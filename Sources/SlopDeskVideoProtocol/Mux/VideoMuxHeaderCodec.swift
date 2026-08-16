@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 
 /// UDP-side mux foundation for the GUI video path (PATH 2): a `UInt32` BE channelID
@@ -5,14 +6,12 @@ import Foundation
 /// way ``MuxEnvelopeCodec`` lets several channels share one TCP connection.
 ///
 /// This is a **NEW, additive** type living BESIDE the existing
-/// ``FrameFragmentHeader`` / ``FrameFragment`` (15-byte header) — it does NOT replace
-/// them. The 15→19-byte header swap (folding the channelID into the per-fragment
-/// header) is a LATER gated migration stage; for now nothing on the live transport
-/// constructs these types, so a single-pane run is byte-identical to today.
+/// ``FrameFragmentHeader`` / ``FrameFragment`` (19-byte header) — it does NOT replace
+/// them. The channelID fold (moving the lane into the per-fragment header) is a LATER
+/// gated migration stage; for now nothing on the live transport constructs
+/// ``MuxFrameFragmentHeader``, so a single-pane run is byte-identical to today.
 ///
-/// Two shapes are provided, both reusing the existing
-/// ``Data/appendBE(_:)-(UInt32)`` writer + ``VideoByteReader`` reader so the bytes are
-/// alignment-safe and endian-explicit, exactly like ``FrameFragment``:
+/// Two shapes, both `rust/slopdesk-video`'s `mux_header`:
 ///
 /// 1. ``VideoMuxHeaderCodec`` — a bare `[UInt32 BE channelID][rest...]` prefix for the
 ///    non-video media lanes (control / geometry) and the cursor socket. The `rest` is
@@ -30,18 +29,22 @@ import Foundation
 ///    off16:  UInt8  flags       — bit0 keyframe(IDR), bit1 parity(FEC), bit2 crisp
 ///    off17:  UInt16 payloadLen  — bytes of payload that follow
 ///    ```
-///    = **19-byte header** (the existing 15 + the 4-byte channelID prefix).
+///    = **19 bytes**, the same width as ``FrameFragmentHeader`` and a DIFFERENT layout:
+///    that one spends its last four bytes on `hostSendTsMillis`, this one spends its
+///    first four on the lane. Reading either with the other's decoder parses cleanly and
+///    produces nonsense, so the widths matching is a coincidence, not a compatibility.
+///
+/// The framing is written straight into the buffer that carries it: the answer is the
+/// payload with four bytes in front, so an encoder that built its own would copy every
+/// datagram twice to prepend a lane.
 public enum VideoMuxHeaderCodec {
     /// Length of the big-endian `UInt32` channelID prefix that fronts a muxed datagram.
-    public static let channelIDLength = 4
+    public static let channelIDLength = slopdesk_mux_constant(0)
 
     /// Prepends `channelID` to an opaque media/cursor payload:
     /// `[UInt32 BE channelID][payload...]`. The `payload` is carried verbatim.
     public static func encode(channelID: UInt32, payload: Data) -> Data {
-        var out = Data(capacity: channelIDLength + payload.count)
-        out.appendBE(channelID)
-        out.append(payload)
-        return out
+        frame(channelID: channelID, tag: nil, payload: payload)
     }
 
     /// Frames a MEDIA-socket datagram in ONE allocation:
@@ -53,10 +56,24 @@ public enum VideoMuxHeaderCodec {
     /// Pinned against independent manual construction in
     /// `VideoMuxHeaderCodecTests.testMediaSendShapePinsManualWireBytes`.
     public static func encodeMedia(channelID: UInt32, tag: UInt8, payload: Data) -> Data {
-        var out = Data(capacity: channelIDLength + 1 + payload.count)
-        out.appendBE(channelID)
-        out.append(tag)
-        out.append(payload)
+        frame(channelID: channelID, tag: tag, payload: payload)
+    }
+
+    /// Both shapes, which differ by one byte in one place. The size is known before the call — a
+    /// lane, maybe a tag, then the payload — so the buffer is allocated once and filled once.
+    private static func frame(channelID: UInt32, tag: UInt8?, payload: Data) -> Data {
+        let needed = channelIDLength + (tag == nil ? 0 : 1) + payload.count
+        var out = Data(count: needed)
+        let written = out.withUnsafeMutableBytes { buffer in
+            payload.withUnsafeBytes { source in
+                slopdesk_mux_encode(
+                    channelID, tag != nil, tag ?? 0,
+                    source.baseAddress, source.count,
+                    buffer.baseAddress, buffer.count,
+                )
+            }
+        }
+        precondition(written == needed, "the mux codec and its own prefix width disagree")
         return out
     }
 
@@ -66,18 +83,23 @@ public enum VideoMuxHeaderCodec {
     ///   corrupt single datagram must never crash the receiver — same contract as
     ///   ``FrameFragment/decode(_:)``).
     public static func decode(_ datagram: Data) throws -> (channelID: UInt32, payload: Data) {
-        var reader = VideoByteReader(datagram)
-        let channelID = try reader.readUInt32()
-        return (channelID, reader.remaining())
+        var channelID: UInt32 = 0
+        let offset = datagram.withUnsafeBytes { bytes in
+            slopdesk_mux_decode(bytes.baseAddress, bytes.count, &channelID)
+        }
+        guard offset > 0 else { throw VideoProtocolError.truncated }
+        // Rebased, not sliced: a `Data` slice indexes from the parent's start and holds the parent
+        // buffer alive, and this payload outlives the datagram it came out of.
+        return (channelID, Data(datagram.dropFirst(offset)))
     }
 }
 
 /// A ``FrameFragmentHeader`` carrying its logical lane's `channelID` at offset 0.
 ///
-/// This is the muxed (19-byte) sibling of the existing 15-byte
-/// ``FrameFragmentHeader``; the non-channelID fields and their meanings are identical
-/// (reused verbatim so the two stay in lock-step). It is additive: the live video
-/// transport still emits the 15-byte header until the gated migration flips over.
+/// This is the muxed sibling of the existing ``FrameFragmentHeader``; the non-channelID
+/// fields and their meanings are identical (shared verbatim so the two stay in
+/// lock-step). It is additive: the live video transport still emits the plain header
+/// until the gated migration flips over.
 public struct MuxFrameFragmentHeader: Equatable, Sendable {
     /// The logical lane this fragment belongs to (offset 0).
     public var channelID: UInt32
@@ -106,29 +128,30 @@ public struct MuxFrameFragmentHeader: Equatable, Sendable {
         self.payloadLength = payloadLength
     }
 
-    /// Header size in bytes, from this type's OWN field widths (it does NOT carry
-    /// ``FrameFragmentHeader/hostSendTsMillis`` — see the type doc's field list above):
-    /// channelID(4) + streamSeq(4) + frameID(4) + fragIndex(2) + fragCount(2) + flags(1)
-    /// + payloadLen(2) = **19**. Must equal what `encode()`/`decode(_:)` actually
-    /// read/write.
-    public static let size = 4 + 4 + 4 + 2 + 2 + 1 + 2
+    /// Header size in bytes: channelID(4) + streamSeq(4) + frameID(4) + fragIndex(2)
+    /// + fragCount(2) + flags(1) + payloadLen(2) = **19**. It does NOT carry
+    /// ``FrameFragmentHeader/hostSendTsMillis`` — see the layout in the type doc above.
+    /// Vended by the codec that writes it, so there is no second place to get it wrong.
+    public static let size = slopdesk_mux_constant(1)
 
     /// Max payload bytes per fragment when the channelID is folded into the header
     /// (datagram budget minus the 19-byte header). Mirrors
-    /// ``VideoPacketizer/maxPayloadSize`` but against the larger muxed header.
-    public static let maxPayloadSize = VideoPacketizer.maxDatagramSize - size
+    /// ``VideoPacketizer/maxPayloadSize`` but against the muxed header.
+    public static let maxPayloadSize = slopdesk_mux_constant(2)
 
     /// Serialises `header + payload` (channelID first, then the existing field order).
     public func encode(payload: Data) -> Data {
-        var out = Data(capacity: Self.size + payload.count)
-        out.appendBE(channelID)
-        out.appendBE(streamSeq)
-        out.appendBE(frameID)
-        out.appendBE(fragIndex)
-        out.appendBE(fragCount)
-        out.append(flags.rawValue)
-        out.appendBE(UInt16(payload.count))
-        out.append(payload)
+        let needed = Self.size + payload.count
+        var out = Data(count: needed)
+        let written = out.withUnsafeMutableBytes { buffer in
+            payload.withUnsafeBytes { source in
+                slopdesk_mux_fragment_encode(
+                    channelID, streamSeq, frameID, fragIndex, fragCount, flags.rawValue,
+                    source.baseAddress, source.count, buffer.baseAddress, buffer.count,
+                )
+            }
+        }
+        precondition(written == needed, "the muxed codec and its own header size disagree")
         return out
     }
 
@@ -137,19 +160,19 @@ public struct MuxFrameFragmentHeader: Equatable, Sendable {
     /// single packet must not crash the receiver — same contract as
     /// ``FrameFragment/decode(_:)``).
     public static func decode(_ datagram: Data) throws -> (header: Self, payload: Data) {
-        var reader = VideoByteReader(datagram)
-        let channelID = try reader.readUInt32()
-        let streamSeq = try reader.readUInt32()
-        let frameID = try reader.readUInt32()
-        let fragIndex = try reader.readUInt16()
-        let fragCount = try reader.readUInt16()
-        let flags = try FrameFragmentHeader.Flags(rawValue: reader.readUInt8())
-        let payloadLength = try reader.readUInt16()
-        let payload = try reader.readBytes(Int(payloadLength))
+        var parsed = SlopDeskMuxFragmentHeader()
+        let ok = datagram.withUnsafeBytes { bytes in
+            slopdesk_mux_fragment_decode(bytes.baseAddress, bytes.count, &parsed)
+        }
+        guard ok else { throw VideoProtocolError.truncated }
         let header = Self(
-            channelID: channelID, streamSeq: streamSeq, frameID: frameID,
-            fragIndex: fragIndex, fragCount: fragCount, flags: flags, payloadLength: payloadLength,
+            channelID: parsed.channel_id, streamSeq: parsed.stream_seq, frameID: parsed.frame_id,
+            fragIndex: parsed.frag_index, fragCount: parsed.frag_count,
+            flags: FrameFragmentHeader.Flags(rawValue: parsed.flags),
+            payloadLength: parsed.payload_length,
         )
-        return (header, payload)
+        // Rebased for the same reason `VideoMuxHeaderCodec.decode` rebases.
+        let span = datagram.dropFirst(Int(parsed.payload_offset)).prefix(Int(parsed.payload_length))
+        return (header, Data(span))
     }
 }

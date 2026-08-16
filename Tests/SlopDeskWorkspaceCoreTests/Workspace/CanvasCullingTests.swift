@@ -1,7 +1,6 @@
 import CoreGraphics
 import SlopDeskWorkspaceModel
 import XCTest
-@testable import SlopDeskWorkspaceCore
 
 /// Pure tests for the kind-aware culling decision (docs/30 §1, §6, §9.1): terminals are NEVER culled
 /// (no stale-replay risk), the focused pane is never culled, `.desktop` panes ARE culled outside

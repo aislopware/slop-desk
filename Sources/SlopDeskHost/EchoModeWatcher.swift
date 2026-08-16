@@ -1,5 +1,4 @@
 import Darwin
-import Foundation
 import SlopDeskProtocol
 
 /// Host PTY-echo watch (the AUTO Secure-Keyboard-Entry signal source). The host

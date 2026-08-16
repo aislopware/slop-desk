@@ -1,6 +1,5 @@
 import Defaults
 import Foundation
-import SlopDeskVideoProtocol
 import SlopDeskWorkspaceModel
 
 // `SettingsKey`: the pure `UserDefaults`-key namespace + fire-time boolean/`PaneKind` accessors read by the
@@ -323,9 +322,10 @@ public enum SettingsKey {
     // `SLOPDESK_AUTO_PROGRESS_COMMANDS` / `SLOPDESK_IPC_ALLOW_SEND_KEYS` / `SLOPDESK_IPC_ALLOW_SENSITIVE`,
     // and Settings → Advanced → Raw overrides DOES reach the sidecar — so that box is the honest editor.
     // Appearance / chrome
-    /// The active ``DSDensity`` tier rawValue. Mirrors ``DSDensity/storageKey`` (the SAME `UserDefaults`
-    /// key the scale store reads at init + on a Settings change) so the picker, persistence, and the live
-    /// `DSScale`/height tokens all agree on one source.
+    /// The active chrome DENSITY tier, persisted as its raw string ("comfortable" / "compact"). ONE
+    /// `UserDefaults` key: ``PreferencesStore`` writes it from ``AppearancePreferences/density`` on apply,
+    /// and Settings + the All-Settings row read that same field back — so the picker and the persisted
+    /// value cannot drift.
     public static let density = "appearance.density"
     // (terminal-features__progress-state.md "DOCK ICON" group). macOS-only NSDockTile behaviour;
     // the keys compile + round-trip on iOS, inert there (no Dock). Fire-time flags, never folded into a typed
@@ -685,27 +685,11 @@ public enum SettingsKey {
         Defaults[.desktopWindowPresentation]
     }
 
-    /// Whether satellite windows keep taking pointer input while not key (`satellite-window`),
-    /// default ON. Read per render by the video-leaf seam.
-    public static var satelliteBackgroundPointerEnabled: Bool { Defaults[.satelliteBackgroundPointer] }
-
     // MARK: First-launch + SlopDesk CLI (getting-started__first-launch.md)
 
     /// Whether the guided first-launch sheet has already run (first-launch), default OFF. Read at app
     /// launch; the sheet presents only when this is OFF (and no automation env is set).
     public static var hasCompletedFirstLaunchEnabled: Bool { Defaults[.hasCompletedFirstLaunch] }
-
-    /// Whether the `slopdesk` CLI symlink is installed ("Install CLI"), default OFF. macOS-only
-    /// behaviour; inert on iOS. Read fire-time by the Shell CLI card + the first-launch Install-CLI step.
-    public static var cliInstalledEnabled: Bool { Defaults[.cliInstalled] }
-
-    /// Whether the prefix-less shell functions are exposed in app-launched shells ("Omit Prefix"),
-    /// default OFF. Read fire-time by the shell-shim injection path (``CLIShellShim``).
-    public static var omitCLIPrefixEnabled: Bool { Defaults[.omitCLIPrefix] }
-
-    /// Whether the prefix-less functions overwrite an existing same-named command ("Allow Overwrite"),
-    /// default OFF. Read fire-time by ``CLIShellShim/snippet(allowOverwrite:binary:)``.
-    public static var allowPrefixOverwriteEnabled: Bool { Defaults[.allowPrefixOverwrite] }
 
     // MARK: Controls / scroll / copy (behaviour lives elsewhere — declared + persisted here)
 
@@ -762,11 +746,6 @@ public enum SettingsKey {
     /// (`auto-secure-input`), default ON. Read fire-time by ``SecureKeyboardEntryController`` +
     /// ``TerminalViewModel/secureInputActive``. macOS-only behaviour (the controller is inert off macOS).
     public static var autoSecureInputEnabled: Bool { Defaults[.autoSecureInput] }
-
-    /// Whether the `🛡 SECURE INPUT` pill is shown while secure input is active (secure-input indicator),
-    /// default ON. Read fire-time by the leaf's pill gate. macOS-only (the pill never lights
-    /// on iOS — ``TerminalViewModel/secureInputActive`` is always `false` there).
-    public static var secureInputIndicatorEnabled: Bool { Defaults[.secureInputIndicator] }
 
     /// The OSC-52 clipboard-WRITE access gate (`clipboard-write`), default ``ClipboardAccess/allow``.
     /// A stale / invalid persisted raw value repairs to `.allow` via the `RawRepresentableBridge`.

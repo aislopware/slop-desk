@@ -1,4 +1,5 @@
 #if canImport(QuartzCore)
+import CSlopDeskFFI
 import Foundation
 import QuartzCore
 import SlopDeskVideoProtocol
@@ -48,8 +49,8 @@ public final class ClientCursorCompositor {
     /// host pointer (arrow / I-beam / hand / resize / …).
     func makeCursor(shapeID: UInt16, hotspot: VideoPoint) -> NSCursor? {
         guard let cached = shapeCache[shapeID] else { return nil }
-        let w = cached.logicalSize.width > 0 ? cached.logicalSize.width : Double(cached.image.width)
-        let h = cached.logicalSize.height > 0 ? cached.logicalSize.height : Double(cached.image.height)
+        let rendered = Self.renderedShapeSize(cached.logicalSize, cached.image)
+        let (w, h) = (rendered.width, rendered.height)
         guard w > 0, h > 0 else { return nil }
         let image = NSImage(cgImage: cached.image, size: NSSize(width: w, height: h))
         // Clamp the hotspot into the image bounds (a malformed/oversized hotspot would otherwise
@@ -84,9 +85,9 @@ public final class ClientCursorCompositor {
         videoScale: Double,
         cursorSize: VideoSize,
     ) -> VideoRect {
-        let x = update.position.x * videoScale - update.hotspot.x
-        let y = update.position.y * videoScale - update.hotspot.y
-        return VideoRect(x: x, y: y, width: cursorSize.width, height: cursorSize.height)
+        rect(slopdesk_cursor_layer_frame_scalar(
+            point(update.position), point(update.hotspot), videoScale, size(cursorSize),
+        ))
     }
 
     /// Aspect-fit + zoom/pan-correct cursor placement: maps the host-space cursor through
@@ -107,24 +108,10 @@ public final class ClientCursorCompositor {
         cursorSize: VideoSize,
         mode: VideoContentMode = .fit,
     ) -> VideoRect {
-        let tip = AspectFit.viewPoint(
-            forHostPoint: update.position,
-            viewSize: viewSize,
-            videoNativeSize: videoNativeSize,
-            zoom: zoom,
-            pan: pan,
-            mode: mode,
-        )
-        // The hotspot is reported in host-window points; scale it into view points by the
-        // displayed-rect's effective per-source-point scale (× zoom for the crop).
-        let r = AspectFit.displayedVideoRect(viewSize: viewSize, videoNativeSize: videoNativeSize, mode: mode)
-        let scaleX = videoNativeSize.width > 0 ? (r.size.width / videoNativeSize.width) * max(1, zoom) : 1
-        let scaleY = videoNativeSize.height > 0 ? (r.size.height / videoNativeSize.height) * max(1, zoom) : 1
-        return VideoRect(
-            x: tip.x - update.hotspot.x * scaleX,
-            y: tip.y - update.hotspot.y * scaleY,
-            width: cursorSize.width, height: cursorSize.height,
-        )
+        rect(slopdesk_cursor_layer_frame_fit(
+            point(update.position), point(update.hotspot), size(viewSize), size(videoNativeSize),
+            zoom, point(pan), size(cursorSize), mode.code,
+        ))
     }
 
     /// Applies a cursor update to the overlay layer at display-refresh.
@@ -169,9 +156,8 @@ public final class ClientCursorCompositor {
             // Size the layer by the LOGICAL point size (not the raw bitmap pixels) so the cursor
             // renders at its true size — CALayer scales `contents` to these bounds. Fall back to the
             // bitmap pixels only if the logical size is degenerate (<= 0).
-            let w = cached.logicalSize.width > 0 ? cached.logicalSize.width : Double(cached.image.width)
-            let h = cached.logicalSize.height > 0 ? cached.logicalSize.height : Double(cached.image.height)
-            cursorLayer.bounds = CGRect(x: 0, y: 0, width: w, height: h)
+            let rendered = Self.renderedShapeSize(cached.logicalSize, cached.image)
+            cursorLayer.bounds = CGRect(x: 0, y: 0, width: rendered.width, height: rendered.height)
             currentShapeID = update.shapeID
         }
         return VideoSize(width: cursorLayer.bounds.width, height: cursorLayer.bounds.height)
@@ -183,7 +169,37 @@ public final class ClientCursorCompositor {
     /// the flip is unit-tested without a `CALayer`. iOS `UIView` layers are top-left and never
     /// call this (the placement frame is used as-is).
     public nonisolated static func bottomLeftOriginY(topLeftY: Double, height: Double, parentHeight: Double) -> Double {
-        parentHeight - topLeftY - height
+        slopdesk_cursor_bottom_left_origin_y(topLeftY, height, parentHeight)
+    }
+
+    // MARK: - Crossing
+
+    /// The size the overlay renders at: the shape's LOGICAL point size, falling back to the raw
+    /// bitmap's pixels when that is degenerate, so a Retina or MTU-downscaled bitmap shows at the
+    /// cursor's true size rather than collapsing to nothing.
+    nonisolated static func renderedShapeSize(_ logical: VideoSize, _ bitmap: CGImage) -> VideoSize {
+        let pixels = SlopDeskVideoSize(width: Double(bitmap.width), height: Double(bitmap.height))
+        let answer = slopdesk_cursor_rendered_shape_size(size(logical), pixels)
+        return VideoSize(width: answer.width, height: answer.height)
+    }
+
+    private nonisolated static func point(_ value: VideoPoint) -> SlopDeskVideoPoint {
+        SlopDeskVideoPoint(x: value.x, y: value.y)
+    }
+
+    private nonisolated static func size(_ value: VideoSize) -> SlopDeskVideoSize {
+        SlopDeskVideoSize(width: value.width, height: value.height)
+    }
+
+    private nonisolated static func box(_ value: VideoRect) -> SlopDeskVideoRect {
+        SlopDeskVideoRect(
+            x: value.origin.x, y: value.origin.y,
+            width: value.size.width, height: value.size.height,
+        )
+    }
+
+    private nonisolated static func rect(_ value: SlopDeskVideoRect) -> VideoRect {
+        VideoRect(x: value.x, y: value.y, width: value.width, height: value.height)
     }
 
     private func setLayerFrame(_ frame: VideoRect) {
@@ -192,9 +208,8 @@ public final class ClientCursorCompositor {
         // rejects non-finite wire floats (readFiniteFloat64), so a malformed cursor datagram is
         // dropped upstream; this guard also covers any NaN that could arise from degenerate
         // aspect-fit math (e.g. a zero video/view dimension) — skip the update rather than crash.
-        let r = frame.cgRect
-        guard r.origin.x.isFinite, r.origin.y.isFinite, r.size.width.isFinite, r.size.height.isFinite else { return }
-        var placed = r
+        guard slopdesk_cursor_is_placeable(Self.box(frame)) else { return }
+        var placed = frame.cgRect
         #if os(macOS)
         // The overlay layer is a sublayer of the macOS `CAMetalLayer`, whose host view sets
         // neither `isFlipped` nor `isGeometryFlipped` → its sublayer coordinate space is
@@ -207,8 +222,8 @@ public final class ClientCursorCompositor {
         // space, not the pixel `drawableSize`.) iOS `UIView` layers are already top-left → no flip.
         if let parentHeight = cursorLayer.superlayer?.bounds.height, parentHeight > 0 {
             placed.origin.y = Self.bottomLeftOriginY(
-                topLeftY: r.origin.y,
-                height: r.size.height,
+                topLeftY: placed.origin.y,
+                height: placed.size.height,
                 parentHeight: parentHeight,
             )
         }

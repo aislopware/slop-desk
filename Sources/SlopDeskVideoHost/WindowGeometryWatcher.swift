@@ -1,7 +1,5 @@
 #if os(macOS)
-import AppKit
 import ApplicationServices
-import Foundation
 import SlopDeskVideoProtocol
 
 /// PURE display-pick math for host-window-resize (unit-tested): given a window frame and
@@ -222,8 +220,6 @@ public final class WindowGeometryWatcher: @unchecked Sendable {
     private var pollTimer: DispatchSourceTimer?
     private let queue = DispatchQueue(label: "slopdesk.video.geometry", qos: .userInteractive)
     private var lastBounds: VideoRect?
-    private var lastTitle: String?
-
     /// DIALOG-EXPAND (host-only): when set, every Nth drag poll enumerates windows IN FRONT of the
     /// tracked window, computes the capture region = window ∪ any attached same-pid panel (a file-open
     /// dialog the OS attributes to the app's pid), and fires this handler with the GLOBAL-point union
@@ -356,29 +352,6 @@ public final class WindowGeometryWatcher: @unchecked Sendable {
             displayBounds: displayBounds,
         )
         handler(union, contentRects)
-    }
-
-    /// Emits a title change if the window's title differs from the last seen value.
-    /// Driven by the AX `kAXTitleChangedNotification` in production.
-    @preconcurrency
-    @MainActor
-    public func checkTitle() {
-        let appEl = AXUIElementCreateApplication(pid)
-        var windowsRef: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(appEl, kAXWindowsAttribute as CFString, &windowsRef) == .success,
-              let axWindows = windowsRef as? [AXUIElement] else { return }
-        // Match the EXACT window by CGWindowID via ``axWindowID(of:)``: a frame-equality match binds
-        // the WRONG window when panes stack at one origin on the shared VD.
-        for axWindow in axWindows where axWindowID(of: axWindow) == windowID {
-            var titleRef: CFTypeRef?
-            if AXUIElementCopyAttributeValue(axWindow, kAXTitleAttribute as CFString, &titleRef) == .success,
-               let title = titleRef as? String, title != lastTitle
-            {
-                lastTitle = title
-                geometryHandler(.title(title))
-            }
-            return
-        }
     }
 
     /// PATH A in-session resize: resize the REAL tracked window to `desiredPoints` via the

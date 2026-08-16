@@ -135,61 +135,12 @@ final class VendoredToolsTests: XCTestCase {
 
     // MARK: - Android toolchain
 
-    func testAdbPrefersTheVendoredPrefixOverAnSDKRoot() throws {
-        let vendored = try makeExecutable("prefix/bin/adb")
-        try makeExecutable("sdk/platform-tools/adb")
-
-        let found = AndroidToolchain.locateSDKTool(
-            "adb", subdirectory: "platform-tools", overrideVariable: "SLOPDESK_ADB_BIN",
-            environment: ["PATH": "", "ANDROID_HOME": root.appendingPathComponent("sdk").path],
-            fileManager: .default,
-            vendoredBinDirectory: root.appendingPathComponent("prefix/bin").path,
-        )
-
-        XCTAssertEqual(found, vendored)
-    }
-
-    /// The emulator is deliberately NOT provisioned, so its lookup is handed no prefix and must
-    /// reach the host's SDK. A prefix that accidentally shadowed it would break AVD booting on every
-    /// machine while looking like it worked.
-    func testEmulatorStillResolvesFromTheHostSDK() throws {
-        let sdkEmulator = try makeExecutable("sdk/emulator/emulator")
-
-        let found = AndroidToolchain.locateSDKTool(
-            "emulator", subdirectory: "emulator", overrideVariable: "SLOPDESK_ANDROID_EMULATOR_BIN",
-            environment: ["PATH": "", "ANDROID_HOME": root.appendingPathComponent("sdk").path],
-            fileManager: .default, vendoredBinDirectory: nil,
-        )
-
-        XCTAssertEqual(found, sdkEmulator)
-    }
-
-    func testScrcpyJarPrefersTheCommittedCopy() throws {
-        let vendored = root.appendingPathComponent("vendor/scrcpy-server")
-        try FileManager.default.createDirectory(
-            at: vendored.deletingLastPathComponent(), withIntermediateDirectories: true,
-        )
-        try Data("jar".utf8).write(to: vendored)
-
-        let found = AndroidToolchain.locateScrcpyServerJar(
-            environment: [:], fileManager: .default, vendoredJar: vendored.path,
-        )
-
-        XCTAssertEqual(found, vendored.path)
-    }
-
-    /// Outside a checkout the committed jar is unreachable; a `brew install scrcpy` host must keep
-    /// mirroring rather than regress to "no scrcpy-server".
-    func testScrcpyJarFallsBackWhenTheCommittedCopyIsAbsent() {
-        let found = AndroidToolchain.locateScrcpyServerJar(
-            environment: [:], fileManager: .default,
-            vendoredJar: root.appendingPathComponent("nothing-here").path,
-        )
-
-        // Whatever this machine has (a Homebrew jar or nothing) — the claim is only that an absent
-        // vendored jar does not short-circuit the rest of the search.
-        XCTAssertNotEqual(found, root.appendingPathComponent("nothing-here").path)
-    }
+    //
+    // The four cases that lived here (adb prefers the vendored prefix, the emulator deliberately
+    // does not, the committed scrcpy jar wins, an absent one does not short-circuit) moved WITH the
+    // capability: the Android toolchain locator is `rust/slopdesk-androidd/src/toolchain.rs` and
+    // there is no Swift copy of it. What stays this side is the repo-root walk above, which androidd
+    // does not repeat — it takes hostd's answer on argv.
 
     // MARK: - The lock itself
 

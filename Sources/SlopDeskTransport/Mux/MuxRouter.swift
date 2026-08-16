@@ -28,8 +28,8 @@ public enum MuxRoutingDecision: Equatable, Sendable {
 /// ``MuxRoutingDecision`` via the shared ``MuxRoutingCore``. It does NOT open sockets
 /// or per-channel `FrameDecoder`s — it returns the opaque bytes + channel id and lets
 /// the (later-built) IO layer own the per-channel decoding.
-public struct MuxRouter: Sendable {
-    private var table: ChannelTable
+public final class MuxRouter {
+    private let table: ChannelTable
 
     /// Creates a router. An empty table is the client default; pass a pre-populated
     /// table only in tests that want to seed channel state.
@@ -44,10 +44,10 @@ public struct MuxRouter: Sendable {
     public func isOpen(_ channelID: UInt32) -> Bool { table.isOpen(channelID) }
 
     /// Allocates a fresh **odd** client channel id (delegates to ``ChannelTable``).
-    public mutating func allocateChannel() -> UInt32 { table.allocate() }
+    public func allocateChannel() -> UInt32 { table.allocate() }
 
     /// Routes one decoded mux frame, mutating the channel table as needed.
-    public mutating func route(_ frame: MuxFrame) -> MuxRoutingDecision {
-        MuxRoutingCore.route(frame, in: &table)
+    public func route(_ frame: MuxFrame) -> MuxRoutingDecision {
+        MuxRoutingCore.route(frame, in: table)
     }
 }

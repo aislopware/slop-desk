@@ -3,7 +3,6 @@
 // with ≥1 test so it compiles + passes; it asserts nothing about the (rebuilding) UI.
 
 import XCTest
-@testable import SlopDeskClientUI
 
 final class L0Placeholder: XCTestCase {
     func testBuilds() {

@@ -1,11 +1,9 @@
-import Foundation
-
 // MARK: - Config action-name → registry bindingID resolver (the N5 resolver core)
 
 /// Maps config action NAMES (`new_tab`, `split_right`, `goto_tab:N`, …) to this registry's stable
 /// binding ids (`tab.new`, `pane.splitRight`, `pane.select.<n>`, …).
 ///
-/// **Why this exists (the N5 gap).** ``KeybindGrammar/parseAction`` already turns a config line's
+/// **Why this exists (the N5 gap).** ``KeybindGrammar/parseLine(_:)`` already turns a config line's
 /// right-hand side into `.named(id:arg:)` for a name like `new_tab` or `goto_tab:1`, and
 /// `KeybindConfigLoader.apply` folds a resolved override into ``KeybindingPreferences`` through an
 /// OPTIONAL `resolveNamedBinding` hook — but the loader CANNOT call this registry directly

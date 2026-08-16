@@ -8,7 +8,6 @@
 // precedence is unit-pinned headlessly (no view, no store).
 
 import Foundation
-import SlopDeskWorkspaceCore
 
 enum RailRowReadout {
     /// Resolve the row's one readout source, by precedence:

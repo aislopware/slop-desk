@@ -2,7 +2,7 @@
 """Differential parity harness: the REAL herdr binary vs SlopDesk's ported detect engine.
 
 Runs `herdr agent explain --file … --json` (upstream's own debug oracle, exercising its
-actual rule engine end-to-end) next to `.build/debug/slopdesk-detect-explain` on a
+actual rule engine end-to-end) next to `slopdesk-screend explain` on a
 deterministic generated corpus, and diffs the full evaluation traces: final state, winner
 rule, visible flags, skip/fallback reasons, and — per evaluated rule — matched flag,
 region byte length, and region preview. Any divergence in a region resolver, gate
@@ -10,7 +10,7 @@ evaluation, priority tie-break, or fallback shows up as a field-level mismatch.
 
 Prereqs (see scripts/herdr-sync.sh for the build recipe):
     herdr checkout with target/release/herdr built
-    swift build   (for slopdesk-detect-explain)
+    make screend  (for `slopdesk-screend explain`, the ported engine's own oracle)
 
 Usage:
     python3 scripts/herdr-differential.py [--herdr-dir PATH] [--seed N] [--jobs N]
@@ -35,7 +35,22 @@ import tempfile
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 DEFAULT_HERDR_DIR = pathlib.Path.home() / ".cache/clio-repos/github.com--ogulcancelik--herdr"
-SWIFT_BIN = REPO_ROOT / ".build/debug/slopdesk-detect-explain"
+# The ported engine's oracle. It is a SUBCOMMAND of the daemon binary, not a target of its own:
+# the rule ladder lives in `rust/slopdesk-screend` and an explain that did not share its code would
+# be a second engine to keep honest (docs/52). Release first, debug as the fallback, so a dev loop
+# that only ran `cargo build` still has an oracle.
+SCREEND_DIR = REPO_ROOT / "rust/slopdesk-screend"
+PORT_BIN = next(
+    (
+        candidate
+        for candidate in (
+            SCREEND_DIR / "target/release/slopdesk-screend",
+            SCREEND_DIR / "target/debug/slopdesk-screend",
+        )
+        if candidate.exists()
+    ),
+    SCREEND_DIR / "target/release/slopdesk-screend",
+)
 
 AGENT_LABELS = [
     "pi",
@@ -228,22 +243,22 @@ def run_case(herdr_bin, env, case_path, label):
         timeout=30,
         check=False,
     )
-    swift_raw = subprocess.run(
-        [str(SWIFT_BIN), "--file", str(case_path), "--agent", label],
+    port_raw = subprocess.run(
+        [str(PORT_BIN), "explain", "--file", str(case_path), "--agent", label],
         capture_output=True,
         text=True,
         timeout=30,
         check=False,
     )
-    if herdr_raw.returncode != 0 or swift_raw.returncode != 0:
-        codes = f"herdr={herdr_raw.returncode} swift={swift_raw.returncode}"
-        return f"nonzero exit ({codes})\n{herdr_raw.stderr}{swift_raw.stderr}"
+    if herdr_raw.returncode != 0 or port_raw.returncode != 0:
+        codes = f"herdr={herdr_raw.returncode} slopdesk={port_raw.returncode}"
+        return f"nonzero exit ({codes})\n{herdr_raw.stderr}{port_raw.stderr}"
     herdr_doc = json.loads(herdr_raw.stdout)
-    swift_doc = json.loads(swift_raw.stdout)
+    port_doc = json.loads(port_raw.stdout)
     source = herdr_doc.get("manifest_source")
     if source is not None and source != "bundled":
         return f"herdr used non-bundled manifest source {source!r} — sandbox leak, results invalid"
-    left, right = project(herdr_doc), project(swift_doc)
+    left, right = project(herdr_doc), project(port_doc)
     return diff(left, right, label)
 
 
@@ -291,7 +306,7 @@ def diff(left, right, label):
         if key != "evaluated_rules":
             l_json = json.dumps(left[key], ensure_ascii=False)
             r_json = json.dumps(right[key], ensure_ascii=False)
-            detail.append(f"  {key}: herdr={l_json} swift={r_json}")
+            detail.append(f"  {key}: herdr={l_json} slopdesk={r_json}")
             continue
         l_rules, r_rules = rules_by_id(left), rules_by_id(right)
         for rule_id in sorted(set(l_rules) | set(r_rules)):
@@ -302,13 +317,13 @@ def diff(left, right, label):
                 continue
             l_json = json.dumps(l_rule, ensure_ascii=False)
             r_json = json.dumps(r_rule, ensure_ascii=False)
-            detail.append(f"  rule {rule_id}:\n    herdr: {l_json}\n    swift: {r_json}")
+            detail.append(f"  rule {rule_id}:\n    herdr: {l_json}\n    slopdesk: {r_json}")
         # A rule EVALUATED on one side only is a divergence in the ladder itself, unless it is one
         # of ours. (Count, not just membership: the ladder short-circuits, so a length gap is real.)
         l_ids = [r for r in l_rules if r not in diverged]
         r_ids = [r for r in r_rules if r not in diverged]
         if len(l_ids) != len(r_ids):
-            detail.append(f"  rule count: herdr={len(l_ids)} swift={len(r_ids)}")
+            detail.append(f"  rule count: herdr={len(l_ids)} slopdesk={len(r_ids)}")
     return "\n".join(detail) or None
 
 
@@ -325,8 +340,8 @@ def main():
         sys.exit(
             f"missing herdr oracle at {herdr_bin} — see scripts/herdr-sync.sh for the build recipe"
         )
-    if not SWIFT_BIN.exists():
-        sys.exit(f"missing {SWIFT_BIN} — run `swift build` first")
+    if not PORT_BIN.exists():
+        sys.exit(f"missing {PORT_BIN} — run `make screend` first")
 
     pin_path = REPO_ROOT / "scripts/herdr.pin"
     head = subprocess.run(

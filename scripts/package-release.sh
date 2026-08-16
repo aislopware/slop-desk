@@ -16,7 +16,7 @@
 #
 # ARTIFACTS (into dist/):
 #   SlopDesk-<version>-arm64.dmg          SlopDesk.app + SlopDeskHost.app, signed + stapled
-#   slopdesk-cli-<version>-arm64.tar.gz   slopdesk, slopdesk-hostd, slopdesk-ctl, signed
+#   slopdesk-cli-<version>-arm64.tar.gz   slopdesk, slopdesk-hostd (SwiftPM) + slopdesk-ctl (cargo), signed
 #   SHA256SUMS                            what the Homebrew tap's cask + formula pin
 #
 # SIGNING / NOTARIZATION inputs (env — CI pulls them from the better-update vault, see
@@ -47,7 +47,12 @@ BUILD_NUMBER="${SLOPDESK_BUILD_NUMBER:-1}"
 SIGN_IDENTITY="${SLOPDESK_SIGN_IDENTITY:-Developer ID Application: WEEBUILD VIET NAM COMPANY LIMITED (AJ4R8GWM7A)}"
 SKIP_NOTARIZE="${SLOPDESK_SKIP_NOTARIZE:-0}"
 
-CLI_TOOLS=(slopdesk slopdesk-hostd slopdesk-ctl)
+# SwiftPM products (Package.swift `products:`) and the cargo one. `slopdesk-ctl` is Rust
+# (rust/slopdesk-ctl) — it is forked once per agent command, so its whole cost is process startup.
+# Two lists because they are BUILT differently; everything after staging treats them as one set.
+SPM_TOOLS=(slopdesk slopdesk-hostd)
+RUST_TOOLS=(slopdesk-ctl)
+CLI_TOOLS=("${SPM_TOOLS[@]}" "${RUST_TOOLS[@]}")
 XCFRAMEWORK="${REPO_ROOT}/ThirdParty/ghostty/libghostty.xcframework"
 
 CLIENT_SPEC="${REPO_ROOT}/Apps/ClientApp-macOS/project.yml"
@@ -71,7 +76,9 @@ step "Preflight"
 [[ "$(uname -m)" == "arm64" ]] ||
   die "arm64-only release: this host is $(uname -m). libghostty ships no x86_64 slice."
 
-for tool in xcodegen xcodebuild codesign hdiutil; do
+# `cargo` is here for the same reason as the rest: `slopdesk-ctl` is Rust, and a missing toolchain
+# should fail in the preflight rather than after the ten-minute app builds.
+for tool in xcodegen xcodebuild codesign hdiutil cargo; do
   command -v "${tool}" > /dev/null 2>&1 || die "missing required tool: ${tool}"
 done
 
@@ -112,8 +119,17 @@ step "Building CLI (swift build -c release)"
 # script that cannot find its own output is the one failure mode worth spending a flag on.
 # `.build-release` is covered by .gitignore's `.build-*/` and survives between local runs.
 SPM_SCRATCH="${REPO_ROOT}/.build-release"
-for tool in "${CLI_TOOLS[@]}"; do
+for tool in "${SPM_TOOLS[@]}"; do
   (cd "${REPO_ROOT}" && swift build -c release --arch arm64 --scratch-path "${SPM_SCRATCH}" --product "${tool}")
+done
+
+# The cargo half. `--target aarch64-apple-darwin` is explicit for the same reason `--arch arm64` is
+# above: the tarball claims arm64 and must contain only arm64, whatever the host toolchain defaults
+# to. Naming the target also fixes the output directory, so `locate_tool` needs no search for these.
+step "Building CLI (cargo build --release)"
+RUST_BIN="${REPO_ROOT}/rust/target/aarch64-apple-darwin/release"
+for tool in "${RUST_TOOLS[@]}"; do
+  (cd "${REPO_ROOT}/rust" && cargo build --release --target aarch64-apple-darwin -p "${tool}")
 done
 
 # Where the binaries land is NOT a constant. `.build/arm64-apple-macosx/release` is right for the
@@ -129,8 +145,24 @@ CLI_BIN="$(cd "${REPO_ROOT}" && swift build -c release --arch arm64 --scratch-pa
 # never assumed.
 SEARCH_ROOTS=("${SPM_SCRATCH}" "${REPO_ROOT}/.build" "${HOME}/Library/Developer/Xcode/DerivedData")
 
+is_rust_tool() {
+  local tool="$1" candidate
+  for candidate in "${RUST_TOOLS[@]}"; do
+    [[ "${candidate}" == "${tool}" ]] && return 0
+  done
+  return 1
+}
+
 locate_tool() {
   local tool="$1" cand root
+  # A cargo tool resolves to its cargo path or to NOTHING. Falling through to the SwiftPM search
+  # would let a stale `.build*/release/slopdesk-ctl` — the Swift binary this one replaced — ship
+  # silently under the right name, which is the one failure the version check cannot catch.
+  if is_rust_tool "${tool}"; then
+    [[ -f "${RUST_BIN}/${tool}" ]] || return 1
+    printf '%s\n' "${RUST_BIN}/${tool}"
+    return 0
+  fi
   if [[ -n "${CLI_BIN}" && -f "${CLI_BIN}/${tool}" ]]; then
     printf '%s\n' "${CLI_BIN}/${tool}"
     return 0
@@ -175,8 +207,8 @@ mkdir -p "${CLI_STAGE}"
 for tool in "${CLI_TOOLS[@]}"; do
   if ! built="$(locate_tool "${tool}")"; then
     dump_build_layout
-    die "swift build reported success but no release ${tool} executable exists
-  (--show-bin-path said: ${CLI_BIN:-<nothing>})"
+    die "the build reported success but no release ${tool} executable exists
+  (--show-bin-path said: ${CLI_BIN:-<nothing>}; cargo dir: ${RUST_BIN})"
   fi
   echo "  ${tool} <- ${built}"
   cp "${built}" "${CLI_STAGE}/${tool}"

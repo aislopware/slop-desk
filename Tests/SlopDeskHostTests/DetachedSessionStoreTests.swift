@@ -12,7 +12,7 @@ import XCTest
 private func makeStubSession(sessionID: UUID = UUID()) -> MuxChannelSession {
     MuxChannelSession(
         channelID: 1,
-        pty: PTYProcess(), // unspawned: no reaper thread, no masterFD
+        pty: unattachedPTY(), // unspawned: no reaper thread, no masterFD
         data: MuxSubChannel(channelID: 1, channel: .data) { _, _ in },
         control: MuxSubChannel(channelID: 1, channel: .control) { _, _ in },
         sessionID: sessionID,
@@ -351,12 +351,14 @@ final class DetachedSessionStoreTests: XCTestCase {
 /// reattach contract (the returning client sends `lastReceivedSeq`; the host replays
 /// everything after it). Pure value-type, zero network/PTY.
 final class ReplayBufferReattachTests: XCTestCase {
+    /// A cold replay (`after: 0`) is the ring and the un-acked tail cleaned as ONE stream and
+    /// re-chunked, so what "everything" means is every BYTE under the top seq — not one message
+    /// per appended entry.
     func testReplayAfterZeroReturnsEverything() {
-        var buf = ReplayBuffer()
+        let buf = ReplayBuffer()
         buf.append(bytes: Data([1, 2]))
-        buf.append(bytes: Data([3, 4]))
-        let msgs = buf.replay(after: 0)
-        XCTAssertEqual(msgs.count, 2)
+        let top = buf.append(bytes: Data([3, 4]))
+        XCTAssertEqual(buf.replay(after: 0), [.output(seq: top, bytes: Data([1, 2, 3, 4]))])
     }
 
     func testReplayAfterLastSeqReturnsEmpty() {
@@ -462,7 +464,7 @@ final class OnExitRoutesToShutdownTests: XCTestCase {
         let channelID: UInt32 = 42
         let session = MuxChannelSession(
             channelID: channelID,
-            pty: PTYProcess(),
+            pty: unattachedPTY(),
             data: MuxSubChannel(channelID: channelID, channel: .data) { _, _ in },
             control: MuxSubChannel(channelID: channelID, channel: .control) { _, _ in },
         )
@@ -481,7 +483,7 @@ final class OnExitRoutesToShutdownTests: XCTestCase {
         let id = UUID()
         let session = MuxChannelSession(
             channelID: 5,
-            pty: PTYProcess(),
+            pty: unattachedPTY(),
             data: MuxSubChannel(channelID: 5, channel: .data) { _, _ in },
             control: MuxSubChannel(channelID: 5, channel: .control) { _, _ in },
             sessionID: id,
@@ -512,7 +514,7 @@ final class RebindRelayOnExitAtomicityTests: XCTestCase {
     private func makeSession(channelID: UInt32 = 7) -> MuxChannelSession {
         MuxChannelSession(
             channelID: channelID,
-            pty: PTYProcess(), // unspawned — no reaper, no masterFD
+            pty: unattachedPTY(), // unspawned — no reaper, no masterFD
             data: MuxSubChannel(channelID: channelID, channel: .data) { _, _ in },
             control: MuxSubChannel(channelID: channelID, channel: .control) { _, _ in },
         )

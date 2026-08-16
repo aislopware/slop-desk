@@ -1,5 +1,5 @@
+import CSlopDeskFFI
 import Foundation
-import SlopDeskVideoProtocol
 
 /// PURE libwebrtc-trendline-style one-way-delay-GRADIENT detector.
 ///
@@ -26,170 +26,115 @@ import SlopDeskVideoProtocol
 /// means the queue context is stale; a regression straddling two activity clusters would read a
 /// bogus slope, so the window is cleared and re-warmed instead.
 ///
-/// PURE + DETERMINISTIC + Equatable: no wall-clock, no I/O — the caller injects every arrival, so
-/// the math is replayable and headlessly unit-testable (`TrendlineEstimatorTests`).
+/// The law itself is `rust/slopdesk-video`'s `trendline`; this is its face. The estimator is a value
+/// its owner copies out, folds into and writes back, so it crosses BY VALUE — the regression WINDOW
+/// travels with it, because the verdict is a least-squares fit over the samples themselves and
+/// running sums would round differently (`docs/55-ffi-boundary.md` §4b).
 public struct TrendlineEstimator: Sendable, Equatable {
     /// Detector output, encoded into bits 0-1 of the wire flags field.
     public enum State: UInt8, Sendable {
         case normal = 0
         case overusing = 1
         case underusing = 2
+
+        /// The door's code as a verdict. An unknown code cannot arise — the door emits exactly
+        /// these three — and reads as the one a fresh detector holds.
+        static func of(_ code: UInt32) -> Self {
+            switch code {
+            case UInt32(SLOPDESK_TREND_STATE_OVERUSING): .overusing
+            case UInt32(SLOPDESK_TREND_STATE_UNDERUSING): .underusing
+            default: .normal
+            }
+        }
+
+        /// The verdict as the door's code.
+        var code: UInt32 { UInt32(rawValue) }
     }
 
     // MARK: Tunables (libwebrtc defaults; env-overridable SLOPDESK_TREND_* for HW A/B)
 
-    /// Regression window in per-frame samples (kDefaultTrendlineWindowSize; 333ms @60fps).
-    /// `SLOPDESK_TREND_WINDOW`.
-    public static let windowSize: Int = envInt("SLOPDESK_TREND_WINDOW", 20, min: 5, max: 200)
-    /// Exponential smoothing on the accumulated delay (kDefaultTrendlineSmoothingCoeff).
-    public static let smoothingCoef = 0.9
-    /// Gain applied to the slope before the threshold compare (kDefaultTrendlineThresholdGain).
-    /// `SLOPDESK_TREND_GAIN`.
-    public static let thresholdGain: Double = envDouble("SLOPDESK_TREND_GAIN", 4.0, min: 0.1, max: 100)
-    /// Adaptive-threshold start value (libwebrtc OveruseDetector), clamped to [min, max] forever.
-    public static let initialThreshold = 12.5
-    public static let thresholdMin = 6.0
-    public static let thresholdMax = 600.0
-    /// Adaptive-threshold gains: rise slowly toward a loud |trend| (kUp), fall quickly back toward
-    /// a quiet one (kDown) — the asymmetry keeps one spike from desensitizing the detector for long.
-    public static let kUp = 0.0087
-    public static let kDown = 0.039
-    /// Skip threshold adaptation when |modifiedTrend| overshoots it by more than this — a gross
-    /// outlier must not yank the threshold up to its own level.
-    public static let outlierSkipMargin = 15.0
-    /// Clamp on the per-sample dt used in threshold adaptation (ms).
-    public static let maxAdaptDtMs = 100.0
-    /// Time over threshold required before overuse SIGNALS (kOverUsingTimeThreshold, ms).
-    public static let overusingTimeMs = 10.0
-    /// OURS: an arrival gap larger than this resets the window (≥15 missed frame slots at 60fps —
-    /// stale queue context + the two-cluster regression artifact; FPS-governor-proof).
-    public static let resetGapMs = 250.0
-    /// `numDeltas` saturation in the modified-trend scale factor (libwebrtc caps at 60).
-    static let maxScaledDeltas = 60
+    /// The law's fixed numbers, resolved once. Nothing here is state — no fold moves one — so they
+    /// are asked for rather than carried, and this side spells none of them.
+    private static let constants = slopdesk_trendline_constants()
 
-    // MARK: State (all value-type ⇒ auto Equatable / Sendable)
+    /// The env-tunable half of the operating point, resolved once. Every knob NAME and every band
+    /// lives behind the door, so the whole environment is handed over one pair at a time; the two
+    /// knobs are independent, so its arbitrary order cannot change the answer. Out-of-band is
+    /// REJECTED rather than clamped: these reshape the detector's geometry.
+    static let config: SlopDeskTrendlineConfig = {
+        var config = slopdesk_trendline_config_default()
+        for (key, value) in ProcessInfo.processInfo.environment {
+            config = apply(config, key, value)
+        }
+        return config
+    }()
 
-    /// Latest detector verdict. Stays `.normal` until the window fills (the warm-up gate).
-    public private(set) var state: State = .normal
-    /// `min(numDeltas, 60) × slope × thresholdGain` — the value compared against `threshold`,
-    /// shipped on the wire (×1000, Int32 bit-pattern) for host-side logging/corroboration.
-    public private(set) var modifiedTrend: Double = 0
-    /// Total samples folded (saturates at 1000), shipped (capped 255) for host log context.
-    public private(set) var numDeltas = 0
-    /// The adaptive detection threshold (see kUp/kDown).
-    public private(set) var threshold = Self.initialThreshold
-
-    /// One regression point: x = arrival ms since the window's first arrival, y = smoothed delay.
-    private struct Sample: Equatable {
-        var x: Double
-        var y: Double
+    /// One environment pair through the door.
+    private static func apply(
+        _ config: SlopDeskTrendlineConfig,
+        _ key: String,
+        _ value: String,
+    ) -> SlopDeskTrendlineConfig {
+        var key = key
+        var value = value
+        return key.withUTF8 { keyBytes in
+            value.withUTF8 { valueBytes in
+                slopdesk_trendline_config_apply(
+                    config, keyBytes.baseAddress, keyBytes.count,
+                    valueBytes.baseAddress, valueBytes.count,
+                )
+            }
+        }
     }
 
-    private var prevArrivalMs: Double?
-    private var prevSendTs: UInt32?
-    private var accumulatedDelayMs = 0.0
-    private var smoothedDelayMs = 0.0
-    private var window: [Sample] = []
-    private var firstArrivalMs = 0.0
-    /// Arrival ms of the FIRST over-threshold sample of the current excursion (`nil` = not over).
-    private var overuseStartMs: Double?
-    private var prevTrend = 0.0
+    /// Regression window in per-frame samples (kDefaultTrendlineWindowSize; 333ms @60fps).
+    /// `SLOPDESK_TREND_WINDOW`.
+    public static var windowSize: Int { config.window_size }
+    /// Exponential smoothing on the accumulated delay (kDefaultTrendlineSmoothingCoeff).
+    public static var smoothingCoef: Double { constants.smoothing_coef }
+    /// Gain applied to the slope before the threshold compare (kDefaultTrendlineThresholdGain).
+    /// `SLOPDESK_TREND_GAIN`.
+    public static var thresholdGain: Double { config.threshold_gain }
+    /// Adaptive-threshold start value (libwebrtc OveruseDetector), clamped to [min, max] forever.
+    public static var initialThreshold: Double { constants.initial_threshold }
+    public static var thresholdMin: Double { constants.threshold_min }
+    public static var thresholdMax: Double { constants.threshold_max }
+    /// Adaptive-threshold gains: rise slowly toward a loud |trend| (kUp), fall quickly back toward
+    /// a quiet one (kDown) — the asymmetry keeps one spike from desensitizing the detector for long.
+    public static var kUp: Double { constants.k_up }
+    public static var kDown: Double { constants.k_down }
+    /// Skip threshold adaptation when |modifiedTrend| overshoots it by more than this — a gross
+    /// outlier must not yank the threshold up to its own level.
+    public static var outlierSkipMargin: Double { constants.outlier_skip_margin }
+    /// Clamp on the per-sample dt used in threshold adaptation (ms).
+    public static var maxAdaptDtMs: Double { constants.max_adapt_dt_ms }
+    /// Time over threshold required before overuse SIGNALS (kOverUsingTimeThreshold, ms).
+    public static var overusingTimeMs: Double { constants.overusing_time_ms }
+    /// OURS: an arrival gap larger than this resets the window (≥15 missed frame slots at 60fps —
+    /// stale queue context + the two-cluster regression artifact; FPS-governor-proof).
+    public static var resetGapMs: Double { constants.reset_gap_ms }
+    /// `numDeltas` saturation in the modified-trend scale factor (libwebrtc caps at 60).
+    static var maxScaledDeltas: Int { constants.max_scaled_deltas }
 
-    public init() {}
+    private var record: SlopDeskTrendline
+
+    public init() { record = slopdesk_trendline_new(Self.config) }
+
+    /// Latest detector verdict. Stays `.normal` until the window fills (the warm-up gate).
+    public var state: State { State.of(record.state) }
+    /// `min(numDeltas, 60) × slope × thresholdGain` — the value compared against `threshold`,
+    /// shipped on the wire (×1000, Int32 bit-pattern) for host-side logging/corroboration.
+    public var modifiedTrend: Double { record.modified_trend }
+    /// Total samples folded (saturates at 1000), shipped (capped 255) for host log context.
+    public var numDeltas: Int { record.num_deltas }
+    /// The adaptive detection threshold (see kUp/kDown).
+    public var threshold: Double { record.threshold }
 
     /// Folds one per-FRAME sample (the caller gates to one sample per strictly-newer frameID via
     /// ``TrendSampler``): the client-monotonic arrival ms of the frame's first-seen fragment plus
     /// that frame's `hostSendTsMillis` stamp.
     public mutating func note(arrivalMs: Double, sendTs: UInt32) {
-        guard let prevArrival = prevArrivalMs, let prevSend = prevSendTs else {
-            // First sample: seed only.
-            prevArrivalMs = arrivalMs
-            prevSendTs = sendTs
-            firstArrivalMs = arrivalMs
-            return
-        }
-        if arrivalMs - prevArrival > Self.resetGapMs {
-            // IDLE RESET (see type doc): clear the regression context, re-seed, re-warm.
-            resetWindow()
-            prevArrivalMs = arrivalMs
-            prevSendTs = sendTs
-            firstArrivalMs = arrivalMs
-            return
-        }
-        // Wrap-aware host-stamp delta. A negative delta (an older frame slipping through) is
-        // ignored entirely — defense in depth; ``TrendSampler`` already rejects reordered frames.
-        let dSend = Double(sendTs.distanceWrapped(from: prevSend))
-        guard dSend >= 0 else { return }
-        let dArrival = arrivalMs - prevArrival
-        prevArrivalMs = arrivalMs
-        prevSendTs = sendTs
-
-        // Delay variation: positive d ⇒ this frame spent longer in flight than the last (queue
-        // growing). The cross-machine clock offset cancels in the two deltas.
-        let d = dArrival - dSend
-        accumulatedDelayMs += d
-        // BIT-EXACT (FMA-sensitive): keep the EWMA as SEPARATE mul + add — `a*x + b*y`, never
-        // `a.mulAdd(x, b*y)`. FMA's fused rounding diverges the low bits and breaks golden parity
-        // (mirrors Rust core `SMOOTHING_COEF * s + (1−COEF) * acc`).
-        smoothedDelayMs = Self.smoothingCoef * smoothedDelayMs + (1 - Self.smoothingCoef) * accumulatedDelayMs
-        numDeltas = min(numDeltas + 1, 1000)
-
-        window.append(Sample(x: arrivalMs - firstArrivalMs, y: smoothedDelayMs))
-        if window.count > Self.windowSize {
-            window.removeFirst(window.count - Self.windowSize)
-        }
-        // Warm-up gate: no verdict until the window is full.
-        guard window.count >= Self.windowSize else { return }
-
-        // OLS slope over the window (ms of delay per ms of arrival time).
-        let n = Double(window.count)
-        var meanX = 0.0, meanY = 0.0
-        for s in window { meanX += s.x
-            meanY += s.y
-        }
-        meanX /= n
-        meanY /= n
-        // BIT-EXACT (FMA-sensitive): the OLS covariance / variance accumulators are SEPARATE
-        // mul + add per term — `numer += (x−mx)*(y−my)`, `denom += (x−mx)*(x−mx)`. Never fold to
-        // mulAdd (matches Rust core's two `+=` loops; FMA would diverge the slope's low bits).
-        var numer = 0.0, denom = 0.0
-        for s in window {
-            numer += (s.x - meanX) * (s.y - meanY)
-            denom += (s.x - meanX) * (s.x - meanX)
-        }
-        let trend = denom > 0 ? numer / denom : prevTrend
-        // BIT-EXACT (FMA-sensitive): `count × slope × gain` as SEPARATE mul chain (two multiplies,
-        // no fused add) — mirrors Rust `(num_deltas.min(60)) as f64 * trend * threshold_gain`.
-        modifiedTrend = Double(min(numDeltas, Self.maxScaledDeltas)) * trend * Self.thresholdGain
-
-        // Detect (libwebrtc OveruseDetector): overuse must be SUSTAINED (>overusingTimeMs anchored
-        // at the first over-threshold arrival) with a NON-DECREASING trend before it signals; a
-        // sub-threshold sample resolves to normal/underusing immediately and clears the clock.
-        if modifiedTrend > threshold {
-            if overuseStartMs == nil { overuseStartMs = arrivalMs }
-            if let start = overuseStartMs, arrivalMs - start > Self.overusingTimeMs, trend >= prevTrend {
-                state = .overusing
-            }
-        } else if modifiedTrend < -threshold {
-            state = .underusing
-            overuseStartMs = nil
-        } else {
-            state = .normal
-            overuseStartMs = nil
-        }
-
-        // Adapt the threshold toward |modifiedTrend| (skip gross outliers) — noisy paths raise it,
-        // quiet ones let it fall back; clamped to [thresholdMin, thresholdMax].
-        if abs(modifiedTrend) <= threshold + Self.outlierSkipMargin {
-            let k = abs(modifiedTrend) < threshold ? Self.kDown : Self.kUp
-            // BIT-EXACT (FMA-sensitive): `k * (|trend|−threshold) * dt` as SEPARATE mul + the
-            // outer `threshold +=` add — never mulAdd (matches Rust core's `threshold += k * … * …`).
-            threshold += k * (abs(modifiedTrend) - threshold) * min(dArrival, Self.maxAdaptDtMs)
-            // NaN-faithful ORDERED clamp: `min(max, max(min, t))` (NOT `.clamped`/`simd_clamp`) so
-            // a NaN drops the way Rust core's `t.max(MIN).min(MAX)` does; identical for finite t.
-            threshold = min(Self.thresholdMax, max(Self.thresholdMin, threshold))
-        }
-        prevTrend = trend
+        record = slopdesk_trendline_note(record, arrivalMs, sendTs)
     }
 
     /// Whether the latest verdict is STALE at `nowMs`: no accepted sample within ``resetGapMs``.
@@ -199,21 +144,18 @@ public struct TrendlineEstimator: Sendable, Equatable {
     /// fields instead (the host must never act on queue context that no longer exists). No samples
     /// yet ⇒ stale. The `>` mirrors ``note(arrivalMs:sendTs:)``'s own reset condition exactly.
     public func isStale(nowMs: Double) -> Bool {
-        guard let prev = prevArrivalMs else { return true }
-        return nowMs - prev > Self.resetGapMs
+        slopdesk_trendline_is_stale(record, nowMs)
     }
 
-    /// Clears the regression context (window/accumulators/verdict) but KEEPS the adapted threshold
-    /// — path-noise knowledge survives an idle gap; queue context does not.
-    private mutating func resetWindow() {
-        window.removeAll(keepingCapacity: true)
-        accumulatedDelayMs = 0
-        smoothedDelayMs = 0
-        numDeltas = 0
-        overuseStartMs = nil
-        prevTrend = 0
-        modifiedTrend = 0
-        state = .normal
+    /// Two estimators are equal when every field the next fold reads agrees — the whole regression
+    /// window included, which is the one comparison this side cannot spell for itself: a C array is
+    /// a tuple here, and a tuple that long has no equality.
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        withUnsafePointer(to: lhs.record) { left in
+            withUnsafePointer(to: rhs.record) { right in
+                slopdesk_trendline_eq(left, right)
+            }
+        }
     }
 }
 
@@ -223,19 +165,12 @@ public extension TrendlineEstimator {
     /// `modifiedTrend × 1000` rounded, clamped to ±1_000_000_000, as an Int32 bit-pattern. Static
     /// so the clamp is testable at magnitudes the estimator cannot reach organically.
     static func packTrendMilli(_ modifiedTrend: Double) -> UInt32 {
-        // BIT-EXACT: `× 1000` then `.rounded()` (half-away-from-zero, matching Rust `round()`).
-        let milli = (modifiedTrend * 1000).rounded()
-        // NaN-faithful ORDERED clamp `min(+1e9, max(-1e9, m))` — a NaN yields -1e9 (drops via
-        // `max(-1e9, NaN) = -1e9` then `min(1e9, -1e9)`), exactly like Rust `m.max(-1e9).min(1e9)`.
-        let clamped = min(1_000_000_000.0, max(-1_000_000_000.0, milli))
-        return UInt32(bitPattern: Int32(clamped))
+        slopdesk_trendline_pack_milli(modifiedTrend)
     }
 
     /// Bits 0-1: detector state raw value; bits 8-15: `min(numDeltas, 255)` (host log context).
     static func packTrendFlags(state: State, numDeltas: Int) -> UInt32 {
-        // BIT-EXACT layout (matches Rust `pack_trend_flags`): state in bits 0-1 masked `& 0x3`,
-        // `numDeltas` clamped to 0...255 then shifted into bits 8-15.
-        UInt32(state.rawValue & 0x3) | (UInt32(min(max(numDeltas, 0), 255)) << 8)
+        slopdesk_trendline_pack_flags(state.code, Swift.max(0, numDeltas))
     }
 
     /// The wire value for ``NetworkStatsReport/owdTrendMilli``.
@@ -253,31 +188,19 @@ public extension TrendlineEstimator {
 /// kfDup duplicates (the same frame re-enqueued — same frameID + stamp) and reordered older-frame
 /// fragments self-rejecting, and `ts == 0` (telemetry off) never samples.
 public struct TrendSampler: Sendable, Equatable {
-    private var lastFrameID: UInt32?
+    private var state: SlopDeskTrendSampler
 
-    public init() {}
+    public init() { state = slopdesk_trend_sampler_new() }
 
     /// `true` exactly once per strictly-newer frameID (and never for `sendTs == 0`).
     public mutating func shouldSample(frameID: UInt32, sendTs: UInt32) -> Bool {
-        guard sendTs != 0 else { return false }
-        guard let last = lastFrameID else {
-            lastFrameID = frameID
-            return true
-        }
-        guard frameID.distanceWrapped(from: last) > 0 else { return false }
-        lastFrameID = frameID
-        return true
+        let decision = slopdesk_trend_sampler_should_sample(state, frameID, sendTs)
+        state = decision.sampler
+        return decision.sampled
     }
-}
 
-// MARK: - Env parsing helpers (same pattern as LiveCongestionController)
-
-private func envInt(_ key: String, _ fallback: Int, min lo: Int, max hi: Int) -> Int {
-    guard let s = ProcessInfo.processInfo.environment[key], let v = Int(s), v >= lo, v <= hi else { return fallback }
-    return v
-}
-
-private func envDouble(_ key: String, _ fallback: Double, min lo: Double, max hi: Double) -> Double {
-    guard let s = ProcessInfo.processInfo.environment[key], let v = Double(s), v >= lo, v <= hi else { return fallback }
-    return v
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.state.has_last_frame_id == rhs.state.has_last_frame_id
+            && lhs.state.last_frame_id == rhs.state.last_frame_id
+    }
 }

@@ -252,14 +252,14 @@ public struct SlopDeskClientApp: App {
         // carries a live channel — resolved at call time like the Agents card, so the fetcher survives
         // pane churn/reconnects.
         appConnection.hostInfoFetcher = { [weak store] in
-            guard let store, let client = Self.firstConnectedMetadataClient(store) else { return nil }
+            guard let store, let client = store.firstConnectedMetadataClient else { return nil }
             return await client.hostInfo()
         }
         // Host pulse: the footer's second line (cpu/mem) reads the machine on the other end over the
         // same metadata RPC (verb 17), resolved at call time through whichever pane has a live
         // channel. The connection polls it on its own liveness clock.
         appConnection.hostVitalsFetcher = { [weak store] in
-            guard let store, let client = Self.firstConnectedMetadataClient(store) else { return nil }
+            guard let store, let client = store.firstConnectedMetadataClient else { return nil }
             return await client.hostVitals()
         }
         // Gate the scene-level "Reconnect Pane" command on the app being connected.
@@ -429,15 +429,15 @@ public struct SlopDeskClientApp: App {
         // card lands on `.disconnected` ("Connect a session to manage hooks"), never a dead button.
         let agentHooks = AgentHooksController(
             install: { [weak store] in
-                guard let store, let client = Self.firstConnectedMetadataClient(store) else { return false }
+                guard let store, let client = store.firstConnectedMetadataClient else { return false }
                 return await client.installAgentHooks()
             },
             uninstall: { [weak store] in
-                guard let store, let client = Self.firstConnectedMetadataClient(store) else { return false }
+                guard let store, let client = store.firstConnectedMetadataClient else { return false }
                 return await client.uninstallAgentHooks()
             },
             refreshStatus: { [weak store] in
-                guard let store, let client = Self.firstConnectedMetadataClient(store) else { return nil }
+                guard let store, let client = store.firstConnectedMetadataClient else { return nil }
                 return await client.agentHookStatus()
             },
         )
@@ -482,11 +482,11 @@ public struct SlopDeskClientApp: App {
         // resolve-at-call-time idiom as the Agents card / hostInfo fetcher.
         _clipboardSync = State(initialValue: ClipboardSyncEngine(
             push: { [weak store] clip in
-                guard let store, let client = Self.firstConnectedMetadataClient(store) else { return false }
+                guard let store, let client = store.firstConnectedMetadataClient else { return false }
                 return await client.setClipboard(clip)
             },
             pull: { [weak store] lastSeen in
-                guard let store, let client = Self.firstConnectedMetadataClient(store) else { return nil }
+                guard let store, let client = store.firstConnectedMetadataClient else { return nil }
                 return await client.readClipboard(lastSeenChangeCount: lastSeen)
             },
         ))
@@ -1006,21 +1006,6 @@ public struct SlopDeskClientApp: App {
         store.onLayoutChangeUnavailable = { [weak overlay] in
             overlay?.noteNotice(label: "Workspace offline", detail: "Layout is host-owned")
         }
-    }
-
-    /// The FIRST connected pane's metadata façade in the active session, or `nil` when no pane
-    /// carries a live channel. The Agents settings card (install/uninstall/status) is host-global but
-    /// `MetadataClient` is one-per-pane, so it routes through whichever pane is connected; a `nil` here
-    /// lands the card on `.disconnected` instead of a dead button. Resolved at CALL time so a
-    /// reconnect transparently re-points the seam.
-    @MainActor
-    private static func firstConnectedMetadataClient(_ store: WorkspaceStore) -> MetadataClient? {
-        for id in store.tree.activeSession?.allPaneIDs() ?? [] {
-            if let client = (store.handle(for: id) as? LivePaneSession)?.connection?.activeMetadataClient {
-                return client
-            }
-        }
-        return nil
     }
 
     /// Promotes every `SLOPDESK_<KEY>=<VALUE>` launch argument into the process environment via `setenv`.

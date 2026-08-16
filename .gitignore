@@ -71,5 +71,14 @@ docs/ui-shell/screenshots/*.webm
 # python bytecode from repo scripts
 __pycache__/
 
-# Rust build products (rust/slopdesk-hook — the Claude Code hook relay)
+# Rust build products. TWO workspaces, so two target directories: `rust/` (the Claude Code hook
+# relay) and `rust/slopdesk-superd`, which is `exclude`d from the first and therefore builds into
+# its own. A pattern per workspace would miss the next one silently — hundreds of megabytes of
+# artifacts one `git add -A` away — so this matches any `target/` under `rust/`, which is a
+# directory name cargo owns there and nothing else uses.
+rust/**/target/
 rust/target/
+
+# Built by scripts/build-ffi.sh from rust/slopdesk-ffi — 17 MB of slices that change on every
+# Rust edit. Same reasoning as libghostty above: a build output, not a source.
+ThirdParty/slopdesk-ffi/

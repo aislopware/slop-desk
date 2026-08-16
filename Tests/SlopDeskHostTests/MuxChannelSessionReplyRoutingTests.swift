@@ -72,7 +72,7 @@ final class MuxChannelSessionReplyRoutingTests: XCTestCase {
         let firstControl = SendRecorder()
         let session = MuxChannelSession(
             channelID: 3,
-            pty: PTYProcess(),
+            pty: unattachedPTY(),
             data: MuxSubChannel(channelID: 3, channel: .data) { _, _ in },
             control: MuxSubChannel(channelID: 3, channel: .control) { _, frame in firstControl.record(frame) },
         )
@@ -113,7 +113,7 @@ final class MuxChannelSessionReplyRoutingTests: XCTestCase {
         let firstControl = SendRecorder()
         let session = MuxChannelSession(
             channelID: 5,
-            pty: PTYProcess(),
+            pty: unattachedPTY(),
             data: MuxSubChannel(channelID: 5, channel: .data) { _, _ in },
             control: MuxSubChannel(channelID: 5, channel: .control) { _, frame in firstControl.record(frame) },
         )
@@ -178,7 +178,7 @@ final class MuxChannelSessionReplyRoutingTests: XCTestCase {
         )
         let session = MuxChannelSession(
             channelID: 6,
-            pty: PTYProcess(),
+            pty: unattachedPTY(),
             data: firstData,
             control: MuxSubChannel(channelID: 6, channel: .control) { _, _ in },
         )
@@ -235,7 +235,7 @@ final class MuxChannelSessionReplyRoutingTests: XCTestCase {
         let firstData = MuxSubChannel(channelID: 8, channel: .data) { _, _ in }
         let session = MuxChannelSession(
             channelID: 8,
-            pty: PTYProcess(),
+            pty: unattachedPTY(),
             data: firstData,
             control: MuxSubChannel(channelID: 8, channel: .control) { _, _ in },
         )

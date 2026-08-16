@@ -2,7 +2,6 @@
 import CoreMedia
 import CoreVideo
 import Foundation
-import OSLog
 import SlopDeskVideoProtocol
 import VideoToolbox
 
@@ -44,7 +43,6 @@ public final class VideoDecoder: @unchecked Sendable {
     /// Emits a decoded NV12 `CVPixelBuffer` for the renderer to draw at vsync.
     public typealias DecodedFrameHandler = @Sendable (CVImageBuffer) -> Void
 
-    private let log = Logger(subsystem: "slopdesk.video.client", category: "VideoDecoder")
     private let decodedFrameHandler: DecodedFrameHandler
 
     private var session: VTDecompressionSession?

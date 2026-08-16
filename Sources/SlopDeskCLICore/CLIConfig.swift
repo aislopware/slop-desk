@@ -1,11 +1,13 @@
+import CSlopDeskFFI
 import Foundation
+import SlopDeskArena
 
-// `slopdesk config path | edit | validate` — the LOCAL (no-socket) config-file ops. These operate
-// on the optional user config FILE (XDG-style: `~/.config/slopdesk/`), which
-// is the persisted source a launch-time bridge reads. The RUNNING-app config ops
+// `slopdesk config path | edit | validate` — the Swift face of `rust/slopdesk-cli`'s `config`.
+// These operate on the optional user config FILE (XDG-style: `~/.config/slopdesk/`), which is the
+// persisted source a launch-time bridge reads. The RUNNING-app config ops
 // (`get`/`set`/`unset`/`show`/`reload`, incl. `--transient`) go over the control socket instead;
-// only `path`/`edit`/`validate` are pure file ops, so the path resolution + the validator live here,
-// PURE and unit-tested (the `edit` $EDITOR spawn lives in the compiled-only `main.swift`).
+// only `path`/`edit`/`validate` are pure file ops (the `edit` $EDITOR spawn lives in the
+// compiled-only `main.swift`).
 //
 // **The split is deliberate and documented: not every `config` subcommand acts on the
 // SAME file.** slopdesk's launch-time bridge (`KeybindConfigLoader`) reads ONLY the
@@ -18,28 +20,45 @@ import Foundation
 
 public enum CLIConfig {
     /// Env override for the config-file location (the `--config-file` flag takes precedence over this).
-    public static let configFileEnvKey = "SLOPDESK_CONFIG_FILE"
+    public static let configFileEnvKey = CLICompletions
+        .answer { out, cap in slopdesk_cli_config_env_key(out, cap) }
 
     /// Resolve the config-file path: explicit `--config-file` > ``configFileEnvKey`` env > the XDG
-    /// default. Pure (env injected) so the resolution order is unit-testable.
+    /// default. The ORDER is `config.rs`'s; the environment is read here and passed by value,
+    /// because asking the environment is I/O and the crate does none.
     public static func resolvePath(
         override: String?,
         environment: [String: String] = ProcessInfo.processInfo.environment,
     ) -> String {
-        if let override, !override.isEmpty { return override }
-        if let env = environment[configFileEnvKey], !env.isEmpty { return env }
-        return defaultPath(environment: environment)
+        candidates(environment) { xdg, home, fallback in
+            let explicit = Array((override ?? "").utf8)
+            let fromEnv = Array((environment[configFileEnvKey] ?? "").utf8)
+            return explicit.withUnsafeBufferPointer { flag in
+                fromEnv.withUnsafeBufferPointer { env in
+                    CLICompletions.answer { out, cap in
+                        slopdesk_cli_config_path(
+                            flag.baseAddress, flag.count, env.baseAddress, env.count,
+                            xdg.baseAddress, xdg.count, home.baseAddress, home.count,
+                            fallback.baseAddress, fallback.count, out, cap,
+                        )
+                    }
+                }
+            }
+        }
     }
 
     /// `$XDG_CONFIG_HOME/slopdesk/config.toml`, else `~/.config/slopdesk/config.toml` (XDG Base Directory convention).
     public static func defaultPath(
         environment: [String: String] = ProcessInfo.processInfo.environment,
     ) -> String {
-        if let xdg = environment["XDG_CONFIG_HOME"], !xdg.isEmpty {
-            return xdg + "/slopdesk/config.toml"
+        candidates(environment) { xdg, home, fallback in
+            CLICompletions.answer { out, cap in
+                slopdesk_cli_config_default_path(
+                    xdg.baseAddress, xdg.count, home.baseAddress, home.count,
+                    fallback.baseAddress, fallback.count, out, cap,
+                )
+            }
         }
-        let home = environment["HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory()
-        return home + "/.config/slopdesk/config.toml"
     }
 
     /// One config-file syntax problem (1-based line number + reason).
@@ -57,60 +76,53 @@ public enum CLIConfig {
     ///
     /// The app's `KeybindConfigLoader` reads ONLY `keybind = <chord>:<action>` lines from `config.toml`
     /// and silently ignores every other key, so a generic `key = value` check would falsely call a file
-    /// full of ignored keys (`font-size = 14`) "valid". This validates the truth instead: blank lines,
-    /// `#` comments, and `[section]` headers are skipped; every OTHER line must be a `keybind = <value>`
-    /// assignment whose `<value>` parses as a binding directive. A non-`keybind` key, a missing `=`, an
-    /// empty value, or a malformed `<chord>:<action>` is reported (1-based line number). Returns every
-    /// problem found (empty ⇒ valid).
+    /// full of ignored keys (`font-size = 14`) "valid". `config.rs` validates the truth instead: blank
+    /// lines, `#` comments, and `[section]` headers are skipped; every OTHER line must be a
+    /// `keybind = <value>` assignment whose `<value>` parses as a binding directive.
     ///
-    /// PURE — no file I/O and NO dependency on the keybind grammar module: the caller injects
-    /// `isValidKeybindValue` (in production, `{ KeybindGrammar.parseLine($0) != nil }`); tests pass the
-    /// same real parser, so the validator's verdict tracks exactly what the app will and won't honour.
-    public static func validate(
-        _ contents: String,
-        isValidKeybindValue: (String) -> Bool,
-    ) -> [ValidationError] {
-        var errors: [ValidationError] = []
-        let lines = contents.split(separator: "\n", omittingEmptySubsequences: false)
-        for (index, raw) in lines.enumerated() {
-            let line = raw.trimmingCharacters(in: .whitespaces)
-            // Skip blank lines, `#` comments, and `[section]` headers (the only non-directive lines the
-            // launch bridge tolerates without acting on them).
-            if line.isEmpty || line.hasPrefix("#") || line.hasPrefix("[") {
-                continue
+    /// The grammar is `slopdesk-terminal`'s `keybind` — the same one ``KeybindGrammar`` parses live
+    /// bindings with — so the verdict tracks exactly what the app will honour. It used to cross back
+    /// as a C callback into Swift, once per line; both ends of that round trip are now the same
+    /// side of the door.
+    public static func validate(_ contents: String) -> [ValidationError] {
+        let bytes = Array(contents.utf8)
+        return bytes.withUnsafeBufferPointer { file -> [ValidationError] in
+            let shape = slopdesk_cli_config_validate(file.baseAddress, file.count, nil, 0, nil, 0)
+            let room = shape.count
+            guard room > 0 else { return [] }
+            var records = [SlopDeskCliConfigError](
+                repeating: SlopDeskCliConfigError(), count: shape.count,
+            )
+            var arena = Data(count: shape.arena_len)
+            records.withUnsafeMutableBufferPointer { out in
+                arena.withUnsafeMutableBytes { pool in
+                    _ = slopdesk_cli_config_validate(
+                        file.baseAddress, file.count,
+                        out.baseAddress, out.count, pool.baseAddress, pool.count,
+                    )
+                }
             }
-            guard let equals = line.firstIndex(of: "=") else {
-                errors.append(ValidationError(
-                    line: index + 1, message: "missing '=' (expected keybind = <chord>:<action>)",
-                ))
-                continue
-            }
-            let key = line[..<equals].trimmingCharacters(in: .whitespaces)
-            guard key == "keybind" else {
-                let shown = key.isEmpty ? "(empty)" : key
-                errors.append(ValidationError(
-                    line: index + 1,
-                    message: "unknown key '\(shown)': the app reads only 'keybind' lines from this file, "
-                        + "so this line has no effect (set app config via `slopdesk config set`)",
-                ))
-                continue
-            }
-            // Mirror the loader's lenient quoting: an optional surrounding pair of double quotes is stripped.
-            var value = line[line.index(after: equals)...].trimmingCharacters(in: .whitespaces)
-            if value.count >= 2, value.hasPrefix("\""), value.hasSuffix("\"") {
-                value = String(value.dropFirst().dropLast())
-            }
-            let unquoted = value
-            guard !unquoted.isEmpty else {
-                errors.append(ValidationError(line: index + 1, message: "empty keybind value"))
-                continue
-            }
-            if !isValidKeybindValue(unquoted) {
-                errors.append(ValidationError(
-                    line: index + 1, message: "malformed keybind '\(unquoted)' (expected <chord>:<action>)",
-                ))
+            return records.map { record in
+                let message = ArenaText.text(
+                    arena, offset: Int(record.message.offset), length: Int(record.message.length),
+                )
+                return ValidationError(line: record.line, message: message)
             }
         }
-        return errors
+    }
+
+    /// Lends the three environment values the path rules read, each as bytes for exactly one call.
+    private static func candidates(
+        _ environment: [String: String],
+        _ ask: (UnsafeBufferPointer<UInt8>, UnsafeBufferPointer<UInt8>, UnsafeBufferPointer<UInt8>) -> String,
+    ) -> String {
+        let xdg = Array((environment["XDG_CONFIG_HOME"] ?? "").utf8)
+        let home = Array((environment["HOME"] ?? "").utf8)
+        let fallback = Array(NSHomeDirectory().utf8)
+        return xdg.withUnsafeBufferPointer { xdg in
+            home.withUnsafeBufferPointer { home in
+                fallback.withUnsafeBufferPointer { fallback in ask(xdg, home, fallback) }
+            }
+        }
     }
 }

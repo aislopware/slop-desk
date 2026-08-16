@@ -94,7 +94,7 @@ enum LossModel {
     /// frame is unrecoverable, exercising the .dropped -> forced-keyframe re-anchor path.
     case firstPerGroup(Int)
     /// Drop `len` CONSECUTIVE WIRE positions [start, start+len) within EACH frame's transmission
-    /// list. This is the real-world UDP burst: adjacent datagrams lost together (#6 FragmentInterleaver
+    /// list. This is the real-world UDP burst: adjacent datagrams lost together (#6 the interleaver
     /// is meant to survive exactly this). WITHOUT interleave those positions are one FEC group → ≥2
     /// holes → unrecoverable. WITH interleave (column-major) they spread one-per-group → all recoverable.
     /// Operates on the per-frame WIRE index (post-interleave send order), NOT the scenario-global index.
@@ -266,18 +266,16 @@ func runScenario(
             stats.encoded += 1
             // Read peekNextFrameID BEFORE packetize (packetize increments it) — mirrors the host LTR map.
             _ = pk.peekNextFrameID
-            let packetized = pk.packetize(
+            // Mirror the LIVE host: when SLOPDESK_INTERLEAVE is on, transmission is reordered
+            // column-major across FEC groups by the SAME group size the parity used. Reassembly is
+            // order-independent (header-keyed), so this is a pure send-order permutation — exactly
+            // what #6 ships. Asking the packetizer for it, rather than reordering afterwards, is
+            // what keeps this tool measuring the host's reorder instead of a copy of it.
+            let frags = pk.packetize(
                 frame: out.avcc, keyframe: out.keyframe,
-                hostSendTsMillis: hostTs, fecTier: tier, isLTR: false,
+                hostSendTsMillis: hostTs, fecTier: tier, isLTR: false, interleave: interleave,
             )
             hostTs &+= 16 // ~60fps monotonic ms stamp (cosmetic here; controllers drive RTT separately)
-
-            // Mirror the LIVE host: when SLOPDESK_INTERLEAVE is on, transmission is reordered column-major
-            // across FEC groups by the SAME group size the parity used. Reassembly is order-independent
-            // (header-keyed), so this is a pure send-order permutation — exactly what #6 ships.
-            let frags = interleave
-                ? FragmentInterleaver.interleave(packetized, groupSize: tierGroupSize)
-                : packetized
 
             for (frameLocalIndex, frag) in frags.enumerated() {
                 stats.fragmentsSent += 1

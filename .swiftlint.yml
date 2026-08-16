@@ -240,7 +240,9 @@ type_body_length:
   # reconcileLive, liveFocusedPane, liveSpec) + export/import dispatchers targeting the live TREE app —
   # touch the private(set) workspace setter + private reconcile(), so main-body-only (importTreeWorkspace
   # DID move to WorkspaceStore+Transfer.swift). Live-model-dispatch cluster, not bloat.
-  warning: 1990
+  # 1990→2000 08-12 MuxChannelSession `screenScanner.release()` — the pane's grid now lives in
+  # slopdesk-screend (docs/52), so teardown has to hand it back; one statement, at the ceiling.
+  warning: 2000
   error: 2700
 
 # Error backstops tightened toward the warnings (2026-06-24): under `--strict` the WARNING is the binding

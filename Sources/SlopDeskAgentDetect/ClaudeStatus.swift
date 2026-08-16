@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 
 /// The per-pane Claude Code status the sidebar + pane chrome consume (docs/41 §4.3,
@@ -24,30 +25,21 @@ public enum ClaudeStatus: String, Sendable, Equatable, Codable, CaseIterable {
     public var isBlocked: Bool { self == .needsPermission }
 
     /// A short human label for the status — the sidebar activity-summary fallback (P3) and the
-    /// ``AgentStatusDot`` tooltip/accessibility text both read this ONE source so they cannot drift.
+    /// agent-mark (`StatusDotView`) tooltip/accessibility text both read this ONE source so they cannot drift.
     /// `none` → "idle" so a fallback summary is never the literal word "none".
     public var displayLabel: String {
-        switch self {
-        case .none: "idle"
-        case .idle: "idle"
-        case .working: "working"
-        case .done: "done"
-        case .needsPermission: "needs permission"
+        var out = [UInt8](repeating: 0, count: 32)
+        let needed = out.withUnsafeMutableBufferPointer { buffer in
+            slopdesk_agent_status_display_label(ffiByte, buffer.baseAddress, buffer.count)
         }
+        guard needed > 0, needed <= out.count else { return "idle" }
+        return String(bytes: out[0..<needed], encoding: .utf8) ?? "idle"
     }
 
     /// Rollup priority — STRICTLY increasing urgency. A session's status = the
     /// most-urgent over its panes (Herdr: blocked > working > done > idle > none).
     /// Total order: `none(0) < idle(1) < done(2) < working(3) < needsPermission(4)`.
-    public var urgency: Int {
-        switch self {
-        case .none: 0
-        case .idle: 1
-        case .done: 2
-        case .working: 3
-        case .needsPermission: 4
-        }
-    }
+    public var urgency: Int { Int(slopdesk_agent_status_urgency(ffiByte)) }
 
     /// The inverse of ``urgency`` — maps the raw wire `state` byte of a
     /// ``SlopDeskProtocol.WireMessage/claudeStatus(state:kind:label:)`` (type 27) back to a
@@ -58,23 +50,20 @@ public enum ClaudeStatus: String, Sendable, Equatable, Codable, CaseIterable {
     /// agreed on degrades to `.none` rather than trapping — a hostile or newer datagram can never crash
     /// the client (CLAUDE.md untrusted-input contract). `0…4` round-trip `urgency` exactly.
     public init(urgency: Int) {
-        switch urgency {
-        case 1: self = .idle
-        case 2: self = .done
-        case 3: self = .working
-        case 4: self = .needsPermission
-        default: self = .none // 0 or any unknown/future byte → no status
-        }
+        // Clamped rather than truncated: a negative or oversized Int is exactly the hostile datagram
+        // the crate's own `from_urgency` degrades to `.none`, and it must reach it as such.
+        let byte = UInt8(exactly: urgency) ?? UInt8.max
+        self.init(ffiByte: slopdesk_agent_status_from_urgency(byte))
     }
 
     /// Most-urgent rollup over a set of per-pane statuses (the sidebar/tab dot).
     /// Empty → `.none`. Commutative; ties impossible (`urgency` is a total order).
     public static func rollup(_ statuses: some Sequence<Self>) -> Self {
-        var winner: Self = .none
-        for s in statuses where s.urgency > winner.urgency {
-            winner = s
+        var bytes = statuses.map(\.ffiByte)
+        let winner = bytes.withUnsafeMutableBufferPointer { buffer in
+            slopdesk_agent_status_rollup(buffer.baseAddress, buffer.count)
         }
-        return winner
+        return Self(ffiByte: winner)
     }
 }
 

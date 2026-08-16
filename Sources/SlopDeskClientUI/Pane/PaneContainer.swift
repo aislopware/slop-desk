@@ -17,11 +17,9 @@
 //   - TODO(L5): the per-pane agent footer coordinator + overflow context menu.
 
 #if canImport(SwiftUI)
-import SFSafeSymbols
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 import SwiftUI
-import UniformTypeIdentifiers
 
 struct PaneContainer: View {
     let store: WorkspaceStore

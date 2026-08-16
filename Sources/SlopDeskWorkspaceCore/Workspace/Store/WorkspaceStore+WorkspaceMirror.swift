@@ -530,10 +530,6 @@ public extension WorkspaceStore {
         workspaceChannel.start()
     }
 
-    func stopWorkspaceChannel() {
-        workspaceChannel?.stop()
-    }
-
     /// Installs an in-process document that answers this store's intents synchronously, seeded from
     /// the layout the store already restored.
     ///

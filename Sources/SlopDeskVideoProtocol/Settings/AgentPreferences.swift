@@ -1,5 +1,3 @@
-import Foundation
-
 /// Claude-Code / agent detection preferences (decision #5 / §7.5). Maps to the agent flags consumed
 /// by the TERMINAL host daemon (`slopdesk-hostd`, via `HostEnvironment`). The detection core
 /// (`SlopDeskAgentDetect`) is env-free and pure; these prefs gate host-side POLICY only.

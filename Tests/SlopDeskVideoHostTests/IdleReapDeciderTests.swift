@@ -10,7 +10,7 @@ import XCTest
 final class IdleReapDeciderTests: XCTestCase {
     private let idleTimeout: TimeInterval = 30
 
-    private func make() -> IdleReapDecider<Int> { IdleReapDecider<Int>(idleTimeout: idleTimeout) }
+    private func make() -> IdleReapDecider { IdleReapDecider(idleTimeout: idleTimeout) }
 
     // 1. reap-after-timeout: a keepalive-proven flow is reapable at exactly +idleTimeout (>=), not before.
     func testReapAfterTimeout() {
@@ -107,6 +107,6 @@ final class IdleReapDeciderTests: XCTestCase {
         var d = make()
         XCTAssertNil(d.record(7))
         d.noteInbound(id: 7, now: 12.5, isKeepalive: false)
-        XCTAssertEqual(d.record(7), IdleReapDecider<Int>.Record(lastInbound: 12.5, sawKeepalive: false))
+        XCTAssertEqual(d.record(7), IdleReapDecider.Record(lastInbound: 12.5, sawKeepalive: false))
     }
 }

@@ -1,3 +1,4 @@
+import SlopDeskVideoProtocol
 import XCTest
 @testable import SlopDeskVideoHost
 
@@ -160,7 +161,11 @@ final class VideoSendLaneTests: XCTestCase {
         let recorder = SendRecorder()
         let lane = makeLane(recorder)
         defer { lane.close() }
-        let didInline = lane.trySendInline(outgoings(3, count: 2))
+        let didInline = lane.trySendInline(VideoSendLane.Job(
+            outgoings: outgoings(3, count: 2),
+            gapNanos: 0,
+            chunkFragments: 4,
+        ))
         XCTAssertTrue(didInline, "an idle lane must inline-send")
         // Inline is synchronous — the datagrams are already recorded with NO await.
         XCTAssertEqual(recorder.all.map(\.bytes), [Data([3, 0]), Data([3, 1])])
@@ -189,7 +194,10 @@ final class VideoSendLaneTests: XCTestCase {
         }
         XCTAssertTrue(gate.isConsumed, "consumer never reached the send")
         // Lane is busy → inline must bail and send NOTHING.
-        XCTAssertFalse(lane.trySendInline(outgoings(2, count: 2)), "inline must bail while mid-transmit")
+        XCTAssertFalse(
+            lane.trySendInline(VideoSendLane.Job(outgoings: outgoings(2, count: 2), gapNanos: 0, chunkFragments: 4)),
+            "inline must bail while mid-transmit",
+        )
         release.signal()
         await waitForCount(recorder, 4)
         let sent = recorder.all
@@ -202,7 +210,11 @@ final class VideoSendLaneTests: XCTestCase {
         let recorder = SendRecorder()
         let lane = makeLane(recorder)
         defer { lane.close() }
-        XCTAssertTrue(lane.trySendInline(outgoings(1, count: 2)))
+        XCTAssertTrue(lane.trySendInline(VideoSendLane.Job(
+            outgoings: outgoings(1, count: 2),
+            gapNanos: 0,
+            chunkFragments: 4,
+        )))
         lane.enqueue(VideoSendLane.Job(outgoings: outgoings(2, count: 2), gapNanos: 0, chunkFragments: 8))
         await waitForCount(recorder, 4)
         XCTAssertEqual(recorder.all.map(\.bytes), [Data([1, 0]), Data([1, 1]), Data([2, 0]), Data([2, 1])])
@@ -212,7 +224,10 @@ final class VideoSendLaneTests: XCTestCase {
         let recorder = SendRecorder()
         let lane = makeLane(recorder)
         lane.close()
-        XCTAssertFalse(lane.trySendInline(outgoings(9, count: 2)), "a closed lane must not inline-send")
+        XCTAssertFalse(
+            lane.trySendInline(VideoSendLane.Job(outgoings: outgoings(9, count: 2), gapNanos: 0, chunkFragments: 4)),
+            "a closed lane must not inline-send",
+        )
         XCTAssertEqual(recorder.count, 0)
     }
 }

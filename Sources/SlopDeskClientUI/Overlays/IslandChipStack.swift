@@ -21,7 +21,6 @@
 
 #if canImport(SwiftUI)
 import SlopDeskWorkspaceCore
-import SlopDeskWorkspaceModel
 import SwiftUI
 
 struct IslandChipStack: View {

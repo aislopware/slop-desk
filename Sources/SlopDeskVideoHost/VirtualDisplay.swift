@@ -1,12 +1,12 @@
 #if os(macOS)
 import CoreGraphics
 import Foundation
+import OSLog
 
 // @preconcurrency: the private CG classes (clang module) predate Swift concurrency and are not
 // `Sendable`; we cross them into a background queue ONLY inside ``applyWithTimeout`` via an explicit
 // unchecked-Sendable box, so downgrade the module-level Sendable notes to warnings.
 @preconcurrency import CSlopDeskVirtualDisplay
-import OSLog
 
 /// Owns ONE HiDPI virtual display for the daemon lifetime. The remoted
 /// window is moved onto it (see ``WindowPlacement``) so it renders at real Retina 2× backing and is
@@ -194,8 +194,15 @@ public final class VirtualDisplay {
         onTerminated?()
     }
 
-    /// The online displays' `(id, global-bounds)` — the physical set when called before the VD exists.
-    private static func onlineDisplayBounds() -> [(id: CGDirectDisplayID, bounds: CGRect)] {
+    /// The online displays' `(id, global-bounds)`, main first — the physical set when called before
+    /// the VD exists.
+    ///
+    /// Not private, because `slopdesk-vd-probe` asks WindowServer the same question between every
+    /// step of its reconfigure-and-restore and had written the same four calls out itself. The
+    /// two-call `CGGetOnlineDisplayList` dance (size, then fill) is exactly the shape that reads as
+    /// correct while dropping a display: the second call rewrites `n`, and a copy that forgot to
+    /// re-`prefix` it would report stale ids from the buffer's tail.
+    public static func onlineDisplayBounds() -> [(id: CGDirectDisplayID, bounds: CGRect)] {
         var n: UInt32 = 0
         guard CGGetOnlineDisplayList(0, nil, &n) == .success, n > 0 else { return [] }
         var ids = [CGDirectDisplayID](repeating: 0, count: Int(n))

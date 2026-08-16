@@ -10,7 +10,6 @@
 
 #if os(macOS)
 import ApplicationServices
-import CoreGraphics
 import Foundation
 
 /// Watches the FRONTMOST app for window-level AX events (created / destroyed / title / focus /

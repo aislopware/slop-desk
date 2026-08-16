@@ -57,7 +57,7 @@
 | **Renderer** | Low-latency display | `CAMetalLayer` or `AVSampleBufferDisplayLayer` |
 | **Input Capture** | Capture mouse/keyboard/touch → send to host | NSEvent / UIKit gestures |
 
-> Wire codec, packetization, **FEC** (Reed–Solomon over GF(2⁸), NEON in `CSlopDeskSIMD` — `m=1` ≡ XOR, `m≥2` multi-loss; adaptive tiering), frame reassembly, and realtime controllers (ABR/congestion, FPS governor, LTR, decode gate/sequencer, pacer, trendline, coordinate mapping) are native Swift (`SlopDeskVideoProtocol`). **SlopDeskVideoHost** / **SlopDeskVideoClient** own capture/encode and decode/render/input.
+> Wire codec, packetization, **FEC** (Reed–Solomon over GF(2⁸), NEON in `rust/slopdesk-gfsimd` — `m=1` ≡ XOR, `m≥2` multi-loss; adaptive tiering), frame reassembly, and realtime controllers (ABR/congestion, FPS governor, LTR, decode gate/sequencer, pacer, trendline, coordinate mapping) are Rust (`rust/slopdesk-video`), reached from `SlopDeskVideoProtocol` through `CSlopDeskFFI`. **SlopDeskVideoHost** / **SlopDeskVideoClient** own capture/encode and decode/render/input.
 
 ## 3. Package structure
 
@@ -65,14 +65,17 @@
 slopdesk/
 ├── Package.swift
 ├── Sources/
-│   ├── CSlopDeskSIMD/          # only C: aarch64 NEON GF(2⁸) region multiply
-│   ├── SlopDeskVideoProtocol/  # wire codec, FEC, reassembly, controllers
+│   ├── CSlopDeskFFI/           # the static archive `make ffi` builds, + its header
+│   ├── SlopDeskVideoProtocol/  # thin Swift face over the Rust codec/controllers
 │   ├── SlopDeskVideoHost/      # macOS — capture, HW encode, send
 │   └── SlopDeskVideoClient/    # client — receive, HW decode, Metal render
+├── rust/
+│   ├── slopdesk-video/         # wire codec, FEC, reassembly, controllers (forbid unsafe)
+│   └── slopdesk-gfsimd/        # aarch64 NEON GF(2⁸) region multiply + scalar twin
 └── docs/
 ```
 
-**Principle:** codecs / FEC / controllers are native Swift (golden-pinned). Shell owns ScreenCaptureKit, VideoToolbox, Metal (macOS + iOS), and input.
+**Principle:** codecs / FEC / controllers are Rust (golden-pinned). Shell owns ScreenCaptureKit, VideoToolbox, Metal (macOS + iOS), and input.
 
 ## 4. Data flow for one frame (happy path)
 

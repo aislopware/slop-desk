@@ -1,5 +1,3 @@
-import Foundation
-
 // MARK: - PermissionStatus (E14/K11 — the PURE "what dot does the System Permission row show" decision)
 
 /// The macOS/iOS notification-permission status row shown at the top of Settings → Shell →

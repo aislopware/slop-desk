@@ -17,7 +17,7 @@ final class HostServerFanOutRoutingTests: XCTestCase {
     private func makeSession(sessionID: UUID) -> MuxChannelSession {
         MuxChannelSession(
             channelID: 1,
-            pty: PTYProcess(), // unspawned: no PTY, no read loop
+            pty: unattachedPTY(), // unspawned: no PTY, no read loop
             data: MuxSubChannel(channelID: 1, channel: .data) { _, _ in },
             control: MuxSubChannel(channelID: 1, channel: .control) { _, _ in },
             sessionID: sessionID,
@@ -280,29 +280,38 @@ final class HostServerFanOutRoutingTests: XCTestCase {
     /// The journal is the discriminator. Its deletion is exclusive to the deliberate close — TTL
     /// eviction, detach and daemon stop all keep the file — so a surviving file after the LAST leave
     /// means the close never became a reap.
-    func testTheLastMemberLeavingReapsThePaneRatherThanDeregisteringIt() {
+    ///
+    /// superd unlinks the file since stage 27 — it is the process that may still hold it open — so
+    /// this needs its daemon. The transcript is written HERE rather than through a pane, because
+    /// the subject is which end of life asks for the delete, not who wrote the bytes.
+    func testTheLastMemberLeavingReapsThePaneRatherThanDeregisteringIt() throws {
+        let superd = try SuperdFixture()
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("fanout-last-leave-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
-        let journals = ScrollbackJournalStore(directory: dir, byteCap: ReplayBuffer.defaultScrollbackBytes)
 
         let id = UUID()
         let transcript = Data("output the closing pane produced\n".utf8)
-        journals.journal(for: id).append(transcript)
-        journals.journal(for: id).synchronize()
         let file = dir.appendingPathComponent("\(id.uuidString).scrollback", isDirectory: false)
-        XCTAssertEqual(try? Data(contentsOf: file), transcript, "precondition: the transcript is on disk")
+        try transcript.write(to: file)
 
-        let server = HostServer(port: 0, detachEnabled: true, resumeOnRecovery: true, scrollbackJournals: journals)
-        defer { Task { await server.stop() } }
+        let server = HostServer(
+            port: 0, detachEnabled: true, resumeOnRecovery: true,
+            scrollbackTranscripts: ScrollbackTranscripts(directory: dir.path, byteCap: 1 << 20),
+        )
+        server.attachSupervisorForTesting() // the delete is a verb, and a verb needs a link
+        defer {
+            Task { await server.stop() }
+            withExtendedLifetime(superd) {}
+        }
 
         let session = MuxChannelSession(
             channelID: 1,
-            pty: PTYProcess(), // unspawned: no PTY, no read loop
+            pty: unattachedPTY(), // unspawned: no PTY, no read loop
             data: MuxSubChannel(channelID: 1, channel: .data) { _, _ in },
             control: MuxSubChannel(channelID: 1, channel: .control) { _, _ in },
             sessionID: id,
-            scrollbackJournal: journals.journal(for: id),
         )
         let first = MuxSessionKey(connectionID: UUID(), channelID: 1)
         let second = MuxSessionKey(connectionID: UUID(), channelID: 1)
@@ -317,6 +326,12 @@ final class HostServerFanOutRoutingTests: XCTestCase {
         )
 
         server.leavePaneChannelForTesting(first)
+        // The delete is fire-and-forget (a close must not wait on a round-trip), so the assertion
+        // polls rather than reading once.
+        let deadline = Date().addingTimeInterval(5)
+        while FileManager.default.fileExists(atPath: file.path), Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.01)
+        }
         XCTAssertFalse(
             FileManager.default.fileExists(atPath: file.path),
             "the LAST member leaving is the deliberate close: the pane takes its transcript with it",

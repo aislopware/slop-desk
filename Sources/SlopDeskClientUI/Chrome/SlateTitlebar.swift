@@ -26,15 +26,21 @@
 // to the two things the collapse displaced (the tabs, and the status that stood under them), and the
 // middle is still the island's top moat.
 
-#if canImport(SwiftUI)
+// `os(macOS)` on the WHOLE file, not just on the AppKit import. This is window-titlebar chrome —
+// it stands on the traffic lights' line and hangs off `.hiddenTitleBar`, neither of which iOS has —
+// and its only mount, `ContentColumn`, is already inside `#if os(macOS)`. The type itself was not,
+// so it still COMPILED for the iOS triple, where its body reaches for `RailStatusRollupMount`, a
+// macOS-only view. That has been a hard error on iOS since the rollup moved into the band
+// (2026-08-11) and nothing reported it: `swift build` compiles the macOS slice only, and
+// `scripts/check-ios.sh` — which exists for exactly this — was reachable from no make target.
+// It is `make check-ios` now.
+#if canImport(SwiftUI) && os(macOS)
+import AppKit // NSPasteboard for "Copy Path"
 import Foundation
 import SFSafeSymbols
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 import SwiftUI
-#if os(macOS)
-import AppKit // NSPasteboard for "Copy Path"
-#endif
 
 struct SlateTitlebar: View {
     let store: WorkspaceStore

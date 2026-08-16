@@ -1,5 +1,10 @@
+import CSlopDeskFFI
 import Foundation
 
+// The Swift faces of `rust/slopdesk-video`'s `capture_recovery`, reached through the door. What
+// stays here is the LOCK, not the rule: serialising concurrent mint lanes is this side's job, and
+// a lock is not a decision.
+//
 // WindowServer can TERMINATE the virtual display out from under the daemon (sleep/wake, GPU
 // reset, fast-user-switch, display reconfig). Restoring only the parked window FRAMES is not
 // enough — every live session whose window was parked on the VD would keep its SCStream pointed
@@ -20,7 +25,24 @@ public enum VirtualDisplayTerminationPolicy {
         parkedChannels: Set<UInt32>,
         liveChannels: Set<UInt32>,
     ) -> [UInt32] {
-        parkedChannels.intersection(liveChannels).sorted()
+        let parked = Array(parkedChannels)
+        let live = Array(liveChannels)
+        return parked.withUnsafeBufferPointer { parkedIn in
+            live.withUnsafeBufferPointer { liveIn in
+                let count = slopdesk_vd_channels_to_disconnect(
+                    parkedIn.baseAddress, parkedIn.count, liveIn.baseAddress, liveIn.count, nil, 0,
+                )
+                guard count > 0 else { return [] }
+                var doomed = [UInt32](repeating: 0, count: count)
+                let copied = doomed.withUnsafeMutableBufferPointer { out in
+                    slopdesk_vd_channels_to_disconnect(
+                        parkedIn.baseAddress, parkedIn.count, liveIn.baseAddress, liveIn.count,
+                        out.baseAddress, out.count,
+                    )
+                }
+                return copied == count ? doomed : []
+            }
+        }
     }
 }
 
@@ -31,7 +53,7 @@ public enum VirtualDisplayTerminationPolicy {
 /// 1× capture, not stall every mint for 10 s.
 public enum VirtualDisplayRecreatePolicy {
     /// Default seconds between re-create attempts.
-    public static let defaultCooldown: TimeInterval = 30
+    public static var defaultCooldown: TimeInterval { slopdesk_vd_recreate_cooldown() }
 
     /// Whether a re-create attempt may start now. An in-flight attempt always blocks; otherwise the
     /// first attempt is free and later ones must be `cooldown` past the previous attempt's START
@@ -39,12 +61,12 @@ public enum VirtualDisplayRecreatePolicy {
     public static func shouldAttempt(
         now: TimeInterval,
         lastAttempt: TimeInterval?,
-        cooldown: TimeInterval = defaultCooldown,
+        cooldown: TimeInterval = Self.defaultCooldown,
         attemptInFlight: Bool,
     ) -> Bool {
-        if attemptInFlight { return false }
-        guard let lastAttempt else { return true }
-        return now - lastAttempt >= cooldown
+        slopdesk_vd_recreate_should_attempt(
+            now, lastAttempt ?? 0, lastAttempt != nil, cooldown, attemptInFlight,
+        )
     }
 }
 

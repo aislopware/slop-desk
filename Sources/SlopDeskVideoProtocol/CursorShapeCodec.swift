@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 
 /// Out-of-band cursor **shape** (bitmap) message for the cursor side-channel
@@ -45,49 +46,55 @@ public struct CursorShapeMessage: Equatable, Sendable {
     }
 
     /// On-wire message type byte for a cursor shape (distinct from ``CursorUpdate``).
-    public static let messageType: UInt8 = 2
+    public static let messageType = UInt8(slopdesk_cursor_constant(2))
     /// Fixed-header size (everything before the bitmap payload).
-    public static let headerSize = 27
+    public static let headerSize = slopdesk_cursor_constant(3)
 
-    /// Encodes the shape message (fixed header then bitmap, big-endian). Native Swift is the
-    /// single source of truth; the wire format is pinned by the `cursorShape` golden vector.
-    /// The on-wire width/height are the round-half-away-from-zero dimensions truncated to 16 bits
-    /// (`UInt16(truncatingIfNeeded: Int(size.width.rounded()))`).
+    /// Encodes the shape message (fixed header then bitmap, big-endian; the wire format is pinned
+    /// by the `cursorShape` golden vector). Rounding the point dimensions down to the wire's
+    /// `UInt16` is the Rust codec's rule, which is why the size crosses as it is written here.
     public func encode() -> Data {
-        var out = Data(capacity: Self.headerSize + bitmap.count)
-        out.append(Self.messageType)
-        out.appendBE(shapeID)
-        out.appendBE(UInt16(truncatingIfNeeded: Int(size.width.rounded())))
-        out.appendBE(UInt16(truncatingIfNeeded: Int(size.height.rounded())))
-        out.appendBE(hotspot.x)
-        out.appendBE(hotspot.y)
-        out.appendBE(UInt32(bitmap.count))
-        out.append(bitmap)
+        var out = Data(count: Self.headerSize + bitmap.count)
+        let written = bitmap.withUnsafeBytes { png in
+            out.withUnsafeMutableBytes { buffer in
+                slopdesk_cursor_encode(wire, png.baseAddress, png.count, buffer.baseAddress, buffer.count)
+            }
+        }
+        precondition(written == out.count, "the cursor-shape codec sized a bitmap differently than it wrote it")
         return out
     }
 
     /// Decodes a cursor shape message (the wire format is pinned by the `cursorShape` golden
-    /// vector). Non-finite hotspots are rejected as `.malformed` and a short body / over-long
-    /// bitmap length as `.truncated`, so a corrupt datagram is DROPPED, never fatal.
+    /// vector). Non-finite hotspots are `.malformed` and a short body / over-long bitmap length
+    /// `.truncated`, so a corrupt datagram is DROPPED, never fatal.
     public static func decode(_ data: Data) throws -> Self {
-        var reader = VideoByteReader(data)
-        let type = try reader.readUInt8()
-        guard type == messageType else {
-            throw VideoProtocolError.malformed("not a cursor shape (type \(type))")
+        let flat = try CursorChannelMessage.parse(data, expecting: messageType, called: "cursor shape")
+        // The bitmap stays in the caller's datagram; it is copied out here, inside the borrow that
+        // already holds the pointer, rather than through a `Data` slice that would retain the whole
+        // parent buffer to describe bytes about to be copied anyway.
+        let bitmap = data.withUnsafeBytes { bytes -> Data in
+            let start = Int(flat.bitmap_offset)
+            return Data(UnsafeRawBufferPointer(rebasing: bytes[start..<start + Int(flat.bitmap_length)]))
         }
-        let shapeID = try reader.readUInt16()
-        let width = try reader.readUInt16()
-        let height = try reader.readUInt16()
-        let hx = try reader.readFiniteFloat64("cursorShape.hotspot.x")
-        let hy = try reader.readFiniteFloat64("cursorShape.hotspot.y")
-        let bitmapLength = try reader.readUInt32()
-        let bitmap = try reader.readBytes(Int(bitmapLength))
         return Self(
-            shapeID: shapeID,
-            size: VideoSize(width: Double(width), height: Double(height)),
-            hotspot: VideoPoint(x: hx, y: hy),
+            shapeID: flat.shape_id,
+            size: VideoSize(width: flat.width, height: flat.height),
+            hotspot: VideoPoint(x: flat.hotspot_x, y: flat.hotspot_y),
             bitmap: bitmap,
         )
+    }
+
+    /// The shape flattened for the boundary. The bitmap does NOT ride inside it — it goes as its
+    /// own `(ptr, len)`, so nothing kilobyte-sized is copied to describe itself.
+    var wire: SlopDeskCursorMessage {
+        var flat = SlopDeskCursorMessage()
+        flat.message_type = Self.messageType
+        flat.hotspot_x = hotspot.x
+        flat.hotspot_y = hotspot.y
+        flat.width = size.width
+        flat.height = size.height
+        flat.shape_id = shapeID
+        return flat
     }
 }
 
@@ -111,7 +118,8 @@ public enum CursorChannelMessage: Equatable, Sendable {
         }
     }
 
-    /// Routes a received cursor datagram by its leading type byte.
+    /// Routes a received cursor datagram by its leading type byte. The routing is the only thing
+    /// this side does: each arm's bytes are read by the codec that writes them.
     public static func decode(_ data: Data) throws -> Self {
         guard let first = data.first else { throw VideoProtocolError.truncated }
         switch first {
@@ -120,5 +128,24 @@ public enum CursorChannelMessage: Equatable, Sendable {
         case SwipeNavStatusMessage.messageType: return try .swipeNavStatus(SwipeNavStatusMessage.decode(data))
         default: throw VideoProtocolError.malformed("unknown cursor channel type \(first)")
         }
+    }
+
+    /// The one call both cursor grammars make: parse, translate the verdict, and refuse a datagram
+    /// that answered as the other type — the socket's type byte is checked, never assumed.
+    static func parse(_ data: Data, expecting type: UInt8, called name: String) throws -> SlopDeskCursorMessage {
+        var flat = SlopDeskCursorMessage()
+        let verdict = data.withUnsafeBytes { bytes in
+            slopdesk_cursor_decode(bytes.baseAddress, bytes.count, &flat)
+        }
+        switch verdict {
+        case UInt32(SLOPDESK_CURSOR_DECODE_TRUNCATED): throw VideoProtocolError.truncated
+        case UInt32(SLOPDESK_CURSOR_DECODE_MALFORMED):
+            throw VideoProtocolError.malformed("not a \(name) (type \(data.first ?? 0))")
+        default: break
+        }
+        guard flat.message_type == type else {
+            throw VideoProtocolError.malformed("not a \(name) (type \(flat.message_type))")
+        }
+        return flat
     }
 }

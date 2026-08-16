@@ -1,0 +1,129 @@
+# `slopdesk-posix` — the ONE crate in this repository allowed to write `unsafe`.
+#
+# ## Why it exists
+# Every other crate in `rust/` is `unsafe_code = "forbid"`, and `forbid` is not a style choice: it
+# cannot be lifted by a downstream `allow`, so a crate carrying it is provably free of unsafe code
+# rather than merely conventionally free. Before this crate, `slopdesk-superd` was the single
+# exception — it sat at `deny` because five of its eleven thousand lines need syscalls Rust has no
+# safe wrapper for, and `deny` is liftable, which meant the whole daemon was one `#[allow]` away
+# from unsafety anywhere in it.
+#
+# Moving those five sites here buys the thing that matters: the audit surface is now a directory
+# you can read in a sitting, and every crate that used to merely promise it had no unsafe code can
+# now `forbid` it and mean it.
+#
+# ## What may live here
+# A syscall with no safe wrapper in `std` or `nix`, and its immediate safety obligation. Nothing
+# else — no policy, no bookkeeping, no protocol. If a function here needs to know what a pane is,
+# it is in the wrong crate. The test for a new entry is: could its safety comment be written
+# without naming slopdesk at all? If not, the obligation is not local, and a local obligation is
+# the only kind this crate can discharge.
+#
+# ## Why `deny`, not `forbid`, on this one
+# `forbid` here would defeat the purpose. What keeps this crate honest instead is that every
+# `unsafe` block sits under its own `#[expect(unsafe_code, reason = …)]`: the lint fires on any
+# site that has not been argued for, and an `#[expect]` that stops being needed fails the build as
+# an unfulfilled expectation. The exemption is per-function and self-expiring, not crate-wide.
+[workspace]
+resolver = "3"
+
+[package]
+name = "slopdesk-posix"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The isolated unsafe surface for slopdesk — POSIX calls with no safe wrapper, and nothing else"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[lib]
+name = "slopdesk_posix"
+path = "src/lib.rs"
+
+[features]
+# `TIOCSWINSZ` is not superd's to issue (`docs/51` §6.9): hostd knows the client's pixel geometry
+# and a second writer on one terminal is a lost update, not a duplicate. superd's own tests still
+# have to stand in for hostd's ioctl, so the setter exists — behind a feature superd enables ONLY
+# in `[dev-dependencies]`. A release build of the daemon therefore does not compile the function at
+# all, which turns a documented rule into a link error.
+winsize-set = []
+
+[dependencies]
+libc = "0.2"
+nix = { version = "0.31", features = ["process", "signal", "socket", "uio"] }
+
+# Mirrors superd's, because superd is what links this: a panic on one pane's thread must unwind
+# that thread and nothing else.
+[profile.release]
+opt-level = 2
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+debug = 1
+strip = "debuginfo"
+
+# ---------------------------------------------------------------------------- #
+# A literal copy of `rust/slopdesk-superd/Cargo.toml`'s block, minus its two deviations: this crate
+# never writes to stderr (it has nothing to say — every failure is an `Errno` returned to a caller
+# that knows what it was doing), so `print_stderr` stays denied.
+[lints.rust]
+# See the header: `deny` on purpose, with a self-expiring `#[expect]` at every site.
+unsafe_code = "deny"
+
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+missing_copy_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+single_use_lifetimes = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+variant_size_differences = "deny"
+elided_lifetimes_in_paths = "deny"
+let_underscore_drop = "deny"
+non_ascii_idents = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+indexing_slicing = "deny"
+integer_division = "deny"
+exit = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+mem_forget = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+verbose_file_reads = "deny"
+str_to_string = "deny"
+empty_structs_with_brackets = "deny"
+if_then_some_else_none = "deny"
+lossy_float_literal = "deny"
+try_err = "deny"
+
+# A duplicate deep in nix's tree is not ours to resolve.
+multiple_crate_versions = "allow"
+# - `suboptimal_flops` / `imprecise_flops` (nursery): both want `f64::mul_add`, which is exactly the
+#   fused multiply-add `CLAUDE.md` forbids — "keep `a * b + c` separate (never `addingProduct`/`fma`)".
+#   FMA rounds once where the wire rounds twice, so taking the advice changes the `f64` bit patterns
+#   `golden/golden_vectors.json` pins. Allowed in EVERY workspace, not only the ones doing float
+#   math today: the reason is a repo invariant, and a lint that fires the first time a float lands
+#   here would be obeyed before anyone reads this file.
+suboptimal_flops = "allow"
+imprecise_flops = "allow"

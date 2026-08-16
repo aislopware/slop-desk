@@ -1,6 +1,5 @@
 #if os(macOS)
 import AppKit
-import Foundation
 
 /// Polls the macOS general pasteboard while the app is active and pushes each NEW string clip into the
 /// store's ``WorkspaceStore/clipboardRing`` — so "Paste Recent" can replay something you copied a few

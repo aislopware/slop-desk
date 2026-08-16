@@ -1,5 +1,3 @@
-import Foundation
-
 // MARK: - macOS Dock tile decision (aggregate progress + red-on-error tint)
 
 /// Whether the macOS Dock tile shows the red error tint. A tiny pure value (`Equatable`/`Sendable`) so the

@@ -1,60 +1,68 @@
+import CSlopDeskFFI
 import Foundation
 import SlopDeskVideoProtocol
 
-// PURE Phase-2 push-feed state (docs/45 §6): the subscriber table (TTL-reaped, renewal-refreshed)
-// and the tick/coalesce/burst policy. No clock (callers pass `now`), no sockets — the "decider
-// beside the actor" discipline, headless-tested.
+// The Swift face of `rust/slopdesk-video`'s `window_feed_host` Phase-2 push state (docs/45 §6): the
+// subscriber table (TTL-reaped, renewal-refreshed) and the tick/coalesce/burst policy. No clock
+// (callers pass `now`), no sockets — the "decider beside the actor" discipline.
 
 /// Who is subscribed to the window feed: channelID → last renewal stamp. A subscriber lives
 /// ``ttl`` past its last `windowFeedSubscribe` (3 missed 2 s renewals); expiry hands the caller the
 /// ids to `retire` at the mux. Bounded — a hostile spray of distinct channelIDs is capped, newest
 /// refused (fail-quiet, the `UnboundByeRateLimiter` shape).
-public struct WindowFeedSubscriberTable: Sendable {
-    private var lastRenewal: [UInt32: TimeInterval] = [:]
+///
+/// A handle for the map it holds; the feed glue drives it from one queue, which is what makes
+/// `@unchecked Sendable` sound.
+public final class WindowFeedSubscriberTable: @unchecked Sendable {
+    /// The far-side table, which owns the renewal stamps.
+    private let handle: OpaquePointer?
     public let ttl: TimeInterval
     public let capacity: Int
 
     public init(ttl: TimeInterval = 6.0, capacity: Int = 32) {
         self.ttl = ttl
         self.capacity = max(1, capacity)
+        handle = slopdesk_feed_subscribers_new(ttl, self.capacity)
     }
 
-    public var isEmpty: Bool { lastRenewal.isEmpty }
-    public var count: Int { lastRenewal.count }
+    deinit { slopdesk_feed_subscribers_free(handle) }
+
+    public var isEmpty: Bool { count == 0 }
+    public var count: Int { slopdesk_feed_subscribers_count(handle) }
 
     /// Records a renewal. Returns `false` when the table is full of FRESH subscribers and this id is
     /// new (refused — bounded map); an existing id always refreshes.
     @discardableResult
-    public mutating func renew(_ channelID: UInt32, now: TimeInterval) -> Bool {
-        if lastRenewal[channelID] != nil {
-            lastRenewal[channelID] = now
-            return true
-        }
-        if lastRenewal.count >= capacity {
-            lastRenewal = lastRenewal.filter { now - $0.value < ttl }
-            guard lastRenewal.count < capacity else { return false }
-        }
-        lastRenewal[channelID] = now
-        return true
+    public func renew(_ channelID: UInt32, now: TimeInterval) -> Bool {
+        slopdesk_feed_subscribers_renew(handle, channelID, now)
     }
 
     /// Drops every subscriber whose renewal is ≥ ttl old and returns their ids (the caller retires
-    /// those lanes at the mux).
-    public mutating func reapExpired(now: TimeInterval) -> [UInt32] {
-        let expired = lastRenewal.filter { now - $0.value >= ttl }.map(\.key)
-        for id in expired { lastRenewal[id] = nil }
-        return expired.sorted()
+    /// those lanes at the mux). Lent at the table's own size in one call: a reap CONSUMES what it
+    /// reports, so a first sizing call would empty it before the second could read it.
+    public func reapExpired(now: TimeInterval) -> [UInt32] {
+        ids(room: count) { out, room in slopdesk_feed_subscribers_reap(handle, now, out, room) }
     }
 
     /// The live subscriber ids (push targets).
     public func subscribers(now: TimeInterval) -> [UInt32] {
-        lastRenewal.filter { now - $0.value < ttl }.map(\.key).sorted()
+        ids(room: count) { out, room in slopdesk_feed_subscribers_live(handle, now, out, room) }
+    }
+
+    /// One lend of `room` ids, as many as the door wrote.
+    private func ids(room: Int, _ fill: (UnsafeMutablePointer<UInt32>?, Int) -> Int) -> [UInt32] {
+        guard room > 0 else { return [] }
+        return [UInt32](unsafeUninitializedCapacity: room) { buffer, written in
+            written = fill(buffer.baseAddress, room)
+        }
     }
 }
 
 /// The differ's tick + fold policy (docs/45 §6): 1 Hz idle, 4 Hz for 3 s after a STRUCTURAL change
 /// (window add/remove/visibility/size); title-only folds coalesce at ≥ 2 s, focus/order-only at
-/// ≥ 1 s — churn never enters burst mode and never floods generations.
+/// ≥ 1 s — churn never enters burst mode and never floods generations. All of it the crate's.
+///
+/// A FOLD, and therefore still a value type: two optional timestamps, read whole every tick.
 public struct WindowFeedPushPolicy: Sendable {
     /// What changed between the cached records and a freshly built set.
     public enum Change: Equatable, Sendable {
@@ -63,16 +71,38 @@ public struct WindowFeedPushPolicy: Sendable {
         case structural
         /// Only titles / focus bits / z-order / display ordinals moved — fold on the coalesce gate.
         case volatileOnly(titleChanged: Bool)
+
+        /// The code this change crosses as.
+        var code: UInt32 {
+            switch self {
+            case .none: SLOPDESK_FEED_CHANGE_NONE
+            case .structural: SLOPDESK_FEED_CHANGE_STRUCTURAL
+            case let .volatileOnly(titleChanged):
+                titleChanged ? SLOPDESK_FEED_CHANGE_VOLATILE_TITLE : SLOPDESK_FEED_CHANGE_VOLATILE
+            }
+        }
+
+        /// The change a code names.
+        static func of(_ code: UInt32) -> Self {
+            switch code {
+            case SLOPDESK_FEED_CHANGE_STRUCTURAL: .structural
+            case SLOPDESK_FEED_CHANGE_VOLATILE: .volatileOnly(titleChanged: false)
+            case SLOPDESK_FEED_CHANGE_VOLATILE_TITLE: .volatileOnly(titleChanged: true)
+            default: .none
+            }
+        }
     }
 
-    public static let idleTick: TimeInterval = 1.0
-    public static let burstTick: TimeInterval = 0.25
-    public static let burstWindow: TimeInterval = 3.0
-    public static let titleCoalesce: TimeInterval = 2.0
-    public static let focusCoalesce: TimeInterval = 1.0
+    /// The policy's fixed cadences, from the door, so neither language writes them down twice.
+    private static let law = slopdesk_feed_constants()
+    public static var idleTick: TimeInterval { law.idle_tick }
+    public static var burstTick: TimeInterval { law.burst_tick }
+    public static var burstWindow: TimeInterval { law.burst_window }
+    public static var titleCoalesce: TimeInterval { law.title_coalesce }
+    public static var focusCoalesce: TimeInterval { law.focus_coalesce }
 
-    private var burstUntil: TimeInterval = -.infinity
-    private var lastVolatileFold: TimeInterval = -.infinity
+    /// The two stamps the policy carries.
+    private var record = slopdesk_feed_policy_new()
 
     public init() {}
 
@@ -80,40 +110,33 @@ public struct WindowFeedPushPolicy: Sendable {
     /// (onScreen/minimized/appHidden), or any window's size changed. Everything else the client
     /// renders volatile (title, focus bits, order, display) is `volatileOnly`.
     public static func classify(old: [HostWindowRecord], new: [HostWindowRecord]) -> Change {
-        if old == new { return .none }
-        let structuralBits: HostWindowFlags = [.onScreen, .minimized, .appHidden]
-        func skeleton(_ records: [HostWindowRecord]) -> [UInt32: [UInt16]] {
-            Dictionary(uniqueKeysWithValues: records.map {
-                ($0.windowID, [$0.widthPt, $0.heightPt, UInt16($0.flags.rawValue & structuralBits.rawValue)])
-            })
+        let (oldRows, oldArena) = HostWindowRecord.rows(old)
+        let (newRows, newArena) = HostWindowRecord.rows(new)
+        let code = oldRows.withUnsafeBufferPointer { before in
+            oldArena.withUnsafeBytes { beforePool in
+                newRows.withUnsafeBufferPointer { after in
+                    newArena.withUnsafeBytes { afterPool in
+                        slopdesk_feed_classify(
+                            before.baseAddress, before.count, beforePool.baseAddress, beforePool.count,
+                            after.baseAddress, after.count, afterPool.baseAddress, afterPool.count,
+                        )
+                    }
+                }
+            }
         }
-        guard skeleton(old) == skeleton(new) else { return .structural }
-        let titleChanged = Dictionary(uniqueKeysWithValues: old.map { ($0.windowID, $0.title) })
-            != Dictionary(uniqueKeysWithValues: new.map { ($0.windowID, $0.title) })
-        return .volatileOnly(titleChanged: titleChanged)
+        return Change.of(code)
     }
 
     /// Whether this change may fold into the cache NOW (bumping the generation → a push). A
     /// structural change always folds and opens the burst window; a volatile-only change folds only
     /// once its coalesce gate (2 s titles / 1 s focus-order) has elapsed since the last volatile fold.
     public mutating func shouldFold(_ change: Change, now: TimeInterval) -> Bool {
-        switch change {
-        case .none:
-            return false
-        case .structural:
-            burstUntil = now + Self.burstWindow
-            return true
-        case let .volatileOnly(titleChanged):
-            let gate = titleChanged ? Self.titleCoalesce : Self.focusCoalesce
-            guard now - lastVolatileFold >= gate else { return false }
-            lastVolatileFold = now
-            return true
-        }
+        slopdesk_feed_should_fold(&record, change.code, now)
     }
 
     /// The differ's next tick interval — 4 Hz inside the structural burst window, 1 Hz otherwise.
     /// (Push pacing ≥ 250 ms is implied: at most one fold per tick.)
     public func tickInterval(now: TimeInterval) -> TimeInterval {
-        now < burstUntil ? Self.burstTick : Self.idleTick
+        slopdesk_feed_tick_interval(record, now)
     }
 }

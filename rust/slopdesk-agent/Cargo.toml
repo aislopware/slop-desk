@@ -1,0 +1,113 @@
+# `slopdesk-agent` — the per-pane AGENT DETECTION rules: what the agent is, and what it is doing.
+#
+# ## Why this is not part of `slopdesk-screend`
+# screend already carries the other half of detection — the manifest rule ladder, the region
+# resolver, the OSC and sync-frame trackers. The line between them is the one the Swift module
+# header already drew: **screend owns everything that reads the BYTES, and this crate owns
+# everything that reads the CLOCK.** The status machine's whole job is temporal — a done→idle
+# decay, a post-exit lockout, a dissent watchdog, a block ledger that outlives individual frames —
+# and none of it ever looks at a screen cell. Folding it into screend would put a clock inside the
+# per-byte loop and give the daemon that must not block on anything a reason to hold state per pane
+# across connections.
+#
+# ## Why its own workspace
+# The same reason `slopdesk-workspace` and `slopdesk-screend` are: cargo profiles are
+# workspace-global, and the root workspace's profile is tuned for the hook binary
+# (`opt-level = "z"`, `panic = "abort"`). This is a library folded on every hook, every 300 ms scan
+# and every ~1 Hz presence poll, and a panic here must never abort a host.
+#
+# ## Zero dependencies, on purpose
+# Every input this crate folds is UNTRUSTED: a hook body from a nested `claude -p`, a PTY title
+# written by whatever holds the foreground, an input chunk from a client emulator, an argv from a
+# process nobody here launched. `forbid(unsafe_code)` plus the panic/indexing denials below are the
+# contract; a dependency would be a hole in it.
+
+[workspace]
+resolver = "3"
+
+[package]
+name = "slopdesk-agent"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Per-pane agent detection for slopdesk — identity, signals and the status state machine"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[lib]
+name = "slopdesk_agent"
+path = "src/lib.rs"
+
+[dependencies]
+
+# Folded on every hook, every screen scan and every presence poll — a long-lived host library, so
+# the same shape as the workspace crate rather than the hook's startup-tuned profile.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+debug = 1
+strip = "debuginfo"
+
+# ---------------------------------------------------------------------------- #
+# Same maximal-strict philosophy as `rust/Cargo.toml`, `rust/slopdesk-wire/Cargo.toml` and
+# `rust/slopdesk-workspace/Cargo.toml`. A literal copy rather than inherited, because inheriting
+# would mean being a member, which is what the profile above forbids.
+[lints.rust]
+unsafe_code = "forbid"
+
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+missing_copy_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+single_use_lifetimes = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+variant_size_differences = "deny"
+elided_lifetimes_in_paths = "deny"
+let_underscore_drop = "deny"
+non_ascii_idents = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+indexing_slicing = "deny"
+integer_division = "deny"
+exit = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+mem_forget = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+verbose_file_reads = "deny"
+str_to_string = "deny"
+empty_structs_with_brackets = "deny"
+if_then_some_else_none = "deny"
+lossy_float_literal = "deny"
+try_err = "deny"
+
+# Disabled, with a reason:
+# - `multiple_crate_versions` (cargo): a duplicate deep in a dev-dependency's tree is not ours.
+# - `suboptimal_flops` / `imprecise_flops` (nursery): both want `f64::mul_add`, which is exactly
+#   the fused multiply-add `CLAUDE.md` forbids.
+multiple_crate_versions = "allow"
+suboptimal_flops = "allow"
+imprecise_flops = "allow"

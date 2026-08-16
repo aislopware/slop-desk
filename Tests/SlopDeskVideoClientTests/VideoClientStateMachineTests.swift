@@ -1,6 +1,19 @@
+import Foundation
 import SlopDeskVideoProtocol
 import XCTest
 @testable import SlopDeskVideoClient
+
+/// The effect for a control message the door has already ENCODED. The tests assert on the bytes
+/// that go on the wire, which also pins the crate's encoder and the codec's to the same output.
+extension VideoClientStateMachine.Effect {
+    static func sending(_ message: VideoControlMessage) -> Self { .sendControl([UInt8](message.encode())) }
+}
+
+/// The message behind a `.sendControl` effect, decoded back. `nil` for any other effect.
+func sentControl(_ effect: VideoClientStateMachine.Effect?) -> VideoControlMessage? {
+    guard case let .sendControl(datagram) = effect else { return nil }
+    return try? VideoControlMessage.decode(Data(datagram))
+}
 
 /// PURE client session state-machine transitions: hello on start, accept/reject of the
 /// helloAck, idempotent duplicate ack, and bye/stop effects. No live component.
@@ -18,7 +31,7 @@ final class VideoClientStateMachineTests: XCTestCase {
             effects.first, .primeCursorFlow,
             "every hello rides with a cursor-flow prime (the cursor socket has no other client→host traffic)",
         )
-        guard case let .sendControl(.hello(version, windowID, viewport)) = effects.last else {
+        guard case let .hello(version, windowID, viewport) = sentControl(effects.last) else {
             XCTFail("expected a hello effect, got \(effects)")
             return
         }
@@ -182,7 +195,7 @@ final class VideoClientStateMachineTests: XCTestCase {
         let effects = sm.resendHello()
         XCTAssertEqual(effects.count, 2)
         XCTAssertEqual(effects.first, .primeCursorFlow, "a retried hello re-primes the cursor flow")
-        guard case let .sendControl(.hello(version, windowID, viewport)) = effects.last else {
+        guard case let .hello(version, windowID, viewport) = sentControl(effects.last) else {
             XCTFail("expected a re-emitted hello, got \(effects)")
             return
         }
@@ -249,7 +262,7 @@ final class VideoClientStateMachineTests: XCTestCase {
         ))
         let effects = sm.stop()
         XCTAssertEqual(sm.state, .stopped)
-        XCTAssertEqual(effects, [.sendControl(.bye), .stopDecodePipeline])
+        XCTAssertEqual(effects, [.sending(.bye), .stopDecodePipeline])
     }
 
     func testStopWhileConnectingSendsByeOnly() {
@@ -257,7 +270,7 @@ final class VideoClientStateMachineTests: XCTestCase {
         _ = sm.start()
         let effects = sm.stop()
         XCTAssertEqual(sm.state, .stopped)
-        XCTAssertEqual(effects, [.sendControl(.bye)])
+        XCTAssertEqual(effects, [.sending(.bye)])
     }
 
     // MARK: In-session resize — resizeAck → updateCaptureSize effect

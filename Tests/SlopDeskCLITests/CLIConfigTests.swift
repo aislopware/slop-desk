@@ -1,5 +1,4 @@
 import SlopDeskCLICore
-import SlopDeskVideoProtocol
 import XCTest
 
 // Hang-safe tests for the `slopdesk config path | validate` PURE helpers. No
@@ -10,9 +9,6 @@ import XCTest
 // `validate` is checked against the REAL keybind grammar: the production parser
 // `KeybindGrammar.parseLine` is injected, so a line the launch bridge would silently ignore
 // (`font-size = 14`) MUST be rejected — proving the validator no longer reports such files "valid".
-
-/// The production keybind-value predicate `config validate` injects in `main.swift`.
-private func isRealKeybind(_ value: String) -> Bool { KeybindGrammar.parseLine(value) != nil }
 
 final class CLIConfigTests: XCTestCase {
     // MARK: - Path resolution
@@ -52,13 +48,13 @@ final class CLIConfigTests: XCTestCase {
         [section-header-is-tolerated]
         keybind = "ctrl+a:text:hello"
         """
-        XCTAssertTrue(CLIConfig.validate(contents, isValidKeybindValue: isRealKeybind).isEmpty)
+        XCTAssertTrue(CLIConfig.validate(contents).isEmpty)
     }
 
     // The core contract: an app-store key the launch bridge SILENTLY IGNORES must be REJECTED, not
     // reported "valid". (The old generic `key = value` validator passed this — revert-to-confirm-fail.)
     func testValidateRejectsKeyTheAppIgnores() {
-        let errors = CLIConfig.validate("font-size = 14", isValidKeybindValue: isRealKeybind)
+        let errors = CLIConfig.validate("font-size = 14")
         XCTAssertEqual(errors.count, 1)
         XCTAssertEqual(errors.first?.line, 1)
         XCTAssertTrue(errors.first?.message.contains("unknown key") ?? false)
@@ -66,14 +62,14 @@ final class CLIConfigTests: XCTestCase {
     }
 
     func testValidateAcceptsBareValidKeybind() {
-        XCTAssertTrue(CLIConfig.validate("keybind = cmd+t:new_tab", isValidKeybindValue: isRealKeybind).isEmpty)
+        XCTAssertTrue(CLIConfig.validate("keybind = cmd+t:new_tab").isEmpty)
     }
 
     // A malformed chord (`cmd+zzz` — a multi-char base key that is not a named key) fails the real
     // parser, so the keybind line is flagged with its 1-based line number.
     func testValidateRejectsMalformedKeybindChord() {
         let errors = CLIConfig.validate(
-            "keybind = cmd+t:new_tab\nkeybind = cmd+zzz:new_tab", isValidKeybindValue: isRealKeybind,
+            "keybind = cmd+t:new_tab\nkeybind = cmd+zzz:new_tab",
         )
         XCTAssertEqual(errors.count, 1)
         XCTAssertEqual(errors.first?.line, 2)
@@ -81,14 +77,14 @@ final class CLIConfigTests: XCTestCase {
     }
 
     func testValidateRejectsLineMissingEquals() {
-        let errors = CLIConfig.validate("keybind cmd+t:new_tab", isValidKeybindValue: isRealKeybind)
+        let errors = CLIConfig.validate("keybind cmd+t:new_tab")
         XCTAssertEqual(errors.count, 1)
         XCTAssertEqual(errors.first?.line, 1)
         XCTAssertTrue(errors.first?.message.contains("missing") ?? false)
     }
 
     func testValidateRejectsEmptyKeybindValue() {
-        let errors = CLIConfig.validate("keybind =", isValidKeybindValue: isRealKeybind)
+        let errors = CLIConfig.validate("keybind =")
         XCTAssertEqual(errors.count, 1)
         XCTAssertEqual(errors.first?.line, 1)
         XCTAssertTrue(errors.first?.message.contains("empty keybind value") ?? false)
@@ -96,7 +92,7 @@ final class CLIConfigTests: XCTestCase {
 
     func testValidateReportsEachBadLineNumber() {
         let errors = CLIConfig.validate(
-            "keybind = cmd+t:new_tab\ntheme = Dracula\nfont-size 14", isValidKeybindValue: isRealKeybind,
+            "keybind = cmd+t:new_tab\ntheme = Dracula\nfont-size 14",
         )
         XCTAssertEqual(errors.map(\.line), [2, 3])
     }

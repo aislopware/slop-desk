@@ -1,4 +1,36 @@
+import CSlopDeskFFI
 import Foundation
+
+/// What a FRESH INSTALL carries, read from `slopdesk-terminal`'s `config`.
+///
+/// A default IS a rule — it decides what the terminal looks like for everyone who never opens
+/// Settings — and these six used to be spelled in this file's `init` defaults AND again in the
+/// crate's own test fixture, with nothing connecting the two lists.
+public enum TerminalFactoryDefaults {
+    /// The primary monospace family.
+    public static let fontFamily = text(0)
+    /// The weight token (`font-style`).
+    public static let fontWeight = text(1)
+    /// The surface background, 6-hex without a leading `#`.
+    public static let background = text(2)
+    /// The text colour, same form.
+    public static let foreground = text(3)
+    /// The point size.
+    public static let fontSize = slopdesk_terminal_factory_number(0)
+    /// The cursor opacity.
+    public static let cursorOpacity = slopdesk_terminal_factory_number(1)
+    /// The scrollback depth, in lines.
+    public static let scrollbackLines = Int(slopdesk_terminal_factory_number(2))
+
+    private static func text(_ field: UInt8) -> String {
+        var out = [UInt8](repeating: 0, count: 64)
+        let needed = out.withUnsafeMutableBufferPointer { room in
+            slopdesk_terminal_factory_text(field, room.baseAddress, room.count)
+        }
+        guard needed > 0, needed <= out.count else { return "" }
+        return String(bytes: out[0..<needed], encoding: .utf8) ?? ""
+    }
+}
 
 /// Live, client-side terminal-render preferences (decision #6: these DO apply live, unlike the video
 /// flags). Persisted via `@AppStorage` / `UserDefaults` (the model is the source of truth); font/theme
@@ -117,18 +149,18 @@ public struct TerminalPreferences: Codable, Sendable, Equatable {
     public var lineHeight: LineHeightMode
 
     public init(
-        fontFamily: String = "SF Mono",
-        fontSize: Double = 13,
-        fontWeight: String = "regular",
+        fontFamily: String = TerminalFactoryDefaults.fontFamily,
+        fontSize: Double = TerminalFactoryDefaults.fontSize,
+        fontWeight: String = TerminalFactoryDefaults.fontWeight,
         theme: String = "",
-        background: String = "22212C",
-        foreground: String = "F8F8F2",
+        background: String = TerminalFactoryDefaults.background,
+        foreground: String = TerminalFactoryDefaults.foreground,
         cursorStyle: CursorStyle = .block,
         cursorBlink: CursorBlink = .default,
-        scrollbackLines: Int = 10000,
+        scrollbackLines: Int = TerminalFactoryDefaults.scrollbackLines,
         cursorColor: String = "",
         cursorTextColor: String = "",
-        cursorOpacity: Double = 1.0,
+        cursorOpacity: Double = TerminalFactoryDefaults.cursorOpacity,
         fontFamilyFallback: String = "",
         fontFamilyBold: String = "",
         fontFamilyItalic: String = "",

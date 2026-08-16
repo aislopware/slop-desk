@@ -52,7 +52,7 @@ final class MuxChannelSessionJoinedInputTests: XCTestCase {
     ) -> MuxChannelSession {
         let session = MuxChannelSession(
             channelID: 1,
-            pty: PTYProcess(), // unspawned — no fork, no reaper
+            pty: unattachedPTY(), // unspawned — no fork, no reaper
             data: MuxSubChannel(channelID: 1, channel: .data) { _, _ in },
             control: MuxSubChannel(channelID: 1, channel: .control) { _, _ in },
             agentDetectEnabled: agentDetectEnabled,

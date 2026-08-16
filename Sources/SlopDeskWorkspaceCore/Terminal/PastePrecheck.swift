@@ -1,5 +1,3 @@
-import Foundation
-
 // MARK: - Embedder-side paste pre-check (the reachability fix)
 
 /// What the terminal embedder should do when ⌘V / right-click-Paste / the context-menu Paste is invoked,

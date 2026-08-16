@@ -1,5 +1,3 @@
-import Foundation
-
 // MARK: - OnLaunchBehavior (the `On Launch` general setting — O1)
 
 /// What the app does when it opens — the **On Launch** setting

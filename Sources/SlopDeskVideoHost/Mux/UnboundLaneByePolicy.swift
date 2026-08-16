@@ -1,9 +1,10 @@
+import CSlopDeskFFI
 import Foundation
 import SlopDeskVideoProtocol
 
-// PURE unbound-lane bye policy: no sockets, no clock — the transport passes `now` in — exactly
-// the "decider beside the actor" discipline of ``VideoMuxRouter`` / ``IdleReapDecider``, so both
-// halves are unit-testable headlessly.
+// The Swift face of `rust/slopdesk-video`'s `mux_flow` bye policy, reached through the `mux_host`
+// door: no sockets, no clock — the transport passes `now` in — exactly the "decider beside the
+// actor" discipline of ``VideoMuxRouter`` / ``IdleReapDecider``.
 
 /// Decides whether a datagram the mux transport is DROPPING for an unbound lane (unadmitted or
 /// retired, non-bootstrap) proves the SENDER still believes a live session exists — in which case
@@ -17,69 +18,17 @@ import SlopDeskVideoProtocol
 /// relaunched. Answering those datagrams with a `bye` closes the loop: the client's existing `bye`
 /// handling tears the dead session down and re-hellos within one keepalive interval.
 ///
-/// ## What warrants a bye (and what must NOT)
-/// - `.input` / `.recovery` datagrams — only ever sent by a client that believes it is streaming.
-/// - `.control` `keepalive` / `resizeRequest` / `focusWindow` — likewise in-session-only messages.
-/// - A `hello` NEVER reaches this decider (it bootstraps a mint), and `listWindows` /
-///   `listSystemDialogs` are session-LESS discovery (daemon-consumed; the dialog one DORMANT) — no bye.
-/// - A stray `bye` gets no reply (nothing to end; replying could ping-pong with a confused peer).
-/// - Host→client-only channels/messages arriving inbound are corrupt/hostile — drop, no reply
-///   (validate-then-drop; never reflect at garbage).
+/// ## Why the payload crosses whole
+/// The answer for a `.control` datagram is a fact about which MESSAGE it carries, and that decode
+/// is the wire's — already on the far side, already golden-pinned. Peeking at it here to hand the
+/// door a verdict would put a second reader of the control grammar in front of the one that owns
+/// it; handing over the bytes keeps exactly one. Which messages count, and which are session-LESS
+/// discovery that must never be answered, is stated in `mux_flow.rs`.
 public enum UnboundLaneByeDecider {
     /// Whether the dropped datagram implies the sender holds a live-session belief worth correcting.
     public static func warrantsBye(channel: VideoChannel, payload: Data) -> Bool {
-        switch channel {
-        case .input,
-             .recovery:
-            // Client→host in-session lanes: the sender is unquestionably mid-session.
-            return true
-        case .control:
-            guard let message = try? VideoControlMessage.decode(payload) else { return false }
-            switch message {
-            case .keepalive,
-                 .resizeRequest,
-                 .focusWindow,
-                 .streamSettings,
-                 .audioControl,
-                 .privacyMode:
-                // `streamSettings` + `audioControl` + `privacyMode` are in-session-only like the
-                // trio above (the client only sends them while it believes a session streams) — a
-                // live-session belief worth correcting.
-                return true
-            case .hello,
-                 .helloAck,
-                 .helloDisplay,
-                 .bye,
-                 .resizeAck,
-                 .streamCadence,
-                 .scrollOffset,
-                 .contentMask,
-                 .displayMax,
-                 .listWindows,
-                 .windowList,
-                 .listSystemDialogs,
-                 .systemDialogList,
-                 .listDisplays,
-                 .displayList,
-                 .windowFeedSubscribe,
-                 .windowFeedSnapshot,
-                 .windowFeedCurrent,
-                 .appIconRequest,
-                 .blobChunk,
-                 .windowPreviewRequest,
-                 .hostStats:
-                // `windowFeedSubscribe` + `appIconRequest` + `listDisplays` are session-LESS discovery
-                // like the list requests (answered by the daemon — they must bootstrap, never bye);
-                // `helloDisplay` bootstraps a mint exactly like `hello`; the snapshot/current/blob/
-                // displayList/hostStats replies are host→client and never arrive inbound legitimately.
-                return false
-            }
-        case .video,
-             .geometry,
-             .cursor,
-             .audio:
-            // Host→client-only payloads arriving inbound: corrupt/hostile — never reflect.
-            return false
+        payload.withUnsafeBytes { bytes in
+            slopdesk_mux_warrants_bye(channel.rawValue, bytes.baseAddress, bytes.count)
         }
     }
 }
@@ -88,10 +37,12 @@ public enum UnboundLaneByeDecider {
 /// `minInterval` per channelID, over at most `capacity` tracked channelIDs. A wedged client emits
 /// a keepalive every ~5 s plus input bursts on interaction — one bye per second per lane is ample
 /// to unwedge it, and the capacity bound keeps a hostile datagram source from growing the map.
-/// Pure value type (caller passes `now`); owned by the transport under its mux lock.
-public struct UnboundByeRateLimiter: Sendable {
-    /// Last bye send time per channelID (monotonic seconds).
-    private var lastSent: [UInt32: TimeInterval] = [:]
+///
+/// A handle for the map it holds, and because the transport owns it under its mux lock the class
+/// needs no locking of its own. `@unchecked Sendable` is sound for exactly that reason.
+public final class UnboundByeRateLimiter: @unchecked Sendable {
+    /// The far-side limiter, which owns the per-lane send times.
+    private let handle: OpaquePointer?
     /// Minimum spacing between byes for the SAME channelID (seconds).
     public let minInterval: TimeInterval
     /// Maximum tracked channelIDs. When full, stale entries (≥ `minInterval` old) are pruned;
@@ -101,21 +52,14 @@ public struct UnboundByeRateLimiter: Sendable {
     public init(minInterval: TimeInterval = 1.0, capacity: Int = 256) {
         self.minInterval = minInterval
         self.capacity = max(1, capacity)
+        handle = slopdesk_mux_bye_limiter_new(minInterval, self.capacity)
     }
+
+    deinit { slopdesk_mux_bye_limiter_free(handle) }
 
     /// Query+mutator (acted-on decision): whether a bye may be sent for `channelID` at `now`.
     /// Records the send time when it returns `true`.
-    public mutating func admit(channelID: UInt32, now: TimeInterval) -> Bool {
-        if let last = lastSent[channelID] {
-            guard now - last >= minInterval else { return false }
-            lastSent[channelID] = now
-            return true
-        }
-        if lastSent.count >= capacity {
-            lastSent = lastSent.filter { now - $0.value < minInterval }
-            guard lastSent.count < capacity else { return false }
-        }
-        lastSent[channelID] = now
-        return true
+    public func admit(channelID: UInt32, now: TimeInterval) -> Bool {
+        slopdesk_mux_bye_limiter_admit(handle, channelID, now)
     }
 }

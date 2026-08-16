@@ -19,7 +19,7 @@ Absent — pane-level chrome: the `AgentInputFooter` coordinator+actions exist b
 | **Agent detection (foreground process poll)** | done | `ClaudePaneDetector.sample(name:at:)` at `Sources/SlopDeskHost/ClaudePaneDetector.swift:103`; ~1 Hz foreground basename poll via `MuxChannelSession.agentWatchTask` at `Sources/SlopDeskHost/MuxChannelSession.swift:538` |
 | **Agent detection (hook events — SessionStart/PreToolUse/Stop/Notification)** | done | `AgentHookListener`/`AgentHookHandler` at `Sources/SlopDeskHost/AgentHookListener.swift`; `ClaudePaneDetector.hook(bytes:at:)` at `Sources/SlopDeskHost/ClaudePaneDetector.swift:140`; hook socket wired in `HostServer.spawnFreshShell` |
 | **Agent detection (self-report via ctl verb)** | done | `AgentControlHandler.reportAgent` at `Sources/SlopDeskHost/AgentControlListener.swift:149`; `ClaudePaneDetector.report(state:message:at:)` at `Sources/SlopDeskHost/ClaudePaneDetector.swift:166`; grace-window stickiness prevents foreground-poll from wiping a self-reported state |
-| **Agent detection (manifest/screen-text fallback)** | partial | `ClaudeManifestMatcher` at `Sources/SlopDeskAgentDetect/ClaudeManifestMatcher.swift` complete; `ClaudePaneDetector.manifestVerdict` seam at `:217`; **not live-fed** — `:205` comment "P6 — available but not yet live-fed (documented deferral)" |
+| **Agent detection (screen tier)** | live | the rule ladder is `rust/slopdesk-screend`'s `detect` verb, driven by `PaneScreenScanner` (`docs/50` §2, `docs/52` §4b). `ClaudeProcessMatcher` is the process-name half of the old `ClaudeManifestMatcher`; its screen cues were deleted with the move. `ClaudePaneDetector.manifestVerdict` is the older coarse seam and is still not live-fed |
 | **awaiting-input / busy / done / idle status model** | done | `ClaudeStatus` enum (none/idle/working/done/needsPermission) at `Sources/SlopDeskAgentDetect/ClaudeStatus.swift`; state machine with `done → idle` decay at `Sources/SlopDeskAgentDetect/ClaudeStatusMachine.swift` |
 | **Status wire transport (type 26 + type 27)** | done | `WireMessage.claudeStatus` / `WireMessage.foregroundProcess`; `ClaudePaneDetector.Emission` deduped at `Sources/SlopDeskHost/ClaudePaneDetector.swift:227`; `LivePaneSession.feedAgentSignal` sinks them at `Sources/SlopDeskWorkspaceCore/Workspace/Store/LivePaneSession.swift:402` |
 | **Per-pane status stored client-side** | done | `WorkspaceStore.paneAgentStatus: [PaneID: ClaudeStatus]` at `Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceStore.swift:2895`; `setAgentStatus` at `Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceStore+Attention.swift:35` |
@@ -51,7 +51,7 @@ Absent — pane-level chrome: the `AgentInputFooter` coordinator+actions exist b
 - `Sources/SlopDeskAgentDetect/ClaudeStatus.swift` — status enum, urgency, rollup
 - `Sources/SlopDeskAgentDetect/ClaudeStatusMachine.swift` — pure per-pane state machine
 - `Sources/SlopDeskAgentDetect/ClaudeSignal.swift` — signal vocabulary
-- `Sources/SlopDeskAgentDetect/ClaudeManifestMatcher.swift` — screen-text / process-name classifier
+- `Sources/SlopDeskAgentDetect/ClaudeProcessMatcher.swift` — process-name classifier (`claude` vs a wrapper runtime)
 - `Sources/SlopDeskHost/ClaudePaneDetector.swift` — single per-pane fusion detector (P1)
 - `Sources/SlopDeskHost/AgentHookListener.swift` — hook socket server + `AgentHookHandler`
 - `Sources/SlopDeskHost/AgentControlListener.swift` — ctl socket server, all verbs incl. subscribe
@@ -82,7 +82,7 @@ Absent — pane-level chrome: the `AgentInputFooter` coordinator+actions exist b
 ## Notes (wiring gaps, dead seams, traps)
 
 ### Dead seams / partial wiring
-- **`manifestVerdict` defined but not live-fed.** `ClaudePaneDetector.manifestVerdict(_:at:)` exists and the machine handles it, but `ClaudePaneDetector.swift:205` marks it "P6 — available but not yet live-fed". The screen-text scanner (`ClaudeManifestMatcher.coarseStatus`) is never called during a live pane session.
+- **`manifestVerdict` defined but not live-fed.** `ClaudePaneDetector.manifestVerdict(_:at:)` exists and the machine handles it, but nothing drives it: the screen tier reaches the machine as `.screen(AgentScreenDetection)` from `PaneScreenScanner` instead, which is richer (it carries the `visible*` chrome flags). The cue tables that used to feed the coarse seam are gone.
 - **`RailRow.status` populated but never rendered.** `RailRowsBuilder` computes `ClaudeStatus` per row into `RailRow.status`, but `NavigatorColumn` passes only `row.title`/`row.active` to `SlateTabRow`. The tab dot is referenced only in doc comments and the implementation plan (`docs/42`), not in current view code.
 - **`AgentInputFooter` view does not exist.** `AgentInputFooterCoordinator` and `AgentInputFooterAction` are implemented and well-tested, but there is no SwiftUI `AgentInputFooter` view file. `TerminalLeafView` has a `TODO(L5)` for it.
 - **Peek & Reply overlay is logic-only.** `PeekReplyTarget`, `PeekReplyFormatter`, `peekContent`, `sendPeekReply` are implemented and unit-tested. The `togglePeekReply` closure in `WorkspaceBindingRouting` is wired at `:207`, but the only live caller passes `nil` — so ⌘⇧J falls back to `jumpToOldestAttentionPane`. No SwiftUI overlay sheet exists.

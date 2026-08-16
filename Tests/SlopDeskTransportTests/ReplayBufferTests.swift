@@ -486,23 +486,31 @@ final class ReplayBufferTests: XCTestCase {
     // MARK: Scrollback ring — replay(after:) delegates to updated messages(after:)
 
     func testReplayAfterZeroIncludesScrollback() {
-        var buf = ReplayBuffer(scrollbackBytes: 256)
+        let buf = ReplayBuffer(scrollbackBytes: 256)
         buf.append(bytes: Data("x".utf8)) // seq 1
         buf.append(bytes: Data("y".utf8)) // seq 2
         buf.ack(upTo: 1) // seq 1 → scrollback ring
-        // replay(after:0) must include seq 1 from the ring plus seq 2 from entries.
-        let replayed = buf.replay(after: 0)
-        XCTAssertEqual(replayed, [
-            .output(seq: 1, bytes: Data("x".utf8)),
-            .output(seq: 2, bytes: Data("y".utf8)),
-        ])
+        // A COLD replay is ring + tail cleaned as ONE stream and re-chunked, so the entry boundary
+        // between seq 1 and seq 2 is not preserved — one message carrying both bytes under the top
+        // seq is the contract. What must hold is that the ring's bytes are there and that the last
+        // seq covers the tail, so the client's ack releases everything.
+        XCTAssertEqual(buf.replay(after: 0), [.output(seq: 2, bytes: Data("xy".utf8))])
     }
 
-    // MARK: Scrollback distiller injection (cold-reattach cleanup)
+    // MARK: Scrollback cleanup on cold reattach
 
-    /// A synthetic "distiller" that drops every `-` byte — stands in for the OSC-133 churn collapse so the
-    /// transport-layer wiring is tested independently of ``ScrollbackDistiller``'s algorithm (host layer).
-    private static let dropDashes: @Sendable (Data) -> Data = { Data($0.filter { $0 != UInt8(ascii: "-") }) }
+    /// The transform is no longer injectable — it is `slopdesk-sanitize`, linked, and the ring calls
+    /// it directly. So these tests drive it with bytes it demonstrably changes rather than with a
+    /// stand-in: a CLOSED alt-screen segment is a whole TUI redrawing itself between `?1049h` and
+    /// `?1049l`, and pass 2 drops it. The wiring question is unchanged — WHICH entries the ring
+    /// hands to the transform and what seqs come back — only the transform is now the real one.
+    private static func churn(_ visible: String) -> Data {
+        Data("\(visible)\u{1b}[?1049ha whole TUI redrawing itself\n\u{1b}[?1049l".utf8)
+    }
+
+    /// Plain history the transform passes through unchanged — the seq/re-chunk assertions want a
+    /// byte-preserving stream, and this is what one looks like to all seven passes.
+    private static func plain(_ text: String) -> Data { Data(text.utf8) }
 
     /// Destructures a `.output` wire message into its `(seq, bytes)` (WireMessage is an enum).
     private func output(_ message: WireMessage) -> (seq: Int64, bytes: Data) {
@@ -517,10 +525,10 @@ final class ReplayBufferTests: XCTestCase {
     /// chronological stream — a client that has rendered nothing has no byte-exact continuity to
     /// protect, and the raw tail is exactly the detached live-TUI churn the transform exists for.
     func testColdReplayTransformsRingAndTailForFreshClient() {
-        var buf = ReplayBuffer(scrollbackBytes: 256, scrollbackDistiller: Self.dropDashes)
-        buf.append(bytes: Data("a-b".utf8)) // seq 1 → will be acked into the ring
-        buf.append(bytes: Data("c-d".utf8)) // seq 2 → ring
-        buf.append(bytes: Data("tail-raw".utf8)) // seq 3 → un-acked live tail
+        let buf = ReplayBuffer(scrollbackBytes: 4096)
+        buf.append(bytes: Self.churn("ab")) // seq 1 → will be acked into the ring
+        buf.append(bytes: Self.churn("cd")) // seq 2 → ring
+        buf.append(bytes: Self.churn("tailraw")) // seq 3 → un-acked live tail
         buf.ack(upTo: 2) // seqs 1,2 move to scrollback
         let replayed = buf.replay(after: 0)
         let joined = replayed.map { String(bytes: output($0).bytes, encoding: .utf8) ?? "" }.joined()
@@ -537,42 +545,45 @@ final class ReplayBufferTests: XCTestCase {
     /// Cold replay with NO ring (nothing acked yet) still transforms the tail and covers the
     /// top seq; a transform that cleans to zero bytes must still emit an ack anchor.
     func testColdReplayTailOnlyAndEmptyTransformOutput() {
-        var buf = ReplayBuffer(scrollbackBytes: 256, scrollbackDistiller: Self.dropDashes)
-        buf.append(bytes: Data("x-y".utf8)) // seq 1, un-acked
-        buf.append(bytes: Data("z-".utf8)) // seq 2, un-acked
+        let buf = ReplayBuffer(scrollbackBytes: 4096)
+        buf.append(bytes: Self.churn("xy")) // seq 1, un-acked
+        buf.append(bytes: Self.churn("z")) // seq 2, un-acked
         let replayed = buf.replay(after: 0)
         let joined = replayed.map { String(bytes: output($0).bytes, encoding: .utf8) ?? "" }.joined()
         XCTAssertEqual(joined, "xyz")
         XCTAssertEqual(replayed.map { output($0).seq }.last, 2)
 
-        var churn = ReplayBuffer(scrollbackBytes: 256, scrollbackDistiller: Self.dropDashes)
-        churn.append(bytes: Data("---".utf8)) // seq 1 — cleans to nothing
-        churn.append(bytes: Data("--".utf8)) // seq 2 — cleans to nothing
-        let anchor = churn.replay(after: 0)
+        let allChurn = ReplayBuffer(scrollbackBytes: 4096)
+        allChurn.append(bytes: Self.churn("")) // seq 1 — cleans to nothing
+        allChurn.append(bytes: Self.churn("")) // seq 2 — cleans to nothing
+        let anchor = allChurn.replay(after: 0)
         XCTAssertEqual(anchor, [.output(seq: 2, bytes: Data())], "empty clean still anchors the ack")
     }
 
     func testWarmReconnectNeverDistills() {
         // A warm reconnect (lastReceivedSeq at the frontier) selects no scrollback entries, so the
         // distiller never runs — only the raw un-acked tail is returned.
-        var buf = ReplayBuffer(scrollbackBytes: 256, scrollbackDistiller: Self.dropDashes)
-        buf.append(bytes: Data("a-b".utf8)) // seq 1
+        let buf = ReplayBuffer(scrollbackBytes: 4096)
+        buf.append(bytes: Self.churn("ab")) // seq 1
         buf.ack(upTo: 1) // → ring
-        buf.append(bytes: Data("live-tail".utf8)) // seq 2 un-acked
+        // The tail carries churn the transform WOULD strip — so an unchanged tail is evidence the
+        // transform did not run on it, not evidence that it had nothing to do.
+        let tail = Self.churn("live-tail")
+        buf.append(bytes: tail) // seq 2 un-acked
         let replayed = buf.replay(after: 1) // client already has up to seq 1
-        XCTAssertEqual(replayed, [.output(seq: 2, bytes: Data("live-tail".utf8))])
+        XCTAssertEqual(replayed, [.output(seq: 2, bytes: tail)])
     }
 
     func testDistilledScrollbackRechunkSeqsStayBelowTail() {
         // The RING-ONLY distill path (a returning client whose `lastReceivedSeq` sits inside the
         // ring, NOT the fresh-client `after: 0` path): the re-chunker must assign only scrollback
         // seqs, ascending, each strictly below the un-acked tail seq, and the tail stays raw.
-        var buf = ReplayBuffer(scrollbackBytes: 4096, scrollbackDistiller: Self.dropDashes)
+        let buf = ReplayBuffer(scrollbackBytes: 4096)
         var expected = ""
         for i in 0..<50 {
-            let s = "L\(i)\n" // no dashes → dropDashes is a no-op here (effective identity)
+            let s = "L\(i)\n" // plain history → the transform passes it through byte for byte
             if i >= 1 { expected += s } // seq 1 (L0) is below the replay point
-            buf.append(bytes: Data(s.utf8)) // seqs 1...50
+            buf.append(bytes: Self.plain(s)) // seqs 1...50
         }
         buf.ack(upTo: 50) // all → scrollback ring
         buf.append(bytes: Data("TAIL".utf8)) // seq 51 un-acked
@@ -594,8 +605,9 @@ final class ReplayBufferTests: XCTestCase {
     /// ring+tail re-chunk never emits a frame above the window/2 payload cap, is byte-preserving,
     /// and its last chunk carries the top tail seq.
     func testColdCombinedRechunkRespectsPayloadCapAndTopSeq() {
-        let identity: @Sendable (Data) -> Data = \.self
-        var buf = ReplayBuffer(scrollbackBytes: 8 * 1024 * 1024, scrollbackDistiller: identity)
+        // Plain repeated printable bytes: nothing for any pass to strip, so the re-chunk is the
+        // only thing under test.
+        let buf = ReplayBuffer(scrollbackBytes: 8 * 1024 * 1024)
         let cap = MuxFlowControl.maxOutputFramePayloadBytes
         var joinedIn = Data()
         for i in 0..<8 {
@@ -623,8 +635,7 @@ final class ReplayBufferTests: XCTestCase {
     /// partial over-half-window frame parks the sender against a receiver whose pending credit
     /// can never cross the grant threshold (permanently silent pane right after reattach).
     func testRechunkNeverExceedsMaxOutputFramePayload() {
-        let identity: @Sendable (Data) -> Data = \.self
-        var buf = ReplayBuffer(scrollbackBytes: 8 * 1024 * 1024, scrollbackDistiller: identity)
+        let buf = ReplayBuffer(scrollbackBytes: 8 * 1024 * 1024)
         // Production-shaped ring entries: each at the drain cap (`takeMergedFrame` bounds every
         // appended frame to exactly this), several of them.
         let cap = MuxFlowControl.maxOutputFramePayloadBytes
@@ -652,16 +663,16 @@ final class ReplayBufferTests: XCTestCase {
         XCTAssertEqual(joinedOut, joinedIn, "re-chunk must be byte-preserving")
     }
 
-    func testNilDistillerIsRawByteIdentical() {
-        // With no distiller, replay(after:) is byte-identical to the pre-distiller behaviour.
-        var buf = ReplayBuffer(scrollbackBytes: 256) // distiller defaults to nil
+    /// There is no "no distiller" any more — the transform is linked, so every cold replay goes
+    /// through it. What survives of the old claim is the part that mattered: plain history comes
+    /// back BYTE for byte. Only the framing changes, because the cleaned ring and tail are one
+    /// stream to re-chunk rather than two entries to forward.
+    func testPlainHistoryIsByteIdenticalThroughTheTransform() {
+        let buf = ReplayBuffer(scrollbackBytes: 256)
         buf.append(bytes: Data("a-b".utf8))
         buf.append(bytes: Data("c-d".utf8))
         buf.ack(upTo: 1)
-        XCTAssertEqual(buf.replay(after: 0), [
-            .output(seq: 1, bytes: Data("a-b".utf8)),
-            .output(seq: 2, bytes: Data("c-d".utf8)),
-        ])
+        XCTAssertEqual(buf.replay(after: 0), [.output(seq: 2, bytes: Data("a-bc-d".utf8))])
     }
 
     // MARK: Scrollback ring — alt-screen cut repair (mid-segment eviction)

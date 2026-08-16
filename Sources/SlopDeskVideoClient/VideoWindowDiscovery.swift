@@ -1,4 +1,5 @@
 #if canImport(QuartzCore) && canImport(Metal) && canImport(VideoToolbox)
+import CSlopDeskFFI
 import Foundation
 import SlopDeskVideoProtocol
 
@@ -26,40 +27,12 @@ public enum VideoWindowDiscovery {
         retryInterval: Duration = .milliseconds(500),
         timeout: Duration = .seconds(3),
     ) async -> [WindowSummary] {
-        guard let registry = VideoWindowPipeline.sharedRegistry else { return [] }
-        let acq = registry.acquire(host: host, mediaPort: mediaPort, cursorPort: cursorPort)
-        defer { registry.release(host: host, mediaPort: mediaPort, cursorPort: cursorPort, channelID: acq.channelID) }
-
-        let box = ReplyBox<WindowSummary>()
-        acq.flow.registerLane(
-            channelID: acq.channelID,
-            onMedia: { channel, payload in
-                guard channel == .control,
-                      let msg = try? VideoControlMessage.decode(payload),
-                      case let .windowList(windows) = msg else { return }
-                box.deliver(windows)
-            },
-            onCursor: { _ in },
+        await discover(
+            host: host, mediaPort: mediaPort, cursorPort: cursorPort,
+            retryInterval: retryInterval, timeout: timeout,
+            request: .listWindows,
+            reply: { if case let .windowList(windows) = $0 { windows } else { nil } },
         )
-
-        let request = VideoControlMessage.listWindows.encode()
-        let flow = acq.flow
-        let channelID = acq.channelID
-
-        // A sender that retransmits the request until a reply arrives or the deadline passes (UDP is
-        // lossy — the request OR the reply can drop), then resolves the waiter so a no-reply discovery
-        // returns [] instead of hanging the picker.
-        let sender = Task { @MainActor in
-            let deadline = ContinuousClock.now.advanced(by: timeout)
-            while ContinuousClock.now < deadline, !box.hasReply, !Task.isCancelled {
-                flow.send(request, on: .control, channelID: channelID)
-                try? await Task.sleep(for: retryInterval)
-            }
-            box.finish() // resolve the waiter with whatever arrived (possibly nothing)
-        }
-        let result = await box.firstReply() // resumes on the first windowList OR on the sender's finish()
-        sender.cancel()
-        return result ?? []
     }
 
     /// Discovers the host's online DISPLAYS (the desktop pane's display-switcher menu): the
@@ -74,36 +47,84 @@ public enum VideoWindowDiscovery {
         retryInterval: Duration = .milliseconds(500),
         timeout: Duration = .seconds(3),
     ) async -> [DisplaySummary] {
+        await discover(
+            host: host, mediaPort: mediaPort, cursorPort: cursorPort,
+            retryInterval: retryInterval, timeout: timeout,
+            request: .listDisplays,
+            reply: { if case let .displayList(displays) = $0 { displays } else { nil } },
+        )
+    }
+
+    /// The one-shot discovery both lists run: take a transient lane, send `request` on the schedule
+    /// the far side plans, and resolve on the first reply `reply` recognises.
+    ///
+    /// Written once for both, because the two differ only in which message they send and which one
+    /// answers it — the lane discipline, the resend schedule and the empty-is-an-answer rule are the
+    /// same discovery said twice.
+    private static func discover<Element>(
+        host: String,
+        mediaPort: UInt16,
+        cursorPort: UInt16,
+        retryInterval: Duration,
+        timeout: Duration,
+        request message: VideoControlMessage,
+        reply: @escaping @Sendable (VideoControlMessage) -> [Element]?,
+    ) async -> [Element] {
         guard let registry = VideoWindowPipeline.sharedRegistry else { return [] }
         let acq = registry.acquire(host: host, mediaPort: mediaPort, cursorPort: cursorPort)
         defer { registry.release(host: host, mediaPort: mediaPort, cursorPort: cursorPort, channelID: acq.channelID) }
 
-        let box = ReplyBox<DisplaySummary>()
+        let box = ReplyBox<Element>()
         acq.flow.registerLane(
             channelID: acq.channelID,
             onMedia: { channel, payload in
                 guard channel == .control,
                       let msg = try? VideoControlMessage.decode(payload),
-                      case let .displayList(displays) = msg else { return }
-                box.deliver(displays)
+                      let records = reply(msg) else { return }
+                box.deliver(records)
             },
             onCursor: { _ in },
         )
 
-        let request = VideoControlMessage.listDisplays.encode()
+        let request = message.encode()
         let flow = acq.flow
         let channelID = acq.channelID
+        let retrySeconds = seconds(retryInterval)
+        let schedule = sendOffsets(timeout: seconds(timeout), retryInterval: retrySeconds)
+
+        // A sender that retransmits on the planned offsets (UDP is lossy — the request OR the reply
+        // can drop), then resolves the waiter so a no-reply discovery returns [] instead of hanging
+        // the picker. Each wait is to an ABSOLUTE instant, so a slow send cannot walk the schedule
+        // later than it was planned.
         let sender = Task { @MainActor in
-            let deadline = ContinuousClock.now.advanced(by: timeout)
-            while ContinuousClock.now < deadline, !box.hasReply, !Task.isCancelled {
+            let start = ContinuousClock.now
+            for offset in schedule {
+                if box.hasReply || Task.isCancelled { break }
                 flow.send(request, on: .control, channelID: channelID)
-                try? await Task.sleep(for: retryInterval)
+                try? await Task.sleep(until: start.advanced(by: .seconds(offset + retrySeconds)))
             }
-            box.finish()
+            box.finish() // resolve the waiter with whatever arrived (possibly nothing)
         }
-        let result = await box.firstReply()
+        let result = await box.firstReply() // resumes on the first reply OR on the sender's finish()
         sender.cancel()
         return result ?? []
+    }
+
+    /// The far side's resend plan: when each send goes out, counted in seconds from the start.
+    static func sendOffsets(timeout: Double, retryInterval: Double) -> [Double] {
+        let needed = slopdesk_video_request_send_offsets(timeout, retryInterval, nil, 0)
+        guard needed > 0 else { return [] }
+        var offsets = [Double](repeating: 0, count: needed)
+        let written = offsets.withUnsafeMutableBufferPointer { room in
+            slopdesk_video_request_send_offsets(timeout, retryInterval, room.baseAddress, room.count)
+        }
+        return written == needed ? offsets : []
+    }
+
+    /// A `Duration` as seconds.
+    private static func seconds(_ duration: Duration) -> Double {
+        let parts = duration.components
+        return Double(parts.seconds) + Double(parts.attoseconds) / 1e18
     }
 }
 
@@ -111,7 +132,7 @@ public enum VideoWindowDiscovery {
 /// awaiting discovery call. Generic over the record type so every list-shaped discovery
 /// (`WindowSummary`, `RemoteDisplaySummary`) reuses it. The single waiter is resolved EXACTLY once
 /// — by the first `deliver(_:)` or by `finish()` on timeout — so the `CheckedContinuation` never leaks.
-private final class ReplyBox<Element>: @unchecked Sendable {
+final class ReplyBox<Element>: @unchecked Sendable {
     private let lock = NSLock()
     private var result: [Element]?
     private var cont: CheckedContinuation<[Element]?, Never>?
@@ -120,10 +141,17 @@ private final class ReplyBox<Element>: @unchecked Sendable {
     var hasReply: Bool { lock.withLock { result != nil } }
 
     /// A reply arrived (may be called more than once under UDP duplication — only the first sticks).
+    ///
+    /// Once the box is RESOLVED the answer it gave is final, so a reply that lands after the
+    /// deadline is dropped rather than recorded: the caller was already handed the empty answer and
+    /// a second one it can never read is not an improvement on none.
     func deliver(_ records: [Element]) {
         lock.lock()
+        guard !resolved else { lock.unlock()
+            return
+        }
         if result == nil { result = records }
-        guard !resolved, let c = cont else { lock.unlock()
+        guard let c = cont else { lock.unlock()
             return
         }
         resolved = true
@@ -134,16 +162,23 @@ private final class ReplyBox<Element>: @unchecked Sendable {
     }
 
     /// Timeout: resolve the waiter with whatever we have (possibly `nil`). No-op once resolved.
+    ///
+    /// The deadline can pass BEFORE anyone is waiting — the sender is a `Task`, and an empty resend
+    /// schedule finishes it before `firstReply()` is even reached. So this marks the box resolved
+    /// whether or not a continuation is parked yet: without that, the answer is thrown away, the
+    /// waiter that arrives afterwards sees neither a result nor a resolution, and the picker hangs
+    /// on a discovery that already gave up.
     func finish() {
         lock.lock()
-        guard !resolved, let c = cont else { lock.unlock()
+        guard !resolved else { lock.unlock()
             return
         }
         resolved = true
+        let waiter = cont
         cont = nil
         let r = result
         lock.unlock()
-        c.resume(returning: r)
+        waiter?.resume(returning: r)
     }
 
     /// Awaits the first reply (or `finish()`). Returns immediately if already resolved/delivered.

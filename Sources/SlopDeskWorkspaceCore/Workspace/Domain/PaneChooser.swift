@@ -1,4 +1,3 @@
-import Foundation
 import SlopDeskWorkspaceModel
 
 // MARK: - PaneKind presentation metadata (single source of truth)

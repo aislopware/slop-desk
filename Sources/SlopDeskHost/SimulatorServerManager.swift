@@ -36,34 +36,18 @@ import SlopDeskProtocol
 /// race.
 final class SimulatorServerManager: @unchecked Sendable {
     /// Finds the `baguette` executable, or `nil` when the host has none (→ `.unavailable`).
-    typealias BinaryLocator = @Sendable () -> String?
+    typealias BinaryLocator = HostServiceProcess.BinaryLocator
     /// Spawns the child; `onLogLine` receives each line of its merged stdout/stderr (the port
     /// parse). Throws when the exec itself fails (missing/broken binary → `.unavailable`).
-    typealias Spawner = @Sendable (
-        _ binary: String, _ arguments: [String], _ onLogLine: @escaping @Sendable (String) -> Void,
-    ) throws -> any HostServiceProcessHandle
+    typealias Spawner = HostServiceProcess.Spawner
     /// Whether a TCP connect to `127.0.0.1:port` succeeds (bounded, never hangs).
-    typealias ReadinessProbe = @Sendable (_ port: UInt16) -> Bool
+    typealias ReadinessProbe = HostServiceProcess.ReadinessProbe
 
-    private struct Instance {
-        var handle: any HostServiceProcessHandle
-        /// Learned from the child's listening line; `nil` until it prints one.
-        var port: UInt16?
-        /// Latched on the first successful probe — a listening server is never un-probed.
-        var ready = false
-        var lastProbe: ContinuousClock.Instant?
-    }
-
-    private let lock = NSLock()
-    private var instance: Instance?
-    /// Bumped per spawn; a stale child's log sink (a respawn raced its last line) must not write
-    /// its old port onto the fresh instance record.
-    private var spawnGeneration = 0
+    /// The spawn-learn-probe-latch lifecycle, shared with the code and Android panels. What is left
+    /// in this file is what makes it the SIMULATOR server.
+    private let service: ProbedPortService
     private let locateBinary: BinaryLocator
     private let spawn: Spawner
-    private let probe: ReadinessProbe
-    private let probeInterval: Duration
-    private let clock = ContinuousClock()
 
     init(
         binaryLocator: @escaping BinaryLocator = SimulatorServerManager.defaultBinaryLocator,
@@ -73,80 +57,43 @@ final class SimulatorServerManager: @unchecked Sendable {
     ) {
         locateBinary = binaryLocator
         spawn = spawner
-        probe = readinessProbe
-        self.probeInterval = probeInterval
+        service = ProbedPortService(readinessProbe: readinessProbe, probeInterval: probeInterval)
     }
 
     /// Ensures the shared simulator server and reports where it stands RIGHT NOW (never waits).
     func ensure() -> MetadataCodec.ServiceEndpoint {
-        lock.lock()
-        defer { lock.unlock() }
-
-        if let existing = instance {
-            if existing.handle.isRunning {
-                return endpointLocked(for: existing)
+        service.ensure { generation in
+            guard let binary = locateBinary() else { return .notYet(.unavailable) }
+            let onLine = service.portSink(generation: generation) {
+                Self.parseListeningPort(fromLogLine: $0)
             }
-            instance = nil
+            // A present-but-unrunnable binary (a broken Homebrew link, a quarantined build) throws
+            // out of the spawner, and reads the same as an absent one — the panel's install hint is
+            // the right surface for both.
+            guard let handle = try? spawn(binary, Self.launchArguments(), onLine) else {
+                return .notYet(.unavailable)
+            }
+            return .spawned(handle)
         }
-
-        guard let binary = locateBinary() else {
-            return MetadataCodec.ServiceEndpoint(state: .unavailable, port: 0)
-        }
-        spawnGeneration += 1
-        let generation = spawnGeneration
-        let onLine: @Sendable (String) -> Void = { [weak self] line in
-            guard let port = Self.parseListeningPort(fromLogLine: line) else { return }
-            self?.recordPort(port, spawnedAs: generation)
-        }
-        guard let handle = try? spawn(binary, Self.launchArguments(), onLine) else {
-            return MetadataCodec.ServiceEndpoint(state: .unavailable, port: 0)
-        }
-        instance = Instance(handle: handle)
-        return MetadataCodec.ServiceEndpoint(state: .starting, port: 0)
     }
 
-    /// Terminates the child (hostd shutdown). Booted DEVICES are deliberately left alone — they are
-    /// the user's machine state, outlive any one hostd run, and `baguette` itself only shuts down
-    /// what it was told to.
+    /// Ends the server for good. Booted DEVICES are deliberately left alone — they are the user's
+    /// machine state, outlive any one hostd run, and `baguette` itself only shuts down what it was
+    /// told to.
+    ///
+    /// ⚠️ **Not the daemon-shutdown path any more** — that is ``relinquish()``. See
+    /// ``SupervisedServiceProcess``.
     func shutdown() {
-        lock.lock()
-        let stranded = instance
-        instance = nil
-        lock.unlock()
-        stranded?.handle.terminate()
+        service.forget()?.terminate()
     }
 
-    /// The endpoint for a LIVE instance, probing readiness at most once per ``probeInterval``.
-    /// Mutates the record (latched `ready`, probe stamp) — callers hold the lock.
-    private func endpointLocked(for live: Instance) -> MetadataCodec.ServiceEndpoint {
-        guard let port = live.port else {
-            return MetadataCodec.ServiceEndpoint(state: .starting, port: 0)
-        }
-        if live.ready {
-            return MetadataCodec.ServiceEndpoint(state: .ready, port: port)
-        }
-        var updated = live
-        let now = clock.now
-        let due = live.lastProbe.map { now - $0 >= probeInterval } ?? true
-        if due {
-            updated.lastProbe = now
-            updated.ready = probe(port)
-        }
-        instance = updated
-        // The learned port rides along even while starting, as ``CodeServerManager`` does: it is
-        // the honest answer to "where will it be", and the client gates on the STATE.
-        return MetadataCodec.ServiceEndpoint(state: updated.ready ? .ready : .starting, port: port)
+    /// Lets the server GO: hostd stops listening and superd keeps it, so the next hostd adopts a
+    /// simulator panel that is already up rather than paying the boot again.
+    func relinquish() {
+        service.forget()?.relinquish()
     }
 
-    /// Records the port the child announced — ignored when a respawn has already superseded the
-    /// generation that produced the line (a dying child's last line must not poison the new record).
-    private func recordPort(_ port: UInt16, spawnedAs generation: Int) {
-        lock.lock()
-        defer { lock.unlock() }
-        guard generation == spawnGeneration, var live = instance, live.port == nil else { return }
-        live.port = port
-        instance = live
-    }
+    // MARK: - What makes it the simulator server
 
     /// The child's argument vector. Port `0` (learn the real one from its listening line, no
     /// pre-bind race) on `0.0.0.0` so mesh clients reach it — the client fronts it with a loopback
@@ -165,14 +112,7 @@ final class SimulatorServerManager: @unchecked Sendable {
     /// for, which under port `0` is literally `0`. The `port > 0` guard rejects that banner even if
     /// a future build reworded it into this shape.
     static func parseListeningPort(fromLogLine line: String) -> UInt16? {
-        guard let markerRange = line.range(of: "listening on ") else { return nil }
-        let rest = line[markerRange.upperBound...]
-        // The address may be bracketed IPv6, a bare IPv4, or a URL — the port is the trailing
-        // digit run after the LAST colon either way.
-        guard let colon = rest.lastIndex(of: ":") else { return nil }
-        let digits = rest[rest.index(after: colon)...].prefix(while: \.isNumber)
-        guard !digits.isEmpty, let port = UInt16(digits), port > 0 else { return nil }
-        return port
+        AnnouncedPort.afterLastColonFollowing("listening on ", in: line)
     }
 
     // MARK: - Production seams
@@ -188,7 +128,7 @@ final class SimulatorServerManager: @unchecked Sendable {
     /// Xcode through `xcode-select`, and an operator's `DEVELOPER_DIR` must reach it unchanged.
     static let defaultSpawner: Spawner = { binary, arguments, onLogLine in
         try HostServiceProcess.spawn(
-            binary: binary, arguments: arguments,
+            service: "baguette", binary: binary, arguments: arguments,
             environment: ProcessInfo.processInfo.environment, onLogLine: onLogLine,
         )
     }

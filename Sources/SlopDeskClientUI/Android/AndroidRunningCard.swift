@@ -22,7 +22,6 @@
 // seconds — provided they are told.
 
 #if os(macOS)
-import AppKit
 import SFSafeSymbols
 import SwiftUI
 

@@ -1,8 +1,15 @@
 // Snapshot-replay composer benchmark.
 //
 // Times `TerminalReplaySnapshot.compose(raw:rows:cols:)` — the whole cold-reattach
-// state-transfer render (screen-model feed + input-mode scan + render) — over synthetic
-// churn shaped like the workloads that actually fill the ReplayBuffer ring:
+// state-transfer render — over synthetic churn shaped like the workloads that actually fill the
+// ReplayBuffer ring. The number it reports is now END-TO-END through `slopdesk-screend`: the frame
+// encode, the AF_UNIX round trip, the Rust parse + render, and the Swift input-mode scan that stays
+// here. That is the number that matters, and it is the one this bench existed to move — 17.9 MiB/s
+// when the parser was Swift. It needs a screend: `make screend` first, or the composer falls back
+// to passthrough and the timing is meaningless (the printed rendered-byte count gives it away —
+// passthrough returns the input size).
+//
+// Shapes:
 //   - build/test log lines with SGR color runs (swift test / prek output),
 //   - `\r`-overprint progress bars (the compaction-heavy shape),
 //   - prompt redraw clusters (OSC 133 + DECSCUSR + SGR-heavy prompt).
@@ -30,7 +37,7 @@ func makeChurn(bytes target: Int) -> Data {
     var out = Data()
     out.reserveCapacity(target + 4096)
     let words = ["Compiling", "Testing", "Building", "Linking", "Planning", "Write"]
-    let files = ["MuxChannelSession.swift", "ReplayBuffer.swift", "HostServer.swift", "TerminalScreenModel.swift"]
+    let files = ["MuxChannelSession.swift", "ReplayBuffer.swift", "HostServer.swift", "PaneScreenScanner.swift"]
     while out.count < target {
         switch rng.below(10) {
         case 0..<5: // build/test log line with a color run

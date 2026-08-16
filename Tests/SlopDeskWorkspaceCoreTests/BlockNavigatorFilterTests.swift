@@ -1,5 +1,3 @@
-import Foundation
-import SlopDeskClient
 import XCTest
 @testable import SlopDeskWorkspaceCore
 

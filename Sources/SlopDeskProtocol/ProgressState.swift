@@ -1,4 +1,4 @@
-import Foundation
+import CSlopDeskFFI
 
 /// The semantic state of an OSC 9;4 taskbar-style progress indicator (E14/K1), shared host + client.
 ///
@@ -35,34 +35,27 @@ public enum ProgressState: UInt8, Sendable, Equatable {
     }
 }
 
-/// The pure OSC 9;4 progress parser (E14/K1): turns the OSC-9 remainder AFTER the leading `9;`
-/// (e.g. `"4;1;40"`, `"4;3"`, `"4;2;80"`, `"4;0"`) into a validated `(state, percent)`.
+/// The OSC 9;4 progress parser — the Swift face of `rust/slopdesk-wire`'s `osc::parse_progress`.
+/// Turns the OSC-9 remainder AFTER the leading `9;` (e.g. `"4;1;40"`, `"4;3"`, `"4;2;80"`, `"4;0"`)
+/// into a validated `(state, percent)`.
 ///
-/// Validate-then-drop on hostile/garbled input: the `4;` progress prefix and the state digit are
-/// validated (an unknown state → `nil`), the percent is CLAMPED to `0…100` (out-of-range is clamped,
-/// never trusted), and ANY malformed shape (missing state, non-integer percent, too many fields,
-/// empty) returns `nil` so the host emits NOTHING. Pure — no allocation beyond the split, no
-/// force-unwrap, no float math (the percent is an integer; the one clamp uses ordered `min`/`max`).
+/// The grammar is the crate's, and it is the SAME crate that builds these sequences for
+/// `slopdesk watch` — so a spinner the wrapper prints and a spinner the host reads can never
+/// disagree about what a field means.
+///
+/// Validate-then-drop on hostile/garbled input: an unknown state, a non-integer percent, a missing
+/// field or an extra one all return `nil` so the host emits NOTHING. An out-of-range percent is
+/// merely CLAMPED — an implausible number is not the same as a malformed one.
 public enum ProgressOSCParser {
     /// Parses the OSC-9 remainder after `9;`. Returns the validated `(state, percent)` or `nil` (drop).
-    ///
-    /// Accepts the canonical forms `"4;<state>"` (clear/indeterminate, no percent → 0) and
-    /// `"4;<state>;<pct>"` (in-progress/error). Empty subsequences are KEPT in the split so `"4;"`
-    /// (an empty state field) is caught as malformed rather than silently coalesced.
     public static func parse(_ body: some StringProtocol) -> (state: ProgressState, percent: UInt8)? {
-        let fields = body.split(separator: ";", omittingEmptySubsequences: false)
-        // Canonical OSC 9;4 progress is exactly "4;<state>" (2 fields) or "4;<state>;<pct>" (3 fields);
-        // a bare "4", an empty "4;", or extra trailing fields are not canonical → drop.
-        guard fields.count == 2 || fields.count == 3, fields[0] == "4" else { return nil }
-        // The state digit must be a valid wire discriminant (0/1/2/3); 4/5/9/… → drop (never trust).
-        guard let rawState = UInt8(fields[1]), let state = ProgressState(wire: rawState) else { return nil }
-        // Percent: absent (clear/indeterminate) → 0; present-but-not-an-integer → DROP the whole
-        // update (a garbled percent is suspect); otherwise CLAMP to 0…100 with ordered min/max.
+        let bytes = Array(String(body).utf8)
+        var raw: UInt8 = 0
         var percent: UInt8 = 0
-        if fields.count == 3 {
-            guard let value = Int(fields[2]) else { return nil }
-            percent = UInt8(min(max(value, 0), 100))
+        let known = bytes.withUnsafeBufferPointer { text in
+            slopdesk_osc_parse_progress(text.baseAddress, text.count, &raw, &percent)
         }
+        guard known, let state = ProgressState(wire: raw) else { return nil }
         return (state, percent)
     }
 }

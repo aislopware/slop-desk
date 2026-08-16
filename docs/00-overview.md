@@ -36,10 +36,10 @@ The canvas holds panes; each streams over the transport its content needs (termi
 
 - **Terminal panes** — full TUI fidelity, pixel-perfect text. Host PTY ([12], [02]) → plain TCP (on a trusted private network) → libghostty client renderer ([12 §renderer]).
 - **GUI-window panes** — a single host window (VS Code, Xcode, a browser…). ScreenCaptureKit → VideoToolbox HEVC over plain UDP, with RS-FEC, ABR/congestion control, a client-side cursor, and LTR recovery; 60 fps with idle-skip. ([01], [02], [04], [09])
-- **Read-only inspector** (the differentiator) — a companion for content awkward to read in scrollback (subagent transcripts, tool I/O, todos, workflow). Data = tailing the Claude Code JSONL transcript + hooks → events over a second NWConnection. Read-only, so it avoids every cost of driving the agent. ([16])
+- **Read-only inspector** (the differentiator) — a companion for content awkward to read in scrollback (subagent transcripts, tool I/O, todos, workflow). Data = tailing the Claude Code JSONL transcript → events over a second connection, which the client dials DIRECTLY: the tail, the fold and the replay window belong to `slopdesk-inspectord`, not hostd, so a session's history outlives a host restart ([54]). Read-only, so it avoids every cost of driving the agent. ([16])
 
 ### Core / shell split
-**Native Swift** owns the wire: codecs, FEC + reassembly, realtime controllers, coordinate mapping, terminal/PTY protocol (channel mux + flow control). Frozen by `golden/golden_vectors.json`. Only non-Swift code: `Sources/CSlopDeskSIMD` (one GF(2⁸) NEON kernel + scalar fallback). Platform shell is Swift/SwiftUI — ScreenCaptureKit, VideoToolbox, Metal, input, PTY, UI.
+**Rust** owns the wire: codecs, FEC + reassembly, realtime controllers, coordinate mapping, terminal/PTY protocol (channel mux + flow control) live in `rust/slopdesk-wire` and `rust/slopdesk-video`, linked in-process through `CSlopDeskFFI` (`docs/55`). Frozen by `golden/golden_vectors.json`. Both crates are `forbid(unsafe_code)`; the FEC's GF(2⁸) NEON kernel is isolated in `rust/slopdesk-gfsimd`, one of the three crates allowed to write `unsafe`. Platform shell is Swift/SwiftUI — ScreenCaptureKit, VideoToolbox, Metal, input, PTY, UI. The only C left under `Sources/` is `CSlopDeskVirtualDisplay`, and it declares private CoreGraphics headers rather than implementing anything.
 
 ## 3. Major decisions (summary — details in [DECISIONS.md](DECISIONS.md))
 

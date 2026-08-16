@@ -21,11 +21,6 @@ import SlopDeskTerminal // TerminalViewportSnapshotting — the iOS letterbox re
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel // PaneID — the autotype seam's task key.
 import SwiftUI
-#if canImport(AppKit)
-import AppKit
-#elseif canImport(UIKit)
-import UIKit
-#endif
 
 struct TerminalLeafView: View {
     /// The live session backing this pane (terminal model + input bar). When `nil` (no live handle yet, or
@@ -619,7 +614,7 @@ struct TerminalLeafView: View {
             // target for an IP. `http://` (not `https://`): a bare IP almost always serves plain HTTP and a TLS
             // cert won't match a raw address.
             switch intent {
-            case .open: openURLString("http://" + target.raw)
+            case .open: ExternalOpen.url("http://" + target.raw)
             case .copy,
                  .reveal: copyToPasteboard(target.raw, model: model)
             }
@@ -662,7 +657,7 @@ struct TerminalLeafView: View {
         case let .changeDirectoryPTY(path):
             model.sendInput(Data(LinkActionPolicy.changeDirectoryCommandLine(path).utf8))
         case let .openURLClient(urlString):
-            openURLString(urlString)
+            ExternalOpen.url(urlString)
         case let .openCodeHost(target):
             model.onRequestOpenCodeHostPath?(target)
         case let .openHost(path):
@@ -684,32 +679,18 @@ struct TerminalLeafView: View {
         if resolved.hasPrefix("open ") {
             let rest = String(resolved.dropFirst("open ".count)).trimmingCharacters(in: .whitespaces)
             if let url = URL(string: rest), url.scheme != nil {
-                openURLString(rest)
+                ExternalOpen.url(rest)
                 return
             }
         }
         model.sendInput(Data((resolved + "\n").utf8))
     }
 
-    /// Open a URL string on the CLIENT (a URL / IP is host-agnostic). A no-op for an unparseable string.
-    private static func openURLString(_ urlString: String) {
-        guard let url = URL(string: urlString) else { return }
-        #if canImport(AppKit)
-        NSWorkspace.shared.open(url)
-        #elseif canImport(UIKit)
-        UIApplication.shared.open(url)
-        #endif
-    }
-
     /// Copy text to the platform pasteboard (the Jump-To / context-menu idiom) and publish the pane's
     /// `COPIED · N` receipt. A no-op for empty text.
     private static func copyToPasteboard(_ text: String, model: TerminalViewModel) {
         guard !text.isEmpty else { return }
-        #if canImport(AppKit)
         ClientPasteboard.write(text)
-        #elseif canImport(UIKit)
-        UIPasteboard.general.string = text
-        #endif
         model.noteClipboardCopy(text)
     }
 }

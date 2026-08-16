@@ -1,15 +1,13 @@
-import Foundation
-
 /// The pure, value-typed generation counter that defeats the iOS first-responder race
 /// (docs/22 §7 — first-responder coordination).
 ///
-/// On iPad-regular, more than one ``TerminalInputHost`` is mounted at once, so switching the
+/// On iPad-regular, more than one `TerminalInputHost` is mounted at once, so switching the
 /// focused pane means *resigning* one `IMEProxyTextView` and *making another* the first
 /// responder. UIKit's `becomeFirstResponder` is honoured asynchronously (a runloop hop later),
 /// so two rapid focus changes (A→B→C, or a stale `makeUIView` `DispatchQueue.main.async` claim)
 /// can land **out of order**: a late callback for an already-superseded pane steals focus back,
 /// leaving the wrong terminal receiving keystrokes — the classic "I typed into the pane I just
-/// left" bug. There is no generation counter in ``TerminalInputHost`` today.
+/// left" bug. There is no generation counter in `TerminalInputHost` today.
 ///
 /// This guard is the deterministic core of the fix: a monotonically increasing token stamped at
 /// the moment a focus change is *requested*. Each pending `becomeFirstResponder` callback captures

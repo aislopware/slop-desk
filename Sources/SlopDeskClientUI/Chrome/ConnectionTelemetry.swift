@@ -3,7 +3,6 @@
 // collapsed) so the readings can never drift between them.
 
 #if canImport(SwiftUI)
-import Foundation
 import SlopDeskWorkspaceCore
 
 @MainActor

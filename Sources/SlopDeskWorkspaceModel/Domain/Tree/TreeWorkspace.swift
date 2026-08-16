@@ -1,5 +1,3 @@
-import Foundation
-
 // MARK: - TreeWorkspace (the tree-rooted workspace container — transitional name)
 
 /// The tree-rooted workspace container for the `Session → Tab → Pane` redesign (docs/42 §Domain model).
@@ -105,17 +103,6 @@ public extension TreeWorkspace {
     /// Whether `id` is detached into its own window in any session.
     func isDetached(_ id: PaneID) -> Bool {
         sessions.contains { $0.isDetached(id) }
-    }
-
-    /// The active session's leaf ids — drives active-tab focus/visibility (reconcile keeps the full set).
-    func activeSessionPaneIDs() -> [PaneID] {
-        activeSession?.allPaneIDs() ?? []
-    }
-
-    /// The active tab's leaf ids — drives active-tab focus/visibility.
-    func activeTabPaneIDs() -> [PaneID] {
-        guard let session = activeSession, let tab = session.activeTab else { return [] }
-        return tab.allPaneIDs()
     }
 
     /// The ``PaneSpec`` for `id`, searched across every session's side table (the owning session's spec).

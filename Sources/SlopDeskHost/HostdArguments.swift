@@ -1,5 +1,3 @@
-import Foundation
-
 /// Parsed command-line configuration for the `slopdesk-hostd` daemon.
 ///
 /// This lives in the library (not in the executable's `main.swift`) so the arg-parse →

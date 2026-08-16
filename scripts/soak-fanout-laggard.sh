@@ -88,7 +88,7 @@ echo "== fan-out laggard soak: SLOPDESK_SUB_LAG_BYTES=${THRESH} =="
 # `NSHomeDirectory()` (Core Foundation reads the account record unless `CFFIXED_USER_HOME` is set).
 # This soak pushes MEGABYTES through several sessions by design, and without the redirect all of it
 # was journaled into the developer's own `~/Library/Application Support/SlopDesk/scrollback/` — where
-# `ScrollbackJournalStore.sweep` then unlinked their oldest transcripts to hold the directory at 256.
+# The journal sweep then unlinked their oldest transcripts to hold the directory at 256.
 # The same daemon also wrote their `workspace-state.json` and resolved their `~/Downloads` as its
 # file-drop directory.
 #

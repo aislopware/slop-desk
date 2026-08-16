@@ -75,78 +75,15 @@ enum AndroidVideoFormat {
         return status == noErr ? description : nil
     }
 
-    /// Wraps one AVCC access unit as a sample buffer ready to enqueue.
-    ///
-    /// Timing is deliberately absent and `DisplayImmediately` set instead — the simulator panel's
-    /// reasoning applies unchanged: real presentation timestamps against a control timebase buy
-    /// smooth playback of a recording and cost a frame of buffering, and this is an interactive
-    /// mirror of a device someone is tapping.
+    /// One AVCC access unit as a sample buffer ready to enqueue —
+    /// ``DevicePanelSampleBuffer/sampleBuffer(accessUnit:formatDescription:isKeyframe:)``, which both
+    /// device panels share. Only the format description above differs between them.
     static func sampleBuffer(
         accessUnit: Data, formatDescription: CMVideoFormatDescription, isKeyframe: Bool,
     ) -> CMSampleBuffer? {
-        guard !accessUnit.isEmpty else { return nil }
-
-        var blockBuffer: CMBlockBuffer?
-        // A block buffer that owns its memory, then a copy in — rather than pointing at the `Data`'s
-        // storage, whose lifetime ends with this call while the sample buffer outlives it.
-        guard CMBlockBufferCreateWithMemoryBlock(
-            allocator: kCFAllocatorDefault,
-            memoryBlock: nil,
-            blockLength: accessUnit.count,
-            blockAllocator: kCFAllocatorDefault,
-            customBlockSource: nil,
-            offsetToData: 0,
-            dataLength: accessUnit.count,
-            flags: 0,
-            blockBufferOut: &blockBuffer,
-        ) == noErr, let blockBuffer else { return nil }
-
-        let copied = accessUnit.withUnsafeBytes { bytes -> OSStatus in
-            guard let base = bytes.baseAddress else { return -1 }
-            return CMBlockBufferReplaceDataBytes(
-                with: base, blockBuffer: blockBuffer, offsetIntoDestination: 0,
-                dataLength: accessUnit.count,
-            )
-        }
-        guard copied == noErr else { return nil }
-
-        var sampleBuffer: CMSampleBuffer?
-        var sampleSize = accessUnit.count
-        guard CMSampleBufferCreateReady(
-            allocator: kCFAllocatorDefault,
-            dataBuffer: blockBuffer,
-            formatDescription: formatDescription,
-            sampleCount: 1,
-            sampleTimingEntryCount: 0,
-            sampleTimingArray: nil,
-            sampleSizeEntryCount: 1,
-            sampleSizeArray: &sampleSize,
-            sampleBufferOut: &sampleBuffer,
-        ) == noErr, let sampleBuffer else { return nil }
-
-        annotate(sampleBuffer, isKeyframe: isKeyframe)
-        return sampleBuffer
-    }
-
-    /// Marks the sample for immediate display, and a delta frame as a non-sync sample.
-    private static func annotate(_ sampleBuffer: CMSampleBuffer, isKeyframe: Bool) {
-        guard let attachments = CMSampleBufferGetSampleAttachmentsArray(
-            sampleBuffer, createIfNecessary: true,
-        ), CFArrayGetCount(attachments) > 0 else { return }
-        let raw = CFArrayGetValueAtIndex(attachments, 0)
-        let dictionary = unsafeBitCast(raw, to: CFMutableDictionary.self)
-        CFDictionarySetValue(
-            dictionary,
-            Unmanaged.passUnretained(kCMSampleAttachmentKey_DisplayImmediately).toOpaque(),
-            Unmanaged.passUnretained(kCFBooleanTrue).toOpaque(),
+        DevicePanelSampleBuffer.sampleBuffer(
+            accessUnit: accessUnit, formatDescription: formatDescription, isKeyframe: isKeyframe,
         )
-        if !isKeyframe {
-            CFDictionarySetValue(
-                dictionary,
-                Unmanaged.passUnretained(kCMSampleAttachmentKey_NotSync).toOpaque(),
-                Unmanaged.passUnretained(kCFBooleanTrue).toOpaque(),
-            )
-        }
     }
 
     /// The stream's pixel dimensions, for the panel's aspect ratio.
@@ -156,8 +93,7 @@ enum AndroidVideoFormat {
     /// own display, and it is the frame the view has to fit. The session header agrees today; the
     /// format description is the one that cannot disagree.
     static func dimensions(of formatDescription: CMVideoFormatDescription) -> CGSize {
-        let dimensions = CMVideoFormatDescriptionGetDimensions(formatDescription)
-        return CGSize(width: Int(dimensions.width), height: Int(dimensions.height))
+        DevicePanelSampleBuffer.dimensions(of: formatDescription)
     }
 }
 #endif

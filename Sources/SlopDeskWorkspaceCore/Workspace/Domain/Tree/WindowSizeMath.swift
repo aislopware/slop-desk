@@ -1,5 +1,4 @@
 import CoreGraphics
-import Foundation
 import SlopDeskTerminal
 
 // MARK: - WindowSizeMath (pure window-sizing arithmetic)

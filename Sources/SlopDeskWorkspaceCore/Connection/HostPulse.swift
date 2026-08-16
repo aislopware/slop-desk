@@ -1,4 +1,3 @@
-import Foundation
 import SlopDeskProtocol
 
 /// The DISPLAYED host pulse — what the sidebar footer's second line actually says, which is not

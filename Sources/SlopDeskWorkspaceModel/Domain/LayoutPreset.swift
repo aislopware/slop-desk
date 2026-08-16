@@ -1,4 +1,3 @@
-import CoreGraphics
 import Foundation
 
 /// A named snapshot of a canvas LAYOUT — the panes (with their video bindings by app+title), groups,

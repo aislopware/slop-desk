@@ -1,4 +1,4 @@
-import Foundation
+import CSlopDeskFFI
 
 /// The coding agents the screen-manifest engine can detect (herdr `Agent`, ported 1:1).
 /// `omp`/`mastracode` are hook-authority-only upstream and ship no screen manifest.
@@ -33,104 +33,33 @@ public enum AgentKind: String, CaseIterable, Sendable {
         $0 != .omp && $0 != .mastracode
     }
 
-    // MARK: Identification (herdr parse_agent_label / lookup_agent)
+    // MARK: Identification — the tables are `rust/slopdesk-agent`, not this file (docs/55)
 
-    /// Identifies an agent from a process/executable name. Trims, lowercases, strips one
-    /// known suffix, then matches the alias table. `nil` for shells / unknown programs.
+    /// Identifies an agent from a process/executable name, or `nil` for a shell or unknown program.
+    ///
+    /// The alias table it consults has ~40 entries across 21 agents and is ported from herdr; it
+    /// lives in `rust/slopdesk-agent::kind` with the differential tests that prove it. What crosses
+    /// is an index into ``allCases``, which is the same order as the crate's `AgentKind::ALL` —
+    /// `scripts/check-supervisor.sh` fails the build if the two ever disagree.
     public static func identify(processName: String) -> Self? {
-        lookup(normalizedLookupName(processName))
+        let index = agentPredicateIndex(processName)
+        guard index >= 0 else { return nil }
+        let all = allCases
+        guard index < all.count else { return nil }
+        return all[all.index(all.startIndex, offsetBy: index)]
     }
 
-    /// herdr `normalized_agent_lookup_name`: trim + lowercase + strip ONE of the known
-    /// executable suffixes.
-    public static func normalizedLookupName(_ name: String) -> String {
-        var out = name.trimmingCharacters(in: .whitespaces).lowercased()
-        for suffix in [".exe", ".cmd", ".bat", ".ps1", ".js"] where out.hasSuffix(suffix) {
-            out.removeLast(suffix.count)
-            break
-        }
-        return out
-    }
-
-    /// herdr `lookup_agent` — the exact alias table.
-    static func lookup(_ name: String) -> Self? {
-        switch name {
-        case "pi": .pi
-        case "claude",
-             "claude-code": .claude
-        case "codex": .codex
-        case "gemini": .gemini
-        case "cursor",
-             "cursor-agent": .cursor
-        case "devin",
-             "devin-cli",
-             "devin cli": .devin
-        case "agy",
-             "antigravity",
-             "antigravity-cli": .antigravity
-        case "cline": .cline
-        case "omp": .omp
-        case "mastracode",
-             "mastra-code",
-             "mastra code": .mastracode
-        case "opencode",
-             "open-code": .openCode
-        case "copilot",
-             "github-copilot",
-             "ghcs": .githubCopilot
-        case "kimi",
-             "kimi-code",
-             "kimi code": .kimi
-        case "kiro",
-             "kiro-cli": .kiro
-        case "droid": .droid
-        case "amp",
-             "amp-local": .amp
-        case "grok",
-             "grok-build": .grok
-        case "hermes",
-             "hermes-agent": .hermes
-        case "kilo",
-             "kilo-code",
-             "kilo code": .kilo
-        case "qodercli",
-             "qoderclicn",
-             "qoder",
-             "qodercn": .qodercli
-        case "maki": .maki
-        default: nil
+    private static func agentPredicateIndex(_ name: String) -> Int {
+        var bytes = Array(name.utf8)
+        return bytes.withUnsafeMutableBufferPointer { buffer in
+            Int(slopdesk_agent_kind_identify(buffer.baseAddress, buffer.count))
         }
     }
 
-    /// herdr `is_generic_runtime_or_shell`: a basename that hosts other programs and must
-    /// never itself count as an agent.
+    /// A basename that hosts other programs and must never itself count as an agent.
     public static func isGenericRuntimeOrShell(_ name: String) -> Bool {
-        let base = normalizedLookupName(pathBasename(name))
-        switch base {
-        case "sh",
-             "bash",
-             "zsh",
-             "fish",
-             "tmux",
-             "node",
-             "bun",
-             "python",
-             "python3",
-             "cmd",
-             "powershell",
-             "pwsh":
-            return true
-        default:
-            return false
+        agentPredicate(name) { bytes, len in
+            slopdesk_agent_kind_is_generic(bytes, len)
         }
-    }
-
-    /// herdr `path_basename`: last non-empty component, `/` or `\` separated.
-    public static func pathBasename(_ path: String) -> String {
-        let component = path
-            .split(whereSeparator: { $0 == "/" || $0 == "\\" })
-            .last
-            .map(String.init)
-        return component ?? path
     }
 }

@@ -1,5 +1,3 @@
-import SlopDeskProtocol
-import SlopDeskTransport
 import XCTest
 @testable import SlopDeskHost
 
@@ -7,7 +5,7 @@ import XCTest
 /// + backpressure live in `PTYProcessTests` / `RelayBackpressureTests`.
 final class SlopDeskHostSmokeTests: XCTestCase {
     func testPTYProcessInstantiatesWithUnsetFDAndPID() {
-        let pty = PTYProcess()
+        let pty = unattachedPTY()
         XCTAssertEqual(pty.masterFD, -1)
         XCTAssertEqual(pty.pid, -1)
     }

@@ -1,6 +1,5 @@
 import Foundation
 import SlopDeskAgentDetect
-import SlopDeskProtocol
 import XCTest
 @testable import SlopDeskHost
 

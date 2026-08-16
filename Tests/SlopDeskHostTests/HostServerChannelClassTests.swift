@@ -17,6 +17,21 @@ import XCTest
 /// handler directly would prove the handler works and say nothing about the ROUTING decision, which
 /// is the part that can regress.
 final class HostServerChannelClassTests: XCTestCase {
+    /// The control case below opens a REAL pane, and a real pane is a real fork — which only
+    /// `slopdesk-superd` does now. The refusal cases would pass without it (nothing spawns, which
+    /// is the assertion), but then the control would be the only test proving the routing decision
+    /// and it would be silently skipped: so the fixture is required for the whole class, and the
+    /// class skips by name when the daemon is not built.
+    private var superd: SuperdFixture?
+
+    override func setUpWithError() throws {
+        superd = try SuperdFixture()
+    }
+
+    override func tearDown() {
+        superd = nil
+    }
+
     private struct Rig {
         let server: HostServer
         let client: MuxNWConnection

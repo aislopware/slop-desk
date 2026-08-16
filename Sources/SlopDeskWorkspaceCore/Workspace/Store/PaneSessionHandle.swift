@@ -1,4 +1,3 @@
-import Foundation
 import SlopDeskWorkspaceModel
 
 // MARK: - What the store hands its session factory
@@ -105,9 +104,9 @@ public protocol PaneSessionHandle: AnyObject, Identifiable {
 
     /// Whether ``sendBytes(_:)``/``sendText(_:)`` will actually reach the remote shell right now, rather
     /// than silently dropping (the documented disconnected no-op semantic — e.g. `InputBarModel.sendSink`
-    /// is `nil`/inert before the pane's connection comes up). A caller that must not lose bytes (e.g.
-    /// ``WorkspaceStore/sendChatToNewSession(_:launchGrace:onDeliveryFailed:)`` launching Claude into a
-    /// freshly-spawned tab) polls this instead of trusting a fixed wall-clock sleep. Default `true` — kinds
+    /// is `nil`/inert before the pane's connection comes up). A caller that must not lose bytes — a
+    /// spawn-then-type flow that would otherwise trust a fixed wall-clock `launchGrace` — polls this
+    /// instead of sleeping a guessed interval. Default `true` — kinds
     /// with no connection concept (video panes) and test fakes are always "ready"; ``LivePaneSession``
     /// overrides for `.terminal` panes to reflect the live ``ConnectionViewModel/status``.
     var isReadyForInput: Bool { get }

@@ -1,5 +1,4 @@
 #if canImport(SwiftUI)
-import SlopDeskTerminal
 import SwiftUI
 
 /// The **seam** between the SwiftUI client and the terminal pixels.

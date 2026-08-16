@@ -26,7 +26,6 @@
 import SlopDeskVideoProtocol
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
-import SwiftUI
 
 /// The card-group option lists. One `static let` per illustrated group, in the order the cards render.
 enum SettingsOptionCatalog {

@@ -1,5 +1,6 @@
 import Foundation
 import SlopDeskProtocol
+import SlopDeskSupervisor
 import XCTest
 @testable import SlopDeskHost
 @testable import SlopDeskTransport
@@ -17,6 +18,13 @@ final class MuxChannelSessionResizeFoldTests: XCTestCase {
     private var spawned: [PTYProcess] = []
     private var sessions: [MuxChannelSession] = []
     private var directories: [URL] = []
+    /// A private `slopdesk-superd`: hostd no longer forks, so a REAL pty means a real daemon
+    /// (`SupervisedPTYSupport`). Skips the suite when superd is not built.
+    private var superd: SuperdFixture?
+
+    override func setUpWithError() throws {
+        superd = try SuperdFixture()
+    }
 
     override func tearDown() {
         for session in sessions { session.shutdown() }
@@ -25,11 +33,16 @@ final class MuxChannelSessionResizeFoldTests: XCTestCase {
         sessions = []
         spawned = []
         directories = []
+        superd = nil
     }
 
     private func makePTY(cols: UInt16 = 80, rows: UInt16 = 24) throws -> PTYProcess {
-        let pty = PTYProcess()
-        try pty.spawn("/bin/cat", environment: HostEnvironment.curated(), cols: cols, rows: rows)
+        let pty = try XCTUnwrap(superd).pty(
+            "/bin/cat",
+            environment: HostEnvironment.curated(),
+            cols: cols,
+            rows: rows,
+        )
         spawned.append(pty)
         return pty
     }
@@ -38,7 +51,6 @@ final class MuxChannelSessionResizeFoldTests: XCTestCase {
         pty: PTYProcess,
         resizeDebounce: Duration = .zero,
         sizeSettle: Duration = .milliseconds(750),
-        journal: ScrollbackJournal? = nil,
         control: MuxSubChannel? = nil,
         sizePassive: Bool = false,
     ) -> MuxChannelSession {
@@ -50,7 +62,6 @@ final class MuxChannelSessionResizeFoldTests: XCTestCase {
             resizeDebounce: resizeDebounce,
             sizeSettle: sizeSettle,
             isSizePassive: sizePassive,
-            scrollbackJournal: journal,
         )
         sessions.append(session)
         return session
@@ -235,15 +246,25 @@ final class MuxChannelSessionResizeFoldTests: XCTestCase {
     /// after any `slopdesk-ctl resize` the sidecar described a geometry the PTY no longer had — and
     /// the next daemon life re-rendered the journaled bytes at that stale width, mis-wrapping every
     /// line that the PATH-B transcript join stitches across the scrollback/grid boundary.
+    ///
+    /// The sidecar is superd's file since stage 27, which is what makes "the one writer" literal:
+    /// there is no separate call to forget any more, because the `resize` that reaches the kernel
+    /// and the one that reaches the sidecar are the SAME request (`PTYProcess.setWindowSize`).
     func testResizeForControlRecordsTheJournalSizeSidecar() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("ctl-resize-sidecar-\(UUID().uuidString)", isDirectory: true)
         directories.append(directory)
-        let store = ScrollbackJournalStore(directory: directory)
         let sessionID = UUID()
 
-        let pty = try makePTY()
-        let session = makeSession(pty: pty, journal: store.journal(for: sessionID))
+        let pty = try XCTUnwrap(superd).pty(
+            "/bin/cat",
+            environment: HostEnvironment.curated(),
+            paneID: UUID().uuidString,
+            sessionID: sessionID.uuidString,
+            journal: JournalSpawnRequest(directory: directory.path, capBytes: 1 << 20),
+        )
+        spawned.append(pty)
+        let session = makeSession(pty: pty)
         session.startRelay()
 
         let sidecar = directory.appendingPathComponent("\(sessionID.uuidString).scrollback.size")

@@ -22,7 +22,6 @@
 // the field's local text. Presented as a real sheet by ``OverlayHostView``.
 
 #if canImport(SwiftUI)
-import SlopDeskAgentDetect
 import SlopDeskInspector
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel

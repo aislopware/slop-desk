@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 
 /// The codec the host's app-audio rides the wire in. A `UInt8` on the wire (the config
@@ -69,100 +70,90 @@ public enum AudioChannelMessage: Equatable, Sendable {
     /// One encoded ~10 ms audio frame.
     case frame(seq: UInt32, hostSendTsMillis: UInt32, payload: Data)
 
-    /// Header size in bytes.
-    public static let headerSize = 11
+    /// Header size in bytes, vended by the codec that writes it.
+    public static let headerSize = slopdesk_audio_constant(0)
     /// Hostile-input cap on `payloadLen` — generous over the real maximum (a 1920-byte PCM
     /// frame; AAC-ELD frames are far smaller) while bounding what a corrupt length can make
-    /// the receiver allocate.
-    public static let maxPayloadBytes = 8192
-    /// Header flags bit0: the payload is an ``AudioStreamConfig``, not a codec frame.
-    static let configFlag: UInt8 = 1 << 0
+    /// the receiver allocate. Enforced at decode, on the Rust side, not here.
+    public static let maxPayloadBytes = slopdesk_audio_constant(1)
 
-    /// Serialises the datagram (header then payload). The CALLER (host) keeps payloads within
-    /// ``maxPayloadBytes`` — the encoder emits ≤ ~2 KB frames by construction; `payloadLen`
-    /// truncates to `UInt16` like every wire count.
+    /// Serialises the datagram (header then payload). `rust/slopdesk-video`'s `audio_wire` lays
+    /// the bytes down — both the header and, for a config, its nested payload — so the two
+    /// grammars exist once each. The CALLER (host) keeps payloads within ``maxPayloadBytes``.
     public func encode() -> Data {
+        let span =
+            switch self {
+            case let .config(_, _, config): config.cookie
+            case let .frame(_, _, payload): payload
+            }
+        let needed = span.withUnsafeBytes { bytes in
+            slopdesk_audio_encode(wire, bytes.baseAddress, bytes.count, nil, 0)
+        }
+        precondition(needed > 0, "the audio codec refused a message this type can express")
+        var out = Data(count: needed)
+        let written = out.withUnsafeMutableBytes { buffer in
+            span.withUnsafeBytes { bytes in
+                slopdesk_audio_encode(wire, bytes.baseAddress, bytes.count, buffer.baseAddress, buffer.count)
+            }
+        }
+        precondition(written == needed, "the audio codec sized a datagram differently than it wrote it")
+        return out
+    }
+
+    /// Parses one datagram. Every guard is the Rust codec's, and they are the guards that keep a
+    /// corrupt length from turning into an allocation: over the cap is `.malformed`, past the end
+    /// is `.truncated`, and a trailing byte is `.malformed`. The config grammar is checked the same
+    /// way — unknown format, zero sample rate or channels, a cookie length that does not consume
+    /// the payload exactly. Reserved flag bits are ignored, so a future sender may set them.
+    public static func decode(_ data: Data) throws -> Self {
+        var flat = SlopDeskAudioMessage()
+        // The span — a codec frame, or a config's cookie — is copied out inside the same borrow
+        // that validated it: `dropFirst().prefix()` would build two intermediate `Data` values,
+        // each with its own retain on the parent, to describe bytes that are about to be copied
+        // once anyway. The offsets are the codec's, and it only reports them after proving the
+        // datagram holds them.
+        let (verdict, span) = data.withUnsafeBytes { bytes -> (UInt32, Data) in
+            let verdict = slopdesk_audio_decode(bytes.baseAddress, bytes.count, &flat)
+            guard verdict == UInt32(SLOPDESK_METADATA_DECODE_OK) else { return (verdict, Data()) }
+            let start = Int(flat.span_offset)
+            let end = start + Int(flat.span_length)
+            return (verdict, Data(UnsafeRawBufferPointer(rebasing: bytes[start..<end])))
+        }
+        switch verdict {
+        case UInt32(SLOPDESK_METADATA_DECODE_TRUNCATED): throw VideoProtocolError.truncated
+        case UInt32(SLOPDESK_METADATA_DECODE_MALFORMED):
+            throw VideoProtocolError.malformed("unacceptable audio datagram")
+        default: break
+        }
+        guard flat.is_config else {
+            return .frame(seq: flat.seq, hostSendTsMillis: flat.host_send_ts_millis, payload: span)
+        }
+        // The format was checked against the ones the wire admits before the offset was reported.
+        let format = AudioWireFormat(rawValue: flat.format) ?? .aacEld
+        return .config(
+            seq: flat.seq, hostSendTsMillis: flat.host_send_ts_millis,
+            config: AudioStreamConfig(
+                format: format, sampleRate: flat.sample_rate, channels: flat.channels, cookie: span,
+            ),
+        )
+    }
+
+    /// The message flattened for the boundary: the header's fields, plus the config's parameters
+    /// when it is one. The span itself travels beside it rather than inside it.
+    private var wire: SlopDeskAudioMessage {
+        var flat = SlopDeskAudioMessage()
         switch self {
         case let .config(seq, hostSendTsMillis, config):
-            Self.encodeMessage(
-                seq: seq,
-                hostSendTsMillis: hostSendTsMillis,
-                flags: Self.configFlag,
-                payload: Self.encodeConfigPayload(config),
-            )
-        case let .frame(seq, hostSendTsMillis, payload):
-            Self.encodeMessage(seq: seq, hostSendTsMillis: hostSendTsMillis, flags: 0, payload: payload)
+            flat.seq = seq
+            flat.host_send_ts_millis = hostSendTsMillis
+            flat.is_config = true
+            flat.format = config.format.rawValue
+            flat.sample_rate = config.sampleRate
+            flat.channels = config.channels
+        case let .frame(seq, hostSendTsMillis, _):
+            flat.seq = seq
+            flat.host_send_ts_millis = hostSendTsMillis
         }
-    }
-
-    /// Parses one datagram. Throws ``VideoProtocolError`` on a short/inconsistent datagram
-    /// (a corrupt single packet must not crash the receiver — same contract as the
-    /// reassembler): a declared payload past the datagram end is `.truncated`, an over-cap
-    /// length or trailing bytes are `.malformed`. Reserved flag bits (1–7) are IGNORED so a
-    /// future sender can set them without breaking this decoder; only bit0 selects the
-    /// payload grammar.
-    public static func decode(_ data: Data) throws -> Self {
-        var reader = VideoByteReader(data)
-        let seq = try reader.readUInt32()
-        let hostSendTsMillis = try reader.readUInt32()
-        let flags = try reader.readUInt8()
-        let payloadLen = try Int(reader.readUInt16())
-        guard payloadLen <= maxPayloadBytes else {
-            throw VideoProtocolError.malformed("audio payloadLen \(payloadLen) exceeds cap \(maxPayloadBytes)")
-        }
-        // `readBytes` bounds-checks against the buffer BEFORE reading, so a corrupt length
-        // drops the datagram (`.truncated`) rather than over-reading or over-allocating.
-        let payload = try reader.readBytes(payloadLen)
-        guard reader.bytesRemaining == 0 else {
-            throw VideoProtocolError.malformed("audio datagram carries \(reader.bytesRemaining) trailing bytes")
-        }
-        guard flags & configFlag != 0 else {
-            return .frame(seq: seq, hostSendTsMillis: hostSendTsMillis, payload: payload)
-        }
-        return try .config(seq: seq, hostSendTsMillis: hostSendTsMillis, config: decodeConfigPayload(payload))
-    }
-
-    private static func encodeMessage(seq: UInt32, hostSendTsMillis: UInt32, flags: UInt8, payload: Data) -> Data {
-        var out = Data(capacity: headerSize + payload.count)
-        out.appendBE(seq)
-        out.appendBE(hostSendTsMillis)
-        out.append(flags)
-        out.appendBE(UInt16(truncatingIfNeeded: payload.count))
-        out.append(payload)
-        return out
-    }
-
-    private static func encodeConfigPayload(_ config: AudioStreamConfig) -> Data {
-        var out = Data(capacity: 8 + config.cookie.count)
-        out.append(config.format.rawValue)
-        out.appendBE(config.sampleRate)
-        out.append(config.channels)
-        // The cookie is an AAC magic cookie (tens of bytes); `cookieLen` truncates to
-        // `UInt16` like every wire count.
-        out.appendBE(UInt16(truncatingIfNeeded: config.cookie.count))
-        out.append(config.cookie)
-        return out
-    }
-
-    /// Validate-then-drop for the config grammar: unknown format, a zero sample rate or
-    /// channel count, and a cookie length that does not consume the payload exactly are all
-    /// corruption/hostile — the client catches and drops the datagram.
-    private static func decodeConfigPayload(_ payload: Data) throws -> AudioStreamConfig {
-        var reader = VideoByteReader(payload)
-        let formatID = try reader.readUInt8()
-        guard let format = AudioWireFormat(rawValue: formatID) else {
-            throw VideoProtocolError.malformed("unknown audio wire format \(formatID)")
-        }
-        let sampleRate = try reader.readUInt32()
-        let channels = try reader.readUInt8()
-        guard sampleRate != 0, channels != 0 else {
-            throw VideoProtocolError.malformed("audio config with zero sampleRate/channels")
-        }
-        let cookieLen = try Int(reader.readUInt16())
-        let cookie = try reader.readBytes(cookieLen)
-        guard reader.bytesRemaining == 0 else {
-            throw VideoProtocolError.malformed("audio config carries \(reader.bytesRemaining) trailing cookie bytes")
-        }
-        return AudioStreamConfig(format: format, sampleRate: sampleRate, channels: channels, cookie: cookie)
+        return flat
     }
 }

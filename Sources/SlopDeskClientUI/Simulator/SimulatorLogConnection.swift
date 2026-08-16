@@ -16,7 +16,6 @@
 #if os(macOS)
 import Foundation
 import Network
-import SlopDeskTransport
 
 /// What the console learns from its socket. Delivered on the main actor, like the frame stream's.
 enum SimulatorLogEvent {
@@ -39,11 +38,11 @@ protocol SimulatorLogStreaming: AnyObject {
 }
 
 @MainActor
-final class SimulatorLogConnection: SimulatorLogStreaming {
-    private var connection: NWConnection?
+final class SimulatorLogConnection: SimulatorLogStreaming, SimulatorWebSocketLane {
+    var connection: NWConnection?
     private let sink: (SimulatorLogEvent) -> Void
     /// Set on teardown so a receive completion already in flight cannot deliver after `.ended`.
-    private var isTornDown = false
+    private(set) var isTornDown = false
 
     init(sink: @escaping (SimulatorLogEvent) -> Void) {
         self.sink = sink
@@ -79,43 +78,8 @@ final class SimulatorLogConnection: SimulatorLogStreaming {
     /// and the two sockets have no ordering relationship to preserve.
     private static let queue = DispatchQueue(label: "slopdesk.simulator.logs")
 
-    private func handle(_ state: NWConnection.State) {
-        guard !isTornDown else { return }
-        switch state {
-        case .ready:
-            sink(.connected)
-            receive()
-        case let .failed(error):
-            sink(.ended(reason: error.localizedDescription))
-            disconnect()
-        case .cancelled:
-            sink(.ended(reason: nil))
-        case .setup,
-             .preparing,
-             .waiting:
-            break
-        @unknown default:
-            break
-        }
-    }
-
-    private func receive() {
-        guard let connection else { return }
-        connection.receiveMessage { [weak self] data, context, _, error in
-            Task { @MainActor in
-                guard let self, !self.isTornDown else { return }
-                if let error {
-                    self.sink(.ended(reason: error.localizedDescription))
-                    self.disconnect()
-                    return
-                }
-                self.deliver(data, context: context)
-                self.receive()
-            }
-        }
-    }
-
-    private func deliver(_ data: Data?, context: NWConnection.ContentContext?) {
+    /// This lane's own message dispatch — the one thing the two websocket lanes do not share.
+    func deliver(_ data: Data?, context: NWConnection.ContentContext?) {
         guard let data, !data.isEmpty else { return }
         let metadata = context?.protocolMetadata(definition: NWProtocolWebSocket.definition)
         switch (metadata as? NWProtocolWebSocket.Metadata)?.opcode {
@@ -135,15 +99,13 @@ final class SimulatorLogConnection: SimulatorLogStreaming {
             break
         }
     }
+}
 
-    /// Same explicit pong as the frame stream, for the same measured reason: `autoReplyPing` on an
-    /// inserted options object is inert, so a socket without this is dropped on the server's idle
-    /// timer minutes in.
-    private func replyToPing(_ payload: Data) {
-        guard let connection else { return }
-        let metadata = NWProtocolWebSocket.Metadata(opcode: .pong)
-        let context = NWConnection.ContentContext(identifier: "pong", metadata: [metadata])
-        connection.send(content: payload, contentContext: context, completion: .idempotent)
-    }
+extension SimulatorLogConnection {
+    /// The socket came up.
+    func noteConnected() { sink(.connected) }
+
+    /// The socket is over; `nil` is a clean close.
+    func noteEnded(reason: String?) { sink(.ended(reason: reason)) }
 }
 #endif

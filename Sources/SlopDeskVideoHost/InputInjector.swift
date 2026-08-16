@@ -161,11 +161,9 @@ public final class InputInjector: @unchecked Sendable {
     /// `NSTouch` data or `trackSwipeEventWithOptions:` (both reject CGEvent-posted scrolls) and
     /// Safari behaves identically (probe-verified, six field variants). So the injector watches
     /// the stream it posts (``SwipeNavRecognizer``) and, when a completed flick qualifies AND the
-    /// receiving app is one where ⌘[ / ⌘] means history (``SwipeNavPolicy``), posts that key
+    /// receiving app is one where ⌘[ / ⌘] means history (``SwipeNavHostConfig``), posts that key
     /// equivalent. Scroll posting itself is untouched — the page still rubber-bands natively.
     private static let swipeNavEnabled = SwipeNavHostConfig.enabled
-    /// Extra bundle ids for the swipe-nav allowlist (`SLOPDESK_SWIPE_NAV_APPS`, comma-separated).
-    private static let swipeNavExtraApps = SwipeNavHostConfig.extraApps
     /// Lift-fire travel threshold in points (`SLOPDESK_SWIPE_NAV_TRAVEL`, default 80) — scales the
     /// recogniser's whole threshold family (arm = 0.3×, momentum confirm = 1.5×). Parse + clamp
     /// live in ``SwipeNavHostConfig`` so the client-feedback status push mirrors this exactly.
@@ -742,8 +740,7 @@ public final class InputInjector: @unchecked Sendable {
     private func fireSwipeNav(_ fired: SwipeNavRecognizer.Direction) {
         // Only drive apps where ⌘[ / ⌘] is history navigation — in an editor it EDITS TEXT
         // (outdent/indent), so an unknown app gets nothing beyond the scroll it already received.
-        guard SwipeNavPolicy.isNavigable(bundleID: swipeNavTargetBundleID(), extraApps: Self.swipeNavExtraApps)
-        else {
+        guard SwipeNavHostConfig.eligible(bundleID: swipeNavTargetBundleID()) else {
             if Self.inputTrace {
                 FileHandle.standardError
                     .write(Data("slopdesk-videohostd[inject]: swipe-nav flick ignored (app not navigable)\n".utf8))

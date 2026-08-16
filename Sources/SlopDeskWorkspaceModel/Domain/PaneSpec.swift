@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - Identity
 
-/// Stable identity for a single pane (a leaf in the ``PaneNode`` tree).
+/// Stable identity for a single pane (an item in the ``Canvas``, a leaf in the ``SplitNode`` tree).
 ///
 /// A `PaneID` is the join key between the two halves of the workspace architecture
 /// (docs/22 §1.1): the **tree of intent** (this pure value tree) and the **table of liveness**
@@ -225,7 +225,7 @@ public struct VideoPaneModes: Codable, Sendable, Equatable {
 ///
 /// A `PaneSpec` is pure intent: it is what the pane *should* be, not a handle to anything live.
 /// The store reads it to materialize a session; mutating it (e.g. rename) is done through
-/// ``PaneNode/updatingSpec(_:_:)`` and triggers a reconcile downstream.
+/// ``Canvas/updatingSpec(_:_:)`` and triggers a reconcile downstream.
 ///
 /// ### What a spec does NOT carry
 /// The pane's live FACTS — its working directory, its By-Project key, the shell title it last asserted,

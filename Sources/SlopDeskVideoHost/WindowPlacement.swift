@@ -1,54 +1,43 @@
 #if os(macOS)
 import ApplicationServices
 import CoreGraphics
+import CSlopDeskFFI
 import Foundation
 import OSLog
 
-/// PURE placement arithmetic (feature #1): decide where/how to move a window fully onto a display.
-/// Headlessly unit-testable; the AX side effects live in ``WindowPlacement``.
+/// The Swift face of `rust/slopdesk-video`'s `window_placement` (feature #1): decide where and at
+/// what size to move a window fully onto a display. The AX side effects live in ``WindowPlacement``.
 ///
-/// Native Swift — the single source of truth for the VD-park placement/fits math (the Rust core's
-/// `window_placement` mirrored this; it is now reabsorbed). All CoreGraphics semantics preserved
-/// EXACTLY:
+/// What stays HERE is what CoreGraphics defines, and only that:
 ///   * `CGRect.width`/`.height` STANDARDIZE — they return `|size|` (always ≥ 0) — so the display
-///     extents read `displayBounds.width`/`.height` (abs-returning).
+///     extents are read through them and cross already standardized.
 ///   * `CGSize.width`/`.height` are RAW stored fields (NOT standardized), so the window operand
-///     (and the `size` arg to ``fits``) is used verbatim, never abs'd. The clamp is therefore
-///     asymmetric: `min(windowRaw, displayAbs)`.
-///   * `CGRect.origin` is the RAW stored origin (NOT standardized), so ``placement`` returns
-///     `displayBounds.origin` verbatim — including negative coordinates from a display placed to
-///     the left of / above the main display.
-///   * The `min(x, y)` clamp uses the same ternary form as Swift's global `min` (`{ y < x ? y : x }`)
-///     rather than `Swift.min`: the two agree for every finite input, but the ternary propagates a
-///     NaN operand (matching the Rust reference's `dw < window ? dw : window`).
-///   * The ½-pt tolerance math is byte-for-byte: `0.5` is exactly representable and is added to
-///     exactly-representable inputs, so there is no rounding error. NO rounding anywhere here.
+///     (and the `size` arg to ``fits``) crosses verbatim, never abs'd. The clamp is therefore
+///     asymmetric, and the far side is told which side it is holding rather than deciding.
+///   * `CGRect.origin` is the RAW stored origin (NOT standardized), so the origin crosses verbatim —
+///     including negative coordinates from a display placed left of / above the main display.
+///
+/// What moved is the arithmetic: the ordered comparison that keeps a NaN where a NaN-ignoring
+/// minimum would swallow it, and the ½-pt tolerance predicate. `golden/golden_vectors.json` pins
+/// both as bit patterns, replayed by `WindowPlacementGoldenVectorTests` here and by
+/// `every_pinned_placement_puts_the_window_where_swift_put_it` on the far side.
 public enum WindowPlacementMath {
     /// Clamp `windowSize` to `displayBounds` (resize DOWN only if larger — never enlarge) and place
     /// at the display's top-left origin. macOS crops a window that overhangs a display, so an
     /// oversized window must be shrunk before the move.
-    ///
-    /// CG-semantic asymmetry preserved EXACTLY:
-    ///   * `windowSize.width`/`.height` are RAW `CGSize` fields (NOT standardized).
-    ///   * `displayBounds.width`/`.height` are CG-standardized (abs).
-    ///   * `min(a, b)` uses the same form as Swift's global `min(x, y) == { y < x ? y : x }`
-    ///     (matters only for NaN; finite inputs agree with `Swift.min`).
     public static func placement(windowSize: CGSize, displayBounds: CGRect)
         -> (origin: CGPoint, size: CGSize, needsResize: Bool)
     {
-        let dw = displayBounds.width // CG-standardized (abs)
-        let dh = displayBounds.height
-        // Swift `min(windowSize.width, displayBounds.width)` == `dw < window ? dw : window`.
-        // NaN-faithful ordered min as a TERNARY (NOT Swift.min — that would propagate NaN
-        // differently); matches the Rust core's `dw < window_size.width ? dw : window_size.width`.
-        let w = dw < windowSize.width ? dw : windowSize.width
-        let h = dh < windowSize.height ? dh : windowSize.height
-        // ½-pt tolerance so floating-point equality doesn't trigger a no-op resize. Uses the
-        // CLAMPED w/h vs the RAW window size. `w + 0.5` is a SEPARATE add (no FMA) — but there is
-        // no mul here, so the FMA trap does not apply; the exact `(w + 0.5 < windowSize.width)`
-        // half-point predicate is reproduced verbatim from the Rust reference.
-        let needsResize = (w + 0.5 < windowSize.width) || (h + 0.5 < windowSize.height)
-        return (displayBounds.origin, CGSize(width: w, height: h), needsResize)
+        let plan = slopdesk_window_placement(
+            windowSize.width, windowSize.height, // RAW CGSize fields
+            displayBounds.origin.x, displayBounds.origin.y, // RAW CGRect origin
+            displayBounds.width, displayBounds.height, // CG-standardized (abs)
+        )
+        return (
+            CGPoint(x: plan.origin_x, y: plan.origin_y),
+            CGSize(width: plan.width, height: plan.height),
+            plan.needs_resize,
+        )
     }
 
     /// True when `size` fits inside `bounds` (within a ½-pt tolerance). Used after the AX move to
@@ -57,7 +46,7 @@ public enum WindowPlacementMath {
     /// crop would exceed the framebuffer and the client's input mapping would desync).
     /// `bounds.width`/`.height` are CG-standardized (abs); `size` is raw.
     public static func fits(_ size: CGSize, within bounds: CGRect) -> Bool {
-        size.width <= bounds.width + 0.5 && size.height <= bounds.height + 0.5
+        slopdesk_window_fits(size.width, size.height, bounds.width, bounds.height)
     }
 }
 

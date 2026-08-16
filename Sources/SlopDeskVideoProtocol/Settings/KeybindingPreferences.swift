@@ -1,4 +1,4 @@
-import Foundation
+import CSlopDeskFFI
 
 /// User keybinding overrides. `WorkspaceBindingRegistry` is the single
 /// source of truth for the available commands (each a stable, string `bindingID` such as
@@ -38,26 +38,27 @@ public struct KeybindingPreferences: Codable, Sendable, Equatable {
             self.control = control
         }
 
-        /// Normalise a base-key spelling to the ONE canonical token: lowercased, with the named-key ALIAS
-        /// spellings this format also accepts (`pgup`/`pageup`, `pgdn`/`pagedown`, `enter`/`return`,
-        /// `leftarrow`/`left`, `rightarrow`/`right`, `uparrow`/`up`, `downarrow`/`down`) folded to the single
-        /// token the dispatcher's reverse bridge emits (`KeyChord.asPreferencesChord` →
-        /// `preferencesKeyToken`: `"pageup"`, `"return"`, `"left"`, …). WITHOUT this fold a config line like
-        /// `keybind = cmd+pgup:text:x` would store under key `"pgup"` while a live ⌘PageUp keystroke produces
-        /// key `"pageup"` — a permanent miss that silently breaks the literal-byte / `unbind:` matching.
-        /// Single printable characters (already lowercased) pass through unchanged; an unmapped
-        /// multi-char token (e.g. `space`) is left as-is (it has no registry `Key`, so it can't match anyway).
+        /// Normalise a base-key spelling to the ONE canonical token — lowercased, with the named-key
+        /// ALIAS spellings this format also accepts (`pgup`/`pageup`, `enter`/`return`,
+        /// `leftarrow`/`left`, …) folded to the single token the dispatcher's reverse bridge emits
+        /// (`KeyChord.asPreferencesChord` → `preferencesKeyToken`: `"pageup"`, `"return"`, `"left"`).
+        /// WITHOUT this fold a config line like `keybind = cmd+pgup:text:x` would store under key
+        /// `"pgup"` while a live ⌘PageUp keystroke produces `"pageup"` — a permanent miss that
+        /// silently breaks the literal-byte / `unbind:` matching.
+        ///
+        /// The fold is the grammar's, because it is the SAME table that decides which spellings the
+        /// grammar accepts: an alias the parser takes but this side does not fold binds under a key
+        /// no keystroke ever produces, and the binding is accepted, persisted and never fires. A
+        /// single printable character is already canonical; an unnamed multi-char token is left
+        /// alone (it has no registry `Key`, so it cannot match either way).
         private static func canonicalKey(_ key: String) -> String {
-            switch key.lowercased() {
-            case "enter": "return"
-            case "leftarrow": "left"
-            case "rightarrow": "right"
-            case "uparrow": "up"
-            case "downarrow": "down"
-            case "pgup": "pageup"
-            case "pgdn": "pagedown"
-            case let other: other
+            let bytes = Array(key.utf8)
+            let folded = bytes.withUnsafeBufferPointer { text in
+                lentText { out, cap in
+                    slopdesk_keybind_canonical_key(text.baseAddress, text.count, out, cap)
+                }
             }
+            return folded.isEmpty ? key : folded
         }
 
         private enum CodingKeys: String, CodingKey {
@@ -85,14 +86,18 @@ public struct KeybindingPreferences: Codable, Sendable, Equatable {
 
         /// Canonical, order-stable display/identity string (`"cmd+shift+d"`). Two chords with the same
         /// keys + modifiers produce the same string ⇒ usable as a conflict-detection key.
+        ///
+        /// Written by the grammar that reads it: every token here is a token `parse_chord` accepts,
+        /// so the text this identity is spelled with is text a config file could carry back.
         public var canonical: String {
-            var parts: [String] = []
-            if control { parts.append("ctrl") }
-            if option { parts.append("opt") }
-            if shift { parts.append("shift") }
-            if command { parts.append("cmd") }
-            parts.append(key)
-            return parts.joined(separator: "+")
+            let bytes = Array(key.utf8)
+            return bytes.withUnsafeBufferPointer { text in
+                lentText { out, cap in
+                    slopdesk_keybind_canonical_chord(
+                        text.baseAddress, text.count, command, shift, option, control, out, cap,
+                    )
+                }
+            }
         }
     }
 

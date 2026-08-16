@@ -1,3 +1,21 @@
+# CI — DORMANT. The `.disabled` suffix keeps GitHub from parsing this file at all; the gate that
+# actually runs is `make check` locally, plus the prek hooks (`.pre-commit-config.yaml`).
+#
+# Kept, and kept CORRECT, because a dormant workflow rots silently: the previous version described a
+# tree that no longer exists. It said "no staticlib to pre-build … the in-tree `CSlopDeskSIMD` C
+# target", and both halves are gone — the C target was deleted when the SIMD kernels moved to
+# `rust/slopdesk-gfsimd`, and `Package.swift` now declares a `binaryTarget` at
+# `ThirdParty/slopdesk-ffi/SlopDeskFFI.xcframework`, which is gitignored. A fresh checkout therefore
+# cannot RESOLVE the package, let alone build it, until `scripts/build-ffi.sh` has run — the same
+# defect `release.yml` carried until it grew a build step (docs/49, docs/55).
+#
+# It also ran no Rust at all: seventeen workspaces of clippy and cargo test, and the Miri audit that
+# pays for the `unsafe` in `slopdesk-gfsimd`, were invisible to it.
+#
+# Every job below shells out to a `make` target rather than restating its commands. That is the
+# point: the Makefile derives its lists (`RUST_WORKSPACES`, `make -n` plans), and a workflow that
+# copies them is a second list to forget.
+
 name: CI
 
 on:
@@ -14,7 +32,7 @@ permissions:
   contents: read
 
 jobs:
-  # ------------------------------------------------------- Shell & Python ----
+  # Text-only gates: no Swift toolchain, no Rust, no Xcode. Cheap and first to fail.
   shell-python:
     name: Shell (shellcheck · shfmt) · Python (ruff)
     runs-on: ubuntu-latest
@@ -22,49 +40,61 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install tools
         run: |
+          set -euo pipefail
           sudo apt-get update && sudo apt-get install -y shellcheck
-          curl -sS https://webi.sh/shfmt | sh || (cd /tmp && curl -sSL -o shfmt https://github.com/mvdan/sh/releases/latest/download/shfmt_v3.13.1_linux_amd64 && chmod +x shfmt && sudo mv shfmt /usr/local/bin/)
-          pipx install ruff || pip install ruff
-      - name: ShellCheck
-        run: shellcheck $(git ls-files '*.sh' | grep -v '^ThirdParty/')
-      - name: shfmt (diff)
-        run: shfmt -i 2 -ci -sr -d $(git ls-files '*.sh' | grep -v '^ThirdParty/')
-      - name: Ruff lint + format check
-        run: |
-          ruff check $(git ls-files '*.py')
-          ruff format --check $(git ls-files '*.py')
+          curl -sSL -o /tmp/shfmt https://github.com/mvdan/sh/releases/latest/download/shfmt_v3.13.1_linux_amd64
+          chmod +x /tmp/shfmt && sudo mv /tmp/shfmt /usr/local/bin/shfmt
+          pipx install ruff
+      - run: make lint-shell
+      - run: make lint-python
 
-  # ------------------------------------------------- Swift format & lint ----
-  # Runs on any macOS image — SwiftFormat/SwiftLint do NOT need to compile the
-  # package, so this gate is independent of the Xcode 26.5 toolchain requirement.
-  # The bit-exact wire contract (the golden corpus + the 13 XCTest-pinned frozen
-  # keys) is enforced by the swift-build-test job below via `make check`'s
-  # `make golden` / `scripts/golden-check.sh`, which needs the package to build.
+  # Rust: every workspace, on macOS because several crates speak to macOS APIs and the FFI slices
+  # target Apple triples. `make lint-rust` is clippy + rustfmt across all seventeen roots; `make
+  # test-rust` is their suites; `make miri` is the memory half that pays for the `unsafe` crate.
+  rust:
+    name: Rust (clippy · rustfmt · tests · Miri)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchains
+        run: |
+          set -euo pipefail
+          rustup toolchain install nightly --component rustfmt miri
+          rustup target add aarch64-apple-darwin aarch64-apple-ios aarch64-apple-ios-sim
+      - run: make lint-rust
+      - run: make test-rust
+      - run: make miri
+
+  # Swift lint needs no compile, so it does not wait on the FFI artifact or on Xcode selection.
   swift-lint:
     name: Swift (SwiftFormat · SwiftLint --strict)
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - run: brew install swiftlint swiftformat
-      - run: swiftformat Package.swift Sources Tests Apps --lint
-      - run: swiftlint --strict --quiet
-      # Design-system leak ratchet — text-only (no Xcode/compile), so it belongs in the lint job.
-      - name: Design-system leak ratchet
-        run: bash scripts/check-ds-leaks.sh
+      - run: make lint-swift
+      - run: make lint-ds-leaks
+      - run: make lint-menu-shortcutless
 
-  # ----------------------------------------------- Swift build & test -------
-  # NOTE: the package targets macOS 26 / iOS 26 (.v26), which needs Xcode 26.5+
-  # (hosted macos-latest images ship it). A clean checkout builds with no
-  # prerequisite — the package is pure Swift plus the in-tree `CSlopDeskSIMD`
-  # C target (compiled from source), no staticlib to pre-build.
+  # The compiling half. `make ffi` FIRST and not optionally: SwiftPM cannot resolve a graph whose
+  # `binaryTarget` path is absent, so this is the step that makes `swift build` possible at all.
+  # `make lint-supervisor` lives here rather than in `swift-lint` because `check-supervisor.sh`
+  # runs `build-ffi.sh --check`, which needs the artifact it is judging.
   swift-build-test:
-    name: Swift build + test (needs Xcode 26.5+)
+    name: Swift build + test + golden (needs Xcode 26.5+)
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - name: Select newest Xcode
-        run: sudo xcode-select -s /Applications/Xcode_26.5.app || echo "Xcode 26.5 not on this image — see note above"
-      - run: swift build
-      - run: swift test
-      - name: Golden wire-corpus check (bit-exact)
-        run: bash scripts/golden-check.sh
+        run: sudo xcode-select -s /Applications/Xcode_26.5.app || echo "Xcode 26.5 not on this image — the package targets .v26"
+      - name: Rust targets for the linked FFI slices
+        run: rustup target add aarch64-apple-darwin aarch64-apple-ios aarch64-apple-ios-sim
+      - run: make ffi
+      - run: make lint-supervisor
+      - run: make build
+      # `make test`, not `swift test`. Eighteen suites boot a real sidecar and `XCTSkip` by name
+      # when its binary is absent — and `swift build` never sees cargo, so a bare `swift test` on a
+      # fresh runner would skip the entire supervised, screen and file-drop surface and report
+      # green. `make test` builds the sidecars first.
+      - run: make test
+      - run: make golden

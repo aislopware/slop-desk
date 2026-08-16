@@ -25,9 +25,10 @@ import SlopDeskProtocol
 ///   `AgentHookListenerTests` with real Claude hook JSON. Validate-then-drop: malformed /
 ///   short / non-JSON bytes yield `nil` (ignored, never trap).
 ///
-/// - ``UnixSocketAcceptor`` — the THIN socket-accept shim (compiled + code-reviewed ONLY,
-///   never bound in a test). It owns the `AF_UNIX` listener and hands each received datagram's
-///   bytes to the handler.
+/// - ``AgentHookListener`` — the per-host coordinator. It does NOT bind anything: superd owns the
+///   `AF_UNIX` listener, because that address is baked into every agent's environment and must
+///   outlive hostd's pid. Each accepted connection arrives here as a descriptor over `SCM_RIGHTS`;
+///   this class drains it and routes the record to the owning pane's handler.
 ///
 /// **Wire mapping** (the host carries the raw bytes the client maps back, mirroring
 /// `ClaudeStatus.urgency` / `ClaudeHookEvent.NotificationKind` — `SlopDeskProtocol` does not
@@ -267,172 +268,6 @@ public struct AgentHookHandler: Sendable {
     }
 }
 
-/// W10 — the THIN `AF_UNIX` socket-accept shim that feeds the pure ``AgentHookHandler``.
-/// **Compiled + code-reviewed ONLY** — never bound in a unit test (the hang-safety rule).
-///
-/// The framing matches the Muxy/Herdr convention the installed hook script POSTs (docs/41
-/// §2.1): a single connection carries one newline-terminated record. The shim reads the bytes,
-/// strips the trailing newline, and hands the raw JSON to the handler — the handler does ALL
-/// parsing/validation (validate-then-drop), so a malformed datagram is dropped here without a
-/// trap. The PANE the bytes belong to is carried out-of-band (the per-pane socket path / the
-/// `SLOPDESK_PANE_ID` the hook script forwards), resolved by the owner before constructing
-/// the handler — this shim is pane-agnostic.
-public final class UnixSocketAcceptor: @unchecked Sendable {
-    /// The bound socket fd (`-1` until ``start(path:)`` / after ``stop()``).
-    private var listenFD: Int32 = -1
-    private let lock = NSLock()
-
-    /// The filesystem path of the bound socket (so ``stop()`` can `unlink` it).
-    private var boundPath: String?
-
-    /// Where `onRecord` runs — OFF the accept thread, so a slow sink cannot stall the listener,
-    /// and SERIAL, so records keep their arrival order (see ``acceptLoop(fd:)``).
-    private let deliveryQueue = DispatchQueue(label: "com.slopdesk.agent-hook.delivery")
-
-    /// Called with each received record's raw bytes (newline already stripped). The owner
-    /// routes them into the per-pane ``AgentHookHandler`` and enqueues the resulting type-27.
-    public var onRecord: (@Sendable (Data) -> Void)?
-
-    public var onLog: (@Sendable (String) -> Void)?
-
-    public init() {}
-
-    /// Binds an `AF_UNIX` stream socket at `path` (replacing any stale socket file) and begins
-    /// accepting. Throws on bind/listen failure. The accept loop runs on a dedicated background
-    /// thread; each accepted connection is drained to EOF, its bytes (sans trailing `\n`)
-    /// handed to ``onRecord``.
-    ///
-    /// SAFETY: `sockaddr_un.sun_path` is bounded — a too-long path is rejected (validate-then-
-    /// drop) rather than overflowing the fixed C array.
-    public func start(path: String) throws {
-        let maxPath = MemoryLayout.size(ofValue: sockaddr_un().sun_path) - 1
-        guard path.utf8.count <= maxPath else {
-            throw AgentSocketError.pathTooLong(path)
-        }
-        unlink(path) // clear a stale socket file from a prior run (idempotent)
-
-        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-        guard fd >= 0 else { throw AgentSocketError.socketFailed(errno) }
-
-        var addr = sockaddr_un()
-        addr.sun_family = sa_family_t(AF_UNIX)
-        _ = withUnsafeMutablePointer(to: &addr.sun_path) { ptr in
-            path.withCString { cstr in
-                strncpy(UnsafeMutableRawPointer(ptr).assumingMemoryBound(to: CChar.self), cstr, maxPath)
-            }
-        }
-        let size = socklen_t(MemoryLayout<sockaddr_un>.size)
-        let bound = withUnsafePointer(to: &addr) { ptr in
-            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, size) }
-        }
-        guard bound == 0 else {
-            let e = errno
-            close(fd)
-            throw AgentSocketError.bindFailed(e)
-        }
-        guard listen(fd, 16) == 0 else {
-            let e = errno
-            close(fd)
-            unlink(path)
-            throw AgentSocketError.listenFailed(e)
-        }
-        // Owner-only, like the ctl socket. The per-user temp dir is already 0700, so this is
-        // belt-and-braces — but the listener now binds unconditionally, and a surface that is
-        // always up earns the narrower mode rather than inheriting whatever the umask allowed.
-        chmod(path, 0o600)
-
-        lock.lock()
-        listenFD = fd
-        boundPath = path
-        lock.unlock()
-
-        Thread.detachNewThread { [weak self] in self?.acceptLoop(fd: fd) }
-        onLog?("agent-hook socket listening at \(path)")
-    }
-
-    /// Closes the listener and unlinks the socket file. Idempotent.
-    public func stop() {
-        lock.lock()
-        let fd = listenFD
-        let path = boundPath
-        listenFD = -1
-        boundPath = nil
-        lock.unlock()
-        if fd >= 0 { close(fd) }
-        if let path { unlink(path) }
-    }
-
-    /// TRUE while the socket is bound + accepting (between a successful ``start(path:)`` and
-    /// ``stop()``). The LIVE truth the `agentHookStatus` metadata verb reports so the Settings card
-    /// can show installed-but-inactive instead of a false green.
-    public var isListening: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return listenFD >= 0
-    }
-
-    /// SAFETY: a blocking `accept`/`read` loop over the owned listen fd; each connection is
-    /// read into a bounded growing buffer until EOF, the trailing newline stripped, and the
-    /// record handed to `onRecord` (which validate-then-drops). A read error / EOF closes the
-    /// connection fd and loops. The loop ends when `accept` fails (the fd was closed by stop()).
-    ///
-    /// ⚠️ THE ACCEPT THREAD IS THE WHOLE HOST'S HOOK PATH — it must never be parked on anything a
-    /// peer controls, because the peer is Claude Code's hook script, which BLOCKS its agent until
-    /// the record is taken. Two ways that used to happen, both fixed here:
-    ///
-    /// - a wedged CLIENT (connected, wrote nothing, never closed) parked the drain `read` forever
-    ///   → `SO_RCVTIMEO` bounds each read, so the connection is dropped instead;
-    /// - a slow SINK parked the loop, because `onRecord` ran inline → delivery moved onto its own
-    ///   serial queue. SERIAL, not concurrent: hook events are a state machine per pane
-    ///   (UserPromptSubmit → PreToolUse → Stop) and arrival order is the only thing that keeps
-    ///   `AgentHookHandler` honest.
-    private func acceptLoop(fd listenFD: Int32) {
-        while true {
-            let conn = accept(listenFD, nil, nil)
-            if conn < 0 { return } // listen fd closed by stop() → exit the thread
-            var timeout = timeval(tv_sec: Self.readTimeoutSeconds, tv_usec: 0)
-            setsockopt(
-                conn, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size),
-            )
-            var record = Data()
-            var chunk = [UInt8](repeating: 0, count: 4096)
-            while true {
-                let n = read(conn, &chunk, chunk.count)
-                if n <= 0 { break } // EOF, error, or the read timeout expired
-                record.append(contentsOf: chunk[0..<n])
-                // Bound a hostile sender: a single hook record is tiny (< 64 KiB); past the
-                // cap, stop reading and drop (the handler caps the label anyway).
-                if record.count > Self.maxRecordBytes { break }
-            }
-            close(conn)
-            // Strip a single trailing newline (the `printf '…\n'` framing).
-            if record.last == 0x0A { record.removeLast() }
-            if !record.isEmpty {
-                let delivered = record
-                let sink = onRecord
-                deliveryQueue.async { sink?(delivered) }
-            }
-        }
-    }
-
-    /// Hard cap on one hook record (validate-then-drop a runaway sender).
-    static let maxRecordBytes = 64 * 1024
-
-    /// How long one connection may go without producing bytes before it is dropped. A hook record
-    /// is one small write from a local process, so seconds is already generous; the point is that
-    /// the ceiling EXISTS.
-    static let readTimeoutSeconds = 2
-}
-
-/// Errors the ``UnixSocketAcceptor`` shim throws on bind/listen failure (the pure handler never
-/// throws — it validate-then-drops). Carried as a typed error so the daemon can log + continue.
-public enum AgentSocketError: Error, Equatable, Sendable {
-    case pathTooLong(String)
-    case socketFailed(Int32)
-    case bindFailed(Int32)
-    case listenFailed(Int32)
-}
-
 /// W10 — the PURE record framing the installed hook POSTs (a `pane=<id>` header line + the raw
 /// hook JSON). Split here so the routing is unit-testable without a socket; the socket shim
 /// only moves bytes. Validate-then-drop: a record with no `pane=` header yields a `nil` pane id
@@ -460,45 +295,132 @@ public enum AgentHookRecord {
     }
 }
 
-/// W10 — the per-HOST hook-listener coordinator: owns ONE ``UnixSocketAcceptor`` and routes each
-/// received record to the registered per-pane sink by its `pane=` header id. The host registers a
-/// sink (`{ paneID → ingest(jsonBytes) }`) when a channel opens and drops it on close. This stays
-/// pane-agnostic at the socket layer (one socket, many panes — the Muxy model) while keeping the
-/// per-pane state (the ``AgentHookHandler``) on the owning ``MuxChannelSession``. Compiled +
-/// code-reviewed (it owns the socket shim); the routing split it depends on is unit-tested via
-/// ``AgentHookRecord``.
+/// W10 — the per-HOST hook-listener coordinator: drains each connection superd hands over and
+/// routes the record to the registered per-pane sink by its `pane=` header id.
+///
+/// The host registers a sink (`{ paneID → ingest(jsonBytes) }`) when a channel opens and drops it on
+/// close. This stays pane-agnostic at the socket layer (one socket, many panes — the Muxy model)
+/// while keeping the per-pane state (the ``AgentHookHandler``) on the owning ``MuxChannelSession``.
+///
+/// ## hostd does not bind this socket, and that is the point
+/// superd does (`rust/slopdesk-superd/src/listeners.rs`), because the address is baked into every
+/// spawned agent's environment at `execve` and can never be corrected — so it has to outlive hostd's
+/// pid. superd accepts and passes the connection over `SCM_RIGHTS`; it reads none of it. Everything
+/// that makes a hook record *mean* something — the Claude state machine, the tool-use ledger, the
+/// dissent watchdog — stays here, in the process that is allowed to be rebuilt.
+///
+/// The framing matches the Muxy/Herdr convention the installed hook POSTs (docs/41 §2.1): one
+/// connection carries one newline-terminated record. This class reads the bytes, strips the trailing
+/// newline, and hands the raw JSON to the pane's sink — the handler does ALL parsing and validation
+/// (validate-then-drop), so a malformed record is dropped without a trap.
+///
+/// ## Two serial queues, and neither may be merged with the other
+/// - `drainQueue` runs the bounded read of one accepted connection. Serial, so connections are
+///   drained in the order superd accepted them, which is the order the agent produced them.
+/// - `deliveryQueue` runs the routing. Serial for the same reason and a stronger one: hook events
+///   are a state machine per pane (UserPromptSubmit → PreToolUse → Stop), and arrival order is the
+///   only thing keeping ``AgentHookHandler`` honest.
+///
+/// Separate, because a slow SINK must not stall the next connection's drain — that is the shape the
+/// old accept loop had, and the reason it had it has not changed.
 public final class AgentHookListener: @unchecked Sendable {
-    private let acceptor = UnixSocketAcceptor()
     private let lock = NSLock()
     /// `paneID → record sink` (the owning channel's `ingestAgentHookRecord`). Guarded by `lock`.
     private var sinks: [String: @Sendable (Data) -> Void] = [:]
+    /// Whether superd confirmed this hostd serves the hook listener. Guarded by `lock`.
+    private var serving = false
 
-    /// A stderr logging hook (forwarded to the socket shim at ``start(path:)``).
+    /// Where one accepted connection is read. See the type docs for why this is not `deliveryQueue`.
+    private let drainQueue = DispatchQueue(label: "com.slopdesk.agent-hook.drain")
+    /// Where the routing runs, off the drain, in arrival order.
+    private let deliveryQueue = DispatchQueue(label: "com.slopdesk.agent-hook.delivery")
+
     public var onLog: (@Sendable (String) -> Void)?
 
-    public init() {
-        acceptor.onRecord = { [weak self] record in self?.route(record) }
-    }
+    public init() {}
 
-    /// Binds the socket at `path` (the value the host exports as `SLOPDESK_SOCKET_PATH`).
-    public func start(path: String) throws {
-        acceptor.onLog = onLog
-        try acceptor.start(path: path)
-    }
-
-    /// Closes the socket + clears all sinks.
-    public func stop() {
-        acceptor.stop()
+    /// Records that superd accepted this hostd's claim on the hook listener.
+    ///
+    /// Called after the `listen` verb succeeds. It only sets the flag ``isListening`` reports —
+    /// nothing is bound here, so there is nothing to fail.
+    public func markServing(_ serving: Bool) {
         lock.lock()
-        sinks.removeAll()
+        self.serving = serving
         lock.unlock()
     }
 
-    /// TRUE while the underlying socket is bound + accepting — the REAL hook-listener state the
-    /// `agentHookStatus` verb (13) reports, so "hooks installed" and "hooks actually flowing" can't
-    /// be conflated on the Settings card. The listener is unconditional, so `false` means the bind
-    /// failed (or the host is an older build that gated it).
-    public var isListening: Bool { acceptor.isListening }
+    /// Takes ownership of one connection superd accepted, and drains it.
+    ///
+    /// Returns immediately: the read happens on ``drainQueue``. That matters because the caller is
+    /// the supervisor client's single read-loop thread, which also carries every pane's output —
+    /// blocking it here for the two seconds a wedged peer is allowed would stall every terminal in
+    /// the host.
+    ///
+    /// The descriptor is closed on every path out, including the ones that read nothing.
+    public func serve(connection descriptor: Int32) {
+        drainQueue.async { [weak self] in
+            guard let self else {
+                close(descriptor)
+                return
+            }
+            drain(descriptor)
+        }
+    }
+
+    /// Closes every sink. There is no socket to close — superd owns it.
+    public func stop() {
+        lock.lock()
+        sinks.removeAll()
+        serving = false
+        lock.unlock()
+    }
+
+    /// TRUE while superd is accepting hook connections on this hostd's behalf — the REAL
+    /// hook-listener state the `agentHookStatus` verb (13) reports, so "hooks installed" and "hooks
+    /// actually flowing" can't be conflated on the Settings card. `false` means superd is absent,
+    /// too old to know the `listen` verb, or could not bind the socket.
+    public var isListening: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return serving
+    }
+
+    /// Reads one connection to EOF and hands the record on. Runs on ``drainQueue``.
+    ///
+    /// ⚠️ This is the whole host's hook path, and it must never park on anything a peer controls:
+    /// the peer is Claude Code's hook binary, which BLOCKS its agent until the record is taken. A
+    /// wedged client — connected, wrote nothing, never closed — would park the drain forever, so
+    /// `SO_RCVTIMEO` bounds each read and the connection is dropped instead.
+    private func drain(_ descriptor: Int32) {
+        defer { close(descriptor) }
+        var timeout = timeval(tv_sec: Self.readTimeoutSeconds, tv_usec: 0)
+        setsockopt(
+            descriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size),
+        )
+        var record = Data()
+        var chunk = [UInt8](repeating: 0, count: 4096)
+        while true {
+            let n = read(descriptor, &chunk, chunk.count)
+            if n <= 0 { break } // EOF, error, or the read timeout expired
+            record.append(contentsOf: chunk[0..<n])
+            // Bound a hostile sender: a single hook record is tiny (< 64 KiB); past the cap, stop
+            // reading and drop (the handler caps the label anyway).
+            if record.count > Self.maxRecordBytes { break }
+        }
+        // Strip a single trailing newline (the `printf '…\n'` framing).
+        if record.last == 0x0A { record.removeLast() }
+        guard !record.isEmpty else { return }
+        let delivered = record
+        deliveryQueue.async { [weak self] in self?.route(delivered) }
+    }
+
+    /// Hard cap on one hook record (validate-then-drop a runaway sender).
+    static let maxRecordBytes = 64 * 1024
+
+    /// How long one connection may go without producing bytes before it is dropped. A hook record
+    /// is one small write from a local process, so seconds is already generous; the point is that
+    /// the ceiling EXISTS.
+    static let readTimeoutSeconds = 2
 
     /// Registers a per-pane sink for `paneID`. Replaces any prior sink for that id (idempotent).
     /// Internal — only ``HostServer`` (same module) registers channels; not a public API.
@@ -543,7 +465,7 @@ public final class AgentHookListener: @unchecked Sendable {
         return Set(sinks.keys)
     }
 
-    /// Drives the REAL record router without binding the socket (testing only — hang-safety:
-    /// the `UnixSocketAcceptor` is never bound in a unit test).
+    /// Drives the REAL record router without a socket (testing only — hang-safety: no unit test
+    /// opens one, and there is nothing here to bind in any case).
     func routeRecordForTesting(_ record: Data) { route(record) }
 }

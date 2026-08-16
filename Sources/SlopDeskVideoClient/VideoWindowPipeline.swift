@@ -1,6 +1,7 @@
 #if canImport(QuartzCore) && canImport(Metal) && canImport(VideoToolbox)
 import CoreGraphics
 import CoreVideo
+import CSlopDeskFFI
 import Foundation
 import OSLog
 import QuartzCore
@@ -910,33 +911,19 @@ final class VideoWindowPipeline {
     /// the feature is on (`reprojector` nil). Main-confined.
     func applyHostScrollOffset(dx: Int16, dy: Int16, bandTop: UInt16, bandBottom: UInt16) {
         guard let reprojector else { return }
-        let normX = Double(dx) / 10000.0
-        let normY = Double(dy) / 10000.0
-        let fps = max(1.0, reprojectionContentFps)
-        let phase: ScrollReprojector.Phase = (dx != 0 || dy != 0) ? .active : .ended
-        reprojector.noteVelocity(vx: normX * fps, vy: normY * fps, phase: phase)
+        let hint = ScrollReprojector.Hint(dx: dx, dy: dy, bandTop: bandTop, bandBottom: bandBottom)
+        let sample = hint.velocity(contentFps: reprojectionContentFps)
+        reprojector.noteVelocity(vx: sample.vx, vy: sample.vy, phase: sample.phase)
         // CHROME-REGION MASK: hand the renderer the moving-content band (normalized) so it warps ONLY
         // the editor body — the static toolbars/tabs/status bar stay put instead of sliding with the
-        // content. A `(0,0)` decay tick (scroll stopped) carries no band; LEAVE the last band so the
-        // residual offset keeps masking as it eases out. `SLOPDESK_REPROJECT_CHROME_MASK=0` forces the
+        // content. A decay tick (scroll stopped) carries no band; LEAVE the last band so the residual
+        // offset keeps masking as it eases out. `SLOPDESK_REPROJECT_CHROME_MASK=0` forces the
         // whole-frame warp for an A/B.
         if !Self.chromeMaskEnabled {
             renderer?.reprojectBand = SIMD2<Float>(0, 0)
-        } else if bandBottom > bandTop {
-            renderer?.reprojectBand = SIMD2<Float>(Float(bandTop) / 10000.0, Float(bandBottom) / 10000.0)
+        } else if let band = hint.band() {
+            renderer?.reprojectBand = SIMD2<Float>(band.top, band.bottom)
         }
-    }
-
-    /// Maps the platform scroll/momentum phase codes to the reprojector's three-phase model. An
-    /// `ended` on EITHER the finger phase (`4`) or the momentum phase (`3`) arms the decay; an active
-    /// momentum (`1`/`2`) coasts; anything else with a live finger is active.
-    nonisolated static func reprojectionPhase(scrollPhase: UInt8, momentumPhase: UInt8) -> ScrollReprojector.Phase {
-        // CGMomentumScrollPhase: 1 begin, 2 continue, 3 end.
-        if momentumPhase == 3 { return .ended }
-        if momentumPhase == 1 || momentumPhase == 2 { return .momentum }
-        // CGScrollPhase: 1 began, 2 changed, 4 ended, 8 cancelled.
-        if scrollPhase == 4 || scrollPhase == 8 { return .ended }
-        return .active
     }
 
     func key(keyCode: UInt16, down: Bool, modifiers: InputModifiers) {
@@ -1089,10 +1076,21 @@ final class VideoWindowPipeline {
     /// interval. `SLOPDESK_INPUT_HZ` (1…1000 Hz) wins over `SLOPDESK_INPUT_INTERVAL_MS` (1…1000 ms); any
     /// missing / unparseable / out-of-range value falls through to the next, finally to 1/120s
     /// (~8.3ms). The clamp bounds wire spam (≤1000Hz) and pathological near-zero cadence (≥1Hz).
+    ///
+    /// The knobs cross as their RAW bytes, and unset crosses as empty: the precedence and both
+    /// clamps are one rule, in `client_input`, and a near side that pre-parsed the values would be
+    /// applying half of it — an out-of-range Hz has to fall THROUGH to the millisecond knob rather
+    /// than clamp and win.
     nonisolated static func resolveMotionInterval(hz: String?, ms: String?) -> TimeInterval {
-        if let hz, let v = Double(hz), v >= 1, v <= 1000 { return 1.0 / v }
-        if let ms, let v = Double(ms), v >= 1, v <= 1000 { return v / 1000.0 }
-        return 1.0 / 120.0
+        let rate = Array((hz ?? "").utf8)
+        let span = Array((ms ?? "").utf8)
+        return rate.withUnsafeBufferPointer { rateBytes in
+            span.withUnsafeBufferPointer { spanBytes in
+                slopdesk_input_motion_interval(
+                    rateBytes.baseAddress, rateBytes.count, spanBytes.baseAddress, spanBytes.count,
+                )
+            }
+        }
     }
 
     /// Starts the @MainActor pump that flushes the latest deferred pointer motion every

@@ -18,7 +18,6 @@
 import AppKit
 import SFSafeSymbols
 import SlopDeskTerminal
-import SlopDeskTransport
 import SlopDeskWorkspaceModel
 import SwiftUI
 import XCTest

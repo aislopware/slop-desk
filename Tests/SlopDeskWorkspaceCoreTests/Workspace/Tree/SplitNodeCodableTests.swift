@@ -1,7 +1,6 @@
 import Foundation
 import SlopDeskWorkspaceModel
 import XCTest
-@testable import SlopDeskWorkspaceCore
 
 /// Decode-time repair + round-trip stability for ``SplitNode`` (W1, docs/42 Phase C1).
 ///

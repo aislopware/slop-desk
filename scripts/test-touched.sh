@@ -53,6 +53,14 @@ elif [[ ! -f .build/pre-push-green-tree ]] ||
   # one full green on a clean tree writes the marker and ends the penalty.
   echo "test-touched: no full-green baseline — running the FULL suite to establish one"
   selection=FULL
+elif [[ "$(cat ThirdParty/slopdesk-ffi/sources.sha256 2> /dev/null || true)" != "$(cat .build/pre-push-green-ffi 2> /dev/null || true)" ]]; then
+  # The FFI artifact moved since the last full green. No pathspec below can see that — `rust/` is
+  # untracked, so the diff against the baseline TREE is empty however many crates changed — and the
+  # dependency closure cannot help either, since every Swift target that links the xcframework does
+  # so through the package graph rather than through a changed file. So the whole suite is the
+  # selection, for the reason `pre-push-test.sh` carries the stamp in its cache key at all.
+  echo "test-touched: the FFI artifact changed — running the FULL suite"
+  selection=FULL
 else
   base=$(cat .build/pre-push-green-tree)
 
@@ -130,9 +138,14 @@ case ${selection} in
   FULL)
     echo "test-touched: change set escalates to the FULL suite"
     swift test --parallel --skip-build
-    # Mirror pre-push-test.sh: a full green on a clean tree warms the pre-push cache.
-    if [[ -z "$(git status --porcelain -- Package.swift Sources Tests Apps golden 2> /dev/null)" ]]; then
+    # Mirror pre-push-test.sh: a full green on a clean tree warms the pre-push cache. BOTH halves of
+    # its key, or the tree marker alone would claim a green that the artifact half then denies.
+    # Same input list as `tested_inputs_clean` over there, `scripts/` included — the two write the
+    # same marker, so a disagreement about what counts as clean is a disagreement about what the
+    # marker means.
+    if [[ -z "$(git status --porcelain -- Package.swift Sources Tests Apps golden scripts 2> /dev/null)" ]]; then
       git rev-parse 'HEAD^{tree}' > .build/pre-push-green-tree
+      cat ThirdParty/slopdesk-ffi/sources.sha256 2> /dev/null > .build/pre-push-green-ffi || true
     fi
     ;;
   NONE)

@@ -1,5 +1,3 @@
-import Foundation
-
 /// Pure TCP-port validation/normalization for the host UI (R16 HOSTVIEW-1).
 ///
 /// The host port field is a free-form, persisted `Int`, but a TCP port is `0...65535` (where `0`

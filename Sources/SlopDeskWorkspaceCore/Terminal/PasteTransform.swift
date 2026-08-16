@@ -1,4 +1,5 @@
 import Foundation
+import SlopDeskWorkspaceModel
 
 // MARK: - "Paste as…" clipboard transforms
 
@@ -36,45 +37,14 @@ public enum PasteTransform {
     /// returned verbatim; anything else is wrapped in single quotes, with each embedded single-quote emitted
     /// as `'\''` (close-quote, backslash-escaped quote, reopen-quote). The empty string becomes `''`.
     ///
-    /// The "safe" set mirrors `shlex` — `[A-Za-z0-9_@%+=:,./-]` — so a typical file path with spaces becomes
-    /// `'…'` and `$`, `;`, `&`, `|`, `*`, `(`, `)`, backticks etc. are neutralised as literals.
-    public static func shellEscaped(_ text: String) -> String {
-        guard !text.isEmpty else { return "''" }
-        if text.unicodeScalars.allSatisfy(isShellSafe) { return text }
-        // Wrap in single quotes; an embedded ' closes the quote, emits an escaped quote, then reopens.
-        let escaped = text.replacingOccurrences(of: "'", with: "'\\''")
-        return "'" + escaped + "'"
-    }
+    /// A face over ``ShellQuoting/shlexQuote(_:)``, which reads the safe set in Rust — the same rule the
+    /// `cd` a jump emits and a template's opening line are quoted by.
+    public static func shellEscaped(_ text: String) -> String { ShellQuoting.shlexQuote(text) }
 
     /// Base64-encodes raw file bytes for ferrying binary content over a plain-text session. Empty input
     /// yields the empty string. The caller reads the file defensively (an unreadable file never reaches
     /// here) — this is a total function over whatever bytes it is handed.
     public static func base64(ofFileBytes bytes: Data) -> String {
         bytes.base64EncodedString()
-    }
-
-    // MARK: Private
-
-    /// Whether `s` is safe to leave unquoted in a POSIX shell word (the `shlex` safe set).
-    private static func isShellSafe(_ s: Unicode.Scalar) -> Bool {
-        switch s {
-        case "a"..."z",
-             "A"..."Z",
-             "0"..."9":
-            true
-        case "@",
-             "%",
-             "+",
-             "=",
-             ":",
-             ",",
-             ".",
-             "/",
-             "-",
-             "_":
-            true
-        default:
-            false
-        }
     }
 }

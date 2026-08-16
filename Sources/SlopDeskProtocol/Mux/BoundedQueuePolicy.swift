@@ -1,30 +1,31 @@
-import Foundation
+import CSlopDeskFFI
 
 /// Pure admit / backpressure decision for a BOUNDED per-channel producer queue.
 ///
-/// This is the decider behind the host PTY-read backpressure (TCP-mux S2 scope #4): the
-/// per-channel relay reads the PTY into a queue and drains it onto the channel's send
-/// window. Without a bound, the per-channel credit window just moves the unboundedness
-/// one hop upstream — a `yes | head -c 50M` flood is buffered whole in the host's memory
-/// instead of on the socket. The fix is to BOUND the queue and pause the PTY read when it
-/// is full, so the flood backpressures all the way to the producer (the kernel's PTY
-/// buffer), exactly as a bounded channel would.
+/// This is the decider behind the host PTY-read backpressure: the per-channel relay reads the PTY
+/// into a queue and drains it onto the channel's send window. Without a bound, the per-channel
+/// credit window just moves the unboundedness one hop upstream — a `yes | head -c 50M` flood is
+/// buffered whole in the host's memory instead of on the socket. The fix is to BOUND the queue and
+/// pause the PTY read when it is full, so the flood backpressures all the way to the producer (the
+/// kernel's PTY buffer), exactly as a bounded channel would.
 ///
-/// `BoundedQueuePolicy` owns only the byte-accounting + the admit/pause/resume DECISION
-/// (yamux / HTTP-2 windows backpressure the same way: stop reading the source when the
-/// downstream window + buffer are full). No IO, no clock, no actual queue storage — so it
-/// is trivially unit-testable in isolation (same discipline as ``FlowCreditPolicy``).
+/// The byte accounting and the pause/resume decision live in `rust/slopdesk-wire`'s `mux::flow`;
+/// this crosses by value for the reason ``FlowCreditPolicy`` does. No IO, no clock, no actual queue
+/// storage.
 public struct BoundedQueuePolicy: Sendable, Equatable {
+    /// The two numbers, in the layout the codec reads them in.
+    private var state: SlopDeskBoundedQueue
+
     /// The high-water mark in bytes: once outstanding (enqueued-not-yet-sent) bytes reach
     /// this, the producer (PTY read) must PAUSE.
-    public private(set) var capacity: Int
+    public var capacity: Int { Int(state.capacity) }
+
     /// Bytes currently enqueued and not yet sent. Never negative.
-    public private(set) var outstanding: Int
+    public var outstanding: Int { Int(state.outstanding) }
 
     /// Creates a queue policy with `capacity` bytes of buffering (clamped non-negative).
     public init(capacity: Int) {
-        self.capacity = max(0, capacity)
-        outstanding = 0
+        state = slopdesk_bounded_queue_new(Int64(capacity))
     }
 
     /// Re-sizes the high-water mark IN PLACE, preserving `outstanding` (the attached ↔ detached
@@ -32,20 +33,19 @@ public struct BoundedQueuePolicy: Sendable, Equatable {
     /// bound is capacity for "output while away", so a pane's agent keeps running instead of
     /// stalling on a full PTY). The caller re-derives `isFull` after this.
     public mutating func setCapacity(_ newCapacity: Int) {
-        capacity = max(0, newCapacity)
+        slopdesk_bounded_queue_set_capacity(&state, Int64(newCapacity))
     }
 
     /// Whether the producer should be PAUSED right now (queue at/over capacity).
     public var isFull: Bool {
-        outstanding >= capacity
+        slopdesk_bounded_queue_full(state)
     }
 
     /// Records that `bytes` were enqueued. Returns `true` if the queue is now full and the
     /// producer should pause AFTER this enqueue. A zero/negative enqueue admits nothing.
     @discardableResult
     public mutating func enqueue(_ bytes: Int) -> Bool {
-        outstanding += max(0, bytes)
-        return isFull
+        slopdesk_bounded_queue_enqueue(&state, Int64(bytes))
     }
 
     /// Records that `bytes` were dequeued (sent). Returns `true` if the queue has now drained
@@ -53,8 +53,10 @@ public struct BoundedQueuePolicy: Sendable, Equatable {
     /// double-dequeue can never drive accounting negative.
     @discardableResult
     public mutating func dequeue(_ bytes: Int) -> Bool {
-        let wasFull = isFull
-        outstanding = max(0, outstanding - max(0, bytes))
-        return wasFull && !isFull
+        slopdesk_bounded_queue_dequeue(&state, Int64(bytes))
+    }
+
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.state.capacity == rhs.state.capacity && lhs.state.outstanding == rhs.state.outstanding
     }
 }

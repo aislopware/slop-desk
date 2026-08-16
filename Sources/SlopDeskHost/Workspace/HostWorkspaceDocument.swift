@@ -220,12 +220,6 @@ public actor HostWorkspaceDocument {
         }
     }
 
-    /// Deletes a pane OBJECT — every field, topology included.
-    @discardableResult
-    public func removePane(_ paneID: UUID) -> Bool {
-        mutate { $0.removeObject(kind: WorkspaceObjectKind.pane.rawValue, objectID: paneID) }
-    }
-
     /// Reaps every pane object the host no longer knows about.
     ///
     /// A pane that vanished without a close — a child that exited, a detached session the store

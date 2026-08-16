@@ -1,6 +1,5 @@
 import XCTest
 @testable import SlopDeskClientUI
-@testable import SlopDeskWorkspaceCore
 
 /// The command palette's "Read Only" row + its spec-accepted search synonyms.
 /// `terminal-features__read-only-mode.md` §Behaviors: the palette accepts "read only" plus `readonly`,

@@ -64,10 +64,11 @@ final class SecretPasteClassifierTests: XCTestCase {
         XCTAssertFalse(SecretPasteClassifier.looksSecret("short"), "too short")
     }
 
-    func testEntropyOrdering() {
-        let repeated = SecretPasteClassifier.shannonEntropyPerChar("aaaaaaaaaaaaaaaa")
-        let mixed = SecretPasteClassifier.shannonEntropyPerChar("aB3dE6fG9hJ2kL5m")
-        XCTAssertEqual(repeated, 0, accuracy: 1e-9, "a single repeated char has zero entropy")
-        XCTAssertGreaterThan(mixed, 3.0, "a mixed random token has high per-char entropy")
+    /// The entropy measure itself is pinned in `rust/slopdesk-workspace::secrets` — including that it
+    /// does not depend on iteration order, which is a property this suite could not state. What
+    /// reaches a caller is the verdict, and that is what the assertions above read.
+    func testEntropyDrivesTheVerdictAndNotTheOtherWayAround() {
+        XCTAssertTrue(SecretPasteClassifier.looksSecret("aB3dE6fG9hJ2kL5mN8pQ1rS4tU7vW0xY"))
+        XCTAssertFalse(SecretPasteClassifier.looksSecret("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"))
     }
 }

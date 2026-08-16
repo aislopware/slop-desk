@@ -10,6 +10,11 @@ import Foundation
 ///
 /// The production `NWConnection`-backed conformer lives in ``NWByteChannel`` (this
 /// file). Tests use ``LoopbackByteChannel`` for a deterministic round-trip.
+///
+/// **This is the CLIENT end only.** The serving end is `slopdesk-inspectord` (`docs/54`),
+/// which the client dials directly on `terminalPort + 1` — so there is no `InspectorSource`
+/// here any more, and adding one back would put the host half of this protocol in two
+/// languages.
 public protocol ByteChannel: Sendable {
     /// Writes raw bytes (a complete frame). Throws on transport failure.
     func send(_ data: Data) async throws
@@ -17,53 +22,6 @@ public protocol ByteChannel: Sendable {
     var inbound: AsyncThrowingStream<Data, Error> { get }
     /// Closes the channel.
     func close()
-}
-
-/// Host side: serialises ``InspectorEvent``s onto a ``ByteChannel`` (NWConnection #2).
-///
-/// Read-only: it only *sends* events (host → client) and, optionally, reads a
-/// lightweight `.subscribe` control from the client. It never produces any signal that
-/// reaches the agent.
-public actor InspectorSource {
-    private let channel: ByteChannel
-
-    public init(channel: ByteChannel) {
-        self.channel = channel
-    }
-
-    /// Sends one event frame to the client.
-    public func send(_ event: InspectorEvent) async throws {
-        try await channel.send(InspectorCodec.encode(.event(event)))
-    }
-
-    /// Sends a keep-alive frame (so a quiet workflow run reads as alive).
-    public func sendKeepAlive() async throws {
-        try await channel.send(InspectorCodec.encode(.keepAlive))
-    }
-
-    /// Pumps an ``InspectorEvent`` stream to the client, in order, until the stream ends
-    /// **or a send fails**. A failed send means the peer is gone (dead TCP), so the pump
-    /// stops consuming immediately — same semantics as the hand-rolled pump in
-    /// `InspectorServer.serve`. (Pre-fix `try? await send` swallowed the failure and kept
-    /// draining a live stream forever for a peer that could never receive it.)
-    public func stream(_ events: AsyncStream<InspectorEvent>) async {
-        for await event in events {
-            do {
-                try await send(event)
-            } catch {
-                return
-            }
-        }
-    }
-
-    /// Inbound lightweight control from the client (subscribe/replay-from only).
-    public func controls() -> AsyncThrowingStream<InspectorWireMessage, Error> {
-        decodeStream(channel.inbound)
-    }
-
-    public func close() {
-        channel.close()
-    }
 }
 
 /// Client side: deserialises a ``ByteChannel`` into an ``InspectorEvent`` stream for
@@ -79,7 +37,7 @@ public actor InspectorClient {
     /// Requests (re)delivery of events. `fromSeq == 0` = full replay; a higher value
     /// resumes after a reconnect. Read-only control.
     public func subscribe(fromSeq: Int64 = 0) async throws {
-        try await channel.send(InspectorCodec.encode(.subscribe(fromSeq: fromSeq)))
+        try await channel.send(InspectorCodec.encodeSubscribe(fromSeq: fromSeq))
     }
 
     /// The decoded inbound stream, filtered to ``InspectorEvent`` (keep-alives are
@@ -132,7 +90,7 @@ private func decodeStream(
 ) -> AsyncThrowingStream<InspectorWireMessage, Error> {
     AsyncThrowingStream { continuation in
         let task = Task {
-            var decoder = InspectorFrameDecoder()
+            let decoder = InspectorFrameDecoder()
             do {
                 for try await chunk in inbound {
                     decoder.append(chunk)

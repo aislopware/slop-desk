@@ -1,6 +1,13 @@
+import CSlopDeskFFI
 import Foundation
+import SlopDeskArena
 
-// MARK: - Folders frecency (pure scoring)
+// MARK: - Folders frecency (the Swift face of `rust/slopdesk-workspace`'s `frecency`)
+
+// The scorer, the bucket weights and the tie-breaking order are the crate's — one function rather
+// than three sorts, because the folder rail, the open-quickly overlay, the store's own cap and
+// `slopdesk jump` all order the same set and must agree. This module lends the database across and
+// reads the answer back.
 
 /// One persisted folder record: a visited working directory, how often it has been visited, and when it
 /// was last visited. The store keys entries by ``path``; ``accessCount`` is the frequency term and
@@ -25,86 +32,95 @@ public struct FolderEntry: Codable, Equatable, Hashable, Sendable {
 }
 
 /// The PURE frecency scorer — `frequency × recency`, used to rank visited folders (frequently-used
-/// folders ranked by a built-in frecency score). No IO, no SwiftUI, no store: a caseless namespace so
-/// it stays headlessly testable and is the single source of truth for the ordering the store enforces.
+/// folders ranked by a built-in frecency score). A caseless namespace over the crate's `frecency`, so
+/// the ordering the store enforces and the ordering `slopdesk jump` searches are the same one.
 ///
 /// ### Integer / ordered math only (CLAUDE.md core convention #2)
-/// The recency term is a small set of **integer** bucket weights keyed on the entry's age, and the score is
-/// an `Int` multiply — there is no FMA and no bare `</>` on a NaN-capable float. The one place a `Double`
-/// appears is the age in seconds (`Date.timeIntervalSince`); it is immediately guarded for finiteness and
-/// reduced to whole `Int` seconds (clamped into a sane range so the `Int()` conversion can never trap),
-/// after which all comparisons are NaN-free `Int`/`Date` ordered comparisons. A corrupt/non-finite date can
-/// therefore never crash nor out-rank a real entry — it scores as ancient.
+/// The recency term is a small set of **integer** bucket weights keyed on the entry's age, and the score
+/// is an integer multiply — there is no FMA and no bare `</>` on a NaN-capable float. The one place a
+/// `Double` appears is the age in seconds, which the crate guards for finiteness and clamps with ordered
+/// `max`/`min` before reducing it to whole seconds. A corrupt/non-finite date can therefore never crash
+/// nor out-rank a real entry: it scores as ancient.
 public enum FolderFrecency {
     // MARK: Recency bucket weights (public — the tests pin the bucketing to these named constants)
 
     /// Visited within the last hour — the freshest, highest-weight bucket.
-    public static let weightHour = 16
+    public static let weightHour = Int(slopdesk_folder_weight(SLOPDESK_FOLDER_WEIGHT_HOUR))
     /// Visited within the last day.
-    public static let weightDay = 8
+    public static let weightDay = Int(slopdesk_folder_weight(SLOPDESK_FOLDER_WEIGHT_DAY))
     /// Visited within the last week.
-    public static let weightWeek = 4
+    public static let weightWeek = Int(slopdesk_folder_weight(SLOPDESK_FOLDER_WEIGHT_WEEK))
     /// Visited within the last month (~30 days).
-    public static let weightMonth = 2
+    public static let weightMonth = Int(slopdesk_folder_weight(SLOPDESK_FOLDER_WEIGHT_MONTH))
     /// Older than a month — the lowest, "stale" weight (still > 0 so a frequent old folder is not erased).
-    public static let weightStale = 1
-
-    // MARK: Bucket thresholds (whole seconds — Int domain, no NaN)
-
-    private static let hourSeconds = 3600
-    private static let daySeconds = 86400
-    private static let weekSeconds = 604_800
-    private static let monthSeconds = 2_592_000 // 30 days
-
-    /// An upper clamp on the age before the `Double → Int` reduction, so an absurd far-future `lastAccess`
-    /// (or a corrupt huge interval) can never trap the `Int(...)` conversion. ~317 years of seconds.
-    private static let maxAgeSeconds = 10_000_000_000
-
-    /// A clamp on the frequency term so `frequency × weight` cannot overflow `Int` for a hand-edited absurd
-    /// count. Bounded inputs keep the score a well-defined non-negative `Int`.
-    private static let maxScoredFrequency = 1_000_000
+    public static let weightStale = Int(slopdesk_folder_weight(SLOPDESK_FOLDER_WEIGHT_STALE))
 
     // MARK: Scoring
 
-    /// The recency weight for an entry whose `lastAccess` is `ageSeconds = now - lastAccess` old.
+    /// The recency weight for an entry whose `lastAccess` is `now - lastAccess` old.
     /// Returns a small integer bucket weight; ``weightStale`` for a non-finite age (validate-then-default).
     public static func recencyWeight(now: Date, lastAccess: Date) -> Int {
-        let ageSeconds = now.timeIntervalSince(lastAccess)
-        // Validate-then-default: a non-finite interval (NaN/inf from a corrupt date) is treated as ancient.
-        // After this guard `ageSeconds` is finite (no NaN), so the ordered comparisons below are well-defined.
-        guard ageSeconds.isFinite else { return weightStale }
-        // A future-dated `lastAccess` (clock skew → negative age) counts as "just now". `isLess(than:)` is the
-        // IEEE ordered predicate (NaN-safe); NaN is already excluded.
-        let nonNegative = ageSeconds.isLess(than: 0) ? 0 : ageSeconds
-        // Clamp above the max age before the Int reduction so `Int(...)` can never trap on an absurd interval.
-        let bounded = nonNegative.isLess(than: Double(maxAgeSeconds)) ? nonNegative : Double(maxAgeSeconds)
-        let age = Int(bounded) // finite, in [0, maxAgeSeconds] → safe, NaN-free Int from here on
-        if age < hourSeconds { return weightHour }
-        if age < daySeconds { return weightDay }
-        if age < weekSeconds { return weightWeek }
-        if age < monthSeconds { return weightMonth }
-        return weightStale
+        Int(slopdesk_folder_recency_weight(
+            now.timeIntervalSinceReferenceDate, lastAccess.timeIntervalSinceReferenceDate,
+        ))
     }
 
     /// The frecency score = `frequency × recencyWeight`. A non-positive / corrupt frequency clamps to a
     /// non-negative bounded `Int`, so the score is always a well-defined `Int ≥ 0` and ordering never inverts.
     public static func score(entry: FolderEntry, now: Date) -> Int {
-        let frequency = max(0, min(entry.accessCount, maxScoredFrequency)) // Int clamp — no NaN, no overflow
-        return frequency * recencyWeight(now: now, lastAccess: entry.lastAccess)
+        Int(slopdesk_folder_score(
+            Int64(clamping: entry.accessCount),
+            entry.lastAccess.timeIntervalSinceReferenceDate,
+            now.timeIntervalSinceReferenceDate,
+        ))
     }
 
     /// Entries ordered by descending frecency. Ties (equal score) break NEWER-first (so the cap keeps the
     /// freshest), then by `path` ascending for a fully deterministic, stable order. `limit` (clamped to
     /// `≥ 0`) keeps only the top-N; `nil` returns every entry.
+    ///
+    /// The rank comes back as the caller's OWN indices — a rank is a permutation of what was just lent,
+    /// so the paths never re-cross the door.
     public static func ranked(entries: [FolderEntry], now: Date, limit: Int? = nil) -> [FolderEntry] {
-        let scored = entries.map { (entry: $0, score: score(entry: $0, now: now)) }
-        let sorted = scored.sorted { lhs, rhs in
-            if lhs.score != rhs.score { return lhs.score > rhs.score }
-            if lhs.entry.lastAccess != rhs.entry.lastAccess { return lhs.entry.lastAccess > rhs.entry.lastAccess }
-            return lhs.entry.path < rhs.entry.path
-        }.map(\.entry)
-        guard let limit else { return sorted }
-        let clamped = max(0, limit)
-        return Array(sorted.prefix(clamped))
+        let bound = Int64(limit.map { Swift.max(0, $0) } ?? -1)
+        let order: [UInt32] = lent(entries) { records, arena in
+            let needed = slopdesk_folder_ranked(
+                records.baseAddress, records.count, arena.baseAddress, arena.count,
+                now.timeIntervalSinceReferenceDate, bound, nil, 0,
+            )
+            guard needed > 0 else { return [] }
+            var indices = [UInt32](repeating: 0, count: needed)
+            let written = indices.withUnsafeMutableBufferPointer { out in
+                slopdesk_folder_ranked(
+                    records.baseAddress, records.count, arena.baseAddress, arena.count,
+                    now.timeIntervalSinceReferenceDate, bound, out.baseAddress, out.count,
+                )
+            }
+            return written == needed ? indices : []
+        }
+        return order.compactMap { index in entries.indices.contains(Int(index)) ? entries[Int(index)] : nil }
+    }
+
+    // MARK: - Lending a database
+
+    /// Lends `entries` as a record array plus the one arena their paths live in, for exactly one call.
+    /// Public because a jump lends the same database to the same door — ``JumpResolver`` is the only
+    /// other caller, and a second copy of this marshalling is exactly the drift the port removes.
+    public static func lent<Answer>(
+        _ entries: [FolderEntry],
+        _ ask: (UnsafeBufferPointer<SlopDeskFolderEntry>, UnsafeRawBufferPointer) -> Answer,
+    ) -> Answer {
+        var arena = [UInt8]()
+        let records = entries.map { entry -> SlopDeskFolderEntry in
+            let path = ArenaText.intern(entry.path, into: &arena)
+            return SlopDeskFolderEntry(
+                path: SlopDeskByteSpan(offset: path.offset, length: path.length),
+                access_count: Int64(clamping: entry.accessCount),
+                last_access: entry.lastAccess.timeIntervalSinceReferenceDate,
+            )
+        }
+        return records.withUnsafeBufferPointer { records in
+            arena.withUnsafeBytes { arena in ask(records, arena) }
+        }
     }
 }

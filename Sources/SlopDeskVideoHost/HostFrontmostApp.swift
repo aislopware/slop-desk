@@ -82,7 +82,7 @@ public enum HostFrontmostApp {
     /// normal-level window is on screen at all (bare desktop, login/lock transitions, display
     /// asleep) — deliberately NO `NSWorkspace` fallback: in this daemon that snapshot is FROZEN
     /// at first access (the very bug this type exists to fix), and the no-window case is
-    /// precisely where a fallback would fire. `nil` flows into `SwipeNavPolicy.isNavigable`'s
+    /// precisely where a fallback would fire. `nil` flows into `SwipeNavHostConfig.eligible`'s
     /// nil ⇒ false at every caller, so both the status push and the fire path fail CLOSED
     /// (chip dark, no chord) instead of fail-frozen.
     public static func bundleID() -> String? {

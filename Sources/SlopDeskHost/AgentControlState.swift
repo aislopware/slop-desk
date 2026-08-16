@@ -1,4 +1,3 @@
-import Foundation
 import SlopDeskAgentDetect
 
 /// The pure mapping between the host-side ``ClaudeStatus`` (state machine verdict) and the

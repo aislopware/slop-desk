@@ -1,7 +1,6 @@
 import Foundation
 import SlopDeskWorkspaceModel
 import XCTest
-@testable import SlopDeskWorkspaceCore
 
 /// The pure launch-preset model + expansion (docs/42 W14 #9, Warp launch-configuration parity): a preset
 /// → the pane spec(s) + the keystrokes to type after each pane connects. The working directory lives on

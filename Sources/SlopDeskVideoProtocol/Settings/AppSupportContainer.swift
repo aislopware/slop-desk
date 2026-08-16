@@ -9,7 +9,7 @@ import Foundation
 /// set, so a process launched with `HOME=/tmp/scratch` still writes
 /// `/Users/<real>/Library/Application Support/SlopDesk/`. Four automation gates isolated their host
 /// daemons with `HOME` alone and believed the container went with it; what actually happened is that
-/// each run swept the developer's own scrollback journals (``ScrollbackJournalStore.sweep`` keeps
+/// each run swept the developer's own scrollback journals (the journal sweep keeps
 /// the newest 256) and left its own behind.
 ///
 /// `CFFIXED_USER_HOME` does move it, and the CLIENT gates use exactly that. It is the wrong tool for

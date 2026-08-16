@@ -1,5 +1,3 @@
-import Foundation
-
 /// What a mux channel is FOR (`MuxChannelOpen.channelClass`, docs/45 §5.1).
 ///
 /// The field has been encoded, decoded and golden-pinned since the mux landed — and read nowhere.

@@ -144,8 +144,6 @@ public struct DevicePreferencesStore: @unchecked Sendable {
     public func save(_ preferences: DevicePreferences) throws {
         let directory = fileURL.deletingLastPathComponent()
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(preferences).write(to: fileURL, options: [.atomic])
+        try SidecarJSON.encoder().encode(preferences).write(to: fileURL, options: [.atomic])
     }
 }

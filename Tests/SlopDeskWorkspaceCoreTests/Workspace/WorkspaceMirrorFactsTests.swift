@@ -2,7 +2,6 @@ import Foundation
 import SlopDeskProtocol
 import SlopDeskWorkspaceModel
 import XCTest
-@testable import SlopDeskClient
 @testable import SlopDeskWorkspaceCore
 
 /// The per-pane facts a client reads back OUT of the workspace document.

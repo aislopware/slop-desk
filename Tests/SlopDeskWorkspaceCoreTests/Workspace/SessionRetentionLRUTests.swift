@@ -1,6 +1,5 @@
 import SlopDeskWorkspaceModel
 import XCTest
-@testable import SlopDeskClient
 @testable import SlopDeskWorkspaceCore
 
 /// R-lifecycle #3: the keep-mounted invariant must span SESSIONS, not just the active session's tabs — else a

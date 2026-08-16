@@ -1,7 +1,6 @@
 import CoreGraphics
 import SlopDeskWorkspaceModel
 import XCTest
-@testable import SlopDeskWorkspaceCore
 
 /// Pure unit tests for ``Canvas`` queries + mutations + camera/arrange (docs/30 §3, §9.1). No client,
 /// no async, no view — the ~85% pure seam. Every op returns a NEW value; these pin the invariants

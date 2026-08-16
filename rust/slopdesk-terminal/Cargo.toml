@@ -1,0 +1,118 @@
+# `slopdesk-terminal` — the CLIENT-side reading of the host→client PTY byte stream: which screen the
+# terminal is presenting, where the shell's command boundaries are, and which bytes of the output are
+# merely the PTY echoing back what the compose box just typed.
+#
+# ## Why this is not `slopdesk-screend` or `slopdesk-wire`
+# All three read bytes, and the line between them is WHOSE bytes and for WHOM. screend reads a
+# rendered screen to answer "what is the agent doing" for the HOST. `slopdesk-wire` reads frames and
+# retains them for the wire. This crate reads the raw output stream on the CLIENT to decide what the
+# input surface should offer the human — an alt-screen flip changes the compose box's whole mode, and
+# an unrecognised OSC 133 changes where a command block begins. It never sees a frame and never sees
+# a manifest.
+#
+# ## Why its own workspace
+# The same reason `slopdesk-workspace`, `slopdesk-agent` and `slopdesk-screend` are: cargo profiles
+# are workspace-global, and the root workspace's profile is tuned for the hook binary
+# (`opt-level = "z"`, `panic = "abort"`). The tracker sits in the terminal-output ingest hot path and
+# wants `opt-level = 3`; a panic in it must never abort a client.
+#
+# ## No EXTERNAL dependencies, on purpose
+# Every byte this crate parses is UNTRUSTED — it is whatever the foreground program on the far side
+# of a PTY chose to write, including deliberately malformed escape sequences. `forbid(unsafe_code)`
+# plus the panic/indexing denials below are the contract; a supply chain would be a hole in it. A
+# path dependency on a sibling under the same contract is not that hole — `slopdesk-wire` settled
+# the same question when it took `slopdesk-workspace` to stop spelling six enums twice.
+
+[workspace]
+resolver = "3"
+
+[package]
+name = "slopdesk-terminal"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Client-side terminal-stream reading for slopdesk — mode, command marks and echo dedup"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[lib]
+name = "slopdesk_terminal"
+path = "src/lib.rs"
+
+[dependencies]
+# `escape::percent_decoded`, which the link scanner and superd's OSC 7 reader both need and both
+# used to spell. That crate is where the shared byte scanners live — `vtscan` and `width` are
+# already there, and this is one of those.
+slopdesk-sanitize = { path = "../slopdesk-sanitize" }
+
+# Every byte of terminal output passes through the tracker, so this is a hot-path library — the same
+# shape as the wire crate rather than the hook's startup-tuned profile.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+debug = 1
+strip = "debuginfo"
+
+# ---------------------------------------------------------------------------- #
+# Same maximal-strict philosophy as `rust/Cargo.toml`, `rust/slopdesk-wire/Cargo.toml`,
+# `rust/slopdesk-workspace/Cargo.toml` and `rust/slopdesk-agent/Cargo.toml`. A literal copy rather
+# than inherited, because inheriting would mean being a member, which is what the profile forbids.
+[lints.rust]
+unsafe_code = "forbid"
+
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+missing_copy_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+single_use_lifetimes = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+variant_size_differences = "deny"
+elided_lifetimes_in_paths = "deny"
+let_underscore_drop = "deny"
+non_ascii_idents = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+indexing_slicing = "deny"
+integer_division = "deny"
+exit = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+mem_forget = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+verbose_file_reads = "deny"
+str_to_string = "deny"
+empty_structs_with_brackets = "deny"
+if_then_some_else_none = "deny"
+lossy_float_literal = "deny"
+try_err = "deny"
+
+# Disabled, with a reason:
+# - `multiple_crate_versions` (cargo): a duplicate deep in a dev-dependency's tree is not ours.
+# - `suboptimal_flops` / `imprecise_flops` (nursery): both want `f64::mul_add`, which is exactly
+#   the fused multiply-add `CLAUDE.md` forbids.
+multiple_crate_versions = "allow"
+suboptimal_flops = "allow"
+imprecise_flops = "allow"

@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 
 /// Swipe-nav status push for the cursor side-channel (type=3): whether the HOST's ⌘[/⌘]
@@ -50,57 +51,73 @@ public struct SwipeNavStatusMessage: Equatable, Sendable {
         self.historyKnown = historyKnown
     }
 
+    /// Lifts one flat record back into the message. Every producer of the record is a door in
+    /// `slopdesk-ffi` — the decode below and the host's operating-point config — so this is the
+    /// one place the six fields are named on this side.
+    public init(wire flat: SlopDeskSwipeNavStatus) {
+        self.init(
+            eligible: flat.eligible, slowTier: flat.slow_tier, fireTravel: flat.fire_travel,
+            canGoBack: flat.can_go_back, canGoForward: flat.can_go_forward,
+            historyKnown: flat.history_known,
+        )
+    }
+
     /// Whether the chip may show for a swipe in `direction`: known-dead history suppresses the
     /// affordance, UNKNOWN fails open. The HOST's fire path deliberately does NOT apply this —
     /// ⌘[/⌘] into an app that cannot navigate is a validated-menu no-op, so a stale-disabled
     /// read can only ever cost feedback, never a navigation (see DECISIONS, history gate).
     public func allowsChip(_ direction: SwipeNavRecognizer.Direction) -> Bool {
-        guard historyKnown else { return true }
-        return direction == .back ? canGoBack : canGoForward
+        slopdesk_swipe_nav_allows_chip(wire, direction == .back ? 0 : 1)
+    }
+
+    /// The same gate, applied to one peel verdict code — the door's, so the client's chip mirror
+    /// never spells the two branches a second time. The status stays flat on this side of the
+    /// boundary; only the answer crosses back.
+    public func peelGated(verdict: UInt32, direction: UInt32) -> UInt32 {
+        slopdesk_peel_history_gated(verdict, direction, wire)
     }
 
     /// On-wire message type byte (distinct from ``CursorUpdate`` =1 / ``CursorShapeMessage`` =2).
-    public static let messageType: UInt8 = 3
+    /// Vended by the codec that writes it — the flag bits stay over there with it.
+    public static let messageType = UInt8(slopdesk_swipe_nav_constant(0))
     /// Encoded size in bytes (fixed).
-    public static let encodedSize = 6
+    public static let encodedSize = slopdesk_swipe_nav_constant(1)
 
-    private static let canGoBackBit: UInt8 = 1 << 0
-    private static let canGoForwardBit: UInt8 = 1 << 1
-    private static let historyKnownBit: UInt8 = 1 << 2
-
-    /// Encodes the status (fixed 6-byte big-endian message). Native Swift is the single
-    /// source of truth; the wire format is pinned by the `swipeNavStatus` golden vector.
+    /// Encodes the status (fixed six-byte big-endian message). `rust/slopdesk-video`'s `swipe_nav`
+    /// lays the bytes down, including which bit means which direction; the wire format is pinned by
+    /// the `swipeNavStatus` golden vector.
     public func encode() -> Data {
-        var out = Data(capacity: Self.encodedSize)
-        out.append(Self.messageType)
-        out.append(eligible ? 1 : 0)
-        out.append(slowTier ? 1 : 0)
-        out.appendBE(fireTravel)
-        var flags: UInt8 = 0
-        if canGoBack { flags |= Self.canGoBackBit }
-        if canGoForward { flags |= Self.canGoForwardBit }
-        if historyKnown { flags |= Self.historyKnownBit }
-        out.append(flags)
+        var out = Data(count: Self.encodedSize)
+        let written = out.withUnsafeMutableBytes { buffer in
+            slopdesk_swipe_nav_status_encode(wire, buffer.baseAddress, buffer.count)
+        }
+        precondition(written == Self.encodedSize, "the swipe-nav codec and its own fixed size disagree")
         return out
     }
 
     /// Decodes a status message (wire format pinned by the `swipeNavStatus` golden vector).
-    /// A short datagram throws `.truncated` and is DROPPED by the caller, never fatal.
+    /// A short datagram throws `.truncated` and is DROPPED by the caller, never fatal; a datagram
+    /// of another type on this socket is `.malformed` rather than silently read as this one.
     public static func decode(_ data: Data) throws -> Self {
-        var reader = VideoByteReader(data)
-        let type = try reader.readUInt8()
-        guard type == messageType else {
-            throw VideoProtocolError.malformed("not a swipe-nav status (type \(type))")
+        var flat = SlopDeskSwipeNavStatus()
+        let verdict = data.withUnsafeBytes { bytes in
+            slopdesk_swipe_nav_status_decode(bytes.baseAddress, bytes.count, &flat)
         }
-        let eligible = try reader.readUInt8() != 0
-        let slowTier = try reader.readUInt8() != 0
-        let fireTravel = try reader.readUInt16()
-        let flags = try reader.readUInt8()
-        return Self(
-            eligible: eligible, slowTier: slowTier, fireTravel: fireTravel,
-            canGoBack: flags & canGoBackBit != 0,
-            canGoForward: flags & canGoForwardBit != 0,
-            historyKnown: flags & historyKnownBit != 0,
+        switch verdict {
+        case UInt32(SLOPDESK_METADATA_DECODE_TRUNCATED): throw VideoProtocolError.truncated
+        case UInt32(SLOPDESK_METADATA_DECODE_MALFORMED):
+            throw VideoProtocolError.malformed("not a swipe-nav status")
+        default: break
+        }
+        return Self(wire: flat)
+    }
+
+    /// The status flattened for the boundary. Six booleans-and-a-number crossing by value: cheaper
+    /// to copy than a handle would be to own, and there is no state here to keep.
+    private var wire: SlopDeskSwipeNavStatus {
+        SlopDeskSwipeNavStatus(
+            fire_travel: fireTravel, eligible: eligible, slow_tier: slowTier,
+            can_go_back: canGoBack, can_go_forward: canGoForward, history_known: historyKnown,
         )
     }
 }

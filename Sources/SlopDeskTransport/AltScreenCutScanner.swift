@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 
 // MARK: - AltScreenCutScanner (front-truncation vs alt-screen segments)
@@ -5,146 +6,78 @@ import Foundation
 /// Exact alternate-screen state at a front-truncation CUT of a terminal byte stream, and the
 /// DECSET that re-opens the segment the cut beheaded.
 ///
+/// ## This is a call, not an implementation
+/// The scanner is `rust/slopdesk-altscreen` and has been since stage 14. What used to be here was
+/// the second copy of it — 150 lines of Swift doing the same job in the same repository, which is
+/// the thing `CLAUDE.md`'s one-implementation rule exists to stop. Stage 29 deleted that copy and
+/// left this: an argument marshaller over `slopdesk_altscreen_reopen`, whose semantics are
+/// documented where they are decided (`rust/slopdesk-altscreen/src/lib.rs`) rather than restated
+/// here where they would drift.
+///
 /// ## Why
 /// Both scrollback retainers cut their stream from the FRONT when it outgrows the cap: the
-/// in-memory ring (``ReplayBuffer/ack(upTo:)`` eviction) and the on-disk journal
-/// (`ScrollbackJournal.compact`). A cut that lands INSIDE an open alt-screen segment
-/// (`?1049h … ?1049l` — a Claude Code session holds one open for its whole run) beheads it:
-/// the surviving stream starts with segment interior and ends it with an UNPAIRED `?1049l`.
-/// Replay-side segmentation (`AltScreenSegmentStripper`) rightly treats an unpaired leave as a
-/// defensive reset and passes everything through — so tens of MiB of full-screen TUI churn
-/// replays onto the MAIN screen and floods the client's scrollback.
-///
-/// "Drop the prefix up to the unpaired leave" is NOT a safe heuristic: apps emit redundant
-/// `?1049l` while already on the main screen (Claude's exit cleanup does), and that would eat
-/// real history. This scanner removes the guess: the evictor feeds it the exact bytes being
-/// dropped, and the net DECSET/DECRST state says whether the cut is inside a segment.
+/// in-memory ring (``ReplayBuffer/ack(upTo:)`` eviction) and the on-disk journal (superd's
+/// `JournalStore` compaction). A cut that lands INSIDE an open alt-screen segment
+/// (`?1049h … ?1049l` — a Claude Code session holds one open for its whole run) beheads it: the
+/// surviving stream starts with segment interior and ends with an UNPAIRED `?1049l`. Replay-side
+/// segmentation rightly treats an unpaired leave as a defensive reset and passes everything
+/// through — so tens of MiB of full-screen TUI churn replays onto the MAIN screen and floods the
+/// client's scrollback.
 ///
 /// ## Repair invariant — the state lives IN the bytes
-/// When the cut is inside a segment, the evictor PREPENDS the returned re-opener to the
-/// surviving head (ring entry / file tail). The surviving stream is then well-formed again, so
-/// the NEXT eviction's scan — which starts from that repaired head — needs no carried state.
-/// For the journal the repair is on disk, so the invariant survives the daemon.
-///
-/// ## Semantics (mirrors `AltScreenSegmentStripper` — "mirror, don't share" is deliberately
-/// broken here: host AND transport need this one, so it lives in the lower module)
-/// - DECSET/DECRST with any of 47/1047/1049 flips the state; the re-opener uses the SAME mode
-///   that last entered (a `?47h` app must not be re-opened with 1049's save/clear semantics).
-/// - String-sequence bodies (OSC/DCS/SOS/PM/APC) are opaque — an embedded `?1049h` is body
-///   text. A body still open at the end of the dropped prefix cannot contain transitions, so
-///   the state at the cut is the state at the body's start.
-/// - A CSI that STRADDLES the cut (starts in the dropped prefix, finishes in the kept head) is
-///   resolved by peeking a bounded slice of the kept head; sequences that START in the kept
-///   head belong to the surviving stream and are never applied.
+/// When the cut is inside a segment, the evictor PREPENDS the returned re-opener to the surviving
+/// head (ring entry / file tail). The surviving stream is then well-formed again, so the NEXT
+/// eviction's scan — which starts from that repaired head — needs no carried state. For the
+/// journal the repair is on disk, so the invariant survives the daemon.
 public enum AltScreenCutScanner {
-    private static let esc: UInt8 = 0x1B
-    private static let bel: UInt8 = 0x07
+    /// First guess at the answer's size. A re-opener is a DECSET and nothing else, so this is
+    /// generous by an order of magnitude; the retry below exists to be correct, not to be used.
+    private static let firstGuessBytes = 64
 
-    /// DEC private modes that switch to the alternate screen.
-    static let altModes: Set<Int> = [47, 1047, 1049]
-
-    /// Bounded kept-head peek: enough to finish any realistic straddling CSI (params + final).
-    private static let straddlePeekBytes = 64
-
-    /// Scans `dropped` (the bytes being evicted from the front of a scrollback stream) and
-    /// returns the DECSET to prepend to the surviving tail when the cut lands inside an open
-    /// alt-screen segment (e.g. `ESC [ ? 1049 h`), else `nil`.
+    /// The DECSET to prepend to the surviving tail when the cut lands inside an open alt-screen
+    /// segment (e.g. `ESC [ ? 1049 h`), else `nil`.
     ///
     /// - Parameter keptHead: the first bytes of the SURVIVING stream, used only to resolve a
     ///   sequence straddling the cut. Pass what is cheap; missing bytes degrade to "straddler
     ///   unresolved → state unchanged", never to a wrong transition.
     public static func reopenSequence(afterDropped dropped: Data, keptHead: Data) -> Data? {
-        var bytes = [UInt8](dropped)
-        let boundary = bytes.count
-        bytes.append(contentsOf: keptHead.prefix(straddlePeekBytes))
-        var inAlt = false
-        var enterMode = 1049
-        var i = 0
-        // Only sequences STARTING inside the dropped prefix are applied; one straddler may
-        // finish in the peek region, after which `i >= boundary` ends the scan.
-        while i < boundary {
-            let b = bytes[i]
-            guard b == esc, i + 1 < bytes.count else {
-                i += 1
-                continue
-            }
-            switch bytes[i + 1] {
-            case UInt8(ascii: "["): // CSI
-                guard let seq = parseCSI(bytes, at: i) else {
-                    i = bytes.count // truncated trailing CSI — unresolvable, state as-is
-                    continue
+        // Two nested `withUnsafeBytes` and nothing else between them: the ABI's whole safety
+        // contract is that both pointers stay live for the call, and that is exactly what these
+        // scopes mean. `Data` may have no base address when empty — the ABI reads a null pointer as
+        // empty, so there is no branch here for it.
+        dropped.withUnsafeBytes { droppedRaw in
+            keptHead.withUnsafeBytes { keptRaw in
+                var buffer = [UInt8](repeating: 0, count: firstGuessBytes)
+                var needed = call(droppedRaw, keptRaw, into: &buffer)
+                guard needed > 0 else { return nil }
+                if needed > buffer.count {
+                    // The answer outgrew the guess. Nothing was written, so this is a clean retry;
+                    // the wrapped function is pure, so the second call cannot disagree.
+                    buffer = [UInt8](repeating: 0, count: needed)
+                    needed = call(droppedRaw, keptRaw, into: &buffer)
+                    guard needed > 0, needed <= buffer.count else { return nil }
                 }
-                if let altParam = altTransitionParam(seq) {
-                    inAlt = seq.final == UInt8(ascii: "h")
-                    if inAlt { enterMode = altParam }
-                }
-                i = seq.end
-            case UInt8(ascii: "]"),
-                 UInt8(ascii: "P"),
-                 UInt8(ascii: "X"),
-                 UInt8(ascii: "^"),
-                 UInt8(ascii: "_"):
-                let belTerminates = bytes[i + 1] == UInt8(ascii: "]")
-                guard let end = stringSequenceEnd(bytes, bodyStart: i + 2, belTerminates: belTerminates)
-                else {
-                    i = bytes.count // cut inside the body — no transitions possible past here
-                    continue
-                }
-                i = end
-            default:
-                i += 2
+                return Data(buffer.prefix(needed))
             }
         }
-        guard inAlt else { return nil }
-        return Data("\u{1B}[?\(enterMode)h".utf8)
     }
 
-    // MARK: CSI
-
-    private struct CSISequence {
-        let params: ArraySlice<UInt8>
-        let final: UInt8
-        let end: Int
-    }
-
-    private static func parseCSI(_ bytes: [UInt8], at start: Int) -> CSISequence? {
-        var j = start + 2
-        let paramsStart = j
-        while j < bytes.count, (0x30...0x3F).contains(bytes[j]) {
-            j += 1
+    /// One invocation of the C entry point. Returns how many bytes the answer needs; see
+    /// `rust/slopdesk-ffi/include/slopdesk_ffi.h` for the convention.
+    private static func call(
+        _ dropped: UnsafeRawBufferPointer,
+        _ keptHead: UnsafeRawBufferPointer,
+        into buffer: inout [UInt8],
+    ) -> Int {
+        buffer.withUnsafeMutableBufferPointer { out in
+            slopdesk_altscreen_reopen(
+                dropped.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                dropped.count,
+                keptHead.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                keptHead.count,
+                out.baseAddress,
+                out.count,
+            )
         }
-        let intersStart = j
-        while j < bytes.count, (0x20...0x2F).contains(bytes[j]) {
-            j += 1
-        }
-        guard j < bytes.count, (0x40...0x7E).contains(bytes[j]) else { return nil }
-        // Intermediates present ⇒ not a DECSET/DECRST; params still parsed for uniform skipping.
-        let final = intersStart == j ? bytes[j] : 0
-        return CSISequence(params: bytes[paramsStart..<intersStart], final: final, end: j + 1)
-    }
-
-    /// The alt-screen mode when the CSI is a DECSET/DECRST whose params include one, else nil.
-    private static func altTransitionParam(_ seq: CSISequence) -> Int? {
-        guard seq.final == UInt8(ascii: "h") || seq.final == UInt8(ascii: "l"),
-              seq.params.first == UInt8(ascii: "?")
-        else { return nil }
-        // Same lossy split discipline as the stripper siblings.
-        // swiftlint:disable:next optional_data_string_conversion
-        return String(decoding: seq.params.dropFirst(), as: UTF8.self)
-            .split(separator: ";")
-            .compactMap { Int($0) }
-            .first { altModes.contains($0) }
-    }
-
-    private static func stringSequenceEnd(_ bytes: [UInt8], bodyStart: Int, belTerminates: Bool) -> Int? {
-        var j = bodyStart
-        while j < bytes.count {
-            if belTerminates, bytes[j] == bel { return j + 1 }
-            if bytes[j] == esc, j + 1 < bytes.count, bytes[j + 1] == UInt8(ascii: "\\") {
-                return j + 2
-            }
-            j += 1
-        }
-        return nil
     }
 }

@@ -3,11 +3,11 @@ import SlopDeskWorkspaceModel
 import UIKit
 #endif
 
-/// The `@MainActor` arbiter that serializes first-responder ownership across the multiple
-/// ``TerminalInputHost`` surfaces mounted at once on iPad-regular (docs/22 §7).
+/// The `@MainActor` arbiter that serializes first-responder ownership across the multiple terminal
+/// input surfaces mounted at once on iPad-regular (docs/22 §7).
 ///
 /// ## Why this exists
-/// When the focused pane changes, the *outgoing* pane's `IMEProxyTextView` must resign before the
+/// When the focused pane changes, the *outgoing* pane's responder must resign before the
 /// *incoming* one becomes first responder — otherwise UIKit briefly has two first responders
 /// fighting, and because `becomeFirstResponder` is honoured a runloop hop later, two rapid focus
 /// changes can land out of order and a stale callback steals focus back to the pane you just left
@@ -25,11 +25,19 @@ import UIKit
 ///    pane.
 ///
 /// ## Registration
-/// The Integrate phase wires each ``TerminalInputHost`` to ``register(_:for:)`` on appear and
-/// ``unregister(_:)`` on dismantle, passing a lightweight ``FocusableInputHost`` adapter over its
-/// `TerminalInputResponderView`. The coordinator never retains the view strongly past unregister,
-/// and holds only the focus *intent*; it does not own the store's focus state (that stays in
-/// `WorkspaceStore`). A view layer observes the store's `focusedPane` and calls `focus(_:)` here.
+/// A mounted iOS input surface calls ``register(_:for:)`` on appear and ``unregister(host:)`` on
+/// dismantle, passing itself (or a thin adapter) as a ``FocusableInputHost``. The coordinator never
+/// retains it strongly past unregister, and holds only the focus *intent*; it does not own the
+/// store's focus state (that stays in `WorkspaceStore`, which points this at the focused pane at the
+/// end of every reconcile — `WorkspaceStore.syncFocusCoordinator`).
+///
+/// ⚠️ NOTHING IN THE TREE REGISTERS YET. The iOS responder view this was written against was the old
+/// client UI's, deleted whole in `2682df50`; the arbitration and its generation guard survived that
+/// because they are pure and macOS-testable, and the only callers of `register` today are
+/// `Tests/SlopDeskWorkspaceCoreTests/Workspace/PaneFocusCoordinatorTests.swift` and
+/// `WorkspaceLayoutTests.swift`. So `focus(_:)` runs on every reconcile and finds no host — correct
+/// and inert. Whatever mounts the iPad-regular terminal responder owns the registration; until then
+/// this is a live seam with no producer, not dead code.
 ///
 /// Cross-platform: the type compiles on macOS (where there is no UIKit first-responder model) so
 /// the macOS build + tests are unaffected; the actual `becomeFirstResponder`/`resignFirstResponder`
@@ -38,10 +46,10 @@ import UIKit
 @preconcurrency
 @MainActor
 public final class PaneFocusCoordinator {
-    /// The thing the coordinator drives: one pane's first-responder surface. On iOS this is
-    /// satisfied by the ``TerminalInputResponderView`` (or a thin adapter the Integrate phase
-    /// supplies); modelling it as a protocol keeps the coordinator testable and lets the byte
-    /// pipeline (`TerminalInputHost`) stay the integration seam rather than being imported here.
+    /// The thing the coordinator drives: one pane's first-responder surface. On iOS that is whatever
+    /// `UIResponder` the terminal pane mounts, conforming directly or through a thin adapter.
+    /// Modelling it as a protocol is what keeps the coordinator testable on macOS AND what keeps
+    /// UIKit out of this file — the byte pipeline stays the integration seam instead of an import.
     ///
     /// The two methods mirror `UIResponder`: `resignFocus()` must drop first-responder status now;
     /// `becomeFocus()` must claim it. Implementations return the actual result so the coordinator
@@ -159,9 +167,10 @@ public final class PaneFocusCoordinator {
     }
 
     /// Schedules the deferred `become`, re-validating the generation token at fire time so a
-    /// superseded request is dropped. On iOS this hops the main runloop (matching UIKit's async
-    /// first-responder honouring + ``TerminalInputHost``'s own `DispatchQueue.main.async` claim);
-    /// elsewhere it claims directly (there is no UIKit responder chain to race).
+    /// superseded request is dropped. On iOS this hops the main runloop, matching how UIKit honours
+    /// `becomeFirstResponder` asynchronously — a responder that claims synchronously from inside a
+    /// touch or a `layoutSubviews` gets the claim taken back. Elsewhere it claims directly (there is
+    /// no UIKit responder chain to race).
     private func scheduleBecome(_ host: FocusableInputHost, id: PaneID, token: Int) {
         #if os(iOS)
         // weak self + weak host: a dismantle between schedule and fire must not resurrect either.

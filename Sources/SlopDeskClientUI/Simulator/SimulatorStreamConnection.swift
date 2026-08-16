@@ -45,12 +45,12 @@ protocol SimulatorStreaming: AnyObject {
 }
 
 @MainActor
-final class SimulatorStreamConnection: SimulatorStreaming {
-    private var connection: NWConnection?
+final class SimulatorStreamConnection: SimulatorStreaming, SimulatorWebSocketLane {
+    var connection: NWConnection?
     private let sink: (SimulatorStreamEvent) -> Void
     /// Set on teardown so a receive completion that was already in flight cannot resurrect a
     /// cancelled connection or deliver an event after `.ended`.
-    private var isTornDown = false
+    private(set) var isTornDown = false
 
     init(sink: @escaping (SimulatorStreamEvent) -> Void) {
         self.sink = sink
@@ -117,45 +117,8 @@ final class SimulatorStreamConnection: SimulatorStreaming {
         return parameters
     }
 
-    private func handle(_ state: NWConnection.State) {
-        guard !isTornDown else { return }
-        switch state {
-        case .ready:
-            sink(.connected)
-            receive()
-        case let .failed(error):
-            sink(.ended(reason: error.localizedDescription))
-            disconnect()
-        case .cancelled:
-            sink(.ended(reason: nil))
-        case .setup,
-             .preparing,
-             .waiting:
-            break
-        @unknown default:
-            break
-        }
-    }
-
-    /// One message at a time, re-armed after each. `receiveMessage` hands back whole websocket
-    /// messages already reassembled from frames, which is why there is no defragmentation here.
-    private func receive() {
-        guard let connection else { return }
-        connection.receiveMessage { [weak self] data, context, _, error in
-            Task { @MainActor in
-                guard let self, !self.isTornDown else { return }
-                if let error {
-                    self.sink(.ended(reason: error.localizedDescription))
-                    self.disconnect()
-                    return
-                }
-                self.deliver(data, context: context)
-                self.receive()
-            }
-        }
-    }
-
-    private func deliver(_ data: Data?, context: NWConnection.ContentContext?) {
+    /// This lane's own message dispatch — the one thing the two websocket lanes do not share.
+    func deliver(_ data: Data?, context: NWConnection.ContentContext?) {
         guard let data, !data.isEmpty else { return }
         let metadata = context?.protocolMetadata(definition: NWProtocolWebSocket.definition)
         switch (metadata as? NWProtocolWebSocket.Metadata)?.opcode {
@@ -176,15 +139,6 @@ final class SimulatorStreamConnection: SimulatorStreaming {
             break
         }
     }
-
-    /// Echo a ping back as a pong, payload included — RFC 6455 requires the same application data.
-    /// This is the whole keepalive: the server pings, we answer, the socket stays up.
-    private func replyToPing(_ payload: Data) {
-        guard let connection else { return }
-        let metadata = NWProtocolWebSocket.Metadata(opcode: .pong)
-        let context = NWConnection.ContentContext(identifier: "pong", metadata: [metadata])
-        connection.send(content: payload, contentContext: context, completion: .idempotent)
-    }
 }
 
 extension SimulatorStreamMessage {
@@ -192,5 +146,13 @@ extension SimulatorStreamMessage {
         if case .unknown = self { return true }
         return false
     }
+}
+
+extension SimulatorStreamConnection {
+    /// The socket came up.
+    func noteConnected() { sink(.connected) }
+
+    /// The socket is over; `nil` is a clean close.
+    func noteEnded(reason: String?) { sink(.ended(reason: reason)) }
 }
 #endif

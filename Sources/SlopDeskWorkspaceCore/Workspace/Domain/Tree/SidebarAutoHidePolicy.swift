@@ -1,5 +1,3 @@
-import Foundation
-
 // MARK: - SidebarAutoHidePolicy (`auto-hide-tabs-panel` decision)
 
 /// The PURE decision for whether the vertical TABS panel (sidebar) should be collapsed for a given

@@ -17,7 +17,13 @@
 // This matters more than it did for simulators: `scrcpy`'s encoder runs ON the device, so a
 // forgotten stream is a real battery drain on someone's phone.
 
-#if canImport(SwiftUI)
+// `os(macOS)` joins the guard because every type this file names — the bridge, the stream,
+// the device list — is declared `#if os(macOS)` in its eighteen siblings in this directory,
+// and the only mount, `CodeSidebarColumn`, is macOS-only too. Without it the type still
+// COMPILED for the iOS triple and reached for symbols that are not there. It has been a hard
+// error on iOS for as long as the Android panel has existed; `swift build` compiles the macOS
+// slice only, so nothing said so until `make check-ios` started running.
+#if canImport(SwiftUI) && os(macOS)
 import CoreGraphics
 import Foundation
 import SlopDeskProtocol
@@ -122,14 +128,17 @@ final class AndroidSidebarModel {
     private var stream: AndroidStreaming?
     private var logStream: AndroidLogStreaming?
     private var logSequence: UInt64 = 0
-    /// Clears ``notice`` after its moment.
-    private var noticeClear: Task<Void, Never>?
+    /// Clears ``notice`` after its moment. A ``DeadlineLatch`` rather than a bare `Task`: cancel the
+    /// previous timer, re-arm, and drop a fire that lost the race are the same three details every
+    /// time, and the one place they are written is the latch.
+    @ObservationIgnored private let noticeClear = DeadlineLatch()
     /// Gives up on a stream that never starts. Held so selecting a second device cancels the first
     /// device's verdict rather than letting it land on the new selection.
     private var streamWatchdog: Task<Void, Never>?
     /// The task chasing a device that cannot take a mirror yet — booting, or freshly booted with no
-    /// serial. One at a time, cancelled by re-selection and by ``settleStream()``.
-    private var reattempt: Task<Void, Never>?
+    /// serial. One at a time, cancelled by re-selection and by ``settleStream()`` — which is exactly
+    /// what ``DeadlineLatch`` is, so the re-arm is not written out a second time here.
+    @ObservationIgnored private let reattempt = DeadlineLatch()
     /// When the current selection began waiting for video. Attempts share this one clock, so a
     /// boot's worth of retries cannot extend the deadline forever. `nil` between campaigns.
     private var awaitBegan: ContinuousClock.Instant?
@@ -496,17 +505,13 @@ final class AndroidSidebarModel {
     private func settleStream() {
         streamWatchdog?.cancel()
         streamWatchdog = nil
-        reattempt?.cancel()
-        reattempt = nil
+        reattempt.cancel()
         awaitBegan = nil
         isAwaitingStream = false
     }
 
     private func scheduleReattempt(_ key: String) {
-        reattempt?.cancel()
-        reattempt = Task { [weak self] in
-            try? await Task.sleep(for: Self.reattemptPause)
-            guard !Task.isCancelled else { return }
+        reattempt.arm(after: Self.reattemptPause) { [weak self] in
             await self?.reattemptStream(key)
         }
     }
@@ -787,7 +792,7 @@ final class AndroidSidebarModel {
     /// A failure raised by the VIEW rather than by a call.
     func report(_ text: String) {
         notice = nil
-        noticeClear?.cancel()
+        noticeClear.cancel()
         failure = text
     }
 
@@ -798,12 +803,7 @@ final class AndroidSidebarModel {
     private func show(notice text: String) {
         failure = nil
         notice = text
-        noticeClear?.cancel()
-        noticeClear = Task { [weak self] in
-            try? await Task.sleep(for: Self.noticeLifetime)
-            guard !Task.isCancelled else { return }
-            self?.notice = nil
-        }
+        noticeClear.arm(after: Self.noticeLifetime) { [weak self] in self?.notice = nil }
     }
 
     private func handle(_ event: AndroidStreamEvent, for key: String) {

@@ -1,5 +1,3 @@
-import Foundation
-
 // MARK: - Undo-at-prompt key intercept
 
 /// The PURE, headless decision behind **Undo at prompt**: given a ⌘Z (undo) or ⌘⇧Z / ⌘Y
@@ -20,8 +18,8 @@ import Foundation
 /// ## The gate (see `docs/ui-shell/spec/terminal-features__input.md` + the safe default)
 /// Undo "applies to the current prompt line; it is unavailable inside full-screen programs (vim, less,
 /// editors) which manage their own undo history" (`docs/ui-shell/spec/terminal-features__input.md`). So the single gate is
-/// the **prompt zone**: only when the terminal is at an editable shell prompt (the GUI derives this exactly
-/// like ``BackspaceSelectionPolicy`` — connected AND OSC-133 idle, which is false while a TUI owns the
+/// the **prompt zone**: only when the terminal is at an editable shell prompt (the GUI derives it exactly
+/// as ``CutSelectionPolicy`` does — connected AND OSC-133 idle, which is false while a TUI owns the
 /// alternate screen) does ⌘Z emit the undo byte. Off the prompt — inside `vim`/`less`, mid-command, or
 /// disconnected — the policy returns `nil` so the chord falls through and the foreground program keeps its
 /// own undo (the "⌘Z in vim passes through" leg).

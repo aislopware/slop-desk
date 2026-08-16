@@ -7,7 +7,6 @@
 
 #if os(macOS)
 import CoreGraphics
-import Foundation
 import XCTest
 @testable import SlopDeskClientUI
 

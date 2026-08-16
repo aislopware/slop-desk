@@ -44,6 +44,32 @@ private final class RecordingChannel: MessageChannel, @unchecked Sendable {
         lock.unlock()
     }
 
+    /// Arms the gate: the NEXT `send` records its message and then PARKS, leaving the host's send
+    /// loop suspended mid-frame until `release()`. That window is what a `Task.yield()` can only
+    /// hope for — here the test owns it.
+    func hold() {
+        lock.lock()
+        _gated = true
+        lock.unlock()
+    }
+
+    /// True once a send is parked. The frame it carries is already in `sent`.
+    var isHolding: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return _gate != nil
+    }
+
+    /// Lets the parked send finish and disarms the gate, whether or not a send has parked yet.
+    func release() {
+        lock.lock()
+        _gated = false
+        let parked = _gate
+        _gate = nil
+        lock.unlock()
+        parked?.resume()
+    }
+
     var inbound: AsyncThrowingStream<WireMessage, Error> {
         AsyncThrowingStream { $0.finish() }
     }
@@ -63,6 +89,22 @@ private final class RecordingChannel: MessageChannel, @unchecked Sendable {
         // arrives WHILE a frame is in flight must land, not be swallowed by the single buffered wake.
         await Task.yield()
         guard record(message) else { throw ChannelDead() }
+        await parkIfGated()
+    }
+
+    private func parkIfGated() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            lock.lock()
+            // Only ONE send parks: a second one arriving while the first is held would deadlock a
+            // test that only ever calls `release()` once.
+            guard _gated, _gate == nil else {
+                lock.unlock()
+                continuation.resume()
+                return
+            }
+            _gate = continuation
+            lock.unlock()
+        }
     }
 }
 
@@ -102,6 +144,11 @@ final class WorkspaceDocumentChannelTests: XCTestCase {
 
     private func subscribe(clientKind: UInt8 = 0, label: String = "test") -> WorkspaceSubscribe {
         WorkspaceSubscribe(clientInstanceID: UUID(), clientKind: clientKind, label: label)
+    }
+
+    private func liveTitle(in diff: WorkspaceStateDiff) -> String? {
+        let value = diff.sets.first { $0.key.field == WorkspacePaneField.liveTitle }?.value
+        return value.flatMap { WorkspaceStateCodec.decodeString($0) }
     }
 
     private func makeSession(
@@ -204,6 +251,47 @@ final class WorkspaceDocumentChannelTests: XCTestCase {
         let latest = try WorkspaceStateCodec.decodeDiff(channel.events(kind: .diff)[1].payload)
         let title = latest.sets.first { $0.key.field == WorkspacePaneField.liveTitle }?.value
         XCTAssertEqual(title.flatMap { WorkspaceStateCodec.decodeString($0) }, "step 499")
+        session.close()
+    }
+
+    func testAnUpdateArrivingMidSendIsNotLost() async throws {
+        let channel = RecordingChannel()
+        let document = HostWorkspaceDocument()
+        let session = makeSession(channel)
+        await document.addSubscriber(session)
+        await expect { !channel.events(kind: .snapshot).isEmpty }
+        let firstNum = await document.stateNum
+        await document.handle(ack: firstNum, from: session.id)
+        await expect { session.outstandingForTesting == nil }
+
+        // Park the send loop INSIDE a frame, so the window between "the host began writing" and
+        // "the write returned" is one the test owns rather than one it races.
+        channel.hold()
+        await document.merge(paneLiveness: PaneLiveness(paneID: paneA, liveTitle: "in flight"))
+        await expect({ channel.isHolding }, "the first diff to park mid-send")
+
+        // THE CASE: an update lands while the loop is suspended in `send`. `deliver` is called from
+        // the document actor and must never block on that send — it drops the freshest state into
+        // the depth-1 slot and returns. Refusing the offer because a frame is in flight would lose
+        // this value with no retry anywhere, since nothing re-offers a state the host already has.
+        await document.merge(paneLiveness: PaneLiveness(paneID: paneA, liveTitle: "arrived mid-send"))
+        channel.release()
+
+        // The frame that was in flight ships what it was BUILT with — a mid-send arrival must not
+        // retroactively edit bytes the client is already reading.
+        await expect({ channel.events(kind: .diff).count == 1 }, "the parked diff to complete")
+        let inFlight = try WorkspaceStateCodec.decodeDiff(XCTUnwrap(channel.events(kind: .diff).first).payload)
+        XCTAssertEqual(liveTitle(in: inFlight), "in flight")
+
+        // …and it stays exactly one frame until the ack: depth-1 holds across the send boundary too.
+        try await Task.sleep(for: .milliseconds(60))
+        XCTAssertEqual(channel.events(kind: .diff).count, 1)
+
+        try await document.handle(ack: XCTUnwrap(channel.events(kind: .diff).first).new, from: session.id)
+        await expect({ channel.events(kind: .diff).count == 2 }, "the mid-send update to ship on the ack")
+        let landed = try WorkspaceStateCodec
+            .decodeDiff(XCTUnwrap(channel.events(kind: .diff).dropFirst().first).payload)
+        XCTAssertEqual(liveTitle(in: landed), "arrived mid-send")
         session.close()
     }
 

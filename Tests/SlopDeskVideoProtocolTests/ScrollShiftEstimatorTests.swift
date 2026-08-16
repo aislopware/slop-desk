@@ -1,13 +1,16 @@
 import XCTest
 @testable import SlopDeskVideoProtocol
 
-/// Tests for the host-side scroll-shift estimator and the per-row hashing it shares with adaptive-QP.
+/// Tests for the scroll-shift estimate as the capture path receives it, over the real door.
 ///
-/// Two things are pinned here:
-///  1. **The `rowHashes` optimization is byte-identical** — the allocation-free per-row hash
-///     (`FrameHasher.hashRow`) must produce exactly the values the per-row `hashNV12` reference does,
-///     so swapping the streaming hasher for the contiguous one can't shift the scroll/adaptive-QP math.
-///  2. **The brittle-exact-hash bug is fixed** — real captured scroll carries per-pixel capture noise
+/// The estimator itself — the mode-hash background exclusion, the informative-row scoring, the band
+/// — is `rust/slopdesk-video`'s `scroll_shift`, and is unit-tested there over row-hash arrays. What
+/// is pinned HERE is what only this side can be wrong about: two locked planes, their strides and
+/// the picture's dimensions reaching that estimator intact, and the answer arriving as the tuple the
+/// caller gates on.
+///
+/// The property under test is the one the port was made for:
+///  1. **The brittle-exact-hash bug stays fixed** — real captured scroll carries per-pixel capture noise
 ///     (resample / dither / ±LSB). With EXACT row-hash matching a single noisy pixel changes a row's
 ///     hash, so a truly-translated row stops matching itself, confidence collapses below the 0.5 gate,
 ///     and the host reports "no scroll" every frame (the documented `measureScrollOffset == 0` bug).
@@ -78,34 +81,7 @@ final class ScrollShiftEstimatorTests: XCTestCase {
         }
     }
 
-    // MARK: - 1. rowHashes optimization is byte-identical to the hashNV12 reference
-
-    func testRowHashesMatchHashNV12Reference() {
-        // A padded plane (stride > width) AND a tight one, several heights, so the per-row path and the
-        // contiguous fast path inside hashRow are both exercised and pinned against the public hash.
-        for (w, h, pad) in [(37, 20, 11), (64, 8, 0), (1, 5, 3), (100, 33, 7)] {
-            let stride = w + pad
-            var plane = [UInt8](repeating: 0, count: stride * h)
-            var s: UInt64 = 0x1234_5678_9ABC_DEF0
-            for i in 0..<plane.count {
-                s = s &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
-                plane[i] = UInt8(truncatingIfNeeded: s >> 33)
-            }
-            plane.withUnsafeBufferPointer { buf in
-                let rows = rowHashes(buf, stride, w, h)
-                XCTAssertEqual(rows.count, h, "one hash per row")
-                for r in 0..<h {
-                    let slice = Array(plane[(r * stride)..<(r * stride + w)])
-                    let ref = FrameHasher.hashNV12Scalar(
-                        y: slice, yStride: w, width: w, height: 1, cbcr: [], cbcrStride: 0,
-                    )
-                    XCTAssertEqual(rows[r], ref, "rowHashes[\(r)] must equal the per-row hashNV12 (w=\(w) pad=\(pad))")
-                }
-            }
-        }
-    }
-
-    // MARK: - 2. The estimator detects a clean integer scroll (the baseline still works)
+    // MARK: - The estimator detects a clean integer scroll (the baseline still works)
 
     func testDetectsExactIntegerScroll() {
         let w = 40, h = 64, stride = 40, shift = 5

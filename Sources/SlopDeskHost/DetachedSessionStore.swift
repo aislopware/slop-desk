@@ -257,7 +257,10 @@ final class DetachedSessionStore: @unchecked Sendable {
 
     // MARK: drainAll
 
-    /// Kills every stored session. Called from `HostServer.stop()`.
+    /// Kills every stored session.
+    ///
+    /// No longer reached from `HostServer.stop()` — see ``relinquishAll()``. Kept for the paths
+    /// that really do mean "end these panes": a store being torn down for good.
     func drainAll() {
         lock.lock()
         let entries = Array(store.values)
@@ -267,6 +270,26 @@ final class DetachedSessionStore: @unchecked Sendable {
             entry.ttlTask?.cancel()
             entry.session.shutdownDetached()
         }
+    }
+
+    /// Lets every stored session GO, without killing a single shell. `HostServer.stop()`'s path.
+    ///
+    /// A parked pane is, by definition, one whose client already left and whose shell the user
+    /// still wants — killing exactly those on a daemon stop was the sharpest edge of the old
+    /// behaviour. The entries are dropped because the store belongs to this hostd; the PANES do
+    /// not, and superd hands them back to the next one.
+    func relinquishAll(completion: (@Sendable () -> Void)? = nil) {
+        lock.lock()
+        let entries = Array(store.values)
+        store.removeAll()
+        lock.unlock()
+        let group = DispatchGroup()
+        for entry in entries {
+            entry.ttlTask?.cancel()
+            group.enter()
+            entry.session.relinquishDetached { group.leave() }
+        }
+        if let completion { group.notify(queue: .global(qos: .utility), execute: completion) }
     }
 
     // MARK: Test seams

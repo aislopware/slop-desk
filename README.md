@@ -6,7 +6,7 @@ Build floor: macOS 26 / iOS 26. Terminal renderer: **libghostty**.
 
 ## Design
 
-- **Native Swift** owns the wire (codecs, FEC, reassembly, realtime controllers, terminal/PTY protocol). Wire format is frozen by a golden corpus. The only C is one NEON kernel in `Sources/CSlopDeskSIMD` (GF(2⁸) for FEC).
+- **Rust owns the wire** (codecs, FEC, reassembly, realtime controllers, terminal/PTY protocol), reached two ways: six sidecar daemons over sockets, and `CSlopDeskFFI` linked in-process as an `.xcframework`. Swift keeps SwiftUI/AppKit. Wire format is frozen by a golden corpus.
 - **No app-layer crypto/auth.** Run on a trusted private network (WireGuard mesh — NetBird, Tailscale, …). The security boundary is the network.
 
 Three independent transports (separate sockets, message sets, version `1` only):

@@ -5,7 +5,7 @@ import XCTest
 /// `MuxFrameDecoder`, and returns the decoded frame — the canonical round-trip helper
 /// (mirrors `WireMessageRoundTripTests.roundTrip`).
 private func roundTrip(_ frame: MuxFrame, file _: StaticString = #filePath, line _: UInt = #line) throws -> MuxFrame? {
-    var decoder = MuxFrameDecoder()
+    let decoder = MuxFrameDecoder()
     decoder.append(MuxEnvelopeCodec.encode(frame))
     return try decoder.nextFrame()
 }
@@ -174,7 +174,7 @@ final class MuxEnvelopeCodecTests: XCTestCase {
         frame.appendBE(UInt32(inner.count))
         frame.append(inner)
 
-        var decoder = MuxFrameDecoder()
+        let decoder = MuxFrameDecoder()
         decoder.append(frame)
         XCTAssertThrowsError(try decoder.nextFrame()) { error in
             XCTAssertEqual(error as? SlopDeskError, .unknownMessageType(0xFF))
@@ -193,7 +193,7 @@ final class MuxEnvelopeCodecTests: XCTestCase {
         frame.appendBE(UInt32(inner.count))
         frame.append(inner)
 
-        var decoder = MuxFrameDecoder()
+        let decoder = MuxFrameDecoder()
         decoder.append(frame)
         XCTAssertThrowsError(try decoder.nextFrame()) { error in
             XCTAssertEqual(error as? SlopDeskError, .truncated)
@@ -209,7 +209,7 @@ final class MuxEnvelopeCodecTests: XCTestCase {
         frame.append(inner)
         inner = Data()
 
-        var decoder = MuxFrameDecoder()
+        let decoder = MuxFrameDecoder()
         decoder.append(frame)
         XCTAssertThrowsError(try decoder.nextFrame()) { error in
             XCTAssertEqual(error as? SlopDeskError, .truncated)
@@ -227,7 +227,7 @@ final class MuxEnvelopeCodecTests: XCTestCase {
         frame.appendBE(UInt32(inner.count))
         frame.append(inner)
 
-        var decoder = MuxFrameDecoder()
+        let decoder = MuxFrameDecoder()
         decoder.append(frame)
         XCTAssertThrowsError(try decoder.nextFrame()) { error in
             XCTAssertEqual(error as? SlopDeskError, .truncated)
@@ -240,7 +240,7 @@ final class MuxEnvelopeCodecTests: XCTestCase {
         var frame = Data()
         frame.appendBE(UInt32(oversized))
 
-        var decoder = MuxFrameDecoder()
+        let decoder = MuxFrameDecoder()
         decoder.append(frame)
         XCTAssertThrowsError(try decoder.nextFrame()) { error in
             XCTAssertEqual(error as? SlopDeskError, .frameTooLarge(oversized))

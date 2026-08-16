@@ -889,11 +889,8 @@ final class ClaudePaneDetectorTests: XCTestCase {
         XCTAssertEqual(ForegroundProcessDetector.canonicalName(of: "2.1.218"), "2.1.218", "no parents to name it")
         XCTAssertEqual(ForegroundProcessDetector.canonicalName(of: ""), "")
         // Version-shape boundaries: at least one dot; digits+dots only (optional leading v).
-        XCTAssertTrue(ForegroundProcessDetector.isVersionShaped("2.1.218"))
-        XCTAssertTrue(ForegroundProcessDetector.isVersionShaped("v1.0"))
-        XCTAssertFalse(ForegroundProcessDetector.isVersionShaped("7z"))
-        XCTAssertFalse(ForegroundProcessDetector.isVersionShaped("2"))
-        XCTAssertFalse(ForegroundProcessDetector.isVersionShaped("python3.11"))
+        // The version SHAPE itself is pinned in `rust/slopdesk-agent::process` — this suite keeps
+        // the answers that reach a caller (the canonical name above), not the predicate behind them.
     }
 
     /// The rest title does NOT demote `.done` — the unseen-completion signal keeps its decay window.

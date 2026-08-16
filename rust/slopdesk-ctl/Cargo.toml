@@ -1,0 +1,36 @@
+[package]
+name = "slopdesk-ctl"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Reference client for the slopdesk agent-control AF_UNIX socket"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[lints]
+workspace = true
+
+# ## Why this is a MEMBER of the root workspace, unlike the five daemons
+# Every daemon (superd, screend, dropd, androidd, inspectord) had to leave because cargo profiles
+# are workspace-global and a long-lived per-byte server wants `opt-level = 3` / `panic = "unwind"`,
+# the opposite of what the hook's profile gives.
+#
+# ctl wants the hook's profile EXACTLY: it is a short-lived program an agent forks per command, so
+# startup is the whole cost, `opt-level = "z"` is right, and there is no colleague connection for
+# `panic = "unwind"` to protect — the process IS the request. Sharing the profile is the reason to
+# share the workspace.
+[dependencies]
+# The one dependency, and the reason it is worth the bytes: this binary parses JSON a *host*
+# produced from bytes a *foreign program* drew into a PTY — pane titles, cwd paths, command output.
+# Hand-rolling an unescaper for that is the classic place to be wrong. `serde_json`'s object is a
+# `BTreeMap`, so re-encoding a response reproduces Foundation's `.sortedKeys` ordering for free,
+# which is what keeps `--json` output stable and greppable across the port.
+serde_json = "1"
+
+[[bin]]
+name = "slopdesk-ctl"
+path = "src/main.rs"
+
+[lib]
+name = "slopdesk_ctl"
+path = "src/lib.rs"

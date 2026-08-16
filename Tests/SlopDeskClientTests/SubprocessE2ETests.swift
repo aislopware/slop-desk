@@ -73,19 +73,33 @@ final class SubprocessE2ETests: XCTestCase {
         client.arguments = ["--host", "127.0.0.1", "--port", String(port), "--no-raw"]
         let stdinPipe = Pipe()
         let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
         client.standardInput = stdinPipe
         client.standardOutput = stdoutPipe
-        client.standardError = Pipe()
+        // Collected, not discarded. This assertion has failed with an EMPTY stdout, and an empty
+        // stdout says nothing about WHY: the client's own complaint went to a pipe nobody read, so
+        // the one artefact that could name the cause was thrown away on every failing run.
+        client.standardError = stderrPipe
 
         // Collect the client's stdout off-thread so a full pipe never deadlocks the child.
         let collected = OutputBox()
+        let complaints = OutputBox()
         let stdoutHandle = stdoutPipe.fileHandleForReading
+        let stderrHandle = stderrPipe.fileHandleForReading
         stdoutHandle.readabilityHandler = { handle in
             let data = handle.availableData
             if data.isEmpty {
                 handle.readabilityHandler = nil
             } else {
                 collected.append(data)
+            }
+        }
+        stderrHandle.readabilityHandler = { handle in
+            let data = handle.availableData
+            if data.isEmpty {
+                handle.readabilityHandler = nil
+            } else {
+                complaints.append(data)
             }
         }
 
@@ -104,13 +118,29 @@ final class SubprocessE2ETests: XCTestCase {
 
         // Wait (bounded) for the client to exit after the remote shell exits.
         let exited = waitForExit(client, timeout: 15)
-        stdoutHandle.readabilityHandler = nil
         XCTAssertTrue(exited, "client did not exit within the timeout")
 
+        // A process that has exited is NOT a pipe that has been drained. The readability handler
+        // runs on a background queue, so bytes written just before exit can still be sitting in the
+        // pipe with no dispatch yet delivered — and clearing the handler first threw them away.
+        // Give the handlers a bounded moment to catch up before reading the accumulators.
+        let drainDeadline = Date().addingTimeInterval(2)
+        while collected.string.isEmpty, Date() < drainDeadline {
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+        stdoutHandle.readabilityHandler = nil
+        stderrHandle.readabilityHandler = nil
+
         let out = collected.string
+        let errors = complaints.string
         XCTAssertTrue(
             out.contains("SHIPPED_OK"),
-            "expected SHIPPED_OK in the client's stdout; got: \(out.prefix(600))",
+            """
+            expected SHIPPED_OK in the client's stdout
+            exit status: \(client.terminationStatus), reason: \(client.terminationReason.rawValue)
+            stdout: \(out.prefix(600))
+            stderr: \(errors.prefix(600))
+            """,
         )
     }
 
@@ -236,15 +266,24 @@ final class SubprocessE2ETests: XCTestCase {
         // This test's SUBJECT is a journal that outlives the daemon, so its two hostds share one
         // journal dir OUTSIDE either sandbox home. The per-file override wins over the container.
         hostEnv["SLOPDESK_SCROLLBACK_DIR"] = journalDir.path
+        // ...and each life gets its OWN superd, which is what makes this the journal's scenario at
+        // all. Sharing one custodian would mean the pane SURVIVED (`docs/51`), hostd #2 would adopt
+        // it and reattach, and the disk journal would never be consulted — the feature working, but
+        // not the feature under test. A dead custodian is superd's own death case: it takes every
+        // pane with it, so life 2 comes up cold, which is exactly a reboot.
+        var life2Env = hostEnv
+        if let socket = try startPrivateSuperd() {
+            life2Env[superdSocketEnvKey] = socket
+        }
 
         let sessionID = UUID()
         let marker = "RESTART_SURVIVOR_\(UInt32.random(in: 0..<1_000_000))"
 
-        func launchHostd() -> (Process, UInt16, OutputBox)? {
+        func launchHostd(_ environment: [String: String]) -> (Process, UInt16, OutputBox)? {
             let hostd = Process()
             hostd.executableURL = hostdURL
             hostd.arguments = ["--port", "0", "--shell", "/bin/sh"]
-            hostd.environment = hostEnv
+            hostd.environment = environment
             let err = Pipe()
             hostd.standardError = err
             hostd.standardOutput = Pipe()
@@ -303,7 +342,7 @@ final class SubprocessE2ETests: XCTestCase {
         }
 
         // --- Life 1: journal the marker, then die without ceremony. ---
-        guard let (hostd1, port1, _) = launchHostd() else {
+        guard let (hostd1, port1, _) = launchHostd(hostEnv) else {
             throw XCTSkip("could not launch hostd #1")
         }
         defer { if hostd1.isRunning { hostd1.terminate() } }
@@ -323,7 +362,7 @@ final class SubprocessE2ETests: XCTestCase {
         _ = waitForExit(hostd1, timeout: 5)
 
         // --- Life 2: a brand-new daemon; a COLD client returns with the same session ID. ---
-        guard let (hostd2, port2, hostd2Log) = launchHostd() else {
+        guard let (hostd2, port2, hostd2Log) = launchHostd(life2Env) else {
             throw XCTSkip("could not launch hostd #2")
         }
         defer { if hostd2.isRunning { hostd2.terminate() } }
@@ -652,10 +691,19 @@ final class SubprocessE2ETests: XCTestCase {
 
         // The baseline the whole test turns on: A's pane IS one forked shell, so a count of 1 here
         // is measuring the thing rather than an empty table.
-        let afterA = shellChildren(ofParent: hostd.processIdentifier)
+        //
+        // Counted under the CUSTODIAN, not under hostd. hostd does not fork — superd does, so that
+        // the shell outlives a hostd restart (`docs/51`) — and the shell is therefore superd's
+        // child. The companion assertion below turns that into a pin: a shell parented to hostd
+        // would mean the fork window had come back.
+        let afterA = shellChildren(ofParent: custodianPID)
         XCTAssertEqual(
             afterA.count, 1,
             "precondition: one client on one pane is one shell; got pids \(afterA)",
+        )
+        XCTAssertEqual(
+            shellChildren(ofParent: hostd.processIdentifier), [],
+            "hostd must fork nothing — every pane's shell belongs to superd",
         )
 
         let b = try launchClient()
@@ -670,7 +718,7 @@ final class SubprocessE2ETests: XCTestCase {
         XCTAssertTrue(b.process.isRunning, "the second client stays connected")
 
         // THE assertion: the join forked nothing. Same shell, same pid.
-        let afterB = shellChildren(ofParent: hostd.processIdentifier)
+        let afterB = shellChildren(ofParent: custodianPID)
         XCTAssertEqual(
             afterB, afterA,
             "a second client on a live sessionID must join the ONE shell, not fork another — "
@@ -751,7 +799,7 @@ final class SubprocessE2ETests: XCTestCase {
     }()
 
     /// A throwaway HOME for a hostd subprocess. The daemon spawns a REAL interactive login
-    /// shell per session — the user's zsh would, via the ShellIntegration shim (which
+    /// shell per session — the user's zsh would, via superd's shell-integration shim (which
     /// deliberately re-points a shim-relative HISTFILE back at the REAL `~/.zsh_history`),
     /// append every script this test types to the user's shell history on every run, and
     /// journal scrollback into the real Application Support dir. `--shell /bin/sh` plus this
@@ -771,7 +819,7 @@ final class SubprocessE2ETests: XCTestCase {
     /// `HOME` on its own was never isolation. It does not move Application Support and does not move
     /// `NSHomeDirectory()` (Core Foundation reads the account record unless `CFFIXED_USER_HOME` is
     /// set), so these spawns resolved the DEVELOPER's `~/Library/Application Support/SlopDesk/` —
-    /// wrote their PTY transcripts into it, and, because `ScrollbackJournalStore.sweep` runs on
+    /// wrote their PTY transcripts into it, and, because the journal sweep runs on
     /// hostd's first loop iteration and keeps only the newest 256, deleted the developer's oldest
     /// journals to make room. Measured on this host: one `swift test` left 9 of its own transcripts
     /// there and removed 6 of theirs.
@@ -793,7 +841,108 @@ final class SubprocessE2ETests: XCTestCase {
         // override doubles as the off-switch: SET but not executable resolves to "no binary"
         // (documented in `HostServiceProcess.locate`), so the prewarm silently no-ops.
         env["SLOPDESK_CODE_SERVER_BIN"] = container.appendingPathComponent("code-server-absent").path
+        // The spawned hostd cannot fork a shell — nothing in Swift can (`docs/51`) — so every test
+        // here that opens a pane needs a `slopdesk-superd` to ask, and it must NOT be the
+        // developer's live one: this suite kills and restarts daemons freely, and a stray `release`
+        // against the real custodian would end somebody's running agent. Each spawn therefore gets
+        // a private daemon on a private directory, torn down with the test.
+        // The key is set EITHER WAY. Omitting it would let `SupervisorPaths.controlSocket()` fall
+        // back to its default path — the developer's live custodian — which is the one outcome the
+        // paragraph above rules out: `swift test` and `make test-touched` do not build superd, so
+        // the nil branch is the ordinary case on a working machine, not a corner.
+        env[superdSocketEnvKey] = try startPrivateSuperd()
+            ?? container.appendingPathComponent("superd-absent.sock").path
         return env
+    }
+
+    /// The pid of the most recent ``startPrivateSuperd()``. A spawned pane's shell is a child
+    /// of THAT process, not of hostd — hostd forks nothing any more — so a test counting shells has
+    /// to look under the custodian.
+    private var custodianPID: pid_t = -1
+
+    /// The env var hostd reads to find its custodian. Spelled out rather than imported: this target
+    /// depends on `SlopDeskHost`, not on `SlopDeskSupervisor`, and one string is not worth widening
+    /// the dependency graph of the E2E suite.
+    private var superdSocketEnvKey: String { "SLOPDESK_SUPERD_SOCKET" }
+
+    /// Boots a private `slopdesk-superd` for one spawned daemon and returns its socket path, or
+    /// `nil` when the binary is not built (the caller's pane assertions then fail honestly rather
+    /// than this silently pointing at the real daemon).
+    ///
+    /// Deliberately NOT `SuperdFixture` from `SlopDeskHostTests`: this needs no client, no
+    /// handshake and no skip machinery — only a running daemon and a path to put in a child's
+    /// environment. It is a subprocess-sandbox detail, which is exactly what this helper is for.
+    private func startPrivateSuperd() throws -> String? {
+        guard let binary = superdBinaryURL() else { return nil }
+
+        // Short stem: `sun_path` is 104 bytes and a sandbox home would eat most of them, so the
+        // daemon directory goes in `$TMPDIR` — which is why this takes no home to put it under.
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("sd-e2e-\(UUID().uuidString.prefix(8))", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let socket = directory.appendingPathComponent("slopdesk-superd.sock").path
+
+        let daemon = Process()
+        daemon.executableURL = binary
+        // A MINIMAL environment, not an inherited one. superd needs its directory and a `PATH` to
+        // resolve nothing in particular; inheriting would also drag in this process's own
+        // `SLOPDESK_*` overrides — and would trip this file's `ProcessInfo` ratchet, which exists
+        // precisely to stop a spawn reaching the developer's real container.
+        daemon.environment = ["SLOPDESK_SUPERD_DIR": directory.path, "PATH": "/usr/bin:/bin"]
+        try daemon.run()
+        custodianPID = daemon.processIdentifier
+        addTeardownBlock {
+            // SIGTERM, not SIGKILL: superd's exit drops the last master fd of every pane it still
+            // holds, which is how this test's shells get cleaned up rather than leaked.
+            if daemon.isRunning { daemon.terminate() }
+            daemon.waitUntilExit()
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        // Readiness is a real connection, not the socket FILE existing. `bind(2)` creates the node
+        // and `listen(2)` comes after it, so a hostd connecting in that window gets `ECONNREFUSED`
+        // rather than `ENOENT` — microseconds wide, and it only ever loses under the full suite's
+        // load, where the flake gets blamed on whichever test caught it.
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline {
+            if Self.accepts(socket) { return socket }
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        return nil
+    }
+
+    /// Whether something is listening on `path` right now. Connects and hangs straight up.
+    private static func accepts(_ path: String) -> Bool {
+        var address = sockaddr_un()
+        address.sun_family = sa_family_t(AF_UNIX)
+        let bytes = Array(path.utf8)
+        guard bytes.count < MemoryLayout.size(ofValue: address.sun_path) else { return false }
+        withUnsafeMutableBytes(of: &address.sun_path) { destination in
+            destination.copyBytes(from: bytes)
+        }
+        let fd = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+        let size = socklen_t(MemoryLayout<sockaddr_un>.size)
+        return withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.connect(fd, $0, size) == 0 }
+        }
+    }
+
+    /// `rust/slopdesk-superd/target/{release,debug}/slopdesk-superd`. `make test` builds it; a bare
+    /// `swift test` may not have, and then the pane assertions fail by name rather than quietly
+    /// borrowing the developer's daemon.
+    private func superdBinaryURL() -> URL? {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent() // SlopDeskClientTests
+            .deletingLastPathComponent() // Tests
+            .deletingLastPathComponent() // <package root>
+            .appendingPathComponent("rust/slopdesk-superd/target")
+        for profile in ["release", "debug"] {
+            let candidate = root.appendingPathComponent("\(profile)/slopdesk-superd")
+            if FileManager.default.isExecutableFile(atPath: candidate.path) { return candidate }
+        }
+        return nil
     }
 
     /// Reads hostd stderr until a "listening on …:<port>" line; returns the port plus the

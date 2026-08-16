@@ -1,4 +1,3 @@
-import Foundation
 import SlopDeskWorkspaceModel
 
 // WorkspaceConnectionAlert (C8 improvement 3) — the pure, `Equatable` fold of every live pane's PATH-1

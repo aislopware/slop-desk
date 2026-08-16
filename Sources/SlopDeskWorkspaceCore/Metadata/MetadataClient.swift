@@ -1,5 +1,4 @@
 import Foundation
-import SlopDeskClient
 import SlopDeskProtocol
 
 /// The typed façade over ``SlopDeskClient/requestMetadata(requestID:verb:payload:)``: each method
@@ -128,8 +127,9 @@ public final class MetadataClient {
         return (try? MetadataCodec.decodeAgentSessionList(payload)) ?? []
     }
 
-    /// One agent session's raw transcript bytes (``MetadataVerb/readAgentSession``) — the client parses the
-    /// JSONL via `SlopDeskInspector.TranscriptParser`. `nil` on any failure.
+    /// One agent session's raw transcript bytes (``MetadataVerb/readAgentSession``) — opaque JSONL for
+    /// the caller to interpret. `nil` on any failure. Still has no caller: the LIVE inspector reads a
+    /// transcript through `slopdesk-inspectord`, which tails the file itself (`docs/54`).
     public func readAgentSession(id: String) async -> Data? {
         let (status, payload) = await request(.readAgentSession, payload: Data(id.utf8))
         guard status == .ok else { return nil }

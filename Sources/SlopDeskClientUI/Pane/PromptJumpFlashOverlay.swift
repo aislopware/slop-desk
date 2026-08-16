@@ -135,8 +135,7 @@ struct PromptJumpFlashOverlay: View {
     /// stderr diagnostics gated by `SLOPDESK_BLOCKS_DEBUG == "1"` — the paint end of the one-flag
     /// jump trace (issue → arm → scrollbar echo → settle → THIS paint / no-rect drop).
     private static func debugLog(_ message: String) {
-        guard ProcessInfo.processInfo.environment["SLOPDESK_BLOCKS_DEBUG"] == "1" else { return }
-        FileHandle.standardError.write(Data("[flash] \(message)\n".utf8))
+        DebugTrace.blocks.write("flash", message)
     }
 }
 #endif

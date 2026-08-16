@@ -36,7 +36,7 @@ final class MuxChannelSessionProjectKeyTests: XCTestCase {
     private func makeSession() -> MuxChannelSession {
         let session = MuxChannelSession(
             channelID: 1,
-            pty: PTYProcess(), // unspawned — relay never started; truths driven via the seams
+            pty: unattachedPTY(), // unspawned — relay never started; truths driven via the seams
             data: MuxSubChannel(channelID: 1, channel: .data) { _, _ in },
             control: MuxSubChannel(channelID: 1, channel: .control) { _, _ in },
         )
@@ -205,7 +205,7 @@ final class MuxChannelSessionProjectKeyTests: XCTestCase {
         let session = makeSession()
         let (root, sub) = try makeTempRepo()
         warmUp(session) // the ingest path shares the same first-command-edge gate
-        session.ingestPTYChunkForTesting(osc("7;file://\(sub)"))
+        session.ingestPTYChunkForTesting(osc("7;file://\(sub)"), sniffed: [.cwd(sub)])
         drainControlOut(session)
 
         session.reestablishActivityOnReattachForTesting()
@@ -224,7 +224,7 @@ final class MuxChannelSessionProjectKeyTests: XCTestCase {
         let session = makeSession()
         let (_, sub) = try makeTempRepo()
         warmUp(session)
-        session.ingestPTYChunkForTesting(osc("7;file://\(sub)"))
+        session.ingestPTYChunkForTesting(osc("7;file://\(sub)"), sniffed: [.cwd(sub)])
         guard case let .output(_, _, fifoControl)? = session.takeMergedFrame() else {
             XCTFail("the ingested chunk must be poppable as one merged output frame")
             return
@@ -253,7 +253,7 @@ final class MuxChannelSessionProjectKeyTests: XCTestCase {
 
         // Ingest returns with the resolve still pending — the exact hung-mount shape: the walk
         // has not run, yet the chunk was journaled/sniffed/enqueued and the latch took the cwd.
-        session.ingestPTYChunkForTesting(osc("7;file://\(sub)"))
+        session.ingestPTYChunkForTesting(osc("7;file://\(sub)"), sniffed: [.cwd(sub)])
         XCTAssertEqual(pending.count, 1, "the cwd change dispatched exactly one deferred resolve")
         var preResolve: [WireMessage] = []
         while let batch = session.takeControlBatchForTesting() {

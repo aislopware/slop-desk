@@ -1,5 +1,3 @@
-import Foundation
-
 // MARK: - Tab (one tiled split tree within a session)
 
 /// One tiled split tree within a ``Session`` (docs/42 §Domain model). A pure

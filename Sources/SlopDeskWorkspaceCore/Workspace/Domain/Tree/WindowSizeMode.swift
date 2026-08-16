@@ -1,5 +1,3 @@
-import Foundation
-
 // MARK: - WindowSizeMode (`window-size` policy)
 
 /// How a newly opened window decides its initial dimensions — the `window-size`

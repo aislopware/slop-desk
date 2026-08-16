@@ -1,0 +1,122 @@
+# `slopdesk-sanitize` — the REPLAY transform: retained PTY bytes in, the same history without the
+# churn out.
+#
+# ## Why it is its own crate rather than part of screend
+# Two callers, one implementation. screend runs these passes for its own `snapshot` work, and the
+# host runs them on every cold reattach — and the host's call used to be an `AF_UNIX` round trip
+# through screend plus a C function pointer back into Swift, purely because the code lived behind a
+# daemon. `sanitize` is a PURE FUNCTION: bytes in, bytes out, nothing remembered, nothing to
+# outlive its caller. It is the shape `CLAUDE.md` says ships as a linked library, and the daemon was
+# never what it needed.
+#
+# It carries the shared byte scanners (`vtscan`, `width`) with it, because they are what the passes
+# are written in and screend's screen model reads them through this crate now.
+#
+# ## Why it is its OWN workspace
+# Same reason screend is: cargo profiles are workspace-global. This is linked into the iOS app
+# through `slopdesk-ffi`, whose `panic = "abort"` is a soundness requirement (unwinding across a C
+# ABI frame is undefined), and into screend, whose `panic = "unwind"` keeps one bad connection from
+# blanking every pane. Neither is expressible per-package.
+#
+# ## No dependencies, on purpose
+# Every byte reaching these passes was written by whatever program holds the far side of a PTY. A
+# supply chain would buy nothing here — the whole crate is `position`, `get` and a state machine —
+# and it would buy it on the app's binary size.
+[workspace]
+resolver = "3"
+
+[package]
+name = "slopdesk-sanitize"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The scrollback replay transform for slopdesk — seven byte passes over retained PTY output"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[lib]
+name = "slopdesk_sanitize"
+path = "src/lib.rs"
+
+[dependencies]
+
+# Linked into the app AND into a daemon whose whole job is a per-byte loop.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+debug = 1
+strip = "debuginfo"
+
+# ---------------------------------------------------------------------------- #
+# The strict block, copied rather than inherited — inheriting would mean being a workspace member,
+# which is what the profile forbids.
+[lints.rust]
+# `forbid`, not `deny` (stage 28): this crate has never contained an `unsafe` block, and `forbid`
+# is what turns that from a fact about today's code into one no downstream `allow` can undo. Every
+# syscall with no safe wrapper lives in `slopdesk-posix`; if this daemon ever needs one, it depends
+# on that crate rather than lifting the lint here.
+unsafe_code = "forbid"
+
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+missing_copy_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+single_use_lifetimes = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+variant_size_differences = "deny"
+elided_lifetimes_in_paths = "deny"
+let_underscore_drop = "deny"
+non_ascii_idents = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+integer_division = "deny"
+exit = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+mem_forget = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+verbose_file_reads = "deny"
+str_to_string = "deny"
+empty_structs_with_brackets = "deny"
+if_then_some_else_none = "deny"
+lossy_float_literal = "deny"
+try_err = "deny"
+
+# Disabled, with reasons:
+# - `indexing_slicing`: a terminal grid IS an indexed structure, and every coordinate reaching it
+#   has already been clamped by `clamp_row`/`clamp_col` or a `min` against `cols`. Rewriting ~200
+#   grid touches as `get_mut(..)` + `else { return }` would replace one panic that cannot fire
+#   with a hundred silent no-ops that hide the bug if it ever could. The clamps are the check.
+indexing_slicing = "allow"
+
+# Disabled, with a reason:
+# - `suboptimal_flops` / `imprecise_flops` (nursery): both want `f64::mul_add`, which is exactly the
+#   fused multiply-add `CLAUDE.md` forbids — "keep `a * b + c` separate (never `addingProduct`/`fma`)".
+#   FMA rounds once where the wire rounds twice, so taking the advice changes the `f64` bit patterns
+#   `golden/golden_vectors.json` pins. Allowed in EVERY workspace, not only the ones doing float
+#   math today: the reason is a repo invariant, and a lint that fires the first time a float lands
+#   here would be obeyed before anyone reads this file.
+suboptimal_flops = "allow"
+imprecise_flops = "allow"

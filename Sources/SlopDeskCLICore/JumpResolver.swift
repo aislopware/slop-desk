@@ -1,15 +1,17 @@
+import CSlopDeskFFI
 import Foundation
+import SlopDeskArena
 import SlopDeskWorkspaceCore
 
-// `slopdesk jump` path resolution (PURE).
+// `slopdesk jump` path resolution — the Swift face of `rust/slopdesk-workspace`'s `jump`.
 //
-// The headless core of the `jump [query]` / `--no-cd` command (see `docs/ui-shell/spec/reference__cli.md`): resolve a
-// target directory over the client's frecency database. No I/O, no store, no socket, no SwiftUI — the
-// running app's `WorkspaceControlBackend` feeds it the frecency entries + the focused pane's cached
+// The headless core of the `jump [query]` / `--no-cd` command (see `docs/ui-shell/spec/reference__cli.md`):
+// resolve a target directory over the client's frecency database. No I/O, no store, no socket, no SwiftUI —
+// the running app's `WorkspaceControlBackend` feeds it the frecency entries + the focused pane's cached
 // OSC-7 cwd + the `$HOME` path + the persisted last-jump-source, then applies the result (sends
 // `cd <path>` VERBATIM unless `--no-cd`). Unit-tested in isolation (`JumpResolverTests`).
 //
-// Jump semantics (faithful to `docs/ui-shell/spec/reference__cli.md`):
+// Jump semantics (faithful to `docs/ui-shell/spec/reference__cli.md`, and the crate's own doc):
 //   - **With a query** → the most-frecent visited folder whose path CONTAINS the query (case-insensitive
 //     substring), ranked by the shared ``FolderFrecency`` scorer. No match → `nil` (the caller errors).
 //     A query jump does NOT touch the `$HOME` toggle state.
@@ -40,9 +42,12 @@ public enum JumpResolver {
 
     /// Resolve the jump target.
     ///
+    /// An absent query / cwd / source crosses as an EMPTY string, which is what a blank one already trims
+    /// to on the far side — so the three optionals need no companion flags.
+    ///
     /// - Parameters:
     ///   - query: the optional frecency query (a substring of a visited path). `nil`/blank → the home toggle.
-    ///   - entries: the frecency database (ranked internally by ``FolderFrecency/ranked(entries:now:limit:)``).
+    ///   - entries: the frecency database (ranked internally by the shared scorer).
     ///   - now: the clock used to score recency (injected for deterministic tests).
     ///   - homePath: the resolved `$HOME` path — the one fixed pole of the no-query toggle.
     ///   - currentCwd: the focused pane's cached OSC-7 cwd (`nil`/blank when never seen).
@@ -59,49 +64,63 @@ public enum JumpResolver {
         lastJumpSource: String?,
         changeDirectory: Bool,
     ) -> Resolution? {
-        // Validate-then-default: an all-whitespace query / cwd / source is treated as absent.
-        let trimmedQuery = query?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let cwd = nonEmpty(currentCwd)
-        let source = nonEmpty(lastJumpSource)
-
-        // Resolve the target path + the source the toggle WOULD record on a committed jump.
-        let path: String
-        var nextSource = source
-
-        if let q = trimmedQuery, !q.isEmpty {
-            // Query jump — frecency-ranked substring match; leaves the home-toggle source untouched.
-            let needle = q.lowercased()
-            guard let match = FolderFrecency.ranked(entries: entries, now: now)
-                .first(where: { $0.path.lowercased().contains(needle) })
-            else {
-                return nil // no visited folder matched the query
+        FolderFrecency.lent(entries) { records, pool in
+            asked(query, homePath, currentCwd, lastJumpSource) { asked, home, cwd, source in
+                var record = SlopDeskJumpResolution()
+                func ask(
+                    _ out: UnsafeMutablePointer<SlopDeskJumpResolution>?,
+                    _ arena: UnsafeMutableRawPointer?,
+                    _ cap: Int,
+                ) -> Int {
+                    slopdesk_jump_resolve(
+                        asked.baseAddress, asked.count, records.baseAddress, records.count,
+                        pool.baseAddress, pool.count, now.timeIntervalSinceReferenceDate,
+                        home.baseAddress, home.count, cwd.baseAddress, cwd.count,
+                        source.baseAddress, source.count, changeDirectory, out, arena, cap,
+                    )
+                }
+                let needed = ask(&record, nil, 0)
+                guard record.resolved else { return nil }
+                var arena = Data(count: needed)
+                let written = arena.withUnsafeMutableBytes { out in
+                    ask(&record, out.baseAddress, out.count)
+                }
+                guard written == needed else { return nil }
+                return Resolution(
+                    path: string(record.path, arena),
+                    lastJumpSource: record.has_source ? string(record.source, arena) : nil,
+                )
             }
-            path = match.path
-        } else if let cwd, cwd != homePath {
-            // Away from home → go home, remembering where we left as the new source.
-            path = homePath
-            nextSource = cwd
-        } else if let source {
-            // At home (or cwd unknown) → return to the recorded source, KEEPING it so the toggle alternates.
-            path = source
-        } else if let top = FolderFrecency.ranked(entries: entries, now: now).first {
-            // No recorded source yet → fall back to the single most-frecent folder.
-            path = top.path
-        } else {
-            // Nothing learned at all → stay at home (last resort).
-            path = homePath
         }
-
-        // `--no-cd` resolves + prints the path but does NOT advance the home-toggle source (no jump happened).
-        let committedSource = changeDirectory ? nextSource : source
-        return Resolution(path: path, lastJumpSource: committedSource)
     }
 
-    /// `s` trimmed of surrounding whitespace/newlines; `nil` when empty/whitespace-only.
-    private static func nonEmpty(_ s: String?) -> String? {
-        guard let trimmed = s?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
-            return nil
+    /// Lends the query and the three paths as bytes for exactly one call.
+    private static func asked<Answer>(
+        _ query: String?,
+        _ home: String,
+        _ cwd: String?,
+        _ source: String?,
+        _ ask: (
+            UnsafeBufferPointer<UInt8>, UnsafeBufferPointer<UInt8>,
+            UnsafeBufferPointer<UInt8>, UnsafeBufferPointer<UInt8>,
+        ) -> Answer,
+    ) -> Answer {
+        let asked = Array((query ?? "").utf8)
+        let home = Array(home.utf8)
+        let cwd = Array((cwd ?? "").utf8)
+        let source = Array((source ?? "").utf8)
+        return asked.withUnsafeBufferPointer { asked in
+            home.withUnsafeBufferPointer { home in
+                cwd.withUnsafeBufferPointer { cwd in
+                    source.withUnsafeBufferPointer { source in ask(asked, home, cwd, source) }
+                }
+            }
         }
-        return trimmed
+    }
+
+    /// The text a span names, or "" when it names nothing — ``ArenaText/text(_:offset:length:)``
+    /// wearing this door's C struct.
+    private static func string(_ span: SlopDeskByteSpan, _ arena: Data) -> String {
+        ArenaText.text(arena, offset: Int(span.offset), length: Int(span.length))
     }
 }

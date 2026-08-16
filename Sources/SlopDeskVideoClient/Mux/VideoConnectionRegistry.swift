@@ -1,4 +1,5 @@
 #if canImport(QuartzCore) && canImport(Metal) && canImport(VideoToolbox)
+import CSlopDeskFFI
 import Foundation
 import SlopDeskVideoProtocol
 
@@ -53,27 +54,20 @@ extension NWVideoMuxClientFlow: VideoMuxClientFlowing {}
 /// endpoint bookkeeping are plain main-actor reads. Acquiring / releasing a lane is
 /// synchronous bookkeeping (the flow's own socket ops are async inside `Network.framework`),
 /// so it fits the synchronous construction site.
+///
+/// ## Where the refcount lives
+/// The lane sets and the id allocator are `mux_client_pool.rs`'s, reached through the `mux_client`
+/// door; this side keeps only the FLOW OBJECTS, because an `NWConnection` is a reference the crate
+/// cannot hold. The pool answers whether an acquisition must BUILD a flow and whether a release
+/// must CLOSE one — the two facts this map needs and the only two it acts on.
 @preconcurrency
 @MainActor
 public final class VideoConnectionRegistry {
-    private struct Entry {
-        let flow: VideoMuxClientFlowing
-        var channelIDs: Set<UInt32> = []
-    }
-
-    private var entries: [String: Entry] = [:]
-    /// Monotonic channelID allocator, SEEDED from a per-process RANDOM base ([7]). UDP lanes need only
-    /// be unique per shared flow within a process — a monotonic counter guarantees that and never reuses
-    /// a retired id (reconnect-generation safety on the host's ``VideoMuxRouter``). But two DISTINCT
-    /// clients streaming the SAME host window each ran their own counter from 1, so both minted
-    /// `channelID == 1` for their first lane — and the host's per-channelID reply-flow maps
-    /// (`channelMediaConn` / `channelCursorConn`) are keyed by the BARE channelID, so the second client's
-    /// lane HIJACKED the first's video/cursor reply flow (stream theft). Seeding each process's counter
-    /// from a random base separates the two clients' id RANGES, so their lanes never collide on the host.
-    /// The base is masked well below `UInt32.max` so a long-lived client's `&+= 1` cannot wrap into a
-    /// sibling's range within any realistic session (a client opens far fewer than the ~0xF0000000
-    /// headroom of lanes). Still strictly monotonic within the process (the property the router needs).
-    private var nextChannelID: UInt32 = .random(in: 1...0x0FFF_FFFF)
+    /// The far-side pool, which owns the lane sets and the allocator. `nonisolated(unsafe)` only so
+    /// the deinit may free it: every other touch is a main-actor call, and the last one is this.
+    private nonisolated(unsafe) let pool: OpaquePointer?
+    /// The shared flows themselves, keyed exactly as the pool keys its endpoints.
+    private var flows: [String: VideoMuxClientFlowing] = [:]
 
     /// Builds a fresh shared flow for an endpoint. Injected so tests substitute an in-memory flow.
     private let makeFlow: @MainActor (_ host: String, _ mediaPort: UInt16, _ cursorPort: UInt16)
@@ -84,7 +78,16 @@ public final class VideoConnectionRegistry {
         makeFlow: @escaping @MainActor (String, UInt16, UInt16) -> VideoMuxClientFlowing,
     ) {
         self.makeFlow = makeFlow
+        // The per-process random base is drawn HERE and injected: the crate stays deterministic, and
+        // randomness is exactly the part that cannot be. Why a base at all: two DISTINCT clients
+        // streaming the same host window each ran a counter from 1, so both minted `channelID == 1`
+        // for their first lane — and the host's reply-flow maps are keyed by the BARE channelID, so
+        // the second client's lane HIJACKED the first's video/cursor flow (stream theft). Separate
+        // ranges, no collision.
+        pool = slopdesk_video_pool_new(.random(in: 0...UInt32.max))
     }
+
+    deinit { slopdesk_video_pool_free(pool) }
 
     private static func key(_ host: String, _ mediaPort: UInt16, _ cursorPort: UInt16) -> String {
         "\(host):\(mediaPort):\(cursorPort)"
@@ -92,11 +95,13 @@ public final class VideoConnectionRegistry {
 
     /// The number of distinct shared flows currently pooled (one per active host). A test asserts
     /// this is 1 for N same-host video panes (the lsof "one UDP flow" property, headlessly).
-    public var sharedFlowCount: Int { entries.count }
+    public var sharedFlowCount: Int { slopdesk_video_pool_shared_flow_count(pool) }
 
     /// The number of live lanes on the shared flow for `(host, ports)`, or 0 if none.
     public func laneCount(host: String, mediaPort: UInt16, cursorPort: UInt16) -> Int {
-        entries[Self.key(host, mediaPort, cursorPort)]?.channelIDs.count ?? 0
+        asked(host) { address, length in
+            slopdesk_video_pool_lane_count(pool, address, length, mediaPort, cursorPort)
+        }
     }
 
     // MARK: - Acquire / release (driven by VideoMuxClientTransport)
@@ -105,18 +110,19 @@ public final class VideoConnectionRegistry {
     /// acquisition for that endpoint and reusing it thereafter (refcount++). Returns the lane's
     /// channelID + the shared flow it rides.
     public func acquire(host: String, mediaPort: UInt16, cursorPort: UInt16) -> VideoMuxAcquisition {
+        var created = false
+        let channelID = asked(host) { address, length in
+            slopdesk_video_pool_acquire(pool, address, length, mediaPort, cursorPort, &created)
+        }
         let key = Self.key(host, mediaPort, cursorPort)
         let flow: VideoMuxClientFlowing
-        if let existing = entries[key] {
-            flow = existing.flow
+        if !created, let existing = flows[key] {
+            flow = existing
         } else {
             flow = makeFlow(host, mediaPort, cursorPort)
-            entries[key] = Entry(flow: flow)
+            flows[key] = flow
         }
         flow.startIfNeeded()
-        let channelID = nextChannelID
-        nextChannelID &+= 1
-        entries[key]?.channelIDs.insert(channelID)
         return VideoMuxAcquisition(channelID: channelID, flow: flow)
     }
 
@@ -124,16 +130,22 @@ public final class VideoConnectionRegistry {
     /// tears the shared flow down and drops the pool entry — so the flow survives exactly as long as
     /// at least one video pane rides it. A sibling lane keeps the flow up (loss isolation on close).
     public func release(host: String, mediaPort: UInt16, cursorPort: UInt16, channelID: UInt32) {
-        let key = Self.key(host, mediaPort, cursorPort)
-        guard var entry = entries[key] else { return }
-        entry.flow.unregisterLane(channelID: channelID)
-        entry.channelIDs.remove(channelID)
-        if entry.channelIDs.isEmpty {
-            entries.removeValue(forKey: key)
-            entry.flow.close()
-        } else {
-            entries[key] = entry
+        let outcome = asked(host) { address, length in
+            slopdesk_video_pool_release(pool, address, length, mediaPort, cursorPort, channelID)
         }
+        guard outcome != SLOPDESK_LANE_UNKNOWN else { return }
+        let key = Self.key(host, mediaPort, cursorPort)
+        guard let flow = flows[key] else { return }
+        flow.unregisterLane(channelID: channelID)
+        guard outcome == SLOPDESK_LANE_FLOW_CLOSED else { return }
+        flows.removeValue(forKey: key)
+        flow.close()
+    }
+
+    /// One question asked of the pool with the address lent as bytes for exactly that call.
+    private func asked<Answer>(_ host: String, _ ask: (UnsafePointer<UInt8>?, Int) -> Answer) -> Answer {
+        let address = Array(host.utf8)
+        return address.withUnsafeBufferPointer { bytes in ask(bytes.baseAddress, bytes.count) }
     }
 }
 

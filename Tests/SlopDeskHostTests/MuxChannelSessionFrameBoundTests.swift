@@ -13,7 +13,7 @@ final class MuxChannelSessionFrameBoundTests: XCTestCase {
     private func makeSession() -> MuxChannelSession {
         MuxChannelSession(
             channelID: 1,
-            pty: PTYProcess(),
+            pty: unattachedPTY(),
             data: MuxSubChannel(channelID: 1, channel: .data) { _, _ in },
             control: MuxSubChannel(channelID: 1, channel: .control) { _, _ in },
         )

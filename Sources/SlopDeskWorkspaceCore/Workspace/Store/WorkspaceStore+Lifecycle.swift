@@ -1,4 +1,3 @@
-import Foundation
 import SlopDeskWorkspaceModel
 
 /// Connection + session-retention lifecycle helpers for ``WorkspaceStore`` (R-lifecycle). Split into an

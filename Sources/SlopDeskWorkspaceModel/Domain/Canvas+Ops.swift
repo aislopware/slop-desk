@@ -1,4 +1,5 @@
 import CoreGraphics
+import CSlopDeskFFI
 import Foundation
 
 // MARK: - Queries (drive reconcile + the coupling that replaces PaneNode reads)
@@ -184,74 +185,98 @@ public extension Canvas {
 // MARK: - Arrange: align + distribute (pure)
 
 /// Which edge/centre the panes are aligned to.
+///
+/// The case ORDER is a cross-language contract — it crosses to `rust/slopdesk-workspace` as a byte,
+/// and `scripts/check-supervisor.sh` pins it so a reordering fails the build rather than aligning to
+/// the wrong edge.
 public enum AlignEdge: Sendable, CaseIterable,
     Equatable { case left, right, top, bottom, centerHorizontal, centerVertical }
 
+/// The three arrange commands are `rust/slopdesk-workspace`'s `canvas_arrange` (docs/55). They read a
+/// pane's id and its frame and write a frame — never a spec, a group, a z or the camera — so what
+/// crosses is that projection and the plane itself stays here, where SwiftUI diffs it.
 public extension Canvas {
     /// Aligns the panes named by `ids` to the shared edge/centre of THEIR bounding box (Figma's
     /// align-left / align-centre / …). Only the moved axis changes; the perpendicular axis and every
     /// size stay put. Panes not in `ids` are untouched. No-op for fewer than 2 targets.
     func aligning(_ ids: [PaneID], to edge: AlignEdge) -> Canvas {
-        let targets = items.filter { ids.contains($0.id) }
-        guard targets.count >= 2 else { return self }
-        let box = targets.dropFirst().reduce(targets[0].frame) { $0.union($1.frame) }
-        let idSet = Set(ids)
-        return Canvas(items: items.map { item in
-            guard idSet.contains(item.id) else { return item }
-            var copy = item
-            var f = item.frame
-            switch edge {
-            case .left: f.origin.x = box.minX
-            case .right: f.origin.x = box.maxX - f.width
-            case .top: f.origin.y = box.minY
-            case .bottom: f.origin.y = box.maxY - f.height
-            case .centerHorizontal: f.origin.x = box.midX - f.width / 2
-            case .centerVertical: f.origin.y = box.midY - f.height / 2
-            }
-            copy.frame = Self.sanitize(f)
-            return copy
-        }, camera: camera)
+        applying(arranged(ids) { targets, out, cap in
+            slopdesk_ws_align(targets.baseAddress, targets.count, edge.ffiByte, out, cap)
+        })
     }
 
     /// Distributes the panes named by `ids` so the GAPS between adjacent panes along `horizontal`/
     /// vertical are equal (Figma's distribute-spacing). The two extreme panes stay put; the interior
     /// ones move. No-op for fewer than 3 targets (nothing interior to redistribute).
     ///
-    /// When the panes are collectively WIDER than their spread (the sum of sizes exceeds the extremes'
-    /// span) the ideal even gap is NEGATIVE — which would silently OVERLAP the panes. The gap is clamped
-    /// to ≥ 0 in that case, so the panes pack flush (edge-to-edge) instead of overlapping, consistent
-    /// with the canvas's non-overlap ethos; the trailing extreme then shifts rather than staying put.
+    /// When the panes are collectively WIDER than their spread the ideal even gap is NEGATIVE, which
+    /// would silently OVERLAP them. It is clamped to ≥ 0 instead, so they pack flush and the trailing
+    /// extreme shifts rather than the panes overlapping.
+    ///
+    /// One behaviour was narrowed on the way across, deliberately: panes sharing a leading edge
+    /// exactly used to keep whatever order `items` happened to be in, and now break the tie by id. The
+    /// spread is a function of the SET either way, which it was not before.
     func distributing(_ ids: [PaneID], horizontal: Bool) -> Canvas {
-        let targets = items.filter { ids.contains($0.id) }
-        guard targets.count >= 3 else { return self }
-        // Sort by the leading edge along the axis.
-        let sorted = targets.sorted { a, b in
-            horizontal ? a.frame.minX < b.frame.minX : a.frame.minY < b.frame.minY
-        }
-        // `sorted.count >= 3` (guarded above) so first/last are always present.
-        guard let firstItem = sorted.first, let lastItem = sorted.last else { return self }
-        let span = horizontal
-            ? (lastItem.frame.maxX - firstItem.frame.minX)
-            : (lastItem.frame.maxY - firstItem.frame.minY)
-        let sumSizes = sorted.reduce(CGFloat(0)) { $0 + (horizontal ? $1.frame.width : $1.frame.height) }
-        // Clamp to ≥ 0: a negative gap (panes wider than their span) would overlap them silently.
-        let gap = max(0, (span - sumSizes) / CGFloat(sorted.count - 1))
-        // Place each from the first's leading edge, cursor advancing by size + gap.
-        var cursor = horizontal ? firstItem.frame.minX : firstItem.frame.minY
-        var newOrigin: [PaneID: CGFloat] = [:]
-        for item in sorted {
-            newOrigin[item.id] = cursor
-            cursor += (horizontal ? item.frame.width : item.frame.height) + gap
-        }
+        applying(arranged(ids) { targets, out, cap in
+            slopdesk_ws_distribute(targets.baseAddress, targets.count, horizontal, out, cap)
+        })
+    }
+
+    // MARK: Marshalling
+
+    /// Runs an arrange command over the panes named by `ids`, in this plane's own item order.
+    private func arranged(
+        _ ids: [PaneID],
+        _ call: (UnsafeMutableBufferPointer<SlopDeskWsFrame>, UnsafeMutablePointer<SlopDeskWsFrame>?, Int) -> Int,
+    ) -> [PaneID: CGRect] {
         let idSet = Set(ids)
+        var targets = items.filter { idSet.contains($0.id) }
+            .map { SlopDeskWsFrame(id: $0.id.ffi, rect: SlopDeskWsRect($0.frame)) }
+        return targets.withUnsafeMutableBufferPointer { buffer in
+            moved { out, cap in call(buffer, out, cap) }
+        }
+    }
+
+    /// Reads the frames a command moved, with the retry docs/55 §4 describes.
+    private func moved(_ call: (UnsafeMutablePointer<SlopDeskWsFrame>?, Int) -> Int) -> [PaneID: CGRect] {
+        var out = [SlopDeskWsFrame](repeating: SlopDeskWsFrame(), count: max(16, items.count))
+        var needed = out.withUnsafeMutableBufferPointer { call($0.baseAddress, $0.count) }
+        if needed > out.count {
+            out = [SlopDeskWsFrame](repeating: SlopDeskWsFrame(), count: needed)
+            needed = out.withUnsafeMutableBufferPointer { call($0.baseAddress, $0.count) }
+        }
+        guard needed > 0, needed <= out.count else { return [:] }
+        var frames: [PaneID: CGRect] = [:]
+        for frame in out[0..<needed] {
+            frames[PaneID(ffi: frame.id)] = frame.rect.rect
+        }
+        return frames
+    }
+
+    /// This plane with each named pane at its new frame. A pane nobody named is untouched, and an
+    /// empty answer is the plane itself rather than a copy that happened to reproduce it.
+    private func applying(_ frames: [PaneID: CGRect]) -> Canvas {
+        guard !frames.isEmpty else { return self }
         return Canvas(items: items.map { item in
-            guard idSet.contains(item.id), let lead = newOrigin[item.id] else { return item }
+            guard let frame = frames[item.id] else { return item }
             var copy = item
-            var f = item.frame
-            if horizontal { f.origin.x = lead } else { f.origin.y = lead }
-            copy.frame = Self.sanitize(f)
+            copy.frame = frame
             return copy
         }, camera: camera)
+    }
+}
+
+extension AlignEdge {
+    /// The CASE index — the crate's enum order, pinned by `scripts/check-supervisor.sh`.
+    var ffiByte: UInt8 {
+        switch self {
+        case .left: 0
+        case .right: 1
+        case .top: 2
+        case .bottom: 3
+        case .centerHorizontal: 4
+        case .centerVertical: 5
+        }
     }
 }
 
@@ -296,34 +321,30 @@ public extension Canvas {
     /// Packs every item into a uniform grid (≈`ceil(sqrt(n))` columns), preserving each item's own
     /// size + z, then recentres the camera on the packed bbox. Deterministic: cells are filled in
     /// ``allIDs()`` order (z-asc, ties by id). The "Tidy" command.
-    func tidied(gutter: CGFloat = 16, viewport: CGSize) -> Canvas {
-        let count = items.count
-        guard count > 1 else { return centeredOnAll(viewport: viewport) }
-        let cols = Int(ceil(Double(count).squareRoot()))
-        let cellW = (items.map(\.frame.width).max() ?? Self.defaultItemSize.width) + gutter
-        let cellH = (items.map(\.frame.height).max() ?? Self.defaultItemSize.height) + gutter
-
+    func tidied(gutter: CGFloat = Canvas.tidyGutter, viewport: CGSize) -> Canvas {
+        guard items.count > 1 else { return centeredOnAll(viewport: viewport) }
         let order = allIDs()
-        let positionByID: [PaneID: CGPoint] = Dictionary(uniqueKeysWithValues: order.enumerated().map { index, id in
-            let row = index / cols
-            let col = index % cols
-            return (id, CGPoint(x: CGFloat(col) * cellW, y: CGFloat(row) * cellH))
-        })
-
-        let packed = items.map { item -> CanvasItem in
-            guard let origin = positionByID[item.id] else { return item }
-            var copy = item
-            copy.frame = Self.sanitize(CGRect(origin: origin, size: item.frame.size))
-            return copy
+        let framed = order.compactMap { id in frame(of: id).map { (id, $0) } }
+        var packed = framed.map { SlopDeskWsFrame(id: $0.0.ffi, rect: SlopDeskWsRect($0.1)) }
+        let grid = packed.withUnsafeMutableBufferPointer { buffer in
+            moved { out, cap in
+                slopdesk_ws_tidy(buffer.baseAddress, buffer.count, gutter, out, cap)
+            }
         }
-        return Canvas(items: packed, camera: camera).centeredOnAll(viewport: viewport)
+        return applying(grid).centeredOnAll(viewport: viewport)
     }
+
+    /// The gap a tidy leaves between packed panes, exported by the crate rather than transcribed.
+    static var tidyGutter: CGFloat { slopdesk_ws_tidy_gutter() }
 
     /// The bounding box that contains every item's frame, or `nil` when empty.
     private func itemsBoundingBox() -> CGRect? {
-        guard var box = items.first?.frame else { return nil }
-        for item in items.dropFirst() { box = box.union(item.frame) }
-        return box
+        var frames = items.map { SlopDeskWsRect($0.frame) }
+        var answer = SlopDeskWsRect()
+        let found = frames.withUnsafeMutableBufferPointer { buffer in
+            slopdesk_ws_bounding_box(buffer.baseAddress, buffer.count, &answer)
+        }
+        return found ? answer.rect : nil
     }
 
     /// The camera whose viewport is centred on the canvas-space `point`.
@@ -344,8 +365,19 @@ public extension Canvas {
         allIDs().filter { id in item(id)?.groupID == groupID }
     }
 
-    /// The set of group ids actually referenced by at least one item — used to prune dangling group
-    /// metadata (a `PaneGroup` whose every member was closed) on load / save.
+    /// The set of group ids actually referenced by at least one item.
+    ///
+    /// No caller, and it should not get one for the reason it used to give. This said it existed to
+    /// "prune dangling group metadata (a `PaneGroup` whose every member was closed) on load / save",
+    /// which reads as an unfinished feature and was reported as one. It is not: `Workspace`'s own
+    /// `normalizingGroups()` decides the opposite in as many words — *"Empty groups are KEPT (a user
+    /// may create a group before assigning panes)"* — and repairs only the other direction, an item
+    /// pointing at a group that is gone. Wiring this in would delete a group the user made on purpose
+    /// and had not filled yet.
+    ///
+    /// What is left is a membership query with no asker. It stays because the repair rule above is
+    /// the kind that grows a second, contradictory implementation the moment someone needs the set
+    /// and does not find one — and now the contradiction is written down where they would look.
     func groupIDsInUse() -> Set<PaneGroupID> {
         Set(items.compactMap(\.groupID))
     }
@@ -452,50 +484,23 @@ public extension Canvas {
         }, camera: camera)
     }
 
-    /// Affinely remaps every member of `groupID` from its CURRENT bounding box into `newBox` (the
+    /// Affinely remaps every member of `groupID` from its CURRENT bounding box into `proposedBox` (the
     /// group-handle resize): each member's origin offset within the box and its size scale by the per-axis
-    /// ratio, so the group's footprint becomes `newBox` while its relative layout is preserved (the
-    /// "resize a grouped selection" semantics). Member sizes floor at ``minItemSize`` via `sanitize`.
-    /// Identity when the group is empty or degenerate.
+    /// ratio, so the group's footprint becomes the new box while its relative layout is preserved.
     ///
-    /// A group box can never be smaller than a single pane: members floor at ``minItemSize``, so scaling
-    /// toward a sub-floor box would force members *larger* than the box and spill them outside it —
-    /// corrupting the non-overlap solver, which moves a group as a rigid unit. We therefore floor the box
-    /// to `minItemSize` and clamp every sanitized member back inside it, so the containment invariant
-    /// (`newBox.contains(member.frame)`) always holds.
+    /// The rule itself — floor the box at the minimum pane size, clamp every member back inside it, so a
+    /// sub-floor box cannot spill members outside the body the non-overlap solver drags — lives in
+    /// `canvas_arrange::resized_group` and is stated once, there. It used to be stated twice, and the two
+    /// copies did not even agree on `min`: this side's `Swift.min` is `<`-ordered where the crate's is
+    /// IEEE `minNum`, so they parted on ±0 and NaN.
+    ///
+    /// The old box is NOT passed across — the crate derives it from the members it was handed, so there is
+    /// no second box to compute here and get wrong. A group with no members or no extent answers nothing
+    /// moved, which ``applying(_:)`` turns back into this plane unchanged.
     func resizingGroup(_ groupID: PaneGroupID, toBox proposedBox: CGRect) -> Canvas {
-        guard let oldBox = groupBoundingBox(groupID), oldBox.width > 0, oldBox.height > 0 else { return self }
-        let newBox = CGRect(
-            x: proposedBox.minX,
-            y: proposedBox.minY,
-            width: max(proposedBox.width, Self.minItemSize.width),
-            height: max(proposedBox.height, Self.minItemSize.height),
-        )
-        let sx = newBox.width / oldBox.width
-        let sy = newBox.height / oldBox.height
-        return Canvas(items: items.map { item in
-            guard item.groupID == groupID else { return item }
-            var copy = item
-            let scaled = Self.sanitize(CGRect(
-                x: newBox.minX + (item.frame.minX - oldBox.minX) * sx,
-                y: newBox.minY + (item.frame.minY - oldBox.minY) * sy,
-                width: item.frame.width * sx,
-                height: item.frame.height * sy,
-            ))
-            copy.frame = Self.clamping(scaled, into: newBox)
-            return copy
-        }, camera: camera)
-    }
-
-    /// Clamps `frame` to fit entirely inside `box`: size is capped to the box (never re-floored, so the
-    /// `minItemSize` invariant the caller already established is preserved when the box is at-least a pane),
-    /// then the origin is pinned so the (possibly shrunk) frame stays within the box on both axes.
-    static func clamping(_ frame: CGRect, into box: CGRect) -> CGRect {
-        let w = Swift.min(frame.width, box.width)
-        let h = Swift.min(frame.height, box.height)
-        let x = Swift.min(Swift.max(frame.minX, box.minX), box.maxX - w)
-        let y = Swift.min(Swift.max(frame.minY, box.minY), box.maxY - h)
-        return CGRect(x: x, y: y, width: w, height: h)
+        applying(arranged(ids(inGroup: groupID)) { targets, out, cap in
+            slopdesk_ws_resize_group(targets.baseAddress, targets.count, SlopDeskWsRect(proposedBox), out, cap)
+        })
     }
 }
 

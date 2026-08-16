@@ -1,92 +1,50 @@
+import CSlopDeskFFI
 import Foundation
 
-// `slopdesk` list/inspect output formatting. PURE: every formatter is a
-// deterministic value transform over the decoded NDJSON `result` rows — no socket, no I/O — so the
-// whole table/JSON surface is exhaustively unit-tested without a running app (hang-safety rule).
+// `slopdesk` list/inspect output formatting — the Swift face of `rust/slopdesk-cli`'s `formatting`.
 //
 // The CLI renders list output as an aligned column table by default and as structured JSON under
-// `--json` / `--format json` (for scripting); `--no-headers` strips the header row for piping. The
-// per-list helpers (`windows`/`tabs`/`panes`/`fonts`/`keybinds`/`config`)
-// pick the columns + cell formatting; ``renderTable(headers:rows:noHeaders:)`` and
-// ``renderJSON(_:)`` are the shared low-level renderers.
+// `--json` / `--format json` (for scripting); `--no-headers` strips the header row for piping.
+// Which columns each list has, how a cell is spelled, how a table is padded and how JSON is sorted
+// are all the crate's.
 //
-// Validate-then-drop on the row dicts (they arrive over the control socket): a missing or
-// wrong-typed field renders as an empty cell rather than trapping — the CLI never crashes on a
-// surprising response shape (CLAUDE.md untrusted-input contract).
+// The rows cross as JSON TEXT, which is the shape they arrived in: the control socket answers
+// NDJSON, so re-encoding a decoded row dictionary is the cheapest way to hand it over, and the
+// crate already owns a JSON parser for exactly these bytes — pane titles and cwd paths a foreign
+// program drew into a PTY. Validate-then-drop is unchanged: a missing or wrong-typed field renders
+// as an empty cell rather than trapping.
 
 public enum CLIFormatting {
     // MARK: - Per-list formatters
 
     /// `windows` → `ID · TITLE · TABS · FOCUSED` (focused marked `*`).
     public static func windows(_ rows: [[String: Any]], format: CLIOutputFormat, noHeaders: Bool) -> String {
-        if format == .json { return renderJSON(rows) }
-        return renderTable(
-            headers: ["ID", "TITLE", "TABS", "FOCUSED"],
-            rows: rows.map { [string($0, "id"), string($0, "title"), integer($0, "tabCount"), marker($0, "focused")] },
-            noHeaders: noHeaders,
-        )
+        table(SLOPDESK_CLI_TABLE_WINDOWS, rows, format, noHeaders)
     }
 
     /// `tabs` → `ID · WINDOW · TITLE · PANES · FOCUSED · BADGE`.
     public static func tabs(_ rows: [[String: Any]], format: CLIOutputFormat, noHeaders: Bool) -> String {
-        if format == .json { return renderJSON(rows) }
-        return renderTable(
-            headers: ["ID", "WINDOW", "TITLE", "PANES", "FOCUSED", "BADGE"],
-            rows: rows.map {
-                [
-                    string($0, "id"), string($0, "windowId"), string($0, "title"),
-                    integer($0, "paneCount"), marker($0, "focused"), string($0, "badge"),
-                ]
-            },
-            noHeaders: noHeaders,
-        )
+        table(SLOPDESK_CLI_TABLE_TABS, rows, format, noHeaders)
     }
 
     /// `panes` → `ID · TAB · TITLE · KIND · FOCUSED · CWD`.
     public static func panes(_ rows: [[String: Any]], format: CLIOutputFormat, noHeaders: Bool) -> String {
-        if format == .json { return renderJSON(rows) }
-        return renderTable(
-            headers: ["ID", "TAB", "TITLE", "KIND", "FOCUSED", "CWD"],
-            rows: rows.map {
-                [
-                    string($0, "id"), string($0, "tabId"), string($0, "title"),
-                    string($0, "kind"), marker($0, "focused"), string($0, "cwd"),
-                ]
-            },
-            noHeaders: noHeaders,
-        )
+        table(SLOPDESK_CLI_TABLE_PANES, rows, format, noHeaders)
     }
 
     /// `font list` → `FAMILY · MONOSPACE · SCOPE` (`mono` when fixed-pitch; `system`/`user`).
     public static func fonts(_ rows: [[String: Any]], format: CLIOutputFormat, noHeaders: Bool) -> String {
-        if format == .json { return renderJSON(rows) }
-        return renderTable(
-            headers: ["FAMILY", "MONOSPACE", "SCOPE"],
-            rows: rows.map {
-                [string($0, "family"), bool($0, "monospace") ? "mono" : "", bool($0, "system") ? "system" : "user"]
-            },
-            noHeaders: noHeaders,
-        )
+        table(SLOPDESK_CLI_TABLE_FONTS, rows, format, noHeaders)
     }
 
     /// `keybind list` → `ACTION · KEYS`.
     public static func keybinds(_ rows: [[String: Any]], format: CLIOutputFormat, noHeaders: Bool) -> String {
-        if format == .json { return renderJSON(rows) }
-        return renderTable(
-            headers: ["ACTION", "KEYS"],
-            rows: rows.map { [string($0, "action"), string($0, "keys")] },
-            noHeaders: noHeaders,
-        )
+        table(SLOPDESK_CLI_TABLE_KEYBINDS, rows, format, noHeaders)
     }
 
     /// `config show` → `KEY · VALUE`.
     public static func config(_ rows: [[String: Any]], format: CLIOutputFormat, noHeaders: Bool) -> String {
-        if format == .json { return renderJSON(rows) }
-        return renderTable(
-            headers: ["KEY", "VALUE"],
-            rows: rows.map { [string($0, "key"), string($0, "value")] },
-            noHeaders: noHeaders,
-        )
+        table(SLOPDESK_CLI_TABLE_CONFIG, rows, format, noHeaders)
     }
 
     // MARK: - Low-level renderers
@@ -97,73 +55,55 @@ public enum CLIFormatting {
     /// joined lines WITHOUT a trailing newline (the caller appends one). With `noHeaders` and no rows
     /// the result is the empty string.
     public static func renderTable(headers: [String], rows: [[String]], noHeaders: Bool) -> String {
-        let columns = headers.count
-        var widths = [Int](repeating: 0, count: columns)
-        if !noHeaders {
-            for (i, header) in headers.enumerated() { widths[i] = header.count }
-        }
-        for row in rows {
-            for i in 0..<columns where i < row.count {
-                widths[i] = max(widths[i], row[i].count)
+        let headerJSON = Array(json(headers).utf8)
+        let rowJSON = Array(json(rows).utf8)
+        return headerJSON.withUnsafeBufferPointer { columns in
+            rowJSON.withUnsafeBufferPointer { cells in
+                CLICompletions.answer { out, cap in
+                    slopdesk_cli_render_table(
+                        columns.baseAddress, columns.count, cells.baseAddress, cells.count, noHeaders, out, cap,
+                    )
+                }
             }
         }
-        var lines: [String] = []
-        if !noHeaders { lines.append(formatRow(headers, widths: widths, columns: columns)) }
-        for row in rows { lines.append(formatRow(row, widths: widths, columns: columns)) }
-        return lines.joined(separator: "\n")
     }
 
     /// Render `value` as a compact, deterministically-key-sorted JSON line (no trailing newline). The
     /// compact + sorted form matches `slopdesk-ctl --json` so the two CLIs are pipe-compatible. A
-    /// value that is not a valid JSON object (should not happen for list payloads) degrades to `[]`.
+    /// value that is not valid JSON (should not happen for list payloads) degrades to `[]`.
     public static func renderJSON(_ value: Any) -> String {
-        guard JSONSerialization.isValidJSONObject(value),
-              let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]),
-              let str = String(bytes: data, encoding: .utf8)
-        else { return "[]" }
-        return str
+        let bytes = Array(json(value).utf8)
+        return bytes.withUnsafeBufferPointer { raw in
+            CLICompletions.answer { out, cap in
+                slopdesk_cli_render_json(raw.baseAddress, raw.count, out, cap)
+            }
+        }
     }
 
     // MARK: - Private helpers
 
-    private static func formatRow(_ cells: [String], widths: [Int], columns: Int) -> String {
-        var parts: [String] = []
-        parts.reserveCapacity(columns)
-        for i in 0..<columns {
-            let cell = i < cells.count ? cells[i] : ""
-            if i == columns - 1 {
-                parts.append(cell) // last column is never padded
-            } else {
-                parts.append(pad(cell, to: widths[i]))
+    /// One list rendered through the door, its rows handed over in the JSON they arrived as.
+    private static func table(
+        _ kind: UInt32,
+        _ rows: [[String: Any]],
+        _ format: CLIOutputFormat,
+        _ noHeaders: Bool,
+    ) -> String {
+        let bytes = Array(json(rows).utf8)
+        return bytes.withUnsafeBufferPointer { raw in
+            CLICompletions.answer { out, cap in
+                slopdesk_cli_table(kind, raw.baseAddress, raw.count, format.code, noHeaders, out, cap)
             }
         }
-        var line = parts.joined(separator: "  ")
-        while line.hasSuffix(" ") { line.removeLast() }
-        return line
     }
 
-    /// Left-justify `s` to `width` using grapheme `count` (consistent with the width measurement).
-    private static func pad(_ s: String, to width: Int) -> String {
-        let deficit = width - s.count
-        return deficit > 0 ? s + String(repeating: " ", count: deficit) : s
-    }
-
-    private static func string(_ row: [String: Any], _ key: String) -> String {
-        row[key] as? String ?? ""
-    }
-
-    private static func integer(_ row: [String: Any], _ key: String) -> String {
-        if let i = row[key] as? Int { return String(i) }
-        if let d = row[key] as? Double { return String(Int(d)) }
-        return ""
-    }
-
-    private static func bool(_ row: [String: Any], _ key: String) -> Bool {
-        row[key] as? Bool ?? false
-    }
-
-    /// A current-item marker for boolean state columns (FOCUSED / ACTIVE): `*` when true, else empty.
-    private static func marker(_ row: [String: Any], _ key: String) -> String {
-        bool(row, key) ? "*" : ""
+    /// `value` re-encoded as JSON text for the crossing. A value Foundation cannot encode hands over
+    /// text that is not JSON, which the door answers `[]` for — the same degradation as before.
+    private static func json(_ value: Any) -> String {
+        guard JSONSerialization.isValidJSONObject(value),
+              let data = try? JSONSerialization.data(withJSONObject: value),
+              let text = String(bytes: data, encoding: .utf8)
+        else { return "" }
+        return text
     }
 }

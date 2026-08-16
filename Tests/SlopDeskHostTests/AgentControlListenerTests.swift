@@ -7,7 +7,7 @@ import XCTest
 ///
 /// **No real PTY, no real socket.** The pure ``AgentControlHandler`` is driven by a fake
 /// ``HostServer``-shaped protocol and by ``MuxChannelSession``'s new primitives fed with
-/// synthetic ``Data`` chunks. The ``AgentControlAcceptor`` socket shim is compiled + code-
+/// synthetic ``Data`` chunks. The ``AgentControlConnectionServer`` socket shim is compiled + code-
 /// reviewed only (the hang-safety rule: no real `AF_UNIX` socket in a test).
 final class AgentControlListenerTests: XCTestCase {
     // MARK: ANSIStripper
@@ -479,7 +479,7 @@ final class AgentControlListenerTests: XCTestCase {
         // (hang-safety rule: no real PTY in unit tests).
         let session = MuxChannelSession(
             channelID: 1,
-            pty: PTYProcess(), // unspawned: no masterFD, no reaper thread
+            pty: unattachedPTY(), // unspawned: no masterFD, no reaper thread
             data: MuxSubChannel(channelID: 1, channel: .data) { _, _ in },
             control: MuxSubChannel(channelID: 1, channel: .control) { _, _ in },
         )

@@ -10,7 +10,7 @@ import SlopDeskWorkspaceModel
 /// with no way to create the first pane.
 ///
 /// `workspace-state.json` is a SIBLING of the `scrollback/` directory, not a file inside it.
-/// `ScrollbackJournalStore.sweep(maxAge:keepNewest:)` walks only `*.scrollback` in that directory, so
+/// superd's journal sweep walks only `*.scrollback` in that directory, so
 /// it would never see this file either way — but a workspace living inside a directory something
 /// else prunes is the kind of arrangement that survives until the day it does not.
 public actor HostWorkspaceStore {

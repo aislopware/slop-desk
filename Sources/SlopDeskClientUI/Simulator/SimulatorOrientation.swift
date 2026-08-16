@@ -10,7 +10,6 @@
 // synonym costs the entire preset — `batteryState` is `discharging`, never "unplugged".
 
 #if os(macOS)
-import Foundation
 
 enum SimulatorOrientation: String, CaseIterable, Sendable {
     case portrait

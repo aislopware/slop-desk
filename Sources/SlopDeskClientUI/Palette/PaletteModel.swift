@@ -7,8 +7,6 @@
 // and no live store (the ACTIONS catalog builds a fixed list; the TABS/NAV sources take a snapshot the
 // store hands them). The store mutation runs in `PaletteAction.run` which the palette view dispatches.
 
-import Foundation
-import SlopDeskAgentDetect
 import SlopDeskWorkspaceCore
 
 // MARK: - Query filter (the chip categories)

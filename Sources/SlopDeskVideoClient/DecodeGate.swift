@@ -1,4 +1,4 @@
-import SlopDeskVideoProtocol
+import CSlopDeskFFI
 
 /// PRE-EMPTIVE drop-until-anchor decode admission.
 ///
@@ -33,14 +33,11 @@ import SlopDeskVideoProtocol
 /// drop — so a lost recovery frame still escalates to a forced IDR at the 2·RTT / escalation-floor
 /// cadence, now WITHOUT a per-frame request storm.
 ///
-/// Wrap-aware (`UInt32.distanceWrapped`, the reassembler's sequence-space discipline) — no clock,
-/// no transport — headlessly unit-testable.
-///
-/// Native Swift is the single source of truth for the drop-until-anchor state machine. This is a
-/// `final class` (not a value struct) so the single owner (`SlopDeskVideoClientSession`) holds it
-/// by reference and mutates it in place across the decode loop. `@unchecked Sendable` is sound
-/// because that owner only touches it on its actor (and the tests from one thread), so no two
-/// threads race the mutable state.
+/// The law is `rust/slopdesk-video`'s `decode_admission`; this is its face. The gate is five
+/// scalars that cross BY VALUE, but the single owner (`SlopDeskVideoClientSession`) holds it by
+/// REFERENCE and mutates it in place across the decode loop, so the type stays a `final class`
+/// wrapping the record it folds. `@unchecked Sendable` is sound because that owner only touches it
+/// on its actor (and the tests from one thread), so no two threads race the mutable state.
 public final class DecodeGate: @unchecked Sendable {
     public enum Mode: Sendable, Equatable {
         /// Chain intact — everything submits.
@@ -49,6 +46,16 @@ public final class DecodeGate: @unchecked Sendable {
         case brokenChain
         /// The decoder session is invalid (hard failure / never configured) — keyframe only.
         case needKeyframe
+
+        /// The door's code as a mode. An unknown code cannot arise — the door emits exactly these
+        /// three — and reads as the one a fresh gate holds.
+        static func of(_ code: UInt32) -> Self {
+            switch code {
+            case UInt32(SLOPDESK_GATE_MODE_BROKEN_CHAIN): .brokenChain
+            case UInt32(SLOPDESK_GATE_MODE_NEED_KEYFRAME): .needKeyframe
+            default: .open
+            }
+        }
     }
 
     public enum Verdict: Sendable, Equatable {
@@ -56,56 +63,38 @@ public final class DecodeGate: @unchecked Sendable {
         case drop
     }
 
-    /// The current admission mode.
-    public private(set) var mode: Mode = .open
-    /// OLDEST lost frameID of the episode — the chain is intact strictly BEFORE this id, so an
-    /// older in-flight delta may still submit (its references predate the break).
-    public private(set) var minLostFrameID: UInt32?
-    /// NEWEST lost frameID of the episode — an anchor must decode strictly PAST this id to prove
-    /// the chain re-anchored (same keep-newest discipline as `LTREscalationTracker.maxLostFrameID`).
-    public private(set) var maxLostFrameID: UInt32?
+    private var record = slopdesk_decode_gate_new()
 
     public init() {}
+
+    /// The current admission mode.
+    public var mode: Mode { Mode.of(record.mode) }
+    /// OLDEST lost frameID of the episode — the chain is intact strictly BEFORE this id, so an
+    /// older in-flight delta may still submit (its references predate the break).
+    public var minLostFrameID: UInt32? { record.has_min_lost ? record.min_lost_frame_id : nil }
+    /// NEWEST lost frameID of the episode — an anchor must decode strictly PAST this id to prove
+    /// the chain re-anchored (same keep-newest discipline as `LTREscalationTracker.maxLostFrameID`).
+    public var maxLostFrameID: UInt32? { record.has_max_lost ? record.max_lost_frame_id : nil }
 
     /// One unrecoverably-lost frame (the reassembler's `.dropped` / drain path). Opens the episode;
     /// `needKeyframe` is strictly stronger and is never downgraded by a mere loss.
     public func noteLoss(frameID: UInt32) {
-        if mode == .open { mode = .brokenChain }
-        if let mx = maxLostFrameID {
-            if frameID.distanceWrapped(from: mx) > 0 { maxLostFrameID = frameID }
-        } else {
-            maxLostFrameID = frameID
-        }
-        if let mn = minLostFrameID {
-            if frameID.distanceWrapped(from: mn) < 0 { minLostFrameID = frameID }
-        } else {
-            minLostFrameID = frameID
-        }
+        record = slopdesk_decode_gate_note_loss(record, frameID)
     }
 
     /// A hard decode failure tore the session down (`invalidateSession`) — only an IDR helps now.
     public func noteHardDecodeFailure() {
-        mode = .needKeyframe
+        record = slopdesk_decode_gate_note_hard_decode_failure(record)
     }
 
     /// The decoder reported `awaitingKeyframe` (no session/parameter sets yet) — same anchor set.
     public func noteAwaitingKeyframe() {
-        mode = .needKeyframe
+        record = slopdesk_decode_gate_note_awaiting_keyframe(record)
     }
 
     /// Admission decision for one reassembled frame. Pure — never mutates; the caller acts.
     public func verdict(frameID: UInt32, keyframe: Bool, ackedAnchored: Bool) -> Verdict {
-        switch mode {
-        case .open:
-            return .submit
-        case .needKeyframe:
-            return keyframe ? .submit : .drop
-        case .brokenChain:
-            if keyframe || ackedAnchored { return .submit }
-            // Pre-break delta still in flight: references predate the OLDEST loss.
-            if let mn = minLostFrameID, frameID.distanceWrapped(from: mn) < 0 { return .submit }
-            return .drop
-        }
+        slopdesk_decode_gate_submits(record, frameID, keyframe, ackedAnchored) ? .submit : .drop
     }
 
     /// Folds one SUCCESSFUL decode. A keyframe re-opens the gate unless a loss NEWER than it is
@@ -113,31 +102,6 @@ public final class DecodeGate: @unchecked Sendable {
     /// next refresh/IDR can finish the job). A non-keyframe success newer than every loss is the
     /// healed LTR anchor (mirrors `LTREscalationTracker.frameDecoded`).
     public func noteDecodeSucceeded(frameID: UInt32, keyframe: Bool) {
-        if keyframe {
-            if let mx = maxLostFrameID, frameID.distanceWrapped(from: mx) <= 0 {
-                // The keyframe predates the newest loss: it re-anchored the chain UP TO itself, but
-                // losses past it remain. Downgrade to brokenChain (which then admits an acked-LTR
-                // refresh) ONLY if the session was still ALIVE — i.e. we were in brokenChain, so the
-                // pre-loss acked LTRs survive in the DPB and an LTR refresh can decode. If the session
-                // had been TORN DOWN (needKeyframe: invalidateSession wiped the DPB), a stale keyframe
-                // rebuilds it with an empty/keyframe-only DPB — NO pre-teardown acked LTR survives, so
-                // admitting an ackedAnchored refresh would feed VT a reference it no longer holds
-                // (-12909) → another decode-fail / teardown / IDR round, the exact churn this gate
-                // prevents. Stay needKeyframe so only a keyframe NEWER than the loss can re-anchor.
-                if mode != .needKeyframe { mode = .brokenChain }
-            } else {
-                reset()
-            }
-            return
-        }
-        guard mode == .brokenChain, let mx = maxLostFrameID,
-              frameID.distanceWrapped(from: mx) > 0 else { return }
-        reset()
-    }
-
-    private func reset() {
-        mode = .open
-        minLostFrameID = nil
-        maxLostFrameID = nil
+        record = slopdesk_decode_gate_note_decode_succeeded(record, frameID, keyframe)
     }
 }

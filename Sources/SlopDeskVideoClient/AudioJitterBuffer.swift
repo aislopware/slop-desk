@@ -1,5 +1,4 @@
-import Foundation
-import SlopDeskVideoProtocol
+import CSlopDeskFFI
 import Synchronization
 
 /// PURE jitter STAGE between the audio decode path (push — the session's serial audio queue) and
@@ -24,11 +23,19 @@ import Synchronization
 /// The `seq` space is session-scoped and SHARED with config packets (one counter for all tag-6
 /// datagrams), so gaps between pushed frames are normal — the ring plays across them seamlessly.
 ///
-/// ⚠️ NOT thread-safe by itself — a plain value type confined to ONE thread (the session's
-/// serial audio queue in the live engine; the loopback's single thread). It stays pure so the
-/// policy is headlessly unit-testable (`AudioJitterBufferTests`). The render thread NEVER
-/// touches this type — it consumes the ``AudioSampleRing`` the pump fills.
-public struct AudioJitterBuffer: Sendable {
+/// The law is `rust/slopdesk-video`'s `audio_jitter`; this is its face, and it is a HANDLE rather
+/// than a by-value fold because this stage's whole product IS the samples — it hands back a steady
+/// stream of them, in an order it chose, split at offsets it chose — so they live where the
+/// decisions are. (The decode sequencer next door is the opposite case and takes the opposite
+/// convention: it never reads a compressed byte, so it moves ids. See `docs/55-ffi-boundary.md`.)
+/// Samples cross once each way through `(ptr, len)`: one memcpy of ~10 ms of audio per push.
+///
+/// ⚠️ NOT thread-safe by itself — one owner, confined to ONE thread (the session's serial audio
+/// queue in the live engine; the loopback's single thread), which is what `@unchecked Sendable`
+/// stands on and what the door's "no two calls overlap" obligation needs. The policy is still
+/// headlessly unit-testable (`AudioJitterBufferTests`). The render thread NEVER touches this type
+/// — it consumes the ``AudioSampleRing`` the pump fills.
+public final class AudioJitterBuffer: @unchecked Sendable {
     /// Cumulative policy counters (monotonic; diagnostics + test pins).
     public struct Stats: Equatable, Sendable {
         /// Frames accepted into the ring.
@@ -45,106 +52,59 @@ public struct AudioJitterBuffer: Sendable {
         public var silenceSamples = 0
 
         public init() {}
+
+        /// The door's odometers as this side reads them.
+        init(_ counted: SlopDeskAudioStageStats) {
+            framesPushed = Int(counted.frames_pushed)
+            lateDropped = Int(counted.late_dropped)
+            duplicateDropped = Int(counted.duplicate_dropped)
+            overflowDropped = Int(counted.overflow_dropped)
+            underruns = Int(counted.underruns)
+            silenceSamples = Int(counted.silence_samples)
+        }
     }
 
-    private struct Block {
-        let seq: UInt32
-        let samples: [Float]
-    }
+    private let handle: OpaquePointer?
+    /// The depth policy, read once — no fold moves one.
+    private let shape: SlopDeskAudioStageShape
 
     /// Interleaved channel count — sizes ``pull(frameCount:)``'s sample count.
-    public let channels: Int
+    public var channels: Int { shape.channels }
     /// Pending frames required before playback starts (≈2 × 10 ms of slack).
-    public let targetDepthFrames: Int
+    public var targetDepthFrames: Int { shape.target_depth_frames }
     /// Pending-frame cap; past it the oldest pending frame is dropped.
-    public let highWaterFrames: Int
-
-    /// Pending + not-yet-reclaimed frames, in wrap-aware `seq` order. The first
-    /// ``consumedBlocks`` entries are fully played, awaiting reclaim on the push side.
-    private var blocks: [Block] = []
-    private var consumedBlocks = 0
-    /// Read offset (samples) into the first UNconsumed block (partial-frame pulls).
-    private var headSampleOffset = 0
-    /// `seq` of the newest frame fully played or overflow-dropped (`nil` ⇒ none yet). A push
-    /// at-or-behind it is late.
-    private var playFrontier: UInt32?
-    /// Whether the ring has filled to ``targetDepthFrames`` and is playing (vs. priming).
-    public private(set) var primed = false
-    public private(set) var stats = Stats()
+    public var highWaterFrames: Int { shape.high_water_frames }
 
     public init(channels: Int, targetDepthFrames: Int = 2, highWaterFrames: Int = 8) {
-        self.channels = max(1, channels)
-        self.targetDepthFrames = max(1, targetDepthFrames)
-        self.highWaterFrames = max(self.targetDepthFrames, highWaterFrames)
+        handle = slopdesk_audio_stage_new(channels, targetDepthFrames, highWaterFrames)
+        shape = slopdesk_audio_stage_shape(handle)
     }
+
+    deinit { slopdesk_audio_stage_free(handle) }
+
+    /// Whether the ring has filled to ``targetDepthFrames`` and is playing (vs. priming).
+    public var primed: Bool { slopdesk_audio_stage_primed(handle) }
+    public var stats: Stats { Stats(slopdesk_audio_stage_stats(handle)) }
 
     /// Pending (unplayed) frame count — the ring's live depth.
-    public var pendingFrames: Int { blocks.count - consumedBlocks }
+    public var pendingFrames: Int { slopdesk_audio_stage_pending_frames(handle) }
 
     /// Samples currently available to pull (partial head accounted).
-    public var availableSamples: Int {
-        var total = 0
-        for i in consumedBlocks..<blocks.count { total += blocks[i].samples.count }
-        return total - headSampleOffset
-    }
-
-    /// The frontier a push must be strictly ahead of: once the head frame has BEGUN playing,
-    /// nothing at-or-behind its `seq` can be inserted (it would play out of order).
-    private var effectiveFrontier: UInt32? {
-        if headSampleOffset > 0, consumedBlocks < blocks.count { return blocks[consumedBlocks].seq }
-        return playFrontier
-    }
+    public var availableSamples: Int { slopdesk_audio_stage_available_samples(handle) }
 
     /// Offers one decoded frame. Empty sample sets are dropped (a decoder miss, not a frame).
-    public mutating func push(seq: UInt32, samples: [Float]) {
-        guard !samples.isEmpty else { return }
-        // Reclaim render-consumed frames HERE (the decode side) so the render callback never frees.
-        if consumedBlocks > 0 {
-            blocks.removeFirst(consumedBlocks)
-            consumedBlocks = 0
+    public func push(seq: UInt32, samples: [Float]) {
+        samples.withUnsafeBufferPointer {
+            slopdesk_audio_stage_push(handle, seq, $0.baseAddress, $0.count)
         }
-        // Duplicate of a pending frame (UDP re-delivery)?
-        for i in consumedBlocks..<blocks.count where blocks[i].seq == seq {
-            stats.duplicateDropped += 1
-            return
-        }
-        // Behind (or at) what already played — too late to matter.
-        if let frontier = effectiveFrontier, seq.distanceWrapped(from: frontier) <= 0 {
-            stats.lateDropped += 1
-            return
-        }
-        // Insert in wrap-aware seq order (walk from the end — in-order arrival appends).
-        var idx = blocks.count
-        while idx > consumedBlocks, seq.distanceWrapped(from: blocks[idx - 1].seq) < 0 { idx -= 1 }
-        blocks.insert(Block(seq: seq, samples: samples), at: idx)
-        stats.framesPushed += 1
-        // High water: drop the OLDEST pending frames (skip forward). Advancing the frontier past
-        // each dropped seq makes a straggling re-send of it a late drop, not a re-insert.
-        while blocks.count - consumedBlocks > highWaterFrames {
-            let dropped = blocks.removeFirst() // consumedBlocks == 0 (reclaimed above)
-            headSampleOffset = 0
-            playFrontier = dropped.seq
-            stats.overflowDropped += 1
-        }
-        if !primed, blocks.count - consumedBlocks >= targetDepthFrames { primed = true }
     }
 
     /// Fills `out` with the next interleaved samples, zero-filling whatever the ring cannot
-    /// supply (priming, or a mid-play underrun — which drops back to priming). Allocation- and
-    /// free-free. The loopback/test consumption surface; the live engine drains via
-    /// ``drainAvailable(into:)`` instead (its silence conceal happens in the render callback).
-    public mutating func pull(into out: UnsafeMutableBufferPointer<Float>) {
-        guard !out.isEmpty else { return }
-        let wrote = primed ? copyAvailable(into: out) : 0
-        guard wrote < out.count else { return }
-        for i in wrote..<out.count { out[i] = 0 }
-        stats.silenceSamples += out.count - wrote
-        if primed {
-            // Ran dry mid-play: back to priming so playback resumes with full slack, not
-            // one-frame-at-a-time crackle.
-            stats.underruns += 1
-            primed = false
-        }
+    /// supply (priming, or a mid-play underrun — which drops back to priming). The loopback/test
+    /// consumption surface; the live engine drains via ``drainAvailable(into:)`` instead (its
+    /// silence conceal happens in the render callback).
+    public func pull(into out: UnsafeMutableBufferPointer<Float>) {
+        slopdesk_audio_stage_pull(handle, out.baseAddress, out.count)
     }
 
     /// Producer-side drain for the lock-free hand-off ring: copies up to `out.count` of the
@@ -152,65 +112,39 @@ public struct AudioJitterBuffer: Sendable {
     /// underrun re-prime, because running short HERE only means nothing is staged to hand off
     /// (actual consumer starvation is signalled by ``noteConsumerStarved()``). Returns the
     /// samples written. Runs on the push thread, so block reclaim stays a single-thread affair.
-    public mutating func drainAvailable(into out: UnsafeMutableBufferPointer<Float>) -> Int {
-        guard primed, !out.isEmpty else { return 0 }
-        return copyAvailable(into: out)
+    public func drainAvailable(into out: UnsafeMutableBufferPointer<Float>) -> Int {
+        slopdesk_audio_stage_drain_available(handle, out.baseAddress, out.count)
     }
 
     /// The hand-off consumer ran the ring dry mid-play (producer-side detection — the render
     /// callback itself only zero-fills): mirror ``pull(into:)``'s underrun policy by dropping
     /// back to priming, so playback resumes with full slack instead of one-frame-at-a-time
     /// crackle. Pending frames stay buffered (they re-count toward the re-prime).
-    public mutating func noteConsumerStarved() {
-        guard primed else { return }
-        stats.underruns += 1
-        primed = false
+    public func noteConsumerStarved() {
+        slopdesk_audio_stage_note_consumer_starved(handle)
     }
 
     /// Skips the oldest PENDING frame forward — the depth-bound drop the pump applies when the
     /// combined stage + hand-off depth passes high-water (``push(seq:samples:)``'s own high-water
     /// check sees only staged frames). Same skip-forward semantics as the push-side drop: the
     /// frontier advances past the dropped seq (a straggling re-send becomes a late drop) and a
-    /// partially handed-off head is abandoned mid-frame. Never touches consumed-awaiting-reclaim
-    /// blocks, and never re-primes — a latency shed is a skip, not an underrun.
-    public mutating func dropOldestPending() {
-        guard consumedBlocks < blocks.count else { return }
-        let dropped = blocks.remove(at: consumedBlocks)
-        headSampleOffset = 0
-        playFrontier = dropped.seq
-        stats.overflowDropped += 1
+    /// partially handed-off head is abandoned mid-frame. Never re-primes — a latency shed is a
+    /// skip, not an underrun.
+    public func dropOldestPending() {
+        slopdesk_audio_stage_drop_oldest_pending(handle)
     }
 
-    /// Copies as many buffered samples as `out` can hold, advancing the consumed marker and the
-    /// play frontier as blocks complete. Allocation- and free-free: consumed frames are only
-    /// FLAGGED consumed (index advance) and reclaimed by the next ``push(seq:samples:)``.
-    private mutating func copyAvailable(into out: UnsafeMutableBufferPointer<Float>) -> Int {
-        guard let base = out.baseAddress else { return 0 }
-        var wrote = 0
-        while wrote < out.count, consumedBlocks < blocks.count {
-            let samples = blocks[consumedBlocks].samples
-            let n = min(samples.count - headSampleOffset, out.count - wrote)
-            samples.withUnsafeBufferPointer { src in
-                // Blocks are never empty (push drops empty sample sets), so a nil base
-                // address is unreachable; the guard just keeps the copy total.
-                guard let srcBase = src.baseAddress else { return }
-                (base + wrote).update(from: srcBase + headSampleOffset, count: n)
-            }
-            wrote += n
-            headSampleOffset += n
-            if headSampleOffset == samples.count {
-                playFrontier = blocks[consumedBlocks].seq
-                consumedBlocks += 1
-                headSampleOffset = 0
-            }
-        }
-        return wrote
+    /// Sheds the oldest STAGED frames until the combined stage + hand-off depth is back at target,
+    /// returning how many went. The stage's own high-water check sees only staged frames, so this
+    /// is the real client-side latency bound — and it is the door's decision, not this side's.
+    func shedToDepthBound(ringFill: Int, samplesPerFrame: Int) -> Int {
+        slopdesk_audio_stage_shed_to_depth_bound(handle, ringFill, samplesPerFrame)
     }
 
     /// Convenience pull of `frameCount` interleaved sample-frames (`frameCount × channels`
     /// Floats), silence-filled. Allocates — the test/diagnostic surface (the live engine drains
     /// via ``drainAvailable(into:)``).
-    public mutating func pull(frameCount: Int) -> [Float] {
+    public func pull(frameCount: Int) -> [Float] {
         var out = [Float](repeating: 0, count: max(0, frameCount) * channels)
         out.withUnsafeMutableBufferPointer { pull(into: $0) }
         return out
@@ -220,11 +154,8 @@ public struct AudioJitterBuffer: Sendable {
     /// frontier — the tag-6 `seq` is session-scoped monotonic (config packets consume ids too),
     /// so frames arriving after a re-enable are strictly newer and must not be mistaken for
     /// late; stats stay cumulative.
-    public mutating func clear() {
-        blocks.removeAll()
-        consumedBlocks = 0
-        headSampleOffset = 0
-        primed = false
+    public func clear() {
+        slopdesk_audio_stage_clear(handle)
     }
 }
 
@@ -348,7 +279,7 @@ final class AudioSampleRing: @unchecked Sendable {
 /// emission/starvation glue is unit-testable without an AudioUnit (repo hang-safety).
 struct AudioPlaybackPump {
     /// Jitter/reorder/conceal policy — reorder happens HERE, before samples commit to the ring.
-    private(set) var stage: AudioJitterBuffer
+    let stage: AudioJitterBuffer
     /// The lock-free hand-off the render callback consumes.
     let ring: AudioSampleRing
     /// Nominal interleaved samples per ~10 ms frame — converts the stage's frame-count policy
@@ -363,10 +294,11 @@ struct AudioPlaybackPump {
 
     /// Ring top-up bound: the render side only needs target-depth's worth of headroom. Everything
     /// beyond it stays STAGED, where the depth bound can still shed it — samples committed to the
-    /// ring are the consumer's and can never be taken back.
-    private var ringTargetSamples: Int { stage.targetDepthFrames * samplesPerFrame }
-    /// Combined (stage + ring) depth cap — the jitter policy's total client-side latency bound.
-    private var highWaterSamples: Int { stage.highWaterFrames * samplesPerFrame }
+    /// ring are the consumer's and can never be taken back. The arithmetic is the door's, so this
+    /// budget and the stage's own policy can never drift apart.
+    private var ringTargetSamples: Int {
+        slopdesk_audio_ring_target_samples(stage.targetDepthFrames, samplesPerFrame)
+    }
 
     init(stage: AudioJitterBuffer, ring: AudioSampleRing, samplesPerFrame: Int) {
         self.stage = stage
@@ -384,7 +316,9 @@ struct AudioPlaybackPump {
         // is routine, not starvation. Detected HERE (the producer side) because the render thread
         // must not touch stage state; the detection lag stays one push cycle.
         let shortfallNow = ring.shortfallSamples
-        if stage.primed, emittedSincePrime, shortfallNow != lastShortfall {
+        if slopdesk_audio_consumer_starved(
+            stage.primed, emittedSincePrime, UInt64(shortfallNow), UInt64(lastShortfall),
+        ) {
             stage.noteConsumerStarved()
             emittedSincePrime = false
         }
@@ -395,11 +329,7 @@ struct AudioPlaybackPump {
         // shed oldest STAGED frames down to target — in-flow matches out-flow, so a backlog
         // never drains on its own; one clean skip forward beats permanently added latency
         // (stale audio is worse than a click).
-        if stage.availableSamples + ring.fillLevel > highWaterSamples {
-            while stage.pendingFrames > 0, stage.availableSamples + ring.fillLevel > ringTargetSamples {
-                stage.dropOldestPending()
-            }
-        }
+        _ = stage.shedToDepthBound(ringFill: ring.fillLevel, samplesPerFrame: samplesPerFrame)
         emit()
     }
 

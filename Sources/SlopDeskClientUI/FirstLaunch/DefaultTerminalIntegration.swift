@@ -71,12 +71,12 @@ public enum DefaultTerminalIntegration {
     /// Open System Settings → Keyboard → Keyboard Shortcuts → Services (the Finder Integration row — where
     /// the "Open in SlopDesk" Services item is enabled / rebound). Best-effort deep-link.
     public static func openFinderServicesSettings() {
-        open("x-apple.systempreferences:com.apple.preference.keyboard?Shortcuts")
+        ExternalOpen.url("x-apple.systempreferences:com.apple.preference.keyboard?Shortcuts")
     }
 
     /// Open System Settings → Privacy & Security → Full Disk Access (the Full Disk Access row).
     public static func openFullDiskAccessSettings() {
-        open("x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")
+        ExternalOpen.url("x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")
     }
 
     // MARK: - Internals
@@ -97,10 +97,6 @@ public enum DefaultTerminalIntegration {
                 continuation.resume(returning: error == nil)
             }
         }
-    }
-
-    private static func open(_ urlString: String) {
-        if let url = URL(string: urlString) { NSWorkspace.shared.open(url) }
     }
 }
 #endif

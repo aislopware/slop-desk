@@ -1,7 +1,6 @@
 import Foundation
 import SlopDeskWorkspaceModel
 import XCTest
-@testable import SlopDeskWorkspaceCore
 
 /// The ``TemplateNode`` / ``SessionTemplate`` hand-written `Codable` (it persists on `workspace.json`): a
 /// well-formed layout round-trips byte-stably, and the validate-then-repair decode tolerates a degenerate /

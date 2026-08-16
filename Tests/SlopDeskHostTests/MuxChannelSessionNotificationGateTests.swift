@@ -10,13 +10,13 @@ import XCTest
 /// permission/idle prompt. A hook-free pane keeps the OSC path: it is the only signal there.
 ///
 /// Driven WITHOUT a PTY or running relay (hang-safety rule): the REAL chunk handler
-/// (`ingestPTYChunkForTesting` → the live ``HostOutputSniffer`` → the FIFO filter) plus the REAL
+/// (`ingestPTYChunkForTesting`, fed what superd's sniffer would have found → the FIFO filter) plus the REAL
 /// hook ingest (`ingestAgentHookRecord` — the exact method the hook socket calls).
 final class MuxChannelSessionNotificationGateTests: XCTestCase {
     private func makeSession() -> MuxChannelSession {
         MuxChannelSession(
             channelID: 1,
-            pty: PTYProcess(), // unspawned — relay never started; truths driven via the seams
+            pty: unattachedPTY(), // unspawned — relay never started; truths driven via the seams
             data: MuxSubChannel(channelID: 1, channel: .data) { _, _ in },
             control: MuxSubChannel(channelID: 1, channel: .control) { _, _ in },
         )
@@ -33,7 +33,10 @@ final class MuxChannelSessionNotificationGateTests: XCTestCase {
 
     func testHookFreePaneForwardsChildNotification() {
         let session = makeSession()
-        session.ingestPTYChunkForTesting(osc("9;build finished"))
+        session.ingestPTYChunkForTesting(
+            osc("9;build finished"),
+            sniffed: [.notification(title: "", body: "build finished")],
+        )
         XCTAssertEqual(
             nextFrameControl(session), [.notification(title: "", body: "build finished")],
             "no hook truth — the OSC 9 notification is the pane's only signal and must pass",
@@ -47,13 +50,16 @@ final class MuxChannelSessionNotificationGateTests: XCTestCase {
 
         // Claude's own OSC 9 arrives with a title edge in the same chunk.
         let chunk = osc("0;✳ Claude Code") + osc("9;Claude needs your permission")
-        session.ingestPTYChunkForTesting(chunk)
+        session.ingestPTYChunkForTesting(chunk, sniffed: [
+            .title("✳ Claude Code"),
+            .notification(title: "", body: "Claude needs your permission"),
+        ])
 
         guard case let .output(bytes, _, control)? = session.takeMergedFrame() else {
             XCTFail("the chunk itself must still ride the FIFO — the gate is control-only")
             return
         }
-        XCTAssertEqual(bytes, chunk, "the sniffer is non-destructive — raw bytes are untouched")
+        XCTAssertEqual(bytes, chunk, "the sniff is non-destructive — raw bytes are untouched")
         XCTAssertFalse(
             control.contains { if case .notification = $0 { true } else { false } },
             "hook truth live — the blind OSC copy of the agent edge is dropped",
@@ -67,7 +73,10 @@ final class MuxChannelSessionNotificationGateTests: XCTestCase {
     func testHookAuthorityDropsOSC777Too() {
         let session = makeSession()
         session.ingestAgentHookRecord(Data(#"{"hook_event_name":"UserPromptSubmit"}"#.utf8))
-        session.ingestPTYChunkForTesting(osc("777;notify;Claude;waiting for input"))
+        session.ingestPTYChunkForTesting(
+            osc("777;notify;Claude;waiting for input"),
+            sniffed: [.notification(title: "Claude", body: "waiting for input")],
+        )
         XCTAssertEqual(
             nextFrameControl(session).filter { if case .notification = $0 { true } else { false } },
             [],
@@ -78,7 +87,7 @@ final class MuxChannelSessionNotificationGateTests: XCTestCase {
     func testProgressOSCUnaffectedByGate() {
         let session = makeSession()
         session.ingestAgentHookRecord(Data(#"{"hook_event_name":"SessionStart"}"#.utf8))
-        session.ingestPTYChunkForTesting(osc("9;4;1;40"))
+        session.ingestPTYChunkForTesting(osc("9;4;1;40"), sniffed: [.progress("4;1;40")])
         XCTAssertEqual(
             nextFrameControl(session), [.progress(state: 1, percent: 40)],
             "OSC 9;4 is progress (type 32), never a notification — the gate must not touch it",

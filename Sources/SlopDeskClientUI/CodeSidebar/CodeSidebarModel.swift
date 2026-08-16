@@ -12,7 +12,6 @@
 #if canImport(SwiftUI)
 import Foundation
 import SlopDeskProtocol
-import SlopDeskWorkspaceCore
 
 /// The readiness phases the code panel renders. One value per distinct surface — the column's body
 /// switches over this and nothing else.

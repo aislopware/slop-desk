@@ -215,7 +215,7 @@ public final class VideoEncoder: @unchecked Sendable {
     /// `AverageBitRate` VBR steering, which banks budget while idle then SLAMS QP after a post-idle
     /// burst (the idle-then-hard-scroll very-soft clawback). `MaxAllowedFrameQP` is normally pinned to
     /// the SAME value (Min==Max==floor on a static frame); but when a per-frame motion ceiling is
-    /// supplied (``constQPBand`` — the capturer's adaptive-QP under `SLOPDESK_ADAPTIVE_QP`), MAX rises
+    /// supplied (`perFrameMaxQP` — the capturer's adaptive-QP under `SLOPDESK_ADAPTIVE_QP`), MAX rises
     /// above the floor on motion so VT may coarsen the whole-viewport SCROLL frame (~80 KB → ~15-25 KB,
     /// draining in a few ms not ~30 ms — the sluggish scroll), then snaps back to the floor when motion
     /// stops. Frame size floats with content (idle tiny, scroll bounded). Brackets (crisp/compact IDRs)
@@ -1237,7 +1237,7 @@ public final class VideoEncoder: @unchecked Sendable {
         // OWN RATE-CONTROL — CONSTANT-QP (motion-keyed): pin Min to the const-QP floor so VT can't blur
         // below the sharp guarantee (no VBR clawback after a post-idle burst); MAX is the floor on a
         // STATIC frame (Min==Max==floor → constant QP) but rises to the capturer's `perFrameMaxQP` on
-        // MOTION so VT may coarsen the fat scroll frame (``constQPBand``). Adaptive-QP off ⇒ `perFrameMaxQP`
+        // MOTION so VT may coarsen the fat scroll frame. Adaptive-QP off ⇒ `perFrameMaxQP`
         // nil ⇒ Max==floor ⇒ pure const-QP. Brackets own the QP (bracketDepth>0) → skip. Setting Min is
         // what forces the sharp floor (Max alone is only a ceiling VT undershoots under budget).
         if Self.constQP != nil {

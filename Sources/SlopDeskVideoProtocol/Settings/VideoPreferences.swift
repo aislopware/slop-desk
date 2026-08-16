@@ -1,5 +1,3 @@
-import Foundation
-
 /// User-facing subset of the ~80 video/host `SLOPDESK_*` flags (decision #6 / #10), grouped into a
 /// `Codable` model. These flags are read at `static let` init from the environment and CANNOT
 /// live-reload — so the model is serialised to a `video-prefs.json` SIDECAR that the host daemon reads

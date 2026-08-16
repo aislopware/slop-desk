@@ -1,5 +1,3 @@
-import Foundation
-
 // MARK: - PaneGroup (a named collection of panes — replaces the tab concept)
 
 /// A named collection of panes on the single infinite ``Canvas`` — the replacement for the retired

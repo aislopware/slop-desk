@@ -12,7 +12,8 @@ better-update vault (org weebuild, env production)   ← p12 + notary creds + ta
         ▼
 GitHub Actions · aislopware/slop-desk · macos-26 · arm64
    libghostty  →  cached libghostty.xcframework          (Zig 0.15.2, ~40 min cold, ~0 warm)
-   package     →  scripts/package-release.sh             (build → stamp → sign → notarize)
+   package     →  scripts/build-ffi.sh                   (SlopDeskFFI.xcframework, 3 arm64 slices)
+               →  scripts/package-release.sh             (build → stamp → sign → notarize)
    publish     →  GitHub Release v<version>
    tap         →  aislopware/homebrew-tap                (version + sha256 rewrite)
         ▼
@@ -22,6 +23,14 @@ brew install --cask aislopware/tap/slopdesk    # SlopDesk.app + SlopDeskHost.app
 
 `scripts/package-release.sh` is the single source of truth for *how* a release is built. CI runs
 it unmodified, so a maintainer reproducing a failure locally runs the same code path.
+
+**Two linked artifacts, both gitignored, both built by the pipeline rather than checked out.**
+`libghostty.xcframework` has its own job (cached, because Zig costs ~40 minutes cold);
+`SlopDeskFFI.xcframework` is a step inside `package`, because `scripts/build-ffi.sh` stamps its own
+inputs and a runner is cold every time anyway. Neither is optional in the weak sense: `Package.swift`
+declares a `binaryTarget` at the FFI path, so SwiftPM cannot resolve the graph without the file —
+a missing step there fails the release before it compiles a line. `check-supervisor.sh` ratchets the
+correspondence: every gitignored `binaryTarget` path must be produced by some step of this workflow.
 
 ## arm64 only — a constraint, not a default
 
@@ -278,13 +287,22 @@ exists to read; it does precisely that on macOS, and `runs-on` is one line of co
 Under the Swift 6.3 build backend `swift build --target slopdesk` compiles the module, prints
 *Build of target: 'slopdesk' complete!* and **never links a binary** — a green build with nothing
 to ship. Only `--product` links (*Linking slopdesk*), and `--product` needs a declared product, so
-`Package.swift` exposes the three shipped executables as `.executable` products. The other
-`executableTarget`s are dev/bench tools and stay product-less on purpose.
+`Package.swift` exposes the two shipped SwiftPM executables — `slopdesk`, `slopdesk-hostd` — as
+`.executable` products. The other `executableTarget`s are dev/bench tools and stay product-less on
+purpose.
+
+The tarball's third binary, `slopdesk-ctl`, is **not** a SwiftPM product at all: it is Rust
+(`rust/slopdesk-ctl`, see `docs/DECISIONS.md`) and `package-release.sh` builds it with
+`cargo build --release --target aarch64-apple-darwin`. That target triple is explicit for the same
+reason `--arch arm64` is on the Swift half. `locate_tool` resolves a cargo binary to its cargo path
+or to *nothing* — deliberately never falling through to the SwiftPM search, because a stale
+`.build*/release/slopdesk-ctl` left by the deleted Swift target would otherwise ship silently under
+the right name, and that is the one substitution the `slopdesk version` check cannot catch.
 
 `package-release.sh` also pins `--scratch-path .build-release` rather than discovering the output
-directory, and still *searches* it for the binary instead of assuming a layout: the path differs by
-build backend (`<triple>/release` vs `Products/Release`), and a packaging script that cannot find
-its own output fails three minutes into CI instead of at the flag.
+directory, and still *searches* it for the SwiftPM binaries instead of assuming a layout: the path
+differs by build backend (`<triple>/release` vs `Products/Release`), and a packaging script that
+cannot find its own output fails three minutes into CI instead of at the flag.
 
 `scripts/package-release.sh` names `SlopDesk.app` without ever launching it, which is the first
 counterexample to `GuiGateLaunchContractTests`'s "names it ⇒ launches it" net. It is declared in

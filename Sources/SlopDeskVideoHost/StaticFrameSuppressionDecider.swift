@@ -1,5 +1,7 @@
-import Foundation
+import CSlopDeskFFI
 
+/// The Swift face of `rust/slopdesk-video`'s `frame_gate` suppression rule, reached through the door.
+///
 /// PURE decision for static-frame suppression: should the host SKIP encoding/sending a captured
 /// `.complete` frame because its pixels are byte-identical to the last submitted frame?
 ///
@@ -21,9 +23,9 @@ import Foundation
 /// - `selfHealDue` — the self-heal cadence frame is due.
 ///
 /// Suppression is therefore allowed ONLY when the pixels are unchanged AND none of those
-/// obligations is outstanding — a duplicate frame with nothing else to deliver. Because the rule
-/// is conjunctive on `!`-of-every-flag, adding a future obligation is a matter of threading one
-/// more `false`-when-set flag through, and the default (any flag set) is always "encode".
+/// obligations is outstanding — a duplicate frame with nothing else to deliver. The obligations
+/// cross as ONE record with a field per flag, so adding a future one is a field on both sides and
+/// nothing else; the rule that reads them lives on the far side of the door only.
 public struct StaticFrameSuppressionDecider: Sendable, Equatable {
     public init() {}
 
@@ -41,18 +43,16 @@ public struct StaticFrameSuppressionDecider: Sendable, Equatable {
         ltrRefreshDue: Bool,
         selfHealDue: Bool,
     ) -> Bool {
-        // The first frame, or any pending/ due forced obligation, must ALWAYS be encoded — these
-        // win over a pixel-identical hash. Only a true duplicate with no obligation is suppressed.
-        guard hashEqualToLast,
-              !isFirstFrame,
-              !forcedKeyframePending,
-              !recoveryPending,
-              !heartbeatDue,
-              !ltrRefreshDue,
-              !selfHealDue
-        else {
-            return false
-        }
-        return true
+        slopdesk_should_suppress_static_frame(
+            hashEqualToLast,
+            SlopDeskFrameObligations(
+                is_first_frame: isFirstFrame,
+                forced_keyframe_pending: forcedKeyframePending,
+                recovery_pending: recoveryPending,
+                heartbeat_due: heartbeatDue,
+                ltr_refresh_due: ltrRefreshDue,
+                self_heal_due: selfHealDue,
+            ),
+        )
     }
 }

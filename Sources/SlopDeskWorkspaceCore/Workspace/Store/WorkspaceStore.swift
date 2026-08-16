@@ -4,6 +4,7 @@ import Network
 import SlopDeskAgentDetect
 import SlopDeskClient
 import SlopDeskInspector
+import SlopDeskNet
 import SlopDeskTransport
 import SlopDeskWorkspaceModel
 
@@ -235,7 +236,7 @@ public final class WorkspaceStore {
 
     /// A monotonic nudge the view layer observes to RE-ATTEMPT video admission for gated panes.
     /// The store can't flip a pane's liveness itself — admission is **view-driven**: only an on-screen pane
-    /// decodes, via ``RemoteGUIPaneView``'s `.onAppear` → ``activateVideo(_:)``. So when a slot frees (a
+    /// decodes, via `RemoteGUIPaneView`'s `.onAppear` → ``activateVideo(_:)``. So when a slot frees (a
     /// video pane deactivated, or an active-video pane closed), no one promotes a queued-but-still-on-screen
     /// gated pane. Bumped on exactly those slot-freeing events; gated leaves observe it via `.onChange` and
     /// re-call `activateVideo` (still cap-gated, so the ceiling holds). Only the store bumps it
@@ -485,20 +486,20 @@ public final class WorkspaceStore {
 
     /// Whether the canvas view has reported viewport membership at least once since it last appeared.
     /// Distinguishes "no report yet" (compact carousel / pre-first-layout → fall back to
-    /// ``isPaneOnActiveTab(_:)``) from "reported, and it is genuinely empty" (panned into the void →
+    /// ``isPaneOnCanvas(_:)``) from "reported, and it is genuinely empty" (panned into the void →
     /// nothing is visible, so an off-screen video pane SHOULD release its slot). Reset by
     /// ``clearViewportMembership()`` when the canvas disappears (a regular→compact flip) so the compact
     /// path falls back correctly instead of inheriting a stale set.
     private var hasReportedViewport = false
 
-    /// VISUAL-ONLY live scroll-pan offset (screen-space) — the scroll counterpart of ``CanvasView``'s
+    /// VISUAL-ONLY live scroll-pan offset (screen-space) — the scroll counterpart of `CanvasView`'s
     /// `livePan` @State for a background DRAG. A trackpad/wheel scroll over background OR a pane (via
     /// ``scrollPan(by:)``) accumulates here; the camera is committed ONCE ~110 ms after the scroll settles
     /// (``commitScrollPan()``). A per-step ``commitCamera(_:)`` is avoided because it mutates
     /// `workspace.canvas` → fires the `.onChange(of: canvas)` → `report()` cascade (viewport / membership /
     /// solved-layout) → a full-canvas SwiftUI re-render that BLOCKS the main thread, starving the Metal video
     /// render + cursor overlay (the freeze gaps are all main-actor; cursor RX stays clean — proven on-device).
-    /// Accumulating here touches ONLY ``CanvasView`` (panes diff unchanged, NO `report()`), so the pan stays
+    /// Accumulating here touches ONLY `CanvasView` (panes diff unchanged, NO `report()`), so the pan stays
     /// smooth. Not persisted; folded into the real camera on commit with NO visual jump (the committed offset
     /// equals the live offset).
     public private(set) var liveCameraOffset: CGSize = .zero
@@ -507,7 +508,7 @@ public final class WorkspaceStore {
     private var scrollCommitTask: Task<Void, Never>?
 
     /// The single-focus arbiter for the iOS multi-visible (iPad-regular) input path (docs/22 §7). One per
-    /// workspace. The regular `PaneTreeView` leaves route their ``TerminalInputHost`` first-responder through
+    /// workspace. The regular `PaneTreeView` leaves route their `TerminalInputHost` first-responder through
     /// this so a stale async `becomeFirstResponder` callback can never win (resign-before-become + generation
     /// reject). Compact mode mounts one host and skips it. Cross-platform-compilable (the UIKit calls inside
     /// are `#if os(iOS)`). Exposed so the view layer can drive `focus(_:)` on a focus change.
@@ -1355,20 +1356,6 @@ public final class WorkspaceStore {
         reconcile()
     }
 
-    /// The slid (non-overlapping) offset for a group-handle LIVE move preview: where the group's box would
-    /// glide to under `rawDelta`, as a delta from its current origin — so the members + box preview glide
-    /// FLUSH along neighbours exactly as the rest-flush commit lands them (preview ≡ commit, the same slide
-    /// the pane drag uses). Returns the raw delta when disabled or the group is gone.
-    public func groupSlideOffset(_ groupID: PaneGroupID, rawDelta: CGSize, config: CanvasNonOverlap.Config) -> CGSize {
-        guard config.enabled, let oldBox = workspace.canvas.groupBoundingBox(groupID) else { return rawDelta }
-        let bodies = workspace.canvas.collisionBodies(
-            excludingPane: nil, excludingGroup: groupID, region: collisionRegion, groups: workspace.groups,
-        )
-        let target = oldBox.offsetBy(dx: rawDelta.width, dy: rawDelta.height)
-        let slid = CanvasNonOverlap.slide(target, from: oldBox.origin, bodies: bodies, config: config).frame
-        return CGSize(width: slid.minX - oldBox.minX, height: slid.minY - oldBox.minY)
-    }
-
     /// Group-handle resize commit: the group's members are affinely remapped into `newBox` (its new
     /// footprint), then any OTHER group / ungrouped pane the grown box now overlaps is shoved clear
     /// (gate-free separation — a resize must never leave an overlap). `newBox` is the group's new
@@ -1482,8 +1469,9 @@ public final class WorkspaceStore {
     /// ``commitScrollPan()`` once scrolling settles — a per-step ``commitCamera(_:)`` would thrash the canvas
     /// re-render + `report()` cascade and freeze the video/cursor. `delta` is the camera delta
     /// `camera.translated(by:)` takes; the visual offset moves OPPOSITE it (the content follows the camera),
-    /// matching the committed `.offset` math in ``CanvasView``. Only ``CanvasView`` reads
-    /// ``liveCameraOffset``, so a step re-renders nothing else.
+    /// matching the committed `.offset` math a canvas renderer applies. NOTE: the free-form canvas view that
+    /// read ``liveCameraOffset`` is gone — the rule survives here, pinned by `CanvasScrollPanTests`, with no
+    /// production reader.
     public func scrollPan(by delta: CGSize) {
         liveCameraOffset.width -= delta.width
         liveCameraOffset.height -= delta.height
@@ -1805,7 +1793,7 @@ public final class WorkspaceStore {
     /// Brings a DETACHED pane's satellite `NSWindow` to the front, injected by the app (macOS:
     /// `SatelliteWindowsCoordinator`) so the pure store stays AppKit-free + testable. Returns `true` iff a
     /// satellite for `paneID` was found and revealed. `nil` (the headless / test default) or a `false`
-    /// return means ``openRemoteWindow(windowID:title:appName:)`` still returns the existing pane WITHOUT
+    /// return means ``openDesktopWindow(displayID:)`` still returns the existing pane WITHOUT
     /// revealing it — better a silent no-op than a duplicate live video stream.
     @ObservationIgnored public var revealSatelliteWindow: ((PaneID) -> Bool)?
 
@@ -1907,39 +1895,6 @@ public final class WorkspaceStore {
         reconcile()
     }
 
-    // MARK: - Group-handle live drag (move the whole PaneGroup as a unit)
-
-    /// The LIVE group-handle drag: the group being moved + its raw translation, broadcast so its member
-    /// panes (and the drawn group box) follow in real time — view-only, like ``groupDragLive`` but keyed
-    /// to a PaneGroup (not the ad-hoc multi-selection). `nil` between drags.
-    public struct GroupHandleDragState: Equatable, Sendable { public let group: PaneGroupID
-        public let delta: CGSize
-    }
-
-    public private(set) var groupHandleDragLive: GroupHandleDragState?
-
-    /// The handle broadcasts its live raw translation each gesture frame.
-    public func updateGroupHandleDrag(_ groupID: PaneGroupID, delta: CGSize) {
-        groupHandleDragLive = GroupHandleDragState(group: groupID, delta: delta)
-    }
-
-    /// Ends the live group-handle drag (committed or cancelled).
-    public func endGroupHandleDrag() { groupHandleDragLive = nil }
-
-    /// The live screen offset a pane should render at during a group-handle move (`.zero` unless it is a
-    /// member of the group currently being handle-dragged). Read by ``CanvasItemView`` like
-    /// ``groupDragOffset(for:)``.
-    public func groupHandleOffset(for id: PaneID) -> CGSize {
-        guard let gh = groupHandleDragLive, workspace.canvas.item(id)?.groupID == gh.group else { return .zero }
-        return gh.delta
-    }
-
-    /// The live offset the DRAWN group box of `groupID` should render at during its own handle move.
-    public func groupBoxOffset(for groupID: PaneGroupID) -> CGSize {
-        guard let gh = groupHandleDragLive, gh.group == groupID else { return .zero }
-        return gh.delta
-    }
-
     // MARK: - Overview (fit-all peek)
 
     /// Whether the temporary "see every pane at once" overview is showing (⌘\). Pure view-presentation
@@ -1957,11 +1912,6 @@ public final class WorkspaceStore {
             if workspace.maximizedPane != nil { workspace.maximizedPane = nil }
             overviewActive = true
         }
-    }
-
-    /// Exits the overview (Esc / a card tap routes through here). No-op when already off.
-    public func exitOverview() {
-        overviewActive = false
     }
 
     /// A card tap in the overview: jump to that pane (focus + centre) and exit the overview.
@@ -2263,7 +2213,7 @@ public final class WorkspaceStore {
     /// Clears viewport membership and the reported flag — called when the canvas view DISAPPEARS (a
     /// regular→compact projection flip). Without this the compact carousel would inherit the canvas's
     /// last (stale) membership set and make wrong video-teardown decisions; clearing the flag restores
-    /// the documented compact fallback to ``isPaneOnActiveTab(_:)``.
+    /// the documented compact fallback to ``isPaneOnCanvas(_:)``.
     public func clearViewportMembership() {
         paneIDsInViewport = []
         hasReportedViewport = false
@@ -2993,11 +2943,6 @@ public final class WorkspaceStore {
         splitActivePane(axis: axis, kind: .terminal)
     }
 
-    /// Adds a tab to the active session carrying the user's default-kind leaf. The "new tab" command entry.
-    public func newTabDefault() {
-        newTab(kind: .terminal)
-    }
-
     /// The SINGLE source of the default new-session name — "Session N" where N is one past the current
     /// session count, so a created session is never blank. Every session-minting path (the agent control
     /// backend, session templates) names through THIS, so the paths can never drift.
@@ -3096,7 +3041,7 @@ public final class WorkspaceStore {
     // MARK: - Find-in-terminal
 
     /// Opens the ⌘F find bar over the active pane (the keyboard / menu / right-click "Find…" entry). Routes
-    /// to the active terminal's ``TerminalViewModel/onRequestFind`` (set by ``TerminalScreenView``); a no-op
+    /// to the active terminal's ``TerminalViewModel/onRequestFind`` (set by ``TerminalLeafView``); a no-op
     /// for a non-terminal active pane or an empty shell. The find bar's PURE engine is
     /// ``TerminalSearchController`` (unit-tested).
     public func requestFindInActivePane() {
@@ -3829,7 +3774,7 @@ public final class WorkspaceStore {
 
     /// Folds one Claude-Code agent-detection event (wire types 26/27) for pane `id` into the owning
     /// ``LivePaneSession``'s state machine, then mirrors the new ``ClaudeStatus`` into ``paneAgentStatus``
-    /// so the sidebar/tab/chrome ``AgentStatusDot``s light up live. The session owns the dedupe + the
+    /// so the sidebar/tab/chrome agent marks (`StatusDotView`) light up live. The session owns the dedupe + the
     /// dynamic inspector open/close; `setAgentStatus` is itself idempotent.
     private func handleAgentSignal(id: PaneID, event: SlopDeskClient.Event) {
         guard let session = registry[id] as? LivePaneSession else { return }
@@ -4869,7 +4814,7 @@ public extension WorkspaceStore {
         // The channel connects lazily: NWByteChannel.start() is idempotent and is triggered by the
         // first send (the `subscribe(fromSeq:)` in LivePaneSession.subscribeInspector). We do not start
         // it here so a plain terminal (no claude detected) opens no inspector socket.
-        let channel = NWByteChannel(connection: connection)
+        let channel = NWByteChannel(connection: connection, label: "slopdesk.inspector.channel")
         return InspectorClient(channel: channel)
     }
 }
@@ -5298,14 +5243,5 @@ public extension WorkspaceStore {
             case .canvas: workspace.focusedPane
             }
         return focused.flatMap { effectiveGitProjectKey($0) } == key
-    }
-
-    /// Whether pane `id` is the currently-focused pane in the live model — the tree's active tab's
-    /// active pane, or the canvas focus.
-    func isActivePane(_ id: PaneID) -> Bool {
-        switch liveModel {
-        case .tree: tree.activeSession?.activeTab?.activePane == id
-        case .canvas: workspace.focusedPane == id
-        }
     }
 }

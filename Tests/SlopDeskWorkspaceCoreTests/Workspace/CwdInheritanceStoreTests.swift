@@ -69,16 +69,6 @@ final class CwdInheritanceStoreTests: XCTestCase {
         Set(store.tree.allPaneIDs())
     }
 
-    /// Drains the deferred (0 ms-grace) send Task by yielding the main actor until `fake` has recorded bytes
-    /// or the budget runs out (mirrors `SessionTemplateStoreTests`).
-    private func waitForBytes(_ fake: FakePaneSession?) async {
-        for _ in 0..<200 {
-            if (fake?.sentBytes.count ?? 0) > 0 { return }
-            await Task.yield()
-            try? await Task.sleep(for: .milliseconds(5))
-        }
-    }
-
     /// Lets any (possibly erroneously-scheduled) deferred send land, so a "sent NOTHING" assertion is not
     /// vacuously true because the send simply hadn't run yet.
     private func settleDeferredSends() async {

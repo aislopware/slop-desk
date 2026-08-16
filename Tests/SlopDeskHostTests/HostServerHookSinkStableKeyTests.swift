@@ -9,10 +9,15 @@ import XCTest
 /// session.
 ///
 /// The pane id is exported ONCE into the child env as `SLOPDESK_PANE_ID` at fresh spawn and is
-/// immutable for the shell's life — the agent's hook POSTs are forever tagged with the ORIGINAL
-/// `connectionID:channelID`. Registering a NEW per-connection key on every reattach therefore
-/// (a) leaked one dead sink per detach/reattach cycle (String key + closure per wifi flap, for
-/// weeks) and (b) was functionally dead anyway — only the original key ever routes.
+/// immutable for the shell's life — the agent's hook POSTs are forever tagged with the string the
+/// shell was born with. Registering a NEW key on every reattach therefore (a) leaked one dead sink
+/// per detach/reattach cycle (String key + closure per wifi flap, for weeks) and (b) was
+/// functionally dead anyway — only the env-baked key ever routes.
+///
+/// The key is now ``HostServer/paneID(sessionID:)``, and the session uuid does not change across a
+/// reattach — so the bug this suite was written for is structurally impossible rather than merely
+/// avoided. That is not a reason to delete the suite: the sink map, the teardown paths and the
+/// unregister-on-parked-death edge are all still real, and a future re-key would still leak.
 ///
 /// Deliberate design (do not regress): detach does NOT unregister — hook records must keep
 /// folding into the detector while the session is parked, so a status change during the
@@ -25,7 +30,7 @@ final class HostServerHookSinkStableKeyTests: XCTestCase {
     private func makeSession(sessionID: UUID = UUID()) -> MuxChannelSession {
         MuxChannelSession(
             channelID: 1,
-            pty: PTYProcess(), // unspawned — no reaper thread, no masterFD (hang-safety)
+            pty: unattachedPTY(), // unspawned — no reaper thread, no masterFD (hang-safety)
             data: MuxSubChannel(channelID: 1, channel: .data) { _, _ in },
             control: MuxSubChannel(channelID: 1, channel: .control) { _, _ in },
             sessionID: sessionID,
@@ -76,11 +81,9 @@ final class HostServerHookSinkStableKeyTests: XCTestCase {
         let server = makeServer(listener: listener)
         let session = makeSession()
         var key = MuxSessionKey(connectionID: UUID(), channelID: 1)
-        let originalPaneID = HostServer.paneID(connectionID: key.connectionID, channelID: key.channelID)
+        let originalPaneID = HostServer.paneID(sessionID: session.sessionID)
 
-        server.registerHookSinkForTesting(
-            session: session, connectionID: key.connectionID, channelID: key.channelID,
-        )
+        server.registerHookSinkForTesting(session: session)
         XCTAssertEqual(listener.sinkCountForTesting, 1, "fresh spawn registers exactly one sink")
 
         for flap in 1...3 {
@@ -107,11 +110,9 @@ final class HostServerHookSinkStableKeyTests: XCTestCase {
         let server = makeServer(listener: listener)
         let session = makeSession()
         let key0 = MuxSessionKey(connectionID: UUID(), channelID: 1)
-        let originalPaneID = HostServer.paneID(connectionID: key0.connectionID, channelID: key0.channelID)
+        let originalPaneID = HostServer.paneID(sessionID: session.sessionID)
 
-        server.registerHookSinkForTesting(
-            session: session, connectionID: key0.connectionID, channelID: key0.channelID,
-        )
+        server.registerHookSinkForTesting(session: session)
         _ = cycleDetachReattach(server: server, session: session, from: key0)
 
         listener.routeRecordForTesting(workingRecord(paneID: originalPaneID))
@@ -132,11 +133,9 @@ final class HostServerHookSinkStableKeyTests: XCTestCase {
         let server = makeServer(listener: listener)
         let session = makeSession()
         let key = MuxSessionKey(connectionID: UUID(), channelID: 1)
-        let paneID = HostServer.paneID(connectionID: key.connectionID, channelID: key.channelID)
+        let paneID = HostServer.paneID(sessionID: session.sessionID)
 
-        server.registerHookSinkForTesting(
-            session: session, connectionID: key.connectionID, channelID: key.channelID,
-        )
+        server.registerHookSinkForTesting(session: session)
         server.detachMuxSessionForTesting(key: key, session: session)
 
         XCTAssertEqual(listener.sinkCountForTesting, 1, "detach must not drop the sink")
@@ -157,9 +156,7 @@ final class HostServerHookSinkStableKeyTests: XCTestCase {
         let session = makeSession()
         let key0 = MuxSessionKey(connectionID: UUID(), channelID: 1)
 
-        server.registerHookSinkForTesting(
-            session: session, connectionID: key0.connectionID, channelID: key0.channelID,
-        )
+        server.registerHookSinkForTesting(session: session)
         let key1 = cycleDetachReattach(server: server, session: session, from: key0)
 
         server.removeMuxSessionForTesting(key1)
@@ -181,9 +178,7 @@ final class HostServerHookSinkStableKeyTests: XCTestCase {
         let session = makeSession()
         let key = MuxSessionKey(connectionID: UUID(), channelID: 1)
 
-        server.registerHookSinkForTesting(
-            session: session, connectionID: key.connectionID, channelID: key.channelID,
-        )
+        server.registerHookSinkForTesting(session: session)
         server.detachMuxSessionForTesting(key: key, session: session)
 
         session.onExit?(0) // the shell exits while parked → the wired onDetachedExit fires
@@ -203,9 +198,7 @@ final class HostServerHookSinkStableKeyTests: XCTestCase {
         let session = makeSession()
         let key = MuxSessionKey(connectionID: UUID(), channelID: 1)
 
-        server.registerHookSinkForTesting(
-            session: session, connectionID: key.connectionID, channelID: key.channelID,
-        )
+        server.registerHookSinkForTesting(session: session)
         server.detachMuxSessionForTesting(key: key, session: session)
 
         // Drive the REAL eviction path directly (the TTL task's only body) — no timer wait.

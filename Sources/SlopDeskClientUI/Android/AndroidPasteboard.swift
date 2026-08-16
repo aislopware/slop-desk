@@ -8,19 +8,14 @@
 #if os(macOS)
 import AppKit
 import Foundation
+import SlopDeskWorkspaceCore
 
 enum AndroidPasteboard {
     /// Puts a capture on the general pasteboard as an image. Returns the decoded image so a caller
     /// can tell "the bytes were not an image" from "the write happened" — a truncated PNG is a
     /// problem worth reporting, not a silent no-op.
     @discardableResult
-    static func write(png: Data) -> NSImage? {
-        guard let image = NSImage(data: png) else { return nil }
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.writeObjects([image])
-        return image
-    }
+    static func write(png: Data) -> NSImage? { ClientPasteboard.write(image: png) }
 
     /// What is on the Mac's clipboard as text, or `nil` when it holds something else. The read side
     /// of "paste into the device": the panel takes the Mac's clipboard and sends it, rather than

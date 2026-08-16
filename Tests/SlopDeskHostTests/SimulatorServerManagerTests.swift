@@ -12,6 +12,7 @@ final class SimulatorServerManagerTests: XCTestCase {
         private let lock = NSLock()
         private var running = true
         private(set) var terminated = false
+        private(set) var relinquished = false
 
         var isRunning: Bool {
             lock.lock()
@@ -24,6 +25,14 @@ final class SimulatorServerManagerTests: XCTestCase {
             defer { lock.unlock() }
             running = false
             terminated = true
+        }
+
+        /// Letting go leaves `running` alone on purpose: superd still holds the child, so a fake
+        /// that flipped it would hide the very difference this seam exists to make.
+        func relinquish() {
+            lock.lock()
+            defer { lock.unlock() }
+            relinquished = true
         }
 
         /// The child died on its own (crash, Xcode mismatch, killed by the operator) — no
@@ -279,6 +288,7 @@ final class HostSimulatorPerformerTests: XCTestCase {
     private final class NeverExitingHandle: HostServiceProcessHandle, @unchecked Sendable {
         var isRunning: Bool { true }
         func terminate() {}
+        func relinquish() {}
     }
 
     private func makeManager(binary: String? = "/fake/baguette") -> SimulatorServerManager {

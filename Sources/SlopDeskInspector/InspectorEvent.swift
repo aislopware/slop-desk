@@ -1,5 +1,3 @@
-import Foundation
-
 /// The typed event taxonomy the read-only inspector emits and the client renders.
 ///
 /// This is the single output type of the whole inspector pipeline (transcript +

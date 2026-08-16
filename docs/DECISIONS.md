@@ -71,7 +71,7 @@
 ## PATH 2 native-feel (GUI video) — from [17]
 - ✅ **Client-side cursor rendering (HIGHEST impact):** `showsCursor=false` strips the cursor from capture; the host samples `NSEvent` ~120Hz and sends position+shape over a **separate UDP socket, <64B** (do NOT multiplex with video); the client composites a Metal quad at display-refresh → **pointer latency = RTT**. (Parsec US 9,798,436 + Moonlight + Selkies.) → [17]
 - ✅ **Concrete idle-skip:** read `SCStreamFrameInfo.status==.idle` → return immediately; heartbeat IDR ~1s. → [17]
-- ✅ **Loss recovery = LTR-refresh + Reed–Solomon FEC with adaptive tiering** (`FECScheme` + `AdaptiveFECPolicy`) instead of forced-IDR (needs a client→host ACK, fallback IDR 2-RTT); 4B seq-number/packet. FEC is RS over GF(2⁸) (NEON-accelerated in `CSlopDeskSIMD`): `m=1` is byte-identical to the original XOR parity, `m≥2` recovers multi-packet loss. → [17], [03]
+- ✅ **Loss recovery = LTR-refresh + Reed–Solomon FEC with adaptive tiering** (`FECScheme` + `AdaptiveFECPolicy`) instead of forced-IDR (needs a client→host ACK, fallback IDR 2-RTT); 4B seq-number/packet. FEC is RS over GF(2⁸) (NEON-accelerated; the kernel was `Sources/CSlopDeskSIMD` and is now `rust/slopdesk-gfsimd`): `m=1` is byte-identical to the original XOR parity, `m≥2` recovers multi-packet loss. → [17], [03]
 - ✅ **Adaptive parity-`m`** (2026-06-18): the FEC parity count steps per-frame by measured loss (clean → m=2 lower overhead, burst → m=5 strong recovery) via the existing 3-bit wire FEC-tier field — **no wire-format change**, fast-attack on loss / slow-decay when clean. `SLOPDESK_ADAPTIVE_FEC_M`, deploy-together. → [03]
 - ✅ **RE-SCOPE: selective retransmit (NACK / ARQ) for video is now allowed** (2026-06-18) — supersedes the old "never retransmit video (1 RTT → stutter)" rule, whose premise (naive replay-and-stall) breaks once a **playout buffer ≫ RTT**: a NACK'd fragment retransmit lands *inside* the buffer → fills the hole before playout, **no stutter** (WebRTC model). FEC stays first; a FEC-unrecoverable frame is HELD a small grace, the client NACKs the missing fragments (wire recovery type 6), the host re-sends them from a bounded ring (cheaper than a recovery-IDR; recovers whole-frame losses FEC cannot). LTR-refresh/IDR is the fallback once the grace expires. `SLOPDESK_NACK`, default OFF, deploy-together. → [03 §FEC vs retransmit], [10 §LAN policy]
 - ✅ **Client frame pacing = `CADisplayLink`/VSync** (NOT decode-completion); show-last-frame when the queue is empty; `CVMetalTextureCache` zero-copy; `CAMetalLayer.maximumDrawableCount=2`. → [17]
@@ -8563,3 +8563,7282 @@ against the glass, rim **9.57**, label **6.99**, detail **20.25**.
   capsule; an inset `.stroke()` was tried and still ticks. ⚠️ It belongs to the SILHOUETTE, so both
   members carry it: on the cream the same defect is there and merely too faint to see, and it was only
   ever CAUGHT on `ConnectionAlertChip` because that is the member whose rim has real contrast.
+
+## A running agent stops dying because we edited the host (2026-08-11, user-directed)
+
+✅ **Decided — and it reverses a written non-goal.** `docs/45` §8 listed "live-process survival
+across a hostd restart" as out of scope, and the disk-journal decision above said "explicitly NOT a
+sessiond" on the reasoning that the TRANSCRIPT can survive the daemon while the process cannot.
+That reasoning was sound for the problem it was solving (history loss) and wrong as a general
+ruling. The user reported the real cost: any host-side edit means killing every running agent, so
+host changes get batched, delayed, and made in bigger and riskier lumps than they should be. The
+tooling was shaping the work.
+
+**What changes.** A new `slopdesk-superd` LaunchAgent forks the pane shells and keeps each PTY master
+fd open for the pane's life, handing hostd a duplicate over `SCM_RIGHTS`. hostd's byte path is
+untouched — it reads, resizes and `tcgetpgrp`s the same kind of fd it always did, with no extra hop
+and no relay. hostd's exit closes only its duplicate, so the fd refcount stays above zero and the
+shell never sees the `SIGHUP`. → [51]
+
+**Two things were verified by running code before any of this was designed**, because both could
+have killed it:
+
+1. A PTY master survives `SCM_RIGHTS` with every power intact — `read`, `TIOCSWINSZ`, and
+   `tcgetpgrp`, which is the primary agent-detection signal. The `CMSG_*` macros are invisible to
+   Swift but their arithmetic is hand-rollable, so **no second C target** is needed and the "only C
+   is `CSlopDeskSIMD`" invariant survives.
+2. The pane survives its fd-holder's death **only if someone else still holds the fd**. A
+   supervisor that hands off and closes is worse than useless: it hangs up the shell at exactly the
+   moment it was supposed to save it. superd holds its copy and never reads it. Across the gap the
+   kernel PTY buffer backpressures the writer rather than dropping — the same mechanism
+   `PTYReadLoop`'s pause gate already leans on, which is why superd needs no ring buffer.
+
+**The non-obvious half was the sockets, not the fd.** `SLOPDESK_SOCKET_PATH` and
+`SLOPDESK_CONTROL_SOCKET` are keyed by hostd's pid and baked into the child env at spawn. A
+restarted hostd binds a *different* path while the running `claude` still holds the old one, and
+the hook relay's failure mode is `ConnectFailed` → exit 0, silently. So the agent's authoritative
+feed would have been lost permanently, not just during the gap — a pane that survives with tier 1
+dead is a worse outcome than an honest restart. Both sockets therefore move to superd at stable
+paths. Same for `SLOPDESK_PANE_ID`: it is derived from `(connectionID, channelID)`, so it must be
+**recovered from superd on adopt, never re-derived**, or hook POSTs route nowhere.
+
+The general rule this leaves behind, which is the part worth keeping: **hostd's pid may not appear
+in anything a live child remembers.** That single test decides what belongs in superd, and it is why
+the split is one small boundary rather than the subsystem-by-subsystem carve-up the request could
+have been read as. Splitting detection or the workspace into their own daemons buys nothing once
+restarting hostd is free.
+
+**Rejected alternatives.** *Relay the bytes through superd* — no unsafe code, but it puts an AF_UNIX
+hop on every keystroke and every output byte, needs the `SO_SNDBUF` fix (2026-08-10), and turns
+`tcgetpgrp` into a polled IPC verb; fd-passing leaves all of it alone. *`execve` in place* — keeps
+the pid, needs no new daemon, but cannot survive a new binary that fails to boot, and during host
+development that is not a rare event; it also does nothing for a hostd that crashed.
+
+**The cost, stated plainly.** superd's own crash still takes every pane with it — fd custody dies with
+the custodian and launchd cannot inherit it. That is inherent, and the mitigation is that superd is
+small, dependency-free, and does nothing per byte. And because superd outlives hostd's *build*, the
+superd↔hostd protocol is the one place in this codebase that must tolerate version skew: append-only,
+version in `hello`, unknown verbs answered `unsupported` rather than dropped. The three wire paths
+are frozen because both ends ship together; this one negotiates because they do not. → [51 §3]
+
+## superd reads the master; only `read` moves (2026-08-11, user-directed)
+
+✅ **Decided — and it reverses one sentence of the entry above, written the same day.** That entry
+rejected relaying bytes through superd for two named reasons, and both were right: an `AF_UNIX` hop
+on every keystroke, and `tcgetpgrp` — the zero-config half of agent detection — becoming polled IPC.
+It then said superd "holds its copy and never reads it", and justified that with "across the gap the
+kernel PTY buffer backpressures the writer rather than dropping".
+
+That last clause is true and was the wrong thing to be satisfied by. **A PTY buffer is a few KB.**
+Between hostd's exit and the next hostd's `adopt` nobody is reading the master, so the child's next
+`write` blocks there, and the `claude` superd had just saved from `SIGHUP` spends the entire restart
+frozen at whatever line it had reached. The pane survived; the agent stopped. The user asked for the
+agent to keep working, and "does not die" was only most of that.
+
+**What changes.** Every pane gets a reader thread in superd (`pump.rs`) that drains it for the
+pane's whole life, attached or not, into an offset-addressed ring (`ring.rs`). hostd `subscribe`s
+and receives binary output frames. `Sources/SlopDeskHost/PTYReadLoop.swift` is deleted. → [51 §6.5]
+
+**Both original objections survive intact, because only `read` moved.** hostd keeps its `SCM_RIGHTS`
+duplicate and still uses it for `write`, `TIOCSWINSZ` and `tcgetpgrp`. Keystrokes go hostd → kernel
+with no hop; the foreground process group is a syscall, not a verb. The rejected design was
+*relaying*, which is bidirectional; this is one direction, and the direction that was already
+one-way to a queue.
+
+**The four rules that fell out, none of which were obvious in advance:**
+
+1. **Losing the last subscriber clears the pause.** hostd asserts backpressure when a channel's
+   output queue fills, and superd is now what stops reading. But a hostd that dies mid-flood leaves
+   that pause behind, and a pause nobody is left to lift would freeze the very pane this daemon
+   exists to carry through a restart — the same failure, arrived at from the other side.
+2. **Eviction is announced, never silent.** `subscribe` answers with the offset the stream *actually*
+   resumed at, not the one that was asked for. A terminal stream spliced across an unannounced hole
+   renders a screen that is *wrong* rather than merely short, and nothing downstream can tell.
+3. **The reaper drains the pump before broadcasting `exited`.** Two independent threads would
+   otherwise race, and a shell's farewell output would arrive after the session meant to show it had
+   been torn down — about half the time.
+4. **`waitUntilExitedDrainingMaster` had to stop draining.** It existed because nobody read the
+   master between `hangup()` and the `SIGKILL` escalation, which wedges a zsh blocked in
+   `tcsetattr(TCSADRAIN)`. The pump makes that premise false, and keeping the drain would make it a
+   *second* reader stealing bytes on a file description `SCM_RIGHTS` makes shared — and one that
+   sets `O_NONBLOCK` on superd's reads as a side effect.
+
+**Rejected while doing it.** *Move the on-disk scrollback journal too* — it is the obvious next
+brick and it would drag `AltScreenCutScanner` into two languages, because `ReplayBuffer`'s eviction
+is its other caller and lives in the transport module the client links. One implementation or
+neither; the journal moves when the ring does. *Base64 the output inside the JSON reply* — a third
+more wire and two more copies on the hottest path this socket has, to avoid one tag byte.
+
+**The cost, stated plainly.** Output now crosses an `AF_UNIX` socket on its way to the transport,
+where before it went kernel → hostd directly. It is one hop on a path that already had a queue, a
+FIFO and a drain task on it, and `SO_SNDBUF` is the thing to watch if it ever shows up in a
+measurement (2026-08-10). The keystroke path — the one latency actually lives on — is untouched.
+
+## superd binds the child-facing sockets and hands hostd the accepted connection (2026-08-11, user-directed)
+
+✅ **Decided.** The two sockets a spawned child is told about — the Claude-hook socket
+(`SLOPDESK_SOCKET_PATH`) and the agent-ctl socket (`SLOPDESK_CONTROL_SOCKET`) — are now bound by
+superd for its whole life. hostd sends `listen` naming the kinds it will serve, and superd passes
+each **accepted connection** over `SCM_RIGHTS` as a `connection` event. → [51 §6.6]
+
+**Why the path fix was not enough.** The entry above dropped the `-<pid>` suffix so a child's
+`execve` snapshot would still name a real address after a restart. But an address is only a promise
+to be *listening* at it, and the listener was hostd. The name was stable and nothing was behind it,
+which is the same bug one layer down and just as silent — a hook POST to a dead socket costs a
+`claude`'s authoritative feed and nothing logs an error.
+
+**Only the `bind` moved, deliberately.** superd reads no byte of either protocol. The hook record
+parser, the Claude state machine, the `tool_use_id` ledger and the dissent watchdog stay in hostd,
+which is the process that has the state they need. The alternative — moving the protocols too —
+either duplicates them in Rust (against the one-implementation rule) or makes superd a relay, which
+is the thing §8 says it is not.
+
+**Unclaimed is not unbound.** Both sockets are bound always; whether a hostd is behind one is
+separate state, and it gates exactly one thing: whether the path is advertised into a child's
+environment. Advertising an address is a promise to be listening at it. This is also how the
+default-off `SLOPDESK_AGENT_CTL` flag survived without leaking into superd — off means hostd does
+not *claim* `control`, and superd never learns the flag exists.
+
+**Rejected: queue the record until a hostd attaches.** The peer is Claude Code's hook binary and it
+**blocks its agent** until its write completes, so a fast `EPIPE` beats a wait. The lost record is
+self-healing — `lastAuthoritativeAt` goes stale, coverage is revoked, the screen engine takes over
+(`docs/50`). A hung `claude` is not.
+
+**Scoped out, with a reason rather than by omission: `CodeBridgeServer` and `InspectorServer` stay
+in Swift.** Both are TCP, neither is addressed into a child's environment, and neither holds a
+long-lived child process — so the rule that produced this whole boundary ("hostd's pid may not
+appear in anything a live child remembers") does not reach them. Moving them would be a rewrite with
+real risk and no benefit; a restart already costs them nothing but a reconnect.
+
+## An exited pane keeps its output long enough to be read (2026-08-11)
+
+✅ **Decided — a defect the entry above exposed, not a design choice made freely.** Once `read` was
+superd's, a pane's bytes lived in that pane's ring, and the pane died the instant its child was
+reaped. hostd subscribes only *after* the `spawn` reply travels back to it, and
+`slopdesk-ctl spawn --cmd ls` finishes well inside that window: the `subscribe` found no pane, and
+the pane rendered **empty**. Not slowly, not partially — nothing at all, reliably, for every command
+fast enough to win the race.
+
+**The fix is two halves.** superd's reaper moves the ring (never an fd) into a bounded 16-entry
+graveyard before it broadcasts `exited`, and `subscribe` falls back to it; `release` evicts. And
+`StreamPosition.ended` tells a late subscriber the stream is finished, because the `exited` notice
+that normally ends it was broadcast before that subscriber existed — without the flag hostd renders
+the backlog and then waits forever for an end that already happened. → [51 §6.5]
+
+**Rejected.** *Auto-subscribe the holder inside `spawn`* — hostd's handler is not wired at that
+point, so the frames would be dropped by the client instead of by superd. *Buffer unhandled frames
+in `SupervisorClient`* — unbounded, on the hottest path this socket has. *Keep exited panes in the
+main pane table until `release`* — every pane lifetime edge would grow a "but is it dead" branch,
+and a hostd that never released would leak them forever.
+
+## The panel backends are supervised panes too (2026-08-12)
+
+✅ **Decided — reversing `docs/51` §8, which had listed this as a non-goal.** The old reasoning
+asked how a new hostd would *find* code-server again (it is addressed by port, not by fd — read it
+from a state file) and never asked why it had to. The answer was `HostServer.stop()`, which
+**terminated** both backends: every host edit bought the user a Node reboot in the code panel and a
+dead simulator server, on the surface they look at most, for the entire life of this project.
+
+The fix is `SupervisedServiceProcess`, ~190 lines, because the output ring had already done the hard
+part. Spawn-or-adopt under the stable pane id `service:<name>`; on adopt, **re-learn the port from
+the child's own announce line** by replaying the ring from offset 0 — no state file, no port
+handshake, nothing to go stale. `stop()` calls `relinquish()`; only a deliberate stop calls
+`terminate()`. → [51 §6.7]
+
+**Held on a PTY on purpose.** Both backends were checked on a real terminal first: neither
+colourises, neither moves its announce line, and the only difference is `\r\n`, which
+`LineAssembler` strips. A second, pipe-flavoured spawn primitive would mean a second pre-exec window
+beside the disassembly-pinned one (`fork_window_contract`) — to buy a carriage return.
+
+**Found on the way:** `CodeServerManager.bridgeSocketPath` carried `getpid()`. Harmless while hostd
+killed its own backend on every restart; fatal the moment one survives, since a child cannot be told
+a new environment. Now stable, and `check-supervisor.sh` §7 ratchets every socket path in `Sources/`
+rather than superd's three.
+
+**Rejected.** *Porting the managers to Rust* — 5,337 lines of settings seeding, extension install,
+port parsing and readiness probing, none of which is supervision; the injected `Spawner` seam meant
+only the fork/hold/reap had to move. *A state file recording the port* — the child already says it,
+every time, and the ring already keeps what it said. *Supervising the Android bridge* — nothing
+there is a held child: the bridge is an in-process listener, `adb` calls are sub-second, scrcpy is
+tied to sockets hostd holds anyway, and the emulator was already deliberately orphaned.
+
+## The restart is one command, and the reload is the restart (2026-08-12)
+
+✅ **Decided — the last piece of `docs/51`, and the one about the person rather than the process.**
+Everything before this made a hostd restart *cheap*: panes, both child-facing sockets and the panel
+backends all live in superd now. What was still expensive was the ritual — find the process (`pkill`
+matching too much is a written-down trap), wait, remember the flags, notice that `--port 0` bound
+something else. A restart that is technically free but takes four steps still gets postponed, which
+was the original complaint.
+
+So hostd states its own launch — `HostLaunchRecord` → `hostd-launch.json`, written once the listener
+is up, removed on the orderly stop — and `scripts/restart-hostd.sh` (`make host-restart`) reads it.
+Two fields exist because only the process can know them: the **bound** port, and the physical path
+of the running executable (`_NSGetExecutablePath`, symlinks resolved, so it matches the `lsof -d txt`
+the script confirms the pid with — `argv[0]` is the relative `.build/release/…` and would not).
+Measured downtime **0.2 s**, superd's child count unchanged across it. → [51 §9]
+
+❌ **Live config reload — rejected, and not narrowly.** It was the obvious companion: SIGHUP, re-read
+the flags, no restart at all. `EnvConfig.overlay` is a deliberately lock-free write-once global, set
+at `main()` before any `static let` is forced and read on the video pipeline's hot path by the
+golden-pinned controllers; making it mutable means a lock *there*, to save a restart that now costs
+0.2 s and kills nothing. The hostd toggles argue the same way from both sides: `ipcAllowSendKeys` and
+`ipcAllowSensitiveSessions` are already re-read per request, while `blocksEnabled`,
+`agentControlEnabled` and `preventSleepEnabled` thread into construction, so a live flip would
+half-apply and leave sessions disagreeing about the rules.
+
+**Rejected.** *`pkill` in a Makefile target* — the trap this replaces. *Reconstructing the launch
+from `ps`* — `-o comm=` is argv[0] as typed, `-o command=` loses argument boundaries, and neither
+knows the environment. *A `--port` flag on the script* — the record already holds the bound port,
+and a second source of that answer is how they drift.
+
+## What is left in Swift stays in Swift — measured, not assumed (2026-08-12, user-directed; the inspectord half REVERSED the same day, see below)
+
+✅ **Decided.** After superd, screend, dropd and androidd, the standing instruction was to keep going:
+move whatever is better in Rust, and split whatever can be dialled directly. This entry is the audit
+that answers "what is left", and its conclusion is mostly **stop** — which is a result, not a
+retreat, because every part of it is a number rather than a taste.
+
+**The rule in `CLAUDE.md` was gating on the wrong thing.** It justifies Swift by "a macOS framework
+with no usable C ABI: AppKit/SwiftUI, ScreenCaptureKit, VideoToolbox, Network.framework". Three of
+those four are wrong on the facts: Network.framework IS a C API (`nw_connection_t`), VideoToolbox IS
+a C API (`VTCompressionSessionCreate`), and ScreenCaptureKit is Objective-C, which `objc2` reaches.
+Read literally the rule permits almost everything to move. The honest floor is much smaller:
+**SwiftUI/AppKit in the client** (49k lines of `SlopDeskClientUI` + 36k of `SlopDeskWorkspaceCore`),
+and in hostd exactly **four files** — `PreventSleepAssertion`, `InspectorServer`,
+`HostPathActionPerformer`, `HostClipboardPerformer` are the only ones importing AppKit/Network/IOKit.
+(Later the same day: `InspectorServer` is gone — see the reversal below — but `RepoStatusWatcher`
+belongs on the list too, on CoreServices/FSEvents. So the count is unchanged at four:
+`PreventSleepAssertion` (IOKit), `HostPathActionPerformer` + `HostClipboardPerformer` (AppKit),
+`RepoStatusWatcher` (CoreServices). Re-verified 2026-08-12 after the ctl port.)
+Everything else is Foundation, and could move. The question is therefore never "can it" but "does
+the number say to".
+
+**The hot path was measured, and it is not a ceiling.** `MuxChannelSession.ingestPTYChunk` is the
+last per-byte Swift on a hot thread: every byte a pane produces crosses `HostOutputSniffer.observe`
+(OSC title/bell, OSC 133, OSC 7, OSC 9;4) and `CommandBlockSegmenter.ingest` on the read loop.
+`slopdesk-sniffbench` times both over the same corpus `slopdesk-replay-bench` uses, in production
+32 KiB reads (`PaneOutputStream.readChunkSize` = superd's `pump::READ_CHUNK_BYTES`):
+
+| stage | throughput (64 MiB, median of 3) |
+| --- | --- |
+| `HostOutputSniffer.observe` | **614 MiB/s** |
+| `CommandBlockSegmenter.ingest` | **118 MiB/s** |
+| both, as the read loop runs them | **99 MiB/s** |
+
+A pane's real output peaks in the single-digit MiB/s. 99 MiB/s is one to two orders of magnitude of
+headroom, so a Rust port buys nothing measurable — and the standing instruction is explicit that a
+move which does not improve performance should not happen. Contrast the case that DID justify a
+move: `TerminalScreenModel` ran at **17.9 MiB/s** and a cold reattach composed the whole retained
+ring through it, so a 64 MiB ring was 3.5 s of hostd's main work before the phone saw a byte
+(`docs/52` §1). That is a ceiling; this is not. The bench stays in the tree so the next person can
+re-ask instead of re-guessing.
+
+⚠️ **The segmenter's 118 was an ITERATION defect, not a language one — 2026-08-12, later the same
+day.** The bench did exactly what it was left in the tree to do: the next person re-asked, and the
+5× gap between two state machines of the same shape on the same thread turned out to be the
+`some Sequence<UInt8>` signature. A `Data` chunk iterated through a non-specialized indexing path
+into a byte-at-a-time `append`; the sibling sniffer took `Data`, called `withUnsafeBytes` once, and
+`memchr`d its way between escapes. Giving the segmenter the same shape — plus a bulk `appendContent`
+whose cap arithmetic reproduces the per-byte rule rather than approximating it — moved it to **375
+MiB/s** and the read loop to **232 MiB/s**, pinned by a differential test that runs the same stream
+through both overloads at five caps × five chunk sizes. The verdict above is unchanged and now rests
+on a bigger margin, but the reasoning it models needs one clause added: **before a slow Swift number
+is allowed to argue for Rust, read the Swift.** The gap here was not in the grammar, the allocator
+or the language — it was one generic parameter, and a port would have carried the defect across and
+credited the win to Rust.
+
+🔁 **Both halves moved anyway — 2026-08-13, and NOT on throughput.** The numbers above are still
+right and still not a ceiling; what they measured stopped being the question once superd's pump
+became the first reader of every byte, which made these a SECOND pass over the same stream in a
+second language. See "The sniffer belongs to the reader that already has the bytes" below.
+
+🔁 **`slopdesk-inspectord` — dropped on a throughput argument, then BUILT once the rule changed
+(same day).** The original verdict is preserved above the line because the facts in it are still
+true: the inspector is off by default (`--inspector` / `--transcript`), the hook feed was never
+connected to it (`main.swift` never called `InspectorEngine.ingest(hook:)` — hooks go to detection
+only), the subagent watcher was passed `nil`, and per-pane transcript discovery was still deferred.
+What changed is the RULE those facts were weighed against. The user's directive — *"nếu ngang perf
+thì cũng có thể chuyển sang rust được, vì rust safety hơn, nhẹ hơn, và là ngôn ngữ hiện đại hơn"* —
+makes parity sufficient and only a measured REGRESSION disqualifying. Under that rule "it would not
+be faster" stops being an argument, and what remains is an argument the throughput framing had
+hidden entirely: **the inspector's state died with every `make host-restart`.** The tail, the fold
+and the whole 50 000-event replay window lived in hostd's address space, so a client reconnecting
+after a 0.2 s rebuild asked for `subscribe(fromSeq: 0)` and got an empty history for a session that
+was still running. That is the same argument dropd won on — blast radius, not benchmarks — and it
+applies whether or not the flag is on today. Built as `rust/slopdesk-inspectord` (`docs/54`), with
+the ten Swift files it replaces deleted and ratcheted in `check-supervisor.sh` §12.
+
+Two things the port did NOT carry over, both deliberate. `EventBuilder.ingest(hook:)` was deleted
+rather than translated — nothing in production called it, and a separate daemon cannot receive a
+hook record at all, so porting it would have invented a capability to keep a dead one alive. And the
+Swift `InspectorSource` went with the rest: it was the host END of the wire, and keeping it "just
+for the tests" is exactly the cross-language mirror the one-implementation rule forbids. The tests
+that used it now hand-build the wire bytes, which is the stronger pin anyway — a round trip through
+one codebase's own encoder and decoder passes just as happily when both have drifted.
+
+Related correction to an earlier claim in the same session, unaffected by the reversal:
+`readAgentSession` (verb 8) can return 15 MiB on the same TCP connection as keystrokes, but it has
+**no caller in the client** — so it is a latent capability, not live traffic, and it does not justify
+a daemon on its own.
+
+**Crates, if a framework port ever happens.** ObjC surfaces: BUY. `objc2` is 36.7M downloads/90d,
+pushed daily, and `objc2-screen-capture-kit` 0.3.2 covers the SCK types — hand-rolling `objc_msgSend`
+for ScreenCaptureKit would be its own project. C surfaces: WRITE OUR OWN. The third-party
+`videotoolbox` crate has **2,709 downloads in 90 days, one contributor, zero PRs, eighteen releases
+in three weeks**; VideoToolbox is a C API and we would use ~15 entry points, so `extern "C"` is ten
+lines and no dependency. Same verdict for `axuielement` (982 downloads/90d) — Accessibility is C too.
+`screencapturekit` (doom-fish) is rejected on churn: v6 → v7 → v8 in seven weeks. `cc-rs` turns out
+to have no job here at all: the only C in the tree is `Sources/CSlopDeskSIMD`, and that must NOT move
+(`SlopDeskVideoProtocol` is a leaf shared by host AND client, so a Rust GF(2⁸) would be the
+two-language mirror the one-implementation rule forbids).
+
+**Toolchain moved to 1.97.1 / nightly 1.99, and it broke a pin honestly.** rustc 1.97 switched the
+default symbol mangling to `v0`, so `fork_window_contract`'s `nm` lookup for `spawn9spawn_pty17` —
+where `17h<hash>` is *legacy* mangling — matched nothing and failed the pin with no code changed.
+Fixed by matching the FUNCTION rather than a substring (`contains` finds thirteen symbols once
+closures spell the same path): the tail after the path must be empty (`v0`) or exactly `17h`+16
+hex+`E` (legacy). Both accepted, because the scheme is the compiler's choice and a pin must fail
+when the window breaks, never when the name changes spelling. `nix` 0.30 → 0.31.3 in the same pass;
+`libc` deliberately held at 0.2 (its `max_version` is `1.0.0-alpha.4`, and "latest" is not "alpha"
+for the crate standing under every syscall superd makes).
+
+## The screen tier of detection is screend's, and the clock stays hostd's (2026-08-12, user-directed)
+
+✅ **Decided.** The manifest schema, its TOML parser, the region resolver, the rule engine, the
+nineteen bundled manifests, the explain trace, the OSC tracker and the synchronized-frame tracker
+moved into `slopdesk-screend` behind one new verb, `detect` (9), and were DELETED from Swift in the
+same change — along with `slopdesk-detect-explain` (now `slopdesk-screend explain`) and
+`ClaudeManifestMatcher`'s three tables of literal Claude cues, which were a SECOND screen matcher
+living beside a nineteen-agent rule ladder. Its process-name half survives as `ClaudeProcessMatcher`.
+
+**The roundabout it removes.** hostd walked every PTY chunk FOUR times for this: once across the
+screend socket for the grid, then again in `AgentOscTracker`, again in `AgentSyncFrameTracker`, and
+once more for ~20 `NSRegularExpression`s over the grid — which came back as JSON, ≈10 KB at 50×200,
+per pane, every ~300 ms. Now one request carries the bytes, three walks happen on the far side, and
+~150 bytes of verdict come back. The regexes stopped being a hazard on the way: the manifests match
+against text a foreign program drew into a PTY, and `NSRegularExpression` is ICU BACKTRACKING, where
+the `regex` crate is a finite automaton with a documented linear-time guarantee. The bundled rules
+were authored FOR that crate upstream (`\x{2800}`, `\p{Alphabetic}`, `(?i)`, `(?s)`, no lookaround),
+so the move improves fidelity with herdr rather than risking it.
+
+**Where the line is, and why it is not "hot code".** *screend owns everything that reads the BYTES;
+hostd owns everything that reads the CLOCK.* So the ladder, the regions and both trackers moved, and
+`AgentDetectionHold` / `PaneScreenScanner` did not — the startup grace, the working→idle hold, the
+blocked→idle confirmation count, the cap on an open synchronized frame and the scan cadence are all
+decisions about time, and they belong next to the timer that measures them. `Verdict` therefore
+reports `frameOpen` and `frameGeneration` as FACTS and lets hostd draw the deadline. Tier 1 (hooks,
+ctl `report`) never touched this path and still does not (`docs/50`).
+
+**Two things got better on the way, neither of them the point.** hostd now CACHES the verdict: it is
+a pure function of (grid, OSC evidence, agent), so a tick that folds no bytes asks nothing at all —
+where the Swift engine re-ran the whole ladder every tick against a snapshot it had already cached,
+for any pane whose last verdict was not idle. And a failed exchange now publishes NOTHING. It used
+to publish IDLE: `feedGrid`'s catch set `lastSnapshot = nil`, the evaluation read
+`lastSnapshot?.detectionText ?? ""`, an empty screen matched no rule, and the known-agent fallback is
+idle — so a dropped socket announced a finished turn, in a function whose doc comment said it
+"publishes nothing".
+
+**Proven before anything was deleted.** `scripts/herdr-differential.py`'s own corpus generator, run
+through the Swift oracle and the Rust one across all 19 manifest agents plus `omp`, `mastracode` and
+an unknown label, diffing state, winner, every `visible*` flag, skip/fallback reasons and — per
+evaluated rule — `matched`, `region_bytes` and `region_preview`: **3656 screens, 0 mismatched.** The
+harness now drives `slopdesk-screend explain` as the ported side.
+
+**One behaviour delta, recorded rather than hidden.** The OSC and frame trackers live in screend's
+bounded registry now, so a pane EVICTED at the 256-pane cap loses its retained title, where the
+Swift trackers (in hostd, never evicted) kept it. It self-heals on the agent's next title emission,
+and at that cap it is theoretical.
+
+The manifests went back to being the TOML files they already are (`rust/slopdesk-screend/manifests`,
+`include_str!`d), so `scripts/gen-bundled-manifests.py` is a copy rather than a Swift-source
+generator — and it now REFUSES to overwrite a manifest carrying the `DIVERGES FROM herdr` marker.
+That was a live hazard: `herdr-sync.sh` runs the writer unattended, so an upstream sync would have
+silently deleted the two deliberate `claude` divergences, after which the differential would have
+reported perfect parity because both engines were again running upstream's rule.
+
+## uniffi-rs — evaluated on request, rejected on structure and then on a measurement (2026-08-12, user-directed)
+
+> **The reopen clause below is VOID as of 2026-08-13** — see "The FFI ban was never the user's rule"
+> at the end of this file. The structural table stays true (a daemon that must outlive hostd cannot
+> be a library); the three-part reopen test does not, because it was written to guard a ban the user
+> had not made.
+
+The standing instruction was to look at [uniffi-rs](https://github.com/mozilla/uniffi-rs) and ask
+which ported, in-flight or planned component could adopt it — *"review lại những phần đã port, đang
+port hoặc sắp port xem phần nào có thể adopt uniffi-rs được"*. It was evaluated properly, and the
+answer is none of them. Not because `CLAUDE.md` forbids FFI — that would be citing the rule as its
+own justification — but because of what each component is.
+
+**The tool is real.** uniffi 0.32.0 (2026-06-30), 10.6M downloads, Mozilla ships it in Firefox on
+both mobile platforms, Swift is a first-class target. Pre-1.0 with ~266 open issues and an explicit
+"advanced things might break as you upgrade", but nobody would be taking a risk on maturity. The
+integration is the friction: it emits a C header, a modulemap and a Swift source, and the crate must
+be built as a cdylib/staticlib and linked. There is no SwiftPM story — you either add a build plugin
+that shells out to cargo, or you commit a prebuilt `.xcframework` as a `binaryTarget`.
+
+**uniffi buys exactly one thing: removing an IPC hop from in-process, lifetime-coupled compute.**
+That is the filter every candidate has to pass, and the ported services fail it on their own terms:
+
+| component | why a linked library cannot be it |
+| --- | --- |
+| `slopdesk-hook` | Claude Code `execve`s it. It has to BE a program. |
+| `slopdesk-superd` | Its entire purpose is outliving hostd — that is what stops a `claude` freezing across a restart. A library dies with its host. |
+| `slopdesk-screend` | Two unrelated processes share one (`SlopDeskHost` + `SlopDeskCLICore`), the client starts one when none is listening, and a linked copy would put an unbounded VT parser inside the process that owns every keystroke. It also already answers a cold reattach at 186 MiB/s. |
+| `slopdesk-dropd` | The client dials it directly, and a 4 GiB upload has to survive `make host-restart`. |
+| `slopdesk-inspectord` | Same — the client dials it, and a session's replay window survives a host restart only because hostd does not hold it. |
+| `slopdesk-androidd` | Same — the client dials the bridge port it learned from metadata verb 22. |
+| `slopdesk-ctl` | A CLI. Its cost IS process startup; that is the thing being fixed. Shipped the same day — see the entry below. |
+| the scrollback journal (planned) | Moves BECAUSE superd outlives hostd. Linking it back into hostd is the bug being removed. |
+
+Every one of them was chosen for **lifetime independence** or **process identity**. Those are
+properties a shared library cannot have, so the answer is structural rather than stylistic — and it
+would be the same answer for `swift-bridge`, a hand-written `@_cdecl` layer, or any other FFI.
+
+**One candidate did pass the structural filter, and a measurement killed it.**
+`MuxChannelSession.ingestPTYChunk` is in-process by necessity: the read loop's two per-byte
+observers are lifetime-coupled to hostd and a per-chunk IPC hop is the one thing that would be
+slower, which is exactly the case where FFI's near-zero call cost is the whole argument. The
+segmenter measured **115 MiB/s** against its sibling sniffer's **614 MiB/s** — a 5× gap between two
+machines of the same shape on the same thread, which reads like a language ceiling and is the
+strongest pro-uniffi datum this codebase had. It was not a language ceiling. It was
+`ingest(_ bytes: some Sequence<UInt8>)`: a `Data` chunk went through a non-specialized iterator into
+a byte-at-a-time `append`. Given the sniffer's shape — one `withUnsafeBytes`, a `memchr` run-scan in
+`.ground`, a bulk append between escapes — it runs at **375 MiB/s**, and the read loop at **232**.
+The only candidate uniffi had was a Swift bug worth 3.3×, and fixing it cost no new binary, no new
+build system and no new failure mode.
+
+**What adoption would have cost, had a candidate survived.** `swift build` on a clean checkout would
+need cargo (the headless-build line is load-bearing: it is what keeps `swift test` runnable without
+a toolchain zoo) or a committed per-architecture binary blob of our OWN source, which is a different
+thing from pinning a third-party jar. Crash isolation goes: screend dying today means passthrough,
+and a linked screend dying means hostd dying. And the shape stops being one shape — "a separate
+binary over a socket" is currently true of six components with no exceptions, and an exception is
+the expensive part, not the FFI.
+
+**Note on what "never FFI" actually rules out.** It is not a ban on native code in-process:
+`CSlopDeskSIMD` is a C NEON kernel linked straight into the client, and nothing about that is
+controversial. The line is a foreign BUILD SYSTEM in the `swift build` graph. Rewriting that kernel
+in Rust would be a lateral move that buys no instruction (NEON intrinsics either way) and pays cargo
+in every clean checkout, so it is not proposed.
+
+**Reopen it if**, and only if, a candidate appears that is (a) in-process by necessity, (b) measured
+as a real ceiling after its Swift has actually been read, and (c) not fixable in Swift. Nothing in
+the tree meets that today.
+
+## slopdesk-ctl is Rust — the one port the uniffi review left standing (2026-08-12)
+
+The table above listed `slopdesk-ctl` as planned, for a reason that is the exact inverse of every
+other entry: the other six moved to escape hostd's lifetime, and this one moved because it has no
+lifetime at all. An agent forks it once per `read`, `wait`, `write`, `run` — several times a minute,
+sometimes several times a second inside a `wait` loop — and what it *does* is one `connect(2)` and
+one line of JSON. Its cost is process startup, and nothing a faster algorithm could touch.
+
+**The number.** 400 runs of `--help` each (which reaches `main`, formats, writes and exits, and
+needs no host), medians, against `/usr/bin/true` as the fork/exec floor:
+
+| binary | median | above the floor |
+| --- | --- | --- |
+| `/usr/bin/true` | 2.28 ms | — |
+| Swift `slopdesk-ctl` | 5.74 ms | **3.47 ms** |
+| Rust `slopdesk-ctl` | 3.01 ms | **0.73 ms** |
+| Rust `slopdesk-hook` (reference) | 2.96 ms | 0.68 ms |
+
+2.7 ms removed per invocation, and the port lands on the hook — which is the interesting part of the
+measurement, not the ratio. The hook is 60 bytes and one socket write with **zero** dependencies;
+this one parses thirteen subcommands, builds JSON and renders tables through `serde_json`. That they
+cost the same says the 0.7 ms is the dynamic-loader floor for a Rust binary on this machine and the
+CLI's own work is under the noise. It also settles the one design question the crate had: `serde_json`
+is the single dependency, and it is free at startup (~100 KB of text, no initializers).
+
+The Swift 3.47 ms is not Swift being slow at anything — the binary is 163 KB — it is
+`libswiftCore` + `Foundation` being resolved and initialized before `main`, which is a fixed toll on
+a program whose entire runtime is shorter than the toll.
+
+**Parity was proved, not asserted.** An 87-case differential ran both binaries against the same fake
+`AF_UNIX` server and compared four things per case: stdout, stderr, exit code, and *the request line
+that reached the socket*. 86 are byte-identical. The one difference is deliberate and pinned by a
+test: under `--json`, Foundation writes `"cwd":"\/tmp\/x"` and `serde_json` writes `"cwd":"/tmp/x"`.
+Escaping `/` is legal JSON and pointless; every parser reads the two identically, and the Rust form
+is what the other five daemons already emit.
+
+Two behaviours were kept *because* they were the original's, not because they are good: `--help`
+after a subcommand still overrides that subcommand, and a bare invocation still prints usage to
+stdout and exits 2. A port that quietly fixes things is a port whose differential proves nothing.
+
+**What the port bought beyond the milliseconds.** In the Swift original the subcommands called
+`sendRequest` directly, so `main.swift` — every flag, every exit code, every rendered line, 907
+lines of it — was compiled-and-reviewed only, and its 48 tests could reach nothing but the parameter
+builders. The Rust one puts a `Control` trait between the subcommands and the socket, so the same
+subcommands run against a fake in-process: **103 tests**, covering the flag parsing, the exit codes,
+the rendering and the streaming rules that previously had no test at all. That was not the reason to
+port, but it is the reason the port is worth more than 2.7 ms.
+
+Three bounds the Swift lacked came with it: a 16 MiB cap on a single event line (`subscribe` could
+previously grow one line without limit), saturation instead of a trap where `Int(Double)` met a NaN
+timeout, and `sockaddr_un`'s 103-byte path limit checked before the connect rather than by it.
+
+**The Swift is gone** — `Sources/slopdesk-ctl/`, `Sources/SlopDeskCtlCore/` and
+`Tests/SlopDeskCtlTests/` were deleted in the same change, per the one-implementation rule, and
+`scripts/check-supervisor.sh` §13 ratchets both that absence and the verb sets on the two ends of
+the wire. The two NDJSON line helpers the *client* CLI still needed (`encodeRequestLine` /
+`decodeResponseLine`) moved into `SlopDeskWorkspaceCore`'s `ClientControlProtocol`, which already
+owned that CLI's method vocabulary — one module fewer, not one module renamed.
+
+It lives in the ROOT cargo workspace with the hook rather than in its own, and that is the same
+profile argument the daemons make in reverse: cargo profiles are workspace-global, the two
+short-lived programs both want `opt-level = "z"` + `panic = "abort"`, and the five long-lived
+per-byte daemons want the opposite. `make lint-rust` said six workspaces when this was written; the
+wire crate below made it seven, for the same profile reason.
+
+**The other CLI does NOT follow, and the number is the reason.** `slopdesk` is the obvious next
+question — it is a CLI, it is short-lived, and it is *worse* on the same axis: **5.18 ms** of its own
+above the same floor, because it links `SlopDeskWorkspaceCore` and drags AppKit and `Defaults` in
+behind it. It stays Swift anyway, because startup cost is only a cost where something pays it in a
+loop. `slopdesk-ctl` is forked by an agent several times a minute; `slopdesk` is typed by a person,
+and the completion scripts it emits are static text that never re-invoke the binary. 5 ms in front of
+a keystroke is not a ceiling, it is invisible. It also reads font-family names through
+`CTFontManagerCreateFontDescriptorsFromURL`, which a Rust port would have to re-derive from the
+`name` table and match Apple's answer on — real work in exchange for nothing measurable.
+
+The rest of the tree was re-checked at the same time and had not moved: the PTY chunk path still
+measures 633 MiB/s (sniffer) / 379 (segmenter) / 235 (both, the read loop), the same numbers the
+"what is left in Swift stays in Swift" entry above recorded after the `some Sequence<UInt8>` fix. A
+PTY that delivered even 10 MiB/s would be a pathological build log; there is no ceiling here to move.
+
+## The scrollback journal stays in hostd; its resume point becomes crash-exact (2026-08-12)
+
+> **REVERSED 2026-08-13** — see "The journal moves to superd after all, because the objection
+> that stopped it was about a pane" at the end of this file. The reasoning below is kept for the
+> record; its resume-point machinery no longer exists.
+
+A standing task said to move the disk scrollback journal into superd and delete hostd's
+`ScrollbackJournal`, on the reasoning that superd already owns every PTY master's `read` and its
+ring already holds the same bytes, so one owner would collapse the resume-offset sidecar entirely.
+Rejected on reading the thing being moved.
+
+`ScrollbackJournal.swift:11-14` states the requirement the move would break: the journal exists
+because every path ending in a fresh spawn — "hostd restart/**reboot**, detach-TTL eviction, shell
+death" — starts on an empty transcript, and it is keyed by the **client session UUID**. superd is
+keyed by **pane id**, and its panes die with the machine. After a reboot superd has no pane to hang
+that transcript on, so the archive would have nowhere to live. The journal has to outlive every
+process in the system, superd included; a daemon that dies with the machine cannot own it. (The same
+reading kills the softer version — journal in superd, archive in hostd — which is two owners of one
+byte history, i.e. the alignment problem it was meant to remove.)
+
+**The bug that motivated the move is real, and is fixed in place.** The resume sidecar was written by
+exactly one caller, `MuxChannelSession.relinquish()`. A hostd that is KILLED never reaches it, so
+`HostServer.resumePointForSurvivor` had nothing to align the journal against and took the only safe
+option left — keep the transcript, resume the stream from NOW — dropping every byte the pane produced
+during the unclean window. Unbounded, since a hostd can be killed hours into a session, and silent,
+because the gap is on the far side of the handover and no reader is there to log it.
+
+`PaneOutputStream`'s `onChunk` now carries the offset each chunk ENDS at, and
+`ScrollbackJournal.claimResumePointIfDue` writes the same sidecar from the flush path, rate-limited
+to 250 ms. An unclean exit costs one claim interval instead of a whole session. The claim goes down
+BEFORE the bytes it describes: the two writes cannot be atomic, and the failure modes are not
+symmetric — a sidecar behind the file replays a region the next daemon already restored (re-feeding
+the sniffer, the block ledger and the screen engine, and re-appending the duplicate to the journal,
+so it compounds on every restart), while a sidecar ahead of it loses one interrupted flush and
+nothing else. `docs/51` §6.8.
+
+Worth noting what the rejected move would ALSO have cost: journal compaction avoids cutting inside an
+open alt-screen segment via `AltScreenCutScanner`, which `ReplayBuffer` uses too. In superd that
+scanner would have had to be written a second time in Rust while Swift kept the copy `ReplayBuffer`
+needs — the same capability in two languages, which is the one thing the porting rule forbids.
+
+## The hostd port starts at the wire, and the retired Rust core is where it starts from (2026-08-13)
+
+The instruction was to migrate as much as possible to Rust — for safety and for the language, not
+only for speed — while holding performance parity. `CLAUDE.md` already says how to decide that:
+"Rust is the default; perf parity is enough to move existing Swift. Only SwiftUI/AppKit justifies
+staying in Swift. A measured regression is the only veto." An earlier answer in this tree applied a
+much stricter test — in-process by necessity *plus* a measured ceiling *plus* not fixable in Swift —
+and concluded nothing was left to port. That test is the one for reopening **uniffi/FFI**, and
+applying it to porting in general was a mistake; it retires the repo's own default rule by accident.
+
+Under the actual rule the largest legitimate target is `slopdesk-hostd`: 26.3k lines, of which only
+four files are framework-pinned (`PreventSleepAssertion` on IOKit, `HostPathActionPerformer` and
+`HostClipboardPerformer` on AppKit, `RepoStatusWatcher` on CoreServices). It is far too large for
+one change, so it goes in stages, and stage 1 is the PATH-1 wire codec.
+
+**Why the wire first, and not something easier.** Every later stage has to speak to a client before
+it can be tested at all, so the codec is the floor. It is also the one module in the tree with a
+mechanical oracle already committed: `golden/golden_vectors.json` is generated from the Swift codec
+and predates the port, so "did moving this change the wire" is answered by bytes nobody wrote for
+the answer.
+
+**It was resurrected, not retyped.** `a2b51614^` still holds `rust/aislopdesk-core` — 29,278 lines,
+`#![forbid(unsafe_code)]`, zero dependencies — covering this exact codec, retired 2026-06-19. The
+reason recorded then was that "the two-language cost was the boundary, not the languages": ~21k
+lines of FFI machinery bridging to ~700 lines that genuinely needed SIMD. That verdict rejected the
+**seam**, not Rust, so it does not bind a port that ships as a separate binary over a socket. About
+half of today's message table (14 of 28 types) predates the retirement and came back from that
+commit; the other half was translated fresh from today's Swift.
+
+**One divergence was found by reading, not by the tests.** The recovered `bytes.rs` decoded strings
+LOSSILY — correct on the video path it came from, where a corrupt datagram must not be able to fail
+a session. The terminal path is STRICT (`WireMessage+Decode.swift:110`): invalid UTF-8 is
+`malformedBody`. Copying the helpers over unchanged would have silently relaxed that and let a
+corrupt title through as `U+FFFD` — and every golden vector would still have passed, because none of
+them carries invalid UTF-8. Resurrection is not free; the recovered code has to be re-read against
+the contract it is landing in, not the one it left.
+
+**Parity is checked from both sides, on purpose.** Decoding a pinned frame and re-encoding it to the
+same hex proves less than it looks: a decoder that reads two fields in the wrong order, paired with
+an encoder that writes them in the same wrong order, round-trips perfectly and is incompatible with
+every Swift peer. So `tests/golden_vectors.rs` also compares each vector's decoded fields against
+the JSON's own field values, which the Swift generator wrote independently of the hex. 63 field-level
+vectors plus 10 workspace vectors (which pin only bytes and size, and are documented as such).
+
+**The number.** 200k frames, best of 5, M-series, both sides release-built (`-Ounchecked` for Swift),
+decode fed in 64 KiB chunks the way the receive loop actually feeds it:
+
+| workload | Swift | Rust | |
+| --- | --- | --- | --- |
+| `.output` 1 KiB — encode | 448 ns/frame | 50 ns/frame | 9.0× |
+| `.output` 1 KiB — decode | 441 ns/frame | 90 ns/frame | 4.9× |
+| control mix — encode | 395 ns/frame | 23 ns/frame | 17× |
+| control mix — decode | 282 ns/frame | 28 ns/frame | 10× |
+| `wireByteCount` | 55 ns/frame | 1.7 ns/frame | 32× |
+
+Parity was the bar; this clears it by 5–17×. Two notes keep the number honest. The decode gap is
+partly a design difference and not only a language one: Swift copies each payload into a fresh `Data`
+before decoding because its decoder needs an owned one, while the Rust decoder borrows straight out
+of the receive buffer. And the FIRST decode measurement was 42 µs/frame in **both** languages — that
+is the lazy-compaction algorithm going quadratic when 206 MB is handed to `append` in one call, which
+is not how the receive loop behaves. It is shared by both implementations and is not a porting
+finding; it is recorded here so the next person who sees it does not read it as one.
+
+**What came back that the reversal lost.** `docs/DECISIONS.md` records `forbid(unsafe_code)`'s
+compiler proof as "the one real guarantee lost" in 2026-06-19. It is back, as `forbid` rather than
+`deny`, so not even a downstream `allow` can reintroduce it.
+
+**The uncomfortable part, stated rather than buried.** `CLAUDE.md` says porting means deleting the
+original in the same change. This change does NOT delete `Sources/SlopDeskProtocol`, because hostd
+and every client still speak through it — so for the duration of the hostd migration the codec exists
+twice, which is the exact thing the rule forbids. The carve-out in `check-supervisor.sh` ("a protocol
+has two ENDS, and each end is written once") does not cover this: both ends are Swift today. What
+bounds it is that `slopdesk-wire` is linked by nothing yet, and that the golden corpus is a gate both
+implementations must pass, so they cannot drift silently. The debt is real and its only honest
+retirement is finishing the hostd port; if that stalls, the correct move is to delete this crate, not
+to keep it.
+
+**Staging after this.** The mux layer (7 files, all with old-Rust ancestors), then `MetadataCodec`
+(841 lines) and `WorkspaceChannelCodec` (466), then hostd's own services. Each stage keeps the golden
+pin as its gate; the Swift deletions land with the stage that makes them unreachable.
+
+## The mux layer moves next, and the one thing it could not resurrect was the flow-control policy (2026-08-13)
+
+Stage 2 of the hostd port, per the staging the entry above set out. Eight Swift files became
+`rust/slopdesk-wire/src/mux/`: the envelope codec and its five frame types, the streaming decoder,
+the channel table, and the three flow-control policies plus the constants all three are sized from.
+The Swift originals are NOT deleted yet, for the same reason and under the same bound stage 1
+recorded — hostd and every client still speak through `Sources/SlopDeskProtocol`, and the debt's only
+honest retirement is finishing the port.
+
+**The corpus already had an oracle for most of it, and none for one field.** All twelve
+`muxEnvelopes` vectors are pinned field-by-field in both directions, and the whole corpus is
+additionally fed to `MuxFrameDecoder` **one byte at a time** — because `MuxFrame::decode` is handed
+an inner run whose boundary the test computed, so nothing else checks that the DECODER finds the same
+boundaries in a stream that carries no framing of its own. A prefix read off by one passes every
+field assertion and desynchronises the moment two frames share a read. What the corpus does NOT
+cover is `initialCwd`: no pinned vector carries one, so the optional field, its `u16` length prefix
+and its strict-UTF-8 rule are pinned only by tests written alongside the port. That is a weaker pin
+and it is said in the test rather than left to look like coverage.
+
+**Two decode behaviours are deliberately asymmetric, and both were kept because they are the
+original's.** An unrecognised close REASON reads as `retired` rather than faulting — a close must
+always close, so a newer peer's reason may not leave a channel open — while trailing bytes past that
+reason are still `malformedBody`, because an unknown VALUE and unknown FRAMING are different faults.
+And `Some("")` for the cwd encodes a present zero-length field that decodes back as `None`. Neither
+was tidied: a port that quietly fixes things is a port whose parity proves nothing.
+
+**`MuxFlowControl` is the one part with no Rust ancestor to resurrect.** The retired core predates
+credit flow control entirely, so the window, the queue bound, the merge cap and the four env knobs
+were translated from today's Swift. Two details survive translation only if you read for them. The
+policies are `i64`, not `usize`: the Swift deliberately ACCEPTS and clamps negative inputs and
+saturates a peer-chosen grant at `Int.max` rather than trapping, and `usize` would make those cases
+unrepresentable and push the guard out to every call site. And `clippy::integer_division` is denied
+crate-wide, which is the right lint here rather than an obstacle — every window in the file rounds
+DOWN on purpose, since a threshold that rounded up could sit above what the sender can put in
+flight. It is a named `half()` now, with that reason written where the rounding happens.
+
+The credit progress invariant (`frame wire bytes <= window/2`, or a sender parks against a receiver
+that can never re-grant) is now a TEST rather than only a comment, including at the worst pair the
+env bounds allow — a 16 KiB window against a 128 KiB merge cap. Both knobs are independently
+tunable, which is exactly how a deadlocking combination gets shipped.
+
+**The number.** Best of five, in-process, M-series, both sides release-built (`-Ounchecked` for
+Swift), decode fed the inner run the way the receive loop hands one over:
+
+| workload | Swift | Rust | |
+| --- | --- | --- | --- |
+| `channelOpen` (with cwd) — encode | 1010 ns | 22 ns | 46× |
+| `channelOpen` — decode | 505 ns | 39 ns | 13× |
+| `channelOpenAck` — encode / decode | 509 / 100 ns | 19 / 6 ns | 27× / 16× |
+| `channelClose` — encode / decode | 174 / 68 ns | 17 / 3 ns | 10× / 22× |
+| `windowAdjust` — encode / decode | 226 / 80 ns | 17 / 4 ns | 13× / 22× |
+| `channelData` 1 KiB — encode / decode | 380 / 208 ns | 45 / 51 ns | 8.4× / 4.1× |
+| `channelData` 32 KiB — encode | 1055 ns | 707–1427 ns | ~parity |
+| streaming decode, 1 KiB frames in 64 KiB chunks | 527 ns/frame | 80 ns/frame | 6.6× |
+
+Parity was the bar. One row is honest about being only that: the 32 KiB encode is one allocation and
+one memcpy in both languages, so it measures the allocator rather than the codec, and Rust's spread
+across process runs (707–1427 ns) is wider than Swift's steady ~1055. Reporting the best-of as a win
+there would be reporting cache state. Everything that is actually codec work — the control frames a
+mux connection is mostly made of — is 4–46× faster, and the streaming path that a flooding pane
+drives is 6.6×.
+
+`examples/muxbench.rs` stays in the tree on the `slopdesk-sniffbench` precedent: re-running that
+bench is what caught a 3.3× Swift defect a port would otherwise have carried across and credited to
+Rust. A bench that is still here is the difference between the next person re-asking and re-guessing.
+
+## The metadata RPC and the workspace channel move next, and one of them had no oracle (2026-08-13)
+
+Stage 3 of the hostd port, per the staging two entries above. Two Swift files became three Rust
+modules: `MetadataCodec.swift` (841 lines) and `MetadataVerb.swift` (230) are now
+`rust/slopdesk-wire/src/metadata/{verb,codec}.rs`, and `WorkspaceChannelCodec.swift` (466) is
+`src/workspace.rs`. The Swift originals stay, on the same bound and for the same reason stages 1 and
+2 recorded: hostd and every client still speak through `Sources/SlopDeskProtocol`, and the debt's
+only honest retirement is finishing the port.
+
+The two envelopes these ride inside — `metadataRequest`/`metadataResponse` (16/30) and
+`workspaceRequest`/`workspaceEvent` (17/37) — moved in stage 1 already. So this stage is the part
+the envelopes carry OPAQUELY, which is exactly why it needed its own pin: the envelope round-trips
+perfectly while the body means something else to every Swift peer.
+
+**One half had an oracle in the repo and the other had none.** All ten `metadataCodecPayloads`
+vectors are pinned field-by-field in both directions — the corpus is generated from the Swift codec
+and predates this crate, so it answers "did the port change the wire" with bytes nobody wrote for
+the test. Because that group pins only `hex`/`kind`/`note` and no machine-readable field values,
+the expected fields are transcribed by hand in the test rather than read back out of the JSON; a
+decoder and encoder that agreed on the WRONG field order would otherwise pass. The workspace CHANNEL
+payloads have no corpus group at all — `workspaceWireMessages` pins the envelope, and
+`workspaceStateCodec`/`workspaceIntentArgs` pin the DOCUMENT codec in the model target, which is a
+different file and a later stage. So `subscribe`, `presence`, `intent`, `intentResult` and the
+presence roster are pinned only by tests written alongside the port. That is a weaker pin and it is
+said here rather than left to look like coverage.
+
+**Three behaviours were carried across unchanged specifically because changing them would prove
+nothing.** `CharacterSet.whitespaces` is NOT `char::is_whitespace`: Swift's set is Unicode `Zs` plus
+tab and excludes the line terminators, so a font family of `"\n"` is legal to Swift's validator and
+empty to Rust's `trim`. The Rust decodes through an explicit `Zs`-plus-tab predicate, because this
+particular validation decides whether a payload reaches a `settings.json` the workbench trusts, and
+the two implementations have to refuse exactly the same bodies rather than similar ones. The roster
+decoder's per-client floor of 42 bytes is a conservative under-estimate of the true 56 — both reject
+the same hostile counts in the end, the smaller one just one read later — and it is carried verbatim
+rather than corrected, because the number is unobservable and drift between two implementations is
+not. And `hasRepo == false` still returns the canonical no-repo payload regardless of any trailing
+bytes.
+
+**The number.** Best of five, in-process, M-series, both sides release-built (`-Ounchecked` for
+Swift), payload byte counts printed and matched on both sides before the timings were compared:
+
+| workload (encode / decode) | Swift | Rust | |
+| --- | --- | --- | --- |
+| `processList`, 200 entries | 78.6 / 18.2 µs | 0.79 / 4.88 µs | 99× / 3.7× |
+| `portList`, 100 entries | 25.6 / 6.4 µs | 0.67 / 2.29 µs | 38× / 2.8× |
+| `dirListing`, 2000 entries | 572 / 308 µs | 12.4 / 59.2 µs | 46× / 5.2× |
+| `gitStatus`, 500 files | 144 / 77.7 µs | 3.45 / 16.7 µs | 42× / 4.7× |
+| `agentSessionList`, 300 sessions | 281 / 124 µs | 7.12 / 25.5 µs | 39× / 4.9× |
+
+Parity was the bar and every row clears it by an order of magnitude on encode. The encode gap is
+not cleverness: it is `Data.append` versus a `Vec` with one reserve, repeated once per field, and it
+shows up as ~40× because these payloads are thousands of small appends each. The decode gap is the
+ordinary one — borrowed slices where the Swift copies into a fresh `Data` per field.
+
+**A row that is deliberately absent.** `hostVitals` is seven fixed bytes with no loop and no
+variable-length field, so at 400k iterations it measured 0.3 ns/op — the optimizer had folded it
+flat, and both a `.len()` and a `.first()` sink folded the same way. That is not a fast codec, it is
+an absent measurement, so the row is not in the table. It is stated in `examples/metadatabench.rs`
+where the next person will look for it.
+
+**Why the Swift half is a throwaway program and not an XCTest.** `swift test -c release` cannot
+build this package's test tree at all: `ConnectionViewModel.foldEventForTesting` is `#if DEBUG`-gated
+by design ("never leaks into release API") and several suites call it, so a release test build fails
+in `SlopDeskWorkspaceCoreTests` before it reaches anything being benchmarked. Adding
+`-Xswiftc -enable-testing` does not help, because the gate is the `#if`, not testability. The Swift
+numbers therefore come from a throwaway SwiftPM executable depending on the `SlopDeskProtocol`
+product by path; `examples/metadatabench.rs` records that so the comparison can be re-run.
+
+## The workspace document moved next, and it was the first port to change a data structure (2026-08-13)
+
+`WorkspaceStateCodec` (555 lines), `HostWorkspaceState` (186) and `WorkspaceIntentArgs` (411) are now
+`rust/slopdesk-wire/src/document/{codec,state,intent}.rs`. This is the layer under the one the
+previous stage moved: `crate::message` frames the type-17 / 37 envelope and treats its payload as
+opaque, `crate::workspace` decodes the channel's own request and event bodies and treats the argument
+bytes as opaque, and `crate::document` is what those opaque payloads actually say. The three modules
+still do not import each other, so the layering survived the port rather than dissolving into it.
+
+**The oracle is real this time, and it is the strong form.** Unlike the workspace CHANNEL payloads,
+which had no golden group, all three of `workspaceStateCodec` (16 vectors), `workspaceIntentOps` (27)
+and `workspaceIntentArgs` (18) are pinned in `golden/golden_vectors.json`, generated from the Swift
+codec long before this crate existed. The new tests do not merely decode-and-re-encode them: the Rust
+side CONSTRUCTS the same fixture the Swift generator did and compares the bytes. A decoder and
+encoder that agreed with each other on a wrong field order pass a round-trip and fail this, because
+the value never came from the pinned bytes. All 61 vectors matched on the first run.
+
+**The one thing that deliberately did not survive verbatim.** Swift held the document in a
+`Dictionary` and sorted its keys at every snapshot, diff and object query; the Rust holds a
+`BTreeMap` whose iteration order already IS `WorkspaceKey`'s ordering, which already IS the wire's
+canonical order. That removes a whole class of bug — a hand-written `Comparable` drifting out of step
+with the encoder that depends on it — but it is an algorithmic change, so "perf parity" stopped being
+a formality and `examples/documentbench.rs` exists to answer it rather than assume it.
+
+Two API consequences fell out of measuring it. `from_entries` collects instead of inserting in a
+loop, because `BTreeMap` bulk-builds from an already-sorted iterator and the hot caller
+(`decode_snapshot`) hands it exactly that — worth 2.9× on snapshot decode. And `apply(&mut self)`
+now exists beside `applying(&self) -> Self`: Swift only needed the value form because `Dictionary` is
+copy-on-write and `var next = self` is free until touched, whereas a `BTreeMap` copy is real. A
+mirror should call `state.apply(&d)`, and `applying` says so in its own doc.
+
+**The number.** Best of five, in-process, M-series, both sides release-built (`-Ounchecked` for
+Swift), payload byte counts printed and matched on both sides — 92894 / 9998 / 1133, 200 sets and 50
+deletes — before the timings were compared:
+
+| workload (encode / decode) | Swift | Rust | |
+| --- | --- | --- | --- |
+| `snapshot`, 2000 cells | 3659 / 548 µs | 55.8 / 65.6 µs | 66× / 8.4× |
+| `diff`, 200 sets + 50 deletes | 23.8 / 30.9 µs | 1.54 / 4.47 µs | 15× / 6.9× |
+| `layoutStructure`, 32 leaves | 4.39 / 5.61 µs | 0.57 / 0.91 µs | 7.7× / 6.1× |
+| `diffFrom` / `applying`, 2000 cells | 3829 / 70.2 µs | 201 / 62.8 µs | 19× / 1.1× |
+
+The last row's two columns are not a codec — nothing there touches a byte. It is the row the
+container change lands on, which is why it is in the table: computing a diff is 19× faster and
+applying one is 11% faster, so the structural swap costs nothing on either side of the algebra.
+
+The 66× on snapshot encode is not cleverness either. Swift's `WorkspaceKey.<` builds two fresh
+16-element `[UInt8]` arrays per comparison, and `sortedEntries` runs it ~22 000 times for a
+2000-cell document — the sort allocates about 44 000 arrays before a single byte is written. Rust
+compares `[u8; 16]` in place and does not sort at all. That is the same finding as the previous
+stage's encode gap, one layer up: the cost was never the codec, it was what the codec had to do to
+get its inputs in order.
+
+**Two shapes were carried across, one was not.** The `Result`-vs-`Option` split is carried: the
+structural decoders (snapshot, diff, layout, weight) answer `Result` because a caller parsing a frame
+wants to know why it was refused, while the single-cell decoders answer `Option` because the only
+useful reaction to a wrong-width cell is to drop that cell and render the rest. Collapsing it either
+way would change what a caller does. Swift's `UInt16(truncatingIfNeeded:)` on the reopen and divider
+indices is carried too, spelled as an explicit mask so the two cannot disagree on the one input that
+reaches it. What was NOT carried is Swift's wrapped `u16` length on a sub-payload blob: writing a
+wrapped length while appending every byte produces a frame that mis-splits at the decoder, so the
+Rust truncates the blob to the length it declared. Identical for every input under 64 KiB, which is
+every real payload and every pinned vector, since `MAX_BLOB_BYTES` refuses anything past 16 KiB on
+the way back in.
+
+## The video FEC moves next, and `forbid(unsafe_code)` finally costs something measurable (2026-08-13)
+
+Stage 5 of the hostd port opens the SECOND transport. `Sources/SlopDeskVideoProtocol` is 9 719 lines
+across 46 files with ZERO AppKit/SwiftUI/UIKit imports — the largest pure-logic target left in the
+tree — and it starts at the bottom of its own stack: `GF256.swift` (264), `ReedSolomonMatrix.swift`
+(135) and `FECScheme.swift` (442) are now `rust/slopdesk-video/src/{gf256,rs_matrix,fec}.rs`, a new
+crate with its own workspace on the same profile argument as `slopdesk-wire`.
+
+**This one was resurrected in the most literal sense available.** `GF256.swift`'s own header says it
+is "the resurrected, native-Swift port of the Rust `slopdesk-core::gf256` reference". So the sentence
+runs backwards here: `a2b51614^` still holds `rust/aislopdesk-core/src/{gf256,rs_matrix,fec}.rs`,
+1 781 lines under `#![forbid(unsafe_code)]` with zero dependencies, and the field tables, the Cauchy
+block, the Gauss-Jordan inverse and the codec's structure come back from there rather than being
+retyped out of the Swift that was typed out of them.
+
+**Why the FEC and not something bigger.** It is the least SAFE code in the tree. `NeonGf` reaches
+`Sources/CSlopDeskSIMD` through `UnsafeBufferPointer` and `withUnsafeTemporaryAllocation` behind a
+`swiftlint:disable force_unwrapping`, and both `encodeGroup` and `recoverGroup` pass raw
+`UnsafeMutableBufferPointer` accumulators around — on a path whose entire input is UDP datagrams from
+the network. `forbid(unsafe_code)` does not make that code safer, it makes it inexpressible.
+
+**Parity is pinned from both directions.** `fecParity` (4 vectors) and `fecRecover` (3) were
+generated from `XORParityFEC(groupSize: 5)` — `RustReedSolomonFEC(groupSize: 5, parityCount: 1)`
+under its alias — so every pinned vector exercises `m == 1`, the shipped operating point and the one
+the wire contract declares byte-identical to plain XOR. All seven matched on the first run. The
+`fecRecover` vectors matter more than they look: two of the three are NEGATIVE — two holes in one
+group, and a hole whose parity was also lost — so a decoder that repairs more than it should fails
+here rather than in production. The `m >= 2` Cauchy path has no corpus, and does not need one: its
+answer is verifiable rather than merely agreed, so the unit tests check the algebra directly (every
+one of the 35 four-subsets of a `[7,4]` encoder inverts, and `A · A⁻¹ == I` for each).
+
+**The number, and it does not all go one way.** Best of five, M-series, both sides release-built
+(`-Ounchecked` for Swift), parity byte counts printed and matched — 40 936 / 122 808 / 1 808 — before
+any timing was compared. `k = 5`; the IDR is 170 × 1200 B, the delta 6 × 900 B; recover repairs the
+maximum the code allows (one hole per group at `m = 1`, three at `m = 3`):
+
+| workload (parity / recover) | Swift + NEON | Rust, safe | |
+| --- | --- | --- | --- |
+| IDR 170 × 1200 B, `m = 1` | 15.5 / 38.3 µs | 6.75 / 17.3 µs | 2.3× / 2.2× |
+| delta 6 × 900 B, `m = 1` | 648 / 1643 ns | 187 / 526 ns | 3.5× / 3.1× |
+| IDR 170 × 1200 B, `m = 3` | 79.1 / 117 µs | 233 / 281 µs | **0.34× / 0.42×** |
+| delta 6 × 900 B, `m = 3` | 3.27 / 4.91 µs | 7.67 / 7.63 µs | **0.43× / 0.64×** |
+
+**So the shipped path is 2.2–3.5× faster and the Cauchy path is 2.3–2.9× SLOWER, and that is the
+whole finding.** `m == 1`'s inner loop is a plain XOR, which is exactly what LLVM autovectorises out
+of a bounds-check-free `zip`; Rust wins there on everything around it, the same way every earlier
+stage did. `m >= 2` multiplies by a field coefficient, and `vqtbl1q_u8` looks up 16 bytes per
+instruction through two 16-entry nibble tables while safe Rust looks up one byte at a time. Stable
+Rust has no safe SIMD (`std::simd` is nightly) and `forbid(unsafe_code)` bars the intrinsics, so this
+is structural, not a missing optimisation. Two real optimisations were applied and are in the number
+above — a per-coefficient 256-entry multiplication table above a measured length crossover, and
+hoisting those tables out of the group loop to the frame (15 built per IDR instead of 510, worth
+23%) — and they closed part of the gap, not the kind of it.
+
+**It lands anyway, and here is the argument rather than a shrug.** `SLOPDESK_FEC_M >= 2` is
+env-gated and OFF by default (`AdaptiveFECPolicy.MultiLossFEC.resolveParityCount` defaults to 1), so
+the regression is on a path no shipped configuration takes. Its absolute cost is 233 µs on a 200 KiB
+IDR — 1.4% of a 60 fps frame budget, against Swift's 0.5% — and IDRs are rare; the delta frames that
+dominate cost 7.7 µs. Against that, the code that is actually on every frame got 2–3× faster while
+losing every `unsafe` it had. If `FEC_M >= 2` ever becomes a default, this reopens with a real
+question attached: whether a `tbl` kernel is worth relaxing `forbid` to `deny` for one module, and
+the answer then must come with its own measurement. It is not worth it for a path that is off.
+
+**One divergence from the old Rust, deliberately.** The resurrected core shipped `XorParityFec` and
+`ReedSolomonFec` as two types, and a `GfRegion` trait with a scalar and a SIMD conformance. Today's
+Swift has already collapsed the first pair into one type behind a `typealias`, so the port follows
+today's Swift, not its own ancestor. The trait went too: it existed ONLY to swap the NEON kernel in,
+this crate cannot have one, and an abstraction with a single implementor is something to read past
+rather than something that carries weight. The independent XOR reference it used to provide now lives
+in the test module, where it belongs — a reference you can check against is worth having, a second
+shipped implementation is exactly what `CLAUDE.md` forbids.
+
+**The debt is the same bounded one, said again rather than assumed.** This does not delete
+`Sources/SlopDeskVideoProtocol/{GF256,ReedSolomonMatrix,FECScheme}.swift`, because the packetizer,
+the reassembler and both session types still drive them. `slopdesk-video` is linked by nothing, and
+the golden corpus is a gate both implementations must pass, so they cannot drift silently. Its only
+honest retirement is finishing the port up through `FramePacketizer` / `FrameReassembler`; if that
+stalls, the correct move is to delete this crate, not to keep it.
+
+## The video protocol's message layer follows the FEC, and the UTF-8 split turns out to be the interesting part (2026-08-13)
+
+Stage 6 continues the same crate: `slopdesk-video` now holds the whole pure message layer of
+`Sources/SlopDeskVideoProtocol` below the packetizer — `bytes`, `error`, `geometry`,
+`coordinate_mapping`, `nal_unit`, `ycbcr`, `window_geometry`, `cursor`, `swipe_nav`, `input_event`,
+`audio_wire` and `video_control`. Ninety-nine unit tests and thirteen golden tests, all green under
+the same maximal-strict clippy the wire crate runs, `unsafe_code = "forbid"`, no dependencies outside
+the dev-only `serde_json`.
+
+`window_geometry`, `cursor`, `input_event` and `video_control` came back from `a2b51614^`'s
+`rust/aislopdesk-core`, the same resurrection route the FEC took. The rest were written against the
+Swift, because they had no ancestor: `swipe_nav` and `audio_wire` postdate the old core entirely.
+
+**The corpus decided the shape of the tests, not the other way round.** Every codec group is now
+checked in BOTH directions by one helper: the pinned hex must decode, and re-encoding what came back
+must reproduce the same hex, and the decoded VALUE is then compared field by field against the
+corpus's own record. Round-trip alone would pass a codec that consistently swapped two same-width
+fields; field comparison alone would pass one that read the right values from the wrong offsets. The
+`videoControl` test additionally asserts the group still covers type bytes 1 through 28 with no gap,
+because a gap is exactly where a future port drifts unnoticed.
+
+**`ycbcr` and `coordWindowPoint` are pinned as raw bit patterns, and that is load-bearing.** A
+coefficient that drifted by one ulp — an `f64` intermediate narrowed to `f32`, or an FMA fusing what
+the wire rounds twice — still prints as the same decimal. Which is also why this crate now sets
+`suboptimal_flops = "allow"` and `imprecise_flops = "allow"` crate-wide: both nursery lints want
+`f64::mul_add`, which is precisely the fused multiply-add `CLAUDE.md` forbids. Per-site `#[expect]`
+on every geometry expression would be noise for a reason that is a repo invariant, so the allow
+carries the reason instead, and `every_pinned_window_point_has_the_same_f64_bit_pattern` is what
+makes it a decision rather than an oversight.
+
+**The UTF-8 split had to be carried exactly, and it is not arbitrary.** `window_geometry` and
+`input_event` decode strings STRICTLY — invalid bytes drop the datagram. `video_control` decodes
+LOSSILY. Porting these together made the reason legible in a way reading either alone does not: the
+strict pair carries a value the user SEES or TYPES, where a substituted U+FFFD is worse than a
+dropped update, because the update self-heals on the next poll and the mojibake does not. A control
+datagram carries a DECISION, and dropping the whole thing over one bad byte in one window's title
+would take the other nine windows with it. Both behaviours now have a test that states the reason,
+so a future tidy-up that "makes the codecs consistent" has to argue with the tests.
+
+**Two hostile-input disciplines survived the port intact.** No list decoder reserves capacity for its
+untrusted `u16` count, so a bogus 65535 with an empty body fails on the first missing byte instead of
+allocating; there is a test per list type. And every declared length is bounds-checked against the
+buffer BEFORE the read, so a corrupt `blobChunk` byte count or cursor bitmap length is truncation,
+not a large allocation. In safe Rust these are ordinary code rather than a review item, which is the
+whole argument for the move — the Swift originals get them right, but nothing in the language was
+holding them to it.
+
+**The same bounded debt, unchanged.** Nothing Swift is deleted here either: `FramePacketizer`,
+`FrameReassembler` and both session types still drive these codecs, and `slopdesk-video` is linked by
+nothing. The golden corpus gates both implementations, so they cannot drift silently. The honest
+retirement is still finishing the port up through the packetizer and reassembler.
+
+## The send path follows the codecs, and the 80-vector tier sweep passed on the first run (2026-08-13)
+
+Stage 7 of the video port: `fragment`, `mux_header`, `adaptive_fec`, `interleaver` and `packetizer`
+in `rust/slopdesk-video`. The layer above the message codecs — everything between an encoded frame
+and the datagrams that leave the host. 154 unit tests plus 18 golden tests, `make lint-rust`,
+`make lint-supervisor` and `swift build` all green.
+
+**The corpus agreed on the first run, which is the point of having it.** The five new golden groups —
+`fragmentEncode`, `muxBare`, `muxFragment`, `adaptiveGroupSize`, `adaptiveTier` — passed without a
+single byte of adjustment, including the 80-vector sweep of the loss ladder against every previous
+tier. That is a real result for the hysteresis code specifically: `tier_for_loss` has asymmetric up
+and down thresholds, a one-step clamp and a relax floor, and any one of those transcribed slightly
+wrong would have shown up in some corner of an 80-cell grid rather than in the obvious cases.
+
+**Two 19-byte headers that are not the same 19 bytes.** `FrameFragmentHeader` is 15 bytes of fields
+plus a 4-byte `host_send_ts_millis`; `MuxFrameFragmentHeader` is the same 15 plus a 4-byte channel
+id, with no timestamp. Reading one with the other's decoder parses cleanly and produces nonsense. So
+both golden tests compare FIELD BY FIELD rather than against a rebuilt struct: a same-width field
+swap round-trips its own bytes perfectly, and the only thing that catches it is naming each field.
+
+**The ladders became their own rungs.** `target_level` and `m_target_level` were transcribed as
+if/else-if chains and clippy's `bool_to_int_with_if` objected to their tails. Rewriting them as
+`level_from_thresholds(loss, &[0.005, 0.02, 0.05, 0.10])` — the count of thresholds reached IS the
+level — removed the lint and made the up-ladder and the down-ladder differ only in the numbers they
+carry, which is what they actually are. The 80 pinned vectors are what made that safe to do.
+
+**The dwell test was wrong and the implementation was right.** `an_unrecovered_loss_doubles_the_dwell`
+asserted a step one report later than it happens: the arming report itself counts toward the relax
+streak. Checked against `AdaptiveFECPolicy.swift` line by line before touching anything — the Rust
+matched. The test now walks the undoubled dwell first as a baseline, so the doubling is visible as a
+difference rather than as a number someone has to trust.
+
+**`VideoPacketizer` is deliberately not `Copy`, with the lint expected rather than obeyed.** It is
+two `u32` counters and an `Option<ReedSolomonFec>`, so `missing_copy_implementations` fires. An
+implicit copy would fork the stream sequence and hand two senders the same `stream_seq`, which reads
+downstream as duplicate datagrams. The `#[expect]` carries that reason.
+
+**The m-tier rule is carried verbatim, not simplified.** `parity_with_m` exists on the Rust codec and
+would have been the shorter call, but the Swift builds a fresh codec at `(k = groupSize, m)` and the
+two are only equivalent because every m-tier resolves its group size to the codec's own `k`. That
+equivalence is an argument, not a guarantee, so the port keeps the shape the Swift has and the
+crate-level doc records why `wire_tier` forces tier 0 whenever multi-loss is on.
+
+**The same bounded debt, one stage smaller.** `FramePacketizer.swift`, `FragmentInterleaver.swift`,
+`AdaptiveFECPolicy.swift` and `VideoMuxHeaderCodec.swift` still drive the live host; `slopdesk-video`
+is still linked by nothing. What is left before the Swift can go is the receive path — the
+reassembler and the policies around it.
+
+## The receive path and every policy around it, and a hash that only looks like xxHash64 (2026-08-13)
+
+Stage 8 of the video port, and the last one inside `SlopDeskVideoProtocol`: `reassembler`,
+`recovery`, `frame_hash`, `scroll_shift`, `adaptive_qp`, `playout`, `keepalive`, `blob`,
+`window_feed`, `scroll_resample`, `scroll_reproject` and `swipe_recognizer` in
+`rust/slopdesk-video`. 296 unit tests plus 19 golden tests, `make lint-rust`, `make lint-supervisor`
+and `swift build` all green.
+
+**The frame hash had no oracle, and the reason is that it is not the algorithm it looks like.** The
+first pass pinned the Rust against published xxHash64 vectors and both failed. `PRIME64_E` in
+`FrameHasher.swift` is `0x2752_5BA1_84B2_3A5D`, and xxHash64's fifth prime is
+`0x27D4_EB2F_1656_67C5`; primes A–D match. So the fold is xxHash64-SHAPED and self-consistent — every
+value it produces is only ever compared against another value from the same code — but `xxh64sum`
+will disagree with it forever. There is no `frameHash` group in the corpus to have caught this. A
+scratch Swift probe compiled against the real `FrameHasher.swift` supplied the pins instead, the
+Rust matched bit-for-bit, and the divergence is now documented on the constant so nobody later
+"fixes" the prime and silently invalidates every hash the capture path has ever compared.
+
+**Two Swift splits collapsed into one Rust entry each, because the reasons for them were Swift's.**
+`hashRow` exists beside `StreamHasher` only because the streaming hasher's 32-byte carry is a heap
+`[UInt8]`; in Rust the carry is a `[u8; 32]` field, so `hash_run` IS the streaming hasher over one
+slice. `hashNV12Scalar` exists beside `hashNV12` only as the safe fallback for the pointer path; with
+`forbid(unsafe_code)` there is one path and it is the safe one.
+
+**One real porting bug, found by transcribing rather than by a test.** `matchedRow` bounds the source
+row by `n = min(prev.count, cur.count)`, not by `prev.count`. Written the obvious way, a longer
+previous row-hash array would have matched rows the estimator is not allowed to see, and the shift
+estimate would have drifted only on frames where the two arrays disagree in length — which is exactly
+a resize, where a wrong scroll estimate is least visible and most wrong.
+
+**`LumaPlane` exists because a plane must not be readable at another plane's stride.** The NV12
+entries take a plane and its stride as one value, which also drops them under clippy's argument-count
+threshold. That is the second-order benefit; the first is that `hash_plane(y, cbcr_stride, …)` is now
+unspellable.
+
+**The swipe recogniser reuses the wire enum rather than declaring a second direction.**
+`swipe_nav::SwipeDirection` already carries the "fingers right ⇒ history BACK" convention and its
+justification; the recogniser returning a different-but-identical enum would have made the wire and
+the decision two vocabularies that happen to agree. `slow_required_travel` stays a free function so
+the lift decision and the live-candidate mirror provably share one surface — a client whose feedback
+disagreed with the host's fire is the failure that shape prevents.
+
+**The bounded debt is now the whole directory at once.** Every file in `SlopDeskVideoProtocol` bar
+`Settings/` has a Rust counterpart, and `slopdesk-video` is still linked by nothing: the Swift
+originals drive the live host until the daemon that speaks this crate over a socket exists. That
+daemon, not another module, is what unblocks the deletions.
+
+## The host's policy layer follows the protocol, and the tick counter is off by one everywhere (2026-08-13)
+
+Stage 9 of the video port, and the first one outside `SlopDeskVideoProtocol`: `congestion`,
+`fps_governor`, `session_state`, `input_routing`, `recovery_routing`, `swipe_nav_config`,
+`mint_rescue` and `packetize_lane` in `rust/slopdesk-video`. `VideoSessionLogic.swift` is covered
+end to end. 472 unit tests plus the 19 golden tests, `make lint-rust`, `make lint-supervisor` and
+`swift build` green.
+
+**Three congestion tests were wrong and the implementation was right, twice for the same reason.**
+The warmup test asserted a decision one report later than it happens: `ticks += 1` precedes the
+`ticks < warmupTicks` gate in both `LiveCongestionController` and `FPSGovernor`, so an N-tick warmup
+means the Nth report is the FIRST that may act, not the first that may not. Checked against the
+Swift line by line before touching anything. The third failure was subtler: a queue-depth test
+expected a floor-factor cut and got 0.87, because `min_rtt` re-baselines UPWARD at 1% of the gap per
+fold — sixty folds of a 120 ms sample dragged the baseline to ~59.7 ms and the queue the test
+thought it had built was gone. The helper now folds twenty times and its doc comment records why
+sixty is a different experiment.
+
+**`effective_slack_millis` had to leave the controller to stay one rule.** `FPSGovernor`'s
+congestion evidence reads the same RTT slack the controller cuts on, and the Swift doc explicitly
+forbids forking those constants. As a method it would have been reachable only through a controller
+instance the governor has no reason to hold, so it is a free function over `&CongestionConfig` and
+both callers provably consume the identical arithmetic.
+
+**`VideoChannel` was TWO Swift enums.** `SlopDeskVideoHost/VideoDatagramTransport.swift` and
+`SlopDeskVideoClient/VideoClientTransport.swift` each declare it, identically, because neither
+module imports the other. In Rust it is one enum in `recovery_routing`, and the pair can no longer
+drift — which for a channel discriminant would mean datagrams silently routed to the wrong lane.
+
+**The mint rescue became a trait, not eight closures.** `resolve_off_screen_window` took the full
+enumeration, the on-screen enumeration, the id accessor, the frame accessor, the un-minimize and the
+sleep — eight arguments, one past clippy's threshold. Bundling them into a `WindowSource` trait was
+the fix that was not an `#[expect]`: the settle poll now takes `fn(&mut S) -> Option<Vec<S::Window>>`
+and picking the WRONG enumeration for an outcome is a different function pointer rather than a
+different argument position.
+
+**`MouseButton` gained `Ord` for a reason that is not ordering.** The held-button ledger keys a set
+on it, and `BTreeSet` iterates deterministically where `HashSet` does not — an injector that
+released held buttons in a varying order would produce a different `CGEventPost` sequence per run.
+The derive is documented as ordered by the wire discriminant so nobody later "fixes" it to something
+semantic.
+
+## The mux, the window feed and the send schedule, and two modules written twice (2026-08-13)
+
+Stage 10, and the last of `SlopDeskVideoHost` that is not AppKit, ScreenCaptureKit or Network:
+`mux_routing`, `mux_flow`, `window_feed_host` and `send_pacing`. 526 unit tests plus the 19 golden
+tests, all three gates green.
+
+**Two modules were written, compiled and deleted, because the crate already had them.** `StillnessCrispDecider` and `should_suppress_static_frame` live in `frame_gate.rs`; the virtual-display
+recreate gate and `arrange_streamable_windows` live in `capture_recovery.rs` — both landed in an
+earlier stage under module names that describe the DECISION rather than the Swift file. Porting by
+walking the Swift directory listing found them again. The cost was two compile errors, because
+`lib.rs` re-exports both names and Rust refuses the duplicate; had the port used private modules it
+would have shipped two implementations of the same rule, which is the failure this whole migration
+exists to prevent. The listing is not the inventory: the crate is.
+
+**`MuxFlowTable` lost its object-identity dance.** The Swift keys every map by `ObjectIdentifier` of
+an `NWConnection` and filters reply stamps with `!==`, because the flow handle is the identity. The
+Rust takes a caller-supplied `FlowId`, so "drop every stamp pointing at this flow" is `retain(|_, f|
+*f != flow)` over a `BTreeMap` and the transport keeps its sockets to itself. The reap's two rules
+stay in their load-bearing order — the never-admitted stamp sweep must run BEFORE the reference
+snapshot, or a stale stamp goes on protecting the flow it orphaned.
+
+**The title truncation is a documented divergence, not a transcription.** Swift's `removeLast()`
+drops a whole grapheme CLUSTER; Rust's char-boundary walk drops a whole SCALAR. Both satisfy the
+rule the Swift doc actually states — a truncation is always valid UTF-8, never a replacement
+character client-side — and they differ only for a cluster straddling the 120-byte cap, where the
+Rust leaves the cluster's leading scalars and the row renders them as their parts. Matching Swift
+exactly would mean a grapheme-segmentation dependency in a crate that has none, to change what a
+truncated emoji looks like.
+
+**Only the send lane's SCHEDULE ported, and that is the whole decision.** `VideoSendLane` is an
+`NSLock`, a FIFO, an `AsyncStream` and a consumer `Task`; none of that is a rule. What is a rule is
+the absolute-deadline pacing — chunk k due at `k × gap` from the job's start, so an oversleep eats
+the next gap instead of pushing the schedule right — and the inline-send admission test. `pace_plan`
+returns the chunk boundaries with their offsets and `may_send_inline` answers the one question the
+lock was protecting, so the daemon's runtime supplies the queue and the sleeps and neither can
+change what gets sent when.
+
+## The client is a decision layer with a renderer attached (2026-08-13)
+
+Stage 11 of the video port, and the first one on the CLIENT: `trendline`, `pacer_depth`,
+`audio_jitter`, `mux_client_pool`, `client_session`, `client_view`, `client_input`, `client_jitter`,
+`cursor_overlay` and `present_queue` in `rust/slopdesk-video`, plus the one-shot blob fetch in
+`blob`, the one-shot discovery in `mux_client_pool` and the codec-free PCM convert in `audio_wire`.
+743 unit tests plus the 19 golden tests, `make lint-rust`, `make lint-supervisor` and `swift build`
+green.
+
+**`StallVerdict` was already in the crate, and `lib.rs` is what said so.** The client's scrim latch
+needs the live-versus-stalled verdict, so the port wrote the enum — and the crate refused it,
+because `keepalive` had exported that name since stage 7. This is the same catch as stage 10's two
+deleted modules and the same reason it worked: the re-export list turns a duplicate into a compile
+error. A private module would have shipped two verdicts that agree today.
+
+**The pointer inverse and the cursor forward are one transform, deliberately.** `client_input`'s
+`normalize` and `cursor_overlay`'s `layer_frame_fit` are the two directions of the same mapping, and
+they call `geometry`'s `displayed_video_rect` and `view_point` rather than each open-coding the
+letterbox. If they ever disagreed the user would see the cursor on one pixel and the host would
+receive a click on another — the class of bug that is invisible in a unit test of either side alone.
+The actual-size viewport is a SECOND mapping, not a parameter of the first: it maps a texture
+sub-rect onto the whole drawable with independent per-axis scales, which the fit path's single scale
+cannot express.
+
+**The queue's re-prime floor is two ticks and the comment explaining why is longer than the code.**
+At the adaptive floor of one frame, a threshold of `max(1, depth)` collides with the transient-dip
+detector: the first empty tick re-primes and wipes the run before any present can observe the dip,
+so neither growth path can fire and the buffer pins at one frame with single-frame-repeat judder and
+no way back up as a clean link degrades. `max(2, depth)` is inert at every depth above one and
+load-bearing at exactly one.
+
+**`clamp` is wrong wherever a NaN can reach it, and right where one cannot.** `f64::clamp` returns
+NaN for a NaN input; the chained `max`-then-`min` lets the bound win, which is what Swift's
+`Double.minimum`/`.maximum` do and what the wire needs — a NaN normalised coordinate or a NaN
+playout delay is a poisoned schedule, not a clamped one. So `client_input::clamp_unit` and
+`present_queue::clamped_playout_seconds` keep the chain with the reason in a comment, while the
+`pacer_depth` env parsers, whose inputs are already `is_finite`-filtered, use the real `clamp`.
+Clippy's `manual_clamp` does not fire inside a `const fn`, which is why only some of these carry an
+`#[expect]`.
+
+**The pacer's frames never enter the crate.** `PresentQueue` carries opaque `u64` handles and the
+caller keeps the map to its image buffers, so the whole presentation policy — priming, homeostasis,
+the transient-dip discriminator, the idle re-prime — runs off a virtual clock with no image pipeline
+anywhere near it. The same line drawn for `VideoSendLane` in stage 10 and for the audio ring here:
+`AudioJitterBuffer` ports every buffering DECISION while the lock-free hand-off stays in the runtime.
+
+**The lane allocator takes its randomness as an argument.** Two clients each counting lane ids from
+one both mint id one, and the host's reply maps are keyed by the bare lane id — so the second
+client's lane hijacks the first's video and cursor replies. Seeding each process separates the
+ranges. The crate stays deterministic, so `VideoFlowPool::new` takes the seed rather than drawing
+it, and the module doc records the bug the seeding fixes so nobody "simplifies" it back to one.
+
+**The one-shot fetches are a gate, not a transport.** Discovery, the icon fetch and the preview
+fetch are all the same shape — acquire a transient lane, resend until an answer or a deadline,
+release — over a path with no request-and-response machinery. `request_send_offsets` says when to
+resend, `OneShotDiscovery` and `OneShotBlobFetch` say when to stop, and both make the FIRST matching
+reply win so a resend that crosses the answer is harmless. The empty result is a first-class answer:
+a host too old to understand the request never replies, and the picker must fall back to manual
+entry rather than hang.
+
+## The whole workspace model is Rust, and the deletion is the part that needs a decision (2026-08-13)
+
+Stage 12, and the first outside the video path: `rust/slopdesk-workspace` — geometry, canvas, snap,
+non-overlap, split tree, layout solver, focus, tab ordering, templates, send-keys, tree ops,
+workspace — plus, in `rust/slopdesk-wire`, `document::topology`, `document::apply` and
+`document::state_file`. That is every one of the 34 files in `Sources/SlopDeskWorkspaceModel`. 336
+tests in the domain crate and 271 + 11 golden in the wire crate, `cargo clippy --all-targets -- -D
+warnings` clean in both.
+
+**The dependency arrow is wire → domain, and it deleted six enums instead of doubling them.**
+`SplitAxis`, `SplitWeight`, `VideoEndpoint`, `PaneKind`, `PaneDropEdge` and `NewTabPosition` existed
+in both crates the moment the domain crate did. Pointing `slopdesk-wire` at `slopdesk-workspace` —
+rather than the reverse, or a shared third crate — let the codec `pub use` the domain's copies and
+delete its own. The eleven golden-vector tests passing afterwards is the proof it was byte-identical.
+The domain crate stays a leaf with an empty `[dependencies]`, and the wire crate's supply-chain claim
+became the more precise "zero THIRD-PARTY dependencies".
+
+**`WorkspaceIntent.swift` was already ported and nobody noticed.** The plan listed it as work; the
+crate already had every encode, decode and op byte in `document::intent`. The same catch as stages 10
+and 11, for the third time: the Swift directory listing is not the inventory, the crate is. What was
+actually missing was one enum — the applier's outcome — and the applier itself.
+
+**Nothing changed IS the refusal, and the applier now says so.** The tree ops answer their input
+unchanged when an op cannot apply, which reads as success to a caller that only checks for an error.
+`move_pane`, `dock_pane_at_tab_edge` and `break_pane_to_tab` therefore assert on the RESULT — did the
+pane end up where it was asked to go — rather than re-deriving each op's preconditions. Reporting
+`Applied` for a document that never moved would retire a client's optimistic patch against a state
+that does not exist, which is worse than any refusal.
+
+**JSON is in the tree now, hand-written, and that is not a crack in the manual-binary rule.** Both
+persistence files are JSON: the host's document cells and the client's canvas. `serde_json` would
+have been one manifest line and the first third-party dependency in a crate whose whole
+supply-chain story is that it has none — to read `{"version": 1}`. `crate::json` is a parser, a
+writer and a depth cap in one screen, with `BTreeMap` making Swift's `.sortedKeys` a property of the
+type rather than a flag somebody has to remember. It lives in the domain crate because both files are
+domain values.
+
+**The deletion is blocked on a decision, not on work.** The rule is that porting deletes the Swift in
+the same change. It cannot here: 101 source files import `SlopDeskWorkspaceModel` in process — SwiftUI
+views keyed by `PaneID`, an `@MainActor` store holding a `Canvas`, `WorkspaceStore` mutating a
+`TreeWorkspace` — and a port ships over a socket, never FFI. So deleting the target means the client
+reads its own arrangement over the workspace channel, which is an architecture change and the user's
+call. Until then the Rust is complete and unused, and this entry is the record that it is deliberate
+rather than forgotten.
+
+## Agent detection splits on the clock, not on the language (2026-08-13)
+
+Stage 13 ports `Sources/SlopDeskAgentDetect` — nine files, 2 152 lines of pure logic with no AppKit
+and no SwiftUI anywhere in it — into `rust/slopdesk-agent`: `kind`, `job`, `process`, `status`,
+`signal`, `screen`, `hold`, `input` and `machine`. 110 tests, zero dependencies,
+`#![forbid(unsafe_code)]`, `cargo clippy --all-targets --all-features -- -D warnings` clean.
+
+**The line between this crate and screend is the CLOCK, not the subject.** Both are agent detection,
+so the obvious move was to fold this into `slopdesk-screend` and have one detection daemon. That is
+wrong: screend's job is a per-byte loop over untrusted PTY output, and everything ported here is
+temporal — a done→idle decay, a post-exit lockout that measures a teardown race, a dissent watchdog
+on a ten-second window, two confirmation holds counting reads. Putting a clock inside the per-byte
+loop would also mean screend holding per-pane state across connections, which is the property that
+lets a malformed request from one pane blank only that pane. **screend owns everything that reads
+the BYTES; this crate owns everything that reads the CLOCK.** They meet at one value,
+`AgentScreenDetection`.
+
+**The state machine has no clock, and that is what makes a detection bug reproducible.** Every
+time-driven rule takes an absolute `now` argument — the same discipline `slopdesk-workspace` draws
+around minting ids. A pane that got stuck blocked is then a list of signals and timestamps, replayable
+on any machine, rather than something that happened once on someone's laptop at 11pm.
+
+**Three Swift behaviours only became visible once the port had to state them.** `enter` clears the
+dissent stopwatch, so a hook that CHANGES the status does reset the watchdog and only a hook that
+leaves the contradiction standing does not — the test now says which. `bun run codex` identifies as
+`bun`, because the argv walk takes the first positional whole and `run` is nobody. And
+`hook_block_overridable` (the 1 s grace) is unreachable in practice under hook coverage, because the
+10 s dissent window always subsumes it; it is kept for fidelity, and the test that used to claim to
+exercise it now pins what is actually reachable instead of what reads well.
+
+**The deletion is blocked the same way stage 12 is, for the same reason.** 66 source and test files
+import `SlopDeskAgentDetect` in process — SwiftUI rail rows and status dots, `WorkspaceStore`
+attention state, the host's `ClaudePaneDetector` and `PaneScreenScanner` — and a port ships over a
+socket, never FFI. Unlike the workspace model, most of these are HOST-side, so the socket boundary
+that would free them is smaller than a whole client channel; it is still an architecture change and
+the user's call. The Rust is complete and unused, and `make agent-test` is what stands between it and
+a silent drift away from the Swift it was ported from.
+
+## The replay buffer is a wire fact, not a transport one (2026-08-13)
+
+Stage 14 ports `Sources/SlopDeskTransport/ReplayBuffer.swift` (658 lines) and its
+`AltScreenCutScanner.swift` (150 lines) into `rust/slopdesk-wire` as `replay` and `altscreen` —
+40 tests on top of the crate's existing 314, `cargo clippy --all-targets --all-features -- -D
+warnings` clean, and the pinned golden corpus still re-encodes byte-for-byte.
+
+**It went into `slopdesk-wire` rather than a `slopdesk-transport` of its own, because everything the
+buffer decides is denominated in wire terms.** The retained unit is a `WireMessage::Output` and its
+`i64` seq; the re-chunker's hard ceiling is `MuxFlowControl::max_output_frame_payload_bytes`, the
+window/2 credit-progress invariant that a 32 KiB payload violates by 13 bytes. A separate crate would
+have had to depend on this one for both, which is a crate boundary drawn where there is no seam. What
+is genuinely transport — `NWParameters`, the `NWListener`, `NWConnection+Async`, the channel
+association preamble — is Network.framework and stays Swift under the SwiftUI/AppKit exemption.
+
+**The ring and the tail are now different types, so "acked history is never lag" is structural.** The
+Swift kept one `Entry` in both arrays and documented that ring entries carry a `cumulativeBefore` of
+0 by convention — a convention that is only ever read by `retainedBytes(above:)`, the fan-out's
+per-ack laggard check. `RingEntry` simply has no such field. The metric cannot read the ring by
+accident, and the port needed no comment to say so.
+
+**The `messages()` primitive borrows now, where the Swift copied.** It answers `Vec<(i64, &[u8])>`
+against a buffer that legitimately holds up to 256 MiB, so the control-channel snapshot path no
+longer materialises the whole retained tail to look at it. That is a change in kind, not a
+micro-optimisation: the copy was the reason the lag metric had to exist as a separate O(log n)
+primitive in the first place.
+
+**The deletion is blocked exactly as stages 12 and 13 are.** `MuxChannelSession`, `HostServer`,
+`PaneOutputStream` and `ScrollbackJournal` hold a `ReplayBuffer` as in-process state under the
+session's replay lock, and a port ships over a socket, never FFI. Freeing it means the PTY drain
+itself moves — the largest remaining host-side move, and the user's call. `make wire-test` is what
+stands between the Rust and a silent drift away from the Swift it was ported from.
+
+## The client reads the byte stream too, and that is a third crate (2026-08-13)
+
+Stage 15 ports `Sources/SlopDeskClaudeCode` — `TerminalMode.swift`, `TerminalModeTracker.swift`,
+`InputDedupRing.swift` and `InputBoxModel.swift`, 702 of its 749 lines — into a new
+`rust/slopdesk-terminal` workspace as `mode`, `tracker`, `dedup` and `inputbox`. 50 tests, zero
+dependencies, `#![forbid(unsafe_code)]`, `cargo clippy --all-targets --all-features -- -D warnings`
+clean under the same maximal-strict lint table every other workspace carries.
+
+**Three crates now read terminal bytes, and the line between them is whose bytes and for whom.**
+screend reads the HOST's PTY output to decide what an agent is doing; `slopdesk-wire` reads the same
+bytes as FRAMES, to decide what to retain and re-send; this reads the host→client stream on the
+CLIENT, to decide what the input surface should offer. Folding it into either of the others would
+have put a client-only concern behind a host daemon's socket, or a UI affordance inside the wire
+codec. Its own workspace, as always, because cargo profiles are workspace-global.
+
+**`TerminalModeStream` was deliberately not ported.** It is an `AsyncStream` façade over the
+synchronous `consume` primitive — the Rust equivalent is a channel the caller already owns, so
+porting it would have shipped an opinion about the caller's concurrency runtime in a crate that has
+no runtime at all. The 47 lines stay Swift and stay a wrapper.
+
+**The `onEvent` closure became a return value.** The Swift `InputBoxModel` stored a callback the UI
+installed; the Rust `ingest_output` answers `Ingested { bytes, events }`. That removes a
+`Box<dyn FnMut>` — and with it the reason `InputBoxModel` could not derive `Debug` or `Clone` — and
+says the same thing: the caller already has to do something with the filtered bytes, and the events
+are an answer to the same chunk.
+
+**`precondition(capacity > 0)` became "0 is raised to 1".** `panic` is denied crate-wide, so a
+zero-capacity dedup ring cannot be a trap; it is a configuration mistake, and the constructor
+normalises it rather than representing a state where every recorded byte is evicted on arrival.
+
+**The deletion is blocked exactly as stages 12, 13 and 14 are.** `SlopDeskWorkspaceCore`'s input and
+terminal layers hold an `InputBoxModel` as in-process SwiftUI state, and a port ships over a socket,
+never FFI. `make terminal-test` is what stands between the Rust and a silent drift away from the
+Swift it was ported from.
+
+## The CLI core splits four ways, because it was never one subject (2026-08-13)
+
+Stage 16 ports `Sources/SlopDeskCLICore` (989 lines) and the `FolderFrecency` scorer it depended on.
+It is the first stage where the Swift module did NOT survive as a Rust crate: what came out is a new
+`rust/slopdesk-cli` plus three additions to crates that already existed. 47 new tests, `cargo clippy
+--all-targets --all-features -- -D warnings` clean everywhere, and the golden corpus unmoved.
+
+**The split is on what each file is ABOUT, not on which binary calls it.** `SlopDeskCLICore` held
+seven files whose only shared property was that `main.swift` imported them. Sorted by subject they
+land in four places: the flag parser, the completion scripts, the config-file validator and the
+output tables are CLI facts and went to `slopdesk-cli`; the `OSC 9;4` and `OSC 777` byte builders
+went to `slopdesk-wire::osc`; the `watch:claude` exit-code machine went to `slopdesk-agent::watch`;
+jump resolution and the frecency scorer went to `slopdesk-workspace`. None of the four crates gained
+a dependency on another, which is the check on whether the split was real.
+
+**The `watch` emitter and the progress parser are now one module, and the round-trip is a test.**
+The Swift had `ProgressOSCParser` in `SlopDeskProtocol` and `WatchProgress` in `SlopDeskCLICore`,
+two modules apart, with nothing asserting that what one wrote the other would accept. In
+`slopdesk-wire::osc` they are adjacent, and `what_the_watch_wrapper_emits_is_what_the_host_parses`
+walks every canonical state through both.
+
+**`slopdesk-cli` is a MEMBER of the root workspace, like `slopdesk-ctl` and unlike the five
+daemons.** The daemons left because profiles are workspace-global and a long-lived per-byte server
+wants `opt-level = 3` / `panic = "unwind"`. `slopdesk` is the third short-lived program: a user
+types it, it does one thing, it exits. Startup is the whole cost, and the process IS the request, so
+it wants the hook's profile exactly.
+
+**`CLIVersion.version` was deliberately NOT transliterated.** `docs/49` names six version sites and
+`bump-version.sh` owns all six because no gate can see most of them; a seventh in Rust would be one
+the bump script does not know about and `package-release.sh` would not catch, because that gate asks
+the built CLI binary and would keep asking the Swift one. So `version::summary` takes the number as
+an argument. What was worth porting is the banner's shape and the build-hash branch — the part that
+had a test.
+
+**Two Swift `precondition`/trap surfaces became total functions.** `ProgressState`'s percent clamp
+and `FolderFrecency`'s age reduction both relied on Swift traps that `panic = "deny"` forbids here,
+so the clamps are explicit and the tests pin the corrupt-input behaviour: a `NaN` timestamp scores
+as ancient, deterministically, rather than making the sort's contract undefined.
+
+**The deletion is blocked exactly as stages 12 through 15 are.** `Sources/slopdesk/main.swift` and
+two `SlopDeskClientUI` views import `SlopDeskCLICore` in process, and a port ships over a socket,
+never FFI. `make cli-test` is what stands between the Rust and a silent drift away from the Swift.
+
+## Each protocol's client end moves INTO the daemon that speaks it (2026-08-13)
+
+Stage 17 of the Rust migration. The three remaining pure-logic Swift surfaces were the *client* ends
+of protocols whose *server* ends are already Rust — `SlopDeskFileTransfer`'s request encoder and
+reply frame decoder against dropd, `ScreenProtocol`'s reply decoder against screend — plus the
+host's two pre-flight decisions about a listen port.
+
+**The client end goes in the daemon's own crate, not a client crate.** `FileTransferProtocol.swift`
++ `FileTransferCodec.swift` + `FileTransferFrameDecoder.swift` became one
+`rust/slopdesk-dropd/src/client.rs`, and screend's missing client pieces became four functions in
+`rust/slopdesk-screend/src/protocol.rs`. The reason is not tidiness. With both ends in one crate the
+round-trip is a *test* — `what_this_end_encodes_the_other_end_decodes`, and its mirror — where in
+Swift it was an agreement two files kept by review. A wire skew now fails `make dropd-test` or `make
+screend-test` in the same change that introduces it, which is the property the cross-language pair
+never had.
+
+**`split_detect_payload` moved out of `server.rs` into `protocol.rs`** and became
+`decode_detect_payload`, so the new `encode_detect_payload` has a partner rather than a second
+implementation of the same split. The server calls the moved function; it did not gain a copy.
+
+**`Status::from_byte` is strict, not forward-tolerant.** Every other decode in this tree degrades an
+unknown value to a benign default, because a future host sending a verb we do not know is not an
+error. A status byte is the opposite: it is the answer to "did my request succeed?", and guessing
+`ok` for an unrecognised byte hands the caller a payload it has no reason to trust. So an unknown
+status is `DecodeError::UnknownStatus`, and `DecodeError` grew that variant.
+
+**Port validation rejects rather than clamps.** `PortValidation.swift` became
+`slopdesk-workspace::listen`, and the Rust keeps the Swift's refusal semantics for a reason worth
+recording: clamping mapped `-5` to `0` — an OS-assigned port nobody asked for, then persisted — and
+`99999` to `65535` while the field still read `99999`. Both desync the displayed value from the
+bound one. `clamped_port` exists for a caller that genuinely wants to normalise, but `port()`
+answers `None` and the Start button goes dark.
+
+**The bind-conflict classifier is digit-bounded, and that is the whole point of porting it.**
+`EADDRINUSE` is `48`, and a loose substring search for `"48"` fires on the port `4843`, the errno
+`148`, and the buffer size `1048576`. `contains_standalone_number` requires a non-digit on both
+sides. The companion rule — that `EADDRINUSE` is the ONE errno that is fatal while a listener is
+parked in the framework's retryable *waiting* state — is now `waiting_errno_is_fatal_bind_conflict`,
+one line and one test instead of a comment on a `switch`.
+
+**The error enum's `errorDescription` strings deliberately did NOT move.** They are user-facing copy
+read by a Swift `LocalizedError` conformance inside the Network.framework transport. Porting the
+strings would create a second place they live and no consumer for it — the drift trap the
+one-implementation rule exists to prevent. Only the *classifiers* moved; the copy stayed with the
+code that displays it.
+
+**What stays Swift, and why it is not a hedge.** `FileTransferChannel` and `FileTransferClient` are
+`NWConnection` — Network.framework, no Rust equivalent inside this process. `TerminalRawMode` is
+`termios` plus async-signal-safe handlers installed by a Swift executable. Moving either means
+porting a whole binary, not a module, and a port ships over a socket, never FFI.
+
+**The deletion is blocked exactly as stages 12 through 16 are**, and for the same reason: the Swift
+callers are in-process SwiftUI and in-process transport. `make dropd-test`, `make screend-test` and
+`make workspace-test` are what stand between the Rust and a silent drift away from it.
+
+## The grid, the blocks, and the marks that segment them (2026-08-13)
+
+Stage 18. Four modules, split by which side of the wire reads them: the CLIENT's two reads of the
+rendered grid into `slopdesk-terminal`, the HOST's read of the mark stream into `slopdesk-screend`.
+
+**`TerminalLinkDetector` measures in CLUSTERS, and that had to be built rather than borrowed.**
+Swift iterated `Character`, which is a grapheme cluster, and took the width of its first scalar.
+Iterating Rust `char`s instead would count a ZWJ family emoji four times over and slide every column
+after it. A segmentation crate would bring a Unicode table to answer a question five lines answer:
+a cluster is a base plus any zero-width scalars, plus the scalar after a ZWJ, plus a skin-tone
+modifier, plus a paired regional indicator. That covers what a terminal actually renders.
+
+**A flag is one cluster and one cell.** The regional indicators sit at U+1F1E6..U+1F1FF, BELOW the
+emoji block the width table calls wide, so `🇻🇳` measures 1. Terminals disagree with each other
+here and the Swift did the same thing; what matters is that the pair is not counted twice, because
+that is what would slide the columns. Pinned by a test rather than left to be rediscovered.
+
+**Percent-decoding is all-or-nothing on purpose.** `file:///tmp/a%ZZb` decodes to nothing and the
+caller falls back to the undecoded text — the same contract Foundation's `removingPercentEncoding`
+has, and the reason the fallback still means "this was not percent-encoded after all" instead of
+"this is half-decoded".
+
+**The block store split from its callbacks.** `TerminalBlockModel` was a `@MainActor @Observable`
+class holding both a ring and a registry of escaping closures. The ring, the bookmark FIFO, the
+jump-to-failed walk and the coalescing rules are here; the closures stay in Swift, where the
+surface that owns them lives. `OutputRequests` answers `Send` or `Coalesced` and gates a timeout on
+a generation — so the rule that a second copy of a block cannot be killed by the first copy's parked
+timer is now a test, not a comment on a dictionary.
+
+**The segmenter's string-swallow is a security property, not a nicety.** A DCS/SOS/PM/APC body is
+consumed whole, so an `ESC ] 133 ; …` inside one cannot forge a command boundary or an exit code in
+someone else's transcript. The test proves it by segmenting the same bytes twice — once in the open,
+where they DO produce a block, and once wrapped, where they produce nothing.
+
+**The segmenter takes the clock as an argument.** Swift injected a `() -> Date`; here `ingest` takes
+the chunk's timestamp, like `slopdesk-agent::watch` and `slopdesk-workspace::frecency` before it. A
+mis-segmentation is then reproducible from a transcript plus its timestamps, with nothing to mock.
+
+**The synthetic spinner leaves as a verdict, not a frame.** The segmenter answers
+`SyntheticProgress::Indeterminate` / `Clear` and the owner builds the wire message. screend does not
+depend on `slopdesk-wire`, and this is why it does not need to: the byte reader says what happened,
+and the protocol stays spelled in exactly one crate.
+
+**`AutoProgressMatcher`'s built-in list is now the only copy of itself.** The client used to hold a
+display mirror behind a settings row that nothing serialised down to the host, so the two could only
+ever disagree.
+
+**Deletion is blocked as in stages 12 through 17.** `make terminal-test` and `make screend-test`
+stand between these and a silent drift away from the Swift they were read from.
+
+## What reads the bytes, and what owns the child (2026-08-13)
+
+Stage 19 moved two things out of hostd, on two different arguments, and deleted the Swift for one
+of them outright.
+
+**The fused out-of-band sniffer → screend.** `HostOutputSniffer` was one pass over the outbound PTY
+stream finding titles, bells, OSC 133 command status, OSC 7 working directories and the three
+notification protocols. screend already held `commandblocks`, which walks the SAME bytes with the
+same eight-state machine — the two now share `parse_exit` and `duration_ms` rather than agreeing
+about what a `133;D` field means, which is exactly the agreement that rots. Two smaller calls fell
+out of it. The OSC 9;4 progress body is handed UP verbatim as `SniffEvent::ProgressBody` rather than
+parsed here, because `slopdesk-wire::osc` already owns that grammar and screend must not grow a
+second copy of the protocol; telling progress from a notification is a shape test (`4` or `4;…`),
+not a parse. And the base64 decoder for kitty's `e=1` is twenty-five hand-written lines rather than
+a dependency, strict about padding and alphabet — a payload that is not well-formed goes into a
+desktop alert, so half-decoding it is worse than dropping it.
+
+**The zsh shell-integration shim → superd, and the Swift is GONE.** This one is not about bytes. The
+generated `ZDOTDIR` directory is a RESOURCE whose lifetime is exactly one child's, and superd is the
+only process that both knows that lifetime and outlives a hostd restart. Held in hostd it needed
+three cleanup sites — spawn failure, session teardown, orphan sweep — each re-deriving the
+relinquish-versus-terminate distinction of `docs/51` §5.5 on its own, and none of them ran when
+hostd was killed rather than stopped. So `make host-restart`, the common case, leaked one directory
+and four files per open pane, permanently.
+
+Note the deliberate contrast with the curated ENVIRONMENT, which superd still passes through whole:
+curation is POLICY, it changes often, and a superd with opinions about it would need a rebuild every
+time hostd learned a variable. The shim is not policy. `SpawnRequest.shellIntegration` keeps the one
+genuinely hostd-shaped judgement — an interactive login shell wants prompt machinery, a `$SHELL -c …`
+pane has no prompt cycles — and superd decides whether a shim is POSSIBLE (a non-zsh, an `/etc/zshenv`
+that reassigns `ZDOTDIR`, a home with no startup files) where every rejection is a log line and a
+working shell. `scripts/check-supervisor.sh` now ratchets both halves: no Swift file may generate rc
+files again, and the flag must stay spelled at both ends or the shim silently never installs.
+
+Two smaller consequences. `SLOPDESK_SHELL_INTEGRATION` had to JOIN the curated allowlist — it used
+to be read from hostd's own environment, and reading it in superd would otherwise have killed the
+opt-out; the three flags now live in one list, `HostEnvironment.shellIntegrationEnvKeys`, since all
+three are read downstream of hostd. And two orphan-recovery tests used the shim dir disappearing as
+their proof that teardown ran; they now watch `teardownCompletionsForTesting`, which says what they
+were actually asserting instead of inferring it from a side effect.
+
+**`OpenQuicklyModel` was considered and NOT ported.** It is 590 lines of client picker model, and
+the parts that look pure — the stable rank, the section merge, the pill ring — are called from a
+keystroke handler with SwiftUI-resident data. A port ships as a separate binary over a socket, never
+FFI, so porting it means an IPC hop per keystroke on the one interaction where latency IS the
+feature. The rest of the file is pill labels, SF Symbol names and badge text: UI copy, which stages
+17 and 18 already ruled stays in Swift. It belongs with the unresolved question of how a ported
+client-side model gets deleted at all, not ahead of it.
+
+---
+
+## The sniffer belongs to the reader that already has the bytes (2026-08-13)
+
+`HostOutputSniffer` was 673 lines of Swift OSC state machine running over EVERY byte of EVERY pane,
+on the read-loop thread, to find six facts: title, bell, the OSC 133 command marks, cwd,
+notifications and the OSC 9;4 progress body. `slopdesk-sniffbench` measured it at 614 MiB/s, and an
+earlier entry (2026-08-12) used that number to decide it should stay. That decision is now void, and
+the reason is not throughput.
+
+It is that `docs/51` §6.5 had already made superd's pump the first reader of every byte. From that
+point the sniffer was a SECOND pass over the same stream, in a second language, one hop later — and
+two readers of one stream drift. The title coalescing anchor is state; a hostd that restarts loses
+it while the shell that set the title does not. Moving the scan into `Pump::publish` costs a state
+machine on a thread that already touches the byte, and buys back the copy, the hop and the second
+implementation. This is the same rule the port has followed throughout, applied to the last hot
+reader hostd had: one implementation, in the process that owns the data.
+
+The design decisions worth keeping, each of which was a real choice:
+
+- **Events precede their bytes on the wire.** A `0x04` frame is written immediately BEFORE the
+  `0x03` frame it describes, under one hold of the wire lock. superd sends one only when a chunk
+  contained something, so a receiver cannot wait to find out whether one is coming — it can only
+  hold what it already has. Events-first is what lets `PaneOutputStream` hand a batch to `onChunk`
+  WITH its own chunk, which is the pairing hostd had when it did the scan itself.
+- **OSC 9;4 crosses unparsed.** The progress grammar belongs to `ProgressOSCParser`, and a second
+  copy inside the byte reader is exactly the drift being removed. Telling progress from a
+  notification is a shape test, not a parse, and that much superd does.
+- **A reattach replays the EVENTS, not a snapshot.** `subscribe` runs a fresh sniffer over the
+  backlog and puts one batch ahead of the first chunk. A restarted hostd learned a pane's title by
+  re-reading the replayed ring before; it still does, and no "current truth" exists to go stale.
+- **`forgetTitle` is a verb, fire-and-forget.** superd dedupes a title against the last one it
+  emitted; hostd's detector is what knows an agent exited, and the next agent's opening title is
+  very often byte-identical. The request sets an atomic the pump clears before its next scan, so
+  losing the race costs a stale title rather than a wrong one.
+- **Only a pane that asked for the shim is sniffed.** `SpawnRequest.shellIntegration` gates the scan
+  as well as the shim: a `$SHELL -c …` pane and a panel backend have no prompt machinery. It is also
+  what keeps the new tag inside the append-only rule — an older hostd never asks, so it never sees a
+  `0x04`.
+
+The frozen `hostOutputSniffer` golden key came with it. `rust/slopdesk-superd/tests/golden_sniffer.rs`
+replays the committed vectors and asserts byte-identical FRAMES, with `slopdesk-wire` as a
+DEV-dependency and nowhere else: superd does not know the protocol and must not, but a guard that
+pins "these bytes produce these frames" has to know both ends, and no single crate owns both. The
+Swift suites that used the sniffer as a fixture now drive the fold with explicit `[SniffedEvent]`
+instead — no Swift sniffer survives as a test fake, which the one-implementation rule forbids by
+name. `SupervisedSniffTests` covers the seam end to end against a real daemon and a real shell.
+
+`CommandBlockSegmenter` is the last Swift reader of this stream and is next; `slopdesk-sniffbench`
+retires with it.
+
+🔁 **It went — 2026-08-13.** See "The block ring outlived the wrong process" below.
+
+
+## The block ring outlived the wrong process (2026-08-13)
+
+✅ **`CommandBlockSegmenter` + `CommandBlockTracker` + `AutoProgressMatcher` move into superd's pump;
+the Swift originals, their suites and `slopdesk-sniffbench` are deleted.** The segmenter was the
+second per-byte reader on hostd's read loop, and §6.13's argument applies to it unchanged: superd's
+pump is already the first reader of every byte, so a Swift state machine over the same stream was a
+second pass in a second language.
+
+**But the deciding fact is the ring, not the scan.** `CommandBlockTracker` held every finished
+command's captured output IN HOSTD, so it died on every `make host-restart` — 0.2 s during which
+nothing else about the pane changed: the shell kept running, superd kept the pane, the PTY kept its
+master. A client reattaching afterwards found an empty Commands panel for a shell that had never
+stopped, and the only way to refill it was to run another command. That is the inspectord argument
+(blast radius, not benchmarks), and it is why this was worth doing even though the measured numbers
+were fine: the segmenter ran at 375 MiB/s after the `some Sequence<UInt8>` fix recorded above, and
+it was never the ceiling.
+
+The choices worth keeping:
+
+- **A second frame tag (`0x05`), not a bigger `0x04` batch.** The two taps answer to DIFFERENT gates
+  — `shellIntegration` and `blocks` — and what keeps a new tag inside the append-only rule is that
+  each tag has exactly one thing to ask for. Order under one hold of the wire lock: sniff, blocks,
+  bytes. An older hostd sets neither flag and sees neither frame.
+- **One `now_ms()` shared by both readers.** `Pump::publish` takes the clock once, so a command's
+  measured duration and a title found in the same chunk cannot disagree about when it arrived.
+- **The auto-progress list crosses UNPARSED**, as `Option<String>` rather than a parsed `[String]`.
+  superd owns the parse and the built-in slow-command list; hostd resolving either would put back
+  the second copy the 2026-08-10 entry above removed. Unset ⇒ built-ins, empty ⇒ disabled, set ⇒
+  those entries — all three still expressible.
+- **`runningCommand` is a hostd-side LATCH; every other read is a verb.** `PaneLiveness.capture`
+  runs for every pane on every reconciler tick and is documented as a handful of lock acquisitions,
+  so a round trip there was the one read that could not be one. The `0x05` events already arrive,
+  so the latch is fed from them. `blockOutput`, `blockSnapshot` and `blockControl` are verbs because
+  each is a person or an agent asking once.
+- **`blockControl` is ONE verb answering three questions.** The recent blocks, the running command
+  and the `run --wait` baseline index are only consistent with each other if superd read them
+  together; three verbs would let a command close between two of them.
+- **Block output is base64 in a JSON reply, not a new binary frame.** It is a fetch a person asked
+  for, capped at 256 KiB per block, so the encoded worst case sits an order of magnitude under the
+  frame ceiling and every existing decode path handles it unchanged.
+- **Absent ≠ empty.** A pane with no tap answers `nil` to all three reads — reported differently
+  from "has run nothing yet" — while an unknown or evicted index on a tapped pane answers EMPTY.
+
+`BlockEventDecodeTests` pins the JSON literals against `blocks.rs`'s own
+`every_event_serialises_to_the_shape_the_client_decodes`, the same two-copies-of-the-same-bytes
+discipline the golden corpus applies to the wire; the OSC 133 truth table went with the segmenter to
+`blocks.rs`. `SupervisedBlocksTests` drives the seam end to end against a real daemon and a real
+shell — including that the retained output is `one\r\n`, ONLCR and all, because a transcript superd
+had tidied would be a transcript that lies. `check-supervisor.sh` gained a `blocks_revived` gate, the
+`0x05` tag comparison, the spawn-flag check and a refusal of any hostd-side auto-progress parse.
+
+With this hostd runs NO per-byte state machine on the read loop. `slopdesk-sniffbench` existed to
+answer "is this path a language ceiling"; both machines it timed are gone, and it retires with them.
+
+---
+
+## The workbench profile is a decision about files, not about a child (2026-08-13)
+
+✅ **The whole code-server PROFILE moves into `rust/slopdesk-codeseed`; `CodeServerManagerSeedHistory`
+and `Sources/SlopDeskHost/Resources/` are deleted.** `CodeServerManager` was ~2.7k lines of Swift, and
+almost none of it was about the process it supervised. It was about FILES: what a pristine
+`settings.json` says, whether the one on disk is still a seed we wrote, which extension folders an
+older hostd left behind, which registry entries the workbench may see, what argv and environment the
+child needs. None of that wants a `HostServiceProcessHandle`, and all of it was string-building and
+`JSONSerialization` — the work a language with sum types and one JSON vocabulary says in a third of
+the space. What stayed in Swift is what holds the handle: `Instance`, `ensure`, the readiness probe,
+the learned port, the prewarm, the lock. The file shrank 1445 → ~453 lines, its suite 1897 → ~911.
+
+**A fork, not a socket** — the first port in this tree that is not a daemon. The rule is that a port
+ships as a separate binary over a socket; the reason for the socket is a long-lived stream nobody
+wants to re-establish per byte. There is no stream here. Every question is asked at most ONCE per
+hostd lifetime — `launch-args`, `child-env`, `paths` and `missing-extensions` are cached in `static
+let`s, `seed` runs before the first spawn — and the only repeatable one, `sync-font`, rides a verb a
+client sends on connect or a preference change. `ensure`, the ~1 Hz poll, asks nothing. A daemon
+holding a socket open to answer six questions a boot would be the heavier design, not the lighter one.
+
+The choices worth keeping:
+
+- **The refusal.** A host with no `slopdesk-codeseed` reports the code panel **unavailable** rather
+  than spawning on guessed arguments. `--auth none` on a guessed port is not a degraded panel, it is
+  a different program listening on a machine's network. `readProfile()` answering `nil` is what stops
+  it, and it is the one failure in this port that is not a silent no-op.
+- **Every other failure IS a silent no-op**, because a seed is a NICETY. No function in the crate
+  returns an error; each answers whether it CHANGED something. A host that cannot write the theme
+  comes up with an unthemed workbench, never with none — which is why the panic lints in its
+  `Cargo.toml` are denials rather than warnings.
+- **Manifests are written as TEXT, from a `format!` template — never serialized from a `Value`.** The
+  file's BYTES are the upgrade signal: a manifest that differs is a re-seed. `serde_json`'s default
+  `Map` is a `BTreeMap`, so serializing would alphabetize every key, and the first boot after this
+  port would have looked like a change to every profile in existence. That same `BTreeMap` is what
+  makes the registry comparison free: sorted-key output is exactly `.sortedKeys`, so the drift check
+  reads the same on both sides. The `preserve_order` feature must stay OFF for both reasons.
+- **The path resolvers take the environment as an ARGUMENT.** Sampling `std::env` would have
+  reproduced a bug this code already had once — a gate-sandboxed hostd seeding the real user's
+  settings while its children read the sandbox's, because the seeder asked the directory service for
+  "home" instead of asking the environment. Passed in, the resolution is testable against a home
+  directory the test machine does not have.
+- **The obsolete-seed history came across whole** — all 32 raw strings. It is the only record of what
+  a former seed looked like, and `is_pristine_former_seed` is what lets an upgrade replace a file the
+  user never touched without ever replacing one they did. Dropping it would have made every old
+  profile permanently un-upgradable, silently.
+
+**Byte-identity was verified, not assumed.** The theme manifest, the bridge manifest, `extension.js`
+and `alucard.json` written by the Rust seeder were diffed against the live deployed
+`~/.local/share/code-server/` and came back IDENTICAL; `settings.json` differed only by the font sync
+that had just run. The resources were `git mv`'d rather than copied, `resources: [.copy("Resources")]`
+is gone from the manifest, and `scripts/monokai-sync.sh` now writes into the crate and cross-checks
+its EXPECTED table against `extensions::THEMES` instead of a Swift array.
+
+The seeder is deliberately NOT staged beside `hostd`: `RustServicePaths` finds it by walking up to
+`rust/slopdesk-codeseed/target/`, so a `cargo clean` can never leave a stale copy behind that lies
+about which profile the panel seeds. `check-supervisor.sh` §14 compares the six subcommand names as
+sets from the two switches themselves — the drift here is quieter than any wire's, since a renamed
+one is not a decode failure but `usage()`, a non-zero exit, and a panel that reports itself
+unavailable with nothing logged — and refuses the return of any Swift seeder member or resource
+bundle. 84 Rust tests carry over the design pins the Swift suite held: nothing casts, selection is a
+tint and never an inversion, one light line draws the tab structure, the GPU renderer stays refused,
+and Alucard still publishes `#FFFBEB`.
+
+---
+
+## The marker and the binary it names are one constant now (2026-08-13)
+
+✅ **`AgentInstaller` moves into `rust/slopdesk-hook` as a second binary, `slopdesk-agenthooks`;
+the Swift original and its two suites are deleted.** The install was a `settings.json` merge — read a
+file the user also edits by hand, strip the entries carrying our sentinel, append one per event,
+write it back sorted and pretty. Every line of it is a decision about JSON and a file, which is the
+same shape as stage 22 and portable for the same reason.
+
+**What decided the crate is the sentinel.** `hookMarker` was the string `"slopdesk-agent"`, and
+`"slopdesk-agent"` is also the BASENAME the relay is installed under — which is why an installed
+entry is recognisable at all. Those were two spellings of one name in two languages, and getting
+them apart is silent: a marker that no longer matches the installed command turns uninstall into a
+no-op and install into a duplicator, with no error anywhere and both suites still green. In Rust
+`hook_path` joins `HOOK_MARKER` instead of spelling it again, so that drift is not caught — it is not
+expressible. `check-supervisor.sh` §15 ratchets the construction.
+
+**Two binaries, one crate, and the split is measured.** The relay is forked twice per tool call and
+its whole cost is process startup, so its dependency list is a latency budget — the crate's manifest
+has said "zero dependencies on purpose" since the relay was written. The installer needs
+`serde_json`. Making it a subcommand of the relay would have put that in the relay's link graph for
+an argv branch nobody on the agent's path takes; a separate crate would have put the marker back in
+two places. A second `[[bin]]` in the same crate is neither. The claim was checked rather than
+assumed:
+
+| | relay binary | installer |
+| --- | --- | --- |
+| before | 286,272 B | — |
+| `serde_json` reachable from the relay's `main` | 319,616 B, +~0.08 ms/exec | — |
+| second binary (what shipped) | **286,272 B**, unchanged | 353,424 B |
+
+Byte-for-byte identical, because nothing links what it cannot reach. §15 also refuses a `use serde…`
+in the relay's own two files — the regression that would fail no build, no test and no lint, and
+would just make every tool call slower.
+
+The choices worth keeping:
+
+- **The installer installs its SIBLING.** `install` copies the `slopdesk-hook` beside itself, found
+  through `current_exe()`. The Swift version took the relay's path as an argument resolved from
+  `Bundle.main`, which is one more place for a build to hand over a relay from a different version
+  than the marker it was compiled against.
+- **Staging survives, with a better reason.** Foundation's `copyItem` cannot overwrite, so the Swift
+  copied to `<name>.staging` and then `replaceItemAt`. Rust's `fs::copy` *can* overwrite — and must
+  not: the binary at that path may be mid-exec in another pane's hook this instant, and a write
+  through the inode corrupts a running process. A staging copy plus one `rename` is now the whole
+  step, and the two-branch "does it exist yet" fork is gone.
+- **Under-reporting stayed the safe direction.** `is_installed` still means ALL of
+  `INSTALLED_EVENTS`, not any — verified against the live settings file on this machine, which
+  carries nine of the fourteen from an older build and correctly reports NOT installed.
+- **The refusal.** A host with no `slopdesk-agenthooks` reports the hooks not installed and fails
+  install rather than merging the file itself. Half an installer — one that wrote entries pointing
+  at a relay it could not stage — looks installed and relays nothing.
+
+One byte-level change, deliberate: Foundation's encoder escapes `/` as `\/` and `serde_json` does
+not, so the installed command in a user's settings file is now a readable path. Both decode to the
+same string, and nothing reads those bytes but a JSON parser. Everything else about the written file
+— sorted keys, two-space pretty, no trailing newline — is what Foundation produced, and the entry
+shape was diffed against the live `~/.claude/settings.json` before the Swift was deleted. 19 Rust
+tests replace the 23 the two deleted suites held.
+
+`slopdesk-agenthooks` is not in `scripts/package-release.sh`'s tarball, which ships `slopdesk`,
+`slopdesk-hostd` and `slopdesk-ctl` — the same pre-existing gap the relay itself and every Rust
+daemon sit in. Closing it is separate work touching every sidecar, not this change.
+
+
+## The metadata probe forks once where it used to fork four times (2026-08-13)
+
+`HostMetadataProbe` was the host metadata RPC's OS shim: ten `MetadataQuerying` methods answering a
+pane's questions about its own cwd, its processes, its ports, its repo, its folders and its agent
+transcripts. Five of the ten were subprocess and filesystem work with nothing behind them but a path,
+and those five are now `rust/slopdesk-probe` — `git-status`, `git-diff`, `list-dir`,
+`list-sessions`, `read-session`, one subcommand each, forked by `HostProbe` (stage 24).
+
+**The seam is the fd, not the language.** What stayed in Swift stayed because a fork does not have
+what it needs: `paneWorkingDirectory`, `processes` and `ports` are anchored to this pane's PTY master
+fd (`tcgetpgrp`, `ptsname`) and to `proc_pidinfo` over every live pid, and `hostVitals` reads a CPU
+baseline that has to outlive the request a fork would die with. `hostName` is one `ProcessInfo`
+field and not worth a spawn. Passing a master fd across an exec to save four lines of Darwin call is
+a trade nobody wants.
+
+**Forking is cheaper here than not forking.** `gitStatus` — the verb the project-scoped
+`RepoStatusWatcher` polls on a cadence, the dominant traffic on this RPC — forked `git` FOUR times
+per request from hostd's own metadata queue: `status --porcelain -b`, `remote get-url origin`,
+`rev-parse --show-toplevel`, `stash list`. It is now ONE spawn from hostd, which makes those four
+inside itself. The other four verbs each ride a person: a folder someone expanded, a diff someone
+opened, a session list someone asked for.
+
+**What this actually bought: the parsing became testable.** The whole file carried the hang-safety
+rule — a real `Process` on a live PTY may not be spun in a unit test — so the porcelain header
+parser, the `XY` status packing, the Claude project-slug convention and the three-base diff ladder
+were *compiled and code-reviewed only*, with a handful of pure helpers promoted to `internal` so a
+test could reach them at all. In Rust they are ordinary functions over strings with the process
+boundary at the edge: 42 tests, including the porcelain cap, the rename-vs-arrow-in-a-filename case,
+the whole nibble table against its client inverse, and every session-root confinement refusal.
+
+**A latent bug came out of the port.** `claudeProjectSlug` mapped Swift `Character`s — grapheme
+clusters — to dashes, but the producer is Claude Code's JavaScript `replace(/[^a-zA-Z0-9]/g, '-')`,
+which runs per UTF-16 code unit. For any astral character the Swift wrote ONE dash where Claude Code
+writes two, so a project whose path contained one had sessions that were silently undiscoverable.
+ASCII is identical either way, which is why nobody saw it. The Rust uses `encode_utf16()` and a test
+pins `"😀"` → `"--"`.
+
+**Empty is an answer; missing is an exit code.** Two subcommands reply in raw bytes, because their
+answer IS bytes — a patch or a transcript, up to 15 MiB, that hostd forwards into an opaque payload
+without looking inside. Wrapping those in JSON would escape every byte on the way out and unescape it
+on the way in to move a blob neither side reads. So "nothing there" cannot be an empty reply (an
+unchanged file has an empty diff) and is exit 3 instead. `check-supervisor.sh` §16 pins `askBytes`
+against the tidy-up that writes `data.isEmpty ? nil : data` and turns every unchanged file into a
+`.notFound`.
+
+The reads stay bounded at the SOURCE, as before: at most `cap + 1` bytes, so the builder's
+`cappedOpaque()` still trims an already-bounded tail and its truncation signal survives. Verified on
+this machine — a 15 MiB session transcript comes back as exactly 15,728,641 bytes. The one
+subprocess left in Swift is `lsof`, and its drain keeps the same budgeted loop for the same reason.
+
+`slopdesk-probe` is not in `scripts/package-release.sh`'s tarball, which ships `slopdesk`,
+`slopdesk-hostd` and `slopdesk-ctl` — the same pre-existing gap the relay, the installer, the seeder
+and every Rust daemon sit in. Closing it is separate work touching every sidecar, not this change.
+
+
+## The TERM decision is about two strings, not about an enum (2026-08-13)
+
+`TerminfoResolver` decided which `TERM` to advertise into a spawned PTY: keep `xterm-ghostty` when
+the host can resolve the entry, fall back to `xterm-256color` when it cannot (Ghostty #54700). The
+search order, both on-disk layouts, the `infocmp` authority and the decision table are now
+`rust/slopdesk-probe`'s sixth subcommand (stage 25). It joined the probe rather than getting its own
+binary for the obvious reason: it is one `stat` sweep and one subprocess, asked about the machine
+hostd is running on, which is what that program is.
+
+**The fallback became a parameter, and that is the design change.** The Swift resolver's decision was
+written in terms of `ClaudeCodeProfile.Term` — a two-case enum it had to agree with. The probe is
+handed two names and knows neither: `terminfo --requested T --fallback F` answers
+`{"term": …, "fellBack": …}`, and "a request that IS the fallback is authoritative" replaces the
+special case for `.xterm256` without naming it. hostd maps the answer back to its enum and owns which
+two names it sends. One fewer thing spelled in two languages.
+
+**What is left in Swift is the degradation, and it is the interesting half.** A host with no probe
+cannot check whether the entry exists, so advertising it would be a guess — and guessing wrong is
+every TUI app on that host starting broken. `resolve` answers the fallback AND reports `fellBack:
+true`, which is what puts it in the one diagnostic the operator gets. Under-reporting it would leave
+a silently degraded terminal with nothing in the log.
+
+**`explicitOverride` stayed an unused parameter, deliberately.** A `.ghostty` request must
+auto-fall back on a host that cannot resolve it whether it was chosen or defaulted; an explicit
+`.xterm256` already wins by BEING the fallback. The parameter keeps the override semantics visible at
+the call site and gives a future "force ghostty even if unresolvable" lever a home.
+
+Fourteen Rust tests replace the fifteen the deleted Swift suite held, over the same conventions: the
+ncurses search order, the empty `$TERMINFO_DIRS` element that must not become a search of `/`, a
+`$HOME` with a trailing slash, a relative directory that must stay relative, and both the `x/` and
+the `78/` layouts — the hex one is what macOS's ncurses writes, and checking only the letter one
+reports "unresolvable" on a machine that resolves it perfectly well. Three Swift tests remain for the
+two paths that reach an answer without the probe saying anything; neither spawns.
+
+The `--xterm256` short-circuit is now in both places on purpose: the probe returns before it stats
+anything, and hostd returns before it forks. The second one is not redundancy, it is the fork it
+saves.
+
+
+## The chunk boundary is read out of the bytes, so it belongs to screend (2026-08-13)
+
+Two functions survived every earlier screend stage on one shared claim: that holding back the
+trailing half of a chunk-cut sequence is the HOST's bookkeeping, because the host is the one that
+cut the chunk. `ScrollbackReplayTransform.splitTrailingIncompleteEscape` guarded escape sequences on
+the ring/tail seam; `TerminalReplaySnapshot.splitTrailingIncompleteUTF8` guarded multi-byte scalars
+on the same seam. Both pre-split, called screend with the head, and re-attached the tail themselves.
+
+Reading them says otherwise. Neither takes an offset, a sequence number or a ring position; both scan
+backwards over at most a few KiB and decide from the bytes alone — a lone `ESC`, a CSI or DCS/APC/PM
+opener with no final byte, an OSC with no `BEL`/`ST`, a UTF-8 lead byte followed by fewer
+continuation bytes than its length promises. "The host knows where the edge is" was never load-
+bearing; the bytes carry it.
+
+What the split location DID cost was real. The reassert ordering — `sanitize`'s re-armed input modes
+must land BEFORE the dangling half, never between it and the live tail's continuation bytes, or the
+split sequence aborts and the continuation prints as literal text — was a convention two call sites
+had to remember, enforced by a test in hostd over a rule implemented in Rust. Now it is an invariant
+of the reply: `sanitize` appends the dangling half after everything, including the reassert, and
+there is no ordering left to get wrong at the call site.
+
+And the two compose verbs genuinely disagree about the dangling half, which is the clearest sign it
+belongs with the verb. `compose` re-attaches it: the stream is a live pane's history and the
+un-acked tail will complete it within milliseconds. `transcript` DROPS it: that stream ended with the
+process that wrote it, the continuation bytes do not exist and never will, so emitting a half-open
+CSI into a fresh shell hands it a sequence that will swallow the next thing the user types. In Swift
+that difference lived in two call sites' comments; in `boundary.rs` it lives in the two verbs.
+
+`ScrollbackReplayTransform` is now one `sanitize` call and an env flag; `TerminalReplaySnapshot` is
+two calls and a `?? raw`. Thirteen Rust tests replace the Swift ones, including the round-trip
+property that the two halves always reconstruct the input — which is the whole safety claim, and was
+never asserted in Swift. `check-supervisor.sh` §9 fails the build if either function name or
+`trailingEscapeScanBytes` reappears under `Sources/`.
+
+## The journal moves to superd after all, because the objection that stopped it was about a pane (2026-08-13)
+
+Reverses **"The scrollback journal stays in hostd; its resume point becomes crash-exact"**
+(2026-08-12), above. That entry rejected moving the disk journal into superd on one reading, and the
+reading was wrong.
+
+The objection: the journal "is keyed by the **client session UUID**. superd is keyed by **pane id**,
+and its panes die with the machine. After a reboot superd has no pane to hang that transcript on, so
+the archive would have nowhere to live." Every clause is true and the conclusion does not follow.
+The archive does not live in superd; it lives in a **file**, and it always did. What the entry
+actually established is that the *lookup* cannot go through superd's pane table — so it doesn't.
+`journal_info`, `journal_delete` and `journal_sweep` take a directory and a session id and touch the
+filesystem; not one of them consults the registry. They answer for a session whose pane died with
+the machine exactly as they answer for a live one, which is the same thing hostd's own store did
+with the same `<uuid>.scrollback` path. A daemon that dies with the machine can write a file that
+outlives it, because that is what files are for.
+
+The second objection has expired rather than been refuted: journal compaction must not cut inside an
+open alt-screen segment, and in 2026-08-12 that scanner existed only in Swift, so superd would have
+needed a second copy in Rust. It has existed in Rust since stage 14. Stage 27 lifted it into
+`rust/slopdesk-altscreen`, a dependency-free crate both consumers share — superd's `journal` and the
+wire crate's `replay` — so the move needed no new implementation of anything. (The Swift
+`AltScreenCutScanner`/`ReplayBuffer` pair is still live under the in-process mux; that duplication
+predates this stage and is tracked with the rest of the ported-but-not-deleted Swift, not created
+here.)
+
+**What the move deletes is the entire class of problem the 08-12 entry then had to solve in place.**
+That entry's own fix was a `<uuid>.scrollback.resume` sidecar, a `spawnedAt` pane-life stamp on it,
+a 250 ms re-claim on the flush path so a killed hostd still left a boundary, and a documented rule
+about which of two non-atomic writes was allowed to be stale. All four exist only because *one
+process was journaling another process's stream*. With superd doing both, "how much of the stream is
+on disk" is `JournalStore::head` — a field advanced under the same lock that appends the bytes, so
+it cannot lag them, returned by `journal_info`. No sidecar, no stamp, no cadence, no trade. A `head`
+that could be stale would belong to a pane superd had forgotten, and superd forgetting a pane means
+superd died, which takes every pane with it.
+
+The split that remains is writing vs policy, and it falls where ownership does. superd decides
+nothing: it writes where it is told, caps at the number it is given, and sweeps with the age and
+count that ride in on every `journal_sweep` call. hostd keeps the directory, the cap, whether a pane
+is journaled at all (`SpawnRequest.journal`, absent for the zero session sentinel and for panel
+backends), which end of life deletes (deliberate close only — a link drop, a TTL eviction and a
+daemon stop all keep the file), and what the bytes MEAN: `ScrollbackTranscripts` renders them
+through the snapshot composer or the distiller, next to the reattach path that answers the same
+question. Two things had to move with the writer for correctness rather than tidiness: the delete,
+because superd may still hold the file open and an unlink under an open writer is a pane journaling
+the rest of its life into an unreachable inode; and the sweep, because "which file is a live pane
+still writing" is the one thing a sweep must not get wrong and only the writer knows it.
+
+`ScrollbackJournal.swift` (732 lines) is gone; `ScrollbackTranscripts.swift` (200) is what replaced
+it, and none of it touches a file descriptor. `MuxChannelSession` lost its journal property, its two
+`recordWindowSize` calls (superd stamps the geometry from the same `spawn`/`resize` requests that
+reach the kernel) and `recordResumePointForTheNextDaemon` entirely — `relinquish()` now stops the
+stream and tears down. superd gained `journal.rs`: one writer thread for all panes, appends that are
+a `memcpy` under an uncontended mutex on the pump thread so no `write(2)` ever lands on the PTY
+reader, and 13 tests. Protocol minor 7.
+
+## The FFI ban was never the user's rule, and it is gone (2026-08-13, user-directed)
+
+`CLAUDE.md`'s porting rule read *"A port ships as a separate binary over a socket, never FFI — no
+foreign build system in the `swift build` graph."* The user removed the first half today, with the
+correction that matters most about it: *"bạn tự thêm rule cấm vào chứ tôi không cấm"* — the ban was
+written by the assistant during this migration, not handed down. `git log -S 'never FFI' --
+CLAUDE.md` returns nothing: the line exists only in this migration's uncommitted working tree. It
+had never been a project invariant; it had been a working preference that then got cited as an
+invariant, including by the uniffi review above, which is exactly the failure mode a rule file is
+supposed to prevent.
+
+**What was actually load-bearing, and stays.** Not "never FFI" — *cargo never runs inside
+`swift build`*. That is what keeps a clean checkout building and `swift test` running headless
+without a Rust toolchain, and it is satisfied by a prebuilt artifact just as well as by a socket.
+The tree already proves it: `ThirdParty/ghostty/libghostty.xcframework` ships `ios-arm64`,
+`ios-arm64-simulator` and `macos-arm64` slices built by Zig, is linked into both app targets by
+XcodeGen (`Apps/ClientApp-iOS/project.yml:53`, `embed: true`), and `Package.swift` never mentions
+it — the files needing `import CGhostty` are deliberately not members of any SwiftPM target. A Rust
+`.xcframework` would occupy the identical slot. `CSlopDeskSIMD`, a C NEON kernel linked straight into
+the client, has always been the same shape and nobody ever called it controversial.
+
+**So the rule is now about lifetime, not mechanism.** A component that must outlive its caller
+(`superd`), be `execve`d (`slopdesk-hook`), or be dialled by two unrelated processes (`screend`,
+`dropd`, `inspectord`, `androidd`) is a binary on a socket — the table in the uniffi entry above is
+still correct and none of it was about FFI being forbidden. A component that is in-process by
+necessity and lifetime-coupled to its caller may be a linked library.
+
+**What this unblocks, and what it does not.** Three modules are currently implemented twice —
+`SlopDeskWorkspaceModel` ↔ `slopdesk-workspace`, `SlopDeskAgentDetect` ↔ `slopdesk-agent`,
+`ReplayBuffer`/`AltScreenCutScanner` ↔ `slopdesk-wire::replay`/`slopdesk-altscreen`. Every one is
+consumed in-process by `SlopDeskClientUI`, so the socket shape could never reach them, and the iOS
+client cannot host a sidecar daemon at all. They are the first candidates the 08-12 review never
+looked at, because that review enumerated the six daemons and stopped there.
+
+It does not, by itself, decide that they move. The old reopen clause demanded a *measured ceiling*,
+and these have none — they are not slow. The justification here is the other rule, the one the user
+did write: **one implementation, never two languages.** That is a different argument and it has to be
+made on its own evidence, which is why the next step is a spike (per-slice binary size on iOS,
+whether uniffi can express the workspace model's tree-ops surface, added CI time) rather than a
+port. `docs/DECISIONS.md` line 38 has listed "iOS XCFramework binary size" as an owed spike since
+the very first planning round.
+
+One cost is real and unchanged from the note in the uniffi entry: a `binaryTarget` holding our OWN
+source as a committed or checksum-fetched blob is not the same as pinning a third party's, and it
+has to be rebuilt on every Rust change. That is the thing the spike has to price, not wish away.
+
+## The `.xcframework` spike came back cheap, and the boundary is bytes, not bindings (2026-08-13)
+
+Measured, not argued. `rust/slopdesk-workspace` (14,287 lines) was built as a `staticlib` behind a
+scratch crate that pins ~40 of its public entry points in a `#[used]` table, so `-dead_strip` and
+thin-LTO keep the surface a real binding would keep, then linked against a one-line C `main` on each
+Apple slice. Profile: `opt-level = 3`, `lto = "thin"`, `codegen-units = 1`, `panic = "abort"`,
+`strip = "symbols"`.
+
+| | added to the linked binary |
+| --- | --- |
+| `aarch64-apple-darwin` | `__TEXT` +376,832 B · file +574,416 B |
+| `aarch64-apple-ios` | file +570,176 B |
+| `aarch64-apple-ios-sim` | file +574,704 B |
+
+**≈560 KB per slice, and there is no fixed Rust tax hiding in it.** A `staticlib` containing nothing
+but one `extern "C" fn` links in at **+48 bytes** over the C-only baseline (16,888 vs 16,840), so the
+560 KB is the domain code plus exactly the `std` it reaches — not a runtime that would be amortised
+by a second crate. The `.a` on disk is 6.2 MB per slice; that number is meaningless, the linker
+discards nearly all of it.
+
+Against that sits **9,742 lines of Swift deleted** (`Sources/SlopDeskWorkspaceModel`), which is not
+free in the app today either. The net is smaller than 560 KB and was not measured, because measuring
+it means doing the port.
+
+**CI: +18 s.** A clean release build of all three slices, LTO and one codegen unit, is 17.9 s wall.
+
+**uniffi is the wrong question.** The crate's surface is not value-in/value-out: `separate`,
+`make_space`, `successor_after_close` and `bucketed_by_project` are generic over the caller's id type
+or take an `impl Fn`, and `normalizing_active(&self, mint: &mut impl IdSource) -> Self` threads a
+mutable id source through. None of those can be named as a function pointer, let alone described in a
+UDL. But they do not need to be: the document already has a byte form on both sides — `persist.rs`
+encodes it and `slopdesk-wire::workspace` already carries the intent envelope over the socket. The
+FFI shape is therefore `(doc bytes, intent bytes) → doc bytes`, one entry point, no generated
+bindings and no object model crossing the boundary.
+
+**One structural consequence.** `slopdesk-workspace` is `unsafe_code = "forbid"`, and `forbid` cannot
+be lifted downstream — that is the point of choosing it over `deny`. `#[unsafe(no_mangle)]` therefore
+cannot live in that crate, so the shim is a separate crate that depends on it. That is the right
+shape anyway: the domain stays unable to leave safety, and the one place that must is small enough to
+read in a sitting.
+
+## Every `unsafe` moves to one crate, because `deny` was never the guarantee it read as (2026-08-13)
+
+Prompted by the user in as many words: *"tách ra những crates unsafe riêng để cô lập tối đa unsafe
+code đi"*. The audit that followed found the surface is smaller than the file layout suggested — all
+of it, five sites, was in `slopdesk-superd`. Twelve crates already had zero `unsafe`; four of them
+were nonetheless sitting at `deny`.
+
+**The defect was `deny` itself.** superd's manifest said the exemption was one module, `spawn.rs`,
+and that was true about intent. It was false about effect: `deny` is liftable by a single `#[allow]`
+anywhere in the crate, so the process holding every live pane's master fd was one attribute away
+from unsafety in any of its eleven thousand lines, with nothing to say so. `forbid` cannot be lifted
+downstream — that is the entire difference, and it is why the fix is a crate boundary rather than a
+comment.
+
+`rust/slopdesk-posix` now holds the `fork`/`execve` window, `SCM_RIGHTS` adoption, the `fcntl` flag
+helpers, `setsockopt` and the `SIGPIPE` disposition. Every other crate in the tree is
+`forbid(unsafe_code)`, superd included. `slopdesk-posix` itself stays at `deny`, deliberately:
+`forbid` there would make the per-site `#[expect(unsafe_code, reason = …)]` impossible, and those
+exemptions are the point — each one is argued, and an `#[expect]` that stops being needed fails the
+build.
+
+**Two sites turned out not to need the crate at all**, which is what applying the admission test
+rather than moving files mechanically bought: `pump`'s `BorrowedFd` helper was working around an
+import collision (`OwnedFd` already implements `AsFd`), and `frame`'s existed only because that
+module's API took raw integers — it takes `BorrowedFd<'_>` now, and the helper vanished with the
+reason for it.
+
+**Two shapes were rejected.** A `posix::fork()` primitive: `fork(2)` is always sound to call and
+what is unsound is the window afterwards, so the primitive would hand its caller an obligation
+covering instructions the *compiler* emits — undischargeable by anyone writing Rust. And a
+`posix::adopt(RawFd) -> OwnedFd`: the proof that a descriptor is unowned exists only in the
+instruction after `recvmsg` returns, so a safe signature would be a lie and an `unsafe fn` would
+push the obligation straight back where it came from. `fdpass::recv_tagged` does the receive and the
+adoption together instead, and the raw integer is never visible.
+
+**`docs/51` §6.9 became a compiler error.** `TIOCSWINSZ` is hostd's alone, but superd's tests must
+stand in for hostd to check the `resize` verb records a truthful size. The setter is behind a
+`winsize-set` feature superd enables only in `[dev-dependencies]`, so `cargo build --release` does
+not compile it and a production caller fails to link.
+
+Gated in `scripts/check-supervisor.sh` against the MANIFESTS, not the source: rustc enforces
+`forbid` per crate already, and what it cannot notice is a new crate spelling `deny` or stating no
+policy at all. Both gates were verified to fire against planted files.
+
+## The FFI boundary is a crate with one convention, and the artifact is gitignored (2026-08-13)
+
+Three Swift modules were still implemented twice — in Swift and in Rust — because the Rust had no
+way to reach an in-process Swift caller. A daemon was not available to them: the iOS client cannot
+host a sidecar at all, and scrollback eviction runs inside the retainer on the output path. So the
+port is linked, and stage 29 built the mechanism and proved it on the smallest of the three pairs:
+`AltScreenCutScanner`'s 150 lines of Swift scanner are now a wrapper over
+`slopdesk_altscreen_reopen`, and that module's existing tests — unchanged, same public signature —
+pass against the Rust. `docs/55-ffi-boundary.md` is the reference.
+
+**Committing the artifact was measured and rejected.** 5.7 MB per slice, 17 MB for three, rewritten
+by every Rust edit. What the app pays is +384 KB linked after `-dead_strip`, so the runtime cost was
+never the question — the git history was. It is gitignored and built by `scripts/build-ffi.sh`,
+following `libghostty.xcframework`.
+
+**It is in the SwiftPM graph anyway, unlike libghostty**, and that is a real cost accepted for a
+real reason: a clean checkout must run `make ffi` once. The reason is the one-implementation rule.
+Rust that `swift test` cannot reach would leave the Swift version as the thing actually under test,
+so "delete the original in the same change" would be unverifiable. cargo still never runs inside
+`swift build`.
+
+**cbindgen was rejected**: it would have to run either inside `swift build` (forbidden) or in a step
+that can silently not have run. The header is written by hand and `build-ffi.sh` checks every symbol
+it declares against every assembled slice, so header drift fails the build, not the app.
+
+**One convention for every entry point**, so there is no per-function ABI to get wrong: `(ptr, len)`
+inputs, a `(out, cap)` output, return = bytes needed, `0` = None, `n > cap` = nothing written, retry.
+No allocation crosses the boundary, so there is no free function and no leak that could be a
+Swift-side mistake. This is affordable only because every wrapped function is pure; a stateful entry
+point needs a different convention and that is a decision, not a patch.
+
+**The stale-artifact failure mode is the one a socket port does not have.** A daemon either answers
+or does not; a linked archive can be last week's logic with every test green. `sources.sha256` is
+written last, hashes every input crate, and `build-ffi.sh --check` runs inside
+`scripts/check-supervisor.sh`, so `make lint` fails on a stale artifact.
+
+`extern "C"` is gated to `rust/slopdesk-ffi` alone — a C entry point inside a domain crate would put
+pointer marshalling next to the logic it marshals and force that crate off `forbid(unsafe_code)`.
+That makes two isolated-unsafe crates, and only two: posix argues about syscalls, ffi argues about
+pointer liveness. A third would dissolve the isolation.
+
+## The replay buffer crosses as a handle, and the cold-reattach cost is recorded, not hidden (2026-08-13)
+
+Stage 30 deleted the second implementation of `ReplayBuffer` — 658 lines of Swift keeping the same
+invariants as `rust/slopdesk-wire`'s `replay::ReplayBuffer` in the same repository. The 48
+`ReplayBufferTests` are unchanged and now exercise the Rust through the C ABI.
+
+**A socket was never available to it.** Appending happens per PTY chunk and the `should_pause_drain`
+answer after that append is what stops the host reading the master; a round trip there is not a
+design, it is a stall. **And the pure convention was not available either**, because the buffer is
+not a function — it holds up to 256 MiB. So `docs/55` gained §4b: Rust owns the object, Swift holds
+an opaque token, and answers still come back through `(out, cap) -> needed`, so "nothing is
+allocated on one side and freed on the other" survives. Producers fill one of three slots on the
+handle and the caller reads items out one at a time, which keeps peak memory at one message instead
+of a second copy of the whole replay. A THIRD convention would be a design change, not a patch.
+
+**The Swift type became a reference type**, which is the one semantic change. Nothing relied on
+copying it — the owning session holds exactly one under `replayLock` — and a silent copy of a
+256 MiB buffer was never something anyone meant to write. The lock is now load-bearing for a second
+reason: overlapping calls on one handle are aliasing UB, not a lost update.
+
+**Measured, against the implementation being deleted** (release, 32 KiB chunks, 64 MiB ring): append
++ ack over 640 MiB is 446 ms vs 531 ms — Rust FASTER; the per-ack lag probe is at parity; a warm
+reconnect costs +8 µs; a cold reattach costs **+30 ms**. That last one is a real regression and is
+recorded as one. It is one memcpy of the history through the distiller callback each way plus one
+out of the message slot, and it sits inside an operation whose compose step renders 64 MiB at a
+measured 17.9 MiB/s — 3.5 s. 0.85%.
+
+**The fix is to delete the callback, not to optimise it.** `sanitize` is a library function in
+`rust/slopdesk-screend`; linking it into the shim removes both memcpys AND the 64 MiB AF_UNIX round
+trip that BOTH implementations pay today, putting the cold path ahead of the Swift original. Held
+back because it also removes screend's absent-engine identity policy and grows the artifact.
+
+The A/B benchmark that produced these numbers was scratch and is deliberately NOT in the tree: it
+had to hold the deleted Swift buffer to compare against, which is precisely the cross-language
+mirror fixture the one-implementation rule forbids. Re-create it from git history when a follow-up
+needs the number again.
+
+## Agent detection crosses as a vocabulary plus a rule set, not as one or the other (2026-08-13)
+
+The third and last double implementation. `Sources/SlopDeskAgentDetect` (2,152 lines, nine files)
+mirrored `rust/slopdesk-agent` (4,637 lines, eleven modules) one-for-one, and unlike the replay
+buffer it could not simply become a handle: a pane's status is an `enum` a SwiftUI `switch` reads,
+so something had to stay in Swift.
+
+**The line, which is now gated rather than argued.** The CASE LIST stays — `AgentKind`,
+`ClaudeStatus`, `AgentScreenState`, `ClaudeSignal`, `ClaudeHookEvent`. Declaring the same cases in
+two type systems is one vocabulary, not two implementations, and marshalling an enum through C buys
+nothing. Every TABLE and every WALK moved: the alias table, the wrapper basenames, the keystroke
+classes, the rollup rank (`ClaudeStatus.urgency` looks like a property and is really the total order
+the wire depends on), the display labels, the temporal hold's counters, the job-identify ladder, the
+900-line status machine. A one-line identity predicate like `isBlocked` stays, because routing
+`self == .needsPermission` through C would add a boundary crossing to restate the case list.
+
+What crosses is therefore a DISCRIMINANT, which makes the case lists a cross-language contract:
+`check-supervisor.sh` compares the Swift case counts against `AgentKind::ALL` and
+`ClaudeStatus::ALL`, so a reordered enum fails the build instead of reporting `working` for
+`blocked`.
+
+**Two ABI shapes were added, both to avoid unreadable Swift.** A hook event carries up to six
+optional strings; six `(ptr, len)` pairs would be six nested `withUnsafeBytes` per call, so they ride
+in ONE buffer as bounds-checked `(offset, len, present)` spans. And a foreground job — a pgid plus N
+processes, each with three optional strings and a whole argv — is STAGED on a handle
+(`push_process` / `push_argv` / `identify` / read the answer slot), the same shape the replay
+buffer's input slot already uses.
+
+**It found a live bug, which is the argument for having done it.** `process::basename` used
+`rsplit('/').next()` where the Swift used `split(separator:).last`, so `/usr/local/bin/claude/`
+answered NOT-claude in Rust and claude in Swift. The two had disagreed since the port and neither
+side could see it, because neither ran the other's tests. One function now, with the Swift test's
+own case pinned to it.
+
+Cost: 2,152 Swift lines → 1,236, of which ~260 is marshalling. The 135 tests in
+`SlopDeskAgentDetectTests` are unchanged and now exercise the crate.
+
+**Also fixed here, and it was a latent version of the failure `docs/55` §3 exists to prevent:**
+`INPUT_CRATES` in `build-ffi.sh` still listed only `slopdesk-ffi` and `slopdesk-altscreen`, so the
+staleness stamp had been blind to `slopdesk-wire` since stage 30. Both it and `slopdesk-agent` are
+listed now.
+
+## The workspace's SOLVERS cross; its DOCUMENT does not (2026-08-13)
+
+Stage 32 deleted six Swift files in `SlopDeskWorkspaceModel` against `rust/slopdesk-workspace` —
+`SendKeysParser`, `FocusResolver`, `TabOrdering`, `CanvasGeometry`, `CanvasNonOverlap`, `CanvasSnap`.
+The line is the same one stage 31 drew for agent detection, and it lands in a different place here
+for a reason worth writing down: **262 files import this module.** A `SplitNode` or a `Canvas` is
+what SwiftUI diffs to decide what to redraw, so the value types are the app's vocabulary and stay
+Swift. What crossed is the half that DECIDES — where focus lands, where a dragged pane may rest,
+what order the sidebar's sections come in, which tab survives a close.
+
+**The closures flattened rather than trampolined.** Three of these rules take a
+`(TabID) -> String?` in Swift and a `Fn(TabId) -> Option<String>` in Rust. Calling a Swift closure
+back from Rust per element would have been the one thing in the boundary that is not a value copy;
+instead the caller evaluates it once per id and hands over `(id, span)` pairs into one strings blob —
+stage 31's encoding, reused unchanged.
+
+**Two answers stay Swift on purpose.** `bucketedByProject<Element>` is generic over its element and
+cannot cross, so the generic bucketing stays and calls the Rust comparator: the ORDER is the rule,
+the bucketing is a container shuffle. `paneProjectKey`/`tabProjectKey` walk a `Session`, which is the
+document — they stay until stage 33 moves `PaneSpec`.
+
+**One behaviour narrowed, deliberately.** `sectionPrecedes` used Foundation's
+`localizedStandardCompare`; the crate's `natural_compare` is case-insensitive with numeric digit runs
+but does NOT fold diacritics, so `Café` and `Cafe` are distinct rather than adjacent. Section headers
+are directory basenames, where that is a rounding error — but it is a real difference, and
+`check-supervisor.sh` now fails if `localizedStandardCompare` reappears in this module's code (doc
+comments are stripped first, so naming the retired collator to explain the narrowing is still legal).
+
+**The tuning constants are exported, not transcribed.** `slopdesk_ws_non_overlap_default` and
+`slopdesk_ws_snap_default` hand the crate's own defaults to Swift. The snapper's gutter and the
+slide's gutter have to be the same number for a gutter-snapped box to already sit at the non-overlap
+boundary; twelve literals repeated across the boundary would be twelve chances for that to stop
+being true.
+
+Cost: 2,051 Swift lines → 1,317, of which ~154 is the shared bridge. Every pre-existing Swift test
+is unchanged and now exercises the crate — 138 canvas tests and 13 tab-ordering tests among them,
+which is the bit-exactness check `CLAUDE.md`'s float rule demands.
+
+### Amendment — the tree crosses in BOTH directions (2026-08-13)
+
+`SplitNode+Ops` answers trees, not scalars, so the pre-order walk the layout solver introduced is now
+a two-way primitive (`WsTree` on the Swift side, `encode_tree`/`decode_tree` in the shim). Still not
+the persisted JSON: these ops run on a gesture, and a parse per frame is the regression that vetoes a
+port. The decode is total over hostile input on both sides — a walk claiming more children than it
+carries is refused rather than trapped on.
+
+Two answers are deliberately distinguished where a single one would have been simpler. `SIZE_MAX`
+means the op did not APPLY, which is not a tree of zero nodes: closing a pane that is not there must
+leave the arrangement standing, where an empty answer would close the tab. And `mapLeaves` stays
+Swift — its rule IS the caller's closure, so it is a container walk rather than a decision.
+
+The crate mints nothing (`identity.rs`), so the three ops that create a split take the fresh
+`SplitNodeId` as an argument and Swift mints it at the call site. The public Swift signatures are
+therefore unchanged for their 262 importers while the rule underneath them moved.
+
+### Amendment — the arrange commands moved DOWN before they moved across (2026-08-13)
+
+`Canvas::aligning`/`distributing`/`tidied` lived on the plane in both languages, reading `item.id` and
+`item.frame` and writing `item.frame` — and nothing else. Exporting the plane itself was never an
+option (a `Canvas` carries specs, groups and z that none of these rules consults, and it is what
+SwiftUI diffs), so the rules were first extracted into `canvas_arrange` as functions over `(id, rect)`
+pairs. `Canvas` now delegates to them and so does the shim: ONE implementation with two callers,
+rather than a crate method and an FFI copy of it.
+
+Each answers only the frames that MOVED. A caller applies the answer by lookup, so a pane nobody
+named is untouched by construction rather than by a copy that happened to reproduce it.
+
+One behaviour was narrowed deliberately, as with `sectionPrecedes` before it: panes sharing a leading
+edge exactly used to keep whatever order `items` happened to be in during a distribute, and now break
+the tie by id. The spread is a function of the SET either way, which it was not before.
+
+This file did not shrink — 511 → 532 lines, the arithmetic replaced by marshalling and by the
+paragraphs above. The win here is not size; it is that "aligned to a shared edge" has one home.
+
+### The workspace's OPS do NOT cross — only the algorithms inside them (2026-08-13)
+
+`WorkspaceTreeOps` (1,222 lines) and the crate's `tree_ops` (1,500) mirror each other op for op, and
+that mirror is NOT going away. Every one of those functions takes a `TreeWorkspace` and answers a
+`TreeWorkspace` — sessions, tabs, titles, specs, focus — and marshalling that document across the
+boundary on every keystroke is precisely the per-frame cost `CLAUDE.md` says vetoes a port. The
+document stays Swift, as it has since stage 32.
+
+What crossed instead is the one part of a re-tile that is an ALGORITHM rather than bookkeeping: the
+tiler. `tree_ops::rebuild` became `pub`, and the Swift `rebuild`/`flatSplit`/`tiled` trio (~80 lines
+of index arithmetic) is now one call. The workspace-level `applyLayout` around it — locate the tab,
+clear the zoom, install the tree, normalize the specs — stays where the document is.
+
+Two consequences worth naming. The main-\* layouts take the FIRST leaf as the large one, so "which
+pane is active" is decided by the caller ORDERING the leaves and never crosses at all. And because
+the crate mints nothing, the split identities are minted Swift-side into a pool the tiler draws from;
+`n + 1` entries cannot run dry for `n` leaves, so the pool has no failure mode to handle.
+
+This is the line for the rest of stage 33: an op that shuffles the document stays, an algorithm
+inside one moves — after being lowered in the crate to a function over what it actually reads.
+
+### The state codec's SCALAR layer crosses, for safety rather than speed (2026-08-13)
+
+Every other port in stages 31–33 was justified by "the rule should have one home". This one is
+justified by what the code DOES: `WorkspaceStateCodec`'s scalar layer decodes bytes that came off a
+socket, and its safety property is strictness — a value of the wrong length is a DROP, never a lenient
+prefix read. That property has to hold identically on both ends, because a mis-numbered field that
+decodes leniently succeeds into something plausible: a `grid` of `(0, 0)` letterboxes a pane to
+nothing, and a truncated `lastExitCode` reports a clean exit for a process a signal killed.
+
+`state_codec` is the one crate module written for the far end rather than for the plane. Absence is
+carried by an out-parameter and a bool, never by a sentinel: `-1` is a real exit code and
+`0xFFFFFFFF` is its encoding, so no in-band answer could have meant "not a value of this kind".
+
+Two things stayed Swift on purpose. `decodeString` is `String(data:encoding:)` — Foundation's UTF-8
+validation is the same validation, and round-tripping bytes through the boundary to learn what
+Foundation already knows would be cost without a property. And `encodeString`'s clamp takes its limit
+as a PARAMETER, because a rename is clamped tighter than a title and the limit belongs to whoever
+knows the field.
+
+The file grew 555 → 588 lines. As with `Canvas+Ops`, the win is not size — it is that "a wrong-width
+field is a drop" is now one implementation instead of two that could drift apart silently.
+
+### Amendment — the snapshot and diff parse crosses too (2026-08-13)
+
+The scalar layer went first; the STRUCTURAL layer is where the risk actually was. `decodeSnapshot`
+and `decodeDiff` read a count and a length, both chosen by whoever is on the other end of the socket,
+and every bound has to be checked against the bytes actually remaining before any capacity is
+reserved. That is now `state_codec`'s `Reader`, where nothing panics and every read is `Option`.
+
+A decoded value crosses back as a SPAN into the buffer the caller handed in, never a copy. A snapshot
+is hundreds of entries and arrives on every attach; copying each value into a second blob would
+double the work for no property. Rust's lifetimes make that safe to state — `Entry<'a>` borrows its
+buffer, and the borrow checker rejected the first version of the round-trip test for freeing the
+bytes while the entries still pointed at them. That is the class of bug this port exists to remove,
+caught in the port itself.
+
+`decodeDiff`'s entry point writes BOTH counts even when a buffer was too small, so one probing call
+sizes both halves and a diff that is mostly deletes never costs a retry for the sets it barely has.
+
+`maxEntryCount` is exported, not transcribed. It is a REFUSAL threshold, so two copies would be two
+ideas of what counts as an absurd document — and the smaller one would reject states the other
+happily sends.
+
+### The layout decoder's recursion was REMOVED, not capped again
+
+`decodeLayoutNode` was recursive, and its depth cap was load-bearing: the comment said so — the cap
+was the stack-safety mechanism. That makes a number chosen for documents ("no sane layout nests past
+twelve") the only thing between a socket and a stack overflow, and the two reasons for it cannot be
+tuned independently. Raising the cap for a legitimately deep board would be raising the crash floor.
+
+`state_codec::decode_layout` walks the flat encoding with an explicit frame stack: a node fills one
+slot of its parent's frame, a split with children opens a frame of its own, and completed frames
+close in a loop. A thousand-deep hostile nesting is now refused by the counter rather than by the
+process dying, and the cap goes back to being a statement about documents only. The test asserting
+that is `a_deeply_nested_layout_is_refused_without_a_stack_to_overflow`.
+
+The two refusals stayed two refusals. `decode_layout` answers `Result<_, LayoutError>`, and the entry
+point carries `depth_exceeded` as a FLAG beside the `SIZE_MAX` sentinel rather than folding both into
+it — the same "absence is a flag, never a sentinel" discipline the scalar decoders use. A tree past
+the cap is a well-formed document this build declines to hold; an unknown tag is a bug or an attack.
+Telling a person "corrupt" about the first would be a lie that every round-trip test still passes.
+The Swift tests caught exactly that when the first port collapsed them, which is why the gate now
+pins `depthExceeded` in the Swift file.
+
+### `ByteReader` is gone, and with it the last hand-written parse in the model
+
+`decodeDetachedPanes` and `decodeVideoTarget` were the last two field values read in Swift, and they
+were the reason the file still carried a `ByteReader` at all. Both are now `state_codec`'s, so the
+cursor, the `appendBE` loop and the sixteen-way uuid unpack were deleted rather than left as a second
+reader nothing calls — a dormant parser is still a parser, and the next field added would have found
+it and used it.
+
+The video target's strings come back as SPANS into the buffer Swift lent, not copies. A pane record
+carries two of them and arrives with every pane; the decoded `&str` borrows the input, so the offset
+is found by pointer arithmetic inside the slice rather than by re-walking the format. Swift reads
+them inside the same `withUnsafeMutableBufferPointer` scope that produced them, which is the same
+lifetime discipline the snapshot's entries already use.
+
+Both sentinels stopped at the boundary. The wire spells "no origin tab" as the all-zero uuid because
+the pair is fixed-width, and "not on a display" as a presence byte because display `0` is the main
+display — the crate translates both into `Option` before anything crosses, so neither side has a
+second idea of what absence looks like. `display_zero_is_a_display_and_not_an_absence` is the test.
+
+The fixed-width ENCODERS crossed at the same time, and for the plainer reason: `encode_u32` existed
+in both languages. They carry no probe-and-retry, because the width is known before the call.
+
+### The document's crossing cost is now MEASURED, and it vetoes the whole-document port
+
+`CLAUDE.md` allows only a measured regression to veto a port, and the ruling that kept
+`WorkspaceTreeOps` in Swift had never been measured — it was an argument about marshalling, which is
+exactly the kind of claim that is usually wrong. `WorkspaceMarshalBenchTests` runs the real path:
+`WorkspaceTopology.entries()` → `encodeSnapshot` → `decodeSnapshot` → `WorkspaceTopology(entries:)`,
+all of it shipped code, the codec legs already in Rust.
+
+On this Mac Studio:
+
+| shape | entries | project | codec | ingest | total |
+| --- | --- | --- | --- | --- | --- |
+| 1 session, 3 tabs, 3 panes | 45 | 115 µs | 238 µs | 68 µs | 0.4 ms |
+| 3 sessions, 5 tabs, 4 panes | 244 | 702 µs | 1,744 µs | 396 µs | 2.8 ms |
+| 6 sessions, 8 tabs, 6 panes | 1,042 | 4,043 µs | 6,683 µs | 1,852 µs | 12.6 ms |
+
+A 120 Hz frame is 8,333 µs. The middle row is an ordinary workspace, and 2.8 ms of it would be spent
+marshalling on every frame of a divider drag; the bottom row misses the frame entirely. The
+assumption held, and it is no longer an assumption.
+
+What this does NOT say is that the tree ops stay Swift forever. The rules inside them already cross —
+every `SplitNode` op delegates to `split_tree`, and the tiler to `tree_ops::rebuild` — bounded by ONE
+TAB's pre-order walk rather than by the document. The Swift that remains in `WorkspaceTreeOps` is a
+walk over the document's own value types to find the tab, which is the part the measurement says must
+not cross.
+
+The host has its own copy of these ops in `slopdesk-wire`'s `document::apply`, over
+`slopdesk_workspace::tree_ops`, and that is deliberate rather than a drift: the host decides what the
+document BECOMES and the client draws an optimistic overlay of the same gesture, so the two run the
+same rules from opposite ends. Collapsing them into one would mean the client waiting a network round
+trip to see its own keystroke land, which is a product decision and not a port.
+
+### The field vocabulary is pinned across the two languages
+
+`rust/slopdesk-wire/src/document/fields.rs` and `WorkspaceFields.swift` are the same 45 numbers
+written twice, and the Rust file's own header explains why that is dangerous: nothing in the codec
+maps through the constants, every value is length-prefixed, and an unknown byte is kept verbatim. A
+field renumbered on one side therefore decodes perfectly cleanly into the wrong meaning — the host
+would write `pane/cwd` and the client would read it as `pane/projectKey` with no error anywhere.
+
+`check-supervisor.sh` now extracts both tables and diffs them, comparing names case- and
+underscore-insensitively (the two languages spell the same field `focusMRU` and `FOCUS_MRU`, and
+neither spelling is wrong). Confirmed by renumbering `root/closedTabRing` to 60 and watching the gate
+name the exact pair.
+
+The INTENT VERBS are pinned the same way, for a sharper version of the same reason: an op byte is
+the whole of what one end asks the other to do, so two ends numbering them differently is a client
+asking for a rename and a host performing a close. 27 ops, both languages.
+
+This does not make the duplication fine — it makes it survivable. The vocabulary is duplicated
+because the host is Rust and the client is Swift and neither can import the other's constants; the
+gate is what turns "two copies" into "one copy checked twice".
+
+### The replay transform is a linked crate, and screend verb 7 is retired
+
+`sanitize` — the seven-pass scrollback replay transform — used to be verb 7 on the screend socket.
+It is `rust/slopdesk-sanitize` now: a dependency-free `forbid(unsafe_code)` crate that screend and
+the app both link, reached from Swift as `slopdesk_sanitize` through the `make ffi` artifact.
+
+The rule that decided it is `CLAUDE.md`'s own — a socket is for a component that must outlive its
+caller, be `execve`d, or be dialled by two processes — and `sanitize` is a pure function of its
+bytes, so it is none of the three. The screen MODEL is all three, which is why the daemon stayed.
+
+Living behind the socket cost three things, and only the first was a performance cost:
+
+- A round trip over the whole retained ring in each direction, per pane, on a cold reattach — the
+  one path where a person is watching a blank pane wait.
+- The only re-entrant edge in `slopdesk-ffi`: a `slopdesk_distill_fn` C callback so the Rust ring
+  could reach back through Swift to the daemon, carrying two `unsafe impl Send + Sync` promises
+  about a pointer nothing in the repo could check. Deleting the callback deleted both.
+- A documented degraded path. "screend is absent" meant a fully RAW replay, so a `?1002h` recorded
+  inside a TUI replayed verbatim and armed the client's input reporting until the next prompt reset
+  it. There is no "when screend is not there" for replay any more: the passes are in the binary.
+
+`slopdesk-sanitize` is its own cargo workspace rather than a screend member because it is linked
+into an iOS app, which wants `panic = "abort"` where the daemon insists on `unwind`; profiles are
+workspace-global, so the two cannot share one. It keeps `indexing_slicing` DENIED, unlike screend,
+which allows it for the grid — there is no grid here, only byte scanners over slices.
+
+Verb 7 stays unallocated rather than being reused. A hostd built before the extraction still sends
+a 7 meaning "clean this replay"; a daemon that answered something else would return a well-formed
+reply of the wrong kind. `check-supervisor.sh` fails the build if either enum allocates it again,
+verified by adding a `Ghost = 7` to each side in turn and watching the gate name that side.
+
+### The FEC's NEON kernel comes back, in a third `unsafe` crate
+
+`Sources/SlopDeskVideoProtocol/{GF256,ReedSolomonMatrix}.swift` and `Sources/CSlopDeskSIMD` are
+deleted; the video forward error correction is `rust/slopdesk-video`, called through
+`slopdesk_video_fec_parity` / `slopdesk_video_fec_recover`. That was the last C target in the tree
+and the least safe code in it: `NeonGf` reached through the C target with `UnsafeBufferPointer`,
+`withUnsafeTemporaryAllocation` and a `swiftlint:disable force_unwrapping`, and both the encoder and
+the decoder passed raw `UnsafeMutableBufferPointer` accumulators around — on the path that parses
+hostile UDP off the network.
+
+**The port was tried twice without a vector kernel, and both attempts failed on speed.** The first
+inherited the flat 256-entry multiplication table; the second replaced it with a bitsliced `u64`
+multiply that folds `x * c` over `c`'s bits with per-lane carry containment, written branchless and
+unrolled to eight fixed steps so LLVM would vectorise it. Both landed at roughly twice the Swift,
+and the second was within noise of the first. That is not a tuning gap. A table lookup is a GATHER,
+which no autovectoriser will touch, and bitslicing trades it for about five operations per byte
+where `vqtbl1q_u8` does sixteen bytes in four. The algorithm the fast path needs is a 16-byte table
+shuffle, and on stable Rust `vld1q_u8` / `vst1q_u8` take raw pointers.
+
+So the kernel came back as `rust/slopdesk-gfsimd` — two byte-region loops, their scalar twins, and
+nothing else. It takes its lookup tables as arguments, so it does not know it is doing GF(2^8): the
+field, the tables and the codec all stay in `slopdesk-video` under `forbid(unsafe_code)`. Its
+differential suite runs 256 table pairs across lengths that straddle the 16-byte chunk, at four
+alignments, inside guarded arenas, and `make miri` runs the same suite under Miri — which is what
+actually reads the loads and stores. `CLAUDE.md`'s rule is now three crates, not two, and the bar
+the third cleared is the bar for a fourth.
+
+**The other half of the gap was marshalling, not arithmetic.** With the kernel in, the codec was
+fast enough that flattening the arguments cost more than computing on them: 0.51 µs to copy a
+group's eight 1200-byte fragments into one span, against 0.24 µs of parity. Two fixes were tried and
+only one survived, which `docs/55` §4d records in full:
+
+- **Descriptors instead of a copy — REVERTED.** Passing `(address, length)` pairs moves 132 bytes
+  instead of 9.6 KB, and it worked, and it is unshippable: `withUnsafeBytes` guarantees its pointer
+  only inside its closure, so describing N fragments is N nested closures, and
+  `RustFECLargeFrameStackTests` — which runs the FEC over 3000 fragments on a deliberately 512 KB
+  stack, because that is the size of the production send thread's — killed it with SIGBUS. That test
+  predates the port; the Swift codec had the same bug once. The shape is a trap independent of the
+  language underneath. Measured, it also bought nothing on the encode path: the nesting cost about
+  what the copy did.
+- **`recover` answers with the REPAIRS — KEPT.** The answer is a list as long as the data list in
+  which only the holes this call closed carry bytes, so a single-loss frame comes back as one shard
+  and a run of four-byte absences instead of a copy of every fragment the caller already had. An
+  answer has no lifetime problem, because the callee owns the allocation it is copied out of.
+
+Measured on a Mac Studio, k = 8, 1200-byte shards, release build, µs per GROUP. The first three
+columns are one group per call, which is what the original bench timed and therefore the only shape
+the deleted Swift can still be compared against; the fourth is the same Rust at a 32-fragment frame,
+which is the shape production actually calls.
+
+| shape | Swift + NEON (deleted) | Rust, safe only | Rust, shipped | shipped, per frame |
+| --- | --- | --- | --- | --- |
+| encode m=2 | 5.46 | 9.83 | **2.66** | **2.16** |
+| recover m=2, 2 holes | 5.03 | 12.22 | **4.30** | **3.74** |
+| encode m=1 *(the wire)* | 0.643 | 1.28 | 1.29 | 1.03 |
+| recover m=1, 1 hole | 1.59 | 3.45 | 2.54 | 2.14 |
+
+The fourth column exists because hostd hands `parity(forDataFragments:groupSize:)` a WHOLE frame, so
+the boundary's fixed cost — one flattened list, one answer buffer, one codec — is paid once per frame
+while the per-byte cost scales with the groups. Timing a single group charges the entire fixed cost
+to that group and reads ~25% pessimistic. It is not a like-for-like column: the Swift codec had
+almost no fixed cost to amortise, so its own frame number would have moved much less.
+
+The `m == 1` rows also show what the vector kernel did NOT fix. At `m == 1` the codec is a plain XOR
+costing 0.24 µs, and everything above that is the crossing — which is why the descriptor and
+repairs-only changes moved those two rows and the kernel barely did, and why `m == 2`, where there
+is real arithmetic to do, is the column that halved.
+
+**The residual `m == 1` regression is accepted.** It is 1.6 µs per encoded frame against a 33,333 µs
+budget at 30 fps — 0.005% — and it buys the deletion of the last C target, the whole
+`UnsafeBufferPointer` category on the network parsing path, and a multi-loss tier that is now 2.5×
+faster than the code it replaced. `m == 1` is the shipped wire; `m >= 2` is opt-in through
+`SLOPDESK_FEC_M`, and it is the tier that runs when the link is actually losing packets.
+
+`slopdesk-video` stays `forbid(unsafe_code)` with exactly one dependency. `slopdesk-gfsimd` is its
+own cargo workspace for the usual reason — profiles are workspace-global — and sits at `deny` with a
+self-expiring `#[expect(unsafe_code, reason = …)]` at each of its two `unsafe` sites, so a block that
+stops needing the exemption fails the build.
+
+### The send path stops being Swift, and the FEC boundary disappears into it
+
+**The FEC was never the expensive part.** With the kernel landed, a 32-fragment frame's parity cost
+4.4 µs at `m == 1`. The same frame's `packetizeRaw` cost 32.7 µs — and 25.1 µs of that remained with
+the FEC switched off entirely. So the measurement that mattered was the one nobody had taken: where
+the other 25 µs went.
+
+It went to `FrameFragment.encode()`. Splitting a 36 KB frame produced 31 payload `Data`s (one
+allocation and one copy each), and each finished datagram was then a fresh `Data(capacity:)` grown by
+eight `append` calls. Timed apart: 4.2 µs to build the fragments, 20.5 µs to encode them — 0.66 µs
+per datagram, for a 19-byte header and a 1200-byte copy. A probe put the floor for producing 31 owned
+`Data`s at all at 3.0 µs, so about 17 µs per inter frame was allocator and `append` overhead and
+nothing else.
+
+**And the replacement was already written.** `rust/slopdesk-video` had `packetizer`, `interleaver`,
+`adaptive_fec` and `packetize_lane` ported and tested — 31,567 lines of crate, of which only `fec`,
+`rs_matrix`, `gf256` and `blob_list` (about 1,900) were reachable from anything the product runs. The
+other 94% was a cross-language mirror that no test could catch drifting, because nothing called it.
+That is the state this repo's one-implementation rule exists to prevent, and it had accumulated one
+stage at a time by porting ahead of linking.
+
+**So the seam moved up one layer**, from the FEC to the whole send path. `VideoPacketizer` is now a
+handle onto the Rust packetizer (§4b): the MTU split, the tier ladder's per-frame group size and `m`,
+the parity, the interleave and the 19-byte stamp all happen on the other side, and what comes back is
+one flattened list of finished datagrams. The FEC boundary is gone from the send path — not made
+cheaper, gone: parity is computed where the fragments already live, so there is nothing to marshal.
+`packetize` (the `[FrameFragment]` entry the tools and tests use) is now a *decode* of those
+datagrams, which inverts the old relationship on purpose: the wire form is what the packetizer
+produces, and a second construction path here is exactly what would drift.
+
+Measured on a Mac Studio, release build, µs per FRAME:
+
+| shape | before | after |
+| --- | --- | --- |
+| inter 36 KB, m=1 *(the wire)* | 32.7 | **12.2** |
+| inter 36 KB, no FEC | 25.1 | **10.5** |
+| inter 36 KB, m=2 | 61.9 | **25.3** |
+| IDR 400 KB, m=1 | 349 | **137** |
+| IDR 400 KB, m=2 | 680 | **280** |
+
+**Why the answer crosses by value, again.** The datagrams total ~41 KB for an inter frame and are
+copied twice — once into the caller's buffer, once as Swift slices it into `Data`s. That sounds like
+the thing to optimise until you price the alternative: `Data(bytes:count:)` from a pointer costs
+~97 ns, while `Data(count:)` plus a fill costs ~333 ns, so handing the datagrams over one slot at a
+time — the shape `ReplayBuffer` uses — would be *slower* than flattening all of them and slicing.
+The send lane needs owned `Data`s regardless, because a queued job outlives the call that made it.
+
+**What was deleted.** `packetizeFragments`, `makeFragment` and the m-aware parity ladder inside
+`FramePacketizer.swift`; `FragmentInterleaver.swift` and its tests, whose last caller outside the
+packetizer was `slopdesk-loopback-validate` reordering by hand after asking for an un-interleaved
+frame — a tool reproducing the host's composition instead of driving it, which is what a mirror looks
+like before it drifts. It now passes `interleave:` through. `check-supervisor.sh` pins both: the
+Swift packetizer must still call the three handle entry points, must not grow the two builders back,
+and the interleaver's two files must stay gone.
+
+`PacketizeLaneTests` lost its instrument in the move — `GatedFEC` pinned "mid-packetize" by blocking
+inside a Swift `FECScheme` that the packetizer no longer calls. The keystroke-latency contract it
+guarded is real, so the test was rewritten to pin ORDER rather than a gate: `inject` must complete
+before the pump does, which the pre-fix inline shape cannot satisfy however long the test waits.
+
+### The receive path follows, and the hostile-input guards stop existing twice
+
+The send path's port left the symmetric half in Swift, which is the half that matters more. The
+reassembler is where UDP with no authentication beyond the mesh is parsed: a crafted `fragCount`
+makes assembly build a per-frame array before anything checks it, a `fragIndex >= fragCount` can
+never complete a frame, and a `frameID` that jumps the loss frontier by millions would strand the
+stream forever if the resync rule were not exactly right. Those guards existed in both languages.
+Two copies of a guard is worse than two copies of an algorithm — an algorithm that drifts produces a
+wrong picture, a guard that drifts produces a reachable allocation.
+
+So `FrameReassembler` is a handle now, on the same convention. It holds frames under construction, so
+it is the memory case; and a verdict depends on everything it has been shown rather than on the
+datagram in hand — a frame is lost only once a NEWER frame arrives while a hole remains — so it is
+the state-is-the-answer case too. `ingest` answers a tag and parks the frame behind it.
+
+**The header crosses as seven scalars, not as its nineteen bytes.** The client's router already
+decodes every video datagram to read `frameID` and `hostSendTsMillis` for the one-way-delay
+telemetry before it decides where the datagram goes, so passing the bytes would decode them twice.
+That leaves `FrameFragment`'s codec in Swift on purpose: moving it means moving `route`, and a seam
+half-moved is the state this stage exists to get out of.
+
+Measured on a Mac Studio, release build, µs per FRAME — every fragment ingested, the clean path and
+the one-data-hole path (which is the one that runs when the link is actually losing packets):
+
+| shape | before | after |
+| --- | --- | --- |
+| inter 36 KB, m=1 *(the wire)* | 11.9 | **8.5** |
+| inter 36 KB, m=1, one hole | 18.9 | **10.5** |
+| inter 36 KB, m=2, one hole | 22.0 | **13.4** |
+| IDR 400 KB, m=1 | 120 | **95** |
+| IDR 400 KB, m=1, one hole | 182 | **117** |
+| IDR 400 KB, m=2, one hole | 198 | **142** |
+
+This is the client's CPU, on the weaker of the two ends, and the loss path — the one the FEC exists
+for — is where it gained most.
+
+**One public member did not survive:** `frontierJumpRejectedCount`, telemetry with no reader in
+`Sources/` or `Tests/`. Rust keeps the counter; nothing asks for it, so nothing crosses for it.
+
+`check-supervisor.sh` pins the shape rather than the behaviour, because behaviour pins would keep
+passing while a second implementation drifted: the Swift reassembler must still call `ingest`,
+`frame_avcc` and `free`, and must not grow `maxFrontierJump`, `resyncStreak`, `resyncClusterWindow`
+or `frontierJumpCandidates` back. Its four test files stay — they drive the public API, which is now
+the boundary, so they became boundary tests without changing a line.
+
+### The wire layout stops being written twice, and a dead scheduler arm goes with it
+
+The two paths met at nineteen bytes that both languages spelled out. `FrameFragment.encode()`
+appended seven fields in big-endian order and `decode(_:)` read them back through `VideoByteReader`;
+`rust/slopdesk-video`'s `fragment` did the same, and was the module every ported piece around it
+already used. Nothing failed — the golden vectors pinned the bytes, so both copies stayed correct.
+That is exactly the state the one-implementation rule names: a layout that only drifts the day
+someone moves a field, and then drifts silently, because a byte-identity test compares each side
+against the golden file and never against the other side.
+
+So the codec is Rust's, and `FrameFragment` stays Swift. **Data is not a second implementation; a
+codec is.** The struct and its `Flags` are read by the mux header codec and the golden generator, and
+moving them means moving `MuxFrameFragmentHeader` — a seam of its own, not a rider on this one.
+
+**Decoding answers a header and an OFFSET, never a payload.** The caller just handed the datagram
+over; copying the payload back would move every byte of every frame across twice for nothing. Swift
+slices its own buffer at `payload_offset` and rebases it, as the byte reader it replaces did — a
+`Data` with a nonzero `startIndex` indexes differently and retains the whole datagram, and neither
+belongs in a value handed to the reassembler. Nobody spells 19 on the Swift side any more except the
+MTU budget that subtracts it.
+
+Inside `rust/slopdesk-video`, the parse split in two rather than being copied: `FrameFragmentHeader::
+decode` borrows the payload out of the datagram, and `FrameFragment::decode` is that plus a
+`to_vec`. One parse, two ways to take the answer — so the boundary allocates nothing at all on the
+receive side.
+
+Measured on a Mac Studio, release build, over a 36 KB frame's 32 datagrams. The "before" column is
+the deleted Swift shape, re-created verbatim in a standalone `-O` build to price it:
+
+| | before | after |
+| --- | --- | --- |
+| `decode`, per datagram | 193 ns | **149 ns** |
+| `decode`, per frame | 6.2 µs | **4.8 µs** |
+| `encode`, per frame | 19.8 µs | **8.4 µs** |
+
+Decode is the one that matters — it runs per datagram on the client before the router knows where
+the datagram goes — and it is the smaller gain, because a 19-byte parse is mostly the `Data` the
+payload comes back in. Encode more than halves, and has no production caller left, which is the
+other half of this change.
+
+**`VideoSendScheduler.scheduleFrame([FrameFragment])` is deleted.** The send path has produced
+finished datagrams since the packetizer moved, and `scheduleFrameRaw` schedules them; `scheduleFrame`
+parsed and re-encoded bytes that were already bytes. It had no caller outside
+`VideoSendSchedulerTests`, which is what dead production code looks like when a test keeps it
+breathing. Both tests now drive `packetizeRaw` → `scheduleFrameRaw`, which is the path the host runs.
+
+`check-supervisor.sh` pins the shape: `FramePacketizer.swift` must call
+`slopdesk_video_fragment_encode` and `slopdesk_video_fragment_decode`, must not grow
+`appendBE(header.…)` back, and `scheduleFrame(` must not reappear.
+
+### The FEC ladder stops being decided twice
+
+`AdaptiveFECPolicy` and `rust/slopdesk-video`'s `adaptive_fec` held the same decision: the wire
+tier's group size, the hysteretic level ladder with its asymmetric up/down thresholds, the 240-report
+relax dwell, the sticky window a dropped frame opens, and the parity-`m` ladder beside it. Both
+correct, both tested, and both read by the *same* wire — which is what makes this one worse than the
+codecs that came before it. **A drifted threshold does not fail a test. It de-syncs a running host
+from a running client, on the exact link that was already losing packets.**
+
+So the ladder is Rust's, and `AdaptiveFECPolicy` is the boundary to it. Six entry points and no
+handle: every one is a function of its arguments, and the tier decision only *looks* stateful — the
+state IS the answer, so `TierState` crosses whole, by value, in and out. Three scalars are cheaper
+to copy than an object is to own, and a value the host keeps in its own session struct cannot drift
+from a counter living somewhere else.
+
+**The env still resolves in Swift, and only the lookup.** `SLOPDESK_FEC_M` and `SLOPDESK_FEC_K` come
+through `EnvConfig`, which reads the process environment *and* the settings overlay a GUI toggle
+writes — that lookup is the app's. What the string MEANS is not: parse, default, clamp, and the
+joint `k + m <= 255` field bound now happen once, on the other side. A missing variable and an
+unparseable one already resolved alike, so absence needs no flag of its own — the pointer is NULL.
+
+**The ladder's numbers are vended, not copied.** `slopdesk_adaptive_fec_constant(index)` answers the
+default tier, the three parity tiers, the dwell, the sticky window, the default `k` and the `m`/`k`
+bounds — the same shape `slopdesk_agent_hold_constant` already uses. A constant written on both
+sides is the smallest possible version of the drift this whole change is about.
+
+**One defect fell out of the port, from a test that no longer exists.** The first cut answered the
+OFF tier as group size `0`, on the reasoning that a group of zero data shards is no shape at all.
+It is a shape a *caller* can ask for: `groupSize(forTier:default:)` passes the caller's own default
+through, so a caller whose default was 0 would have been told its own answer meant OFF. The absence
+is the return value now, with the size written through an out param — the same shape
+`next_dropped_frame` uses, and for the same reason.
+
+**`RustAdaptiveFECParityTests.swift` is deleted.** It carried a verbatim copy of the Swift ladder as
+its oracle and fuzzed the public API against it. That is precisely the cross-language mirror fixture
+the one-implementation rule names: with one ladder there is nothing to diff, and a test that keeps
+the deleted logic alive to compare against is keeping the second implementation alive.
+`AdaptiveFECPolicyTests` still pins every behavioural value, and the `adaptiveTier` /
+`adaptiveGroupSize` golden vectors still pin the wire.
+
+Measured on a Mac Studio, release build. This is not a hot path and the port does not pretend to be
+a win:
+
+| | before | after |
+| --- | --- | --- |
+| `nextTierState`, per stats report | 2.4 ns | 6.2 ns |
+| `groupSize(forTier:)` | folded to 0 by the optimiser | 2.8 ns |
+
+A call that cannot inline costs about four nanoseconds more than a branch that can. The decision
+runs once per client NetworkStats report — 20 a second — so that is ~80 ns per second of session,
+and `groupSize` has no per-frame caller left at all: the packetizer and the reassembler resolve the
+tier inside Rust, and what remains in Swift is the golden generator and the loopback tool. Parity is
+the bar the rule sets, and this clears it with room; what it buys is that the threshold table exists
+once.
+
+`check-supervisor.sh` pins the shape: `AdaptiveFECPolicy.swift` must call the four decision entry
+points and the constant vend, must not grow `levelForTier`, `tierForLevel`, `targetLevel`,
+`mLevelForTier`, `tierForMLevel` or `mTargetLevel` back, and the differential fixture must stay
+deleted.
+
+### The recovery channel stops being a second decoder
+
+`Sources/SlopDeskVideoProtocol/RecoverySignaling.swift` held its own copy of the client→host
+recovery codec — the seven message bodies, the trailing-byte rejection, the NACK cap, the escalation
+clock, the redundancy fan-out and the loss-observing window — beside `rust/slopdesk-video`'s
+`recovery`, which had all of it already. The codec is the half that cannot be allowed to drift: the
+host's request deduper keys on the RAW datagram bytes, so a decoder that tolerated one extra byte
+would let suffix-varied copies of a single logical request each decode identically while slipping
+the dedup, and answer one loss with two forced IDRs. Two decoders means that property has to hold
+twice.
+
+It crosses as one flat `#[repr(C)]` message rather than a tagged union: a C union would have to be
+kept in step with the Rust enum by hand on both sides, which is the drift the port exists to remove.
+Decode answers a VERDICT rather than a bool — `OK` / `TRUNCATED` / `MALFORMED` — because the caller
+had two error cases and collapsing them would have turned a short datagram into a hostile one.
+
+The loss window is the interesting shape. The ring of timestamps is DATA and stays in Swift; only
+the pruning law is Rust's. The first cut passed the ring in and got a new ring out, and that cost 14×
+what the Swift in-place mutation had: two calls (one to size the answer, one to fill it), a fresh
+array per event, and a `Vec` allocated inside the shim to hold a window that was about to be thrown
+away. The shape that works is ONE buffer, rewritten in place: the answer is never longer than the
+argument plus the event being recorded, so the caller appends the spare slot itself and the law
+compacts, shifts and appends inside it. `note_in_place` is that law, and
+`LossObservationWindow::note_event` is the same function over its own `Vec` — the method is not a
+second copy of the rule, it is a caller of it.
+
+Measured on a Mac Studio, release build, per message:
+
+| | before | after |
+| --- | --- | --- |
+| stats encode | 1164.3 ns | 217.2 ns |
+| stats decode | 247.4 ns | 119.4 ns |
+| NACK decode | 139.5 ns | 209.8 ns |
+| loss-window note | 9.6 ns | 17.5 ns |
+
+Two of those are regressions and neither is hidden. The NACK decode pays for an owned `Vec<u16>`
+built inside `RecoveryMessage::decode` and then copied into the caller's buffer — one allocation and
+one copy the old byte reader did not make. Removing it means a slice-decoding entry point beside the
+owning one, which is more surface than 70 ns on a path that runs once per fragment-loss burst is
+worth. The window note is 8 ns above a call that inlined to nothing; it runs once per unrecovered
+frame or FEC recovery. Both sit far under the noise of the thing they are reacting to, which is a
+lost packet.
+
+`encodeRequestFragments` / `decodeRequestFragments` are gone: they were the NACK body split out for
+tests, and the tests now go through the message.
+
+**`RustRecoveryPolicyParityTests.swift` is deleted**, for the reason
+`RustAdaptiveFECParityTests.swift` was: it fuzzed the public API against a verbatim copy of the
+Swift policy, which is the deleted implementation kept alive as an oracle. `RecoverySignalingTests`
+and `CodecTests` still pin every behaviour, and the `recovery` golden vectors still pin the wire.
+
+### The mux prefix is laid down once, and it got faster doing it
+
+`Sources/SlopDeskVideoProtocol/Mux/VideoMuxHeaderCodec.swift` wrote the four-byte lane prefix by
+hand — `Data(capacity:)`, `appendBE`, `append` — beside `rust/slopdesk-video`'s `mux_header`, which
+had the same four bytes. Four bytes is exactly the size of thing that gets written twice and drifts
+once, and this one fronts EVERY datagram on the video flow in both directions on both ends. So does
+its sibling: `MuxFrameFragmentHeader` is 19 bytes, the same width as the plain fragment header and a
+different layout — one spends its last four on `hostSendTsMillis`, the other its first four on the
+lane. Reading either with the other's decoder parses cleanly and produces nonsense. Two decoders for
+that pair is two chances to line them up wrong.
+
+The framing does NOT allocate on the Rust side. `encode_into` writes the answer into the buffer the
+caller already owns, because the answer is the payload with four bytes in front — an owning encoder
+would copy the whole datagram a second time to prepend a lane, and then Swift would copy it again
+coming back. `encode` and `encode_media` are wrappers over `encode_into`, so a Rust caller and a
+Swift caller lay the same bytes down through the same four lines. Splitting answers an OFFSET, the
+shape §4 of `docs/55-ffi-boundary.md` describes: 0 means the datagram was too short, unambiguous
+because a payload can never start at offset 0.
+
+`has_tag` is a flag rather than a second entry point. The bare lane prefix and the media-socket
+`[lane][tag][payload]` differ by one byte in one place; two symbols would be two chances to pick the
+wrong one.
+
+Measured on a Mac Studio, release build, over an MTU-sized 1200-byte payload:
+
+| | before | after |
+| --- | --- | --- |
+| `encodeMedia` | 400.9 ns | 145.6 ns |
+| `decode` | 173.9 ns | 133.2 ns |
+
+The encode win is the intermediate buffer disappearing — `Data` grown by three appends against one
+`Data(count:)` filled in a single pass. The decode win is a four-byte big-endian read that no longer
+goes through a byte-at-a-time throwing reader. Both directions of the highest-frequency codec in the
+system got cheaper, which is the case the rule does not even require.
+
+`check-supervisor.sh` pins it: the Swift file must call all five entry points, must not grow
+`appendBE` or `VideoByteReader` back, and must not respell either header width — `slopdesk_mux_constant`
+vends both.
+
+### Input events are parsed once, on the path where a bad parse posts a syscall
+
+`Sources/SlopDeskVideoProtocol/InputEventCodec.swift` called itself "the single source of truth for
+the wire format" in its own doc comment, while `rust/slopdesk-video`'s `input_event` carried the
+same seven message types. Of every codec in the system this is the one that least tolerates two
+readings of a byte: the host decodes an input event off an unauthenticated UDP socket and then POSTS
+it into the window server. A non-finite coordinate that survives the decode reaches the injector's
+trapping `Int32(Double)` and takes the host down. The finite check is a decode guard for that
+reason, and a guard is not a guard if there are two of it and only one is right.
+
+It crosses as one flat `#[repr(C)]` struct with `message_type` saying which fields carry meaning,
+for the reason the recovery message does: a C union would have to be kept in step with the Rust enum
+by hand on both sides. Decode answers a verdict — `OK` / `TRUNCATED` / `MALFORMED` — because a short
+datagram and a hostile one are different things to the caller. The text arm answers an OFFSET: the
+bytes stay in the caller's datagram, already proven UTF-8 on the way through, so Swift builds its
+string from the span with `String(decoding:as:)` rather than re-checking what was just checked.
+
+Encoding tries the caller's stack first. The fixed-size arms — everything but `.text` — fit in 64
+bytes, so the call that sizes the datagram is also the call that writes it, and only typed text ever
+pays for a second pass. That number is not the layout and cannot be wrong in the dangerous
+direction: too small is slower, never incorrect.
+
+Measured on a Mac Studio, release build, per event:
+
+| | before | after |
+| --- | --- | --- |
+| `mouseMove` encode | 292.2 ns | 170.6 ns |
+| `mouseMove` decode | 94.4 ns | 13.4 ns |
+| `scroll` encode | 332.0 ns | 203.8 ns |
+| `scroll` decode | 154.6 ns | 18.2 ns |
+
+The decode side is where the byte-at-a-time `VideoByteReader` was: five `Double`s read one byte at a
+time through a throwing accessor, against four aligned big-endian loads. Seven to eight times, on
+the path that runs once per pointer sample for as long as a drag is held.
+
+`check-supervisor.sh` pins the three entry points and refuses `appendBE`, `VideoByteReader` and
+`readFiniteFloat64` coming back into that file.
+
+### The three metadata wires join the rest, and the span stops being copied twice
+
+`WindowGeometryCodec`, `SwipeNavStatusCodec` and `AudioWireCodec` each had a Rust twin in
+`rust/slopdesk-video` and each parsed its own bytes in Swift anyway. They ship together, through one
+shim, because they share a shape — a small message off the same untrusted mesh — while what each one
+GUARDS is different, and the guards are the reason to move them:
+
+* a geometry coordinate ends up in a `CALayer` frame, where a NaN is an uncaught
+  `CALayerInvalidGeometry` and a dead client;
+* the swipe status drives an affordance that must never promise a navigation the host would refuse,
+  so the type byte is checked and not assumed — the cursor socket carries three message types;
+* an audio datagram declares its own payload length, the classic over-allocate lever. The cap, the
+  bounds check and the exact-consumption check are decode guards, not the caller's manners.
+
+**The span is copied once, inside the borrow that validated it.** The first cut wrote what every
+other decode here wrote — `data.dropFirst(offset).prefix(length)` and then `Data(...)` — and the
+audio decode came out 21% SLOWER than the Swift it replaced. Two intermediate `Data` values, each
+retaining the parent buffer, to describe bytes that were about to be copied once anyway. Copying out
+of the `withUnsafeBytes` that already had the pointer took audio decode from 191.8 ns to 108.3, and
+the same edit applied to `FrameFragment.decode` — the hottest decode in the system — took it from
+149 ns per datagram to 116. The port paid for a fix on a path it was not even about.
+
+`AudioChannelMessage::decode` is now `decode_parts` plus a `to_vec`: the guards live in the
+borrowing form, and both the owning Rust caller and the boundary run them.
+
+Measured on a Mac Studio, release build, per message (a 640-byte audio frame, a bounds message):
+
+| | before | after |
+| --- | --- | --- |
+| geometry encode | 367.4 ns | 198.1 ns |
+| geometry decode | 125.5 ns | 14.3 ns |
+| audio encode | 416.2 ns | 356.4 ns |
+| audio decode | 158.0 ns | 108.3 ns |
+
+`check-supervisor.sh` pins all three files to their entry points, refuses `appendBE` and
+`VideoByteReader` in any of them, and refuses the audio cap and the swipe flag bits being spelled in
+Swift code again — prose may still name them, since a doc comment is not what the decoder reads.
+
+### The cursor socket and the AVCC split answer a span, not a copy
+
+`CursorCodec`, `CursorShapeCodec` and `NALUnit` were the last three files in
+`SlopDeskVideoProtocol` that laid out bytes by hand, and all three had a Rust twin. They ship
+together because they share the one thing that decided their boundary shape: each has a payload big
+enough that copying it to describe it would BE the cost — a cursor PNG, and an IDR's NAL units,
+which are most of a frame.
+
+So neither payload crosses. The shape decode answers `bitmap_offset` / `bitmap_length` into the
+datagram the caller already holds, and `slopdesk_nal_split` answers a `SlopDeskNalSpan` array —
+`(offset, length)` pairs — under §4's convention, with a 16-span stack scratch so every real frame
+is one call. `nal_unit::split` in `rust/slopdesk-video` was refactored to sit on a new
+`split_ranges`, which is the same single walk: the borrowing form and the span form cannot disagree
+because one is built from the other.
+
+`join` is the exception and takes the §4d blob list, because its argument is a run of separately
+allocated payloads and there is no other shape for that — the same marshalling `FECScheme` already
+uses, reused rather than re-invented. An absence in that list answers 0 rather than a short buffer:
+a missing NAL unit is a frame that cannot be built, not a frame with a hole.
+
+**The type byte is checked on the routing side AND the decode side.** Three message kinds share the
+cursor socket; the Swift router still peeks the first byte, because routing is not byte layout, but
+each arm then refuses a flat message that came back as the other type. The swipe-nav status keeps
+its own entry point — same socket, different wire, different stakes.
+
+`CursorShapeMessage::decode` is now `decode_parts` plus a `to_vec`, the shape the audio wire
+established: the guards live in the borrowing form and both callers run them.
+
+Measured on a Mac Studio, release build, per message (a 900-byte cursor PNG; a 40 KB AVCC buffer of
+three units):
+
+| | before | after |
+| --- | --- | --- |
+| cursor update encode | 1.02 µs | 119.4 ns |
+| cursor update decode | 141.6 ns | 15.2 ns |
+| cursor shape encode | 835.0 ns | 240.7 ns |
+| cursor shape decode | 226.2 ns | 121.7 ns |
+| AVCC split | 1.13 µs | 1.08 µs |
+
+The update is the fastest-moving message here — up to 120 Hz for as long as the pointer moves — and
+it is now 8.6× cheaper to write and 9.3× cheaper to read. The split is parity, which is the honest
+reading: at 40 KB the walk is a rounding error and the number is the `memcpy` both versions pay.
+
+`check-supervisor.sh` pins all three files to their entry points, refuses `appendBE` and
+`VideoByteReader` in any of them, and refuses the four widths a second speller would drift on — the
+two type bytes, the 36-byte update, the 27-byte header and the 4-byte AVCC prefix.
+
+### The control channel crosses through an arena, because a span into the datagram is not enough
+
+`VideoControlCodec.swift` was the last codec in `SlopDeskVideoProtocol` still laying out bytes by
+hand: 875 lines, 28 message arms, and a mirror of `rust/slopdesk-video`'s `video_control` kept in
+step by review. It is also the widest surface the two could drift on, and the one where a drift is
+quietest — a window feed silently one row short reads as a host that closed a window.
+
+Every earlier seam on this path answered with an OFFSET into the caller's own datagram: the fragment
+payload, the mux prefix, the input-event text, the geometry title, the audio span, the cursor
+bitmap, the NAL spans. That convention does not reach here, for two reasons:
+
+- **Five arms carry a LIST** — `windowList`, `systemDialogList`, `displayList`, `contentMask` and
+  `windowFeedSnapshot`, the last with three strings per record. There is no single span to point at.
+- **Titles decode LOSSILY.** `String::from_utf8_lossy` on a malformed title produces U+FFFD, whose
+  bytes are not in the datagram. An offset into the input cannot name them.
+
+So both directions share one flat byte ARENA, and every string field names its `(offset, length)`
+inside it. Decode fills the arena; encode reads from one the Swift side built. It is symmetric, it
+keeps the lossy repair down in `rust/slopdesk-video` where it always lived, and it is still true
+that no allocation crosses the boundary.
+
+The message itself is a flat `#[repr(C)] SlopDeskVideoControl` with a named field per wire scalar —
+not a C union. A union would have to be kept in step with a Rust enum by hand on both sides, which
+is the exact drift this port removes.
+
+**The decode scratch is a proof, not a guess.** A record costs at least 8 wire bytes, so
+`count <= len / 8`; lossy repair grows a string at most threefold, so `arena <= 3 * len`. Both
+scratches are stack allocations sized from the datagram. The `AGAIN` return is kept anyway, with a
+heap retry behind it: the contract permits it, and a wrong guess must never truncate a window feed.
+
+Measured on a Mac Studio, release build, per message (a feed chunk of 12 records, three strings
+each, 1187 wire bytes — one datagram's worth, which is what the host actually sends):
+
+| | before | after |
+| --- | --- | --- |
+| keepalive encode | 22.6 ns | 54.7 ns |
+| keepalive decode | 9.8 ns | 29.7 ns |
+| helloAck encode | 2.83 µs | 238.2 ns |
+| helloAck decode | 498.0 ns | 42.9 ns |
+| feed(12) encode | 22.11 µs | 9.31 µs |
+| feed(12) decode | 20.32 µs | 4.08 µs |
+
+The window feed is the message that matters — it is re-read on every host window change and it is
+2.4× cheaper to write and 5.0× cheaper to read. `helloAck` is 11.9× / 11.6×: four `Float64`s appended
+a byte at a time onto a growing `Data` was most of the old cost.
+
+**The keepalive is a regression and stays one.** A bodyless message pays the boundary and nothing
+else — a ~150-byte flat struct and an FFI call where the old code appended one byte. Sizing the
+encode scratch from the message instead of allocating a fixed 48-byte `Data` and shrinking it took
+it from 140.9 ns to 54.7 ns, and the remaining 32 ns is the boundary itself. It is sent once every
+`KeepaliveTiming.keepaliveInterval` — five seconds — so the cost is 32 ns per five seconds, and
+buying it back would mean a second convention for bodyless arms.
+
+`check-supervisor.sh` pins `VideoControlCodec.swift` to the three entry points, refuses the four
+byte-layout helpers (`appendBE`, `VideoByteReader`, and both length-prefix extensions) from
+returning to it, and refuses the five budgets — the two chunk sizes, the title cap and the two blob
+caps — from being spelled in Swift again. `slopdesk_video_control_constant` vends all five.
+
+## PATH-1 crosses with its payload held apart, because a byte run is an OFFSET and not a copy (2026-08-14)
+
+The terminal wire — 30 message types, the `.output` flood behind every keystroke — was the last
+codec written twice. `WireMessage+Encode.swift` (396 lines) and `WireMessage+Decode.swift` (283)
+are deleted; `Sources/SlopDeskProtocol/WireMessageCodec.swift` flattens a message onto a
+`#[repr(C)]` struct and `rust/slopdesk-wire` lays out every byte. This is the debt stage 1 recorded
+("the codec exists twice, which is the exact thing the rule forbids") paid off for the message
+table. Framing, the mux layer, metadata and the workspace channel still owe it.
+
+**TWO ADDRESS SPACES, on purpose.** The `text_*` spans are offsets into an ARENA the way
+`video_control`'s are — a title, a cwd, a label, and an encode has to write them down somewhere. The
+`blob_*` span is an offset into the DATAGRAM ITSELF. Six arms end in an opaque byte run, and that
+run is the one field on this wire big enough for a copy to be felt, so the decode answers WHERE it
+sits and the encode takes it as its own argument. The two fields have opposite costs, so they get
+opposite conventions.
+
+**One parser, told to elide.** Answering "where does the run sit" without a copy could have meant a
+borrowed mirror of the enum — `WireMessageRef<'a>`, ~250 lines of the same table a second time,
+which is the thing this whole port exists to stop. Instead the existing decode table threads a
+`(&mut Range<usize>, elide: bool)` pair: `decode_leaving_opaque_run` returns the message with an
+EMPTY run and the range it occupied in the caller's datagram. A test sweeps every variant and
+asserts `payload[run]` equals what the copying form returned, so a header width cannot drift between
+the two forms — an off-by-one there would decode every scalar correctly and hand back a payload
+shifted by a byte.
+
+**Three copies became one, and that is the whole 32 KiB story.** The first cut went through
+`WireMessage::encode() -> Vec<u8>` and copied a 32 KiB `.output` payload three times: into the
+message, into the encoder's `Vec`, out of that `Vec` into the caller's buffer. `ByteWriter` grew a
+second sink — a buffer the CALLER lends, where a write past the end is counted rather than
+performed, so the §4 "bytes needed" answer still works — and `encode_with_run_into` takes the run
+beside the message. Same table, same arms; the six opaque arms read the run from the parameter
+instead of from the enum. The Rust side of a 32 KiB frame is 683 ns, of which ~550 is the memcpy
+that has to happen.
+
+**The allocation is picked by size, because the two `Data` shapes cross over.** Measured here:
+`Data(count:)` on a frame of 14 bytes or fewer never reaches the allocator at all (~5 ns against
+~113 ns for a `malloc`) because the bytes live inside the `Data` value; above that,
+`Data(bytesNoCopy:deallocator:)` carries ~20 ns of heavier representation but skips the zeroing
+pass, which only pays for itself once that pass is longer than 20 ns. The crossing is at 4 KiB. At
+32 KiB the zeroing costs as much as the encode (1.18 µs against 632 ns), and an `ack` — the message
+this wire sends most — is 13 bytes.
+
+Measured on a Mac Studio, release build, per message. "Before" is the deleted Swift rebuilt verbatim
+as a standalone `swiftc -O` binary, so it is that code's number and not a memory of it:
+
+| | before | after |
+| --- | --- | --- |
+| `output` 1 KiB — encode / decode | 1.32 µs / 923.5 ns | 222 / 566 ns |
+| `output` 32 KiB — encode / decode | 1.35 / 4.37 µs | 874 ns / 3.00 µs |
+| `ack` — encode / decode | 236.0 / 209.1 ns | 84 / 299 ns |
+| `title` — encode / decode | 449.0 / 439.5 ns | 426 / 542 ns |
+| `wireByteCount`, 1 KiB / 32 KiB | 40.9 / 26.7 ns | 82 / 82 ns |
+
+**Three rows are regressions and they are kept.** `wireByteCount` is ~2× slower and flat in the
+payload size: 22 ns of it is the FFI call, the rest is flattening a ~190-byte struct that the answer
+then ignores. It is charged once per consumed message by receive-side flow control, where 45 ns
+against a 566 ns decode of the same message is noise. `ack` and `title` decode pay the same
+flattening in the other direction. Buying any of them back means a second sizing table in Swift,
+which is the drift this change removes — the encode rows it would be traded against are 1.5× to 5.9×
+the other way.
+
+`SlopDesk.swift` stops spelling the wire version and the frame ceiling and asks
+`slopdesk_wire_constant` for both, which is what makes `check-supervisor.sh`'s new pins total:
+`WireMessageCodec.swift` must call all four entry points, may not grow `appendBE` or
+`BigEndianReader` back — the framing and metadata layers still own those, so the pin is this file
+rather than the target — and neither it nor `SlopDesk.swift` may spell a session id's width, the
+16 MiB ceiling, or a `protocolVersion` literal.
+
+## The framing crosses as a HANDLE, and the payload stops being copied on the way in (2026-08-14)
+
+`FrameDecoder.swift` (133 lines) is now a handle over `rust/slopdesk-wire`'s `FrameDecoder`: the
+buffering, the read cursor that replaces a per-frame memmove, the lazy head compaction and the
+fail-stop on a lost byte-boundary are all one implementation again. What is left in Swift is the
+handle, `deinit`, and the mapping from a verdict to a `SlopDeskError`.
+
+**A handle, because a frame arrives in pieces.** Half a length prefix in one `recv` and the rest in
+the next is the NORMAL case, so the decoder has to remember what it has been shown; copying that
+state across per chunk would copy the frame under construction — up to a 16 MiB `.output` — on every
+read. Same convention as `replay` and the reassembler: one free per new, no overlapping calls.
+
+**The opaque run is FETCHED, not handed over.** A decoded message's payload lives in the decoder's
+own buffer, which the caller cannot index and which moves when the head is compacted. So `next`
+answers with the run's length and PARKS it, and `run` copies it into the caller's buffer once,
+straight out of the decode buffer. The park holds until the next `next` on the same handle.
+
+**A message decoded into too small an arena cannot be put back.** The frame is off the stream by
+then. So it waits in the handle and the retry finds it parked — and the retry is not a guess either:
+the `AGAIN` verdict reports the arena size that would have fit. A test drives a 400-byte title
+through an 8-byte arena and asserts the frame survives.
+
+**Two copies removed, and the second one was the interesting one.** The first was structural: the
+Swift decoder buffered a chunk, then sliced each frame's payload into a fresh `Data`, then decoded
+that slice. The second was a mistake this port would have shipped: `build` took the run as a span
+into a buffer and copied it, so a run fetched into its own `Data` was copied straight back out
+again. Handing `build` the run as a `Data` — copy-on-write, so passing it on costs a retain — took
+a 32 KiB `.output` decode from 3.58 µs to 1.44 µs on its own.
+
+Two smaller things fell out of measuring rather than reasoning:
+
+- **The deferred compaction is taken in `append`, not in the next `next`.** The eliding decode must
+  not compact while it is answering with a span into the buffer, so the compaction is put off — but
+  put off to the next `next` it moves a whole freshly-appended frame instead of the empty tail a
+  just-drained buffer has. Taking it at the top of `append` restores the empty tail. Worth ~200 ns
+  on every second 32 KiB frame.
+- **`Data.append` on an EMPTY `Data` is nearly free** and `Vec::extend_from_slice` never is, which
+  is why the Rust side of this seam is not automatically cheaper and had to be measured.
+
+| | before | after |
+| --- | --- | --- |
+| `output` 1 KiB decode | 923.5 ns | 367 ns |
+| `output` 32 KiB decode | 4.37 µs | 1.44 µs |
+| `ack` decode | 209.1 ns | 216 ns |
+| `title` decode | 439.5 ns | 386 ns |
+
+`check-supervisor.sh` pins `FrameDecoder.swift` to the five handle entry points and refuses the
+buffer itself from coming back — `readOffset`, `compactConsumed`, `readPrefix` and a `private var
+buffer`. A second READER of a stream is not a second implementation; a second BUFFER of it is, and
+it is exactly how a cursor and a fail-stop drift apart.
+
+`BigEndian.swift` stays: the mux layer and the metadata codec still lay out their own bytes, and
+they are the next two stages.
+
+## The mux layer crosses whole — envelope, framing, credit and table (2026-08-14)
+
+The layer above the terminal frame went the same way and for the same reason: `rust/slopdesk-wire`'s
+`mux` module already held every one of these — the envelope's bytes, the streaming splitter, the
+three flow-control state machines, the channel table — and the Swift beside it was the second
+implementation the one-implementation rule forbids. 926 lines of it, of which 19 stay.
+
+Four shapes, picked by what the state is rather than by taste:
+
+- **The envelope is flat-plus-arena**, exactly like `WireMessage`: a `#[repr(C)] SlopDeskMuxFrame`
+  with the cwd named as an `(offset, length)` into an arena, and `channelData`'s payload passed
+  WHOLE as its own argument. `encode_with_payload_into` writes into a lent buffer, so a 32 KiB
+  channelData is memcpy'd once rather than three times.
+- **The framing is a HANDLE**, because half a length prefix in one `recv` and the rest in the next
+  is the normal case. `next_frame_leaving_payload` answers where the payload sits and parks it;
+  Swift copies it out once, straight from the decode buffer.
+- **The three policies cross BY VALUE.** A credit window, a receive accountant and a bounded queue
+  are two `i64`s each and allocate nothing, so the state fits in the call: the caller holds the
+  struct and the entry point reads and writes it in place. A handle would have cost a `new`/`free`
+  per channel per direction and bought nothing. `FlowCreditPolicy::restored` and its two siblings
+  exist for exactly this, and they clamp the way `new` clamps so a caller cannot restore a window
+  the type could not have produced.
+- **The channel table is a HANDLE**, because a map plus an eviction ring cannot cross in a call
+  without copying every entry. Its states cross as ordinals with a fifth value, UNKNOWN, for an id
+  the table has no entry for — a distinction that has to survive the crossing, since an unknown id's
+  frame is dropped where a closed id's is a late frame on a channel that really existed.
+
+`MuxRouter` and `HostChannelRouter` became `final class` and lost `Sendable` on the way, which is
+the honest reading: they were `Sendable` structs only because the table underneath them was a value.
+Neither is used outside tests — production routes through `MuxNWConnection`, which holds its two
+tables directly.
+
+| | before | after |
+| --- | --- | --- |
+| `channelData` 32 KiB encode | 1.42 µs | 902 ns |
+| `channelData` 32 KiB streaming decode | 2.65 µs | 1.54 µs |
+| `channelData` 32 KiB one-shot decode | 826.2 ns | 883.6 ns |
+| `channelOpen` encode | 750.3 ns | 236.1 ns |
+| `channelOpen` decode | 356.4 ns | 167.9 ns |
+
+The one-shot decode is the one kept regression, ~7%, and it is the crossing itself on a path already
+dominated by handing the payload on. It is also not the path production takes: `MuxNWConnection`
+holds a `MuxFrameDecoder`, and that path is 1.7× faster.
+
+One thing measured the wrong way round first. Copying the payload eagerly into the buffer that gets
+handed on — the trick that won on the terminal decode — LOST here, 1.16 µs against 883 ns, because
+`Data(someDataSlice)` shares the slice's backing rather than copying it. The eager copy is a copy
+the caller may never need; on the streaming path, where the bytes live in Rust's buffer, there is no
+such choice and the copy is real.
+
+`MuxChannelClass` stays in Swift. It is 19 lines with no arithmetic in it — two names for two bytes,
+the same shape as `MuxFrameType` and `MuxCloseReason`, which the envelope port also kept as the
+Swift-facing labels. `check-supervisor.sh` pins the four envelope entries, the five framing entries
+and five of the policy entries, and refuses the arithmetic itself from coming back: `pendingCredit
++=`, `remaining -=`, `outstanding +=`, a `states[` subscript, `terminalRing`. A window clamped in
+two languages is two windows, and the one that drifts low stalls a channel forever rather than
+failing.
+
+## The twelve metadata payloads cross, and only the clipboard elides (2026-08-14)
+
+`MetadataCodec.swift` was 841 lines of hand-rolled big-endian parsing over payloads
+`rust/slopdesk-wire`'s `metadata::codec` already encoded and decoded, byte for byte, with 350 tests
+on it. The second implementation went; the file is 920 lines of Swift face and no reader. Every
+public value type and every signature is unchanged, so no consumer moved.
+
+Four crossing shapes, again by what the payload is:
+
+- **A list is RECORDS plus one ARENA.** `SlopDeskMetadataProcess` & co. are fixed-size `#[repr(C)]`
+  structs whose text fields are `(offset, length)` into a single flat byte buffer. One allocation
+  per direction, not one per string.
+- **Git status is a HEAD plus a companion array**, sharing that one arena — branch, remote and repo
+  root sit in it beside the 128 file paths.
+- **The scalar payloads cross BY VALUE** — vitals, endpoint, disposition, font spec. A font spec's
+  size crosses as its bit pattern (`size_bits: u64`), because the rule is bit-exact floats and a
+  `Double` that round-trips through a decimal is not the same `Double`.
+- **The clipboard ELIDES.** A clip runs to 12 MiB, so `decode_clipboard_set_leaving_content` answers
+  WHERE the run sits rather than copying it into the arena, and encoding lends the caller's bytes
+  straight through. This is the only payload where that is worth a second address space — and it is
+  a second address space: on a clipboard decode the `content` offset is into the PAYLOAD, while
+  every other text offset in the same struct family is into the arena.
+
+**A decode needs no probing call.** The payload bounds both buffers: the arena can never exceed
+`payload.count`, and a list can hold no more than `payload.count / fixedBytesPerEntry`. So Swift
+sizes both up front and calls ONCE, and the §4 AGAIN verdict becomes a `preconditionFailure` — it
+cannot happen without the bound being wrong. `slopdesk_metadata_constant(3..7)` vends the per-entry
+widths so the divisor is never respelled in Swift; `check-supervisor.sh` refuses the numbers coming
+back.
+
+Encoding used to pay for the size pass twice — encode to a `Vec`, measure, encode again. Every
+payload gained an `encode_*_into(&mut ByteWriter<'_>, …)` in the wire crate, and the owned `encode_*`
+delegates to it, so the §4 sizing pass now allocates and copies nothing: writes past the end of a
+lent buffer are COUNTED, not performed.
+
+| | before | after |
+| --- | --- | --- |
+| process list ×64 encode | 24.86 µs | 5.33 µs |
+| process list ×64 decode | 5.84 µs | 3.13 µs |
+| dir listing ×256 encode | 64.32 µs | 21.22 µs |
+| dir listing ×256 decode | 26.23 µs | 12.76 µs |
+| git status ×128 encode | 37.87 µs | 13.11 µs |
+| git status ×128 decode | 20.69 µs | 11.01 µs |
+| porcelain fold ×128 | 140.7 ns | 129.8 ns |
+| clipboard 4 MiB encode | 85.65 µs | 86.25 µs |
+| clipboard 4 MiB decode | 85.08 µs | 86.00 µs |
+
+("before" is the deleted Swift rebuilt verbatim as a standalone `swiftc -O` binary, not a memory of
+what it cost.) The clipboard is a wash to within noise, which is the answer the eliding decode was
+for: at 4 MiB the number is the memcpy and nothing else, and it did not grow.
+
+Two findings paid for most of the encode column, and neither was in the Rust.
+
+**The arena must be `[UInt8]`, not `Data`.** `Data.append` per text field cost ~3–4× at 256 dir
+entries; `Array.append(contentsOf: string.utf8)` plus one `withUnsafeBufferPointer` at the end does
+not.
+
+**`files.enumerated()` retains.** The fold was the one *measured regression* — 140.7 ns → 508.3 ns —
+and it survived two wrong fixes: narrowing the FFI to take CODES rather than records got it to
+250 ns, and table-driving the Rust fold with a `const AXES: [u8; 256]` changed nothing, which is
+what proved the cost was not in Rust at all. Iterating an array of structs that contain a `String`
+copies — retains — every element. `for slot in 0..<files.count { codes[slot] = files[slot].statusCode }`
+ends at 129.8 ns, faster than the Swift it replaced. A regression is a veto only after it is chased
+to its cause; this one had three causes stacked, and none of them was the crossing.
+
+`MetadataVerb` stays in Swift — 22 verbs and 4 statuses, a name table with no arithmetic, the same
+category as `MuxFrameType`. `check-supervisor.sh` pins the 26 entry points by NAME rather than by
+call, because half of them cross as a function REFERENCE into a shared `encode`/`decode` helper and
+never appear followed by a paren.
+
+## The workspace CHANNEL crosses too, and the roster flattens rather than nests (2026-08-14)
+
+The five payloads inside `workspaceRequest` (17) and `workspaceEvent` (37) — subscribe, presence,
+intent, intentResult, roster — were a second implementation of `rust/slopdesk-wire`'s `workspace`
+module, which already held every layout and every clamp. 466 lines of hand-rolled big-endian went;
+the Swift is a face over the crate now, with every public value type and signature unchanged.
+
+Three shapes, and one of them is new:
+
+- **By value** where the payload is fixed-size. A presence update and an intent result are two ids
+  and a handful of scalars, so the `#[repr(C)]` record IS the crossing and nothing is interned.
+- **Record plus arena** where it carries text — a subscribe's label, a roster client's label.
+- **Eliding** for an intent's arguments, which are opaque here and run to the frame cap.
+  `decode_leaving_args` answers WHERE they sit in the caller's own payload, so Swift copies them
+  once, out of the buffer it was already holding.
+
+**The roster flattens.** It is panes each holding attachments, and a nest cannot cross without a
+pointer per pane. It crosses as THREE flat arrays — clients, panes, attachments — with each pane
+naming its run `(offset, count)` into the attachment array. That is the arena's trick applied to
+records instead of bytes, and it is why the roster needs no handle and no second call. The decode
+writes all three counts BEFORE it fills any array, so a caller that under-sized is told all three
+sizes at once rather than one per retry.
+
+| | before | after |
+| --- | --- | --- |
+| subscribe encode | 897.5 ns | 266.9 ns |
+| subscribe decode | 675.7 ns | 252.6 ns |
+| presence encode | 621.7 ns | 104.2 ns |
+| presence decode | 497.9 ns | 71.9 ns |
+| intent 4 KiB encode | 513.0 ns | 204.6 ns |
+| intent 4 KiB decode | 462.3 ns | 262.9 ns |
+| intentResult encode | 228.9 ns | 102.2 ns |
+| intentResult decode | 235.6 ns | 69.1 ns |
+| roster 8×16 encode | 24.17 µs | 5.07 µs |
+| roster 8×16 decode | 22.82 µs | 3.47 µs |
+
+("before" is the deleted Swift rebuilt verbatim as a standalone `swiftc -O` binary.) Nothing here
+regressed, so nothing had to be argued for. The roster is the one that matters under load — it is
+broadcast WHOLE to every client on any change, never diffed — and it is 4.8× / 6.6×.
+
+`lend`, `records_of` and the byte pool moved up into `slopdesk-ffi`'s `lib.rs` on the way, because a
+second door wanting them is what makes them boundary mechanics rather than metadata's private
+business. Each door still names its own `(offset, length)` struct: the pair belongs to that door's
+vocabulary, and the shared pool only counts bytes.
+
+The four name tables — `WorkspaceRequestVerb`, `WorkspaceEventKind`, `WorkspaceIntentStatus`,
+`WorkspaceClientKind` — stay in Swift, on the `MuxFrameType` reasoning: names for bytes, no
+arithmetic. `check-supervisor.sh` diffs their 15 distinct `NAME=byte` pairs against
+`rust/slopdesk-wire/src/workspace.rs` (15, not 16: `presence` is verb 2 AND kind 2, and agreeing on
+both is the point), pins the 11 entry points by name, refuses `BigEndianReader` / `appendBE` /
+`clampUTF8` / `readUUID` / `readBytes(` from coming back, and refuses the label cap, the record cap
+and the three per-record floors from being respelled — `slopdesk_workspace_constant` vends them.
+
+`BigEndian.swift` does NOT go with this change, which the plan had assumed it would.
+`FileTransferCodec`, `InspectorWire` and fourteen test files still read through it. It is no longer
+the wire's parser, only a helper the remaining Swift codecs share, and it goes when the last of them
+does.
+
+## PATH 4's client end stops being written twice (2026-08-14)
+
+The 2026-08-13 entry above says `FileTransferProtocol.swift` + `FileTransferCodec.swift` +
+`FileTransferFrameDecoder.swift` "became one `rust/slopdesk-dropd/src/client.rs`". Half of that was
+true: `client.rs` was written, exported and tested. The other half never happened — the three Swift
+files were still there, still the live client, and `client.rs` had no non-test caller in the tree.
+The same capability existed twice, in two languages, which is the one thing the one-implementation
+rule names outright. This is that deletion.
+
+The door is `rust/slopdesk-ffi/src/file_transfer.rs`. A request crosses as its type byte plus the
+scalars any frame could carry and ONE borrowed blob — a name for an offer, a body for a chunk — so
+`Request::Chunk` is never built to encode a chunk. A reply crosses as a flat record plus a small
+arena for the one string it can hold. The frame splitter crosses as a HANDLE, `MuxFrameDecoder`'s
+shape, because half a length prefix in one `recv` and the rest in the next is the ordinary case;
+`FileTransferFrameDecoder` went from a `struct` to a `final class` for it, and sizes the arena by
+what the splitter has BUFFERED — a string inside the next frame cannot outrun the bytes already
+held, so one call always suffices and there is no probing round trip.
+
+The first cut was a **measured regression** on the one path that matters, and the veto held until it
+was gone. A 256 KiB chunk frame cost 9.71 µs in Swift and 17.94 µs across the door: the §4 sizing
+call built the whole frame to learn its length and threw it away, then built it again, then copied
+it out — three passes over the body where Swift made two. Two changes fixed it and then some.
+`chunk_frame_len` answers the sizing call from arithmetic, and `write_chunk_frame` writes into the
+caller's buffer, so the body is copied exactly once, from where the caller holds it to the buffer
+that goes to the socket. And that buffer is handed over UNINITIALIZED — `Data(count:)` zero-fills
+every byte the encoder is about to overwrite, which is the second pass; above 4 KiB the codec
+`malloc`s and returns `Data(bytesNoCopy:)`, below it `Data`'s own storage is cheaper than the
+`malloc`/`free` pair. `write_chunk_payload` is the single writer both the borrowing and the owning
+path go through: the owned `Request::Chunk` resizes and delegates, paying a zero-fill the borrowing
+path does not, which is the right way round — a caller who already chose to own the body is not the
+one uploading a gigabyte.
+
+|  | before | after |
+| --- | --- | --- |
+| offer encode | 727.4 ns | 412.1 ns |
+| chunk 256 KiB encode | 9.71 µs | 4.94 µs |
+| finish encode | 133.2 ns | 94.4 ns |
+| accept decode | 27.4 ns | 11.1 ns |
+| failed decode | 187.5 ns | 192.7 ns |
+| split one frame | 153.9 ns | 101.4 ns |
+
+`failed` decode is the wash, and it is the one that allocates a Swift `String` on both sides of the
+change. Everything else is 1.4× to 2.5×, including the chunk the veto was about.
+
+`§10 of check-supervisor.sh` was a Swift↔Rust byte-table diff and could not stay one — there is no
+second table left to diff. It now pins the eight door entries on both sides, refuses `appendBE` /
+`struct ByteReader` / `BigEndianReader` from growing back under `Sources/SlopDeskFileTransfer`,
+refuses the four constants from being respelled in `FileTransferProtocol.swift`, and keeps the
+type-byte agreement as a Rust↔Rust check between `client.rs` and `protocol.rs` — narrower than it
+was, since the two are one crate, but they are still edited apart. That check counts what it found
+and fails on anything but five request types: the chunk's byte moved into `write_chunk_payload` on
+the way, and an extraction that silently covered four of five would have read as "covered".
+
+The Swift tests kept their hand-assembled dropd bytes and changed what they claim. They no longer
+pin the layout — the crate does — they pin the MAPPING across the door: which case becomes which
+type byte, which field lands in the scalar slot and which in the borrowed blob, which verdict comes
+back as which Swift error. A swapped `fileSize`/`transferId` type-checks and rides through the
+crate's own round-trip test untouched; it shows up as the wrong bytes there.
+
+## The inspector's FRAME moves too, and the event JSON stays where it is (2026-08-14)
+
+The last hand-rolled Swift codec with a Rust mirror. `InspectorWire.swift` held a length-prefix
+reader, a big-endian writer, a tag switch, a cap check and a cursor-and-compact splitter;
+`rust/slopdesk-inspectord/src/wire.rs` held all five as well, for the daemon's own end. Both were
+right, which is the failure mode: nothing failed when they stopped agreeing.
+
+**The line is drawn at the JSON.** The door — `rust/slopdesk-ffi/src/inspector.rs` — answers WHICH
+frame arrived and WHERE its body sits, never what the body says. `InspectorEvent` stays a Swift
+`Codable` type and a Rust `serde` type, and that is not the rule being bent: an event is a document
+the daemon writes and the client reads, which is the two-ENDS shape. Crossing a rich, still-evolving
+schema field by field to avoid a JSON parse the channel pays once per turn would buy nothing and
+cost the schema's freedom to change.
+
+`wire.rs` gained the split that made this possible. `next_message` became `next_payload` plus
+`decode`, so the splitter is one implementation serving two granularities — the daemon parses into
+its model, the client hands the bytes to `JSONDecoder`. `decode_client` is the client end's tag
+policy in the crate that owns the tags: tag 1 answers a RANGE rather than a value, tag 2 is the
+keep-alive, and tag 3 — the client's own control, arriving from the daemon — is refused as unknown,
+the mirror of the tolerance `decode` extends in the other direction.
+
+**`peek_payload_len` exists because the first cut lost frames or re-zeroed the backlog.** A handle
+splitter has to answer "how big is the next payload?" before the caller commits a buffer, and the
+first version answered it with `buffered_len` — the whole backlog. On the shape that matters, a
+reconnect replaying the daemon's history as one chunk packed with small frames, that is the backlog
+allocated and zeroed once per frame in it: a measured 843 → 1017 µs for 200 frames. The fix is a
+peek that reads the prefix WITHOUT consuming, and a fifth verdict, `AGAIN`, that says how many bytes
+were needed and leaves the frame where it is. The Swift decoder keeps one buffer, starts it empty
+and grows it once to 4 KiB, so a stream of ordinary events never allocates again.
+
+|  | before | after |
+| --- | --- | --- |
+| subscribe encode | 181.4 ns | 134.8 ns |
+| keepAlive decode | 105.4 ns | 38.5 ns |
+| event decode (1 KiB JSON) | 4.01 µs | 4.02 µs |
+| split one frame | 179.7 ns | 66.0 ns |
+| replay 200 frames | 848 µs | 827 µs |
+
+Event decode is parity and always was going to be: it is `JSONDecoder` with a few hundred nanoseconds
+of framing around it. It reaches parity rather than regressing because `Data.SubSequence` IS `Data`,
+so the body now goes to the parser as a view onto the caller's own payload — the copy the old code
+paid to build a `Data` from a slice is gone.
+
+**The cost this port has that the others did not: `slopdesk-ffi` now links `slopdesk-inspectord`,
+which brings `serde` and `serde_json`.** The static archive went 26 MB to 29 MB. It is gitignored,
+it is an input rather than a source, and the linker drops what no entry point reaches — but it is a
+real widening of the client's dependency graph, and the alternative was worse: factoring the framing
+into a crate of its own to keep serde out would have put a third file between two ends that belong
+next to each other, to save an archive nobody ships.
+
+`§12 of check-supervisor.sh` follows §10: the eight door entries on both sides (seven with a Swift
+caller — `_buffered` is the crate's own drained-and-compacted assertion), no `appendBE` / `readPrefix`
+/ `readBESeq` / cap / tag respelled in the Swift face, and the tags and the cap pinned where they are
+now spelled once. `decode_client`'s two arms are pinned by name, because a client end that grew a
+third arm would be reading a frame the daemon never sends it.
+
+## The last big-endian helper in `Sources/` becomes a test fixture (2026-08-14)
+
+`Sources/SlopDeskProtocol/BigEndian.swift` was the shared `appendBE` / `BigEndianReader` pair every
+hand-written Swift codec used to reach for. After the wire, the mux envelope, the metadata payloads,
+the workspace channel, PATH 4's client end and the inspector's frame all crossed into Rust, a grep
+for its two symbols under `Sources/` matched exactly one file — itself. Its only remaining callers
+were six suites under `Tests/SlopDeskProtocolTests`.
+
+So it moved rather than being deleted: `git mv` to `Tests/SlopDeskProtocolTests/BigEndianFixtureBytes.swift`,
+following `Tests/SlopDeskVideoProtocolTests/VideoWireFixtureBytes.swift`, which made the same trip for
+the same reason. In a test a hand-spelled big-endian body is the POINT — a fixture that built its
+bytes by calling the encoder would be asserting that the encoder agrees with itself. In `Sources/` the
+same helper is the seed of a second implementation of a wire, and it never arrives as a codec; it
+arrives as "just this one field".
+
+`check-supervisor.sh` now fails on a declaration of `appendBE` or `BigEndianReader` anywhere under
+`Sources/`, and separately on the fixture file going missing — the pin has two ends because the point
+is *where* these bytes may be spelled, not that they may never be.
+
+No measurement, because nothing shipped changed: this is a file moving between targets, and
+`SlopDeskProtocol` compiles with one fewer source file in it.
+
+## The capture path's three measurements cross, and the fold gets faster on the way (2026-08-14)
+
+`FrameHasher`, `ScrollShiftEstimator` and `AdaptiveFrameQP` are gone from
+`Sources/SlopDeskVideoProtocol`, replaced by one `FrameMeasurement.swift` that holds no arithmetic
+at all. The fold, the mode-hash background exclusion, the informative-row scoring, the band, the QP
+ramp and every plane guard are `rust/slopdesk-video`'s — written in the 2026-08-13 stage and unused
+until now — reached through a new `rust/slopdesk-ffi` door, `video_frame`.
+
+**This is the one door that does not take bytes.** Every other entry point here borrows a `Data` the
+caller owns; these borrow an address inside a Core Video mapping, because that is the only form the
+pixels have. `docs/55` §4 has the shape written up: the length is not given but computed as
+`stride * rows` with a `checked_mul` on the Rust side, a plane and its stride cross as one value so
+they cannot be mismatched, and the answers come back by value as small `#[repr(C)]` records.
+
+**The regression the rule is for, and what it turned out to be.** The first working version was 27%
+SLOWER on the frame hash — 219 → 278 µs per 1080p frame — while the other two measurements were
+already several times faster. That is the *measured regression* `CLAUDE.md` names as the only veto,
+so it was diagnosed rather than argued past, and it was two separate copies of the same mistake in
+`StreamHasher`'s main loop:
+
+- `consume_block(&mut self, block: &[u8; 32])` copied every block to the stack on the way in. Three
+  megabytes moved per frame to hash three megabytes. 278 → 259 µs.
+- Taking it as a plain `&[u8]` instead fixed that and cost the other half: with the length unknown
+  at compile time the `chunks_exact(8)` lane walk stays a runtime loop. A `&[u8; 32]` — borrowed,
+  fixed-size, converted with a `try_from` that only re-states a check `chunks_exact(32)` already
+  made — unrolls it into four loads. 259 → 214 µs.
+
+| per 1080p frame | Swift | Rust |
+| --- | --- | --- |
+| frame hash | 219.0 µs | 214.2 µs |
+| scroll shift (quantized, ±270 rows) | 3046.1 µs | 912.6 µs |
+| adaptive QP | 2143.5 µs | 284.1 µs |
+
+The two estimators are 3.3× and 7.5× because the Swift built its row-hash arrays through a
+`StreamHasher` whose 32-byte carry was a heap `[UInt8]`, and paid for one per row — the reason the
+Swift also carried a second, allocation-free `hashRow` entry beside it. In Rust the carry is a
+`[u8; 32]` field, so there is nothing to avoid and there is one entry.
+
+**The hash pins moved to the face, and everything else went.** `FrameHashValuePinTests` keeps the
+absolute 64-bit constants the Swift original produced and drops the pointer-vs-array differential:
+there is one entry now, so there is nothing to hold in step with it. Those constants are the only
+oracle this hash has — it is xxHash64-SHAPED but its fifth lane prime is the repo's own, so
+`xxh64sum` will disagree with it forever — and they passing unchanged over the door is the proof the
+Rust fold is bit-identical. `ScrollShiftEstimatorTests` lost its `rowHashes`-vs-`hashNV12` internals
+test and kept the behaviour the port was made for: exact hashing misses a noisy scroll, quantized
+hashing finds it, and a uniform or random frame still reports nothing.
+
+`ShiftEstimate::confidence_milli` was added to `slopdesk-video` rather than written in the door,
+because "how a confidence is reported as an integer" is a fact about the estimate and the caller's
+gate is an integer comparison against it. The door converts an address to a slice and a band to two
+`i32`s, and decides nothing.
+
+§ of `check-supervisor.sh` pins the four door entries, the three deleted files, and — repo-wide —
+that no `StreamHasher`, `hashRow`, `rowHashes`, `borrowPlane`, `estimateVerticalShift`,
+`changedFraction` or `adaptiveMaxQP` grows back under `Sources/`. Each is small, pure and
+framework-free, which is exactly the shape a "tiny local helper" takes.
+
+## The four pure policies cross, and the two dead mappings just go (2026-08-14)
+
+`YCbCrConversion.coefficients`, `CoordinateMapping.windowPoint`, `AdaptivePlayoutPolicy.stepMs` and
+`StreamStallPolicy.evaluate` are now faces over `rust/slopdesk-video`, reached through the new
+`video_policy` door. Each is a handful of arithmetic with no state behind it, which is the whole
+reason they were the last four: nobody ports a five-line function, they reimplement it in place.
+
+**Two of them are pinned as IEEE bit patterns, and that is the argument.** `coordWindowPoint` and
+`ycbcr` are emitted into `golden/golden_vectors.json` as raw `f64`/`f32` bit patterns. A Swift copy
+of either agrees with the Rust until a compiler fuses the multiply and the add, or until someone
+writes `255.0 / 219.0` without the `Float` annotation and an `f64` intermediate narrows on the way
+out. Then a click lands a pixel off, or the whole picture shifts a code value, on ONE machine — with
+every test still green. `make golden` staying byte-identical after the port is the proof the door
+carries them intact, which is a stronger check than any assertion either side could hold.
+
+**`StreamStallPolicy` had no Rust twin, so one was written.** `stream_stall.rs` is the first module
+in this port that was not already implemented twice: `Liveness`, `StreamVerdict` and `verdict`, with
+the idle-skip branch (frames are absent BY DESIGN, so only the heartbeat counts) and the inclusive
+`>=` at the threshold that keeps a caller polling on a tick boundary from sitting one sample short
+forever. The two optional stamps cross as a value plus a presence flag rather than a sentinel time,
+because "no frame has EVER arrived" and "the last frame arrived at time zero" are different states
+and only one of them can be a stall.
+
+One behaviour changed, deliberately. Swift's `max` returns `x` when the comparison is unordered, so
+a NaN `lastFrameAt` beside a genuinely stale heartbeat propagated NaN and reported `.live` — a
+frozen stream reading as healthy because one stamp was unreadable. Rust's `f64::max` is NaN-ignoring,
+so the good stamp survives and the stall is seen. No test pinned the old result.
+
+**`cgRectToCocoa`, `backingScaleFactor(forWindowBoundsCG:)`, `windowPoint(pixel:)` and `ScreenInfo`
+were deleted rather than crossed.** They had no caller anywhere under `Sources/` — only their own
+tests — so crossing them would have built a door for nobody. The Rust twins stay: they are the
+single implementation of doc 18 §B's multi-monitor fix, tested, and deleting them would drop a
+documented capability rather than a duplicate, which is not what this port is for.
+`AdaptivePlayoutPolicy.Config`, `.targetSeconds` and `.stepSeconds` went the same way — internal
+rungs of a ladder whose only public step now crosses whole.
+
+§ of `check-supervisor.sh` pins the four door entries per file, that no `targetSeconds`,
+`stepSeconds`, `cgRectToCocoa`, `backingScaleFactor` or `ScreenInfo` grows back under `Sources/`, and
+that `YCbCrConversion.swift` never spells a BT.709 coefficient again.
+
+## The terminal-mode grammar crosses, and two dead oracles go with it (2026-08-14)
+
+`TerminalModeTracker` is now a face over `rust/slopdesk-terminal`'s `tracker`, reached through the
+new `terminal_mode` handle door. It is the first port in this series where the Rust crate already
+existed in full — 2 925 lines across five modules — with **zero** reverse dependencies: no daemon
+linked it, no door reached it, `INPUT_CRATES` did not cover it. It had been written and left
+unwired, which is the most expensive shape a port can stop in: two grammars, and nothing making them
+agree.
+
+**Three implementations were live at once.** The Swift tracker; a frozen pre-fast-path Swift copy
+(`Tests/.../Support/LegacyTerminalModeTracker.swift`) kept as the differential oracle for the memchr
+skim; and the Rust. The frozen copy is precisely the "test fake" the one-implementation rule names —
+it existed to be a second machine — so it went with the port, along with the fast-path suite that
+compared them. The skim is still pinned, by a stronger oracle: chunk-size-1 bypasses the scan
+entirely, so replaying every vector whole and byte-at-a-time and demanding identical events pins the
+fast path to the transition table without a second machine to drift from.
+
+**A fourth grammar was found and deleted.** `Tests/SlopDeskHostTests/Support/HostCommandStatusSniffer.swift`
+— 275 lines of byte-at-a-time OSC 133 parsing — was a frozen oracle for `HostTitleBellSniffer`,
+which no longer exists. Nothing in the repository referenced either. A frozen oracle for an oracle
+that is gone is not coverage; it is a fourth place for the grammar to be subtly different.
+
+**The corpus key was frozen but unread, and is the port's proof now.** `golden/golden_vectors.json`
+has carried 16 `terminalModeTracker` cases — every alt-screen mode, every OSC 133 mark and exit-code
+shape, sequences split across chunks, a DCS spoof, invalid UTF-8, an unterminated OSC — and
+`golden-check.sh` listed the key as "pinned by its own XCTest suite". **No suite read it.** They were
+emitted by the Swift original, so `TerminalModeGoldenVectorTests` replaying them through the door is
+exactly the differential this port needed: same bytes in, same events and same final mode out, case
+by case, plus per-byte chunking invariance on all 16. A pin that looks like coverage and enforces
+nothing is worse than no pin, and this one is live now.
+
+The exit code crosses as a value plus a presence flag, for the reason `video_policy` gives: a command
+that finished 0 and a `;D` mark carrying nothing parsable are different facts, and only one means
+success. `INPUT_CRATES` in `build-ffi.sh` grew `rust/slopdesk-terminal`, so an edit to the grammar
+now makes the artifact stale rather than silently shipping the old one.
+
+§ of `check-supervisor.sh` pins the eight door entries, that the frozen copy stays deleted, that no
+`oscEscape`/`stringConsume`/`handleCSI`/`handleOSC` state machine grows back under `Sources/` or
+`Tests/`, and that the corpus replay suite keeps reading the key.
+
+## The dedup ring crosses INSIDE the input box, not beside it (2026-08-14)
+
+`InputBoxModel` is now a face over `rust/slopdesk-terminal`'s `inputbox`, through the new `input_box`
+handle door — the second half of the same crate the terminal-mode tracker came from, and the last of
+`SlopDeskClaudeCode`'s logic. `InputDedupRing.swift` is **deleted**, not ported to a door of its own.
+
+**Why the ring has no door.** It was `public` and had two dedicated test suites, so the obvious move
+was a second handle beside the model's. But nothing outside `InputBoxModel` ever built one: the ring
+is only correct in the presence of the tracker, because the alt-screen flip that switches the box
+from **A** (a shell command line, where echo is meant to show) to **B1** (a compose overlay, where it
+must not) is the *same* flip that clears a half-matched echo, and the record-then-echo ordering has
+to hold across both. A second entrance would have put that coupling back on the Swift side of the
+boundary, restated in a place no gate could check it. The ring crosses as the model's interior; its
+own behaviour — the eviction that *flushes* a held-but-unconfirmed run rather than eating it, the
+newline normalisation, the per-byte-chunking invariance — is pinned by `dedup.rs`'s 16 tests, which
+are a superset of the 16 Swift ones deleted with it.
+
+**The existing Swift suite is the differential.** `InputBoxModelTests`' 10 cases were written against
+the Swift implementation and were not touched by this change; they pass verbatim against Rust. That
+is the same shape as the terminal-mode corpus replay, one level up: a test that predates the port and
+does not know it happened is the only kind that can prove the port.
+
+**The state crosses as one record, not five getters.** `slopdesk_input_box_state` answers mode,
+affordance, running flag and last exit code together, because they are answers to the same question.
+A caller reading them one at a time could ingest a chunk between two of them and render a mode from
+before it beside an exit code from after. The rendered bytes are a SLOT for a reason the marks are
+not: the ring may *add* bytes to a chunk — a run it had been holding on behalf of an earlier one and
+has now given up on — so the count is not knowable before the call, and re-running the filter to
+learn it would consume the chunk twice.
+
+§ of `check-supervisor.sh` pins the eight door entries, that `InputDedupRing.swift` stays deleted, and
+that no `InputDedupRing`/`expectedEchoBytes`/`stepFilter` grows back under `Sources/` or `Tests/`.
+
+## Ten of the thirteen frozen golden keys were pinned by a sentence (2026-08-14)
+
+Porting the terminal-mode tracker turned up one unread golden key. Auditing the rest turned up nine
+more, and one of them had already gone wrong.
+
+`golden-check.sh` splits the corpus in two: `EMITTED_KEYS`, regenerated by `slopdesk-corevectors` and
+byte-diffed on every run, and `FROZEN_KEYS` — in the corpus, not emitted, and, said the script,
+"pinned by their own XCTest suites". **That sentence was the entire guarantee for ten of the
+thirteen.** `terminalModeTracker` was replayed by nothing. `inputMotionCoalesce` did not appear
+anywhere in the repository outside the corpus itself. The capture, virtual-display and
+window-placement keys were covered by three notes in the generator saying their logic "lives solely
+in the Rust core (`slopdesk_core::…`, reached via the C ABI)" and that "`golden_parity` validates the
+core against the frozen corpus" — there is no `slopdesk_core` crate and no `golden_parity` test, and
+the math is Swift in `SlopDeskVideoHost`. `VirtualDisplayGeometryTests` looked like the missing
+reader for three keys, but it names them in `// MARK:` headings above assertions written by hand and
+never opens the corpus at all, which is the most convincing shape this failure takes.
+
+**One had drifted, exactly as an unread pin does.** `6281fae2` (2026-07-15) deliberately changed
+`VirtualDisplayPlanner.refreshRates` so a VD advertises the `min(120, 2 × fps)` oversample mode that
+kills the capture beat — `refreshRates(60)` went from `[60, 30]` to `[120, 60, 30]`. It updated the
+hand-written suite beside the code and left the corpus alone, because nothing read it. Three of the
+five `vdRefreshRates` cases have recorded a superseded law ever since. The four other reviving suites
+passed on the first run — 80 cases across eight keys, bit patterns and all — so the drift is one key,
+not a rot.
+
+**The pins are live, and the claim is now a gate.** Five suites (`WindowPlacementGoldenVectorTests`,
+`VirtualDisplayGoldenVectorTests`, `CaptureRegionGoldenVectorTests`,
+`InputMotionCoalesceGoldenVectorTests`, and `TerminalModeGoldenVectorTests` from the port before
+this) replay their keys through the live implementations. `golden-check.sh` then checks what it used
+to assert: every frozen key must be named by a file that ALSO mentions `golden_vectors` or
+`GoldenCorpus`, so a `// MARK:` heading does not count and a deleted suite fails the gate by name.
+
+Why revive rather than delete: these vectors are bit patterns, and what they hold is exactly what a
+port has to preserve — the `!(targetArea > 0.0)` NaN-faithful guard, the `/ ppi * 25.4` operand order
+that must never become an FMA, the ordered ternary min that `Swift.min` would get wrong, the strict
+`>` in the retarget gate, and the trailing-edge guarantee in the motion collapse. Rewriting any of
+this in Rust without them would be a rewrite, not a port. The terminal-mode port is the proof: its
+16 frozen-but-unread cases became the differential that made the port checkable.
+
+`vdRefreshRates` is left SKIPPED with the drift named in the skip message, because refreshing a
+frozen vector is the corpus owner's call and `CLAUDE.md` forbids regenerating over the file. The
+assertion under the skip is the one that should run once those five cases are refreshed.
+
+## The link scan crosses as an arena, and its two bounds are a gate (2026-08-14)
+
+`rust/slopdesk-terminal`'s `link` was 813 lines of tested Rust nothing could reach, against a
+515-line Swift twin driving three overlays. It is one implementation now, and the shape it crosses
+in is the interesting part.
+
+**The answer does not fit in a value.** A scan returns a list of records each carrying up to two
+strings, and neither the record count nor the total text length is knowable before the scan runs —
+so §4's "return the bytes NEEDED, caller retries with a bigger buffer" cannot start: there is
+nothing to size. So the result crosses as an ARENA parked behind a handle: `slopdesk_link_scan`
+takes every input at once, runs the scan, and hands back an owned result; `counts` says how much
+there is, `link` reads one record, `take_arena` copies the one flat string buffer under §4's rule,
+`free` ends it. The handle carries no policy and no history, which is what keeps the Swift face the
+free function all ten call sites already call — the handle never escapes `detect`, so two overlays
+scanning at once share nothing to race on.
+
+**Rows cross as one blob plus a length each, not an array of pointers.** The caller has to build
+something contiguous for the boundary either way; one buffer is one allocation and one bounds rule
+instead of `row_count` of each. The custom scheme list takes the same shape.
+
+**Two width entries, because one of them is called per column.** `text_cells` answers for a string;
+`scalar_cells` answers for one Unicode scalar. `ViLineMotion` and `HintLabelAssigner` walk a line
+cell by cell, and a string-only door would have made them build a one-character `String` per column
+to ask about a scalar already in hand. `link::char_cells` was renamed `scalar_cells` and made `pub`
+for exactly that; `cluster_cells` still calls it, so there is one table. On the Swift side
+`displayCellWidth(of: String)` lends its bytes with `withUTF8` rather than copying them into an
+`Array`, since a native string is already contiguous UTF-8.
+
+**The bounds are spelled twice, so they are checked.** `MAX_MATCHES_PER_ROW` (512) and
+`MAX_SCAN_COLUMNS` (4096) exist as a `pub const` the scan enforces and a `public static let` the
+call sites read. A drift between them is an anti-hang bound or an overlay flood that no test would
+see, so `check-supervisor.sh` compares the two numbers rather than trusting a comment — alongside a
+gate that the classify/trim/normalise functions and the East-Asian width TABLE stay deleted. That
+last one is matched on the scalar/character parameter, because `ViLineMotion.cellWidth(_:at:)` is a
+caller of the door, not a second table.
+
+The port is proven the way the others were: `TerminalLinkDetectorTests` and the six other suites
+that reach the detector are unchanged, and 129 of them pass against the door.
+
+The cost was measured, not assumed — `TerminalLinkScanBenchTests` against the deleted Swift file
+timed the same way. The scan is **4.2–4.3× faster** at every size (a 50-row viewport 855 → 203 µs, a
+2000-row scrollback 33910 → 7950 µs), because Swift's per-`Character` grapheme breaking was most of
+the old cost, and `displayCellWidth(of: String)` is 3.7× faster because `withUTF8` lends the bytes.
+`displayCellWidth(of: Character)` is **~30 ns/call slower** and stays that way: the overhead is a
+call that cannot inline across the boundary, and the only way to remove it is a second copy of the
+width table in Swift — the thing this port exists to delete. Its callers walk one line per
+KEYSTROKE, so ~6 µs lands on a 16-millisecond budget while ~650 µs comes off the per-frame scan
+beside it. A per-frame caller would get a batch entry that answers a whole row's widths at once, not
+a table.
+
+## The command blocks cross whole, and the door says where an upsert landed (2026-08-14)
+
+`rust/slopdesk-terminal`'s `blocks` was 706 lines of tested Rust nothing could reach, against
+`TerminalBlockModel.swift`'s 483 lines doing the same work for real: the ring and its 64-block
+bound, the ordered insert that tolerates a late lower index, the eviction that takes the oldest
+block's first-seen stamp with it, the bookmark set with its FIFO cap and its restore-is-not-an-edit
+rule, the status a block derives from `complete` and `exitCode`, the duration label, the
+jump-to-failed walk, and the coalescing and generation rules behind an output request. One
+implementation, and it is Rust's.
+
+**One handle, for the ring AND the request registry**, because a reset touches both in an order that
+matters: the blocks die and every in-flight request has to be answered "unavailable" or a
+continuation is parked forever. `reset` does both and PARKS the stranded indices for
+`take_stranded` — a SLOT, not the usual size-then-fill pair, because a destructive operation cannot
+be asked its size first. Writing the test for that is what found the bug: the first shape drained
+the pending set on the sizing call and handed back an empty list on the second.
+
+**`status`, `duration_label` and `adjacent_failed` take FIELDS, not a handle.** `isFailed` is read
+per row per render and the jump walk runs over whatever list the caller projected, so neither needs
+the store, and making them need it would mean a test could not ask the question without building
+one.
+
+**What stayed in Swift is what cannot cross**: the CALLBACKS a resolved request fans out to, and the
+SF Symbol and label strings a row displays. The callback bag is a bag, not a rule — the door decides
+send-versus-coalesce and owns the generation; this side only remembers who to call.
+
+**The door answers WHERE an upsert landed, and that is the whole performance story.** `blocks` is an
+`@Observable` array, so it has to live in Swift, and the first shape rebuilt it from a projection
+after every update. Measured at `-O` against the deleted model, that cost ~8 µs per upsert no matter
+how the rebuild was arranged — scratch buffers kept between calls, a per-row byte diff against the
+previous arena, one `memcmp` over the whole arena, every buffer lent once up front. ~8 µs is simply
+what an array of 64 string-bearing structs costs to build in Swift. So `slopdesk_block_store_upsert`
+now returns `{replaced, position}`: a known index replaces its slot with exactly the block the
+caller passed, so the caller writes that one slot and reads nothing back. The in-place upsert — the
+one that arrives on every output-length growth of a running command — went 7.08 µs → **0.48 µs**,
+and the evicting one 19.86 → 10.33 µs, the filtered query 2.25 → 0.06 µs. Three per-render reads
+(`isFailed`, `durationLabel`, `adjacentFailed`) are a fraction of a microsecond SLOWER across 64
+rows, being calls that cannot inline across the boundary; the alternative is a second Swift copy of
+"completed with a non-zero code", which is the drift the port removes.
+`TerminalBlockStoreBenchTests` carries the table.
+
+The caps are spelled twice and therefore checked: `maxBlocks` (64) and `maxBookmarks` (256) against
+`MAX_BLOCKS` and `MAX_BOOKMARKS`, compared numerically by `check-supervisor.sh` alongside a gate
+that the Swift ring, bookmark order and generation counter stay deleted. A drift in the first would
+make the client hold a block superd already evicted.
+
+## The far side picks the convention: the quantiser folds, the recovery policy holds (2026-08-14)
+
+`rust/slopdesk-video`'s `qp_control` and `recovery_idr` were both written and both tested, and both
+had a live Swift twin that ran instead — the constant-QP AIMD in `QPController.swift` and the
+delivery-keyed IDR admission in `RecoveryIDRPolicy.swift`. They cross now, through one door module,
+`rust/slopdesk-ffi/src/rate_control.rs`, and the twins are faces.
+
+**They take opposite conventions, and what picks is the SWIFT side's ownership, not the Rust side's
+shape.** `QPController` is a `struct: Equatable` whose owner takes a copy out of the session, folds a
+report into the copy and writes it back, and compares the whole thing against `nil`. A handle there
+would let two copies the type system says are separate alias one allocation, so the quantiser crosses
+as a pure fold: config and state in, state out, nothing allocated on either side.
+`RecoveryIDRPolicy` is a `final class` on purpose — one token bucket, one keyframe ring, one owner
+mutating it in place — which is exactly what a handle models, so it is one.
+
+**The fold needed the wrapped crate to grow a way back in.** A by-value crossing has to restore state
+that `new` deliberately zeroes: `clean_streak` IS the law's memory, and a controller rebuilt without
+it sharpens on every clean report instead of one per interval. So `QpController` gained `restored`
+and `clean_streak()`, which sanitise and clamp on the way in like any other untrusted input — a
+streak is held at the last value the fold can actually be in, because `decide` resets it the moment
+it reaches the interval. The alternative was to replay the streak through `decide` inside the door,
+which is arithmetic, and arithmetic in the door is the thing the door is not allowed to have.
+
+**What stayed in Swift is where the knobs come from.** `SLOPDESK_QP_*` and `SLOPDESK_IDR_*` resolve
+through `EnvConfig` — environment, then the settings overlay — so a GUI setting can beat an
+environment variable, and that overlay is Swift's. The door is handed the resolved text and parses
+it, CLAMPING an out-of-range knob rather than rejecting it, and never reads an environment of its
+own. `Verdict` also stayed: a Swift `switch` needs cases, and mapping five constants onto five cases
+is the only decision either face makes.
+
+The 24 Swift tests that pinned both laws were left exactly as they were and pass unchanged, which is
+the parity evidence — they now drive the Rust through the face. `check-supervisor.sh` pins the ten
+entries, the `deinit` that frees the handle, and the state a re-implementation would grow back
+(`cleanStreak`, `recentKeyframes`, a token bucket), scoped to the video host: a token bucket is a
+shape rather than a law, and `NotificationRateLimiter` in SlopDeskWorkspaceCore is its own.
+
+## The rate law crosses whole: state in, state out, every field (2026-08-14)
+
+`LiveCongestionController` (617 lines) and the `NetworkEstimate` it folds (in `VideoSessionLogic.swift`)
+were the last of the video host's control laws still spelled in Swift, each carrying a comment saying
+it "mirrors `LiveCongestionController::decide_with_config` byte-for-byte" — which is to say, two
+implementations of one law, kept in step by hand. They are now faces over
+`rust/slopdesk-ffi/src/abr.rs`, and the mirror comments are gone with the mirror.
+
+**Both cross BY VALUE, and the whole record travels every call.** Both are Swift `struct`s their
+owners copy out, fold into and write back, so the rule the quantiser established applies again: a
+handle would alias two values the type system says are separate. What the crossing must carry is
+every field the NEXT fold reads, not the fields a reader finds interesting. `rtt_inflated_streak` is
+what makes one noisy report harmless; `prev_smoothed_rtt_millis` IS the drain gate, without which a
+backlog flushing out walks the rate to the floor; `sample_count` is the two-fold warmup that stops
+the very first jitter sample reading as a rise. A crossing carrying only the public readings would
+be a different control law that agreed on the easy cases. So `Equatable` is spelled out over all of
+them — a C struct synthesises nothing, and a field missing from `==` would let two controllers that
+disagree on the next report compare equal.
+
+**The wrapped crate grew `snapshot` + `restored` rather than the door growing arithmetic**, exactly
+as `QpController` did. `restored` re-establishes what `new` guarantees — a ceiling of at least one, a
+floor inside the encoder minimum, a target between them — and it does it FLOOR-LAST (`floor.max(cur
+.min(effective_ceiling()))`), never `clamp`: a ceiling under the encoder minimum leaves the floor
+above the ceiling, which `new` already permits and answers by returning the floor, while `clamp`
+asserts its bounds are ordered and would panic. A panic crossing the C boundary aborts the process,
+so a hostile snapshot must land on a legal state, not kill the host.
+
+**The defaults are spelled once, on the far side.** `slopdesk_abr_config_default()` vends them and
+every `SLOPDESK_ABR_*` static falls back to a field of it, so a default can no longer be changed in
+one language and not the other. What stayed in Swift is the part that is genuinely the host's:
+resolving each knob through the overlay-aware `EnvConfig` (validate-then-default, so a GUI setting
+beats an environment variable), naming the ten branches for the `abr: actuate` debug line, and
+holding the state between reports. `effective_slack_millis` stays a free-standing entry because the
+frame-rate governor consults the SAME rule — the two controllers cannot be allowed to drift apart on
+what "inflated" means.
+
+The 94 Swift tests over these two types were left exactly as they were and pass unchanged, which is
+the parity evidence. `check-supervisor.sh` pins the eleven entries, the five branch functions a
+re-implementation would grow back (`decideInner`, `applyDecrease`, `appLimitedDecay`, `increaseStep`,
+`utilizationPermitsRamp`), the estimate's three EWMA weights — which no env reads and nothing hands
+across, so a Swift copy could drift for a whole release unnoticed — and the count of defaults read
+from the door.
+
+## The frame-rate axis crosses by value; the ladder is derived, not carried (2026-08-14)
+
+`FPSGovernor`, `EncodeCadenceGate`, `SelfHealCadence` and `EncodeLoadPacer` — the whole of
+`FPSGovernor.swift` — are now faces over `rust/slopdesk-video`'s `fps_governor`, through
+`rust/slopdesk-ffi/src/frame_rate.rs`. Both governors are Swift `struct`s their owners copy, so both
+cross by value, state in and state out, exactly as the rate law does.
+
+**The LADDER does not cross.** It is a function of the base rate and the floor, both of which travel
+inside the record, so carrying it would be carrying a derivation — and a derivation that crossed
+could come back disagreeing with the numbers it came from. A caller that wants to SEE the rungs asks
+for them: `slopdesk_fps_ladder` fills a buffer under §4's out-and-capacity convention, and four rungs
+is the whole answer, so the buffer is sized once at construction. `restored` snaps a rate that
+arrives BETWEEN two rungs down onto the rung at or below it, because every path in the law reads the
+rate against the ladder and a value no ladder names would step to a rate no cadence can be regular
+at. An average that arrives non-finite reads as UNSEEDED — the state the governor refuses to act in,
+which is the safe answer and the one `new` starts from.
+
+**One rule is shared rather than mirrored.** `slopdesk_fps_congestion_evidence` takes the BITRATE
+law's `SlopDeskAbrConfig`, not a config of its own, so the frame-rate axis and the rate axis read one
+`effective_slack_millis`. Had it kept a local copy of the inflate factor, the frame rate would step
+down on evidence the rate controller ignored — and nothing would have said so.
+
+The 38 Swift tests over these four types were left exactly as they were and pass unchanged; the
+golden corpus, which replays the bytes-EWMA fold, is byte-identical. `check-supervisor.sh` pins the
+twelve entries, the ladder/cadence/budget arithmetic a re-implementation would grow back (scoped to
+the video host, since a frame interval is a shape rather than a law and the loopback harness computes
+its own), and the fact that the congestion predicate still passes `LiveCongestionController.config`.
+
+## The presentation depth crosses by value, rings and all (2026-08-14)
+
+`PacerDepthPolicy` and `OwdLateDetector` — the whole of the client's depth axis — are now faces over
+`rust/slopdesk-video`'s `pacer_depth`, through `rust/slopdesk-ffi/src/pacer_depth.rs`. Both are Swift
+`struct`s the `FramePacer` copies out, folds into and writes back under its lock, so both cross by
+value, state in and state out, the way the rate law and the frame-rate axis already do. `FramePacer`
+itself stays Swift: it is CADisplayLink, CoreVideo and QuartzCore, which is the one thing that
+justifies staying.
+
+**The RINGS travel.** That is the whole design question here. A promote window, a demote dwell and
+the dense-flow gate all read TIMES rather than counts — the question is never "how many lates" but
+"how many inside the last second" — so a crossing that carried the counters would be a different
+policy that agreed only while nothing aged out. The three rings cross as fixed-capacity arrays,
+sixteen arrivals, fifteen intervals and four lates, which are the capacities the folds themselves cap
+at; `interval_ring_size` is capped to the carried capacity when the state is rebuilt, because a ring
+that KEPT more than the crossing carries would lose its oldest entry on every trip. The baseline's
+two bucket minima travel for the same reason: a detector that agreed on its verdicts but not on those
+would diverge on the next sample.
+
+**The environment is applied one PAIR at a time.** The caller holds a whole `[String: String]` and
+every band lives on the far side, so the door takes a KEY and a VALUE and answers the config that
+results — `slopdesk_pacer_depth_config_apply`, `slopdesk_owd_late_config_apply`. The alternative,
+nine optional strings in one call, keeps the knob NAMES on the near side, which is the same law
+written twice; the names now live in `pacer_depth.rs` beside the bands they open. The knobs are
+independent, so the dictionary's arbitrary iteration order cannot change the answer. One behaviour
+moved while the names did: an integer knob now parses SIGNED and clamps, so `-1` lands on the nearest
+end of its band instead of silently keeping the default — which is what every other knob already did,
+and what the Swift original did.
+
+**Equality is the door's.** A C array is a TUPLE on the Swift side and a tuple that long has no
+equality, so `slopdesk_pacer_depth_eq` is the one comparison the near side cannot spell for itself.
+
+The 33 Swift tests over the two types were left exactly as they were and pass unchanged, and the
+golden corpus — which pins the detector's per-sample deviations and the policy's interval/threshold
+bit patterns — is byte-identical. `check-supervisor.sh` pins the sixteen entries, the rings and
+promote/demote branches a re-implementation would grow back (scoped to `Sources/`, since the tests
+name the state they drive), and the absence of any `SLOPDESK_DEPTH_*` or `SLOPDESK_OWD_LATE_*`
+literal in the shipping code.
+
+## The gradient detector crosses by value, window and all (2026-08-14)
+
+`TrendlineEstimator` and `TrendSampler` — the client's one-way-delay GRADIENT path, which is what
+buys the rate law its early cut — are now faces over `rust/slopdesk-video`'s `trendline`, through
+`rust/slopdesk-ffi/src/trendline.rs`. A Swift `struct` its owner copies out, folds into and writes
+back, so it crosses by value like the rate law, the frame-rate axis and the depth policy before it.
+
+**The regression WINDOW travels.** The verdict is a least-squares slope over the window's samples,
+and running sums that dropped the evicted point arithmetically would be a different sequence of
+roundings — the trend's bits are pinned both on the wire and in the golden corpus, so the samples
+themselves cross, as a pair of parallel fixed-capacity arrays. The capacity is two hundred, which is
+the CEILING of `SLOPDESK_TREND_WINDOW`'s own band: every window a legal config can ask for fits with
+nothing truncated, and the ninety percent of the array a default twenty-sample window leaves unused
+is three kilobytes of stack per fold at sixty folds a second, which is not a cost worth a second
+convention.
+
+**The law's constants do NOT cross as state.** The smoothing coefficient, the threshold's bounds and
+gains, the sustain time and the idle-reset gap are asked for once through
+`slopdesk_trendline_constants`, because no fold changes one — carrying them in the record would have
+made a fixed number look like something a caller could move.
+
+**Out-of-band is rejected here, not clamped.** The depth policy's knobs move an operating point along
+an axis, so a value past the end of a band lands on the end. These two reshape the detector's
+geometry, so a typo keeps the default — which is what the Swift original did, and the door now says
+so once rather than in both languages.
+
+The 17 Swift tests over the two types were left exactly as they were and pass unchanged, and the
+golden corpus — which pins the smoothed delay, the modified trend, the threshold, the state and both
+packed wire fields as bit patterns — is byte-identical. `check-supervisor.sh` pins the eleven
+entries, the OLS accumulators and threshold gains a re-implementation would grow back, and the
+absence of any `SLOPDESK_TREND_*` literal in the shipping code.
+
+## The decoder's admission crosses by value, hold sets and all (2026-08-14)
+
+`DecodeFrontier`, `DecodeGate`, `DecodeSequencer` and `DecodeAdmissionBudget` — everything that
+stands between a reassembled frame and VideoToolbox — are now faces over `rust/slopdesk-video`'s
+`decode_admission`, through `rust/slopdesk-ffi/src/decode_admission.rs`. Three of the four are a
+handful of scalars and cross the way the rate law, the depth policy and the gradient detector do.
+`DecodeGate` stays a Swift `final class`, because its single owner mutates it in place across the
+decode loop, but the record it wraps is still a by-value fold — a five-scalar handle would have
+bought an allocation and a lifetime for nothing.
+
+**The sequencer moves IDS, and Swift keeps the bytes.** This is the new boundary shape, and the
+reason for it is that the ordering law never reads a compressed byte: it is a function of frame ids
+and one keyframe bit. Threading `ReassembledFrame` through the door would have copied the whole AVCC
+payload in and out on every completion — about 10 µs a frame at 75 Mbps, for a law that does not
+look at it. So the door takes an id and answers with ids: which are releasable now, in RELEASE
+order, and which a keyframe has made obsolete. Swift keeps its own frames in a bag keyed by id and
+honours the two answers in that order, release then forget, so a duplicate keyframe that was already
+held finds its removal a no-op. The Rust type lost its `BTreeMap<u32, ReassembledFrame>` in the same
+change — carrying payloads it never inspected was incidental, and no Rust caller wanted it.
+
+This is NOT the `RetransmitRing` question deferred elsewhere. There the bytes ARE the product — the
+ring exists to hand a frame back — so a port has to answer who owns the allocation. Here the bytes
+are never the product, so the boundary lands where the law's own inputs end.
+
+**The two outstanding SETS travel.** Which specific ids are held and which are declared-lost is what
+the next fold reads: the run at the expectation, the holes it steps over, the flush order. A count
+answers none of those. Both cross as fixed-capacity arrays, and both valves now CLAMP to a ceiling of
+sixty-four — which is what the capacities are proved against, and an order of magnitude past the
+retransmit grace the valves are actually derived from. Patience past that point is a pane frozen for
+a second, which no gap is worth. Inside Rust the sets became arrays too: no allocation on the
+per-frame path, and the whole sequencer stays a value that copies.
+
+**The flush sorts by hand.** `sort_by` over `distance_wrapped` is a comparator that is only a total
+order over a span shorter than half the id space. The valves guarantee that, but a library sort that
+validates its comparator would ABORT if they ever did not — and an abort is what a panic crossing the
+shim becomes. A selection sort over at most sixty-five ids on a path that trips rarely is total by
+construction.
+
+The 37 Swift tests over the four types were left exactly as they were and pass unchanged, and the
+golden corpus is byte-identical. `check-supervisor.sh` pins the seventeen entries, the hold set and
+flush branches a re-implementation would grow back, and the valve and cap literals that would put a
+band in two languages at once.
+
+## The audio jitter stage is a handle, samples and all (2026-08-14)
+
+`AudioJitterBuffer` — every buffering decision between the audio decoder and whatever plays — is now
+a face over `rust/slopdesk-video`'s `audio_jitter`, through `rust/slopdesk-ffi/src/audio_jitter.rs`.
+It takes the HANDLE convention, and it is worth writing down next to the port that landed the same
+day and took the opposite one.
+
+**The two ports are the same shape and the opposite answer, and the test is what the LAW reads.**
+Both hold a queue of frames. The decode sequencer never looks at a compressed byte — its law is a
+function of frame ids and one keyframe bit — so its door moves ids and Swift keeps the payloads. This
+stage's whole product IS the samples: it exists to hand back a steady stream of them, in an order it
+chose, split at offsets it chose. There is no id it could answer with that would let the caller
+reconstruct the answer, so the samples live where the decisions are. Rust owns the stage, Swift holds
+an opaque token, and samples cross once each way through `(ptr, len)`.
+
+**What that costs, measured against what it replaces.** Swift used to retain the decoder's `[Float]`
+and never copy it. Now each push memcpys about 10 ms of audio — 3.8 KB at 48 kHz stereo — which at
+the ~100 Hz push cadence is under 0.4 MB/s, or a few microseconds of CPU per second. There is no
+arrangement that avoids it without putting the reorder law back on the near side, which is the thing
+being deleted.
+
+**The SPSC hand-off ring stays Swift, on purpose.** `AudioSampleRing` is raw storage partitioned by
+two atomic counters, and it exists so a real-time render callback never blocks on the producer. It
+belongs to the runtime that owns the audio unit, and the Rust module's own header says so. What DID
+cross is the pump's arithmetic — the two sample budgets, the starvation test and the combined-depth
+shed — so the stage's policy and the pump's budget can no longer drift apart. `check-supervisor.sh`
+pins the sixteen entries, the one `_free` in the owner's `deinit`, the block list and play frontier a
+re-implementation would grow back, and the absence of any door entry for the ring itself.
+
+The 65 Swift audio tests were left exactly as they were and pass unchanged.
+
+## The presentation queue folds by value, waiting frames and all (2026-08-14)
+
+`FramePacer` no longer holds a jitter buffer. Which decoded frame each refresh shows, how much slack
+to keep, when to hold and when to re-prime is now `rust/slopdesk-video`'s `present_queue`, reached
+through `rust/slopdesk-ffi/src/present_queue.rs`. The Swift keeps the display-link wiring, the
+render callback and the two depth controllers — AppKit, telemetry and policy that already lived
+elsewhere — and one bag of `CVImageBuffer`s keyed by handle.
+
+**By value, and this is the third worked example of the rule, not a new one.** The queue is the big
+part of the value and the near side never reads it: it reads a handle to present and a list of
+handles to release. The law never dereferences a handle, so nothing is gained by moving images
+across — the decoder's buffers stay exactly where they are. The waiting frames therefore cross as a
+fixed-capacity array sized at the depth cap the `SLOPDESK_JITTER_MAX` gate already clamps to, which
+makes the crossing 288 bytes and the whole pacer state a value that copies.
+
+**A by-value port of a HANDLE queue owes its caller a drop list.** Every fold answers with the
+handles it made obsolete: homeostasis's trim on a present, the hard cap's eviction on a submit. A
+count would say how many died and leave Swift inferring WHICH from a queue order it is precisely no
+longer keeping — which is the mirror state the port exists to delete. That obligation is why
+`PresentOutcome` gave up its `dropped: usize` for a `PresentStep` carrying the handles.
+
+**Two depth doors, because there are two controllers.** `set_live_depth` carries the promote rule (a
+deeper buffer re-primes, or the slack frame it asked for never gets built); `adopt_live_depth` does
+not. The older arrival-jitter controller re-recommends on every frame and every underrun, and
+re-priming that often would hold the picture where the user can see it. The two controllers are
+mutually exclusive upstream, so the two rules never both apply to one pacer — but they are two rules,
+and one entry point pretending otherwise would have been a silent behaviour change.
+
+Also deleted: the Swift spellings of the deadline schedule, the half-tick lookahead, the tick-rate
+band, the render cap's 0.5 ms slack, the playout ceiling and the 60-sample recompute cadence — every
+one of them a number that was written down twice. `check-supervisor.sh` pins the twelve entries, the
+lockstep timestamp array and priming latch a re-implementation would grow back, and the literals.
+
+The 43 Swift pacer tests were left exactly as they were and pass unchanged.
+
+## The HEVC parameter sets are spans, not a second walk (2026-08-15)
+
+`HEVCParameterSets` was a line-for-line Swift copy of `rust/slopdesk-video`'s
+`hevc_parameter_sets` — same three type numbers, same six-bit shift under the forbidden zero bit,
+same split-then-classify loop, same last-one-wins rule. It is now a face over that module through
+`rust/slopdesk-ffi/src/hevc_parameter_sets.rs`.
+
+**Spans, because `NALUnit` already crosses that way.** A keyframe access unit is most of a frame and
+Swift is holding it, so the door answers WHERE the three sets sit and the payloads are copied once,
+inside the borrow that has the pointer. `extract_spans` is the new shape in the crate; the owning
+`extract` is written in terms of it, so there is still one walk.
+
+**An incomplete set is one answer, not three.** A format description built from two of the three
+would configure the decoder wrong, so the entry answers false and leaves the caller's record
+untouched rather than handing back a partial set. An empty unit's missing type crosses as a presence
+flag, never a sentinel type number.
+
+The 10 Swift tests over this type and `VideoDecoder`'s parameter-set caching were left exactly as
+they were and pass unchanged.
+
+## The scroll reprojection folds by value (2026-08-15)
+
+`ScrollReprojector` was the last Swift half of `rust/slopdesk-video`'s `scroll_reproject` — the same
+band clamp, the same integrator, the same ease-out and the same rest epsilon, written twice. It is
+now a face over that module through `rust/slopdesk-ffi/src/scroll_reproject.rs`, and the stale
+comment claiming "the former Rust core is retired" is gone with it.
+
+**By value, and the class stays.** The state is seven scalars: two knobs, an offset, a velocity and
+a decay flag. Nothing here is big, so nothing is worth a handle — the pane holds one reprojector by
+reference the way it always did, and the reference is Swift's while the state is the law's.
+
+**An advance answers both, because the caller needs both.** The tick produces the offset the
+renderer sets AND the state the next tick folds. Splitting them into two entries would make the near
+side call twice and invent a rule about which order is correct.
+
+**The arithmetic is the point.** The separate multiply and add that must never fuse, the clamp
+applied in its fixed order, the geometric ease-out that SNAPS to exactly zero inside the rest
+epsilon — a second implementation would disagree in the last bits and, worse, would asymptote
+instead of settling. check-supervisor bans a Swift `exp(`, `applyDecay` or band literal for that
+reason.
+
+The three `FramePacerReprojectionTests` were left exactly as they were and pass unchanged.
+
+## The scroll resampling folds by value (2026-08-15)
+
+`ScrollResampler` was the injector's Swift half of `rust/slopdesk-video`'s `scroll_resample` — same
+spread, same lag cap, same flush-before-the-End rule, same carried sub-pixel fraction. It is now a
+face over that module through `rust/slopdesk-ffi/src/scroll_resample.rs`, and the type stays a Swift
+`struct` because that is how `InputInjector` holds it: a value on the near side, a value on the far
+one, which is the convention the far side is entitled to pick.
+
+**An ingest answers a FIXED PAIR, not a list.** The law's own branches bound the answer at two: a
+marker, and at most one residual flush in front of an ending marker. That bound is now a crate
+constant (`MAX_INGEST_EVENTS`) the shim's array is sized from, so the crossing needs neither an
+allocation nor a length rule — the same reason the present queue's capacity is a constant rather
+than a negotiation.
+
+**The flush ordering is the part worth pinning.** A residual drained AFTER an End marker is a
+`Changed` at phase 2 following a phase 4, which corrupts rubber-banding in AppKit and Chromium
+alike. One implementation cannot disagree with itself about when to flush; two can.
+
+**The truncation carries.** `drain` emits whole pixels and keeps the fraction, which is what makes
+the integer outputs sum to the float input to under a pixel per axis per gesture. A second
+`rounded(.towardZero)` in Swift would quietly leak that fraction, so check-supervisor bans it here.
+
+The 14 Swift resampler tests were left exactly as they were and pass unchanged.
+
+## The swipe recogniser is one law, and both processes read it (2026-08-15)
+
+`SwipeNavRecognizer` was a 559-line Swift mirror of `rust/slopdesk-video`'s `swipe_recognizer` —
+same three decision points, same field-tuned thresholds, same graduated slow-tier surface, same
+27-entry allow-list. It is now a face over that module through
+`rust/slopdesk-ffi/src/swipe_recognizer.rs`.
+
+**This is the mirror that mattered most.** Every other port removed a duplicate that only had to
+agree with itself. This one is run by TWO processes: the host's injector decides whether a flick
+fires ⌘[ / ⌘], and the client's peel planner predicts that decision over the same event stream so
+the overlay can fill without a round trip. Two implementations would not merely duplicate the rule —
+they would let the overlay promise a navigation the host then declines, which is the one failure the
+feedback exists to prevent.
+
+**By value, because both holders are values.** Sixteen scalars and flags, held inside a Swift
+`struct` on each side. `RecognizerState` is the crate's own carried form, and the threshold family is
+taken as given on restore rather than re-derived from `fire_travel` — deriving it twice is how two
+passes come to disagree.
+
+**The trace line is an answer, not state.** It is recorded AT a decision and popped straight after,
+so it crosses written into the caller's buffer by the same ingest that produced it, rather than
+riding in a record that would then have to own a string. A restored recogniser has none pending.
+
+**The allow-list crosses as one newline-separated answer.** A bundle id cannot contain a newline, so
+the near side unpacks with a split rather than running the comma-and-trim parse a second time. An
+EMPTY span means absent, not the empty string — without that distinction a null frontmost app
+matched the empty entry an empty extension list produced, which the door's own test caught.
+
+The 83 Swift recogniser and peel-planner tests were left exactly as they were and pass unchanged.
+
+## The blob reassembly is a handle, bytes and caps and all (2026-08-15)
+
+`BlobAssembler`, `BlobImageValidator` and `BlobChunker` were a line-for-line Swift mirror of
+`rust/slopdesk-video`'s `blob` — same per-kind caps, same four-partial bound, same disagreeing-count
+discard, same magic bytes, same FNV-1a. They are now faces over that module through
+`rust/slopdesk-ffi/src/blob.rs`.
+
+**A handle, so the Swift type became a class.** This is the audio-stage case, not the present-queue
+one: the assembly's whole product IS the bytes, and they accumulate across many calls — up to four
+partial blobs, each up to its kind's cap. A by-value record would copy the accumulator on every
+chunk of every blob, which is the opposite of what the crossing rule asks for.
+
+**A completed blob crosses in two steps.** The near side cannot know the length until the chunk that
+finishes the assembly arrives, so the fold reports it and one take copies the bytes out. A take that
+did not fit leaves the blob in place and reports the length again, so a caller that sized wrong
+retries rather than losing it. The alternative — a fixed buffer sized to the kind's cap — would make
+every caller carry a megabyte to receive an icon.
+
+**The chunker answers one chunk at a time.** A list of variable-length payloads has no natural
+crossing shape, so the door answers chunk `i` and the crate's whole-list `encoded_chunks` is written
+in terms of the same per-index split. One split, two shapes.
+
+The 10 Swift blob tests were left exactly as they were and pass unchanged.
+
+## The window feed reassembles once, in chunk order (2026-08-15)
+
+`WindowFeedAssembler` was a Swift mirror of `rust/slopdesk-video`'s `window_feed` — same four-
+generation bound, same 512-record cap, same disagreeing-count discard, same chunk-order
+concatenation. It is now a face over that module through `rust/slopdesk-ffi/src/window_feed.rs`, and
+a handle for the reason the blob assembler is: the accumulator is a list of records with three
+strings each, held across chunks and across generations.
+
+**The records cross in the control decode's own shape.** Flat rows naming `(offset, length)` spans
+in one arena — the same `SlopDeskControlRecord` the decode already answers with, so the near side is
+holding exactly this shape when a chunk arrives and a fold costs it the marshalling an encode
+already does. Inventing a second flat record type for this door would have been the duplication in a
+different disguise.
+
+**Chunk order is the part worth pinning.** Arrival order is not chunk order — that is the whole
+point of a reassembler — so a second concatenation loop that forgot it would silently reorder the
+window list on every lossy renewal, which reads as the feed "jumping" rather than as a bug.
+
+The 57 Swift window-feed tests were left exactly as they were and pass unchanged.
+
+## The keepalive cadences and the stall threshold are one record (2026-08-15)
+
+`KeepaliveTiming` said so itself — "Native Swift twin of `slopdesk_core::keepalive`" — and
+`StreamStallPolicy` spelled its own 3-second default. Both now read `slopdesk_keepalive_timing()`.
+
+**One record, not five entries.** The five numbers are one argument: the stall threshold is sized to
+tolerate two lost host heartbeats, and the reaper tick is what makes the worst-case reclaim
+`idleTimeout + reaperTick`. Five separate doors would let a caller read one and reason about it
+alone, which is exactly the drift the shared constants exist to prevent.
+
+The 27 Swift keepalive and stall tests were left exactly as they were and pass unchanged.
+
+## The four smallest send-path decisions are Rust, not Swift (2026-08-15)
+
+`StaticFrameSuppressionDecider`, `StillnessCrispDecider`, `LiveBitratePolicy` and
+`CaptureRegionFailureRecovery` each had a full Rust twin — `frame_gate`, `live_bitrate`,
+`capture_recovery` — and each was still deciding in Swift. All four are now faces.
+
+**Being small is the argument FOR porting them, not against.** A rule that is one `guard` over six
+flags, a count-and-latch, a multiply-and-round, and a three-rung ternary are exactly the shapes that
+get re-typed at the call site rather than called. The suppression rule is the sharp case: it is
+conjunctive on `!`-of-every-obligation, so a future obligation added on one side only produces a
+host that suppresses a frame the client is blocked waiting for — a freeze with no error anywhere.
+The obligations therefore cross as ONE record with a field per flag, so adding one is a field on
+both sides or it does not compile.
+
+**The stillness decider folds; nothing here is a handle.** Its whole state is a count and a latch,
+so each step hands the door the two numbers it was last given. §4b's test — does the far side read
+the part that is big — has no big part to read here at all, and a handle would buy an allocation
+per capture session for nothing.
+
+**The density knob is parsed by the door, not by Swift.** `SLOPDESK_BPP` outside `(0, 1]` is a typo
+rather than an intent, so it falls back to the default instead of being clamped — one reading, on
+the side that owns the arithmetic the budget feeds. The multiplies stay separate and the rounding
+stays half-away-from-zero, because the budget is what the encoder's QP ceiling is sized against.
+
+The Swift tests for all four were left exactly as they were and pass unchanged.
+
+## The four host accumulators are handles (2026-08-15)
+
+`LTRController`, `RecoveryRequestDeduper`, `IdleReapDecider` and `RetransmitRing` each had a full
+Rust twin — `ltr`, `recovery_dedupe`, `idle_reap`, `retransmit_ring` — and each was still
+accumulating in Swift. All four are now handles.
+
+**The LTR gate is why this one mattered.** A `ForceLTRRefresh` may only reference a long-term
+reference the client demonstrably holds. Two nets enforce that: the controller's own "has anything
+been acked" gate, and VideoToolbox's contract. A second copy of the gate that drifts open by one
+line collapses the stack to one net and issues a refresh against a reference the client never
+had — persistent corruption until the next IDR, with no error anywhere to trace it to.
+
+**§4b's test, answered on the handle side four times.** Each of these holds something large across
+many calls that the near side barely reads back. The LTR map is sixty-four mappings and production
+reads only `hasAckedToken`; the dedup window is a ring of whole datagrams and the answer is one
+bool; the reaper holds a record per flow and answers a short list of ids. The retransmit ring is the
+sharp case — it exists BECAUSE it is large, so folding it by value would copy the whole send history
+on every frame. A repair crosses in two steps instead: the selection reports its shape, one take
+copies out only the fragments the NACK named.
+
+**The Swift ring was also subtly worse, and that is now gone.** It selected fragments by reading a
+byte at a fixed offset into each datagram, guarded by a length check. The crate decodes the fragment
+header, so a truncated datagram is skipped rather than mis-selected, and the selection cannot drift
+when the wire header moves.
+
+**The reaper's key is concrete now.** It was generic over the flow id; the door is keyed on the
+`UInt32` channel id the mux lanes actually use. A generic key would have to be interned into
+something the door understands, and that interning table would be a second identity rule — the very
+thing the port exists to remove. The only production instantiation was already `UInt32`.
+
+**What deliberately stayed Swift.** `VirtualDisplayRecreateGate` keeps its `NSLock`: its whole job is
+to serialise concurrent mint lanes, and a lock is not a rule. The rule it protects — `shouldAttempt`
+— is the crate's.
+
+## The aspect geometry is Rust, bit-exactly (2026-08-15)
+
+`Geometry.swift` said so in three separate comments — "byte-identical to
+`geometry::VideoRect::intersection_area`", "byte-identical to
+`geometry::aspect_fit::displayed_video_rect`", "byte-identical to `geometry::aspect_fit::view_point`"
+— and was still computing all three itself. It now calls them.
+
+**A comment claiming byte-identity is the strongest possible argument for deleting the copy.** These
+are the numbers a click lands on. `viewPoint` is the exact inverse of the input encoder's
+`normalize`, and it is what places the local cursor overlay; if the two drift by one ULP the overlay
+sits beside the click it is drawn for. The Swift copy was carrying three separate `keep mul+add
+separate — FMA breaks bit-exact golden parity` comments to hold that line by hand, on a compiler
+under no obligation to obey them.
+
+**The vocabulary stays Swift; the arithmetic does not.** `VideoPoint`/`VideoSize`/`VideoRect` remain
+Swift structs — they bridge to `CGPoint`/`CGSize`/`CGRect` and that bridge is the reason they exist.
+Each grew one `crossing` property naming the record it hands the door. `Double.maximum` and
+`Double.minimum` are gone from the file entirely, which is what the supervisor now checks: they were
+only ever there to imitate `f64::max`'s NaN-ignoring behaviour, and imitation is what got deleted.
+
+**The VD throttle went with it, minus its lock.** `VirtualDisplayRecreatePolicy.shouldAttempt` and
+`VirtualDisplayTerminationPolicy.channelsToDisconnect` are `capture_recovery`'s. `VirtualDisplay-
+RecreateGate` keeps its `NSLock`, because serialising concurrent mint lanes is this side's job and a
+lock is not a decision.
+
+## The peel mirror is Rust, so it agrees with the fire it predicts (2026-08-15)
+
+`SwipePeelPlanner` was the last Swift half of a gesture whose other half was already ported. The
+recogniser it wraps has crossed by value since `swipe_recognizer` landed — precisely because the
+host's injector and the client's overlay must reach the same verdict over the same events — and yet
+the layer that turns those verdicts into a chip kept its own copy of when to show, how far to fill
+and when to ratchet. It now calls `swipe_peel`.
+
+**A mirror that disagrees is worse than no mirror.** The whole point of the client-side planner is
+feedback while the fingers are still down: the chip promises a navigation the host has not fired
+yet. If the mirror shows at a different travel than the host commits at, the affordance lies — it
+fills and then retracts on lift, or it never appears for a swipe that fires. Two implementations of
+the show fraction are two answers to "is this gesture live", and the user sees the difference.
+
+**The ratchet is the part that could not survive a second copy.** `glass_progress` holds the maximum
+the on-glass segment reached, so a momentum tail whose dominance collapses cannot walk the chip
+back. A re-implementation that simply tracked the live candidate looks correct in every test that
+lifts at peak, and drops the chip mid-commit on every real swipe that decelerates. It is banned by
+name in the supervisor for that reason.
+
+**The history gate crossed as a verdict code, not as a status.** `SwipeNavStatusMessage` already
+flattens itself for the boundary; `peelGated` hands the door that flat record plus one verdict code
+and gets a code back. The alternative — exposing the C status type through the client module so the
+planner could call the door directly — would have made a protocol type's private wire representation
+public to satisfy a caller in another module.
+
+**The near side stays a `struct`.** Doc 55 §4b's test asks whether the far side reads the part that
+is big; here nothing is big. The planner is a mirrored recogniser and four scalars, fully read on
+every event, and it is held inside a view's state where a value type is what the surrounding code
+expects.
+
+## The host mux routes, stamps and byes from one law (2026-08-15)
+
+`VideoMuxRouter`, `MuxFlowTable` and `UnboundLaneByeDecider` were three Swift deciders with three
+complete, separately-tested Rust twins — `mux_routing` and `mux_flow`. They now call them.
+
+**All three guard the same failure, which is why they moved together.** A datagram from a session
+that no longer exists must never reach one that does. The router answers it per lane, the flow table
+answers which flow a reply rides so a rebind cannot cross two clients' streams, and the bye policy
+answers whether a dropped datagram's sender deserves to be told. Split across two languages, the
+three answers could drift independently; a lane the router considers retired while the flow table
+still holds its stamp is exactly the shape of a leak that survives every unit test.
+
+**The flow crosses as an id, and that is the whole shim.** A flow on the near side is an
+`NWConnection`, which the crate cannot hold and should not try to. It crosses as an opaque
+`uint64_t` — the object's identity — and the Swift face keeps the id → object registry so it can
+turn a reaped id back into the connection to `cancel()`. That registry is NOT a second copy of the
+table: it holds no rule. It is pruned by asking `slopdesk_mux_flows_tracks`, so which side of the
+table an id still lives on is answered once, by the side that knows.
+
+**The reap asks its caller back rather than taking a snapshot.** Rule one of the reap needs to know
+whether an expired stamp's lane got admitted inside its window, and that answer lives in the router,
+which the transport holds separately and which the tests replace with a fake. So the predicate
+crosses as a C callback plus a context pointer. A snapshot would have to be taken before the sweep
+it feeds — the one ordering the rule forbids, because rule 2's reference set must be built AFTER
+rule 1 has dropped the stale stamps.
+
+**A reap consumes what it reports, so it is lent at full size.** The two-call size-then-fill shape
+every other door uses is wrong here: the first call would perform the reap and the second would find
+nothing. The tracked-flow count is an exact upper bound on what one tick can close, so the buffer is
+lent at that size in a single call. `removeAll` is the same shape for the same reason.
+
+**`Decision.drop(reason:)` kept its string.** The crate's verdict is `DropEmpty`; the near side's
+enum carries a human-readable reason the transport logs. The code is what crosses, and the reason is
+re-attached on this side — the alternative was to move a log string onto the wire, which is not a
+decision and does not belong in the law.
+
+## The host window feed lists, packs, pushes and paces from one law (2026-08-15)
+
+Four Swift files — `WindowFeedSnapshotBuilder`, `WindowFeedCache`, `WindowFeedChunkPacker`,
+`WindowFeedSubscribers` — against one complete crate module, `window_feed_host`. They now call it.
+
+**The inclusion verdict is the one that had to be single.** The picker and the feed both ask it, and
+its own doc comment already said so: "the ONE inclusion policy, so the two surfaces can never
+drift." It was still spelled in Swift. Two copies of an exclusion list is a window that appears in
+the picker and not in the rail, or the reverse — and the list is not a heuristic anyone can
+re-derive: "Cua Driver" is on it because an automation agent's transparent full-display overlay is a
+real, on-screen, layer-0 window with nothing in it.
+
+**The AX evidence gate and the structural skeleton are the two rules a re-implementation gets
+wrong.** An off-screen window is listable only on accessibility evidence, because the full
+enumeration is thick with phantoms that report exactly what real windows report; a copy without that
+gate drowns the rail in tab caches. And WHICH flag bits count as structural is the entire coalescing
+contract — a copy that called a title change structural would put any window being typed into
+permanent 4 Hz burst. Both are banned by name in the supervisor.
+
+**The cache is a handle; the push policy is not.** The cache holds a record list AND the datagrams
+that list packs into, and the near side reads one reply out of it per subscribe — §4b's test, met.
+The policy is two optional timestamps read whole every tick, so it folds by value, and the crate
+grew `state()`/`restored()` for it the same way `swipe_peel` and `frame_gate` did.
+
+**The pure builders answer twice; the reap does not.** A snapshot and a chunk list are
+variable-length products with strings in them, so they follow §4: the call reports the shape it
+would write, a second call writes it. Recomputing costs a pass over at most sixty-four rows at four
+times a second — cheaper than a handle holding an answer nobody asked for. The subscriber reap is
+the opposite case and is lent at the table's own size in one call, because it CONSUMES what it
+reports.
+
+**Truncation is by scalar now, not by grapheme.** The Swift dropped whole `Character`s; the crate
+drops whole scalars. Both honour the rule that matters — a truncation is always valid UTF-8, never a
+replacement character on the client — and they differ only for a cluster straddling the cap, where
+the crate leaves the cluster's leading scalars. That is the crate's documented choice and it is now
+the only one.
+
+**One record marshalling, not four.** `HostWindowRecord` crosses as `SlopDeskControlRecord` rows
+naming spans in one arena — the codebase's single flat record type. Three call sites need that
+flattening and a fourth was about to be written, so it moved to `HostWindowRecordRows.swift` and the
+client's assembler lost its private copy. The supervisor checks that the copy stays gone: four
+hand-rolled row layouts is how arena offsets drift into each other.
+
+## The client mux pools its flows and re-arms its loops from one law (2026-08-15)
+
+Three Swift files went, and one of them went because it existed twice.
+`Sources/SlopDeskVideoHost/Mux/UDPReceiveLoopPolicy.swift` and
+`Sources/SlopDeskVideoClient/Mux/UDPReceiveLoopPolicy.swift` were byte-identical, and each carried a
+comment saying the other existed: "Client + host live in separate modules and each owns an identical
+copy; the behaviour contract is the agreement, not a shared Swift type." That is a contract kept by
+reading. A datagram loop is a datagram loop — the re-arm question is "is the connection alive", and
+the backoff is one exponential — so both now call `mux_flow.rs` through the `mux_client` door, and
+the ONE Swift face lives in `SlopDeskVideoProtocol`, the module both ends already import.
+`UDPSendPathPolicy` followed it: same shape, same module, and its verdict is read by the same loop.
+
+**The pool is a handle; the flow objects are not.** `VideoFlowPool` holds a lane set per endpoint
+plus the id allocator, and the registry asks it one id at a time — §4b's test, so it is a handle. But
+a flow on the near side is an `NWConnection`, which the crate cannot hold and does not want to. So
+the registry keeps `[String: VideoMuxClientFlowing]` — objects only, no rule — and the pool answers
+the two facts that map acts on: must this acquisition BUILD a flow, and must this release CLOSE one.
+The same split as `MuxFlowTable`'s id registry, one round earlier, and for the same reason.
+
+**The seed stays on this side.** The lane allocator is seeded from a per-process random base,
+because two distinct clients streaming the same host window each used to count from 1, and the
+host's reply-flow maps are keyed by the bare channelID — so the second client's lane hijacked the
+first's video and cursor replies. The crate stays deterministic, so the base is injected: Swift draws
+the random `UInt32`, `VideoFlowPool::new` masks it into the seed band and floors it past zero. The
+randomness is exactly the part a deterministic crate cannot own.
+
+**Two behaviours are now stricter, both toward idempotence.** Releasing a lane the pool never
+handed out used to still call `unregisterLane` on whatever flow was pooled for that endpoint; it now
+answers `SLOPDESK_LANE_UNKNOWN` and touches nothing. And `nextBackoff` takes its count as a
+`UInt32(clamping:)`, so a negative count reads as zero — an immediate re-arm — rather than as the
+`guard consecutiveErrors > 0` fall-through it was.
+
+The corpus lost its strangest import along the way: `slopdesk-corevectors` had to write
+`import enum SlopDeskVideoHost.UDPReceiveLoopPolicy` because the host module also exports a TYPE
+named `SlopDeskVideoHost`, making the twin impossible to qualify. One type, no disambiguator.
+
+## The CLI is linked, and stops being written twice (2026-08-15)
+
+`rust/slopdesk-cli` was finished, tested and then left unlinked for two days on a rule stage 16 had
+recorded: *a port ships over a socket, never FFI*. That rule is void — CLAUDE.md now reads "a port
+ships over a socket, **or as a linked library — pick by lifetime**" — and by that test the CLI is
+not a socket port at all. It starts, does one thing and exits. Nothing outlives its caller, nothing
+`execve`s it, no second process dials it. It is in-process by necessity, which is what a linked
+library is for, and it is now linked: `SlopDeskCLICore` is the face, and the flag grammar, the five
+completion scripts, the config-file rules, the six output tables and the version banner are the
+crate's.
+
+**Rows cross as JSON text, and that is not a cop-out.** They ARRIVE as JSON — the control socket
+answers NDJSON — and they leave as JSON or as a table, so decoding them into a flat record on the
+way through would mean writing a schema for six lists and re-encoding it on both sides. The crate
+already parses JSON for exactly these bytes, and its own manifest gives the reason: a pane title or
+a cwd path is something a foreign program drew into a PTY, and hand-rolling an unescaper for that is
+the classic place to be wrong.
+
+**The keybind grammar is asked back.** `config validate` checks a file against the grammar the app
+actually honours, which is a Swift parser the crate has no business depending on — so it crosses as
+a `@convention(c)` callback with its context, the way the mux reap's admitted-lane question already
+does. The verdict then tracks exactly what the launch bridge will honour, rather than a second
+grammar that agrees today.
+
+**The version NUMBER stays in Swift, deliberately.** `docs/49` names six version sites and
+`bump-version.sh` owns all six because no gate can see most of them. A seventh, in Rust, would be
+one the bump script does not know about and `package-release.sh` would not catch, because that gate
+asks the built CLI binary. So the number is passed in and the crate owns only the banner's shape.
+
+**Three more twins went with it.** `JumpResolver`, `WatchClaudeOutcome` and `WatchProgress` had live
+Rust counterparts in three different crates — `slopdesk-workspace::jump`, `slopdesk-agent::watch`
+and `slopdesk-wire::osc` — and each is now a face. The watch bytes matter most: they are built by
+the same crate the host's sniffer parses them with, so the wrapper can no longer emit a sequence the
+host would drop, and `WatchNotificationMarker` reads the sentinel from `osc.rs` rather than spelling
+it a second time in `SlopDeskProtocol`.
+
+**`FolderFrecency` came along because a jump reads it.** It scored and ranked in Swift while
+`frecency.rs` did the same in Rust, and the jump resolver sat between them. The database now crosses
+by value — a record array plus one arena of path bytes, §4b's fold — and the ranking answers the
+caller's OWN indices rather than copying the paths back: a rank is a permutation of what was just
+lent, and re-crossing the strings to say so would be the one wasteful thing in an otherwise-free
+call.
+
+`build-ffi.sh`'s `INPUT_CRATES` gained `rust/slopdesk-cli` in the same change. A linked port has one
+failure mode a socket port does not — an artifact older than its sources, green tests and all — and
+the staleness gate only sees the crates it is told about.
+
+## Three small rules stop being written twice (2026-08-15)
+
+Small is exactly why they are worth naming. A placement that is two multiplies, a parser that is
+one split and an arrangement that is one line are the shapes that get re-typed at a call site
+instead of called — and each of these three had a failure mode the type checker cannot see.
+
+**The cursor overlay must land on the pixel the input encoder targets.** `ClientCursorCompositor`'s
+placement math mapped the host position through the forward render transform while
+`cursor_overlay.rs` did the same in Rust, and the two are only equal while nobody contracts a
+multiply-add. They are one function now, next to the `view_point` the input path inverts, so the
+cursor the user sees and the coordinate the host receives cannot drift at any zoom or in any
+letterbox. The `is_placeable` guard came with it: a non-finite component raises an uncaught geometry
+exception that kills the process, so that check is now the same one on both sides, and the
+logical-size fallback that was written inline TWICE in the same file — once for `NSCursor`, once for
+the layer bounds — is one call.
+
+**The progress parser and the progress builders are one grammar.** `ProgressOSCParser` read
+`9;4;<state>[;<pct>]` in Swift while `osc.rs` both wrote and read it in Rust. The parser now sits in
+the same door as the builders whose output it reads back, which is the point: `slopdesk watch`
+prints a spinner and the host's byte reader turns it into a control message, and a second copy of
+the grammar between them is how a spinner starts surviving the command that raised it.
+
+**The windowList arrangement crosses as flags, not windows.** The rule reads exactly two facts about
+each window — is it on screen, does it carry a title — so those two arrays go over and the answer
+comes back as indices into the caller's own list, the same shape `slopdesk_folder_ranked` uses. The
+generic Swift signature is unchanged, so callers still hand it their own window type and their own
+accessors; only the ordering moved.
+
+## A client video session decides once (2026-08-15)
+
+`VideoClientSessionLogic.swift` held the client's whole lifecycle — the state machine, the
+hello-retry cadence, the reconnecting-scrim latch — beside `rust/slopdesk-video`'s `client_session`,
+which held the same one. The Swift half is a face now.
+
+**The machine crosses BY VALUE, because the near side reads all of it.** Six scalars and two
+rectangles, every one of them read on the Swift side (`state`, `streamID`, `captureSize`,
+`windowBoundsCG`, `mediaFlowing`, `requestedWindowID`), and the Swift type is a `Sendable` struct
+that callers copy. §4b decides this, not convenience: a handle behind a copied struct is two owners
+aliasing one allocation. So the record rides in and out of every call and value semantics survive.
+
+**A transition commits only when its answer fits.** The two-call shape — measure, then fill — would
+apply a MUTATING call twice. Each entry point therefore steps a copy, measures, and writes the
+machine back only once all three lent buffers are big enough. A call that did not fit is not a
+transition, so calling again with the reported shape repeats the same one rather than adding a
+second. That is what makes the ordinary lent-buffer protocol safe for a machine that moves.
+
+**A control message crosses as its bytes.** `SendControl` carried a typed `VideoControlMessage` that
+the runtime did exactly one thing with: encode it. The effect now carries the encoded datagram, so
+the hello that opens every session is minted by the same crate the host parses it back with, and the
+runtime just puts bytes on the wire. The client tests assert on those bytes through the Swift codec,
+which pins the two encoders to the same output on the one message nothing else would catch.
+
+**The router did NOT come with it.** `ReceivedDatagramRouter` answers typed values —
+`FrameFragment`, `WindowGeometryMessage`, `AudioChannelMessage` — decoded by the Swift codec, which
+is still Swift. Moving the router before the codec would cross four decoded types to save one
+`switch`; it moves WITH the codec or not at all.
+
+## The pane pans, scales, adopts and snaps by one set of rules (2026-08-15)
+
+Six rules in the same Swift file — the edge-pan gate and its clamp, the layer-to-decoded scale, the
+pre-decode triage, the frame-gated resize adoption, the drag debounce, the 1:1 snap — sat beside
+`client_view.rs`, which held all six. Each is two or three sizes wide, which is exactly why they get
+re-typed at a call site instead of called, and each has a failure the type checker cannot see: a pan
+gate and a clamp that disagree about the ZOOM leave a zoomed-in window's overflow unreachable or only
+half reachable; an adoption gate that accepts an in-flight old-size frame mis-scales the cursor for a
+beat; a debounce that mints an epoch on a CLIENT-side snap echoes a resize request that re-triggers
+the snap, a feedback loop with the host's window inside it.
+
+**The debounce rides as a record, and the absent sizes carry a flag.** Four fields, all of them read
+on the Swift side, so §4b makes it a value rather than a handle — the same call the state machine
+makes. `ResizeDebounce::restored` is how it gets back in: replaying the epoch through
+`note_requested` would be a loop over a counter that only grows. The optional previous decoded size
+crosses as a value plus a presence flag for the reason the stall verdict's stamps already do — "no
+frame has arrived" and "the last frame was zero by zero" are different states and only one of them
+means adopt.
+
+**The defaults moved with them.** `minDelta = 8` and `settleInterval = 0.2` were Swift literals over
+a crate whose `Default` already spelled the same pair, and `epsilon = 0.5` shadowed `SNAP_EPSILON`.
+The Swift `init()` now asks for the crate's, so "settled" cannot come to mean two things.
+
+## check-supervisor's `spells` was matching nothing (2026-08-15)
+
+`spells` piped a comment-stripped file into `grep -q`, and `grep -q` exits the instant it matches —
+`sed` then dies of SIGPIPE, and under `set -o pipefail` the pipeline reports failure. A spell that
+was FOUND read as not found. Every existing caller was a BAN, which expects no match, so the helper
+had never been asked a question whose answer it could get wrong. The first presence check written
+against it failed on code that was plainly there. It matches from a here-string now.
+
+## A pane's master crosses as an owned duplicate, not a second lookup (2026-08-15)
+
+superd answered `spawn` by inserting the pane and then asking the map for its master fd by name. The
+two steps are not one decision, and the gap between them is where a pane can stop existing: the
+reaper's first act on a child's death is to remove the pane and drop its master, and a child like
+`/bin/sh -c "exit 0"` is usually already dead by the time the reply is being assembled. The lookup
+lost that race two ways, both silent. It found nothing — `.ok()` turned that into "no descriptor",
+the reply still went out with status `ok`, and hostd raised `missingDescriptor` for a child that had
+really run (this is what made `testRapidSpawnShutdownChurnDoesNotLeakFDs` flaky under load). Or it
+found a `RawFd` the reaper had already closed and the kernel had since reissued to another pane's
+master, a journal file, an accepted socket — and hostd would have adopted that, wired it to the pane,
+and reported nothing wrong.
+
+`Registry::spawn` and `Registry::adopt` now return `(PaneRecord, OwnedFd)`, the duplicate taken while
+the function still holds the master outright, and `master_fd(pane_id)` is deleted rather than left
+for the next caller. `frame::write` takes a `BorrowedFd` instead of a `RawFd`, which is the same fix
+made structural: "the descriptor is open for the length of this `sendmsg`" stops being a comment.
+The connection handover path was already correct — it borrows the accepted `UnixStream` across the
+send — and now says so in its type.
+
+## The click lands where the cursor is, and the latch is a bitmask (2026-08-15)
+
+`InputEventEncoder.normalize` was a second copy of the render transform's inverse, and it is the one
+piece of client math a copy gets subtly WRONG rather than loudly broken: a click that lands near the
+pixel under the cursor instead of on it reads as a remote machine that feels off, not as a bug
+anybody files. It is golden-pinned for exactly that reason, and it now folds through
+`client_input.rs` — as does the event tag, whose only content is that it WRAPS rather than traps.
+
+**The mapping crosses flat, with a flag.** `PointerMapping` is a two-variant enum and C has none, so
+both arms ride one record beside `has_crop`. Not a sentinel: an all-zero crop is a degenerate
+actual-size viewport, which is a different answer from "there is no crop", and only one of the two
+takes the aspect-fit path the golden vectors pin.
+
+**`ModifierLatchTracker` became a `u64`.** The vocabulary is nine keycodes, 54 through 63, so the
+whole tracker is a bitmask — no allocation per pane, and nothing for two copies of a `Sendable`
+struct to alias (§4b). The rewrite also closed a real hole: the `Set` accepted keycodes that are not
+modifiers at all, latched them, and would have synthesised a bare key-up for them on the next focus
+loss. Only a HELD modifier can be owed a release, which is now one rule where there were two — Caps
+Lock is refused because it is not in the vocabulary, not by a special case beside it.
+
+**`CursorShapeRequestTracker` crosses through lent buffers.** It holds a set and a map keyed by
+host-assigned shape ids, and nothing bounds them: the host mints an id per distinct rendered cursor
+bitmap, so an app with animated cursors keeps minting. That rules out a fixed record, and being a
+value-copied `struct` rules out a handle (§4b), so the two lists ride in and out as `(ptr, len)`
+pairs — ids ascending, stamps parallel. The buffers are lent one longer than what is held, which is
+the most any step can add (an arrival caches one id, an ask records one stamp), so the write always
+fits and there is no measure pass. The answer is adopted only when it did fit: a step that could not
+write is not a decision, and acting on its `send` would put an ask on the wire the tracker has no
+record of — the flood the interval exists to prevent.
+
+**Two Swift tests were passing because this machine is quick.** `testRapidSpawnShutdownChurnDoesNotLeakFDs`
+found the superd fd race above. `testPrewarmWithMissingExtensionsSpawnsWhenTheInstallLands` asserted
+"no child has booted yet" against a install task running on another queue — true only while the CLI
+had not returned, which under a full `make test` it already had. The fake CLI now blocks until the
+test opens it, so the window is a fact rather than a hope.
+
+## The scroll hint is one encoding, and it is spelled once (2026-08-15)
+
+Scroll reprojection has two halves in two processes. The host measures the true per-frame content
+shift between captured frames and normalises it — a signed value in TEN-THOUSANDTHS of the frame
+extent, plus the moving-content band in the same units — and the client turns that back into a
+velocity for the reprojector and a mask for the renderer. The scale, the confidence gate, the
+saturation and the band's inclusive-row-to-exclusive-edge step were spelled TWICE, once in
+`WindowCapturer.measureScrollOffset` and once in `VideoWindowPipeline.applyHostScrollOffset`.
+
+Two spellings of one encoding is the failure mode nothing catches. Change the host's rounding, or
+the `+1` on the band's bottom row, and every scrolled frame warps by a hair against a client that
+still decodes the old way: no test fails, no frame is dropped, the remote machine just feels
+slightly wrong. So both halves moved into `scroll_reproject.rs` as `ScrollHint` — `measured(...)`
+encodes, `velocity(fps)` and `band()` decode, `SCALE` and `MIN_CONFIDENCE_MILLI` are named once —
+and `check-supervisor.sh` now fails if either Swift file respells `10000.0`.
+
+The band crosses as a value plus a PRESENCE flag, not a sentinel. An empty span at the top of the
+frame is a degenerate band, and the client's rule for "the host measured no band this tick" is to
+KEEP the last one so the decay eases out still masked — a rule a `(0, 0)` cannot express.
+
+`reprojectionPhase` moved with it, as `ScrollPhase::of_platform`. It reads the momentum code before
+the finger code because momentum is the later half of one gesture: a frame carrying a stale finger
+`ended` under a live momentum `continue` is coasting, not stopped. That mapping had drifted into
+being reachable only from a test — one more reason it belongs where the phases are defined.
+
+## The park math goes back to Rust, and Swift keeps only CoreGraphics (2026-08-15)
+
+`WindowPlacementMath` — where a remoted window lands on the virtual display, and whether it actually
+fit once the app was done with it — carried a comment saying a Rust twin had "mirrored this" and was
+"now reabsorbed". That reabsorption was made under the old ruling; under the current one a pure
+arithmetic rule stays in Swift only if SwiftUI or AppKit requires it, and this one requires neither.
+
+It is now `window_placement.rs`, and the split is drawn where the semantics actually live. What
+CoreGraphics DEFINES stays on the near side: `CGRect.width` standardises (returns `|size|`) while
+`CGSize.width` is a raw stored field, so the clamp is asymmetric, and the face reads each through
+the accessor that defines it. What is merely arithmetic crossed: the ordered comparison and the
+half-point tolerance. The far side never abs's anything — it is told which side it is holding.
+
+The ordered comparison is the reason the vectors are bit patterns. `display < window` is false for a
+NaN operand, so a NaN window size passes through; a minimum that "ignores NaN" would hand back the
+display's extent instead. Both answers are the same width for every finite input, and the corpus is
+the only thing that can tell them apart.
+
+`windowPlacement` / `windowFits` were frozen with nothing reading them for a long time — pinned by a
+sentence that named a crate and a test that had both been deleted. A Swift suite revived the pin
+earlier; the port adds the crate-side replay of the same 19 cases, so each side pins the half it
+owns. `check-supervisor.sh` now fails if the tolerance or the clamp reappears in Swift.
+
+## The keybind grammar is Rust, and the CLI stops asking Swift for it (2026-08-15)
+
+`config validate` had a shape worth naming: the crate walked the file, and for every line it called
+a C function pointer BACK into Swift to ask "is this value a keybind?". The reason was sound — the
+validator's verdict must track the grammar the app actually honours, and the grammar was Swift — but
+the result was a round trip across the door per line, and a seam where two languages had to agree.
+
+`KeybindGrammar` is now `rust/slopdesk-terminal/src/keybind.rs`, so both ends of that round trip are
+the same side. `config.rs::validate` still TAKES the grammar as a parameter — the file's shape and a
+value's grammar are genuinely separate questions, and its own tests use a stand-in — but the door
+supplies `keybind::parse_line` rather than a pointer back into Swift, and `SlopDeskKeybindValidFn` is
+gone from the header.
+
+A binding crosses as a record plus three runs — base key, payload, argument — interned into one
+arena the caller lends: measure, then fill. A record whose runs did not fit comes back invalid,
+because a half-written payload would put bytes on a pane the user never wrote. An absent argument is
+a FLAG, not an empty run: the grammar refuses `goto_tab:`, so "no argument" and "an empty one" are
+different answers and only one of them can arise.
+
+What stays in Swift is `KeyChord`'s canonicalisation. The far side answers the base key as the user
+lowercased it; the alias fold (`leftarrow` → `left`) and the canonical modifier order happen in the
+same initialiser a DISPATCHED chord goes through, which is exactly what makes a parsed chord and a
+dispatched one key the same map entry. Moving that fold would have split it in two.
+
+The Swift suite was rewritten rather than kept: restating each escape and each refused base key
+beside the crate's own cases is the cross-language mirror fixture the one-implementation rule
+forbids. It now pins the CROSSING — the whole line, the arena round trip, the canonicalisation — and
+the grammar's cases are pinned once, where the grammar is.
+
+## The terminal config text is emitted once, in Rust (2026-08-15)
+
+`TerminalConfigBuilder` turned a `TerminalPreferences` into the libghostty config text the client
+hands `ghostty_config_load_string`, and every rule in it was a rule about libghostty: which key a
+preference actuates, which value is skipped rather than emitted blank, whether a hex string is a
+colour, and — load-bearing — what ORDER the lines arrive in. `background` after `theme` is what makes
+the explicit colour win; the palette after `foreground` is what makes the theme's sixteen entries win
+over both; `font-feature` rides EVERY build because a font that ships ligatures turns them on itself,
+so "ligatures off" has to say so. None of that is SwiftUI or AppKit, so none of it stays in Swift:
+the emitter is `rust/slopdesk-terminal/src/config.rs` now, reached through
+`slopdesk_terminal_config_string`.
+
+A second emitter is the failure mode this closes. It would not fail a test — it would quietly hand
+libghostty a different terminal, one key or one line-order apart, and the user would see a font that
+does not thicken or a selection that inverts. `check-supervisor` therefore bans a libghostty config
+line, a hex validator, a number formatter and a per-line byte estimate from the Swift file, the way
+it bans the keybind vocabulary.
+
+The preferences cross as the RAW VALUES they persist as — `primary-only`, `macos-like`,
+`block_hollow`, `dlig` — not as codes. The enums are `Codable` and bound to the UI, so they stay
+Swift; but which libghostty key one of them actuates is a libghostty fact, and it is written once, on
+the far side. A raw value the crate does not know takes the branch that emits nothing, which is what
+a preference from a build that is not this one deserves. `baseFeatures`, `syntheticTokens`,
+`disablesFace` and `thickens` are gone from `TerminalFontSettings` for that reason. The one exception
+is `LineHeightMode.adjustCellHeightPercent`, which stays: `CodeFontSync` reads the percent too, so
+the mode resolves on the near side and the CLAMP and the formatting are the far side's.
+
+Two dozen strings do not cross as two dozen `(ptr, len)` pairs. They cross as one record of named
+`(offset, length)` runs into a single blob the caller interns — the keybind door's shape, widened —
+and the answer comes back through the same measure-then-fill lending every text door here uses. The
+two LISTS, the user's keybind lines and the palette's sixteen entries, cross as their own arrays of
+runs rather than as one delimited blob: a delimiter is a thing a value could contain and a count is
+not.
+
+The control block crosses as a value plus a presence flag, not as a block of switches all off.
+Absent emits none of those lines at all, which is what keeps a build from a caller that has no
+controls byte-for-byte the build from before controls existed — the guard the Swift suite has always
+carried, and the reason `has_controls` is a field rather than an inference.
+
+A NaN cell-height multiplier resolves to the UPPER bound, not the lower and not `nan%`. That is what
+`Double.minimum`/`.maximum` did, and `f64::min`/`f64::max` are the same IEEE operations, so the port
+is exact. It is deliberately NOT `f64::clamp`, which propagates a NaN input — the one answer that
+must never reach libghostty.
+
+The Swift suites were kept, not rewritten. Unlike the keybind grammar, whose cases were restated on
+both sides, these tests already asked their question through the whole builder — the exact default
+output, the ordering probes, the validate-then-drop palette — so every one of them is a crossing test
+already, and the byte-for-byte default-output guard now pins the port itself.
+
+## The config file has one reader, and a CRLF file binds what it says (2026-08-15)
+
+`slopdesk config validate` exists to answer which lines of `~/.config/slopdesk/config.toml` the app
+will actually honour — that is why it validates against the keybind grammar rather than against a
+generic `key = value` shape. But the LINE reader was spelled twice: once in `slopdesk-cli`'s
+`config.rs` for the validator, once in Swift's `KeybindConfigLoader` for the client. A comment in the
+crate said "mirror the loader's lenient quoting", which is the one-implementation rule being broken
+out loud.
+
+They disagreed on one byte. The crate trimmed a carriage return; Swift's `.whitespaces` does not
+include one. So in a file written with CRLF endings every `keybind` value ended in `\r`, the keybind
+grammar refused it as part of the base key, and the line was dropped — by a validator that had
+already printed the file as clean. `classify_line` is now the single reader and `keybind_value` is
+the loader's reading of it; the validator maps the same classification to its messages.
+
+The Swift split was the other half of the same bug, and it was worse: a CRLF pair is ONE Swift
+`Character`, so `split(separator: "\n")` never matched it and a CRLF file arrived as a single line
+that bound NOTHING at all. The split now names both separators, which is exactly what the far side's
+`split('\n')` over bytes does — there the `\r` stays on the line and the reader trims it.
+
+`defaultConfigURL` went through the door too. `slopdesk config path` and the client were computing
+the same XDG path from the same two variables in two languages. What stays in Swift is the `nil`:
+with neither variable set there is no home to build a path under, and a loader declines to guess one
+rather than reading a file at an invented location — the CLI, which must always print something,
+passes a fallback instead. That is a policy about whether to look, not about where.
+
+## A number is spelled once, and `toEnv` stays where its readers are (2026-08-15)
+
+`EnvBridge.formatDouble` and the config emitter's `format_size` asked the same question — what a
+user types for this number — and answered it twice, in two languages, differing only in the limit at
+which an integer stops being written as one (`1e15` against `1e9`). Two rules that must agree and
+have no way to notice they don't. The rule is now `config::number_text(value, limit)`, and the limit
+is an argument: the config text asks at `CONFIG_INTEGRAL_LIMIT`, the env overlay through
+`slopdesk_settings_env_number_text`, which carries `ENV_INTEGRAL_LIMIT` so no Swift file spells a
+limit at all. Above `1e15` the two sides print an integral value differently — Swift's `String(_:)`
+reaches for an exponent where Rust writes the digits out — and both parse back to the same `Double`,
+which is the only property a `SLOPDESK_*` value has to have.
+
+The rest of `EnvBridge.toEnv` does NOT move, and the reason is not effort: every read site of the
+keys it writes (`SLOPDESK_QP_SHARP`, `SLOPDESK_VD`, `SLOPDESK_PLAYOUT_MS`, …) is Swift — no `rust/`
+file names one. Porting the write half alone would open a new cross-language seam rather than close
+one, which is the opposite of what the one-implementation rule asks for. It moves when its readers
+do.
+
+The measure-then-fill dance around a text door had three spellings in the same module by then, and a
+measure that disagrees with its fill is a truncated answer that reads as an empty one. `lentText`
+asks and fills, once.
+
+## One named-key table, and `space` was never meant to be off it (2026-08-15)
+
+A chord has spellings a config file may use and one spelling it is stored under, and those were two
+tables in two languages: `is_valid_base_key`'s `matches!` said what parses, `KeyChord.canonicalKey`
+said what each folds to, and `mapKey` restated the aliases a third time. Kept in step by hand, they
+drifted exactly the way that arrangement drifts — `space` was refused by the grammar while `mapKey`
+resolved it and the dispatcher produced it (⌃⇧Space enters Vi mode), so a chord the app can deliver
+was one no config file could ask for. The rows are `NAMED_KEYS` now; `is_valid_base_key` and
+`canonical_base_key` are both read off them, the near side folds through
+`slopdesk_keybind_canonical_key`, and `mapKey` lost its alias branches because a chord reaches it
+already folded.
+
+`canonical` — the order-stable identity two equal chords share — moved with it, to sit beside the
+`parse_chord` it inverts. A writer that drifts from its reader emits a chord the config file cannot
+express, and a round-trip test over all sixteen modifier combinations now says it doesn't.
+
+`EnvConfig` does NOT move, and not for lack of trying: it is the interposition point ~192 Swift
+`static let` sites resolve through, and its parse rules ARE Swift's (`Int(_:)`, `Double(_:)`,
+`RawRepresentable`). There is no second implementation to close — porting it would mean reproducing
+Swift's numeric parsers in Rust exactly, which manufactures a cross-language risk where none exists.
+
+## The off-screen rescue asks for a step rather than taking a trait (2026-08-15)
+
+`OffScreenWindowMintRescue` and `mint_rescue.rs` were the same decision tree written twice, and the
+tree is the load-bearing part: capture size is locked from the minted handle's frame, the Dock
+restore reports intermediate frames that already claim to be on screen, and a mid-animation mint
+crops the pane permanently because the geometry watcher installs only after the mint. A second copy
+of that does not fail a test — it crops a stream.
+
+Moving it hit the reason it had not moved: every effect the rescue needs SUSPENDS on the near side —
+two `SCShareableContent` enumerations, an AX call that hops to the MainActor, a sleep — and the
+crate took a trait of them, which no C ABI can call back into and wait on. So the tree stopped
+calling and started ASKING: `begin` opens a rescue, its `step` names the one effect the caller owes,
+`advance` takes what came back. The state crosses by value, seven scalars, and its `step` field is
+both what to do next and where the rescue is — no two stages ask for the same step, so nothing else
+has to cross. No window handle crosses at all: Swift keeps the two it might mint from and the far
+side names which, so the rescue reasons about a window with no way to touch one.
+
+An observation that answers a question the machine did not ask is not an answer, and the rescue
+refuses on it — the same terminal answer it gives a window it cannot restore, so a caller that drives
+the protocol wrongly falls back to the picker rather than minting something arbitrary.
+
+## The discovery keeps its gate in Swift, and takes its schedule from Rust (2026-08-15)
+
+`VideoWindowDiscovery` had the one-shot discovery written twice — once for windows, once for
+displays — and `mux_client_pool`'s `OneShotDiscovery` was a third copy that nothing ever reached.
+Only one of the three parts had a reason to cross.
+
+The SCHEDULE did: when each resend goes out is arithmetic, and the Swift loop had no answer for an
+interval of zero or less, which is not a schedule but a spin that sends as fast as the CPU allows
+until the deadline. It comes from `request_send_offsets` now, and each wait is to an absolute
+instant so a slow send cannot walk the plan later than it was planned.
+
+The GATE did not. Which reply answers which request is `if case let .windowList(w) = msg` — one act
+that both tests the message and takes the list out of it — and the message is decoded on this side,
+through the codec door, into Swift values. Crossing the gate would have added a door without
+removing a spelling, and would have re-crossed records the decode door had just produced. So the
+unreachable Rust half was deleted rather than wired up, and the five behaviours its tests pinned —
+first reply wins, a resend's echo is ignored, someone else's reply does not land, an empty answer
+resolves the picker — moved to a Swift suite against the box that actually implements them.
+
+Writing that suite found the bug the missing pin had been hiding: `ReplyBox.finish()` only marked
+the box resolved if a waiter was already parked. The sender is a `Task`, so the deadline can pass
+before `firstReply()` is reached — with an empty schedule it always does — and the waiter that
+arrived afterwards then saw neither a result nor a resolution and parked forever. The picker hung on
+a discovery that had already given up.
+
+
+## The motion coalescer answers a plan, not events (2026-08-15)
+
+`InputMotionCoalescer` and `input_routing::coalesce_motion` were the same rule in two languages, and
+the Rust one had no consumer at all — the whole run rule, the class boundary, and the scroll sum
+existed twice with only 14 golden vectors pinning either. The rule is arithmetic over an ordering,
+which is exactly what belongs on the far side, so the Swift half is now a face.
+
+What blocked the obvious door is the `.text` arm. Events cross as `SlopDeskInputEvent`, one flat
+record with no room for a string — encoding gets around that by taking the bytes alongside, which
+works for ONE event and not for a batch of them, where each would need its own span and the answer
+would need to hand every span back. But the coalescer never invents an event: a surviving move or
+drag IS the run's last input, and a merged scroll is the run's last input with its deltas replaced
+by the run's sum. So the answer is a PLAN — one `{source, dx, dy}` slot per output — and Swift
+applies it to the events it is already holding. Nothing that has no home in the flat record ever
+leaves this side, and a text event's bytes are not even read to key its run, because a text event is
+a barrier whatever it says.
+
+`coalesce_motion` did not stay a second statement of the rule: it is now `coalesce_plan` applied to
+its own input, so there is one fold and the crate's own tests exercise the same code the door does.
+The pin that makes the split safe is the round trip — a batch rebuilt from the plan equals the batch
+the fold answers, for both settings of the scroll knob.
+
+A record the door cannot rebuild — an unknown `message_type`, a button outside 0..2 — counts as a
+BARRIER rather than being dropped or merged. Swift builds these records from its own enum so the
+case is unreachable in this build, but the conservative answer is the one that cannot lose an event
+or reorder one across a click.
+
+## The raise rule is read once, and the router that folded it is gone (2026-08-15)
+
+Raising is the expensive half of injecting — six to ten synchronous accessibility calls the input
+consumer awaits before the click is posted — so the four predicates deciding it were worth getting
+to one place: a button-down always raises, a mouse-up re-arms the latch, a scroll is exempt even
+armed and does not satisfy the latch, everything else raises only when armed. They were four Swift
+statics and four Rust functions nothing reached.
+
+They cross as one call. `slopdesk_input_raise_flags` answers all four as bits of one word, because
+they are one reading of one event and four separate doors could be asked about four different
+events. The frontmost-app policy crosses beside it, with the pid as a value plus a presence flag —
+a pid that means "none" is a pid that can also match a target by accident.
+
+`route_input` did NOT cross, and was deleted rather than wired up. It folded three decisions that
+each already have exactly one home: the streaming gate is the session actor's (and carries a trace
+the actor logs, which is not a pure decision at all), the decode is a door, and the raise rule is
+the door above. Swift's `InputDatagramRouter.route` composes the three and is what the tests drive;
+the live path never called either router, so folding them would have added a third spelling of a
+decision the actor makes inline. The three behaviours the Rust tests pinned — a corrupt datagram
+drops, a non-streaming session ignores before decoding, a decodable one carries the raise verdict —
+are the Swift suite's, and they now reach the same Rust rule through the doors.
+
+## The two input folds cross by value, not as handles (2026-08-15)
+
+`InputButtonBalance` and `ScrollCoalescePlanner` were the last two Swift↔Rust mirrors on the input
+path, and both are STATEFUL — which usually argues for a handle. Here it argues the opposite. The
+ledger is held under the injector's lock, CARRIED across a reconnect by the session, and folded on
+its own thread by the tests; the accumulator is an actor field and a test's local. Every one of
+those owners copies. A handle they copied would be two ledgers by the second copy, silently, with
+both halves looking right — so the state crosses instead (`docs/55` §4b).
+
+That is affordable because both states are small and closed. The ledger is twelve bits: three
+buttons the wire admits, and nine modifier keycodes. Its modifier bit is a key's POSITION in
+`modifier_keys::HELD_MODIFIER_KEY_CODES`, which is why `InputModifierKeys` now takes that table
+through a door rather than spelling it — a table spelled twice would be a ledger that means one
+thing on one side and another on the other. The accumulator is six numbers and a scroll template,
+and a scroll is all scalars precisely because a summed emit is the planner's own event.
+
+The accumulator's answer is a plan, like the coalescer's, and for the same reason: a passed-through
+event is NAMED so its `.text` payload stays on the Swift side, while a summed emit is carried whole.
+Its door also commits the state ONLY when the answer fits, so a caller that lent too little may
+retry without folding the run twice — Swift lends `2 * count + 2` and never has to.
+
+What did not move: `plan(run:now:)`'s clock. `now` is the caller's `systemUptime`, sampled once per
+run, and a door that read a clock of its own would fold on a different one than the caller's gate
+was armed against.
+
+## The swipe-nav operating point is a handle, and the allowlist face is gone (2026-08-15)
+
+The host's `SLOPDESK_SWIPE_NAV*` family is parsed ONCE, in `rust/slopdesk-ffi`'s `swipe_nav_config`,
+and `SwipeNavHostConfig` is a face over the handle it answers. Where the input ledger and the scroll
+accumulator cross by VALUE, this one is a handle for the two reasons `docs/55` §4b names together:
+it carries an allowlist EXTENSION — a set of bundle ids read out of the environment, which no fold
+of scalars holds — and its owner is a process-lifetime namespace that never copies it. A handle is
+the wrong shape exactly when something duplicates it, and nothing here does; nothing frees it
+either, because the parse outlives every caller by construction.
+
+Every environment value crosses as a `(pointer, length)` pair where NULL means UNSET, which is not
+the same as an empty string: `SLOPDESK_SWIPE_NAV=` is a value a user can set, so a present value's
+buffer is kept non-empty on the near side rather than collapsing to the NULL address an empty
+`Array` would lend. A value that is not UTF-8 reads as absent, the default every switch answers to
+anyway. The history read crosses as `has_history` plus two flags, because UNKNOWN is what makes the
+client fail OPEN rather than show a dark chip, and no pair of bits can say it.
+
+Deleted in the same change: Swift's `SwipeNavPolicy` and the four doors it was the only caller of
+(`slopdesk_swipe_navigable_apps`, `_extra_apps`, `_fire_travel_from_env`, `_is_navigable`). They
+answered the allowlist, its extension and the travel knob APART from any operating point, which is
+precisely what let the fire path and the status push read the environment twice — the drift this
+module exists to prevent, and one whose symptom is a committed chip and its haptic promising a
+navigation the host silently swallows. Their Swift tests moved into `swipe_recognizer.rs` beside the
+list they pin: the 27-entry floor, the pre-release channels of every browser, and the
+reject-to-default (never clamp-to-bound) travel cases.
+
+The one knob the face still reads alone is the master switch, and only where the fire path exits
+BEFORE it knows a target app; every other caller asks the eligibility question, which carries it.
+
+## The client's gesture policies cross in three shapes (2026-08-15)
+
+`client_gestures` had no consumer; now the four Swift files it mirrors are faces over it. The
+interesting part is that one module crosses three different ways, each picked by `docs/55` §4b
+rather than by taste:
+
+**Predicates cross as arguments.** `forwards_pointer` and `is_background_click` are two booleans in,
+one out. Nothing to own.
+
+**The pinch planner and the scroll-route pinner cross BY VALUE.** Both are stateful — a residual, a
+pin — and both are owned by a SwiftUI view, which the framework copies whenever it pleases. A handle
+two copies shared would be ONE accumulator serving two gestures: a pinch bleeding steps into the
+next, or a coast routed by a gesture that already ended. So the state crosses as what it IS (one
+`double`; one `bool` plus its presence flag) and every door answers the new state beside its
+verdict. This is the same reading that made the input ledger and the scroll accumulator values, and
+it is worth stating in the negative: a handle is not the safer default, it is the wrong shape the
+moment anything duplicates its owner.
+
+**The zoom-reset denylist is a handle**, for the swipe-nav config's reason: it carries a runtime
+extension SET out of `SLOPDESK_PINCH_ZERO_UNSAFE_APPS`, which no fold of scalars holds, and its
+owner is a process-lifetime namespace that never copies it. A NULL app name is a desktop pane and
+fails OPEN — a pane streaming a whole display cannot know its frontmost app.
+
+Deleted with the port: Swift's own step threshold and per-event cap, its phase-code comparisons (1,
+128, 8, 3 — which phase begins or ends a gesture is the pin's rule, not a transcription of
+CoreGraphics), the `"Xcode"` denylist and its `extraUnsafe` parse, and `VideoWindowView`'s
+`pinchZeroExtraUnsafe` — the view now asks a question instead of holding half its answer.
+
+## The paced-send schedule crosses; the sleeps do not (2026-08-15)
+
+`send_pacing` had no consumer, and `VideoSendLane` spelled its own chunk loop. The split is by what
+each side is for: Swift's structured concurrency owns the SLEEPS, the consumer task and the abort
+generation; `send_pacing` owns what decides — the chunk boundaries, their ABSOLUTE deadlines, and
+whether a job may skip the lane entirely.
+
+The datagrams never cross. A chunk names the caller's own array by index — the motion coalescer's
+shape — so a frame's hundreds of kilobytes stay where they were packetized, and the plan is
+measured with a null buffer and then filled.
+
+What the port actually fixed is a duplicated rule the code documented rather than removed: the
+session computed `gapNanos == 0 || outgoings.count <= chunkFragments` to choose the inline path, and
+the lane computed the same expression again to decide to send in one shot. The comment at the first
+said it "mirrors the lane's own one-shot test" — a drift risk stated as a promise, and the drift
+would have been an inlined frame paced differently from how the lane would have paced it. There is
+one test now; `trySendInline` takes the whole job and asks the door, and the session's `singleShot`
+local is gone.
+
+Also deleted: `rust/slopdesk-video`'s `packetize_lane`. It was the second copy of a COMPOSITION —
+peek the frame id, packetize, tag the channel — whose heavy half is already single-sourced in Rust
+behind the packetizer handle, and whose remaining content is a Swift actor hop (which is the whole
+point of the lane) plus a one-line channel tag. Wiring it up would have moved a `map` at the cost of
+crossing every datagram a second time; the peek-and-assign atomicity it advertised is already held
+by the actor that owns the handle.
+
+## The host session machine crosses by value, and the handshake is decided once (2026-08-15)
+
+`client_session` already carried the CLIENT's half of the hello negotiation. `session_state` is the
+host's, and it crosses the same way for the same reasons — which is the point: the two ends of one
+handshake should not disagree about what a hello means.
+
+The machine crosses BY VALUE. Nine scalars (the state, the negotiated size, the target and its
+kind, the stream-id counter and the last one minted, the range flag, the last applied resize
+epoch), all read on the near side, owned by an actor field Swift copies on every `mutating` call —
+`docs/55` §4b's reading, unchanged. A handle here would be two machines by the second copy.
+
+A transition MUTATES, so the measure-then-fill shape would apply it twice. Each door steps a COPY,
+renders the answer, and writes the machine back only once every lent buffer is big enough; a caller
+that lent too little gets the shape it should have lent and a machine that has not moved.
+
+The resolvers are ANSWERS, not callbacks. The law asks three questions of the actor — what capture
+size this window settles on, what a resize clamps to, what a display target sizes to — and exactly
+ONE can be asked per message, decided by the message's own variant. So the near side pre-resolves
+that one and it crosses as a size plus a presence flag, where ABSENT is the reject the closure
+spelled as `nil`. The closures stay in Swift because each reads live AppKit state; their signature
+is unchanged, so the actor and all six host test files needed no edits. A `helloAck` crosses as its
+ENCODED BYTES (the `client_session` precedent): putting it on the control channel is the only thing
+the actor does with one, and it is minted by the same crate that parsed the hello it answers.
+
+The audit that followed the wiring is where the value was. Three rules were spelled in BOTH
+languages and are now asked: the resize clamp (`SizeNegotiation.clamp` → `_clamp_capture`), the
+stale-epoch test (`epoch <= lastApplied`, which the machine ALSO applies inside its resize
+transition — two spellings of one rule, one of them reachable from the actor), and both
+`UserStreamSettingsPolicy` bands, whose Swift `fpsCapRange`/`bitrateCeilingRange` constants are
+deleted because nothing on this side ever read a band, only the clamped answer. The golden vectors
+for `sizeNegotiation` and the epoch test came back byte-identical, which is what proves the two
+clamps had not already drifted.
+
+The actor's OWN control sends — a resize ack it just actuated, a content mask it just measured, the
+goodbye — do NOT round-trip through an effect. The law mints none of them, so they go straight out
+through one `sendControl` helper rather than being laundered through a state machine that has no
+opinion about them.
+
+## One key vocabulary, whichever grammar names it (2026-08-15)
+
+Two tables mapped a key name to PTY bytes: `send_keys`'s, behind the `<Token>` grammar that launch
+presets, session templates, a re-run and a text drop carry, and `ControlKeyMap`'s in Swift, behind
+the agent-control `write` verb's comma-separated `--key C-c,Enter` list.
+
+They had already drifted, in both directions. `C-?` was DEL in Swift and `C-_`'s byte in Rust
+(0x3F masked with 0x1F is 0x1F, which is a real key, just not that one). `C-Space` was NUL in Swift
+and refused in Rust, because the fold only takes a single character and `space` is five. The
+function keys, the paging keys, `Insert`, the `A-` Alt alias and the `bspace`/`ic`/`dc`/`ppage`/
+`npage` tmux spellings existed only in Swift. `M-Enter` resolved to ESC + CR in Swift and to nothing
+in Rust, because only Swift's meta chord resolved a NAME before falling back to a character.
+
+The two spellings are two ways of naming a key, not two vocabularies, so the union is the table now
+and `key_token` is where both grammars read it. A preset can say `<F5>` — that is a behaviour
+change, and a deliberate one: an unrecognised marker stays literal, so `<F5>` used to reach the PTY
+as five characters, which is not something anyone wrote on purpose.
+
+`C-?` and `C-Space` are spelled out beside the fold rather than being folded, with the reason at
+the code: they are the two names where the ASCII arithmetic gives an answer that is wrong rather
+than absent, which is the kind of bug a mask hides.
+
+The Swift table is deleted, and so are the Swift tests that pinned its vocabulary — a second set of
+expectations on the near side is the mirror fixture that let the tables drift in the first place.
+What stays in Swift is what the `write` verb owns: joining a token list in order, and refusing the
+whole request at the first unknown token so a typo never sends a partial key sequence.
+
+## One VT grammar for plain text, read two ways (2026-08-15)
+
+`vtscan` exists because the replay-hygiene passes had each hand-rolled the same escape skimmer. Two
+more machines were still spelled in Swift, in the agent-control path: `ANSIStripper`, which renders
+a pane's output as the text a `wait --until` regex is matched against, and `WaitMatcher`'s
+`csiEnd`/`stringCommandEnd`, which decide where a chunk arrived cut mid-sequence so the tail can be
+held back for the next one. Their doc comments named each other — "matching `ANSIStripper.skipCSI`"
+— which is the drift risk stated as a promise, the same shape the paced-send lane had.
+
+They are `slopdesk-sanitize::plaintext` now, one grammar with two questions asked of it: `strip`
+renders a whole buffer, `holdback_start` names where an incomplete tail begins. A test feeds a
+stream one byte at a time through both and asserts it renders what the whole buffer does, which is
+the promise the comments used to make.
+
+`plaintext` is NOT one of the seven replay passes and `sanitize` does not call it. A replay pass
+keeps a faithful terminal stream and removes only churn, because the client renders what survives;
+this removes every sequence and every Nerd-font private-use glyph, because a regex is not a
+terminal. It lives in that crate to share the scanner, not the purpose.
+
+The one real difference between the two readings is the terminator policy, so it is NAMED rather
+than duplicated: `vtscan::Terminators` replaces the `bel_terminates: bool` parameter. A replay pass
+treats an unterminated body as a head-cut artifact and passes it through verbatim, because there IS
+a next chunk; a render has no next chunk once the caller's carry budget is spent, so a bare `ESC`
+ends the body it broke and a trailing lone `ESC` is consumed rather than emitted as text. Both are
+right for their caller, and now both are spelled once.
+
+## The reset backstop is built from the set the strip pass reads (2026-08-15)
+
+`ScrollbackTranscripts.sanitizeSuffix` is what a restore appends when the replay passes did NOT run
+— a raw journal tail, or a run with the transform disabled. It exists precisely to catch what the
+passes missed, and it spelled all fourteen of `inputmode`'s tracked modes out as a Swift string
+literal, with nothing connecting the two lists. A mode added to `TRACKED_MODES` would have been
+stripped by the pass and silently missing from the backstop for the path where the pass never ran.
+
+`inputmode::reset_suffix()` builds it by iterating that array, so the set is spelled once. What is
+NOT in the array stays written out, and the code says why for each: the alt-screen leave comes
+first because a reset that lands on a TUI's screen is one the main screen never sees, and the
+alt-screen pass owns that mode anyway; the kitty keyboard pop-and-clear, the rendition reset and the
+cursor show are not input modes this pass tracks.
+
+The byte ORDER changed — `?1l` now sits with the other tracked modes rather than after the kitty
+sequences, because that is its position in the array. Independent `DECRST`s commute, nothing pins
+the literal, and the test that consumes the constant reads it rather than restating it.
+
+## One shell word, wherever a path is typed into a live shell (2026-08-15)
+
+POSIX single-quoting — wrap in `'…'`, rewrite each embedded quote as `'\''` — was written EIGHT
+times: seven Swift copies (`ShellQuoting`, `LinkActionPolicy`, `PasteTransform`, `LaunchPreset`,
+`CLIInstaller`, `WorkspaceControlBackend`, `CodeBridgeTerminalRouter`) and once privately in
+`templates.rs`. It is four lines, which is exactly why it kept being retyped rather than reached
+for.
+
+Two of the copies argued for themselves in their own doc comments, and both arguments were wrong in
+the same way. One called itself the ONE source of truth while four other Swift spellings sat beside
+it. The other declined to widen hostd's dependency graph for four lines — but `SlopDeskWorkspaceModel`
+is a leaf hostd, the workspace core and the client UI all already link, so the face costs no edge at
+all. `ShellQuoting` moved there, and the rule is `shell_quoting::single_quoted` in Rust.
+
+`PasteTransform.shellEscaped` was NOT the same rule: it leaves a word a shell would not act on
+unquoted, so a pasted `file.txt` lands in the prompt looking like the path. That is `shlex.quote`,
+and the difference is real — so it is NAMED (`shlex_quoted`, one flag on the door) rather than
+duplicated. The safe set is `[A-Za-z0-9_@%+=:,./-]`, deliberately without `~` or `{`: a shell
+EXPANDS those, and stopping expansion is the whole point.
+
+`SlopDeskClientUI` gained an explicit `SlopDeskWorkspaceModel` dependency. It was already transitive
+through `SlopDeskWorkspaceCore` — the declaration is what a direct `import` needs, the same
+rationale as the Protocol / Inspector / Transport entries beside it.
+
+## One vocabulary for a foreground process name (2026-08-15)
+
+A PTY foreground process name is read three ways: classified (`claude`? a wrapper?), labelled (the
+sidebar's shell slot), and refused (a credential prompt the control RPC must not touch). The first
+was already in `slopdesk-agent::process`, with a private `basename` doing the reduction. The other
+two were Swift — `ForegroundProcessDetector.basename` / `canonicalName` / `isVersionShaped`, and an
+eleven-name `SensitiveSessionPolicy.sensitiveBasenames` with no Rust twin at all. Its own doc
+comment pointed at the Swift reducer as the one it matched, which is the shape a drift takes before
+it drifts.
+
+All three now cross one door apiece over the same module. `basename` became total — the last
+non-empty `/`-separated component, falling back to the whole input rather than `Option::None`. The
+`Option` was right for a predicate, which reads nothing as "not claude", and wrong for a label,
+which would have printed nothing where the raw input was the best answer available. Every existing
+answer is unchanged: `is_claude_running("/")` compares `"/"` to `"claude"` instead of `None`.
+
+Two deliberate divergences kept, each with the reason at its definition:
+
+- `process::basename` splits on `/` ONLY, while `kind::path_basename` splits on `/` and `\`. The
+  first answers what a Unix host's foreground poll reported, where a backslash is a filename
+  character; the second reads names that may have been written on another platform.
+- `is_version_shaped` accepts `.` and `v.`. Nothing real is named that, and tightening it would be
+  a rule change rather than a port, so the Rust suite PINS the current answer instead of quietly
+  improving on it.
+
+`isVersionShaped` no longer exists in Swift, so the five assertions that drove it directly moved to
+the Rust suite (which also gained `python3.11`, the case that proves a dot is not enough).
+
+## One badge ladder for a tab row (2026-08-15)
+
+`TabBadgeResolver.badge` fuses four independent per-pane signals — the agent status, the stored
+exit-code badge, the live busy bit, the `OSC 9;4` progress mirror — plus the foreground process
+name, into the ONE badge a sidebar row has room for. Ten rungs of precedence, all of it pure, none
+of it SwiftUI, and it had no Rust twin at all. It is `slopdesk-agent::badge` now, and the Swift
+resolver is a face over one door.
+
+Two rungs are the reason this is a rule rather than a sort, and both moved with their reasons
+attached: the AGENT finish sits ABOVE the busy tiers, because `claude` holds the shell's OSC-133
+block open for its whole interactive lifetime — checked later, a finished turn would be shadowed by
+`isBusy` for hours and never show. A plain COMMAND's clean exit sits BELOW them, because there a
+newly-running command genuinely supersedes the previous exit.
+
+The seven inputs cross as one `Signals` struct in Rust and as positional arguments at the ABI, each
+optional carrying its own absence sentinel (`-1`) rather than a pointer — the same shape the answer
+comes back in, since an all-clear row is `-1` too. The percent inside a progress report never
+reaches the rule, so it does not cross: only whether the indicator is still going or has gone red.
+
+`needsAttention` / `isBusyTier` became faces over the same module, and the privilege allow-sets
+(`sudo`/`su`, `caffeinate`) went with them. The Rust suite pins what the Swift one could not state
+as one assertion: no badge is ever both attention and busy.
+
+All 80 existing badge tests pass unchanged, which is the point — this is a port, not a redesign.
+
+## One vocabulary of secret shapes, for the title and for the paste (2026-08-15)
+
+Two Swift modules recognised credentials. `SecretRedactor` masked them out of untrusted titles and
+notification bodies with ten compiled `NSRegularExpression`s; `SecretPasteClassifier` decided
+whether typing the clipboard into a remote field would leak one — and it CALLED the redactor to
+answer half of that question, which is the honest admission that the two are one rule. Both are
+`slopdesk-workspace::secrets` now, behind three doors.
+
+**No regex crate.** Every one of the ten patterns is a prefix, a character class and a length floor
+— shapes a scanner states directly. The crate is linked into the iOS app, and pulling `regex` in for
+ten fixed shapes would buy nothing but binary size. The two rules that are not pure shapes (a
+`key=value` assignment, a `Bearer` header) are written as what they actually are: find the
+delimiter, look left for a key that ENDS in a secret word, mask what follows.
+
+Porting the assignment rule exposed a subtlety the regex hid. `\b([A-Za-z0-9_]*(?:…|token))` puts
+the word boundary before the OPTIONAL PREFIX, not before the secret word — so `GITHUB_TOKEN=`
+matches (prefix `GITHUB_`) while a boundary check at the word itself would have rejected it, since
+`_` is a word character. The first port did exactly that and the existing Swift test caught it.
+
+The entropy sum is now order-independent: Swift accumulated `-Σ p·log2(p)` over a `Dictionary`'s
+unspecified iteration order, so the last bits of the answer depended on hash seeding. The crate
+sorts the characters and sums the runs, which is reproducible across builds — and the Rust suite
+asserts that two orderings of the same multiset agree to the bit, a property the Swift suite could
+not have stated.
+
+`KeystrokeReplay.maxLength` crosses as an argument rather than moving into the crate: it is a
+transport ceiling on what can be typed at all, not a rule about secrets.
+
+Both existing Swift suites pass unchanged against the Rust scanner — 36 tests including the
+vendor-token fixtures, the false-positive negatives (a hex SHA, a path, `tokenizer=`), and
+idempotency. That is the differential proof this port rests on.
+
+## What a fresh install carries is spelled once (2026-08-15)
+
+The product's terminal defaults — `SF Mono`, 13pt, `regular`, `22212C`, `F8F8F2`, opacity 1, 10 000
+scrollback lines — lived in `TerminalPreferences.init`'s default arguments AND in
+`slopdesk-terminal::config`'s test fixture, which called itself "the preferences a fresh install
+carries". Two of the values were the same literal in both files with nothing connecting them.
+
+A test fixture that restates another language's constants is precisely the cross-language mirror
+CLAUDE.md bans, and this one had teeth: the Rust test asserts the exact emitted config line for
+line, so a default changed in Swift alone would leave a green suite proving the OLD terminal.
+
+`config::factory()` is the fresh-install config now, built from seven named `FACTORY_*` constants.
+The Rust suite varies fields off it; Swift's `init` defaults read the same constants through two
+doors — one for the strings by index, one for the numbers. Every field NOT named is the type's own
+`Default`, which is the empty string or a false: "the user has not chosen", rather than a value
+someone picked.
+
+The doors are indexed rather than one-per-value on purpose. Seven exported symbols for seven
+scalars is the shape that grows without bound; two doors and an index do not.
+
+## The secret shapes are `regex`, not a scanner I wrote (2026-08-15)
+
+Ported the Swift redactor's ten `NSRegularExpression`s to a hand-written byte scanner the day
+before, and the reason given was that `slopdesk-workspace` was dependency-free and is linked into
+the iOS app. Both halves were the wrong test. The user's ruling: *"nếu crate nào ngon, vẫn được
+maintain active thì dùng chứ đừng tự viết"* — and the repo had already made exactly this call once,
+in `slopdesk-screend`, whose header argues for `regex` over `NSRegularExpression` because a finite
+automaton has a documented linear-time bound where ICU's backtracking has none on a line an
+adversary chose. A crate that is right for untrusted PTY output in a daemon is right for untrusted
+PTY output in a title.
+
+The notation is the real argument. These shapes are published as regular expressions by every
+secret-scanning corpus there is, so a new vendor prefix should be one line in a table, not a new
+byte loop with its own `\b` reasoning to review. The scanner it replaces had already been wrong
+twice during its own port — a vacuous word-boundary check, and the wrong character class for the
+Google key — and both were caught by tests rather than by reading, which is what hand-writing a
+notation buys you.
+
+One rule does not survive the translation intact: the generic backstop's three lookaheads. A
+lookahead is not regular, and `regex` will not compile one. It does not need to be part of the
+pattern — it only inspects the run the automaton already matched — so it is a filter on the match
+(`Action::WholeIfMixed`) rather than a reason to reach for a backtracking engine and give up the
+bound that made the crate the right choice. A pattern that fails to compile is dropped rather than
+fatal, and `every_pattern_compiles` is what stops that silence being how a rule rots.
+
+Measured, because binary size was the stated objection: a probe linking one plain door is 439 KB
+after `-dead_strip`; the same probe calling `slopdesk_ws_redact_secrets` is 1.61 MB. ~1.17 MB for
+the app, next to a `libghostty` an order of magnitude larger. `scripts/build-ffi.sh`'s header
+carried a "384 KB linked" figure that had gone stale long before this change; it now carries both
+measured numbers.
+
+## Three hand-written base64 codecs became one crate (2026-08-15)
+
+Auditing the tree with the same lens found `slopdesk-superd/src/blocks.rs` arguing the case out
+loud: *"Standard base64 with padding, twenty lines rather than a dependency … a codec this small is
+cheaper to read than to audit a crate for."* Its own doc comment then names the counterpart decoder
+in `sniffer.rs`, which is the tell — an encoder and a decoder written separately, in one binary,
+agreeing by inspection. `slopdesk-wire/src/document/state_file.rs` carried a third and fourth, and
+the standard alphabet was a verbatim literal in three files.
+
+"Small enough to read" was never the test. `CLAUDE.md`'s rule is one implementation, and a codec
+copied per call site is one implementation per copy — this one had already grown four readings of
+what padding is legal, each with its own comment explaining why it rejects what it rejects. The
+`base64` crate's `STANDARD` engine is the alphabet Swift's `base64EncodedString()` wrote and the
+canonical-padding strictness all four copies were reaching for: unpadded tails, padding in the
+middle and two payloads spliced together are refused by construction rather than by four separate
+loops that each remembered to. The strictness tests came through unchanged, which is what says this
+was a replacement and not a redesign.
+
+Not everything a crate could do is a thing a crate should do here: `percent-encoding` was rejected
+for the two OSC-7/OSC-99 decoders in the same sweep, because it is LENIENT by design — a malformed
+`%ZZ` survives as literal text — and both call sites refuse malformed input on purpose, since the
+bytes come from whatever holds the far side of a PTY. A crate that cannot express the requirement
+is not the wheel you were about to reinvent. That duplication is real and is dealt with separately.
+
+## One reading of `\xNN` and `%NN` (2026-08-15)
+
+The same sweep that found the base64 copies found two more rules spelled twice and one spelled four
+times:
+
+- The shell shim's `133;E` escaping of `;`, `\`, ESC, BEL, CR and LF was inverted in
+  `slopdesk-sanitize::distill` AND in superd's block segmenter — the same rule, one written
+  `(high << 4) | low` and the other `high * 16 + low`. Two spellings of one arithmetic is how a
+  rule stops being one rule.
+- Percent-decoding was byte-for-byte identical in superd's OSC 7 / OSC 99 reader and in the
+  client's link scanner, differing only in whether the nibble helper was called `hex_nibble` or
+  `hex_value`.
+- `hex_nibble` had four copies. Three matched over `b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F'`
+  by hand; the fourth already called `char::to_digit(16)`, which is what the other three were
+  re-deriving.
+
+`slopdesk-sanitize::escape` is the single reading. That crate already declares itself the home of
+the shared byte scanners — `vtscan` and `width` are there for exactly this reason — and both new
+consumers take it as a path dependency, which `slopdesk-wire` had already established is not the
+supply chain a "zero dependencies" header is defending against. `slopdesk-terminal`'s header said
+"Zero dependencies, on purpose"; it says "No EXTERNAL dependencies" now, because that was always
+what the paragraph beneath it argued.
+
+`percent-encoding` was considered and rejected, and the reason is worth recording next to the
+opposite ruling on `base64`: it is lenient by construction — a malformed `%ZZ` survives as literal
+text and the decode has no failure case — while both call sites refuse malformed input on purpose,
+one feeding a desktop alert and the other a path a person is invited to click. "Use the crate" is
+not "use any crate": it is use the crate that expresses the requirement, and where none does, the
+answer is one implementation rather than four.
+
+## One receive buffer, and a narrowed length spelled where it is named (2026-08-15)
+
+A mechanical sweep for identical function bodies across the Rust tree — run because "audit again
+after the fix" is the only way a consolidation pass finds what the first reading missed — turned up
+two things worth the change and a pile that was not.
+
+**The streaming decoders.** `FrameDecoder` and `MuxFrameDecoder` live in the same crate and each
+carried the whole framing rule: fail-stop poisoning that frees the buffer, a read cursor with a
+64 KiB wasted-head bound, and a compaction that is OWED rather than taken when the answer just
+given points into the buffer. Three of those had already drifted between the copies — one `poison`
+cleared the owed compaction and the other did not; one took an owed compaction at the top of a
+decode and the other only at `append`; one compacted unconditionally on the two not-enough-bytes
+paths where the other honoured the elide flag. None had produced a bug, which is precisely the
+state a rule is in just before one copy is fixed and the other is not.
+
+`slopdesk-wire::framing::PrefixedReader` is the rule now, and each decoder is what a framed payload
+MEANS and nothing else — three lines and a closure. Where the copies disagreed the conservative
+reading won, and the module header names each disagreement rather than quietly picking. All 361
+wire tests pass unchanged, including the eliding suites that exist specifically to catch a span
+going stale across a compaction, which is what says this was a port and not a redesign.
+
+**The narrowing casts.** `truncating_uN` had FIFTEEN copies across four crates. Fourteen were
+mechanical, but four in `slopdesk-ffi` shared the name `truncating_u32` while two of them
+SATURATED — the name was lying at half the call sites. They are now `truncating_u32` and
+`saturating_u32`, kept apart deliberately: on the unreachable path where they differ a wrapped
+length makes Swift read a truncated payload as complete, and a clamped one makes it ask for a
+buffer it cannot get. Merging them would have been a behaviour change dressed as a cleanup. Each
+crate that writes a wire now has exactly one home for these — its own `bytes` module, or the FFI
+root beside `deliver`.
+
+`slopdesk-video::cursor`'s `truncating_u16` was NOT one of the copies: it takes an `f64` and
+reproduces Swift's `UInt16(truncatingIfNeeded: Int(rounded()))`. It is `rounded_truncating_u16` now,
+because a name that collides with a shared helper is how the next reader merges two rules by
+accident.
+
+## The arena's read half is one function per side of the boundary (2026-08-15)
+
+`docs/55` §4c's arena convention has two halves. A door that hands Swift a list of records with
+strings in them interns the strings into one buffer and puts `(offset, length)` pairs in the
+records, so no record makes the caller own a lifetime. The WRITE half — `TextArena::intern` — was
+shared from the day the convention was written. The READ half never was, and there is no reason for
+that beyond nobody having looked: **eight copies in `slopdesk-ffi`, ten more in Swift.**
+
+The eighteen had drifted, in ways that are all unreachable today and all the kind of thing that
+stops being unreachable without anyone noticing:
+
+- `Sources/SlopDeskWorkspaceCore/Terminal/TerminalBlockModel.swift` and `VideoControlCodec`'s blob
+  arm bounds-checked NOTHING — a projected row whose pair ran past the arena would have read
+  whatever followed it. `VideoControlCodec`'s text reader checked the length was non-zero and not
+  that the span fit.
+- `WorkspaceChannelCodec` and `FileTransferCodec` answered `""` for bytes that are not UTF-8, where
+  the other faces — and the crate's own reader — repair them. That is a different answer for the
+  same bytes: one loses the whole field, the other one character of it.
+- On the Rust side, five copies folded overflow with `saturating_add` and three with `checked_add`.
+  Both answer empty on a real arena, but only by the accident that `arena.get(start..usize::MAX)`
+  also fails.
+
+`crate::arena_span`/`arena_text` and `SlopDeskArena`'s `ArenaText` are the readers now. A door whose
+pair is a named C struct — `SlopDeskMetadataText`, `SlopDeskWorkspaceText`, `SlopDeskDropText`,
+`SlopDeskKeybindRun`, `SlopDeskWsSpan` — keeps a one-line overload beside that struct and calls
+through, because the struct belongs to that door's vocabulary and the read does not.
+
+**Why a new Swift target for one function.** `SlopDeskProtocol`, `SlopDeskVideoProtocol`,
+`SlopDeskWorkspaceModel` and `SlopDeskFileTransfer` are deliberately leaves whose only dependency is
+the shim, so putting the reader in any of them would have widened three graphs to narrow one.
+`SlopDeskArena` depends on NOTHING, not even `CSlopDeskFFI`: an offset and a length are arithmetic,
+not a boundary. It is the shape §6 already describes for `SlopDeskAgentDetect` — the module that is
+a vocabulary rather than a port.
+
+**Two contracts survived on purpose.** `WorkspaceStateCodec`'s reader answers `String?`, because
+that door's span carries a `present` flag and an ABSENT field is a different fact from an empty one;
+it calls `ArenaText.optionalText`, which is `nil` only for a pair that does not fit. And
+`link_detect` and `blocks` spell their pairs `size_t`, the way §4 spells every length, rather than
+the `u32` the record-carrying doors use; the two widths meet at exactly one `saturating_u32` per
+call site, which is where a cast belongs.
+
+The bar this cleared is §6's own: `process::basename` was two implementations that disagreed for a
+month with neither side able to see it. Eighteen readers of one convention is that setup, eighteen
+times over.
+
+## One NWConnection byte channel, and a lane keeps only its vocabulary (2026-08-15)
+
+`SlopDeskInspector.NWByteChannel` and `SlopDeskFileTransfer.NWFileTransferChannel` were the same
+actor line for line. Not similar — identical, apart from the dispatch-queue label and the prose
+above it. Both wrap one `NWConnection` as an `AsyncThrowingStream<Data, Error>` in and an `async`
+send out, with framing a layer up.
+
+What makes two copies of this worse than two copies of a pure function is that the lifecycle is
+where the bugs are, and the file records three of them: the continuation's `onTermination` cancel
+(for a consumer that stops iterating without calling `close()`), the `cancel()` beside every
+`finish()` (finishing the stream alone leaves the connection and its fd alive until the actor
+deallocates), and the idempotent `start()`. Each was an fd leak, and each had to be fixed in both
+places or the copies drift. They had not drifted yet, which is the same "just before" state the
+framing decoders were in.
+
+`SlopDeskNet.NWByteChannel` is the actor now — Foundation and Network and nothing else, so neither
+caller widens its dependency graph by naming it. Each lane keeps its own protocol —
+``ByteChannel``, ``FileTransferChannel`` — and one conformance line, because the protocol is that
+lane's vocabulary (what a caller there is allowed to ask for) and the socket is not. The queue label
+is the one thing the two ever disagreed about, so it is the one initialiser parameter: a spindump
+still says which lane a thread belongs to.
+
+This is the same split the arena readers took the same day: the RULE is shared, the NAME each door
+gives it is not.
+
+## One write(2) loop and one read-exactly, and drop-or-report stays with the caller (2026-08-15)
+
+Thirteen copies of "move every byte, and fold in what `write`/`read` actually do": ELEVEN write
+loops and two `readExactly`s. The first sweep found six of the writes because they were named
+`writeAll`; the other five were inline — two closures inside the agent control listener, one
+returning `Bool` in the code bridge, two spelled at the call site in the `slopdesk` CLI, one of
+which called `die`.
+
+Every one of them folded in the same two facts: **EINTR is a retry, not a failure**, and **a short
+write is normal**. Getting either wrong is a truncated control response or a spin, and thirteen
+places is thirteen chances.
+
+`SlopDeskTTY.FileDescriptorWrite.all` and `FileDescriptorRead.exactly` are the loops now. The leaf
+already owned the Swift side's raw descriptors — raw mode, termios, `TIOCSWINSZ` — and it has no
+dependencies, so none of the six targets that now name it widened a graph.
+
+**What did NOT collapse is the reaction**, and that is the whole design. Six callers DROP a failure
+(a control client that has gone away is not something a listener can do anything about); five
+REPORT it (a supervisor frame or a screend answer half-written is a lost boundary, and the CLI has
+nothing to fall back on). Both are right, so the loop answers a `FileDescriptorOutcome` —
+`.complete`, `.peerClosed`, `.failed(errno:)` — and each lane switches on it into its own error
+type. `SupervisorFrame` still throws `FrameError.peerClosed`; `ScreenClient` still spells an EOF
+mid-frame `ECONNRESET`; the `slopdesk` CLI still `die`s with `strerror`.
+
+**Not a Rust port, and this is the one place that argument does not carry.** `rust/slopdesk-posix`
+is the crate for a syscall with no safe wrapper, but it has no FFI door and needs none here: the
+loop holds no policy, every caller already owns the descriptor, and routing each control-response
+write through the boundary would add marshalling to a call whose entire cost is the syscall itself.
+
+The outcome type was `FileDescriptorWriteOutcome` for about ten minutes, until the read side reused
+it — the same lie `truncating_u32` was telling at half its call sites earlier the same day. It is
+`FileDescriptorOutcome`, and the payload label is `transferred`, not `written`.
+
+## One device-panel law, two device protocols (2026-08-15)
+
+`Sources/SlopDeskClientUI/Simulator` and `Sources/SlopDeskClientUI/Android` are ~10k lines of
+deliberately parallel code, and most of that parallelism is correct: the two panels speak different
+protocols. The simulator's framebuffer never rotates, so a scroll delta has to be un-rotated against
+the bezel's `rotationEffect`; `scrcpy` rotates on the DEVICE and restarts its encoder, so the frame
+is always the right way up and there is no angle to be out of step with. The simulator sends touches
+in the fitted rect's own space because the host rescales; the Android lane must send them in the
+video's own pixel grid, because `PositionMapper` compares the pair on the wire against the size it
+is currently encoding and DROPS a mismatch. Those files should read differently, and they do.
+
+Five things were not different, and each of them fails quietly — a tap two rows off, a pinch whose
+contacts leave the frame, a finger planted inside the system-gesture band. Both files even said so,
+in the same words, in the two places where the same arithmetic could be wrong two different ways:
+"this is the part that can be wrong in a way nobody notices until a tap lands two rows off."
+
+- `DevicePanelGeometry` — the aspect fit, the panel-point→device-point mapping, the pinch pair, the
+  safe-area margin, and the regrip that makes a long scroll one gesture instead of a series of
+  unrelated flicks.
+- `DevicePanelSampleBuffer` — the AVCC access unit becoming a `CMSampleBuffer`, identical down to
+  the `-1` returned for a null base address. Only `formatDescription` is genuinely per-panel: the
+  simulator is asked for `format=avcc` and parses a record, `scrcpy` forwards raw `MediaCodec`
+  output whose parameter sets arrive as the Annex-B NALs CoreMedia wants anyway.
+
+**The aspect fit went one level further than the two panels.** It is
+`slopdesk-video::geometry::displayed_video_rect` through the door now — the same law the desktop
+video client's renderer, input encoder and cursor overlay all invert, and which is Rust precisely so
+a click lands on the pixel it was drawn for. It was a fourth spelling of it. What stays on this side
+is the panels' own contract, which the video client does not share: a degenerate input answers
+`.zero` (the view reads that as "nothing to draw yet") rather than the full view rect, and the
+result is rounded to whole points because a device frame is drawn on a pixel grid.
+
+The gesture tests reference `SimulatorScrollGesture.regrip`, `.planted` and `.edgeMargin` by name
+and are unchanged, which is what says this was a port.
+
+## The small rules that were spelled twice (2026-08-15)
+
+A mechanical sweep for identical function bodies across `Sources/` found 53 of them. Most were the
+two clusters above; these are the rest that were real, each one law with two call sites:
+
+- **`ControlLine`** (`SlopDeskProtocol`) — the NDJSON control-line grammar. The host's agent-control
+  listener and the client's control dispatcher run different verb sets over different objects and
+  stay that way, but a request was `{"id", "method", "params"}` in both, and `nil`-on-anything-else
+  in both, character for character, along with the `sortedKeys` encode and the fallback line for a
+  failure that cannot happen. The trailing newline stayed with the callers, which is the one thing
+  they genuinely disagreed about.
+- **`TerminalModeEvent.init?(_:)`** — the `SLOPDESK_MODE_EVENT_*` discriminant becoming a case. It
+  belongs ON the enum, because `docs/55` §6 makes the case list a CONTRACT: it is one vocabulary in
+  two type systems and the mapping between them has exactly one right spelling. It had two — the
+  mode tracker's and the input box's, identical down to the doc comment — which is two places for
+  the next event to be added to one of.
+- **`RustServicePaths.locateBeside`** — where a ROOT-workspace binary lives. `slopdesk-probe` and
+  `slopdesk-agenthooks` are staged beside hostd rather than in a per-crate cargo target, so the
+  existing `locate` walk has nothing to find and both had written the two-line fallback themselves.
+- **`SimulatorWebSocketLane`** — the websocket state machine, receive loop and pong that the frame
+  stream and the log stream both ran. The pong is why this one matters: `autoReplyPing` is INERT
+  when set on an inserted options object (the protocol stack stores a copy that reads the flag back
+  as its default), so a lane without an explicit pong is dropped on the server's idle timer minutes
+  into a session for no visible reason. That was measured once and written down twice — which is one
+  copy away from being written down once and fixed in the wrong file.
+
+`VideoDecoder.stampDisplayImmediately` was left alone on purpose. It is the same three lines of
+CoreFoundation as the panels' `annotate`, but in a target whose dependency floor deliberately
+excludes the media frameworks, and for a different reason — Parsec-parity present-on-decode before a
+`VTDecompressionSession` submit, not marking a panel's sample for an `AVSampleBufferDisplayLayer`.
+Sharing it would widen a leaf's purpose to save three lines. The supervisor records that as a
+decision so the next sweep does not re-litigate it.
+
+## The five sidecar managers keep their vocabulary and share their lifecycle (2026-08-15)
+
+`Sources/SlopDeskHost` had five managers for the five children hostd supervises — `code-server`,
+`baguette serve`, `slopdesk-androidd`, `slopdesk-inspectord`, `slopdesk-dropd` — and between them
+two lifecycles, each written out once per manager.
+
+`HostServiceProcess` already held the shape's PROSE at the top of its file ("spawn with port `0` and
+LEARN the bound port from the child's own log line, merge stdout+stderr into one pipe, probe
+readiness with a BOUNDED loopback connect") and the production seams. What it did not hold was the
+code. So `CodeServerManager`, `SimulatorServerManager` and `AndroidServiceManager` each carried
+their own `Instance` record, spawn generation, probe-and-latch and drop-the-exited-child head, and
+`InspectorServiceManager` and `FileDropServiceManager` were the same 200-line file twice — a
+`sed`-substituted diff of the two comes back as prose and nothing else.
+
+They had already drifted, in the way that is invisible one file at a time:
+
+- `CodeServerManager.endpointLocked` wrote its updated record INSIDE the `if due` block; the other
+  two wrote it after. Equivalent today, and equivalent only because nothing else in the record
+  changes on a not-due round.
+- The dropd and inspectord announce parses accepted a `:0` port; androidd's rejected it. `:0` is the
+  port the child was ASKED for under `--port 0`, echoed back before the OS had picked one — the one
+  value in that position that is always a lie. Two of five parsers rejected it.
+
+Neither difference was intended by anyone, and each copy reads as correct on its own. That is
+`docs/55` §6's `process::basename` precedent in a second target, so it is answered the same way.
+
+**Two lifecycles, in `SupervisedServiceLifecycle.swift`, because the difference between them is
+real.** `ProbedPortService` is for a child whose port the OS picks: spawn, learn the port from its
+line, probe until it answers, and report where it stands RIGHT NOW. It never waits, because its
+callers sit on per-session metadata queues answering an RPC whose client-side timeout is 5 s and
+every one of those children does something slow first. `AnnouncedPortService` is for a daemon whose
+port hostd CHOOSES: it waits a bounded while for the announce line and VERIFIES that what the child
+announced is the port this hostd advertises, respawning it when it is not — affordable because it
+runs on the startup path, where there is no deadline to miss, and necessary because the pane id is
+stable across a `make host-restart` while the port is not.
+
+**What stayed with each face is what the daemons genuinely disagree about**: the service name, the
+announce marker (which `check-supervisor` pins against the crate's `server.rs`), the argv, the env
+override that names the binary, and — the one control-flow difference — whether a spawn that THREW
+reads `unavailable` or `starting`. It reads `unavailable` for the panel backends, where a broken
+binary is indistinguishable from an absent one and the install hint is the right surface for both,
+and `starting` for androidd, where an unreachable superd or a thread limit says nothing about
+whether this host has a bridge. Both are asserted by their own tests; `ProbedPortService.Boot`
+carries the state rather than deciding it.
+
+**One lock per service, not two.** `CodeServerManager` has boot gates of its own — the settings
+seed, the bridge bind, the one-shot bundled-extension install that DEFERS the spawn — and they gate
+the same spawn as the instance record, so they run under the same lock through
+`ProbedPortService.locked(_:)` and `bootLocked(_:)` rather than beside a second `NSLock`. That is
+why the engine exposes the pieces as well as the whole round: two faces take `ensure(boot:)` and
+have nothing else to serialize; the workbench walks the pieces and keeps its gates inside the same
+critical section, including the one re-entry (`finishBundledExtensionInstall`) that has to flip a
+flag and re-run the boot in place. `check-supervisor` fails a manager that takes an `NSLock` beside
+its service.
+
+## The two device panels share what they DRAW, not just what they compute (2026-08-15)
+
+The earlier pass gave the simulator and Android panels one geometry (`DevicePanelGeometry`) and one
+CoreMedia wrap (`DevicePanelSampleBuffer`) on the grounds that the arithmetic was never per-device.
+The sweep that followed found the same thing one layer up, in the drawing:
+
+- **The empty stage and its caption.** Both stage views carried `veil(content:)` and `caption(_:)`
+  character for character, each with the same doc comment written in the singular — "a scrim says
+  something is on top of the picture; there is no picture, and the truthful drawing is the stage
+  itself, empty". A sentence that argues for one decision, stored in two files, is the shape of a
+  design pass re-toning whichever one it happened to open.
+- **The empty-list notice.** Both device lists had `message(_:)`, and both had the 2026-08-04
+  user-directed comment saying a failed poll draws nothing — one of them recording the reasoning and
+  the other pointing at it ("for the reason `SimulatorDeviceList` records").
+- **The loading-veil asymmetry.** `followLoading` waits on the way UP and fires immediately on the
+  way DOWN, and that asymmetry is the entire reason the views keep their own copy of the model's
+  loading state. Written out twice.
+- **The console lexer.** `token(_:)` and `isTime(_:)` were identical in `AndroidLogLine` and
+  `SimulatorLogLine`, and `isDate` differed only in a length — `logcat` prints no year, the unified
+  log does.
+- **The frame dimensions.** `CMVideoFormatDescriptionGetDimensions` read off the FORMAT DESCRIPTION
+  rather than the session header, twice, each with its own paragraph explaining the same choice.
+
+**The measured numbers stay per panel.** The veil delay is 400 ms on the simulator (a booted
+device's first keyframe lands 0.09 s after the socket opens) and 600 ms on the bridge (0.83 s, because
+the host pushes the server jar, starts `app_process` and waits for the device's encoder). Those are
+facts about two pieces of hardware; merging them would throw away the measurement, so
+`DevicePanelChrome.loadingVeilState` takes the delay and each view keeps its own with its own
+citation. The same holds for each console's header shape after the tokens — a priority letter and a
+`Tag( pid):` on one, a severity token and a `Process[pid:tid]` on the other — which is why
+`DeviceLogLexer` stops at the tokens and the grammars stay apart.
+
+**One pasteboard write, for a reason that is not tidiness.** `NSPasteboard.general.setString`
+without a preceding `clearContents` appends to whatever the previous writer declared, so the pair has
+one correct order and five files were spelling it.
+
+**Correction, same day.** That pasteboard funnel was a MISTAKE, and the entry above is left standing
+so the mistake is legible: a `Pasteboard.copy` was added to ClientUI when `ClientPasteboard.write`
+already existed one target down and had been "the one client-side copy funnel" since it was written.
+The new one was worse, too — `ClientPasteboard` resolves to a per-PROCESS named board under XCTest
+precisely so a copy test cannot clobber the developer's own clipboard, and reaching `.general`
+directly gave that up. It was deleted and every caller repointed the same day. The sweep that found
+five copies of two lines has to look for the funnel that already exists BEFORE it writes one; a
+duplicate-body scan cannot see a duplicate whose original it never opened.
+
+**Correction, same day (2).** The other thing this entry got wrong was the notice/failure pair on
+the two sidebar models, recorded here as "left alone, on purpose" because sharing it would widen
+`private(set)` on an `@Observable` model. That objection is about sharing the STATE. The eight
+identical lines are not state — they are a TIMER: cancel the pending deadline, sleep, fire unless
+cancelled. `DeadlineLatch` owns the `Task` and nothing a view observes, so both models adopt it with
+their setters untouched, and so do `TerminalViewModel.beginAwaitingReflow` and
+`RemoteWindowModel.noteResized`, which had the same five lines for the resize scrim. Three details
+in those five lines are load-bearing and each reads as noise until it is missing: the cancel comes
+FIRST (a re-arm during a live drag otherwise stacks one timer per layout pass), `Task.isCancelled` is
+checked AFTER the sleep (`try?` swallows the cancellation throw, so without it a cancelled timer runs
+its body anyway), and the caller's closure is `[weak self]`.
+
+## The arena convention is one implementation on the Swift side too, both ways (2026-08-15)
+
+The earlier pass gave `docs/55` §4c's arena convention one READER on each side —
+`crate::arena_span`/`arena_text` and `ArenaText` — and reported nine Swift copies folded into one.
+That count was wrong, and the sweep that found the rest is the reason this entry exists: the
+mechanical duplicate-body scan only sees copies that are their own FUNCTION, and half of this
+convention was written inline.
+
+Folded in this pass, for twenty-six Swift copies in total:
+
+- **Five more text readers** — `CLIArgs`, `JumpResolver`, `CLIConfig`, `CLICompletions`,
+  `HostWindowRecordRows` — all spelling `String(bytes:encoding:) ?? ""`, the answer the crate's own
+  reader does not give. `CLIConfig` and `CLICompletions` also had no lower-bound guard.
+- **Three BYTE readers**, which the first pass did not look for at all because they answer `[UInt8]`
+  rather than `String`: `KeybindGrammar.bytes` guarded only `end <= count`,
+  `VideoClientSessionLogic.run` guarded all three, and `RetransmitRing` guarded NOTHING — a pair
+  naming bytes past the arena would have trapped there rather than answered empty. They are now
+  `ArenaText.bytes`/`.data` over the same `range(in:offset:length:)` as the text reads.
+- **Nine writers.** `TextArena::intern` was shared on the crate side from the day it was written and
+  never on the Swift side. Six were inline in the loop that built the arena; three were their own
+  `intern`. They disagreed about overflow: most used `UInt32(clamping:)`, while `WireMessageCodec`
+  and `VideoControlCodec` used a plain `UInt32(...)` conversion, which TRAPS rather than clamps.
+
+**The generic write, and the one concrete exception.** `intern` is generic over
+`RangeReplaceableCollection where Element == UInt8`, because both arena spellings are in use and
+neither is wrong — a door that lends the crate an `UnsafeRawBufferPointer` builds `Data`, one that
+lends an `UnsafeBufferPointer<UInt8>` builds `[UInt8]`. The exception is `Data`-into-`Data`, spelled
+concretely: the retransmit ring interns every outgoing packet of every frame, and the generic would
+reach `Data.append(contentsOf:)` through a `Collection` witness on the video send path. That is a
+perf decision, not a style one, and it is why the overload exists at all.
+
+**What is still per-door**: the named C struct. `SlopDeskByteSpan`, `SlopDeskKeybindRun` and the
+bare `(UInt32, UInt32)` pairs are each a door's own vocabulary, so each face keeps a one-line
+overload that wears its struct and calls through — the same shape `crate::arena_text`'s field-keyed
+readers have on the other side. `ArenaText` still depends on nothing but Foundation: an offset and a
+length are arithmetic, not a boundary.
+
+## Clipboard sync's two ends read the pasteboard from one file (2026-08-15)
+
+`HostClipboardPerformer` (the daemon) and `ClipboardSyncEngine` (the client) are the two halves of
+one wire contract, and each carried its own `NSPasteboard` ↔ `MetadataCodec.ClipboardClip`
+conversion: the same three-way read preference (PNG as-is → TIFF transcoded → non-empty text), the
+same cap check, the same TIFF transcode, the same PNG-plus-TIFF-twin write. This is the exact shape
+`docs/55` §6 records for `process::basename` — two implementations of one contract, drifting where
+neither side can see it.
+
+**They had already drifted, and the drift is a privacy asymmetry.** The client refuses to PUSH a
+concealed clip (`org.nspasteboard.ConcealedType`, what password managers set). The host does not
+refuse to SHIP one back on a `readClipboard` pull — copy a password on the host machine and the
+client applies it to its own pasteboard. That is preserved exactly as it was, because closing it is a
+product decision and not a refactor's to make. What changed is that it is now the named parameter
+`skippingConcealed:` at two call sites instead of a difference between two function bodies that
+nobody was comparing. **Flagged for a decision; it was not made here.**
+
+**`PasteboardClip` is its own target, and that is the whole reason.** `SlopDeskHost` is the daemon
+graph and `SlopDeskWorkspaceCore` is the client graph; neither depends on the other. The only thing
+below both is `SlopDeskProtocol` — the WIRE, which has no business importing AppKit. So the shared
+reading is a leaf of its own: AppKit plus the clip type, nothing else, and hostd links what it
+already linked.
+
+**The write answers `Bool`, not a status.** It validates before it clears, so a garbage clip arriving
+over the wire cannot destroy the clip already on the board. The two callers spell the refusal
+differently — the host answers `MetadataStatus.error` over the wire, the client just drops — which is
+why the answer is a boolean and the vocabulary stays with each caller.
+
+## The client copies, opens and traces from one funnel each (2026-08-15)
+
+Three platform forks were written out at their call sites rather than inside the thing that owns
+them, and each hid something a call site could not see:
+
+- **The copy fork.** `#if canImport(AppKit) ClientPasteboard.write … #elseif canImport(UIKit)
+  UIPasteboard.general.string = …` appeared at four call sites (terminal leaf, link overlay, command
+  navigator, palette). The asymmetry worth hiding is that the AppKit arm reaches a test-safe named
+  board and the UIKit arm reaches `.general`; a fifth copy would have had to know that. The fork is
+  now inside `ClientPasteboard.write`, which also grew the frame write the two device panels had
+  (`NSImage(data:)` → clear → `writeObjects`, identical but for the argument label) — they keep their
+  own named faces so each panel still says whether its transport delivers PNG or JPEG.
+- **The open fork.** `openURLString` was identical in `TerminalLeafView` and `LinkActionActuator`,
+  and `DefaultTerminalIntegration` had a third macOS-only spelling. The parse is part of the law —
+  a string that is not a URL is dropped inside `ExternalOpen`, not at each caller. The HOST's
+  `NSWorkspace.open` is deliberately NOT folded in: it READS the return to answer `.ok`/`.error` over
+  the wire, has no UIKit arm, and its target cannot see ClientUI. Same call, different law.
+- **The stderr trace.** `SLOPDESK_BLOCKS_DEBUG` gated two tracers (`[blocks]` in the store,
+  `[flash]` in the overlay) with the same three lines, and `SLOPDESK_WORKSPACE_DEBUG` a third. Two of
+  the three read the environment on EVERY call — a syscall per gesture on a path that runs per
+  gesture, which is exactly why the third had already hoisted it into a `static let`. `DebugTrace`
+  resolves once for all of them. The VIDEO host's `SLOPDESK_AUDIO_DEBUG`/`SLOPDESK_VIDEO_DEBUG`
+  tracers stay put: `SlopDeskVideoHost` depends on nothing that could carry a shared one down to it,
+  and inventing a leaf for six lines costs more than it saves. They are also not the same shape —
+  eleven files read `SLOPDESK_VIDEO_DEBUG` into a `static let` and use it as a GUARD over blocks of
+  measurement work at 58 sites, not as a write-one-line funnel; `docs/46` says outright that the call
+  site owns the idiom.
+
+  **Correction, same day.** That entry said "two tracers". There were three: `TerminalViewModel`
+  carried its own `flashDebugLog` — the same `SLOPDESK_BLOCKS_DEBUG` gate, the same `[flash]` tag as
+  the overlay's paint end, its own copy of both, and no `@autoclosure`, so it built the trace string
+  on every arm and settle whether or not anyone was reading. It is the arm/settle MIDDLE of a trace
+  whose other two thirds had already been folded, which is exactly the half that goes missing without
+  looking missing: a jump prints `[blocks]` and then a paint, and the gap between them reads as a
+  step that never ran rather than a tracer that was never called. `check-supervisor` now fails on any
+  file outside `DebugTrace.swift` that reads either gate — one gate, one spelling, one tag grammar.
+
+**Also folded, same sweep:** the `refreshing(_:)` binding wrapper (three copies across two Settings
+pages, sixteen call sites, three different doc comments for one seam) is now an extension on
+`PreferencesStore` — the seam is the store's, not a view's, so a page that has a store has the
+wrapper. It is an extension in ClientUI rather than a method in `PreferencesStore.swift` because that
+file is deliberately SwiftUI-free and a `Binding` is SwiftUI's. The two device sidebars' readiness
+enum is one `DevicePanelPhase`: four identical cases and one non-obvious rule (a `ready` endpoint
+with no usable address degrades to `.offline` rather than trapping on a zero port) that would
+otherwise get fixed on one side only. What each state MEANS stays per panel, on the typealias.
+
+**What is left alone, and why — so the next sweep does not re-litigate it:**
+
+- **`status(for:)`** on the two workspace documents. `WorkspaceIntentOutcome` lives in
+  `SlopDeskWorkspaceModel` and `WorkspaceIntentStatus` in `SlopDeskProtocol`, and those two targets
+  cannot see each other; only the two callers see both. It is an exhaustive `switch`, so a new
+  outcome case breaks BOTH sides at compile time — the silent-drift hazard the one-implementation
+  rule exists for cannot occur here, and a target for eight lines is not the trade.
+- **`setInitialCwd`** on the client and the mux transport: two lines of trim-then-empty-is-nil, an
+  idiom this codebase spells 57 times in shapes that are not the same law.
+- **`park`, `setLogLevel`, `deliver`** on the two device sidebars: same shape, different member
+  types (two stream protocols, two log-level enums), so sharing needs a protocol whose only
+  implementers are these two — abstraction bought with nothing.
+- **`fromEnvironment`** on the OWD detector and the depth policy: the fold is the same six lines but
+  each `apply` goes through a different FFI door with a different config struct.
+- **The per-door `intern`/`string` faces** over `ArenaText`: already recorded above — a named C
+  struct is a door's own vocabulary.
+
+**One sidecar encoder per target, and a rule for the rest.** Four stores inside
+`SlopDeskWorkspaceCore` built their own `JSONEncoder` with `[.prettyPrinted, .sortedKeys]`, each
+carrying half the reason in a comment; they now share `SidecarJSON.encoder()`, where both halves are
+written down (`.sortedKeys` is `docs/22` §8's byte-comparison contract, `.prettyPrinted` is for the
+human reading a `git diff`). The four other targets that write sidecars hold ONE encoder each — there
+is nothing duplicated to remove there, only a dependency edge to add to four deliberately narrow
+graphs — so `check-supervisor` pins the rule instead: whoever writes a sidecar sorts its keys. One of
+them already spelled the option set in the other order, which is harmless and is also the sign that
+nobody was comparing.
+
+## The video channel tag is one enum in the wire target (2026-08-15)
+
+**The host and the client each declared their own `VideoChannel`,** seven cases, byte-identical raw
+values, and each side carried a doc paragraph justifying the copy: *"the client and host live in
+separate modules (the client must not depend on the macOS-only host), so each carries the same pure
+enum — the wire contract is the agreement, not a shared Swift type."* The first half is true and
+still is. The second half was not: both modules already depend on `SlopDeskVideoProtocol`, and a
+1-byte tag on every media-socket datagram is exactly what a wire target is for. The client's own doc
+had already written the fix down as outstanding work — *"(The docs step should hoist this into
+`SlopDeskVideoProtocol` so both sides reference one definition.)"* — which is how long a two-copy
+contract survives once its justification stops being read.
+
+This is the `process::basename` shape (`docs/55` §6) with the failure still ahead of it rather than
+behind: the two copies agreed for as long as nobody added a channel. They would have kept agreeing
+right up to the day a seventh landed on one side, and nothing — not the compiler, not a test, not the
+golden corpus — would have said so. What the far side does on an unknown tag is drop it, silently.
+
+`Sources/SlopDeskVideoProtocol/VideoChannel.swift` now holds the enum and the rationale that is
+genuinely shared: the tags are the wire, `.cursor` is a separate socket (doc 17 §3.3 — never
+multiplex with video, so video backpressure cannot delay the cursor), `.recovery` is a dedicated
+channel because `RecoveryMessage`'s leading type bytes overlap `InputEvent`'s and multiplexing them
+onto `.input` would decode a recovery datagram as a phantom mouse event, and `.audio` rides the media
+socket but always sends IMMEDIATE so it never queues behind a fat video frame. What differs per side
+— which tags that side SENDS and which it RECEIVES — stayed in each transport's own doc, where its
+reader already is.
+
+Two `check-supervisor` pins, because one of them cannot catch what the other does. A negative check
+fails if a second `enum VideoChannel` is declared anywhere in `Sources` or `Tests`. A positive one
+pins each `case name = number` in the shared file: the raw values ARE the wire tags, so renumbering
+one re-routes a channel on the far side with nothing failing to compile and no golden vector moving.
+
+## The half-paired mux reaper had five test seams and no test (2026-08-15)
+
+**A sweep for functions declared once and referenced nowhere** — the class a duplicate-body sweeper
+cannot see, because dead code has no twin — turned up sixty-odd candidates, most of them delegate
+methods the framework calls by selector. One cluster was not noise. `HostTransport` carries
+`pendingCount()`, `isPending(_:)`, `reapExpiredPending(now:)`, `instantNowForTest()` and
+`instantPastAllPendingDeadlines()`, every one of them documented as a test seam, and
+`reapExpiredPending`'s own doc says the expiry is *"called directly by tests with a synthesized `now`
+so the behaviour is verified WITHOUT any wall-clock sleep."* Nothing called any of them. The two
+`isPending` hits a grep finds are `WorkspaceMirrorBox` and `MetadataRequestRegistry`, different types
+entirely — which is exactly why this survived: the seam LOOKS called.
+
+What was unverified is not a nicety. The reaper is the bound on a hostile peer opening many
+CONTROL-only mux sockets with distinct connectionIDs — each parks a live `NWConnection` whose fd only
+the pending map can reach. Its `createdAt` is deliberately preserved across a same-side re-park,
+because a peer re-sending the same side in a loop would otherwise push the deadline out forever: the
+entry is never reaped, and `pendingCount()` reads a reassuring 1 the whole time.
+
+The seams were unreachable, not merely uncalled. The only way to park an entry was
+`associateMux(_ connection:connectionID:isControl:)`, which takes an `NWConnection`, and no suite here
+opens a socket — a real listener hangs the test process. So `associateMux` split: the `NWConnection`
+overload now wraps the socket in an `NWMuxByteLink` and hands it to
+`associateMux(link:connectionID:isControl:)`, which owns everything the seams exist to observe —
+parking, the same-side displacement close, the `createdAt` the reaper measures against, the
+post-`stop()` refusal. `internal`, not `public`: the daemon's callers hand over connections.
+
+`HostTransportPendingReaperTests` drives all five paths through a `MuxByteLink` that records nothing
+but its close count. Four of them use only the transport's own clock, so they never sleep. The fifth —
+that a re-park does not defer the deadline — cannot: the discriminating question is which `createdAt`
+the entry kept, and no seam exposes it, so it uses a 50 ms timeout and a real wait past it. That
+assertion is one-sided by construction: a slower machine only ages the entry further, so a preserved
+`createdAt` reaps under any load and only a restamped one can fail it.
+
+Each assertion was mutation-tested before being trusted: restamping `createdAt` on re-park, dropping
+the displaced-half close, and neutering the reaper's filter each fail the tests that claim to cover
+them (the last one fails four assertions across two tests). A seam whose test cannot fail is the same
+false comfort as a seam with no test at all.
+
+## Thirty-two functions nothing called, and the docs that said otherwise (2026-08-15)
+
+**The dead-code sweep that found the reaper's untested seams found thirty-two more declarations with
+no caller anywhere in `Sources`, `Tests` or `scripts`.** They are gone. The interesting part is not
+the line count — it is that almost every one carried a doc comment asserting a call site that does
+not exist, which is how they survived a codebase that reads its own comments:
+
+- `TreeWorkspace.activeSessionPaneIDs()` / `.activeTabPaneIDs()` — *"drives active-tab
+  focus/visibility"*. Nothing drives anything; the callers ask `activeSession?.allPaneIDs()` directly.
+- `WorkspaceStore.groupHandleOffset(for:)` — *"Read by `CanvasItemView`"*. It is not, and neither is
+  the state behind it: `GroupHandleDragState`, `groupHandleDragLive`, `updateGroupHandleDrag`,
+  `endGroupHandleDrag` and `groupBoxOffset` form a complete live-drag feature with no view on either
+  end. The whole cluster went.
+- `PanePresentation.lastCommandSummary` — *"this is the formatter the pill tooltip uses"*. The pill
+  has no tooltip. `formatCommandResult`, which it called, says *"Exposed (and tested) independently"*
+  and had no test either. `latestBlock` (*"Drives the chrome status chip"*) and `openBlockNavigator`
+  (*"the chrome chip's tap action"*) are the same story; `displayTitle` is the only member anything
+  outside the file asks for.
+- `PreferencesStore`'s green "Enable … notifications" pill — five methods, two private helpers and
+  two persisted `UserDefaults` keys, describing a chip that is never built.
+- `exitOverview` (*"Esc / a card tap routes through here"* — `selectFromOverview` clears the flag
+  itself), `newTabDefault` (*"The 'new tab' command entry"*), `isActivePane`, `groupSlideOffset`,
+  `assessPaste`, `currentSelectionText`, `makeCopyModeKey`, `toggleRichMode`, `checkTitle`,
+  `truncatedCwd`, `refreshPicture`, `stopWorkspaceChannel`, `activitySummary`, `sessionLiveness`,
+  `VideoPaneControls.toggleFill`/`.resetZoom` (internal forwarders the overlay could not see anyway),
+  `wsText`, `rectBits`, and the two `AgentJobIdentifier` FFI faces.
+
+Four unused TEST seams went with them — `foldScreenDetectionForTesting`,
+`enqueueRestoredScrollbackForTesting` with its paired `hasRestoredScrollbackForTesting`,
+`reconcileWorkspaceDocumentForTesting`, and a `#if DEBUG` `forceStatusConnectedForTesting` whose own
+comment reads *"Test hook (no production caller)"*. Their siblings in the same files are called by
+dozens of tests, which is exactly why nobody noticed these four were not.
+
+**Four deletions were WRONG and were put back**, with the reason written into each. `looksLikePNG`,
+`looksLikeJPEG`, `intersectionArea` and `WatchProgress.progressBytes` have no Swift caller and are
+pinned by `check-supervisor` anyway, which failed the build the moment they left. The pin is not
+about the call: it is that the face IS the door. The blob magic, the NaN-ignoring intersection maxima
+and the OSC framing are the crates', and an uncalled face is what stops the next
+`data.prefix(8) == pngMagic` from being written in Swift. Each now says so in its own doc, so the
+next sweep does not delete it a second time.
+
+**Two survivors are unfinished FEATURES, not dead helpers, and are left for a decision rather than
+quietly removed.** `Canvas.groupIDsInUse()` says it is *"used to prune dangling group metadata (a
+`PaneGroup` whose every member was closed) on load / save"* — nothing prunes, so that metadata
+accumulates. `WorkspaceTreeOps.insertPaneAtRootEdge` is a complete, invariant-preserving rail-drag
+commit for `docs/45` with no drop site wired to it. Deleting either would erase intent; both are
+reported instead.
+
+## Sixty-eight doc links named symbols the repo had deleted (2026-08-16)
+
+A port moves an implementation to Rust and deletes the Swift original in the same change — that is the
+rule. What the rule does not cover is the paragraph next door. `MuxChannelSession` still told a reader
+that a `` ``TerminalQueryStripper`` `` pass strips the replayed history; the pass is
+`rust/slopdesk-sanitize/src/query.rs` and no Swift type by that name exists. `HostOutputSniffer` was
+named as live machinery in five files across three modules. `CommandBlockSegmenter`,
+`ScrollbackDistiller`, `PromptEOLMarkStripper`, `TerminalInputModeStripper`, `WireMessageCodec`,
+`PacketizeOptions`, `AndroidDeviceCatalog.merge`, `AgentKind.pathBasename`, `process_priority` and
+`ScreenVerb.detect` all read the same way. A DocC double-backtick promises a symbol in THIS doc graph;
+each of these promised one that had moved to a crate, so a reader who greps Swift concludes the
+machinery is gone rather than that it is somewhere else. Every one now cites the item the way the rest
+of the tree already cites a ported item — `name` plus its crate path.
+
+The other half were never ports. `isPaneOnActiveTab` is `isPaneOnCanvas`; `PaneNode.updatingSpec` is
+`Canvas.updatingSpec`; `WorkspaceStore.blockJumpCursor` is `BlockBookmarkSeam.jumpCursor`;
+`openRemoteWindow(windowID:title:appName:)` is `openDesktopWindow(displayID:)`; the ⌘1…9 family is
+`selectPane`, not `selectTab`, and the registry's own class doc said "select tab". `DSDensity` and
+`DSScale` are gone entirely, so `SettingsKey.density`'s doc described a token pipeline that no longer
+runs. Three said something FALSE rather than merely stale: `OverlayCoordinator` called four surfaces
+"SCRIMMED" and mounted "behind a ``Scrim``" when `OverlayHostView`'s own doc says in as many words
+that *the backdrop does NOT dim* and there is no `Scrim` type; `PaneSessionHandle.isReadyForInput`
+cited `sendChatToNewSession` as the caller that polls it, and nothing polls it at all; and
+`WorkspaceStore.liveCameraOffset` said *"Only `CanvasView` reads"* it — `CanvasView` is deleted and
+nothing reads it, so the scroll-pan rule survives with `CanvasScrollPanTests` as its only consumer.
+That last one is left standing and now says so, on the same reasoning as `insertPaneAtRootEdge`:
+deleting a tested rule because its view was rebuilt away erases intent.
+
+Where the referent is a view that a rebuild has not yet replaced, the link is demoted to a single
+backtick rather than renamed — `RemoteWindowPanel`, `TerminalInputHost`, `CanvasView`,
+`RemoteGUIPaneView` and the iOS UIKit input surfaces are prose about a thing that is not here, which
+is what the L0 headers were already doing with `` `PaneLeafView.swift` ``. Renaming them to something
+live would be inventing a fact.
+
+**The check is the point.** A fix without a ratchet regrows — `build-ffi.sh --check` is in `make lint`
+for exactly that reason. `check-supervisor` now walks every `` ``link`` `` in a comment and fails on
+one that names nothing the repo declares, where "declares" means an identifier on a NON-comment line
+(a name kept alive only by other comments does not vouch for itself) or a Swift file basename (several
+links legitimately name a file that groups a vocabulary). Three framework symbols — `SwiftUICore`,
+`CGDisplayGammaTable`, `CGEventTap` — are listed as external; the list stays short on purpose. It
+found six more the first time it ran. Its vouching set comes off the FILESYSTEM, not `git ls-files`
+like every other check here: the question is whether the repo declares the name, and an unstaged file
+declares it just as much as a committed one — reading the index instead failed a perfectly good link
+to `SupervisedBlocksTests`. Negative-tested by planting both link forms in a tracked file. 2.3 s.
+
+Two more duplicate mutators went in the same pass: `removePane(_:)` existed byte-identically in
+`HostWorkspaceDocument` and `LoopbackWorkspaceDocument`, called by nothing. The live reaper is
+`removePanes(keeping:)`, which is tested. Two copies of one uncalled operation is the
+`process::basename` shape with no compiler to notice, so both are gone.
+
+## The read-first doc still said Swift owns the wire (2026-08-16)
+
+The doc-link ratchet added the day before only looks at comments in *code*. Running its mirror —
+symbols and paths cited in `docs/` — found the sentence that most of this repository's orientation
+hangs on, `docs/00-overview.md` §"Core / shell split", claiming **"Native Swift owns the wire …
+Only non-Swift code: `Sources/CSlopDeskSIMD`"**. Both halves had been false for weeks: the codecs,
+FEC, reassembly and every realtime controller are `rust/slopdesk-wire` and `rust/slopdesk-video`
+reached through `CSlopDeskFFI`, and `Sources/CSlopDeskSIMD` is deleted. Whoever read the overview to
+decide where a new codec belongs was told the opposite of the rule in `CLAUDE.md`.
+
+The same claim had been copied into five more live files, which is how a stale sentence survives:
+`docs/README.md`, `docs/01-architecture.md` (prose *and* the package tree), `docs/12-coding-profile.md`,
+`docs/20-wire-protocol.md` and `docs/51-process-supervision.md`, whose §2.1 rested its "no C shim is
+required" argument on an invariant named after a target that no longer exists. `CLAUDE.md` itself
+offered `CSlopDeskSIMD` as one of the two live examples of a linked port; it is now `CSlopDeskFFI`.
+The invariant that actually holds today is narrower and worth stating that way: nothing under
+`Sources/` *implements* anything in C. The one C target left there, `CSlopDeskVirtualDisplay`,
+declares private CoreGraphics headers and has no `.c` file at all.
+
+`Package.swift`'s own tombstone was wrong in the other direction — it said the codec moved to
+`rust/slopdesk-video`, "which is `forbid(unsafe_code)` and holds parity **without a hand-written
+kernel**". The kernel did not dissolve; it came back as `rust/slopdesk-gfsimd` (the third `unsafe`
+crate), and `slopdesk-video/src/gf256.rs` calls straight into it. What left with the C target is the
+last hand-written implementation under `Sources/`, not the intrinsics. `docs/46`'s SIMD note named a
+`GF256NeonDifferentialTests` that went with it, so it now names the two suites that really pin the
+kernel: `rust/slopdesk-gfsimd/tests/differential.rs` for kernel ≡ scalar twin, and the cross-region
+cases in `gf256.rs` for the seam a 16-byte chunk straddle opens, which the kernel cannot see alone.
+
+Four smaller citations died the same way and were repointed at what does the work now:
+`docs/46`'s vendored-tool search order said it was mirrored by `AndroidToolchain.locateSDKTool`
+while the same file, twenty lines up, lists `AndroidToolchain` among the Swift types
+`check-supervisor` forbids from coming back — the mirror is `locate_sdk_tool` in
+`rust/slopdesk-androidd/src/toolchain.rs`. `docs/20` credited `title`/`bell` to a
+`HostTitleBellSniffer` wired into `HostSession`'s output relay, two names for one deleted thing;
+it is `rust/slopdesk-superd/src/sniffer.rs`, one pass over the pump's stream. `docs/45` named a
+`RecentlyClosedTab` ring at a line number that has since become unrelated prose — it is
+`WorkspaceTopology.closedTabs`, read LIFO. `docs/55` called an FFI handle `BlockStore` in a
+paragraph where `FrameReassembler` and `RecoveryIdrPolicy` are exact Rust type names; the handle is
+`SlopDeskBlockStore`.
+
+Two axes were audited in the same sweep and found clean, recorded so the next pass skips them.
+Every `SLOPDESK_*` default `docs/46` states matches its constant (`SUB_LAG_BYTES` 32 MiB,
+`PANE_RING_BYTES` 4 MiB, `SCREEND_IDLE_EXIT` 120 s, replay 256 MiB / gate 64 MiB, queue 64 KiB
+attached ↔ 64 MiB detached); the 246 gates the code reads that the table omits are covered by its
+own "Not exhaustive — grep `SLOPDESK_`". And no live doc cites a rooted file path that does not
+exist: every hit was either a historical handoff/plan doc or a `### What this deleted` section,
+where naming the deleted file is the point.
+
+The class now has a gate, scoped to the half of it that is decidable. `check-supervisor.sh` reads
+every file path a read-first doc cites and fails if it does not exist. Two bounds keep it free of
+false positives, and both were measured before the check was written: only paths ROOTED at a real
+top-level directory count, because a bare `Overlays/PaletteView.swift` is ordinary shorthand for a
+path relative to its package and resolving that guess is exactly how a gate earns noise; and only
+the docs `CLAUDE.md`'s own table sends a reader to, because a handoff from March naming files that
+are gone is a correct record, not drift. The live set is derived FROM that table rather than listed
+again — a doc becomes read-first by being added there, and the gate follows without being told
+twice. A doc may still name a deleted file on purpose, which is the whole point of `docs/51`'s
+"What this deleted"; those are one allowlist entry each, and removing the entry fails the check,
+so the list cannot quietly outlive its sentence. The symbol half was left ungated on purpose: a
+sweep of the same docs produced 68 candidates of which nearly all were legitimate — SDK types,
+signal names, Claude Code hook events, and the deliberately-absent names `check-supervisor` already
+forbids from returning — and an exception list long enough to silence that would rot faster than
+the thing it guards.
+
+## Twenty ban checks were reading the index, not the tree (2026-08-16)
+
+`check-supervisor.sh` has two kinds of rule and they disagreed about what "the repo" means. The
+ABSENCE rules — no Swift screen engine, no revived file-drop receiver, no Android bridge — all
+`grep -r Sources/`, so they see the working tree. The BAN rules built their file lists with
+`git ls-files`, which lists the INDEX. Those are not the same tree here: 415 files under `rust/`
+and 55 Swift files under `Sources/` are on disk and unstaged, so twenty bans were passing on files
+they never opened. Nothing was violating one today — the hole was latent — but a gate that cannot
+see half the tree is not a ratchet, it is a coin flip whose result depends on what happens to be
+staged.
+
+They now go through `repo_files`, which is `git ls-files --cached --others --exclude-standard`:
+git's own pathspec semantics, which those bans are written against, over tracked *and* present-but-
+not-ignored files. The docc check next door had already made this move for its vouching set and
+said so in a comment that ended "which is why an untracked file is invisible to the other checks";
+that sentence described a defect, and it is now gone along with the defect.
+
+Switching it over immediately failed the tree, which is the point — and the failure was the check's
+own regex, not the code. `(Darwin\.)?write\(socket` matched `SupervisorFrame.write(socket: fd,
+body:)`, whose argument LABEL is the same word as the syscall's first parameter and whose `writeAll`
+delegates to `FileDescriptorWrite.all` exactly as the rule demands. A syscall spells a comma and a
+Swift call spells a colon, so the pattern now requires the comma. That over-broad regex had been
+sitting there unable to tell a call from a contract, and could only be found by pointing the check
+at the files it had been skipping.
+
+## `INPUT_CRATES` stopped being a list, and the FFI flake was re-diagnosed (2026-08-16)
+
+`build-ffi.sh` reads `REQUIRED_SYMBOLS` out of the header, with a comment saying why: "a hand-kept
+list beside it is a second list to forget." Ten lines further down, `INPUT_CRATES` was a hand-kept
+list — the twelve crates whose sources decide whether the artifact is stale — and `CLAUDE.md` asked
+a human to keep it right ("keep `INPUT_CRATES` covering every crate the shim wraps"). Forgetting it
+does not fail loudly: the stamp calls a stale library fresh, which is precisely the one failure mode
+`docs/55` says a linked port has and a socket port does not. It is now the transitive closure of
+path dependencies from `rust/slopdesk-ffi`, read out of the Cargo graph. The derived set is
+byte-identical to the list it replaced and the stamp did not move, so `--check` still says "up to
+date" on an untouched tree; a fixture proved the walk follows two hops (`ffi → a → b`) and that a
+path dependency with no `Cargo.toml` fails loudly instead of being skipped. `slopdesk-posix` stays
+correctly outside it — superd forks, and the shim does not wrap it.
+
+Separately, `MetadataClientTests.testEndToEndEchoedReplyDecodesThroughClientAndFold` failed a second
+time in a full `make test`, and the earlier reading of it as a load flake is wrong. It does not
+fail SLOWLY: it returns `[]` at exactly its 30-second timeout, which means the echoed reply never
+reached `resolve` at all. A longer timeout cannot fix that, and the comment in the test — which
+raised the bound from 2 s to 30 s on the theory that it "bounds a HANG, not a latency" — is
+measuring the hang it named. The loss window it worried about is genuinely closed:
+`EventBroadcaster.subscribe()` registers the child continuation synchronously inside the
+`AsyncStream` build closure, before the request is ever sent, and the buffer is unbounded.
+
+What is now ruled out, with the runs to say so: the test alone passes 3/3; the whole class passes
+5/5 with the machine loaded to 2× its core count; and `swift test --parallel` over the target did
+not reproduce it in 3 attempts. The remaining suspect is the one dependency the test has that
+nothing bounds — the fold runs in a `Task { @MainActor }`, and if that task is never scheduled the
+reply sits in a buffer nobody drains, which is exactly the observed `[]`-at-timeout. Left as is
+rather than rewritten on an unconfirmed hypothesis; recorded so the next pass starts from the
+evidence instead of re-deriving it.
+
+One neighbouring fragility surfaced while chasing it: `TerminalBlockStoreBenchTests` and
+`TerminalLinkScanBenchTests` assert wall-clock budgets and fail under `swift test --parallel` on a
+busy machine (167 µs against a 100 µs ceiling, 32 ms against 20 ms). `make test` does not run them
+that way and is green; noted because a future move of those suites into a parallel lane would
+convert a real regression signal into noise.
+
+## `docs/46` had the unsafe policy exactly inverted (2026-08-16)
+
+Auditing the bar `CLAUDE.md` sets for the third `unsafe` crate — "a differential suite that runs
+under Miri" — found the bar genuinely met: `make miri` runs `rust/slopdesk-gfsimd`'s five
+differential cases under `cargo +nightly miri test`, and they pass in 47 s with no UB reported. The
+suite narrows itself under `cfg(miri)` so the sweep stays minutes rather than hours. That target is
+deliberately outside `make test`; it is the thing to run when a line inside an `unsafe` block moves.
+
+The row above it in `docs/46` was wrong in three ways at once, and each way pointed a reader at
+permission the tree does not grant. It said `make lint-rust` "sweeps all SIX workspaces" and named
+`slopdesk-hook` as one — the sweep is SEVENTEEN, and the hook is not a workspace at all but a
+root-workspace member carrying `[lints] workspace = true`, already covered by
+`cargo clippy --workspace`. It said "the hook is `unsafe_code = "forbid"` and the other five are
+`"deny"`", which is inverted: the hook has no `unsafe_code` line because it inherits the root's
+`forbid`, and all five daemons state `forbid` in their own manifests. And it explained the
+exemption as "superd needs the fork/exec window" — that window moved to `rust/slopdesk-posix`, and
+`check-supervisor.sh` now fails on a `libc::fork` anywhere else. Somebody reading that row would
+have believed they could write `unsafe` in superd behind an `#[expect]`; the ratchet would have
+told them otherwise, but only after they wrote it.
+
+The three genuinely exempt crates are `deny`, not `forbid`, and that is the point: `forbid` cannot
+be lifted by the per-site `#[expect]` that makes each `unsafe` block self-expiring and auditable.
+`make lint-rust`'s own help line said "all ten Rust workspaces" and is now 17, counted from the
+recipe rather than remembered.
+
+## The staleness gate fired on its own build output (2026-08-16)
+
+`make ffi` assembled three fresh slices and reported success; `make lint`, run seconds later on an
+untouched tree, said the artifact was STALE. Twice. The earlier pass had recorded this as noise.
+It is not noise, and the cause is in the gate rather than around it: `current_stamp` walked each
+input crate whole, and `target/` is inside each input crate. Build scripts write real `.rs` there —
+`target/<triple>/release/build/<crate>-<metadata-hash>/out/private.rs`, twelve of them across the
+shim's closure — so cargo's own output was being hashed as if it were a source. Worse, the hash in
+those directory names is cargo's, and `cargo build --target aarch64-apple-ios` MINTS a fresh path
+for a triple it has not built before: the stamp changed after `WANT` was computed and before `WANT`
+was written, so a clean build recorded a value the next `--check` was guaranteed to disagree with.
+
+An input-hash gate that fires on its own output is worse than no gate, because the failure it
+reports is the one it exists to report. Somebody who saw "STALE" right after `make ffi` learns to
+run `make ffi` again and move on — and the day the message is true, that reflex ships the stale
+archive. `target` is now pruned. Planting a cargo-shaped `out/private.rs` leaves `--check` clean;
+appending one line to `rust/slopdesk-video/src/lib.rs` still fails it.
+
+The banner has claimed since it was written that the stamp covers "the Rust sources of this crate
+and the crates it wraps, plus the header and this script." The header was covered — it is a `.h`
+under the crate. The script never was, though it decides which slices exist and which symbols each
+must carry, so an edit to it could change the artifact without touching one line of Rust. It is an
+input now, which is why this change itself reads as stale exactly once.
+
+## A null resolver callback resolved nothing, not "resolve it here" (2026-08-16)
+
+Chasing why `slopdesk_agent::job::realpath_basename` had no caller in either language found a live
+bug rather than dead code. `Resolver::resolve` in `rust/slopdesk-ffi/src/agent.rs` opened with
+`let call = self.call?;`, so a null callback meant "resolve nothing." Both sides of the boundary
+document the opposite: `AgentJobIdentifier.defaultSymlinkResolver` is `nil` ON PURPOSE and says why
+— routing a filesystem touch back out through the trampoline would pay two boundary crossings per
+token to reach the same `realpath`, so the crate is supposed to run it itself. `nil` is the arm
+production takes, reached from `MuxChannelSession`'s host probe, which is why the fallback had no
+caller: it was unreachable, and the comment explaining it was a lie.
+
+The user-visible effect is silent by construction. A wrapper whose own basename identifies nobody —
+`/usr/local/bin/cc-agent` symlinked at `…/claude` — simply goes unidentified; the pane shows no
+agent and nothing is logged anywhere. `a_null_callback_still_resolves_a_symlink_through_the_crate`
+builds a real symlink on disk, asserts the link's own basename identifies nobody so the test can
+only pass through the resolver, and fails when the fix is reverted.
+
+## The group resize was written twice, and the two copies disagreed about `min` (2026-08-16)
+
+`Canvas::resizing_group` in `rust/slopdesk-workspace` and `Canvas.resizingGroup(_:toBox:)` in
+`Sources/SlopDeskWorkspaceModel/Domain/Canvas+Ops.swift` were the same algorithm in two languages,
+down to the doc comment: derive the group's box, floor the proposed box at the minimum pane size,
+scale each member's offset and size by the per-axis ratio, clamp every member back inside. Only the
+Swift one ever ran. The Rust one was reachable from nothing — no door, no crate, no Swift line —
+and was kept alive solely by its own two unit tests.
+
+They had already drifted, in the quietest possible way. Swift's `clamping` used `Swift.min`/`max`,
+which order by `<`; the crate used `f64::min`/`max`, which are IEEE `minNum`/`maxNum`. The two
+answer differently for ±0 and for NaN, which is exactly the class `CLAUDE.md` pins bit-exactly.
+Nobody would have found that by reading either file, because each is correct on its own.
+
+Resolved in the direction the rules name: the rule moved to `canvas_arrange::resized_group`, beside
+align/distribute/tidy, whose module banner already says why — "there is one implementation of
+'aligned to a shared edge', not one per caller." It is a rule over `(id, frame)` pairs, so the old
+box is DERIVED from the members handed over rather than passed alongside them; a caller cannot
+supply a box that no longer matches its members. `slopdesk_ws_resize_group` exposes it and Swift's
+body is now the same four-line marshalling as `aligning`/`distributing`. The Rust `Canvas` method
+is gone rather than kept as a second entry point.
+
+What makes this checkable rather than hopeful: the two Rust tests moved to the frame-level rule and
+ran GREEN beside the Canvas-level copies before those were removed, and Swift's three existing
+`resizingGroup` tests were not touched and still pass against the ported rule. The new door also
+carries the first boundary test any arrange door has had — align, distribute and tidy have none —
+because `slopdesk_ws_resize_group` is the only one taking a struct BY VALUE, and a header that
+disagreed with the crate about a by-value `CRect` would misread the box rather than fail to link.
+
+## Four enums crossed the ABI by a hand-written map with a plausible default (2026-08-16)
+
+`check-supervisor.sh` compares `AlignEdge`, `FocusDirection`, `ResizeAnchor` and `LayoutPreset`/
+`TileLayout` across the two languages, and its own comment says why: "a reordered Swift enum would
+send focus the wrong way with nothing failing. Compared, not trusted." What it actually compares is
+the COUNT of cases. A count cannot see a reorder, and — more to the point — it cannot see a case
+added correctly to BOTH enums and forgotten in the third place the order was written down: the
+shim's decoder.
+
+Each decoder was a hand-written `match byte { … }` ending in a default, and the defaults were the
+dangerous kind — plausible values, not refusals. `direction_from` fell back to `Next`, so a seventh
+focus direction would have CYCLED instead of failing. `anchor_from` fell back to `BottomRight`, so a
+ninth anchor would have resized from the wrong corner. The tile decoder fell back to
+`EvenHorizontal`, so a sixth layout would have quietly re-tiled as one row. `slopdesk_ws_align` fell
+back to `Left`. In every case the gate stays green, the tests stay green, and the feature is simply
+wrong.
+
+The order is now stated once per enum, as `ALL`, with an exhaustive `index()` beside it and a
+`from_index()` derived from `ALL`. That makes the compiler the gate for the half it can decide — a
+case added to the enum but not to `index()` does not compile, which a negative test confirmed:
+planting a seventh `AlignEdge` failed the build in two places. For the half it cannot decide — a
+case added to both `ALL` and `index()` at DIFFERENT positions, which compiles fine — each enum grew
+a round-trip test asserting `ALL[i].index() == i` and that a byte past the end reads as `None`
+rather than as the last case. Swapping two entries in `ALL` fails that test with the position named.
+The shim's four decoders are now one line each and restate nothing. The count gate stays: it still
+guards the Swift side, which the crate cannot see.
+
+## An E2E flake was undiagnosable by construction (2026-08-16)
+
+`SubprocessE2ETests.testShippedBinariesEchoOverTCP` failed once in a full `make test` with an EMPTY
+stdout and passed 6/6 immediately after, then 15/15 in a row. Two things in the test made that
+failure impossible to read, and both are fixed rather than the timeout being raised.
+
+The client's stderr went to `Pipe()` — constructed, attached, never read, never reported. On the one
+run that mattered, the process's own account of what went wrong was written into a pipe that was
+then thrown away, which is why the failure message could only say "got: " and stop. It is collected
+now and printed alongside the exit status and termination reason.
+
+The second is the mechanism itself. The test called `waitForExit`, then cleared
+`readabilityHandler` on the next line. A process that has exited is not a pipe that has been
+drained: the handler runs on a background queue, so bytes written just before exit can still be in
+the pipe with no dispatch delivered, and clearing the handler discarded them. That fits the
+evidence exactly — the failing run took 0.433 s and a PASSING run takes 0.310 s, so the client had
+not been slow or failed to connect; the test simply read its accumulator too early. There is now a
+bounded 2-second drain before the handlers come down. Not proof — the flake reproduced once in
+dozens of runs — but it is the only mechanism consistent with an empty stdout on a run that was not
+slow, and the diagnosis for the next occurrence is now in the failure message instead of absent.
+
+## The ABI-enum gate is now a comparison, and it no longer dies quietly (2026-08-16)
+
+Hardening the four crossing enums left one place unreachable from Rust: Swift's `ffiByte` switch,
+where the byte is written for the third time. The compiler covers the crate, the round-trip tests
+cover `ALL` against `index()`, and neither can see Swift. `check-supervisor.sh` now extracts both
+maps — `case .centerHorizontal: 4` and `Self::CenterHorizontal => 4` are the same claim spelled two
+ways — lower-cases and sorts them, and compares. Swapping two Swift bytes fails it by name.
+
+Writing that gate surfaced a trap worth recording on its own. Under the script's `set -euo
+pipefail`, a `grep` inside a command substitution that matches NOTHING exits 1 and takes the whole
+script with it. The first version of this check did exactly that: with the Swift extension renamed,
+`check-supervisor` stopped at that line, printed no failure, and every one of the ~40 contracts
+below it never ran — a log that ends early reads exactly like a log that passed. The script already
+carries this warning beside the `build-ffi --check` call ("under `set -e` a bare call would exit
+here and the ~40 contracts below would report nothing, which reads as 'they passed'"), and the same
+trap was re-entered anyway. Both pipelines end in `|| true` so an empty map reaches the guard that
+names it, and the empty branch returns rather than falling through to also report a disagreement —
+"one side is missing" and "the two sides differ" are different repairs.
+
+Both halves were negative-tested: a swapped Swift byte fails with `AlignEdge: the two languages
+disagree`, and a moved switch fails with `read as EMPTY`, once, instead of aborting the run.
+
+## The registry's own doc argued away the buffer that a race needed (2026-08-16)
+
+`MetadataRequestRegistry` had no place to put a reply that arrived before its waiter, and said so on
+purpose: the class doc argued that "a reply requires the request to have been sent first (a host
+round-trip), which cannot complete before the awaiting façade has registered its continuation."
+
+That is false, and reading `MetadataClient.request` is enough to see it. The order there is: mint the
+id, `await send(…)`, then `await registry.reply(for: id)`. The `await` on the send frees the main
+actor. The inbound-pump fold is also main-actor, so it runs in that window, calls `resolve`, finds no
+waiter, and hits `guard … else { return }`. The reply is gone. The request then waits out its whole
+timeout and answers `(error, empty)` — five seconds of a spinning Details Panel and then nothing,
+with nothing logged, because a timeout is exactly what a genuinely dropped reply looks like. Rare
+against a real host over a mesh; routine against a fast one; and reproducible in the suite, where the
+fake transport replies synchronously.
+
+The atomicity the doc described is real — registration inside `reply(for:)` is synchronous on the
+main actor, so nothing interleaves *once `reply(for:)` has been entered*. The argument's error was
+extending that to the gap *before* it was entered, which belongs to the caller, not to the registry.
+
+So an early reply is now held rather than dropped, in `landed`, and `reply(for:)` probes it before
+parking anything. The distinction that decides which replies are worth holding is `outstanding`: ids
+`next()` has minted whose `reply(for:)` has not returned. A reply for an outstanding id is early — a
+waiter is on its way. A reply for an id nobody minted is stray, and dropping it is the point of the
+existing `testResolveOfUnknownIDIsDroppedNotBuffered`: a later request that reused that id must not
+find itself pre-resolved by a ghost. Buffering unconditionally would have traded one silent bug for a
+worse one, and for an unbounded map.
+
+`cancelAll()` clears both. A held reply belongs to the session that just died; handing it to a
+request made after the reconnect would be a cross-session answer.
+
+Three tests, one per behaviour: the early reply is held (30 s timeout, so only the hold can satisfy
+it), it answers exactly one await, and `cancelAll()` discards it. The first was negative-tested by
+restoring the drop — it fails after 31.35 s, which is the timeout, which is the bug.
+
+## The silent-death trap was in twenty-three more places, and it disarmed the guards (2026-08-16)
+
+The `set -euo pipefail` + empty-`grep` trap was fixed once in `compare_abi_enum` and recorded above.
+Sweeping for it found twenty-three more assignments of the same shape in `check-supervisor.sh`. The
+sweep was worth doing because this is not a tidiness bug: under `set -e`, `x=$(… | grep …)` where the
+grep matches nothing exits 1 and takes the whole script with it, and a log that ends early reads
+exactly like a log that passed.
+
+What made it worse than "the script stops" is what it stopped BEFORE. Five of those assignments are
+immediately followed by a guard whose message is some variant of "the extraction in this gate has
+gone stale" — `verb_count`, `ws_vocab_count`, `field_count`, `op_count`, `swift_android_ops`. Each
+was written for exactly the case that killed the script one line earlier, so the guard could never
+run in the situation it exists for. Adding `|| true` is what lets the guard speak.
+
+Two more needed a guard that did not exist, and they are the sharp ones. `codec_code` and
+`solver_code` are ban lists — a haystack, then a loop of `grep -qF` for symbols that must stay
+deleted. An empty haystack passes every ban in the list at once. A ban list is the one shape where
+losing the input is indistinguishable from compliance, so `|| true` alone would have converted a
+silent death into a silent pass, which is worse. Both now fail by name when the haystack reads empty.
+
+`doc_missing` is the same problem inverted: its PASS state is empty output, so no check on the output
+can tell "every cited path exists" from "nothing was extracted". The liveness check had to move to
+the input, so the citations are now extracted into `doc_cited` and that is what is checked for life.
+
+Proven both ways on one planted fault — `public enum AgentKind` renamed to `MovedAway`. Before: exit
+2, two lines of output, ending in a bash trap fragment, roughly eighty contracts never run, no named
+failure. After: exit 1, eighty-five lines, one precise failure ("AgentKind has 0 Swift cases and 21
+Rust ones"), and the run reaches its last line. The emptied-haystack guard was planted separately by
+truncating `WorkspaceStateCodec.swift` to a single comment, and it names the file.
+
+Fixing twenty-five instances of one trap is worth less than making the twenty-sixth impossible, so
+`check-supervisor.sh` now runs `scripts/gate-death.awk` over `scripts/*.sh` and fails on any
+assignment whose command substitution runs `grep` without an `||`. It reports zero on the clean tree;
+stripping the `|| true`s out of `check-video.sh` makes it name eleven offenders and fail.
+
+The detector lives in its own file because the first version did not. Written inline as shell text
+inside `gate_deaths=$(…)`, its own source contains the literal `grep` and an escaped `/\|\|/` — which
+holds no two adjacent pipes — so the check read itself as an offender and failed on a clean tree. A
+checker that cannot be written inside the thing it checks belongs beside it.
+
+## `same()` called an empty extraction agreement (2026-08-16)
+
+The dying-gate sweep turned up its own inversion. `sed`, unlike `grep`, exits 0 when it matches
+nothing — so a `sed -n …p` extraction that has gone stale does not kill the run, it returns the empty
+string. `check-supervisor.sh`'s `same()` compared the two sides and nothing else, which means twelve
+cross-language constant checks read `"" == ""` as agreement.
+
+One side going empty was always caught, because the other side still had a value to disagree with.
+Both going empty in the same commit is the case that passed, and it is not a contrived one: renaming
+a constant on both sides at once is precisely what a port does, and this gate exists to survive
+exactly that commit.
+
+Proven by renaming `versionMajor` in `SupervisorProtocol.swift` and `VERSION_MAJOR` in
+`slopdesk-superd/src/protocol.rs` together. With the old `same()`: no output about the protocol
+version at all, no violations, exit 0 — the gate passed while comparing nothing. With the guard:
+`protocol major: one side read as EMPTY`, exit 1.
+
+The verb loop above it had the same shape for the same reason — `for verb in ${swift_verbs}` over an
+empty list runs zero times and reports nothing, which is indistinguishable from every verb crossing.
+It now asserts the extraction is live before iterating it.
+
+## One of the two "unfinished features" was a decision already taken against (2026-08-16)
+
+The sweep above left `Canvas.groupIDsInUse()` and `WorkspaceTreeOps.insertPaneAtRootEdge` standing as
+unfinished features rather than dead helpers, on the grounds that deleting either erases intent. That
+was right for one of them and wrong for the other.
+
+`insertPaneAtRootEdge` is still what it was called: a complete, invariant-preserving commit for a
+rail-drag drop site nobody has wired, and `DECISIONS.md` records the user request it belongs to.
+
+`groupIDsInUse` is not. Its doc said it existed to "prune dangling group metadata (a `PaneGroup` whose
+every member was closed) on load / save" — but `Workspace.normalizingGroups()` decides the opposite,
+in as many words: *"Empty groups are KEPT (a user may create a group before assigning panes)"*, and it
+repairs only the other direction, an item pointing at a group that is gone. So the "unfinished"
+feature is a feature the repo already refused. Wiring it would delete a group the user made on purpose
+and had not filled yet.
+
+The function stays — a membership query with no asker is exactly what someone re-derives badly when
+they need the set and do not find one — but its doc now carries the refusal instead of the plan, so
+the next sweep does not report it as work owed for a third time.
+
+## A ban check at the end of a pipe stops working when its input gets big (2026-08-16)
+
+`spells()` already carried the warning: `grep -q` exits the instant it matches, the producer upstream
+then dies of SIGPIPE, and under `pipefail` that non-zero status becomes the PIPELINE's — so a spell
+that WAS found reads as not found. It was written for exactly that, with the haystack hoisted into a
+variable and matched from a here-string.
+
+Fourteen other checks in the same file never adopted it, all of them the shape
+`grep -vE '^//' file | grep -q "${banned}"`. The failure is worse than the one it resembles, because
+it is silent AND size-dependent: the producer only takes SIGPIPE if it is still writing when `grep`
+exits, so a ban check works on a small file and quietly stops working once the file grows. Nothing
+about the log changes.
+
+Measured rather than argued: three hundred thousand lines, each containing the needle. The pipe form
+reports NOT FOUND; the here-string form reports FOUND. All fourteen are now here-strings, and the
+planted `getpid()` this class was written to catch is caught again.
+
+The same sweep found the floor missing under all of it. Forty `SWIFT_*` / `RUST_*` constants name the
+files these contracts are read out of, and nothing checked that they still exist — a renamed file
+makes `grep` print to stderr and return nothing, and every ban reading that haystack passes at once.
+The check is derived from the variables themselves (`${!SWIFT_@}`), not a list kept beside them, and
+it runs at the END on purpose: the constants are declared throughout the file, so it cannot un-run the
+checks it invalidates, only report that they were reading nothing. Proven by moving
+`WorkspaceChannelCodec.swift` aside — it names the variable and the path.
+
+## `workspace = true` was accepted as a policy without checking the workspace (2026-08-16)
+
+The unsafe-crate ratchet is the right idea and was checked the wrong way. It gates MANIFESTS rather
+than source, because what rustc cannot notice is the shape drifting back — and it accepted three
+answers: the exempt list, `unsafe_code = "forbid"`, or the line `workspace = true`.
+
+That third answer only means something for a crate that inherits from the ROOT workspace, and only
+because the root is in the same loop and must state `forbid` itself. Almost every crate under `rust/`
+is its OWN `[workspace]` root. For one of those, `[lints] workspace = true` says nothing about the
+policy: the crate can carry `[workspace.lints.rust] unsafe_code = "allow"` beside it and inherit
+permission, and the gate reads the same line and passes it. Measured on the real predicate, with
+`slopdesk-sanitize` mutated to say `allow` and inherit: OLD rule accepted, NEW rule rejects it by
+name. Deleting the line entirely instead of setting `allow` — a manifest that states no policy at
+all, which is `allow` by default — was accepted the same way.
+
+Two changes. Inheritance is now accepted only from the root, and the member list is READ OUT of
+`rust/Cargo.toml` rather than kept beside it — a hand-kept copy of the members is a second list to
+forget, and the gate fails if that list does not parse rather than silently accepting every
+`workspace = true` again. And a stated `allow`/`warn` anywhere in a manifest is decisive whatever
+else it also says, because the narrower `[lints.rust]` table wins over `[workspace.lints.rust]`: a
+`forbid` above one of those is not protection, it is camouflage.
+
+The invariant itself was verified while doing this and holds — exactly three crates state `deny`
+(`slopdesk-posix`, `slopdesk-ffi`, `slopdesk-gfsimd`), thirteen state `forbid` in their own manifest,
+and four (`slopdesk-hook`, `-ctl`, `-cli`, `-probe`) inherit the root's.
+
+### The type-byte gates covered four ABI enums and none of the four wires (2026-08-16)
+
+`compare_abi_enum` existed and was pointed at `AlignEdge`, `FocusDirection`, `ResizeAnchor` and
+`LayoutPreset/TileLayout` — four enums that cross the FFI boundary as a single byte. Every one of
+those is a small, closed set nobody appends to. Meanwhile the maps that actually carry traffic, and
+that a new feature DOES append a case to, had no gate at all:
+`WireMessage.messageType` (29 cases, the primary wire) and the video wire's three —
+`VideoControlCodec` (28), `RecoverySignaling` (6), `WindowGeometryCodec` (4). All four have a Rust
+twin spelling the identical claim a second time, and all four agreed at the time of writing, which
+is the only reason this reads as a near miss rather than an incident.
+
+The failure this gates is not a decode error. Both ends parse a length-prefixed frame and switch on
+byte zero, so a case numbered differently at the two ends produces a frame that decodes CLEANLY as
+the WRONG message — the exact shape the metadata-verb gate two hundred lines above already exists
+for. The widest map is the most exposed: appending to a 28-case switch is where a number gets
+reused, and neither compiler can see the other one's list.
+
+`compare_abi_enum`'s Rust extraction had to widen to reach them. It matched only `Self::Case => N`,
+where these three spell `Self::Hello { .. } => 1` and `Self::Move(_) => 1`; a payload pattern read as
+no match, and a no-match on a whole file is the EMPTY-map case, which the function already fails on
+loudly. So the widening was found by the guard rather than by a silent pass — the one part of this
+that worked as designed.
+
+Each of the four was planted against in both directions: a renumbered case reports the
+disagreement, and a renamed marker (`messageType` → `wireTagByte`) reports that the map read empty
+rather than reporting agreement.
+
+Swept the rest of the tree for hand-written byte maps afterwards. What remains is `radius` and `y`
+in `SlateDesign.swift` — `CGFloat` design tokens, not bytes — and `rank` in `SimulatorDeviceKind`
+and `AndroidDeviceKind`, a UI sort order with no twin anywhere. No gate is owed on those; the
+similarly-named `fn rank` under `slopdesk-ffi` ranks folders and is unrelated.
+
+### The byte-at-a-time mux test compared two empty vectors (2026-08-16)
+
+Swept the golden corpus for the zero-iteration shape — a loop over a section that would pass by
+never running. Swift is clean: all nine `GoldenCorpus.load` sites assert a case count, and
+`golden-check.sh` already reports that every frozen key has a suite replaying it, which is the
+liveness check on the other end. Rust's corpus tests are guarded too, with one exception and one
+near-miss.
+
+The near-miss is `the_pinned_unknown_discriminants_are_carried_verbatim`, which looks unguarded and
+is not: it counts matches into `seen` and asserts `seen == 2` at the bottom, which is the stronger
+check — it survives the section being non-empty but having lost exactly those two vectors.
+
+The real one is `the_pinned_mux_corpus_survives_being_delivered_one_byte_at_a_time`. It builds a
+byte stream from `muxEnvelopes`, feeds it one byte at a time, and ends at
+`assert_eq!(collected, expected)`. With an empty section both sides are empty and it passes. A
+renamed section still panics on `as_array().expect`, so the reachable hole is narrow — the section
+present and empty — but the cost is not: this test is, by its own doc, the ONLY check that the
+decoder finds the right boundaries in a stream carrying no framing of its own. Now asserts at least
+two pinned frames, because the premise needs two: one frame cannot share a read with anything.
+
+### Half a ban is not a ban (2026-08-16)
+
+`docs/46` records two env gates as deleted deliberately, do not reintroduce —
+`SLOPDESK_WORKSPACE_DOC` and `SLOPDESK_PANE_FANOUT` — because multi-client sync is unconditional: a
+client draws its layout FROM the workspace document, so a host that switched the channel off would
+hand it a blank window and no error, the worst shape a kill switch can take.
+
+Only one of the two was enforced. `SLOPDESK_WORKSPACE_DOC` has a ratchet written as a test —
+`testTheWorkspaceChannelIsServedWithTheEnvironmentSetToZero` sets it to 0 and proves the document is
+served anyway, which is stronger than a name ban because it pins the BEHAVIOUR. `SLOPDESK_PANE_FANOUT`
+had nothing at all: the doc's sentence was the whole enforcement. Both names are now banned from
+`Sources/` by the supervisor, shipping code only — the test that spells the surviving name is the
+enforcement of the ban, not a breach of it.
+
+### The header/library check ran one way only (2026-08-16)
+
+`build-ffi.sh` reads every `slopdesk_*(` out of `slopdesk_ffi.h` and fails if the assembled slice
+does not export it — a header that promises what the library lacks fails at build rather than at app
+link, or worse at runtime on one platform only. That direction was sound. The other was never asked.
+
+A symbol the library EXPORTS but the header never declares is not a link error and never will be. It
+is a door with no handle: the port shipped, it pays for its bytes in a 37 MB archive, and no Swift
+line can reach it. Neither compiler can see it — rustc treats a `pub extern "C"` item as used by
+definition (which is why the 115-item dead-`pub fn` sweep could not have found these either), and
+Swift never hears the name at all. It is the exact residue a half-finished port leaves.
+
+Measured before gating: 784 declared, 784 exported, an exact bijection. So this adds no cleanup —
+it holds a correspondence that is currently perfect and had nothing keeping it that way.
+
+Two things went wrong writing it, both worth the reader's time. The first draft compared a stripped
+symbol list against `REQUIRED_SYMBOLS`, whose entries carry the leading underscore the linker uses.
+`comm` compares LINES, so mismatched shapes do not report everything — they report whatever the two
+sort orders happen to interleave, and this one surfaced a single name that was in fact declared on
+header line 3528. A gate whose first output is a false positive is the good outcome of that mistake;
+the same bug on the other `comm` argument would have reported nothing and read as a pass. The second
+was the negative test itself: the planted door failed to COMPILE (`no_mangle` needs the
+`expect(unsafe_code)` every real door carries), and a non-zero exit from the wrong cause is not a
+passing negative test. Re-planted with the attribute, the gate named `_slopdesk_probe_undeclared_door`
+and failed.
+
+### "Skipped, loudly" was not loud (2026-08-16)
+
+`VirtualDisplayGoldenVectorTests.testRefreshRateVectorsStillHold` guarded a known-stale corpus key
+with `XCTSkipUnless` and a paragraph explaining that the skip was the announcement — three of the
+five `vdRefreshRates` vectors predate `6281fae2`'s 2×-oversample mode, refreshing a frozen vector is
+the owner's call, so the test stepped aside and said why.
+
+It said why to nobody. `make test` runs `swift test --parallel`, which prints one progress line per
+test and no skip reason at all, and `--xunit-output` records a skipped case as a plain passing
+`<testcase>` — so the machine-readable half loses it too. Measured on the full run: the reason string
+appears zero times in 11,455 lines of output, and the test's progress line is indistinguishable from
+the 7,559 that passed. Run alone, without `--parallel`, XCTest prints it in full. The loudness was
+real and the gate that ships never showed it.
+
+A skip nobody can see has the same shape as the stale vector it was announcing, which is the failure
+this whole suite was revived to prevent.
+
+The fix needs no corpus edit and therefore no owner's call: the test RUNS, and pins the disagreement
+instead of hiding behind it. `knownStale = [60, 90, 144]` is asserted as an exact SET, and the
+remaining two cases are compared for real. Both directions now fail loudly — refreshing the corpus
+makes `knownStale` wrong and says so, and a new drift on 30 or 120 is a plain mismatch. Planted
+against by narrowing the set to `[60, 90]`: two failures, the set assertion naming what moved and
+the vector assertion naming fps 144.
+
+The general fact is worth more than the one test: ~60 `XCTSkip` sites exist, most of them legitimate
+environment guards (daemon not built, font absent, snapshot env var unset), and under the shipped
+run mode not one of them can report itself. `make test` mitigates the important ones by DEPENDING on
+the daemon build targets rather than detecting the skip afterwards — prevention, not detection. Do
+not write "skipped, loudly" again; under `--parallel` there is no such thing.
+
+### clippy runs per workspace, and the list of workspaces was hand-kept (2026-08-16)
+
+`make lint-rust` cannot lint `rust/` in one command. Almost every crate there is its OWN `[workspace]`
+root — sixteen of them — and cargo will not cross a workspace boundary, so the recipe carries a
+`cd rust/<crate> && cargo clippy` line per crate plus one for the root. That is a hand-kept list
+sitting beside a derivable fact, which is the shape this file has now found four times
+(`root_members`, the gate path variables, the FFI input crates, this).
+
+The counts agree today: sixteen own-roots, sixteen recipe lines, plus the root's `--workspace` run,
+which is the seventeen the target's own help text claims. Nothing kept them agreeing. A crate added
+tomorrow and not added to the Makefile is never seen by clippy, and the miss is silent in the worst
+way — `make lint-rust` still passes, and passes FASTER.
+
+The supervisor now derives the left side: every `rust/*/Cargo.toml` that declares `[workspace]` must
+be named by a clippy line in the Makefile. Planted against by deleting `slopdesk-wire`'s line — the
+gate names the crate and says clippy has never seen it.
+
+### And the same list again, in the target that runs the tests (2026-08-16)
+
+The clippy gate above has a twin: `make test` must reach every crate that carries tests. A crate
+nobody lints has a missing opinion; a suite that never executes is a green report about code nobody
+exercised, which is strictly worse.
+
+The first draft read the `<short>-test` names off `test:`'s prerequisite line and reported
+`slopdesk-sanitize` as untested. It is not: it has no target of its own, and its 138 tests run inside
+`screend-test`. So the predicate was wrong, not the tree — recipe-reading cannot answer "what would
+`make test` actually run" no matter how carefully it is done. `make -n test` answers it exactly, in
+30 ms, and is what the gate asks now. Twenty crates get a `cargo test`: sixteen own-workspace roots
+entered by `cd`, four root members by `-p`.
+
+Two other things this cost, both worth writing down. The first draft walked `rust/<crate>` looking
+for `#[test]` and descended into `target/` — ~2 GB per crate of build output that also contains
+`#[test]`. It got the right answer and took minutes to do it, inside a gate that runs on every lint;
+scoped to `src` and `tests` it is instant. And the first attempt to plant a failure ran
+`perl -0pi -e 's/ wire-test / /'` over the whole file, which hit the `.PHONY` line at 193 and left
+`test:` at 448 untouched — a negative test that changes nothing reports exactly like a gate that does
+not work, and the only way to tell them apart is to check that the plant landed.
+
+### SwiftPM ignores an undeclared directory, and says nothing (2026-08-16)
+
+The Rust half of this — clippy and `make test` reaching every crate — has a Swift twin nobody had
+asked about. SwiftPM builds the targets `Package.swift` declares. A directory under `Tests/` or
+`Sources/` that no target names is not an error and not a warning: it is simply not there.
+
+For `Tests/` that means a suite nobody runs, the same shape as the Rust one. For `Sources/` it is
+worse. The directory is never COMPILED, yet `swiftformat` and `swiftlint` still walk it — so it keeps
+passing `make lint`, keeps getting formatted, and reads as maintained code that nothing links. The
+only symptom is the absence of one.
+
+Both sides are exact today (17 test directories / 17 `testTarget`s, 39 source directories / 39
+targets) and now both are derived rather than assumed. Planted against in both halves: an
+undeclared `Tests/SlopDeskProbeOnlyTests/` and an undeclared `Sources/SlopDeskGhostModule/` are each
+named and rejected.
+
+### The lint scope was `git ls-files`, so five scripts had never been checked (2026-08-16)
+
+`SHELL_FILES` and `PY_FILES` were derived with `git ls-files '*.sh'`. Tracking is not ownership, and
+using it as a proxy for "files this repo is responsible for" fails in one direction only — silently,
+and against exactly the files most likely to be new or in flight.
+
+Five scripts under `scripts/` are untracked, so `git ls-files` never named them, so `shellcheck` had
+never run on any of them and `make fmt-shell` had never touched one: `check-supervisor.sh` and
+`build-ffi.sh` among them — the ratchet this repo leans on hardest and the script that assembles the
+FFI artifact. A lint scope that shrinks when a file is new is exactly backwards.
+
+Nothing was broken underneath. Run for the first time, shellcheck reported 22 findings in
+`check-supervisor.sh` and zero in the other four, and all 22 were style-level: sixteen SC2046 on the
+`$(repo_files …)` idiom where the word-splitting IS the argument list, two SC2016 where the single
+quotes hold a regex, one SC2086, one SC2231, and two `tr 'A-Z' 'a-z'` pairs. The four real ones were
+fixed (`[:upper:]`/`[:lower:]`, a quoted glob); the rest carry a per-site `disable` naming the code
+and the reason. Per-site, not a file-level blanket — a blanket would hide the next SC2046 that is
+NOT the idiom, which is the same trade this file keeps refusing elsewhere.
+
+The scope now reads the filesystem: `$(wildcard scripts/*.sh)` plus `ThirdParty/tools/provision.sh`,
+and `$(wildcard scripts/*.py)`. All 25 previously-tracked shell files and all 3 Python files already
+lived there, so nothing left the scope — 60 shell files are checked now where 26 were.
+
+One consequence worth predicting, because it happened: `shfmt` reformatting `build-ffi.sh` made the
+FFI artifact stale by that script's own definition (it hashes ITSELF into the stamp, deliberately),
+so the supervisor failed on the next run and `make ffi` was the fix. The staleness gate firing on a
+whitespace-only edit to the builder is correct — the script decides which slices exist and which
+symbols they must carry.
+
+### The green-tree cache could not see the artifact the suite links (2026-08-16)
+
+`pre-push-test.sh` skips `swift test` when `git rev-parse HEAD^{tree}` matches the recorded last-green
+tree and nothing under `Package.swift`/`Sources`/`Tests`/`Apps`/`golden` is dirty. Both halves are
+sound about SWIFT: `git status --porcelain` reports untracked files too, so a new file in `Tests/`
+invalidates properly.
+
+Neither half can see Rust. The suite links `SlopDeskFFI.xcframework`, `rust/` is not in the
+tested-inputs list, and adding it would not help — the tree is untracked, so `HEAD^{tree}` is byte
+identical before and after a Rust edit. On a CLEAN tree the sequence is: edit `rust/`, run
+`make test`, watch its `ffi` prerequisite rebuild the artifact, and then watch the Swift half report
+"already tested green" for a suite that never ran against what was just built. That is the linked
+port's one failure mode — a Swift side calling last week's logic with every test green — one level
+above the `build-ffi.sh --check` gate that exists to prevent it.
+
+Not reachable in this working tree today, and only because it is dirty: `tested_inputs_clean` is
+false, so the cache never engages at all. It is reachable on any clean checkout, which is the state
+this cache was written for.
+
+The key is now `HEAD^{tree}` plus `ThirdParty/slopdesk-ffi/sources.sha256` — the stamp `build-ffi.sh`
+writes as the hash of every Rust input plus its own text, which is exactly the right witness and
+already exists. Absent artifact reads as an empty half rather than an error.
+
+The stamp lives in its OWN marker, `.build/pre-push-green-ffi`, and that detail is the whole lesson
+of the first attempt. Concatenating it onto `pre-push-green-tree` broke `test-touched.sh`, which
+reads that file as a git REF — `git cat-file -e "$(cat …)"` and `git diff "${base}"`. A marker with a
+suffix stops being an object id, so the fast inner loop would have failed its baseline check and run
+the FULL suite for ever: a "safe direction" regression that costs ~100 s on every inner-loop run and
+announces itself as a normal escalation message. A marker is an interface; two readers had already
+agreed what it holds.
+
+`test-touched.sh` needed the stamp for its own sake as well. Its selection diffs the working tree
+against the baseline tree over `Sources`/`Tests`/`golden`/`scripts` — a pathspec that cannot see a
+Rust edit for the same reason `HEAD^{tree}` cannot, and the SwiftPM dependency closure cannot rescue
+it either, since targets link the xcframework through the package graph rather than through a
+changed file. It now escalates to FULL when the stamp differs from the last full green, and writes
+BOTH halves when it records one — the tree marker alone would claim a green that the artifact half
+then denies.
+
+## The other linked artifact does not need the gate mtime said it did (2026-08-16)
+
+Right after the green-tree cache was taught to see `SlopDeskFFI.xcframework`, the same question was
+asked of the repo's *other* linked artifact — `ThirdParty/ghostty/libghostty.xcframework`. It has
+none of the protection: `build-libghostty.sh` writes no stamp, offers no `--check`, and no Makefile
+target invokes it. The artifact is gitignored, so nothing rebuilds it and nothing complains.
+
+The mtimes looked damning. The artifact was built `Jul 14`; `build-libghostty.sh` is dated `Aug 10`
+and `integration/GhosttySurface/GhosttySurface.swift` `Jul 22`. Two inputs newer than the output is
+the exact shape the FFI gate exists to catch.
+
+Neither is an input. `integration/` is Swift the *app* compiles — `build-libghostty.sh` never reads
+that path, so it cannot make the archive stale. And the one commit that touched the script since the
+build, `77ff99e8`, changed four comment lines and nothing else: every `+`/`-` line outside the diff
+header begins with `#`. The archive matches its sources.
+
+So the finding is a negative one, recorded because the *signal* will recur: mtime is not content, a
+`git checkout` reorders it freely, and "newer than the artifact" was weak evidence that read as
+strong. The reason no `--check` gate was added is not that staleness is impossible here but that the
+cost is upside-down — it is a Zig build measured in minutes, wired into `make lint`, to protect a
+tree that is tracked (so `HEAD^{tree}` already sees every change to it, unlike `rust/`) and that is
+edited a few times a year. The FFI gate is cheap because `shasum` over a file list is cheap. Revisit
+if the vendored delta starts moving, or if `build-libghostty.sh` ever gains a real input list.
+
+One more fact settles it: `.github/workflows/release.yml` runs `ThirdParty/ghostty/build-libghostty.sh`
+as a build step, so what ships is built from source every time. A stale local artifact costs a
+developer a confusing afternoon; it cannot reach a release. The FFI artifact has no such backstop —
+`make ffi` is local-only — which is why the asymmetry in gating is the right one.
+
+## The read-first doc gate watched one of the five docs the table names (2026-08-16)
+
+`check-supervisor.sh` checks that every file path a read-first doc cites still exists, and it builds
+the read-first set off `CLAUDE.md`'s own table rather than a second list — the right instinct, and
+the reason it was worth reading twice.
+
+It matched `docs/[0-9]{2}[a-z0-9-]*`. The sidecar row is written
+
+    | a sidecar daemon | `docs/51` superd · `52` screend · `53` dropd · `54` inspectord · `48` androidd |
+
+so four of the five docs on that row carry no `docs/` prefix and were never in the set. Ten docs went
+in where fourteen should have. Nothing was wrong in the four today — every path they cite exists —
+which is the point: the gate's pass state is an empty `doc_missing`, and four unwatched docs print
+exactly like four clean ones. The extraction now reads both spellings.
+
+A token that resolves to no file used to be dropped in silence by the same loop. That is a doc the
+table sends readers to and that is not there, so it fails now.
+
+The "rooted at a real top-level directory" bound was a hand-written alternation, and it had drifted
+in both directions at once: `manifests` and `research` are gone, so two of its ten branches could
+never match, while `hid-bridge` — a real top-level tree — was never in it, so a citation into that
+tree was exempt without anyone deciding it should be. It is read off `ls -d */` now. Sixth time in
+this audit that a hand-kept list stood beside a fact the filesystem already had.
+
+## `make lint-swift-analyze` had never run an analyzer rule (2026-08-16)
+
+`.swiftlint.yml` sets `analyzer_rules: all`, and the Makefile carries a target to run them. The
+target read `.build/debug.yaml`, which is llbuild's build MANIFEST, not a compiler log. SwiftLint
+took the path without complaint, collected nothing out of it, and printed
+
+    Done analyzing! Found 0 violations, 0 serious in 0 files.
+
+Exit 0, over an empty file set. The recipe's `|| echo "note: run 'swift build -v | tee build.log'…"`
+was written for exactly this case and could never fire, because nothing had failed — and the note
+names the correct command, so the recipe knew the right answer and ran the wrong one. Every analyzer
+rule in the config had been unenforced since the target was written, reporting green each time.
+
+The same page already carries the lesson, six lines above `lint-shell`: "the `|| true` that silences
+THAT silences every real diagnostic with it: the tool prints its findings and the gate still passes."
+This was that failure reached from the other side — not a swallowed error, a success with nothing
+behind it.
+
+Fixed by capturing a real `swift build --build-tests -v` log, dropping the `|| echo`, and asserting
+the file count in the summary line: a run that analyses zero files fails. The analyzer's own exit
+status is the target's, which is why the log is written to a file and printed afterwards rather than
+piped through `tee` — a pipe hands make `tee`'s status and re-opens the hole one line lower.
+
+It stays out of `make lint`. On this tree it collects 753 files and takes minutes, not seconds, and
+"heavier, run on demand" was always the right call about the cost. It was the honesty that was wrong.
+
+## The push gate did not fire for the two inputs most likely to break it (2026-08-16)
+
+`scripts/pre-push-test.sh` is wired into prek as the `swift-test` pre-push hook, and the hook's
+`files:` regex was `^(Sources|Tests|Apps)/.*\.swift$`. A `files:` regex is not a filter over an
+already-running gate — it decides whether the gate runs at all. So a push whose commits touched only
+`rust/` skipped the Swift suite entirely, and the suite LINKS `SlopDeskFFI.xcframework`: exactly the
+blind spot the green-tree cache had inside the script until the artifact stamp joined its key, one
+level up and still open. `golden/` and `Package.swift` were in the same position.
+
+`scripts/` was the sharper one, because it was already known elsewhere. `test-touched.sh` maps a
+`scripts/` change to `SlopDeskClientUITests` — `LaunchRestoreGateContractTests` and
+`GuiGateLaunchContractTests` open `scripts/*.sh` and `scripts/fixtures/` off disk at run time, with a
+comment saying so. The fast inner loop knew about that input; the push hook did not, and neither did
+`tested_inputs_clean`, which is what decides whether a green may be RECORDED. A green written over a
+dirty `scripts/` is a green about text nobody ran.
+
+The regex now names every input the suite consumes, and both cleanliness checks name `scripts`.
+
+Both scripts write `.build/pre-push-green-tree`, so the input list existed in two copies and now has
+a ratchet: `check-supervisor.sh` extracts the `git status --porcelain --` pathspec from each and
+fails if they differ, and does the same for the set of `.build/pre-push-*` markers each file names.
+The marker half started as `grep -qF pre-push-green-ffi` per script and was rewritten after a
+negative test: a rename to `pre-push-green-ffi-stamp` passes a substring check, so the check would
+have survived precisely the edit it exists to catch. Sets, not spellings.
+
+The gate-death ratchet then failed the first draft of that block for a nested `$(grep …)` without an
+`||` — a rule added earlier this same audit, catching the person who added it.
+
+## What the analyzer found the first time it ran: 495 (2026-08-16)
+
+With the target fixed, the first honest run collected 1423 files and reported
+
+    Done analyzing! Found 495 violations, 495 serious in 1423 files.
+
+379 `unused_import`, 98 `unused_declaration`, 18 `capture_variable`. Fifty minutes wall clock — a
+clean rebuild plus a real frontend pass per file — which is the cost the old vacuous version was
+buying its speed with.
+
+Not fixed in this pass, deliberately. `swiftlint analyze --fix` corrects `unused_import` and would
+rewrite ~379 sites at once across a tree with 652 uncommitted paths and no commit to fall back to;
+that is a bulk overwrite nobody asked for, and the right person to authorise it is the one who owns
+the tree. A copy of `Sources/`, `Tests/` and `Apps/` was taken first, so the run is one command away
+when it is wanted.
+
+One caveat belongs with the number, because it decides how much of it is real. The compiler log is
+the macOS SwiftPM build, so an import or declaration used only from an `#if os(iOS)` branch, or only
+from an Xcode app target, is invisible to it and reads as unused. `unused_import` is the safer half —
+SwiftLint resolves actual symbol use — but any correction has to be followed by `swift build
+--build-tests` AND `scripts/check-ios.sh`, which type-checks the slice `swift build` never sees.
+`unused_declaration` (98) is the half to distrust: it should be read as a list of candidates.
+
+## `--workspace` at `rust/` reaches four crates out of twenty-one (2026-08-16)
+
+`docs/46` says it plainly in the row about `make lint-rust`: "`--workspace` does NOT reach [an
+excluded crate], so each needs its own invocation and forgetting one is a silently unlinted crate."
+Three prek hooks were written the way the doc warns against —
+
+    rustfmt     entry: bash -c 'cd rust && cargo +nightly fmt --all'
+    clippy      entry: bash -c 'cd rust && cargo clippy --workspace … -D warnings'
+    cargo-test  entry: bash -c 'cd rust && cargo test --workspace --quiet'
+
+— each firing on `^rust/.*\.(rs|toml)$`, that is, on a change to any of the seventeen workspaces,
+while running against the root's four members. A commit touching only `slopdesk-video` ran
+`slopdesk-hook`'s tests and reported green. The formatter was the one that bit both ways: it fixed
+four crates while `make lint`'s per-workspace `--check` judged all seventeen, so the hook that exists
+to stop a formatting failure was a way of producing one.
+
+They call `make fmt-rust`, `make lint-rust-clippy` and `make test-rust` now. Measured warm: 8 s for
+clippy across all seventeen, 16 s for the tests — commit-time costs, which is what made this a fix
+rather than a trade-off. `lint-rust-clippy` is a new split of `lint-rust` without its `fmt --check`,
+because prek runs hooks in parallel and the rustfmt hook is rewriting the files a `--check` reads.
+
+The seventeen were themselves spelled out by hand three times in the Makefile — once in `fmt-rust`,
+twice in `lint-rust` — so the list is now `RUST_WORKSPACES`, derived by grepping `rust/*/Cargo.toml`
+for `[workspace]`. Seventh time this audit that a hand-kept list stood beside a derivable fact.
+
+The supervisor gate that ratcheted those lines was checking the Makefile's TEXT for three `cd
+rust/<crate> && …` lines per crate, which the rewrite deletes. It asks `make -n` of each of the four
+targets now and looks for the crate in the plan — the same correction the `make test` gate took
+earlier, for the same reason: what a target would RUN survives however the recipe is spelled next.
+
+## The release could not have built the FFI artifact, and nobody would have known until the tag (2026-08-16)
+
+`Package.swift` declares
+
+    .binaryTarget(name: "CSlopDeskFFI", path: "ThirdParty/slopdesk-ffi/SlopDeskFFI.xcframework")
+
+and `.gitignore:84` ignores that whole directory — correctly: 110 MB across three slices, rewritten
+by every Rust edit. `scripts/build-ffi.sh` produces it locally, `make ffi` runs that, and `make lint`
+carries `--check` so a stale one cannot pass.
+
+`.github/workflows/release.yml` did not mention it. No step ran the script, nothing downloaded an
+artifact, and the file cannot be checked out. SwiftPM does not resolve a graph whose `binaryTarget`
+path is absent, so the first tag cut after this work lands would have failed in the `package` job,
+after the vault pull and the keychain setup, before compiling a line. `docs/49` did not know either:
+its pipeline diagram named one linked artifact where there are two.
+
+It never bit because the entire FFI port is uncommitted — the binaryTarget line does not exist in any
+commit, and v0.3.0 predates it by hours. That is the window in which to notice, not a reason it was
+fine.
+
+The workflow now runs `rustup target add` for the three arm64 triples plus `scripts/build-ffi.sh`,
+as a step in `package` rather than a job of its own: the script stamps its own inputs, and unlike the
+40-minute Zig build there is nothing worth caching across runs on a runner that is cold anyway. This
+step has NOT been exercised on a GitHub runner — the disabled CI workflow means the only way to try
+it is to cut a release — so it is written to fail loudly rather than skip.
+
+The ratchet took two corrections, both of the same family this audit keeps finding:
+
+1. It first asked whether `release.yml` MENTIONED the artifact. A negative test that deleted the
+   whole build step passed, because the comment above the step named the file. A gate a comment can
+   satisfy is a gate about prose; it reads only non-comment lines now.
+2. It then resolved "the producer" as the first script naming the artifact, and nominated
+   `build-ffi.sh` as libghostty's builder — that script discusses libghostty's gitignore in its
+   header. Four scripts name `libghostty.xcframework` and only one builds it, so the gate asks the
+   question that has one answer: does the workflow run ANY script that names this artifact outside a
+   comment?
+
+## The test the harness was built for was never written (2026-08-16)
+
+`RecordingChannel` in `WorkspaceDocumentChannelTests` carried two fields — `_gate` and `_gated` —
+under the comment *"Held sends, for proving that an update arriving MID-SEND still lands."* Nothing
+read them. Seventeen tests covered snapshot, diff, ack, epoch, resubscribe, presence and roster;
+none covered the case the fields were declared for. In their place `send` did `await Task.yield()`
+and hoped the window opened.
+
+A yield is a hope, not a window. The gate now parks the send AFTER recording its frame, so the test
+holds the host's send loop suspended mid-frame, delivers an update into that suspension, and
+releases. Three things are then asserted that nothing asserted before: the in-flight frame ships
+what it was BUILT with, the mid-send arrival is not lost, and it ships exactly once, on the ack.
+
+It was verified by mutation, not by passing: moving `claimPendingState()` from before the `await` to
+after it — the classic form of this bug, where the slot is cleared of whatever arrived during the
+send — turns the new test red and leaves the other seventeen green.
+
+## An unused `pub fn` in an unwired port is not dead code (2026-08-16)
+
+Ten `pub fn` out of 2101 in `rust/` have no reference anywhere in the tree. Deleting them was the
+obvious move and would have been wrong for eight of them:
+
+- `schedule_geometry`, `schedule_cursor` (and `schedule_control`, which only its own test calls) are
+  a complete, tested scheduling family in `slopdesk-video` that `lib.rs` does not re-export.
+- `Canvas::solved_layout`, `moving_to`, `moving_group`, `TreeWorkspace::active_session_pane_ids`,
+  `active_tab_pane_ids` are the Rust counterparts of Swift methods still in use — `allPaneIDs()` has
+  eleven live call sites in `SlopDeskClientUI` alone.
+
+These are port surface waiting for their call site, in a migration where almost all of `rust/` is
+still untracked. Deleting them would set the port back and read, later, as work that was never done.
+The defect is that nothing marks them as unwired, so every tool reads them as garbage.
+
+Two of the ten were real and are gone:
+
+- `Toolchain::locate_default` collected the process env and called `Toolchain::locate` — which is
+  exactly what `server.rs::locate_toolchain` does, on the path that actually runs. Two spellings of
+  one step, one of them uncalled.
+- `TrendlineEstimator::wire_trend_milli` / `wire_trend_flags` wrapped `pack_trend_milli` /
+  `pack_trend_flags`, which the FFI already calls directly.
+
+## Two env keys that named themselves three times (2026-08-16)
+
+`slopdesk-superd`'s `OSC133_ENV_KEY` and `CURSOR_ENV_KEY` were `pub const` and read by nothing.
+The names they hold are spelled twice more: literally inside `ZSHRC_BODY`, which the child shell
+evaluates, and literally again in the test asserting the body gates on them — plus a fourth time in
+hostd's curated env allowlist. A rename of either constant changed nothing anywhere.
+
+They are load-bearing now: the assertions build their expected substring with `format!` from the
+constant. Renaming `CURSOR_ENV_KEY`'s VALUE without touching the body fails the suite; before, it
+passed. Both keys stay documented in `docs/51` and the shell-integration spec — the point is that the
+Rust name and the shell text can no longer drift apart silently.
+
+## The stale worktrees are not stale (2026-08-16)
+
+`.claude/worktrees/wf_b77efe2d-807-{1..5}` hold 7.2 GB and were previously noted as safe to reclaim.
+They are not. All five carry uncommitted work, and three carry files that do not exist in the main
+tree at all — `Sources/SlopDeskVideoClient/Mux/UDPSendPathPolicy.swift`,
+`Tests/SlopDeskVideoClientTests/UDPSendPathPolicyTests.swift`,
+`Tests/SlopDeskHostTests/ScrollbackJournalTests.swift`. Sixteen more files differ from their
+main-tree namesakes. Reclaiming the space means deciding what to do with that work first, which is
+not a cleanup decision.
+
+## The lint that argues against the invariant (2026-08-16)
+
+`CLAUDE.md` keeps `a * b + c` as two roundings, because `golden/golden_vectors.json` pins the `f64`
+bit patterns a fused multiply-add would change. Clippy's `suboptimal_flops` and `imprecise_flops`
+argue the other way — both want `f64::mul_add` — both live in `nursery`, and all seventeen Rust
+workspaces deny the whole nursery group.
+
+Four manifests opted out of those two lints. The other thirteen did not, because they have no float
+math today. That is the whole trap: in those thirteen the FIRST float expression to land is a hard
+clippy error whose only suggested fix is the thing the repo forbids, arriving at the moment nobody
+is reading a manifest, with `-D warnings` making it look mandatory. The opt-out is not a local
+judgement about a crate that happens to do geometry; it is a repo invariant, so it belongs in all
+seventeen. It is in all seventeen now, and a gate keeps the eighteenth honest.
+
+Allowing the lint only stops clippy ASKING. Nine Swift files carried a comment promising never to
+write `addingProduct`, `.swiftlint.yml` has no `custom_rules` at all, and `check-supervisor.sh` had
+never heard of `fma` — so in both languages the invariant was enforced by prose. It is a ban now:
+`.addingProduct(` and bare `fma(` in Swift, `.mul_add(` in Rust, at zero sites today. The METHOD
+form only — `gf256::mul_add` and `slopdesk_gfsimd::mul_add` are Galois-field region ops over `u8`
+and have nothing to do with float rounding.
+
+## An exemption nobody checked the terms of (2026-08-16)
+
+The unsafe-policy gate reads every manifest under `rust/` and demands `unsafe_code = "forbid"`,
+with three crates exempt by name. The exemption was unconditional: an exempt manifest was skipped
+before the `allow`/`warn` check ran, so `slopdesk-ffi` could have said `unsafe_code = "allow"` and
+passed — and taken every per-site `#[expect]` with it, because a lint nobody fires cannot expire.
+The comment above the list already argued why the level must be `deny` and not `forbid`; nothing
+asserted it. It does now, and an entry naming a manifest that no longer exists fails too, rather
+than reading for years like protection.
+
+## The obligation that paid for the third unsafe crate was never run (2026-08-16)
+
+`CLAUDE.md` sets the bar for a crate allowed to write `unsafe`: "a measured conflict where safe Rust
+cannot reach parity, paid for by a crate small enough to read in a sitting and a differential suite
+that runs under Miri." `rust/slopdesk-gfsimd` has that suite — five tests sweeping every table pair
+against a scalar oracle, at four alignments, inside a guarded arena, with a `#[cfg(miri)]` seed
+reduction written specifically so Miri can run it.
+
+Nothing ran it. `make miri` existed and no target depended on it: not `check`, not `test`, not the
+prek hooks, and the disabled CI workflow had no Rust job at all. The whole enforcement was a
+sentence in a document.
+
+The reason it was left out was written in the Makefile — "Miri interprets every instruction, so even
+the narrowed `cfg(miri)` sweep runs for minutes". Measured: **47 seconds**, compile included. The
+seed reduction the suite's own doc comment describes is what makes that true, and nobody had timed
+it since. `make check` now depends on `miri`, `make -n check` is asserted to reach it, and the
+comment carries the measurement instead of the guess. It stays out of `make test`, which the
+pre-push hook runs on every push.
+
+## A dormant workflow describing a tree that no longer exists (2026-08-16)
+
+`.github/workflows/ci.yml.disabled` claimed "a clean checkout builds with no prerequisite — the
+package is pure Swift plus the in-tree `CSlopDeskSIMD` C target … no staticlib to pre-build". Both
+halves were false: `CSlopDeskSIMD` was deleted when the SIMD kernels moved to `slopdesk-gfsimd`, and
+`Package.swift` declares a gitignored `binaryTarget`, so a fresh checkout cannot even RESOLVE the
+package until `scripts/build-ffi.sh` has run. It also ran no Rust: seventeen workspaces of clippy
+and tests, plus the Miri audit, were invisible to it.
+
+The `.disabled` suffix is why it rotted — nothing parses the file, so nothing fails when it lies.
+It now runs `make` targets rather than restating their commands, which is the only way a dormant
+file stays true: the Makefile derives its own lists, and a workflow that copies them is a second
+list to forget. It is still dormant.
+
+## The layer the gates are written in (2026-08-16)
+
+Every gate in this repo is a pipeline somewhere, and without `pipefail` a pipeline reports the LAST
+command's status — a generator that crashed feeding `grep` reads as success. All twenty-five scripts
+set it; nothing checked that they did. They are checked now.
+
+The first draft of that check matched the string `set -euo pipefail` and reported two false
+positives, because `soak-fanout-laggard.sh` and `video-input-test.sh` say `set -uo pipefail`
+deliberately. It matches the WORD now. A gate that names a spelling rather than the property is the
+same mistake as a gate that names a file rather than what the file does.
+
+## Three silent gate failures in one afternoon, all of them shaped like a grep (2026-08-16)
+
+Every ratchet in `check-supervisor.sh` is some form of "this spelling must not appear in code", and
+in shell that is a `grep`. Writing four new ones in a row produced three distinct silent failures:
+
+1. `repo_files 'Sources/*.swift' | xargs grep -ln …` PRINTS the offending file and still exits
+   non-zero, because `xargs` splits 742 paths into batches and reports the LAST batch's status. The
+   surrounding `if hit=$(…)` is therefore false exactly when there is something to report. This was
+   not only my new gate: the shell-quoting ratchet had carried the same construction all along, so
+   the one-owner rule for POSIX quoting had never been enforceable.
+2. A `grep` for `pkill` matched the gate's own failure MESSAGE. It reported itself, and no edit to
+   the repo could ever make it pass — the fourth time this audit has found a gate that reads prose.
+3. `sed -E 's,//.*,,'`, the comment-stripper `spells()` uses, also eats `https://…` inside a string
+   literal.
+
+None is a shell-scripting mistake so much as the shape of the tool: a pipeline hides status, a regex
+cannot tell code from a comment, and both failures look exactly like success. So the token bans moved
+to `scripts/check-invariants.py`, which carries a small tokenizer that blanks comments while keeping
+string literals and line numbers intact, and where each gate is a named function returning its sites.
+`check-supervisor.sh` runs it and folds the status into its count; `ruff.toml` already had
+`select = ["ALL"]` pointed at `scripts/*.py`, so the gate is linted at the same strictness as the
+code it guards.
+
+Six invariants moved or arrived there, all at zero sites: app-layer crypto (CryptoKit/CommonCrypto,
+with one named allowlist entry — a SHA-256 over a COMMITTED jar against its `tools.lock` pin is
+supply-chain integrity, not an auth path), a SwiftPM build plugin, the fused multiply-add, `pipefail`
+in every script, an unqualified `pkill` naming hostd, and the one owner for shell quoting. The
+comment/code distinction is tested both ways: `// .plugin(name:)` passes, `plugins: [.plugin(…)]`
+fails.
+
+## The ratchet spent two thirds of its time in `rust/*/target/` (2026-08-16)
+
+`make lint-supervisor` took 114 s. Profiling it with `PS4='+ $EPOCHREALTIME:$LINENO ' bash -x` and
+sorting by per-line delta made the shape obvious: two lines accounted for 21 s and about a dozen more
+for 4–9 s each.
+
+The two big ones were `grep -rl … rust --include='*.rs'`, which walks `rust/*/target/` — gigabytes of
+`build.rs` output and vendored expansions. That was never only a speed problem: a match inside build
+output would have been reported as a stray `fork` or `extern "C"` in the source tree, and the fix
+(`--exclude-dir=target`) closes a false-positive channel as much as it saves the time.
+
+The dozen were `spells()`, which comment-strips a file with `sed` and then greps the result. Twelve
+call sites hand it the whole Swift tree, so that was two processes per file, per call site. It now
+runs ONE `grep -lE` over the entire list first and comment-strips only the files that matched.
+Semantics are identical by construction — stripping comments can only ever REMOVE a match, so a file
+the first grep rejects could not have matched afterwards.
+
+114 s → 39 s, byte-identical output. Verified by mutation, not by reading: renaming `pub fn
+reset_suffix` out of `rust/slopdesk-sanitize/src/inputmode.rs` still fails the script. The first
+attempt at that negative test renamed it to `reset_suffix_renamed` and passed — the gate greps for
+`pub fn reset_suffix`, which is a prefix of the new name. A negative test that mutates nothing
+observable reports exactly like a gate that does not work; this is the third time that lesson has
+landed in this document.
+
+## The ratchet ran only when someone typed `make` (2026-08-16)
+
+`check-supervisor.sh` is the file that enforces which Swift files must stay deleted, the socket
+paths, relinquish-vs-terminate and the FFI staleness gate — and it was reachable only through
+`make lint` and `make check`, both of which a person has to remember. That is the same shape as the
+Miri audit found earlier this cycle: the obligation that pays for `slopdesk-gfsimd`'s `unsafe` was
+written down, and no target ran it.
+
+At 114 s it was arguably too slow to hang on a push. At 39 s it is not, so it is now a `pre-push`
+prek hook, running beside `swift-test` — which takes ~60 s, so on any push touching Swift the
+ratchet is free.
+
+It is the only hook in `.pre-commit-config.yaml` with `always_run: true` and no `files:` regex.
+Every other hook can name its inputs. This one asserts absences — "this Swift file is still gone",
+"no file anywhere respells a Rust constant" — and an absence has no path to match: a deletion that
+violates it stages as a change to some unrelated file, or to none at all.
+
+## Eighteen suites that skip themselves, behind a gate that never built what they need (2026-08-16)
+
+`SupervisedPTYSupport`, `ScreendFixture` and `DropdE2ETests` each boot a real sidecar, and each
+throws `XCTSkip` naming the daemon when its binary is absent. That is the right call *inside a
+test*: `swift build` never sees cargo, so the alternative is a suite that passes without exercising
+anything. `make test` lists `superd screend dropd` (and three more) as prerequisites, so the
+developer path is honest.
+
+The push path was not. The prek hook ran `bash scripts/pre-push-test.sh` directly and the dormant CI
+job ran `swift test` — neither builds a sidecar. On any tree that had not had `make test` run
+against it, the entire supervised, screen and file-drop surface skipped and the gate reported green.
+The skip message even says "run `make superd`", which is precisely the instruction nobody was there
+to read.
+
+Both callers now go through `make test`. That alone would be a fix by convention, so the script also
+refuses to run when a needed binary is missing, whoever invoked it. The daemon list is DERIVED —
+`grep -ohE 'rust/slopdesk-[a-z]+/target' Tests` — because every fixture already spells that path to
+find its own binary, so a nineteenth suite booting a new daemon is covered the day it lands rather
+than the day someone remembers a list. Verified by hiding `slopdesk-dropd`: the run stops before
+`swift test` and names `make dropd`.
+
+## Neither app had built, on either platform, and four gates all read green (2026-08-16)
+
+`xcodebuild` on `ClientApp-macOS` and on `ClientApp-iOS`:
+
+    error: Multiple commands produce '…/Build/Products/Debug/include/module.modulemap'
+      note: Command: ProcessXCFramework …/libghostty.xcframework …
+      note: Command: ProcessXCFramework …/SlopDeskFFI.xcframework …
+
+`-create-xcframework -headers X` copies X's contents to each slice's `Headers/`, and Xcode's
+`ProcessXCFramework` then flattens that into `$BUILT_PRODUCTS_DIR/include/`. Both xcframeworks kept
+a `module.modulemap` at their Headers root, so both wrote the same destination and Xcode refused the
+graph. This began the moment `SlopDeskFFI.xcframework` joined — the linked half of the Rust port.
+
+Nothing noticed, and the reasons are worth separating:
+
+* `swift build` and `swift test` never run `ProcessXCFramework`. SwiftPM reads the xcframework
+  directly, so the entire Swift gate — lint, build, test, golden — is blind to this class of break
+  by construction. Green tests and no app.
+* The two scripts that DO build the apps, `check-macos.sh` and `check-ios.sh`, were reachable from
+  no `make` target, no prek hook and no workflow. The same shape as the Miri audit found earlier in
+  this cycle: an obligation written down and never run.
+* `check-macos.sh` sent `xcodebuild` to `/dev/null`, so even run by hand it said `** BUILD FAILED **`
+  and nothing else. Finding the actual line meant re-running the same invocation with the redirect
+  removed.
+
+The fix is in `scripts/build-ffi.sh`: the headers are staged into `Headers/CSlopDeskFFI/` before
+wrapping, which gives the copy a unique destination. SwiftPM still resolves the module — it walks
+the Headers tree rather than only its root — verified by `swift build` green and by the macOS app
+building for the first time since the port. The script then asserts BOTH halves per slice: the
+modulemap is under `CSlopDeskFFI/`, and there is none at the root. libghostty's stays where upstream
+puts it; nesting the side we own is the smaller change and needs no vendor rebuild.
+
+`check-ios.sh` is now `make check-ios` and a prerequisite of `make check`. `check-macos.sh` is
+deliberately not: it drives a real window and needs a logged-in GUI session. Its build log now goes
+to a file and its failure path prints the compiler's own words.
+
+## The formatter could not produce a tree the linter accepts (2026-08-16)
+
+`.swiftformat` states the division of labour in its first line: SwiftFormat owns formatting,
+SwiftLint owns lint. It does not survive `leading_whitespace`. SwiftFormat cannot remove a blank line
+at the START of a file — `consecutiveBlankLines` collapses three to two and stops, and no other rule
+reaches file position 0 (checked against every rule's `--ruleinfo`). SwiftLint enforces it. So a file
+beginning with a blank line failed `make lint-swift`, and `make fmt-swift` could not fix it: the one
+thing a format target exists to guarantee.
+
+Sixty-five files were in exactly that state, because deleting a file's only import leaves the blank
+line behind. `swiftlint --fix` — the correctable-rule pass, not `analyze --fix` — clears it, and is
+a verified no-op on a clean tree: zero output, byte-identical `git status` and diffstat. So it now
+runs inside `fmt-swift`, and `lint-swift` stays strictly read-only. Everything that WRITES is in the
+format target; nothing that lints writes.
+
+## What `unused_import` gets wrong, and how to find out (2026-08-16)
+
+`swiftlint analyze --fix --only-rule unused_import` judges from a compiler log of ONE configuration.
+The log was macOS. Two failure classes followed, and they need different gates to catch:
+
+* Imports the macOS build itself needs — `CoreGraphics` under a `CGRect`, `OSLog`, `Observation`
+  behind an `@Observable` macro. Thirty-three files. `swift build` finds these.
+* Imports only an `#if os(iOS)` branch uses. `swift build` on macOS cannot see them at all; only the
+  iOS triple can, which is the gate that was not wired up (above).
+
+Both were repaired the same way and it is the right way: build, take every file the COMPILER names,
+restore that file's missing imports from the pre-fix state, build again. What survives is the subset
+a compiler vouches for, not the analyzer's belief. The loop is worth more than its output — it
+converges in a handful of rounds and needs no judgement about any individual import.
+
+`make fmt-swift` runs `swiftlint --fix` and never `analyze --fix`, for this reason.
+
+## The iOS client had not compiled since 2026-08-11, at HEAD (2026-08-16)
+
+With the modulemap collision fixed, the iOS triple got far enough to report what was underneath it:
+
+    Sources/SlopDeskClientUI/Chrome/SlateTitlebar.swift:96: error: cannot find 'RailStatusRollupMount' in scope
+
+`RailStatusRollupMount` moved inside `#if os(macOS)` when the agent rollup rolled into the band
+(a0e99e58, 2026-08-11). `SlateTitlebar`'s only MOUNT — `ContentColumn` — was already `#if os(macOS)`,
+so nothing on iOS renders it; but the TYPE sat under `#if canImport(SwiftUI)` alone, so it still
+compiled for the iOS triple, and its body reaches for the macOS-only view. Neither file was touched
+by the `unused_import` sweep; `git diff` on both is empty. This was red at HEAD.
+
+The gating now matches the mount: `#if canImport(SwiftUI) && os(macOS)` on the whole file.
+
+Three separate things had to be true for this to sit for five days, and each is worth naming:
+`swift build` compiles the macOS slice only, so the entire Swift gate is blind to `#if os(iOS)` by
+construction; `check-ios.sh` existed for exactly that and no target ran it; and the xcframework
+collision meant that even running it by hand failed earlier, on a different error, which reads like
+one broken thing rather than two.
+
+A gate that has never run is not a gate that passes. It is a gate with an unknown verdict, and the
+verdict here was no.
+
+## `git checkout HEAD --` is not a revert here, it is a delete (2026-08-16)
+
+Repairing the `unused_import` sweep's damage, the repair script reverted four files to `HEAD`. That
+destroyed work, because almost the whole tree is an uncommitted in-flight migration: `HEAD` is not
+"the version before my mistake", it is "the version before *every* uncommitted change in this file",
+and the two are five days apart. `make lint` went from green to seven supervisor violations —
+`SlateFactLine` grew a second pasteboard write back, both device sidebar models grew their
+cancel-and-re-arm timers back, and a doc link came back pointing at a type deleted in `2682df50`.
+
+The ratchet is the only reason this was recoverable at all. Nothing in the compiler, the tests or
+the formatter objects to a hand-rolled `Task { try? await Task.sleep(...) }` — it builds, it runs, it
+is merely the second copy of a rule. `check-supervisor.sh` names each one it wants and where, so
+the repair was mechanical instead of archaeological: `noticeClear.arm`, `reattempt.arm`,
+`ClientPasteboard.write`. A ratchet earns its keep on the day someone deletes the thing it protects
+without noticing.
+
+The rule that follows: when the tree is a working migration, restore from a copy of the *working
+tree*, never from a commit. `git stash` or a `cp -a` of the file, and check `git diff --stat` for the
+file first — an empty diff is the only case where `checkout HEAD --` is what it looks like.

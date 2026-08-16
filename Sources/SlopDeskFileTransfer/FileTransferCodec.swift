@@ -1,12 +1,23 @@
+import CSlopDeskFFI
 import Foundation
+import SlopDeskArena
 
-/// Manual big-endian encode/decode for ``FileTransferMessage`` — the PATH-4 body that rides inside
-/// each `[UInt32 BE length][payload]` frame. No JSON/Codable on the wire (house rule); multi-byte
-/// ints are big-endian; strings are `[UInt16 BE byteLength][UTF-8]`.
+/// PATH 4's **client end** — requests out, replies in.
 ///
-/// Decode is validate-then-drop: every read is length-checked before it slices, unknown types and
-/// truncated bodies throw rather than force-unwrap, and no attacker-chosen length drives an
-/// allocation before it is bounded by the already-capped frame payload.
+/// Every layout lives in `rust/slopdesk-dropd`'s `client` module, beside the `protocol` module that
+/// decodes what this encodes. That is the whole reason the client end is there and not here: the
+/// round trip is a TEST — one walks every frame type through both ends — where two languages agreed
+/// by review and nothing failed when they stopped agreeing.
+///
+/// This type is the Swift face of it. A request crosses as its type byte plus the scalars any frame
+/// could carry and ONE borrowed blob (a name for an offer, a body for a chunk); a chunk's 256 KiB is
+/// borrowed all the way to the frame rather than copied on the way. A reply crosses as a flat record
+/// plus a small arena for the one string it can hold.
+///
+/// Validate-then-drop on untrusted bytes is unchanged and is enforced in the crate that owns the
+/// layout: every read is length-checked before it slices, unknown types and truncated bodies are
+/// refused rather than guessed at, and no peer-chosen length drives an allocation before it is
+/// bounded by the already-capped frame payload.
 public enum FileTransferCodec {
     public enum DecodeError: Error, Equatable, Sendable {
         case empty
@@ -15,189 +26,158 @@ public enum FileTransferCodec {
         case badUTF8
     }
 
-    // MARK: - Encode
+    // MARK: - Encode (client → host)
 
-    /// The full framed bytes for `message`: `[UInt32 BE payloadLength][UInt8 type][body]`.
-    public static func encodeFrame(_ message: FileTransferMessage) -> Data {
-        let payload = encodePayload(message)
-        var out = Data(capacity: 4 + payload.count)
-        appendBE(&out, UInt32(payload.count))
-        out.append(payload)
-        return out
+    /// The full framed bytes for `request`: `[UInt32 BE payloadLength][UInt8 type][body]`.
+    public static func encodeFrame(_ request: FileTransferRequest) -> Data {
+        request.lent { kind, transferId, scalar, blob, blobLength in
+            sized { out, cap in
+                slopdesk_drop_encode_request(
+                    kind, transferId, scalar, blob?.assumingMemoryBound(to: UInt8.self), blobLength,
+                    out, cap,
+                )
+            }
+        }
     }
 
     /// The payload only (`[UInt8 type][body]`), for callers that frame separately (e.g. tests).
-    public static func encodePayload(_ message: FileTransferMessage) -> Data {
-        var out = Data()
-        switch message {
+    public static func encodePayload(_ request: FileTransferRequest) -> Data {
+        encodeFrame(request).dropFirst(prefixByteCount)
+    }
+
+    // MARK: - Decode (host → client)
+
+    /// Decodes one reply payload (`[UInt8 type][body]`). Throws on empty, an unknown or
+    /// client-bound type, a truncated body, or invalid UTF-8 — the caller drops the frame (and
+    /// typically the connection).
+    ///
+    /// Types 1–5 are the CLIENT's own vocabulary. Seeing one arrive means the peer is not a dropd,
+    /// so they are rejected as unknown rather than decoded into something to ignore.
+    public static func decodeReplyPayload(_ payload: Data) throws -> FileTransferReply {
+        try withUnsafeTemporaryAllocation(of: UInt8.self, capacity: Swift.max(payload.count, 1)) { arena in
+            var record = SlopDeskDropReply()
+            let verdict = payload.spanning { bytes, length in
+                slopdesk_drop_decode_reply(
+                    bytes?.assumingMemoryBound(to: UInt8.self), length,
+                    &record, arena.baseAddress, arena.count,
+                )
+            }
+            guard verdict == SLOPDESK_DROP_OK else { throw decodeError(verdict, record.detail) }
+            return reply(record, UnsafeRawBufferPointer(arena))
+        }
+    }
+
+    // MARK: - Shared with the frame splitter
+
+    /// The `[UInt32 BE payloadLength]` every frame opens with.
+    static let prefixByteCount = 4
+
+    /// The error a non-OK verdict names. `frameTooLarge` is the splitter's and never reaches here.
+    static func decodeError(_ verdict: UInt32, _ detail: UInt64) -> Error {
+        switch verdict {
+        case SLOPDESK_DROP_UNKNOWN_TYPE: DecodeError.unknownType(UInt8(truncatingIfNeeded: detail))
+        case SLOPDESK_DROP_BAD_UTF8: DecodeError.badUTF8
+        case SLOPDESK_DROP_EMPTY: DecodeError.empty
+        case SLOPDESK_DROP_FRAME_TOO_LARGE: FileTransferFrameDecoderError.frameTooLarge(Int(detail))
+        default: DecodeError.truncated
+        }
+    }
+
+    /// The reply a flattened record and its arena describe.
+    static func reply(_ record: SlopDeskDropReply, _ arena: UnsafeRawBufferPointer) -> FileTransferReply {
+        switch record.kind {
+        case 6: .helloAck(accepted: record.accepted)
+        case 7: .accept(transferId: record.transfer_id)
+        case 8: .complete(transferId: record.transfer_id)
+        default: .failed(transferId: record.transfer_id, reason: text(arena, record.reason))
+        }
+    }
+
+    /// Reads the one string a reply can carry out of the arena the decode filled.
+    ///
+    /// The second of the two faces that answered `""` where the crate repairs; see ``ArenaText``.
+    private static func text(_ arena: UnsafeRawBufferPointer, _ field: SlopDeskDropText) -> String {
+        ArenaText.text(arena, field.offset, field.length)
+    }
+
+    /// A frame past this is carrying a BODY, and its buffer is handed over uninitialized: that is
+    /// the difference between one pass over a 256 KiB chunk and two, since `Data(count:)` zero-fills
+    /// every byte the encoder is about to overwrite and a gigabyte upload is four thousand chunks.
+    /// Below it the frame is control traffic a few bytes long, where `Data`'s own storage costs less
+    /// than the `malloc`/`free` pair that would replace it.
+    private static let bodyBearingFrame = 4096
+
+    /// Encodes by the §4 convention: ask for the size, then fill exactly that.
+    ///
+    /// The sizing call is free on the path that matters — a chunk's frame length is arithmetic on
+    /// the body length, not a frame built and thrown away.
+    private static func sized(_ call: (UnsafeMutablePointer<UInt8>?, Int) -> Int) -> Data {
+        let needed = call(nil, 0)
+        guard needed > 0 else { return Data() }
+        guard needed >= bodyBearingFrame else {
+            var out = Data(count: needed)
+            out.withUnsafeMutableBytes { buffer in
+                filled(call, buffer.baseAddress?.assumingMemoryBound(to: UInt8.self), needed)
+            }
+            return out
+        }
+        guard let room = malloc(needed)?.assumingMemoryBound(to: UInt8.self) else {
+            preconditionFailure("out of memory framing a \(needed)-byte drop request")
+        }
+        filled(call, room, needed)
+        return Data(bytesNoCopy: room, count: needed, deallocator: .free)
+    }
+
+    /// Fills `room` and asserts the encoder wrote exactly what it asked for.
+    private static func filled(
+        _ call: (UnsafeMutablePointer<UInt8>?, Int) -> Int,
+        _ room: UnsafeMutablePointer<UInt8>?,
+        _ needed: Int,
+    ) {
+        let written = call(room, needed)
+        precondition(written == needed, "the drop codec sized a frame differently than it wrote it")
+    }
+}
+
+private extension FileTransferRequest {
+    /// Hands this request to `body` as the door's arguments, borrowing its one variable-length blob.
+    ///
+    /// A chunk's body is never copied to get here: it is lent straight through to the frame writer,
+    /// which is the difference between one copy per 256 KiB and three.
+    func lent<R>(
+        _ body: (UInt8, UInt32, UInt64, UnsafeRawPointer?, Int) -> R,
+    ) -> R {
+        switch self {
         case let .hello(version):
-            out.append(1)
-            out.append(version)
+            body(1, 0, UInt64(version), nil, 0)
         case let .offer(transferId, fileSize, name):
-            out.append(2)
-            appendBE(&out, transferId)
-            appendBE(&out, fileSize)
-            appendString(&out, name)
+            // `withUTF8` lends the string's own storage when it is already UTF-8, which a filename
+            // read from the filesystem is; `Array(name.utf8)` would copy it to say the same thing.
+            withUnsafeUTF8(name) { body(2, transferId, fileSize, $0, $1) }
         case let .chunk(transferId, data):
-            out.append(3)
-            appendBE(&out, transferId)
-            out.append(data)
+            data.spanning { bytes, length in body(3, transferId, 0, bytes, length) }
         case let .finish(transferId):
-            out.append(4)
-            appendBE(&out, transferId)
+            body(4, transferId, 0, nil, 0)
         case let .cancel(transferId):
-            out.append(5)
-            appendBE(&out, transferId)
-        case let .helloAck(accepted):
-            out.append(6)
-            out.append(accepted ? 1 : 0)
-        case let .accept(transferId):
-            out.append(7)
-            appendBE(&out, transferId)
-        case let .complete(transferId):
-            out.append(8)
-            appendBE(&out, transferId)
-        case let .failed(transferId, reason):
-            out.append(9)
-            appendBE(&out, transferId)
-            appendString(&out, reason)
-        }
-        return out
-    }
-
-    // MARK: - Decode
-
-    /// Decodes one payload (`[UInt8 type][body]`) into a message. Throws on empty, unknown type, a
-    /// truncated body, or invalid UTF-8 — the caller drops the frame (and typically the connection).
-    public static func decodePayload(_ payload: Data) throws -> FileTransferMessage {
-        guard !payload.isEmpty else { throw DecodeError.empty }
-        var reader = ByteReader(payload)
-        let type = try reader.readUInt8()
-        switch type {
-        case 1:
-            return try .hello(version: reader.readUInt8())
-        case 2:
-            let transferId = try reader.readUInt32()
-            let fileSize = try reader.readUInt64()
-            let name = try reader.readString()
-            return .offer(transferId: transferId, fileSize: fileSize, name: name)
-        case 3:
-            let transferId = try reader.readUInt32()
-            // The rest of the payload is the raw body chunk (may be empty on a zero-length flush).
-            return .chunk(transferId: transferId, data: reader.rest())
-        case 4:
-            return try .finish(transferId: reader.readUInt32())
-        case 5:
-            return try .cancel(transferId: reader.readUInt32())
-        case 6:
-            return try .helloAck(accepted: reader.readUInt8() != 0)
-        case 7:
-            return try .accept(transferId: reader.readUInt32())
-        case 8:
-            return try .complete(transferId: reader.readUInt32())
-        case 9:
-            let transferId = try reader.readUInt32()
-            let reason = try reader.readString()
-            return .failed(transferId: transferId, reason: reason)
-        default:
-            throw DecodeError.unknownType(type)
+            body(5, transferId, 0, nil, 0)
         }
     }
 }
 
-// MARK: - Big-endian append helpers
-
-private func appendBE(_ data: inout Data, _ value: UInt32) {
-    data.append(UInt8((value >> 24) & 0xFF))
-    data.append(UInt8((value >> 16) & 0xFF))
-    data.append(UInt8((value >> 8) & 0xFF))
-    data.append(UInt8(value & 0xFF))
+/// Hands `string`'s UTF-8 to `body` as a `(pointer, length)` pair, borrowing rather than copying
+/// whenever the string is already stored as UTF-8.
+private func withUnsafeUTF8<R>(_ string: String, _ body: (UnsafeRawPointer?, Int) -> R) -> R {
+    var string = string
+    return string.withUTF8 { body($0.baseAddress, $0.count) }
 }
 
-private func appendBE(_ data: inout Data, _ value: UInt64) {
-    for shift in stride(from: 56, through: 0, by: -8) {
-        data.append(UInt8((value >> UInt64(shift)) & 0xFF))
-    }
-}
-
-private func appendBE(_ data: inout Data, _ value: UInt16) {
-    data.append(UInt8((value >> 8) & 0xFF))
-    data.append(UInt8(value & 0xFF))
-}
-
-/// `[UInt16 BE byteLength][UTF-8]`. A name/reason longer than 65535 UTF-8 bytes is truncated to the
-/// prefix's capacity — filenames never approach this, and a reason string is short by construction.
-private func appendString(_ data: inout Data, _ string: String) {
-    var bytes = Array(string.utf8)
-    if bytes.count > Int(UInt16.max) { bytes = Array(bytes.prefix(Int(UInt16.max))) }
-    appendBE(&data, UInt16(bytes.count))
-    data.append(contentsOf: bytes)
-}
-
-// MARK: - ByteReader (length-checked cursor)
-
-/// A forward-only cursor over a `Data` that length-checks every read. Every accessor throws
-/// ``FileTransferCodec/DecodeError/truncated`` rather than trap when the buffer runs short — the
-/// validate-then-drop contract for untrusted bytes.
-private struct ByteReader {
-    private let data: Data
-    private var index: Int
-
-    init(_ data: Data) {
-        self.data = data
-        index = data.startIndex
-    }
-
-    private var remaining: Int { data.endIndex - index }
-
-    mutating func readUInt8() throws -> UInt8 {
-        guard remaining >= 1 else { throw FileTransferCodec.DecodeError.truncated }
-        defer { index += 1 }
-        return data[index]
-    }
-
-    mutating func readUInt16() throws -> UInt16 {
-        guard remaining >= 2 else { throw FileTransferCodec.DecodeError.truncated }
-        var value: UInt16 = 0
-        for _ in 0..<2 { value = (value << 8) | UInt16(data[index])
-            index += 1
-        }
-        return value
-    }
-
-    mutating func readUInt32() throws -> UInt32 {
-        guard remaining >= 4 else { throw FileTransferCodec.DecodeError.truncated }
-        var value: UInt32 = 0
-        for _ in 0..<4 { value = (value << 8) | UInt32(data[index])
-            index += 1
-        }
-        return value
-    }
-
-    mutating func readUInt64() throws -> UInt64 {
-        guard remaining >= 8 else { throw FileTransferCodec.DecodeError.truncated }
-        var value: UInt64 = 0
-        for _ in 0..<8 { value = (value << 8) | UInt64(data[index])
-            index += 1
-        }
-        return value
-    }
-
-    mutating func readString() throws -> String {
-        let length = try Int(readUInt16())
-        guard remaining >= length else { throw FileTransferCodec.DecodeError.truncated }
-        let slice = data[index..<index + length]
-        index += length
-        guard let string = String(data: Data(slice), encoding: .utf8) else {
-            throw FileTransferCodec.DecodeError.badUTF8
-        }
-        return string
-    }
-
-    /// Consumes and returns the remaining bytes (the trailing raw body of a `chunk`).
-    mutating func rest() -> Data {
-        let slice = Data(data[index..<data.endIndex])
-        index = data.endIndex
-        return slice
+extension Data {
+    /// Hands this buffer to `body` as the `(pointer, length)` pair the door's C entries take.
+    ///
+    /// An EMPTY buffer short-circuits to `(nil, 0)` rather than borrowing: `finish` and `cancel`
+    /// carry no blob at all, and `withUnsafeBytes` on nothing is a borrow bought for nothing.
+    @inline(__always)
+    func spanning<R>(_ body: (UnsafeRawPointer?, Int) throws -> R) rethrows -> R {
+        try isEmpty ? body(nil, 0) : withUnsafeBytes { try body($0.baseAddress, $0.count) }
     }
 }

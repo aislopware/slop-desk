@@ -13,7 +13,7 @@ final class MuxChannelSessionInputTeardownTests: XCTestCase {
     private func makeSession(channelID: UInt32 = 4) -> MuxChannelSession {
         let data = MuxSubChannel(channelID: channelID, channel: .data) { _, _ in }
         let control = MuxSubChannel(channelID: channelID, channel: .control) { _, _ in }
-        return MuxChannelSession(channelID: channelID, pty: PTYProcess(), data: data, control: control)
+        return MuxChannelSession(channelID: channelID, pty: unattachedPTY(), data: data, control: control)
     }
 
     /// The load-bearing drain: `shutdown()` must not return (and so must not `closeMaster()`)
@@ -61,7 +61,7 @@ final class MuxChannelSessionInputTeardownTests: XCTestCase {
     func testClientInputFramesLandOnTheGatedWriter() async throws {
         let data = MuxSubChannel(channelID: 7, channel: .data) { _, _ in }
         let control = MuxSubChannel(channelID: 7, channel: .control) { _, _ in }
-        let session = MuxChannelSession(channelID: 7, pty: PTYProcess(), data: data, control: control)
+        let session = MuxChannelSession(channelID: 7, pty: unattachedPTY(), data: data, control: control)
         let delivered = ByteRecorder()
         session.ptyWriteOverrideForTesting = { delivered.append($0) }
         session.startRelay()

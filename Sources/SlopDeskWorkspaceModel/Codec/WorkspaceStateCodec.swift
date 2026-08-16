@@ -1,4 +1,6 @@
+import CSlopDeskFFI
 import Foundation
+import SlopDeskArena
 
 // MARK: - Errors
 
@@ -22,66 +24,6 @@ public indirect enum WorkspaceLayoutNode: Equatable, Sendable {
     case split(id: SplitNodeID, axis: SplitAxis, children: [Self])
 }
 
-// MARK: - Reader
-
-/// A bounds-checked cursor over untrusted bytes. Every read validates BEFORE it advances, so a
-/// truncated frame produces `malformedBody` rather than a trap or an over-allocation.
-private struct ByteReader {
-    let bytes: [UInt8]
-    var offset = 0
-
-    init(_ data: Data) { bytes = [UInt8](data) }
-
-    var remaining: Int { bytes.count - offset }
-
-    mutating func u8() throws -> UInt8 {
-        guard remaining >= 1 else { throw WorkspaceCodecError.malformedBody }
-        defer { offset += 1 }
-        return bytes[offset]
-    }
-
-    mutating func u32() throws -> UInt32 {
-        guard remaining >= 4 else { throw WorkspaceCodecError.malformedBody }
-        defer { offset += 4 }
-        return (UInt32(bytes[offset]) << 24) | (UInt32(bytes[offset + 1]) << 16)
-            | (UInt32(bytes[offset + 2]) << 8) | UInt32(bytes[offset + 3])
-    }
-
-    mutating func uuid() throws -> UUID {
-        guard remaining >= 16 else { throw WorkspaceCodecError.malformedBody }
-        defer { offset += 16 }
-        let b = bytes
-        let o = offset
-        return UUID(uuid: (
-            b[o], b[o + 1], b[o + 2], b[o + 3], b[o + 4], b[o + 5], b[o + 6], b[o + 7],
-            b[o + 8], b[o + 9], b[o + 10], b[o + 11], b[o + 12], b[o + 13], b[o + 14], b[o + 15],
-        ))
-    }
-
-    mutating func take(_ count: Int) throws -> Data {
-        guard count >= 0, remaining >= count else { throw WorkspaceCodecError.malformedBody }
-        defer { offset += count }
-        return Data(bytes[offset..<offset + count])
-    }
-}
-
-private extension [UInt8] {
-    mutating func appendBE(_ value: UInt32) {
-        append(UInt8(truncatingIfNeeded: value >> 24))
-        append(UInt8(truncatingIfNeeded: value >> 16))
-        append(UInt8(truncatingIfNeeded: value >> 8))
-        append(UInt8(truncatingIfNeeded: value))
-    }
-
-    mutating func append(uuid: UUID) {
-        let u = uuid.uuid
-        append(contentsOf: [
-            u.0, u.1, u.2, u.3, u.4, u.5, u.6, u.7,
-            u.8, u.9, u.10, u.11, u.12, u.13, u.14, u.15,
-        ])
-    }
-}
-
 // MARK: - Codec
 
 /// Manual big-endian binary codec for the workspace document (docs/45 §5.3). A caseless-enum
@@ -95,166 +37,228 @@ private extension [UInt8] {
 public enum WorkspaceStateCodec {
     /// Upper bound on entries in one snapshot or diff. Rejects an absurd count before it can drive an
     /// allocation; the real corpus is hundreds of entries, not tens of thousands.
-    public static let maxEntryCount = 65536
+    ///
+    /// Exported by the crate rather than transcribed: it is a REFUSAL threshold, so two copies would
+    /// be two ideas of what counts as an absurd document, and the smaller one would reject states the
+    /// other happily sends.
+    public static var maxEntryCount: Int { slopdesk_ws_max_entry_count() }
 
     // MARK: Key
 
     public static func encode(key: WorkspaceKey, into out: inout [UInt8]) {
-        out.append(key.kind)
-        out.append(uuid: key.objectID)
-        out.append(key.field)
+        out.append(contentsOf: encode(key: key))
     }
 
     public static func encode(key: WorkspaceKey) -> Data {
-        var out: [UInt8] = []
-        out.reserveCapacity(WorkspaceKey.encodedSize)
-        encode(key: key, into: &out)
-        return Data(out)
-    }
-
-    private static func decodeKey(_ reader: inout ByteReader) throws -> WorkspaceKey {
-        let kind = try reader.u8()
-        let objectID = try reader.uuid()
-        let field = try reader.u8()
-        return WorkspaceKey(kind: kind, objectID: objectID, field: field)
-    }
-
-    // MARK: Entry
-
-    public static func encode(entry: WorkspaceEntry, into out: inout [UInt8]) {
-        encode(key: entry.key, into: &out)
-        out.appendBE(UInt32(entry.value.count))
-        out.append(contentsOf: entry.value)
-    }
-
-    private static func decodeEntry(_ reader: inout ByteReader) throws -> WorkspaceEntry {
-        let key = try decodeKey(&reader)
-        let length = try reader.u32()
-        // Bound the length against the bytes ACTUALLY left before allocating — a hostile
-        // `UInt32.max` must cost nothing.
-        guard length <= UInt32(Int32.max), reader.remaining >= Int(length) else {
-            throw WorkspaceCodecError.malformedBody
+        wsFixed(WorkspaceKey.encodedSize) { out, cap in
+            slopdesk_ws_encode_key(key.kind, SlopDeskWsUuid(key.objectID), key.field, out, cap)
         }
-        return try WorkspaceEntry(key: key, value: reader.take(Int(length)))
     }
 
-    /// Decodes `count` entries, having first proven the buffer could plausibly hold them.
-    ///
-    /// An unknown `kindTag` or `field` is KEPT, not skipped. Length-prefixing makes forward
-    /// tolerance free either way, but keeping is strictly stronger than the skip docs/45 §5.3
-    /// proposed: a client that retains bytes it cannot yet interpret still round-trips them, so its
-    /// `entries` stay byte-equal to the host's and its ack means what it says. Skipping would make an
-    /// older client silently ack a state it does not hold.
-    private static func decodeEntries(_ reader: inout ByteReader, count: UInt32) throws -> [WorkspaceEntry] {
-        guard count <= UInt32(maxEntryCount) else { throw WorkspaceCodecError.malformedBody }
-        // Cheapest possible entry is a bare key + a zero length prefix.
-        let floor = WorkspaceKey.encodedSize + 4
-        guard reader.remaining >= Int(count) * floor else { throw WorkspaceCodecError.malformedBody }
-        var out: [WorkspaceEntry] = []
-        out.reserveCapacity(Int(count))
-        for _ in 0..<count { try out.append(decodeEntry(&reader)) }
-        return out
-    }
+    // MARK: Snapshot and diff
 
-    // MARK: Snapshot — `[u32 entryCount][entry…]`
+    //
+    // The parsing is `rust/slopdesk-workspace`'s `state_codec` (docs/55). This is the highest-risk
+    // code in the document — a count and a length, both chosen by whoever is on the other end of the
+    // socket — and every bound is checked against the bytes ACTUALLY remaining before any capacity is
+    // reserved. A decoded value crosses back as a SPAN into the buffer that was handed in, never a
+    // copy: a snapshot is hundreds of entries and arrives on every attach.
 
+    /// A snapshot: `[u32 entryCount][entry…]`.
     public static func encodeSnapshot(_ state: HostWorkspaceState) -> Data {
-        var out: [UInt8] = []
         let entries = state.sortedEntries
-        out.appendBE(UInt32(entries.count))
-        for entry in entries { encode(entry: entry, into: &out) }
-        return Data(out)
+        var blob = WsBlob()
+        var flat = entries.map { blob.entry($0) }
+        return blob.lend { bytes in
+            flat.withUnsafeMutableBufferPointer { input in
+                wsBytes { out, cap in
+                    slopdesk_ws_encode_snapshot(
+                        input.baseAddress,
+                        input.count,
+                        bytes.baseAddress,
+                        bytes.count,
+                        out,
+                        cap,
+                    )
+                }
+            }
+        }
     }
 
+    /// Throws ``WorkspaceCodecError/malformedBody`` on any bytes the crate refuses — including
+    /// TRAILING ones, which are malformed on purpose: a snapshot decoding to fewer entries than it
+    /// carries would have the client ack a state it does not hold.
     public static func decodeSnapshot(_ data: Data) throws -> HostWorkspaceState {
-        var reader = ByteReader(data)
-        let count = try reader.u32()
-        let entries = try decodeEntries(&reader, count: count)
-        guard reader.remaining == 0 else { throw WorkspaceCodecError.malformedBody }
+        var bytes = [UInt8](data)
+        let entries: [WorkspaceEntry]? = bytes.withUnsafeMutableBufferPointer { input in
+            var out = [SlopDeskWsEntry](repeating: SlopDeskWsEntry(), count: 256)
+            var needed = out.withUnsafeMutableBufferPointer { buffer in
+                slopdesk_ws_decode_snapshot(input.baseAddress, input.count, buffer.baseAddress, buffer.count)
+            }
+            if needed == Int(bitPattern: UInt.max) { return nil }
+            if needed > out.count {
+                out = [SlopDeskWsEntry](repeating: SlopDeskWsEntry(), count: needed)
+                needed = out.withUnsafeMutableBufferPointer { buffer in
+                    slopdesk_ws_decode_snapshot(input.baseAddress, input.count, buffer.baseAddress, buffer.count)
+                }
+            }
+            guard needed <= out.count else { return nil }
+            return out[0..<needed].map { $0.entry(in: input) }
+        }
+        guard let entries else { throw WorkspaceCodecError.malformedBody }
         return HostWorkspaceState(entries)
     }
 
-    // MARK: Diff — `[u32 setCount][entry…][u32 delCount][key…]`
-
+    /// A diff: `[u32 setCount][entry…][u32 delCount][key…]`.
     public static func encodeDiff(_ diff: WorkspaceStateDiff) -> Data {
-        var out: [UInt8] = []
-        out.appendBE(UInt32(diff.sets.count))
-        for entry in diff.sets { encode(entry: entry, into: &out) }
-        out.appendBE(UInt32(diff.deletes.count))
-        for key in diff.deletes { encode(key: key, into: &out) }
-        return Data(out)
+        var blob = WsBlob()
+        var sets = diff.sets.map { blob.entry($0) }
+        var deletes = diff.deletes.map { WsBlob.key($0) }
+        return blob.lend { bytes in
+            sets.withUnsafeMutableBufferPointer { setBuffer in
+                deletes.withUnsafeMutableBufferPointer { deleteBuffer in
+                    wsBytes { out, cap in
+                        slopdesk_ws_encode_diff(
+                            setBuffer.baseAddress,
+                            setBuffer.count,
+                            deleteBuffer.baseAddress,
+                            deleteBuffer.count,
+                            bytes.baseAddress,
+                            bytes.count,
+                            out,
+                            cap,
+                        )
+                    }
+                }
+            }
+        }
     }
 
     public static func decodeDiff(_ data: Data) throws -> WorkspaceStateDiff {
-        var reader = ByteReader(data)
-        let sets = try decodeEntries(&reader, count: reader.u32())
-        let deleteCount = try reader.u32()
-        guard deleteCount <= UInt32(maxEntryCount),
-              reader.remaining >= Int(deleteCount) * WorkspaceKey.encodedSize
-        else { throw WorkspaceCodecError.malformedBody }
-        var deletes: [WorkspaceKey] = []
-        deletes.reserveCapacity(Int(deleteCount))
-        for _ in 0..<deleteCount { try deletes.append(decodeKey(&reader)) }
-        guard reader.remaining == 0 else { throw WorkspaceCodecError.malformedBody }
-        return WorkspaceStateDiff(sets: sets, deletes: deletes)
+        var bytes = [UInt8](data)
+        let diff: WorkspaceStateDiff? = bytes.withUnsafeMutableBufferPointer { input in
+            var setsNeeded = 0
+            var deletesNeeded = 0
+            // One call sizes BOTH halves, so a diff that is mostly deletes never costs a retry for
+            // the sets it barely has.
+            guard slopdesk_ws_decode_diff(
+                input.baseAddress, input.count, nil, 0, nil, 0, &setsNeeded, &deletesNeeded,
+            ) else { return nil }
+            var sets = [SlopDeskWsEntry](repeating: SlopDeskWsEntry(), count: max(1, setsNeeded))
+            var deletes = [SlopDeskWsEntry](repeating: SlopDeskWsEntry(), count: max(1, deletesNeeded))
+            let decoded = sets.withUnsafeMutableBufferPointer { setBuffer in
+                deletes.withUnsafeMutableBufferPointer { deleteBuffer in
+                    slopdesk_ws_decode_diff(
+                        input.baseAddress,
+                        input.count,
+                        setBuffer.baseAddress,
+                        setsNeeded,
+                        deleteBuffer.baseAddress,
+                        deletesNeeded,
+                        &setsNeeded,
+                        &deletesNeeded,
+                    )
+                }
+            }
+            guard decoded else { return nil }
+            return WorkspaceStateDiff(
+                sets: sets[0..<setsNeeded].map { $0.entry(in: input) },
+                deletes: deletes[0..<deletesNeeded].map(\.workspaceKey),
+            )
+        }
+        guard let diff else { throw WorkspaceCodecError.malformedBody }
+        return diff
     }
 
     // MARK: layoutStructure — pre-order, self-describing, weights EXCLUDED
 
-    public static func encodeLayout(_ node: WorkspaceLayoutNode) -> Data {
-        var out: [UInt8] = []
-        appendLayout(node, into: &out)
-        return Data(out)
-    }
+    //
+    // The codec is `rust/slopdesk-workspace`'s `state_codec` (docs/55), and the decoder there is
+    // ITERATIVE where this one recursed. A depth cap checked before descending is correct, but it is
+    // one forgotten check away from a remote stack overflow on network input; walking a flat array
+    // with an explicit frame stack makes the overflow structurally impossible, and the cap goes back
+    // to being a statement about documents rather than the thing keeping the decoder safe.
 
-    private static func appendLayout(_ node: WorkspaceLayoutNode, into out: inout [UInt8]) {
-        switch node {
-        case let .leaf(paneID):
-            out.append(0)
-            out.append(uuid: paneID.raw)
-        case let .split(id, axis, children):
-            out.append(1)
-            out.append(uuid: id.raw)
-            out.append(axis == .horizontal ? 0 : 1)
-            // `childCount` is a u8 → fan-out is bounded at 255 by the FORMAT, before any allocation.
-            out.append(UInt8(truncatingIfNeeded: children.count))
-            for child in children { appendLayout(child, into: &out) }
+    public static func encodeLayout(_ node: WorkspaceLayoutNode) -> Data {
+        var walk: [SlopDeskWsLayoutNode] = []
+        appendLayout(node, into: &walk)
+        return walk.withUnsafeMutableBufferPointer { input in
+            wsBytes { out, cap in
+                slopdesk_ws_encode_layout(input.baseAddress, input.count, out, cap)
+            }
         }
     }
 
+    private static func appendLayout(_ node: WorkspaceLayoutNode, into walk: inout [SlopDeskWsLayoutNode]) {
+        switch node {
+        case let .leaf(paneID):
+            walk.append(SlopDeskWsLayoutNode(kind: 0, axis: 0, child_count: 0, id: SlopDeskWsUuid(paneID.raw)))
+        case let .split(id, axis, children):
+            walk.append(SlopDeskWsLayoutNode(
+                kind: 1,
+                axis: axis == .horizontal ? 0 : 1,
+                // A `u8` by the FORMAT, so the fan-out is bounded before any allocation.
+                child_count: UInt8(truncatingIfNeeded: children.count),
+                id: SlopDeskWsUuid(id.raw),
+            ))
+            for child in children { appendLayout(child, into: &walk) }
+        }
+    }
+
+    /// Throws on any bytes the crate refuses: an unknown tag, a truncated node, a split claiming more
+    /// children than it carries, or trailing bytes — and ``WorkspaceCodecError/depthExceeded`` for a
+    /// well-formed tree nested past the cap, which is a different report because it is a document
+    /// this build declines to hold rather than a bug or an attack. The crate says which; the depth is
+    /// no longer a property of any stack, so nothing here has to count to find out.
     public static func decodeLayout(_ data: Data) throws -> WorkspaceLayoutNode {
-        var reader = ByteReader(data)
-        let node = try decodeLayoutNode(&reader, depth: 0)
-        guard reader.remaining == 0 else { throw WorkspaceCodecError.malformedBody }
+        var bytes = [UInt8](data)
+        var tooDeep = false
+        let walk: [SlopDeskWsLayoutNode]? = bytes.withUnsafeMutableBufferPointer { input in
+            var out = [SlopDeskWsLayoutNode](repeating: SlopDeskWsLayoutNode(), count: 64)
+            var needed = out.withUnsafeMutableBufferPointer { buffer in
+                slopdesk_ws_decode_layout(input.baseAddress, input.count, buffer.baseAddress, buffer.count, &tooDeep)
+            }
+            if needed == Int(bitPattern: UInt.max) { return nil }
+            if needed > out.count {
+                out = [SlopDeskWsLayoutNode](repeating: SlopDeskWsLayoutNode(), count: needed)
+                needed = out.withUnsafeMutableBufferPointer { buffer in
+                    slopdesk_ws_decode_layout(
+                        input.baseAddress,
+                        input.count,
+                        buffer.baseAddress,
+                        buffer.count,
+                        &tooDeep,
+                    )
+                }
+            }
+            guard needed > 0, needed <= out.count else { return nil }
+            return Array(out[0..<needed])
+        }
+        if tooDeep { throw WorkspaceCodecError.depthExceeded }
+        guard let walk else { throw WorkspaceCodecError.malformedBody }
+        var cursor = 0
+        guard let node = buildLayout(walk, &cursor) else { throw WorkspaceCodecError.malformedBody }
         return node
     }
 
-    /// - Note: the depth cap is checked BEFORE descending, and it is the STACK-SAFETY mechanism here.
-    ///   `SplitNode+Codable` can lean on `JSONDecoder`'s own nesting limit; a hand-rolled binary
-    ///   decoder over network input has nothing underneath it, so an unbounded recursion would be a
-    ///   remote stack overflow.
-    private static func decodeLayoutNode(_ reader: inout ByteReader, depth: Int) throws -> WorkspaceLayoutNode {
-        guard depth <= SplitNode.maxDepth else { throw WorkspaceCodecError.depthExceeded }
-        switch try reader.u8() {
-        case 0:
-            return try .leaf(PaneID(raw: reader.uuid()))
-        case 1:
-            let id = try SplitNodeID(raw: reader.uuid())
-            let axisByte = try reader.u8()
-            // C-style bool discipline: any non-zero is `vertical`, never a trap on an unexpected byte.
-            let axis: SplitAxis = axisByte == 0 ? .horizontal : .vertical
-            let childCount = try Int(reader.u8())
-            // One byte minimum per child (a bare leaf tag) — bound before reserving.
-            guard reader.remaining >= childCount else { throw WorkspaceCodecError.malformedBody }
-            var children: [WorkspaceLayoutNode] = []
-            children.reserveCapacity(childCount)
-            for _ in 0..<childCount {
-                try children.append(decodeLayoutNode(&reader, depth: depth + 1))
-            }
-            return .split(id: id, axis: axis, children: children)
-        default:
-            throw WorkspaceCodecError.malformedBody
+    /// Rebuilds the tree from the walk the crate validated. No depth cap here: the crate already
+    /// refused anything past it, so this recursion is bounded by a tree it has proven is shallow.
+    private static func buildLayout(_ walk: [SlopDeskWsLayoutNode], _ cursor: inout Int) -> WorkspaceLayoutNode? {
+        guard cursor < walk.count else { return nil }
+        let node = walk[cursor]
+        cursor += 1
+        guard node.kind == 1 else { return .leaf(PaneID(raw: node.id.uuid)) }
+        var children: [WorkspaceLayoutNode] = []
+        children.reserveCapacity(Int(node.child_count))
+        for _ in 0..<node.child_count {
+            guard let child = buildLayout(walk, &cursor) else { return nil }
+            children.append(child)
         }
+        return .split(
+            id: SplitNodeID(raw: node.id.uuid),
+            axis: node.axis == 0 ? .horizontal : .vertical,
+            children: children,
+        )
     }
 
     // MARK: Scalar field values
@@ -264,40 +268,15 @@ public enum WorkspaceStateCodec {
     /// The Double rides as its raw `bitPattern`, never a re-parsed decimal — the repo's bit-exact
     /// float rule, and the same discipline the golden generator's `bytesEwmaBits` uses.
     public static func encodeWeight(_ weight: SplitWeight) -> Data {
-        var out: [UInt8] = []
-        appendWeight(weight, into: &out)
-        return Data(out)
+        encodeWeights([weight]).dropFirst().reduce(into: Data()) { $0.append($1) }
     }
 
-    private static func appendWeight(_ weight: SplitWeight, into out: inout [UInt8]) {
-        let bits: UInt64
-        switch weight {
-        case let .flex(value):
-            out.append(0)
-            bits = value.bitPattern
-        case let .fixed(value):
-            out.append(1)
-            bits = value.bitPattern
-        }
-        for shift in stride(from: 56, through: 0, by: -8) {
-            out.append(UInt8(truncatingIfNeeded: bits >> UInt64(shift)))
-        }
-    }
-
+    /// Throws on any length but exactly nine — a truncated weight is a drop, never a partial read.
     public static func decodeWeight(_ data: Data) throws -> SplitWeight {
-        var reader = ByteReader(data)
-        let weight = try readWeight(&reader)
-        guard reader.remaining == 0 else { throw WorkspaceCodecError.malformedBody }
-        return weight
-    }
-
-    private static func readWeight(_ reader: inout ByteReader) throws -> SplitWeight {
-        let kind = try reader.u8()
-        guard reader.remaining >= 8 else { throw WorkspaceCodecError.malformedBody }
-        var bits: UInt64 = 0
-        for _ in 0..<8 { bits = try (bits << 8) | UInt64(reader.u8()) }
-        let value = Double(bitPattern: bits)
-        return kind == 0 ? .flex(value) : .fixed(value)
+        var framed = Data([1])
+        framed.append(data)
+        guard let only = decodeWeights(framed)?.first else { throw WorkspaceCodecError.malformedBody }
+        return only
     }
 
     /// A `splitNode/weight` value: `[u8 childCount]([u8 weightKind][u64 BE bits])*` — ALL of one
@@ -312,28 +291,32 @@ public enum WorkspaceStateCodec {
     /// `childCount` is a `u8`, so the fan-out is bounded by the FORMAT — the same discipline
     /// `layoutStructure` uses, and it must stay in step with it.
     public static func encodeWeights(_ weights: [SplitWeight]) -> Data {
-        var out: [UInt8] = []
-        let count = min(weights.count, Int(UInt8.max))
-        out.append(UInt8(truncatingIfNeeded: count))
-        for weight in weights.prefix(count) { appendWeight(weight, into: &out) }
-        return Data(out)
+        var shares = weights.map(\.ffi)
+        return shares.withUnsafeMutableBufferPointer { input in
+            wsBytes { out, cap in
+                slopdesk_ws_encode_weights(input.baseAddress, input.count, out, cap)
+            }
+        }
     }
 
-    /// `nil` on any framing the bytes cannot back — a wrong-width value is a DROP, and the caller
-    /// falls back to an even share rather than rendering a layout it half-understood.
+    /// `nil` on a count the bytes cannot back.
     public static func decodeWeights(_ data: Data) -> [SplitWeight]? {
-        var reader = ByteReader(data)
-        guard let count = try? Int(reader.u8()) else { return nil }
-        // Nine bytes per weight, checked before reserving: a declared 255 over an empty tail costs
-        // nothing.
-        guard reader.remaining == count * 9 else { return nil }
-        var out: [SplitWeight] = []
-        out.reserveCapacity(count)
-        for _ in 0..<count {
-            guard let weight = try? readWeight(&reader) else { return nil }
-            out.append(weight)
+        var bytes = [UInt8](data)
+        return bytes.withUnsafeMutableBufferPointer { input -> [SplitWeight]? in
+            var out = [SlopDeskWsShare](repeating: SlopDeskWsShare(), count: 16)
+            var needed = out.withUnsafeMutableBufferPointer { buffer in
+                slopdesk_ws_decode_weights(input.baseAddress, input.count, buffer.baseAddress, buffer.count)
+            }
+            if needed == Int(bitPattern: UInt.max) { return nil }
+            if needed > out.count {
+                out = [SlopDeskWsShare](repeating: SlopDeskWsShare(), count: needed)
+                needed = out.withUnsafeMutableBufferPointer { buffer in
+                    slopdesk_ws_decode_weights(input.baseAddress, input.count, buffer.baseAddress, buffer.count)
+                }
+            }
+            guard needed <= out.count else { return nil }
+            return out[0..<needed].map { $0.is_fixed ? .fixed($0.value) : .flex($0.value) }
         }
-        return out
     }
 
     // MARK: Identity field values
@@ -344,47 +327,61 @@ public enum WorkspaceStateCodec {
     /// "none" in the presence records, and letting it mean the same thing here would make "no active
     /// pane" and "the pane whose id happens to be zero" the same cell.
     public static func encodeUUID(_ id: UUID) -> Data {
-        var out: [UInt8] = []
-        out.reserveCapacity(16)
-        out.append(uuid: id)
-        return Data(out)
+        withUnsafeBytes(of: SlopDeskWsUuid(id).bytes) { Data($0) }
     }
 
     public static func decodeUUID(_ data: Data) -> UUID? {
-        guard data.count == 16 else { return nil }
-        var reader = ByteReader(data)
-        return try? reader.uuid()
+        var bytes = [UInt8](data)
+        var answer = SlopDeskWsUuid()
+        let found = bytes.withUnsafeMutableBufferPointer { input in
+            slopdesk_ws_decode_uuid(input.baseAddress, input.count, &answer)
+        }
+        return found ? answer.uuid : nil
     }
 
     /// `session/detachedPanes`: `[u16 n]([16B paneID][16B originTabID])*`.
     ///
-    /// A detached pane with no remembered origin tab rides as the all-zero UUID — here it IS the
-    /// sentinel, because a pane always has an id but its origin is genuinely optional and the pair is
-    /// fixed-width.
+    /// A detached pane with no remembered origin tab rides as the all-zero UUID — on the WIRE it is
+    /// the sentinel, because a pane always has an id but its origin is genuinely optional and the
+    /// pair is fixed-width. The crate translates it back to an `Optional` at the boundary, so this
+    /// side never spells absence as an id.
     public static func encodeDetachedPanes(_ panes: [(pane: UUID, originTab: UUID?)]) -> Data {
-        var out: [UInt8] = []
-        let count = min(panes.count, Int(UInt16.max))
-        out.append(UInt8(truncatingIfNeeded: count >> 8))
-        out.append(UInt8(truncatingIfNeeded: count))
-        for entry in panes.prefix(count) {
-            out.append(uuid: entry.pane)
-            out.append(uuid: entry.originTab ?? WorkspaceObjectKind.rootObjectID)
+        var entries = panes.map { entry in
+            SlopDeskWsDetachedPane(
+                pane: SlopDeskWsUuid(entry.pane),
+                origin: SlopDeskWsUuid(entry.originTab ?? WorkspaceObjectKind.rootObjectID),
+                has_origin: entry.originTab != nil,
+            )
         }
-        return Data(out)
+        return entries.withUnsafeMutableBufferPointer { input in
+            wsBytes { out, cap in
+                slopdesk_ws_encode_detached_panes(input.baseAddress, input.count, out, cap)
+            }
+        }
     }
 
     public static func decodeDetachedPanes(_ data: Data) -> [(pane: UUID, originTab: UUID?)]? {
-        var reader = ByteReader(data)
-        guard reader.remaining >= 2, let high = try? reader.u8(), let low = try? reader.u8() else { return nil }
-        let count = Int((UInt16(high) << 8) | UInt16(low))
-        guard reader.remaining == count * 32 else { return nil }
-        var out: [(pane: UUID, originTab: UUID?)] = []
-        out.reserveCapacity(count)
-        for _ in 0..<count {
-            guard let pane = try? reader.uuid(), let origin = try? reader.uuid() else { return nil }
-            out.append((pane, origin == WorkspaceObjectKind.rootObjectID ? nil : origin))
+        var bytes = [UInt8](data)
+        return bytes.withUnsafeMutableBufferPointer { input -> [(pane: UUID, originTab: UUID?)]? in
+            var out = [SlopDeskWsDetachedPane](repeating: SlopDeskWsDetachedPane(), count: 32)
+            var needed = out.withUnsafeMutableBufferPointer { buffer in
+                slopdesk_ws_decode_detached_panes(input.baseAddress, input.count, buffer.baseAddress, buffer.count)
+            }
+            if needed == Int(bitPattern: UInt.max) { return nil }
+            if needed > out.count {
+                out = [SlopDeskWsDetachedPane](repeating: SlopDeskWsDetachedPane(), count: needed)
+                needed = out.withUnsafeMutableBufferPointer { buffer in
+                    slopdesk_ws_decode_detached_panes(
+                        input.baseAddress,
+                        input.count,
+                        buffer.baseAddress,
+                        buffer.count,
+                    )
+                }
+            }
+            guard needed <= out.count else { return nil }
+            return out[0..<needed].map { ($0.pane.uuid, $0.has_origin ? $0.origin.uuid : nil) }
         }
-        return out
     }
 
     /// `pane/videoTarget`: `[u32 windowID][u8 hasDisplay][u32 displayID][u16 titleLen][title][u16 appLen][app]`.
@@ -392,48 +389,56 @@ public enum WorkspaceStateCodec {
     /// `displayID` is optional in the model — a window-shaped endpoint has none — so it carries its
     /// own presence byte rather than overloading `0`, which is a legitimate display id (the main one).
     public static func encodeVideoTarget(_ endpoint: VideoEndpoint) -> Data {
-        var out: [UInt8] = []
-        out.appendBE(endpoint.windowID)
-        out.append(endpoint.displayID == nil ? 0 : 1)
-        out.appendBE(endpoint.displayID ?? 0)
-        for text in [endpoint.title, endpoint.appName] {
-            let bytes = encodeString(text)
-            out.append(UInt8(truncatingIfNeeded: bytes.count >> 8))
-            out.append(UInt8(truncatingIfNeeded: bytes.count))
-            out.append(contentsOf: bytes)
+        var strings = WsStrings()
+        let title = strings.span(endpoint.title)
+        let app = strings.span(endpoint.appName)
+        var blob = strings.bytes
+        return blob.withUnsafeMutableBufferPointer { text in
+            wsBytes { out, cap in
+                slopdesk_ws_encode_video_target(
+                    endpoint.windowID,
+                    endpoint.displayID ?? 0,
+                    endpoint.displayID != nil,
+                    text.baseAddress,
+                    text.count,
+                    title,
+                    app,
+                    out,
+                    cap,
+                )
+            }
         }
-        return Data(out)
     }
 
+    /// The strings come back as SPANS into `data`'s own bytes, so nothing is copied twice — they are
+    /// read inside the buffer's scope and only the `String`s outlive it.
     public static func decodeVideoTarget(_ data: Data) -> VideoEndpoint? {
-        var reader = ByteReader(data)
-        guard let windowID = try? reader.u32(),
-              let hasDisplay = try? reader.u8(),
-              let displayID = try? reader.u32()
-        else { return nil }
-        var strings: [String] = []
-        for _ in 0..<2 {
-            guard let high = try? reader.u8(), let low = try? reader.u8() else { return nil }
-            let length = Int((UInt16(high) << 8) | UInt16(low))
-            guard let bytes = try? reader.take(length), let text = decodeString(bytes) else { return nil }
-            strings.append(text)
+        var bytes = [UInt8](data)
+        return bytes.withUnsafeMutableBufferPointer { input -> VideoEndpoint? in
+            var answer = SlopDeskWsVideoTarget()
+            guard slopdesk_ws_decode_video_target(input.baseAddress, input.count, &answer) else { return nil }
+            guard let title = input.text(answer.title), let app = input.text(answer.app_name) else { return nil }
+            return VideoEndpoint(
+                windowID: answer.window_id,
+                title: title,
+                appName: app,
+                displayID: answer.has_display ? answer.display_id : nil,
+            )
         }
-        guard reader.remaining == 0 else { return nil }
-        return VideoEndpoint(
-            windowID: windowID,
-            title: strings[0],
-            appName: strings[1],
-            // C-style bool discipline on a byte that crossed the network.
-            displayID: hasDisplay != 0 ? displayID : nil,
-        )
     }
 
     /// A string field value: strict UTF-8, never lossy. Clamped at a Unicode SCALAR boundary so a
     /// truncated value stays valid UTF-8 (the type-35 idiom).
+    ///
+    /// This layer is `rust/slopdesk-workspace`'s `state_codec` (docs/55). It is the one part of the
+    /// document worth crossing on its own terms: every decoder below reads bytes that came off a
+    /// SOCKET, and the strictness — a wrong-width value is a drop, never a lenient prefix read — is a
+    /// property that has to hold identically on both ends or a mis-numbered field decodes into
+    /// something plausible on one of them.
     public static func encodeString(_ text: String, maxBytes: Int = 65535) -> Data {
-        var out = text
-        while out.utf8.count > maxBytes { out.unicodeScalars.removeLast() }
-        return Data(out.utf8)
+        Data(wsTransform(text) { bytes, len, out, cap in
+            slopdesk_ws_encode_string(bytes, len, maxBytes, out, cap)
+        } ?? [])
     }
 
     /// `nil` when the bytes are not valid UTF-8 — the caller drops the field rather than rendering
@@ -450,7 +455,7 @@ public enum WorkspaceStateCodec {
     /// `nil` on any length but exactly 1 — a wrong-width value is a DROP, never a lenient prefix read.
     /// Strictness here is what stops a mis-numbered field from decoding into a plausible-looking value.
     public static func decodeU8(_ data: Data) -> UInt8? {
-        data.count == 1 ? data[data.startIndex] : nil
+        wsScalar(data, UInt8(0)) { bytes, len, out in slopdesk_ws_decode_u8(bytes, len, out) }
     }
 
     /// C-style bool discipline: any non-zero byte is `true`, matching the interop rule the rest of the
@@ -458,44 +463,31 @@ public enum WorkspaceStateCodec {
     public static func encodeBool(_ value: Bool) -> Data { encodeU8(value ? 1 : 0) }
 
     public static func decodeBool(_ data: Data) -> Bool? {
-        guard let byte = decodeU8(data) else { return nil }
-        return byte != 0
+        decodeU8(data).map { $0 != 0 }
     }
 
     /// A two-byte pair — `agentState` (`[state][kind]`) and `progress` (`[state][percent]`).
     public static func encodeU8Pair(_ first: UInt8, _ second: UInt8) -> Data { Data([first, second]) }
 
     public static func decodeU8Pair(_ data: Data) -> (UInt8, UInt8)? {
-        guard data.count == 2 else { return nil }
-        let bytes = [UInt8](data)
-        return (bytes[0], bytes[1])
+        wsPair(data, UInt8(0)) { bytes, len, a, b in slopdesk_ws_decode_u8_pair(bytes, len, a, b) }
     }
 
     /// A `[u16 BE][u16 BE]` pair — `pane/grid` is `(cols, rows)`, in that order.
     public static func encodeU16Pair(_ first: UInt16, _ second: UInt16) -> Data {
-        Data([
-            UInt8(truncatingIfNeeded: first >> 8), UInt8(truncatingIfNeeded: first),
-            UInt8(truncatingIfNeeded: second >> 8), UInt8(truncatingIfNeeded: second),
-        ])
+        wsFixed(4) { out, cap in slopdesk_ws_encode_u16_pair(first, second, out, cap) }
     }
 
     public static func decodeU16Pair(_ data: Data) -> (UInt16, UInt16)? {
-        guard data.count == 4 else { return nil }
-        let b = [UInt8](data)
-        return ((UInt16(b[0]) << 8) | UInt16(b[1]), (UInt16(b[2]) << 8) | UInt16(b[3]))
+        wsPair(data, UInt16(0)) { bytes, len, a, b in slopdesk_ws_decode_u16_pair(bytes, len, a, b) }
     }
 
     public static func encodeU32(_ value: UInt32) -> Data {
-        var out: [UInt8] = []
-        out.reserveCapacity(4)
-        out.appendBE(value)
-        return Data(out)
+        wsFixed(4) { out, cap in slopdesk_ws_encode_u32(value, out, cap) }
     }
 
     public static func decodeU32(_ data: Data) -> UInt32? {
-        guard data.count == 4 else { return nil }
-        let b = [UInt8](data)
-        return (UInt32(b[0]) << 24) | (UInt32(b[1]) << 16) | (UInt32(b[2]) << 8) | UInt32(b[3])
+        wsScalar(data, UInt32(0)) { bytes, len, out in slopdesk_ws_decode_u32(bytes, len, out) }
     }
 
     /// `pane/lastExitCode`. Rides as the `UInt32` bit pattern so a negative code (a signal-killed
@@ -503,53 +495,171 @@ public enum WorkspaceStateCodec {
     public static func encodeI32(_ value: Int32) -> Data { encodeU32(UInt32(bitPattern: value)) }
 
     public static func decodeI32(_ data: Data) -> Int32? {
-        guard let bits = decodeU32(data) else { return nil }
-        return Int32(bitPattern: bits)
+        wsScalar(data, Int32(0)) { bytes, len, out in slopdesk_ws_decode_i32(bytes, len, out) }
     }
 
     public static func encodeI64(_ value: Int64) -> Data {
-        let bits = UInt64(bitPattern: value)
-        var out: [UInt8] = []
-        out.reserveCapacity(8)
-        for shift in stride(from: 56, through: 0, by: -8) {
-            out.append(UInt8(truncatingIfNeeded: bits >> UInt64(shift)))
-        }
-        return Data(out)
+        wsFixed(8) { out, cap in slopdesk_ws_encode_i64(value, out, cap) }
     }
 
     public static func decodeI64(_ data: Data) -> Int64? {
-        guard data.count == 8 else { return nil }
-        var bits: UInt64 = 0
-        for byte in data { bits = (bits << 8) | UInt64(byte) }
-        return Int64(bitPattern: bits)
+        wsScalar(data, Int64(0)) { bytes, len, out in slopdesk_ws_decode_i64(bytes, len, out) }
     }
 
     /// A `[u16 BE count]` list of UUIDs — `root/sessionOrder`, `session/tabOrder`, `root/closedTabRing`.
     public static func encodeUUIDList(_ ids: [UUID]) -> Data {
-        var out: [UInt8] = []
-        let count = UInt16(truncatingIfNeeded: min(ids.count, Int(UInt16.max)))
-        out.append(UInt8(truncatingIfNeeded: count >> 8))
-        out.append(UInt8(truncatingIfNeeded: count))
-        for id in ids.prefix(Int(count)) { out.append(uuid: id) }
-        return Data(out)
+        var encoded = ids.map { SlopDeskWsUuid($0) }
+        return encoded.withUnsafeMutableBufferPointer { input in
+            var out = [UInt8](repeating: 0, count: 2 + input.count * 16)
+            let needed = out.withUnsafeMutableBufferPointer { buffer in
+                slopdesk_ws_encode_uuid_list(input.baseAddress, input.count, buffer.baseAddress, buffer.count)
+            }
+            guard needed <= out.count else { return Data() }
+            return Data(out[0..<needed])
+        }
     }
 
     /// `nil` on a count the bytes cannot back — the length is validated against what REMAINS before
     /// any capacity is reserved, so a hostile `0xFFFF` costs nothing.
     public static func decodeUUIDList(_ data: Data) -> [UUID]? {
-        var reader = ByteReader(data)
-        guard reader.remaining >= 2 else { return nil }
-        let high = try? reader.u8()
-        let low = try? reader.u8()
-        guard let high, let low else { return nil }
-        let count = Int((UInt16(high) << 8) | UInt16(low))
-        guard reader.remaining == count * 16 else { return nil }
-        var out: [UUID] = []
-        out.reserveCapacity(count)
-        for _ in 0..<count {
-            guard let id = try? reader.uuid() else { return nil }
-            out.append(id)
+        var bytes = [UInt8](data)
+        return bytes.withUnsafeMutableBufferPointer { input -> [UUID]? in
+            var out = [SlopDeskWsUuid](repeating: SlopDeskWsUuid(), count: max(8, input.count / 16))
+            var needed = out.withUnsafeMutableBufferPointer { buffer in
+                slopdesk_ws_decode_uuid_list(input.baseAddress, input.count, buffer.baseAddress, buffer.count)
+            }
+            if needed == Int(bitPattern: UInt.max) { return nil }
+            if needed > out.count {
+                out = [SlopDeskWsUuid](repeating: SlopDeskWsUuid(), count: needed)
+                needed = out.withUnsafeMutableBufferPointer { buffer in
+                    slopdesk_ws_decode_uuid_list(input.baseAddress, input.count, buffer.baseAddress, buffer.count)
+                }
+            }
+            guard needed <= out.count else { return nil }
+            return out[0..<needed].map(\.uuid)
         }
-        return out
     }
+
+    // MARK: - Marshalling
+
+    /// Reads a fixed-width field. Absence is the BOOL, never a sentinel value: `-1` is a real exit
+    /// code and `0xFFFFFFFF` is its encoding, so no in-band answer could mean "not a value".
+    private static func wsScalar<T>(
+        _ data: Data,
+        _ empty: T,
+        _ call: (UnsafePointer<UInt8>?, Int, UnsafeMutablePointer<T>?) -> Bool,
+    ) -> T? {
+        var bytes = [UInt8](data)
+        var answer = empty
+        let decoded = bytes.withUnsafeMutableBufferPointer { input in
+            call(input.baseAddress, input.count, &answer)
+        }
+        return decoded ? answer : nil
+    }
+
+    /// The same for a two-value field.
+    private static func wsPair<T>(
+        _ data: Data,
+        _ empty: T,
+        _ call: (UnsafePointer<UInt8>?, Int, UnsafeMutablePointer<T>?, UnsafeMutablePointer<T>?) -> Bool,
+    ) -> (T, T)? {
+        var bytes = [UInt8](data)
+        var first = empty
+        var second = empty
+        let decoded = bytes.withUnsafeMutableBufferPointer { input in
+            call(input.baseAddress, input.count, &first, &second)
+        }
+        return decoded ? (first, second) : nil
+    }
+}
+
+// MARK: - The entry blob
+
+/// Accumulates every entry's VALUE into one buffer, handing back spans into it.
+///
+/// One buffer means one pointer and one lifetime, where a span per value would mean a nested
+/// `withUnsafeBytes` per entry — and a snapshot has hundreds. The crate bounds-checks every span, so
+/// a caller that got the arithmetic wrong encodes an empty value rather than reading someone else's
+/// memory.
+struct WsBlob {
+    private(set) var bytes: [UInt8] = []
+
+    /// The entry, with its value appended to the blob.
+    mutating func entry(_ entry: WorkspaceEntry) -> SlopDeskWsEntry {
+        let offset = bytes.count
+        bytes.append(contentsOf: entry.value)
+        return SlopDeskWsEntry(
+            kind: entry.key.kind,
+            field: entry.key.field,
+            object: SlopDeskWsUuid(entry.key.objectID),
+            value: SlopDeskWsSpan(offset: offset, len: bytes.count - offset, present: true),
+        )
+    }
+
+    /// A DELETE: a key with no value, which is what an absent span says.
+    static func key(_ key: WorkspaceKey) -> SlopDeskWsEntry {
+        SlopDeskWsEntry(
+            kind: key.kind,
+            field: key.field,
+            object: SlopDeskWsUuid(key.objectID),
+            value: SlopDeskWsSpan(offset: 0, len: 0, present: false),
+        )
+    }
+
+    /// Lends the blob for exactly one call. The scope IS the safety contract.
+    mutating func lend<T>(_ body: (UnsafeMutableBufferPointer<UInt8>) -> T) -> T {
+        bytes.withUnsafeMutableBufferPointer { body($0) }
+    }
+}
+
+extension SlopDeskWsEntry {
+    /// The key this entry carries.
+    var workspaceKey: WorkspaceKey {
+        WorkspaceKey(kind: kind, objectID: object.uuid, field: field)
+    }
+
+    /// The entry, its value read back out of the buffer the span points into.
+    ///
+    /// A span the buffer cannot back reads as an EMPTY value rather than trapping — the same bounds
+    /// discipline the crate applies, restated on this side because the buffer is this side's.
+    func entry(in buffer: UnsafeMutableBufferPointer<UInt8>) -> WorkspaceEntry {
+        let end = value.offset + value.len
+        guard value.present, end <= buffer.count else {
+            return WorkspaceEntry(key: workspaceKey, value: Data())
+        }
+        return WorkspaceEntry(key: workspaceKey, value: Data(buffer[value.offset..<end]))
+    }
+}
+
+/// Reads a variable-length byte answer with the retry docs/55 §4 describes.
+func wsBytes(_ call: (UnsafeMutablePointer<UInt8>?, Int) -> Int) -> Data {
+    var out = [UInt8](repeating: 0, count: 4096)
+    var needed = out.withUnsafeMutableBufferPointer { call($0.baseAddress, $0.count) }
+    if needed > out.count {
+        out = [UInt8](repeating: 0, count: needed)
+        needed = out.withUnsafeMutableBufferPointer { call($0.baseAddress, $0.count) }
+    }
+    guard needed <= out.count else { return Data() }
+    return Data(out[0..<needed])
+}
+
+/// A span the crate answered, read back out of the buffer it points into.
+///
+/// The span is an OFFSET, so it is only meaningful inside the `withUnsafeMutableBufferPointer`
+/// scope that produced it — and the bounds check here is what makes a boundary bug read as `nil`
+/// rather than as somebody else's memory.
+extension UnsafeMutableBufferPointer<UInt8> {
+    func text(_ span: SlopDeskWsSpan) -> String? {
+        guard span.present else { return nil }
+        return ArenaText.optionalText(UnsafeRawBufferPointer(self), span.offset, span.len)
+    }
+}
+
+/// A fixed-width answer from the crate. The width is known before the call, so there is no probe and
+/// no retry — a short answer is a boundary bug and reads as empty rather than as a truncated field.
+func wsFixed(_ width: Int, _ call: (UnsafeMutablePointer<UInt8>?, Int) -> Int) -> Data {
+    var out = [UInt8](repeating: 0, count: width)
+    let needed = out.withUnsafeMutableBufferPointer { call($0.baseAddress, $0.count) }
+    guard needed == width else { return Data() }
+    return Data(out)
 }

@@ -269,30 +269,21 @@ final class VideoMuxHeaderCodecTests: XCTestCase {
         XCTAssertEqual(reader.remaining(), Data(), "a second remaining() is empty")
     }
 
-    // MARK: Differential — the codec is byte-identical to an independent reference implementation
+    // MARK: The framing, pinned to literal bytes
 
-    /// A framing implementation built independently of `VideoMuxHeaderCodec`
-    /// (`appendBE` for encode, `VideoByteReader` for decode), kept ONLY so the differential below can
-    /// prove the codec under test matches it byte-for-byte rather than trusting the codec to check itself.
-    private enum NativeMuxReference {
-        static func encode(channelID: UInt32, payload: Data) -> Data {
-            var out = Data(capacity: 4 + payload.count)
-            out.appendBE(channelID)
-            out.append(payload)
-            return out
-        }
-
-        static func decode(_ datagram: Data) throws -> (channelID: UInt32, payload: Data) {
-            var reader = VideoByteReader(datagram)
-            let channelID = try reader.readUInt32()
-            return (channelID, reader.remaining())
-        }
-    }
-
-    func testRustMuxFramingIsByteIdenticalToTheNativeReference() throws {
-        // A corpus spanning channelID edge values (0, 1, max, mixed bytes) × payload shapes (empty,
-        // one byte, a 1500-byte burst, a real control/cursor payload).
-        let channelIDs: [UInt32] = [0, 1, 7, 0x0102_0304, 0xAABB_CCDD, .max]
+    func testMuxFramingIsTheLiteralFourBytePrefix() throws {
+        // A corpus spanning channelID edge values × payload shapes (empty, one byte, a 1500-byte
+        // burst, a real control/cursor payload). The prefix is written out, not computed: a second
+        // Swift framer here would be a mirror of the codec under test, and a mirror agrees with a
+        // drift as readily as it agrees with the truth.
+        let channelIDs: [(UInt32, [UInt8])] = [
+            (0, [0, 0, 0, 0]),
+            (1, [0, 0, 0, 1]),
+            (7, [0, 0, 0, 7]),
+            (0x0102_0304, [0x01, 0x02, 0x03, 0x04]),
+            (0xAABB_CCDD, [0xAA, 0xBB, 0xCC, 0xDD]),
+            (.max, [0xFF, 0xFF, 0xFF, 0xFF]),
+        ]
         let payloads: [Data] = [
             Data(),
             Data([0xFF]),
@@ -300,31 +291,21 @@ final class VideoMuxHeaderCodecTests: XCTestCase {
             VideoControlMessage.bye.encode(),
             CursorUpdate(position: VideoPoint(x: 1920, y: 1080), shapeID: 42, hotspot: VideoPoint(x: 8, y: 8)).encode(),
         ]
-        for channelID in channelIDs {
+        for (channelID, prefix) in channelIDs {
             for payload in payloads {
-                // Encode: the codec's wire output is byte-identical to the independent reference.
-                let rust = VideoMuxHeaderCodec.encode(channelID: channelID, payload: payload)
-                let native = NativeMuxReference.encode(channelID: channelID, payload: payload)
-                XCTAssertEqual(rust, native, "encode differs for channelID \(channelID), \(payload.count)B")
+                let expected = Data(prefix) + payload
+                let framed = VideoMuxHeaderCodec.encode(channelID: channelID, payload: payload)
+                XCTAssertEqual(framed, expected, "encode differs for channelID \(channelID), \(payload.count)B")
 
-                // Decode the reference-encoded bytes through the codec under test: same channelID +
-                // payload as the reference decoder, proving the borrow+offset decode reproduces `remaining()`.
-                let (rustID, rustPayload) = try VideoMuxHeaderCodec.decode(native)
-                let (nativeID, nativePayload) = try NativeMuxReference.decode(native)
-                XCTAssertEqual(rustID, nativeID)
-                XCTAssertEqual(rustPayload, nativePayload)
-                XCTAssertEqual(rustID, channelID)
-                XCTAssertEqual(rustPayload, payload)
+                let (decodedID, decodedPayload) = try VideoMuxHeaderCodec.decode(expected)
+                XCTAssertEqual(decodedID, channelID)
+                XCTAssertEqual(decodedPayload, payload)
             }
         }
 
-        // Truncation parity: both reject a < 4-byte datagram with `.truncated`.
+        // A datagram shorter than the prefix is truncated, never a channelID with an empty payload.
         for short in [Data(), Data([0x01]), Data([0x01, 0x02, 0x03])] {
             XCTAssertThrowsError(try VideoMuxHeaderCodec.decode(short)) { XCTAssertEqual(
-                $0 as? VideoProtocolError,
-                .truncated,
-            ) }
-            XCTAssertThrowsError(try NativeMuxReference.decode(short)) { XCTAssertEqual(
                 $0 as? VideoProtocolError,
                 .truncated,
             ) }

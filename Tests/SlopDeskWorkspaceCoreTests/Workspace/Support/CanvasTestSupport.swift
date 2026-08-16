@@ -1,5 +1,4 @@
 import CoreGraphics
-import Foundation
 import SlopDeskWorkspaceModel
 @testable import SlopDeskWorkspaceCore
 

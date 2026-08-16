@@ -13,11 +13,11 @@
 // (`FirstLaunchModelTests`). `#if os(macOS)` throughout: iOS has no `/usr/local/bin` and no `osascript`.
 
 #if os(macOS)
-import Darwin
 import Defaults
 import Foundation
 import Observation
 import SlopDeskWorkspaceCore // CLIShellShim
+import SlopDeskWorkspaceModel // ShellQuoting
 
 /// The `@MainActor @Observable` controller behind the "Install CLI" card (first-launch step 3 +
 /// Settings → Shell). It owns the symlink install/uninstall (admin-escalated), the installed-state probe

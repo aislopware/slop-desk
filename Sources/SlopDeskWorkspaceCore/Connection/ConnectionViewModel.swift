@@ -11,7 +11,7 @@ import SlopDeskWorkspaceModel
 /// - ``disconnect()`` is a *deliberate* close (distinct from a network drop): closes the client and
 ///   stops the supervisor so no reconnect is attempted.
 ///
-/// `@MainActor @Observable`, bound directly to ``ConnectionView``. Terminal byte handling is
+/// `@MainActor @Observable`, bound directly to `ConnectionView`. Terminal byte handling is
 /// delegated to the injected ``TerminalViewModel`` (one source of truth for live state).
 @preconcurrency
 @MainActor
@@ -351,7 +351,7 @@ public final class ConnectionViewModel {
         self.makeClient = makeClient
     }
 
-    /// The terminal view-model (so the view can pass it to ``TerminalScreenView``).
+    /// The terminal view-model (so the view can pass it to ``TerminalLeafView``).
     public var terminalModel: TerminalViewModel { terminal }
 
     /// The pane's SHELL activity (OSC 133): `.running` while a command executes, else `.idle`.
@@ -890,13 +890,6 @@ public final class ConnectionViewModel {
             break // already connected / failed — do not regress
         }
     }
-
-    #if DEBUG
-    /// Test hook (no production caller): force `.connected` so a unit test can assert that a LATE
-    /// reconnect-progress / give-up callback does not regress a pane that already recovered. `internal` +
-    /// `DEBUG`-gated so it never leaks into a release build's API surface.
-    func forceStatusConnectedForTesting() { status = .connected }
-    #endif
 
     /// Folds the terminal "gave up after maxReconnectAttempts" callback into `status`: a pane stuck
     /// reconnecting flips to `.unreachable` (the visible WF3 give-up state). Guarded so a give-up racing a

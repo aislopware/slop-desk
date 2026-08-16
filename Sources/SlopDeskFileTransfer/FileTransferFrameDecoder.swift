@@ -1,95 +1,63 @@
+import CSlopDeskFFI
 import Foundation
 
-/// Incremental splitter that turns arbitrary TCP chunks into whole ``FileTransferMessage`` values —
-/// the PATH-4 analogue of `MuxFrameDecoder`, deliberately its own type (the three-paths-share
-/// -nothing rule) though it follows the identical `[UInt32 BE length][payload]` streaming shape:
-/// buffer-append + advancing read cursor + lazy head compaction + poison-on-fault.
+/// Incremental splitter that turns arbitrary TCP chunks into whole ``FileTransferReply`` values.
 ///
-/// A partial frame is NOT an error — ``nextMessage()`` returns `nil` and waits for more bytes. A
+/// The buffer, the read cursor, the lazy head compaction and the poison-on-fault all live in
+/// `rust/slopdesk-dropd`'s `ReplyFrameDecoder`, beside the payload decode they hand bytes to. This
+/// type is the handle: Rust owns the state, Swift owns the lifetime — the shape `MuxFrameDecoder`
+/// and `SlopDeskReplay` already cross by, and the right one here because half a length prefix in one
+/// `recv` and the rest in the next is the ordinary case, not the edge.
+///
+/// A partial frame is NOT an error — ``nextReply()`` returns `nil` and waits for more bytes. A
 /// decode fault (oversize length, malformed payload) POISONS the decoder: the byte boundary for the
 /// whole stream is lost, so every later byte is untrustworthy — further ``append(_:)`` is dropped and
-/// ``nextMessage()`` rethrows the original fault (fail-stop, never resync onto attacker bytes).
+/// ``nextReply()`` rethrows the original fault (fail-stop, never resync onto attacker bytes).
 ///
-/// Value type, intentionally NOT `Sendable`: it holds mutable buffer state for a single per-connection
-/// receive loop. One decoder per physical connection.
-public struct FileTransferFrameDecoder {
-    private static let prefixLength = 4
-    private static let compactionThreshold = 64 * 1024
+/// A reference type, intentionally NOT `Sendable`: it owns one Rust splitter and is driven by a
+/// single per-connection receive loop. One decoder per physical connection.
+public final class FileTransferFrameDecoder {
+    private let handle: OpaquePointer
 
-    private var buffer = Data()
-    private var readOffset = 0
-    private var fault: Error?
+    public init() {
+        guard let handle = slopdesk_drop_decoder_new() else {
+            preconditionFailure("the drop splitter could not be built")
+        }
+        self.handle = handle
+    }
 
-    public init() {}
+    deinit { slopdesk_drop_decoder_free(handle) }
 
     /// Appends a freshly received chunk. A no-op once poisoned (the buffer was cleared at the fault,
     /// so a peer holding the socket open cannot grow it without bound).
-    public mutating func append(_ data: Data) {
-        guard fault == nil else { return }
-        buffer.append(data)
+    public func append(_ data: Data) {
+        data.spanning { bytes, length in
+            slopdesk_drop_decoder_append(handle, bytes?.assumingMemoryBound(to: UInt8.self), length)
+        }
     }
 
     /// Test-only: buffered byte count — asserts a poisoned decoder cannot be grown further.
-    var bufferedByteCountForTesting: Int { buffer.count }
+    var bufferedByteCountForTesting: Int { slopdesk_drop_decoder_buffered(handle) }
 
-    /// Returns the next complete message, or `nil` if a full frame is not yet buffered.
+    /// Returns the next complete reply, or `nil` if a full frame is not yet buffered.
+    ///
+    /// The arena is sized by what is BUFFERED: a string inside the next frame cannot be longer than
+    /// the bytes already held, so one call always suffices and there is no probing round trip.
     ///
     /// - Throws: ``FileTransferFrameDecoderError/frameTooLarge(_:)`` if a length prefix exceeds
     ///   ``FileTransferProtocolConstants/maxFramePayloadLength``, or any ``FileTransferCodec/DecodeError``
     ///   from a malformed payload.
-    public mutating func nextMessage() throws -> FileTransferMessage? {
-        if let fault { throw fault }
-
-        let available = buffer.count - readOffset
-        guard available >= Self.prefixLength else {
-            compactConsumed()
-            return nil
+    public func nextReply() throws -> FileTransferReply? {
+        let buffered = slopdesk_drop_decoder_buffered(handle)
+        return try withUnsafeTemporaryAllocation(of: UInt8.self, capacity: Swift.max(buffered, 1)) { arena in
+            var record = SlopDeskDropReply()
+            let verdict = slopdesk_drop_decoder_next(handle, &record, arena.baseAddress, arena.count)
+            switch verdict {
+            case SLOPDESK_DROP_PENDING: return nil
+            case SLOPDESK_DROP_OK: return FileTransferCodec.reply(record, UnsafeRawBufferPointer(arena))
+            default: throw FileTransferCodec.decodeError(verdict, record.detail)
+            }
         }
-
-        let payloadLength = Int(readPrefix())
-        guard payloadLength <= FileTransferProtocolConstants.maxFramePayloadLength else {
-            throw poison(FileTransferFrameDecoderError.frameTooLarge(payloadLength))
-        }
-
-        let frameLength = Self.prefixLength + payloadLength
-        guard available >= frameLength else {
-            compactConsumed()
-            return nil
-        }
-
-        let base = buffer.startIndex + readOffset
-        let payloadStart = base + Self.prefixLength
-        let payload = Data(buffer[payloadStart..<base + frameLength])
-        readOffset += frameLength
-        if readOffset >= Self.compactionThreshold { compactConsumed() }
-
-        do {
-            return try FileTransferCodec.decodePayload(payload)
-        } catch {
-            throw poison(error)
-        }
-    }
-
-    private mutating func poison(_ error: Error) -> Error {
-        fault = error
-        buffer.removeAll(keepingCapacity: false)
-        readOffset = 0
-        return error
-    }
-
-    private mutating func compactConsumed() {
-        guard readOffset > 0 else { return }
-        buffer.removeSubrange(buffer.startIndex..<buffer.startIndex + readOffset)
-        readOffset = 0
-    }
-
-    private func readPrefix() -> UInt32 {
-        let base = buffer.startIndex + readOffset
-        var value: UInt32 = 0
-        for i in 0..<Self.prefixLength {
-            value = (value << 8) | UInt32(buffer[base + i])
-        }
-        return value
     }
 }
 

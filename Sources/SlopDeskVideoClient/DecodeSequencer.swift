@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import SlopDeskVideoProtocol
 
 /// IN-ORDER decode admission — closes the `frontier = N−2` failure class.
@@ -23,122 +24,79 @@ import SlopDeskVideoProtocol
 /// Worst-case added hold on the unhappy path ≈ `maxGap` frame intervals (~100 ms @60fps); the
 /// happy path (in-order completions, the overwhelming norm) releases immediately, zero latency.
 ///
-/// Pure value type — wrap-aware (`UInt32.distanceWrapped`), no clock, no transport; headlessly
-/// unit-testable.
+/// The law is `rust/slopdesk-video`'s `decode_admission`; this is its face, and the split is the
+/// point: the ordering law never reads a compressed byte, so what crosses is frameIDs — the two
+/// outstanding SETS travel with the state, and each fold answers with the ids to RELEASE, in
+/// order, and the ids a keyframe made obsolete. The AVCC payloads stay on this side, in a bag
+/// keyed by id, so no compressed frame is ever copied through the door. Honour the answers in the
+/// order the door gives them: release first, forget second (see `docs/55-ffi-boundary.md` §4b).
 public struct DecodeSequencer: Sendable {
-    /// The next frameID the decoder should see (nil until the first release).
-    public private(set) var nextExpected: UInt32?
-    /// Completed frames waiting for an older gap to resolve, keyed by frameID.
-    private var held: [UInt32: ReassembledFrame] = [:]
-    /// FrameIDs declared lost while NEWER than the expectation (out-of-order loss declarations).
-    private var lostAhead: Set<UInt32> = []
-
-    /// Overflow valves (see header). Held-count and id-span caps both trip the flush.
-    /// (Internal read: lets wiring tests verify the configured patience without behaviour probes.)
-    let maxHeld: Int
-    let maxGap: Int
+    /// The law's fixed numbers, resolved once. Nothing here is state — no fold moves one.
+    private static let constants = slopdesk_decode_sequencer_constants()
 
     /// Stock valve values, exposed so wiring code (e.g. the NACK-grace floor in
     /// ``SlopDeskVideoClientSession``) can derive from them instead of duplicating magic numbers.
     /// `defaultMaxHeld` is a held-frame COUNT; `defaultMaxGap` is a frameID SPAN past the expectation.
-    public static let defaultMaxHeld = 4
-    public static let defaultMaxGap = 6
+    public static var defaultMaxHeld: Int { constants.default_max_held }
+    public static var defaultMaxGap: Int { Int(constants.default_max_gap) }
 
-    public init(maxHeld: Int = defaultMaxHeld, maxGap: Int = defaultMaxGap) {
-        self.maxHeld = max(1, maxHeld)
-        self.maxGap = max(1, maxGap)
+    private var record: SlopDeskDecodeSequencer
+    /// The payloads the law does not read, kept by the id it does. Held frames live here until the
+    /// door releases or forgets them, so the bag is bounded by ``maxHeld`` exactly as the law is.
+    private var frames: [UInt32: ReassembledFrame] = [:]
+
+    public init(maxHeld: Int = Self.defaultMaxHeld, maxGap: Int = Self.defaultMaxGap) {
+        record = slopdesk_decode_sequencer_new(maxHeld, Int32(clamping: maxGap))
     }
+
+    /// The next frameID the decoder should see (nil until the first release).
+    public var nextExpected: UInt32? { record.has_next_expected ? record.next_expected : nil }
+
+    /// Overflow valves (see header). Held-count and id-span caps both trip the flush; each is
+    /// floored so neither can be disabled, and capped at the band the crossing's capacity is proved
+    /// against. (Internal read: lets wiring tests verify the configured patience without behaviour
+    /// probes.)
+    var maxHeld: Int { record.max_held }
+    var maxGap: Int { Int(record.max_gap) }
 
     /// Folds one reassembler completion. Returns the frames now releasable to the decoder, in
     /// frameID order (possibly empty — the frame was held; possibly several — it closed a gap).
     public mutating func noteCompleted(_ frame: ReassembledFrame) -> [ReassembledFrame] {
-        // First frame of the session anchors the expectation.
-        guard let expected = nextExpected else {
-            nextExpected = frame.frameID &+ 1
-            return [frame]
+        frames[frame.frameID] = frame
+        let step = withUnsafePointer(to: record) {
+            slopdesk_decode_sequencer_note_completed($0, frame.frameID, frame.keyframe)
         }
-        if frame.keyframe {
-            // Keyframes reference nothing — release NOW. Held frames older than it are pre-IDR
-            // content behind a known gap: obsolete (the keyframe repaints everything) and very
-            // likely undecodable — drop them. The expectation jumps past the keyframe unless it
-            // was itself a stale straggler (kfDup duplicates are `.stale` upstream, but be safe).
-            if frame.frameID.distanceWrapped(from: expected) >= 0 {
-                held = held.filter { $0.key.distanceWrapped(from: frame.frameID) > 0 }
-                lostAhead = lostAhead.filter { $0.distanceWrapped(from: frame.frameID) > 0 }
-                nextExpected = frame.frameID &+ 1
-                return [frame] + drainContiguous()
-            }
-            return [frame]
-        }
-        let dist = frame.frameID.distanceWrapped(from: expected)
-        if dist < 0 {
-            // Older than the expectation (late straggler the reassembler somehow completed):
-            // release immediately — the gate/decoder decide; the expectation never regresses.
-            return [frame]
-        }
-        if dist == 0 {
-            nextExpected = expected &+ 1
-            return [frame] + drainContiguous()
-        }
-        // Ahead of a gap: hold, then check the overflow valves.
-        held[frame.frameID] = frame
-        if held.count > maxHeld || dist > Int64(maxGap) {
-            return flushAll()
-        }
-        return []
+        return harvest(step)
     }
 
     /// Folds one reassembler loss declaration: the hole at `frameID` will never complete — skip
     /// it. Returns frames released by the gap closing (in order).
     public mutating func noteLost(frameID: UInt32) -> [ReassembledFrame] {
-        guard let expected = nextExpected else { return [] }
-        let dist = frameID.distanceWrapped(from: expected)
-        if dist < 0 { return [] } // already behind the expectation
-        if dist == 0 {
-            nextExpected = expected &+ 1
-            return drainContiguous()
+        let step = withUnsafePointer(to: record) {
+            slopdesk_decode_sequencer_note_lost($0, frameID)
         }
-        lostAhead.insert(frameID)
-        // A loss can also trip the span valve (the gap is now known-unfillable up to it).
-        if lostAhead.count + held.count > maxHeld + maxGap { return flushAll() }
-        return []
+        return harvest(step)
     }
 
-    /// Releases the contiguous run now available at the expectation: held frames release,
-    /// declared-lost ids are skipped, the first true hole stops the run.
-    private mutating func drainContiguous() -> [ReassembledFrame] {
-        var out: [ReassembledFrame] = []
-        while let expected = nextExpected {
-            if let f = held.removeValue(forKey: expected) {
-                out.append(f)
-                nextExpected = expected &+ 1
-            } else if lostAhead.remove(expected) != nil {
-                nextExpected = expected &+ 1
-            } else {
-                break
-            }
+    /// Takes one fold's answers: release first, then forget. An id can be in BOTH lists exactly
+    /// once — a duplicate keyframe that was already held releases as the new arrival and drops as
+    /// the held copy — and in that order the removal is the no-op it should be.
+    private mutating func harvest(_ step: SlopDeskDecodeSequencerStep) -> [ReassembledFrame] {
+        record = step.sequencer
+        let released = Self.ids(step.released, step.released_len).compactMap {
+            frames.removeValue(forKey: $0)
         }
-        return out
+        for obsolete in Self.ids(step.dropped, step.dropped_len) {
+            frames.removeValue(forKey: obsolete)
+        }
+        return released
     }
 
-    /// Overflow valve: give up on the gap — release EVERYTHING held in ascending frameID order
-    /// (downstream gate/VT handle the consequences, exactly the pre-sequencer behaviour) and jump
-    /// the expectation past it all.
-    private mutating func flushAll() -> [ReassembledFrame] {
-        let out = held.values.sorted { $0.frameID.distanceWrapped(from: $1.frameID) < 0 }
-        if let last = out.last {
-            let pastHeld = last.frameID &+ 1
-            let pastLost = lostAhead.max(by: { $0.distanceWrapped(from: $1) < 0 }).map { $0 &+ 1 }
-            if let pastLost, pastLost.distanceWrapped(from: pastHeld) > 0 {
-                nextExpected = pastLost
-            } else {
-                nextExpected = pastHeld
-            }
-        } else if let maxLost = lostAhead.max(by: { $0.distanceWrapped(from: $1) < 0 }) {
-            nextExpected = maxLost &+ 1
+    /// The live prefix of one of the door's id arrays. A C array is a TUPLE over here, so the only
+    /// way to read one is through its own storage.
+    private static func ids(_ carried: some Any, _ count: Int) -> [UInt32] {
+        withUnsafeBytes(of: carried) { raw in
+            Array(raw.bindMemory(to: UInt32.self).prefix(count))
         }
-        held.removeAll(keepingCapacity: true)
-        lostAhead.removeAll(keepingCapacity: true)
-        return out
     }
 }

@@ -1,5 +1,4 @@
 import Foundation
-import SlopDeskProtocol
 import SlopDeskWorkspaceModel
 
 // The unread-finish marker, as a COMPARISON rather than a latch (docs/45 §4.5).

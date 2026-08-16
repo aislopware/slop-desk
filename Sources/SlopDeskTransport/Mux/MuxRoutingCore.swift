@@ -1,4 +1,3 @@
-import Foundation
 import SlopDeskProtocol
 
 /// The shared, side-agnostic demux core for ``MuxRouter`` (client) and
@@ -18,7 +17,7 @@ import SlopDeskProtocol
 /// Factored out so the two routers cannot drift apart: the only thing that differs
 /// between client and host is which side allocates ids, not how a frame is demuxed.
 enum MuxRoutingCore {
-    static func route(_ frame: MuxFrame, in table: inout ChannelTable) -> MuxRoutingDecision {
+    static func route(_ frame: MuxFrame, in table: ChannelTable) -> MuxRoutingDecision {
         let id = frame.channelID
 
         switch frame {

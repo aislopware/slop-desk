@@ -1,5 +1,3 @@
-import Foundation
-
 // MARK: - Mouse-over-to-focus decision
 
 /// The PURE, headless decision behind "Mouse-over-to-focus" / `focus-follows-mouse`: given the

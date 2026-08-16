@@ -1,4 +1,0 @@
-module CSlopDeskSIMD {
-    header "slopdesk_simd.h"
-    export *
-}

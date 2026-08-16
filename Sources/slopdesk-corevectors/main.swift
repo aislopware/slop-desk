@@ -3,15 +3,8 @@ import Foundation
 import SlopDeskProtocol // WireMessage, MuxEnvelopeCodec (terminal/PTY path)
 import SlopDeskVideoClient // TrendlineEstimator, OwdLateDetector, PacerDepthPolicy
 import SlopDeskVideoHost // NetworkEstimate, FPSGovernor (pure controllers)
-import SlopDeskWorkspaceModel // WorkspaceStateCodec (the host workspace document, docs/45)
-
-// `UDPReceiveLoopPolicy` is a byte-identical twin exported by BOTH the host and client modules. The
-// host module also exports a TYPE named `SlopDeskVideoHost`, so `SlopDeskVideoHost.UDPReceiveLoopPolicy`
-// resolves to that type, not the module — qualification is impossible; this scoped `import enum` is the
-// only disambiguator to the host copy (pairs with the wholesale import → duplicate_imports, silenced).
-// swiftlint:disable:next duplicate_imports
-import enum SlopDeskVideoHost.UDPReceiveLoopPolicy // host/client twin → host copy
 import SlopDeskVideoProtocol
+import SlopDeskWorkspaceModel // WorkspaceStateCodec (the host workspace document, docs/45)
 
 // slopdesk-corevectors — emits a deterministic JSON corpus of golden vectors from the
 // REAL Swift `SlopDeskVideoProtocol` codecs, using ONLY the public API. The Rust
@@ -1362,29 +1355,24 @@ root["muxEnvelopes"] = [
 // port is proven to reproduce Swift's arithmetic operation-for-operation. CGRectNull (∞,∞,0,0) is
 // dumped as its raw component bits and matched against Rust `VideoRect::NULL`.
 
-/// The four IEEE bit patterns of a `CGRect`'s raw components, under `<prefix>X/Y/W/H` keys.
-func rectBits(_ prefix: String, _ r: CGRect) -> [String: Any] {
-    [
-        prefix + "X": r.origin.x.bitPattern,
-        prefix + "Y": r.origin.y.bitPattern,
-        prefix + "W": r.size.width.bitPattern,
-        prefix + "H": r.size.height.bitPattern,
-    ]
-}
-
-// NOTE: captureUnion / captureRetarget vectors are FROZEN in golden_vectors.json. Their logic
-// lives solely in the Rust core (slopdesk_core::capture_region, reached via the C ABI);
-// golden_parity validates the core against the frozen corpus, so no Swift dumper section is needed.
+// NOTE: captureUnion / captureRetarget vectors are FROZEN in golden_vectors.json — this generator
+// does not import `SlopDeskVideoHost`, so it cannot emit them. `CaptureRegionGoldenVectorTests`
+// replays them through the live `CaptureRegionMath`. (This note used to claim the logic lived in a
+// Rust `slopdesk_core` crate validated by a `golden_parity` test; neither has existed for a long
+// time, and while the note stood the 23 cases were pinned by nothing at all.)
 
 // NOTE: virtualDisplayGeometry / vdOriginToRight / vdChipPixelLimit / vdRefreshRates vectors are
-// FROZEN in golden_vectors.json. Their logic lives solely in the Rust core
-// (slopdesk_core::virtual_display_geometry, reached via the C ABI); golden_parity validates the
-// core against the frozen corpus, so no Swift dumper section is needed here.
+// FROZEN in golden_vectors.json, for the same reason as the capture keys above.
+// `VirtualDisplayGoldenVectorTests` replays them through the live `VirtualDisplayGeometry` /
+// `VirtualDisplayPlanner` — and found `vdRefreshRates` STALE: 6281fae2 added the 2x-oversample
+// mode and, with no reader, the corpus kept recording the superseded law.
 
-// NOTE: windowPlacement / windowFits vectors are FROZEN in golden_vectors.json. Their logic
-// lives solely in the Rust core (`slopdesk_core::window_placement`, reached via the C ABI); the
-// `golden_parity` test still validates the core against the frozen corpus, so no Swift dumper
-// section is needed here.
+// NOTE: windowPlacement / windowFits vectors are FROZEN in golden_vectors.json, for the same
+// reason as the two notes above. They are now replayed TWICE: `WindowPlacementGoldenVectorTests`
+// through the Swift face, and `every_pinned_placement_puts_the_window_where_swift_put_it` in
+// `rust/slopdesk-video/tests/golden_vectors.rs` through `window_placement`, which is where the
+// arithmetic lives. The Swift side keeps only what CoreGraphics defines — the standardized rect
+// extent against the raw size field — so the two replays pin the two halves they each own.
 
 // MARK: SystemDialogDetector.classify / detect
 
@@ -1666,8 +1654,8 @@ root["staticIdrDrive"] = [
 
 // MARK: UDPReceiveLoopPolicy.nextBackoff / shouldRearm
 
-// `UDPReceiveLoopPolicy` resolves to the host copy via the scoped `import enum` at the top of the
-// file (the Rust port unifies the host+client twins into one `udp_receive_loop_policy`).
+// `UDPReceiveLoopPolicy` is ONE type now, in `SlopDeskVideoProtocol`, folding the byte-identical
+// host and client twins the corpus used to have to disambiguate between.
 func udpBackoffRecord(_ n: Int) -> [String: Any] {
     ["n": n, "backoffBits": UDPReceiveLoopPolicy.nextBackoff(consecutiveErrors: n).bitPattern]
 }

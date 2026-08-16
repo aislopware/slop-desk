@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 
 /// The loader that turns a `~/.config/slopdesk/config.toml`
@@ -27,22 +28,28 @@ import Foundation
 /// caller returns `nil` for an unknown action id), the named line is dropped. The `text:` / `csi:` / `esc:` /
 /// `unbind:` directives need NO registry and are handled here unconditionally — that is the core of this loader.
 public enum KeybindConfigLoader {
-    /// The default config path: `~/.config/slopdesk/config.toml`. Honours `XDG_CONFIG_HOME` when set (the
-    /// freedesktop convention the `~/.config` base follows); falls back to `$HOME/.config`. Returns `nil` when
-    /// no home can be resolved.
+    /// The default config path: `~/.config/slopdesk/config.toml`, honouring `XDG_CONFIG_HOME` — the same
+    /// path `slopdesk config path` prints, because it is spelled by the same door.
+    ///
+    /// The one decision that stays here is `nil`: with neither variable set there is no home to build a
+    /// path under, and this loader declines to GUESS one rather than reading a file at an invented
+    /// location. The CLI, which must always print something, supplies a fallback instead.
     public static func defaultConfigURL(environment: [String: String] = ProcessInfo.processInfo.environment)
         -> URL?
     {
-        let base: URL
-        if let xdg = environment["XDG_CONFIG_HOME"], !xdg.isEmpty {
-            base = URL(fileURLWithPath: xdg, isDirectory: true)
-        } else if let home = environment["HOME"], !home.isEmpty {
-            base = URL(fileURLWithPath: home, isDirectory: true).appendingPathComponent(".config", isDirectory: true)
-        } else {
-            return nil
+        let xdg = Array((environment["XDG_CONFIG_HOME"] ?? "").utf8)
+        let home = Array((environment["HOME"] ?? "").utf8)
+        guard !xdg.isEmpty || !home.isEmpty else { return nil }
+        let path = xdg.withUnsafeBufferPointer { config in
+            home.withUnsafeBufferPointer { base in
+                lentText { out, cap in
+                    slopdesk_cli_config_default_path(
+                        config.baseAddress, config.count, base.baseAddress, base.count, nil, 0, out, cap,
+                    )
+                }
+            }
         }
-        return base.appendingPathComponent("slopdesk", isDirectory: true)
-            .appendingPathComponent("config.toml", isDirectory: false)
+        return path.isEmpty ? nil : URL(fileURLWithPath: path)
     }
 
     /// One `keybind = <chord>:<action>` directive whose action is a NAMED registry action (`new_tab`,
@@ -102,7 +109,14 @@ public enum KeybindConfigLoader {
         var textBindings = base.textBindings
         var unbinds = base.unbinds
 
-        for rawLine in configText.split(separator: "\n", omittingEmptySubsequences: false) {
+        // A CRLF pair is ONE Swift `Character`, so splitting on the `"\n"` Character would not find it
+        // and a whole CRLF file would arrive as a single line. Both separators are named, which is
+        // exactly the far side's `split('\n')` over bytes: there, the `\r` stays on the line and the
+        // line reader trims it.
+        for rawLine in configText.split(
+            omittingEmptySubsequences: false,
+            whereSeparator: { $0 == "\n" || $0 == "\r\n" },
+        ) {
             guard let value = keybindValue(in: String(rawLine)) else { continue }
             guard let parsed = KeybindGrammar.parseLine(value) else { continue } // malformed line → drop
             switch parsed.action {
@@ -129,18 +143,19 @@ public enum KeybindConfigLoader {
         )
     }
 
-    /// The `keybind` value on one config line, or `nil` when the line is blank, a comment, or assigns a
-    /// DIFFERENT key. Splits on the FIRST `=` (lenient whitespace), trims, and matches the bare key `keybind`.
-    /// An optional surrounding pair of double quotes on the value is stripped (lenient quoting).
+    /// The `keybind` value on one config line, or `nil` when the line declares none — blank, a comment, a
+    /// `[section]` header, another key, or a `keybind` with nothing after the `=`.
+    ///
+    /// The reading is the far side's, and it is the SAME reading `slopdesk config validate` reports on: a
+    /// second one here could call a line good that this loader then drops, which is the one thing a
+    /// validator must not do. It is also why a CRLF file works — the trim includes the carriage return,
+    /// which the keybind grammar would otherwise refuse as part of the base key.
     private static func keybindValue(in rawLine: String) -> String? {
-        let line = rawLine.trimmingCharacters(in: .whitespaces)
-        guard !line.isEmpty, !line.hasPrefix("#") else { return nil }
-        guard let eq = line.firstIndex(of: "=") else { return nil }
-        let key = line[line.startIndex..<eq].trimmingCharacters(in: .whitespaces)
-        guard key == "keybind" else { return nil } // every other config key is silently ignored
-        var value = line[line.index(after: eq)...].trimmingCharacters(in: .whitespaces)
-        if value.count >= 2, value.hasPrefix("\""), value.hasSuffix("\"") {
-            value = String(value.dropFirst().dropLast())
+        let bytes = Array(rawLine.utf8)
+        let value = bytes.withUnsafeBufferPointer { line in
+            lentText { out, cap in
+                slopdesk_cli_config_keybind_value(line.baseAddress, line.count, out, cap)
+            }
         }
         return value.isEmpty ? nil : value
     }

@@ -14,11 +14,11 @@ import SlopDeskProtocol
 /// 3. `enqueue` resumes and calls its stale `setPaused(true)`.
 ///
 /// Final state: PAUSED, but `outstanding < capacity` — so no future enqueue/dequeue ever fires the
-/// gate again → the `PTYReadLoop` never resumes → the pane's output silently freezes forever.
+/// gate again → the reader never resumes → the pane's output silently freezes forever.
 ///
 /// The fix is to apply the `setPaused` action WHILE STILL HOLDING the queue lock, so the pause state
 /// is always a consistent function of the accounting (last writer under the lock wins, and the winner
-/// is the one whose accounting is current). The `setPaused` sink (``PTYReadLoop/setPaused(_:)`` in
+/// is the one whose accounting is current). The `setPaused` sink (``PaneOutputStream/setPaused(_:)`` in
 /// production) takes its OWN lock, so nesting is fine — the lock order is gate-lock → sink-lock, used
 /// identically by enqueue and dequeue, so there is no inversion.
 ///

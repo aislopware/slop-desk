@@ -69,7 +69,7 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     private let isAgentDetectable: Bool
 
     /// The current Claude status — the HOST's type-27 verdict, trusted verbatim. Drives the
-    /// sidebar/tab/chrome ``AgentStatusDot`` (via ``WorkspaceStore/setAgentStatus(_:for:)``) AND the
+    /// sidebar/tab/chrome agent mark (`StatusDotView`, via ``WorkspaceStore/setAgentStatus(_:for:)``) AND the
     /// dynamic open/close of the inspector second channel. `.none` until the host reports a `claude`.
     /// Observed so the leaf chrome re-renders.
     public private(set) var claudeStatus: ClaudeStatus = .none
@@ -632,5 +632,27 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
             remoteWindow?.close()
             isVideoActive = false
         }
+    }
+}
+
+/// The first connected pane's metadata façade, for the host-GLOBAL asks that have no pane of their
+/// own.
+///
+/// `MetadataClient` is one-per-pane, but several things routed through it are machine-wide — the
+/// agent-hooks install/uninstall card, the editor font push. They have no pane to name, so they take
+/// whichever pane is currently carrying a live channel.
+///
+/// Resolved at CALL time, never cached: a reconnect transparently re-points the seam, and `nil` here
+/// is a real answer (no connected pane) that the caller renders as `.disconnected` rather than a dead
+/// button. Two callers had their own copy of this walk; the store owns the pane handles, so it owns
+/// the walk.
+public extension WorkspaceStore {
+    var firstConnectedMetadataClient: MetadataClient? {
+        for id in tree.activeSession?.allPaneIDs() ?? [] {
+            if let client = (handle(for: id) as? LivePaneSession)?.connection?.activeMetadataClient {
+                return client
+            }
+        }
+        return nil
     }
 }

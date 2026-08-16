@@ -1,4 +1,3 @@
-import Foundation
 import SlopDeskAgentDetect
 
 // MARK: - Per-pane agent-badge gating policy (Claude-only)

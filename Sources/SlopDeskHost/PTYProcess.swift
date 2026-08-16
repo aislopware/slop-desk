@@ -1,79 +1,117 @@
 import Darwin
 import Foundation
-import SlopDeskProtocol
+import SlopDeskSupervisor
 
 /// A child process attached to a pseudo-terminal (PTY) on the macOS host.
 ///
-/// ## Spawn strategy (`DECISIONS.md` / [12] Part B §1.1)
-/// `openpty()` allocates the master/slave pair with an initial cooked-mode `termios`
-/// (+ `IUTF8`) and `winsize`. The child is launched with **`fork()` + `login_tty(slave)` +
-/// `execve`** (NOT `posix_spawn`, NOT `forkpty`). The child runs ONLY raw libc/syscalls
-/// before `execve` — `sigprocmask`, `signal`, `login_tty`, `chdir`, `close`, `execve`,
-/// `_exit` — with NO Swift/ObjC runtime work (no metadata, no conformance lookup, no
-/// allocation/ARC), honouring the `DECISIONS.md` caveat that ruled out `forkpty`
-/// (running the Swift runtime in a forked child is the unsafe part; bare pre-exec syscalls
-/// are not). That window is one function,
-/// ``execInForkedChild(slave:master:cwd:path:argv:envp:sigDefault:)``, whose doc explains why the
-/// rule is not "avoid `for…in`" and whose contents are pinned by disassembly in
-/// `ForkExecWindowContractTests` — a comment cannot hold this line, and did not. In the child:
+/// ## hostd does not fork. It adopts.
+/// This object used to `openpty` + `fork` + `execve` a shell itself. It no longer contains any of
+/// that, and no Swift in this repo does: `slopdesk-superd` — a separate Rust daemon under launchd
+/// — is the only process that forks a pane, and it stays the child's parent for the pane's whole
+/// life (`docs/51`). hostd asks for a shell over an `AF_UNIX` socket and receives a **duplicate**
+/// of the PTY master through `SCM_RIGHTS`.
 ///
-/// - `login_tty(slave)` = `setsid()` + `ioctl(slave, TIOCSCTTY, 0)` (claim ctty) +
-///   `dup2(slave → 0/1/2)` + `close(slave)` — this gives the shell job control + `SIGWINCH`;
-/// - `close(master)` — the child must never hold the master, or its EOF never reaches the
-///   parent's read;
-/// - `execve(path, argv, envp)` — argv/envp are materialised in the PARENT before `fork`.
+/// That one indirection is the entire point of the design. The last close of a PTY master sends
+/// `SIGHUP` to the foreground process group, so whoever holds the only copy holds the shell's life
+/// in their hands. When that was hostd, restarting hostd killed every running `claude`. Now superd
+/// keeps a copy, hostd's copy dies with hostd, and the shell never notices — a hostd rebuild costs
+/// a reconnect, not a session (`DECISIONS.md` 2026-08-11).
 ///
-/// ### Controlling terminal (the load-bearing part — `fork`+`login_tty`, not `posix_spawn`)
-/// A session leader acquires its ctty only by `open()`ing a tty WITHOUT `O_NOCTTY` *after*
-/// `setsid`. A `posix_spawn(POSIX_SPAWN_SETSID)` child only `dup2`s the already-open slave
-/// onto fd 0/1/2 — never `open()`s the tty — so for some programs the slave never becomes the
-/// ctty. Empirically, on macOS 26.5.1 a `posix_spawn`ed **interactive zsh** ends up ctty-less
-/// (`ps` shows `TTY=??`, `TPGID=0`): job control and `SIGWINCH` delivery are both broken, so a
-/// `TIOCSWINSZ` on the master delivers no resize signal and the post-resize prompt blanks with
-/// zero reprint bytes. (`/bin/sh -c …` acquires a ctty on its own, so testing only over `/bin/sh`
-/// would pass even with the interactive-shell path broken — it doesn't exercise the failure.)
-/// `login_tty` claims the ctty explicitly, fixing this. Verified by
-/// `SlopDeskHostTests.testControllingTTY` over **interactive zsh** (`tty </dev/tty` resolves;
-/// `stty size` reflects the openpty winsize; `TIOCSWINSZ` + `SIGWINCH` reflow works).
+/// It also means this file has no fork-window contract to keep. The pre-`execve` discipline — no
+/// allocator, no runtime, no panic between `fork` and `execve` — moved to
+/// `rust/slopdesk-superd/src/spawn.rs`, and its disassembly pin moved with it
+/// (`fork_window_contract.rs`). There is deliberately no second copy here to drift.
 ///
-/// `setBlocking(true)` clears `O_NONBLOCK` on the master FD around spawn — a
-/// non-blocking master breaks the blocking read relay (Happy #301).
+/// ### What is still hostd's
+/// Everything downstream of holding an fd: the read loop, resize, the redraw dance, the teardown
+/// ladder, cwd policy. Signals and the final close route through superd — not because hostd
+/// *cannot* `kill(2)` a non-child (it can), but so superd's record of the pane stays true, and so
+/// "hostd went away" and "the user closed the pane" never look the same.
 ///
-/// The relay (PTY ⇄ transport) is no-buffer with a `USER_INTERACTIVE` QoS read loop
-/// (no intermediate ring buffer — the NoMachine NX lesson); that lives in
-/// ``MuxChannelSession`` (the ``PTYReadLoop`` it owns).
+/// The relay (PTY ⇄ transport) is no-buffer with a `USER_INTERACTIVE` QoS read loop (no
+/// intermediate ring buffer — the NoMachine NX lesson); that lives in ``MuxChannelSession`` (the
+/// ``PaneOutputStream`` it owns).
 ///
-/// `masterFD` / `pid` are immutable-after-spawn and safe to share; the only mutable state
-/// is the one-shot exit plumbing, guarded by an `NSLock`.
+/// `masterFD` / `pid` are immutable-after-adopt and safe to share; the only mutable state is the
+/// one-shot exit plumbing, guarded by an `NSLock`.
 public final class PTYProcess: @unchecked Sendable {
     /// Master side of the PTY (host reads child output / writes child input here).
-    /// `-1` until ``spawn(_:arguments:environment:)`` succeeds.
+    /// `-1` until ``spawn(_:arguments:environment:argv0:cwd:cols:rows:paneID:sessionID:)`` succeeds.
+    ///
+    /// A duplicate of superd's, installed by the kernel out of an `SCM_RIGHTS` message. Closing it
+    /// does not hang up the shell; superd still holds the original.
     public private(set) var masterFD: Int32 = -1
 
-    /// PID of the spawned child, or `-1` before spawn.
+    /// PID of the child, or `-1` before spawn. Valid to `kill`, never to `waitpid` — this process
+    /// is not its parent, and only superd can reap it.
     public private(set) var pid: pid_t = -1
 
-    /// One-shot exit plumbing: the reaped exit code and any continuation awaiting it.
+    /// The pane identity superd files this child under. Every later verb quotes it.
+    public private(set) var paneID: String?
+    /// When superd forked this pane, in unix seconds — the identity of the pane LIFE, as opposed to
+    /// of the session. `0` for a pane that was never spawned or adopted.
+    ///
+    /// Stamped onto the journal's resume sidecar, because an offset into a pane's output stream is
+    /// only meaningful for the fork that produced it.
+    public private(set) var paneSpawnedAt: Int64 = 0
+
+    /// Whether ``spawn(_:arguments:environment:argv0:cwd:cols:rows:paneID:sessionID:)`` ended up
+    /// TAKING OVER an existing pane instead of forking one.
+    ///
+    /// superd refuses a duplicate pane id, and that refusal is not always a mistake: it can mean the
+    /// shell under that id is still running, left behind by a hostd that relinquished it and never
+    /// adopted it back (adoption off, or it failed for this one pane). `spawn` adopts it rather than
+    /// hand the user a permanently dead tab — and the caller has to know, because a pane with a
+    /// history needs a resume offset, not the 0 that is right for a fresh fork.
+    public private(set) var tookOverASurvivor = false
+
+    /// One-shot exit plumbing: the exit code superd reported and any continuation awaiting it.
     private let exitLock = NSLock()
     private var exitCode: Int32?
     private var exitWaiters: [CheckedContinuation<Int32, Never>] = []
     private var reaped = false
 
-    public init() {}
+    /// The supervisor this pane belongs to. Held for the pane's whole life: signals, resizes and
+    /// the final release all go through it.
+    private let supervisor: SupervisorClient
+
+    public init(supervisor: SupervisorClient) {
+        self.supervisor = supervisor
+    }
 
     // MARK: Spawn
 
-    /// Allocates a PTY and spawns `executable` as a session leader attached to it.
+    /// Asks superd for a shell on a fresh PTY and adopts the master it sends back.
     ///
     /// - Parameters:
     ///   - executable: absolute path to the program (e.g. the user's `$SHELL`).
     ///   - arguments: argv (excluding argv[0]; pass `argv0` to override argv[0],
     ///     e.g. `-zsh` for a login shell).
     ///   - environment: full environment for the child. Pass a curated env (the caller owns
-    ///     `TERM=xterm-ghostty`, `CLAUDE_CODE_NO_FLICKER=1`, etc.).
+    ///     `TERM=xterm-ghostty`, `CLAUDE_CODE_NO_FLICKER=1`, etc.). superd overlays its own stable
+    ///     socket paths over whatever this says about them, and passes the rest through untouched —
+    ///     which is why the curated env can keep changing without superd needing a rebuild.
     ///   - argv0: the value for `argv[0]`. Defaults to `executable`. A login shell uses
     ///     a leading `-` (e.g. `-zsh`).
     ///   - cols/rows: initial winsize in character cells.
+    ///   - paneID: the identity superd files this pane under, and the value the child sees as
+    ///     `SLOPDESK_PANE_ID`. It must be recoverable by a *later* hostd, so it is derived from
+    ///     durable things (`docs/51` §5), never from a connection's address.
+    ///   - sessionID: opaque to superd; hostd's key back to the scrollback journal after a restart.
+    ///   - owner: which hostd this pane belongs to (``HostServer/supervisorOwnerIdentity``). Opaque
+    ///     to superd, which stores it and hands it back in `list` — it is how a second daemon on the
+    ///     same machine tells its own predecessor's surviving panes from a stranger's live ones.
+    ///   - shellIntegration: ask superd to install the generated `ZDOTDIR` shim (resize reprint,
+    ///     OSC 133 marks, cursor shape) for this child. Only an interactive login shell wants it —
+    ///     a `$SHELL -c …` pane has no prompt cycles for prompt machinery to hook. superd decides
+    ///     whether it is possible and owns the generated directory for the child's whole life.
+    ///
+    ///     It also decides whether the pane is SNIFFED: a shell with prompt machinery is the only
+    ///     thing that talks out of band, so a pane that does not ask for the shim is not scanned
+    ///     and never receives a sniff frame (`docs/51` §6.4).
+    ///   - blocks: ask superd to segment this pane's output into command blocks and hold each
+    ///     finished command's captured bytes. `false` — the operator's `SLOPDESK_BLOCKS=0` — means
+    ///     no segmenter touches the stream and no `0x05` frame ever arrives (`docs/51` §6.14).
     public func spawn(
         _ executable: String,
         arguments: [String] = [],
@@ -82,171 +120,147 @@ public final class PTYProcess: @unchecked Sendable {
         cwd: String? = nil,
         cols: UInt16 = 80,
         rows: UInt16 = 24,
+        paneID: String,
+        sessionID: String,
+        owner: String? = nil,
+        shellIntegration: Bool = false,
+        blocks: Bool = false,
+        journal: JournalSpawnRequest? = nil,
     ) throws {
         precondition(masterFD == -1, "PTYProcess.spawn called twice")
 
-        var master: Int32 = -1
-        var slave: Int32 = -1
-
-        // Sane cooked-mode termios: echo on, canonical mode, signals, CR/NL mapping,
-        // plus IUTF8 (correct backspace-over-multibyte; [12] §1.4). The shell flips to
-        // raw mode itself when it needs to (readline / TUIs).
-        var term = termios()
-        term.c_iflag = tcflag_t(ICRNL | IXON | IXANY | IMAXBEL | BRKINT | IUTF8)
-        term.c_oflag = tcflag_t(OPOST | ONLCR)
-        term.c_cflag = tcflag_t(CREAD | CS8 | HUPCL)
-        term.c_lflag = tcflag_t(ICANON | ISIG | IEXTEN | ECHO | ECHOE | ECHOK | ECHOKE | ECHOCTL)
-        term.c_ispeed = speed_t(B38400)
-        term.c_ospeed = speed_t(B38400)
-        setControlChars(&term)
-
-        var ws = winsize(ws_row: rows, ws_col: cols, ws_xpixel: 0, ws_ypixel: 0)
-
-        guard openpty(&master, &slave, nil, &term, &ws) == 0 else {
-            throw HostError.posix(errno)
-        }
-
-        // setBlocking(true): clear O_NONBLOCK on the master before spawn (Happy #301).
-        // The slave is already open (openpty opened it), so this never hits the
-        // posix_openpt EINVAL caveat from [12] §1.1.
-        Self.setBlocking(master)
-
-        // --- Build ALL C strings AND the argv/envp VECTORS in the PARENT, before fork() ---
-        // The forked child must do NO Swift-runtime work (no allocation/ARC) before execve, so
-        // path/argv/envp are fully materialised here — and "materialised" has to mean raw `char *`,
-        // not a Swift `[UnsafeMutablePointer<CChar>?]`. Handing an ARRAY to `execve` looks like a C
-        // call and is not one: the array-to-pointer conversion is a `swift_bridgeObjectRetain`, a
-        // generic `_ArrayBuffer.firstElementAddressIfContiguous`, an `_ArrayBuffer.owner` and a
-        // matching release — and its non-contiguous fallback instantiates `ContiguousArray` metadata
-        // FROM A MANGLED NAME and allocates. All of that would run in the child, all of it behind
-        // runtime locks (see ``execInForkedChild(slave:master:cwd:path:argv:envp:sigDefault:)``).
-        // These vectors are NULL-terminated and already have the exact type `execve` takes, so the
-        // child's exec is a plain C call over pointers it was handed. Freed in the parent's defer.
-        let argv0Value = argv0 ?? executable
-        let argvStrings = [argv0Value] + arguments
-        let argvVector = Self.makeArgumentVector(argvStrings)
-
-        // envp: "KEY=VALUE" entries.
-        let envStrings = environment.map { "\($0.key)=\($0.value)" }
-        let envpVector = Self.makeArgumentVector(envStrings)
-
-        let pathDup = strdup(executable)
-        // Validate the requested cwd HOST-SIDE before fork: a stale/deleted/foreign/`~`-style path
-        // must not reach the child's `chdir` and abort it pre-`execve` (`_exit 127` = dead pane). An
-        // invalid request falls back to the user's HOME; an unusable HOME resolves to nil (no chdir).
+        // Validate the requested cwd HOST-SIDE, before the request goes out: the child's `chdir`
+        // runs pre-`execve` and is best-effort, so a stale/deleted/foreign/`~`-style path would
+        // silently leave the pane in superd's cwd rather than the user's. Repairing it here is
+        // policy, and policy is hostd's — superd is told a directory, not asked to choose one.
         let resolvedCwd = Self.resolveCwd(cwd, home: environment["HOME"])
-        let cwdDup: UnsafeMutablePointer<CChar>? = resolvedCwd.flatMap { strdup($0) }
 
-        defer {
-            Self.freeArgumentVector(argvVector, count: argvStrings.count)
-            Self.freeArgumentVector(envpVector, count: envStrings.count)
-            free(pathDup)
-            if let cwdDup { free(cwdDup) }
+        // Registered BEFORE the request: a child that dies instantly (bad executable, `exit 1`) can
+        // be reaped and broadcast while this thread is still inside `spawn`, and a dropped `exited`
+        // leaves a dead pane looking alive until someone types into it.
+        supervisor.observeExit(ofPane: paneID) { [weak self] code in self?.completeExit(code: code) }
+
+        let spawned: (record: PaneRecord, masterFD: Int32)
+        do {
+            spawned = try supervisor.spawn(SpawnRequest(
+                paneID: paneID,
+                sessionID: sessionID,
+                executable: executable,
+                argv0: argv0,
+                arguments: arguments,
+                environment: environment,
+                cwd: resolvedCwd,
+                rows: rows,
+                cols: cols,
+                owner: owner,
+                shellIntegration: shellIntegration,
+                // The bridge value crosses VERBATIM. superd owns both the parse and the built-in
+                // slow-command list, so hostd resolving it here would put the second copy of that
+                // list back — unset, cleared and set are three different answers and all three are
+                // expressible as they stand (`AutoProgressMatcher` is gone; see `docs/DECISIONS`).
+                blocks: blocks
+                    ? BlocksRequest(autoProgressCommands: HostEnvironment.autoProgressCommandsRaw())
+                    : nil,
+                // Where superd keeps this pane's transcript, and how much of it. Present only when
+                // disk scrollback is on for a re-presentable session id — superd writes nothing
+                // when it is absent. hostd never writes the file itself: superd numbers the stream
+                // it would have to number bytes against (`docs/51` §6.8).
+                journal: journal,
+            ))
+        } catch {
+            // superd refuses a duplicate pane id, and it is right to: two forks under one id would
+            // orphan the first child. But a duplicate here does not mean a mistake — it means the
+            // pane this id names is STILL RUNNING, left behind by a hostd that relinquished it and
+            // never adopted it back (adoption is off, or it failed for this one pane). Refusing
+            // would hand the user a dead tab per surviving shell, permanently, and the only cure
+            // would be killing superd — which is killing their agents.
+            //
+            // So the surviving pane is taken over instead. Not blindly: a pane another live hostd
+            // is ATTACHED to is that daemon's, and this rethrows rather than steal it.
+            if let survivor = try? adoptSurvivor(paneID: paneID) {
+                adopt(
+                    masterFD: survivor.masterFD, pid: survivor.record.pid, paneID: paneID,
+                    spawnedAt: survivor.record.spawnedAt,
+                )
+                // Said out loud, because the caller's next decision depends on it: what came back
+                // is a shell with a HISTORY, not the fresh fork it asked for, and its output stream
+                // must not be subscribed from offset 0 on top of a restored transcript.
+                tookOverASurvivor = true
+                return
+            }
+            supervisor.forgetExitHandler(ofPane: paneID)
+            throw error
         }
 
-        // `SIG_DFL` is not a constant — the Darwin overlay exports it as a COMPUTED PROPERTY, so
-        // reading it is a cross-module getter call. Read it once here, in the parent, and hand the
-        // child the resulting value; the reset loop below then touches nothing but `signal(2)`.
-        let sigDefault: sig_t? = SIG_DFL
-
-        // fork(), NOT posix_spawn: posix_spawn cannot run TIOCSCTTY in the child, and a
-        // POSIX_SPAWN_SETSID child that only dup2s the slave does not reliably acquire the ctty
-        // (interactive zsh ends up ctty-less → no SIGWINCH; see the type doc). The child below
-        // claims the ctty explicitly via login_tty.
-        //
-        // Swift's Darwin overlay marks `fork()` unavailable, so we resolve the raw libc symbol
-        // via `dlsym` and call it through a C function pointer — the literal `fork(2)`, same
-        // single-threaded-child semantics. Safe here because the child does NO Swift-runtime work
-        // before `execve` — ``execInForkedChild(slave:master:cwd:path:argv:envp:sigDefault:)`` is
-        // seven syscalls and a disassembly test that says so. The `DECISIONS.md` forkpty caveat is
-        // about running the Swift/ObjC runtime in the child, which is the thing being avoided.
-        let childPID = Self.rawFork()
-        if childPID == 0 {
-            // ===== CHILD ===== every argument is a raw pointer or an Int32 the PARENT already
-            // computed, so this call site itself converts nothing. The window's whole contents are
-            // one function, which is what `ForkExecWindowContractTests` disassembles.
-            execInForkedChild(
-                slave: slave,
-                master: master,
-                cwd: cwdDup,
-                path: pathDup,
-                argv: argvVector,
-                envp: envpVector,
-                sigDefault: sigDefault,
-            )
-        }
-
-        // Capture fork()'s errno IMMEDIATELY, before any other syscall can overwrite it. The
-        // `close(slave)` below sets errno on ITS OWN failure (EINTR/EBADF), which would clobber the
-        // fork() errno we report on a fork() failure — so read it here, at the first opportunity.
-        let forkErrno = errno
-
-        // ===== PARENT =====
-        // Parent uses only the master; close the slave unconditionally.
-        close(slave)
-
-        guard childPID > 0 else {
-            // fork() failed: reclaim the master and report fork()'s errno (captured pre-close above).
-            close(master)
-            throw HostError.posix(forkErrno)
-        }
-
-        masterFD = master
-        pid = childPID
-        startReaper(pid: childPID)
+        adopt(
+            masterFD: spawned.masterFD, pid: spawned.record.pid, paneID: paneID,
+            spawnedAt: spawned.record.spawnedAt,
+        )
     }
 
-    // MARK: argv / envp vectors
-
-    /// A NULL-terminated `char *` vector of `strdup`ed copies — the exact shape `execve` takes,
-    /// built in the PARENT so the forked child hands the syscall a pointer it was given rather than
-    /// converting a Swift `Array` (which is runtime work; see ``execInForkedChild(slave:master:cwd:path:argv:envp:sigDefault:)``).
-    /// Paired with ``freeArgumentVector(_:count:)``.
-    private static func makeArgumentVector(
-        _ strings: [String],
-    ) -> UnsafeMutablePointer<UnsafeMutablePointer<CChar>?> {
-        let vector = UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>.allocate(capacity: strings.count + 1)
-        // Every slot NULL first: a `strdup` that fails under memory pressure then truncates the
-        // vector instead of leaving one uninitialised slot for `execve` to walk into.
-        vector.initialize(repeating: nil, count: strings.count + 1)
-        for (index, string) in strings.enumerated() { vector[index] = strdup(string) }
-        return vector
-    }
-
-    /// Frees a vector from ``makeArgumentVector(_:)`` — the `count` strings and the vector itself.
-    /// (`free(nil)` is a no-op, so a truncated vector frees cleanly too.)
-    private static func freeArgumentVector(
-        _ vector: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>,
-        count: Int,
-    ) {
-        for index in 0..<count { free(vector[index]) }
-        vector.deallocate()
-    }
-
-    /// Sets the standard control characters (VINTR, VEOF, VERASE, …) to sane defaults
-    /// so cooked-mode editing behaves like a normal login terminal.
-    private func setControlChars(_ term: inout termios) {
-        withUnsafeMutableBytes(of: &term.c_cc) { raw in
-            let cc = raw.bindMemory(to: cc_t.self)
-            func set(_ index: Int32, _ value: Int32) { cc[Int(index)] = cc_t(value) }
-            set(VEOF, 4) // ^D
-            set(VEOL, 0xFF)
-            set(VEOL2, 0xFF)
-            set(VERASE, 0x7F) // DEL
-            set(VWERASE, 23) // ^W
-            set(VKILL, 21) // ^U
-            set(VREPRINT, 18) // ^R
-            set(VINTR, 3) // ^C
-            set(VQUIT, 28) // ^\
-            set(VSUSP, 26) // ^Z
-            set(VDSUSP, 25) // ^Y
-            set(VSTART, 17) // ^Q
-            set(VSTOP, 19) // ^S
-            set(VLNEXT, 22) // ^V
-            set(VDISCARD, 15) // ^O
-            set(VMIN, 1)
-            set(VTIME, 0)
+    /// Takes over the unattached pane already filed under `paneID`, or throws.
+    ///
+    /// The `attached` check is what keeps this from being a second daemon's pane theft: it means
+    /// some hostd holds a duplicate of that master right now, which after the rekey to a bare
+    /// session UUID is the only way to tell one daemon's panes from another's.
+    private func adoptSurvivor(paneID: String) throws -> (record: PaneRecord, masterFD: Int32) {
+        let records = try supervisor.list()
+        guard let existing = records.first(where: { $0.paneID == paneID }), !existing.attached else {
+            throw ClientError.paneHeldElsewhere(paneID)
         }
+        return try supervisor.adopt(paneID: paneID)
+    }
+
+    /// Why a takeover was not possible. Deliberately local: it never leaves ``spawn``, whose own
+    /// error — superd's refusal — is the one a caller sees.
+    private enum ClientError: Error {
+        case paneHeldElsewhere(String)
+    }
+
+    /// Takes ownership of a master fd superd handed over, and of the child on the other end of it.
+    ///
+    /// Two callers: ``spawn(_:arguments:environment:argv0:cwd:cols:rows:paneID:sessionID:)``, and
+    /// the restart path — a fresh hostd that `adopt`s a pane an earlier hostd left running. The
+    /// second is why this is separate: from here down, a pane that was spawned an hour ago by a
+    /// binary that no longer exists is indistinguishable from one spawned a moment ago.
+    public func adopt(masterFD: Int32, pid: pid_t, paneID: String, spawnedAt: Int64 = 0) {
+        precondition(self.masterFD == -1, "PTYProcess adopted twice")
+        self.masterFD = masterFD
+        self.pid = pid
+        self.paneID = paneID
+        paneSpawnedAt = spawnedAt
+        // The exit route, wired here rather than only in `spawn`: an adopted pane's child can die
+        // like any other, and a `PTYProcess` that never hears about it reports a corpse as running
+        // forever. `spawn` registers this itself, EARLIER — before the request, so an instantly
+        // dying child cannot be reaped before anyone is listening — and re-registering here simply
+        // replaces that closure with an identical one.
+        supervisor.observeExit(ofPane: paneID) { [weak self] code in self?.completeExit(code: code) }
+    }
+
+    /// Builds this pane's output stream.
+    ///
+    /// Here rather than at the call site because the pane id and the supervisor client are both
+    /// private to this type, and because there is exactly one correct pairing of them: a stream
+    /// built against the wrong pane id subscribes successfully and delivers another window's bytes.
+    ///
+    /// A pane with no identity yet — never spawned, never adopted — gets a stream that reports EOF
+    /// the moment it starts, which is what the old `PTYReadLoop` did with `masterFD == -1`. That
+    /// shape is load-bearing rather than lenient: most of the host suite wants the `MuxChannelSession`
+    /// OBJECT and never a child, and its control and input planes are not dependents of the output
+    /// path — a `ping` must still be answered by a session whose shell does not exist.
+    @preconcurrency
+    public func makeOutputStream(
+        fromOffset: UInt64 = 0,
+        onChunk: @escaping @Sendable (Data, UInt64, [SniffedEvent], [BlockEvent]) -> Void,
+        onEOF: @escaping @Sendable () -> Void,
+    ) -> PaneOutputStream {
+        PaneOutputStream(
+            supervisor: supervisor,
+            paneID: paneID,
+            fromOffset: fromOffset,
+            onChunk: onChunk,
+            onEOF: onEOF,
+        )
     }
 
     // MARK: resolveCwd
@@ -287,39 +301,6 @@ public final class PTYProcess: @unchecked Sendable {
         return expanded
     }
 
-    // MARK: setBlocking
-
-    /// Clears `O_NONBLOCK` on `fd` so reads/writes block (Happy #301).
-    /// Exposed for wiring and tests.
-    public static func setBlocking(_ fd: Int32) {
-        let flags = fcntl(fd, F_GETFL)
-        if flags >= 0 {
-            _ = fcntl(fd, F_SETFL, flags & ~O_NONBLOCK)
-        }
-    }
-
-    // MARK: rawFork
-
-    /// `fork(2)` resolved at runtime, because Swift's Darwin overlay marks `fork()` *unavailable*
-    /// (it discourages forking from the Swift runtime in general). We need the real syscall for the
-    /// `login_tty` controlling-terminal acquisition (see ``spawn(_:arguments:environment:argv0:cols:rows:)``);
-    /// the child does no Swift-runtime work before `execve`, so this specific use is safe. Resolved once
-    /// via `dlsym(RTLD_DEFAULT, "fork")` and cached. The `static let` is a `swift_once`, which takes a
-    /// lock — it runs on the calling thread BEFORE the fork, so the child never reaches it.
-    private typealias ForkFn = @convention(c) () -> pid_t
-    private static let rawForkFn: ForkFn = {
-        guard let sym = dlsym(UnsafeMutableRawPointer(bitPattern: -2 /* RTLD_DEFAULT */ ), "fork") else {
-            fatalError("PTYProcess: could not resolve fork(2)")
-        }
-        return unsafeBitCast(sym, to: ForkFn.self)
-    }()
-
-    /// `@inline(never)` so the fork itself keeps a name in the binary: `ForkExecWindowContractTests`
-    /// anchors on this call to prove that nothing runs between `fork()` returning 0 and
-    /// ``execInForkedChild(slave:master:cwd:path:argv:envp:sigDefault:)``.
-    @inline(never)
-    private static func rawFork() -> pid_t { rawForkFn() }
-
     // MARK: Resize
 
     /// Applies a terminal size to the PTY via `TIOCSWINSZ` (driven by `resize`). The
@@ -331,10 +312,75 @@ public final class PTYProcess: @unchecked Sendable {
         // TOCTOU). Safe/non-deadlocking: TIOCSWINSZ is a microsecond non-blocking syscall that never
         // re-enters PTYProcess.
         exitLock.lock()
-        defer { exitLock.unlock() }
-        guard masterFD >= 0 else { return }
+        guard masterFD >= 0 else {
+            exitLock.unlock()
+            return
+        }
         var ws = winsize(ws_row: rows, ws_col: cols, ws_xpixel: pxWidth, ws_ypixel: pxHeight)
         _ = ioctl(masterFD, TIOCSWINSZ, &ws)
+        let identity = paneID
+        exitLock.unlock()
+
+        // Tell superd too, so its `PaneRecord` stops being a lie.
+        //
+        // The ioctl above is the only write to the terminal — one writer, hostd's own duplicate, as
+        // `docs/51` §6.9 requires. superd's `resize` verb RECORDS the numbers and touches no
+        // `TIOCSWINSZ`, which is what makes this notification safe to fire and forget: it can land
+        // after the redraw jiggle's shrink without undoing it. What it buys is the record —
+        // superd's spawn-time 24×80 is what `list` reports, and a stale one there is a lie about a
+        // 200×50 pane in every log and every enumeration.
+        guard let identity else { return }
+        supervisor.resize(paneID: identity, rows: rows, cols: cols)
+    }
+
+    /// Retires superd's sniffer title-coalescing anchor for this pane.
+    ///
+    /// Called when a detected agent EXITS. superd dedupes a title against the last one it emitted,
+    /// and the next agent's opening title is very often byte-identical to the one just retired
+    /// (`✳ Claude Code`) — deduped away, the pane simply stays untitled. Fire-and-forget: the anchor
+    /// is an optimisation, so losing the race costs a stale title, not a wrong one.
+    ///
+    /// A no-op for a pane with no identity, which is every session in the suite that never spawns.
+    public func forgetTitleCoalescing() {
+        exitLock.lock()
+        let identity = paneID
+        exitLock.unlock()
+        guard let identity else { return }
+        supervisor.forgetTitleCoalescing(paneID: identity)
+    }
+
+    /// One finished command block's retained output, from superd's ring.
+    ///
+    /// The ring lives there rather than here because hostd's did not survive its own restart: a
+    /// client that clicked a block from before a `make host-restart` got an empty body for output
+    /// superd had never stopped holding (`docs/51` §6.14).
+    ///
+    /// - Returns: `nil` for a pane with no identity or no tap. An EMPTY array is the other answer
+    ///   and a different one: the block aged out of the ring, or never existed.
+    public func blockOutput(index: UInt32) -> [UInt8]? {
+        guard let identity = paneIdentity() else { return nil }
+        return try? supervisor.blockOutput(paneID: identity, index: index)
+    }
+
+    /// Every block superd's tap still knows about this pane, ascending — the reattach backfill.
+    public func blockSnapshot() -> [BlockMetadata]? {
+        guard let identity = paneIdentity() else { return nil }
+        return try? supervisor.blockSnapshot(paneID: identity)
+    }
+
+    /// The agent-control read: recent blocks with their bytes, the running command, and the index
+    /// the next one will close under — one round trip, because the three are only consistent with
+    /// each other if superd read them together.
+    public func blockControl(limit: Int) -> BlocksReply? {
+        guard let identity = paneIdentity() else { return nil }
+        return try? supervisor.blockControl(paneID: identity, limit: limit)
+    }
+
+    /// The pane id under ``exitLock``, which is the TOCTOU discipline every superd call here keeps.
+    private func paneIdentity() -> String? {
+        exitLock.lock()
+        defer { exitLock.unlock() }
+        return paneID
     }
 
     /// The PTY's current window size via `TIOCGWINSZ`, or `nil` on a closed/unspawned master.
@@ -475,15 +521,13 @@ public final class PTYProcess: @unchecked Sendable {
     /// without it, every pane close / daemon stop / eviction silently throws away the user's
     /// typed history. Pinned by `testDestroyPathTeardownPersistsInteractiveZshHistory`.
     public func hangup() {
-        guard pid > 0 else { return }
-        kill(pid, SIGHUP)
+        send(signal: SIGHUP)
     }
 
     /// Sends `SIGTERM` to the child (it is a session leader, so this reaches the group
     /// via the controlling tty's hangup machinery once the master closes too).
     public func terminate() {
-        guard pid > 0 else { return }
-        kill(pid, SIGTERM)
+        send(signal: SIGTERM)
     }
 
     /// Sends `SIGKILL` to the child — the un-ignorable escalation when a `SIGTERM` did not
@@ -494,58 +538,61 @@ public final class PTYProcess: @unchecked Sendable {
     /// child is reaped (`pid` is immutable-after-spawn, but the kernel just drops a signal
     /// to a dead-and-reaped pid).
     public func forceTerminate() {
-        guard pid > 0 else { return }
-        kill(pid, SIGKILL)
+        send(signal: SIGKILL)
     }
 
-    /// Waits (bounded) for the child to be reaped while DRAINING the master — the destroy-path
-    /// sibling of ``waitUntilExited(timeout:step:)``, used between `hangup()` and the `SIGKILL`
-    /// escalation. By that point the `PTYReadLoop` is already stopped, so NOBODY consumes the
-    /// child's pending output — and a zsh caught mid-prompt-redraw sits BLOCKED in
-    /// `tcsetattr(TCSADRAIN)` (zle's `zsetterm`, waiting for the output queue to empty), never
-    /// processes the `SIGHUP`, never persists its history, and rides the `SIGKILL` escalation.
-    /// Consuming (and discarding — the pane is being destroyed) master bytes until the exit
-    /// lands keeps that drain moving, so the shell's hangup save always completes. Same
-    /// `poll()`-gated non-hanging discipline as the read loop.
-    public func waitUntilExitedDrainingMaster(timeout: TimeInterval) -> Bool {
-        // Snapshot the master under `exitLock` (the file's close-TOCTOU discipline) and drain a
-        // private dup(): concurrent double-shutdown is designed-for (the teardown queue is
-        // concurrent and `shutdown()` is only idempotent, not exclusive), so a sibling teardown
-        // can `closeMaster()` mid-drain — the dup stays valid across that close and can never
-        // alias a recycled fd number, where a raw re-read of `masterFD` could steal bytes from
-        // an unrelated fresh pane.
-        exitLock.lock()
-        let fd = masterFD >= 0 ? dup(masterFD) : -1
-        exitLock.unlock()
-        guard fd >= 0 else { return waitUntilExited(timeout: timeout) }
-        defer { close(fd) }
-        // Destroy-only: make the description non-blocking so the drain read can never park.
-        // `poll()`'s POLLIN is ADVISORY here — the stopped-but-still-parked `PTYReadLoop` is a
-        // second reader on the same master and can win the race for the bytes, and a blocking
-        // read() after a stolen POLLIN would wedge this wait past its deadline (and past the
-        // SIGKILL escalation) for a child that survives SIGHUP+SIGTERM and goes quiet. The flag
-        // is shared with that read loop, but this is the destroy path: the loop is already
-        // stopping, and an EAGAIN return just ends it a beat early.
-        _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
-        let deadline = Date().addingTimeInterval(timeout)
-        var buf = [UInt8](repeating: 0, count: 4096)
-        while Date() < deadline {
-            if waitExitCode() != nil { return true }
-            var pfd = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
-            if poll(&pfd, 1, 5) > 0, pfd.revents & Int16(POLLIN) != 0 {
-                _ = buf.withUnsafeMutableBytes { read(fd, $0.baseAddress, $0.count) } // EAGAIN → loop
-            }
+    /// Asks superd to signal the child.
+    ///
+    /// hostd could `kill(2)` it directly — a same-uid process may signal a non-child — and that is
+    /// exactly why this goes the long way instead. superd is the only holder of the pane's true
+    /// state, and a shell that dies from a signal superd never saw is a pane superd still believes
+    /// is alive: it keeps the master fd open and the record in its table until the reaper catches
+    /// up. Routing through the socket keeps the two in step, and costs one `AF_UNIX` round trip
+    /// (~11µs) on a path that only runs at teardown.
+    ///
+    /// Best-effort by design: the child may already be gone, or superd may have restarted. Neither
+    /// is worth failing a teardown over — the ladder above escalates anyway.
+    private func send(signal number: Int32) {
+        guard pid > 0, let paneID else { return }
+        do {
+            try supervisor.signal(paneID: paneID, signal: number)
+        } catch {
+            // Nothing to escalate to: this IS the escalation path.
         }
-        return waitExitCode() != nil
     }
 
-    /// Blocks the CALLER until the child has been reaped (the detached reaper observed its
-    /// exit and recorded a code) or `timeout` elapses, whichever comes first. Synchronous,
-    /// poll-based — ``MuxChannelSession/shutdown()`` is not `async` and so cannot
-    /// `await waitForExit()` inline, but it must still let the parked `read()` drain before
-    /// closing the master. This does NOT itself call `waitpid` (the detached reaper from
-    /// ``startReaper(pid:)`` owns that); it only WAITS for that reaper's result to land,
-    /// polling the one-shot ``waitExitCode()`` peek.
+    /// Waits (bounded) for the child to be reaped, and no longer drains the master itself.
+    ///
+    /// ## What this used to do, and why it stopped
+    /// Between `hangup()` and the `SIGKILL` escalation there used to be nobody reading the master:
+    /// `PTYReadLoop.stop()` had already run. A zsh caught mid-prompt-redraw then sits BLOCKED in
+    /// `tcsetattr(TCSADRAIN)` (zle's `zsetterm`, waiting for the output queue to empty), never
+    /// processes the `SIGHUP`, never persists its history, and rides the `SIGKILL`. So this method
+    /// opened a private `dup()` and consumed-and-discarded bytes until the exit landed, purely to
+    /// keep that queue moving.
+    ///
+    /// superd's pump made the premise false. It drains every pane for the pane's whole life, and
+    /// hostd unsubscribing does not stop it — that is the entire point of the pump. The queue keeps
+    /// moving on its own, so the shell's hangup save completes without help.
+    ///
+    /// Keeping the drain would now be actively wrong rather than merely redundant. It was a SECOND
+    /// reader on the same file description, so it would steal bytes the pump owed to whatever else
+    /// was still subscribed; and it set `O_NONBLOCK` on a description shared with the pump, which
+    /// `SCM_RIGHTS` makes the very same description superd reads.
+    ///
+    /// The name survives the change because the CONTRACT did: callers on the destroy path want a
+    /// bounded wait that does not wedge a shell mid-redraw, and they still get one.
+    @discardableResult
+    public func waitUntilExitedDrainingMaster(timeout: TimeInterval) -> Bool {
+        waitUntilExited(timeout: timeout)
+    }
+
+    /// Blocks the CALLER until superd reports the child exited, or `timeout` elapses, whichever
+    /// comes first. Synchronous, poll-based — ``MuxChannelSession/shutdown()`` is not `async` and
+    /// so cannot `await waitForExit()` inline, but it must still let the parked `read()` drain
+    /// before closing the master. This does NOT itself call `waitpid` (it cannot — see The reaper
+    /// below); it only WAITS for superd's `exited` to land, polling the one-shot
+    /// ``waitExitCode()`` peek.
     ///
     /// - Returns: `true` if the child was observed exited within the window, `false` on
     ///   timeout (caller then escalates to ``forceTerminate()``).
@@ -562,17 +609,22 @@ public final class PTYProcess: @unchecked Sendable {
 
     /// Closes the PTY master fd exactly once and marks it `-1`.
     ///
-    /// On a successful ``spawn(_:arguments:environment:argv0:cols:rows:)`` the master fd
-    /// is held open for the life of the session (the host reads child output / writes
-    /// input through it). It is **not** closed by ``terminate()`` (which only signals the
-    /// child) so the relay can still drain the child's final output before EOF. The owner
+    /// The fd is held open for the life of the session (the host reads child output / writes input
+    /// through it). It is **not** closed by ``terminate()`` (which only signals the child) so the
+    /// relay can still drain the child's final output before EOF. The owner
     /// (``MuxChannelSession/shutdown()``) calls this **after stopping the read loop** so no
-    /// concurrent `read()` can race the close; a `deinit` safety net catches any path
-    /// that forgot. Idempotent.
+    /// concurrent `read()` can race the close; a `deinit` safety net catches any path that forgot.
+    /// Idempotent.
     ///
-    /// Without this the master fd leaked once per spawn — a long-running daemon exhausted
-    /// the default 256-fd soft limit after ~250 sessions and `openpty` began returning
-    /// `EMFILE`.
+    /// Without this the master fd leaked once per pane — a long-running daemon exhausted the
+    /// default 256-fd soft limit after ~250 sessions and `openpty` began returning `EMFILE`.
+    ///
+    /// ## This no longer hangs up the shell
+    /// The last close of a PTY master `SIGHUP`s the foreground group, and this used to BE the last
+    /// close. It is not any more: superd holds the original, and the fd closed here is a duplicate
+    /// the kernel installed out of an `SCM_RIGHTS` message. Ending the pane for good is
+    /// ``release()`` — a separate, explicit act, which is the distinction that lets hostd exit
+    /// without taking the shells with it (`docs/51` §2).
     public func closeMaster() {
         exitLock.lock()
         let fd = masterFD
@@ -581,9 +633,37 @@ public final class PTYProcess: @unchecked Sendable {
         if fd >= 0 { close(fd) }
     }
 
+    /// Ends the pane for good: superd drops its own master fd, and the shell finally gets its
+    /// `SIGHUP`.
+    ///
+    /// The counterpart to ``closeMaster()``, and the line the whole daemon is drawn along. Closing
+    /// hostd's fd means "hostd is done looking at this pane"; this means "this pane is over". Only
+    /// a deliberate close — the user closing a tab, an `exited` already observed — may call it.
+    /// **Never call it on hostd shutdown**: doing so would restore exactly the behaviour superd
+    /// exists to remove, killing every running agent on every rebuild.
+    ///
+    /// - Parameter kill: `false` when the child is already known dead and this is bookkeeping.
+    /// - Returns: whether superd accepted it. `false` means the pane is still out there.
+    @discardableResult
+    public func release(kill: Bool = true) -> Bool {
+        guard let paneID else { return false }
+        do {
+            try supervisor.release(paneID: paneID, kill: kill)
+            return true
+        } catch {
+            // superd unreachable. The pane outlives us either way; a restarted hostd will find it
+            // in `list` and can release it then — which is why the caller reports this rather than
+            // letting a tab the user closed come back, adopted, after the next restart.
+            return false
+        }
+    }
+
     deinit {
         // Safety net: if an owner forgot to closeMaster(), don't leak the fd. By the time
         // deinit runs nothing else references this object, so no read can race the close.
+        //
+        // Note what this does NOT do: release the pane. A `PTYProcess` being deallocated is a hostd
+        // event, not a user one, and the pane must survive it.
         if masterFD >= 0 { close(masterFD) }
     }
 
@@ -610,43 +690,39 @@ public final class PTYProcess: @unchecked Sendable {
         return exitCode
     }
 
-    /// Spawns a dedicated blocking `waitpid` thread that reaps the child and surfaces
-    /// the exit status (used as `WireMessage.exit(code:)` by the relay). A dedicated
-    /// thread (not SIGCHLD) keeps reaping local to this process object and avoids
-    /// global signal-handler coordination.
-    private func startReaper(pid: pid_t) {
-        Thread.detachNewThread { [weak self] in
-            var status: Int32 = 0
-            var reapedOK = false
-            while true {
-                let r = waitpid(pid, &status, 0)
-                if r == pid { reapedOK = true
-                    break
-                } // success: `status` is a real wait status
-                if r == -1, errno != EINTR { break } // failure (e.g. ECHILD: child already reaped)
-            }
-            let code: Int32 =
-                if !reapedOK {
-                    // waitpid FAILED — `status` was never written (still 0), so the prior code decoded it
-                    // as a clean `exit 0`, masking the abnormal condition (the wire `exit(code:0)` would
-                    // lie that a vanished/double-reaped child exited gracefully). Report a sentinel instead
-                    // so the client sees an abnormal termination. (128+SIGKILL=137, the "killed" convention.)
-                    128 + SIGKILL
-                } else if (status & 0o177) == 0 {
-                    // WIFEXITED: high byte is the exit status.
-                    (status >> 8) & 0xFF
-                } else {
-                    // WIFSIGNALED: report 128 + signal (shell convention).
-                    128 + (status & 0o177)
-                }
-            self?.completeExit(code: code)
-        }
-    }
+    // MARK: The reaper
 
-    /// Test seam: records an exit code exactly as the reaper thread would (``completeExit``),
-    /// so hang-safe unit tests can drive child-exited branches (`isChildExited() == true`)
-    /// on an UNSPAWNED process — no real child is ever forked or killed in a unit test.
+    //
+    // There is no reaper here, and there cannot be one: `waitpid` is a privilege of the PARENT, and
+    // this process is not the child's parent — superd is. It reaps (one blocking thread per pane,
+    // in `registry.rs`), decodes the wait status by the same `128 + signal` convention this file
+    // used to, and pushes an `exited` notification. `SupervisorClient` routes that to
+    // `completeExit`, so everything downstream — `waitForExit`, `waitExitCode`, the teardown
+    // ladder — is unchanged.
+    //
+    // A hostd that is not connected to superd therefore never learns that a pane died. That is not
+    // a gap to paper over with a local `waitpid` fallback: `waitpid` would return ECHILD and the
+    // pane would be reported killed while its shell is in fact fine. The honest signal is the
+    // dropped connection, which `onDisconnect` already reports.
+
+    /// Records an exit code exactly as an `exited` notification would.
+    ///
+    /// Test seam: hang-safe unit tests drive child-exited branches (`isChildExited() == true`) on a
+    /// pane that was never spawned, with no real child forked or killed anywhere.
     func completeExitForTesting(code: Int32) { completeExit(code: code) }
+
+    /// Declares the child gone because the CUSTODIAN is gone.
+    ///
+    /// hostd cannot `waitpid` a pane it did not fork, so every exit it ever learns about arrives as
+    /// superd's `exited` notice. When superd itself has restarted, the shells it held died with it
+    /// (it was the last holder of every master) and no notice is coming from anybody — a session
+    /// left waiting for one waits for ever, and its tab never closes.
+    ///
+    /// `128 + SIGHUP`, which is what superd reports for a hung-up child and, for that matter, what
+    /// actually happened: the master's last close sent one.
+    public func completeExitFromSupervisorLoss() {
+        completeExit(code: 128 &+ SIGHUP)
+    }
 
     private func completeExit(code: Int32) {
         exitLock.lock()
@@ -664,92 +740,13 @@ public final class PTYProcess: @unchecked Sendable {
 
 // MARK: The fork-to-exec window
 
-/// Everything the child of ``PTYProcess/spawn(_:arguments:environment:argv0:cwd:cols:rows:)``'s
-/// `fork()` does before `execve` — and nothing else. It is ONE function so that the contract has an
-/// address: `ForkExecWindowContractTests` disassembles this symbol and fails on any call target
-/// outside `sigprocmask` / `signal` / `login_tty` / `chdir` / `close` / `execve` / `_exit`.
-///
-/// ## The window is a contract, not a comment
-/// Between `fork()` and `execve()` in a MULTI-THREADED process, only async-signal-safe raw syscalls
-/// are legal. The child inherits the parent's entire address space and exactly ONE thread, so every
-/// lock some other thread happened to hold at the instant of the fork is frozen HELD, by an owner
-/// that does not exist here. The Swift runtime keeps its type, witness-table and conformance caches
-/// behind `os_unfair_lock`, and `os_unfair_lock_lock` answers a lock whose owner thread is gone by
-/// ABORTING the process — before `execve`, so the pane's shell dies the instant it is born while the
-/// host has already logged `attached for pane`.
-///
-/// Swift trips that rule without writing anything that looks like a call. `for sig in 1...31` asks
-/// the runtime to instantiate `ClosedRange<Int32>` metadata, and it cost this host TEN `.ips` reports
-/// in one day — every one `_os_unfair_lock_corruption_abort` ← `os_unfair_lock_lock_slow` ←
-/// `PTYProcess.spawn`, with `asi` "crashed on child side of fork pre-exec". One line, TWO different
-/// locks: nine died in the generic-metadata cache (`Collection<>.makeIterator()` →
-/// `swift_getGenericMetadata` → `LockingConcurrentMap::getOrInsert`) and one in the conformance cache
-/// (`__swift_instantiateConcreteTypeFromMangledNameV2` → `swift_getTypeByMangledName` →
-/// `ConformanceState::cacheResult`) — which is why the rule has to be "no runtime", not "not that
-/// lock". One of the ten (pid 4995, parent hostd 4956) is the missing third shell of a
-/// `check-launch-restore.sh` run that went red with "3 pane(s) in the layout but 2 live shell(s)".
-/// Handing `execve` a Swift `[UnsafeMutablePointer<CChar>?]` was the same bug wearing a C call's
-/// clothes: the array-to-pointer conversion is ARC plus a generic `_ArrayBuffer` accessor, and its
-/// fallback instantiates `ContiguousArray` metadata and allocates.
-///
-/// Warming the caches cannot save it: this code runs ONLY in children, so the per-call-site metadata
-/// cache the parent owns is cold at every single fork and every fork reaches the runtime for real.
-///
-/// So, in here: no generics, no `for…in`, no `String`, no `Array`/`Dictionary` literal, no ARC, no
-/// `class` allocation, no `print`/`FileHandle`/`Foundation`, no `static let` (each is a `swift_once`,
-/// which locks) and no capturing closure. Every value is a pointer or an `Int32` that the parent
-/// materialised BEFORE the fork.
-///
-/// - Parameters:
-///   - slave: the PTY slave fd, still open in both processes.
-///   - master: the PTY master fd — closed here, or the child's EOF never reaches the parent's read.
-///   - cwd: validated by `PTYProcess.resolveCwd` in the parent; `nil` means "inherit".
-///   - path/argv/envp: `strdup`ed / vector-built in the parent.
-///   - sigDefault: `SIG_DFL`, read in the parent (the Darwin overlay exports it as a computed var).
-/// - Returns: never — it either `execve`s away or `_exit`s.
-@inline(never)
-func execInForkedChild(
-    slave: Int32,
-    master: Int32,
-    cwd: UnsafeMutablePointer<CChar>?,
-    path: UnsafeMutablePointer<CChar>?,
-    argv: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>,
-    envp: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>,
-    sigDefault: sig_t?,
-) -> Never {
-    // Reset inherited signal state BEFORE exec. A SIG_IGN disposition and a blocked signal mask both
-    // survive fork+execve — so a daemon launched under `nohup` (or a test runner) that ignores
-    // SIGHUP breeds shells that NEVER receive the destroy-path hangup (nohup semantics): zsh then
-    // skips its history save on pane teardown. A terminal emulator hands every child a clean slate;
-    // `sigprocmask`/`signal` are async-signal-safe raw syscalls. (SIGKILL/SIGSTOP reject SIG_DFL —
-    // harmless.) `sigset_t` is a plain `UInt32`, so the empty mask is a constant store, not an init.
-    var emptyMask = sigset_t(0)
-    sigprocmask(SIG_SETMASK, &emptyMask, nil)
-    // A RAW COUNTER, never `for sig in 1...31` — see the metadata story above. `sig += 1` compiles to
-    // an add plus a `brk` on overflow, which is a trap instruction, not a runtime call, and the loop
-    // bound makes it unreachable anyway.
-    var sig: Int32 = 1
-    while sig <= 31 {
-        signal(sig, sigDefault)
-        sig += 1
-    }
-    // login_tty(slave) atomically: setsid(); ioctl(slave, TIOCSCTTY, 0);
-    // dup2(slave → 0,1,2); close(slave) if >2. This is what makes the slave the
-    // controlling terminal (so SIGWINCH / job control reach the shell).
-    if login_tty(slave) != 0 { _exit(127) }
-    // Best-effort chdir: `resolveCwd` already validated the dir in the parent, so this normally
-    // succeeds. A TOCTOU (dir deleted between validate and chdir) must NOT kill the pane — leave the
-    // child in the inherited cwd rather than `_exit 127` (dead pane).
-    if cwd != nil { _ = chdir(cwd) }
-    // The child must never hold the master, or its EOF would never arrive on read.
-    close(master)
-    _ = execve(path, argv, envp)
-    // execve only returns on failure.
-    _exit(127)
-}
-
-/// Host-side errors. Distinct from ``SlopDeskError`` (which is wire-decode only).
-public enum HostError: Error, Equatable, Sendable {
-    /// A POSIX syscall failed; associated value is `errno`.
-    case posix(Int32)
-}
+//
+// GONE from Swift entirely (2026-08-11). It lives once, in `rust/slopdesk-superd/src/spawn.rs`,
+// because superd is now the only process that forks a pane — and its disassembly pin went with it
+// (`fork_window_contract.rs`, which walks the child's path through `otool` and fails on any call
+// that is not async-signal-safe libc).
+//
+// It is deliberately not ALSO kept here as a fallback. That pin finds the window by name fragment
+// in a symbol table and asserts exactly one match; a second copy would make it ambiguous, so it
+// would guard one implementation and silently stop guarding the other. One window, one symbol, one
+// contract — and no language in which a pane can be forked twice.

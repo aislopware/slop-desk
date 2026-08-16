@@ -69,7 +69,12 @@ repos:
         name: rustfmt (apply)
         # NIGHTLY: rust/rustfmt.toml enables unstable options (wrap_comments, group_imports,
         # format_strings). Only the formatter needs it — the crate builds/tests on stable.
-        entry: bash -c 'cd rust && cargo +nightly fmt --all'
+        #
+        # Through the Makefile target, not `cd rust` directly: `rust/` holds SEVENTEEN workspaces and
+        # `--all` means "every member of THIS one", so the bare form formatted the four root members
+        # and left the other sixteen crates alone — while `make lint`'s per-workspace `--check` still
+        # judged them. A hook that fixes less than the gate checks sends you to `--no-verify`.
+        entry: make fmt-rust
         language: system
         files: '^rust/.*\.(rs|toml)$'
         pass_filenames: false
@@ -106,17 +111,24 @@ repos:
         exclude: '^Sources/slopdesk-(loopback-validate|capture-probe|fake-client)/'
 
       - id: clippy
-        name: cargo clippy -D warnings
-        entry: bash -c 'cd rust && cargo clippy --workspace --all-targets --all-features -- -D warnings'
+        name: cargo clippy -D warnings (every workspace)
+        # Same reason as rustfmt above: `--workspace` at `rust/` reaches the root's four members and
+        # none of the sixteen crates that declare their own `[workspace]` — the silently-unlinted-crate
+        # failure `docs/46` names. `lint-rust-clippy` is the clippy half of `lint-rust` WITHOUT its
+        # `fmt --check`, because prek runs hooks in parallel and the rustfmt hook above is rewriting
+        # the very files a `--check` would be reading. ~8 s warm across all seventeen.
+        entry: make lint-rust-clippy
         language: system
         files: '^rust/.*\.(rs|toml)$'
         pass_filenames: false
 
       - id: cargo-test
-        name: cargo test (hook relay)
+        name: cargo test (every workspace)
         # The relay's framing is a WIRE contract with AgentHookRecord.split on the host; the
-        # byte-for-byte tests are the pin, so they gate the commit like golden-check does.
-        entry: bash -c 'cd rust && cargo test --workspace --quiet'
+        # byte-for-byte tests are the pin, so they gate the commit like golden-check does — and so do
+        # the other sixteen crates' suites, which `cd rust && cargo test --workspace` never ran while
+        # this hook fired on any `rust/**.{rs,toml}` change. ~16 s warm for all seventeen.
+        entry: make test-rust
         language: system
         files: '^rust/.*\.(rs|toml)$'
         pass_filenames: false
@@ -154,10 +166,49 @@ repos:
       # green — by `make test`/`make check` or a previous push — skips the run entirely) and
       # `--parallel` (per-class xctest workers, ~92s → ~60s; safe since `SettingsKey.store`
       # isolates each worker's UserDefaults).
+      #
+      # The `files:` list is what DECIDES to consult the script; the script's own cache then decides
+      # whether to run. So it must name every input the suite consumes, not just the Swift it
+      # compiles. `rust/` and `ThirdParty/slopdesk-ffi/` are on it because the suite LINKS
+      # `SlopDeskFFI.xcframework` — a push that only moves Rust would otherwise skip the Swift gate
+      # entirely, which is the same blind spot the green-tree cache had inside the script until the
+      # artifact stamp joined its key. `golden/` pins the wire, `Package.*` decides the graph, and
+      # `scripts/` is read off DISK at runtime by the gate-contract tests in `SlopDeskClientUITests`
+      # — `test-touched.sh` already attributes a scripts change to that target, so leaving it out
+      # here meant the fast inner loop knew about an input the push gate did not.
+      #
+      # `make test`, NOT `bash scripts/pre-push-test.sh` directly. Eighteen suites boot a real
+      # sidecar — superd, screend, dropd — and every one of them `XCTSkip`s by name when its binary
+      # is absent, deliberately, so a missing daemon reads as "not run" rather than as a pass. But
+      # `swift build` never sees cargo, so nothing in the Swift graph builds those binaries: calling
+      # the script straight meant a push whose tree had never had `make test` run against it
+      # skipped the whole supervised, screen and file-drop surface and reported green. `make test`
+      # lists the sidecar builds as prerequisites and then runs this same script, so the green-tree
+      # cache still makes a repeat push instant.
       - id: swift-test
-        name: swift test (green-tree cache + --parallel; scripts/pre-push-test.sh)
-        entry: bash scripts/pre-push-test.sh
+        name: swift test (sidecars first, then the green-tree cache + --parallel)
+        entry: make test
         language: system
-        files: '^(Sources|Tests|Apps)/.*\.swift$'
+        files: '^((Sources|Tests|Apps)/.*\.swift|rust/.*\.(rs|toml)|ThirdParty/slopdesk-ffi/.*|golden/.*|scripts/.*|Package\.(swift|resolved))$'
+        pass_filenames: false
+        stages: [pre-push]
+
+      # The cross-language ratchet: which Swift files must stay deleted, socket paths,
+      # relinquish-vs-terminate, the FFI staleness gate, and `check-invariants.py` folded in.
+      #
+      # It reached the tree only through `make lint` / `make check`, both of which are typed by
+      # hand — the same "a gate nobody runs" shape as the Miri audit that paid for the third
+      # `unsafe` crate and had never once executed. Here it runs on every push.
+      #
+      # `always_run` with NO `files:` on purpose. Every other hook here can name its inputs; this
+      # one cannot. It asserts things like "no Swift file anywhere respells a Rust constant" and
+      # "this file is still absent", and an absence has no path to put in a regex — a deletion
+      # that violates it stages as a change to some unrelated file, or to none. It costs ~39 s and
+      # prek runs it beside `swift-test`, so on a push that also touches Swift it is free.
+      - id: supervisor
+        name: cross-language contract ratchet (check-supervisor.sh + check-invariants.py)
+        entry: make lint-supervisor
+        language: system
+        always_run: true
         pass_filenames: false
         stages: [pre-push]

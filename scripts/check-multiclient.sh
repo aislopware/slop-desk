@@ -404,7 +404,7 @@ converge "after A closes that tab" 1 2
 # A BARE CHILD COUNT IS WRONG, and the same count in check-launch-restore.sh made that gate flaky
 # (2 of 8 runs red on a clean tree, 3 of 3 under an FSEvents burst). hostd forks non-PTY helpers as
 # well as shells — `TerminfoResolver` runs `/usr/bin/infocmp`, `HostMetadataProbe` runs
-# `/usr/bin/git` and `/usr/sbin/lsof`, `ShellIntegration` probes `$ZDOTDIR` with a `--norcs` zsh —
+# `/usr/bin/git` and `/usr/sbin/lsof`, superd's shim probes `$ZDOTDIR` with a `--norcs` zsh —
 # and each is a child of hostd for as long as it lives. `${WORK}` is under this repo, so the
 # daemon's HOME is too, so a pane's project key resolves to slop-desk itself and every write this
 # gate makes to its own logs arms `RepoStatusWatcher`'s debounced `git` probe. A settle cannot help:

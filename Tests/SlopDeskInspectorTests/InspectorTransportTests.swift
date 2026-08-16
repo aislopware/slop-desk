@@ -2,8 +2,11 @@ import SlopDeskProtocol
 import XCTest
 @testable import SlopDeskInspector
 
-/// Inspector transport round-trip: encode a set of InspectorEvents through
-/// InspectorSource → loopback → InspectorClient, assert equality.
+/// The CLIENT end of the inspector wire: daemon-shaped bytes → loopback → `InspectorClient`.
+///
+/// The frames come from ``InspectorWireFixture``, hand-built to the wire spec, because the Swift
+/// side has no event encoder any more — `slopdesk-inspectord` is the only thing that writes tag 1
+/// and tag 2 (`docs/54`). What Swift still owns is decode, plus the one control it sends.
 final class InspectorTransportTests: XCTestCase {
     private func sampleEvents() -> [InspectorEvent] {
         [
@@ -37,9 +40,8 @@ final class InspectorTransportTests: XCTestCase {
         ]
     }
 
-    func testRoundTripPreservesEventsExactly() async throws {
+    func testEveryEventShapeDecodesOffTheWire() async throws {
         let (hostChannel, clientChannel) = LoopbackByteChannel.pair()
-        let source = InspectorSource(channel: hostChannel)
         let client = InspectorClient(channel: clientChannel)
 
         let events = sampleEvents()
@@ -55,18 +57,16 @@ final class InspectorTransportTests: XCTestCase {
             return got
         }
 
-        // Send from the host.
         for event in events {
-            try await source.send(event)
+            try hostChannel.send(InspectorWireFixture.eventFrame(event))
         }
 
         let received = try await collector.value
-        XCTAssertEqual(received, events, "every event round-trips byte-exact through the framed channel")
+        XCTAssertEqual(received, events, "every event shape survives the framed channel")
     }
 
     func testKeepAliveIsSwallowedByEventStream() async throws {
         let (hostChannel, clientChannel) = LoopbackByteChannel.pair()
-        let source = InspectorSource(channel: hostChannel)
         let client = InspectorClient(channel: clientChannel)
 
         let stream = await client.events()
@@ -79,102 +79,53 @@ final class InspectorTransportTests: XCTestCase {
             return got
         }
 
-        try await source.sendKeepAlive() // must NOT surface as an event
-        try await source.send(.message(MessageEvent(role: .assistant, text: "real")))
+        hostChannel.send(InspectorWireFixture.keepAliveFrame) // must NOT surface as an event
+        let real = InspectorEvent.message(MessageEvent(role: .assistant, text: "real"))
+        try hostChannel.send(InspectorWireFixture.eventFrame(real))
 
         let received = try await collector.value
         XCTAssertEqual(received.count, 1)
-        XCTAssertEqual(received.first, .message(MessageEvent(role: .assistant, text: "real")))
+        XCTAssertEqual(received.first, real)
     }
 
-    func testSubscribeControlReachesHost() async throws {
+    // MARK: - The one frame this end WRITES
+
+    /// `subscribe` is the client's only outbound frame, and its bytes are the contract with
+    /// `slopdesk_inspectord::wire::decode`: a 9-byte payload, tag `3`, then a big-endian `Int64`.
+    /// Asserted as BYTES rather than through a decode, because this end has no subscribe decoder —
+    /// and should not grow one just to check its own encoder.
+    func testSubscribeFrameIsExactlyTheWireBytes() async throws {
         let (hostChannel, clientChannel) = LoopbackByteChannel.pair()
-        let source = InspectorSource(channel: hostChannel)
         let client = InspectorClient(channel: clientChannel)
 
-        let controls = await source.controls()
-        let collector = Task { () -> InspectorWireMessage? in
-            for try await message in controls { return message }
+        let collector = Task { () -> Data? in
+            for try await chunk in hostChannel.inbound { return chunk }
             return nil
         }
         try await client.subscribe(fromSeq: 42)
         let got = try await collector.value
-        XCTAssertEqual(got, .subscribe(fromSeq: 42))
+
+        XCTAssertEqual(got, Data([
+            0, 0, 0, 9, // payloadLength = tag + 8 body bytes
+            3, // tag: subscribe
+            0, 0, 0, 0, 0, 0, 0, 42, // fromSeq, big-endian
+        ]))
     }
 
-    // MARK: - InspectorSource.stream — dead-peer pump termination
+    /// A negative `fromSeq` is two's complement on the wire, not a clamp — the daemon saturates it
+    /// on its side (`replay.rs`), and this end must not quietly change the number it was given.
+    func testSubscribeCarriesANegativeSeqAsTwosComplement() async throws {
+        let (hostChannel, clientChannel) = LoopbackByteChannel.pair()
+        let client = InspectorClient(channel: clientChannel)
 
-    /// A ``ByteChannel`` whose `send` succeeds `failAfter` times, then throws forever
-    /// (a peer that died mid-stream). Counts every send attempt.
-    private final class FailingSendChannel: ByteChannel, @unchecked Sendable {
-        struct PeerGone: Error {}
-        private let lock = NSLock()
-        private var attempts = 0
-        private let failAfter: Int
-
-        init(failAfter: Int) { self.failAfter = failAfter }
-
-        var sendAttempts: Int {
-            lock.lock()
-            defer { lock.unlock() }
-            return attempts
+        let collector = Task { () -> Data? in
+            for try await chunk in hostChannel.inbound { return chunk }
+            return nil
         }
+        try await client.subscribe(fromSeq: -1)
+        let got = try await collector.value
 
-        /// Synchronous (non-async) so the locking is legal from the async `send`.
-        private func recordAttempt() -> Int {
-            lock.lock()
-            defer { lock.unlock() }
-            attempts += 1
-            return attempts
-        }
-
-        func send(_: Data) async throws {
-            // `await Task.yield()` satisfies the protocol's async signature (and the
-            // async_without_await strict-lint rule) — the repo's fake-channel idiom.
-            await Task.yield()
-            if recordAttempt() > failAfter { throw PeerGone() }
-        }
-
-        var inbound: AsyncThrowingStream<Data, Error> { AsyncThrowingStream { $0.finish() } }
-        func close() {}
-    }
-
-    /// `InspectorSource.stream(_:)` must STOP pumping when a send fails (dead peer),
-    /// matching the hand-rolled pump in `InspectorServer.serve` — not swallow the error
-    /// and keep draining (pre-fix: `try? await send(event)` consumed the entire upstream
-    /// forever, parking on a never-finishing live stream for a peer that is gone).
-    func testStreamStopsPumpingOnSendFailure() async throws {
-        let channel = FailingSendChannel(failAfter: 2)
-        let source = InspectorSource(channel: channel)
-
-        var continuation: AsyncStream<InspectorEvent>.Continuation!
-        let events = AsyncStream<InspectorEvent> { continuation = $0 }
-        for i in 0..<10 {
-            continuation.yield(.message(MessageEvent(role: .assistant, text: "e\(i)")))
-        }
-        // Deliberately NOT finished: a live tail never "ends" on its own — the pump must
-        // terminate on the send failure, not wait for upstream exhaustion.
-
-        let pump = Task { await source.stream(events) }
-        // Race the pump against a timeout so the pre-fix hang FAILS the test, not the suite.
-        struct PumpNeverReturned: Error {}
-        try await withThrowingTaskGroup(of: Void.self) { group in
-            group.addTask { await pump.value }
-            group.addTask {
-                try await Task.sleep(for: .seconds(5))
-                pump.cancel()
-                throw PumpNeverReturned()
-            }
-            try await group.next()!
-            group.cancelAll()
-        }
-
-        XCTAssertEqual(
-            channel.sendAttempts,
-            3,
-            "2 successful sends + the 1 failing send, then the pump stops — the remaining 7 events are never sent",
-        )
-        continuation.finish()
+        XCTAssertEqual(got, Data([0, 0, 0, 9, 3, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]))
     }
 
     // MARK: - Codec-level framing (split / coalesced reads)
@@ -183,14 +134,13 @@ final class InspectorTransportTests: XCTestCase {
         let messages: [InspectorWireMessage] = [
             .event(.message(MessageEvent(role: .user, text: "x"))),
             .keepAlive,
-            .subscribe(fromSeq: 7),
             .event(.toolCard(ToolCard(id: "z", name: "Read", input: .object([:]), status: .pending))),
         ]
         var blob = Data()
-        for message in messages { try blob.append(InspectorCodec.encode(message)) }
+        for message in messages { try blob.append(frame(for: message)) }
 
         // Feed one byte at a time → the decoder must still recover every frame in order.
-        var decoder = InspectorFrameDecoder()
+        let decoder = InspectorFrameDecoder()
         var decoded: [InspectorWireMessage] = []
         for byte in blob {
             decoder.append(Data([byte]))
@@ -201,8 +151,8 @@ final class InspectorTransportTests: XCTestCase {
         XCTAssertEqual(decoded, messages)
     }
 
-    /// Many complete frames delivered in ONE chunk (the shape an `InspectorReplayLog` full-history
-    /// replay produces after a reconnect: one ≤64KiB TCP read packed with small JSON event frames).
+    /// Many complete frames delivered in ONE chunk (the shape the daemon's full-history replay
+    /// produces after a reconnect: one ≤64KiB TCP read packed with small JSON event frames).
     /// Exercises the lazy `readOffset` cursor draining several frames from a single `append` without
     /// any front-removal in between, and that decode order/content survive a later compaction.
     func testManyFramesInOneChunkDecodeInOrder() throws {
@@ -210,9 +160,9 @@ final class InspectorTransportTests: XCTestCase {
             .event(.message(MessageEvent(role: .user, text: "line \($0)")))
         }
         var blob = Data()
-        for message in messages { try blob.append(InspectorCodec.encode(message)) }
+        for message in messages { try blob.append(frame(for: message)) }
 
-        var decoder = InspectorFrameDecoder()
+        let decoder = InspectorFrameDecoder()
         decoder.append(blob) // one chunk holding every frame.
         var decoded: [InspectorWireMessage] = []
         while let message = try decoder.nextMessage() { decoded.append(message) }
@@ -220,13 +170,13 @@ final class InspectorTransportTests: XCTestCase {
 
         // The cursor-then-compact discipline must still work for a SUBSEQUENT chunk after the drain.
         let tail: InspectorWireMessage = .event(.message(MessageEvent(role: .assistant, text: "after")))
-        try decoder.append(InspectorCodec.encode(tail))
+        try decoder.append(frame(for: tail))
         XCTAssertEqual(try decoder.nextMessage(), tail)
     }
 
     func testFrameTooLargeRejected() {
         // Length prefix claiming > 16 MiB must be rejected, not allocated.
-        var decoder = InspectorFrameDecoder()
+        let decoder = InspectorFrameDecoder()
         var prefix = Data()
         let tooBig = UInt32(SlopDesk.maxFramePayloadLength + 1)
         prefix.append(UInt8(truncatingIfNeeded: tooBig >> 24))
@@ -242,6 +192,25 @@ final class InspectorTransportTests: XCTestCase {
     func testUnknownTypeTagRejected() {
         XCTAssertThrowsError(try InspectorCodec.decode(payload: Data([0xFF]))) { error in
             XCTAssertEqual(error as? InspectorCodec.CodecError, .unknownType(0xFF))
+        }
+    }
+
+    /// The client's OWN control tag, arriving from the daemon, is not a frame this end reads. It
+    /// decodes as unknown rather than as a subscribe — which keeps `decode` strictly the
+    /// host → client half and cannot be mistaken for a second implementation of the other one.
+    func testSubscribeTagIsNotDecodableOnTheClientEnd() {
+        XCTAssertThrowsError(try InspectorCodec.decode(payload: Data([3, 0, 0, 0, 0, 0, 0, 0, 7]))) { error in
+            XCTAssertEqual(error as? InspectorCodec.CodecError, .unknownType(3))
+        }
+    }
+
+    // MARK: -
+
+    /// The daemon-side frame for a message this end can decode.
+    private func frame(for message: InspectorWireMessage) throws -> Data {
+        switch message {
+        case let .event(event): try InspectorWireFixture.eventFrame(event)
+        case .keepAlive: InspectorWireFixture.keepAliveFrame
         }
     }
 }

@@ -13,7 +13,6 @@
 #if canImport(AppKit)
 import AppKit
 #endif
-import Foundation
 import SlopDeskProtocol
 import SlopDeskVideoProtocol
 

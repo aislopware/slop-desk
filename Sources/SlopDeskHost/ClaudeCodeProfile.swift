@@ -1,5 +1,3 @@
-import Foundation
-
 /// The `TERM` policy for the host PTY.
 ///
 /// A Claude session is just a `.terminal` pane, auto-detected (see `ClaudePaneDetector`, docs/42,

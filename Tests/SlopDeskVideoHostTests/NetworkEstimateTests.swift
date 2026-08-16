@@ -1,4 +1,3 @@
-import SlopDeskVideoProtocol
 import XCTest
 @testable import SlopDeskVideoHost
 

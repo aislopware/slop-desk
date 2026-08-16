@@ -1,6 +1,3 @@
-import CoreGraphics
-import Foundation
-
 // MARK: - Oversized-viewport edge-hint model (C7 improvement 3)
 
 /// The PURE computed model behind the remote-GUI pane's edge-pan affordance: when the remote window is
@@ -9,6 +6,9 @@ import Foundation
 /// maps the existing viewport geometry (content size, visible viewport size, pan offset) onto which of the
 /// four edges have hidden content — no view / gesture state here, so it is unit-tested headlessly and the
 /// overlay stays a thin renderer.
+import CoreGraphics
+import Foundation
+
 public struct ViewportEdgeHints: Equatable, Sendable {
     /// Content extends ABOVE the viewport (there is hidden content past the top edge).
     public var top: Bool

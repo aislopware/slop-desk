@@ -1,12 +1,10 @@
-import Foundation
-
 // L0: extracted from the deleted SwiftUI `PaneLeafView.swift`. `RemoteGUIDisplay` is the PURE
 // (SwiftUI- and store-free) display decision for a remote-GUI pane — live vs entry-form vs
 // cap-gated — unit-tested directly (LiveVideoCapTests). The rebuilt pane leaf (L6) reads it.
 public enum RemoteGUIDisplay: Equatable {
-    /// The live ``RemoteWindowPanel`` (admitted to a cap slot — its decode stack may run).
+    /// The live `RemoteWindowPanel` (admitted to a cap slot — its decode stack may run).
     case live
-    /// The ``RemoteWindowPanel`` entry FORM: either the model is not yet configured (no host/port — the
+    /// The `RemoteWindowPanel` entry FORM: either the model is not yet configured (no host/port — the
     /// user must dial it in), OR it just became configured while a cap slot IS free (so admission is
     /// about to be auto-attempted and flip the pane to `.live` — the form must NOT vanish before then).
     /// Holds NO decode stack (`model.active == nil`).

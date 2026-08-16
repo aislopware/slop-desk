@@ -1,6 +1,7 @@
 #if os(macOS)
 import AppKit
 import Foundation
+import SlopDeskPasteboard
 import SlopDeskProtocol
 
 /// The macOS shim that actuates the TWO clipboard-sync metadata verbs
@@ -90,26 +91,9 @@ enum HostClipboardPerformer {
         _ payload: Data, to pasteboard: NSPasteboard, state: SyncState,
     ) -> MetadataStatus {
         guard let clip = try? MetadataCodec.decodeClipboardSet(payload) else { return .error }
-        switch clip.kind {
-        case .text:
-            guard let text = String(data: clip.bytes, encoding: .utf8), !text.isEmpty else {
-                return .error
-            }
-            pasteboard.clearContents()
-            pasteboard.setString(text, forType: .string)
-        case .imagePNG:
-            // Validate the PNG decodes BEFORE clearing the pasteboard (a garbage clip must not
-            // destroy the host's current clip). The TIFF twin makes the paste land in apps that
-            // only read `public.tiff`; Claude Code's Ctrl+V reads the PNG flavor.
-            guard let rep = NSBitmapImageRep(data: clip.bytes) else { return .error }
-            pasteboard.clearContents()
-            pasteboard.setData(clip.bytes, forType: .png)
-            if let tiff = rep.tiffRepresentation {
-                pasteboard.setData(tiff, forType: .tiff)
-            }
-        case nil:
-            return .error // unknown future kind — refuse, never guess
-        }
+        // The write validates before it clears, so a garbage clip cannot destroy the host's current
+        // one; a refusal here is non-UTF-8/empty text, undecodable PNG bytes, or an unknown kind.
+        guard PasteboardClip.write(clip, to: pasteboard) else { return .error }
         state.recordClientSet(changeCount: pasteboard.changeCount)
         return .ok
     }
@@ -130,28 +114,12 @@ enum HostClipboardPerformer {
     /// The pasteboard's current shippable clip: PNG data as-is, else TIFF transcoded to PNG, else a
     /// non-empty string as UTF-8 text. `nil` (→ kind 0) for an empty board, an over-cap clip, a
     /// file-copy (a host file path is meaningless on the client), or an untranscodable image.
+    ///
+    /// `skippingConcealed: false` — the HOST ships a concealed clip (what a password manager marks)
+    /// where the client refuses to push one. That asymmetry predates the shared reader and is left
+    /// as it was; it is now one word rather than a difference between two function bodies.
     static func currentClip(_ pasteboard: NSPasteboard) -> MetadataCodec.ClipboardClip? {
-        let types = pasteboard.types ?? []
-        guard !types.contains(.fileURL) else { return nil }
-        if let png = pasteboard.data(forType: .png) ?? transcodedTIFF(pasteboard) {
-            guard png.count <= MetadataCodec.maxClipboardContentBytes else { return nil }
-            return MetadataCodec.ClipboardClip(kind: .imagePNG, bytes: png)
-        }
-        if let text = pasteboard.string(forType: .string), !text.isEmpty {
-            let bytes = Data(text.utf8)
-            guard bytes.count <= MetadataCodec.maxClipboardContentBytes else { return nil }
-            return MetadataCodec.ClipboardClip(kind: .text, bytes: bytes)
-        }
-        return nil
-    }
-
-    /// The pasteboard's TIFF flavor transcoded to PNG (most app copies declare TIFF, not PNG);
-    /// `nil` when there is no TIFF or it will not decode.
-    private static func transcodedTIFF(_ pasteboard: NSPasteboard) -> Data? {
-        guard let tiff = pasteboard.data(forType: .tiff),
-              let rep = NSBitmapImageRep(data: tiff)
-        else { return nil }
-        return rep.representation(using: .png, properties: [:])
+        PasteboardClip.read(pasteboard, skippingConcealed: false)
     }
 }
 #endif

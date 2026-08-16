@@ -32,7 +32,6 @@
 
 #if canImport(SwiftUI)
 import SlopDeskWorkspaceCore
-import SlopDeskWorkspaceModel
 import SwiftUI
 
 struct PaneSwitcherOverlay: View {

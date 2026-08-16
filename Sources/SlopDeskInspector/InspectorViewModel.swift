@@ -1,5 +1,3 @@
-import Foundation
-
 /// The client-side observable store the read-only SwiftUI views render from.
 ///
 /// It consumes the deserialised ``InspectorEvent`` stream (from ``InspectorClient``)
@@ -9,6 +7,8 @@ import Foundation
 ///
 /// `@MainActor` + `@Observable` so SwiftUI tracks changes automatically. It is built
 /// in the library target and compiles on macOS + iOS.
+import Foundation
+
 @preconcurrency
 @MainActor
 @Observable
@@ -34,8 +34,8 @@ public final class InspectorViewModel {
     public private(set) var messages: [MessageEvent] = []
 
     /// Drop-oldest caps so a long session (or a host emitting tens of thousands of tool calls) cannot
-    /// grow client memory without bound — the host already bounds its analogues (InspectorReplayLog
-    /// 50k, EventBuilder 100k), so the client was the unbounded end. Eviction is batched
+    /// grow client memory without bound — `slopdesk-inspectord` already bounds its analogues (the
+    /// replay window at 50k, the builder's processed keys at 100k), so the client was the unbounded end. Eviction is batched
     /// (cap → retain, not one-at-a-time) so it stays amortized O(1) like the host. The OUTER agent-count
     /// dimension is bounded too: `subagentOrder` evicts the oldest agents' node + cards + index
     /// TOGETHER so `subagentTree` never references an orphan (drop-oldest, NOT terminal-status — a
@@ -67,7 +67,7 @@ public final class InspectorViewModel {
 
     /// The most recent unrecognised transcript lines (bounded ring, newest-last). Lets the UI turn
     /// the bare count into an inspectable disclosure instead of a dead-end alarm. Bounded
-    /// (drop-oldest) so a malformed-feed flood cannot grow it without limit (cf. the EventBuilder
+    /// (drop-oldest) so a malformed-feed flood cannot grow it without limit (cf. the daemon's builder
     /// unbounded-maps history).
     public private(set) var recentUnknownLines: [String] = []
     private static let recentUnknownLinesCap = 50

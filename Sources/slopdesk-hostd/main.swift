@@ -1,7 +1,5 @@
 import Foundation
-import SlopDeskFileTransfer
 import SlopDeskHost
-import SlopDeskInspector
 import SlopDeskVideoProtocol
 
 // slopdesk-hostd — headless SlopDesk host daemon (PTY + transport).
@@ -42,9 +40,9 @@ if !appliedHostPrefs.isEmpty, ProcessInfo.processInfo.environment["SLOPDESK_VIDE
 }
 
 // `integration install|uninstall claude`: write/merge (or strip) the Claude Code hooks
-// config + hook script, then EXIT. This is a one-shot setup command, not the daemon path; it
-// runs entirely off the pure ``AgentInstaller`` + its thin disk shim. Honored before the daemon
-// arg-parse so `integration …` never reaches the listener.
+// config + hook relay, then EXIT. This is a one-shot setup command, not the daemon path; it
+// forwards to `slopdesk-agenthooks`, which owns the merge and stages the relay from beside itself.
+// Honored before the daemon arg-parse so `integration …` never reaches the listener.
 if arguments.count >= 2, arguments[1] == "integration" {
     let sub = arguments.count >= 3 ? arguments[2] : ""
     let target = arguments.count >= 4 ? arguments[3] : "claude"
@@ -55,30 +53,25 @@ if arguments.count >= 2, arguments[1] == "integration" {
         ))
         exit(2)
     }
+    // A host built without `make hook` has no installer to forward to. Saying so beats merging a
+    // settings file here: entries pointing at a relay nobody staged look installed and relay nothing.
+    let missingInstaller = "no \(AgentHooks.binaryName) beside \(programName) — run `make build`"
     guard target == "claude" else { fail("unknown integration target '\(target)' (only 'claude')") }
-    let settingsPath = AgentInstaller.defaultSettingsPath()
-    let hookPath = AgentInstaller.defaultHookPath()
-    do {
-        switch sub {
-        case "install":
-            _ = try AgentInstaller.install(
-                settingsPath: settingsPath,
-                hookPath: hookPath,
-                binarySource: AgentInstaller.bundledBinaryPath(),
-            )
-            print("slopdesk: installed Claude Code hooks → \(settingsPath)")
-            print("slopdesk: hook relay → \(hookPath)")
-            print("slopdesk: restart claude in a slopdesk pane — the host is already listening.")
-            exit(0)
-        case "uninstall":
-            _ = try AgentInstaller.uninstall(settingsPath: settingsPath)
-            print("slopdesk: removed Claude Code hooks from \(settingsPath)")
-            exit(0)
-        default:
-            fail("unknown integration subcommand '\(sub)' (use install | uninstall)")
-        }
-    } catch {
-        fail("integration \(sub) failed: \(error)")
+    switch sub {
+    case "install":
+        guard let answer = AgentHooks.install() else { fail(missingInstaller) }
+        if let error = answer.error { fail("integration install failed: \(error)") }
+        print("slopdesk: installed Claude Code hooks → \(answer.settings)")
+        print("slopdesk: hook relay → \(answer.hook ?? "?")")
+        print("slopdesk: restart claude in a slopdesk pane — the host is already listening.")
+        exit(0)
+    case "uninstall":
+        guard let answer = AgentHooks.uninstall() else { fail(missingInstaller) }
+        if let error = answer.error { fail("integration uninstall failed: \(error)") }
+        print("slopdesk: removed Claude Code hooks from \(answer.settings)")
+        exit(0)
+    default:
+        fail("unknown integration subcommand '\(sub)' (use install | uninstall)")
     }
 }
 
@@ -101,30 +94,22 @@ let agentDetectEnabled = true
 // `SLOPDESK_BLOCKS=0` disables it. When off the byte pipeline + sniffer are byte-identical.
 let blocksEnabled = HostEnvironment.blocksEnabled()
 
-// The Claude-hook listener — ALWAYS bound, no gate (see `HostEnvironment` for why the old
-// `SLOPDESK_AGENT_HOOKS` is gone). The socket lives in the user's temp dir, keyed by pid so
-// concurrent hosts don't collide. The installed hook (`integration install claude`) POSTs to
-// `SLOPDESK_SOCKET_PATH`, which every PTY env exports; a host whose hooks were never installed
-// simply never receives a connection.
-let agentHookSocketPath = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-    .appendingPathComponent("slopdesk-agent-\(getpid()).sock").path
+// The Claude-hook listener — ALWAYS served, no gate (see `HostEnvironment` for why the old
+// `SLOPDESK_AGENT_HOOKS` is gone). hostd BINDS NOTHING: superd owns the socket, at a stable
+// pid-free path, because the address is baked into every agent's environment at `execve` and can
+// never be corrected afterwards (`docs/51` §1). hostd claims the listener at handshake and serves
+// each connection superd hands it over `SCM_RIGHTS`. A host whose hooks were never installed simply
+// never receives one.
 let agentHookListener: AgentHookListener? = {
     let listener = AgentHookListener()
     listener.onLog = log
     return listener
 }()
 
-// Agent-control Unix-domain socket (DEFAULT-OFF: only `SLOPDESK_AGENT_CONTROL=1` enables).
-// The socket path is keyed by pid (same derivation as the hook socket) so concurrent hosts
-// don't collide. chmod 0600 is applied by `AgentControlAcceptor.start(path:)`.
-// Resolve the path BEFORE constructing HostServer so the server can inject it into PTY envs.
-let agentControlSocketPath: String =
-    if HostEnvironment.agentControlEnabled() {
-        URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-            .appendingPathComponent("slopdesk-ctl-\(getpid()).sock").path
-    } else {
-        ""
-    }
+// Agent-control (DEFAULT-OFF: only `SLOPDESK_AGENT_CONTROL=1` enables). Same socket ownership as
+// the hook path; what the flag now decides is whether hostd CLAIMS that listener, and superd
+// advertises `SLOPDESK_CONTROL_SOCKET` to a child only while someone has.
+let agentControlEnabled = HostEnvironment.agentControlEnabled()
 
 // Resolve the sibling `slopdesk-ctl` binary (P1 env sentinel for spawned panes). hostd and ctl
 // ship in the same directory, so derive ctl's path from hostd's executable path. If the sibling is
@@ -142,14 +127,13 @@ let server = HostServer(
     launchMode: parsed.launchMode,
     agentDetectEnabled: agentDetectEnabled,
     agentHookListener: agentHookListener,
-    agentHookSocketPath: agentHookSocketPath,
-    agentControlSocketPath: agentControlSocketPath,
+    agentControlEnabled: agentControlEnabled,
     ctlBinaryPath: ctlBinaryPath,
     blocksEnabled: blocksEnabled,
     // Disk scrollback journals (history survives hostd restarts / TTL evictions). `nil` when
     // SLOPDESK_SCROLLBACK_PERSIST=0 or SLOPDESK_SCROLLBACK_DISK=0; HostServer additionally
     // AND-s the detach gate.
-    scrollbackJournals: ScrollbackJournalStore.makeFromEnvironment(),
+    scrollbackTranscripts: ScrollbackTranscripts.makeFromEnvironment(),
 )
 server.onLog = log
 
@@ -176,59 +160,32 @@ if preventSleepEnabled {
 }
 #endif
 
-// Construct the control listener (needs a reference to the server for verb dispatch).
+// The ctl connection server (needs a reference back to the server for verb dispatch, which is why
+// it cannot be an init parameter). Installed BEFORE `start()`, because that is where the listener
+// claim goes out — a `control` connection arriving with nothing installed here is closed.
+//
+// Nothing is bound in either direction: superd owns both addresses and hands over each accepted
+// connection. There is no bind to fail, so the old "failed to bind, continuing" paths are gone; what
+// can still fail is the CLAIM, and `HostServer.claimChildListeners` reports that.
 var agentControlListener: AgentControlListener?
-if !agentControlSocketPath.isEmpty {
-    let listener = AgentControlListener(socketPath: agentControlSocketPath, server: server)
+if agentControlEnabled {
+    let listener = AgentControlListener(server: server)
     listener.onLog = log
+    server.serveAgentControl(with: listener)
     agentControlListener = listener
 }
 
-// Bind the hook socket now (before the listener accepts client connections). A bind failure is
-// logged + non-fatal — the foreground watch still provides detection (Decision #5).
-if let agentHookListener {
-    do {
-        try agentHookListener.start(path: agentHookSocketPath)
-    } catch {
-        log("agent-hook listener failed to bind (\(error)) — continuing with process-watch only")
-    }
-}
+// PATH 3, the read-only structured companion (`terminalPort &+ 1`), served by
+// `slopdesk-inspectord` under superd. hostd does not bind this port, tail the transcript or hold
+// the replay window any more — the client dials the daemon directly, exactly as it always did
+// (`docs/54`). Set inside the startup Task once `server.start()` resolves the real bound port; a
+// signal racing construction just sees `nil` and skips the not-yet-started service.
+var inspectorService: InspectorServiceManager?
 
-// Bind the agent-control socket. A bind failure is logged + non-fatal (the terminal path is
-// unaffected); agents will get connection-refused and should report the error to the operator.
-if let agentControlListener {
-    do {
-        try agentControlListener.start()
-        log("agent-control socket: \(agentControlSocketPath) (SLOPDESK_CONTROL_SOCKET)")
-    } catch {
-        log("agent-control listener failed to bind (\(error)) — control socket unavailable")
-    }
-}
-
-// Inspector server (NWConnection #2, port + 1) — read-only structured companion.
-// Constructed when --inspector / --transcript is set. The replay log is the
-// replay-then-live fan-out; the engine feeds it. Live per-PTY transcript-path
-// discovery via the SessionStart hook is DEFERRED — for now the path is the injected
-// --transcript value (if any), tailed straight into the engine. Without a path the
-// server still binds (so a client can connect) and the replay log stays empty until
-// per-session tailing is wired up.
-//
-// Construction is deferred to inside the startup Task, AFTER `server.start()` resolves the
-// REAL bound port (`--port 0` mints an OS-chosen ephemeral port that can differ from
-// `parsed.port`) — `inspectorPort` is `terminalPort &+ 1` for the object's whole lifetime, so
-// building it from the raw requested port would bind the wrong port under `--port 0`.
-let inspectorEngine = InspectorEngine()
-let inspectorReplayLog = InspectorReplayLog()
-inspectorReplayLog.ingest(inspectorEngine.events)
-
-// Set inside the startup Task once `server.start()` resolves the real bound port. Read by
-// the SIGINT/SIGTERM handler (main-actor) below — a signal racing construction just sees `nil`
-// and skips the (not-yet-started) inspector, which `Task.stop()` on `nil` already tolerates.
-var inspectorServer: InspectorServer?
-
-// PATH-4 drag-drop file-transfer listener (`terminalPort &+ 2`). Same nil-race tolerance as the
-// inspector: a signal racing construction skips the not-yet-started server.
-var fileTransferServer: FileTransferServer?
+// PATH-4 drag-drop file drops (`terminalPort &+ 2`), served by `slopdesk-dropd` under superd. Same
+// nil-race tolerance as the inspector: a signal racing construction skips the not-yet-started
+// service.
+var fileDropService: FileDropServiceManager?
 
 // A one-shot latch so a SECOND SIGINT during the (potentially ~0.25s/pane) async shutdown does not
 // spawn a second teardown Task that calls `exit(0)` again — two concurrent libc `exit()` calls are UB
@@ -266,10 +223,20 @@ func makeShutdownSignalSource(_ sig: Int32, name: String) -> DispatchSourceSigna
             guard shutdownLatch.tryFire() else { return } // ignore repeated signals during the async drain
             log("\(name) — shutting down")
             Task {
+                // The hook sinks go; the SOCKET does not, because it is not ours to close. superd
+                // keeps both child-facing addresses bound across this exit, which is the point:
+                // a running agent's `SLOPDESK_SOCKET_PATH` stays valid while hostd is rebuilt.
                 agentHookListener?.stop()
-                agentControlListener?.stop()
-                inspectorServer?.stop()
-                fileTransferServer?.stop()
+                // Gone before the drain, not after: from here on this daemon will not serve, and a
+                // record naming a dying pid is worse than none. Its ABSENCE is meaningful — a
+                // record whose pid is gone means hostd died badly, which is worth telling apart
+                // from a clean stop.
+                HostLaunchRecord.remove()
+                // RELINQUISH, never terminate: superd keeps these children, so an upload in flight
+                // and a session's replay window both survive this daemon's restart, and the next
+                // hostd adopts the same child (`docs/53`, `docs/54`).
+                inspectorService?.relinquish()
+                fileDropService?.relinquish()
                 await server.stop()
                 exit(0)
             }
@@ -293,50 +260,51 @@ Task {
         exit(1)
     }
 
+    // State how this daemon was started, now that the BOUND port is known (`--port 0` mints one
+    // that differs from the request). `scripts/restart-hostd.sh` reads it, so a rebuild is one
+    // command that cannot pick the wrong process, the wrong port or the wrong flags — the ritual
+    // was the last thing making a restart feel expensive, now that superd makes it cheap.
+    // Best-effort: a host that cannot write it still serves every client.
+    let launchRecord = HostLaunchRecord.current(boundPort: bound)
+    if launchRecord.write(), let recordPath = HostLaunchRecord.url()?.path {
+        log("launch record at \(recordPath) — `scripts/restart-hostd.sh` restarts this exact daemon")
+    }
+
     // Boot the code panel's backend NOW, off the client path: the shared code-server pays its
     // settings seed + extension install + Node boot while nobody is waiting, so the first panel
     // expand connects to a live workbench (user-directed startup-latency pass, 2026-08-07). A
     // binary-less host no-ops — verb 18 keeps answering `unavailable`.
     server.prewarmCodeServer()
 
-    // Bring up the inspector listener (port + 1) once the terminal server is up and its REAL
-    // bound port is known — `--port 0` mints an OS-chosen ephemeral port that can differ from
-    // `parsed.port`, and `inspectorPort` is `terminalPort &+ 1` for the object's whole lifetime, so
-    // this must be built from `bound`, not the raw requested port. The inspector is read-only
-    // tooling layered on top of an already-healthy terminal server: a bind failure here (bad
-    // `--port 0`+privileged-port math, EADDRINUSE, …) is logged loudly and non-fatal — it must
-    // NOT tear down the terminal server that just successfully bound and could serve clients.
+    // Bring up PATH 3 on `terminalPort &+ 1` once the terminal server is up and its REAL bound port
+    // is known — `--port 0` mints an OS-chosen ephemeral port that can differ from `parsed.port`,
+    // and the inspector port is `bound &+ 1`, so this must be built from `bound`. The port is not
+    // bound HERE any more: `slopdesk-inspectord` binds it, under superd, and the client dials it
+    // directly — so the transcript tail and the replay window now survive `make host-restart`
+    // (`docs/54`). A daemon that will not start is logged loudly and NON-fatal, exactly as a failed
+    // bind was: it must not tear down the terminal server that just successfully bound.
     if parsed.inspectorEnabled {
-        let inspector = InspectorServer(
-            terminalPort: bound,
-            replayLog: inspectorReplayLog,
-            transcriptPath: parsed.transcriptPath,
-        )
-        inspector.onLog = log
-        inspectorServer = inspector
-
-        if let path = parsed.transcriptPath {
-            let tailer = TranscriptTailer(path: path)
-            inspectorEngine.run(tailer: tailer, subagents: nil)
-            log("inspector tailing transcript \(path)")
-        }
-
-        do {
-            try await inspector.start()
-        } catch {
+        let inspectorPort = bound &+ 1
+        let inspector = InspectorServiceManager()
+        inspectorService = inspector
+        if let served = await inspector.start(port: inspectorPort, transcriptPath: parsed.transcriptPath) {
+            let subject = parsed.transcriptPath.map { "transcript \($0)" } ?? "no transcript yet"
+            log("inspector service on 0.0.0.0:\(served) (\(subject))")
+        } else {
             log(
-                "inspector failed to bind on port \(inspector.inspectorPort) (\(error)) — continuing with terminal server only, no inspector",
+                "slopdesk-inspectord did not come up on port \(inspectorPort) — continuing with terminal server only, no inspector",
             )
-            inspectorServer = nil
+            inspectorService = nil
         }
     }
 
-    // Bring up the PATH-4 file-transfer listener on `terminalPort &+ 2` (mirrors the inspector's
-    // `+1`), once the terminal server's REAL bound port is known. A drag-drop upload rides its OWN
-    // reliable TCP connection — never the terminal mux (a bulk body would stall keystrokes) nor the
-    // lossy UDP video path. Gated by `SLOPDESK_FILE_TRANSFER` (default-ON; `0` disables); the drop
-    // directory is `SLOPDESK_FILE_DROP_DIR` or `~/Downloads`. Like the inspector, a bind failure here
-    // is logged loudly and NON-fatal — it must not tear down the healthy terminal server.
+    // Bring up PATH 4 on `terminalPort &+ 2` (mirrors the inspector's `+1`), once the terminal
+    // server's REAL bound port is known. The port is not bound HERE any more: `slopdesk-dropd`
+    // binds it, under superd, and the client dials it directly — hostd never sees a body byte and a
+    // host restart no longer takes an upload with it (`docs/53`). Gated by `SLOPDESK_FILE_TRANSFER`
+    // (default-ON; `0` disables); the drop directory is `SLOPDESK_FILE_DROP_DIR` or `~/Downloads`.
+    // A daemon that will not start is logged loudly and NON-fatal — it must not tear down the
+    // healthy terminal server, exactly as a failed bind did not.
     let env = ProcessInfo.processInfo.environment
     if env["SLOPDESK_FILE_TRANSFER"] != "0" {
         let home = FileManager.default.homeDirectoryForCurrentUser
@@ -352,15 +320,13 @@ Task {
             return URL(fileURLWithPath: custom, isDirectory: true)
         }()
         let ftPort = bound &+ 2
-        let server = FileTransferServer(port: ftPort, dropDirectory: dropDir)
-        server.onLog = log
-        fileTransferServer = server
-        do {
-            try await server.start()
-            log("file-transfer listening on 0.0.0.0:\(ftPort) (drop dir \(dropDir.path))")
-        } catch {
-            log("file-transfer failed to bind on port \(ftPort) (\(error)) — continuing without file transfer")
-            fileTransferServer = nil
+        let drops = FileDropServiceManager()
+        fileDropService = drops
+        if let served = await drops.start(port: ftPort, dropDirectory: dropDir) {
+            log("file-drop service on 0.0.0.0:\(served) (drop dir \(dropDir.path))")
+        } else {
+            log("slopdesk-dropd did not come up on port \(ftPort) — continuing without file transfer")
+            fileDropService = nil
         }
     }
 }

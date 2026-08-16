@@ -1,4 +1,6 @@
+import CSlopDeskFFI
 import Foundation
+import SlopDeskArena
 
 // MARK: - Verb / kind vocabulary
 
@@ -74,7 +76,8 @@ public struct WorkspaceSubscribe: Equatable, Sendable {
     public static let flagContributesSize: UInt8 = 1 << 0
     /// b1 — this client follows host focus rather than steering its own view (docs/45 §8.2).
     public static let flagFollowsFocus: UInt8 = 1 << 1
-    public static let maxLabelBytes = 64
+    /// The label cap, read from the crate that enforces it rather than respelled here.
+    public static let maxLabelBytes = Int(slopdesk_workspace_constant(0))
 
     public var contributesSize: Bool { flags & Self.flagContributesSize != 0 }
     public var followsFocus: Bool { flags & Self.flagFollowsFocus != 0 }
@@ -96,44 +99,40 @@ public struct WorkspaceSubscribe: Equatable, Sendable {
     }
 
     public func encode() -> Data {
-        var out = Data()
-        out.append(clientInstanceID.dataBytes)
-        out.append(clientKind)
-        out.append(knownEpoch.dataBytes)
-        out.appendBE(knownStateNum)
-        out.append(flags)
-        let labelBytes = WorkspaceChannelCodec.clampUTF8(label, maxBytes: Self.maxLabelBytes)
-        out.appendBE(UInt16(labelBytes.count))
-        out.append(labelBytes)
-        return out
+        var pool = [UInt8]()
+        let record = SlopDeskWorkspaceSubscribe(
+            client_instance_id: WorkspaceChannelCodec.flat(clientInstanceID),
+            known_epoch: WorkspaceChannelCodec.flat(knownEpoch),
+            known_state_num: knownStateNum,
+            label: WorkspaceChannelCodec.intern(label, &pool),
+            client_kind: clientKind,
+            flags: flags,
+        )
+        return WorkspaceChannelCodec.sized { out, cap in
+            withUnsafePointer(to: record) { one in
+                pool.withUnsafeBufferPointer { arena in
+                    slopdesk_workspace_encode_subscribe(one, arena.baseAddress, arena.count, out, cap)
+                }
+            }
+        }
     }
 
     public static func decode(_ payload: Data) throws -> Self {
-        var reader = BigEndianReader(payload)
-        let clientInstanceID = try WorkspaceChannelCodec.readUUID(&reader)
-        let clientKind = try reader.readUInt8()
-        let knownEpoch = try WorkspaceChannelCodec.readUUID(&reader)
-        let knownStateNum = try reader.readInt64()
-        let flags = try reader.readUInt8()
-        let labelLen = try Int(reader.readUInt16())
-        // Bound the DECLARED length against both the cap and the bytes actually present, before any
-        // allocation. An over-long label is malformed, not clamped: silently truncating a field a
-        // peer over-declared hides a framing bug behind a plausible value.
-        guard labelLen <= maxLabelBytes else {
-            throw SlopDeskError.malformedBody("workspace subscribe: label \(labelLen) > \(maxLabelBytes)")
+        // The label is capped, so the arena it lands in is a fixed 64 bytes rather than a fraction
+        // of the payload — the only decode here whose bound is a cap and not a length.
+        try WorkspaceChannelCodec.decode(
+            payload, arenaBytes: maxLabelBytes, "workspace subscribe",
+            slopdesk_workspace_decode_subscribe,
+        ) { record, arena in
+            Self(
+                clientInstanceID: WorkspaceChannelCodec.uuid(record.client_instance_id),
+                clientKind: record.client_kind,
+                knownEpoch: WorkspaceChannelCodec.uuid(record.known_epoch),
+                knownStateNum: record.known_state_num,
+                flags: record.flags,
+                label: WorkspaceChannelCodec.text(arena, record.label),
+            )
         }
-        let labelBytes = try reader.readBytes(labelLen)
-        guard let label = String(data: labelBytes, encoding: .utf8) else {
-            throw SlopDeskError.malformedBody("workspace subscribe: label is not valid UTF-8")
-        }
-        return Self(
-            clientInstanceID: clientInstanceID,
-            clientKind: clientKind,
-            knownEpoch: knownEpoch,
-            knownStateNum: knownStateNum,
-            flags: flags,
-            label: label,
-        )
     }
 }
 
@@ -169,26 +168,31 @@ public struct WorkspacePresenceUpdate: Equatable, Sendable {
     }
 
     public func encode() -> Data {
-        var out = Data()
-        out.appendBE(presenceClock)
-        out.append(viewingTabID.dataBytes)
-        out.append(viewingPaneID.dataBytes)
-        out.appendBE(cols)
-        out.appendBE(rows)
-        out.append(flags)
-        return out
+        let record = SlopDeskWorkspacePresence(
+            presence_clock: presenceClock,
+            viewing_tab_id: WorkspaceChannelCodec.flat(viewingTabID),
+            viewing_pane_id: WorkspaceChannelCodec.flat(viewingPaneID),
+            cols: cols,
+            rows: rows,
+            flags: flags,
+        )
+        return WorkspaceChannelCodec.sized { out, cap in
+            withUnsafePointer(to: record) { slopdesk_workspace_encode_presence($0, out, cap) }
+        }
     }
 
     public static func decode(_ payload: Data) throws -> Self {
-        var reader = BigEndianReader(payload)
-        return try Self(
-            presenceClock: reader.readInt64(),
-            viewingTabID: WorkspaceChannelCodec.readUUID(&reader),
-            viewingPaneID: WorkspaceChannelCodec.readUUID(&reader),
-            cols: reader.readUInt16(),
-            rows: reader.readUInt16(),
-            flags: reader.readUInt8(),
-        )
+        let entry = slopdesk_workspace_decode_presence
+        return try WorkspaceChannelCodec.decode(payload, "workspace presence", entry) { record in
+            Self(
+                presenceClock: record.presence_clock,
+                viewingTabID: WorkspaceChannelCodec.uuid(record.viewing_tab_id),
+                viewingPaneID: WorkspaceChannelCodec.uuid(record.viewing_pane_id),
+                cols: record.cols,
+                rows: record.rows,
+                flags: record.flags,
+            )
+        }
     }
 }
 
@@ -209,24 +213,29 @@ public struct WorkspaceIntent: Equatable, Sendable {
     }
 
     public func encode() -> Data {
-        var out = Data()
-        out.append(intentID.dataBytes)
-        out.append(op)
-        out.appendBE(UInt32(args.count))
-        out.append(args)
-        return out
+        let id = WorkspaceChannelCodec.flat(intentID)
+        return WorkspaceChannelCodec.sized { out, cap in
+            withUnsafePointer(to: id) { one in
+                args.spanning { bytes, length in
+                    slopdesk_workspace_encode_intent(
+                        one, op, bytes?.assumingMemoryBound(to: UInt8.self), length, out, cap,
+                    )
+                }
+            }
+        }
     }
 
     public static func decode(_ payload: Data) throws -> Self {
-        var reader = BigEndianReader(payload)
-        let intentID = try WorkspaceChannelCodec.readUUID(&reader)
-        let op = try reader.readUInt8()
-        let argLen = try reader.readUInt32()
-        // A hostile `UInt32.max` must cost nothing: check against the bytes ACTUALLY left first.
-        guard argLen <= UInt32(Int32.max), reader.bytesRemaining >= Int(argLen) else {
-            throw SlopDeskError.truncated
+        // The arguments are opaque here and run to the frame cap, so the decode answers WHERE they
+        // sit in the payload and this is the ONE copy of them.
+        let flat = try WorkspaceChannelCodec.decode(
+            payload, "workspace intent", slopdesk_workspace_decode_intent,
+        ) { $0 }
+        let start = Int(flat.args.offset)
+        let args = payload.withUnsafeBytes { bytes in
+            Data(bytes[start..<start + Int(flat.args.length)])
         }
-        return try Self(intentID: intentID, op: op, args: reader.readBytes(Int(argLen)))
+        return Self(intentID: WorkspaceChannelCodec.uuid(flat.intent_id), op: flat.op, args: args)
     }
 }
 
@@ -248,15 +257,20 @@ public struct WorkspaceIntentResult: Equatable, Sendable {
     }
 
     public func encode() -> Data {
-        var out = Data()
-        out.append(intentID.dataBytes)
-        out.append(status)
-        return out
+        let record = SlopDeskWorkspaceIntentResult(
+            intent_id: WorkspaceChannelCodec.flat(intentID), status: status,
+        )
+        return WorkspaceChannelCodec.sized { out, cap in
+            withUnsafePointer(to: record) { slopdesk_workspace_encode_intent_result($0, out, cap) }
+        }
     }
 
     public static func decode(_ payload: Data) throws -> Self {
-        var reader = BigEndianReader(payload)
-        return try Self(intentID: WorkspaceChannelCodec.readUUID(&reader), statusByte: reader.readUInt8())
+        try WorkspaceChannelCodec.decode(
+            payload, "workspace intent result", slopdesk_workspace_decode_intent_result,
+        ) { record in
+            Self(intentID: WorkspaceChannelCodec.uuid(record.intent_id), statusByte: record.status)
+        }
     }
 }
 
@@ -328,6 +342,10 @@ public struct WorkspaceRosterPane: Equatable, Sendable {
 /// Presence is DERIVED, TTL-expired and never persisted, so it is broadcast whole every time rather
 /// than diffed. Keeping it in the versioned document would persist dead connection UUIDs across a
 /// restart and churn `stateNum` on every WireGuard flap.
+///
+/// A roster is panes each holding attachments, and a nest cannot cross without a pointer per pane.
+/// It crosses as THREE flat arrays instead — clients, panes, attachments — with each pane naming its
+/// run `(offset, count)` into the attachment array, the same trick the arena plays for text.
 public struct WorkspacePresenceRoster: Equatable, Sendable {
     public var clients: [WorkspaceRosterClient]
     public var panes: [WorkspaceRosterPane]
@@ -339,128 +357,252 @@ public struct WorkspacePresenceRoster: Equatable, Sendable {
 
     /// Upper bound on each list. Real rosters are single digits; this only exists so a hostile count
     /// is rejected by arithmetic before it can drive an allocation.
-    public static let maxRecords = 4096
+    public static let maxRecords = Int(slopdesk_workspace_constant(1))
 
     public func encode() -> Data {
-        var out = Data()
-        out.appendBE(UInt16(truncatingIfNeeded: min(clients.count, Self.maxRecords)))
-        for client in clients.prefix(Self.maxRecords) {
-            out.append(client.clientInstanceID.dataBytes)
-            out.append(client.clientKind)
-            out.append(client.flags)
-            out.append(client.viewingTabID.dataBytes)
-            out.append(client.viewingPaneID.dataBytes)
-            out.appendBE(client.cols)
-            out.appendBE(client.rows)
-            let labelBytes = WorkspaceChannelCodec.clampUTF8(
-                client.label,
-                maxBytes: WorkspaceSubscribe.maxLabelBytes,
+        var pool = [UInt8]()
+        let flatClients = clients.map { client in
+            SlopDeskWorkspaceRosterClient(
+                client_instance_id: WorkspaceChannelCodec.flat(client.clientInstanceID),
+                viewing_tab_id: WorkspaceChannelCodec.flat(client.viewingTabID),
+                viewing_pane_id: WorkspaceChannelCodec.flat(client.viewingPaneID),
+                label: WorkspaceChannelCodec.intern(client.label, &pool),
+                cols: client.cols,
+                rows: client.rows,
+                client_kind: client.clientKind,
+                flags: client.flags,
             )
-            out.appendBE(UInt16(labelBytes.count))
-            out.append(labelBytes)
         }
-        out.appendBE(UInt16(truncatingIfNeeded: min(panes.count, Self.maxRecords)))
-        for pane in panes.prefix(Self.maxRecords) {
-            out.append(pane.paneID.dataBytes)
-            out.appendBE(pane.resolvedCols)
-            out.appendBE(pane.resolvedRows)
-            out.appendBE(UInt16(truncatingIfNeeded: min(pane.attachments.count, Self.maxRecords)))
-            for attachment in pane.attachments.prefix(Self.maxRecords) {
-                out.append(attachment.clientInstanceID.dataBytes)
-                out.append(attachment.contributes ? 1 : 0)
-                out.appendBE(attachment.cols)
-                out.appendBE(attachment.rows)
+        var flatAttachments: [SlopDeskWorkspaceRosterAttachment] = []
+        let flatPanes = panes.map { pane in
+            let offset = UInt32(clamping: flatAttachments.count)
+            flatAttachments.append(contentsOf: pane.attachments.map { attachment in
+                SlopDeskWorkspaceRosterAttachment(
+                    client_instance_id: WorkspaceChannelCodec.flat(attachment.clientInstanceID),
+                    cols: attachment.cols,
+                    rows: attachment.rows,
+                    contributes: attachment.contributes,
+                )
+            })
+            return SlopDeskWorkspaceRosterPane(
+                pane_id: WorkspaceChannelCodec.flat(pane.paneID),
+                attachments: SlopDeskWorkspaceRun(
+                    offset: offset, count: UInt32(clamping: pane.attachments.count),
+                ),
+                resolved_cols: pane.resolvedCols,
+                resolved_rows: pane.resolvedRows,
+            )
+        }
+        return WorkspaceChannelCodec.sized { out, cap in
+            flatClients.withUnsafeBufferPointer { clientList in
+                flatPanes.withUnsafeBufferPointer { paneList in
+                    flatAttachments.withUnsafeBufferPointer { attachmentList in
+                        pool.withUnsafeBufferPointer { arena in
+                            slopdesk_workspace_encode_roster(
+                                clientList.baseAddress, clientList.count,
+                                paneList.baseAddress, paneList.count,
+                                attachmentList.baseAddress, attachmentList.count,
+                                arena.baseAddress, arena.count, out, cap,
+                            )
+                        }
+                    }
+                }
             }
         }
-        return out
     }
 
     public static func decode(_ payload: Data) throws -> Self {
-        var reader = BigEndianReader(payload)
-        let clientCount = try Int(reader.readUInt16())
-        // Cheapest client record: two UUIDs + kind + flags + cols + rows + a zero label length.
-        guard reader.bytesRemaining >= clientCount * 42 else { throw SlopDeskError.truncated }
-        var clients: [WorkspaceRosterClient] = []
-        clients.reserveCapacity(clientCount)
-        for _ in 0..<clientCount {
-            let id = try WorkspaceChannelCodec.readUUID(&reader)
-            let kind = try reader.readUInt8()
-            let flags = try reader.readUInt8()
-            let tab = try WorkspaceChannelCodec.readUUID(&reader)
-            let pane = try WorkspaceChannelCodec.readUUID(&reader)
-            let cols = try reader.readUInt16()
-            let rows = try reader.readUInt16()
-            let labelLen = try Int(reader.readUInt16())
-            guard labelLen <= WorkspaceSubscribe.maxLabelBytes else {
-                throw SlopDeskError.malformedBody("workspace roster: label \(labelLen) over cap")
+        // Every buffer is bounded by the payload itself: no list can hold more records than
+        // `payload.count / theSmallestSuchRecord`, and no arena can exceed the payload. So the sizes
+        // come off the bytes already in hand and the call happens ONCE.
+        let clientRoom = WorkspaceChannelCodec.room(payload, perRecord: 2)
+        let paneRoom = WorkspaceChannelCodec.room(payload, perRecord: 3)
+        let attachmentRoom = WorkspaceChannelCodec.room(payload, perRecord: 4)
+        return try payload.spanning { bytes, length in
+            try withUnsafeTemporaryAllocation(
+                of: SlopDeskWorkspaceRosterClient.self, capacity: clientRoom,
+            ) { clientSlots in
+                try withUnsafeTemporaryAllocation(
+                    of: SlopDeskWorkspaceRosterPane.self, capacity: paneRoom,
+                ) { paneSlots in
+                    try withUnsafeTemporaryAllocation(
+                        of: SlopDeskWorkspaceRosterAttachment.self, capacity: attachmentRoom,
+                    ) { attachmentSlots in
+                        try withUnsafeTemporaryAllocation(
+                            of: UInt8.self, capacity: Swift.max(payload.count, 1),
+                        ) { arena in
+                            var clientCount = 0
+                            var paneCount = 0
+                            var attachmentCount = 0
+                            let verdict = slopdesk_workspace_decode_roster(
+                                bytes?.assumingMemoryBound(to: UInt8.self), length,
+                                clientSlots.baseAddress, clientSlots.count, &clientCount,
+                                paneSlots.baseAddress, paneSlots.count, &paneCount,
+                                attachmentSlots.baseAddress, attachmentSlots.count, &attachmentCount,
+                                arena.baseAddress, arena.count,
+                            )
+                            try WorkspaceChannelCodec.throwIfFaulted(verdict, "workspace roster")
+                            let pool = UnsafeRawBufferPointer(arena)
+                            return Self(
+                                clients: (0..<clientCount).map { built(clientSlots[$0], pool) },
+                                panes: (0..<paneCount).map { built(paneSlots[$0], attachmentSlots) },
+                            )
+                        }
+                    }
+                }
             }
-            let labelBytes = try reader.readBytes(labelLen)
-            guard let label = String(data: labelBytes, encoding: .utf8) else {
-                throw SlopDeskError.malformedBody("workspace roster: label is not valid UTF-8")
-            }
-            clients.append(WorkspaceRosterClient(
-                clientInstanceID: id,
-                clientKind: kind,
-                flags: flags,
-                viewingTabID: tab,
-                viewingPaneID: pane,
-                cols: cols,
-                rows: rows,
-                label: label,
-            ))
         }
-        let paneCount = try Int(reader.readUInt16())
-        // Cheapest pane record: paneID + resolved grid + a zero attachment count.
-        guard reader.bytesRemaining >= paneCount * 22 else { throw SlopDeskError.truncated }
-        var panes: [WorkspaceRosterPane] = []
-        panes.reserveCapacity(paneCount)
-        for _ in 0..<paneCount {
-            let paneID = try WorkspaceChannelCodec.readUUID(&reader)
-            let cols = try reader.readUInt16()
-            let rows = try reader.readUInt16()
-            let count = try Int(reader.readUInt16())
-            guard reader.bytesRemaining >= count * 21 else { throw SlopDeskError.truncated }
-            var attachments: [WorkspaceRosterPane.Attachment] = []
-            attachments.reserveCapacity(count)
-            for _ in 0..<count {
-                try attachments.append(WorkspaceRosterPane.Attachment(
-                    clientInstanceID: WorkspaceChannelCodec.readUUID(&reader),
-                    // C-style bool: any non-zero is `true`.
-                    contributes: reader.readUInt8() != 0,
-                    cols: reader.readUInt16(),
-                    rows: reader.readUInt16(),
-                ))
-            }
-            panes.append(WorkspaceRosterPane(
-                paneID: paneID,
-                resolvedCols: cols,
-                resolvedRows: rows,
-                attachments: attachments,
-            ))
-        }
-        return Self(clients: clients, panes: panes)
+    }
+
+    /// One client, read out of its record and the arena its label landed in.
+    private static func built(
+        _ record: SlopDeskWorkspaceRosterClient,
+        _ arena: UnsafeRawBufferPointer,
+    ) -> WorkspaceRosterClient {
+        WorkspaceRosterClient(
+            clientInstanceID: WorkspaceChannelCodec.uuid(record.client_instance_id),
+            clientKind: record.client_kind,
+            flags: record.flags,
+            viewingTabID: WorkspaceChannelCodec.uuid(record.viewing_tab_id),
+            viewingPaneID: WorkspaceChannelCodec.uuid(record.viewing_pane_id),
+            cols: record.cols,
+            rows: record.rows,
+            label: WorkspaceChannelCodec.text(arena, record.label),
+        )
+    }
+
+    /// One pane, with its run of the flat attachment array read back into a nest.
+    private static func built(
+        _ record: SlopDeskWorkspaceRosterPane,
+        _ attachments: UnsafeMutableBufferPointer<SlopDeskWorkspaceRosterAttachment>,
+    ) -> WorkspaceRosterPane {
+        let start = Int(record.attachments.offset)
+        let end = start + Int(record.attachments.count)
+        return WorkspaceRosterPane(
+            paneID: WorkspaceChannelCodec.uuid(record.pane_id),
+            resolvedCols: record.resolved_cols,
+            resolvedRows: record.resolved_rows,
+            attachments: (start..<end).map { slot in
+                WorkspaceRosterPane.Attachment(
+                    clientInstanceID: WorkspaceChannelCodec.uuid(attachments[slot].client_instance_id),
+                    contributes: attachments[slot].contributes,
+                    cols: attachments[slot].cols,
+                    rows: attachments[slot].rows,
+                )
+            },
+        )
     }
 }
 
 // MARK: - Shared helpers
 
-/// Namespace for the bits the workspace payload codecs share. Not a codec itself — the ENVELOPE is
+/// Namespace for the bits the workspace payload codecs share. Not a codec itself — every layout,
+/// clamp and validation lives in `rust/slopdesk-wire`'s `workspace` module, and the ENVELOPE is
 /// ``WireMessage/workspaceRequest(requestSeq:verb:payload:)`` /
-/// ``WireMessage/workspaceEvent(kind:epoch:baseStateNum:newStateNum:payload:)`` and the document
+/// ``WireMessage/workspaceEvent(kind:epoch:baseStateNum:newStateNum:payload:)`` while the document
 /// entries are `WorkspaceStateCodec` in the model target.
 public enum WorkspaceChannelCodec {
-    static func readUUID(_ reader: inout BigEndianReader) throws -> UUID {
-        let bytes = try reader.readBytes(16)
-        guard let uuid = UUID(dataBytes: bytes) else { throw SlopDeskError.truncated }
-        return uuid
+    /// A UUID as the sixteen bytes the wire orders them in.
+    static func flat(_ uuid: UUID) -> SlopDeskWsUuid {
+        SlopDeskWsUuid(bytes: uuid.uuid)
     }
 
-    /// UTF-8 bytes clamped at a Unicode SCALAR boundary, so a clamped value is still valid UTF-8
-    /// (the type-35 idiom). Applied on ENCODE only — a decoder rejects an over-long declared length
-    /// rather than trimming it.
-    static func clampUTF8(_ text: String, maxBytes: Int) -> Data {
-        var out = text
-        while out.utf8.count > maxBytes { out.unicodeScalars.removeLast() }
-        return Data(out.utf8)
+    /// The UUID those sixteen bytes are.
+    static func uuid(_ flat: SlopDeskWsUuid) -> UUID {
+        UUID(uuid: flat.bytes)
+    }
+
+    /// Appends `string`'s UTF-8 to the arena and answers where it landed.
+    ///
+    /// The pool is `[UInt8]` rather than `Data` because `Data.append` per text field measured 3–4×
+    /// the cost of `Array.append(contentsOf:)` at list sizes this wire really carries.
+    static func intern(_ string: String, _ pool: inout [UInt8]) -> SlopDeskWorkspaceText {
+        let offset = UInt32(clamping: pool.count)
+        pool.append(contentsOf: string.utf8)
+        return SlopDeskWorkspaceText(offset: offset, length: UInt32(clamping: pool.count) - offset)
+    }
+
+    /// Reads a text field out of the arena a decode filled.
+    ///
+    /// This face answered `""` for a byte sequence that is not UTF-8 where the crate's own reader
+    /// repairs it; it now agrees with the crate. The branch is unreachable — the arena was filled by
+    /// a Rust `String` in the same call — which is why the disagreement survived unseen.
+    static func text(_ arena: UnsafeRawBufferPointer, _ field: SlopDeskWorkspaceText) -> String {
+        ArenaText.text(arena, field.offset, field.length)
+    }
+
+    /// How many records of a kind the payload could possibly hold.
+    ///
+    /// `perRecord` is the ``slopdesk_workspace_constant(_:)`` INDEX of that kind's smallest size, not
+    /// the size — the number itself stays in the crate that enforces it.
+    static func room(_ payload: Data, perRecord: UInt32) -> Int {
+        let smallest = Int(slopdesk_workspace_constant(perRecord))
+        return Swift.max(payload.count / Swift.max(smallest, 1), 1)
+    }
+
+    /// Encodes by the §4 convention: ask for the size, then fill exactly that.
+    static func sized(_ call: (UnsafeMutablePointer<UInt8>?, Int) -> Int) -> Data {
+        let needed = call(nil, 0)
+        return WireBuffer.filled(needed) { out in
+            let written = call(out?.assumingMemoryBound(to: UInt8.self), needed)
+            precondition(
+                written == needed, "the workspace codec sized a payload differently than it wrote it",
+            )
+        }
+    }
+
+    /// Decodes a fixed-size payload — one record, no arena.
+    static func decode<Record, Item>(
+        _ payload: Data,
+        _ context: String,
+        _ call: (UnsafePointer<UInt8>?, Int, UnsafeMutablePointer<Record>?) -> UInt32,
+        _ build: (Record) -> Item,
+    ) throws -> Item {
+        try withUnsafeTemporaryAllocation(of: Record.self, capacity: 1) { record in
+            let verdict = payload.spanning { bytes, length in
+                call(bytes?.assumingMemoryBound(to: UInt8.self), length, record.baseAddress)
+            }
+            try throwIfFaulted(verdict, context)
+            return build(record[0])
+        }
+    }
+
+    /// Decodes a payload that is one record plus an arena its text lands in.
+    static func decode<Record, Item>(
+        _ payload: Data,
+        arenaBytes: Int,
+        _ context: String,
+        _ call: (
+            UnsafePointer<UInt8>?, Int, UnsafeMutablePointer<Record>?, UnsafeMutablePointer<UInt8>?, Int,
+        ) -> UInt32,
+        _ build: (Record, UnsafeRawBufferPointer) -> Item,
+    ) throws -> Item {
+        try withUnsafeTemporaryAllocation(of: Record.self, capacity: 1) { record in
+            try withUnsafeTemporaryAllocation(of: UInt8.self, capacity: Swift.max(arenaBytes, 1)) { arena in
+                let verdict = payload.spanning { bytes, length in
+                    call(
+                        bytes?.assumingMemoryBound(to: UInt8.self), length,
+                        record.baseAddress, arena.baseAddress, arena.count,
+                    )
+                }
+                try throwIfFaulted(verdict, context)
+                return build(record[0], UnsafeRawBufferPointer(arena))
+            }
+        }
+    }
+
+    /// Throws the error a non-OK verdict names.
+    ///
+    /// `AGAIN` cannot reach a caller here: every buffer is sized off the payload or the cap that
+    /// bounds it, so a short one would be a boundary bug rather than a hostile body — and is trapped
+    /// as one.
+    static func throwIfFaulted(_ verdict: UInt32, _ context: String) throws {
+        switch verdict {
+        case SLOPDESK_WIRE_DECODE_OK: return
+        case SLOPDESK_WIRE_DECODE_TRUNCATED: throw SlopDeskError.truncated
+        case SLOPDESK_WIRE_DECODE_AGAIN:
+            preconditionFailure("\(context): a payload out-grew the buffers it bounds")
+        default: throw SlopDeskError.malformedBody("\(context): rejected by the workspace codec")
+        }
     }
 }

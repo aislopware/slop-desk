@@ -1,5 +1,3 @@
-import Foundation
-
 // MARK: - CloseConfirmationPolicy (close-confirmation policy)
 
 /// When a tab / pane / window close must be GATED behind a confirmation prompt

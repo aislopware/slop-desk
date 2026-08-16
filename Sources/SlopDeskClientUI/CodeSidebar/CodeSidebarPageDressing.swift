@@ -47,7 +47,8 @@ import Foundation
 
 enum CodeSidebarPageDressing {
     /// The CSS family the nerd-font @font-face declares — the name the seeded `editor.fontFamily`
-    /// (`CodeServerManager.seededUserSettings`, host side) lists as the private-use fallback.
+    /// (`slopdesk-codeseed`'s `resources/settings.json`, host side) lists as the private-use
+    /// fallback.
     static let nerdFontFamilyName = "Symbols Nerd Font"
 
     /// The CSS family the JetBrains Mono @font-faces declare — the seeded `editor.fontFamily`'s

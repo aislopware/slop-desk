@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 
 // MARK: - TabOrderingEngine (the pure By-Project key helpers)
@@ -24,10 +25,9 @@ public enum TabOrderingEngine {
     /// `cd foo/` differ only by a trailing `/` yet name the SAME project; without normalizing they would
     /// split one directory into two identically-titled sections.
     public static func normalizedProjectKey(_ key: String?) -> String? {
-        guard let key else { return nil }
-        var trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        while trimmed.count > 1, trimmed.hasSuffix("/") { trimmed.removeLast() }
-        return trimmed.isEmpty ? nil : trimmed
+        withOptionalText(key) { bytes, len, present in
+            wsAnswer { out, cap in slopdesk_ws_project_key(bytes, len, present, out, cap) }
+        }
     }
 
     /// The section header for a project key — its last path component (`/Users/me/proj/foo` → `foo`),
@@ -35,12 +35,9 @@ public enum TabOrderingEngine {
     /// the "Other" bucket. Mirrors the basename helper in ``TabBadgeResolver`` (split on `/`, last non-empty
     /// component).
     public static func projectSectionHeader(for key: String?) -> String {
-        guard let key, case let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty
-        else { return "Other" }
-        guard let last = trimmed.split(separator: "/", omittingEmptySubsequences: true).last else {
-            return trimmed
+        withOptionalText(key) { bytes, len, present in
+            wsAnswer { out, cap in slopdesk_ws_section_header(bytes, len, present, out, cap) } ?? "Other"
         }
-        return String(last)
     }
 
     // MARK: - The pane → project-key precedence (the ONE resolution rule)
@@ -141,9 +138,12 @@ public enum TabOrderingEngine {
     /// `session.tabs`, so where a project sat was a fact about when you happened to open it).
     ///
     /// Ordering on the HEADER (the key's basename), not the key, because the header is what the eye
-    /// scans: `/w/zeta/alpha` reads "alpha" and belongs under A. `localizedStandardCompare` is the
-    /// Finder's comparison — case- and diacritic-insensitive, with digit runs read as numbers, so
-    /// `app2` precedes `app10`.
+    /// scans: `/w/zeta/alpha` reads "alpha" and belongs under A. The comparison is
+    /// `rust/slopdesk-workspace`'s `natural_compare` — case-insensitive, with digit runs read as
+    /// numbers so `app2` precedes `app10`. It differs from the `localizedStandardCompare` it replaces
+    /// in one respect: it does not fold DIACRITICS, so `Café` and `Cafe` are distinct rather than
+    /// adjacent. Section headers are directory basenames, where that is a rounding error — but it is
+    /// a real difference and not an oversight (the crate's module docs say so too).
     ///
     /// The key breaks a header tie, which makes this a TOTAL order (keys are unique per section, so
     /// two sections can never compare equal) — `sorted(by:)` is not documented stable, and two
@@ -151,12 +151,11 @@ public enum TabOrderingEngine {
     /// is also the order their parent-qualified headers will read in
     /// (``RailRowsBuilder/headerDisambiguated(_:)`` turns `/w/feature-a/myapp` into `feature-a/myapp`).
     public static func sectionPrecedes(_ lhs: String?, _ rhs: String?) -> Bool {
-        guard let lhs else { return false } // the keyless bucket never precedes a named project
-        guard let rhs else { return true }
-        let byHeader = projectSectionHeader(for: lhs)
-            .localizedStandardCompare(projectSectionHeader(for: rhs))
-        if byHeader != .orderedSame { return byHeader == .orderedAscending }
-        return lhs.localizedStandardCompare(rhs) == .orderedAscending
+        withOptionalText(lhs) { left, leftLen, leftPresent in
+            withOptionalText(rhs) { right, rightLen, rightPresent in
+                slopdesk_ws_section_precedes(left, leftLen, leftPresent, right, rightLen, rightPresent)
+            }
+        }
     }
 
     // MARK: - Close → next selection
@@ -195,29 +194,44 @@ public enum TabOrderingEngine {
         projectKey: (TabID) -> String?,
         focusHistory: [TabID],
     ) -> TabID? {
-        guard let closingIndex = displayOrder.firstIndex(of: closing) else { return nil }
-        let survivors = displayOrder.filter { $0 != closing }
-        guard !survivors.isEmpty else { return nil }
+        // The closure is evaluated ONCE per tab here rather than trampolined back per probe: the crate
+        // reads `(id, key)` pairs, and a Swift closure called from Rust would be the one thing in this
+        // file that could not be a plain value copy.
+        var strings = WsStrings()
+        var tabs = displayOrder.map {
+            SlopDeskWsKeyedTab(id: $0.ffi, key: strings.span(projectKey($0)))
+        }
+        var history = focusHistory.map(\.ffi)
+        var blob = strings.bytes
+        var answer = SlopDeskWsUuid(bytes: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
 
-        // 1. Most-recently-focused survivor. The history's newest entry is usually `closing` itself (it was
-        //    active when the user hit ⌘W), so identity + liveness are both filtered here.
-        let live = Set(survivors)
-        if let recent = focusHistory.first(where: { $0 != closing && live.contains($0) }) { return recent }
-
-        // 2. Neighbour inside the closing tab's own project section.
-        let section = normalizedProjectKey(projectKey(closing))
-        let siblings = displayOrder.filter { normalizedProjectKey(projectKey($0)) == section }
-        if let sibling = neighbour(of: closing, in: siblings) { return sibling }
-
-        // 3. Neighbour in the full display order (the section died with its last tab).
-        return neighbour(of: closing, in: displayOrder) ?? survivors[min(closingIndex, survivors.count - 1)]
+        let found = blob.withUnsafeMutableBufferPointer { keys in
+            tabs.withUnsafeMutableBufferPointer { order in
+                history.withUnsafeMutableBufferPointer { recent in
+                    slopdesk_ws_successor_after_close(
+                        closing.ffi,
+                        order.baseAddress, order.count,
+                        keys.baseAddress, keys.count,
+                        recent.baseAddress, recent.count,
+                        &answer,
+                    )
+                }
+            }
+        }
+        return found ? TabID(ffi: answer) : nil
     }
 
-    /// The element after `target` in `list`, else the one before it — `nil` when `target` is absent or alone.
-    private static func neighbour(of target: TabID, in list: [TabID]) -> TabID? {
-        guard let index = list.firstIndex(of: target) else { return nil }
-        if index + 1 < list.count { return list[index + 1] }
-        if index > 0 { return list[index - 1] }
-        return nil
+    /// Reads a `(out, cap) -> needed` answer that has no input to lend, with the retry docs/55 §4
+    /// describes. `nil` is "no answer", which is not the empty answer: an absent project key and a
+    /// blank one are different facts about a pane.
+    private static func wsAnswer(_ call: (UnsafeMutablePointer<UInt8>?, Int) -> Int) -> String? {
+        var out = [UInt8](repeating: 0, count: 256)
+        var needed = out.withUnsafeMutableBufferPointer { call($0.baseAddress, $0.count) }
+        if needed > out.count {
+            out = [UInt8](repeating: 0, count: needed)
+            needed = out.withUnsafeMutableBufferPointer { call($0.baseAddress, $0.count) }
+        }
+        guard needed > 0, needed <= out.count else { return nil }
+        return String(bytes: out[0..<needed], encoding: .utf8)
     }
 }

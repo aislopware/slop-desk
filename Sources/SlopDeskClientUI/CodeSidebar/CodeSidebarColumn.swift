@@ -141,7 +141,7 @@ struct CodeSidebarColumn: View {
         // settings watcher applies it without a reload). The ensure-round sync below covers the
         // panel-open path; this covers Settings edits mid-session. Best-effort, reply ignored.
         .onChange(of: fontSpec) { _, spec in
-            guard let spec, let client = Self.firstConnectedMetadataClient(store) else { return }
+            guard let spec, let client = store.firstConnectedMetadataClient else { return }
             // Records the push too, so the next ensure round does not re-send what just landed.
             Self.lastPushedFontSpec = spec
             Task { await client.syncCodeFont(spec) }
@@ -423,7 +423,7 @@ struct CodeSidebarColumn: View {
             await simulatorModel.poll(
                 host: { [connection] in connection.target.host },
                 ensure: { [store] in
-                    await Self.firstConnectedMetadataClient(store)?.ensureSimulatorServer()
+                    await store.firstConnectedMetadataClient?.ensureSimulatorServer()
                 },
             )
         }
@@ -563,7 +563,7 @@ struct CodeSidebarColumn: View {
             await androidModel.poll(
                 host: { [connection] in connection.target.host },
                 ensure: { [store] in
-                    await Self.firstConnectedMetadataClient(store)?.ensureAndroidBridge()
+                    await store.firstConnectedMetadataClient?.ensureAndroidBridge()
                 },
             )
         }
@@ -690,7 +690,7 @@ struct CodeSidebarColumn: View {
     private static func ensureEndpoint(
         projectRoot: String, store: WorkspaceStore, preferences: PreferencesStore?,
     ) async -> MetadataCodec.ServiceEndpoint? {
-        guard let client = firstConnectedMetadataClient(store) else { return nil }
+        guard let client = store.firstConnectedMetadataClient else { return nil }
         let endpoint = await client.ensureCodeServer(projectRoot: projectRoot)
         if let terminal = preferences?.terminal {
             let spec = CodeFontSync.spec(terminal: terminal)
@@ -706,15 +706,6 @@ struct CodeSidebarColumn: View {
     /// restarted per project/reload and the settings file it writes is host-global anyway; a
     /// project switch must not re-push a spec the host already has.
     @MainActor private static var lastPushedFontSpec: MetadataCodec.CodeFontSpec?
-
-    private static func firstConnectedMetadataClient(_ store: WorkspaceStore) -> MetadataClient? {
-        for id in store.tree.activeSession?.allPaneIDs() ?? [] {
-            if let client = (store.handle(for: id) as? LivePaneSession)?.connection?.activeMetadataClient {
-                return client
-            }
-        }
-        return nil
-    }
 }
 
 /// The open gate — what a project shows before its first-ever workbench open

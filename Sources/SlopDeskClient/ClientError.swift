@@ -1,5 +1,3 @@
-import Foundation
-
 /// Client-side errors surfaced by ``SlopDeskClient`` and ``ReconnectManager``.
 public enum ClientError: Error, Equatable, Sendable {
     /// An operation was attempted from a state that does not permit it — e.g. sending

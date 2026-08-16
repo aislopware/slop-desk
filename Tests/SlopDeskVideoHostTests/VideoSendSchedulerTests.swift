@@ -17,21 +17,21 @@ final class VideoSendSchedulerTests: XCTestCase {
     func testFrameSchedulesAllFragmentsOnVideoChannelInOrder() {
         let packetizer = VideoPacketizer(fec: XORParityFEC())
         let frame = makeAVCC(naluSizes: [VideoPacketizer.maxPayloadSize * 2 + 9])
-        let fragments = packetizer.packetize(frame: frame, keyframe: true)
-        let outgoing = scheduler.scheduleFrame(fragments)
+        let datagrams = packetizer.packetizeRaw(frame: frame, keyframe: true)
+        let outgoing = scheduler.scheduleFrameRaw(datagrams)
 
-        XCTAssertEqual(outgoing.count, fragments.count)
+        XCTAssertEqual(outgoing.count, datagrams.count)
         for (i, out) in outgoing.enumerated() {
             XCTAssertEqual(out.channel, .video)
-            XCTAssertEqual(out.bytes, fragments[i].encode(), "scheduler preserves packetizer order + bytes")
+            XCTAssertEqual(out.bytes, datagrams[i], "scheduler preserves packetizer order + bytes")
         }
     }
 
     func testFrameRoundTripsThroughSchedulerToReassembler() throws {
         let packetizer = VideoPacketizer()
         let frame = makeAVCC(naluSizes: [VideoPacketizer.maxPayloadSize + 100, 30])
-        let fragments = packetizer.packetize(frame: frame, keyframe: true, crisp: true)
-        let outgoing = scheduler.scheduleFrame(fragments)
+        let datagrams = packetizer.packetizeRaw(frame: frame, keyframe: true, crisp: true)
+        let outgoing = scheduler.scheduleFrameRaw(datagrams)
 
         let reassembler = FrameReassembler()
         var completed: ReassembledFrame?

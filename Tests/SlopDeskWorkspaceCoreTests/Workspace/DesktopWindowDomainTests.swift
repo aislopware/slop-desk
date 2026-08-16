@@ -4,7 +4,6 @@
 
 import SlopDeskWorkspaceModel
 import XCTest
-@testable import SlopDeskWorkspaceCore
 
 final class DesktopWindowDomainTests: XCTestCase {
     private var ws: TreeWorkspace { .defaultWorkspace() }

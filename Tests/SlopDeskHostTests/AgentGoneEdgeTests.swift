@@ -32,27 +32,11 @@ final class AgentGoneEdgeTests: XCTestCase {
 
     // MARK: The sniffer's coalescing anchor
 
-    /// The retirement's other half. Without forgetting the anchor, the NEXT claude run in the same
-    /// pane opens on the byte-identical `✳ Claude Code` the previous one was retired on — and the
-    /// coalescer drops it, leaving the pane untitled for the whole session.
-    func testForgettingCoalescingLetsAnIdenticalTitleThrough() {
-        let sniffer = HostOutputSniffer()
-        let title = Data("\u{1B}]0;✳ Claude Code\u{07}".utf8)
-        XCTAssertEqual(sniffer.observe(title).count, 1, "first title ships")
-        XCTAssertTrue(sniffer.observe(title).isEmpty, "an immediate repeat coalesces away")
-        sniffer.forgetTitleCoalescing()
-        XCTAssertEqual(sniffer.observe(title).count, 1, "after the retirement the same title ships again")
-    }
-
-    /// Forgetting the anchor must not weaken the empty-title guard the retirement is built AROUND —
-    /// zsh/p10k prompt redraws stay dropped, so an empty type-21 on the wire keeps meaning
-    /// "the host retired this title" and nothing else.
-    func testEmptyOSCTitleIsStillDropped() {
-        let sniffer = HostOutputSniffer()
-        sniffer.forgetTitleCoalescing()
-        XCTAssertTrue(sniffer.observe(Data("\u{1B}]0;\u{07}".utf8)).isEmpty)
-        XCTAssertTrue(sniffer.observe(Data("\u{1B}]2;\u{07}".utf8)).isEmpty)
-    }
+    //
+    // The anchor itself lives in superd now (`rust/slopdesk-superd/src/sniffer.rs`), and so do the
+    // two cases that used to sit here — that retiring it lets a byte-identical `✳ Claude Code`
+    // through again, and that retiring it does NOT weaken the empty-title guard it is built around.
+    // What stays hostd's, and is covered above, is WHEN the retirement is asked for.
 
     // MARK: Stop — the work that outlives the turn
 

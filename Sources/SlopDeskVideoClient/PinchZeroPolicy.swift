@@ -1,4 +1,5 @@
-import Foundation
+import CSlopDeskFFI
+import SlopDeskVideoProtocol
 
 /// Where the smart-zoom → ⌘0 translation must NOT fire (doc 05 §8).
 ///
@@ -14,21 +15,28 @@ import Foundation
 /// "Xcode"/"Google Chrome" style) — bundle ids never reach the client seam. A DESKTOP pane
 /// (or a legacy binding with no recorded app) has an empty name and FAILS OPEN: the pane
 /// streams a whole display whose frontmost app the client cannot know.
+///
+/// A face over `client_gestures`, and the one owner of its handle. A handle is right here for the
+/// swipe-nav config's reason: the denylist carries a runtime EXTENSION set, which no fold of
+/// scalars holds, and this namespace is process-lifetime and never copied.
 public enum PinchZeroPolicy {
-    /// App display names where ⌘0 is not a zoom reset. Extend at runtime via
-    /// `SLOPDESK_PINCH_ZERO_UNSAFE_APPS` (comma-separated display names) without a rebuild.
-    public static let unsafeAppNames: Set<String> = ["Xcode"]
-
-    /// Parses the `SLOPDESK_PINCH_ZERO_UNSAFE_APPS` extension list (comma-separated,
-    /// whitespace-tolerant) — same shape as `SwipeNavPolicy.extraApps`.
-    public static func extraUnsafe(from raw: String?) -> Set<String> {
-        guard let raw else { return [] }
-        return Set(raw.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })
-    }
+    /// The parsed denylist — the built-in names plus `SLOPDESK_PINCH_ZERO_UNSAFE_APPS`
+    /// (comma-separated display names), read once. `nonisolated(unsafe)` because it is written by
+    /// the first reader and only ever READ afterwards; nothing frees it, and the parse outlives
+    /// every caller.
+    private nonisolated(unsafe) static let handle: OpaquePointer? = {
+        guard let raw = EnvConfig.string("SLOPDESK_PINCH_ZERO_UNSAFE_APPS") else {
+            return slopdesk_zoom_reset_policy_parse(nil, 0)
+        }
+        return Array(raw.utf8).withUnsafeBufferPointer { bytes in
+            slopdesk_zoom_reset_policy_parse(bytes.baseAddress, bytes.count)
+        }
+    }()
 
     /// Whether a smart-zoom ⌘0 may be sent at a pane bound to `appName`.
-    public static func allowsReset(appName: String, extraUnsafe: Set<String> = []) -> Bool {
-        guard !appName.isEmpty else { return true } // desktop pane / legacy binding — fail open
-        return !unsafeAppNames.contains(appName) && !extraUnsafe.contains(appName)
+    public static func allowsReset(appName: String) -> Bool {
+        Array(appName.utf8).withUnsafeBufferPointer { name in
+            slopdesk_zoom_reset_allowed(handle, name.baseAddress, name.count)
+        }
     }
 }

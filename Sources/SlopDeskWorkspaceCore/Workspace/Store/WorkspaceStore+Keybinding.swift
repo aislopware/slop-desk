@@ -2,7 +2,6 @@
 // `wireMaterializedLeaf` so the `WorkspaceStore` primary body stays under the SwiftLint type-body ceiling
 // (the same split as `WorkspaceStore+Blocks.seedBlockBookmarks`). Pure wiring; no new behaviour.
 
-import Foundation
 import SlopDeskWorkspaceModel
 
 /// The view-injected overlay-toggle closures the per-pane hardware-keyboard ``TerminalKeyInterceptor`` threads

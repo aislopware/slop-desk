@@ -1,5 +1,4 @@
-import Foundation
-import SlopDeskVideoProtocol
+import CSlopDeskFFI
 
 /// Per-frame one-way-delay SPIKE detector — the promotion signal for the pacer's adaptive 1↔2
 /// depth boost.
@@ -30,100 +29,123 @@ import SlopDeskVideoProtocol
 /// Measured at ARRIVAL, independent of presentation depth — promotion can't self-sustain at
 /// depth 2 via its own pinning loop, so demote-on-clean actually happens.
 ///
-/// PURE + deterministic: caller injects every sample; headlessly unit-testable.
+/// The law itself is `rust/slopdesk-video`'s `pacer_depth`; this is its face. The detector is a
+/// value its owner copies out, folds into and writes back, so it crosses BY VALUE — the whole
+/// state travels on every sample, because a baseline is a rolling minimum over samples this side
+/// no longer holds (`docs/55-ffi-boundary.md` §4b).
 public struct OwdLateDetector: Sendable, Equatable {
     public struct Config: Sendable, Equatable {
+        private var state: SlopDeskOwdLateConfig
+
+        /// The record as the detector reads it.
+        var crossing: SlopDeskOwdLateConfig { state }
+
+        public init() { state = slopdesk_owd_late_config_default() }
+
         /// Baseline bucket span (ms). Baseline = min(current bucket, previous bucket) ⇒ effective
         /// history 1–2 buckets. Long enough to straddle multi-frame bursts (a whole burst must not
         /// instantly become the baseline), short enough to track a real path change within ~4 s.
-        public var bucketMs: Double = 2000
+        public var bucketMs: Double {
+            get { state.bucket_ms }
+            set { state.bucket_ms = newValue }
+        }
+
         /// Absolute spike floor (ms). The send stamp is minted at PACKETIZE time, BEFORE the
         /// VideoSendLane pacer — so big-frame serialization + queue-behind-a-big-predecessor shows
         /// up as 10-20ms of owd wobble during dense scroll; a 10ms floor lets that self-inflicted
         /// wobble alone trigger 153 "lates"/90s with depth flapping 1↔2. 25ms sits above that
         /// pacing band, while a genuine network burst that threatens presents (the >28ms stutter
         /// class) still clears it. `SLOPDESK_OWD_LATE_FLOOR_MS`.
-        public var thresholdFloorMs: Double = 25
+        public var thresholdFloorMs: Double {
+            get { state.threshold_floor_ms }
+            set { state.threshold_floor_ms = newValue }
+        }
+
         /// Interval-proportional component: a spike beyond this fraction of the content frame
         /// interval risks losing more than the one slot depth 2 buys back (1.25 × interval at a
         /// governed-down fps keeps the threshold meaningfully above the bigger frame spacing).
         /// `SLOPDESK_OWD_LATE_FRAC_PCT` (0...400, percent).
-        public var thresholdIntervalFraction: Double = 1.25
+        public var thresholdIntervalFraction: Double {
+            get { state.threshold_interval_fraction }
+            set { state.threshold_interval_fraction = newValue }
+        }
+
         /// Samples required before any late verdict — the baseline needs population first
         /// (connection bring-up transients must not promote; pairs with the policy's warmup).
-        public var warmupSamples: Int = 20
-        public init() {}
+        public var warmupSamples: Int {
+            get { state.warmup_samples }
+            set { state.warmup_samples = newValue }
+        }
 
-        /// Env-tunable construction (absent/unparseable ⇒ default), clamped to sane bands. Pure.
+        /// Env-tunable construction (absent/unparseable ⇒ default), clamped to sane bands. Every
+        /// band and every `SLOPDESK_OWD_LATE_*` name lives behind the door, so this hands the whole
+        /// environment over one pair at a time and lets the law recognise its own knobs. The knobs
+        /// are independent, so the dictionary's arbitrary order cannot change the answer.
         public static func fromEnvironment(_ env: [String: String]) -> Self {
-            var c = Self()
-            if let v = env["SLOPDESK_OWD_LATE_FLOOR_MS"].flatMap(Double.init), v.isFinite {
-                c.thresholdFloorMs = min(200, max(1, v))
+            var config = Self()
+            for (key, value) in env {
+                config.state = apply(config.state, key, value)
             }
-            if let v = env["SLOPDESK_OWD_LATE_FRAC_PCT"].flatMap(Double.init), v.isFinite {
-                c.thresholdIntervalFraction = min(400, max(0, v)) / 100.0
+            return config
+        }
+
+        /// One environment pair through the door.
+        private static func apply(
+            _ config: SlopDeskOwdLateConfig,
+            _ key: String,
+            _ value: String,
+        ) -> SlopDeskOwdLateConfig {
+            var key = key
+            var value = value
+            return key.withUTF8 { keyBytes in
+                value.withUTF8 { valueBytes in
+                    slopdesk_owd_late_config_apply(
+                        config, keyBytes.baseAddress, keyBytes.count,
+                        valueBytes.baseAddress, valueBytes.count,
+                    )
+                }
             }
-            if let v = env["SLOPDESK_OWD_LATE_WARMUP"].flatMap(Int.init) {
-                c.warmupSamples = min(1000, max(1, v))
-            }
-            return c
+        }
+
+        public static func == (lhs: Self, rhs: Self) -> Bool {
+            lhs.state.bucket_ms == rhs.state.bucket_ms
+                && lhs.state.threshold_floor_ms == rhs.state.threshold_floor_ms
+                && lhs.state.threshold_interval_fraction == rhs.state.threshold_interval_fraction
+                && lhs.state.warmup_samples == rhs.state.warmup_samples
         }
     }
 
-    private let config: Config
-
-    /// Host send stamp unwrapped into a monotone double (the UInt32 wire stamp wraps at ~49 days;
-    /// accumulating wrap-aware deltas keeps owd continuous across the wrap).
-    private var unwrappedSendMs = 0.0
-    private var prevSendTs: UInt32?
-    /// Two-bucket rolling min over owd (see Config.bucketMs).
-    private var currentBucketMin = Double.infinity
-    private var previousBucketMin = Double.infinity
-    private var bucketStartArrivalMs: Double?
-    private var samples = 0
+    private var state: SlopDeskOwdLate
 
     public init(config: Config = Config()) {
-        self.config = config
+        state = slopdesk_owd_late_new(config.crossing)
     }
 
     /// Folds one per-frame sample (the caller admits one per strictly-newer frameID via
     /// `TrendSampler`, so reorder/kfDup/ts==0 never reach here). Returns the deviation above
     /// threshold (ms) when the sample is a network-late spike, else `nil`.
     public mutating func note(arrivalMs: Double, sendTs: UInt32, intervalMs: Double) -> Double? {
-        if let prev = prevSendTs {
-            // Wrap-aware monotone unwrap; the sampler guarantees strictly-newer frames, but a
-            // negative delta is tolerated as 0 forward progress (defense in depth). `max(0, …)` is
-            // an ORDERED Int max (no NaN concern — UInt32 wrap-delta), matching Rust `.max(0)`.
-            unwrappedSendMs += Double(max(0, sendTs.distanceWrapped(from: prev)))
-        }
-        prevSendTs = sendTs
-        let owd = arrivalMs - unwrappedSendMs
+        let note = slopdesk_owd_late_note(state, arrivalMs, sendTs, intervalMs)
+        state = note.detector
+        return note.has_deviation ? note.deviation_ms : nil
+    }
 
-        // Bucket rotation on ARRIVAL time (content gaps just stretch a bucket — harmless to min).
-        if let start = bucketStartArrivalMs {
-            if arrivalMs - start >= config.bucketMs {
-                previousBucketMin = currentBucketMin
-                currentBucketMin = .infinity
-                bucketStartArrivalMs = arrivalMs
-            }
-        } else {
-            bucketStartArrivalMs = arrivalMs
-        }
-
-        // NaN-faithful ORDERED min nesting — `min(prev, min(cur, owd))`, mirroring the Rust core's
-        // `previous.min(current.min(owd))`. owd is finite here; `.infinity` seeds are ordered.
-        let baseline = min(previousBucketMin, min(currentBucketMin, owd))
-        currentBucketMin = min(currentBucketMin, owd)
-        samples += 1
-        guard samples >= config.warmupSamples, baseline.isFinite else { return nil }
-
-        // ORDERED max for the threshold (floor vs fraction × interval); `max(0, intervalMs)` guards
-        // a stray negative interval. Mirrors Rust `floor.max(fraction * interval.max(0.0))`.
-        let threshold = max(
-            config.thresholdFloorMs,
-            config.thresholdIntervalFraction * max(0, intervalMs),
-        )
-        let deviation = owd - baseline
-        return deviation > threshold ? deviation - threshold : nil
+    /// Two detectors are equal when every field the next fold reads agrees — the baseline's two
+    /// bucket minima included, since a detector that agreed on its verdicts but not on those would
+    /// diverge on the next sample.
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.state.unwrapped_send_ms == rhs.state.unwrapped_send_ms
+            && lhs.state.has_prev_send_ts == rhs.state.has_prev_send_ts
+            && lhs.state.prev_send_ts == rhs.state.prev_send_ts
+            && lhs.state.current_bucket_min == rhs.state.current_bucket_min
+            && lhs.state.previous_bucket_min == rhs.state.previous_bucket_min
+            && lhs.state.has_bucket_start == rhs.state.has_bucket_start
+            && lhs.state.bucket_start_arrival_ms == rhs.state.bucket_start_arrival_ms
+            && lhs.state.samples == rhs.state.samples
+            && lhs.state.config.bucket_ms == rhs.state.config.bucket_ms
+            && lhs.state.config.threshold_floor_ms == rhs.state.config.threshold_floor_ms
+            && lhs.state.config.threshold_interval_fraction
+            == rhs.state.config.threshold_interval_fraction
+            && lhs.state.config.warmup_samples == rhs.state.config.warmup_samples
     }
 }

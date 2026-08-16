@@ -17,6 +17,45 @@ private func makeUnconnectedClient() -> SlopDeskClient {
     })
 }
 
+/// Writes the frames `slopdesk-inspectord` sends onto the host end of a loopback pair.
+///
+/// The serving end of this protocol is a Rust daemon (`docs/54`), so Swift has no event encoder to
+/// borrow — a test that needs host → client bytes spells the wire out: `[UInt32 BE
+/// payloadLength][UInt8 tag][body]`, tag `1` for an event, `2` for a keep-alive. An actor, so the
+/// call sites read the same as the `InspectorSource` they replace.
+private actor InspectorFeed {
+    private let channel: LoopbackByteChannel
+
+    init(channel: LoopbackByteChannel) {
+        self.channel = channel
+    }
+
+    func send(_ event: InspectorEvent) throws {
+        try channel.send(Self.frame(tag: 1, body: JSONEncoder().encode(event)))
+    }
+
+    func sendKeepAlive() {
+        channel.send(Self.frame(tag: 2, body: Data()))
+    }
+
+    func close() {
+        channel.close()
+    }
+
+    static func frame(tag: UInt8, body: Data) -> Data {
+        var payload = Data([tag])
+        payload.append(body)
+        let length = UInt32(payload.count)
+        var out = Data()
+        out.append(UInt8(truncatingIfNeeded: length >> 24))
+        out.append(UInt8(truncatingIfNeeded: length >> 16))
+        out.append(UInt8(truncatingIfNeeded: length >> 8))
+        out.append(UInt8(truncatingIfNeeded: length))
+        out.append(payload)
+        return out
+    }
+}
+
 /// Inspector pane-content glue.
 ///
 /// These tests prove a terminal pane's structured inspector (revealed once a `claude` is detected)
@@ -30,7 +69,7 @@ private func makeUnconnectedClient() -> SlopDeskClient {
 ///   - **NO real `SlopDeskClient`** and **NO terminal byte stream** touched (PATH 1 is independent).
 ///
 /// The fold under test is `InspectorViewModel.apply(_:)` driven through the real client transport
-/// (`InspectorClient.events()`), fed by a real host `InspectorSource.send(_:)` over the loopback.
+/// (`InspectorClient.events()`), fed by daemon-shaped frames (``InspectorFeed``) over the loopback.
 /// Two surfaces are covered:
 ///
 ///   1. The raw view-model fold over the transport (tool-card upsert/dedup, todos replace, session,
@@ -89,10 +128,10 @@ final class InspectorGlueTests: XCTestCase {
 
     /// A tool-card upsert: a `pending` card then a re-emitted `completed` card with the SAME id must
     /// UPDATE in place (one card, dedup holds) — never append a duplicate. This is the doc-16
-    /// pairing contract folded through the client transport, not just the EventBuilder.
+    /// pairing contract folded through the client transport, not just the daemon's builder.
     func testToolCardUpsertFoldsThroughTransportAndDedups() async throws {
         let (hostCh, clientCh) = LoopbackByteChannel.pair()
-        let source = InspectorSource(channel: hostCh)
+        let source = InspectorFeed(channel: hostCh)
         let client = InspectorClient(channel: clientCh)
         let vm = InspectorViewModel()
 
@@ -118,7 +157,7 @@ final class InspectorGlueTests: XCTestCase {
     /// still leaves exactly two cards (dedup is per-id, ordering preserved).
     func testDistinctToolCardsAppendInOrderWhileDedupHoldsPerID() async throws {
         let (hostCh, clientCh) = LoopbackByteChannel.pair()
-        let source = InspectorSource(channel: hostCh)
+        let source = InspectorFeed(channel: hostCh)
         let client = InspectorClient(channel: clientCh)
         let vm = InspectorViewModel()
 
@@ -151,7 +190,7 @@ final class InspectorGlueTests: XCTestCase {
     /// wholesale on each emission (latest-wins, doc 16) — folded through the transport.
     func testSessionAndTodosFoldThroughTransport() async throws {
         let (hostCh, clientCh) = LoopbackByteChannel.pair()
-        let source = InspectorSource(channel: hostCh)
+        let source = InspectorFeed(channel: hostCh)
         let client = InspectorClient(channel: clientCh)
         let vm = InspectorViewModel()
 
@@ -182,7 +221,7 @@ final class InspectorGlueTests: XCTestCase {
     /// main timeline (the `.claudeCode` tree-attach contract), folded through the transport.
     func testSubagentCardAttachesUnderNodeNotMainTimeline() async throws {
         let (hostCh, clientCh) = LoopbackByteChannel.pair()
-        let source = InspectorSource(channel: hostCh)
+        let source = InspectorFeed(channel: hostCh)
         let client = InspectorClient(channel: clientCh)
         let vm = InspectorViewModel()
 
@@ -210,14 +249,14 @@ final class InspectorGlueTests: XCTestCase {
     /// here at the fold boundary the pane actually renders from.)
     func testKeepAliveIsSwallowedAndDoesNotPerturbTheFold() async throws {
         let (hostCh, clientCh) = LoopbackByteChannel.pair()
-        let source = InspectorSource(channel: hostCh)
+        let source = InspectorFeed(channel: hostCh)
         let client = InspectorClient(channel: clientCh)
         let vm = InspectorViewModel()
 
         let fold = Task { await vm.consume(client.events()) }
         defer { fold.cancel() }
 
-        try await source.sendKeepAlive() // must NOT fold to any state
+        await source.sendKeepAlive() // must NOT fold to any state
         try await source.send(.toolCard(sampleCard(id: "real", status: .pending)))
 
         await waitUntil({ vm.toolCards.count == 1 }, "real card after keep-alive never folded")
@@ -247,7 +286,7 @@ final class InspectorGlueTests: XCTestCase {
     /// folds host events — proving the production glue, not just the raw transport.
     func testLivePaneSessionClaudeFoldsViaSubscribeInspector() async throws {
         let (hostCh, clientCh) = LoopbackByteChannel.pair()
-        let source = InspectorSource(channel: hostCh)
+        let source = InspectorFeed(channel: hostCh)
 
         // The store's makeInspector seam: hand the session a loopback-backed client (no network).
         let session = LivePaneSession.make(
@@ -287,7 +326,7 @@ final class InspectorGlueTests: XCTestCase {
     /// Assert the host observes exactly that control over the loopback.
     func testSubscribeInspectorSendsFullReplaySubscribeControl() async throws {
         let (hostCh, clientCh) = LoopbackByteChannel.pair()
-        let source = InspectorSource(channel: hostCh)
+        let source = InspectorFeed(channel: hostCh)
 
         let session = LivePaneSession.make(
             paneID: PaneID(), spec: PaneSpec(kind: .terminal, title: "claude"),
@@ -296,10 +335,12 @@ final class InspectorGlueTests: XCTestCase {
         )
         detectClaude(in: session)
 
-        // Observe the host's inbound control channel.
-        let controls = await source.controls()
-        let observed = Task { () -> InspectorWireMessage? in
-            for try await message in controls { return message }
+        // Observe the host's inbound bytes. Asserted as BYTES: `subscribe` is the client's only
+        // outbound frame and the Swift end has no decoder for it — that half belongs to
+        // `slopdesk_inspectord::wire`, and growing a second one here to check our own encoder is
+        // exactly the mirror the one-implementation rule forbids.
+        let observed = Task { () -> Data? in
+            for try await chunk in hostCh.inbound { return chunk }
             return nil
         }
         defer { observed.cancel() }
@@ -308,7 +349,11 @@ final class InspectorGlueTests: XCTestCase {
         defer { fold.cancel() }
 
         let got = try await observed.value
-        XCTAssertEqual(got, .subscribe(fromSeq: 0), "subscribeInspector requests a full replay (fromSeq 0)")
+        XCTAssertEqual(
+            got,
+            Data([0, 0, 0, 9, 3, 0, 0, 0, 0, 0, 0, 0, 0]),
+            "subscribeInspector requests a full replay (tag 3, fromSeq 0)",
+        )
 
         await source.close()
     }
@@ -318,7 +363,7 @@ final class InspectorGlueTests: XCTestCase {
     /// twice and assert the fold still produces exactly one, correct card.
     func testSubscribeInspectorIsIdempotentNoDoubleConsumer() async throws {
         let (hostCh, clientCh) = LoopbackByteChannel.pair()
-        let source = InspectorSource(channel: hostCh)
+        let source = InspectorFeed(channel: hostCh)
 
         var clientHandedOut = 0
         let session = LivePaneSession.make(
@@ -358,7 +403,7 @@ final class InspectorGlueTests: XCTestCase {
     /// loopback host channel ends finished (the client was closed).
     func testResumeThenTeardownInSameTurnCancelsResubscribeAndClosesClient() async throws {
         let (hostCh, clientCh) = LoopbackByteChannel.pair()
-        let source = InspectorSource(channel: hostCh)
+        let source = InspectorFeed(channel: hostCh)
 
         let session = LivePaneSession.make(
             paneID: PaneID(), spec: PaneSpec(kind: .terminal, title: "claude"),
@@ -394,7 +439,7 @@ final class InspectorGlueTests: XCTestCase {
     /// boundary in `applyDetectedStatus`. Mirrors the open-on-detect test, run in reverse.
     func testInspectorClosesWhenClaudeLeaves() async throws {
         let (hostCh, clientCh) = LoopbackByteChannel.pair()
-        let source = InspectorSource(channel: hostCh)
+        let source = InspectorFeed(channel: hostCh)
 
         let session = LivePaneSession.make(
             paneID: PaneID(), spec: PaneSpec(kind: .terminal, title: "claude"),
@@ -456,7 +501,7 @@ final class InspectorGlueTests: XCTestCase {
     /// `wireMaterializedLeaf` wiring (a tree store materializing genuine `LivePaneSession`s) and fires the
     /// same `onReconnected` closure `ConnectionViewModel.foldEvent(.reconnected)` invokes.
     func testStoreReconnectHookReSubscribesInspectorWhileClaudeActive() async throws {
-        var hostSides: [InspectorSource] = []
+        var hostSides: [InspectorFeed] = []
         var makeInspectorCalls = 0
         let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in
             LivePaneSession.make(
@@ -465,7 +510,7 @@ final class InspectorGlueTests: XCTestCase {
                 makeInspector: { _ in
                     makeInspectorCalls += 1
                     let (host, client) = LoopbackByteChannel.pair()
-                    hostSides.append(InspectorSource(channel: host))
+                    hostSides.append(InspectorFeed(channel: host))
                     return InspectorClient(channel: client)
                 },
             )
@@ -500,13 +545,13 @@ final class InspectorGlueTests: XCTestCase {
     /// loopback's host side observes the finish — no strand, single-consumer rule preserved) and fold
     /// only over the fresh one. Pins the teardown-then-resubscribe order without the store.
     func testReestablishInspectorClosesStaleClientAndFoldsFreshOne() async throws {
-        var hostSides: [InspectorSource] = []
+        var hostSides: [InspectorFeed] = []
         let session = LivePaneSession.make(
             paneID: PaneID(), spec: PaneSpec(kind: .terminal, title: "claude"),
             makeClient: { _ in makeUnconnectedClient() },
             makeInspector: { _ in
                 let (host, client) = LoopbackByteChannel.pair()
-                hostSides.append(InspectorSource(channel: host))
+                hostSides.append(InspectorFeed(channel: host))
                 return InspectorClient(channel: client)
             },
         )

@@ -1,5 +1,3 @@
-import Foundation
-
 // MARK: - DesktopWindowPresentation (`desktop-window` policy)
 
 /// How the dedicated remote-desktop window presents when it opens — the Parsec-style default

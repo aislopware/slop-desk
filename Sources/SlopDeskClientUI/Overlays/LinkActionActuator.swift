@@ -24,11 +24,6 @@
 
 import Foundation
 import SlopDeskWorkspaceCore
-#if canImport(AppKit)
-import AppKit // NSPasteboard (Copy) + NSWorkspace (open URL) — client-side
-#elseif canImport(UIKit)
-import UIKit // UIPasteboard (Copy) + UIApplication (open URL) — client-side
-#endif
 
 @MainActor
 enum LinkActionActuator {
@@ -80,7 +75,7 @@ enum LinkActionActuator {
         case let .changeDirectoryPTY(path):
             model?.sendInput(Data(LinkActionPolicy.changeDirectoryCommandLine(path).utf8))
         case let .openURLClient(urlString):
-            openURLString(urlString)
+            ExternalOpen.url(urlString)
         case let .openCodeHost(target):
             model?.onRequestOpenCodeHostPath?(target)
         case let .openHost(path):
@@ -93,20 +88,6 @@ enum LinkActionActuator {
     /// Copy text to the platform pasteboard (the Outline / context-menu "Copy" idiom). A no-op for empty text.
     static func copyToPasteboard(_ text: String) {
         guard !text.isEmpty else { return }
-        #if canImport(AppKit)
         ClientPasteboard.write(text)
-        #elseif canImport(UIKit)
-        UIPasteboard.general.string = text
-        #endif
-    }
-
-    /// Open a URL string on the CLIENT (a URL / IP is host-agnostic). A no-op for an unparseable string.
-    private static func openURLString(_ urlString: String) {
-        guard let url = URL(string: urlString) else { return }
-        #if canImport(AppKit)
-        NSWorkspace.shared.open(url)
-        #elseif canImport(UIKit)
-        UIApplication.shared.open(url)
-        #endif
     }
 }

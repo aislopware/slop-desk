@@ -13,7 +13,7 @@ import SlopDeskProtocol
 final class RecordingMuxLink: MuxByteLink, @unchecked Sendable {
     private let underlying: any MuxByteLink
     private let lock = NSLock()
-    private var decoder = MuxFrameDecoder()
+    private let decoder = MuxFrameDecoder()
     private var windowAdjusts = 0
 
     init(wrapping underlying: any MuxByteLink) {

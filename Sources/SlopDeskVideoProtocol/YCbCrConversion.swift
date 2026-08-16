@@ -1,28 +1,31 @@
-import Foundation
-
-// FULL-RANGE COLOR — the SINGLE pure source of truth for the YCbCr→RGB
-// coefficients the client's Metal shader uses. NO platform deps (this is the shared
-// host+client protocol module), so the coefficient math is headlessly unit-testable
-// while the actual rendered pixels (HW-only-verifiable) read these exact values.
+// FULL-RANGE COLOR — the vocabulary for the YCbCr→RGB coefficients the client's Metal shader uses,
+// as the Swift face of `rust/slopdesk-video`'s `ycbcr`, reached through `rust/slopdesk-ffi`'s
+// `video_policy` door.
 //
-// The encoded stream's luma range is negotiated over `helloAck` (the `fullRange` byte),
-// so BOTH ends derive the range from the stream — the client never needs its own env
-// flag, and the host's capture pixel-format + encoder VUI + the client's decoder
-// pixel-format + this shader all follow ONE negotiated value. DEFAULT is `.video`
-// (today's behaviour, byte-identical).
+// The encoded stream's luma range is negotiated over `helloAck` (the `fullRange` byte), so BOTH
+// ends derive the range from the stream — the client never needs its own env flag, and the host's
+// capture pixel-format + encoder VUI + the client's decoder pixel-format + this shader all follow
+// ONE negotiated value. DEFAULT is `.video`.
 //
 // ⚠️ THE WHOLE MATH DIFFERENCE between the two ranges is the LUMA expansion ONLY:
 //   • video: Y in [16,235] → [0,1] via bias 16/255 + scale 255/219.
 //   • full:  Y in [0,255]  → [0,1] via bias 0    + scale 1.0.
-// CHROMA is IDENTICAL in both (centre 128/255, no extra 255/224 scale — today's shader
-// already normalises chroma /255, the full-range convention, even for video-range, so
-// DO NOT "correct" it or the OFF path stops being byte-identical). The four matrix
-// coefficients (BT.709, Kr=0.2126 / Kb=0.0722 / Kg=0.7152) are RANGE-INDEPENDENT.
+// CHROMA is IDENTICAL in both (centre 128/255, no extra 255/224 scale — the shader already
+// normalises chroma /255, the full-range convention, even for video-range, so DO NOT "correct" it
+// or the default path stops being byte-identical). The four matrix coefficients (BT.709,
+// Kr=0.2126 / Kb=0.0722 / Kg=0.7152) are RANGE-INDEPENDENT.
+//
+// The literals themselves are NOT here. They are `f32` end to end on the Rust side — an `f64`
+// intermediate narrowed to `Float` diverges in the low bits and breaks the bit patterns the `ycbcr`
+// golden vector pins — and a second copy of a pinned constant is exactly the drift this door
+// removes. What stays is the vocabulary the renderer and the wire speak in.
+
+import CSlopDeskFFI
 
 /// The luma code-range of an encoded NV12 stream.
 public enum ColorRange: Sendable, Equatable {
-    /// "Studio swing" — Y in [16,235], Cb/Cr in [16,240] (today's default; the NV12
-    /// `…VideoRange` pixel-format variant + `video_full_range_flag = 0`).
+    /// "Studio swing" — Y in [16,235], Cb/Cr in [16,240] (the default; the NV12 `…VideoRange`
+    /// pixel-format variant + `video_full_range_flag = 0`).
     case video
     /// "Full swing" — Y in [0,255] (the NV12 `…FullRange` pixel-format variant +
     /// `video_full_range_flag = 1`). ~16% more luma code space.
@@ -83,47 +86,23 @@ public struct YCbCrCoefficients: Sendable, Equatable {
     }
 }
 
-/// PURE selector: the BT.709 YCbCr→RGB coefficients for `range`. The `.video` result
-/// reproduces today's hardcoded shader literals EXACTLY (the unit test enforces this), so
-/// the default-OFF path feeds the GPU identical numbers. `.full` changes ONLY the luma
-/// (scale 1.0, bias 0); chroma + the four matrix coefficients are byte-identical to `.video`.
-///
-/// The coefficient table is computed natively here in `Float` end-to-end (the SINGLE source of
-/// truth for the shader literals); pinned bit-exact by `YCbCrConversionTests` + the `ycbcr` golden
-/// vector. ⚠️ Every value MUST stay `Float` — an `f64`/`Double` intermediate narrowed to `Float`
-/// diverges the low bits and breaks the pinned bit-patterns. The four matrix coefficients + the
-/// chroma centre are range-independent; only the luma scale/bias differ between the two ranges.
+/// The BT.709 YCbCr→RGB coefficient table, selected by range.
 public enum YCbCrConversion {
+    /// The coefficients for `range`. `.video` reproduces the shader's hardcoded literals EXACTLY,
+    /// so the default path feeds the GPU identical numbers; `.full` changes ONLY the luma pair.
+    ///
+    /// One flag is the whole input because that is the whole difference — chroma and the four
+    /// matrix coefficients are bit-identical between the two ranges.
     public static func coefficients(_ range: ColorRange) -> YCbCrCoefficients {
-        // Shared (range-independent): chroma centre + the four BT.709 matrix coefficients.
-        let chromaBias: Float = 128.0 / 255.0
-        let crToR: Float = 1.5748
-        let cbToG: Float = 0.1873
-        let crToG: Float = 0.4681
-        let cbToB: Float = 1.8556
-        switch range {
-        case .video:
-            // Studio swing: Y in [16,235] → [0,1] via bias 16/255, scale 255/219.
-            return YCbCrCoefficients(
-                lumaScale: 255.0 / 219.0,
-                lumaBias: 16.0 / 255.0,
-                chromaBias: chromaBias,
-                crToR: crToR,
-                cbToG: cbToG,
-                crToG: crToG,
-                cbToB: cbToB,
-            )
-        case .full:
-            // Full swing: Y in [0,255] → [0,1] (scale 1.0, bias 0); chroma + matrix unchanged.
-            return YCbCrCoefficients(
-                lumaScale: 1.0,
-                lumaBias: 0.0,
-                chromaBias: chromaBias,
-                crToR: crToR,
-                cbToG: cbToG,
-                crToG: crToG,
-                cbToB: cbToB,
-            )
-        }
+        let c = slopdesk_ycbcr_coefficients(range.isFullRange)
+        return YCbCrCoefficients(
+            lumaScale: c.luma_scale,
+            lumaBias: c.luma_bias,
+            chromaBias: c.chroma_bias,
+            crToR: c.cr_to_r,
+            cbToG: c.cb_to_g,
+            crToG: c.cr_to_g,
+            cbToB: c.cb_to_b,
+        )
     }
 }

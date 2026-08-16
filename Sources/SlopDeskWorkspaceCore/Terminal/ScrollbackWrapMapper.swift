@@ -1,5 +1,3 @@
-import Foundation
-
 // MARK: - ScrollbackWrapMapper (logical-line → physical-row coordinate mapping)
 
 /// The PURE bridge between the two DIFFERENT row indexings the ⌘F find bar and ⇧⌘F Global Search juggle:

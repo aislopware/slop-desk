@@ -1,6 +1,5 @@
 #if os(macOS)
 import CoreGraphics
-import Foundation
 
 /// Pure, unit-tested classifier that recognises host SYSTEM dialogs among enumerated windows.
 ///

@@ -1,5 +1,4 @@
 import CoreGraphics
-import Foundation
 import SlopDeskWorkspaceModel
 
 // MARK: - SplitTreeRenderModel (the pure render seam for the IDE split view)

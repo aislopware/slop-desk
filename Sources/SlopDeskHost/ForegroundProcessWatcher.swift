@@ -30,7 +30,7 @@ import SlopDeskProtocol
 public struct ForegroundProcessDetector: Sendable {
     /// The matcher used to classify a basename as `claude` (exact basename match — no
     /// `claudefoo` false positive). Reused from W7 so there is one classifier, not two.
-    private let matcher: ClaudeManifestMatcher
+    private let matcher: ClaudeProcessMatcher
 
     /// The embedded per-pane state machine (W7). `processPresent(true/false)` is its FLOOR
     /// signal; the richer hook/manifest signals (other W10 components) feed the SAME machine
@@ -79,7 +79,7 @@ public struct ForegroundProcessDetector: Sendable {
     }
 
     public init(doneToIdleTimeout: TimeInterval = 8) {
-        matcher = ClaudeManifestMatcher()
+        matcher = ClaudeProcessMatcher()
         machine = ClaudeStatusMachine(doneToIdleTimeout: doneToIdleTimeout)
         lastEmittedName = nil
         lastEmittedStatus = nil
@@ -152,39 +152,17 @@ public struct ForegroundProcessDetector: Sendable {
     }
 
     /// The basename of a process path. `"/usr/local/bin/claude"` → `"claude"`; `"zsh"` → `"zsh"`;
-    /// `""` → `""`. Pure string split (no `URL`, which would resolve `""` to the cwd).
+    /// `""` → `""`. A face over ``ForegroundProcessName/basename(of:)``.
     static func basename(of name: String) -> String {
-        guard !name.isEmpty else { return "" }
-        return name.split(separator: "/").last.map(String.init) ?? name
+        ForegroundProcessName.basename(of: name)
     }
 
     /// The CANONICAL process name of an executable path: the basename — except a VERSION-named
-    /// executable, which resolves to the owning app directory. The Claude Code native installer
-    /// lays the binary out as `…/.local/share/claude/versions/2.1.218` (the executable file IS
-    /// the version string), so the raw basename defeats the exact-basename `claude` classifier
-    /// AND reads as a meaningless `2.1.218` in the sidebar's shell-label slot. A pure version
-    /// string names a release, not a program — walk up past it (and the layout components
-    /// `versions`/`bin`/`current`/`libexec`) to the first real name. A non-version basename is
-    /// returned untouched, so every other program keeps its exact-basename semantics.
+    /// executable, which resolves to the owning app directory. A face over
+    /// ``ForegroundProcessName/canonicalName(of:)``, where the version shape and the layout
+    /// components it walks past are spelled.
     static func canonicalName(of path: String) -> String {
-        let base = basename(of: path)
-        guard isVersionShaped(base) else { return base }
-        for component in path.split(separator: "/").dropLast().reversed() {
-            let name = String(component)
-            if isVersionShaped(name) { continue }
-            if ["versions", "bin", "current", "libexec"].contains(name.lowercased()) { continue }
-            return name
-        }
-        return base
-    }
-
-    /// True for a pure version string (`2.1.218`, `v1.0`) — digits and dots (an optional
-    /// leading `v`), at least one dot so plain numerals (`7z`-style names, bare `2`) stay names.
-    static func isVersionShaped(_ s: String) -> Bool {
-        var t = Substring(s)
-        if t.hasPrefix("v") || t.hasPrefix("V") { t = t.dropFirst() }
-        guard t.contains("."), !t.isEmpty else { return false }
-        return t.allSatisfy { $0.isNumber || $0 == "." }
+        ForegroundProcessName.canonicalName(of: path)
     }
 }
 

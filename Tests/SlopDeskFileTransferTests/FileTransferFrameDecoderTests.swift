@@ -1,49 +1,58 @@
 import XCTest
 @testable import SlopDeskFileTransfer
 
+/// The client's inbound splitter — now a handle onto `rust/slopdesk-dropd`'s `ReplyFrameDecoder`.
+///
+/// What is pinned here is the FACE: a partial frame answers `nil` rather than throwing, a verdict
+/// becomes the Swift error that names it, the arena carries a reason string out, and the handle
+/// stays poisoned across calls. The buffering, compaction and byte layout are the crate's, tested
+/// there. The frames these tests feed are still hand-assembled dropd bytes rather than something
+/// this module encoded: a splitter tested against its own encoder proves the pair agree, not that
+/// either is right.
 final class FileTransferFrameDecoderTests: XCTestCase {
+    private func frame(_ payload: [UInt8]) -> Data {
+        var out = Data([0, 0, 0, UInt8(payload.count)])
+        out.append(contentsOf: payload)
+        return out
+    }
+
     func testWholeFrame() throws {
-        var decoder = FileTransferFrameDecoder()
-        decoder.append(FileTransferCodec.encodeFrame(.finish(transferId: 3)))
-        XCTAssertEqual(try decoder.nextMessage(), .finish(transferId: 3))
-        XCTAssertNil(try decoder.nextMessage())
+        let decoder = FileTransferFrameDecoder()
+        decoder.append(frame([8, 0, 0, 0, 3]))
+        XCTAssertEqual(try decoder.nextReply(), .complete(transferId: 3))
+        XCTAssertNil(try decoder.nextReply())
     }
 
     func testMultipleFramesInOneChunk() throws {
-        var decoder = FileTransferFrameDecoder()
+        let decoder = FileTransferFrameDecoder()
         var bytes = Data()
-        bytes.append(FileTransferCodec.encodeFrame(.hello(version: 1)))
-        bytes.append(FileTransferCodec.encodeFrame(.accept(transferId: 5)))
-        bytes.append(FileTransferCodec.encodeFrame(.complete(transferId: 5)))
+        bytes.append(frame([6, 1]))
+        bytes.append(frame([7, 0, 0, 0, 5]))
+        bytes.append(frame([8, 0, 0, 0, 5]))
         decoder.append(bytes)
-        XCTAssertEqual(try decoder.nextMessage(), .hello(version: 1))
-        XCTAssertEqual(try decoder.nextMessage(), .accept(transferId: 5))
-        XCTAssertEqual(try decoder.nextMessage(), .complete(transferId: 5))
-        XCTAssertNil(try decoder.nextMessage())
+        XCTAssertEqual(try decoder.nextReply(), .helloAck(accepted: true))
+        XCTAssertEqual(try decoder.nextReply(), .accept(transferId: 5))
+        XCTAssertEqual(try decoder.nextReply(), .complete(transferId: 5))
+        XCTAssertNil(try decoder.nextReply())
     }
 
     func testFrameSplitAcrossReads() throws {
-        var decoder = FileTransferFrameDecoder()
-        let frame = FileTransferCodec.encodeFrame(.offer(transferId: 1, fileSize: 42, name: "a.txt"))
+        let decoder = FileTransferFrameDecoder()
+        var payload: [UInt8] = [9, 0, 0, 0, 1, 0, 5]
+        payload += Array("oops!".utf8)
+        let bytes = frame(payload)
         // Feed one byte at a time; only the final byte completes the frame.
-        for (i, byte) in frame.enumerated() {
+        for (index, byte) in bytes.enumerated() {
             decoder.append(Data([byte]))
-            if i < frame.count - 1 {
-                XCTAssertNil(try decoder.nextMessage(), "frame completed early at byte \(i)")
+            if index < bytes.count - 1 {
+                XCTAssertNil(try decoder.nextReply(), "frame completed early at byte \(index)")
             }
         }
-        XCTAssertEqual(try decoder.nextMessage(), .offer(transferId: 1, fileSize: 42, name: "a.txt"))
-    }
-
-    func testChunkBodyPreserved() throws {
-        var decoder = FileTransferFrameDecoder()
-        let body = Data((0..<1000).map { UInt8($0 % 256) })
-        decoder.append(FileTransferCodec.encodeFrame(.chunk(transferId: 2, data: body)))
-        XCTAssertEqual(try decoder.nextMessage(), .chunk(transferId: 2, data: body))
+        XCTAssertEqual(try decoder.nextReply(), .failed(transferId: 1, reason: "oops!"))
     }
 
     func testOversizeFramePoisons() {
-        var decoder = FileTransferFrameDecoder()
+        let decoder = FileTransferFrameDecoder()
         // A length prefix just over the cap; the body never needs to arrive.
         let tooBig = UInt32(FileTransferProtocolConstants.maxFramePayloadLength + 1)
         var bytes = Data([
@@ -52,22 +61,22 @@ final class FileTransferFrameDecoderTests: XCTestCase {
             UInt8((tooBig >> 8) & 0xFF),
             UInt8(tooBig & 0xFF),
         ])
-        bytes.append(1) // start of a payload
+        bytes.append(6) // start of a payload
         decoder.append(bytes)
-        XCTAssertThrowsError(try decoder.nextMessage()) { error in
+        XCTAssertThrowsError(try decoder.nextReply()) { error in
             XCTAssertEqual(error as? FileTransferFrameDecoderError, .frameTooLarge(Int(tooBig)))
         }
-        // Poisoned: further appends are dropped and nextMessage keeps rethrowing.
-        decoder.append(FileTransferCodec.encodeFrame(.finish(transferId: 1)))
+        // Poisoned: further appends are dropped and nextReply keeps rethrowing.
+        decoder.append(frame([8, 0, 0, 0, 1]))
         XCTAssertEqual(decoder.bufferedByteCountForTesting, 0)
-        XCTAssertThrowsError(try decoder.nextMessage())
+        XCTAssertThrowsError(try decoder.nextReply())
     }
 
     func testMalformedPayloadPoisons() {
-        var decoder = FileTransferFrameDecoder()
+        let decoder = FileTransferFrameDecoder()
         // A well-framed but unknown-type payload (length 1, type 200).
         decoder.append(Data([0, 0, 0, 1, 200]))
-        XCTAssertThrowsError(try decoder.nextMessage())
-        XCTAssertThrowsError(try decoder.nextMessage()) // still poisoned
+        XCTAssertThrowsError(try decoder.nextReply())
+        XCTAssertThrowsError(try decoder.nextReply()) // still poisoned
     }
 }

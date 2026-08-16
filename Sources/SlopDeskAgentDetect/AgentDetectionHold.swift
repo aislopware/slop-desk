@@ -1,68 +1,60 @@
+import CSlopDeskFFI
 import Foundation
 
-/// The temporal layer over the pure engine (herdr `src/pane/agent_detection.rs`, ported 1:1):
-/// the working→idle confirmation hold, the publish-worthiness gate, and the steady
-/// visible-blocker re-publish heartbeat. Pure, injected clock.
-public struct AgentDetectionHold: Sendable, Equatable {
-    // herdr constants, exact.
+/// The temporal layer over the pure engine: the working→idle confirmation hold, the publish-worthiness
+/// gate, and the steady visible-blocker re-publish heartbeat.
+///
+/// Every rule is `rust/slopdesk-agent::hold` (docs/55) — including the counters, which ARE the rule:
+/// three confirming reads, or the 700 ms cap, release a hold. This is a handle over that state, so
+/// it is a `final class` where it used to be a `struct`. Nothing copied it (the one owner is
+/// `PaneScreenScanner`, which resets it by assignment), so reference semantics cost nothing here.
+public final class AgentDetectionHold: @unchecked Sendable {
     /// Recheck interval while a working→idle transition is pending.
-    public static let pendingIdleRecheck: TimeInterval = 0.100
+    public static let pendingIdleRecheck: TimeInterval = slopdesk_agent_hold_constant(0)
     /// Consecutive confirming reads required to publish a plain idle.
-    public static let pendingIdleConfirmations = 3
+    public static let pendingIdleConfirmations = Int(slopdesk_agent_hold_constant(1))
     /// Hard ceiling — publish the idle regardless once this much time has passed.
-    public static let pendingIdleCap: TimeInterval = 0.700
+    public static let pendingIdleCap: TimeInterval = slopdesk_agent_hold_constant(2)
     /// Re-publish a steady visible blocker this often (freshness heartbeat).
-    public static let stableVisibleSignalRefresh: TimeInterval = 0.800
+    public static let stableVisibleSignalRefresh: TimeInterval = slopdesk_agent_hold_constant(3)
     /// Suppress detection publishes for this long after a new agent appears (splash paint).
-    public static let startupGraceWindow: TimeInterval = 3.0
+    public static let startupGraceWindow: TimeInterval = slopdesk_agent_hold_constant(4)
     /// The scan cadence when no hold is pending (herdr's detection-loop sleep).
-    public static let scanInterval: TimeInterval = 0.300
+    public static let scanInterval: TimeInterval = slopdesk_agent_hold_constant(5)
 
-    /// Pending working→idle confirmation state (herdr `PendingIdleConfirmation`).
-    private var pendingIdleStartedAt: TimeInterval?
-    private var confirmations = 0
+    private let handle: OpaquePointer
 
-    /// Pending BLOCKED→idle confirmation state — the same shape, its own counters, so the
-    /// herdr-ported working→idle hold above stays byte-identical to upstream.
-    private var pendingUnblockStartedAt: TimeInterval?
-    private var unblockConfirmations = 0
+    public init() {
+        guard let handle = slopdesk_agent_hold_new() else {
+            // A hold is a few counters; a failure here is the allocator being gone, and a detector
+            // with no hold would flap every pane rather than fail quietly.
+            preconditionFailure("slopdesk_agent_hold_new returned null")
+        }
+        self.handle = handle
+    }
 
-    public init() {}
+    deinit { slopdesk_agent_hold_free(handle) }
 
     /// True while EITHER idle hold is pending (callers tighten the recheck cadence).
-    public var isHoldingIdle: Bool { pendingIdleStartedAt != nil || pendingUnblockStartedAt != nil }
+    public var isHoldingIdle: Bool {
+        slopdesk_agent_hold_is_holding_idle(handle)
+    }
 
     /// herdr `should_hold_working_to_idle`: engages only on working → PLAIN idle (a VISIBLE
     /// idle — real prompt chrome — bypasses the hold); 3 consecutive confirmations release,
     /// the 700 ms cap force-releases.
-    public mutating func shouldHoldWorkingToIdle(
+    public func shouldHoldWorkingToIdle(
         previous: AgentScreenDetection,
         next: AgentScreenDetection,
         agentChanged: Bool,
         processExited: Bool,
         now: TimeInterval,
     ) -> Bool {
-        let transitioning = previous.state == .working && next.state == .idle
-            && !next.visibleIdle && !next.visibleBlocker && !agentChanged && !processExited
-        guard transitioning else {
-            clear()
-            return false
+        withHoldPair(previous, next) { from, to in
+            slopdesk_agent_hold_working_to_idle(
+                handle, from, to, agentChanged, processExited, now,
+            )
         }
-        guard let startedAt = pendingIdleStartedAt else {
-            pendingIdleStartedAt = now
-            confirmations = 0
-            return true
-        }
-        if now - startedAt >= Self.pendingIdleCap {
-            clear()
-            return false
-        }
-        confirmations += 1
-        if confirmations >= Self.pendingIdleConfirmations {
-            clear()
-            return false
-        }
-        return true
     }
 
     /// The BLOCKED→idle sibling — **ours, not herdr's**, and deliberately stricter than the
@@ -84,60 +76,33 @@ public struct AgentDetectionHold: Sendable, Equatable {
     /// and the footer needles that would veto it sit BELOW the last horizontal rule, outside
     /// `prompt_box_body`. So it reports `idle` + `visible_idle`, the one shape strong enough to
     /// clear a hook block (user-reported 2026-08-11, `AskUserQuestion` Tab flap).
-    public mutating func shouldHoldBlockedToIdle(
+    public func shouldHoldBlockedToIdle(
         previous: AgentScreenDetection,
         next: AgentScreenDetection,
         agentChanged: Bool,
         processExited: Bool,
         now: TimeInterval,
     ) -> Bool {
-        let transitioning = previous.state == .blocked && next.state == .idle
-            && !agentChanged && !processExited
-        guard transitioning else {
-            clearUnblock()
-            return false
+        withHoldPair(previous, next) { from, to in
+            slopdesk_agent_hold_blocked_to_idle(
+                handle, from, to, agentChanged, processExited, now,
+            )
         }
-        guard let startedAt = pendingUnblockStartedAt else {
-            pendingUnblockStartedAt = now
-            unblockConfirmations = 0
-            return true
-        }
-        if now - startedAt >= Self.pendingIdleCap {
-            clearUnblock()
-            return false
-        }
-        unblockConfirmations += 1
-        if unblockConfirmations >= Self.pendingIdleConfirmations {
-            clearUnblock()
-            return false
-        }
-        return true
     }
 
-    private mutating func clear() {
-        pendingIdleStartedAt = nil
-        confirmations = 0
-    }
-
-    private mutating func clearUnblock() {
-        pendingUnblockStartedAt = nil
-        unblockConfirmations = 0
-    }
-
-    /// herdr `stable_visible_signal_refresh_due`: a steady visible blocker re-publishes
-    /// every 800 ms even without a change.
+    /// A steady visible blocker re-publishes every 800 ms even without a change.
     public static func stableVisibleSignalRefreshDue(
         previous: AgentScreenDetection,
         next: AgentScreenDetection,
         lastRefresh: TimeInterval?,
         now: TimeInterval,
     ) -> Bool {
-        guard next.visibleBlocker, previous.visibleBlocker else { return false }
-        guard let lastRefresh else { return true }
-        return now - lastRefresh >= stableVisibleSignalRefresh
+        withHoldPair(previous, next) { from, to in
+            slopdesk_agent_hold_refresh_due(from, to, lastRefresh ?? 0, lastRefresh != nil, now)
+        }
     }
 
-    /// herdr `should_publish_detection_update`.
+    /// Whether a verdict differs enough from the last published one to be worth announcing.
     public static func shouldPublish(
         previous: AgentScreenDetection,
         next: AgentScreenDetection,
@@ -145,17 +110,17 @@ public struct AgentDetectionHold: Sendable, Equatable {
         processExited: Bool,
         refreshDue: Bool,
     ) -> Bool {
-        previous.state != next.state
-            || previous.visibleIdle != next.visibleIdle
-            || previous.visibleBlocker != next.visibleBlocker
-            || previous.visibleWorking != next.visibleWorking
-            || agentChanged
-            || processExited
-            || (refreshDue && next.visibleBlocker && previous.visibleBlocker)
+        withHoldPair(previous, next) { from, to in
+            slopdesk_agent_hold_should_publish(from, to, agentChanged, processExited, refreshDue)
+        }
     }
 
-    /// herdr `decide_detection_transition`: hold → no publish; else the publish gate.
-    public mutating func decide(
+    /// The whole temporal decision: hold → no publish; else the publish gate.
+    ///
+    /// Both holds are consulted on EVERY decision inside the crate, never short-circuited: each
+    /// clears its own pending state when its transition does not apply, so a pane that walks
+    /// working → idle → blocked → idle leaves no stale counter behind.
+    public func decide(
         previous: AgentScreenDetection,
         next: AgentScreenDetection,
         agentChanged: Bool,
@@ -163,36 +128,27 @@ public struct AgentDetectionHold: Sendable, Equatable {
         lastRefresh: TimeInterval?,
         now: TimeInterval,
     ) -> Bool {
-        // Both holds are consulted on EVERY decision (never short-circuited): each clears its own
-        // pending state when its transition does not apply, so a pane that walks
-        // working → idle → blocked → idle leaves no stale counter behind.
-        let holdingWorking = shouldHoldWorkingToIdle(
-            previous: previous,
-            next: next,
-            agentChanged: agentChanged,
-            processExited: processExited,
-            now: now,
-        )
-        let holdingUnblock = shouldHoldBlockedToIdle(
-            previous: previous,
-            next: next,
-            agentChanged: agentChanged,
-            processExited: processExited,
-            now: now,
-        )
-        if holdingWorking || holdingUnblock { return false }
-        let refreshDue = Self.stableVisibleSignalRefreshDue(
-            previous: previous,
-            next: next,
-            lastRefresh: lastRefresh,
-            now: now,
-        )
-        return Self.shouldPublish(
-            previous: previous,
-            next: next,
-            agentChanged: agentChanged,
-            processExited: processExited,
-            refreshDue: refreshDue,
-        )
+        withHoldPair(previous, next) { from, to in
+            slopdesk_agent_hold_decide(
+                handle, from, to, agentChanged, processExited,
+                lastRefresh ?? 0, lastRefresh != nil, now,
+            )
+        }
+    }
+}
+
+/// Lends the two verdicts as C structs for exactly the length of one call — the `withUnsafePointer`
+/// scopes ARE the safety contract, so nothing else goes inside them.
+private func withHoldPair<T>(
+    _ previous: AgentScreenDetection,
+    _ next: AgentScreenDetection,
+    _ body: (UnsafePointer<SlopDeskAgentDetection>, UnsafePointer<SlopDeskAgentDetection>) -> T,
+) -> T {
+    var from = previous.ffiDetection
+    var to = next.ffiDetection
+    return withUnsafePointer(to: &from) { fromPointer in
+        withUnsafePointer(to: &to) { toPointer in
+            body(fromPointer, toPointer)
+        }
     }
 }

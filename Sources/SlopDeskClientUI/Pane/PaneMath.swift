@@ -30,12 +30,4 @@ enum PaneMath {
         let lead = Int((leading / sum * 100).rounded())
         return (lead, 100 - lead)
     }
-
-    /// Truncate a cwd path from the BEGINNING (keep the trailing leaf dirs visible), max `maxChars`
-    /// glyphs incl. the leading ellipsis (spec §5.1 `truncate_from_beginning`, max 40).
-    static func truncatedCwd(_ cwd: String, maxChars: Int = 40) -> String {
-        guard cwd.count > maxChars else { return cwd }
-        guard maxChars > 1 else { return String(cwd.suffix(maxChars)) }
-        return "…" + String(cwd.suffix(maxChars - 1))
-    }
 }

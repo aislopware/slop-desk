@@ -1,5 +1,3 @@
-import Foundation
-
 // MARK: - TerminalContextMenu (pure right-click menu model + enablement)
 
 /// The PURE model behind the terminal right-click context menu (Ghostty/Warp parity):

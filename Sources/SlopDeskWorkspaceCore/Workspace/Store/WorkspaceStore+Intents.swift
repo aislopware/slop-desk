@@ -297,13 +297,9 @@ public extension WorkspaceStore {
     /// The tab every tab-scoped intent names.
     var activeTreeTab: TabID? { tree.activeSession?.activeTab?.id }
 
+    /// `SLOPDESK_WORKSPACE_DEBUG` — `== "1"`, default-OFF, resolved once by ``DebugTrace``: the
+    /// mutators run on every gesture and a per-call environment lookup is a syscall in a hot path.
     internal func logIntentRefusal(_ op: WorkspaceIntentOp, _ why: String) {
-        guard Self.isWorkspaceDebugEnabled else { return }
-        FileHandle.standardError.write(Data("workspace intent \(op) dropped: \(why)\n".utf8))
+        DebugTrace.workspace.write("workspace intent \(op) dropped: \(why)")
     }
-
-    /// `SLOPDESK_WORKSPACE_DEBUG` — `== "1"`, default-OFF. Resolved once: the mutators run on every
-    /// gesture and a per-call environment lookup is a syscall in a hot path.
-    internal static let isWorkspaceDebugEnabled =
-        ProcessInfo.processInfo.environment["SLOPDESK_WORKSPACE_DEBUG"] == "1"
 }

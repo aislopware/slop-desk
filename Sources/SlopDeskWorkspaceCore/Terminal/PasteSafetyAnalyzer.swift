@@ -1,5 +1,3 @@
-import Foundation
-
 // MARK: - Paste-protection danger analyzer
 
 /// PURE analyzer for the **Paste Protection** safety net (Settings ▸ Controls). It classifies a

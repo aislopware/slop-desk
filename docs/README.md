@@ -1,6 +1,6 @@
 # SlopDesk — design docs
 
-Low-latency remote coding for Apple platforms (macOS host; macOS + iOS/iPadOS clients). Workspace of panes: **terminal** (PTY → TCP → libghostty) or **GUI window** (ScreenCaptureKit → HEVC → UDP). Wire core is native Swift; only non-Swift code is the NEON kernel in `Sources/CSlopDeskSIMD`.
+Low-latency remote coding for Apple platforms (macOS host; macOS + iOS/iPadOS clients). Workspace of panes: **terminal** (PTY → TCP → libghostty) or **GUI window** (ScreenCaptureKit → HEVC → UDP). Wire core is Rust (`rust/slopdesk-wire`, `rust/slopdesk-video`), linked in-process through `CSlopDeskFFI`; Swift is the platform shell.
 
 **Start here:** [00-overview.md](00-overview.md) · [DECISIONS.md](DECISIONS.md)
 

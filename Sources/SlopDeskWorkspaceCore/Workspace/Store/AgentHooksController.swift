@@ -1,5 +1,3 @@
-import Foundation
-
 // MARK: - The Agents settings-card model (Claude Code only)
 
 /// The `@MainActor @Observable` model behind the Agents settings card's **Install Hooks** row — the
@@ -15,6 +13,8 @@ import Foundation
 /// channel; with no connected pane the status seam yields `nil`, which lands the card on
 /// ``InstallState/disconnected`` (a disabled card with a "Connect a session" note — NEVER a false
 /// "Not Installed").
+import Foundation
+
 @preconcurrency
 @MainActor
 @Observable

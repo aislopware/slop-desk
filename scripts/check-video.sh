@@ -206,7 +206,10 @@ if [[ -z "${WID}" ]]; then
 fi
 # The listing line ends with the pixel size; the remote window's NAME is the app + title alone.
 # It becomes the detached pane's window title, so it is read off the screenshot — keep it clean.
-WTITLE="$(echo "${LISTING}" | grep -E "id=${WID}\b" | sed -E 's/.*id=[0-9]+ +//; s/ *\[[0-9]+x[0-9]+\] *$//')"
+# `|| true`: the title is only ever echoed, so a listing whose shape changed should cost a blank in
+# one message, not the whole run — under `set -euo pipefail` a grep that matches nothing exits 1 and
+# would kill the script here, silently, one step before the host is started.
+WTITLE="$(echo "${LISTING}" | grep -E "id=${WID}\b" | sed -E 's/.*id=[0-9]+ +//; s/ *\[[0-9]+x[0-9]+\] *$//' || true)"
 echo "==> serving window id=${WID} (${WTITLE}) on media:${MEDIA_PORT} cursor:${CURSOR_PORT}"
 
 # ── 3. Start the host ──────────────────────────────────────────────────────────────────────────

@@ -74,7 +74,7 @@ final class MuxChannelSessionFanOutDrainBoundTests: XCTestCase {
     ) -> MuxChannelSession {
         let session = MuxChannelSession(
             channelID: 1,
-            pty: PTYProcess(), // unspawned — `startRelay` builds the drain, nothing reads a master fd
+            pty: unattachedPTY(), // unspawned — `startRelay` builds the drain, nothing reads a master fd
             data: makeChannel(primary, kind: .data, window: primaryWindow),
             control: makeChannel(ByteSink(), kind: .control, window: nil),
         )
@@ -134,7 +134,7 @@ final class MuxChannelSessionFanOutDrainBoundTests: XCTestCase {
         let primary = ByteSink()
         let session = MuxChannelSession(
             channelID: 1,
-            pty: PTYProcess(),
+            pty: unattachedPTY(),
             data: makeChannel(primary, kind: .data, window: 16 * 1024),
             control: makeChannel(ByteSink(), kind: .control, window: nil),
         )

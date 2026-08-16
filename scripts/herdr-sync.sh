@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
-# Upstream sync + parity gate for the herdr-ported detect engine (SlopDeskAgentDetect).
+# Upstream sync + parity gate for the herdr-ported detect engine (rust/slopdesk-screend).
 #
 # scripts/herdr.pin records the herdr commit the port is proven equivalent to. This script
 # advances that proof to a newer upstream commit:
 #
 #   1. fetch upstream, show what changed under src/detect since the pin
-#   2. check out the target commit and regenerate BundledAgentManifests.swift verbatim
-#      (gen-bundled-manifests.py — fails loudly if the manifest SET changed)
-#   3. list src/detect *.rs changes — engine-code changes need a manual Swift port, but
-#      even an unread one cannot slip through: step 5 diffs the real binaries
+#   2. check out the target commit and re-sync rust/slopdesk-screend/manifests/*.toml
+#      verbatim (gen-bundled-manifests.py — fails loudly if the manifest SET changed)
+#   3. list src/detect *.rs changes — engine-code changes need a manual port, but even an
+#      unread one cannot slip through: step 5 diffs the real binaries
 #   4. build the herdr oracle binary (vendored libghostty-vt needs Zig 0.15.2 + the xcrun
-#      SDK shim from ThirdParty/ghostty — see libghostty build recipe) and slopdesk's
-#      slopdesk-detect-explain
+#      SDK shim from ThirdParty/ghostty — see libghostty build recipe) and slopdesk's own
+#      oracle, `slopdesk-screend explain`
 #   5. run scripts/herdr-differential.py: ~10k generated screens through BOTH engines,
 #      field-level diff of the full evaluation traces (winner, per-rule matched flags,
 #      region bytes + previews)
-#   6. run the Swift parity test suite
+#   6. run the screend parity test suite
 #   7. with --update-pin: record the newly proven commit in scripts/herdr.pin
 #
 # Usage:
@@ -67,12 +67,13 @@ DIRTY="$(git -C "${HERDR_DIR}" status --porcelain -- src)"
 [[ -z "${DIRTY}" ]] || fail "herdr checkout has local src changes — clean it first"
 git -C "${HERDR_DIR}" checkout --quiet "${TARGET_SHA}"
 
-log "regenerating BundledAgentManifests.swift from upstream TOMLs…"
+log "re-syncing rust/slopdesk-screend/manifests/*.toml from upstream…"
 python3 "${REPO_ROOT}/scripts/gen-bundled-manifests.py" --herdr-dir "${HERDR_DIR}"
 
 RS_CHANGES="$(git -C "${HERDR_DIR}" diff --name-only "${PIN}" "${TARGET_SHA}" -- 'src/detect/*.rs' 'src/detect/manifest/*.rs' || true)"
 if [[ -n "${RS_CHANGES}" ]]; then
-  log "ENGINE CODE changed upstream — review + port by hand, the differential below gates the result:"
+  log "ENGINE CODE changed upstream — review + port by hand into rust/slopdesk-screend/src,"
+  log "the differential below gates the result:"
   printf '    %s\n' "${RS_CHANGES}"
   log "view with: git -C ${HERDR_DIR} diff ${PIN:0:12} ${TARGET_SHA:0:12} -- src/detect"
 fi
@@ -88,14 +89,14 @@ else
 fi
 (cd "${HERDR_DIR}" && env "${BUILD_ENV[@]}" cargo build --release --bin herdr)
 
-log "building slopdesk-detect-explain…"
-(cd "${REPO_ROOT}" && swift build)
+log "building the ported engine's oracle (slopdesk-screend explain)…"
+(cd "${REPO_ROOT}/rust/slopdesk-screend" && cargo build --release)
 
 log "running the differential parity harness…"
 python3 "${REPO_ROOT}/scripts/herdr-differential.py" --herdr-dir "${HERDR_DIR}"
 
-log "running the Swift parity test suite…"
-(cd "${REPO_ROOT}" && swift test --filter SlopDeskAgentDetectTests | tail -2)
+log "running the screend parity test suite…"
+(cd "${REPO_ROOT}/rust/slopdesk-screend" && cargo test | tail -12)
 
 if [[ "${UPDATE_PIN}" = 1 ]]; then
   printf '%s\n' "${TARGET_SHA}" > "${PIN_FILE}"
@@ -103,4 +104,4 @@ if [[ "${UPDATE_PIN}" = 1 ]]; then
 else
   log "parity proven against ${TARGET_SHA:0:12} (pin unchanged; rerun with --update-pin to record it)"
 fi
-log "done — remember: manifest regen may have touched BundledAgentManifests.swift; run make check before committing"
+log "done — remember: the re-sync may have touched rust/slopdesk-screend/manifests; run make check before committing"

@@ -3,7 +3,7 @@
 //
 // The host answers ONE array, already folded: a booted AVD appears once, as its running record, and
 // the AVDs that are not running follow. So unlike the simulator panel there is no pair of groups to
-// merge here — the ordering decision was made host-side, in ``AndroidDeviceCatalog/merge(running:avds:)``,
+// merge here — the ordering decision was made host-side, in `merge` (`rust/slopdesk-androidd/src/catalog.rs`),
 // where the two halves are actually known.
 //
 // `state` is kept as `adb`'s raw word alongside the derived ``isRunning``. `adb` says `device`,

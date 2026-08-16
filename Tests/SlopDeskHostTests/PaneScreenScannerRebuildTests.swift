@@ -1,3 +1,4 @@
+import SlopDeskScreen
 import XCTest
 @testable import SlopDeskAgentDetect
 @testable import SlopDeskHost
@@ -11,6 +12,11 @@ import XCTest
 /// grid — which the engine reads, correctly, as `blocked`. That is how switching tabs raised a
 /// "Claude is waiting for your input" banner on a pane sitting quietly at its prompt.
 final class PaneScreenScannerRebuildTests: XCTestCase {
+    /// The pane's grid lives in `slopdesk-screend`; skip by name when it is not built.
+    override func setUpWithError() throws {
+        try ScreendFixture.requireDaemon()
+    }
+
     /// A ring whose LIVE screen is the idle prompt box: a permission dialog, then the app's own
     /// dismissal — `CSI 9A` + `CSI J` — for the nine rows the dialog occupied AT 80 COLUMNS.
     private static func ring() -> Data {
@@ -33,19 +39,17 @@ final class PaneScreenScannerRebuildTests: XCTestCase {
         return Data(s.utf8)
     }
 
-    private static func detection(cols: Int) -> AgentScreenDetection {
-        var model = TerminalScreenModel(rows: 40, cols: cols)
-        model.feed(ring())
-        var tracker = AgentOscTracker()
-        tracker.observe(ring())
-        return AgentManifestCatalog.detect(
-            agent: .claude,
-            input: AgentDetectionInput(
-                screen: model.snapshot().detectionText,
-                oscTitle: tracker.latestTitle,
-                oscProgress: tracker.latestProgress,
-            ),
-        )
+    /// What the ring reconstructs to at `cols`, straight from the engine — a private pane key, so
+    /// this reads the same grid the scanner would build without sharing one with it.
+    private static func detection(cols: Int) throws -> AgentScreenDetection {
+        try AgentScreenDetection(ScreenClient.shared.detect(
+            pane: "rebuild-probe-\(cols)-\(UUID().uuidString)",
+            agent: AgentKind.claude.label,
+            raw: ring(),
+            rows: 40,
+            cols: cols,
+            reset: true,
+        ))
     }
 
     private func input(
@@ -68,9 +72,9 @@ final class PaneScreenScannerRebuildTests: XCTestCase {
 
     /// The premise: the SAME ring reconstructs to two different screens, and the narrower one is a
     /// permission dialog the user answered long ago. Pins WHY the gate below has to exist.
-    func testTheSameRingReconstructsToABlockedScreenAtANarrowerWidth() {
-        XCTAssertEqual(Self.detection(cols: 80).state, .idle)
-        let narrow = Self.detection(cols: 40)
+    func testTheSameRingReconstructsToABlockedScreenAtANarrowerWidth() throws {
+        XCTAssertEqual(try Self.detection(cols: 80).state, .idle)
+        let narrow = try Self.detection(cols: 40)
         XCTAssertEqual(narrow.state, .blocked)
         XCTAssertEqual(narrow.matchedRuleID, "legacy_no_prompt_blocker")
     }

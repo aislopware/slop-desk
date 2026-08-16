@@ -3,10 +3,12 @@ import SlopDeskVideoProtocol
 
 /// Dedicated serial executor for the CPU-heavy encoded-frame → wire-datagram step.
 ///
-/// Running `packetizeRaw` (hundreds of MTU-split `Data` slice copies + RS-FEC parity) and the
-/// wire-encode map synchronously on the session actor would block the SAME actor that runs the
-/// inbound input consumer — a keystroke arriving mid-packetize of a large IDR would wait several
-/// ms for `CGEventPost`, directly on the keystroke-to-echo path.
+/// Running `packetizeRaw` (the MTU split, the RS-FEC parity and the per-datagram stamp over a
+/// whole IDR) synchronously on the session actor would block the SAME actor that runs the inbound
+/// input consumer — a keystroke arriving mid-packetize of a large IDR would wait milliseconds for
+/// `CGEventPost`, directly on the keystroke-to-echo path. The work is Rust's now and about 2.5×
+/// cheaper than it was, which shortens that window without closing it: a 400 KB IDR is still
+/// hundreds of microseconds, and this lane is what keeps them off the input path.
 ///
 /// This actor owns the ``VideoPacketizer`` (its monotonic `frameID`/`streamSeq` counters) plus a
 /// stateless ``VideoSendScheduler`` end-to-end, and the session actor `await`s ``packetize`` — the

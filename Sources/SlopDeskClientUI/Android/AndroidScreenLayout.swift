@@ -33,34 +33,19 @@
 
 #if os(macOS)
 import CoreGraphics
-import Foundation
 
 enum AndroidScreenLayout {
-    /// The largest rect with `contentSize`'s aspect ratio that fits inside `bounds`, centred.
-    ///
-    /// A degenerate input yields `.zero` rather than a divide-by-zero — the view reads that as
-    /// "nothing to draw yet", which is the truth before the session packet has named a size.
+    /// Where the frame sits inside the panel — ``DevicePanelGeometry/fittedRect(content:in:)``,
+    /// which both device panels share and which reaches the same aspect-fit law the video client's
+    /// renderer uses.
     static func fittedRect(content contentSize: CGSize, in bounds: CGSize) -> CGRect {
-        guard contentSize.width > 0, contentSize.height > 0,
-              bounds.width > 0, bounds.height > 0 else { return .zero }
-        let scale = min(bounds.width / contentSize.width, bounds.height / contentSize.height)
-        let size = CGSize(width: contentSize.width * scale, height: contentSize.height * scale)
-        return CGRect(
-            x: ((bounds.width - size.width) / 2).rounded(),
-            y: ((bounds.height - size.height) / 2).rounded(),
-            width: size.width.rounded(),
-            height: size.height.rounded(),
-        )
+        DevicePanelGeometry.fittedRect(content: contentSize, in: bounds)
     }
 
-    /// A point in panel space → a point in the fitted rect's space, or `nil` when the click landed on
-    /// the bars either side of the frame.
-    ///
-    /// `nil` rather than a clamped edge point: a click beside the device is not a tap on its edge, and
-    /// clamping would make the surround a permanently-armed strip that taps the outermost column.
+    /// A panel-space point in the frame's own space, or `nil` beside it — shared, see
+    /// ``DevicePanelGeometry/devicePoint(from:fitted:)``.
     static func devicePoint(from point: CGPoint, fitted: CGRect) -> CGPoint? {
-        guard fitted.width > 0, fitted.height > 0, fitted.contains(point) else { return nil }
-        return CGPoint(x: point.x - fitted.minX, y: point.y - fitted.minY)
+        DevicePanelGeometry.devicePoint(from: point, fitted: fitted)
     }
 
     /// The same mapping for a point that may have left the frame mid-drag, CLAMPED instead of dropped.
@@ -151,25 +136,11 @@ enum AndroidScreenLayout {
     /// decide when an accumulated wheel delta is worth a move message at all.
     static let touchSlop: CGFloat = 8
 
-    /// The two contacts a pinch is made of: a pair straddling `centre`, `spread` points apart along the
-    /// diagonal. The diagonal rather than the horizontal so a spread has room in both axes on a screen
-    /// far taller than it is wide, and clamped inside the frame because a finger past the edge is a
-    /// system gesture rather than a zoom.
+    /// A pinch's two contacts — shared, see ``DevicePanelGeometry/pinchFingers(centre:spread:fitted:)``.
     static func pinchFingers(
         centre: CGPoint, spread: CGFloat, fitted: CGRect,
     ) -> (CGPoint, CGPoint) {
-        let arm = spread / 2 * CGFloat(2.0.squareRoot() / 2)
-        let inset: CGFloat = 1
-        let clamped = { (point: CGPoint) -> CGPoint in
-            CGPoint(
-                x: min(max(point.x, inset), max(inset, fitted.width - inset)),
-                y: min(max(point.y, inset), max(inset, fitted.height - inset)),
-            )
-        }
-        return (
-            clamped(CGPoint(x: centre.x + arm, y: centre.y + arm)),
-            clamped(CGPoint(x: centre.x - arm, y: centre.y - arm)),
-        )
+        DevicePanelGeometry.pinchFingers(centre: centre, spread: spread, fitted: fitted)
     }
 }
 #endif

@@ -29,7 +29,7 @@ final class DisplaySessionStateMachineTests: XCTestCase {
             resolveDisplayCaptureSize: resolveDisplay,
         )
         XCTAssertEqual(effects.count, 2)
-        guard case let .sendControl(.helloAck(accepted, _, cw, ch, ackBounds, _)) = effects[0] else {
+        guard case let .helloAck(accepted, _, cw, ch, ackBounds, _) = sentControl(effects[0]) else {
             XCTFail("first effect is the ack")
             return
         }
@@ -53,7 +53,7 @@ final class DisplaySessionStateMachineTests: XCTestCase {
         let effects = sm.handleControl(
             helloDisplay(), windowBoundsCG: bounds, resolveCaptureSize: { _, _ in (800, 600) },
         )
-        guard case let .sendControl(.helloAck(accepted, _, _, _, _, _)) = effects.first else {
+        guard case let .helloAck(accepted, _, _, _, _, _) = sentControl(effects.first) else {
             XCTFail("a refusal ack is sent")
             return
         }
@@ -75,7 +75,7 @@ final class DisplaySessionStateMachineTests: XCTestCase {
             resolveCaptureSize: { _, _ in nil }, resolveDisplayCaptureSize: resolveDisplay,
         )
         XCTAssertEqual(dup.count, 1, "a duplicate re-acks without restarting capture")
-        guard case .sendControl(.helloAck(true, _, _, _, _, _)) = dup[0] else {
+        guard case .helloAck(true, _, _, _, _, _) = sentControl(dup[0]) else {
             XCTFail("the duplicate answer is an accepted re-ack")
             return
         }

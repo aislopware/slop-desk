@@ -1,7 +1,7 @@
 import XCTest
 @testable import SlopDeskVideoProtocol
 
-/// STACK-DEPTH regression for the `aisd_fec_*` marshaling (``RustFECBridge``).
+/// STACK-DEPTH regression for the `aisd_fec_*` marshaling (`RustFECBridge`).
 ///
 /// The marshaling must NOT consume stack proportional to the fragment count. A large HEVC
 /// IDR/keyframe (1MB+) packetizes into hundreds-to-thousands of data fragments

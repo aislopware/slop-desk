@@ -15,7 +15,7 @@
 
 **Why terminal first (history, both shipped now):** terminal input is just bytes — no CGEvent, no TCC Accessibility, no activate-then-control. That risk layer (R1/R2 in [08](08-risks-open-questions.md)) lives only on GUI panes. Prior art (VS Code Remote, JetBrains Gateway, Blink) streams text for code, pixels only where no semantic path exists.
 
-**Wire core:** native Swift codecs + controllers; golden corpus `golden/golden_vectors.json`; only C is `Sources/CSlopDeskSIMD` (GF NEON). Shell = ScreenCaptureKit / VideoToolbox / Metal / PTY / UI. Floor: macOS 26 / iOS 26.
+**Wire core:** Rust codecs + controllers (`rust/slopdesk-wire`, `rust/slopdesk-video`) linked through `CSlopDeskFFI`; golden corpus `golden/golden_vectors.json`; the GF NEON kernel is isolated in `rust/slopdesk-gfsimd`. Shell = ScreenCaptureKit / VideoToolbox / Metal / PTY / UI. Floor: macOS 26 / iOS 26.
 
 Workspace chrome is a **Session → Tab → n-ary split tree** (not free-floating canvas — see [22](22-workspace-architecture.md); canvas design kept as [30](30-infinite-canvas.md) history).
 

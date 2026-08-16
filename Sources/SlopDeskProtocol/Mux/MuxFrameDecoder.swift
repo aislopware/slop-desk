@@ -1,132 +1,127 @@
+import CSlopDeskFFI
 import Foundation
 
-/// Incremental, streaming splitter that turns arbitrary chunks of TCP bytes into
-/// whole ``MuxFrame`` values — the DIRECT analogue of ``FrameDecoder`` one layer up
-/// (mux envelopes instead of terminal ``WireMessage`` frames).
+/// Incremental, streaming splitter that turns arbitrary chunks of TCP bytes into whole ``MuxFrame``
+/// values — the DIRECT analogue of ``FrameDecoder`` one layer up (mux envelopes instead of terminal
+/// ``WireMessage`` frames).
 ///
-/// TCP is a byte stream with no message boundaries: one `recv` may deliver half a
-/// mux frame, three frames, or a frame split across many reads. `MuxFrameDecoder`
-/// buffers raw bytes via ``append(_:)`` and yields complete frames via
-/// ``nextFrame()``, returning `nil` whenever no complete frame is buffered yet (it
-/// simply waits for more bytes — a partial frame is **not** an error).
+/// TCP is a byte stream with no message boundaries: one `recv` may deliver half a mux frame, three
+/// frames, or a frame split across many reads. ``append(_:)`` takes raw bytes and ``nextFrame()``
+/// yields complete frames, returning `nil` whenever no complete frame is buffered yet — a partial
+/// frame is **not** an error.
 ///
-/// This is a value type. Like ``FrameDecoder`` it is intentionally **not** `Sendable`:
-/// it carries mutable buffer state and is meant to live inside a single actor / task
-/// (e.g. the per-connection receive loop). One decoder per physical mux connection.
-public struct MuxFrameDecoder {
-    /// Length of the big-endian `UInt32` mux-frame-length prefix.
-    private static let prefixLength = 4
+/// The buffering, the cursor that avoids a per-frame memmove, the fail-stop on a lost byte-boundary
+/// and the decode itself all live in `rust/slopdesk-wire`. This is the handle: a `final class` and
+/// intentionally **not** `Sendable` — it carries mutable buffer state and belongs to a single actor
+/// or task. One decoder per physical mux connection.
+///
+/// A `channelData` payload never crosses twice. It stays in the decoder's own buffer and is copied
+/// ONCE, straight into the `Data` this hands back.
+public final class MuxFrameDecoder {
+    /// The Rust decoder. Owned outright: one `new` here, one `free` in `deinit`.
+    private let handle: OpaquePointer
 
-    /// Reclaim the consumed prefix once the read cursor has advanced past this many bytes, so the
-    /// buffer's wasted head stays bounded during a long burst. 64 KiB == the max single `recv` chunk,
-    /// so in the common case compaction happens at most once per received chunk.
-    private static let compactionThreshold = 64 * 1024
+    public init() {
+        guard let handle = slopdesk_mux_decoder_new() else {
+            preconditionFailure("out of memory for a mux frame decoder")
+        }
+        self.handle = handle
+    }
 
-    /// Received bytes. Completed frames are NOT removed per-parse (that front-removal memmoves the
-    /// entire tail forward — O(n) per frame, O(n²) for a chunk of many small frames). Instead a
-    /// ``readOffset`` cursor advances past consumed frames and the head is compacted LAZILY (on a
-    /// drain that returns `nil`, or when the cursor crosses ``compactionThreshold``), amortizing total
-    /// work to O(bytes). All indexing is relative to `buffer.startIndex + readOffset`.
-    private var buffer = Data()
+    deinit { slopdesk_mux_decoder_free(handle) }
 
-    /// Number of leading bytes in ``buffer`` already consumed by completed frames but not yet
-    /// physically removed (reclaimed by ``compactConsumed()``).
-    private var readOffset = 0
-
-    /// Set once a decode error has been thrown — the byte-boundary for the whole stream is lost, so
-    /// no later byte can be trusted to start a frame. A poisoned decoder DROPS all further input
-    /// (``append(_:)`` is a no-op; the buffer was cleared at the fault, so a peer that keeps the
-    /// socket open cannot grow it without bound) and ``nextFrame()`` rethrows the original fault.
-    private var fault: Error?
-
-    public init() {}
-
-    /// Appends a freshly received chunk of bytes to the internal buffer.
+    /// Appends a freshly received chunk of bytes.
     /// Safe to call with empty data, a single byte, or many frames' worth.
     /// Dropped entirely once the decoder is poisoned by a prior decode fault.
-    public mutating func append(_ data: Data) {
-        guard fault == nil else { return }
-        buffer.append(data)
+    public func append(_ data: Data) {
+        guard !data.isEmpty else { return }
+        data.withUnsafeBytes { bytes in
+            slopdesk_mux_decoder_append(handle, bytes.baseAddress, bytes.count)
+        }
     }
 
     /// Test-only: current buffered byte count — asserts a poisoned decoder cannot be grown by
     /// further ``append(_:)`` traffic.
-    var bufferedByteCountForTesting: Int { buffer.count }
+    var bufferedByteCountForTesting: Int { slopdesk_mux_decoder_buffered(handle) }
 
-    /// Returns the next complete mux frame, or `nil` if a full frame is not yet
-    /// buffered (caller should `append` more bytes and retry).
+    /// Returns the next complete mux frame, or `nil` if a full frame is not yet buffered (caller
+    /// should `append` more bytes and retry).
     ///
-    /// - Throws: ``SlopDeskError/frameTooLarge(_:)`` if a length prefix exceeds
-    ///   ``SlopDesk/maxFramePayloadLength``; or any error from
-    ///   ``MuxEnvelopeCodec/decode(inner:)`` (unknown mux type, malformed/truncated
-    ///   body).
-    public mutating func nextFrame() throws -> MuxFrame? {
-        // Poisoned: a prior fault already lost the stream's byte-boundary — rethrow it so every
-        // caller keeps failing (fail-stop), never resynchronizes onto attacker-chosen bytes.
-        if let fault { throw fault }
-        // Bytes not yet consumed by a completed frame.
-        let available = buffer.count - readOffset
-        // Need at least the length prefix to know how big the frame is.
-        guard available >= Self.prefixLength else { compactConsumed()
-            return nil
-        }
-
-        let muxFrameLength = Int(readPrefix())
-
-        // Reject implausibly large frames before allocating / waiting for them.
-        guard muxFrameLength <= SlopDesk.maxFramePayloadLength else {
-            throw poison(SlopDeskError.frameTooLarge(muxFrameLength))
-        }
-
-        // Wait until the whole inner run has arrived (partial read — not an error).
-        let frameLength = Self.prefixLength + muxFrameLength
-        guard available >= frameLength else { compactConsumed()
-            return nil
-        }
-
-        // Slice out the inner run (after the prefix) and ADVANCE the cursor past the frame (no
-        // per-frame front-removal). `base` is the absolute index of this frame's first byte.
-        let base = buffer.startIndex + readOffset
-        let innerStart = base + Self.prefixLength
-        let inner = Data(buffer[innerStart..<base + frameLength])
-        readOffset += frameLength
-        // Bound the wasted head mid-burst; a drain that returns nil reclaims the rest.
-        if readOffset >= Self.compactionThreshold { compactConsumed() }
-
-        do {
-            return try MuxEnvelopeCodec.decode(inner: inner)
-        } catch {
-            throw poison(error)
+    /// - Throws: ``SlopDeskError/frameTooLarge(_:)`` if a length prefix exceeds the wire's ceiling;
+    ///   or any error a body decode raises (unknown mux type, malformed, truncated). Every one of
+    ///   them is FAIL-STOP: the byte-boundary for the whole connection is lost, so the same fault is
+    ///   thrown by every later call rather than resynchronising onto attacker-chosen bytes.
+    public func nextFrame() throws -> MuxFrame? {
+        switch try take(room: Self.scratchArena) {
+        case let .frame(frame): return frame
+        case .pending: return nil
+        case let .needsRoom(room):
+            // Not an error and not a guess: an arena that did not fit reports the size that would,
+            // and the frame waits inside the decoder until it is asked for again.
+            guard case let .frame(frame) = try take(room: room) else {
+                throw SlopDeskError.truncated
+            }
+            return frame
         }
     }
 
-    /// Marks the decoder poisoned by `error` and frees the buffer (the remaining bytes are past a
-    /// lost boundary — undecodable by definition — and the owner may not tear the socket down
-    /// synchronously). Returns the error so fault sites read `throw poison(error)`.
-    private mutating func poison(_ error: Error) -> Error {
-        fault = error
-        buffer.removeAll(keepingCapacity: false)
-        readOffset = 0
-        return error
+    /// A cwd fits this, and it is the only text a mux envelope carries — a `.channelData` payload
+    /// under a flood is not text and never enters the arena at all.
+    private static let scratchArena = 1024
+
+    /// What one attempt at the next frame produced.
+    private enum Taken {
+        /// A whole envelope, rebuilt.
+        case frame(MuxFrame)
+        /// No whole envelope is buffered yet — append more bytes. Not an error.
+        case pending
+        /// An envelope is waiting but its cwd needs this many arena bytes.
+        case needsRoom(Int)
     }
 
-    /// Physically drops the consumed prefix (`readOffset` bytes) from the front of the buffer ONCE,
-    /// resetting the cursor — the single O(remaining) memmove that replaces the per-frame one.
-    private mutating func compactConsumed() {
-        guard readOffset > 0 else { return }
-        buffer.removeSubrange(buffer.startIndex..<buffer.startIndex + readOffset)
-        readOffset = 0
-    }
-
-    /// Reads the 4-byte big-endian length prefix at the cursor without consuming it. (The cursor
-    /// advances in ``nextFrame()`` once the full frame is confirmed present, so an incomplete frame
-    /// leaves the prefix in place for the next call.)
-    private func readPrefix() -> UInt32 {
-        let base = buffer.startIndex + readOffset
-        var value: UInt32 = 0
-        for i in 0..<Self.prefixLength {
-            value = (value << 8) | UInt32(buffer[base + i])
+    /// One envelope taken into an arena of `room` bytes.
+    private func take(room: Int) throws -> Taken {
+        var flat = SlopDeskMuxFrame()
+        var verdict = UInt32(SLOPDESK_WIRE_DECODE_OK)
+        var built: MuxFrame?
+        var reported = 0
+        withUnsafeTemporaryAllocation(byteCount: max(room, 1), alignment: 1) { arena in
+            verdict = slopdesk_mux_decoder_next(
+                handle, &flat, arena.baseAddress, arena.count, &reported,
+            )
+            guard verdict == UInt32(SLOPDESK_WIRE_DECODE_OK) else { return }
+            // The payload is fetched INSIDE the arena's scope so the frame is built once, from both
+            // halves at their final addresses — and handed on as its own buffer, never re-sliced.
+            built = MuxFrame.build(
+                flat, UnsafeRawBufferPointer(arena), fetchPayload(byteCount: Int(flat.payload_length)),
+            )
         }
-        return value
+        switch verdict {
+        case UInt32(SLOPDESK_FRAME_PENDING):
+            return .pending
+        case UInt32(SLOPDESK_WIRE_DECODE_AGAIN):
+            return .needsRoom(reported)
+        case UInt32(SLOPDESK_FRAME_TOO_LARGE):
+            throw SlopDeskError.frameTooLarge(reported)
+        case UInt32(SLOPDESK_WIRE_DECODE_TRUNCATED):
+            throw SlopDeskError.truncated
+        case UInt32(SLOPDESK_WIRE_DECODE_UNKNOWN_TYPE):
+            throw SlopDeskError.unknownMessageType(UInt8(truncatingIfNeeded: reported))
+        case UInt32(SLOPDESK_WIRE_DECODE_MALFORMED):
+            throw SlopDeskError.malformedBody("a mux frame's body is not what its type declares")
+        default:
+            break
+        }
+        guard let built else { throw SlopDeskError.truncated }
+        return .frame(built)
+    }
+
+    /// Copies the opaque payload the last frame parked. Valid only until the next frame is taken,
+    /// which is why it is fetched immediately and never held.
+    private func fetchPayload(byteCount: Int) -> Data {
+        WireBuffer.filled(byteCount) { out in
+            let copied = slopdesk_mux_decoder_payload(handle, out, byteCount)
+            precondition(copied == byteCount, "the decoder parked a payload of a different length")
+        }
     }
 }

@@ -165,7 +165,7 @@ final class FrameDecoderCursorTests: XCTestCase {
 
     func testMuxFrameDecoderDecodesManySmallFramesIdenticallyInOneChunk() throws {
         let (expected, bytes) = smallMuxFrames(12000)
-        var decoder = MuxFrameDecoder()
+        let decoder = MuxFrameDecoder()
         decoder.append(bytes)
         var decoded: [MuxFrame] = []
         while let f = try decoder.nextFrame() { decoded.append(f) }
@@ -175,7 +175,7 @@ final class FrameDecoderCursorTests: XCTestCase {
 
     func testMuxFrameDecoderDecodesIdenticallyAcrossArbitrarySplits() throws {
         let (expected, bytes) = smallMuxFrames(3000)
-        var decoder = MuxFrameDecoder()
+        let decoder = MuxFrameDecoder()
         var decoded: [MuxFrame] = []
         var i = bytes.startIndex
         while i < bytes.endIndex {

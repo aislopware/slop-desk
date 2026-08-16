@@ -176,7 +176,7 @@ PER-CLIENT-PRESENCE — fanned out, TTL-expired, never persisted, never versione
 | `TreeWorkspace.sessions` order | `root/sessionOrder` | Topology. |
 | `TreeWorkspace.activeSessionID` | `root/activeSessionID` | What a fresh client opens into. |
 | `layoutPresets` / `launchPresets` / `sessionTemplates` | `root/*` | They name **host** cwds and spawn **host** commands. Host config, not device config. |
-| `RecentlyClosedTab` ring (`WorkspaceStore.swift:599`) | `root/closedTabRing` | ⇧⌘T reopens a tab whose panes live host-side. A per-client undo stack over shared state is incoherent. |
+| `WorkspaceTopology.closedTabs` ring (read LIFO by `WorkspaceStore+PaneCycle.swift`) | `root/closedTabRing` | ⇧⌘T reopens a tab whose panes live host-side. A per-client undo stack over shared state is incoherent. |
 | `Session.name` / `.tabs` order / `.detached` | `session/*` | Topology. |
 | `Session.activeTabIndex` → **`session/activeTabID`** | `session/activeTabID` | Indices are exactly what broke in `ed76f137`. Identity, not position. |
 | `tabFocusHistory` (`WorkspaceStore.swift:611`) | `session/focusMRU` | If close is an intent and the tree is host-owned, two clients computing successors from different local MRU rings diverge and the host's index clamp reintroduces the `ed76f137` bug. The ring must be shared. |
@@ -190,7 +190,7 @@ PER-CLIENT-PRESENCE — fanned out, TTL-expired, never persisted, never versione
 | `PaneSpec.lastKnownCwd` | `pane/cwd` | Already host truth (`lastCwdTruth`, type 33). |
 | `PaneSpec.projectKey` | `pane/projectKey` | Already host truth (`lastProjectKey`, type 34). |
 | `paneForegroundProcess` (`:2956`) | `pane/foregroundProcess` | Type 26. |
-| **NEW** `pane/runningCommand` | `pane/runningCommand` | Today `RailRowsBuilder.liveRowTitle(runningCommand:)` reads the *client's* per-materialization `TerminalBlockModel`. A client that has rendered zero bytes cannot reproduce the sidebar title chain at all. Source: the host's own `CommandBlockSegmenter` open block. This is the missing link for "the host alone can render the sidebar". |
+| **NEW** `pane/runningCommand` | `pane/runningCommand` | Today `RailRowsBuilder.liveRowTitle(runningCommand:)` reads the *client's* per-materialization `TerminalBlockModel`. A client that has rendered zero bytes cannot reproduce the sidebar title chain at all. Source: the open block superd's tap reports, latched host-side (`docs/51` §6.14). This is the missing link for "the host alone can render the sidebar". |
 | `paneAgentStatus` / `Label` / `Intent` (`:2934`) | `pane/agentState`, `/agentLabel`, `/agentIntent` | Types 27 / 36. |
 | `paneProgress` | `pane/progress` | Type 32. |
 | type-23 running latch, `lastExitTruth`, duration | `pane/commandRunning`, `/lastExitCode`, `/lastDurationMS` | Already host truth. |
@@ -534,8 +534,12 @@ subscriber whose acked `stateNum` falls outside that window gets a snapshot.
 title/bell state machine behind type 21) and **`terminalModeTracker`** — are PATH-1-adjacent. A
 title-sniffer behaviour change in exactly the phases that touch the title path produces **no
 `golden-check.sh` signal at all**. Mitigation, added in Phase 1:
-`Tests/SlopDeskProtocolTests/HostOutputSnifferGoldenGuardTests.swift` asserts the frozen vector still
-round-trips against the live sniffer, so the XCTest suite is a real gate rather than an implicit one.
+`rust/slopdesk-superd/tests/golden_sniffer.rs` asserts the frozen vector still round-trips against
+the live sniffer, so the suite is a real gate rather than an implicit one. (It was a Swift test named
+HostOutputSnifferGoldenGuardTests until the sniffer moved into
+superd's pump — the guarantee crossed languages with the code, and `scripts/golden-check.sh` is what
+holds the two ends together: `hostOutputSniffer` is a SUITE-PINNED key, and that script fails if no
+suite replays it.)
 
 ---
 
@@ -619,10 +623,10 @@ ctl socket. `HostWorkspaceDocument`'s subscriber registry is the same pattern, w
 <Application Support>/SlopDesk/workspace-state.json     — sibling of scrollback/
 ```
 
-`ScrollbackJournalStore` writes to `<Application Support>/SlopDesk/scrollback/`
-(`ScrollbackJournal.swift:115-119`); the document is a **sibling of that directory**, not a file inside
-it. `sweep(maxAge:keepNewest:)` (`:298-308`) walks only `*.scrollback` in that directory and never sees
-the new file — correct, and worth saying so nobody "fixes" it.
+Scrollback transcripts go in `<Application Support>/SlopDesk/scrollback/` — hostd picks the directory
+(`ScrollbackTranscripts.makeFromEnvironment`) and superd writes the files (`docs/51` §6.8); the
+document is a **sibling of that directory**, not a file inside it. The sweep walks only `*.scrollback`
+in that directory and never sees the new file — correct, and worth saying so nobody "fixes" it.
 
 JSON on disk is fine — **the manual-binary rule is about the WIRE.** Sorted keys, atomic
 write-and-rename, 600 ms debounce, synchronous flush on SIGTERM/SIGINT (the
@@ -671,10 +675,13 @@ Refused forever after the document is touched. It is a **bootstrap, not a migrat
    ever be accepted.
 2. `workspace-state.json` restores **topology, titles, cwd, project keys, presets, closed-tab ring**
    (§6.3's persisted column).
-3. **Live processes do not survive** — `DetachedSessionStore` is in-process. Restored panes come back
-   with `pane/liveness = 2` and their last-known metadata, `titleFresh = 0`, `commandRunning = 0`,
-   `attachedBy` empty. The client renders them **stale** (dimmed, no busy dot), not fake-live. This is
-   zellij's resurrection boundary and the design does not pretend to move it.
+3. **Live processes survive iff the pane is superd-supervised** (2026-08-11 → [51]). A supervised pane is
+   re-adopted from `slopdesk-superd` with its shell still running and comes back **live**, carrying the
+   pane id superd recorded so the agent's hook feed keeps routing. An UNSUPERVISED pane (superd absent)
+   still follows the old rule below, which is why it is kept rather than deleted:
+   `DetachedSessionStore` is in-process, so those panes come back with `pane/liveness = 2` and their
+   last-known metadata, `titleFresh = 0`, `commandRunning = 0`, `attachedBy` empty — rendered **stale**
+   (dimmed, no busy dot), not fake-live.
 4. A restored pane's `<uuid>.scrollback` journal still drives PATH-B `composeTranscript` on respawn —
    unchanged.
 
@@ -686,7 +693,7 @@ document goes semantically stale with no signal:
 - **`DetachedSessionStore.onEvicted`** fires *after* it kills a stored session, on both TTL eviction
   and `SLOPDESK_DETACH_MAX_SESSIONS` overflow (`DetachedSessionStore.swift:37-60,84-115`). Subscribe
   the document: set `pane/liveness = 2`, bump `stateNum`.
-- **`ScrollbackJournal.sweep(maxAge: 14d, keepNewest: 256)`** deletes journals. A pane whose journal is
+- **The journal sweep (`maxAge: 14d, keepNewest: 256`)** deletes journals. A pane whose journal is
   gone is no longer restorable; the document keeps its entries (topology is still real) but its
   `liveness` stays 2 and it can only respawn empty. State it; do not silently pretend.
 
@@ -1299,12 +1306,11 @@ default install; with the shell-controlled-title toggle off it is a no-op on tha
   - `testReattachReassertsCurrentTitle` — **prove it fails first**
   - `testReattachDoesNotResurrectRetiredTitle` — pins the `_currentTitle = ""` clear at `:1027`
   - `testTitleIsEnqueuedAfterCommandStatus` — pins the load-bearing ordering
-- `Tests/SlopDeskWorkspaceCoreTests/WorkspaceStoreProgramTitleTests.swift`
-  - `testTitleWithNoCommandStartIsTrusted`
-  - `testTitlePredatingCommandStartIsStillRejected`
+- The title-trust cases moved with the sniffer: `rust/slopdesk-superd/tests/golden_sniffer.rs`
+  (they were the Swift cases testTitleWithNoCommandStartIsTrusted
+  and testTitlePredatingCommandStartIsStillRejected in WorkspaceStoreProgramTitleTests)
 - `Tests/SlopDeskHostTests/HostServerListPanesTests.swift` — `testDetachedPaneIsListed`
-- `Tests/SlopDeskProtocolTests/HostOutputSnifferGoldenGuardTests.swift` — closes the frozen-key blind
-  spot (§5.7)
+- `rust/slopdesk-superd/tests/golden_sniffer.rs` — closes the frozen-key blind spot (§5.7)
 
 This repairs the **live detach/reattach** case, which is the common one. `_currentTitle` lives in
 memory on `MuxChannelSession` and dies with hostd; after a **daemon** restart the title stays degraded
@@ -1374,7 +1380,7 @@ one the moment Phase 5b projected the tree — the sinks carry per-pane FACTS, n
 - `WorkspaceChannelSession` with the **depth-1 coalescing** send task. **Never `enqueueControl`.**
 - `PaneLiveness.paneEntries()` fed from the truths `MuxChannelSession` already latches.
 - **`pane/titleFresh`** computed host-side, all four rules of §4.4.
-- **`pane/runningCommand`** from the host's own `CommandBlockSegmenter`.
+- **`pane/runningCommand`** from the latch superd's `0x05` block events feed (`docs/51` §6.14).
 - **`pane/completionEpoch`** bumped on each working→done edge.
 - **`project/gitSummary`** fed from `RepoStatusWatcher` (type 35 keeps pushing as the fast path).
 - ctl panes get entries under `root/unattachedSessionID`.
@@ -1412,7 +1418,7 @@ one the moment Phase 5b projected the tree — the sinks carry per-pane FACTS, n
   seam (the one `InspectorServer` tests use) — subscribe → snapshot → diff → epoch change → mis-based
   diff → resubscribe; a **new-epoch-converges-in-ONE-frame** case; a **shed-proof** case that floods
   `controlOut` past 1024 and asserts the snapshot still lands.
-- `Tests/SlopDeskWorkspaceCoreTests/WorkspaceMirrorFastPathTests.swift` — fast-path-write a key, then
+- `Tests/SlopDeskWorkspaceCoreTests/Workspace/WorkspaceMirrorFastPathTests.swift` — fast-path-write a key, then
   deliver a diff with a **different** value for that key; assert the projection follows the diff and a
   later empty diff does **not** resurrect the fast-path value.
 - `Tests/SlopDeskHostTests/WorkspacePresenceTests.swift` — clock ordering (older clock ignored), TTL
@@ -1770,10 +1776,11 @@ below the real 64 MiB offline gate — only a cellular-iOS soak settles it, and 
    larger sync engine.
 7. **Any app-layer auth, pairing, tokens, or per-client permissions.** `clientInstanceID` and the device
    label are **presence decoration, not credentials**. Security remains the WireGuard mesh.
-8. **Live-process survival across a hostd restart.** The document persists topology and metadata so the
-   workspace re-renders correctly; the panes come back **dead** (`liveness = 2`), exactly zellij's
-   resurrection caveat. Only `DetachedSessionStore`-parked sessions survive, and only while the daemon
-   lives.
+8. ~~**Live-process survival across a hostd restart.**~~ **SUPERSEDED 2026-08-11 → [51].** This was a
+   non-goal on the reasoning that a live process cannot outlive the daemon that forked it. True, and
+   the fix was to stop forking it from the daemon: `slopdesk-superd` holds the PTY master fd, so a
+   supervised pane comes back **live**, not `liveness = 2`. The rest of this section's reasoning about
+   what the *document* can and cannot carry is unchanged — see §6.5.
 9. **Cross-host workspaces.** A client talking to two hostds gets **two documents** and must compose
    them itself; the rail would need a real multi-document model, which is not designed here.
 10. **Fractional indexing for tab order.** Short lists rewritten wholesale by the host are sufficient at

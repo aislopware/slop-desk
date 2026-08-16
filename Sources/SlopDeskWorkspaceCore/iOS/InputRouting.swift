@@ -1,5 +1,3 @@
-import Foundation
-
 /// The pure routing decision behind the iOS IME proxy (doc 17 §2.5).
 ///
 /// On iOS we must split physical input into two paths to keep CJK / multi-stage IME working:

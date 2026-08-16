@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 
 /// One process inside a pane's foreground process group (herdr `ForegroundProcess`). The host's
@@ -42,316 +43,136 @@ public enum AgentJobIdentifier {
     /// Resolves a path to its symlink target's basename, or nil. Injected for tests.
     public typealias SymlinkResolver = @Sendable (String) -> String?
 
-    /// The default resolver: `FileManager`-free `realpath` (never traps, nil on failure).
-    public static let defaultSymlinkResolver: SymlinkResolver = { token in
-        var buffer = [UInt8](repeating: 0, count: Int(PATH_MAX))
-        let ok = buffer.withUnsafeMutableBytes { raw -> Bool in
-            let typed = raw.bindMemory(to: CChar.self)
-            return realpath(token, typed.baseAddress) != nil
-        }
-        guard ok else { return nil }
-        guard let resolved = String(bytes: buffer.prefix(while: { $0 != 0 }), encoding: .utf8) else {
-            return nil
-        }
-        let base = AgentKind.pathBasename(resolved)
-        return base.isEmpty ? nil : base
-    }
+    /// The default resolver: `realpath`, through the crate's own `canonicalize`. A token that does
+    /// not exist, a permission error, a symlink loop and a non-UTF-8 target all answer `nil`, which
+    /// is exactly the "this token names nothing I know" every caller already handles.
+    ///
+    /// `nil` here means "use the crate's resolver", which is why it is not a Swift closure: routing
+    /// a filesystem touch back out through the callback would pay two boundary crossings per token
+    /// to reach the same `realpath`.
+    public static let defaultSymlinkResolver: SymlinkResolver? = nil
 
-    /// herdr `identify_agent_in_job`: prefer the group leader; else scan every process, keep
-    /// recognized agents, pick the highest `processPriority` (strict `>` — first wins ties).
-    /// Returns the agent plus the normalized name that identified it.
+    /// Prefer the group leader; else scan every process, keep recognised agents, pick the highest
+    /// `process_priority` (`rust/slopdesk-agent/src/job.rs`, strict `>` — first wins ties). Returns the agent plus
+    /// the normalized name that identified it.
+    ///
+    /// The whole ladder — the runtime argv unwrap, the `cmd`/PowerShell forms, the known package
+    /// paths, the command-text tokenizer — is `rust/slopdesk-agent::job` (docs/55).
     public static func identify(
         job: ForegroundJob,
         resolveSymlink: SymlinkResolver? = nil,
     ) -> (agent: AgentKind, name: String)? {
-        let resolver = resolveSymlink ?? defaultSymlinkResolver
-        if let leader = job.processes.first(where: { $0.pid == job.processGroupID }) {
-            let name = normalizedProcessName(leader, resolveSymlink: resolver)
-            if let agent = AgentKind.identify(processName: name) {
-                return (agent, name)
+        withStagedJob(job) { handle in
+            let index = withResolver(resolveSymlink) { resolve, context in
+                Int(slopdesk_agent_job_identify(handle, resolve, context))
             }
+            guard index >= 0 else { return nil }
+            let all = AgentKind.allCases
+            guard index < all.count else { return nil }
+            return (all[all.index(all.startIndex, offsetBy: index)], answer(of: handle))
         }
+    }
 
-        var best: (agent: AgentKind, name: String, priority: UInt8)?
+    // MARK: Staging
+
+    /// Builds the job on a handle, runs `body`, and frees it — the staging half of docs/55 §4b.
+    private static func withStagedJob<T>(_ job: ForegroundJob, _ body: (OpaquePointer) -> T) -> T {
+        guard let handle = slopdesk_agent_job_new(job.processGroupID) else {
+            preconditionFailure("slopdesk_agent_job_new returned null")
+        }
+        defer { slopdesk_agent_job_free(handle) }
         for process in job.processes {
-            let name = normalizedProcessName(process, resolveSymlink: resolver)
-            guard let agent = AgentKind.identify(processName: name) else { continue }
-            let priority = processPriority(process, normalizedName: name)
-            if let current = best, current.priority >= priority { continue }
-            best = (agent, name, priority)
+            push(process, onto: handle)
         }
-        return best.map { ($0.agent, $0.name) }
+        return body(handle)
     }
 
-    /// herdr `normalized_process_name`: argv0-over-comm, runtime unwrap, direct match,
-    /// argv0/cmdline path fallbacks — in that exact order.
-    public static func normalizedProcessName(
-        _ process: ForegroundJobProcess,
-        resolveSymlink: SymlinkResolver? = nil,
-    ) -> String {
-        let resolver = resolveSymlink ?? defaultSymlinkResolver
-        let effective = process.argv0 ?? process.name
-        let lowerEffective = effective.lowercased()
-
-        if AgentKind.isGenericRuntimeOrShell(lowerEffective),
-           let wrapped = wrappedAgentName(runtime: lowerEffective, argv: process.argv, resolveSymlink: resolver)
-        {
-            return wrapped
+    private static func push(_ process: ForegroundJobProcess, onto handle: OpaquePointer) {
+        var blob: [UInt8] = []
+        func span(_ text: String?) -> SlopDeskAgentSpan {
+            guard let text else { return SlopDeskAgentSpan(offset: 0, len: 0, present: false) }
+            let offset = blob.count
+            blob.append(contentsOf: text.utf8)
+            return SlopDeskAgentSpan(offset: offset, len: blob.count - offset, present: true)
         }
-
-        if AgentKind.identify(processName: effective) != nil {
-            return effective
-        }
-
-        if let wrapped = process.argv?.first.flatMap({ agentName(fromPathToken: $0, resolveSymlink: resolver) }) {
-            return wrapped
-        }
-        if let first = (process.cmdline ?? "").split(whereSeparator: \.isWhitespace).first,
-           let wrapped = agentName(fromPathToken: String(first), resolveSymlink: resolver)
-        {
-            return wrapped
-        }
-
-        return effective
-    }
-
-    /// herdr `process_priority`: 3 = unwrapped from a runtime/script, 2 = the literal agent
-    /// binary, 1 = anything else.
-    public static func processPriority(_ process: ForegroundJobProcess, normalizedName: String) -> UInt8 {
-        let lowerName = normalizedName.lowercased()
-        if lowerName != process.name.lowercased() { return 3 }
-        if !AgentKind.isGenericRuntimeOrShell(lowerName) { return 2 }
-        return 1
-    }
-
-    // MARK: - Runtime argv unwrapping (herdr wrapped_agent_name_from_runtime_argv family)
-
-    static func wrappedAgentName(
-        runtime: String,
-        argv: [String]?,
-        resolveSymlink: SymlinkResolver,
-    ) -> String? {
-        guard let argv else { return nil }
-        switch AgentKind.normalizedLookupName(AgentKind.pathBasename(runtime)) {
-        case "node",
-             "bun":
-            return scriptArgAgentName(
-                argv,
-                evalFlags: ["-e", "--eval", "-p", "--print"],
-                moduleFlags: [],
-                resolveSymlink: resolveSymlink,
+        let name = span(process.name)
+        let argv0 = span(process.argv0)
+        let cmdline = span(process.cmdline)
+        blob.withUnsafeMutableBufferPointer { buffer in
+            slopdesk_agent_job_push_process(
+                handle, process.pid, name, argv0, cmdline, buffer.baseAddress, buffer.count,
             )
-        case "python",
-             "python3":
-            return scriptArgAgentName(argv, evalFlags: ["-c"], moduleFlags: ["-m"], resolveSymlink: resolveSymlink)
-        case "sh",
-             "bash",
-             "zsh",
-             "fish":
-            return scriptArgAgentName(argv, evalFlags: ["-c"], moduleFlags: [], resolveSymlink: resolveSymlink)
-        case "cmd":
-            return windowsCmdArgAgentName(argv, resolveSymlink: resolveSymlink)
-        case "powershell",
-             "pwsh":
-            return powershellArgAgentName(argv, resolveSymlink: resolveSymlink)
-        default:
-            return nil
         }
-    }
-
-    /// herdr `script_arg_agent_name`: walk argv past option flags to the first positional
-    /// (script path) token; an eval/module flag bails IMMEDIATELY — a `-c`/`-e` command's
-    /// trailing args are never trusted as an agent path.
-    static func scriptArgAgentName(
-        _ argv: [String],
-        evalFlags: [String],
-        moduleFlags: [String],
-        resolveSymlink: SymlinkResolver,
-    ) -> String? {
-        var index = 1
-        while index < argv.count {
-            let arg = argv[index]
-            index += 1
-            if arg == "--" {
-                guard index < argv.count else { return nil }
-                return agentName(fromPathToken: argv[index], resolveSymlink: resolveSymlink)
-            }
-            if flagMatches(arg, evalFlags) || flagMatches(arg, moduleFlags) { return nil }
-            if arg.hasPrefix("-") {
-                if optionTakesValue(arg) { index += 1 }
-                continue
-            }
-            return agentName(fromPathToken: arg, resolveSymlink: resolveSymlink)
-        }
-        return nil
-    }
-
-    static func flagMatches(_ arg: String, _ flags: [String]) -> Bool {
-        flags.contains { flag in
-            if arg == flag { return true }
-            // Short-flag glued payload (`-eSCRIPT`).
-            if flag.hasPrefix("-"), !flag.hasPrefix("--"), arg.hasPrefix(flag), arg.count > flag.count {
-                return true
-            }
-            // Long-flag `=` value (`--eval=…`).
-            if flag.hasPrefix("--"), arg.hasPrefix(flag + "=") { return true }
-            return false
-        }
-    }
-
-    static func optionTakesValue(_ arg: String) -> Bool {
-        switch arg {
-        case "-r",
-             "--require",
-             "--loader",
-             "--import",
-             "--experimental-loader",
-             "--inspect-port",
-             "-W",
-             "-X",
-             "-S",
-             "-L",
-             "-o":
-            true
-        default:
-            false
-        }
-    }
-
-    static func windowsCmdArgAgentName(_ argv: [String], resolveSymlink: SymlinkResolver) -> String? {
-        var index = 1
-        while index < argv.count {
-            let flag = argv[index].trimmingCharacters(in: CharacterSet(charactersIn: "\"")).lowercased()
-            index += 1
-            switch flag {
-            case "/c",
-                 "/k":
-                guard index < argv.count else { return nil }
-                return commandTextAgentName(argv[index], resolveSymlink: resolveSymlink)
-            case "/d",
-                 "/s",
-                 "/q",
-                 "/a",
-                 "/u",
-                 "/e:on",
-                 "/e:off",
-                 "/f:on",
-                 "/f:off",
-                 "/v:on",
-                 "/v:off":
-                continue
-            default:
-                continue
+        // argv rides separately: it starts ABSENT and becomes a list on the first push, which is
+        // what keeps "no argv" distinguishable from "an empty argv" across the boundary.
+        for argument in process.argv ?? [] {
+            var bytes = Array(argument.utf8)
+            bytes.withUnsafeMutableBufferPointer { buffer in
+                slopdesk_agent_job_push_argv(handle, buffer.baseAddress, buffer.count)
             }
         }
-        return nil
     }
 
-    static func powershellArgAgentName(_ argv: [String], resolveSymlink: SymlinkResolver) -> String? {
-        var index = 1
-        while index < argv.count {
-            let raw = argv[index]
-            let flag = raw.trimmingCharacters(in: CharacterSet(charactersIn: "\"")).lowercased()
-            index += 1
-            switch flag {
-            case "-file",
-                 "-f",
-                 "/file":
-                guard index < argv.count else { return nil }
-                return agentName(fromPathToken: argv[index], resolveSymlink: resolveSymlink)
-            case "-command",
-                 "-c",
-                 "/command",
-                 "/c":
-                guard index < argv.count else { return nil }
-                return commandTextAgentName(argv[index], resolveSymlink: resolveSymlink)
-            case "-encodedcommand",
-                 "-enc",
-                 "/encodedcommand",
-                 "/enc":
-                return nil
-            case "-configurationname",
-                 "-executionpolicy",
-                 "-outputformat",
-                 "-psconsolefile",
-                 "-version",
-                 "-windowstyle",
-                 "-workingdirectory":
-                index += 1
-            default:
-                if flag.hasPrefix("-") || flag.hasPrefix("/") { continue }
-                return agentName(fromPathToken: raw, resolveSymlink: resolveSymlink)
+    private static func answer(of handle: OpaquePointer) -> String {
+        var out = [UInt8](repeating: 0, count: 512)
+        var needed = out.withUnsafeMutableBufferPointer { buffer in
+            slopdesk_agent_job_answer(handle, buffer.baseAddress, buffer.count)
+        }
+        if needed > out.count {
+            out = [UInt8](repeating: 0, count: needed)
+            needed = out.withUnsafeMutableBufferPointer { buffer in
+                slopdesk_agent_job_answer(handle, buffer.baseAddress, buffer.count)
             }
         }
-        return nil
+        guard needed > 0, needed <= out.count else { return "" }
+        return String(bytes: out[0..<needed], encoding: .utf8) ?? ""
     }
 
-    /// herdr `command_text_agent_name`: first shell-ish token of a command string, skipping
-    /// `&` / `.` / `call` invokers.
-    static func commandTextAgentName(_ command: String, resolveSymlink: SymlinkResolver) -> String? {
-        var rest = Substring(command)
-        while let (token, next) = commandTextToken(rest) {
-            let trimmed = token.trimmingCharacters(in: .whitespaces)
-            if trimmed.caseInsensitiveCompare("&") == .orderedSame
-                || trimmed.caseInsensitiveCompare(".") == .orderedSame
-                || trimmed.caseInsensitiveCompare("call") == .orderedSame
-            {
-                rest = next
-                continue
-            }
-            return agentName(fromPathToken: trimmed, resolveSymlink: resolveSymlink)
+    // MARK: The resolver, crossing back the other way
+
+    /// Boxes an injected resolver so the crate can call it, or passes null so the crate uses its own
+    /// `realpath`. The box lives for exactly `body`, which is exactly how long the crate may call it.
+    private static func withResolver<T>(
+        _ resolver: SymlinkResolver?,
+        _ body: (slopdesk_agent_resolve_fn?, UnsafeMutableRawPointer?) -> T,
+    ) -> T {
+        guard let resolver else { return body(nil, nil) }
+        let box = ResolverBox(resolver)
+        return withExtendedLifetime(box) {
+            body(resolveTrampoline, Unmanaged.passUnretained(box).toOpaque())
         }
-        return nil
     }
+}
 
-    static func commandTextToken(_ input: Substring) -> (String, Substring)? {
-        let trimmed = input.drop(while: \.isWhitespace)
-        guard let first = trimmed.first else { return nil }
-        if first == "\"" || first == "'" {
-            let body = trimmed.dropFirst()
-            if let end = body.firstIndex(of: first) {
-                return (String(body[body.startIndex..<end]), body[body.index(after: end)...])
-            }
-            return (String(body), Substring(""))
+/// The injected resolver, as something a `void *` can name.
+private final class ResolverBox {
+    let resolve: AgentJobIdentifier.SymlinkResolver
+    init(_ resolve: @escaping AgentJobIdentifier.SymlinkResolver) { self.resolve = resolve }
+}
+
+/// The C entry point the crate calls per token. Answers 0 for "nothing", the needed length
+/// otherwise — §4's convention, inverted.
+private func resolveTrampoline(
+    _ context: UnsafeMutableRawPointer?,
+    _ token: UnsafePointer<UInt8>?,
+    _ tokenLength: Int,
+    _ out: UnsafeMutablePointer<UInt8>?,
+    _ capacity: Int,
+) -> Int {
+    guard let context else { return 0 }
+    let box = Unmanaged<ResolverBox>.fromOpaque(context).takeUnretainedValue()
+    let text =
+        if let token, tokenLength > 0 {
+            String(bytes: UnsafeBufferPointer(start: token, count: tokenLength), encoding: .utf8) ?? ""
+        } else {
+            ""
         }
-        let end = trimmed.firstIndex(where: \.isWhitespace) ?? trimmed.endIndex
-        return (String(trimmed[trimmed.startIndex..<end]), trimmed[end...])
-    }
-
-    // MARK: - Path token resolution (herdr agent_name_from_path_token)
-
-    /// Basename match → known-package sniff → symlink resolution, in that order.
-    static func agentName(fromPathToken token: String, resolveSymlink: SymlinkResolver) -> String? {
-        let trimmed = token.trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
-        if trimmed.isEmpty || trimmed.hasPrefix("-") { return nil }
-
-        if let direct = agentName(fromBasename: AgentKind.pathBasename(trimmed)) { return direct }
-        if let packaged = agentName(fromKnownPackagePath: trimmed) { return packaged }
-
-        // Symlink resolution only for multi-component paths (a bare word never touches the fs).
-        let componentCount = trimmed.split(whereSeparator: { $0 == "/" || $0 == "\\" }).count
-        let isAbsolute = trimmed.hasPrefix("/") || trimmed.hasPrefix("\\")
-        guard componentCount >= 2 || (isAbsolute && componentCount >= 1) else { return nil }
-        guard let resolvedBase = resolveSymlink(trimmed) else { return nil }
-        return agentName(fromBasename: resolvedBase)
-    }
-
-    static func agentName(fromBasename basename: String) -> String? {
-        AgentKind.identify(processName: basename)?.label
-    }
-
-    /// herdr `agent_name_from_known_package_path`: the pi coding agent's npm dist layout.
-    static func agentName(fromKnownPackagePath path: String) -> String? {
-        let components = path
-            .split(whereSeparator: { $0 == "/" || $0 == "\\" })
-            .map { AgentKind.normalizedLookupName(String($0)) }
-        let needle = ["node_modules", "@earendil-works", "pi-coding-agent", "dist", "cli"]
-        guard components.count >= needle.count else { return nil }
-        for start in 0...(components.count - needle.count)
-            where Array(components[start..<start + needle.count]) == needle
-        {
-            return AgentKind.pi.label
-        }
-        return nil
-    }
+    guard let answer = box.resolve(text) else { return 0 }
+    let bytes = Array(answer.utf8)
+    guard !bytes.isEmpty else { return 0 }
+    // Over capacity writes NOTHING and asks to be called again — a partial basename would be a
+    // different program's name.
+    guard bytes.count <= capacity, let out else { return bytes.count }
+    out.update(from: bytes, count: bytes.count)
+    return bytes.count
 }

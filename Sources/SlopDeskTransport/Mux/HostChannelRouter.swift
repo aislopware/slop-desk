@@ -1,4 +1,3 @@
-import Foundation
 import SlopDeskProtocol
 
 /// PURE per-channel mux router for the HOST side.
@@ -12,8 +11,8 @@ import SlopDeskProtocol
 ///
 /// Like ``MuxRouter`` it owns NO sockets and NO per-channel `FrameDecoder`s — the
 /// (later-built) IO layer owns per-channel decoding and flow-control windows.
-public struct HostChannelRouter: Sendable {
-    private var table: ChannelTable
+public final class HostChannelRouter {
+    private let table: ChannelTable
 
     /// Creates a host router. An empty table is the default; pass a pre-populated
     /// table only in tests that want to seed channel state.
@@ -29,7 +28,7 @@ public struct HostChannelRouter: Sendable {
 
     /// Routes one decoded mux frame, mutating the channel table as needed. A
     /// `channelOpen` from the client registers and opens the peer-initiated channel.
-    public mutating func route(_ frame: MuxFrame) -> MuxRoutingDecision {
-        MuxRoutingCore.route(frame, in: &table)
+    public func route(_ frame: MuxFrame) -> MuxRoutingDecision {
+        MuxRoutingCore.route(frame, in: table)
     }
 }

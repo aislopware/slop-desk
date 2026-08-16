@@ -9,8 +9,6 @@
 // characters") — the floating family's voice, since the chip that renders it is paper, not glass
 // (`SlatePaperCapsule`).
 
-import Foundation
-
 /// One clipboard-copy receipt: the counts of what was written, plus a monotonically-increasing `epoch`
 /// so a rapid re-copy reads as a NEW receipt (the chip's dwell timer restarts and the label hard-cuts
 /// to the new count — retarget, never a re-entrance animation).

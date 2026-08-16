@@ -105,14 +105,6 @@ public final class PreferencesStore {
         /// per-client acknowledgement state, so every viewer answers "is this finish unread" for
         /// itself.
         static let seenCompletionEpochs = "settings.seenCompletionEpochs.v1"
-        /// Dismissed agent-notification suggestion chips, keyed by agent display-name. A plain
-        /// `[agentName: true]` JSON map so a dismissed pill stays dismissed across launches (Warp persists
-        /// this in `AISSettings` keyed by agent+host).
-        static let notificationChipDismissed = "settings.agentNotificationDismissed.v1"
-        /// Agents for which the user ENABLED rich notifications (clicked the green pill). No host
-        /// wire exists for the OSC/notification-enable path, so this records intent + drives the chip's
-        /// "already enabled ⇒ hide" behaviour. `[agentName: true]`.
-        static let notificationChipEnabled = "settings.agentNotificationEnabled.v1"
     }
 
     // MARK: Init / load
@@ -466,54 +458,6 @@ public final class PreferencesStore {
 
     public func setSeenCompletionEpochs(_ record: SeenCompletionEpochs) {
         Self.encode(record, defaults, Key.seenCompletionEpochs)
-    }
-
-    // MARK: Agent notification suggestion chip (green "Enable … notifications" pill)
-
-    /// Whether the green suggestion chip for `agent` has been dismissed (the trailing ✕). Persisted so a
-    /// dismissed chip does not reappear on the next launch. An unknown agent reads `false`.
-    public func isNotificationChipDismissed(for agent: String) -> Bool {
-        notificationChipMap(Key.notificationChipDismissed)[agent] ?? false
-    }
-
-    /// Persist that the suggestion chip for `agent` was dismissed (✕). Idempotent.
-    public func dismissNotificationChip(for agent: String) {
-        setNotificationChipFlag(true, for: agent, key: Key.notificationChipDismissed)
-    }
-
-    /// Whether the user has ENABLED rich notifications for `agent` (clicked the green pill's main half).
-    /// Recorded per-agent (also hides the chip, like a dismissal). The actual delivery is the GLOBAL OSC
-    /// notification toggle (`SettingsKey.oscNotifications`, default-ON), which `enableNotifications` turns
-    /// back on so the green CTA is a real action.
-    public func isNotificationChipEnabled(for agent: String) -> Bool {
-        notificationChipMap(Key.notificationChipEnabled)[agent] ?? false
-    }
-
-    /// Record that the user enabled notifications for `agent` (clicked the green pill) AND actually enable
-    /// delivery by turning the global OSC/notification toggle ON (it is the delivery gate read by the app
-    /// sinks). Default-ON already, but a user who turned it OFF and then clicks the green CTA expects it
-    /// back ON. Hides the chip via the per-agent flag.
-    public func enableNotifications(for agent: String) {
-        setNotificationChipFlag(true, for: agent, key: Key.notificationChipEnabled)
-        // Deliver on the promise — re-enable the global OSC/notification delivery gate.
-        defaults.set(true, forKey: SettingsKey.oscNotifications)
-    }
-
-    /// Whether the green suggestion chip should be SHOWN for `agent`: not already dismissed and not
-    /// already enabled (Warp's "hide once a plugin connects or the user dismisses it" rule).
-    public func shouldShowNotificationChip(for agent: String) -> Bool {
-        !isNotificationChipDismissed(for: agent) && !isNotificationChipEnabled(for: agent)
-    }
-
-    private func notificationChipMap(_ key: String) -> [String: Bool] {
-        Self.decode([String: Bool].self, defaults, key) ?? [:]
-    }
-
-    private func setNotificationChipFlag(_ value: Bool, for agent: String, key: String) {
-        guard !agent.isEmpty else { return }
-        var map = notificationChipMap(key)
-        if value { map[agent] = true } else { map.removeValue(forKey: agent) }
-        Self.encode(map, defaults, key)
     }
 
     /// The keybinding conflicts the UI highlights — DISTINCT ids resolving to the same chord

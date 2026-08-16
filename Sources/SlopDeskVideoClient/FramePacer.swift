@@ -1,7 +1,7 @@
 #if canImport(QuartzCore) && canImport(CoreVideo)
 import CoreVideo
+import CSlopDeskFFI
 import Foundation
-import OSLog
 import QuartzCore
 import SlopDeskVideoProtocol
 #if os(macOS)
@@ -57,34 +57,29 @@ public final class FramePacer: @unchecked Sendable {
     /// the buffer is empty / still priming). `nil` only before the first frame.
     public typealias RenderCallback = @Sendable (CVImageBuffer) -> Void
 
-    private let log = Logger(subsystem: "slopdesk.video.client", category: "FramePacer")
     /// Depth-change observability (env `SLOPDESK_VIDEO_DEBUG`): one stderr line per liveDepth
     /// transition, so an HW A/B can verify the buffer floats down to 1 on a clean link (or see
     /// what jitter is pinning it higher).
     private static let dbgEnabled = ProcessInfo.processInfo.environment["SLOPDESK_VIDEO_DEBUG"] != nil
     private let renderCallback: RenderCallback
     private let lock = NSLock()
-    /// Jitter buffer: decoded frames awaiting presentation, oldest first. Drained one per
-    /// vsync; the oldest are dropped if it grows past ``maxDepth`` (bounded latency).
-    private var queue: [CVImageBuffer] = []
-    /// The last frame shown — re-presented while priming or on an empty buffer.
+    /// The whole presentation state machine — the jitter buffer, the priming latch, the underflow
+    /// run, the live depth — as one value folded through `rust/slopdesk-video`'s `present_queue`,
+    /// reached by `rust/slopdesk-ffi`'s `present_queue` door. Every rule the header describes
+    /// (priming, HOMEOSTASIS, the `max(2, liveDepth)` re-prime floor, the hard cap) is that law's,
+    /// spelled once. Guarded by ``lock``.
+    private var record: SlopDeskPresentQueue
+    /// The decoded frames the record's handles name. The record carries HANDLES and never touches
+    /// an image; each fold answers which handles it let go of, and this is the bag they name — so
+    /// there is exactly one place a `CVImageBuffer` is held and exactly one law deciding when.
+    /// Guarded by ``lock``.
+    private var images: [UInt64: CVImageBuffer] = [:]
+    /// The next handle to mint. Monotonic and never reused; wrap is unreachable at a frame per
+    /// vsync, and would only collide with a frame still queued from before it.
+    private var nextHandle: UInt64 = 1
+    /// The last frame shown — re-presented while priming or on an empty buffer. Held apart from
+    /// ``images`` because the record goes on re-showing a handle long after the queue released it.
     private var lastShownFrame: CVImageBuffer?
-    /// False until the buffer reaches ``targetDepth``; while false we hold (re-show last) so the
-    /// jitter slack is established before steady presentation. RESET to false after a SUSTAINED
-    /// dry spell (``underflowRun`` ≥ `max(2, liveDepth)` — a real idle, since the host idle-skips
-    /// static frames, NOT a transient single-frame scroll dip), so the slack is REBUILT before
-    /// motion resumes — making EVERY stop→scroll transition smooth, not just the first. The
-    /// `max(2, …)` floor keeps re-prime strictly above the single-vsync transient-dip detector
-    /// even at the adaptive floor `liveDepth == 1`.
-    private var primed = false
-    /// Consecutive vsyncs the buffer has been empty (underflow). Reaching `max(2, liveDepth)` means
-    /// a genuine producer stall/idle (re-prime); reset to 0 on any presented frame.
-    private var underflowRun = 0
-    /// Submit timestamps in LOCKSTEP with ``queue`` (same appends/removeFirsts), so the dequeue
-    /// site can measure the REAL pacer hold (submit → first present). The wire `clientHoldMs`
-    /// telemetry is NOT this: it samples arrival staleness at the 50 ms report timer, which says
-    /// nothing about presentation latency. Guarded by ``lock``.
-    private var queueSubmittedAt: [Double] = []
     /// Debug-only (``dbgEnabled``): per-frame pacer holds for the current ~2s window, drained
     /// into one stderr line (`pacer hold p50/p90/max`). Guarded by ``lock``.
     private var dbgHolds: [Double] = []
@@ -110,13 +105,13 @@ public final class FramePacer: @unchecked Sendable {
     /// When false the buffer is a FIXED ``targetDepth``: ``liveDepth`` is never reassigned,
     /// ``controller`` is nil, arrival jitter is never measured.
     private let adaptiveJitter: Bool
-    /// The LIVE presentation depth the priming / homeostasis / re-prime logic reads. Equals
-    /// ``targetDepth`` when adaptive is off; otherwise the controller's recommendation.
-    /// ⚠️ MUTABLE — mutated AND read ONLY under ``lock`` (``submit`` writes it via the controller;
-    /// ``frameForVSync`` reads it at the 3 depth sites and writes it on underrun). Do NOT read it
-    /// from ``tick()`` (runs unlocked) — go through ``frameForVSync()`` or the locked
-    /// ``currentDepth`` accessor, or you reintroduce the data race the queue avoids.
-    private var liveDepth: Int
+    /// The LIVE presentation depth the priming / homeostasis / re-prime logic reads — the record's
+    /// own field, so there is no second copy to drift. Equals ``targetDepth`` when adaptive is off;
+    /// otherwise the controller's recommendation, adopted through one of the two depth doors.
+    /// ⚠️ Read ONLY under ``lock``. Do NOT read it from ``tick()`` (runs unlocked) — go through
+    /// ``frameForVSync()`` or the locked ``currentDepth`` accessor, or you reintroduce the data
+    /// race the queue avoids.
+    private var liveDepth: Int { Int(record.live_depth) }
     /// Client-clock arrival-jitter estimator, fed ONE sample per decoded-frame ``submit``
     /// (adaptive only). Guarded by ``lock``. RESET at a re-prime-on-idle transition so the long
     /// idle gap isn't folded as a spurious jitter spike that would re-inflate on every resume.
@@ -175,8 +170,6 @@ public final class FramePacer: @unchecked Sendable {
     private let playoutShrinkStepMs: Double = 2.0
     /// Folded-sample counter gating the ~1s recompute cadence (avoids per-fragment churn). ``lock``.
     private var playoutJitterSampleCount = 0
-    /// Recompute the playout value once per this many jitter samples (≈1s at ~60 fragments/s).
-    private static let playoutRecomputeEvery = 60
     /// Single pending frame + its deadline (latest-wins). Guarded by ``lock``.
     private var pendingFrame: CVImageBuffer?
     private var pendingDeadline: Double = 0
@@ -268,7 +261,7 @@ public final class FramePacer: @unchecked Sendable {
         self.presentOnArrival = presentOnArrival
         self.deadlineMode = deadlineMode
         contentIntervalSec = 1.0 / max(1.0, contentFps)
-        playoutDelaySec = min(200.0, max(0.0, playoutDelayMs)) / 1000.0
+        playoutDelaySec = slopdesk_present_clamped_playout_seconds(playoutDelayMs / 1000.0)
         // Adaptive only takes effect in deadline mode with no fixed override; otherwise the seed holds.
         self.adaptivePlayout = adaptivePlayout && deadlineMode && !fixedPlayoutOverride
         self.fixedPlayoutOverride = fixedPlayoutOverride
@@ -277,8 +270,15 @@ public final class FramePacer: @unchecked Sendable {
         self.playoutFloorMs = playoutFloorMs
         self.playoutCeilMs = playoutCeilMs
         self.maxFrameRate = maxFrameRate
-        let clampedTarget = max(1, targetDepth)
-        let clampedMax = max(clampedTarget, maxDepth)
+        // Every depth bound is the law's — a floor of one, a cap no lower than the target and no
+        // deeper than the band one crossing is sized for. Reading them back off the record is what
+        // keeps these two `let`s from becoming a second, drifting statement of the same clamps.
+        record = slopdesk_present_queue_new(
+            UInt32(clamping: targetDepth),
+            UInt32(clamping: max(targetDepth, maxDepth)),
+        )
+        let clampedTarget = Int(record.live_depth)
+        let clampedMax = Int(record.max_depth)
         self.targetDepth = clampedTarget
         self.maxDepth = clampedMax
         // PRECEDENCE: if BOTH adaptive systems are requested, v2 wins and v1 is forced OFF — two
@@ -294,7 +294,6 @@ public final class FramePacer: @unchecked Sendable {
             adaptEnabled: adaptiveDepth && clampedTarget == 1 && !deadlineMode,
         )
         // Adaptive OFF ⇒ liveDepth stays == targetDepth forever (controller nil, never consulted).
-        liveDepth = clampedTarget
         // The controller's fps is its seconds→frames conversion UNIT and it is the CONTENT fps —
         // the SAME unit ``setContentFps(_:)`` rebases with. Seeding it with `maxFrameRate` (the
         // display tick rate, e.g. 120) would make the unit FLIP to content fps (60) on the first
@@ -355,13 +354,15 @@ public final class FramePacer: @unchecked Sendable {
             return
         }
         lock.lock()
-        let queueWasEmpty = queue.isEmpty
-        queue.append(frame)
-        queueSubmittedAt.append(now)
-        if queue.count > maxDepth {
-            queueSubmittedAt.removeFirst(queue.count - maxDepth)
-            queue.removeFirst(queue.count - maxDepth)
-        }
+        let handle = nextHandle
+        nextHandle &+= 1
+        images[handle] = frame
+        let submission = withUnsafePointer(to: record) { slopdesk_present_queue_submit($0, handle, now) }
+        record = submission.queue
+        // The hard cap's own eviction: the law says WHICH handle it dropped, so the image behind it
+        // is released here and nowhere else.
+        if submission.has_evicted { images.removeValue(forKey: submission.evicted) }
+        let queueWasEmpty = submission.was_empty
         // Adaptive: one decoded-FRAME arrival = one jitter sample (correct cadence for a
         // FRAME-denominated depth). Fold it and let the controller re-recommend liveDepth;
         // maxDepth (the hard cap trim above) stays the backstop.
@@ -373,7 +374,7 @@ public final class FramePacer: @unchecked Sendable {
             // `controller` is a value-type with a MUTATING method on an optional stored property;
             // `guard let` would mutate a COPY and silently drop the depth update. adaptiveJitter ⇒ non-nil.
             // swiftlint:disable:next force_unwrapping
-            liveDepth = controller!.noteFrame(jitterSeconds: jitter.jitterSeconds)
+            adoptLiveDepthLocked(controller!.noteFrame(jitterSeconds: jitter.jitterSeconds))
             if Self.dbgEnabled, liveDepth != before {
                 depthChangeLine = "SlopDesk[video.client]: jitter depth \(before)→\(liveDepth) (arrival jitter \(String(format: "%.1f", jitterMs))ms)\n"
             }
@@ -389,7 +390,7 @@ public final class FramePacer: @unchecked Sendable {
         let presentNow = Self.shouldPresentOnArrival(
             enabled: presentOnArrival,
             queueWasEmpty: queueWasEmpty,
-            queueCount: queue.count,
+            queueCount: Int(record.len),
             liveDepth: liveDepth,
         )
         lock.unlock()
@@ -413,10 +414,22 @@ public final class FramePacer: @unchecked Sendable {
         let desired = depthPolicy.depth
         guard desired != liveDepth else { return nil }
         let before = liveDepth
-        liveDepth = desired
-        if desired > before { primed = false }
+        record = withUnsafePointer(to: record) {
+            slopdesk_present_queue_set_live_depth($0, UInt32(clamping: desired))
+        }
         guard Self.dbgEnabled else { return nil }
         return "SlopDesk[video.client]: jitter depth \(before)→\(desired) (v3 owd-late)\n"
+    }
+
+    /// Called under ``lock``: consume the ARRIVAL-JITTER controller's recommended depth. This is
+    /// the other depth door — bounded, but never re-priming. That controller re-recommends on every
+    /// frame and every underrun, and holding the picture that often is a change the user would see;
+    /// the two controllers are mutually exclusive (see the `resolvedAdaptiveJitter` precedence at
+    /// construction), so the two rules never both apply to one pacer.
+    private func adoptLiveDepthLocked(_ depth: Int) {
+        record = withUnsafePointer(to: record) {
+            slopdesk_present_queue_adopt_live_depth($0, UInt32(clamping: depth))
+        }
     }
 
     /// Folds one NETWORK-late event (the session's `OwdLateDetector` flagged an owd spike past the
@@ -447,7 +460,7 @@ public final class FramePacer: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         let (late, gaps) = depthPolicy.drainCounters()
-        return PacerTelemetrySnapshot(lateFrames: late, presentGaps: gaps, depth: UInt32(max(0, liveDepth)))
+        return PacerTelemetrySnapshot(lateFrames: late, presentGaps: gaps, depth: record.live_depth)
     }
 
     /// PURE present-on-arrival decision (unit-tested): fire whenever an arrival lands in an EMPTY
@@ -468,7 +481,12 @@ public final class FramePacer: @unchecked Sendable {
         queueCount: Int,
         liveDepth: Int,
     ) -> Bool {
-        enabled && queueWasEmpty && queueCount >= liveDepth
+        slopdesk_present_should_present_on_arrival(
+            enabled,
+            queueWasEmpty,
+            UInt32(clamping: queueCount),
+            UInt32(clamping: liveDepth),
+        )
     }
 
     /// The no-throttle present behind present-on-arrival. ⚠️ Main-actor only (the render callback
@@ -530,9 +548,9 @@ public final class FramePacer: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         guard adaptivePlayout else { return }
-        playoutJitterSampleCount += 1
-        guard playoutJitterSampleCount >= Self.playoutRecomputeEvery else { return }
-        playoutJitterSampleCount = 0
+        let gate = slopdesk_present_playout_recompute_due(UInt32(clamping: playoutJitterSampleCount))
+        playoutJitterSampleCount = Int(gate.next_samples)
+        guard gate.due else { return }
         recomputePlayoutLocked(jitterSeconds: jitterSeconds)
     }
 
@@ -562,7 +580,7 @@ public final class FramePacer: @unchecked Sendable {
             floorMs: playoutFloorMs,
             ceilMs: playoutCeilMs,
         )
-        let clamped = min(200.0, max(0.0, nextMs)) / 1000.0
+        let clamped = slopdesk_present_clamped_playout_seconds(nextMs / 1000.0)
         if Self.dbgEnabled, abs(clamped - playoutDelaySec) > 1e-6 {
             let line = "SlopDesk[video.client]: playout J=\(Int((jitterSeconds * 1000).rounded()))ms" +
                 " → \(String(format: "%.1f", clamped * 1000))ms\n"
@@ -588,77 +606,58 @@ public final class FramePacer: @unchecked Sendable {
         defer { if let depthChangeLine { FileHandle.standardError.write(Data(depthChangeLine.utf8)) } }
         lock.lock()
         defer { lock.unlock() }
-        // All depth reads below go through `liveDepth`: == targetDepth when adaptive is off, the
-        // controller's live recommendation when on.
-        if !primed {
-            // (Re)prime: hold (re-show last) until the buffer fills to liveDepth, (re)building the
-            // jitter slack BEFORE steady presentation. Re-entered after a sustained dry spell (below),
-            // so slack is rebuilt ahead of every stop→scroll resume, not just once per session. This
-            // also resets underflowRun to 0, which the transient-dip discriminator below relies on.
-            if queue.count >= liveDepth { primed = true
-                underflowRun = 0
-            } else { return lastShownFrame }
-        }
-        // Homeostasis: never carry MORE than liveDepth frames — drop the OLDEST excess so steady-state
-        // depth (hence added latency) settles at ≈ liveDepth/fps instead of ratcheting up to maxDepth
-        // under sustained motion / clock skew. Catches up to the freshest within the slack window.
-        if queue.count > liveDepth {
-            queueSubmittedAt.removeFirst(queue.count - liveDepth)
-            queue.removeFirst(queue.count - liveDepth)
-        }
-        if !queue.isEmpty {
-            // Capture the transient-dip flag BEFORE resetting underflowRun: a present that follows ≥1
-            // empty vsync WHILE STILL PRIMED is a real (transient) starvation → grow. After an IDLE
-            // re-prime, underflowRun was reset to 0 at the priming gate above, so this is false ⇒ host
-            // idle-skips never inflate the buffer (the precise idle-vs-underrun discriminator).
-            let wasTransientDip = underflowRun > 0
-            let next = queue.removeFirst()
-            let submittedAt = queueSubmittedAt.removeFirst()
+        // One refresh of the law: priming, HOMEOSTASIS, the present, the underflow run and the
+        // `max(2, liveDepth)` re-prime floor are all inside this one fold — see the module header
+        // of `rust/slopdesk-video`'s `present_queue` for why each is shaped the way it is.
+        let step = withUnsafePointer(to: record) { slopdesk_present_queue_step($0) }
+        record = step.queue
+        // Homeostasis trimmed these to reach the frame it chose; the law names them, so the images
+        // behind them are released here rather than inferred from a queue order this side no longer
+        // keeps.
+        for obsolete in Self.handles(step.dropped, step.dropped_len) { images.removeValue(forKey: obsolete) }
+        switch step.kind {
+        case SLOPDESK_PRESENT_PRESENT:
+            guard let next = images.removeValue(forKey: step.frame.handle) else { return lastShownFrame }
             lastShownFrame = next
-            underflowRun = 0
             // One CONTENT present = one gap classification (telemetry always; the depth action only
             // when v2 is engaged).
             depthPolicy.notePresent(now)
             if adaptiveDepthV2, let line = applyPolicyDepthLocked() { depthChangeLine = line }
-            if Self.dbgEnabled { dbgNoteHold(since: submittedAt, now: now) }
-            if adaptiveJitter, wasTransientDip {
+            if Self.dbgEnabled { dbgNoteHold(since: step.frame.submitted_at, now: now) }
+            // A present that follows ≥1 empty vsync WHILE STILL PRIMED is a real (transient)
+            // starvation → grow. The law reports it as false after an IDLE re-prime, so host
+            // idle-skips never inflate the buffer (the precise idle-vs-underrun discriminator).
+            if adaptiveJitter, step.transient_dip {
                 let before = liveDepth
                 // Mutating value-type method on the optional stored property — see noteFrame above.
                 // swiftlint:disable:next force_unwrapping
-                liveDepth = controller!.noteUnderrun()
+                adoptLiveDepthLocked(controller!.noteUnderrun())
                 if Self.dbgEnabled, liveDepth != before {
                     FileHandle.standardError
                         .write(Data("SlopDesk[video.client]: jitter depth \(before)→\(liveDepth) (underrun)\n".utf8))
                 }
             }
             return next
+        case SLOPDESK_PRESENT_RESHOW:
+            // Underflow: producer fell behind (idle-skip or stall). Re-present last. An empty-queue
+            // re-show may OPEN a late-gap episode (counted once per episode inside the policy) — the
+            // hitch is recorded as it happens, even if no frame ever resolves it (motion stop).
+            depthPolicy.noteReshow(now)
+            // Reset the jitter estimator at the idle transition the law just declared: otherwise the
+            // long idle gap becomes a huge inter-arrival → a spurious 2nd-difference spike on resume
+            // → the buffer inflates on every stop→scroll, defeating the latency reclaim.
+            if step.re_primed, adaptiveJitter { jitter = OWDJitterEstimator() }
+            return lastShownFrame
+        default:
+            // Priming: hold (re-show last, nil before the first decode) while the slack is built.
+            return lastShownFrame
         }
-        // Underflow: producer fell behind (idle-skip or stall). Re-present last. After a SUSTAINED dry
-        // spell (empty ≥ max(2, liveDepth) vsyncs ⇒ a real idle, not a transient scroll dip) drop back
-        // to priming so slack is rebuilt before motion resumes.
-        //
-        // FLOOR: the threshold is max(2, …), NOT max(1, …), so it stays STRICTLY above the transient-dip
-        // detector (a single empty vsync, `wasTransientDip = underflowRun > 0` above). At the adaptive
-        // floor liveDepth == 1 the two would otherwise COLLIDE at 1: the first empty vsync would re-prime
-        // (resetting underflowRun + wiping the jitter estimator) before the next present could see
-        // underflowRun > 0, so neither grow path (noteUnderrun nor noteFrame) could ever fire — the buffer
-        // pins at 1 with single-frame-repeat judder and no self-healing as a clean LAN degrades. Keeping
-        // re-prime ≥ 2 means a single dip at the floor is still transient (→ grows via noteUnderrun), while
-        // 2+ empty vsyncs is still a real idle. For liveDepth ≥ 2 the floor is inert (max(2, liveDepth)
-        // == liveDepth).
-        //
-        // An empty-queue re-show tick may OPEN a late-gap episode (counted once per episode inside the
-        // policy) — the hitch is recorded as it happens, even if no frame ever resolves it (motion stop).
-        depthPolicy.noteReshow(now)
-        underflowRun += 1
-        if underflowRun >= max(2, liveDepth) {
-            primed = false
-            // Reset the jitter estimator at the idle transition: otherwise the long idle gap becomes a
-            // huge inter-arrival → a spurious 2nd-difference spike on resume → the buffer inflates on
-            // every stop→scroll, defeating the latency reclaim.
-            if adaptiveJitter { jitter = OWDJitterEstimator() }
-        }
-        return lastShownFrame
+    }
+
+    /// The live prefix of a crossing's handle array. A C array is a TUPLE in Swift, so it is read
+    /// through its own bytes rather than subscripted.
+    private static func handles(_ carried: some Any, _ count: Int) -> [UInt64] {
+        withUnsafeBytes(of: carried) { raw in Array(raw.bindMemory(to: UInt64.self).prefix(count)) }
     }
 
     /// TEST SEAM (also useful under `SLOPDESK_VIDEO_DEBUG`): the live presentation depth, read
@@ -800,17 +799,14 @@ public final class FramePacer: @unchecked Sendable {
         interval: Double,
         playoutDelay: Double,
     ) -> Double {
-        guard lastDeadline > 0 else { return arrival + playoutDelay }
-        let next = lastDeadline + interval
-        if next < arrival - interval { return arrival + playoutDelay }
-        return next
+        slopdesk_present_deadline_for_arrival(arrival, lastDeadline, interval, playoutDelay)
     }
 
     /// PURE present decision (unit-tested): present at the first tick whose half-period
     /// lookahead covers the deadline (a "just missed" deadline waits ≤ half a tick, never a
     /// full one).
     public static func deadlineDue(deadline: Double, now: Double, halfTick: Double) -> Bool {
-        deadline <= now + halfTick
+        slopdesk_present_deadline_due(deadline, now, halfTick)
     }
 
     /// PURE tick-rate resolution (unit-tested): the display link runs at the display's native
@@ -819,10 +815,18 @@ public final class FramePacer: @unchecked Sendable {
     /// the rate below which we never drop even if the screen reports something degenerate (0 on
     /// an unknown/headless screen). `SLOPDESK_TICK_HZ` overrides for A/B, clamped to a sane band.
     public static func resolveTickRate(envOverride: String?, displayMaxHz: Int, floor: Double) -> Double {
-        if let raw = envOverride, let hz = Double(raw), hz.isFinite {
-            return min(240, max(30, hz))
+        let hz = UInt32(clamping: displayMaxHz)
+        guard let raw = envOverride else { return slopdesk_present_resolve_tick_rate(nil, 0, hz, floor) }
+        // The override is borrowed for the call and parsed on the far side: a bad one, an empty one
+        // and an absent one are one answer there, not three spellings of it here.
+        return Array(raw.utf8).withUnsafeBytes { bytes in
+            slopdesk_present_resolve_tick_rate(
+                bytes.baseAddress?.assumingMemoryBound(to: CChar.self),
+                bytes.count,
+                hz,
+                floor,
+            )
         }
-        return max(floor, Double(displayMaxHz))
     }
 
     /// Pure cap decision: render only when at least `1/maxFrameRate` seconds elapsed
@@ -830,12 +834,7 @@ public final class FramePacer: @unchecked Sendable {
     /// extra frame to rounding). `lastRender == 0` ⇒ first tick always renders.
     /// Unit-testable without a display link.
     public static func shouldRender(now: Double, lastRender: Double, maxFrameRate: Double) -> Bool {
-        guard maxFrameRate > 0 else { return true }
-        guard lastRender > 0 else { return true }
-        let minInterval = 1.0 / maxFrameRate
-        // 0.5 ms slack so a refresh landing a hair early still counts (avoids a
-        // beat-frequency stutter between the display vsync and the cap interval).
-        return (now - lastRender) >= (minInterval - 0.0005)
+        slopdesk_present_should_render(now, lastRender, maxFrameRate)
     }
 
     // MARK: Display-link driver (GUI-only; never created in tests)

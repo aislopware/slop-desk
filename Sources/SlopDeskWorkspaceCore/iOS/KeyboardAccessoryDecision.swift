@@ -1,5 +1,3 @@
-import Foundation
-
 /// Decides whether the keyboard accessory bar (Ctrl / Esc / Tab / arrows row) should be
 /// shown (doc 17 §2.5).
 ///

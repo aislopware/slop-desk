@@ -1,3 +1,7 @@
+import CSlopDeskFFI
+
+// The Swift face of `rust/slopdesk-video`'s `capture_recovery` ladder, reached through the door.
+//
 // The PURE decision ladder for a failed DIALOG-EXPAND capture rebuild.
 // `applyCaptureRegion` stops the OLD capturer before starting the new region-override capturer; if
 // that start throws and nothing intervenes, the session is left `.streaming` with capturer/encoder
@@ -31,7 +35,10 @@ public enum CaptureRegionFailureRecovery {
         superseded: Bool,
         isFallbackRebuild: Bool,
     ) -> Action {
-        guard mediaFlowing, !superseded else { return .abandon }
-        return isFallbackRebuild ? .disconnect : .rebuildPlainWindow
+        switch slopdesk_capture_failure_action(mediaFlowing, superseded, isFallbackRebuild) {
+        case SLOPDESK_CAPTURE_REBUILD_PLAIN_WINDOW: .rebuildPlainWindow
+        case SLOPDESK_CAPTURE_DISCONNECT: .disconnect
+        default: .abandon
+        }
     }
 }

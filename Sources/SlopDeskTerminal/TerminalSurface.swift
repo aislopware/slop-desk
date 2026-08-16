@@ -1,6 +1,5 @@
 import CoreGraphics
 import Foundation
-import SlopDeskProtocol
 
 /// The seam between the byte pipeline and a terminal renderer.
 ///

@@ -1,4 +1,4 @@
-import Foundation
+import SlopDeskWorkspaceModel
 
 // MARK: - Pure link gesture/menu → action mapping
 
@@ -218,7 +218,5 @@ public enum LinkActionPolicy {
 
     /// POSIX single-quote `s` so it survives the shell verbatim: wrap in `'…'` and rewrite each embedded `'`
     /// as `'\''` (close-quote, escaped-quote, reopen-quote). Safe for spaces, `$`, `` ` ``, `;`, etc.
-    static func shellSingleQuoted(_ s: String) -> String {
-        "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
-    }
+    static func shellSingleQuoted(_ s: String) -> String { ShellQuoting.singleQuote(s) }
 }

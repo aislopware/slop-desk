@@ -1,5 +1,4 @@
 import Foundation
-import SlopDeskAgentDetect
 import XCTest
 @testable import SlopDeskHost
 
@@ -13,6 +12,20 @@ import XCTest
 /// These fail without an `onAgentStatusChanged` hook, a server-level observer registry, a
 /// `state` on `PaneInfo`, or a `SLOPDESK_CTL` sentinel.
 final class AgentSupervisionIntegrationTests: XCTestCase {
+    /// A real pane means a real fork, and the only thing in this repo that forks is
+    /// `slopdesk-superd` — so every test here boots a private one, or skips by name
+    /// (``SuperdFixture``). It also points this process's default supervisor socket at itself, so
+    /// the `HostServer`s built below attach to it rather than to the developer's live daemon.
+    private var superd: SuperdFixture?
+
+    override func setUpWithError() throws {
+        superd = try SuperdFixture()
+    }
+
+    override func tearDown() {
+        superd = nil
+    }
+
     /// A throwaway HOME for a spawned pane (`env` merges OVER the curated env, which otherwise
     /// mirrors the developer's real HOME): a login `/bin/sh` still reads `$HOME/.profile`, and
     /// the HUP-led teardown lets it write its history file — both must land in the sandbox,
@@ -30,7 +43,7 @@ final class AgentSupervisionIntegrationTests: XCTestCase {
     func testReportFansCrossPaneObserver() async throws {
         // `shellPath: "/bin/sh"` + `sandboxHomeEnv()` (here and in every `cmd: nil` spawn below):
         // the default is the developer's REAL login zsh, which sources their real rc files and —
-        // via the ShellIntegration shim — points HISTFILE at the real ~/.zsh_history. These tests
+        // via superd's shell-integration shim — points HISTFILE at the real ~/.zsh_history. These tests
         // drive agent-status plumbing, not shell behaviour, so a plain sh with a throwaway HOME
         // touches none of the developer's rc or history files.
         let server = HostServer(port: 0, shellPath: "/bin/sh")
@@ -105,11 +118,14 @@ final class AgentSupervisionIntegrationTests: XCTestCase {
     /// the injection lines at `HostServer.spawnStandalonePane` are removed (the echoed line would be
     /// empty / missing the keys), unlike the constant-equality unit checks which never touch the wiring.
     func testSpawnInjectsSelfOrientationEnv() async throws {
-        let socketPath = "/tmp/slopdesk-test-ctl-\(UUID().uuidString).sock"
         let ctlBin = "/tmp/slopdesk-test-ctl-bin-\(UUID().uuidString)"
+        // `agentControlEnabled` rather than a path: hostd has no answer of its own for where the ctl
+        // socket is any more, and that is the fix. The address comes from superd's `hello`, because
+        // it has to outlive this process — so what the flag decides is whether hostd CLAIMS that
+        // listener, which is in turn what makes superd advertise the address to a child at all.
         let server = HostServer(
             port: 0,
-            agentControlSocketPath: socketPath,
+            agentControlEnabled: true,
             ctlBinaryPath: ctlBin,
         )
         defer { Task { await server.stop() } }
@@ -140,6 +156,15 @@ final class AgentSupervisionIntegrationTests: XCTestCase {
 
         XCTAssertTrue(text.contains("CTL=1"), "SLOPDESK_CTL=1 injected; got:\n\(text)")
         XCTAssertTrue(text.contains("BIN=\(ctlBin)"), "SLOPDESK_CTL_BIN injected; got:\n\(text)")
+        let socketPath = server.agentControlSocketPath
+        XCTAssertFalse(
+            socketPath.isEmpty,
+            "superd must have told hostd where the ctl socket is at hello; got:\n\(text)",
+        )
+        XCTAssertFalse(
+            socketPath.contains(String(getpid())),
+            "the ctl address must be pid-free, or a restarted hostd strands every running agent",
+        )
         XCTAssertTrue(text.contains("SOCK=\(socketPath)"), "SLOPDESK_CONTROL_SOCKET injected; got:\n\(text)")
         XCTAssertTrue(text.contains("PANE=\(paneId)"), "SLOPDESK_PANE_ID == the returned paneId; got:\n\(text)")
     }

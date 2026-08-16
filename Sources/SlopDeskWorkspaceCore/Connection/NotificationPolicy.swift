@@ -1,4 +1,3 @@
-import Foundation
 import SlopDeskProtocol
 
 // MARK: - NotificationPolicy (the PURE "should this notification be delivered" decision)

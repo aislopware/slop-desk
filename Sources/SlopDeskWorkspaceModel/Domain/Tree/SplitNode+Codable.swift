@@ -1,5 +1,3 @@
-import Foundation
-
 // MARK: - Codable for SplitWeight (readable {flex:…} / {fixed:…} discriminator)
 
 // A synthesized enum-with-associated-value Codable would emit an opaque nested shape; this hand-written

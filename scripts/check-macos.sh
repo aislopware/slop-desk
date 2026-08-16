@@ -152,15 +152,26 @@ else
 fi
 
 # ── 2. Build (unsigned / ad-hoc) ────────────────────────────────────────────────────────────
+# The log goes to a FILE, not to /dev/null. It used to go to /dev/null, and the day the app stopped
+# building this script said only "** BUILD FAILED **" with nothing above it — the actual line was
+# `error: Multiple commands produce …/include/module.modulemap`, and reading it took a hand-run of
+# the same xcodebuild invocation. A gate that knows why it failed and does not say is barely better
+# than one that does not run.
+BUILD_LOG="${WORK}/xcodebuild-check-macos.log"
 echo "==> building SlopDesk.app (Debug, unsigned)"
-xcodebuild \
+if ! xcodebuild \
   -project "${PROJECT}" \
   -scheme ClientApp-macOS \
   -configuration Debug \
   -destination 'platform=macOS,arch=arm64' \
   -derivedDataPath "${DD}" \
   CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
-  build > /dev/null
+  build > "${BUILD_LOG}" 2>&1; then
+  echo "==> FAIL: the app did not build. The compiler's own words:" >&2
+  grep -E '(error|warning): |Multiple commands produce' "${BUILD_LOG}" | sort -u | head -40 >&2
+  echo "==> full log: ${BUILD_LOG}" >&2
+  exit 1
+fi
 echo "==> build OK: ${APP}"
 
 # The `slopdesk` CLI is how step 4c asks the running app what it MOUNTED, over the shipping
@@ -183,7 +194,7 @@ if [[ "${CONNECT}" == "1" ]]; then
   pkill -f "slopdesk-hostd --port ${CONNECT_PORT}" 2> /dev/null || true
   sleep 0.5
   # Isolation: --port stays FIRST so the pkill pattern above keeps matching. The default spawn
-  # is the developer's REAL login zsh — the ShellIntegration shim points its HISTFILE at the
+  # is the developer's REAL login zsh — superd's shell-integration shim points its HISTFILE at the
   # real ~/.zsh_history, so the AUTOTYPE proof command would be appended there on every run.
   # A plain sh computes the $((6*7)) proof just as well, and the throwaway HOME sandboxes the
   # history file.
@@ -191,7 +202,7 @@ if [[ "${CONNECT}" == "1" ]]; then
   # HOME sandboxes the history file and NOTHING ELSE. It does not move Application Support; it does
   # not even move `NSHomeDirectory()` — Core Foundation reads the account record unless
   # `CFFIXED_USER_HOME` is set. So `SLOPDESK_APP_SUPPORT_DIR` is what actually gives this daemon a
-  # container of its own, and it is not optional: `ScrollbackJournalStore.sweep` runs on hostd's
+  # container of its own, and it is not optional: the journal sweep runs on hostd's
   # FIRST loop iteration and unlinks everything past the newest 256 journals in whatever directory it
   # resolved. Measured on this host before this line existed: one run of this gate unlinked 5 of the
   # developer's journals and left one of its own behind. The live-writer exemption is no protection
@@ -475,7 +486,10 @@ if [[ "${CONNECT}" == "1" ]]; then
   # the user-feel span (wire out + host PTY + wire back + client delivery to the render feed).
   # Informational, never a failure: the smoothness-work A/B number, not a gate.
   if [[ -s "${APP_LOG}" ]] && grep -q "echo-probe" "${APP_LOG}"; then
-    SAMPLES="$(grep -o 'key→ingest [0-9.]*ms' "${APP_LOG}" | grep -o '[0-9.]*' | sort -n)"
+    # `|| true`, like the COUNT below it: the enclosing `if` only proves the probe ANNOUNCED itself,
+    # not that it printed a timing line. Under `set -euo pipefail` a miss here would kill the run
+    # one step before the screenshot — an informational block taking the whole gate with it.
+    SAMPLES="$(grep -o 'key→ingest [0-9.]*ms' "${APP_LOG}" | grep -o '[0-9.]*' | sort -n || true)"
     COUNT="$(echo "${SAMPLES}" | grep -c . || true)"
     MEDIAN="$(echo "${SAMPLES}" | awk '{a[NR]=$1} END{ if (NR) printf "%.1f", a[int((NR+1)/2)] }')"
     P95="$(echo "${SAMPLES}" | awk '{a[NR]=$1} END{ if (NR) printf "%.1f", a[int(NR*0.95)>0?int(NR*0.95):1] }')"

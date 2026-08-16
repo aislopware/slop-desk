@@ -3,13 +3,19 @@ import Darwin
 import Foundation
 import SlopDeskProtocol
 
-/// The THIN OS shim that backs the host metadata RPC by running the real git/lsof/proc/FileManager
-/// queries for ONE pane (its PTY master fd + shell pid). It conforms to ``MetadataQuerying`` so the PURE
-/// ``MetadataResponseBuilder`` can drive it; **compiled + code-reviewed ONLY** — never instantiated in a
-/// unit test (the hang-safety rule, exactly like ``PTYForegroundProbe``: real subprocess / `proc_*` work
-/// on a live PTY hangs / depends on the host environment). The decision logic (verb mapping, path
-/// confinement, caps) lives in the pure builder; this file is a straight, defensive translation of OS
-/// queries into the shared ``MetadataCodec`` value types.
+/// The THIN OS shim that backs the host metadata RPC for ONE pane (its PTY master fd + shell pid).
+/// It conforms to ``MetadataQuerying`` so the PURE ``MetadataResponseBuilder`` can drive it;
+/// **compiled + code-reviewed ONLY** — never instantiated in a unit test (the hang-safety rule,
+/// exactly like ``PTYForegroundProbe``: real subprocess / `proc_*` work on a live PTY hangs / depends
+/// on the host environment). The decision logic (verb mapping, path confinement, caps) lives in the
+/// pure builder; this file is a straight, defensive translation of OS queries into the shared
+/// ``MetadataCodec`` value types.
+///
+/// **What is left here is what needs the fd.** The five verbs that were subprocess and filesystem
+/// work with no handle behind them — git status, git diff, directory listing, session listing,
+/// session read — moved to `slopdesk-probe` and are forwarded through ``HostProbe`` below. What
+/// stays is anchored to something a fork does not have: `tcgetpgrp`/`ptsname` on this pane's master
+/// fd, `proc_pidinfo` over every live pid, and a CPU baseline that outlives the request.
 ///
 /// **Validate-then-drop everywhere.** Every syscall return is checked (`> 0`, exact struct size); every
 /// subprocess is best-effort (a missing binary / non-zero exit / unparseable line is SKIPPED, never a
@@ -28,16 +34,11 @@ struct HostMetadataProbe: MetadataQuerying {
     // Caps (a second backstop under the builder's caps — a pathological host can't flood a frame).
     private static let maxProcesses = 256
     private static let maxPorts = 512
-    private static let maxGitFiles = 4096
-    private static let maxDirEntries = 4096
-    private static let maxSessions = 512
-    /// The opaque-read budget for the source-side bounded reads (`readAgentSession` / `gitDiff`). It
-    /// MIRRORS ``MetadataResponseBuilder/defaultMaxOpaquePayloadBytes`` (15 MiB) so an opaque read is
-    /// bounded at the SOURCE — we pull at most `cap + 1` bytes so the builder's `cappedOpaque()` still
-    /// trims an already-bounded tail (and its "was truncated" signal survives) instead of letting a
-    /// pathological session file / huge `git diff` spike per-request RAM before the cap is applied.
-    private static let maxOpaqueReadBytes = 15 * 1024 * 1024
-    private static let gitPath = "/usr/bin/git"
+    /// The read budget for the ONE subprocess still spawned here. `lsof` scoped to a pane's pids
+    /// prints kilobytes, so this is not a limit anyone reaches — it is the drain loop's stop
+    /// condition, and a loop that appends until EOF with no ceiling is a loop a wedged `lsof` can
+    /// grow without bound.
+    private static let maxCaptureBytes = 15 * 1024 * 1024
     private static let lsofPath = "/usr/sbin/lsof"
 
     // MARK: - cwd (proc-vnode of the foreground process; OSC-7 is a clean future enhancement)
@@ -148,212 +149,27 @@ struct HostMetadataProbe: MetadataQuerying {
         return out
     }
 
-    // MARK: - git status (porcelain v1 -b) + diff
+    // MARK: - forwarded to `slopdesk-probe` (git, directories, sessions)
 
-    func gitStatus(cwd: String) -> MetadataCodec.GitStatusPayload {
-        // `-c core.quotepath=false` disables git's default octal-escaping/quoting of non-ASCII paths
-        // (`"b\303\241o..."`) so accented/CJK filenames flow through verbatim as UTF-8 — both for display
-        // and as the `gitDiff` pathspec, which would otherwise match nothing against the quoted literal.
-        // `--no-optional-locks` keeps this read-only probe from taking `index.lock` (its opportunistic
-        // untracked-cache refresh) — the project-scoped scheduler probes on a cadence now, and a probe
-        // racing the user's own `git commit`/`git add` in the pane must never make THAT fail on a held lock.
-        guard let output = Self.runProcessString(
-            Self.gitPath,
-            ["--no-optional-locks", "-c", "core.quotepath=false", "-C", cwd, "status", "--porcelain", "-b"],
-        ) else {
-            return .noRepo
-        }
-        var hasRepo = false
-        var branch = ""
-        var ahead: Int32 = 0
-        var behind: Int32 = 0
-        var files: [MetadataCodec.GitFileChange] = []
-        for line in output.split(separator: "\n", omittingEmptySubsequences: true) {
-            hasRepo = true
-            if line.hasPrefix("## ") {
-                Self.parseBranchHeader(line.dropFirst(3), branch: &branch, ahead: &ahead, behind: &behind)
-            } else if line.count >= 3 {
-                if let change = Self.parseStatusLine(line), files.count < Self.maxGitFiles {
-                    files.append(change)
-                }
-            }
-        }
-        guard hasRepo else { return .noRepo }
-        let remote = Self.runProcessString(Self.gitPath, ["-C", cwd, "remote", "get-url", "origin"])?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        // The precise By-Project grouping key — the repo's absolute toplevel. Best-effort like
-        // every other probe (a missing binary / non-repo / detached state → empty; the client then falls
-        // back to the pane cwd).
-        let toplevel = Self.gitToplevel(cwd: cwd) ?? ""
-        return MetadataCodec.GitStatusPayload(
-            hasRepo: true, branch: branch, remoteURL: remote, repoRoot: toplevel,
-            ahead: ahead, behind: behind, stashCount: Self.gitStashCount(cwd: cwd), files: files,
-        )
-    }
+    func gitStatus(cwd: String) -> MetadataCodec.GitStatusPayload { HostProbe.gitStatus(cwd: cwd) }
 
-    /// The repo's stash depth (`git stash list` line count), clamped to `Int32`. Best-effort like every
-    /// other probe: a missing binary / non-repo / empty stash all yield `0` (an empty `stash list` prints
-    /// nothing). Repo-global (not cwd-specific beyond which repo the cwd is in).
-    static func gitStashCount(cwd: String) -> Int32 {
-        guard let out = runProcessString(gitPath, ["-C", cwd, "stash", "list"]) else { return 0 }
-        let lines = out.split(separator: "\n", omittingEmptySubsequences: true).count
-        return Int32(min(lines, Int(Int32.max)))
-    }
-
-    func gitDiff(cwd: String, file: String) -> Data? {
-        Self.resolveGitDiff(cwd: cwd, file: file) { Self.runProcessData(Self.gitPath, $0) }
-    }
-
-    /// The repo's absolute toplevel for `cwd` (`git -C cwd rev-parse --show-toplevel`), trimmed of the
-    /// trailing newline; `nil` when `cwd` is not inside a repo / git is missing (the best-effort fallback).
-    static func gitToplevel(cwd: String) -> String? {
-        let top = runProcessString(gitPath, ["-C", cwd, "rev-parse", "--show-toplevel"])?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return top.isEmpty ? nil : top
-    }
-
-    /// The ORDERED `git diff` invocations the resolver tries for a repo-ROOT-relative `file`, all rooted
-    /// at the repo `repoRoot` (NEVER the pane cwd — porcelain status paths are repo-root-relative, so a
-    /// subdir-cwd diff of a root-relative pathspec matches nothing). The bases, in order:
-    ///  1. `diff HEAD` — the combined change vs the last commit, so a STAGED/index-only change shows just
-    ///     like an unstaged worktree change (the medium finding: `git diff` alone is empty for a staged file).
-    ///  2. `diff` — the plain unstaged worktree diff (the fallback for a repo with no commits, where
-    ///     `diff HEAD` errors, but a tracked file is modified in the worktree).
-    ///  3. `diff --cached` — the staged index-vs-HEAD diff (the no-HEAD repo where a freshly-staged add
-    ///     lives ONLY in the index and neither of the above shows it).
-    /// A PURE arg-builder (no I/O) so the base ordering is unit-pinned without spinning a `git` Process.
-    static func gitDiffArgumentPlan(repoRoot: String, file: String) -> [[String]] {
-        [
-            ["-C", repoRoot, "diff", "HEAD", "--", file],
-            ["-C", repoRoot, "diff", "--", file],
-            ["-C", repoRoot, "diff", "--cached", "--", file],
-        ]
-    }
-
-    /// Resolves the `git diff` for a repo-ROOT-relative `file` whose pane cwd is `cwd`, returning the
-    /// FIRST non-empty diff across the ``gitDiffArgumentPlan`` bases. `run` is the injected git arg-runner
-    /// (path-relative argv → captured stdout bytes, or `nil` on a spawn failure) — injected so the
-    /// subdir-relativity + staged-base logic is unit-pinned WITHOUT a real `Process` (the hang-safety rule).
-    ///
-    /// **The subdir fix:** the diff is rooted at the repo toplevel (`git rev-parse --show-toplevel`), not
-    /// the possibly-subdir `cwd`, so a root-relative pathspec from `git status` resolves. When the toplevel
-    /// can't be resolved (non-repo / git missing) it falls back to `cwd` (best-effort — the empty diff the
-    /// builder maps to `.notFound`/`.ok`). A nil/empty result from one base falls through to the next; an
-    /// all-empty chain returns the last result (empty `Data` → `.ok` empty, or `nil` → `.notFound`), the
-    /// SAME mapping the single-command path produced for an unchanged/untracked file.
-    static func resolveGitDiff(cwd: String, file: String, run: ([String]) -> Data?) -> Data? {
-        let topRaw = run(["-C", cwd, "rev-parse", "--show-toplevel"])
-            .flatMap { String(data: $0, encoding: .utf8) }?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let root = topRaw.isEmpty ? cwd : topRaw
-        var last: Data?
-        for args in gitDiffArgumentPlan(repoRoot: root, file: file) {
-            let data = run(args)
-            if let data, !data.isEmpty { return data }
-            last = data ?? last
-        }
-        return last
-    }
-
-    /// Parses a porcelain v1 `-b` branch header: `<branch>...<upstream> [ahead N, behind M]`, or a bare
-    /// `<branch>`, or `HEAD (no branch)` (detached → empty branch). Defensive: a missing field defaults.
-    static func parseBranchHeader(
-        _ rest: Substring, branch: inout String, ahead: inout Int32, behind: inout Int32,
-    ) {
-        var head = String(rest)
-        if let open = head.firstIndex(of: "["), let close = head.firstIndex(of: "]"), open < close {
-            let inside = head[head.index(after: open)..<close]
-            for token in inside.split(separator: ",") {
-                let trimmed = String(token).trimmingCharacters(in: .whitespaces)
-                if trimmed.hasPrefix("ahead ") {
-                    ahead = Int32(trimmed.dropFirst("ahead ".count)) ?? 0
-                } else if trimmed.hasPrefix("behind ") {
-                    behind = Int32(trimmed.dropFirst("behind ".count)) ?? 0
-                }
-            }
-            head = String(head[..<open])
-        }
-        let name = head.components(separatedBy: "...").first.map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
-        branch = name.hasPrefix("HEAD") ? "" : name
-    }
-
-    /// Parses a porcelain v1 status line `XY <path>` (rename `XY old -> new` keeps the new path); the
-    /// `XY` chars are packed via ``packStatus``. `nil` for a malformed line.
-    static func parseStatusLine(_ line: Substring) -> MetadataCodec.GitFileChange? {
-        guard line.count >= 3 else { return nil }
-        let x = line[line.startIndex]
-        let y = line[line.index(after: line.startIndex)]
-        // The path starts at index 3 (the `XY` pair + one space separator).
-        let pathStart = line.index(line.startIndex, offsetBy: 3)
-        var path = String(line[pathStart...])
-        if let range = path.range(of: " -> ") {
-            // A rename `old -> new`: keep the NEW path (what the worktree now holds).
-            path = String(path[range.upperBound...])
-        }
-        guard !path.isEmpty else { return nil }
-        return MetadataCodec.GitFileChange(statusCode: packStatus(x, y), path: path)
-    }
-
-    /// Maps a porcelain status char to a 4-bit code. **The client MUST mirror this inverse** to
-    /// render the change category. Convention: space=0 M=1 A=2 D=3 R=4 C=5 U=6 ?=7 !=8 T=9 (other=15).
-    static func statusNibble(_ char: Character) -> UInt8 {
-        switch char {
-        case " ": 0
-        case "M": 1
-        case "A": 2
-        case "D": 3
-        case "R": 4
-        case "C": 5
-        case "U": 6
-        case "?": 7
-        case "!": 8
-        case "T": 9
-        default: 15
-        }
-    }
-
-    /// Packs the porcelain `X` (index) and `Y` (worktree) status chars into one byte (high nibble = X,
-    /// low nibble = Y) — the ``MetadataCodec/GitFileChange/statusCode`` host-defined packing.
-    static func packStatus(_ x: Character, _ y: Character) -> UInt8 {
-        (statusNibble(x) << 4) | statusNibble(y)
-    }
-
-    // MARK: - directory listing (one level, lazy)
+    func gitDiff(cwd: String, file: String) -> Data? { HostProbe.gitDiff(cwd: cwd, file: file) }
 
     func listDirectory(absolutePath: String) -> [MetadataCodec.DirEntry]? {
-        let fm = FileManager.default
-        var isDir: ObjCBool = false
-        guard fm.fileExists(atPath: absolutePath, isDirectory: &isDir), isDir.boolValue else { return nil }
-        guard let names = try? fm.contentsOfDirectory(atPath: absolutePath) else { return nil }
-        var out: [MetadataCodec.DirEntry] = []
-        for name in names.sorted() {
-            var entryIsDir: ObjCBool = false
-            // swiftlint:disable:next legacy_objc_type
-            let full = (absolutePath as NSString).appendingPathComponent(name)
-            _ = fm.fileExists(atPath: full, isDirectory: &entryIsDir)
-            out.append(MetadataCodec.DirEntry(isDir: entryIsDir.boolValue, name: name))
-            if out.count >= Self.maxDirEntries { break }
-        }
-        return out
+        HostProbe.listDirectory(absolutePath: absolutePath)
     }
 
-    // MARK: - agent sessions (Claude / codex / opencode)
-
-    /// Auto-enumerates the agent sessions discoverable for `project` — Claude Code + OpenCode ONLY.
-    ///
-    /// **Codex auto-enumeration is intentionally DEFERRED (Claude-first scope reduction), NOT removed.**
-    /// There is deliberately no `codexSessions` enumerator here, so a `~/.codex/sessions` transcript is never
-    /// auto-discovered into this list. The codex scaffolding is kept intact ON PURPOSE — ``AgentKind`` still
-    /// carries `.codex`, ``sessionRoots()`` still lists the codex root, and ``readAgentSession(id:)`` still
-    /// serves an EXPLICIT absolute codex session id (the on-disk read capability). So only the
-    /// auto-discovery half is deferred; the explicit-id read path stays live. Only Claude surfaces as the
-    /// first-class agent — see `docs/DECISIONS.md`.
+    /// Claude Code and OpenCode only. Codex auto-enumeration is intentionally DEFERRED (the
+    /// Claude-first scope reduction), not removed: the probe still lists `~/.codex/sessions` as a
+    /// read root, so an EXPLICIT absolute codex session id stays readable while auto-discovery is the
+    /// deferred half — see `docs/DECISIONS.md`.
     func listAgentSessions(project: String) -> [MetadataCodec.AgentSessionInfo] {
-        var out = Self.claudeSessions(project: project)
-        out.append(contentsOf: Self.opencodeSessions(project: project))
-        out.sort { $0.mtimeMS > $1.mtimeMS }
-        return Array(out.prefix(Self.maxSessions))
+        HostProbe.listAgentSessions(project: project)
     }
+
+    func readAgentSession(id: String) -> Data? { HostProbe.readAgentSession(id: id) }
+
+    // MARK: - host identity + vitals
 
     func hostName() -> String? {
         // The machine's own name ("mac-studio.local") — the `hostInfo` verb's answer. Pane-agnostic,
@@ -366,90 +182,6 @@ struct HostMetadataProbe: MetadataQuerying {
         // PROCESS-WIDE sampler rather than any state of this per-request probe: the CPU percent is a
         // delta between polls and would never exist if the baseline died with the probe.
         HostVitalsSampler.shared.sample()
-    }
-
-    func readAgentSession(id: String) -> Data? {
-        // Defense in depth (the builder already rejected `..`): confine the resolved file to the known
-        // session roots so an absolute id outside them can't exfiltrate an arbitrary host file.
-        guard id.hasPrefix("/") else { return nil }
-        // swiftlint:disable:next legacy_objc_type
-        let path = (id as NSString).standardizingPath
-        let pathC = path.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
-        let withinRoot = Self.sessionRoots().contains { root in
-            let rootC = root.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
-            return !rootC.isEmpty && pathC.count > rootC.count && Array(pathC.prefix(rootC.count)) == rootC
-        }
-        guard withinRoot, FileManager.default.isReadableFile(atPath: path) else { return nil }
-        // Bound the read at the SOURCE: pull at most `maxOpaqueReadBytes + 1` (NOT the whole file via
-        // `Data(contentsOf:)`) so the builder's `cappedOpaque()` only trims an already-bounded tail and a
-        // pathological session file can't spike per-request RAM. Validate-then-drop: any open/read failure
-        // → `nil` (never a trap), with the handle closed on every exit.
-        guard let handle = try? FileHandle(forReadingFrom: URL(fileURLWithPath: path)) else { return nil }
-        defer { try? handle.close() }
-        return try? handle.read(upToCount: Self.maxOpaqueReadBytes + 1)
-    }
-
-    /// The known agent-session roots (expanded against the host's home dir). The `~/.codex/sessions` root is
-    /// listed for the READ path (``readAgentSession(id:)`` confines an explicit absolute id to a known root)
-    /// even though ``listAgentSessions(project:)`` does NOT auto-enumerate codex — codex auto-enumeration is
-    /// intentionally deferred (Claude-first scope reduction), so the codex root stays here BY DESIGN, not by
-    /// oversight: it keeps an explicit codex session id readable while auto-discovery is the deferred half.
-    private static func sessionRoots() -> [String] {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        return [
-            "\(home)/.claude/projects",
-            "\(home)/.codex/sessions",
-            "\(home)/.local/share/opencode/storage/session",
-        ]
-    }
-
-    /// Claude Code's on-disk project-slug convention: every non-alphanumeric character (not just `/`)
-    /// becomes `-`, one dash per character (no collapsing of runs). Verified empirically against a real
-    /// `~/.claude/projects` listing — e.g. `/Users/me/.config/nvim` stores as `-Users-me--config-nvim`
-    /// (the leading `.` of `.config` becomes its OWN dash, adjacent to the `/`'s dash).
-    static func claudeProjectSlug(_ project: String) -> String {
-        String(project.map { $0.isASCII && $0.isLetter || $0.isASCII && $0.isNumber ? $0 : "-" })
-    }
-
-    /// Claude Code: `~/.claude/projects/<slug>/*.jsonl` where the slug is ``claudeProjectSlug(_:)``.
-    /// Title is best-effort (left blank for a future session viewer to fill).
-    private static func claudeSessions(project: String) -> [MetadataCodec.AgentSessionInfo] {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let dir = "\(home)/.claude/projects/\(claudeProjectSlug(project))"
-        return jsonlSessions(inDirectory: dir, kind: .claude, project: project, ext: "jsonl")
-    }
-
-    /// OpenCode: `~/.local/share/opencode/storage/session/<slug>/*.json`.
-    private static func opencodeSessions(project: String) -> [MetadataCodec.AgentSessionInfo] {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let slug = project.replacingOccurrences(of: "/", with: "-")
-        let dir = "\(home)/.local/share/opencode/storage/session/\(slug)"
-        return jsonlSessions(inDirectory: dir, kind: .opencode, project: project, ext: "json")
-    }
-
-    /// Enumerates `<dir>/*.<ext>` into ``MetadataCodec/AgentSessionInfo`` (id = absolute file path,
-    /// mtime from the file attrs). Missing dir → empty (validate-then-drop).
-    private static func jsonlSessions(
-        inDirectory dir: String, kind: MetadataCodec.AgentKind, project: String, ext: String,
-    ) -> [MetadataCodec.AgentSessionInfo] {
-        let fm = FileManager.default
-        guard let names = try? fm.contentsOfDirectory(atPath: dir) else { return [] }
-        var out: [MetadataCodec.AgentSessionInfo] = []
-        for name in names where name.hasSuffix(".\(ext)") {
-            // swiftlint:disable:next legacy_objc_type
-            let path = (dir as NSString).appendingPathComponent(name)
-            let attrs = try? fm.attributesOfItem(atPath: path)
-            let mtime = (attrs?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
-            out.append(MetadataCodec.AgentSessionInfo(
-                agentKindByte: kind.rawValue,
-                id: path,
-                title: "",
-                cwd: project,
-                mtimeMS: Int64(mtime * 1000),
-            ))
-            if out.count >= maxSessions { break }
-        }
-        return out
     }
 
     // MARK: - Darwin proc helpers
@@ -508,22 +240,18 @@ struct HostMetadataProbe: MetadataQuerying {
         return String(data: data, encoding: .utf8)
     }
 
-    /// Whether `accumulated` captured opaque bytes have exceeded the source-side read budget
-    /// (``maxOpaqueReadBytes``, mirroring the builder's 15 MiB opaque cap). A PURE predicate (no I/O) so
-    /// the byte-budgeted drain loop's stop condition is unit-pinned WITHOUT spinning a `Process` /
-    /// `FileHandle` in a test (the hang-safety rule keeps those compiled-and-reviewed only). `cap` → false,
-    /// `cap + 1` → true, so the loop stops once the captured buffer is one byte past the cap and the
-    /// builder's `cappedOpaque()` still trims an already-bounded tail.
-    static func opaqueBudgetExceeded(_ accumulated: Int) -> Bool {
-        accumulated > maxOpaqueReadBytes
+    /// Whether `accumulated` captured bytes have exceeded ``maxCaptureBytes``. A PURE predicate (no
+    /// I/O) so the drain loop's stop condition is unit-pinned WITHOUT spinning a `Process` in a test
+    /// (the hang-safety rule keeps that compiled-and-reviewed only).
+    static func captureBudgetExceeded(_ accumulated: Int) -> Bool {
+        accumulated > maxCaptureBytes
     }
 
     /// Runs `path arguments`, returning captured stdout bytes (stderr discarded). `nil` if the binary
-    /// is missing / not executable / cannot spawn. stdout is drained in CHUNKS before `waitUntilExit` so
-    /// a large `git diff` can neither deadlock on a full pipe buffer nor spike per-request RAM: once the
-    /// accumulated bytes exceed the opaque budget (``opaqueBudgetExceeded``, i.e. one past the cap so the
-    /// builder still sees a truncation) the child is `terminate()`d and reading stops — bounding the read
-    /// at the SOURCE while still draining-before-wait.
+    /// is missing / not executable / cannot spawn. stdout is drained in CHUNKS before `waitUntilExit`
+    /// so a child can neither deadlock on a full pipe buffer nor grow this side without bound: once
+    /// the accumulated bytes exceed ``captureBudgetExceeded`` the child is `terminate()`d and reading
+    /// stops.
     private static func runProcessData(_ path: String, _ arguments: [String]) -> Data? {
         guard FileManager.default.isExecutableFile(atPath: path) else { return nil }
         let process = Process()
@@ -543,7 +271,7 @@ struct HostMetadataProbe: MetadataQuerying {
             let chunk = reader.availableData
             if chunk.isEmpty { break } // EOF — the child closed its stdout (the normal, small-diff case).
             data.append(chunk)
-            if opaqueBudgetExceeded(data.count) {
+            if captureBudgetExceeded(data.count) {
                 // Past the budget: kill the child (a blocked `write` is interrupted by SIGTERM, so
                 // `waitUntilExit` can't wedge) and stop reading. The bounded buffer is returned as-is.
                 process.terminate()

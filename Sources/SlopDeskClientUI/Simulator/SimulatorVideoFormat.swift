@@ -64,92 +64,22 @@ enum SimulatorVideoFormat {
         return status == noErr ? description : nil
     }
 
-    /// Wrap one access unit as a sample buffer ready to enqueue.
-    ///
-    /// Timing is deliberately absent and `DisplayImmediately` set instead. The alternative — real
-    /// presentation timestamps against a control timebase — buys smooth playback of a recording, and
-    /// costs a frame of buffering to get it. This is an interactive mirror of a device someone is
-    /// tapping, where the only thing that matters is that the frame lands as soon as it arrives; the
-    /// project's own framing of the video path as a coding tool rather than a game stream applies
-    /// here with more force, not less.
+    /// One AVCC access unit as a sample buffer ready to enqueue —
+    /// ``DevicePanelSampleBuffer/sampleBuffer(accessUnit:formatDescription:isKeyframe:)``, which both
+    /// device panels share. Only the format description above differs between them.
     static func sampleBuffer(
         accessUnit: Data, formatDescription: CMVideoFormatDescription, isKeyframe: Bool,
     ) -> CMSampleBuffer? {
-        guard !accessUnit.isEmpty else { return nil }
-
-        var blockBuffer: CMBlockBuffer?
-        // A block buffer that owns its own memory, then a copy in — rather than pointing at the
-        // `Data`'s storage, whose lifetime ends with this call while the sample buffer outlives it.
-        guard CMBlockBufferCreateWithMemoryBlock(
-            allocator: kCFAllocatorDefault,
-            memoryBlock: nil,
-            blockLength: accessUnit.count,
-            blockAllocator: kCFAllocatorDefault,
-            customBlockSource: nil,
-            offsetToData: 0,
-            dataLength: accessUnit.count,
-            flags: 0,
-            blockBufferOut: &blockBuffer,
-        ) == noErr, let blockBuffer else { return nil }
-
-        let copied = accessUnit.withUnsafeBytes { bytes -> OSStatus in
-            guard let base = bytes.baseAddress else { return -1 }
-            return CMBlockBufferReplaceDataBytes(
-                with: base, blockBuffer: blockBuffer, offsetIntoDestination: 0,
-                dataLength: accessUnit.count,
-            )
-        }
-        guard copied == noErr else { return nil }
-
-        var sampleBuffer: CMSampleBuffer?
-        var sampleSize = accessUnit.count
-        guard CMSampleBufferCreateReady(
-            allocator: kCFAllocatorDefault,
-            dataBuffer: blockBuffer,
-            formatDescription: formatDescription,
-            sampleCount: 1,
-            sampleTimingEntryCount: 0,
-            sampleTimingArray: nil,
-            sampleSizeEntryCount: 1,
-            sampleSizeArray: &sampleSize,
-            sampleBufferOut: &sampleBuffer,
-        ) == noErr, let sampleBuffer else { return nil }
-
-        annotate(sampleBuffer, isKeyframe: isKeyframe)
-        return sampleBuffer
-    }
-
-    /// Mark the sample for immediate display, and mark a delta frame as a non-sync sample.
-    ///
-    /// `NotSync` is what tells the decoder this frame is not a seek point. Getting it wrong does not
-    /// break a forward-only stream, but it does mislead anything that later inspects the queue — and
-    /// it costs one dictionary write to be honest.
-    private static func annotate(_ sampleBuffer: CMSampleBuffer, isKeyframe: Bool) {
-        guard let attachments = CMSampleBufferGetSampleAttachmentsArray(
-            sampleBuffer, createIfNecessary: true,
-        ), CFArrayGetCount(attachments) > 0 else { return }
-        let raw = CFArrayGetValueAtIndex(attachments, 0)
-        let dictionary = unsafeBitCast(raw, to: CFMutableDictionary.self)
-        CFDictionarySetValue(
-            dictionary,
-            Unmanaged.passUnretained(kCMSampleAttachmentKey_DisplayImmediately).toOpaque(),
-            Unmanaged.passUnretained(kCFBooleanTrue).toOpaque(),
+        DevicePanelSampleBuffer.sampleBuffer(
+            accessUnit: accessUnit, formatDescription: formatDescription, isKeyframe: isKeyframe,
         )
-        if !isKeyframe {
-            CFDictionarySetValue(
-                dictionary,
-                Unmanaged.passUnretained(kCMSampleAttachmentKey_NotSync).toOpaque(),
-                Unmanaged.passUnretained(kCFBooleanTrue).toOpaque(),
-            )
-        }
     }
 
     /// The stream's pixel dimensions, for the panel's aspect ratio. Read off the format description
     /// rather than the device's advertised screen size: a scaled stream (`--scale 2`) is smaller than
     /// the device, and it is the FRAME the view has to fit.
     static func dimensions(of formatDescription: CMVideoFormatDescription) -> CGSize {
-        let dimensions = CMVideoFormatDescriptionGetDimensions(formatDescription)
-        return CGSize(width: Int(dimensions.width), height: Int(dimensions.height))
+        DevicePanelSampleBuffer.dimensions(of: formatDescription)
     }
 }
 #endif

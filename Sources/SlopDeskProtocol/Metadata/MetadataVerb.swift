@@ -1,5 +1,3 @@
-import Foundation
-
 /// The operation a ``WireMessage/metadataRequest(requestID:verb:payload:)`` selects — the host
 /// metadata RPC. ONE generic request/response pair on the CONTROL channel backs every Details-Panel
 /// surface that reads host-side metadata; the `verb` byte discriminates which of these operations the
@@ -22,7 +20,7 @@ import Foundation
 ///
 /// **Agent-hooks verbs.** Verbs `11` (``installAgentHooks``) / `12` (``uninstallAgentHooks``)
 /// are SIDE-EFFECTING like 9/10 — they write/strip the slopdesk Claude Code hook entries in the HOST's
-/// `~/.claude/settings.json` (+ hook script) via `AgentInstaller`, returning ONLY a status byte + empty
+/// `~/.claude/settings.json` (+ the hook relay) via `slopdesk-agenthooks`, returning ONLY a status byte + empty
 /// payload (no host bytes cross the wire). Verb `13` (``agentHookStatus``) is a PURE READ that — unlike
 /// the read verbs above — returns NO host file contents, only the 2-byte `[installed][listenerActive]`
 /// flags (docs/20; byte 1 is the LIVE hook-listener bind state, kept separate from the install marker
@@ -51,7 +49,8 @@ public enum MetadataVerb: UInt8, Sendable, Equatable, CaseIterable {
     /// project path (empty = pane cwd). Response: `AgentSessionList`.
     case listAgentSessions = 7
     /// Read one agent session's raw transcript. Request payload: UTF-8 session id/path. Response: raw
-    /// JSONL/JSON bytes (opaque — the client parses it via `SlopDeskInspector.TranscriptParser`).
+    /// JSONL/JSON bytes, opaque to this protocol. The LIVE inspector does not use it — that reads
+    /// through `slopdesk-inspectord`, which tails the file itself (`docs/54`).
     case readAgentSession = 8
     /// **Side-effecting.** Open a host path in its default app / Finder (the ⌘click
     /// action). Request payload: raw UTF-8 ABSOLUTE host path. Response: empty payload — status `.ok` on
@@ -65,20 +64,20 @@ public enum MetadataVerb: UInt8, Sendable, Equatable, CaseIterable {
     /// if the path is gone, `.error` on an empty/relative path.
     case revealPath = 10
     /// **Side-effecting.** Install the slopdesk Claude Code hooks on the HOST: writes the
-    /// hook script + merges our hook entries into `~/.claude/settings.json` (``AgentInstaller/install``).
+    /// hook relay + merges our hook entries into `~/.claude/settings.json` (`slopdesk-agenthooks install`).
     /// Request payload: empty (host-global — install acts on the host regardless of the carrying pane).
     /// Response: empty payload — status `.ok` on a successful write, `.error` if the install threw. Like
     /// 9/10 no host bytes cross the wire.
     case installAgentHooks = 11
     /// **Side-effecting.** Uninstall the slopdesk Claude Code hooks on the HOST: strips
-    /// exactly our hook entries from `~/.claude/settings.json` (``AgentInstaller/uninstall``), leaving the
+    /// exactly our hook entries from `~/.claude/settings.json` (`slopdesk-agenthooks uninstall`), leaving the
     /// user's own hooks intact. Request payload: empty. Response: empty payload — status `.ok` on success,
     /// `.error` if the uninstall threw.
     case uninstallAgentHooks = 12
     /// **Pure read.** Report the HOST's slopdesk Claude Code hooks state. Request payload:
     /// empty. Response: status `.ok` + the **2-byte** `[installed][listenerActive]` payload (docs/20) —
     /// byte 0 is the `settings.json` install marker
-    /// (``AgentInstaller/isInstalled(settingsPath:fileManager:)``), byte 1 the LIVE hook-listener bind
+    /// (`slopdesk-agenthooks status`), byte 1 the LIVE hook-listener bind
     /// state, kept distinct because an installed-but-unbound hook must not render as a green check.
     /// NO host file CONTENTS cross the wire (unlike the read verbs 5...8), only the two flag bytes —
     /// so it needs no cwd confinement.

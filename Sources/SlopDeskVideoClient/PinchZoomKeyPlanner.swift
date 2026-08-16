@@ -1,4 +1,4 @@
-import Foundation
+import CSlopDeskFFI
 
 /// Turns the trackpad pinch (`NSEvent.magnification` deltas) into discrete ⌘= / ⌘− zoom steps.
 ///
@@ -8,39 +8,24 @@ import Foundation
 /// zoom key equivalents and rides the existing key path (no wire change). See
 /// docs/05-input-window-control.md §"Trackpad gestures".
 ///
-/// Pure value type: the view feeds it magnification deltas and emits one ⌘=/⌘− pair per step
-/// returned. Accumulation carries across events within one pinch and RESETS on gesture begin,
-/// so residual never leaks between pinches.
+/// A face over `client_gestures`, carrying the one number that IS the accumulation. It crosses by
+/// VALUE rather than as a handle because its owner is a SwiftUI view the framework copies whenever
+/// it pleases, and a handle two copies shared would be one accumulator serving two gestures.
 public struct PinchZoomKeyPlanner: Sendable {
-    /// Accumulated |magnification| per zoom step. A full two-finger pinch sweep sums to ~±1.0,
-    /// so this yields ~5 steps ≈ the 10–25%-per-step zoom ladder browsers/editors use.
-    public static let stepThreshold: Double = 0.2
-    /// Per-event cap on emitted steps: one wild delta (or a burst coalesced by AppKit) must not
-    /// machine-gun the host with keystrokes.
-    public static let maxStepsPerEvent = 3
-
-    private var residual: Double = 0
+    private var state = slopdesk_pinch_planner_new()
 
     public init() {}
 
-    /// Resets accumulation — call when a new pinch begins (`NSEvent.phase == .began`).
-    public mutating func begin() { residual = 0 }
+    /// Resets accumulation — call when a new pinch begins (`NSEvent.phase == .began`). A fresh
+    /// planner IS what a gesture begins with, so no residual can leak between pinches.
+    public mutating func begin() { state = slopdesk_pinch_planner_new() }
 
     /// Feeds one magnification delta; returns the SIGNED zoom steps to emit now
-    /// (+n → n × zoom-in (⌘=), −n → n × zoom-out (⌘−), 0 → keep accumulating).
+    /// (+n → n × zoom-in (⌘=), −n → n × zoom-out (⌘−), 0 → keep accumulating). A non-finite delta
+    /// is dropped rather than folded, over there, so one bad event cannot poison the gesture.
     public mutating func ingest(magnification: Double) -> Int {
-        // Non-finite deltas (defensive: NSEvent shouldn't produce them) are dropped, not folded.
-        guard magnification.isFinite else { return 0 }
-        residual += magnification
-        var steps = 0
-        while residual >= Self.stepThreshold, steps < Self.maxStepsPerEvent {
-            residual -= Self.stepThreshold
-            steps += 1
-        }
-        while residual <= -Self.stepThreshold, steps > -Self.maxStepsPerEvent {
-            residual += Self.stepThreshold
-            steps -= 1
-        }
-        return steps
+        let plan = slopdesk_pinch_planner_plan(state, magnification)
+        state = plan.state
+        return Int(plan.steps)
     }
 }

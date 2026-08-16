@@ -1,6 +1,7 @@
+import CSlopDeskFFI
 import SlopDeskAgentDetect
 
-// `slopdesk watch:claude <id>` — the PURE exit-code state machine.
+// `slopdesk watch:claude <id>` — the Swift face of `rust/slopdesk-agent`'s `watch`.
 //
 // `watch:claude <id>` blocks until the named Claude session reaches an at-rest state, then exits.
 // Spec (reference__cli.md §CLI): exit `0` = idle or session closed, `4` = session id never seen,
@@ -9,11 +10,10 @@ import SlopDeskAgentDetect
 // The CLI polls the running app's `agent-status` method (``ClientControlProtocol/Method/agentStatus``),
 // which answers `{seen, status?}`: `seen:false` = the id resolves to NO pane (→ exit 4); `seen:true` with
 // NO `status` = the pane EXISTS but its agent has not reported yet (the startup window → keep polling);
-// `seen:true` + a ``ClaudeStatus`` rawValue = the rolled-up agent status. This type turns each polled observation —
-// plus whether the id has EVER been seen across polls and whether the deadline has elapsed — into a
-// ``Step``: finish with an exit code, or keep polling. The poll loop itself (sleep + socket I/O + the
-// clock) lives in `main.swift` (compiled-only — it does I/O and sleeps, so it is never instantiated in
-// a unit test, hang-safety rule); ALL exit-code decisions are HERE and exhaustively unit-tested.
+// `seen:true` + a ``ClaudeStatus`` rawValue = the rolled-up agent status. The crate turns each polled
+// observation — plus whether the id has EVER been seen across polls and whether the deadline has
+// elapsed — into a ``Step``. The poll loop itself (sleep + socket I/O + the clock) lives in `main.swift`
+// (compiled-only — it does I/O and sleeps, so it is never instantiated in a unit test, hang-safety rule).
 
 public enum WatchClaudeOutcome {
     /// The three terminal exit codes (see `reference__cli.md`).
@@ -50,14 +50,24 @@ public enum WatchClaudeOutcome {
     /// `seen:true` with NO status token ⇒ ``Observation/seenNoStatus`` (pane exists, agent not yet
     /// reporting — the startup window, keep polling); `seen:true` with a known status token ⇒ that
     /// ``ClaudeStatus``; `seen:true` with an UNKNOWN/future token degrades to ``ClaudeStatus/none``
-    /// (i.e. "no agent here / closed" → settled) rather than trapping, mirroring ``ClaudeStatus/init(urgency:)``.
+    /// (i.e. "no agent here / closed" → settled) rather than trapping.
     public static func observation(seen: Bool, statusToken: String?) -> Observation {
-        guard seen else { return .notSeen }
-        guard let token = statusToken else { return .seenNoStatus }
-        if let status = ClaudeStatus(rawValue: token) {
-            return .status(status)
+        var status: UInt8 = 0
+        let kind: UInt32
+        if let statusToken {
+            let bytes = Array(statusToken.utf8)
+            kind = bytes.withUnsafeBufferPointer { token in
+                slopdesk_watch_observation(seen, token.baseAddress, token.count, &status)
+            }
+        } else {
+            // A null token is the ABSENT one — not the same answer as an unknown token.
+            kind = slopdesk_watch_observation(seen, nil, 0, &status)
         }
-        return .status(.none)
+        switch kind {
+        case SLOPDESK_WATCH_SEEN_NO_STATUS: return .seenNoStatus
+        case SLOPDESK_WATCH_NOT_SEEN: return .notSeen
+        default: return .status(ClaudeStatus(ffiByte: status))
+        }
     }
 
     /// A polled ``ClaudeStatus`` is "at rest" — a state `watch:claude` returns on — when the session is
@@ -66,13 +76,7 @@ public enum WatchClaudeOutcome {
     /// (claude exited / session closed). `working` and `needsPermission` are still active (the latter is
     /// blocked on a human, not idle), so they keep polling until they settle or the deadline elapses.
     public static func isAtRest(_ status: ClaudeStatus) -> Bool {
-        switch status {
-        case .idle,
-             .done,
-             .none: true
-        case .working,
-             .needsPermission: false
-        }
+        slopdesk_watch_is_at_rest(status.ffiByte)
     }
 
     /// The BLOCK deadline (in `DispatchTime` uptime nanoseconds), DECOUPLED from the per-IPC `--timeout`.
@@ -84,8 +88,11 @@ public enum WatchClaudeOutcome {
     /// (`blockTimeoutMs == nil` ⇒ `nil` ⇒ no deadline-driven exit `9`); a caller-supplied `--block-timeout`
     /// bounds it. A non-positive value also yields `nil` (treated as unbounded — never an instant timeout).
     public static func blockDeadlineNanos(startNanos: UInt64, blockTimeoutMs: Int?) -> UInt64? {
-        guard let blockTimeoutMs, blockTimeoutMs > 0 else { return nil }
-        return startNanos &+ UInt64(blockTimeoutMs) &* 1_000_000
+        var deadline: UInt64 = 0
+        let bounded = slopdesk_watch_block_deadline_nanos(
+            startNanos, Int64(clamping: blockTimeoutMs ?? 0), &deadline,
+        )
+        return bounded ? deadline : nil
     }
 
     /// Decide the next step from one poll.
@@ -101,18 +108,18 @@ public enum WatchClaudeOutcome {
         hasEverBeenSeen: Bool,
         deadlineExceeded: Bool,
     ) -> Step {
+        let kind: UInt32
+        var status = ClaudeStatus.none.ffiByte
         switch observation {
-        case let .status(status):
-            if isAtRest(status) { return .finished(.settled) }
-            // Still working / blocked on a human → keep polling unless the deadline has elapsed.
-            return deadlineExceeded ? .finished(.timedOut) : .keepPolling
-        case .seenNoStatus:
-            // Pane EXISTS but its agent has not reported a status yet (startup window) → keep polling
-            // until it settles or the deadline elapses; never an instant never-seen on the first poll.
-            return deadlineExceeded ? .finished(.timedOut) : .keepPolling
-        case .notSeen:
-            // An id that resolves to NO pane is "closed" when we have seen it before, else "never seen".
-            return .finished(hasEverBeenSeen ? .settled : .neverSeen)
+        case let .status(polled):
+            kind = SLOPDESK_WATCH_STATUS
+            status = polled.ffiByte
+        case .seenNoStatus: kind = SLOPDESK_WATCH_SEEN_NO_STATUS
+        case .notSeen: kind = SLOPDESK_WATCH_NOT_SEEN
         }
+        var code: Int32 = 0
+        let step = slopdesk_watch_decide(kind, status, hasEverBeenSeen, deadlineExceeded, &code)
+        guard step == SLOPDESK_WATCH_FINISHED, let exit = Exit(rawValue: code) else { return .keepPolling }
+        return .finished(exit)
     }
 }

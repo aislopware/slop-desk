@@ -47,7 +47,6 @@
 //     instrument voice (`check-ds-leaks.sh` still enforces the closed scales).
 
 #if canImport(SwiftUI)
-import SlopDeskVideoProtocol
 import SwiftUI
 #if canImport(AppKit)
 import AppKit
@@ -932,7 +931,7 @@ enum Slate {
         /// prompt stays readable while the chip is up.
         static let islandChipInset: CGFloat = space4 + space2
 
-        /// The footer ARC GAUGE (``PulseGauge``): a ring the size of a footnote glyph box, so it
+        /// The footer ARC GAUGE (`PulseGauge`): a ring the size of a footnote glyph box, so it
         /// stands where the metric's SF-symbol mark used to and the pulse line's rhythm holds.
         static let gaugeDiameter: CGFloat = 11
         /// The gauge's ring weight — two hairlines: one reads as a slot, two read as a filling band.

@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 
 /// Modifier-key bitmask carried by input events (matches the CGEventFlags the host
@@ -14,7 +15,7 @@ public struct InputModifiers: OptionSet, Sendable, Equatable {
 }
 
 /// Which mouse button an event concerns.
-public enum MouseButton: UInt8, Sendable, Equatable {
+public enum MouseButton: UInt8, CaseIterable, Sendable, Equatable {
     case left = 0
     case right = 1
     case other = 2
@@ -103,109 +104,141 @@ public enum InputEvent: Equatable, Sendable {
         }
     }
 
-    /// Serialises the event. Native Swift is the single source of truth for the wire format
-    /// (pinned by the `inputEvent` golden vectors). All multi-byte ints are big-endian; the
-    /// `text` payload is appended as raw UTF-8 to the end of the datagram.
+    /// Serialises the event. `rust/slopdesk-video`'s `input_event` lays the bytes down — this side
+    /// only says which event it is (pinned by the `inputEvent` golden vectors). All multi-byte ints
+    /// are big-endian; the `text` payload is raw UTF-8 at the end of the datagram.
     public func encode() -> Data {
-        var out = Data()
-        out.append(messageType)
-        switch self {
-        case let .mouseMove(n, tag):
-            out.appendBE(tag)
-            out.appendBE(n.x)
-            out.appendBE(n.y)
-        case let .mouseDown(button, n, clickCount, mods, tag),
-             let .mouseUp(button, n, clickCount, mods, tag),
-             let .mouseDrag(button, n, clickCount, mods, tag):
-            out.appendBE(tag)
-            out.append(button.rawValue)
-            out.append(clickCount)
-            out.append(mods.rawValue)
-            out.appendBE(n.x)
-            out.appendBE(n.y)
-        case let .scroll(dx, dy, n, scrollPhase, momentumPhase, continuous, tag):
-            out.appendBE(tag)
-            out.appendBE(dx)
-            out.appendBE(dy)
-            out.appendBE(n.x)
-            out.appendBE(n.y)
-            out.append(scrollPhase)
-            out.append(momentumPhase)
-            out.append(continuous ? 1 : 0)
-        case let .key(keyCode, down, mods, tag):
-            out.appendBE(tag)
-            out.appendBE(keyCode)
-            out.append(down ? 1 : 0)
-            out.append(mods.rawValue)
-        case let .text(string, tag):
-            out.appendBE(tag)
-            out.append(Data(string.utf8))
+        let text = if case let .text(string, _) = self { Data(string.utf8) } else { Data() }
+        return text.withUnsafeBytes { bytes in
+            withUnsafeTemporaryAllocation(of: UInt8.self, capacity: Self.scratchBytes) { scratch in
+                let needed = slopdesk_input_event_encode(
+                    wire, bytes.baseAddress, bytes.count, scratch.baseAddress, scratch.count,
+                )
+                precondition(needed > 0, "the input codec refused an event this type can express")
+                guard needed > scratch.count else {
+                    return Data(UnsafeBufferPointer(start: scratch.baseAddress, count: needed))
+                }
+                // Only `.text` can outgrow the scratch, and only then does anyone pay for a second
+                // pass: the fixed-size arms are already written by the call that sized them.
+                var out = Data(count: needed)
+                let written = out.withUnsafeMutableBytes { buffer in
+                    slopdesk_input_event_encode(
+                        wire, bytes.baseAddress, bytes.count, buffer.baseAddress, buffer.count,
+                    )
+                }
+                precondition(written == needed, "the input codec sized an event differently than it wrote it")
+                return out
+            }
         }
-        return out
     }
 
-    /// Decodes a client→host input event (native Swift, the single source of truth; the wire
-    /// format is pinned by golden vectors). Non-finite coordinates, an unknown button/type, or
-    /// non-UTF-8 text are rejected as `.malformed`; a short body is `.truncated`.
+    /// Stack the fixed-size arms are written into on the first try, so the common event costs one
+    /// call rather than a sizing call and a writing one. Comfortably above the widest of them (a
+    /// scroll); too small would only ever be slower, never wrong, which is why this side may pick a
+    /// number at all — it is not the layout.
+    private static let scratchBytes = 64
+
+    /// Decodes a client→host input event. Every guard is the Rust codec's: non-finite coordinates,
+    /// an unknown button or type, and non-UTF-8 text are `.malformed`; a short body is `.truncated`.
+    /// The reason a decode failed stays on that side — nothing here branches on it, and the datagram
+    /// is being dropped either way.
     public static func decode(_ data: Data) throws -> Self {
-        var reader = VideoByteReader(data)
-        let type = try reader.readUInt8()
-        switch type {
-        case 1:
-            let tag = try reader.readUInt32()
-            let x = try reader.readFiniteFloat64("mouseMove.x")
-            let y = try reader.readFiniteFloat64("mouseMove.y")
-            return .mouseMove(normalized: VideoPoint(x: x, y: y), tag: tag)
+        var flat = SlopDeskInputEvent()
+        let verdict = data.withUnsafeBytes { bytes in
+            slopdesk_input_event_decode(bytes.baseAddress, bytes.count, &flat)
+        }
+        switch verdict {
+        case UInt32(SLOPDESK_INPUT_DECODE_TRUNCATED): throw VideoProtocolError.truncated
+        case UInt32(SLOPDESK_INPUT_DECODE_MALFORMED):
+            throw VideoProtocolError.malformed("unacceptable input event")
+        default: break
+        }
+        let normalized = VideoPoint(x: flat.x, y: flat.y)
+        let mods = InputModifiers(rawValue: flat.modifiers)
+        switch flat.message_type {
+        case 1: return .mouseMove(normalized: normalized, tag: flat.tag)
         case 2,
              3,
              7:
-            let tag = try reader.readUInt32()
-            guard let button = try MouseButton(rawValue: reader.readUInt8()) else {
-                throw VideoProtocolError.malformed("unknown mouse button")
-            }
-            let clickCount = try reader.readUInt8()
-            let mods = try InputModifiers(rawValue: reader.readUInt8())
-            let x = try reader.readFiniteFloat64("mouseButton.x")
-            let y = try reader.readFiniteFloat64("mouseButton.y")
-            let n = VideoPoint(x: x, y: y)
-            switch type {
-            case 2: return .mouseDown(button: button, normalized: n, clickCount: clickCount, modifiers: mods, tag: tag)
-            case 3: return .mouseUp(button: button, normalized: n, clickCount: clickCount, modifiers: mods, tag: tag)
-            default: return .mouseDrag(button: button, normalized: n, clickCount: clickCount, modifiers: mods, tag: tag)
-            }
+            // The button was already checked against the three the wire admits, so this cannot fail.
+            let button = MouseButton(rawValue: flat.button) ?? .left
+            let arm: (MouseButton, VideoPoint, UInt8, InputModifiers, UInt32) -> Self =
+                switch flat.message_type {
+                case 2: Self.mouseDown
+                case 3: Self.mouseUp
+                default: Self.mouseDrag
+                }
+            return arm(button, normalized, flat.click_count, mods, flat.tag)
         case 4:
-            let tag = try reader.readUInt32()
-            let dx = try reader.readFiniteFloat64("scroll.dx")
-            let dy = try reader.readFiniteFloat64("scroll.dy")
-            let x = try reader.readFiniteFloat64("scroll.x")
-            let y = try reader.readFiniteFloat64("scroll.y")
-            let scrollPhase = try reader.readUInt8()
-            let momentumPhase = try reader.readUInt8()
-            let continuous = try reader.readUInt8() != 0
             return .scroll(
-                dx: dx,
-                dy: dy,
-                normalized: VideoPoint(x: x, y: y),
-                scrollPhase: scrollPhase,
-                momentumPhase: momentumPhase,
-                continuous: continuous,
-                tag: tag,
+                dx: flat.dx, dy: flat.dy, normalized: normalized,
+                scrollPhase: flat.scroll_phase, momentumPhase: flat.momentum_phase,
+                continuous: flat.continuous, tag: flat.tag,
             )
         case 5:
-            let tag = try reader.readUInt32()
-            let keyCode = try reader.readUInt16()
-            let down = try reader.readUInt8() != 0
-            let mods = try InputModifiers(rawValue: reader.readUInt8())
-            return .key(keyCode: keyCode, down: down, modifiers: mods, tag: tag)
-        case 6:
-            let tag = try reader.readUInt32()
-            let bytes = reader.remaining()
-            guard let string = String(data: bytes, encoding: .utf8) else {
-                throw VideoProtocolError.malformed("input text not valid UTF-8")
-            }
-            return .text(string, tag: tag)
+            return .key(keyCode: flat.key_code, down: flat.down, modifiers: mods, tag: flat.tag)
         default:
-            throw VideoProtocolError.malformed("unknown input event type \(type)")
+            // The text arm: its bytes stay in the caller's datagram, and the codec proved every one
+            // of them is UTF-8 before it reported where they start.
+            let span = data.dropFirst(Int(flat.text_offset))
+            // Not the failable initializer: the decode above rejected non-UTF-8 text as malformed,
+            // so a second check here would be a second guard with an unreachable arm.
+            // swiftlint:disable:next optional_data_string_conversion
+            return .text(String(decoding: span, as: UTF8.self), tag: flat.tag)
         }
+    }
+
+    /// A scroll the far side SYNTHESISED — a summed emit the caller never sent, so there is no
+    /// event of its own to name and the whole thing crosses in the record.
+    ///
+    /// Only the scroll arm: everything else the boundary answers is one of the caller's own events,
+    /// named by index, and a record claiming to be one of those is a shape this side did not ask
+    /// for and does not build.
+    public init?(summedScroll flat: SlopDeskInputEvent) {
+        guard flat.message_type == 4 else { return nil }
+        self = .scroll(
+            dx: flat.dx, dy: flat.dy, normalized: VideoPoint(x: flat.x, y: flat.y),
+            scrollPhase: flat.scroll_phase, momentumPhase: flat.momentum_phase,
+            continuous: flat.continuous, tag: flat.tag,
+        )
+    }
+
+    /// The event flattened for the boundary: one value with `messageType` saying which fields of it
+    /// carry meaning, which is what keeps a C union off the wire between the two sides.
+    ///
+    /// Public because encoding is no longer the only door that takes a batch of these — the motion
+    /// coalescer hands the same records across and gets back a plan naming them.
+    public var wire: SlopDeskInputEvent {
+        var flat = SlopDeskInputEvent()
+        flat.message_type = messageType
+        flat.tag = tag
+        switch self {
+        case let .mouseMove(n, _):
+            flat.x = n.x
+            flat.y = n.y
+        case let .mouseDown(button, n, clickCount, mods, _),
+             let .mouseUp(button, n, clickCount, mods, _),
+             let .mouseDrag(button, n, clickCount, mods, _):
+            flat.x = n.x
+            flat.y = n.y
+            flat.button = button.rawValue
+            flat.click_count = clickCount
+            flat.modifiers = mods.rawValue
+        case let .scroll(dx, dy, n, scrollPhase, momentumPhase, continuous, _):
+            flat.x = n.x
+            flat.y = n.y
+            flat.dx = dx
+            flat.dy = dy
+            flat.scroll_phase = scrollPhase
+            flat.momentum_phase = momentumPhase
+            flat.continuous = continuous
+        case let .key(keyCode, down, mods, _):
+            flat.key_code = keyCode
+            flat.down = down
+            flat.modifiers = mods.rawValue
+        case .text:
+            flat.text_offset = slopdesk_input_event_constant(0)
+        }
+        return flat
     }
 }

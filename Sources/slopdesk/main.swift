@@ -1,6 +1,5 @@
 import SlopDeskCLICore
-import SlopDeskCtlCore
-import SlopDeskVideoProtocol
+import SlopDeskTTY
 import SlopDeskWorkspaceCore
 #if os(macOS)
 import CoreText
@@ -140,7 +139,7 @@ func launchClientGUI(forward: [String]? = nil) -> Never {
 func forwardExecCommand(_ command: [String]) {
     let socketPath = resolveClientSocketPath()
     let text = command.joined(separator: " ")
-    guard let line = encodeRequestLine(
+    guard let line = ClientControlProtocol.encodeRequestLine(
         id: "1",
         method: ClientControlProtocol.Method.paneSendKeys,
         params: ClientControlProtocol.paneSendKeysParams(paneId: nil, text: text, keys: ["Enter"]),
@@ -177,18 +176,7 @@ func forwardSend(socketPath: String, requestLine: String) -> Bool {
     var line = requestLine
     if !line.hasSuffix("\n") { line += "\n" }
     let sendData = Data(line.utf8)
-    return sendData.withUnsafeBytes { (raw: UnsafeRawBufferPointer) -> Bool in
-        guard let base = raw.baseAddress else { return false }
-        var offset = 0
-        let total = raw.count
-        while offset < total {
-            let n = write(fd, base + offset, total - offset)
-            if n > 0 { offset += n }
-            else if n < 0, errno == EINTR { continue }
-            else { return false }
-        }
-        return true
-    }
+    return FileDescriptorWrite.all(fd: fd, sendData) == .complete
 }
 #else
 func launchClientGUI(forward _: [String]? = nil) -> Never {
@@ -272,16 +260,12 @@ func clientSendRequest(socketPath: String, requestLine: String) -> String {
     var line = requestLine
     if !line.hasSuffix("\n") { line += "\n" }
     let sendData = Data(line.utf8)
-    sendData.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
-        guard let base = raw.baseAddress else { return }
-        var offset = 0
-        let total = raw.count
-        while offset < total {
-            let n = write(fd, base + offset, total - offset)
-            if n > 0 { offset += n }
-            else if n < 0, errno == EINTR { continue }
-            else { die("write to control socket failed: \(String(cString: strerror(errno)))", code: 3) }
-        }
+    // This one REPORTS: the CLI has nothing to fall back to, so a half-written request exits.
+    switch FileDescriptorWrite.all(fd: fd, sendData) {
+    case .complete: break
+    case .peerClosed: die("write to control socket failed: the SlopDesk app closed the socket", code: 3)
+    case let .failed(errno, _):
+        die("write to control socket failed: \(String(cString: strerror(errno)))", code: 3)
     }
 
     var response = Data()
@@ -309,11 +293,12 @@ func clientSendRequest(socketPath: String, requestLine: String) -> String {
 /// Encode + send one control request, returning the decoded response object. Dies on encode / transport /
 /// decode failure.
 func callClient(method: String, params: [String: Any]) -> [String: Any] {
-    guard let line = encodeRequestLine(id: "1", method: method, params: params) else {
+    guard let line = ClientControlProtocol.encodeRequestLine(id: "1", method: method, params: params)
+    else {
         die("failed to encode \(method) request as JSON")
     }
     let response = clientSendRequest(socketPath: resolveClientSocketPath(), requestLine: line)
-    guard let obj = decodeResponseLine(response) else {
+    guard let obj = ClientControlProtocol.decodeResponseLine(response) else {
         die("malformed response from the SlopDesk app: \(response)", code: 3)
     }
     return obj
@@ -689,7 +674,7 @@ func cmdConfigValidate(_ args: [String]) -> Never {
     guard let data = FileManager.default.contents(atPath: path),
           let contents = String(data: data, encoding: .utf8)
     else { die("config validate: cannot read \(path)") }
-    let errors = CLIConfig.validate(contents, isValidKeybindValue: { KeybindGrammar.parseLine($0) != nil })
+    let errors = CLIConfig.validate(contents)
     guard errors.isEmpty else {
         for error in errors {
             FileHandle.standardError.write(Data("\(programName): \(path):\(error.line): \(error.message)\n".utf8))

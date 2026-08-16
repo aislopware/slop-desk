@@ -1,5 +1,4 @@
 import Foundation
-import SlopDeskProtocol
 
 /// A non-rendering ``TerminalSurface`` that simply accumulates the bytes fed to it.
 ///

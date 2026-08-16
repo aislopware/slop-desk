@@ -1,5 +1,4 @@
 import CoreGraphics
-import Foundation
 
 // MARK: - Readable wire shape for CoreGraphics values
 

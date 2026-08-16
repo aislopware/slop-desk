@@ -163,12 +163,6 @@ public final class LoopbackWorkspaceDocument {
         mutate { $0.merge(paneLiveness: record) }
     }
 
-    /// Deletes a pane OBJECT — every field, topology included.
-    @discardableResult
-    public func removePane(_ paneID: UUID) -> Bool {
-        mutate { $0.removeObject(kind: WorkspaceObjectKind.pane.rawValue, objectID: paneID) }
-    }
-
     // MARK: - Publishing
 
     /// Versions `next` and publishes the diff that carries the mirror to it.

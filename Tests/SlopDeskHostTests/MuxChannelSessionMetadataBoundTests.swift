@@ -24,7 +24,7 @@ final class MuxChannelSessionMetadataBoundTests: XCTestCase {
     private func makeSession() -> MuxChannelSession {
         MuxChannelSession(
             channelID: 1,
-            pty: PTYProcess(), // unspawned — hang-safety; the probe guards out on pid −1
+            pty: unattachedPTY(), // unspawned — hang-safety; the probe guards out on pid −1
             data: MuxSubChannel(channelID: 1, channel: .data) { _, _ in },
             control: MuxSubChannel(channelID: 1, channel: .control) { _, _ in },
         )

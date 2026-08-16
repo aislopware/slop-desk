@@ -1,6 +1,3 @@
-import Foundation
-import SlopDeskVideoProtocol
-
 /// The seam by which the headless ``PreferencesStore`` (in `SlopDeskWorkspaceCore`) reads the GUI's
 /// terminal-cell palette without depending on `SlopDeskClientUI` (the SwiftUI/AppKit layer that
 /// `WorkspaceCore` must not import). Mirrors the `TerminalRenderingView.shared` /

@@ -1,6 +1,5 @@
 import SlopDeskWorkspaceModel
 import XCTest
-@testable import SlopDeskWorkspaceCore
 
 /// Pins `PaneSpec.looksLikeTransientPluginCwd` — the classifier that keeps a plugin manager's TRANSIENT
 /// turbo-`cd` cache dir out of `lastKnownCwd` (the "cwd sometimes becomes zsh-users---zsh-autosuggestions"

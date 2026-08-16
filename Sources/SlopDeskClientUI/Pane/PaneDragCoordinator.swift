@@ -214,7 +214,7 @@ final class PaneDragCoordinator {
 
     /// The armed spring-load: hovering a sidebar row for the dwell REVEALS that row's tab (Finder-style
     /// spring-loaded folders), so the drag can continue into the newly shown canvas and drop precisely.
-    @ObservationIgnored private var springLoadTask: Task<Void, Never>?
+    @ObservationIgnored private let springLoadTask = DeadlineLatch()
     @ObservationIgnored private var springLoadArmedRow: PaneID?
 
     /// Sidebar-row dwell before the spring-loaded tab reveal fires.
@@ -322,11 +322,9 @@ final class PaneDragCoordinator {
             return
         }
         guard row != springLoadArmedRow else { return }
-        springLoadTask?.cancel()
         springLoadArmedRow = row
-        springLoadTask = Task { [weak self] in
-            try? await Task.sleep(for: Self.springLoadDwell)
-            guard !Task.isCancelled, let self else { return }
+        springLoadTask.arm(after: Self.springLoadDwell) { [weak self] in
+            guard let self else { return }
             guard drag?.destination == .sidebarRow(row), let store else { return }
             if let index = Self.springLoadTabIndex(for: row, in: store.tree) {
                 store.selectTab(index)
@@ -335,8 +333,7 @@ final class PaneDragCoordinator {
     }
 
     private func cancelSpringLoad() {
-        springLoadTask?.cancel()
-        springLoadTask = nil
+        springLoadTask.cancel()
         springLoadArmedRow = nil
     }
 

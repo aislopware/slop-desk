@@ -1,4 +1,6 @@
+import CSlopDeskFFI
 import Foundation
+import SlopDeskArena
 import SlopDeskVideoProtocol
 
 // Pure, platform-free client-session logic for the GUI video path (PATH 2 / Phase 4).
@@ -6,6 +8,11 @@ import SlopDeskVideoProtocol
 // host's `VideoSessionLogic`) so every decision is unit-testable in isolation. The actor
 // in `SlopDeskVideoClientSession.swift` owns the live components (decoder / pacer /
 // renderer / sockets) and delegates each decision to these types.
+//
+// The lifecycle half — the state machine, the hello-retry cadence, the reconnecting-scrim latch —
+// is the Swift FACE of `rust/slopdesk-video`'s `client_session`. It holds no decision of its own:
+// the machine crosses BY VALUE (every field is read here, so there is nothing for a handle to own —
+// docs/55 §4b) and each transition answers a list of effects through lent buffers.
 
 /// Lifecycle state of a client video session (the mirror of the host's
 /// ``VideoSessionState``).
@@ -20,6 +27,18 @@ public enum VideoClientState: Equatable, Sendable {
     case rejected
     /// `stop()` (or a received `bye`) ran; terminal.
     case stopped
+
+    /// The state behind one of the door's codes. An unrecognised code reads as ``idle`` — the only
+    /// state from which nothing has happened yet.
+    init(code: UInt32) {
+        switch code {
+        case SLOPDESK_VIDEO_CLIENT_CONNECTING: self = .connecting
+        case SLOPDESK_VIDEO_CLIENT_STREAMING: self = .streaming
+        case SLOPDESK_VIDEO_CLIENT_REJECTED: self = .rejected
+        case SLOPDESK_VIDEO_CLIENT_STOPPED: self = .stopped
+        default: self = .idle
+        }
+    }
 }
 
 /// What a client video session asks the host to stream: one WINDOW (the classic per-window
@@ -35,59 +54,54 @@ public enum VideoStreamTarget: Equatable, Sendable {
 /// sibling `helloDisplay`), consumes the host's `helloAck`, and gates whether received media is
 /// processed. No live component — the actor advances it and acts on the returned ``Effect``s.
 public struct VideoClientStateMachine: Sendable {
-    public private(set) var state: VideoClientState = .idle
+    /// The whole machine as it crosses: six scalars and two rectangles, all of them read here, so
+    /// there is nothing for a handle to own (docs/55 §4b) and value semantics survive the port.
+    private var machine: SlopDeskVideoClientMachine
+
+    public var state: VideoClientState { VideoClientState(code: machine.state) }
 
     /// What this client asked the host to stream (window or whole display).
-    public let target: VideoStreamTarget
-    /// The window this client asked the host to remote (`0` for a display target — kept for the
-    /// window-specific call sites; prefer ``target``).
-    public var requestedWindowID: UInt32 {
-        if case let .window(id) = target { return id }
-        return 0
+    public var target: VideoStreamTarget {
+        machine.target_kind == SLOPDESK_VIDEO_TARGET_DISPLAY
+            ? .display(machine.target_id)
+            : .window(machine.target_id)
     }
 
+    /// The window this client asked the host to remote (`0` for a display target — kept for the
+    /// window-specific call sites; prefer ``target``).
+    public var requestedWindowID: UInt32 { slopdesk_video_client_requested_window_id(machine) }
+
     /// The client viewport size sent in the hello (host sizes capture against it).
-    public let viewport: VideoSize
+    public var viewport: VideoSize { Self.size(machine.viewport) }
 
     /// Negotiated values, populated on an accepted `helloAck`.
-    public private(set) var streamID: UInt32 = 0
-    public private(set) var captureSize: VideoSize = .init(width: 0, height: 0)
+    public var streamID: UInt32 { machine.stream_id }
+    public var captureSize: VideoSize { Self.size(machine.capture_size) }
     /// The TARGET's CG-top-left bounds reported in the ack (the initial geometry — a window's
     /// frame, updated thereafter by the geometry channel; a display's fixed CG bounds).
-    public private(set) var windowBoundsCG: VideoRect = .init(x: 0, y: 0, width: 0, height: 0)
+    public var windowBoundsCG: VideoRect { Self.rect(machine.window_bounds_cg) }
 
     public init(requestedWindowID: UInt32, viewport: VideoSize) {
         self.init(target: .window(requestedWindowID), viewport: viewport)
     }
 
     public init(target: VideoStreamTarget, viewport: VideoSize) {
-        self.target = target
-        self.viewport = viewport
-    }
-
-    /// The wire hello for this session's target — `hello` for a window, `helloDisplay` for a
-    /// display. One derivation shared by ``start()`` and ``resendHello()``.
-    private var helloMessage: VideoControlMessage {
-        switch target {
-        case let .window(id):
-            .hello(
-                protocolVersion: SlopDeskVideoProtocol.version,
-                requestedWindowID: id,
-                viewport: viewport,
-            )
-        case let .display(id):
-            .helloDisplay(
-                protocolVersion: SlopDeskVideoProtocol.version,
-                requestedDisplayID: id,
-                viewport: viewport,
-            )
-        }
+        let (kind, id): (UInt32, UInt32) =
+            switch target {
+            case let .window(id): (SLOPDESK_VIDEO_TARGET_WINDOW, id)
+            case let .display(id): (SLOPDESK_VIDEO_TARGET_DISPLAY, id)
+            }
+        machine = slopdesk_video_client_new(
+            kind, id, SlopDeskVideoSize(width: viewport.width, height: viewport.height),
+        )
     }
 
     /// Side effects the actor performs after a transition.
     public enum Effect: Equatable, Sendable {
-        /// Send this control message to the host (on the control channel).
-        case sendControl(VideoControlMessage)
+        /// Send these bytes to the host on the control channel. Already ENCODED — the hello that
+        /// opens every session is minted by the same crate the host parses it back with, so there is
+        /// no second encoder for the runtime to disagree with.
+        case sendControl([UInt8])
         /// (Re-)send the cursor side-channel prime so the host (re-)learns this lane's cursor
         /// reply flow. The cursor socket is host→client only after the prime — there is NO ongoing
         /// client→host traffic on it — so unlike the media flow (re-stamped by every routed inbound
@@ -149,110 +163,7 @@ public struct VideoClientStateMachine: Sendable {
     }
 
     /// `start()` was called: prime the cursor flow + send the hello, move to `.connecting`.
-    public mutating func start() -> [Effect] {
-        guard state == .idle else { return [] }
-        state = .connecting
-        return [.primeCursorFlow, .sendControl(helloMessage)]
-    }
-
-    /// A control datagram arrived from the host. The client acts only on `helloAck`
-    /// (accept → start pipeline; reject → `.rejected`) and `bye` (host tore down → stop).
-    /// A duplicate accepted ack while already streaming is ignored (idempotent — UDP may
-    /// deliver the ack more than once).
-    public mutating func handleControl(_ message: VideoControlMessage) -> [Effect] {
-        switch message {
-        case let .helloAck(accepted, streamID, cw, ch, bounds, fullRange):
-            guard state == .connecting else {
-                // Already resolved: ignore a duplicate / late ack.
-                return []
-            }
-            guard accepted else {
-                // TERMINAL REFUSAL (window gone on the host — the mux mint-failure refusal — or a
-                // version mismatch). Surface `.sessionRejectedByHost` so the pane tears down and
-                // falls back to the picker; the `.connecting` guard above makes a duplicate refusal
-                // (UDP re-delivery / a re-refused retried hello) inert. Deliberately NOT
-                // `.sessionEndedByHost`: that path REBUILDS + re-hellos, which would re-send the
-                // same doomed request forever.
-                state = .rejected
-                return [.sessionRejectedByHost]
-            }
-            self.streamID = streamID
-            captureSize = VideoSize(width: Double(cw), height: Double(ch))
-            windowBoundsCG = bounds
-            state = .streaming
-            return [.startDecodePipeline(captureSize: captureSize, windowBoundsCG: bounds, fullRange: fullRange)]
-        case .bye:
-            guard state == .streaming || state == .connecting else { return [] }
-            state = .stopped
-            // `.sessionEndedByHost` (reconnect-wedge fix): the GUI layer rebuilds the whole
-            // pipeline + re-hellos on a fresh lane. Emitted ONLY here (host-initiated end) —
-            // a local `stop()` must not trigger a rebuild.
-            return [.stopDecodePipeline, .sessionEndedByHost]
-        case let .resizeAck(cw, ch, _):
-            // Host adopted a new capture size. Stage it as pending; adoption as the aspect-fit
-            // denominator is frame-gated to the first decoded buffer at that size (in-flight
-            // old-size frames may still be queued after the ack). Acted on ONLY while streaming
-            // (a stray/late ack after teardown is inert). The echoed epoch is not re-validated
-            // (the host already dropped stale epochs). Fixed-size sessions (host AX-refuses
-            // resize) send no resizeAck, so this branch is never reached there.
-            guard state == .streaming else { return [] }
-            return [.updateCaptureSize(VideoSize(width: Double(cw), height: Double(ch)))]
-        case let .streamCadence(fps):
-            // FPS governor (host→client): rebase content-cadence assumptions. Streaming only.
-            // fps 0 is nonsense — dropped (host never sends it; defensive against a corrupt body
-            // that still parsed).
-            guard state == .streaming, fps >= 1 else { return [] }
-            return [.applyStreamCadence(fps)]
-        case let .scrollOffset(dx, dy, bandTop, bandBottom):
-            // Host→client scroll-reprojection hint + moving-content band. Streaming only. (0,0,…)
-            // still flows — it arms the reprojector's decay when scroll stops.
-            guard state == .streaming else { return [] }
-            return [.applyScrollOffset(dx, dy, bandTop, bandBottom)]
-        case let .contentMask(rects):
-            // Host→client transparency mask after a DIALOG-EXPAND region change. Streaming only;
-            // an empty list clears the mask.
-            guard state == .streaming else { return [] }
-            return [.applyContentMask(rects)]
-        case let .displayMax(w, h):
-            // Host→client max resizable point size (the window's display bounds). Streaming only.
-            // Zero/degenerate dimensions are dropped (popover stays uncapped) rather than pinning
-            // the field max to 0.
-            guard state == .streaming, w >= 1, h >= 1 else { return [] }
-            return [.applyDisplayMax(VideoSize(width: Double(w), height: Double(h)))]
-        case let .hostStats(rttTenths, encodeTenths):
-            // Host→client stats-HUD halves (~2 Hz). Streaming only; zeros flow (0 = "no reading
-            // yet" — the readout renders it as a dash, never a fake 0.0 ms).
-            guard state == .streaming else { return [] }
-            return [.applyHostStats(rttTenthsMillis: rttTenths, encodeTenthsMillis: encodeTenths)]
-        case .hello,
-             .helloDisplay,
-             .resizeRequest,
-             .keepalive,
-             .listWindows,
-             .windowList,
-             .focusWindow,
-             .listSystemDialogs,
-             .systemDialogList,
-             .listDisplays,
-             .displayList,
-             .windowFeedSubscribe,
-             .windowFeedSnapshot,
-             .windowFeedCurrent,
-             .appIconRequest,
-             .blobChunk,
-             .windowPreviewRequest,
-             .streamSettings,
-             .audioControl,
-             .privacyMode:
-            // hello / resizeRequest / keepalive / listWindows / focusWindow / windowFeedSubscribe /
-            // appIconRequest / streamSettings / audioControl / privacyMode are client→host.
-            // `windowList` + `windowFeedSnapshot` + `windowFeedCurrent` + `blobChunk` ARE host→client
-            // but handled out-of-band by the discovery / window-feed / blob queries (their own lanes),
-            // NOT by a streaming session's FSM. `listSystemDialogs`/`systemDialogList` are DORMANT wire
-            // (docs/DECISIONS.md 2026-07-23 — codec + golden kept, no live sender). Defensive no-op here.
-            return []
-        }
-    }
+    public mutating func start() -> [Effect] { drain(slopdesk_video_client_start) }
 
     /// Re-emits the `hello` while STILL `.connecting` (hello-retry path — the second half of the
     /// reconnect-wedge fix). Over plain UDP the one-shot hello or its ack can be lost, and after a
@@ -260,27 +171,158 @@ public struct VideoClientStateMachine: Sendable {
     /// session would wedge in `.connecting` forever. Driven on the ``HelloRetryPolicy`` cadence; any resolved state
     /// (streaming / rejected / stopped) returns `[]`, ending the retry loop. Idempotent on the host
     /// (a duplicate hello re-acks without restarting capture).
-    public mutating func resendHello() -> [Effect] {
-        guard state == .connecting else { return [] }
-        // The prime rides every retry, not just the first hello: a session that sat `.connecting`
-        // across a host daemon restart reconnects THROUGH this path on the restarted daemon, which
-        // never saw the lane's original one-shot prime — without a re-prime its cursor channel
-        // stays dead (pointer shape frozen on the default arrow) while video and input recover.
-        return [.primeCursorFlow, .sendControl(helloMessage)]
-    }
+    public mutating func resendHello() -> [Effect] { drain(slopdesk_video_client_resend_hello) }
 
     /// `stop()` was called locally: tell the host (best-effort `bye`) and tear down.
-    public mutating func stop() -> [Effect] {
-        guard state != .stopped else { return [] }
-        let wasStreaming = state == .streaming
-        state = .stopped
-        var effects: [Effect] = [.sendControl(.bye)]
-        if wasStreaming { effects.append(.stopDecodePipeline) }
-        return effects
+    public mutating func stop() -> [Effect] { drain(slopdesk_video_client_stop) }
+
+    /// A control datagram arrived from the host. The client acts only on `helloAck`
+    /// (accept → start pipeline; reject → `.rejected`) and `bye` (host tore down → stop).
+    /// A duplicate accepted ack while already streaming is ignored (idempotent — UDP may
+    /// deliver the ack more than once).
+    public mutating func handleControl(_ message: VideoControlMessage) -> [Effect] {
+        handleControl(datagram: [UInt8](message.encode()))
+    }
+
+    /// The same, from the datagram the transport handed over — the shape the door takes, so a caller
+    /// that already holds the bytes does not re-encode what it just decoded. An undecodable datagram
+    /// is inert: no effects, no transition.
+    public mutating func handleControl(datagram: [UInt8]) -> [Effect] {
+        func step(
+            _ seat: UnsafeMutablePointer<SlopDeskVideoClientMachine>?,
+            _ out: UnsafeMutablePointer<SlopDeskVideoClientEffect>?,
+            _ room: Int,
+            _ masks: UnsafeMutablePointer<SlopDeskVideoMaskRect>?,
+            _ maskRoom: Int,
+            _ arena: UnsafeMutablePointer<UInt8>?,
+            _ arenaRoom: Int,
+        ) -> SlopDeskVideoClientShape {
+            datagram.withUnsafeBufferPointer { bytes in
+                slopdesk_video_client_handle_control(
+                    seat, bytes.baseAddress, bytes.count, out, room, masks, maskRoom, arena, arenaRoom,
+                )
+            }
+        }
+        return drain(step)
     }
 
     /// Whether received media (video/geometry/cursor) should be processed right now.
-    public var mediaFlowing: Bool { state == .streaming }
+    public var mediaFlowing: Bool { slopdesk_video_client_media_flowing(machine) }
+
+    // MARK: - Crossing
+
+    /// One transition, as the door takes it: the machine to step, and the three buffers its answer
+    /// is written into.
+    private typealias Step = (
+        UnsafeMutablePointer<SlopDeskVideoClientMachine>?,
+        UnsafeMutablePointer<SlopDeskVideoClientEffect>?,
+        Int,
+        UnsafeMutablePointer<SlopDeskVideoMaskRect>?,
+        Int,
+        UnsafeMutablePointer<UInt8>?,
+        Int,
+    ) -> SlopDeskVideoClientShape
+
+    /// Runs one transition and reads its effects back.
+    ///
+    /// Two calls, and the first one is free of consequence: a transition that does not fit the lent
+    /// buffers is NOT applied, so the measuring pass leaves the machine exactly where it was and the
+    /// filling pass is the same transition rather than a second one.
+    private mutating func drain(_ step: Step) -> [Effect] {
+        let shape = withUnsafeMutablePointer(to: &machine) { seat in step(seat, nil, 0, nil, 0, nil, 0) }
+        guard shape.effects > 0 else { return [] }
+        let records = UnsafeMutableBufferPointer<SlopDeskVideoClientEffect>.allocate(capacity: shape.effects)
+        defer { records.deallocate() }
+        records.initialize(repeating: SlopDeskVideoClientEffect())
+        let rects = UnsafeMutableBufferPointer<SlopDeskVideoMaskRect>.allocate(capacity: shape.masks)
+        defer { rects.deallocate() }
+        rects.initialize(repeating: SlopDeskVideoMaskRect())
+        let arena = UnsafeMutableBufferPointer<UInt8>.allocate(capacity: shape.arena)
+        defer { arena.deallocate() }
+        arena.initialize(repeating: 0)
+        let filled = withUnsafeMutablePointer(to: &machine) { seat in
+            step(
+                seat, records.baseAddress, records.count, rects.baseAddress, rects.count,
+                arena.baseAddress, arena.count,
+            )
+        }
+        guard filled.effects == shape.effects else { return [] }
+        return records.compactMap { record in Self.effect(record, rects, arena) }
+    }
+
+    /// One effect record, with its variable parts read out of the two arrays it points into.
+    private static func effect(
+        _ record: SlopDeskVideoClientEffect,
+        _ rects: UnsafeMutableBufferPointer<SlopDeskVideoMaskRect>,
+        _ arena: UnsafeMutableBufferPointer<UInt8>,
+    ) -> Effect? {
+        switch record.kind {
+        case SLOPDESK_CLIENT_EFFECT_SEND_CONTROL:
+            .sendControl(run(record.control, arena))
+        case SLOPDESK_CLIENT_EFFECT_PRIME_CURSOR_FLOW:
+            .primeCursorFlow
+        case SLOPDESK_CLIENT_EFFECT_START_DECODE_PIPELINE:
+            .startDecodePipeline(
+                captureSize: size(record.size),
+                windowBoundsCG: rect(record.bounds),
+                fullRange: record.full_range,
+            )
+        case SLOPDESK_CLIENT_EFFECT_STOP_DECODE_PIPELINE:
+            .stopDecodePipeline
+        case SLOPDESK_CLIENT_EFFECT_UPDATE_CAPTURE_SIZE:
+            .updateCaptureSize(size(record.size))
+        case SLOPDESK_CLIENT_EFFECT_APPLY_STREAM_CADENCE:
+            .applyStreamCadence(UInt16(truncatingIfNeeded: record.first))
+        case SLOPDESK_CLIENT_EFFECT_APPLY_SCROLL_OFFSET:
+            .applyScrollOffset(
+                Int16(truncatingIfNeeded: record.dx),
+                Int16(truncatingIfNeeded: record.dy),
+                UInt16(truncatingIfNeeded: record.first),
+                UInt16(truncatingIfNeeded: record.second),
+            )
+        case SLOPDESK_CLIENT_EFFECT_APPLY_CONTENT_MASK:
+            .applyContentMask(mask(record, rects))
+        case SLOPDESK_CLIENT_EFFECT_APPLY_DISPLAY_MAX:
+            .applyDisplayMax(size(record.size))
+        case SLOPDESK_CLIENT_EFFECT_APPLY_HOST_STATS:
+            .applyHostStats(
+                rttTenthsMillis: UInt16(truncatingIfNeeded: record.first),
+                encodeTenthsMillis: UInt16(truncatingIfNeeded: record.second),
+            )
+        case SLOPDESK_CLIENT_EFFECT_SESSION_ENDED_BY_HOST:
+            .sessionEndedByHost
+        case SLOPDESK_CLIENT_EFFECT_SESSION_REJECTED_BY_HOST:
+            .sessionRejectedByHost
+        default:
+            nil
+        }
+    }
+
+    /// The run of the answer arena a span names.
+    private static func run(_ span: SlopDeskByteSpan, _ arena: UnsafeMutableBufferPointer<UInt8>) -> [UInt8] {
+        ArenaText.bytes(arena, offset: Int(span.offset), length: Int(span.length))
+    }
+
+    /// The run of the lent rectangles an effect names.
+    private static func mask(
+        _ record: SlopDeskVideoClientEffect,
+        _ rects: UnsafeMutableBufferPointer<SlopDeskVideoMaskRect>,
+    ) -> [MaskRect] {
+        let start = Int(record.mask_offset)
+        let end = start + Int(record.mask_count)
+        guard start >= 0, end <= rects.count, start <= end else { return [] }
+        return rects[start..<end].map { rect in
+            MaskRect(x: rect.x, y: rect.y, width: rect.width, height: rect.height)
+        }
+    }
+
+    private static func size(_ value: SlopDeskVideoSize) -> VideoSize {
+        VideoSize(width: value.width, height: value.height)
+    }
+
+    private static func rect(_ value: SlopDeskVideoRect) -> VideoRect {
+        VideoRect(x: value.x, y: value.y, width: value.width, height: value.height)
+    }
 }
 
 /// PURE hello-retry cadence (reconnect-wedge fix): how long to wait before re-sending the `hello`
@@ -289,20 +331,17 @@ public struct VideoClientStateMachine: Sendable {
 /// one ~20-byte datagram per `maxDelay` (same order as the window dock's discovery poll). No clock,
 /// no timer (the actor sleeps the returned delay) — headlessly unit-testable.
 public enum HelloRetryPolicy {
-    /// First retry fires this long after the initial hello (seconds).
-    public static let initialDelay: TimeInterval = 0.5
-    /// Ceiling for the backoff (seconds).
-    public static let maxDelay: TimeInterval = 5.0
+    /// First retry fires this long after the initial hello (seconds) — which IS the delay before
+    /// retry 0, so the number is asked for rather than restated.
+    public static let initialDelay: TimeInterval = delay(attempt: 0)
+    /// Ceiling for the backoff (seconds) — the delay at an attempt the backoff can never reach.
+    public static let maxDelay: TimeInterval = delay(attempt: .max)
 
     /// The delay before retry number `attempt` (0-based: `attempt == 0` is the FIRST retry after
     /// the initial hello). `initialDelay × 2^attempt`, capped at `maxDelay`; a negative attempt is
     /// clamped to 0 (defensive — the caller counts up from 0).
     public static func delay(attempt: Int) -> TimeInterval {
-        let n = max(0, attempt)
-        // 2^4 already exceeds the cap (0.5 × 16 = 8 > 5) — short-circuit so a long retry loop
-        // can never overflow the shift.
-        guard n < 4 else { return maxDelay }
-        return Double.minimum(maxDelay, initialDelay * Double(1 << n))
+        slopdesk_video_client_hello_retry_delay(UInt32(clamping: attempt))
     }
 }
 
@@ -329,27 +368,23 @@ public struct StallScrimLatch: Sendable, Equatable {
     /// hello-retry limbo with no scrim (the HW-found bye-path gap). Returns `true` when this SHOWED
     /// the scrim (caller notifies the view), `nil` when already up (duplicate byes are quiet).
     public mutating func noteReconnecting() -> Bool? {
-        guard !visible else { return nil }
-        visible = true
-        return true
+        flipped { seat in slopdesk_stall_scrim_note_reconnecting(seat) }
     }
 
     /// Folds one verdict. Returns the NEW visibility when it flipped (the caller notifies the view),
     /// `nil` when unchanged (quiet — no per-tick re-notify). `.notConnected`/`.unknown` hold the
     /// current state (see the type doc: sticky through the rebuild).
     public mutating func apply(_ verdict: StreamStallPolicy.Verdict) -> Bool? {
-        switch verdict {
-        case .stalled:
-            guard !visible else { return nil }
-            visible = true
-            return true
-        case .live:
-            guard visible else { return nil }
-            visible = false
-            return false
-        case .notConnected,
-             .unknown:
-            return nil
+        flipped { seat in slopdesk_stall_scrim_apply(seat, verdict.code) }
+    }
+
+    /// Runs one latch operation over the single bit this type is, and reads back what flipped.
+    private mutating func flipped(_ fold: (UnsafeMutablePointer<Bool>) -> Int32) -> Bool? {
+        let answer = withUnsafeMutablePointer(to: &visible) { seat in fold(seat) }
+        switch answer {
+        case SLOPDESK_SCRIM_SHOWN: return true
+        case SLOPDESK_SCRIM_HIDDEN: return false
+        default: return nil
         }
     }
 }
@@ -364,17 +399,19 @@ public enum ViewportPan {
     /// Whether displayed window content extends beyond the pane on some axis (±1 pt slack). Keys off
     /// `window × zoom` (the DISPLAYED size), matching the layer frame the compositor lays out.
     public static func isNavigable(window: VideoSize, pane: VideoSize, zoom: Double) -> Bool {
-        window.width * zoom > pane.width + 1 || window.height * zoom > pane.height + 1
+        slopdesk_client_is_navigable(size(window), size(pane), zoom)
     }
 
     /// The maximum pan offset per axis (DISPLAY points, top-left basis): `displayed − pane`, floored at 0.
     /// Identical basis to ``isNavigable`` and to `layoutVideoLayer`'s frame clamp, so the gate, the edge-pan
     /// step clamp, and the layer position never disagree.
     public static func maxPanOffset(window: VideoSize, pane: VideoSize, zoom: Double) -> VideoPoint {
-        VideoPoint(
-            x: Swift.max(0, window.width * zoom - pane.width),
-            y: Swift.max(0, window.height * zoom - pane.height),
-        )
+        let offset = slopdesk_client_max_pan_offset(size(window), size(pane), zoom)
+        return VideoPoint(x: offset.x, y: offset.y)
+    }
+
+    private static func size(_ value: VideoSize) -> SlopDeskVideoSize {
+        SlopDeskVideoSize(width: value.width, height: value.height)
     }
 }
 
@@ -386,32 +423,46 @@ public enum ViewportPan {
 /// into ⌘-scroll (the remote page zooms). This lets the view synthesize the missing key-ups on
 /// focus loss. Pure value type — headlessly unit-testable.
 public struct ModifierLatchTracker: Sendable, Equatable {
-    private var downKeyCodes: Set<UInt16> = []
+    /// The whole tracker: one bit per held-modifier keycode, and every keycode that can be latched
+    /// fits — the vocabulary is 54 through 63 (``InputModifierKeys/heldModifierKeyCodes``). A `Set`
+    /// here was an allocation per pane to hold at most nine small integers, and it accepted keycodes
+    /// that are not modifiers at all — latching them, then synthesising a key-up for them on the
+    /// next focus loss. The crate refuses those now, so this cannot.
+    private var latched = slopdesk_modifier_latch_new()
 
     public init() {}
 
     /// Whether no modifier is currently latched down.
-    public var isEmpty: Bool { downKeyCodes.isEmpty }
+    public var isEmpty: Bool { slopdesk_modifier_latch_is_empty(latched) }
 
     /// Whether `keyCode` is currently latched down.
-    public func isDown(_ keyCode: UInt16) -> Bool { downKeyCodes.contains(keyCode) }
+    public func isDown(_ keyCode: UInt16) -> Bool { slopdesk_modifier_latch_is_down(latched, keyCode) }
 
     /// Record one modifier `flagsChanged` edge (idempotent — a repeated same-edge is absorbed).
-    /// Caps Lock (keyCode 57) is NEVER latched: it is a TOGGLE, not a held key, so the
-    /// blur-time synthesized "release" (a bare key-up CGEvent on virtualKey 57) would FLIP the host's
-    /// Caps state — focus/blur of a GUI pane with local Caps on toggled remote Caps every time. Its
-    /// genuine `flagsChanged` edges still forward to the host 1:1; they just bypass the latch.
+    /// Caps Lock (57) is never latched, and neither is anything else outside the held-modifier
+    /// vocabulary: it is a TOGGLE, not a held key, so the blur-time synthesized "release" (a bare
+    /// key-up CGEvent on virtualKey 57) would FLIP the host's Caps state — focus/blur of a GUI pane
+    /// with local Caps on toggled remote Caps every time. Its genuine `flagsChanged` edges still
+    /// forward to the host 1:1; they just bypass the latch.
     public mutating func note(keyCode: UInt16, down: Bool) {
-        guard keyCode != InputModifierKeys.capsLockKeyCode else { return }
-        if down { downKeyCodes.insert(keyCode) } else { downKeyCodes.remove(keyCode) }
+        latched = slopdesk_modifier_latch_note(latched, keyCode, down)
     }
 
     /// Returns every latched keyCode (ascending, deterministic emit order) and CLEARS the tracker —
     /// the caller synthesizes a host key-up for each so no modifier stays latched after focus loss.
+    ///
+    /// The buffer is lent at the crate's own capacity, which is the VOCABULARY rather than a number
+    /// picked here: at that size the drain cannot come up short, so there is no measure pass and no
+    /// half-drained latch to reason about.
     public mutating func drainForRelease() -> [UInt16] {
-        let all = downKeyCodes.sorted()
-        downKeyCodes.removeAll()
-        return all
+        let capacity = slopdesk_modifier_latch_capacity()
+        var released = [UInt16](repeating: 0, count: capacity)
+        let count = released.withUnsafeMutableBufferPointer { seats in
+            withUnsafeMutablePointer(to: &latched) { mask in
+                slopdesk_modifier_latch_drain(mask, seats.baseAddress, capacity)
+            }
+        }
+        return Array(released.prefix(count))
     }
 }
 
@@ -432,8 +483,10 @@ public enum VideoScaleMath {
     /// so width and height ratios match; width is the stable axis). Returns `1.0` for a degenerate
     /// (zero-width) decoded frame so the cursor is still placed sensibly.
     public static func videoScale(layerSize: VideoSize, decodedSize: VideoSize) -> Double {
-        guard decodedSize.width > 0 else { return 1.0 }
-        return layerSize.width / decodedSize.width
+        slopdesk_client_video_scale(
+            SlopDeskVideoSize(width: layerSize.width, height: layerSize.height),
+            SlopDeskVideoSize(width: decodedSize.width, height: decodedSize.height),
+        )
     }
 }
 
@@ -456,8 +509,11 @@ public enum FrameDecodability: Equatable, Sendable {
 
     /// Triage a frame by its keyframe flag and reassembled byte count.
     public static func classify(keyframe: Bool, byteCount: Int) -> Self {
-        if byteCount > 0 { return .decodable }
-        return keyframe ? .requestKeyframe : .dropSilently
+        switch slopdesk_frame_decodability(keyframe, Swift.max(0, byteCount)) {
+        case SLOPDESK_FRAME_REQUEST_KEYFRAME: .requestKeyframe
+        case SLOPDESK_FRAME_DROP_SILENTLY: .dropSilently
+        default: .decodable
+        }
     }
 }
 
@@ -487,11 +543,16 @@ public enum ResizeAdoption {
     /// on an intermediate-size frame (both gates pass, but to the intermediate size, not the final).
     /// Rare; self-heals on the next IDR.
     public static func shouldAdopt(pending: VideoSize, decoded: VideoSize, previousDecoded: VideoSize?) -> Bool {
-        guard pending.width > 0, pending.height > 0, decoded.width > 0, decoded.height > 0 else { return false }
-        let aspectMatches = abs(pending.width / pending.height - decoded.width / decoded.height) < 0.02
-        let sizeChanged = previousDecoded
-            .map { abs(decoded.width - $0.width) >= 1 || abs(decoded.height - $0.height) >= 1 } ?? true
-        return aspectMatches && sizeChanged
+        // The absent previous frame crosses as a flag, not a sentinel size: "no frame yet" and "a
+        // frame of zero by zero" are different states and only one of them means adopt.
+        let previous = previousDecoded ?? VideoSize(width: 0, height: 0)
+        return slopdesk_resize_should_adopt(
+            box(pending), box(decoded), box(previous), previousDecoded != nil,
+        )
+    }
+
+    private static func box(_ value: VideoSize) -> SlopDeskVideoSize {
+        SlopDeskVideoSize(width: value.width, height: value.height)
     }
 }
 
@@ -505,23 +566,34 @@ public enum ResizeAdoption {
 /// caller passes layer size + elapsed-since-last-change) — unit-testable in isolation. The epoch
 /// counter is minted here so each emitted request carries a monotonic, host-droppable epoch.
 public struct ResizeDebounce: Sendable, Equatable {
+    /// The whole debounce as it crosses: four fields, all of them read here, so there is nothing
+    /// for a handle to own (docs/55 §4b) and value semantics survive the port.
+    private var debounce: SlopDeskResizeDebounce
+
     /// Size of the last request actually EMITTED (`nil` ⇒ none yet — still at the hello-negotiated
     /// capture size). A new settled size is compared against this to drop sub-`minDelta` jitter.
-    public private(set) var lastRequested: VideoSize?
+    public var lastRequested: VideoSize? {
+        guard debounce.has_last_requested else { return nil }
+        return VideoSize(width: debounce.last_requested.width, height: debounce.last_requested.height)
+    }
+
     /// Monotonic epoch of the last emitted request (0 ⇒ none emitted yet). The next emitted request
     /// carries `lastEpoch + 1`.
-    public private(set) var lastEpoch: UInt32 = 0
+    public var lastEpoch: UInt32 { debounce.last_epoch }
 
     /// Minimum per-axis change (points) below which a new settled size is jitter, dropped (no
     /// request) — prevents a 1px layout wobble re-sizing capture.
-    public let minDelta: Double
+    public var minDelta: Double { debounce.min_delta }
     /// How long the layer size must be UNCHANGED before the burst is settled and a request fires
     /// (seconds, elapsed-since-last-change passed in by the caller).
-    public let settleInterval: TimeInterval
+    public var settleInterval: TimeInterval { debounce.settle_interval }
 
-    public init(minDelta: Double = 8, settleInterval: TimeInterval = 0.2) {
-        self.minDelta = minDelta
-        self.settleInterval = settleInterval
+    /// The band and the interval the client uses when nothing was configured — the crate's own, so
+    /// the two languages cannot disagree about what "settled" means.
+    public init() { debounce = slopdesk_resize_debounce_default() }
+
+    public init(minDelta: Double, settleInterval: TimeInterval) {
+        debounce = slopdesk_resize_debounce_new(minDelta, settleInterval)
     }
 
     /// The debounce decision for one layer-size sample.
@@ -538,11 +610,17 @@ public struct ResizeDebounce: Sendable, Equatable {
     /// like ``LTREscalationTracker`` takes `now`). Pure query: does NOT mutate — call
     /// ``noteRequested(_:)`` after acting on `.request`.
     public func decide(layerSize: VideoSize, elapsedSinceLastChange: TimeInterval) -> Decision {
-        // Still settling: changed too recently to be the final size — coalesce.
-        guard elapsedSinceLastChange >= settleInterval else { return .hold }
-        // Quiet long enough — meaningful change vs the last emitted request?
-        guard changedEnough(from: lastRequested, to: layerSize) else { return .hold }
-        return .request(layerSize)
+        var settled = SlopDeskVideoSize(width: 0, height: 0)
+        let verdict = withUnsafeMutablePointer(to: &settled) { out in
+            slopdesk_resize_debounce_decide(
+                debounce,
+                SlopDeskVideoSize(width: layerSize.width, height: layerSize.height),
+                elapsedSinceLastChange,
+                out,
+            )
+        }
+        guard verdict == SLOPDESK_RESIZE_REQUEST else { return .hold }
+        return .request(VideoSize(width: settled.width, height: settled.height))
     }
 
     /// Records that a request for `size` was emitted: stores it as the new baseline and advances the
@@ -551,9 +629,11 @@ public struct ResizeDebounce: Sendable, Equatable {
     /// separate mutator).
     @discardableResult
     public mutating func noteRequested(_ size: VideoSize) -> UInt32 {
-        lastRequested = size
-        lastEpoch &+= 1
-        return lastEpoch
+        withUnsafeMutablePointer(to: &debounce) { seat in
+            slopdesk_resize_debounce_note_requested(
+                seat, SlopDeskVideoSize(width: size.width, height: size.height),
+            )
+        }
     }
 
     /// Rebases the jitter baseline on a size the CLIENT adopted by itself (the 1:1 pane snap — pane
@@ -562,14 +642,20 @@ public struct ResizeDebounce: Sendable, Equatable {
     /// echoes a `resizeRequest` back — which would AX-resize the host window and re-trigger the snap
     /// (a feedback loop). A LATER user drag still differs ≥ `minDelta` and requests normally.
     public mutating func noteAdopted(_ size: VideoSize) {
-        lastRequested = size
+        withUnsafeMutablePointer(to: &debounce) { seat in
+            slopdesk_resize_debounce_note_adopted(
+                seat, SlopDeskVideoSize(width: size.width, height: size.height),
+            )
+        }
     }
 
-    /// Whether `to` differs from `from` by ≥ `minDelta` on some axis. A `nil` baseline (no request
-    /// yet) always counts as changed (the first settle always fires).
-    private func changedEnough(from: VideoSize?, to: VideoSize) -> Bool {
-        guard let from else { return true }
-        return abs(to.width - from.width) >= minDelta || abs(to.height - from.height) >= minDelta
+    /// Spelled out because the crossed record is a C struct, which carries no `Equatable` of its
+    /// own: two debounces are equal when the four things they answer are.
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.lastRequested == rhs.lastRequested
+            && lhs.lastEpoch == rhs.lastEpoch
+            && lhs.minDelta == rhs.minDelta
+            && lhs.settleInterval == rhs.settleInterval
     }
 }
 
@@ -591,8 +677,8 @@ public enum StreamSizeSnap {
     /// doc). Equals the host window's point size, so it round-trips cleanly through the point-valued
     /// resizeRequest/resizeAck. A non-positive scale falls back to 1 (defensive).
     public static func targetPoints(pixelSize: VideoSize, captureScale: Double) -> VideoSize {
-        let s = captureScale > 0 ? captureScale : 1
-        return VideoSize(width: pixelSize.width / s, height: pixelSize.height / s)
+        let target = slopdesk_snap_target_points(box(pixelSize), captureScale)
+        return VideoSize(width: target.width, height: target.height)
     }
 
     /// The HOST capture scale inferred from the first decoded frame: decoded PIXELS per negotiated
@@ -601,15 +687,21 @@ public enum StreamSizeSnap {
     /// and reuses it for every later in-session resize. A non-positive `windowPoints` width falls
     /// back to 1 (defensive: the helloAck always carries a real size before any frame).
     public static func inferredCaptureScale(decodedPixels: VideoSize, windowPoints: VideoSize) -> Double {
-        guard windowPoints.width > 0, decodedPixels.width > 0 else { return 1 }
-        return decodedPixels.width / windowPoints.width
+        slopdesk_snap_inferred_capture_scale(box(decodedPixels), box(windowPoints))
     }
 
     /// Whether the pane should snap: the 1:1 target differs from the current layer size by ≥
     /// `epsilon` points on some axis. Sub-epsilon deltas are layout noise — snapping on them would
     /// churn the canvas frame + persistence for an invisible change.
-    public static func shouldSnap(target: VideoSize, current: VideoSize, epsilon: Double = 0.5) -> Bool {
-        abs(target.width - current.width) >= epsilon || abs(target.height - current.height) >= epsilon
+    public static func shouldSnap(target: VideoSize, current: VideoSize, epsilon: Double = epsilon) -> Bool {
+        slopdesk_snap_should_snap(box(target), box(current), epsilon)
+    }
+
+    /// The slack below which a snap is layout noise rather than a real difference.
+    public static let epsilon: Double = slopdesk_snap_epsilon()
+
+    private static func box(_ value: VideoSize) -> SlopDeskVideoSize {
+        SlopDeskVideoSize(width: value.width, height: value.height)
     }
 }
 
@@ -714,32 +806,28 @@ public struct InputEventEncoder: Sendable {
         mode: VideoContentMode = .fit,
         viewportCrop: VideoRect? = nil,
     ) -> VideoPoint {
-        // ACTUAL-SIZE VIEWPORT (per-axis 1:1 crop): with the pane at the window's actual
-        // point size, the renderer maps a texture sub-rect `viewportCrop` (UV origin + size, per-axis)
-        // onto the WHOLE drawable (fit = (1,1), no letterbox / scalar-zoom). The inverse is a plain
-        // per-axis affine — view fraction → UV — matching the renderer's `crop.xy + uv·crop.zw`
-        // exactly, so a click lands on the right host pixel even with independent H/V scales. Additive
-        // + default-nil ⇒ the fit/zoom/pan path below (golden-pinned, byte-identical) is untouched.
-        if let crop = viewportCrop {
-            let u = layerSize.width > 0 ? viewPoint.x / layerSize.width : 0
-            let v = layerSize.height > 0 ? viewPoint.y / layerSize.height : 0
-            // keep mul+add separate — FMA breaks bit-exact parity
-            let sx = crop.origin.x + u * crop.size.width
-            let sy = crop.origin.y + v * crop.size.height
-            return VideoPoint(x: min(max(sx, 0), 1), y: min(max(sy, 0), 1))
-        }
-        let r = AspectFit.displayedVideoRect(viewSize: layerSize, videoNativeSize: videoNativeSize, mode: mode)
-        // 0..1 over the DISPLAYED (un-zoomed) video rect; degenerate rect → 0.
-        let u = r.size.width > 0 ? (viewPoint.x - r.origin.x) / r.size.width : 0
-        let v = r.size.height > 0 ? (viewPoint.y - r.origin.y) / r.size.height : 0
-        // Apply the renderer's zoom/pan crop forward (inert when zoom == 1).
-        let invZoom = 1 / max(1, zoom)
-        let panLimit = 0.5 * (1 - invZoom)
-        let px = min(max(pan.x, -panLimit), panLimit)
-        let py = min(max(pan.y, -panLimit), panLimit)
-        let sx = (u - 0.5) * invZoom + 0.5 + px
-        let sy = (v - 0.5) * invZoom + 0.5 + py
-        return VideoPoint(x: min(max(sx, 0), 1), y: min(max(sy, 0), 1))
+        // The mapping crosses FLAT with a presence flag, because C has no two-variant enum — and
+        // because a zero crop is a degenerate ACTUAL-SIZE viewport, which is a different answer from
+        // "there is no crop". Only one of the two takes the aspect-fit path the golden vectors pin.
+        let mapping = SlopDeskPointerMapping(
+            video_native_size: SlopDeskVideoSize(
+                width: videoNativeSize.width, height: videoNativeSize.height,
+            ),
+            zoom: zoom,
+            pan: SlopDeskVideoPoint(x: pan.x, y: pan.y),
+            mode: mode.code,
+            crop: SlopDeskVideoRect(
+                x: viewportCrop?.origin.x ?? 0, y: viewportCrop?.origin.y ?? 0,
+                width: viewportCrop?.size.width ?? 0, height: viewportCrop?.size.height ?? 0,
+            ),
+            has_crop: viewportCrop != nil,
+        )
+        let normalized = slopdesk_input_normalize(
+            SlopDeskVideoPoint(x: viewPoint.x, y: viewPoint.y),
+            SlopDeskVideoSize(width: layerSize.width, height: layerSize.height),
+            mapping,
+        )
+        return VideoPoint(x: normalized.x, y: normalized.y)
     }
 
     /// The tag the next emitted event will carry (for tests).
@@ -747,7 +835,7 @@ public struct InputEventEncoder: Sendable {
 
     private mutating func takeTag() -> UInt32 {
         let tag = nextTag
-        nextTag &+= 1
+        nextTag = slopdesk_input_next_tag(nextTag)
         return tag
     }
 
@@ -926,41 +1014,92 @@ public struct InputEventEncoder: Sendable {
 /// without a socket or a `CALayer`.
 public struct CursorShapeRequestTracker: Sendable, Equatable {
     /// Shape ids the client has cached the bitmap for — their position updates never re-request.
-    /// Recorded even if the shape arrived before any position update.
-    private var knownShapeIDs: Set<UInt16> = []
-    /// Host time (seconds) of the last re-request PER missing shapeID, capping re-requests at once
-    /// per ``reRequestInterval`` instead of every ~120 Hz position update. Cleared once the shape arrives.
-    private var lastRequested: [UInt16: TimeInterval] = [:]
+    /// Ascending, because that is the order the crate keeps them in and the order it hands them back.
+    private var known: [UInt16] = []
+    /// The ids with an ask still outstanding, and the host time each was sent — two parallel lists
+    /// rather than a dictionary because that is the shape a lent buffer can carry. Ascending by id.
+    private var pendingIDs: [UInt16] = []
+    private var pendingAt: [TimeInterval] = []
 
     /// Minimum spacing between re-requests for the SAME missing shapeID (seconds). A few × RTT:
     /// long enough that one re-ship has time to arrive, short enough to self-heal promptly.
     public let reRequestInterval: TimeInterval
 
-    public init(reRequestInterval: TimeInterval = 0.25) {
+    public init(reRequestInterval: TimeInterval = slopdesk_cursor_shape_default_interval()) {
         self.reRequestInterval = reRequestInterval
     }
 
     /// A cursor shape bitmap arrived for `shapeID` — mark it cached (idempotent) and stop
     /// re-requesting it.
     public mutating func noteShapeArrived(_ shapeID: UInt16) {
-        knownShapeIDs.insert(shapeID)
-        lastRequested[shapeID] = nil
+        _ = step { held, outKnown, knownCap, outIDs, outAt, pendingCap in
+            slopdesk_cursor_shape_note_arrived(
+                held.known, held.known.count, held.ids, held.at, held.ids.count, shapeID,
+                outKnown, knownCap, outIDs, outAt, pendingCap,
+            )
+        }
     }
 
     /// Whether the id is already cached (no request needed). Test/diagnostics seam.
-    public func isKnown(_ shapeID: UInt16) -> Bool { knownShapeIDs.contains(shapeID) }
+    public func isKnown(_ shapeID: UInt16) -> Bool {
+        known.withUnsafeBufferPointer { slopdesk_cursor_shape_is_known($0.baseAddress, $0.count, shapeID) }
+    }
 
     /// A cursor POSITION update referenced `shapeID` at host time `now`. Returns `true` iff the
     /// client should SEND a `requestCursorShape(shapeID)` now: the id is unknown AND no request for
     /// it was sent within ``reRequestInterval``. Records the request time on `true` (query+mutator),
     /// so the next ~120 Hz update for the same still-missing id does not immediately re-fire.
     public mutating func shouldRequest(shapeID: UInt16, now: TimeInterval) -> Bool {
-        guard !knownShapeIDs.contains(shapeID) else { return false }
-        if let last = lastRequested[shapeID], now - last < reRequestInterval {
-            return false
+        // Read out before the step, which takes `self` exclusively: a closure reaching back for a
+        // property of the value it is mutating is the same access twice.
+        let interval = reRequestInterval
+        return step { held, outKnown, knownCap, outIDs, outAt, pendingCap in
+            slopdesk_cursor_shape_should_request(
+                held.known, held.known.count, held.ids, held.at, held.ids.count, shapeID, now,
+                interval, outKnown, knownCap, outIDs, outAt, pendingCap,
+            )
         }
-        lastRequested[shapeID] = now
-        return true
+    }
+
+    /// The three lists as one argument, so a step names its inputs once.
+    private struct Held {
+        let known: [UInt16]
+        let ids: [UInt16]
+        let at: [TimeInterval]
+    }
+
+    /// Runs one transition and adopts what it wrote.
+    ///
+    /// The buffers are lent one longer than what is held, which is the most any step can add — an
+    /// arrival caches one id, an ask records one stamp — so the write always fits and there is no
+    /// measure pass. The answer is adopted ONLY when it did fit: a step that could not write is not
+    /// a decision, and acting on its `send` would put an ask on the wire the tracker has no record
+    /// of, which is the flood the interval exists to prevent.
+    private mutating func step(
+        _ transition: (
+            Held, UnsafeMutablePointer<UInt16>?, Int,
+            UnsafeMutablePointer<UInt16>?, UnsafeMutablePointer<Double>?, Int,
+        ) -> SlopDeskCursorShapeAnswer,
+    ) -> Bool {
+        var outKnown = [UInt16](repeating: 0, count: known.count + 1)
+        var outIDs = [UInt16](repeating: 0, count: pendingIDs.count + 1)
+        var outAt = [TimeInterval](repeating: 0, count: pendingAt.count + 1)
+        let held = Held(known: known, ids: pendingIDs, at: pendingAt)
+        let answer = outKnown.withUnsafeMutableBufferPointer { knownSeats in
+            outIDs.withUnsafeMutableBufferPointer { idSeats in
+                outAt.withUnsafeMutableBufferPointer { atSeats in
+                    transition(
+                        held, knownSeats.baseAddress, knownSeats.count,
+                        idSeats.baseAddress, atSeats.baseAddress, idSeats.count,
+                    )
+                }
+            }
+        }
+        guard answer.known <= outKnown.count, answer.pending <= outIDs.count else { return false }
+        known = Array(outKnown.prefix(answer.known))
+        pendingIDs = Array(outIDs.prefix(answer.pending))
+        pendingAt = Array(outAt.prefix(answer.pending))
+        return answer.send
     }
 }
 
@@ -974,37 +1113,34 @@ public struct CursorShapeRequestTracker: Sendable, Equatable {
 /// ⚠️ Do NOT feed the host `hostSendTsMillis` into this — that re-introduces cross-machine clock
 /// skew. Jitter is a purely client-local arrival-cadence measure.
 public struct OWDJitterEstimator: Sendable, Equatable {
-    /// Client-monotonic time (seconds) of the previous arrival (`nil` ⇒ no sample yet).
-    private var lastArrival: Double?
-    /// The previous inter-arrival interval (seconds), for the 2nd-difference (`nil` ⇒ <2 samples).
-    private var lastInterArrival: Double?
+    /// The whole estimate as it crosses: two optional stamps and the smoothed value, all of them
+    /// read here, so there is nothing for a handle to own (docs/55 §4b).
+    private var estimator = slopdesk_owd_jitter_new()
+
     /// Smoothed jitter (seconds), RFC3550 `J += (|D| − J)/16`.
-    public private(set) var jitterSeconds: Double = 0
+    public var jitterSeconds: Double { estimator.jitter_seconds }
 
     public init() {}
 
-    /// Folds one frame arrival (client monotonic seconds). Sample 1 seeds `lastArrival` (no interval
+    /// Folds one frame arrival (client monotonic seconds). Sample 1 seeds the arrival (no interval
     /// yet); sample 2 seeds the first interval (no 2nd-difference yet); from sample 3 on it updates
     /// the smoothed jitter — so an initial burst never emits a spurious spike.
     public mutating func note(arrival: Double) {
-        guard let prevArrival = lastArrival else { lastArrival = arrival
-            return
-        }
-        let inter = arrival - prevArrival
-        lastArrival = arrival
-        guard let prevInter = lastInterArrival else { lastInterArrival = inter
-            return
-        }
-        let d = abs(inter - prevInter)
-        jitterSeconds += (d - jitterSeconds) / 16
-        lastInterArrival = inter
+        withUnsafeMutablePointer(to: &estimator) { seat in slopdesk_owd_jitter_note(seat, arrival) }
     }
 
     /// The smoothed jitter as microseconds, clamped to the `UInt32` wire field (never traps the
     /// `UInt32(Double)` initializer: negatives floor to 0, an absurd value saturates at `UInt32.max`).
-    public func jitterMicros() -> UInt32 {
-        let micros = jitterSeconds * 1_000_000
-        return UInt32(min(Double(UInt32.max), max(0, micros)))
+    public func jitterMicros() -> UInt32 { slopdesk_owd_jitter_micros(estimator) }
+
+    /// Spelled out because the crossed record is a C struct, which carries no `Equatable` of its
+    /// own: two estimators are equal when they would fold the next arrival the same way.
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.estimator.has_last_arrival == rhs.estimator.has_last_arrival
+            && lhs.estimator.last_arrival == rhs.estimator.last_arrival
+            && lhs.estimator.has_last_inter_arrival == rhs.estimator.has_last_inter_arrival
+            && lhs.estimator.last_inter_arrival == rhs.estimator.last_inter_arrival
+            && lhs.jitterSeconds == rhs.jitterSeconds
     }
 }
 
@@ -1024,53 +1160,40 @@ public struct OWDJitterEstimator: Sendable, Equatable {
 /// whole point: reclaim the fixed-depth buffer's ~targetDepth/fps of added latency on a clean LAN
 /// while still re-inflating on a real spike.
 public struct AdaptiveJitterController: Sendable, Equatable {
+    /// The whole controller as it crosses: seven numbers, all of them read here (docs/55 §4b).
+    private var controller: SlopDeskAdaptiveJitter
+
     /// Floor — never recommend fewer than this many frames (1 ⇒ present as soon as decoded).
-    public let minDepth: Int
+    public var minDepth: Int { Int(controller.min_depth) }
     /// Ceiling — the pacer's hard cap; the recommendation never exceeds it.
-    public let maxDepth: Int
+    public var maxDepth: Int { Int(controller.max_depth) }
     /// Presentation cadence (frames/s) — converts jitter SECONDS into a FRAME count.
-    public let fps: Double
+    public var fps: Double { controller.fps }
     /// Buffer-sizing multiple: depth ≈ ceil(jitter × fps × safety). >1 gives a marginal link
     /// headroom so ordinary wobble does not underrun.
-    public let jitterSafety: Double
+    public var jitterSafety: Double { controller.jitter_safety }
     /// Consecutive low-jitter frames required before a single one-step shrink (the slow, hysteretic
-    /// path). ~3s at 60fps by default.
-    public let shrinkCooldownFrames: Int
-
-    /// The live recommendation (frames). Initialised to the configured/initial depth.
-    public private(set) var targetDepth: Int
-    /// Consecutive frames the recommendation has been BELOW `targetDepth`; a one-step shrink fires
-    /// (and resets this) at `shrinkCooldownFrames`. Reset to 0 by any grow or steady step.
-    private var shrinkRun: Int = 0
+    /// path).
+    public var shrinkCooldownFrames: Int { Int(controller.shrink_cooldown_frames) }
+    /// The live recommendation (frames).
+    public var targetDepth: Int { Int(controller.target_depth) }
 
     public init(
         minDepth: Int = 1,
         maxDepth: Int,
         fps: Double,
         initialDepth: Int,
-        jitterSafety: Double = 2.5,
-        shrinkCooldownFrames: Int = 180,
+        jitterSafety: Double = slopdesk_adaptive_jitter_default_safety(),
+        shrinkCooldownFrames: Int = Int(slopdesk_adaptive_jitter_default_cooldown()),
     ) {
-        let lo = max(1, minDepth)
-        self.minDepth = lo
-        self.maxDepth = max(lo, maxDepth)
-        self.fps = fps
-        self.jitterSafety = jitterSafety
-        self.shrinkCooldownFrames = max(1, shrinkCooldownFrames)
-        targetDepth = min(self.maxDepth, max(lo, initialDepth))
-    }
-
-    /// Depth that would absorb jitter `j` (seconds): `1 + ceil(j × fps × safety)`, clamped to
-    /// `[minDepth, maxDepth]`. `j == 0` ⇒ `minDepth`. The `max(0, …)` guards a (theoretical)
-    /// negative jitter so the +1 base never underflows the floor.
-    private func depthForJitter(_ j: Double) -> Int {
-        // Clamp the Double BEFORE the Int conversion: a non-finite (NaN/Inf) or out-of-range product
-        // would TRAP `Int(_:)`. The result is bounded by maxDepth anyway, so capping `raw` at
-        // maxDepth is behaviour-preserving for every reachable value while making the conversion
-        // total (trap-class hardening, codebase invariant).
-        let raw = (j * fps * jitterSafety).rounded(.up)
-        let extra = raw.isFinite ? max(0, Int(min(raw, Double(maxDepth)))) : 0
-        return min(maxDepth, max(minDepth, 1 + extra))
+        controller = slopdesk_adaptive_jitter_new(
+            UInt32(clamping: minDepth),
+            UInt32(clamping: maxDepth),
+            fps,
+            UInt32(clamping: initialDepth),
+            jitterSafety,
+            UInt32(clamping: shrinkCooldownFrames),
+        )
     }
 
     /// Folds one decoded-frame's smoothed jitter and returns the (possibly updated) depth.
@@ -1078,28 +1201,31 @@ public struct AdaptiveJitterController: Sendable, Equatable {
     /// falls; reset the cooldown when steady.
     @discardableResult
     public mutating func noteFrame(jitterSeconds: Double) -> Int {
-        let desired = depthForJitter(jitterSeconds)
-        if desired > targetDepth {
-            targetDepth = min(maxDepth, desired)
-            shrinkRun = 0
-        } else if desired < targetDepth {
-            shrinkRun += 1
-            if shrinkRun >= shrinkCooldownFrames {
-                targetDepth = max(minDepth, targetDepth - 1)
-                shrinkRun = 0
-            }
-        } else {
-            shrinkRun = 0
+        let depth = withUnsafeMutablePointer(to: &controller) { seat in
+            slopdesk_adaptive_jitter_note_frame(seat, jitterSeconds)
         }
-        return targetDepth
+        return Int(depth)
     }
 
     /// A real starvation occurred — GROW one step immediately (capped) and restart the shrink
     /// cooldown so the bump is not undone by the next low-jitter frame.
     @discardableResult
     public mutating func noteUnderrun() -> Int {
-        targetDepth = min(maxDepth, targetDepth + 1)
-        shrinkRun = 0
-        return targetDepth
+        let depth = withUnsafeMutablePointer(to: &controller) { seat in
+            slopdesk_adaptive_jitter_note_underrun(seat)
+        }
+        return Int(depth)
+    }
+
+    /// Spelled out because the crossed record is a C struct, which carries no `Equatable` of its
+    /// own: two controllers are equal when they would fold the next frame the same way.
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.controller.min_depth == rhs.controller.min_depth
+            && lhs.controller.max_depth == rhs.controller.max_depth
+            && lhs.controller.fps == rhs.controller.fps
+            && lhs.controller.jitter_safety == rhs.controller.jitter_safety
+            && lhs.controller.shrink_cooldown_frames == rhs.controller.shrink_cooldown_frames
+            && lhs.controller.target_depth == rhs.controller.target_depth
+            && lhs.controller.shrink_run == rhs.controller.shrink_run
     }
 }

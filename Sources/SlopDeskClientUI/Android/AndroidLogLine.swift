@@ -18,7 +18,6 @@
 // someone reading a crash is looking for.
 
 #if os(macOS)
-import Foundation
 
 /// One rendered console row.
 struct AndroidLogLine: Identifiable, Equatable {
@@ -81,25 +80,22 @@ struct AndroidLogLine: Identifiable, Equatable {
 
     // MARK: The grammar
 
-    /// The next whitespace-delimited run, consumed from `rest`. `nil` at end of input.
+    /// The next whitespace-delimited run, consumed from `rest`. ``DeviceLogLexer``'s, because the
+    /// two consoles' grammars diverge AFTER the tokens, not at them.
     private static func token(_ rest: inout Substring) -> Substring? {
-        let start = rest.drop(while: \.isWhitespace)
-        guard !start.isEmpty else { return nil }
-        let end = start.firstIndex(where: \.isWhitespace) ?? start.endIndex
-        rest = start[end...]
-        return start[..<end]
+        DeviceLogLexer.token(&rest)
     }
 
-    /// `08-04` — `logcat` prints no year. Shape only; the value is never read.
+    /// `08-04` — `logcat` prints no year, which is the one thing this grammar's date does not share
+    /// with the unified log's.
     private static func isDate(_ token: Substring) -> Bool {
-        token.count == 5 && token.allSatisfy { $0.isNumber || $0 == "-" }
+        DeviceLogLexer.isDate(token, length: 5)
     }
 
     /// `13:50:19.565`. Shape, not value — validating the clock here would reject a log written
     /// across a timezone change.
     private static func isTime(_ token: Substring) -> Bool {
-        token.count >= 8 && token.first?.isNumber == true
-            && token.allSatisfy { $0.isNumber || $0 == ":" || $0 == "." }
+        DeviceLogLexer.isTime(token)
     }
 
     /// `logcat`'s priority letters. Checked so a line whose third token happens to start with a

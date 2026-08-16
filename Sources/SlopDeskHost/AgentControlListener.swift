@@ -1,51 +1,46 @@
-import Darwin
 import Foundation
-import SlopDeskTransport
+import SlopDeskAgentDetect
+import SlopDeskProtocol
+import SlopDeskScreen
+import SlopDeskTTY
 
 /// Agent-control socket server — the herdr/zellij-style control surface for AI agents.
 ///
-/// Binds an `AF_UNIX` stream socket at `$TMPDIR/slopdesk-ctl-<pid>.sock` (chmod 0600) and speaks
-/// **NDJSON** per connection: one UTF-8 JSON object per line,
+/// Speaks **NDJSON** on the `AF_UNIX` connections superd hands over (superd binds the socket, at a
+/// stable pid-free path, `0600`): one UTF-8 JSON object per line,
 /// request `{"id":"…","method":"…","params":{…}}` → response `{"id":"…","ok":true,"result":{…}}`
 /// or `{"id":"…","ok":false,"error":"…"}`.
 ///
 /// ## Hang-safety
-/// The accept loop and per-connection read loop run on dedicated background threads (never the
-/// cooperative-concurrency pool), so a blocked `read(2)` or slow shell write never parks a Swift
-/// concurrency thread. The `wait` verb (the only blocking verb) parks its connection thread on an
+/// Each connection's read loop runs on a dedicated background thread (never the
+/// cooperative-concurrency pool, and never the supervisor client's read loop), so a blocked
+/// `read(2)` or slow shell write never parks a Swift concurrency thread. The `wait` verb (the only blocking verb) parks its connection thread on an
 /// `NSCondition` until the PTY fires a chunk matching the regex or the timeout elapses.
 ///
 /// ## Pure handler split (same pattern as ``AgentHookListener``)
 /// - ``AgentControlHandler`` — PURE verb dispatcher: `(id, method, params)` + a ``HostServer`` ref
 ///   → executes the verb, returns the JSON response line. No socket I/O; unit-testable with a
 ///   fake `HostServer`.
-/// - ``AgentControlAcceptor`` — THIN `AF_UNIX` shim: binds, accepts, reads NDJSON lines, routes
-///   each to ``AgentControlHandler``, writes the response. Never instantiated in a test
-///   (hang-safety: no real socket in a unit test).
+/// - ``AgentControlConnectionServer`` — the per-connection NDJSON loop: reads lines, routes each to
+///   ``AgentControlHandler``, writes the response. Never driven by a test (hang-safety: no real
+///   socket in a unit test). It does not bind — superd owns the address.
 ///
 /// **Validate-then-drop**: a request line that is not valid UTF-8, not valid JSON, exceeds
 /// 64 KiB, or has an unknown method gets an error response — the server never traps.
 public final class AgentControlListener: @unchecked Sendable {
-    private let acceptor: AgentControlAcceptor
-    /// The socket path exported to PTY envs and logged at startup.
-    public let socketPath: String
+    private let connections: AgentControlConnectionServer
 
-    public var onLog: (@Sendable (String) -> Void)?
-
-    public init(socketPath: String, server: HostServer) {
-        self.socketPath = socketPath
-        acceptor = AgentControlAcceptor(server: server)
+    public var onLog: (@Sendable (String) -> Void)? {
+        didSet { connections.onLog = onLog }
     }
 
-    /// Binds the socket and begins accepting. Throws on bind/listen failure.
-    public func start() throws {
-        acceptor.onLog = onLog
-        try acceptor.start(path: socketPath)
+    public init(server: HostServer) {
+        connections = AgentControlConnectionServer(server: server)
     }
 
-    /// Closes the listener and unlinks the socket file. Idempotent.
-    public func stop() {
-        acceptor.stop()
+    /// Serves one connection superd accepted on the ctl listener.
+    public func serve(connection descriptor: Int32) {
+        connections.serve(connection: descriptor)
     }
 }
 
@@ -191,15 +186,22 @@ public struct AgentControlHandler: Sendable {
     /// Excises zsh's PROMPT_SP end-of-line mark (`%` + width fill) from a block's output tail.
     ///
     /// On the live wire the cluster always abuts the closing `133;D` (zsh's preprompt runs right
-    /// before precmd), which is exactly what ``PromptEOLMarkStripper`` anchors on — but the
+    /// before precmd), which is exactly what screend's `promptEolMarks` pass anchors on — but the
     /// segmenter strips the OSC marks out of the captured span, leaving the cluster bare at the
-    /// buffer tail. Re-appending a synthetic `D` anchor restores the adjacency the stripper keys
-    /// on (honest: the real `D` DID follow these bytes), reusing its two-sided-SGR false-positive
+    /// buffer tail. Re-appending a synthetic `D` anchor restores the adjacency the pass keys on
+    /// (honest: the real `D` DID follow these bytes), reusing its two-sided-SGR false-positive
     /// guard instead of duplicating the machine. A command whose real output ends in `%` + spaces
     /// stays untouched (no SGR wrapping → deliberate miss).
+    ///
+    /// The `sanitize` verb would be wrong here: this is ONE captured command block, not a replay
+    /// stream, and its other six passes key on marks the segmenter has already taken out. An absent
+    /// screend leaves the tail as it came — the documented passthrough, never a Swift second copy.
     static func stripPromptEOLTail(_ bytes: [UInt8]) -> [UInt8] {
         let anchor: [UInt8] = Array("\u{1B}]133;D\u{07}".utf8)
-        let stripped = [UInt8](PromptEOLMarkStripper.strip(Data(bytes + anchor)))
+        guard let cleaned = try? ScreenClient.shared.promptEolMarks(Data(bytes + anchor)) else {
+            return bytes
+        }
+        let stripped = [UInt8](cleaned)
         guard stripped.suffix(anchor.count).elementsEqual(anchor) else { return stripped }
         return Array(stripped.dropLast(anchor.count))
     }
@@ -220,10 +222,15 @@ public struct AgentControlHandler: Sendable {
         }
         let n = max(1, (params["n"] as? Int) ?? 1)
         let ansiStrip = (params["ansiStrip"] as? Bool) ?? true
-        guard let blocks = session.recentBlocksForControl(limit: n) else {
-            return errorResponse(id: id, message: "blocks tracking disabled on host (SLOPDESK_BLOCKS=0)")
+        // One round trip to superd, which holds the ring: the recent blocks and the running one
+        // have to be read together or they can disagree about which command is which.
+        guard let blocks = session.blockControlForControl(limit: n) else {
+            return errorResponse(
+                id: id,
+                message: "no block tap on this pane (SLOPDESK_BLOCKS=0, or it has no shell integration)",
+            )
         }
-        let items = blocks.map { b -> [String: Any] in
+        let items = (blocks.recent ?? []).map { b -> [String: Any] in
             let raw = decodeLossyUTF8(stripPromptEOLTail(b.output))
             var item: [String: Any] = [
                 "index": Int(b.index),
@@ -236,8 +243,8 @@ public struct AgentControlHandler: Sendable {
             return item
         }
         var result: [String: Any] = ["blocks": items]
-        if let open = session.openBlockForControl() {
-            result["running"] = ["command": open.commandText, "outputLen": open.output.count]
+        if let open = blocks.open {
+            result["running"] = ["command": open.commandText, "outputLen": Int(open.outputLen)]
         }
         return successResponse(id: id, result: result)
     }
@@ -273,7 +280,7 @@ public struct AgentControlHandler: Sendable {
     }
 
     /// `screen` — the RENDERED-screen dump: replays the scrollback ring's raw bytes through
-    /// ``TerminalScreenModel`` at the pane's live PTY size and returns the resulting grid, so a
+    /// `slopdesk-screend` at the pane's live PTY size and returns the resulting grid, so a
     /// TUI pane (vim, htop, claude) reads as what a human sees instead of raw byte soup.
     ///
     /// Response: `{rows, cols, cursorRow, cursorCol, cursorVisible, altScreen, lines: [String],
@@ -299,11 +306,16 @@ public struct AgentControlHandler: Sendable {
             guard c >= 1, c <= 1024 else { return errorResponse(id: id, message: "cols must be 1..1024") }
             cols = c
         }
-        var model = TerminalScreenModel(rows: rows, cols: cols)
-        model.feed(session.scrollbackRawForControl())
-        let snap = model.snapshot()
-        var trimmed = snap.lines
-        while let last = trimmed.last, last.isEmpty { trimmed.removeLast() }
+        let snap: ScreenSnapshot
+        do {
+            snap = try ScreenClient.shared.snapshot(
+                raw: session.scrollbackRawForControl(), rows: rows, cols: cols,
+            )
+        } catch {
+            // No screen engine, no screen. Answered rather than faked: `scrollback` is right there
+            // for the raw bytes, and a synthesised grid would be a lie about what the pane shows.
+            return errorResponse(id: id, message: "screen engine unavailable: \(error)")
+        }
         return successResponse(id: id, result: [
             "rows": snap.rows,
             "cols": snap.cols,
@@ -312,7 +324,7 @@ public struct AgentControlHandler: Sendable {
             "cursorVisible": snap.cursorVisible,
             "altScreen": snap.altScreen,
             "lines": snap.lines,
-            "text": trimmed.joined(separator: "\n"),
+            "text": snap.linesWithoutTrailingBlanks.joined(separator: "\n"),
         ])
     }
 
@@ -404,8 +416,13 @@ public struct AgentControlHandler: Sendable {
 
         // --wait: baseline the expected block index BEFORE the write so the observer can
         // discriminate our command's block from an already-running one.
-        guard let baseline = session.expectedNextBlockIndexForControl() else {
-            return errorResponse(id: id, message: "blocks tracking disabled on host (SLOPDESK_BLOCKS=0)")
+        // `limit: 0` asks for the baseline and nothing else — a `run --wait` has no use for the
+        // PREVIOUS commands' bytes, and shipping them would be a quarter of a megabyte per call.
+        guard let baseline = session.blockControlForControl(limit: 0)?.nextIndex else {
+            return errorResponse(
+                id: id,
+                message: "no block tap on this pane (SLOPDESK_BLOCKS=0, or it has no shell integration)",
+            )
         }
         let timeoutMs = (params["timeoutMs"] as? Double) ?? 30000
         let ansiStrip = (params["ansiStrip"] as? Bool) ?? true
@@ -711,18 +728,14 @@ public struct AgentControlHandler: Sendable {
 
     /// Encodes an error response as a NDJSON line.
     static func errorResponse(id: String, message: String) -> String {
-        let obj: [String: Any] = ["id": id, "ok": false, "error": message]
-        return encodeJSON(obj) + "\n"
+        encodeJSON(ControlLine.error(id: id, message: message)) + "\n"
     }
 
     /// Minimal JSON encoder — handles the fixed types the verb results produce.
     /// `JSONSerialization` fits here: Foundation is already imported everywhere, no `Codable`
     /// ceremony for a simple string→Any dict.
     static func encodeJSON(_ value: Any) -> String {
-        guard let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]) else {
-            return #"{"ok":false,"error":"json encode failure"}"#
-        }
-        return String(bytes: data, encoding: .utf8) ?? #"{"ok":false,"error":"utf8 encode failure"}"#
+        ControlLine.encode(value)
     }
 
     /// Parses one NDJSON request line. Returns `nil` on validate-then-drop (malformed or
@@ -730,13 +743,7 @@ public struct AgentControlHandler: Sendable {
     public static func parseRequest(_ line: String)
         -> (id: String, method: String, params: [String: Any])?
     {
-        guard let data = line.data(using: .utf8),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let id = obj["id"] as? String,
-              let method = obj["method"] as? String
-        else { return nil }
-        let params = obj["params"] as? [String: Any] ?? [:]
-        return (id, method, params)
+        ControlLine.parseRequest(line)
     }
 }
 
@@ -821,85 +828,12 @@ struct WaitUntilScanner {
     /// Returns the index from which the tail of `bytes` must be HELD BACK into the next chunk: the
     /// start of a trailing escape sequence that has not terminated yet, or of a trailing truncated
     /// UTF-8 multi-byte codepoint — either can only be stripped/decoded once its continuation
-    /// arrives. Mirrors ``ANSIStripper``'s grammar exactly (a forward scan, so a `0x9B`/`0x9D`
-    /// UTF-8 continuation byte is never misread as a C1 introducer). `bytes.count` = nothing held.
+    /// arrives. `bytes.count` = nothing held.
+    ///
+    /// One question over the grammar ``ANSIStripper`` strips by, asked through it. The two used to
+    /// be separate machines here, each documented as "matching" the other.
     static func holdbackStart(in bytes: [UInt8]) -> Int {
-        var i = 0
-        let n = bytes.count
-        while i < n {
-            let b = bytes[i]
-            // Multi-byte UTF-8 lead: hold the whole codepoint back if its continuations are missing.
-            if b >= 0xC2, b <= 0xF7 {
-                let tail = b >= 0xF0 ? 3 : (b >= 0xE0 ? 2 : 1)
-                if i + tail >= n { return i }
-                i += tail + 1
-                continue
-            }
-            if b == 0x1B { // ESC
-                guard i + 1 < n else { return i } // lone trailing ESC — introducer unknown yet
-                switch bytes[i + 1] {
-                case 0x5B: // CSI
-                    guard let end = csiEnd(bytes, from: i + 2) else { return i }
-                    i = end
-                case 0x5D, // OSC
-                     0x50, // DCS
-                     0x58, // SOS
-                     0x5E, // PM
-                     0x5F: // APC
-                    guard let end = stringCommandEnd(bytes, from: i + 2) else { return i }
-                    i = end
-                case 0x28, // charset designator: ESC + introducer + one designator byte
-                     0x29,
-                     0x2A,
-                     0x2B:
-                    guard i + 2 < n else { return i }
-                    i += 3
-                default:
-                    i += 2 // two-byte ESC sequence — complete as-is
-                }
-                continue
-            }
-            if b == 0x9B { // raw C1 CSI (never a continuation here — those are consumed above)
-                guard let end = csiEnd(bytes, from: i + 1) else { return i }
-                i = end
-            } else if b == 0x9D { // raw C1 OSC
-                guard let end = stringCommandEnd(bytes, from: i + 1) else { return i }
-                i = end
-            } else {
-                i += 1
-            }
-        }
-        return n
-    }
-
-    /// The index just past a CSI body starting at `start` (params + intermediates + one final
-    /// byte), or `nil` when the body runs off the end of `bytes` (final byte not yet arrived).
-    /// A non-final, non-body byte ends the sequence malformed-but-complete, matching
-    /// `ANSIStripper.skipCSI`.
-    private static func csiEnd(_ bytes: [UInt8], from start: Int) -> Int? {
-        var i = start
-        while i < bytes.count, bytes[i] >= 0x30, bytes[i] <= 0x3F { i += 1 } // parameter bytes
-        while i < bytes.count, bytes[i] >= 0x20, bytes[i] <= 0x2F { i += 1 } // intermediate bytes
-        guard i < bytes.count else { return nil }
-        return (bytes[i] >= 0x40 && bytes[i] <= 0x7E) ? i + 1 : i // final byte (or malformed stop)
-    }
-
-    /// The index just past an OSC/DCS/SOS/PM/APC body starting at `start` (terminated by BEL, C1
-    /// ST, or `ESC \` — a bare ESC counts as a malformed terminator, matching
-    /// `ANSIStripper.skipStringCommand`), or `nil` when no terminator has arrived yet (a trailing
-    /// lone ESC is undecidable — it may be the first byte of ST).
-    private static func stringCommandEnd(_ bytes: [UInt8], from start: Int) -> Int? {
-        var i = start
-        while i < bytes.count {
-            let b = bytes[i]
-            if b == 0x07 || b == 0x9C { return i + 1 }
-            if b == 0x1B {
-                guard i + 1 < bytes.count else { return nil }
-                return bytes[i + 1] == 0x5C ? i + 2 : i + 1
-            }
-            i += 1
-        }
-        return nil
+        ANSIStripper.holdbackStart(in: bytes)
     }
 }
 
@@ -941,50 +875,39 @@ public struct IPCGuards: Sendable {
 /// this is the small, BOUNDED basename list the plan calls for (no env, no allocation beyond the
 /// basename split — a pure decision unit-pinned by `IPCGuardTests`).
 public enum SensitiveSessionPolicy {
-    /// The bounded set of sensitive foreground-command basenames (credential / remote-shell entry points).
-    /// Matched CASE-SENSITIVELY against the basename, like the foreground-process basenames the host
-    /// already resolves (``ForegroundProcessDetector/basename(of:)``).
-    public static let sensitiveBasenames: Set<String> = [
-        "ssh",
-        "sshpass",
-        "ssh-agent",
-        "ssh-add",
-        "sudo",
-        "doas",
-        "su",
-        "login",
-        "passwd",
-        "gpg",
-        "security",
-    ]
-
     /// Whether `processName` (a foreground-process basename, or a full path that is reduced to its last
     /// component) is a sensitive command. An EMPTY / unknown name is NOT sensitive — the host could not
     /// prove a sensitive session, and the send-keys gate already guards the mutating path, so the benign
     /// default is to allow rather than fail-closed on an unresolved probe.
+    ///
+    /// A face over ``ForegroundProcessName/isSensitive(processName:)``. The set of names lives in
+    /// `rust/slopdesk-agent::process` beside the `claude`/wrapper matches, which reduce a process
+    /// name exactly the same way — one vocabulary, so a name added there closes the door here too.
     public static func isSensitive(processName: String) -> Bool {
-        guard !processName.isEmpty else { return false }
-        // Reuse the host's basename reducer so a full path and a bare basename match identically.
-        let base = ForegroundProcessDetector.basename(of: processName)
-        return sensitiveBasenames.contains(base)
+        ForegroundProcessName.isSensitive(processName: processName)
     }
 }
 
-// MARK: - Thin socket shim
+// MARK: - Connection server
 
-/// The THIN `AF_UNIX` stream socket shim for the agent-control protocol.
+/// Serves the agent-control protocol on connections superd hands over.
 ///
-/// One accepted connection gets one background thread that reads NDJSON lines (bounded to
+/// One connection gets one background thread that reads NDJSON lines (bounded to
 /// ``maxRequestBytes`` per line), dispatches each to ``AgentControlHandler``, and writes the
-/// response. Connections are long-lived (agents pipeline requests).
+/// response. Connections are long-lived (agents pipeline requests, and `subscribe` hijacks one for
+/// the pane's whole life).
 ///
-/// **Compiled + code-reviewed only** — never bound in a unit test (hang-safety: no real socket
-/// in tests; the pure ``AgentControlHandler`` is tested separately).
-public final class AgentControlAcceptor: @unchecked Sendable {
+/// ## hostd does not bind this socket
+/// superd does (`rust/slopdesk-superd/src/listeners.rs`), for the reason that governs every
+/// child-facing address here: it is baked into a spawned agent's environment at `execve` and can
+/// never be corrected, so it must outlive hostd's pid. superd accepts and passes the connection over
+/// `SCM_RIGHTS`, reading none of it — every verb below needs ``HostServer`` state that only exists
+/// in this process, so the protocol keeps exactly one implementation and it is this one.
+///
+/// **Compiled + code-reviewed only** — never driven by a unit test (hang-safety: no real socket in
+/// tests; the pure ``AgentControlHandler`` is tested separately).
+public final class AgentControlConnectionServer: @unchecked Sendable {
     private let server: HostServer
-    private let lock = NSLock()
-    private var listenFD: Int32 = -1
-    private var boundPath: String?
 
     public var onLog: (@Sendable (String) -> Void)?
 
@@ -995,82 +918,19 @@ public final class AgentControlAcceptor: @unchecked Sendable {
         self.server = server
     }
 
-    /// Binds the socket at `path`, chmods it 0600, and begins accepting.
-    public func start(path: String) throws {
-        let maxPath = MemoryLayout.size(ofValue: sockaddr_un().sun_path) - 1
-        guard path.utf8.count <= maxPath else {
-            throw AgentSocketError.pathTooLong(path)
-        }
-        unlink(path)
-
-        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-        guard fd >= 0 else { throw AgentSocketError.socketFailed(errno) }
-
-        var addr = sockaddr_un()
-        addr.sun_family = sa_family_t(AF_UNIX)
-        _ = withUnsafeMutablePointer(to: &addr.sun_path) { ptr in
-            path.withCString { cstr in
-                strncpy(
-                    UnsafeMutableRawPointer(ptr).assumingMemoryBound(to: CChar.self),
-                    cstr,
-                    maxPath,
-                )
-            }
-        }
-        let size = socklen_t(MemoryLayout<sockaddr_un>.size)
-        let bound = withUnsafePointer(to: &addr) { ptr in
-            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, size) }
-        }
-        guard bound == 0 else {
-            let e = errno
-            close(fd)
-            throw AgentSocketError.bindFailed(e)
-        }
-
-        // Restrict to the running user (agents on the same machine, same uid only).
-        Darwin.chmod(path, 0o600)
-
-        guard listen(fd, 16) == 0 else {
-            let e = errno
-            close(fd)
-            unlink(path)
-            throw AgentSocketError.listenFailed(e)
-        }
-
-        lock.lock()
-        listenFD = fd
-        boundPath = path
-        lock.unlock()
-
-        Thread.detachNewThread { [weak self] in self?.acceptLoop(fd: fd) }
-        onLog?("agent-control socket listening at \(path)")
-    }
-
-    /// Closes the listener and unlinks the socket file. Idempotent.
-    public func stop() {
-        lock.lock()
-        let fd = listenFD
-        let path = boundPath
-        listenFD = -1
-        boundPath = nil
-        lock.unlock()
-        if fd >= 0 { close(fd) }
-        if let path { unlink(path) }
-    }
-
-    // MARK: Accept loop
-
-    private func acceptLoop(fd listenFD: Int32) {
-        while true {
-            let conn = accept(listenFD, nil, nil)
-            if conn < 0 { return } // listen fd closed by stop() → exit
-            // Each connection gets its own background thread for the blocking read loop.
-            let server = server
-            let log = onLog
-            Thread.detachNewThread {
-                Self.serveConnection(fd: conn, server: server, log: log)
-                close(conn)
-            }
+    /// Takes ownership of one connection superd accepted and serves it to EOF.
+    ///
+    /// Returns immediately, on its own thread rather than a cooperative-pool one: these connections
+    /// are long-lived by design and `wait`/`subscribe` park on them indefinitely. The caller is the
+    /// supervisor client's single read-loop thread, which also carries every pane's output — serving
+    /// inline here would stall every terminal in the host for as long as one agent held a
+    /// subscription.
+    public func serve(connection descriptor: Int32) {
+        let server = server
+        let log = onLog
+        Thread.detachNewThread {
+            Self.serveConnection(fd: descriptor, server: server, log: log)
+            close(descriptor)
         }
     }
 
@@ -1246,21 +1106,8 @@ public final class AgentControlAcceptor: @unchecked Sendable {
 
             for line in batch {
                 var ok = true
-                line.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
-                    guard let base = raw.baseAddress else { ok = false
-                        return
-                    }
-                    var offset = 0
-                    let total = raw.count
-                    while offset < total {
-                        let n = write(fd, base + offset, total - offset)
-                        if n > 0 { offset += n }
-                        else if n < 0, errno == EINTR { continue }
-                        else { ok = false
-                            return
-                        } // EPIPE or other error → client gone
-                    }
-                }
+                // EPIPE or anything else → the client is gone.
+                ok = FileDescriptorWrite.all(fd: fd, line) == .complete
                 if !ok {
                     clientDisconnected = true
                     break
@@ -1392,21 +1239,7 @@ public final class AgentControlAcceptor: @unchecked Sendable {
 
             for line in batch {
                 var ok = true
-                line.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
-                    guard let base = raw.baseAddress else { ok = false
-                        return
-                    }
-                    var offset = 0
-                    let total = raw.count
-                    while offset < total {
-                        let n = write(fd, base + offset, total - offset)
-                        if n > 0 { offset += n }
-                        else if n < 0, errno == EINTR { continue }
-                        else { ok = false
-                            return
-                        }
-                    }
-                }
+                ok = FileDescriptorWrite.all(fd: fd, line) == .complete
                 if !ok {
                     clientDisconnected = true
                     break
@@ -1420,20 +1253,10 @@ public final class AgentControlAcceptor: @unchecked Sendable {
         // reader thread exits — no leak.
     }
 
-    // MARK: writeAll helper (handles EINTR + partial writes)
-
+    /// A reply that cannot be delivered is DROPPED — the peer is a control client that has gone
+    /// away, and there is nothing this listener could do with the error. The loop itself (EINTR,
+    /// short writes) is ``FileDescriptorWrite``.
     private static func writeAll(fd: Int32, data: Data) {
-        data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
-            guard let base = raw.baseAddress else { return }
-            var offset = 0
-            let total = raw.count
-            while offset < total {
-                let n = write(fd, base + offset, total - offset)
-                if n > 0 { offset += n }
-                else if n < 0 { if errno == EINTR { continue }
-                    return
-                } else { return }
-            }
-        }
+        FileDescriptorWrite.all(fd: fd, data)
     }
 }

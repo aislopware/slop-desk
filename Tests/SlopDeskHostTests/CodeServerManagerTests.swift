@@ -53,11 +53,19 @@ private final class FakeBridge: CodeBridgeRouting, @unchecked Sendable {
 /// a real code-server (a multi-second Node boot, a network listener, a Homebrew dependency). The
 /// spawner/locator/probe are all injected fakes; only `canonicalRoot` touches the real filesystem
 /// (temp directories).
+/// The launch answers a test drives the manager with. The real reader forks `slopdesk-codeseed`,
+/// which a unit test may not do — and whose absence on a CI machine would otherwise turn every
+/// lifecycle assertion below into `.unavailable`. File scope because BOTH suites drive it.
+private let fakeProfile = CodeServerManager.Profile(
+    arguments: ["--auth", "none"], bridgeSocket: "/tmp/fake-code-bridge.sock",
+)
+
 final class CodeServerManagerTests: XCTestCase {
     private final class FakeHandle: HostServiceProcessHandle, @unchecked Sendable {
         private let lock = NSLock()
         private var running = true
         private(set) var terminated = false
+        private(set) var relinquished = false
 
         var isRunning: Bool {
             lock.lock()
@@ -70,6 +78,14 @@ final class CodeServerManagerTests: XCTestCase {
             defer { lock.unlock() }
             running = false
             terminated = true
+        }
+
+        /// Letting go leaves `running` alone on purpose: superd still holds the child, so a fake
+        /// that flipped it would hide the very difference this seam exists to make.
+        func relinquish() {
+            lock.lock()
+            defer { lock.unlock() }
+            relinquished = true
         }
 
         func exitSilently() {
@@ -116,12 +132,10 @@ final class CodeServerManagerTests: XCTestCase {
         try? FileManager.default.removeItem(atPath: root)
     }
 
-    /// A registry that already carries every bundled marketplace extension — the helper's default,
-    /// so lifecycle tests exercise the post-install steady state (spawn on the first ensure).
-    private static func satisfiedRegistry() -> Data? {
-        let entries = CodeServerManager.bundledMarketplaceExtensions.map { ["identifier": ["id": $0]] }
-        return try? JSONSerialization.data(withJSONObject: entries)
-    }
+    /// Stands in for what the seeder reports missing from the profile registry — the ids
+    /// themselves are the Rust crate's business (`extensions::BUNDLED_MARKETPLACE_EXTENSIONS`);
+    /// what the manager owes them is the deferred spawn.
+    private static let bundledIDs = ["pkief.material-icon-theme"]
 
     private func makeManager(
         spawner: FakeSpawner,
@@ -129,22 +143,23 @@ final class CodeServerManagerTests: XCTestCase {
         probe: @escaping @Sendable (UInt16) -> Bool = { _ in true },
         settingsSeeder: @escaping @Sendable () -> Void = {},
         cliRunner: @escaping CodeServerManager.CLIRunner = { _, _ in nil },
-        installedExtensionsRegistry: @escaping CodeServerManager.InstalledExtensionsRegistry =
-            CodeServerManagerTests.satisfiedRegistry,
+        missingExtensions: @escaping CodeServerManager.MissingExtensions = { [] },
+        profileReader: @escaping CodeServerManager.ProfileReader = { fakeProfile },
         bridge: FakeBridge = FakeBridge(),
     ) -> CodeServerManager {
-        // The seeder, CLI runner, registry reader, settings-file URL AND bridge are ALWAYS
-        // injected — the default seams read/write the real user's `~/.local/share/code-server`,
-        // exec a real binary or bind a real socket, none of which a test may touch.
-        let settingsURL = URL(fileURLWithPath: root).appendingPathComponent("settings.json")
-        return CodeServerManager(
+        // The seeder, CLI runner, extension check, profile reader AND bridge are ALWAYS injected —
+        // the default seams fork `slopdesk-codeseed` against the real user's
+        // `~/.local/share/code-server`, exec a real binary or bind a real socket, none of which a
+        // test may touch.
+        CodeServerManager(
             binaryLocator: { binary },
             spawner: { bin, args, onLine in spawner.spawn(binary: bin, arguments: args, onLine: onLine) },
             readinessProbe: probe,
             settingsSeeder: settingsSeeder,
             cliRunner: cliRunner,
-            installedExtensionsRegistry: installedExtensionsRegistry,
-            settingsFileURL: { settingsURL },
+            missingExtensions: missingExtensions,
+            fontSync: { _ in false },
+            profileReader: profileReader,
             bridge: bridge,
             probeInterval: .zero,
             openRetryDelay: .zero,
@@ -266,12 +281,27 @@ final class CodeServerManagerTests: XCTestCase {
         private let lock = NSLock()
         private let exitCodes: [Int32?]
         private(set) var calls: [[String]] = []
+        /// Held shut while a test needs the CLI to still be RUNNING.
+        ///
+        /// Without it "nothing has spawned yet" is a claim about wall-clock: the install runs on
+        /// another task, and on a loaded machine it can finish before the assertion after `prewarm()`
+        /// is even reached — a test that passes because this machine was quick. Blocking the first
+        /// call until the test opens the gate makes the window a fact rather than a hope.
+        private let gate: DispatchSemaphore?
 
-        init(_ exitCodes: [Int32?]) {
+        init(_ exitCodes: [Int32?], heldUntilOpened: Bool = false) {
             self.exitCodes = exitCodes
+            gate = heldUntilOpened ? DispatchSemaphore(value: 0) : nil
+        }
+
+        /// Lets the first held call return. A no-op for a CLI nobody is holding.
+        func open() {
+            gate?.signal()
         }
 
         func run(binary _: String, arguments: [String]) -> Int32? {
+            gate?.wait()
+            gate?.signal() // one hold, then every later call runs free
             lock.lock()
             defer { lock.unlock() }
             calls.append(arguments)
@@ -377,7 +407,7 @@ final class CodeServerManagerTests: XCTestCase {
         let manager = makeManager(spawner: FakeSpawner(), bridge: bridge)
 
         _ = manager.ensure(projectRoot: root)
-        XCTAssertEqual(bridge.startedPaths, [CodeServerManager.bridgeSocketPath])
+        XCTAssertEqual(bridge.startedPaths, [fakeProfile.bridgeSocket])
 
         _ = manager.ensure(projectRoot: root)
         XCTAssertEqual(bridge.startedPaths.count, 1, "latched — the second ensure re-binds nothing")
@@ -395,131 +425,6 @@ final class CodeServerManagerTests: XCTestCase {
         XCTAssertEqual(bridge.startedPaths.count, 2, "a post-shutdown ensure binds a fresh listener")
     }
 
-    /// The path the extension connects back to reaches it the only way it can: the environment
-    /// every code-server child inherits.
-    func testChildEnvironmentHandsDownTheBridgeSocket() {
-        let environment = CodeServerManager.childEnvironment(base: [:], bridgeSocket: "/tmp/b.sock")
-
-        XCTAssertEqual(environment["SLOPDESK_CODE_BRIDGE_SOCKET"], "/tmp/b.sock")
-    }
-
-    // MARK: Bridge extension seed
-
-    func testBridgeSeedWritesTheManifestAndSourceThenRegisters() throws {
-        let dir = URL(fileURLWithPath: root).appendingPathComponent("extensions")
-        let source = { Data("module.exports = {};".utf8) }
-
-        XCTAssertTrue(CodeServerManager.seedBridgeExtension(into: dir, source: source))
-
-        let folder = dir.appendingPathComponent(CodeServerManager.bridgeExtensionDirectoryName)
-        XCTAssertEqual(
-            try Data(contentsOf: folder.appendingPathComponent("extension.js")), source(),
-        )
-        let manifest = try JSONSerialization.jsonObject(
-            with: Data(contentsOf: folder.appendingPathComponent("package.json")),
-        ) as? [String: Any]
-        XCTAssertEqual(manifest?["main"] as? String, "./extension.js")
-
-        let registry = try JSONSerialization.jsonObject(
-            with: Data(contentsOf: dir.appendingPathComponent("extensions.json")),
-        ) as? [[String: Any]]
-        let ids = registry?.compactMap { ($0["identifier"] as? [String: Any])?["id"] as? String }
-        XCTAssertEqual(ids, ["slopdesk.slopdesk-bridge"], "a folder drop alone is invisible to the workbench")
-    }
-
-    /// Re-seeding an unchanged folder writes nothing (the second call reports no work), and a
-    /// DRIFTED `extension.js` — a hostd carrying a newer bridge — is overwritten in place.
-    func testBridgeSeedIsIdempotentButUpgradesDriftedSource() throws {
-        let dir = URL(fileURLWithPath: root).appendingPathComponent("extensions")
-        let old = { Data("// v1".utf8) }
-        let new = { Data("// v2".utf8) }
-
-        XCTAssertTrue(CodeServerManager.seedBridgeExtension(into: dir, source: old))
-        XCTAssertFalse(CodeServerManager.seedBridgeExtension(into: dir, source: old))
-        XCTAssertTrue(CodeServerManager.seedBridgeExtension(into: dir, source: new))
-
-        let js = dir.appendingPathComponent(CodeServerManager.bridgeExtensionDirectoryName)
-            .appendingPathComponent("extension.js")
-        XCTAssertEqual(try Data(contentsOf: js), new())
-    }
-
-    /// A broken bundle is a no-op, never a half-written extension folder the workbench would then
-    /// try to activate.
-    func testBridgeSeedWithoutSourceWritesNothing() {
-        let dir = URL(fileURLWithPath: root).appendingPathComponent("extensions")
-
-        XCTAssertFalse(CodeServerManager.seedBridgeExtension(into: dir, source: { nil }))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: dir.path))
-    }
-
-    /// The manifest, the folder name and the registry entry all have to agree on ONE identity —
-    /// they are written from the same three constants, and this is what keeps them there.
-    func testBridgeManifestAgreesWithTheSeededIdentity() throws {
-        let manifest = try XCTUnwrap(JSONSerialization.jsonObject(
-            with: Data(CodeServerManager.bridgeExtensionManifest.utf8),
-        ) as? [String: Any])
-
-        XCTAssertEqual(manifest["name"] as? String, CodeServerManager.bridgeExtensionName)
-        XCTAssertEqual(manifest["publisher"] as? String, CodeServerManager.bridgeExtensionPublisher)
-        XCTAssertEqual(manifest["version"] as? String, CodeServerManager.bridgeExtensionVersion)
-        XCTAssertEqual(
-            CodeServerManager.bridgeExtensionDirectoryName, "slopdesk.slopdesk-bridge-1.1.0",
-        )
-        XCTAssertEqual(
-            manifest["extensionKind"] as? [String], ["workspace"],
-            "the socket and the files live on the HOST — the web worker host has neither",
-        )
-    }
-
-    /// The manifest's commands and the extension's `registerCommand` calls have to name the same
-    /// ids: a menu item pointing at an unregistered command is an error dialog, and a registered
-    /// command with no menu item is unreachable.
-    func testBridgeManifestAndSourceAgreeOnTheCommandIDs() throws {
-        let manifest = try XCTUnwrap(JSONSerialization.jsonObject(
-            with: Data(CodeServerManager.bridgeExtensionManifest.utf8),
-        ) as? [String: Any])
-        let contributes = try XCTUnwrap(manifest["contributes"] as? [String: Any])
-        let commands = try XCTUnwrap(contributes["commands"] as? [[String: Any]])
-        let ids = commands.compactMap { $0["command"] as? String }
-        XCTAssertEqual(
-            ids, ["slopdesk.runSelectionInTerminal", "slopdesk.changeTerminalDirectory"],
-        )
-
-        let menus = try XCTUnwrap(contributes["menus"] as? [String: [[String: Any]]])
-        for (menu, items) in menus {
-            for item in items {
-                let command = try XCTUnwrap(item["command"] as? String)
-                XCTAssertTrue(ids.contains(command), "\(menu) points at an undeclared \(command)")
-            }
-        }
-
-        let sourceData = try XCTUnwrap(CodeServerManager.bridgeExtensionSource())
-        let source = try XCTUnwrap(String(data: sourceData, encoding: .utf8))
-        for id in ids {
-            XCTAssertTrue(
-                source.contains("registerCommand(\"\(id)\""), "\(id) is contributed but never registered",
-            )
-        }
-    }
-
-    /// The version bump that carries the new contributions also has to retire the folder the old
-    /// one wrote — the registry stops pointing at it, but our own dead code should not sit in the
-    /// user's profile forever.
-    func testBridgeSeedSweepsTheRetiredVersionsFolder() throws {
-        let dir = URL(fileURLWithPath: root).appendingPathComponent("extensions")
-        let legacy = try XCTUnwrap(CodeServerManager.legacyBridgeExtensionDirectoryNames.first)
-        let stale = dir.appendingPathComponent(legacy).appendingPathComponent("extension.js")
-        try FileManager.default.createDirectory(
-            at: stale.deletingLastPathComponent(), withIntermediateDirectories: true,
-        )
-        try Data("// v1".utf8).write(to: stale)
-
-        XCTAssertTrue(CodeServerManager.seedBridgeExtension(into: dir, source: { Data("// v2".utf8) }))
-
-        XCTAssertFalse(FileManager.default.fileExists(atPath: stale.deletingLastPathComponent().path))
-    }
-
-    /// The runner reaches the BRIDGE (where a `run` line looks it up), not a copy on the manager.
     func testTerminalRunnerIsForwardedToTheBridge() throws {
         let bridge = FakeBridge()
         let manager = CodeServerManager(bridge: bridge)
@@ -532,20 +437,6 @@ final class CodeServerManagerTests: XCTestCase {
             .landed(in: "zsh — alpha"),
         )
     }
-
-    /// The shipped `extension.js` is a real resource in the target bundle (a broken `.copy` rule
-    /// would silently degrade every open back to the CLI) and it reads the env var hostd sets.
-    func testBridgeSourceShipsInTheBundle() throws {
-        let source = try XCTUnwrap(
-            CodeServerManager.bridgeExtensionSource(), "Resources/bridge/extension.js is missing",
-        )
-        let text = try XCTUnwrap(String(data: source, encoding: .utf8))
-
-        XCTAssertTrue(text.contains("SLOPDESK_CODE_BRIDGE_SOCKET"))
-        XCTAssertTrue(text.contains("module.exports"))
-    }
-
-    // MARK: Settings seed
 
     func testSettingsSeederRunsOnceBeforeTheFirstSpawnOnly() throws {
         let other = root + "-b"
@@ -571,42 +462,13 @@ final class CodeServerManagerTests: XCTestCase {
         XCTAssertEqual(seeds.value, 0)
     }
 
-    // MARK: Bundled marketplace extensions
-
-    func testMissingBundledExtensionsTruthTable() throws {
-        // No registry yet (pristine host) / unparseable registry ⇒ everything is missing — the
-        // install CLI rewrites a broken registry properly anyway.
-        XCTAssertEqual(
-            CodeServerManager.missingBundledExtensions(inRegistry: nil),
-            CodeServerManager.bundledMarketplaceExtensions,
-        )
-        XCTAssertEqual(
-            CodeServerManager.missingBundledExtensions(inRegistry: Data("not json".utf8)),
-            CodeServerManager.bundledMarketplaceExtensions,
-        )
-        // Ids compare case-insensitively; foreign entries (the seeded theme) don't satisfy.
-        let satisfied = try JSONSerialization.data(
-            withJSONObject: CodeServerManager.bundledMarketplaceExtensions.map {
-                ["identifier": ["id": $0.uppercased()]]
-            },
-        )
-        XCTAssertEqual(CodeServerManager.missingBundledExtensions(inRegistry: satisfied), [])
-        let foreign = try JSONSerialization.data(
-            withJSONObject: [["identifier": ["id": "slopdesk.slopdesk-themes"]]],
-        )
-        XCTAssertEqual(
-            CodeServerManager.missingBundledExtensions(inRegistry: foreign),
-            CodeServerManager.bundledMarketplaceExtensions,
-        )
-    }
-
     func testFirstEnsureInstallsBundledExtensionsBeforeTheFirstSpawn() async throws {
         let spawner = FakeSpawner()
         let cli = FakeCLI([0])
         let manager = makeManager(
             spawner: spawner,
             cliRunner: { cli.run(binary: $0, arguments: $1) },
-            installedExtensionsRegistry: { nil },
+            missingExtensions: { Self.bundledIDs },
         )
 
         // The install defers the spawn — the very first boot must already scan the icon pack, and
@@ -622,7 +484,7 @@ final class CodeServerManagerTests: XCTestCase {
         try await pollUntilSpawn(manager: manager, spawner: spawner)
         XCTAssertEqual(
             cli.calls,
-            CodeServerManager.bundledMarketplaceExtensions.map { ["--install-extension", $0] },
+            Self.bundledIDs.map { ["--install-extension", $0] },
         )
         XCTAssertEqual(spawner.spawnCount, 1)
     }
@@ -635,12 +497,12 @@ final class CodeServerManagerTests: XCTestCase {
         let manager = makeManager(
             spawner: spawner,
             cliRunner: { cli.run(binary: $0, arguments: $1) },
-            installedExtensionsRegistry: { nil },
+            missingExtensions: { Self.bundledIDs },
         )
         _ = manager.ensure(projectRoot: root)
         try await pollUntilSpawn(manager: manager, spawner: spawner)
         XCTAssertEqual(
-            cli.calls.count, CodeServerManager.bundledMarketplaceExtensions.count,
+            cli.calls.count, Self.bundledIDs.count,
             "one attempt per id — no retry loop inside a manager lifetime",
         )
     }
@@ -652,6 +514,24 @@ final class CodeServerManagerTests: XCTestCase {
         _ = manager.ensure(projectRoot: root)
         XCTAssertEqual(spawner.spawnCount, 1, "already installed ⇒ the first ensure spawns straight away")
         XCTAssertTrue(cli.calls.isEmpty)
+    }
+
+    /// A thread-safe call counter for the injected seams — the seeder and the CLI runner are
+    /// invoked off the metadata queue.
+    private final class Counter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var count = 0
+        var value: Int {
+            lock.lock()
+            defer { lock.unlock() }
+            return count
+        }
+
+        func increment() {
+            lock.lock()
+            defer { lock.unlock() }
+            count += 1
+        }
     }
 
     // MARK: Prewarm (daemon-boot spawn, no client)
@@ -691,14 +571,15 @@ final class CodeServerManagerTests: XCTestCase {
         // client poll to pick the spawn up, so waiting for the next ensure would strand the
         // child unspawned until the panel opens (exactly the cold start prewarm removes).
         let spawner = FakeSpawner()
-        let cli = FakeCLI([0])
+        let cli = FakeCLI([0], heldUntilOpened: true)
         let manager = makeManager(
             spawner: spawner,
             cliRunner: { cli.run(binary: $0, arguments: $1) },
-            installedExtensionsRegistry: { nil },
+            missingExtensions: { Self.bundledIDs },
         )
         manager.prewarm()
         XCTAssertEqual(spawner.spawnCount, 0, "no child boots while the install CLI runs")
+        cli.open() // the install may finish now — the window above was real, not merely quick
         for _ in 0..<500 {
             if spawner.spawnCount > 0 { break }
             try await Task.sleep(for: .milliseconds(10))
@@ -706,7 +587,7 @@ final class CodeServerManagerTests: XCTestCase {
         XCTAssertEqual(spawner.spawnCount, 1, "the install completion spawns — no ensure needed")
         XCTAssertEqual(
             cli.calls,
-            CodeServerManager.bundledMarketplaceExtensions.map { ["--install-extension", $0] },
+            Self.bundledIDs.map { ["--install-extension", $0] },
         )
     }
 
@@ -719,822 +600,6 @@ final class CodeServerManagerTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(10))
         }
         XCTFail("the install task never released the spawn")
-    }
-
-    func testSeedUserSettingsWritesOnlyWhenAbsent() throws {
-        let fileURL = URL(fileURLWithPath: root)
-            .appendingPathComponent("data/code-server/User/settings.json")
-
-        // Absent (intermediate directories included) → written with the canned defaults.
-        XCTAssertTrue(CodeServerManager.seedUserSettings(at: fileURL))
-        XCTAssertEqual(
-            try String(contentsOf: fileURL, encoding: .utf8), CodeServerManager.seededUserSettings,
-        )
-
-        // Present with the user's OWN content → NEVER overwritten, whatever it holds.
-        try Data("{\"workbench.colorTheme\": \"Mine\"}".utf8).write(to: fileURL)
-        XCTAssertFalse(CodeServerManager.seedUserSettings(at: fileURL))
-        XCTAssertEqual(
-            try String(contentsOf: fileURL, encoding: .utf8), "{\"workbench.colorTheme\": \"Mine\"}",
-        )
-    }
-
-    func testSeededChromeIsFlatAndSelectionWearsTheIslandChip() throws {
-        // The two rules the colour block exists to hold, pinned because a seed bump is a wall of
-        // JSON and either is easy to drop silently.
-        let seed = try XCTUnwrap(
-            JSONSerialization.jsonObject(with: Data(CodeServerManager.seededUserSettings.utf8))
-                as? [String: Any],
-        )
-        let colors = try XCTUnwrap(seed["workbench.colorCustomizations"] as? [String: String])
-
-        // 1. NOTHING CASTS. Every shadow key the theme pair ships is fully transparent here — on a
-        // field where every surface is the one cream, a cast is a smear rather than a lift.
-        let shadows = colors.filter { $0.key.lowercased().contains("shadow") }
-        XCTAssertFalse(shadows.isEmpty)
-        for (key, value) in shadows {
-            XCTAssertEqual(value, "#00000000", "\(key) still casts")
-        }
-
-        // 1b. …INCLUDING THE STRUCTURAL ONES, which the block above cannot reach. The editor part's
-        // inset left and right seams, the title bar, the activity bar and the side bar cast from
-        // `rgba()` literals in the workbench stylesheet, keyed to no colour token; `workbench.shadows`
-        // is the only switch that zeroes them. Dropping it puts the seam strips back while every
-        // assertion above still passes, so it is pinned separately rather than folded in.
-        XCTAssertEqual(seed["workbench.shadows"] as? Bool, false, "the part shadows are back")
-
-        // 2. SELECTION IS A TINT, NEVER AN INVERSION. Every chosen row is the island ink laid over
-        // the ground at 12%, in every list the panel puts a selection in.
-        for key in [
-            "list.activeSelectionBackground", "list.focusBackground",
-            "quickInputList.focusBackground", "editorSuggestWidget.selectedBackground",
-            "menu.selectionBackground",
-        ] {
-            XCTAssertEqual(colors[key], "#22212C17", "\(key) is not the selection tint")
-        }
-
-        // 2b. NO TAB IS MARKED BY WEIGHT, AND NO SURFACE CARRIES A SECOND TONE. Every part stays
-        // the ground cream; the whole structure — the strip's baseline, the notch the open tab cuts
-        // in it, the island edge around the editor and the sidebar — is drawn by the ONE light line
-        // in `editorGroup.border`, which the client's sheet reads through its var. A bed here was
-        // the v31 error: a tone that has to span a whole part cannot mark something that occupies
-        // part of it, so it ran on past the last tab as a grey rectangle.
-        XCTAssertEqual(colors["editorGroup.border"], "#22212C1F", "the one structural line went out")
-        XCTAssertEqual(colors["editorGroupHeader.tabsBackground"], "#FFFBEB", "the strip grew a bed again")
-        XCTAssertEqual(colors["tab.activeBackground"], "#FFFBEB", "the open tab is not the ground cream")
-        XCTAssertEqual(colors["tab.unfocusedActiveBackground"], "#FFFBEB")
-        for key in ["tab.inactiveBackground", "tab.unfocusedInactiveBackground"] {
-            XCTAssertEqual(colors[key], "#00000000", "\(key) put a chip back on a closed tab")
-        }
-        for key in ["tab.hoverBackground", "tab.unfocusedHoverBackground"] {
-            XCTAssertEqual(colors[key], "#22212C0A", "\(key) is not the plain hover tint")
-        }
-
-        // 3. NO SELECTION FOREGROUND, ANYWHERE — the regression guard for the reversal. A solid
-        // plate needs light ink to stay legible, so an inverted chip and a foreground override
-        // arrive together; the tint needs neither. Every row here carries a saturated multi-colour
-        // file icon authored for a light bed, and those cannot be recoloured to follow a dark one.
-        let selectionForegrounds = colors.keys.filter {
-            ($0.contains("election") || $0.contains("focus") || $0.contains("Focus"))
-                && ($0.hasSuffix("Foreground") || $0.hasSuffix("IconForeground"))
-        }
-        XCTAssertEqual(selectionForegrounds.sorted(), [], "selection is inverting again")
-    }
-
-    func testSeededTabsAreOneFixedWidth() throws {
-        // Pinned as a trio: `fixed` alone only BOUNDS the plate, and a min below the max lets the
-        // strip resize per filename again — the exact behaviour the setting was chosen to stop.
-        let seed = try XCTUnwrap(
-            JSONSerialization.jsonObject(with: Data(CodeServerManager.seededUserSettings.utf8))
-                as? [String: Any],
-        )
-        XCTAssertEqual(seed["workbench.editor.tabSizing"] as? String, "fixed")
-        let min = try XCTUnwrap(seed["workbench.editor.tabSizingFixedMinWidth"] as? Int)
-        let max = try XCTUnwrap(seed["workbench.editor.tabSizingFixedMaxWidth"] as? Int)
-        XCTAssertEqual(min, max, "a min below the max is bounded, not fixed")
-        XCTAssertGreaterThanOrEqual(min, 38, "below the workbench's own floor")
-    }
-
-    func testSeededEditorNeverAsksForTheGpuRendererOrTheEditContextInputPath() {
-        // Both keys are REGISTERED in the 4.131 bundle — the reason they stay unseeded is the DOM,
-        // not the schema. The GPU view context sizes its canvas through
-        // `observe(canvas, { box: ["device-pixel-content-box"] })`, and a WKWebView probe answers
-        // `TypeError` to that box (with `devicePixelContentBoxSize` absent from the entry
-        // prototype). The workbench rethrows it out of the editor's construction, so `"on"` is not
-        // a fallback to the DOM renderer — it is `Unable to open '<file>'` for every file. v33
-        // shipped it on for one day; it lives on only in ``obsoleteSeeds`` so those hosts recover.
-        XCTAssertNil(seedValue("editor.experimentalGpuAcceleration"))
-        // Its sibling rides the `EditContext` DOM API, which WebKit does not ship — measured
-        // `undefined` in the same probe. Seeding it would claim an input path this panel can
-        // never take; the fallback is Monaco's hidden textarea either way.
-        XCTAssertNil(seedValue("editor.editContext"))
-    }
-
-    func testWorkbenchWrittenThemeKeysDoNotStrandAHost() throws {
-        // The workbench re-materialises its theme bookkeeping after a theme change even when the
-        // seed omits those keys. Such a file was never user-edited and must still upgrade.
-        let fileURL = URL(fileURLWithPath: root).appendingPathComponent("settings.json")
-        let former = try XCTUnwrap(CodeServerManager.obsoleteSeeds.last)
-        var object = try XCTUnwrap(
-            JSONSerialization.jsonObject(with: Data(former.utf8)) as? [String: Any],
-        )
-        for key in CodeServerManager.machineWrittenThemeKeys {
-            XCTAssertNil(seedValue(key), "\(key) is seeded now — the blindness must be reconsidered")
-            object[key] = "Dark 2026"
-        }
-        try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
-            .write(to: fileURL)
-
-        XCTAssertTrue(CodeServerManager.seedUserSettings(at: fileURL))
-        XCTAssertEqual(
-            try String(contentsOf: fileURL, encoding: .utf8),
-            CodeServerManager.seededUserSettings,
-        )
-    }
-
-    /// The current seed's value for `key`, or `nil` when the seed does not set it.
-    private func seedValue(_ key: String) -> Any? {
-        guard let object = (try? JSONSerialization.jsonObject(
-            with: Data(CodeServerManager.seededUserSettings.utf8),
-        )) as? [String: Any] else { return nil }
-        return object[key]
-    }
-
-    func testSeedUpgradesEveryPristineFormerSeed() throws {
-        // A file byte-identical to ANY seed this manager once shipped was never user-edited (the
-        // workbench rewrites the file on any settings change) — each upgrades to the current seed.
-        let fileURL = URL(fileURLWithPath: root)
-            .appendingPathComponent("data/code-server/User/settings.json")
-        try FileManager.default.createDirectory(
-            at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true,
-        )
-        XCTAssertFalse(CodeServerManager.obsoleteSeeds.isEmpty)
-        for former in CodeServerManager.obsoleteSeeds {
-            try Data(former.utf8).write(to: fileURL)
-            XCTAssertTrue(CodeServerManager.seedUserSettings(at: fileURL))
-            XCTAssertEqual(
-                try String(contentsOf: fileURL, encoding: .utf8), CodeServerManager.seededUserSettings,
-            )
-        }
-    }
-
-    func testFontSyncedFormerSeedStillUpgrades() throws {
-        // A former seed whose ONLY divergence is the verb-20 font trio (sync rewrote the file,
-        // re-serializing it wholesale) is still OURS — the format-blind + font-blind comparator
-        // must upgrade it, or every font-synced host is stranded on its old seed forever.
-        let fileURL = URL(fileURLWithPath: root)
-            .appendingPathComponent("data/code-server/User/settings.json")
-        try FileManager.default.createDirectory(
-            at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true,
-        )
-        for former in CodeServerManager.obsoleteSeeds {
-            try Data(former.utf8).write(to: fileURL)
-            CodeServerManager.syncEditorFont(
-                MetadataCodec.CodeFontSpec(family: "Iosevka", size: 15, lineHeight: 1.44),
-                at: fileURL,
-            )
-            XCTAssertNotEqual(try Data(contentsOf: fileURL), Data(former.utf8))
-            XCTAssertTrue(CodeServerManager.seedUserSettings(at: fileURL))
-            XCTAssertEqual(
-                try String(contentsOf: fileURL, encoding: .utf8), CodeServerManager.seededUserSettings,
-            )
-        }
-    }
-
-    func testFontSyncedCurrentSeedIsLeftAlone() throws {
-        // The CURRENT seed with synced fonts is up to date — a rewrite would clobber the client's
-        // sync on every manager lifetime (the seed lays defaults; the sync overrides them).
-        let fileURL = URL(fileURLWithPath: root)
-            .appendingPathComponent("data/code-server/User/settings.json")
-        try FileManager.default.createDirectory(
-            at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true,
-        )
-        try Data(CodeServerManager.seededUserSettings.utf8).write(to: fileURL)
-        CodeServerManager.syncEditorFont(
-            MetadataCodec.CodeFontSpec(family: "Iosevka", size: 15, lineHeight: 1.44), at: fileURL,
-        )
-        let synced = try Data(contentsOf: fileURL)
-        XCTAssertFalse(CodeServerManager.seedUserSettings(at: fileURL))
-        XCTAssertEqual(try Data(contentsOf: fileURL), synced)
-    }
-
-    func testUserEditedFormerSeedNeverUpgradesEvenWithFontDrift() throws {
-        // A REAL user edit beyond the font trio (here: wordWrap) makes the file theirs — no
-        // upgrade, no matter how seed-like the rest looks.
-        let fileURL = URL(fileURLWithPath: root)
-            .appendingPathComponent("data/code-server/User/settings.json")
-        try FileManager.default.createDirectory(
-            at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true,
-        )
-        let former = try XCTUnwrap(CodeServerManager.obsoleteSeeds.last)
-        var object = try XCTUnwrap(
-            try JSONSerialization.jsonObject(with: Data(former.utf8)) as? [String: Any],
-        )
-        object["editor.wordWrap"] = "on"
-        object["editor.fontSize"] = 15
-        try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .prettyPrinted])
-            .write(to: fileURL)
-        let edited = try Data(contentsOf: fileURL)
-        XCTAssertFalse(CodeServerManager.seedUserSettings(at: fileURL))
-        XCTAssertEqual(try Data(contentsOf: fileURL), edited)
-    }
-
-    // MARK: Editor font sync (verb 20)
-
-    func testSyncEditorFontPatchesTheTrioAndKeepsEveryOtherKey() throws {
-        let fileURL = URL(fileURLWithPath: root).appendingPathComponent("settings.json")
-        try Data(CodeServerManager.seededUserSettings.utf8).write(to: fileURL)
-        XCTAssertTrue(CodeServerManager.syncEditorFont(
-            MetadataCodec.CodeFontSpec(family: "Iosevka", size: 14, lineHeight: 1.58), at: fileURL,
-        ))
-        let settings = try XCTUnwrap(
-            try JSONSerialization.jsonObject(with: Data(contentsOf: fileURL)) as? [String: Any],
-        )
-        XCTAssertEqual(
-            settings["editor.fontFamily"] as? String,
-            "'Iosevka', 'JetBrains Mono', ui-monospace, 'Symbols Nerd Font', monospace",
-        )
-        XCTAssertEqual(try XCTUnwrap(settings["editor.fontSize"] as? Double), 14)
-        XCTAssertEqual(try XCTUnwrap(settings["editor.lineHeight"] as? Double), 1.58)
-        // Every non-font key rides through untouched.
-        XCTAssertEqual(settings["workbench.colorTheme"] as? String, "Alucard")
-        XCTAssertEqual(settings["files.autoSave"] as? String, "onFocusChange")
-        // The file reads the way a human wrote it: a raw Double serializes with round-trip noise
-        // ("1.5800000000000001") in a settings file the user opens — the decimal route must keep
-        // it "1.58" / "14" on the BYTES, not just the parsed value.
-        let text = try String(contentsOf: fileURL, encoding: .utf8)
-        XCTAssertTrue(text.contains("\"editor.lineHeight\" : 1.58"), text)
-        XCTAssertTrue(text.contains("\"editor.fontSize\" : 14"), text)
-        XCTAssertFalse(text.contains("1.5800000"))
-    }
-
-    func testSyncEditorFontIsChurnFreeWhenAlreadyInSync() throws {
-        // Every ensure round re-syncs — the second identical spec must NOT rewrite the file (the
-        // workbench's settings watcher would reload for nothing).
-        let fileURL = URL(fileURLWithPath: root).appendingPathComponent("settings.json")
-        try Data(CodeServerManager.seededUserSettings.utf8).write(to: fileURL)
-        let spec = MetadataCodec.CodeFontSpec(family: "JetBrains Mono", size: 14, lineHeight: 1.58)
-        XCTAssertTrue(CodeServerManager.syncEditorFont(spec, at: fileURL))
-        let once = try Data(contentsOf: fileURL)
-        XCTAssertFalse(CodeServerManager.syncEditorFont(spec, at: fileURL))
-        XCTAssertEqual(try Data(contentsOf: fileURL), once)
-    }
-
-    func testSyncEditorFontNeverCreatesAndNeverRewritesJSONC() throws {
-        let spec = MetadataCodec.CodeFontSpec(family: "Iosevka", size: 15, lineHeight: 1.44)
-        // Missing file → no-op, still missing (the sync is layered over the seed, never a creator).
-        let missing = URL(fileURLWithPath: root).appendingPathComponent("absent.json")
-        XCTAssertFalse(CodeServerManager.syncEditorFont(spec, at: missing))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: missing.path))
-        // JSONC (comments — JSONSerialization rejects it) → the USER's file, byte-untouched.
-        let jsonc = URL(fileURLWithPath: root).appendingPathComponent("settings.json")
-        let contents = "// mine\n{\"editor.fontSize\": 11}\n"
-        try Data(contents.utf8).write(to: jsonc)
-        XCTAssertFalse(CodeServerManager.syncEditorFont(spec, at: jsonc))
-        XCTAssertEqual(try String(contentsOf: jsonc, encoding: .utf8), contents)
-    }
-
-    func testEditorFontFamilyStack() {
-        let fallback = "'JetBrains Mono', ui-monospace, 'Symbols Nerd Font', monospace"
-        // The embedded default and degenerate families collapse to the seeded stack (no repeat).
-        XCTAssertEqual(CodeServerManager.editorFontFamilyStack(for: "JetBrains Mono"), fallback)
-        XCTAssertEqual(CodeServerManager.editorFontFamilyStack(for: "  "), fallback)
-        XCTAssertEqual(CodeServerManager.editorFontFamilyStack(for: "'\"'"), fallback)
-        // A real family heads the stack, quote-stripped and single-quoted.
-        XCTAssertEqual(
-            CodeServerManager.editorFontFamilyStack(for: " 'SF Mono' "), "'SF Mono', \(fallback)",
-        )
-    }
-
-    func testCurrentSeedIsNotListedObsolete() {
-        // The upgrade rule keys on obsoleteSeeds — the CURRENT seed in that list would make every
-        // pristine host rewrite (and log a seed) on every manager lifetime.
-        XCTAssertFalse(CodeServerManager.obsoleteSeeds.contains(CodeServerManager.seededUserSettings))
-    }
-
-    func testSeededSettingsAreValidJSONWithThemeAndLeanChrome() throws {
-        let object = try JSONSerialization.jsonObject(
-            with: Data(CodeServerManager.seededUserSettings.utf8),
-        )
-        let settings = try XCTUnwrap(object as? [String: Any])
-        XCTAssertEqual(settings["workbench.colorTheme"] as? String, "Alucard")
-        XCTAssertEqual(settings["workbench.startupEditor"] as? String, "none")
-        // The lean pass: title-bar strips gone, editor chrome minimal.
-        XCTAssertEqual(settings["window.commandCenter"] as? Bool, false)
-        XCTAssertEqual(settings["workbench.layoutControl.enabled"] as? Bool, false)
-        XCTAssertEqual(settings["editor.minimap.enabled"] as? Bool, false)
-        // v12: the activity-bar icons fold into the sidebar TOP (user-directed) — Search / Source
-        // Control / Extensions are clickable again; fully "hidden" left them chord-only. "top"
-        // force-shows the web title bar; the CLIENT clips that band off
-        // (`CodeSidebarWebView.clippedTitleBarHeight`).
-        XCTAssertEqual(settings["workbench.activityBar.location"] as? String, "top")
-        XCTAssertEqual(settings["window.menuBarVisibility"] as? String, "hidden")
-        // v14: the status bar RETURNS (user-directed 2026-08-03) — no visibility key at all, the
-        // workbench keeps its stock footing (branch, problems, cursor) under the retinted seam.
-        XCTAssertNil(settings["workbench.statusBar.visible"])
-        // v13: the gutter slims — the panel reads code, it does not debug it (user-directed):
-        // three-char line numbers, no breakpoint glyph margin, no folding-arrow column.
-        XCTAssertEqual(settings["editor.lineNumbersMinChars"] as? Int, 3)
-        XCTAssertEqual(settings["editor.glyphMargin"] as? Bool, false)
-        XCTAssertEqual(settings["editor.folding"] as? Bool, false)
-        // v16: the reading aids (user-directed 2026-08-04) — structure guides in the editor AND
-        // the file tree. Sticky scroll and always-on tree guides are genuine non-defaults
-        // (verified in the shipped 4.131 bundle: `stickyScroll={enabled:!1`, tree guides
-        // default "onHover"); the indentation-guide pin is the ask by its own name.
-        XCTAssertEqual(settings["editor.guides.indentation"] as? Bool, true)
-        XCTAssertEqual(settings["editor.guides.bracketPairs"] as? String, "active")
-        XCTAssertEqual(settings["editor.stickyScroll.enabled"] as? Bool, true)
-        XCTAssertEqual(settings["editor.renderWhitespace"] as? String, "trailing")
-        XCTAssertEqual(settings["workbench.tree.renderIndentGuides"] as? String, "always")
-        XCTAssertEqual(settings["workbench.tree.indent"] as? Int, 16)
-        // Every seeded key must be REGISTERED in the shipped web workbench — the settings editor
-        // flags unknown keys as warnings in a file we authored. These two are still unregistered
-        // (desktop-only / absent from the shipped workbench) and must never come back.
-        XCTAssertNil(settings["window.customTitleBarVisibility"])
-        XCTAssertNil(settings["chat.commandCenter.enabled"])
-        // v18: `chat.disableAIFeatures` RETURNS — v7 dropped it because Code-OSS had no chat to
-        // disable, and code-server 4.113+ bundles the Copilot chat extension that registers it
-        // again (verified in the 4.131 bundle). The intent never changed: this panel is seeded
-        // with the AI surfaces off.
-        XCTAssertEqual(settings["chat.disableAIFeatures"] as? Bool, true)
-        // The file tree hugs the window's right edge — the panel hangs off it.
-        XCTAssertEqual(settings["workbench.sideBar.location"] as? String, "right")
-        // The editor face IS the terminal's: JetBrains Mono (what libghostty actually renders —
-        // its embedded default; "SF Mono" resolves on neither machine) at the terminal's 13pt,
-        // with the bundled nerd face behind it for private-use glyphs. The client injects both
-        // @font-faces; the family NAMES here must match `CodeSidebarPageDressing`'s
-        // `monoFontFamilyName` / `nerdFontFamilyName`.
-        let fontFamily = try XCTUnwrap(settings["editor.fontFamily"] as? String)
-        XCTAssertTrue(fontFamily.hasPrefix("'JetBrains Mono'"))
-        XCTAssertTrue(fontFamily.contains("ui-monospace"))
-        XCTAssertTrue(fontFamily.contains("'Symbols Nerd Font'"))
-        XCTAssertEqual(settings["editor.fontSize"] as? Int, 13)
-        // Line rhythm parity: 1.32 is JetBrains Mono's own vertical metric ((1020 + 300) / 1000)
-        // — the exact ratio ghostty rounds into its cell height.
-        XCTAssertEqual(try XCTUnwrap(settings["editor.lineHeight"] as? Double), 1.32)
-        // v17: NO `window.title` template. The web title bar is clipped off client-side and the
-        // panel's strip stopped reading the document title (the workbench's own editor tab already
-        // names the open file), so there is no surface left for a shape here to reach.
-        XCTAssertNil(settings["window.title"])
-        // Auto-save on focus change — leaving the editor for the terminal puts the file on disk.
-        XCTAssertEqual(settings["files.autoSave"] as? String, "onFocusChange")
-        // v9: NO compact tab density. The 22px compact row minus the Slate plate recut (height −
-        // 8px) left 14px plates — too squat next to the app's own tab plates. Absent ⇒ the stock
-        // 35px row ⇒ 27px plates, ≈ the app's control height.
-        XCTAssertNil(settings["window.density.editorTabHeight"])
-        // v10: markdown opens straight into the RENDERED preview — in this panel markdown is
-        // read, not authored. The value is the built-in markdown extension's custom-editor id.
-        let associations = try XCTUnwrap(settings["workbench.editorAssociations"] as? [String: Any])
-        XCTAssertEqual(associations["*.md"] as? String, "vscode.markdown.preview.editor")
-        // v11: no git-decoration letter badge on editor TABS — the sub-baseline "A"/"M" reads as
-        // a stray character beside the label. The explorer keeps its own badges.
-        XCTAssertEqual(settings["workbench.editor.decorations.badges"] as? Bool, false)
-        // v15: Material Icon Theme file icons — the id the bundled marketplace install provides
-        // (`bundledMarketplaceExtensions`), so it resolves on the very first boot.
-        XCTAssertEqual(settings["workbench.iconTheme"] as? String, "material-icon-theme")
-    }
-
-    // MARK: Theme extension seed
-
-    func testThemeExtensionManifestCarriesEveryVariantAndAgreesWithTheSeed() throws {
-        let manifest = try XCTUnwrap(
-            try JSONSerialization.jsonObject(
-                with: Data(CodeServerManager.themeExtensionManifest.utf8),
-            ) as? [String: Any],
-        )
-        let contributes = try XCTUnwrap(manifest["contributes"] as? [String: Any])
-        let themes = try XCTUnwrap(contributes["themes"] as? [[String: Any]])
-        // The app's own Alucard plus ALL EIGHT stock Monokai variants (user-directed 2026-08-03,
-        // 2026-08-09) — the generated manifest must mirror the source-of-truth table row for row.
-        XCTAssertEqual(themes.count, CodeServerManager.themeExtensionThemes.count)
-        XCTAssertEqual(themes.count, 9)
-        // The seed selects the FIRST row by name, so the two must never drift apart.
-        let seeded = try XCTUnwrap(
-            try JSONSerialization.jsonObject(
-                with: Data(CodeServerManager.seededUserSettings.utf8),
-            ) as? [String: Any],
-        )
-        XCTAssertEqual(seeded["workbench.colorTheme"] as? String, themes.first?["label"] as? String)
-        // ...and with one appearance there is nothing left to flip between.
-        XCTAssertNil(seeded["window.autoDetectColorScheme"])
-        XCTAssertNil(seeded["workbench.preferredDarkColorTheme"])
-        XCTAssertNil(seeded["workbench.preferredLightColorTheme"])
-        for (entry, expected) in zip(themes, CodeServerManager.themeExtensionThemes) {
-            XCTAssertEqual(entry["label"] as? String, expected.label)
-            XCTAssertEqual(entry["uiTheme"] as? String, expected.dark ? "vs-dark" : "vs")
-            XCTAssertEqual(entry["path"] as? String, "./themes/\(expected.resource).json")
-        }
-        // The folder name pins the manifest identity (publisher.name-version).
-        let identity = "\(manifest["publisher"] as? String ?? "").\(manifest["name"] as? String ?? "")"
-            + "-\(manifest["version"] as? String ?? "")"
-        XCTAssertEqual(identity, CodeServerManager.themeExtensionDirectoryName)
-    }
-
-    // MARK: Retired Foundry theme extension removal
-
-    func testRemoveRetiredThemeExtensionsSweepsEveryFolderAndRegistryEntry() throws {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("slopdesk-retired-removal-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: dir) }
-        let allNames = CodeServerManager.retiredExtensions.flatMap(\.directoryNames)
-        XCTAssertFalse(allNames.isEmpty)
-        // The renamed vendored family must be in here: leaving its old folder behind would list
-        // the same eight theme labels twice in the picker.
-        XCTAssertTrue(allNames.contains("slopdesk.slopdesk-monokai-1.0.0"))
-        // ...and the live folder must NEVER be swept as retired.
-        XCTAssertFalse(allNames.contains(CodeServerManager.themeExtensionDirectoryName))
-        for name in allNames {
-            try FileManager.default.createDirectory(
-                at: dir.appendingPathComponent("\(name)/themes"), withIntermediateDirectories: true,
-            )
-        }
-        // A registry carrying OUR retired entries beside a foreign one.
-        let registry = dir.appendingPathComponent("extensions.json")
-        var entries: [[String: Any]] = CodeServerManager.retiredExtensions.map {
-            ["identifier": ["id": $0.id], "version": "2.0.0"]
-        }
-        entries.append(["identifier": ["id": "someone.else"], "version": "1.2.3"])
-        try JSONSerialization.data(withJSONObject: entries).write(to: registry)
-
-        XCTAssertTrue(CodeServerManager.removeRetiredThemeExtensions(from: dir))
-        for name in allNames {
-            XCTAssertFalse(
-                FileManager.default.fileExists(atPath: dir.appendingPathComponent(name).path),
-            )
-        }
-        let kept = try XCTUnwrap(
-            try JSONSerialization.jsonObject(with: Data(contentsOf: registry)) as? [[String: Any]],
-        )
-        // The foreign entry rides through untouched; ours is gone.
-        XCTAssertEqual(kept.count, 1)
-        XCTAssertEqual((kept[0]["identifier"] as? [String: Any])?["id"] as? String, "someone.else")
-
-        // Idempotent: a second sweep finds nothing to do.
-        XCTAssertFalse(CodeServerManager.removeRetiredThemeExtensions(from: dir))
-    }
-
-    func testUnregisterExtensionLeavesMissingOrForeignRegistriesAlone() throws {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("slopdesk-unregister-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: dir) }
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        // No registry file at all: nothing to prune, nothing created.
-        XCTAssertFalse(CodeServerManager.unregisterExtension(id: "slopdesk.x", in: dir))
-        XCTAssertFalse(
-            FileManager.default.fileExists(atPath: dir.appendingPathComponent("extensions.json").path),
-        )
-        // An unparseable registry is someone else's problem state: left byte-identical.
-        let registry = dir.appendingPathComponent("extensions.json")
-        try Data("not json".utf8).write(to: registry)
-        XCTAssertFalse(CodeServerManager.unregisterExtension(id: "slopdesk.x", in: dir))
-        XCTAssertEqual(try Data(contentsOf: registry), Data("not json".utf8))
-    }
-
-    /// The seven structural part borders — the workbench's own seams. These are the ONLY colour
-    /// departure from the stock vsix: they carry the app's Slate `divider` tint so the
-    /// workbench's seams match the split dividers around the panel (user-directed 2026-08-03).
-    private static let seamBorderKeys = [
-        "activityBar.border", "editorGroup.border", "panel.border", "sideBar.border",
-        "statusBar.border", "statusBar.noFolderBorder", "titleBar.border",
-    ]
-
-    func testEveryThemeResourceParsesWithSeamTintAndValidColors() throws {
-        // One resource per manifest row, every one loadable from the bundle, every one carrying
-        // the two (and only two) departures from stock: retinted seam borders per dark/light,
-        // no invalid colour values (the vsix's empty strings dropped by the sync script).
-        for theme in CodeServerManager.themeExtensionThemes {
-            let data = try XCTUnwrap(
-                CodeServerManager.themeExtensionThemeData(resource: theme.resource),
-                "\(theme.resource).json must resolve from the bundle",
-            )
-            let parsed = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
-            XCTAssertEqual(parsed["name"] as? String, theme.label)
-            XCTAssertEqual(parsed["type"] as? String, theme.dark ? "dark" : "light")
-            let colors = try XCTUnwrap(parsed["colors"] as? [String: Any])
-            // The vendored vsix carries the workbench's full key set; the app's own theme is
-            // hand-authored and only names what it means to change.
-            let floor = CodeServerManager.ownThemeResources.contains(theme.resource) ? 100 : 500
-            XCTAssertGreaterThan(colors.count, floor, theme.label)
-            for key in Self.seamBorderKeys {
-                XCTAssertEqual(
-                    colors[key] as? String, theme.dark ? "#fcfcfa1a" : "#00000014",
-                    "\(theme.label) \(key)",
-                )
-            }
-            try assertEveryColorValueIsValidHex(colors)
-            XCTAssertFalse(
-                try XCTUnwrap(parsed["tokenColors"] as? [Any]).isEmpty,
-                "syntax rules ride along — the palette identity (\(theme.label))",
-            )
-        }
-    }
-
-    func testThemeResourceIsStockMonokaiProWithSlateSeamBorders() throws {
-        let data = try XCTUnwrap(
-            CodeServerManager.themeExtensionThemeData(resource: "monokai-pro"),
-            "the bundled theme resource must resolve",
-        )
-        let theme = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
-        XCTAssertEqual(theme["name"] as? String, "Monokai Pro")
-        XCTAssertEqual(theme["type"] as? String, "dark")
-        let colors = try XCTUnwrap(theme["colors"] as? [String: Any])
-        // Stock Monokai Pro surfaces (they double as the app's own Slate seeds).
-        XCTAssertEqual(colors["editor.background"] as? String, "#2d2a2e")
-        XCTAssertEqual(colors["sideBar.background"] as? String, "#221f22")
-        // STOCK survives (user-directed 2026-08-03, reverting the earlier 17-key chrome-accent
-        // neutralization): the filter's yellow accent stays on tabs, lists and links.
-        XCTAssertEqual(colors["tab.activeForeground"] as? String, "#ffd866")
-        XCTAssertEqual(colors["tab.activeBorder"] as? String, "#ffd866")
-        XCTAssertEqual(colors["list.activeSelectionForeground"] as? String, "#ffd866")
-        XCTAssertEqual(colors["textLink.foreground"] as? String, "#ffd866")
-        XCTAssertEqual(colors["tab.activeBackground"] as? String, "#2d2a2e")
-        XCTAssertEqual(colors["gitDecoration.modifiedResourceForeground"] as? String, "#ffd866")
-        // The one colour departure: every structural seam border rides the Slate divider token —
-        // the dark filter's foreground `#fcfcfa` at the token's 0.10, in alpha form so it
-        // composites over whichever surface it separates (stock painted these near-black).
-        for key in Self.seamBorderKeys {
-            XCTAssertEqual(colors[key] as? String, "#fcfcfa1a", key)
-        }
-        try assertEveryColorValueIsValidHex(colors)
-        XCTAssertFalse(
-            try XCTUnwrap(theme["tokenColors"] as? [Any]).isEmpty,
-            "syntax rules ride along — the Monokai identity",
-        )
-    }
-
-    /// Every workbench colour must be `#rrggbb`/`#rrggbbaa` — the vsix conversion once carried
-    /// five EMPTY-string values (`diffEditor.move.border` etc.), which the workbench rejects
-    /// per-key; a file we author carries no invalid values.
-    private func assertEveryColorValueIsValidHex(_ colors: [String: Any]) throws {
-        for (key, value) in colors {
-            let hex = try XCTUnwrap(value as? String, "\(key) must be a string colour")
-            XCTAssertTrue(
-                hex.wholeMatch(of: /#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?/) != nil,
-                "\(key) carries an invalid colour value '\(hex)'",
-            )
-        }
-    }
-
-    func testLightThemeResourceIsStockMonokaiProLightWithSlateSeamBorders() throws {
-        let data = try XCTUnwrap(
-            CodeServerManager.themeExtensionThemeData(resource: "monokai-pro-light"),
-            "the bundled light theme resource must resolve",
-        )
-        let theme = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
-        XCTAssertEqual(theme["name"] as? String, "Monokai Pro Light")
-        XCTAssertEqual(theme["type"] as? String, "light")
-        let colors = try XCTUnwrap(theme["colors"] as? [String: Any])
-        // Stock Monokai Pro Light surfaces (they double as the app's own light Slate seed).
-        XCTAssertEqual(colors["editor.background"] as? String, "#faf4f2")
-        XCTAssertEqual(colors["editor.foreground"] as? String, "#29242a")
-        // STOCK survives, mirrored: the light filter's pink accent stays on tabs, lists and links.
-        XCTAssertEqual(colors["tab.activeForeground"] as? String, "#e14775")
-        XCTAssertEqual(colors["tab.activeBorder"] as? String, "#e14775")
-        XCTAssertEqual(colors["list.activeSelectionForeground"] as? String, "#e14775")
-        XCTAssertEqual(colors["textLink.foreground"] as? String, "#e14775")
-        XCTAssertEqual(colors["tab.activeBackground"] as? String, "#faf4f2")
-        XCTAssertEqual(colors["gitDecoration.deletedResourceForeground"] as? String, "#e14775")
-        // The mirrored seam-border departure: the light divider token is black at 0.08.
-        for key in Self.seamBorderKeys {
-            XCTAssertEqual(colors[key] as? String, "#00000014", key)
-        }
-        try assertEveryColorValueIsValidHex(colors)
-        XCTAssertFalse(
-            try XCTUnwrap(theme["tokenColors"] as? [Any]).isEmpty,
-            "syntax rules ride along — the Monokai identity",
-        )
-    }
-
-    func testSeedThemeExtensionWritesOnceThenRepairsDrift() throws {
-        let dir = URL(fileURLWithPath: root).appendingPathComponent("extensions")
-        let fakeThemes: (String) -> Data? = { Data("{\"is\": \"\($0)\"}".utf8) }
-        XCTAssertTrue(CodeServerManager.seedThemeExtension(into: dir, themeData: fakeThemes))
-        let extensionRoot = dir.appendingPathComponent(CodeServerManager.themeExtensionDirectoryName)
-        // One theme file per manifest row, each carrying its OWN resource's bytes.
-        for theme in CodeServerManager.themeExtensionThemes {
-            XCTAssertEqual(
-                try Data(contentsOf: extensionRoot.appendingPathComponent("themes/\(theme.resource).json")),
-                fakeThemes(theme.resource),
-            )
-        }
-
-        // Byte-identical ⇒ idempotent no-op.
-        XCTAssertFalse(CodeServerManager.seedThemeExtension(into: dir, themeData: fakeThemes))
-
-        // OUR file drifted (a newer seed, a truncated write) ⇒ repaired — unlike the user's
-        // settings file, the namespaced extension folder is ours to keep current.
-        let themeFile = extensionRoot.appendingPathComponent("themes/monokai-pro.json")
-        try Data("stale".utf8).write(to: themeFile)
-        XCTAssertTrue(CodeServerManager.seedThemeExtension(into: dir, themeData: fakeThemes))
-        XCTAssertEqual(try Data(contentsOf: themeFile), fakeThemes("monokai-pro"))
-
-        // No resource (broken bundle) ⇒ silent no-op, nothing half-written.
-        XCTAssertFalse(CodeServerManager.seedThemeExtension(into: dir, themeData: { _ in nil }))
-    }
-
-    func testSeedThemeExtensionSweepsTheTwoVariantEraFileNames() throws {
-        // The pre-variant era wrote two differently named theme files; a deployed folder from
-        // that era must not keep them as orphans beside the eight the manifest now references.
-        let dir = URL(fileURLWithPath: root).appendingPathComponent("extensions")
-        let extensionRoot = dir.appendingPathComponent(CodeServerManager.themeExtensionDirectoryName)
-        try FileManager.default.createDirectory(
-            at: extensionRoot.appendingPathComponent("themes"), withIntermediateDirectories: true,
-        )
-        for legacy in CodeServerManager.legacyThemeFileNames {
-            try Data("old".utf8).write(to: extensionRoot.appendingPathComponent(legacy))
-        }
-        XCTAssertTrue(CodeServerManager.seedThemeExtension(into: dir, themeData: { _ in Data("{}".utf8) }))
-        for legacy in CodeServerManager.legacyThemeFileNames {
-            XCTAssertFalse(
-                FileManager.default.fileExists(
-                    atPath: extensionRoot.appendingPathComponent(legacy).path,
-                ),
-                legacy,
-            )
-        }
-    }
-
-    func testSeedThemeExtensionRegistersInTheProfileRegistry() throws {
-        // The registry (`extensions.json`) — not the directory scan — is the workbench's source of
-        // truth once the file exists: code-server writes an empty `[]` on first boot, and a
-        // folder-dropped extension is then INVISIBLE (observed: the seeded theme fell back to the
-        // stock dark). The seeder therefore registers what it drops.
-        let dir = URL(fileURLWithPath: root).appendingPathComponent("extensions")
-        let registry = dir.appendingPathComponent("extensions.json")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        try Data("[]".utf8).write(to: registry)
-
-        XCTAssertTrue(CodeServerManager.seedThemeExtension(into: dir, themeData: { _ in Data("{}".utf8) }))
-        let entries = try XCTUnwrap(
-            try JSONSerialization.jsonObject(with: Data(contentsOf: registry)) as? [[String: Any]],
-        )
-        XCTAssertEqual(entries.count, 1)
-        let entry = try XCTUnwrap(entries.first)
-        XCTAssertEqual(
-            (entry["identifier"] as? [String: Any])?["id"] as? String, "slopdesk.slopdesk-themes",
-        )
-        XCTAssertEqual(entry["version"] as? String, CodeServerManager.themeExtensionVersion)
-        XCTAssertEqual(
-            entry["relativeLocation"] as? String, CodeServerManager.themeExtensionDirectoryName,
-        )
-        // The location must be URI-shaped (path + scheme) or the server scanner drops the entry.
-        let location = try XCTUnwrap(entry["location"] as? [String: Any])
-        XCTAssertEqual(location["scheme"] as? String, "file")
-        XCTAssertEqual(
-            location["path"] as? String,
-            dir.appendingPathComponent(CodeServerManager.themeExtensionDirectoryName).path,
-        )
-
-        // Registered and byte-current ⇒ the whole seed is an idempotent no-op.
-        XCTAssertFalse(CodeServerManager.seedThemeExtension(into: dir, themeData: { _ in Data("{}".utf8) }))
-
-        // Foreign entries survive; a drifted OURS is replaced, not duplicated.
-        let foreign: [[String: Any]] = [
-            [
-                "identifier": ["id": "someone.else"],
-                "version": "9",
-                "location": ["path": "/x", "scheme": "file"],
-                "relativeLocation": "someone.else-9",
-            ],
-            [
-                "identifier": ["id": "slopdesk.slopdesk-themes"],
-                "version": "0.0.1",
-                "location": ["path": "/stale", "scheme": "file"],
-                "relativeLocation": "stale",
-            ],
-        ]
-        try JSONSerialization.data(withJSONObject: foreign).write(to: registry)
-        // The folder is already current, but the registry repair IS a write.
-        XCTAssertTrue(CodeServerManager.seedThemeExtension(into: dir, themeData: { _ in Data("{}".utf8) }))
-        let repaired = try XCTUnwrap(
-            try JSONSerialization.jsonObject(with: Data(contentsOf: registry)) as? [[String: Any]],
-        )
-        XCTAssertEqual(repaired.count, 2)
-        XCTAssertEqual(
-            (repaired[0]["identifier"] as? [String: Any])?["id"] as? String, "someone.else",
-        )
-        XCTAssertEqual(repaired[1]["version"] as? String, CodeServerManager.themeExtensionVersion)
-
-        // An unparseable registry is someone else's problem state — left alone.
-        try Data("not json".utf8).write(to: registry)
-        XCTAssertFalse(CodeServerManager.seedThemeExtension(into: dir, themeData: { _ in Data("{}".utf8) }))
-        XCTAssertEqual(try Data(contentsOf: registry), Data("not json".utf8))
-
-        // A MISSING registry file is created carrying our entry (fresh install: the seed runs
-        // before code-server's first boot; that boot keeps existing entries).
-        try FileManager.default.removeItem(at: registry)
-        XCTAssertTrue(CodeServerManager.seedThemeExtension(into: dir, themeData: { _ in Data("{}".utf8) }))
-        let fresh = try XCTUnwrap(
-            try JSONSerialization.jsonObject(with: Data(contentsOf: registry)) as? [[String: Any]],
-        )
-        XCTAssertEqual(fresh.count, 1)
-    }
-
-    func testEveryObsoleteSeedIsValidJSON() throws {
-        for seed in CodeServerManager.obsoleteSeeds {
-            _ = try JSONSerialization.jsonObject(with: Data(seed.utf8))
-        }
-    }
-
-    func testUserSettingsURLResolution() {
-        // `$HOME` — what Node's `os.homedir()` answers in the child — is the base, NOT directory
-        // services (a gate-sandboxed hostd overrides HOME; the seed must follow it).
-        XCTAssertEqual(
-            CodeServerManager.userSettingsURL(environment: ["HOME": "/Users/x"]).path,
-            "/Users/x/.local/share/code-server/User/settings.json",
-        )
-        // An ABSOLUTE XDG_DATA_HOME wins (code-server's own resolution order)…
-        XCTAssertEqual(
-            CodeServerManager.userSettingsURL(
-                environment: ["XDG_DATA_HOME": "/xdg", "HOME": "/Users/x"],
-            ).path,
-            "/xdg/code-server/User/settings.json",
-        )
-        // …but relative XDG/HOME values are ignored, per the XDG spec (fall through to the next).
-        XCTAssertEqual(
-            CodeServerManager.userSettingsURL(
-                environment: ["XDG_DATA_HOME": "rel", "HOME": "/Users/x"],
-            ).path,
-            "/Users/x/.local/share/code-server/User/settings.json",
-        )
-        // No usable env at all → directory services' home (the interactive-launch default).
-        XCTAssertEqual(
-            CodeServerManager.userSettingsURL(environment: [:]).path,
-            FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(".local/share/code-server/User/settings.json").path,
-        )
-    }
-
-    /// Thread-safe call counter for the `@Sendable` seeder seam.
-    private final class Counter: @unchecked Sendable {
-        private let lock = NSLock()
-        private var count = 0
-        var value: Int {
-            lock.lock()
-            defer { lock.unlock() }
-            return count
-        }
-
-        func increment() {
-            lock.lock()
-            defer { lock.unlock() }
-            count += 1
-        }
-    }
-
-    // MARK: Pure helpers
-
-    func testLaunchArgumentsShape() {
-        let arguments = CodeServerManager.launchArguments()
-        XCTAssertEqual(arguments.first, "--auth")
-        XCTAssertTrue(arguments.contains("--bind-addr"))
-        XCTAssertTrue(arguments.contains("0.0.0.0:0"))
-        XCTAssertTrue(arguments.contains("--disable-workspace-trust"))
-        // The workbench brands itself with the embedding app's name, not "code-server".
-        XCTAssertTrue(arguments.contains("--app-name"))
-        XCTAssertTrue(arguments.contains("SlopDesk"))
-        // NO positional folder — one shared instance serves every project; each client names its
-        // folder in the workbench URL's `?folder=` query.
-        XCTAssertFalse(arguments.contains { $0.hasPrefix("/") })
-        // NO idle reaper — the daemon prewarms at boot so the workbench is always warm; a
-        // self-reaping child re-imposes the cold start prewarm exists to remove. Never
-        // reintroduce without revisiting `prewarm()`.
-        XCTAssertFalse(arguments.contains("--idle-timeout-seconds"))
-    }
-
-    func testChildEnvironmentInjectsTheOfficialMarketplaceGallery() throws {
-        // Every child (server + one-shot CLI) launches with `EXTENSIONS_GALLERY` pointing at the
-        // official VS Code Marketplace — code-server parses the env var as JSON and replaces its
-        // Open VSX default wholesale, so the value must be one valid JSON object carrying the
-        // full URL set (a partial set would silently drop e.g. the asset download template).
-        let environment = CodeServerManager.childEnvironment(base: ["PATH": "/usr/bin"])
-        XCTAssertEqual(environment["PATH"], "/usr/bin")
-        let gallery = try XCTUnwrap(environment["EXTENSIONS_GALLERY"])
-        let parsed = try XCTUnwrap(
-            JSONSerialization.jsonObject(with: Data(gallery.utf8)) as? [String: String],
-        )
-        XCTAssertEqual(
-            parsed["serviceUrl"], "https://marketplace.visualstudio.com/_apis/public/gallery",
-        )
-        XCTAssertEqual(parsed["itemUrl"], "https://marketplace.visualstudio.com/items")
-        XCTAssertNotNil(parsed["resourceUrlTemplate"])
-        XCTAssertNotNil(parsed["controlUrl"])
-        XCTAssertNotNil(parsed["nlsBaseUrl"])
-        XCTAssertNotNil(parsed["publisherUrl"])
-    }
-
-    func testChildEnvironmentKeepsAnOperatorsOwnGallery() {
-        // The escape hatch is the env var itself: an operator who exported EXTENSIONS_GALLERY
-        // before hostd keeps their gallery verbatim; only an EMPTY export is treated as unset.
-        let own = "{\"serviceUrl\":\"https://example.test/gallery\"}"
-        XCTAssertEqual(
-            CodeServerManager.childEnvironment(base: ["EXTENSIONS_GALLERY": own])["EXTENSIONS_GALLERY"],
-            own,
-        )
-        XCTAssertEqual(
-            CodeServerManager.childEnvironment(base: ["EXTENSIONS_GALLERY": ""])["EXTENSIONS_GALLERY"],
-            CodeServerManager.marketplaceExtensionsGallery,
-        )
     }
 
     func testParseListeningPort() {
@@ -1580,27 +645,42 @@ final class HostCodeServerPerformerTests: XCTestCase {
         }
     }
 
+    /// Records every font spec the performer folds through the manager. The PATCH itself belongs
+    /// to `slopdesk-codeseed` (and is pinned by its own tests) — what this suite owes verb 20 is
+    /// that a decoded spec reaches the sync intact and that the answer is `ok` either way.
+    private final class FontRecord: @unchecked Sendable {
+        private let lock = NSLock()
+        private var specs: [MetadataCodec.CodeFontSpec] = []
+        /// What the sync reports back; a test flips it to stand in for "nothing changed".
+        var changed = true
+
+        var calls: [MetadataCodec.CodeFontSpec] {
+            lock.lock()
+            defer { lock.unlock() }
+            return specs
+        }
+
+        func record(_ spec: MetadataCodec.CodeFontSpec) -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            specs.append(spec)
+            return changed
+        }
+    }
+
     private func makeManager(
         binary: String? = "/fake/code-server",
         spawned: @escaping @Sendable () -> Void = {},
         cli: RunnerRecord = RunnerRecord(),
-        settingsFileURL: URL? = nil,
+        fonts: FontRecord = FontRecord(),
         bridge: FakeBridge = FakeBridge(),
     ) -> CodeServerManager {
-        // settingsSeeder / cliRunner / registry reader / settingsFileURL / bridge injected as
-        // fakes — the default seams touch the real user's settings file and extension registry,
-        // exec a real binary or bind a real socket. The registry answers SATISFIED so an open
-        // never records a bundled `--install-extension` alongside the `-r` under test (the
-        // production seam would, on any dev machine missing one of the bundled ids).
-        let settingsURL = settingsFileURL
-            ?? URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("performer-tests-absent-\(UUID().uuidString).json")
-        let satisfiedRegistry = try? JSONSerialization.data(
-            withJSONObject: CodeServerManager.bundledMarketplaceExtensions.map {
-                ["identifier": ["id": $0]]
-            },
-        )
-        return CodeServerManager(
+        // Seeder / CLI runner / extension check / font sync / bridge injected as fakes — the
+        // default seams fork `slopdesk-codeseed` against the real user's settings file and
+        // extension registry, exec a real binary or bind a real socket. The extension check answers
+        // SATISFIED so an open never records a bundled `--install-extension` alongside the `-r`
+        // under test (the production seam would, on any dev machine missing one of the ids).
+        CodeServerManager(
             binaryLocator: { binary },
             spawner: { _, _, _ in
                 spawned()
@@ -1612,27 +692,19 @@ final class HostCodeServerPerformerTests: XCTestCase {
                 cli.record(arguments)
                 return 0
             },
-            installedExtensionsRegistry: { satisfiedRegistry },
-            settingsFileURL: { settingsURL },
+            missingExtensions: { [] },
+            fontSync: { fonts.record($0) },
+            profileReader: { fakeProfile },
             bridge: bridge,
             probeInterval: .zero,
             openRetryDelay: .zero,
         )
     }
 
-    /// A fallback opener that records and answers `.ok` — never `NSWorkspace`.
-    private func recordingFallback(
-        into recorded: RunnerRecord,
-    ) -> HostCodeServerPerformer.FallbackOpener {
-        { path in
-            recorded.record([path])
-            return .ok
-        }
-    }
-
     private final class NeverExitingHandle: HostServiceProcessHandle, @unchecked Sendable {
         var isRunning: Bool { true }
         func terminate() {}
+        func relinquish() {}
     }
 
     func testOtherVerbsFallThrough() {
@@ -1685,18 +757,13 @@ final class HostCodeServerPerformerTests: XCTestCase {
         }
     }
 
-    func testSyncFontValidSpecAnswersOkAndPatchesTheFile() throws {
-        let dir = NSTemporaryDirectory() + "performer-font-tests-" + UUID().uuidString
-        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(atPath: dir) }
-        let fileURL = URL(fileURLWithPath: dir).appendingPathComponent("settings.json")
-        try Data(CodeServerManager.seededUserSettings.utf8).write(to: fileURL)
-
+    func testSyncFontValidSpecReachesTheSyncIntactAndAnswersOk() throws {
+        let fonts = FontRecord()
         let spec = MetadataCodec.CodeFontSpec(family: "JetBrains Mono", size: 14, lineHeight: 1.58)
         let response = HostCodeServerPerformer.response(
             requestID: 12, verb: MetadataVerb.syncCodeFont.rawValue,
             payload: MetadataCodec.encodeCodeFontSpec(spec),
-            manager: makeManager(settingsFileURL: fileURL),
+            manager: makeManager(fonts: fonts),
         )
         guard case let .metadataResponse(requestID, status, body)? = response else {
             XCTFail("expected a metadataResponse")
@@ -1705,26 +772,30 @@ final class HostCodeServerPerformerTests: XCTestCase {
         XCTAssertEqual(requestID, 12)
         XCTAssertEqual(status, MetadataStatus.ok.rawValue)
         XCTAssertTrue(body.isEmpty)
-        let settings = try XCTUnwrap(
-            try JSONSerialization.jsonObject(with: Data(contentsOf: fileURL)) as? [String: Any],
-        )
-        XCTAssertEqual(try XCTUnwrap(settings["editor.fontSize"] as? Double), 14)
-        XCTAssertEqual(try XCTUnwrap(settings["editor.lineHeight"] as? Double), 1.58)
+        // The decode is what this layer owns; what the three values then do to the settings file
+        // is `slopdesk-codeseed`'s, pinned there.
+        let synced = try XCTUnwrap(fonts.calls.first)
+        XCTAssertEqual(synced.family, "JetBrains Mono")
+        XCTAssertEqual(synced.size, 14)
+        XCTAssertEqual(synced.lineHeight, 1.58)
     }
 
-    func testSyncFontMissingSettingsFileStillAnswersOk() {
-        // No settings file on the host is a no-op, not a failure — the spec decoded fine, and
-        // "nothing to patch" must not surface an error toast client-side.
+    func testSyncFontThatChangedNothingStillAnswersOk() {
+        // No settings file on the host — or one already in sync — is a no-op, not a failure: the
+        // spec decoded fine, and "nothing to patch" must not surface an error toast client-side.
+        let fonts = FontRecord()
+        fonts.changed = false
         let spec = MetadataCodec.CodeFontSpec(family: "JetBrains Mono", size: 14, lineHeight: 1.58)
         let response = HostCodeServerPerformer.response(
             requestID: 13, verb: MetadataVerb.syncCodeFont.rawValue,
-            payload: MetadataCodec.encodeCodeFontSpec(spec), manager: makeManager(),
+            payload: MetadataCodec.encodeCodeFontSpec(spec), manager: makeManager(fonts: fonts),
         )
         guard case let .metadataResponse(_, status, _)? = response else {
             XCTFail("expected a metadataResponse")
             return
         }
         XCTAssertEqual(status, MetadataStatus.ok.rawValue)
+        XCTAssertEqual(fonts.calls.count, 1)
     }
 
     func testMissingRootIsNotFound() {

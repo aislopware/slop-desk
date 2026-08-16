@@ -1,4 +1,3 @@
-import Foundation
 import SlopDeskVideoProtocol
 
 // MARK: - WorkspaceBindingRegistry × KeybindingPreferences (user overrides)
@@ -160,26 +159,24 @@ public extension KeybindingPreferences.KeyChord {
         return KeyChord(mappedKey, mods)
     }
 
-    /// Map a normalised key token (lowercased single char or a named key) to the registry `Key`. Returns
+    /// Map a CANONICAL key token (lowercased single char or a named key) to the registry `Key`. Returns
     /// `nil` for an empty / multi-char / unrecognised-named key.
+    ///
+    /// One spelling per key, because a `KeybindingPreferences.KeyChord` has already folded its alias
+    /// spellings (`pgup`, `enter`, `leftarrow`, …) through the grammar's table — both its memberwise
+    /// init and its decoder do. An alias branch here would be a second table that could only ever
+    /// drift from that one, and unreachable while it agreed.
     private static func mapKey(_ key: String) -> KeyChord.Key? {
         switch key {
-        case "return",
-             "enter": return .return
+        case "return": return .return
         case "tab": return .tab
         case "space": return .space
-        case "left",
-             "leftarrow": return .leftArrow
-        case "right",
-             "rightarrow": return .rightArrow
-        case "up",
-             "uparrow": return .upArrow
-        case "down",
-             "downarrow": return .downArrow
-        case "pageup",
-             "pgup": return .pageUp
-        case "pagedown",
-             "pgdn": return .pageDown
+        case "left": return .leftArrow
+        case "right": return .rightArrow
+        case "up": return .upArrow
+        case "down": return .downArrow
+        case "pageup": return .pageUp
+        case "pagedown": return .pageDown
         case "home": return .home
         case "end": return .end
         default:

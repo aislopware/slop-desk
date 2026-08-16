@@ -1,5 +1,8 @@
+import CSlopDeskFFI
 import Foundation
 
+/// The Swift face of `rust/slopdesk-video`'s `live_bitrate`, reached through the door of the same name.
+///
 /// PURE resolution-aware live-bitrate policy for the HEVC encoder.
 ///
 /// WHY: the flat 12 Mbps live default (doc 18 §E) was MEASURED at 1080p@1×. A 2× HiDPI virtual
@@ -14,8 +17,9 @@ import Foundation
 /// The configured `--bitrate` acts as a FLOOR (an explicit higher value is still honoured); LAN/NetBird
 /// bandwidth is ample, so the resolution-derived value wins for any window from ~1080p up.
 ///
-/// Pure Int/Double arithmetic — unit-tested. (The `VideoEncoder` it feeds is HW-gated and never
-/// instantiated in a test; this keeps the bitrate decision headlessly verifiable.)
+/// The arithmetic is the crate's: separate multiplies (never fused) and half-away-from-zero
+/// rounding, because the budget is what the encoder's QP ceiling is sized against and a contracted
+/// multiply-add would move it by a bit on one machine and not another.
 public enum LiveBitratePolicy {
     /// Bits per pixel per frame. 0.25: 1920·1080·60·0.25 ≈ 31.1 Mbps at 1080p60, scaling to
     /// ≈75 Mbps at a 2816×1778@60 HiDPI window. HW-calibrated (2026-07-21, RTT 5–8 ms link): this is
@@ -31,28 +35,27 @@ public enum LiveBitratePolicy {
     /// text the instant the screen goes still. The delta send-pace floor + budget-adaptive QP
     /// ceiling absorb the variance a denser budget adds, so 0.25 no longer buys judder on a clean
     /// link the way it did before those shipped.
+    ///
+    /// The knob is read once, and PARSED by the door: a value outside `(0, 1]` is a typo rather than
+    /// an intent, so it falls back to the default instead of being clamped.
     public static let bitsPerPixelPerFrame: Double = {
-        if let s = ProcessInfo.processInfo.environment["SLOPDESK_BPP"], let v = Double(s), v > 0,
-           v <= 1.0 { return v }
-        return 0.25
+        let raw = ProcessInfo.processInfo.environment["SLOPDESK_BPP"] ?? ""
+        return Array(raw.utf8).withUnsafeBufferPointer { bytes in
+            slopdesk_live_bitrate_bits_per_pixel(bytes.baseAddress, bytes.count)
+        }
     }()
 
-    /// Absolute lower bound so a tiny window never starves the encoder (matches `VideoEncoder.init`'s
-    /// own `max(1_000_000, …)` clamp).
-    public static let minimumBitrate = 1_000_000
+    /// Absolute lower bound so a tiny window never starves the encoder — the same floor
+    /// `VideoEncoder.init` clamps to, spelled once, on the far side of the door.
+    public static var minimumBitrate: Int { Int(slopdesk_live_bitrate_defaults().minimum_bitrate) }
 
     /// Resolution-aware target bitrate (bits/sec) for an encoder of `pixelWidth × pixelHeight` at
     /// `fps`. Never below `floor` (the configured `--bitrate`, so an explicit higher cap is honoured)
     /// and never below ``minimumBitrate``. Degenerate (zero/negative) dimensions and fps are
     /// clamped to 1.
     public static func targetBitrate(pixelWidth: Int, pixelHeight: Int, fps: Int, floor: Int) -> Int {
-        let px = max(1, pixelWidth)
-        let py = max(1, pixelHeight)
-        let rate = max(1, fps)
-        // keep mul+add separate — FMA breaks bit-exact parity (pure multiplies here; round half-away
-        // matches Rust `f64::round`, which Swift `.rounded()` reproduces).
-        let bits = Double(px) * Double(py) * Double(rate) * bitsPerPixelPerFrame
-        let resolution = Int(bits.rounded())
-        return max(max(minimumBitrate, floor), resolution)
+        Int(slopdesk_live_bitrate_target(
+            Int64(pixelWidth), Int64(pixelHeight), Int64(fps), Int64(floor), bitsPerPixelPerFrame,
+        ))
     }
 }

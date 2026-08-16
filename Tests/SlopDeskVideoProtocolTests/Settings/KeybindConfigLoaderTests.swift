@@ -272,4 +272,20 @@ final class KeybindConfigLoaderTests: XCTestCase {
         XCTAssertEqual(home?.path, "/Users/me/.config/slopdesk/config.toml")
         XCTAssertNil(KeybindConfigLoader.defaultConfigURL(environment: [:]))
     }
+
+    /// A file written by an editor that ends its lines with CRLF declares the bindings it looks like it
+    /// declares. The line reader is `slopdesk-cli`'s — the same one `slopdesk config validate` reports on
+    /// — and its trim includes the carriage return; a reader that kept the `\r` would hand it to the
+    /// keybind grammar as part of the base key, and the line would be dropped by a validator that had
+    /// already called the file valid. FAILS on a reader that trims only spaces and tabs.
+    func testCRLFLineEndingsDeclareTheSameBindings() {
+        let prefs = KeybindConfigLoader.apply(
+            configText: "# a comment\r\nkeybind = cmd+shift+h:text:hi\r\nkeybind = unbind:cmd+q\r\n",
+        )
+        XCTAssertEqual(
+            prefs.textBindings[.init(key: "h", command: true, shift: true)]?.payload, [0x68, 0x69],
+            "a CRLF line binds what it says",
+        )
+        XCTAssertTrue(prefs.unbinds.contains(.init(key: "q", command: true)))
+    }
 }

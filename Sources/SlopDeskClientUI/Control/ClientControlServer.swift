@@ -25,6 +25,7 @@
 #if canImport(SwiftUI)
 import Darwin
 import Foundation
+import SlopDeskTTY
 import SlopDeskWorkspaceCore // ClientControlDispatcher + ClientControlBackend
 
 /// The thin `AF_UNIX` NDJSON server for the client control plane. Binds a stable socket, accepts
@@ -267,25 +268,9 @@ final class ClientControlServer: @unchecked Sendable {
         return str + "\n"
     }
 
-    // MARK: - writeAll (handles EINTR + partial writes)
-
+    /// Same drop-on-failure contract as the host's control listener, and the same loop.
     private static func writeAll(fd: Int32, data: Data) {
-        data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
-            guard let base = raw.baseAddress else { return }
-            var offset = 0
-            let total = raw.count
-            while offset < total {
-                let n = write(fd, base + offset, total - offset)
-                if n > 0 {
-                    offset += n
-                } else if n < 0 {
-                    if errno == EINTR { continue }
-                    return
-                } else {
-                    return
-                }
-            }
-        }
+        FileDescriptorWrite.all(fd: fd, data)
     }
 }
 

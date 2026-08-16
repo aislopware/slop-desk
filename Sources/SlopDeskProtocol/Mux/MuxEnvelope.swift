@@ -1,4 +1,6 @@
+import CSlopDeskFFI
 import Foundation
+import SlopDeskArena
 
 /// The frame types carried by the TCP mux envelope.
 ///
@@ -108,21 +110,19 @@ public enum MuxFrame: Equatable, Sendable {
 /// Encodes / decodes the TCP mux envelope
 /// (`[UInt32 BE muxFrameLength][UInt32 BE channelID][UInt8 muxType][body...]`).
 ///
-/// Like ``WireMessage`` this is a manual big-endian binary codec (never JSON /
-/// `Codable`) reusing the same ``Data/appendBE(_:)-(UInt32)`` helpers and
-/// ``BigEndianReader``. `channelData` bodies are carried byte-for-byte: the codec
-/// never inspects them.
+/// The layout lives in `rust/slopdesk-wire`'s `mux::envelope`, which the video path, the golden
+/// corpus and this door all read from. What is here is the flattening: a `MuxFrame` becomes one
+/// `#[repr(C)]` struct plus, at most, a cwd — and `channelData`'s payload is passed WHOLE, never
+/// through the struct, because it is the one field a copy is felt on.
 public enum MuxEnvelopeCodec {
     /// Length of the big-endian `UInt32` mux-frame-length prefix.
-    static let prefixLength = 4
-    /// Length of the big-endian `UInt32` channelID field.
-    static let channelIDLength = 4
+    static let prefixLength = slopdesk_mux_envelope_constant(1)
     /// Number of bytes occupied by a session UUID on the wire (its 16 raw bytes),
     /// matching ``WireMessage/sessionIDByteCount``.
-    static let sessionIDByteCount = 16
-    /// Smallest legal `muxFrameLength`: channelID (4) + muxType (1). The shortest
-    /// frames (`channelClose`) have an empty body.
-    static let minMuxFrameLength = channelIDLength + 1
+    static let sessionIDByteCount = slopdesk_mux_envelope_constant(2)
+    /// Smallest legal `muxFrameLength`: channelID + muxType. The shortest frames (`channelClose`)
+    /// have an empty body.
+    static let minMuxFrameLength = slopdesk_mux_envelope_constant(0)
 
     /// Encodes a frame into the complete mux envelope, ready to write to a socket:
     /// `[UInt32 BE muxFrameLength][UInt32 BE channelID][UInt8 muxType][body...]`.
@@ -130,52 +130,23 @@ public enum MuxEnvelopeCodec {
     /// `muxFrameLength` counts `channelID` + `muxType` + `body` and excludes the
     /// 4-byte prefix — exactly what ``MuxFrameDecoder`` expects.
     public static func encode(_ frame: MuxFrame) -> Data {
-        // Build the whole envelope in ONE buffer: a 4-byte muxFrameLength placeholder, then the inner
-        // run [channelID][muxType][body…], then BACK-PATCH the prefix. A separate `inner` Data would
-        // force an extra whole-payload copy — the up-to-128 KiB `.channelData` payload under a flood
-        // would get memcpy'd twice (once into `inner`, once into the final buffer) for no reason.
-        var out = Data()
-        out.append(contentsOf: [0, 0, 0, 0]) // muxFrameLength placeholder (back-patched below)
-        out.appendBE(frame.channelID)
-        out.append(frame.muxType.rawValue)
-
-        switch frame {
-        case let .channelOpen(_, sessionID, lastReceivedSeq, channelClass, initialCwd):
-            out.append(sessionID.dataBytes)
-            out.appendBE(lastReceivedSeq)
-            out.append(channelClass)
-            if let initialCwd {
-                let cwdBytes = clampedUTF8(initialCwd)
-                out.appendBE(UInt16(cwdBytes.count))
-                out.append(contentsOf: cwdBytes)
+        var flat = SlopDeskMuxFrame()
+        var arena = Data()
+        let payload = frame.flatten(into: &flat, arena: &arena)
+        return withUnsafePointer(to: flat) { frame in
+            arena.spanning { pool, poolLength in
+                payload.spanning { body, bodyLength in
+                    let bound = slopdesk_mux_frame_byte_count(frame, pool, poolLength, bodyLength)
+                    precondition(bound > 0, "the mux codec refused a frame this type can express")
+                    return WireBuffer.filled(bound) { out in
+                        let written = slopdesk_mux_frame_encode(
+                            frame, pool, poolLength, body, bodyLength, out, bound,
+                        )
+                        precondition(written == bound, "the mux codec sized a frame differently than it wrote it")
+                    }
+                }
             }
-
-        case let .channelOpenAck(_, accepted, resumeFromSeq):
-            out.append(accepted ? 1 : 0)
-            out.appendBE(resumeFromSeq)
-
-        case let .channelData(_, payload):
-            out.append(payload) // opaque — carried verbatim
-
-        case let .channelClose(_, reason):
-            // `.retired` is the ABSENT body — the empty-bodied close every peer has always sent, so
-            // the default path stays byte-identical and only a close that means something else
-            // costs a byte. The decoder reads the absence back as `.retired`.
-            if reason != .retired { out.append(reason.rawValue) }
-
-        case let .windowAdjust(_, bytesToAdd):
-            out.appendBE(bytesToAdd)
         }
-
-        // muxFrameLength counts the inner run [channelID][muxType][body] — everything after the 4-byte
-        // prefix.
-        let innerLength = UInt32(out.count - prefixLength)
-        let s = out.startIndex
-        out[s] = UInt8(truncatingIfNeeded: innerLength >> 24)
-        out[s + 1] = UInt8(truncatingIfNeeded: innerLength >> 16)
-        out[s + 2] = UInt8(truncatingIfNeeded: innerLength >> 8)
-        out[s + 3] = UInt8(truncatingIfNeeded: innerLength)
-        return out
     }
 
     /// Decodes a frame from a **complete inner run** (`[channelID][muxType][body...]`,
@@ -186,99 +157,135 @@ public enum MuxEnvelopeCodec {
     ///   byte, or ``SlopDeskError/malformedBody(_:)`` for a right-length-but-invalid body
     ///   (e.g. bad sessionID bytes).
     public static func decode(inner: Data) throws -> MuxFrame {
-        var reader = BigEndianReader(inner)
-        let channelID = try reader.readUInt32()
-        let typeByte = try reader.readUInt8()
-        guard let type = MuxFrameType(rawValue: typeByte) else {
-            throw SlopDeskError.unknownMessageType(typeByte)
-        }
+        // A cwd is the only text a mux envelope carries, and a path fits this. The retry is not a
+        // guess: a refusal reports what would have fitted.
+        if let frame = try attempt(inner, room: 1024) { return frame }
+        guard let frame = try attempt(inner, room: reportedRoom) else { throw SlopDeskError.truncated }
+        return frame
+    }
 
-        switch type {
-        case .channelOpen:
-            let idBytes = try reader.readBytes(sessionIDByteCount)
-            let lastReceivedSeq = try reader.readInt64()
-            let channelClass = try reader.readUInt8()
-            guard let sessionID = UUID(dataBytes: idBytes) else {
-                throw SlopDeskError.malformedBody("channelOpen: invalid sessionID bytes")
+    /// How much arena the last refusal asked for. Written and read on the one thread a decode runs
+    /// on — a retry immediately follows its own refusal.
+    private nonisolated(unsafe) static var reportedRoom = 0
+
+    /// One decode into an arena of `room` bytes; `nil` means the arena was too small and
+    /// ``reportedRoom`` now holds the size that fits.
+    private static func attempt(_ inner: Data, room: Int) throws -> MuxFrame? {
+        var flat = SlopDeskMuxFrame()
+        var verdict = UInt32(SLOPDESK_WIRE_DECODE_OK)
+        var built: MuxFrame?
+        try inner.spanning { bytes, length in
+            withUnsafeTemporaryAllocation(byteCount: max(room, 1), alignment: 1) { arena in
+                verdict = slopdesk_mux_frame_decode(
+                    bytes?.assumingMemoryBound(to: UInt8.self), length,
+                    &flat, arena.baseAddress?.assumingMemoryBound(to: UInt8.self), arena.count,
+                )
+                guard verdict == UInt32(SLOPDESK_WIRE_DECODE_OK) else { return }
+                // The payload span points into the run the caller passed in, so the copy this path
+                // makes is the one Foundation makes lazily: a `Data` built from a slice of another
+                // `Data` shares its backing. Copying the bytes eagerly into a fresh buffer measured
+                // 1.16 µs against 879 ns at 32 KiB — the eager copy is a copy the caller may never
+                // need.
+                let start = inner.startIndex + Int(flat.payload_offset)
+                let payload = flat.payload_length > 0
+                    ? Data(inner[start..<start + Int(flat.payload_length)])
+                    : Data()
+                built = MuxFrame.build(flat, UnsafeRawBufferPointer(arena), payload)
             }
-            let initialCwd: String?
-            if reader.bytesRemaining == 0 {
-                initialCwd = nil
-            } else {
-                let length = try Int(reader.readUInt16())
-                let bytes = try reader.readBytes(length)
-                guard reader.bytesRemaining == 0 else {
-                    throw SlopDeskError.malformedBody("channelOpen: trailing cwd bytes")
-                }
-                if length == 0 {
-                    initialCwd = nil
-                } else if let decoded = String(data: bytes, encoding: .utf8) {
-                    initialCwd = decoded
-                } else {
-                    throw SlopDeskError.malformedBody("channelOpen: invalid cwd UTF-8")
-                }
+            if verdict == UInt32(SLOPDESK_WIRE_DECODE_AGAIN) {
+                // The refusal carries no length of its own: the frame is whole, so the cwd cannot be
+                // longer than the run that held it.
+                reportedRoom = length
+                return
             }
+            try throwIfFaulted(verdict, in: inner)
+        }
+        return built
+    }
+
+    /// Turns a decode verdict into the error the Swift callers already catch. The type byte is read
+    /// out of the run rather than the struct: a refused frame is a frame that was never built.
+    private static func throwIfFaulted(_ verdict: UInt32, in inner: Data) throws {
+        let typeIndex = inner.startIndex + prefixLength
+        let type = inner.indices.contains(typeIndex) ? inner[typeIndex] : 0
+        switch verdict {
+        case UInt32(SLOPDESK_WIRE_DECODE_TRUNCATED):
+            throw SlopDeskError.truncated
+        case UInt32(SLOPDESK_WIRE_DECODE_UNKNOWN_TYPE):
+            throw SlopDeskError.unknownMessageType(type)
+        case UInt32(SLOPDESK_WIRE_DECODE_MALFORMED):
+            throw SlopDeskError.malformedBody("mux type \(type): body is not what its type declares")
+        default:
+            break
+        }
+    }
+}
+
+// MARK: - Crossing
+
+extension MuxFrame {
+    /// Spreads the frame onto the flat struct plus, at most, a cwd — and hands the opaque payload
+    /// back rather than interning it, so a `.channelData` body crosses as itself.
+    func flatten(into flat: inout SlopDeskMuxFrame, arena: inout Data) -> Data {
+        flat.channel_id = channelID
+        flat.mux_type = muxType.rawValue
+        switch self {
+        case let .channelOpen(_, sessionID, lastReceivedSeq, channelClass, initialCwd):
+            flat.session_id = sessionID.uuid
+            flat.last_received_seq = lastReceivedSeq
+            flat.channel_class = channelClass
+            if let initialCwd {
+                arena = Data(initialCwd.utf8)
+                flat.has_cwd = true
+                flat.cwd_length = UInt32(arena.count)
+            }
+        case let .channelOpenAck(_, accepted, resumeFromSeq):
+            flat.accepted = accepted
+            flat.resume_from_seq = resumeFromSeq
+        case let .channelData(_, payload):
+            return payload
+        case let .channelClose(_, reason):
+            flat.reason = reason.rawValue
+        case let .windowAdjust(_, bytesToAdd):
+            flat.bytes_to_add = bytesToAdd
+        }
+        return Data()
+    }
+
+    /// Rebuilds a frame from the flat struct, its arena, and the opaque payload already lifted out
+    /// of wherever it sat. Unknown mux types never reach here — the decode refused them.
+    static func build(
+        _ flat: SlopDeskMuxFrame, _ arena: UnsafeRawBufferPointer, _ payload: Data,
+    ) -> MuxFrame? {
+        let channelID = flat.channel_id
+        switch flat.mux_type {
+        case MuxFrameType.channelOpen.rawValue:
             return .channelOpen(
                 channelID: channelID,
-                sessionID: sessionID,
-                lastReceivedSeq: lastReceivedSeq,
-                channelClass: channelClass,
-                initialCwd: initialCwd,
+                sessionID: UUID(uuid: flat.session_id),
+                lastReceivedSeq: flat.last_received_seq,
+                channelClass: flat.channel_class,
+                initialCwd: flat.has_cwd
+                    ? text(arena, flat.cwd_offset, flat.cwd_length)
+                    : nil,
             )
-
-        case .channelOpenAck:
-            let acceptedByte = try reader.readUInt8()
-            // `resumeFromSeq` is decode-optional (the `channelOpen` cwd discipline): absent
-            // (a pre-resume encoder / old golden vector) reads as 0 — "nothing resumed".
-            let resumeFromSeq: Int64
-            if reader.bytesRemaining == 0 {
-                resumeFromSeq = 0
-            } else {
-                resumeFromSeq = try reader.readInt64()
-                guard reader.bytesRemaining == 0 else {
-                    throw SlopDeskError.malformedBody("channelOpenAck: trailing bytes")
-                }
-            }
+        case MuxFrameType.channelOpenAck.rawValue:
             return .channelOpenAck(
-                channelID: channelID,
-                accepted: acceptedByte != 0,
-                resumeFromSeq: resumeFromSeq,
+                channelID: channelID, accepted: flat.accepted, resumeFromSeq: flat.resume_from_seq,
             )
-
-        case .channelData:
-            // Body is an opaque WireMessage frame — consume the rest verbatim.
-            return .channelData(channelID: channelID, payload: reader.remaining())
-
-        case .channelClose:
-            // A close must always CLOSE: the reason only advises what may happen afterwards, so
-            // neither an absent body (the default `.retired` encoding) nor an unrecognised byte may
-            // throw and leave the channel open — both read as `.retired`, the reading that
-            // withholds an automatic re-dial. Trailing bytes past the reason are still malformed.
-            guard reader.bytesRemaining > 0 else { return .channelClose(channelID: channelID, reason: .retired) }
-            let reasonByte = try reader.readUInt8()
-            guard reader.bytesRemaining == 0 else {
-                throw SlopDeskError.malformedBody("channelClose: trailing bytes")
-            }
+        case MuxFrameType.channelData.rawValue:
+            return .channelData(channelID: channelID, payload: payload)
+        case MuxFrameType.channelClose.rawValue:
             return .channelClose(
-                channelID: channelID,
-                reason: MuxCloseReason(rawValue: reasonByte) ?? .retired,
+                channelID: channelID, reason: MuxCloseReason(rawValue: flat.reason) ?? .retired,
             )
-
-        case .windowAdjust:
-            let bytesToAdd = try reader.readUInt32()
-            return .windowAdjust(channelID: channelID, bytesToAdd: bytesToAdd)
+        default:
+            return .windowAdjust(channelID: channelID, bytesToAdd: flat.bytes_to_add)
         }
     }
 
-    private static func clampedUTF8(_ string: String) -> Data {
-        let full = Data(string.utf8)
-        guard full.count > Int(UInt16.max) else { return full }
-        var out = Data()
-        for scalar in string.unicodeScalars {
-            let bytes = Data(String(scalar).utf8)
-            if out.count + bytes.count > Int(UInt16.max) { break }
-            out.append(bytes)
-        }
-        return out
+    /// A text field, read out of the arena the decode filled.
+    private static func text(_ arena: UnsafeRawBufferPointer, _ offset: UInt32, _ length: UInt32) -> String {
+        ArenaText.text(arena, offset, length)
     }
 }

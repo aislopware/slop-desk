@@ -4,8 +4,13 @@ import Foundation
 ///
 /// Claude Code hooks (`SessionStart`, `PostToolUse`, `SubagentStop`) POST small JSON
 /// payloads to a local listener. The actual HTTP / stdin wiring is host-app glue;
-/// this type is the **seam**: the typed model + a parser + the fold-into-stream logic
-/// (`EventBuilder.ingest(hook:)`). It is unit-tested against fixture payloads.
+/// this type is the **seam**: the typed model + a parser. It is unit-tested against
+/// fixture payloads.
+///
+/// This file is the DETECTION path (`docs/50`), not the inspector: a hook record is what
+/// `AgentHookListener` folds into `ClaudeStatusMachine`. It never fed the inspector's event
+/// stream, which is why it stayed in Swift when everything that DID move to
+/// `rust/slopdesk-inspectord` (`docs/54`).
 public enum HookPayload: Sendable, Equatable {
     /// `SessionStart` → `transcript_path` + `session_id` + `model` (doc 16). This is
     /// how the inspector discovers which JSONL file to tail — we do **not** reconstruct
@@ -157,7 +162,10 @@ public struct StopInfo: Sendable, Equatable, Codable {
 /// body yields `nil` (the host glue logs + drops it) rather than throwing.
 public enum HookParser {
     /// The `agent_transcript_path` a `SubagentStop` payload referenced, if any —
-    /// surfaced separately so the host can hand the path to the `SubagentWatcher`.
+    /// surfaced separately because it is the only field that names a subagent's own file.
+    /// (Nothing in hostd tails it: `slopdesk-inspectord` discovers the same file by watching
+    /// the `subagents/` directory. Kept because the path is also how a payload WITHOUT an
+    /// explicit `agent_id` gets one — see ``agentHash(_:)``.)
     public static func subagentTranscriptPath(_ data: Data) -> String? {
         guard let root = try? JSONDecoder().decode(JSONValue.self, from: data) else { return nil }
         return root["agent_transcript_path"]?.stringValue
@@ -416,6 +424,12 @@ public enum HookParser {
 
     /// Derives a stable subagent id from an `agent-<hash>.jsonl` path when the payload
     /// omits an explicit id (the filename hash *is* the agent id in doc 16's scheme).
+    ///
+    /// The inspector daemon derives the SAME id from the SAME filename
+    /// (`slopdesk_inspectord::subagents::agent_hash`), which is what makes a node linked by a
+    /// hook and one discovered by the directory watcher the same node. That is a shared naming
+    /// SCHEME, not a shared implementation — neither side calls the other, and each reads a
+    /// filename it was handed by a different producer.
     static func agentHash(_ path: String) -> String {
         // `URL.lastPathComponent` mirrors `NSString.lastPathComponent` for every real agent path;
         // guard the empty string (URL would resolve "" to the cwd, NSString yields "").
@@ -425,5 +439,61 @@ public enum HookParser {
         if name.hasSuffix(".jsonl") { name = String(name.dropLast(6)) }
         if name.hasPrefix("agent-") { name = String(name.dropFirst(6)) }
         return name.isEmpty ? path : name
+    }
+}
+
+// MARK: - Hook content blocks
+
+/// A tool call as a HOOK announced it: `{ tool_name, tool_use_id, tool_input }`.
+///
+/// Named for the assistant `{type:tool_use, …}` transcript block it mirrors, because that is the
+/// shape Claude Code reuses across both surfaces — but this is the HOOK's model and its only
+/// consumers are on the detection path (``HookPayload``, `AgentHookListener.questionLabel`). The
+/// transcript-line half of the family moved to `slopdesk-inspectord` and was deleted here; these
+/// two stayed with the parser that builds them.
+public struct ToolUseBlock: Sendable, Equatable {
+    public var id: String
+    public var name: String
+    /// The tool input as a JSON object, preserved as decoded values (so a label can be derived
+    /// from whichever field the tool happens to carry one in).
+    public var input: JSONValue
+
+    /// TRUE when ``id`` came from the payload's `tool_use_id` and therefore MATCHES across the
+    /// `PreToolUse` / `PostToolUse` pair; FALSE when the producer omitted it and ``HookParser``
+    /// minted a fresh UUID so a consumer still has a key.
+    ///
+    /// ⚠️ Load-bearing for the status machine's BLOCK LEDGER: a synthesised id is a DIFFERENT
+    /// string on the pre and the post hook, so treating it as real would leave a question's ledger
+    /// entry unresolvable — a raised hand nothing could lower. Consumers that need identity across
+    /// two events must read this and fall back to id-less handling; consumers that just need a
+    /// dictionary key can ignore it.
+    public var idIsFromPayload: Bool
+
+    public init(id: String, name: String, input: JSONValue, idIsFromPayload: Bool = true) {
+        self.id = id
+        self.name = name
+        self.input = input
+        self.idIsFromPayload = idIsFromPayload
+    }
+
+    /// The id to key cross-event identity by — ``id`` when the payload supplied it, else `nil`.
+    public var stableID: String? { idIsFromPayload ? id : nil }
+}
+
+/// A tool call's outcome as a HOOK announced it: `{ tool_use_id, tool_result, is_error }`.
+///
+/// The sibling of ``ToolUseBlock``; see that type for why the transcript-shaped name survives a
+/// hook-only life.
+public struct ToolResultBlock: Sendable, Equatable {
+    public var toolUseID: String
+    /// The tool output, flattened to a string (Claude Code emits either a string or
+    /// an array of `{type:text,text}` blocks; both flatten here).
+    public var content: String
+    public var isError: Bool
+
+    public init(toolUseID: String, content: String, isError: Bool) {
+        self.toolUseID = toolUseID
+        self.content = content
+        self.isError = isError
     }
 }

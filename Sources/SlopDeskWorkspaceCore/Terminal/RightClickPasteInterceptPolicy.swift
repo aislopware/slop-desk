@@ -1,5 +1,3 @@
-import Foundation
-
 // MARK: - Right-click paste-protection interception
 
 /// The PURE decision behind closing the right-click paste-protection hole: whether the embedder must

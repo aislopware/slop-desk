@@ -1,5 +1,3 @@
-import Foundation
-
 /// A free, dependency-free async timeout helper for tests.
 ///
 /// Runs `body` and returns its value, or `nil` if it does not finish within

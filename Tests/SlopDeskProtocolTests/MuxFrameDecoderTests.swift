@@ -21,7 +21,7 @@ final class MuxFrameDecoderTests: XCTestCase {
             .channelOpenAck(channelID: 3, accepted: true, resumeFromSeq: 0),
             .windowAdjust(channelID: 3, bytesToAdd: 1024),
         ]
-        var decoder = MuxFrameDecoder()
+        let decoder = MuxFrameDecoder()
         decoder.append(two.reduce(into: Data()) { $0.append(MuxEnvelopeCodec.encode($1)) })
 
         var decoded: [MuxFrame] = []
@@ -31,7 +31,7 @@ final class MuxFrameDecoderTests: XCTestCase {
     }
 
     func testThreeFramesInOneAppend() throws {
-        var decoder = MuxFrameDecoder()
+        let decoder = MuxFrameDecoder()
         decoder.append(concatenatedFrames())
 
         var decoded: [MuxFrame] = []
@@ -45,7 +45,7 @@ final class MuxFrameDecoderTests: XCTestCase {
         let bytes = MuxEnvelopeCodec.encode(frame)
         let split = bytes.count / 2
 
-        var decoder = MuxFrameDecoder()
+        let decoder = MuxFrameDecoder()
         decoder.append(bytes.prefix(split))
         XCTAssertNil(try decoder.nextFrame(), "first half: must wait")
 
@@ -60,7 +60,7 @@ final class MuxFrameDecoderTests: XCTestCase {
         let frame = MuxFrame.windowAdjust(channelID: 9, bytesToAdd: 42)
         let bytes = MuxEnvelopeCodec.encode(frame)
 
-        var decoder = MuxFrameDecoder()
+        let decoder = MuxFrameDecoder()
         decoder.append(bytes.prefix(2)) // only 2 of the 4 prefix bytes
         XCTAssertNil(try decoder.nextFrame())
 
@@ -75,7 +75,7 @@ final class MuxFrameDecoderTests: XCTestCase {
         // prefix(4) + 2 of the 4 channelID bytes = 6 bytes buffered.
         let cut = 6
 
-        var decoder = MuxFrameDecoder()
+        let decoder = MuxFrameDecoder()
         decoder.append(bytes.prefix(cut))
         XCTAssertNil(try decoder.nextFrame(), "header partially present: must wait")
         // Still nil on a second call with no new bytes.
@@ -86,7 +86,7 @@ final class MuxFrameDecoderTests: XCTestCase {
     }
 
     func testOneByteAtATimeDrainsAllFrames() throws {
-        var decoder = MuxFrameDecoder()
+        let decoder = MuxFrameDecoder()
         let combined = concatenatedFrames()
         var decoded: [MuxFrame] = []
         for byte in combined {
@@ -102,7 +102,7 @@ final class MuxFrameDecoderTests: XCTestCase {
         var frame = Data()
         frame.appendBE(UInt32(oversized))
 
-        var decoder = MuxFrameDecoder()
+        let decoder = MuxFrameDecoder()
         decoder.append(frame)
         XCTAssertThrowsError(try decoder.nextFrame()) { error in
             XCTAssertEqual(error as? SlopDeskError, .frameTooLarge(oversized))
@@ -114,13 +114,13 @@ final class MuxFrameDecoderTests: XCTestCase {
         var frame = Data()
         frame.appendBE(UInt32(SlopDesk.maxFramePayloadLength))
 
-        var decoder = MuxFrameDecoder()
+        let decoder = MuxFrameDecoder()
         decoder.append(frame)
         XCTAssertNoThrow(XCTAssertNil(try decoder.nextFrame()))
     }
 
     func testEmptyAndShortInputsWait() throws {
-        var decoder = MuxFrameDecoder()
+        let decoder = MuxFrameDecoder()
         XCTAssertNil(try decoder.nextFrame())
         decoder.append(Data())
         XCTAssertNil(try decoder.nextFrame())
@@ -138,7 +138,7 @@ final class MuxFrameDecoderTests: XCTestCase {
         var frame = Data()
         frame.appendBE(UInt32(oversized))
 
-        var decoder = MuxFrameDecoder()
+        let decoder = MuxFrameDecoder()
         decoder.append(frame)
         XCTAssertThrowsError(try decoder.nextFrame())
         XCTAssertEqual(decoder.bufferedByteCountForTesting, 0, "the fault frees the buffer")
@@ -161,7 +161,7 @@ final class MuxFrameDecoderTests: XCTestCase {
         frame.append(0xFF) // unknown mux frame type
         frame.append(MuxEnvelopeCodec.encode(.channelClose(channelID: 1))) // valid frame after the poison point
 
-        var decoder = MuxFrameDecoder()
+        let decoder = MuxFrameDecoder()
         decoder.append(frame)
         XCTAssertThrowsError(try decoder.nextFrame())
         XCTAssertThrowsError(try decoder.nextFrame()) // rethrown, never nil/resync

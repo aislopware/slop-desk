@@ -1,4 +1,3 @@
-import Foundation
 import SlopDeskWorkspaceModel
 
 // MARK: - The ⌃⇥ pane switcher (press-and-hold, MRU-ordered)

@@ -56,7 +56,7 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
     /// CONCURRENCY-HOST-1 mux analogue (always on): the per-lane idle-timeout reaper. Keyed by
     /// channelID so a crashed lane is reaped independently of its siblings (per-channel loss
     /// isolation). Guarded by `lock`.
-    private var idleReaper = IdleReapDecider<UInt32>(idleTimeout: KeepaliveTiming.idleTimeout)
+    private var idleReaper = IdleReapDecider(idleTimeout: KeepaliveTiming.idleTimeout)
     /// The coarse reaper scan timer (``KeepaliveTiming/reaperTick``), on `queue`; cancelled under
     /// `lock` in ``stop()``.
     private var reaperTimer: DispatchSourceTimer?

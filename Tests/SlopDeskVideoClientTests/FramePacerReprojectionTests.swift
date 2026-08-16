@@ -112,17 +112,38 @@ final class FramePacerReprojectionTests: XCTestCase {
         )
     }
 
-    /// The scroll/momentum phase mapping the pipeline uses to drive the reprojector.
+    /// The scroll/momentum phase mapping the pipeline uses to drive the reprojector, through the door.
     func testReprojectionPhaseMapping() {
         // Active drag (CGScrollPhase changed = 2, no momentum).
-        XCTAssertEqual(VideoWindowPipeline.reprojectionPhase(scrollPhase: 2, momentumPhase: 0), .active)
-        XCTAssertEqual(VideoWindowPipeline.reprojectionPhase(scrollPhase: 1, momentumPhase: 0), .active)
+        XCTAssertEqual(ScrollReprojector.Phase(scrollPhase: 2, momentumPhase: 0), .active)
+        XCTAssertEqual(ScrollReprojector.Phase(scrollPhase: 1, momentumPhase: 0), .active)
         // Momentum coast (CGMomentumScrollPhase begin = 1, continue = 2).
-        XCTAssertEqual(VideoWindowPipeline.reprojectionPhase(scrollPhase: 0, momentumPhase: 1), .momentum)
-        XCTAssertEqual(VideoWindowPipeline.reprojectionPhase(scrollPhase: 0, momentumPhase: 2), .momentum)
+        XCTAssertEqual(ScrollReprojector.Phase(scrollPhase: 0, momentumPhase: 1), .momentum)
+        XCTAssertEqual(ScrollReprojector.Phase(scrollPhase: 0, momentumPhase: 2), .momentum)
         // Either ended arms the decay (finger end = 4 / cancelled = 8 / momentum end = 3).
-        XCTAssertEqual(VideoWindowPipeline.reprojectionPhase(scrollPhase: 4, momentumPhase: 0), .ended)
-        XCTAssertEqual(VideoWindowPipeline.reprojectionPhase(scrollPhase: 8, momentumPhase: 0), .ended)
-        XCTAssertEqual(VideoWindowPipeline.reprojectionPhase(scrollPhase: 0, momentumPhase: 3), .ended)
+        XCTAssertEqual(ScrollReprojector.Phase(scrollPhase: 4, momentumPhase: 0), .ended)
+        XCTAssertEqual(ScrollReprojector.Phase(scrollPhase: 8, momentumPhase: 0), .ended)
+        XCTAssertEqual(ScrollReprojector.Phase(scrollPhase: 0, momentumPhase: 3), .ended)
+    }
+
+    /// A host-measured shift crosses out as ten-thousandths and comes back as a velocity + a band.
+    func testScrollHintEncodesAndDecodesOneEncoding() {
+        let hint = ScrollReprojector.Hint(
+            shift: 48, confidenceMilli: 900, bandTopRow: 100, bandBottomRow: 899, height: 960,
+        )
+        XCTAssertEqual(hint.dy, 500, "48 rows of 960 is a twentieth of the frame")
+        XCTAssertEqual(hint.dx, 0, "the v1 host measures the vertical axis only")
+        let sample = hint.velocity(contentFps: 60.0)
+        XCTAssertEqual(sample.vy, 3.0, accuracy: 1e-12, "one frame of shift, sixty frames a second")
+        XCTAssertEqual(sample.phase, .active)
+        XCTAssertEqual(hint.band()?.bottom, 0.9375, "the inclusive bottom row became an exclusive edge")
+
+        // An unconfident measurement is not a scroll; a still frame arms the decay and carries no band.
+        let still = ScrollReprojector.Hint(
+            shift: 48, confidenceMilli: 499, bandTopRow: 100, bandBottomRow: 899, height: 960,
+        )
+        XCTAssertEqual(still.dy, 0)
+        XCTAssertNil(still.band(), "no band is absent, not an empty span at the top of the frame")
+        XCTAssertEqual(still.velocity(contentFps: 60.0).phase, .ended)
     }
 }

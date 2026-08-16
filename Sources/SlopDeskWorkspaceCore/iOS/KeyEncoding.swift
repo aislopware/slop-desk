@@ -1,7 +1,5 @@
-import Foundation
-
 /// Pure, platform-agnostic terminal key-encoding — the macOS-unit-testable core behind the iOS
-/// UIKit key path (``TerminalInputResponderView`` / ``KeyboardAccessoryBar``).
+/// UIKit key path (`TerminalInputResponderView` / `KeyboardAccessoryBar`).
 ///
 /// Deliberately kept OUT of the `#if os(iOS)` guard (like ``FloatingCursorMapping`` /
 /// ``KeyboardAccessoryDecision``) so the byte mappings are exercised by the headless test runner,

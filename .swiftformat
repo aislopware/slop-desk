@@ -2,6 +2,11 @@
 # OWNS formatting (whitespace, wrapping, redundancy); SwiftLint owns lint/bug rules.
 # The two are kept non-conflicting by construction (see the notes in .swiftlint.yml).
 # Run: `make fmt-swift` (writes) / `make lint-swift` (check).
+#
+# The ownership line is not quite clean, and the Makefile says where: SwiftFormat cannot remove a
+# blank line at the START of a file, which SwiftLint's `leading_whitespace` requires. So `fmt-swift`
+# runs `swiftlint --fix` after this config, and `lint-swift` stays read-only. Everything that WRITES
+# is in the format target; nothing that lints writes.
 
 --swift-version 6.2
 --max-width 120

@@ -124,7 +124,7 @@ never offers or falls back to another version.
 - **`helloAck.returningClient`** is decided **by the host** (see §5), not asserted by the client.
 - **`title`** payload must be valid UTF-8; a non-UTF-8 body decodes to `SlopDeskError.malformedBody`.
 - **`title` (21) and `bell` (22) are PRODUCED by the host** by a non-destructive OSC/BEL sniffer
-  (`HostTitleBellSniffer` in `SlopDeskHost`, wired into `HostSession`'s output relay): as it relays
+  (`rust/slopdesk-superd/src/sniffer.rs`, one pass over the pump's stream): as it relays
   the raw PTY stream it observes a copy of the bytes and emits:
   - **`title`** ← **OSC 0** (`ESC ] 0 ; <text> <term>`, icon + window) or **OSC 2**
     (`ESC ] 2 ; <text> <term>`, window), `<term>` = `BEL` (`0x07`) **or** `ST` (`ESC \`). **OSC 1**
@@ -221,7 +221,7 @@ never offers or falls back to another version.
     which never performs a side effect; the iOS client routes open/reveal TO the host over this same wire.
   - **`installAgentHooks` (11) / `uninstallAgentHooks` (12) / `agentHookStatus` (13) are the agent-hooks
     verbs** (E13 — the Agents settings card). 11/12 are **side-effecting** like 9/10: the host writes (the
-    hook RELAY BINARY + a merge into `~/.claude/settings.json`) or strips exactly our entries via `AgentInstaller`
+    hook RELAY BINARY + a merge into `~/.claude/settings.json`) or strips exactly our entries via `slopdesk-agenthooks`
     and replies with an **empty payload** + a status (`ok` on a successful write, `error` if it threw).
     13 is a **pure read** that returns status `ok` + a **2-byte** payload
     `[UInt8 installed][UInt8 listenerActive]` — `installed` (`1`/`0`) is the `settings.json` install
@@ -697,6 +697,12 @@ topology). See docs/DECISIONS.md 2026-07-28.
 - `struct ReplayBuffer: Sendable` — pure logic: `append(bytes:) -> Int64`, `ack(upTo:)`,
   `messages(after:) -> [(seq, bytes)]`, `retainedBytes`, `isClientOnline`, `shouldPauseDrain` (4 MiB
   offline gate / 64 MiB cap; never drops un-acked data — backpressure via pause instead).
+  **Rust counterpart (stage 14, 2026-08-13):** `rust/slopdesk-wire`'s `replay::ReplayBuffer` and
+  `altscreen::reopen_sequence` carry every rule above — the seq ledger, the scrollback ring, the
+  line-aligned eviction, the alt-screen cut repair, the distiller re-chunk and the O(log n) lag
+  metric. It lives in the wire crate because the retained unit is a `WireMessage::Output` and the
+  re-chunk ceiling is `MuxFlowControl::max_output_frame_payload_bytes`; the Network.framework half of
+  `SlopDeskTransport` stays Swift. See `docs/DECISIONS.md`.
 - `actor HostTransport` — `NWListener`; `start(port:)`, `boundPort`, `sessions_`
   (`AsyncStream<HostSessionTransport>`), `stop()`.
 - `actor HostSessionTransport` — per-session `ReplayBuffer` owner; `sendOutput(_:)`, `sendControl(_:)`,
@@ -709,10 +715,11 @@ topology). See docs/DECISIONS.md 2026-07-28.
 
 # PATH 2 — GUI video transport (UDP)
 
-> **STATUS: CURRENT.** The wire format, packetization, FEC and recovery logic are **native Swift**
-> (the `SlopDeskVideoProtocol` codecs, with the FEC's GF(2⁸) NEON kernel in `CSlopDeskSIMD`);
-> `SlopDeskVideoHost` (`NWVideoDatagramTransport`) and `SlopDeskVideoClient`
-> (`NWVideoClientTransport`) capture/encode/decode/render and drive the sockets. This secondary GUI
+> **STATUS: CURRENT.** The wire format, packetization, FEC and recovery logic are **Rust**
+> (`rust/slopdesk-video`, reached from the `SlopDeskVideoProtocol` face through `CSlopDeskFFI`, with
+> the FEC's GF(2⁸) NEON kernel isolated in `rust/slopdesk-gfsimd`); `SlopDeskVideoHost`
+> (`NWVideoMuxDatagramTransport`) and `SlopDeskVideoClient` (`NWVideoMuxClientFlow`)
+> capture/encode/decode/render and drive the sockets. This secondary GUI
 > video path (doc 17 §3, doc 18 measured spike config) is **independent of PATH 1** — its own
 > protocol over plain UDP, with NO TCP, no `WireMessage`, no `FrameDecoder`.
 
@@ -1142,8 +1149,10 @@ loss is the normal case PATH 2 is built to tolerate.
 # PATH 4 — drag-drop file transfer (TCP)
 
 > **STATUS: CURRENT.** A file dragged from Finder onto the remote **desktop window** uploads to the
-> host over a DEDICATED reliable TCP connection — the `SlopDeskFileTransfer` module: its own listener
-> (`FileTransferServer`), client (`FileTransferClient`), frame decoder, codec, and receive FSM. It is
+> host over a DEDICATED reliable TCP connection. Since 2026-08-12 the two ends are in two languages
+> and two processes: the client is `SlopDeskFileTransfer` (`FileTransferClient`, the codec's
+> encoder, the frame decoder) and the RECEIVER is `slopdesk-dropd`, a Rust daemon under superd that
+> the client dials directly — hostd is not in the byte path (`docs/53`). It is
 > **independent of PATH 1** (a bulk body must never share the terminal mux's data channel — it would
 > stall keystrokes/resizes) and of PATH 2 (lossy UDP + FEC recovers *frames*, not files). No
 > `WireMessage`, no `MuxFrame`, no `VideoControlMessage` — a genuinely separate path, per the
@@ -1153,19 +1162,27 @@ loss is the normal case PATH 2 is built to tolerate.
 ## 10. Path-4 overview
 
 - **Connection.** One TCP connection per drop, dialed at `host : terminalPort + 2` (mirrors the
-  inspector's `+ 1`; the client derives it as `ConnectionTarget.filePort = port &+ 2`, the daemon binds
-  `bound &+ 2`). `TCP_NODELAY` + keepalive, no app crypto (WireGuard encrypts). The host listener is
-  gated `SLOPDESK_FILE_TRANSFER` (default-ON) and is **non-fatal** on bind failure. Drop directory:
-  `SLOPDESK_FILE_DROP_DIR` or `~/Downloads`.
+  inspector's `+ 1`; the client derives it as `ConnectionTarget.filePort = port &+ 2`, and hostd tells
+  dropd to bind `bound &+ 2`). `TCP_NODELAY` + keepalive, no app crypto (WireGuard encrypts). The
+  listener is gated `SLOPDESK_FILE_TRANSFER` (default-ON) and a dropd that will not come up is
+  **non-fatal**, exactly as a failed bind was. Drop directory: `SLOPDESK_FILE_DROP_DIR` or
+  `~/Downloads`, resolved by hostd and passed on dropd's argv.
 - **Framing.** `[UInt32 BE payloadLength][UInt8 messageType][body]`, 16 MiB payload cap (a larger
-  prefix is rejected before allocation, poisoning the decoder — fail-stop, no resync). Multi-byte ints
-  big-endian; strings are `[UInt16 BE byteLength][UTF-8]`.
+  prefix is rejected before allocation — fail-stop, no resync: the client's decoder poisons itself,
+  dropd's `read_exact` loop simply ends the connection). Multi-byte ints big-endian; strings are
+  `[UInt16 BE byteLength][UTF-8]`.
 - **Direction.** Client → host **upload** only (the "drop onto the remote desktop" gesture). Host →
   client download is a future add.
 - **Version.** `1` only, no negotiation: the client opens with `hello(version:)`, the host answers
   `helloAck(accepted:)`; a mismatch is rejected outright.
 
-### 10.1 Message table (`FileTransferMessage`)
+### 10.1 Message table (`FileTransferRequest` / `FileTransferReply`, `Request` / `Reply` in Rust)
+
+Each end is written ONCE and the halves are gated against each other by `check-supervisor.sh` §10:
+`FileTransferCodec` encodes 1–5 and decodes 6–9, `rust/slopdesk-dropd/src/protocol.rs` does the
+mirror. A 1–5 arriving at the client is refused as unknown (the peer is not a dropd); a 6–9 arriving
+at dropd is decoded strictly and then ignored (a confused client, not a hostile one — hanging up
+would turn a stray frame into a lost upload).
 
 | Type | Name | Dir | Body | Meaning |
 |------|------|-----|------|---------|
@@ -1179,22 +1196,24 @@ loss is the normal case PATH 2 is built to tolerate.
 | 8 | `complete` | h→c | `transferId:u32` | Body written + moved into place. |
 | 9 | `failed` | h→c | `transferId:u32, reason:str` | Transfer failed (short reason, never a path). |
 
-### 10.2 Receive discipline (`FileReceiveLogic`, validate-then-drop)
+### 10.2 Receive discipline (`receive.rs`, validate-then-drop)
 
-The host FSM rejects (a `failed` reply + abort of any partial write) on: a chunk before its offer, a
-body **overrun** past the offered size, an offer over the 20 GiB cap, a **duplicate** transferId, or a
-name that fails `FileNameSanitizer` (last-component-only; `..`/absolute/empty rejected — the
-path-traversal guard an upload endpoint invites). `finish` requires `receivedBytes == fileSize`. The
-disk sink streams to a hidden `.part` temp file, then atomically renames into a collision-avoiding
-final name (`report.pdf` → `report (1).pdf`); a dropped connection sweeps any partial temp.
+The host FSM rejects (a `failed` reply + abort of any partial write) on: an offer before the
+handshake, a chunk before its offer, a body **overrun** past the offered size, an offer over the
+20 GiB cap, a **duplicate** transferId, or a name that fails `name::sanitize` (last-component-only;
+`..`/absolute/empty/NUL rejected — the path-traversal guard an upload endpoint invites). `finish`
+requires `receivedBytes == fileSize`. The disk sink streams to a hidden `.part` temp file, then
+renames into a collision-avoiding final name (`report.pdf` → `report (1).pdf`, bounded to a
+thousand); a dropped connection sweeps any partial temp. One machine and one sink per connection,
+owned by that connection's thread — no shared state and therefore no lock.
 
 ### 10.3 Errors
 
 | Case | Meaning |
 |------|---------|
-| `FileTransferCodec.DecodeError` | `empty` / `unknownType` / `truncated` / `badUTF8` — a malformed payload, dropped (poisons the connection decoder). |
-| `FileTransferFrameDecoderError.frameTooLarge` | A length prefix over the 16 MiB cap — rejected before allocating. |
-| `FileDropSinkError` | `notOpen` / `ioFailed` — a disk failure surfaces as a per-transfer `failed`, never a connection teardown. |
+| `FileTransferCodec.DecodeError` (Swift) / `DecodeError` (Rust) | `empty` / `unknownType` / `truncated` / `badUTF8` — a malformed payload. Same four cases at both ends, by design. |
+| `FileTransferFrameDecoderError.frameTooLarge` | A length prefix over the 16 MiB cap — rejected before allocating. dropd's `read_frame` refuses the same length the same way, with an `InvalidData` io error. |
+| `SinkError` | `NotOpen` / `Io` — a disk failure surfaces as a per-transfer `failed`, never a connection teardown; the id is remembered so a later `accept`/`complete` for it is suppressed rather than contradicting the failure the client already has. |
 
 ---
 

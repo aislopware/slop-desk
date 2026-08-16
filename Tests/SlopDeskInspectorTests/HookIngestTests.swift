@@ -1,8 +1,12 @@
 import XCTest
 @testable import SlopDeskInspector
 
-/// Hook ingest: fixture PostToolUse/SubagentStop/SessionStart payloads parse into
-/// typed hooks and fold into the event stream correctly.
+/// Hook ingest: fixture payloads parse into typed hooks.
+///
+/// There is no fold-into-events half any more. `EventBuilder.ingest(hook:)` existed but production
+/// never called it — hostd routes a hook record to the DETECTION path (`docs/50`), never to the
+/// inspector — and the inspector is a separate daemon now, which cannot receive one at all
+/// (`docs/54`). What these payloads feed is `AgentHookListener`, tested in `SlopDeskHostTests`.
 final class HookIngestTests: XCTestCase {
     func testSessionStartHookGivesTranscriptPath() {
         let hook = HookParser.parse(Fixtures.data("hook-session-start.json"))
@@ -16,18 +20,9 @@ final class HookIngestTests: XCTestCase {
             info.transcriptPath,
             "/Users/dev/.claude/projects/encoded-cwd/11111111-2222-3333-4444-555555555555.jsonl",
         )
-
-        var b = EventBuilder()
-        let events = b.ingest(hook: .sessionStart(info))
-        XCTAssertEqual(events.count, 1)
-        if case let .sessionStarted(emitted) = events[0] {
-            XCTAssertEqual(emitted.transcriptPath, info.transcriptPath)
-        } else {
-            XCTFail("expected .sessionStarted")
-        }
     }
 
-    func testPostToolUseHookFoldsToCompletedCard() {
+    func testPostToolUseHookCarriesInputAndResult() {
         let hook = HookParser.parse(Fixtures.data("hook-post-tool-use.json"))
         guard case let .postToolUse(use, result)? = hook else {
             XCTFail("expected .postToolUse, got \(String(describing: hook))")
@@ -36,16 +31,27 @@ final class HookIngestTests: XCTestCase {
         XCTAssertEqual(use.id, "toolu_hook_01")
         XCTAssertEqual(use.name, "Write")
         XCTAssertEqual(use.input["file_path"]?.stringValue, "/tmp/out.txt")
-        XCTAssertNotNil(result)
-
-        var b = EventBuilder()
-        let events = b.ingest(hook: .postToolUse(use, result))
-        let cards = events.compactMap { if case let .toolCard(c) = $0 { c } else { nil } }
-        XCTAssertEqual(cards.last?.status, .completed, "PostToolUse with a result → immediate completed card")
-        XCTAssertEqual(cards.last?.output, "File created successfully")
+        XCTAssertEqual(use.stableID, "toolu_hook_01", "the payload supplied the id, so it pairs across Pre/Post")
+        XCTAssertEqual(result?.toolUseID, "toolu_hook_01")
+        XCTAssertEqual(result?.content, "File created successfully")
+        XCTAssertEqual(result?.isError, false)
     }
 
-    func testSubagentStopHookFoldsToStoppedNode() {
+    /// An id-less payload still gets a key, but says so — the ledger must not pair the minted id
+    /// across the Pre/Post hooks, because it is a different string on each.
+    func testAnIdLessPayloadMintsAnIdAndDisownsIt() {
+        let hook = HookParser.parse(Data(
+            #"{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls"}}"#.utf8,
+        ))
+        guard case let .preToolUse(use)? = hook else {
+            XCTFail("expected .preToolUse, got \(String(describing: hook))")
+            return
+        }
+        XCTAssertFalse(use.id.isEmpty, "a key exists")
+        XCTAssertNil(use.stableID, "but it is not identity across two events")
+    }
+
+    func testSubagentStopHookParsesStoppedNode() {
         let hook = HookParser.parse(Fixtures.data("hook-subagent-stop.json"))
         guard case let .subagentStop(node)? = hook else {
             XCTFail("expected .subagentStop, got \(String(describing: hook))")
@@ -56,32 +62,15 @@ final class HookIngestTests: XCTestCase {
             "/Users/dev/.claude/projects/encoded-cwd/session/subagents/agent-deadbeef.jsonl",
         )
 
-        var b = EventBuilder()
-        let events = b.ingest(hook: .subagentStop(node))
-        let nodes = events.compactMap { if case let .subagentUpdated(n) = $0 { n } else { nil } }
-        XCTAssertEqual(nodes.last?.id, "deadbeef")
-        XCTAssertEqual(nodes.last?.status, .stopped)
+        XCTAssertEqual(node.id, "deadbeef")
+        XCTAssertEqual(node.status, .stopped)
         XCTAssertEqual(
-            nodes.last?.lastAssistantMessage,
+            node.lastAssistantMessage,
             "Found 2 callers of foo() in src/a.swift and src/b.swift.",
         )
-    }
-
-    func testPostToolUseHookBeforeJSONLDedupsOnCardID() {
-        // doc 16: a PostToolUse hook can arrive BEFORE the JSONL flush. The later
-        // JSONL tool_use (same id) must update the SAME card, not append a duplicate.
-        var b = EventBuilder()
-        let hookUse = ToolUseBlock(id: "shared", name: "Read", input: .object([:]))
-        var events = b.ingest(hook: .postToolUse(hookUse, nil)) // pending card from hook
-        // Later, the JSONL tool_result arrives for the same id.
-        events += b.ingest(line: .user(UserLine(
-            identity: LineIdentity(uuid: "r1"),
-            toolResults: [ToolResultBlock(toolUseID: "shared", content: "content", isError: false)],
-        )))
-        let cards = events.compactMap { if case let .toolCard(c) = $0 { c } else { nil } }
-        let shared = cards.filter { $0.id == "shared" }
-        XCTAssertEqual(shared.map(\.status), [.pending, .completed])
-        XCTAssertEqual(shared.last?.output, "content")
+        // The id the hook derives from the filename is the id the daemon's directory watcher
+        // derives from the same filename — which is what makes them the same node.
+        XCTAssertEqual(HookParser.agentHash("/x/subagents/agent-deadbeef.jsonl"), "deadbeef")
     }
 
     func testUnknownHookYieldsNil() {

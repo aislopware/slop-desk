@@ -1,5 +1,3 @@
-import Foundation
-
 /// The four-way agent state a manifest rule resolves to (herdr `AgentState`, ported 1:1).
 public enum AgentScreenState: String, Sendable, Equatable {
     /// Agent finished, prompt visible, nothing happening.
@@ -12,26 +10,18 @@ public enum AgentScreenState: String, Sendable, Equatable {
     case unknown
 }
 
-/// One evaluation input snapshot (herdr `DetectionInput`): the caller supplies the already
-/// trimmed/joined recent screen text plus the latest raw OSC title and OSC 9 progress remainder.
-/// The engine does no PTY/grid work itself.
-public struct AgentDetectionInput: Sendable, Equatable {
-    public var screen: String
-    public var oscTitle: String
-    public var oscProgress: String
-
-    public init(screen: String, oscTitle: String = "", oscProgress: String = "") {
-        self.screen = screen
-        self.oscTitle = oscTitle
-        self.oscProgress = oscProgress
-    }
-}
-
-/// The engine's verdict (herdr `AgentDetection`, ported 1:1) plus the matched-rule id for
-/// debugging/tests. The `visible*` flags are true only when the SCREEN literally shows the
-/// corresponding chrome (a live prompt box, a live blocker form, a live spinner) — they gate the
-/// temporal layer (a visible idle bypasses the working→idle hold; a visible blocker gets the
-/// steady re-publish heartbeat).
+/// The engine's verdict, in the terms the status machine speaks — decoded from a
+/// `ScreenDetection` reply by the scanner, which is the only thing that talks to the engine.
+///
+/// The ENGINE is `rust/slopdesk-screend` (`docs/52` §4b): the rule ladder, the manifests, the
+/// region resolver and both stream trackers live there, so this module has no evaluation input
+/// type and no evaluator. It keeps the verdict because the state machine and the temporal hold
+/// consume it, and because those are hostd's — the split is that screend owns everything reading
+/// the BYTES and hostd owns everything reading the CLOCK.
+///
+/// The `visible*` flags are true only when the SCREEN literally shows the corresponding chrome (a
+/// live prompt box, a live blocker form, a live spinner) — they gate the temporal layer (a visible
+/// idle bypasses the working→idle hold; a visible blocker gets the steady re-publish heartbeat).
 public struct AgentScreenDetection: Sendable, Equatable {
     public var state: AgentScreenState
     public var skipStateUpdate: Bool
@@ -60,14 +50,4 @@ public struct AgentScreenDetection: Sendable, Equatable {
         self.matchedRuleID = matchedRuleID
         self.fallbackReason = fallbackReason
     }
-
-    /// herdr `DEFAULT_KNOWN_AGENT_IDLE_FALLBACK` — the reason string on the known-agent
-    /// no-rule-matched fallback.
-    public static let knownAgentIdleFallbackReason = "default_known_agent_idle_fallback"
-
-    /// The fallback verdict for a KNOWN agent whose screen matched no rule: plain idle.
-    public static let knownAgentIdleFallback = Self(
-        state: .idle,
-        fallbackReason: knownAgentIdleFallbackReason,
-    )
 }

@@ -1,4 +1,3 @@
-import Foundation
 import SlopDeskWorkspaceModel
 
 // MARK: - GlobalSearch (pure cross-pane find engine behind ⇧⌘F)

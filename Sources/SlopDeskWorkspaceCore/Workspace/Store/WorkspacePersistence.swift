@@ -56,13 +56,10 @@ public struct WorkspacePersistence: @unchecked Sendable {
 
     // MARK: Encoding (deterministic, reviewable)
 
-    /// JSON encoder for a stable, reviewable on-disk shape. Sorted keys keep the byte-stable round-trip
-    /// tests meaningful (docs/22 §8).
-    private static func makeEncoder() -> JSONEncoder {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        return encoder
-    }
+    /// JSON encoder for a stable, reviewable on-disk shape — ``SidecarJSON/encoder()``, which every
+    /// sidecar this target writes is built from (sorted keys are the byte-stable round-trip contract,
+    /// docs/22 §8).
+    private static func makeEncoder() -> JSONEncoder { SidecarJSON.encoder() }
 
     // MARK: Save
 

@@ -1,3 +1,4 @@
+import CoreGraphics
 import SlopDeskVideoHost
 import XCTest
 
@@ -15,8 +16,17 @@ final class OffScreenWindowMintRescueTests: XCTestCase {
     /// settled handle and not a stale one.
     private struct StubWindow: Equatable {
         let id: UInt32
-        let frame: String
+        let frame: CGRect
         let tag: String
+
+        init(id: UInt32, frame: String, tag: String) {
+            self.id = id
+            // The frame is written as a SIZE, the way the measured animation is; the gate compares
+            // it and never reads it, so an origin of zero says everything.
+            let parts = frame.split(separator: "x").compactMap { Double($0) }
+            self.frame = CGRect(x: 0, y: 0, width: parts.first ?? 0, height: parts.last ?? 0)
+            self.tag = tag
+        }
     }
 
     /// Mutable call-count / script state shared into the injected effect closures. Scripted answers
@@ -67,7 +77,7 @@ final class OffScreenWindowMintRescueTests: XCTestCase {
     /// touching AX, so the caller's terminal `muxNoWindow` refusal stands.
     func testClosedWindowRefusesWithoutTouchingAX() async {
         let script = Script()
-        script.fullByCall = [[StubWindow(id: 9, frame: "f", tag: "full")]]
+        script.fullByCall = [[StubWindow(id: 9, frame: "100x100", tag: "full")]]
         let got = await run(windowID: 7, outcome: .restoring, script: script)
         XCTAssertNil(got)
         XCTAssertEqual(script.deminiaturizeCalls, 0)
@@ -87,7 +97,7 @@ final class OffScreenWindowMintRescueTests: XCTestCase {
     /// the rescue refuses and the client falls back to the picker.
     func testAXFailureRefuses() async {
         let script = Script()
-        script.fullByCall = [[StubWindow(id: 7, frame: "f", tag: "full")]]
+        script.fullByCall = [[StubWindow(id: 7, frame: "100x100", tag: "full")]]
         let got = await run(windowID: 7, outcome: .failed, script: script)
         XCTAssertNil(got)
         XCTAssertEqual(script.onScreenPolls, 0)
@@ -153,11 +163,11 @@ final class OffScreenWindowMintRescueTests: XCTestCase {
     /// window IS coming back.
     func testNeverStabilizingRestoreMintsFromLastSighting() async {
         let script = Script()
-        let last = StubWindow(id: 7, frame: "frame-3", tag: "onscreen-last")
-        script.fullByCall = [[StubWindow(id: 7, frame: "f", tag: "full")]]
+        let last = StubWindow(id: 7, frame: "103x103", tag: "onscreen-last")
+        script.fullByCall = [[StubWindow(id: 7, frame: "100x100", tag: "full")]]
         script.onScreenByPoll = [
-            [StubWindow(id: 7, frame: "frame-1", tag: "onscreen-1")],
-            [StubWindow(id: 7, frame: "frame-2", tag: "onscreen-2")],
+            [StubWindow(id: 7, frame: "101x101", tag: "onscreen-1")],
+            [StubWindow(id: 7, frame: "102x102", tag: "onscreen-2")],
             [last],
         ]
         let got = await run(windowID: 7, outcome: .restoring, pollAttempts: 3, script: script)
@@ -181,7 +191,7 @@ final class OffScreenWindowMintRescueTests: XCTestCase {
     func testEnumerationHiccupMidPollKeepsPolling() async {
         let script = Script()
         let settled = StubWindow(id: 7, frame: "656x422", tag: "onscreen-settled")
-        script.fullByCall = [[StubWindow(id: 7, frame: "f", tag: "full")]]
+        script.fullByCall = [[StubWindow(id: 7, frame: "100x100", tag: "full")]]
         script.onScreenByPoll = [
             nil,
             [StubWindow(id: 7, frame: "656x422", tag: "onscreen-1")],

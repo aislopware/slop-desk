@@ -1,7 +1,6 @@
 import Foundation
 import SlopDeskWorkspaceModel
 import XCTest
-@testable import SlopDeskWorkspaceCore
 
 /// The pure ``SplitNode`` operation layer (docs/42 §"Pure ops" — `SplitNode+Ops.swift`): split a
 /// leaf, remove a leaf (collapse + rebalance), resize a divider (sum-preserve + clamp), swap. These pin

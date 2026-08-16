@@ -1,0 +1,25 @@
+[package]
+name = "slopdesk-probe"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Host metadata probe — the git, directory and agent-session half of the metadata RPC"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[lints]
+workspace = true
+
+# The one dependency, and the same one `slopdesk-ctl` takes for the same reason: this program's
+# answers cross a process boundary to a Swift decoder, and half of them are structured. Hand-rolling
+# an escaper for a branch name or a path that a foreign repo chose is the classic place to be wrong.
+[dependencies]
+serde_json = "1"
+
+[[bin]]
+name = "slopdesk-probe"
+path = "src/main.rs"
+
+[lib]
+name = "slopdesk_probe"
+path = "src/lib.rs"

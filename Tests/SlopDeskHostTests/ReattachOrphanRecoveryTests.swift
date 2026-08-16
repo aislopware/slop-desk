@@ -55,14 +55,13 @@ final class ReattachOrphanRecoveryTests: XCTestCase {
         }
     }
 
-    private func makeSession(sessionID: UUID = UUID(), shimDir: URL? = nil) -> MuxChannelSession {
+    private func makeSession(sessionID: UUID = UUID()) -> MuxChannelSession {
         MuxChannelSession(
             channelID: 1,
-            pty: PTYProcess(), // unspawned — no reaper thread, no masterFD (hang-safety)
+            pty: unattachedPTY(), // unspawned — no reaper thread, no masterFD (hang-safety)
             data: MuxSubChannel(channelID: 1, channel: .data) { _, _ in },
             control: MuxSubChannel(channelID: 1, channel: .control) { _, _ in },
             sessionID: sessionID,
-            shimDir: shimDir,
         )
     }
 
@@ -311,20 +310,15 @@ final class ReattachOrphanRecoveryTests: XCTestCase {
     }
 
     /// A claimed session whose child EXITED mid-reattach has nothing to park: recovery must
-    /// shut it down (fd + shim-dir teardown), not insert a corpse into the store.
+    /// shut it down (the full fd teardown), not insert a corpse into the store.
     func testFailedRebindShutsDownExitedChildInsteadOfParking() async {
         let server = makeServer()
         guard let store = server.detachedStoreForTesting else {
             XCTFail("detach-enabled server must have a store")
             return
         }
-        let shimDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("orphan-recovery-shim-\(UUID().uuidString)", isDirectory: true)
-        try? FileManager.default.createDirectory(at: shimDir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: shimDir) }
-
         let id = UUID()
-        let session = makeSession(sessionID: id, shimDir: shimDir)
+        let session = makeSession(sessionID: id)
         let key1 = MuxSessionKey(connectionID: UUID(), channelID: 1)
         server.detachMuxSessionForTesting(key: key1, session: session)
         let key2 = MuxSessionKey(connectionID: UUID(), channelID: 1)
@@ -342,12 +336,12 @@ final class ReattachOrphanRecoveryTests: XCTestCase {
             "an exited child must be shut down, never parked as a claimable corpse",
         )
         XCTAssertNil(server.muxSessionForTesting(key: key2))
-        // shutdown() deletes the shim dir once the child is reaped — the observable proof the
-        // teardown path actually ran (it is dispatched to the teardown queue).
-        await waitUntil { !FileManager.default.fileExists(atPath: shimDir.path) }
-        XCTAssertFalse(
-            FileManager.default.fileExists(atPath: shimDir.path),
-            "recovery must run the real teardown (shutdown deletes the per-session shim dir)",
+        // Teardown is dispatched to its own queue, so its completion — not the call returning — is
+        // the proof the real path ran rather than the session merely being dropped on the floor.
+        await waitUntil { session.teardownCompletionsForTesting > 0 }
+        XCTAssertGreaterThan(
+            session.teardownCompletionsForTesting, 0,
+            "recovery must run the real teardown, not just forget the session",
         )
     }
 
@@ -359,13 +353,8 @@ final class ReattachOrphanRecoveryTests: XCTestCase {
             XCTFail("detach-enabled server must have a store")
             return
         }
-        let shimDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("orphan-recovery-drain-\(UUID().uuidString)", isDirectory: true)
-        try? FileManager.default.createDirectory(at: shimDir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: shimDir) }
-
         let id = UUID()
-        let session = makeSession(sessionID: id, shimDir: shimDir)
+        let session = makeSession(sessionID: id)
         let key1 = MuxSessionKey(connectionID: UUID(), channelID: 1)
         server.detachMuxSessionForTesting(key: key1, session: session)
         let key2 = MuxSessionKey(connectionID: UUID(), channelID: 1)
@@ -380,11 +369,11 @@ final class ReattachOrphanRecoveryTests: XCTestCase {
         store.drainAll()
         XCTAssertEqual(store.countForTesting, 0)
         // The drain's shutdownDetached tears the PTY down (SIGTERM→SIGKILL escalation on a live
-        // child; here the unspawned PTY makes it a pure fd/shim teardown) — the shim-dir delete
-        // is the observable completion of that path.
-        await waitUntil { !FileManager.default.fileExists(atPath: shimDir.path) }
-        XCTAssertFalse(
-            FileManager.default.fileExists(atPath: shimDir.path),
+        // child; here the unspawned PTY makes it a pure fd teardown) — its completion is the
+        // observable end of that path.
+        await waitUntil { session.teardownCompletionsForTesting > 0 }
+        XCTAssertGreaterThan(
+            session.teardownCompletionsForTesting, 0,
             "drainAll must reap a re-parked session (no PTY left behind after stop())",
         )
     }

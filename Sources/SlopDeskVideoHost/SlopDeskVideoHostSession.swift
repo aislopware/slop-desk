@@ -43,7 +43,7 @@ public actor SlopDeskVideoHostSession {
     /// `fragIndex` untouched, reassembler reorder-tolerant) → NO wire change, so it cannot white-screen
     /// the stream: `slopdesk-loopback-validate` (synthetic→REAL HW HEVC→packetize→interleave→reassemble
     /// →REAL HW decode) reports 120/120 clean at no-loss AND full FEC recovery of the 2- and 3-adjacent
-    /// datagram bursts that plain order drops entirely (0/120). The pure ``FragmentInterleaver`` (+ tests)
+    /// datagram bursts that plain order drops entirely (0/120). The pure reorder law (`rust/slopdesk-video`'s `interleaver`, + tests)
     /// and the harness scenarios are the regression proof.
     private static let interleaveTransmit = ProcessInfo.processInfo.environment["SLOPDESK_INTERLEAVE"] != "0"
     /// SEND PACING (anti-flicker; reorder-free, no wire change). A large frame (a ~115 KB heartbeat IDR
@@ -194,8 +194,9 @@ public actor SlopDeskVideoHostSession {
         return 0.008
     }()
 
-    // Which scroll phases accumulate lives in ``ScrollCoalescePlanner/isCoalescableScrollPhase`` — the
-    // pure planner owns the whole scroll-accumulator fold.
+    // Which scroll phases accumulate is `slopdesk-video`'s `is_coalescable_scroll_phase`, inside the
+    // fold ``ScrollCoalescePlanner`` is the face of — only the high-frequency continuous phases do,
+    // and every gesture boundary emits at once so the structure and the total travel stay exact.
 
     /// PURE (unit-tested): should this captured frame be SKIPPED for congestion backpressure? Skip iff
     /// backpressure is enabled, the lane is backed up beyond `depthThreshold`, AND the frame carries no
@@ -1819,11 +1820,24 @@ public actor SlopDeskVideoHostSession {
 
     // MARK: Effects
 
+    /// Puts one typed control message on the control channel. The state machine's own
+    /// `.sendControl` effect carries BYTES — the law encodes what it minted — so this is the entry
+    /// for the acknowledgements the ACTOR mints itself (a resize ack it just actuated, a content
+    /// mask it just measured, the goodbye).
+    private func sendControl(_ message: VideoControlMessage) {
+        dbg("→ sending control: \(String(describing: message))")
+        transport.send(scheduler.scheduleControl(message).bytes, on: .control)
+    }
+
     private func apply(_ effect: VideoSessionStateMachine.Effect) async {
         switch effect {
-        case let .sendControl(message):
-            dbg("→ sending control: \(String(describing: message))")
-            transport.send(scheduler.scheduleControl(message).bytes, on: .control)
+        case let .sendControl(datagram):
+            // The law minted these bytes; the debug line re-reads them rather than keeping a second
+            // typed copy of what is already on its way out.
+            if Self.debugStderr {
+                dbg("→ sending control: \(String(describing: try? VideoControlMessage.decode(datagram)))")
+            }
+            transport.send(datagram, on: .control)
         case let .startCapture(_, width, height):
             dbg("effect startCapture \(width)x\(height) — bringing up live capture/encode")
             // USER STREAM SETTINGS die with the session re-mint: a fresh hello starts clean and
@@ -2113,11 +2127,11 @@ public actor SlopDeskVideoHostSession {
                 dbg(
                     "resize(in-place) epoch=\(epoch) — updateConfiguration to \(pixelWidth)x\(pixelHeight) px, NO restart",
                 )
-                await apply(.sendControl(.resizeAck(
+                sendControl(.resizeAck(
                     captureWidth: achievedWidth,
                     captureHeight: achievedHeight,
                     epoch: epoch,
-                )))
+                ))
                 return
             } catch {
                 // In-place failed: the OLD stream was NEVER stopped and updateSize restored the box to
@@ -2239,7 +2253,7 @@ public actor SlopDeskVideoHostSession {
         // a blind SM rollback risks an epoch/size desync riskier than this cosmetic edge (a real resize
         // re-issues anyway). Revisit with the Mac Studio in the loop (failure paths aren't
         // headless-exercisable).
-        await apply(.sendControl(.resizeAck(captureWidth: achievedWidth, captureHeight: achievedHeight, epoch: epoch)))
+        sendControl(.resizeAck(captureWidth: achievedWidth, captureHeight: achievedHeight, epoch: epoch))
     }
 
     /// Rollback: re-issue the AX window resize back to `points` so the (still-running OR
@@ -2838,23 +2852,21 @@ public actor SlopDeskVideoHostSession {
             // Inline fast path (input latency): a tiny single-shot DELTA that produces NO second (dup)
             // copy can skip the lane's Task-wakeup hop when the wire is idle — the typing-idle
             // keystroke case, where shaving ~0.1–1 ms off input→photon is felt.
-            // `singleShot` mirrors the lane's own one-shot test, so an inlined frame goes out
-            // byte-for-byte as the lane would have sent it. Keyframes (kfDup) and loss-gated small
+            // The one-shot test is the LANE's, asked once through `trySendInline`, so an inlined
+            // frame goes out byte-for-byte as the lane would have sent it. Keyframes (kfDup) and loss-gated small
             // deltas (smallDup) keep the lane: they enqueue a SECOND time-separated copy, so
             // primary+dup must stay ordered on the one consumer. `trySendInline` returns false (→
             // enqueue) whenever the lane is busy, so a keystroke can never overtake an earlier,
             // still-draining frame.
-            let singleShot = gapNanos == 0 || outgoings.count <= Self.paceChunkFragments
+            let job = VideoSendLane.Job(
+                outgoings: outgoings,
+                gapNanos: gapNanos,
+                chunkFragments: Self.paceChunkFragments,
+            )
             let willSmallDup = Self.smallDup && !keyframe && avcc.count <= Self.smallDupMaxBytes
                 && Self.adaptiveMEnabled && fecTierState.tier != AdaptiveFECPolicy.parityTierClean
-            let inlined = singleShot && !keyframe && !willSmallDup && sendLane.trySendInline(outgoings)
-            if !inlined {
-                sendLane.enqueue(VideoSendLane.Job(
-                    outgoings: outgoings,
-                    gapNanos: gapNanos,
-                    chunkFragments: Self.paceChunkFragments,
-                ))
-            }
+            let inlined = !keyframe && !willSmallDup && sendLane.trySendInline(job)
+            if !inlined { sendLane.enqueue(job) }
             // Keyframe DUPLICATE-SEND, lane edition: the second copy is just another in-order job
             // with a leading time-separation gap. Throttle state stays actor-owned.
             // LOSS-GATED on the loss EWMA (see `kfDupLossThreshold`): the dup guards a keyframe lost
@@ -3188,11 +3200,11 @@ public actor SlopDeskVideoHostSession {
             await newCapturer.stop()
             return
         }
-        await apply(.sendControl(.resizeAck(
+        sendControl(.resizeAck(
             captureWidth: UInt16(min(Double(UInt16.max), Double(pointW))),
             captureHeight: UInt16(min(Double(UInt16.max), Double(pointH))),
             epoch: epoch,
-        )))
+        ))
         // TRANSPARENCY MASK: tell the client which capture-PIXEL rects are real content (window +
         // popups) so it masks the black flank beside a narrow popup. A contract (regionGlobal nil)
         // sends an EMPTY mask to clear it (the window-frame capture is fully opaque). Sent ×2 ~25 ms
@@ -3206,7 +3218,7 @@ public actor SlopDeskVideoHostSession {
                 pixelWidth: pixelWidth,
                 pixelHeight: pixelHeight,
             )
-        await apply(.sendControl(.contentMask(maskRects)))
+        sendControl(.contentMask(maskRects))
         let maskMessage = VideoControlMessage.contentMask(maskRects).encode()
         Task { // dup ~25 ms later (mirrors cursor-shape/cadence loss-tolerant resend)
             try? await Task.sleep(nanoseconds: 25_000_000)
@@ -3342,12 +3354,12 @@ public actor SlopDeskVideoHostSession {
         }
         // Ack the degraded (window-frame) size — the client adopts it frame-gated — and CLEAR any
         // transparency mask left over from a previously-applied union region.
-        await apply(.sendControl(.resizeAck(
+        sendControl(.resizeAck(
             captureWidth: UInt16(min(Double(UInt16.max), Double(pointW))),
             captureHeight: UInt16(min(Double(UInt16.max), Double(pointH))),
             epoch: epoch,
-        )))
-        await apply(.sendControl(.contentMask([])))
+        ))
+        sendControl(.contentMask([]))
     }
 
     /// Last rung: no capturer can be brought up — a `.streaming` session with dead capture would freeze
@@ -3360,8 +3372,8 @@ public actor SlopDeskVideoHostSession {
             .error(
                 "capture rebuild unrecoverable — sending bye + stopping session (visible disconnect beats silent freeze)",
             )
-        await apply(.sendControl(.bye))
-        await apply(.sendControl(.bye))
+        sendControl(.bye)
+        sendControl(.bye)
         await stop()
     }
 

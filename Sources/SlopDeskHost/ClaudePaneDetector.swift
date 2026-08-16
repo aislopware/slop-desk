@@ -17,7 +17,7 @@ import SlopDeskProtocol
 ///
 /// ## Inputs (folded through the ONE machine, in the machine's precedence order)
 /// - ``sample(name:at:)`` — the ~1 Hz foreground poll: `.processPresent(isClaude)` (exact-basename
-///   classified via ``ClaudeManifestMatcher``) drives the presence FLOOR, and emits type-26 on a
+///   classified via ``ClaudeProcessMatcher``) drives the presence FLOOR, and emits type-26 on a
 ///   basename EDGE (a coarse process-name hint for display, NOT a status source).
 /// - ``hook(bytes:at:)`` — the hook socket: parsed via ``HookParser`` and folded as `.hook(event)`.
 /// - ``tick(at:)`` — the per-poll clock tick (~1 Hz) that drives the `.done → .idle` decay.
@@ -30,7 +30,7 @@ import SlopDeskProtocol
 public struct ClaudePaneDetector: Sendable {
     /// The matcher used to classify a foreground basename as `claude` (exact basename — no
     /// `claudefoo` false positive). One classifier.
-    private let matcher: ClaudeManifestMatcher
+    private let matcher: ClaudeProcessMatcher
 
     /// The ONE per-pane state machine — every signal folds through this single instance.
     private var machine: ClaudeStatusMachine
@@ -99,7 +99,7 @@ public struct ClaudePaneDetector: Sendable {
     /// telltale, or a claude-naming title) — i.e. the agent, not the shell, owns what the row shows.
     ///
     /// This is the ownership record the title retirement needs. Claude Code does emit its own
-    /// exit-time clear, but as an EMPTY `OSC 0` that ``HostOutputSniffer`` drops on purpose
+    /// exit-time clear, but as an EMPTY `OSC 0` that the sniffer (`rust/slopdesk-superd/src/sniffer.rs`) drops on purpose
     /// (zsh/p10k/starship emit empty titles mid prompt-redraw), and a plain zsh prompt never
     /// re-titles afterwards — so the agent's `✳ <topic>` outlived the agent forever. Rather than
     /// loosen a guard that exists for a good reason, the detector that watched the agent TAKE the
@@ -111,7 +111,7 @@ public struct ClaudePaneDetector: Sendable {
     static let maxIntentChars = 120
 
     public init(doneToIdleTimeout: TimeInterval = 8) {
-        matcher = ClaudeManifestMatcher()
+        matcher = ClaudeProcessMatcher()
         machine = ClaudeStatusMachine(doneToIdleTimeout: doneToIdleTimeout)
         lastEmittedName = nil
         lastEmittedStatus = nil
@@ -556,7 +556,7 @@ public struct ClaudePaneDetector: Sendable {
     ///
     /// A ONE-SHOT edge: the ownership flag is consumed here, so a pane already handed back keeps
     /// whatever the shell (or a later agent) titles it next. Empty is deliberate and unambiguous —
-    /// ``HostOutputSniffer`` drops empty OSC 0/2 bodies, so the client can read an empty type-21 as
+    /// the sniffer (`rust/slopdesk-superd/src/sniffer.rs`) drops empty OSC 0/2 bodies, so the client can read an empty type-21 as
     /// "the host means it" rather than as prompt-redraw noise.
     private mutating func titleEmissionIfAgentGone() -> WireMessage? {
         guard agentOwnsTitle, machine.status == .none else { return nil }

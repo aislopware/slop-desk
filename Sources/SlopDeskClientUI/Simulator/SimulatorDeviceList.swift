@@ -46,8 +46,8 @@
 // The CONTEXT MENU carries what a sidebar row has no width for — the UDID, and the destructive verb.
 
 #if os(macOS)
-import AppKit
 import SFSafeSymbols
+import SlopDeskWorkspaceCore
 import SwiftUI
 
 /// One group of the list: a heading and its devices.
@@ -420,14 +420,8 @@ struct SimulatorDeviceList: View {
         Divider()
         // The UDID is what every other tool wants — `xcrun simctl`, a test invocation, a bug report —
         // and it is far too long to put in a sidebar row.
-        Button("Copy UDID") {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(device.udid, forType: .string)
-        }
-        Button("Copy Name") {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(device.name, forType: .string)
-        }
+        Button("Copy UDID") { ClientPasteboard.write(device.udid) }
+        Button("Copy Name") { ClientPasteboard.write(device.name) }
     }
 
     // MARK: Notices
@@ -440,12 +434,7 @@ struct SimulatorDeviceList: View {
     // last knew. Two bespoke alert shapes in one panel was the thing being fixed.
 
     private func message(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: Slate.Typeface.base))
-            .foregroundStyle(Slate.Text.secondary)
-            .multilineTextAlignment(.center)
-            .padding(Slate.Metric.space3)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        DevicePanelChrome.notice(text)
     }
 }
 #endif

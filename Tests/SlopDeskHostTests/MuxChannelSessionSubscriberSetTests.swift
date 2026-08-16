@@ -67,7 +67,7 @@ final class MuxChannelSessionSubscriberSetTests: XCTestCase {
         data: MuxSubChannel,
         control: MuxSubChannel,
     ) -> MuxChannelSession {
-        MuxChannelSession(channelID: 1, pty: PTYProcess(), data: data, control: control)
+        MuxChannelSession(channelID: 1, pty: unattachedPTY(), data: data, control: control)
     }
 
     private func waitUntil(_ condition: @Sendable () -> Bool) async {

@@ -10,13 +10,22 @@ repository = "https://github.com/aislopware/slop-desk"
 [lints]
 workspace = true
 
-# Zero dependencies on purpose: this binary is forked twice per tool call, and
-# every crate linked in is startup cost paid on the agent's critical path.
+# The RELAY takes no dependencies on purpose: it is forked twice per tool call, and every crate
+# linked into it is startup cost paid on the agent's critical path. `serde_json` is reachable only
+# from the `slopdesk-agenthooks` binary — the linker leaves it out of the relay, and the relay's
+# release binary is byte-for-byte the same size with it in the crate as without (measured).
 [dependencies]
+serde_json = "1"
 
 [[bin]]
 name = "slopdesk-hook"
 path = "src/main.rs"
+
+# The installer. A separate binary rather than a subcommand of the relay: an argv branch would put
+# `serde_json` in the relay's link graph for nothing, and the relay's cost IS its startup.
+[[bin]]
+name = "slopdesk-agenthooks"
+path = "src/bin/agenthooks.rs"
 
 [lib]
 name = "slopdesk_hook"

@@ -105,8 +105,6 @@ public struct WorkspaceCacheStore: @unchecked Sendable {
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         let payload = WorkspaceStateCodec.encodeSnapshot(WorkspaceStateFile.persisting(state))
         let document = Document(hostKey: hostKey, snapshot: payload.base64EncodedString())
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(document).write(to: fileURL, options: [.atomic])
+        try SidecarJSON.encoder().encode(document).write(to: fileURL, options: [.atomic])
     }
 }

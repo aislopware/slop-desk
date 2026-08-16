@@ -22,6 +22,12 @@
 //!
 //! Record framing (`AgentHookRecord::split` on the host): a `pane=<id>` header
 //! line, then the raw hook JSON.
+//!
+//! The crate also carries [`install`] — the merge that writes the settings entries pointing AT this
+//! relay. It is compiled into a second binary (`slopdesk-agenthooks`) and is unreachable from the
+//! relay's own `main`, so nothing it depends on is linked into the binary Claude Code forks.
+
+pub mod install;
 
 use std::io::{Read, Write};
 use std::os::unix::fs::FileTypeExt;

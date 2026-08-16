@@ -10,7 +10,6 @@
 
 #if os(macOS)
 import AppKit
-import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskClientUI
 @testable import SlopDeskWorkspaceCore

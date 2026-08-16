@@ -1,4 +1,4 @@
-import Foundation
+import CSlopDeskFFI
 import SlopDeskAgentDetect
 
 /// The single fused status state a sidebar tab row carries (see
@@ -55,17 +55,7 @@ public enum TabBadgeKind: Equatable, Sendable {
     /// markers (``running``/``commandRunning``) and the at-rest privilege badges (``sudo``/``caffeinate``)
     /// are NOT attention: attention means unread, not busy.
     public var needsAttention: Bool {
-        switch self {
-        case .awaitingInput,
-             .completed,
-             .error,
-             .finished: true
-        case .caffeinate,
-             .commandBusy,
-             .commandRunning,
-             .running,
-             .sudo: false
-        }
+        slopdesk_agent_badge_needs_attention(ffiByte)
     }
 
     /// Whether this badge is a BUSY tier — "something is in flight" (a working agent, an OSC 9;4
@@ -74,16 +64,40 @@ public enum TabBadgeKind: Equatable, Sendable {
     /// and only the privilege markers occupy the slot.
     /// The disjoint complement of ``needsAttention`` plus the privilege markers.
     public var isBusyTier: Bool {
+        slopdesk_agent_badge_is_busy_tier(ffiByte)
+    }
+
+    /// The discriminant `slopdesk-agent::badge`'s `TabBadge::ALL` gives this case. Declaration order
+    /// is the crossing order, and `scripts/check-supervisor.sh` fails the build if the two lists
+    /// ever disagree.
+    var ffiByte: UInt8 {
         switch self {
-        case .commandBusy,
-             .commandRunning,
-             .running: true
-        case .awaitingInput,
-             .caffeinate,
-             .completed,
-             .error,
-             .finished,
-             .sudo: false
+        case .running: 0
+        case .commandRunning: 1
+        case .commandBusy: 2
+        case .completed: 3
+        case .finished: 4
+        case .error: 5
+        case .awaitingInput: 6
+        case .caffeinate: 7
+        case .sudo: 8
+        }
+    }
+
+    /// The inverse. An unknown byte — a badge a newer crate names and this build does not — answers
+    /// `nil`, which is exactly the all-clear row.
+    init?(ffiByte: Int8) {
+        switch ffiByte {
+        case 0: self = .running
+        case 1: self = .commandRunning
+        case 2: self = .commandBusy
+        case 3: self = .completed
+        case 4: self = .finished
+        case 5: self = .error
+        case 6: self = .awaitingInput
+        case 7: self = .caffeinate
+        case 8: self = .sudo
+        default: return nil
         }
     }
 }
@@ -122,12 +136,6 @@ public enum TabBadgeResolver {
         case settled
     }
 
-    /// Basenames that mark a **privileged** session (the shield). A small allow-set; matched exactly
-    /// against the lowercased basename of the foreground process.
-    private static let sudoBasenames: Set<String> = ["sudo", "su"]
-    /// Basenames that mark a **sleep-blocking** session (the coffee cup).
-    private static let caffeinateBasenames: Set<String> = ["caffeinate"]
-
     /// Resolve the one badge for a row, by fixed precedence (most-urgent wins).
     ///
     /// - Parameters:
@@ -162,77 +170,21 @@ public enum TabBadgeResolver {
         progress: PaneProgress? = nil,
         unseenAgentDone: Bool = false,
     ) -> TabBadgeKind? {
-        // 1. Awaiting input — a blocked agent demands a human; highest urgency.
-        if agent == .needsPermission { return .awaitingInput }
-
-        // 2. Error — a failed command (non-zero exit) OR a held-red OSC 9;4;2 progress error. Either at the
-        // error tier, above a running spinner and a stale completion dot. (Unwrap first, then match the
-        // non-optional case so there is no optional-pattern ambiguity.)
-        if completion == .failure { return .error }
-        if let progress, case .error = progress { return .error }
-
-        // 3. Activity — a WORKING agent gets the agent tier (``running``); an active OSC 9;4;1/3
-        // progress gets the quiet ``commandRunning`` tier; a merely-busy shell gets the bare
-        // ``commandBusy`` tier (the busy split is informational — the view layer renders all three
-        // through the title, never a trailing glyph). Most-informative wins. (A progress `.error`
-        // already returned at the error tier above, so `isRunning` here is exactly the "still going" states.)
-        if agent == .working { return .running }
-
-        // 3a. Agent finish — the completed/finished marker for a FINISHED AGENT TURN (a live `.done`,
-        // or the client's unread latch outliving the host's done→idle decay). Deliberately ABOVE the
-        // busy tiers: the `claude` process keeps the shell's OSC-133 block open for its whole
-        // interactive lifetime, so `isBusy` stays true for hours — checked later, a finished turn
-        // would be shadowed by the busy tier forever and the finish could never show. An agent
-        // turn ending IS the completion signal; the agent process staying alive at its prompt is not
-        // "busy" in any sense the user cares about. (A plain COMMAND's `.success` stays below
-        // `isBusy` — there a newly-running command genuinely supersedes the previous exit.)
-        if agent == .done || unseenAgentDone {
-            switch completionFreshness {
-            case .fresh: return .completed
-            case .settled: return .finished
-            }
+        // The ladder itself is `slopdesk-agent::badge` — every optional input crosses as a value
+        // plus its absence sentinel, and the answer comes back the same shape.
+        var foreground = Array((foregroundProcess ?? "").utf8)
+        let raw = foreground.withUnsafeMutableBufferPointer { name in
+            slopdesk_agent_tab_badge(
+                agent.ffiByte,
+                completion.map { $0 == .failure ? 1 : 0 } ?? -1,
+                isBusy,
+                name.baseAddress,
+                name.count,
+                completionFreshness == .fresh,
+                progress.map { $0.isRunning ? 0 : 1 } ?? -1,
+                unseenAgentDone,
+            )
         }
-
-        if let progress, progress.isRunning { return .commandRunning }
-        if isBusy { return .commandBusy }
-
-        // 4 + 5. Privilege badges, only when the shell is at rest: sudo (shield) > caffeinate (coffee).
-        if let privilege = privilegeBadge(forProcess: foregroundProcess) { return privilege }
-
-        // 6. Completed/finished — a plain command's clean exit. While the completion is FRESH it shows
-        // the brief `.completed` flash; once the caller reports it SETTLED it decays to the
-        // persistent `.finished` unread marker (held until the tab is viewed). Freshness is an input — no clock here.
-        if completion == .success {
-            switch completionFreshness {
-            case .fresh: return .completed
-            case .settled: return .finished
-            }
-        }
-
-        // 7. All-clear.
-        return nil
-    }
-
-    /// Classify the (untrusted) foreground-process string into a privilege badge by its **lowercased
-    /// basename** against the allow-sets. `nil`/empty/unknown ⇒ no badge (validate-then-default). Never
-    /// uses `contains` (which would misfire on e.g. `sudoedit-helper`), never force-unwraps.
-    private static func privilegeBadge(forProcess process: String?) -> TabBadgeKind? {
-        guard let name = basename(of: process) else { return nil }
-        if sudoBasenames.contains(name) { return .sudo }
-        if caffeinateBasenames.contains(name) { return .caffeinate }
-        return nil
-    }
-
-    /// The lowercased last path component of `process`, or `nil` when there is nothing to classify.
-    /// `"/usr/bin/sudo"` → `"sudo"`, `"caffeinate"` → `"caffeinate"`, `""`/`"/"`/`nil` → `nil`.
-    private static func basename(of process: String?) -> String? {
-        guard let process else { return nil }
-        let trimmed = process.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        // Last non-empty `/`-delimited component. An all-slashes string yields no component → nil.
-        guard let component = trimmed.split(separator: "/", omittingEmptySubsequences: true).last else {
-            return nil
-        }
-        return component.lowercased()
+        return TabBadgeKind(ffiByte: raw)
     }
 }

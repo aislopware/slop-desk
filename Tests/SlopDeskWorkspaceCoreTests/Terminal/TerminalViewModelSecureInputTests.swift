@@ -1,5 +1,4 @@
 import Defaults
-import Foundation
 import XCTest
 @testable import SlopDeskWorkspaceCore
 

@@ -1,6 +1,6 @@
 #if os(macOS)
 import AppKit
-import Foundation
+import SlopDeskPasteboard
 import SlopDeskProtocol
 
 /// Bidirectional clipboard sync between the client and the host, over the metadata RPC
@@ -48,8 +48,9 @@ public final class ClipboardSyncEngine {
         changeCount: Int64, clip: MetadataCodec.ClipboardClip?,
     )?
 
-    /// The concealed-clip marker password managers set (nspasteboard.org convention) — never sync.
-    static let concealedType = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
+    /// The concealed-clip marker password managers set (nspasteboard.org convention) — never PUSHED.
+    /// The reader owns the marker; this is the name the engine's own tests use.
+    static let concealedType = PasteboardClip.concealedType
 
     private let pasteboard: NSPasteboard
     private let pollGap: Duration
@@ -137,21 +138,10 @@ public final class ClipboardSyncEngine {
     /// paste it; text → string), recording it as the synced truth and pre-advancing
     /// ``lastChangeCount`` so the very next tick does not even snapshot our own write.
     private func apply(_ clip: MetadataCodec.ClipboardClip) {
-        switch clip.kind {
-        case .text:
-            guard let text = String(data: clip.bytes, encoding: .utf8), !text.isEmpty else { return }
-            pasteboard.clearContents()
-            pasteboard.setString(text, forType: .string)
-        case .imagePNG:
-            guard let rep = NSBitmapImageRep(data: clip.bytes) else { return }
-            pasteboard.clearContents()
-            pasteboard.setData(clip.bytes, forType: .png)
-            if let tiff = rep.tiffRepresentation {
-                pasteboard.setData(tiff, forType: .tiff)
-            }
-        case nil:
-            return // unknown future kind — drop, never guess
-        }
+        // Validate-then-drop: the write refuses non-UTF-8/empty text, undecodable PNG bytes and an
+        // unknown future kind WITHOUT touching the board, so a bad host clip is a no-op rather than
+        // a cleared local clipboard.
+        guard PasteboardClip.write(clip, to: pasteboard) else { return }
         lastSynced = clip
         lastChangeCount = pasteboard.changeCount
     }
@@ -160,27 +150,7 @@ public final class ClipboardSyncEngine {
     /// non-empty string. `nil` for concealed (password-manager) clips, file copies, over-cap
     /// content, an untranscodable image, or an empty board.
     static func currentClip(_ pasteboard: NSPasteboard) -> MetadataCodec.ClipboardClip? {
-        let types = pasteboard.types ?? []
-        guard !types.contains(concealedType), !types.contains(.fileURL) else { return nil }
-        if let png = pasteboard.data(forType: .png) ?? transcodedTIFF(pasteboard) {
-            guard png.count <= MetadataCodec.maxClipboardContentBytes else { return nil }
-            return MetadataCodec.ClipboardClip(kind: .imagePNG, bytes: png)
-        }
-        if let text = pasteboard.string(forType: .string), !text.isEmpty {
-            let bytes = Data(text.utf8)
-            guard bytes.count <= MetadataCodec.maxClipboardContentBytes else { return nil }
-            return MetadataCodec.ClipboardClip(kind: .text, bytes: bytes)
-        }
-        return nil
-    }
-
-    /// The pasteboard's TIFF flavor transcoded to PNG (most app copies declare TIFF, not PNG);
-    /// `nil` when there is no TIFF or it will not decode.
-    private static func transcodedTIFF(_ pasteboard: NSPasteboard) -> Data? {
-        guard let tiff = pasteboard.data(forType: .tiff),
-              let rep = NSBitmapImageRep(data: tiff)
-        else { return nil }
-        return rep.representation(using: .png, properties: [:])
+        PasteboardClip.read(pasteboard, skippingConcealed: true)
     }
 }
 #endif

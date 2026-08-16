@@ -1,7 +1,6 @@
 import CoreGraphics
 import SlopDeskWorkspaceModel
 import XCTest
-@testable import SlopDeskWorkspaceCore
 
 /// Pins that the canvas reuses ``FocusResolver`` verbatim (docs/30 §3): ``Canvas/solvedLayout()``
 /// produces the items' canvas-space frames (camera-independent), and `FocusResolver.neighbor` /

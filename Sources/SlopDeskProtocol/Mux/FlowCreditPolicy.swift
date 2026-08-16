@@ -1,4 +1,4 @@
-import Foundation
+import CSlopDeskFFI
 
 /// Pure SSH-window-style flow-control credit math for one direction of one channel.
 ///
@@ -8,21 +8,25 @@ import Foundation
 /// ``adjust(bytesToAdd:)`` re-credits it. When the window is exhausted the channel
 /// ``isBlocked`` and further sends must wait.
 ///
-/// No IO, no clock, no sockets — just the credit arithmetic — so it is trivially
-/// unit-testable in isolation (same discipline as ``ChannelTable``).
+/// The arithmetic — the all-or-nothing debit, the non-negative clamps, the saturation of a
+/// peer-chosen grant — lives in `rust/slopdesk-wire`'s `mux::flow`. This is the seam, and it stays
+/// a VALUE type: the whole state is two integers, so it crosses in the call rather than behind a
+/// handle nobody would gain anything from.
 public struct FlowCreditPolicy: Sendable, Equatable {
+    /// The two numbers, in the layout the codec reads them in.
+    private var state: SlopDeskFlowCredit
+
     /// The window size the channel started with (and the natural cap reference for
     /// callers that want to know how much has been consumed).
-    public let initialWindow: Int
+    public var initialWindow: Int { Int(state.initial_window) }
+
     /// Bytes of credit still available to send. Never negative.
-    public private(set) var remaining: Int
+    public var remaining: Int { Int(state.remaining) }
 
     /// Creates a window with `initialWindow` bytes of credit.
     /// `initialWindow` is clamped to be non-negative.
     public init(initialWindow: Int) {
-        let start = max(0, initialWindow)
-        self.initialWindow = start
-        remaining = start
+        state = slopdesk_flow_credit_new(Int64(initialWindow))
     }
 
     /// The outcome of attempting to send `bytes`.
@@ -42,32 +46,28 @@ public struct FlowCreditPolicy: Sendable, Equatable {
     /// nothing (callers never send negative bytes; we guard defensively).
     @discardableResult
     public mutating func consume(_ bytes: Int) -> ConsumeResult {
-        let want = max(0, bytes)
-        guard want <= remaining else {
-            return .insufficient(available: remaining)
-        }
-        remaining -= want
-        return .allowed(remaining: remaining)
+        let verdict = slopdesk_flow_credit_consume(&state, Int64(bytes))
+        return verdict.allowed
+            ? .allowed(remaining: Int(verdict.value))
+            : .insufficient(available: Int(verdict.value))
     }
 
     /// Re-credits the window by `bytesToAdd` (an SSH `CHANNEL_WINDOW_ADJUST`).
     /// Negative grants are ignored. Replenishing a blocked window unblocks it.
     ///
-    /// OVERFLOW-SAFE: a huge peer-chosen `UInt32` grant (or a long run of grants) must not
-    /// Int-overflow-trap the `remaining += bytesToAdd`. Saturate at `Int.max` instead. NOTE: SSH-style
-    /// windows may legitimately grow PAST ``initialWindow`` (it is the starting reference, not a hard
-    /// cap on `remaining` — see `testAdjustCanGrowBeyondInitialWindow`), so we deliberately do NOT clamp
-    /// to the window; we only defuse the overflow trap. (For this remote-terminal the SENDER is the host
-    /// PTY, whose output is bounded by what the shell produces, so an inflated window is not itself a
-    /// socket-monopolisation lever — the bounded-queue + ReplayBuffer gates bound host memory regardless.)
+    /// OVERFLOW-SAFE: a huge peer-chosen grant (or a long run of grants) saturates rather than
+    /// trapping. SSH-style windows may legitimately grow PAST ``initialWindow`` — it is the
+    /// starting reference, not a hard cap — so the saturation is the only bound applied.
     public mutating func adjust(bytesToAdd: Int) {
-        guard bytesToAdd > 0 else { return }
-        let (sum, overflowed) = remaining.addingReportingOverflow(bytesToAdd)
-        remaining = overflowed ? Int.max : sum
+        slopdesk_flow_credit_adjust(&state, Int64(bytesToAdd))
     }
 
     /// Whether the window is exhausted (no credit to send even a single byte).
     public var isBlocked: Bool {
-        remaining <= 0
+        slopdesk_flow_credit_blocked(state)
+    }
+
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.state.initial_window == rhs.state.initial_window && lhs.state.remaining == rhs.state.remaining
     }
 }

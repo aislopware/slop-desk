@@ -1,0 +1,144 @@
+# `slopdesk-wire` — the PATH-1 terminal wire codec: framing, message table, encode/decode.
+#
+# ## Why this exists, and why now
+# This is stage 1 of moving `slopdesk-hostd` off Swift (`docs/DECISIONS.md`). Every later stage
+# needs a Rust encoder before it can speak to a client at all, so the codec goes first — and it is
+# the one module in the tree with a committed, mechanical parity oracle already sitting in the repo:
+# `golden/golden_vectors.json`. `tests/golden_vectors.rs` re-encodes every pinned terminal vector
+# and compares the hex byte-for-byte, so "did the port change the wire" is answered by a file that
+# predates the port rather than by a fixture written alongside it.
+#
+# ## Resurrected, not invented
+# A Rust core owned exactly this codec until 2026-06-19, when it was retired — for the FFI
+# BOUNDARY's cost, never for the language (`docs/DECISIONS.md`, "Single language: Swift + native
+# SIMD kernels"). That code is bit-identical by the same golden corpus's own record, so `bytes.rs`,
+# `frame.rs` and the fourteen message types that predate the retirement are recovered from
+# `a2b51614^` rather than retyped. The fourteen types added to the wire since are translated fresh
+# from today's Swift. That is the repo's own "resurrect + fresh-translate" shape, run backwards.
+#
+# ## Why its OWN workspace
+# Same argument as `slopdesk-screend` and `slopdesk-superd`: cargo profiles are workspace-global,
+# and the root workspace's profile is tuned for two programs that are forked per event, where
+# startup IS the cost (`opt-level = "z"`, `panic = "abort"`). This crate ends up inside a long-lived
+# daemon running a per-byte loop, which wants the opposite of both.
+#
+# ## Zero THIRD-PARTY dependencies
+# Deliberate, and inherited from the retired core. A wire codec that parses hostile bytes is the
+# last place to widen a supply chain, and everything here is `to_be_bytes` and slice arithmetic.
+# `serde_json` appears only as a dev-dependency, to read the golden file the tests diff against.
+#
+# The one path dependency is `slopdesk-workspace`, and it exists to DELETE code rather than add it:
+# the axis, the drop edge, the pane kind, the new-tab position, the split weight and the video
+# endpoint are domain values that the wire merely gives a byte. Defining them a second time here
+# meant two enums that had to agree forever, with no compiler and no test standing between them and
+# a silent divergence — so the codec re-exports the domain's, and the byte lives on the domain type.
+[workspace]
+resolver = "3"
+
+[package]
+name = "slopdesk-wire"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "PATH-1 terminal wire codec for slopdesk — framing, message table, encode/decode"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[lib]
+name = "slopdesk_wire"
+path = "src/lib.rs"
+
+[dependencies]
+# The state file carries retained pane bytes as base64, because Swift's `base64EncodedString()`
+# wrote every file already on disk. The `STANDARD` engine is that alphabet with canonical padding
+# required — which is also the strictness the reader needs, since a truncated or spliced file must
+# be refused rather than half-decoded into a plausible-looking short one.
+base64 = "0.22"
+# Where a front-truncated stream was w.r.t. the alternate screen — the ring's eviction repair. Its
+# own crate because superd's journal needs the same scanner and must not depend on the protocol.
+slopdesk-altscreen = { path = "../slopdesk-altscreen" }
+# The domain values the wire gives a byte to. See the header — this dependency removed six duplicate
+# enums, and it is a path dependency on our own crate, not a supply-chain widening.
+slopdesk-workspace = { path = "../slopdesk-workspace" }
+
+[dev-dependencies]
+# Only the golden-parity test reads JSON. The library itself stays dependency-free.
+serde_json = "1"
+
+# The codec sits on the PTY hot path inside the daemon that will host it.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+debug = 1
+strip = "debuginfo"
+
+# ---------------------------------------------------------------------------- #
+# Same maximal-strict philosophy as `rust/Cargo.toml`. A literal copy rather than inherited,
+# because inheriting would mean being a member, which is what the profile above forbids.
+#
+# `unsafe_code` is FORBID here, not deny. The retired core carried `#![forbid(unsafe_code)]` and
+# `docs/DECISIONS.md` records that compiler proof as "the one real guarantee lost" in the reversal.
+# This crate is where it comes back, and forbid — unlike deny — cannot be re-allowed downstream.
+[lints.rust]
+unsafe_code = "forbid"
+
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+missing_copy_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+single_use_lifetimes = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+variant_size_differences = "deny"
+elided_lifetimes_in_paths = "deny"
+let_underscore_drop = "deny"
+non_ascii_idents = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+indexing_slicing = "deny"
+integer_division = "deny"
+exit = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+mem_forget = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+verbose_file_reads = "deny"
+str_to_string = "deny"
+empty_structs_with_brackets = "deny"
+if_then_some_else_none = "deny"
+lossy_float_literal = "deny"
+try_err = "deny"
+
+# Disabled, with a reason:
+# - `multiple_crate_versions` (cargo): a duplicate deep in a dev-dependency's tree is not ours.
+multiple_crate_versions = "allow"
+# - `suboptimal_flops` / `imprecise_flops` (nursery): both want `f64::mul_add`, which is exactly the
+#   fused multiply-add `CLAUDE.md` forbids — "keep `a * b + c` separate (never `addingProduct`/`fma`)".
+#   FMA rounds once where the wire rounds twice, so taking the advice changes the `f64` bit patterns
+#   `golden/golden_vectors.json` pins. Allowed in EVERY workspace, not only the ones doing float
+#   math today: the reason is a repo invariant, and a lint that fires the first time a float lands
+#   here would be obeyed before anyone reads this file.
+suboptimal_flops = "allow"
+imprecise_flops = "allow"

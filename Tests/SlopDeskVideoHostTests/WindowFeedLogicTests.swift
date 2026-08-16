@@ -226,7 +226,11 @@ final class WindowFeedLogicTests: XCTestCase {
         XCTAssertEqual(current.payloads, [VideoControlMessage.windowFeedCurrent(generation: 1).encode()])
         let stale = cache.replyDatagrams(forKnownGeneration: 0)
         XCTAssertTrue(stale.isSnapshot)
-        XCTAssertEqual(stale.payloads, cache.encodedChunks)
+        XCTAssertEqual(
+            stale.payloads,
+            WindowFeedChunkPacker.encodedChunks(generation: cache.generation, records: cache.records),
+            "a stale client is answered with exactly this generation's packed chunks",
+        )
     }
 
     func testGenerationSkipsTheZeroSentinelOnWrap() {

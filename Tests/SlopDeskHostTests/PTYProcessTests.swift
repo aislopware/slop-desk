@@ -2,6 +2,7 @@
 import Darwin
 #endif
 import SlopDeskProtocol
+import SlopDeskSupervisor
 import XCTest
 @testable import SlopDeskHost
 @testable import SlopDeskTransport // reach `MuxSubChannel.deliver(payload:)` (the demux inbound seam)
@@ -11,57 +12,76 @@ import XCTest
 final class PTYProcessTests: XCTestCase {
     // MARK: read helpers
 
-    /// Reads `fd` until `needle` appears or `timeout` passes; returns all output so far.
+    /// One ``PaneOutput`` per pane, kept for the test's life so matching stays sequential.
     ///
-    /// `poll()`-gated on the CALLING thread — `read()` only runs after `POLLIN`, so it can never block
-    /// past the deadline and the helper leaves NO thread behind. A naive background-dispatch-thread
-    /// blocking `read()` + semaphore timeout abandons that thread inside `read()` on a missed needle —
-    /// a PTY master never EOFs on child exit, so the read stays pending forever and the test-end
-    /// `close(masterFD)` (PTYProcess.deinit) deadlocks against it in the kernel: the "unkillable 40-min
-    /// hang" the resize-burst test's doc describes, surfaced reliably by `swift test --parallel` load.
+    /// The whole helper below used to be a `poll()`-gated `read()` on `pty.masterFD`, guarded by a
+    /// long comment about never leaving a thread parked inside `read()` — a PTY master does not EOF
+    /// on child exit, so an abandoned read deadlocks the test-end `close(masterFD)` in the kernel
+    /// (the "unkillable 40-min hang"). None of that applies now and the hazard it warned about is
+    /// gone with it: nothing here reads a master, and a subscription cannot park in the kernel.
     ///
-    /// The timeout is PATIENCE, never an assertion. Every caller asserts on the needle it got back, so a
-    /// genuinely broken PTY fails at any value — waiting longer only costs seconds on a real break. It was
-    /// 5s and `testResizeAfterSpawn` flaked once in a full `make test` (8187 tests, every core busy): the
-    /// spawned `/bin/sh` did not get scheduled to answer the second `stty size` inside the window, so the
-    /// helper returned the shell's own echo. Under that load 5s is a measure of the machine, not the code.
+    /// The timeout is still PATIENCE, never an assertion. Every caller asserts on the needle it got
+    /// back, so a genuinely broken pane fails at any value — waiting longer only costs seconds on a
+    /// real break. 20s, because at 5s `testResizeAfterSpawn` flaked once under a full `make test`
+    /// with every core busy: the spawned `/bin/sh` was not scheduled to answer the second
+    /// `stty size` inside the window. Under that load 5s measures the machine, not the code.
+    private var collectors: [ObjectIdentifier: PaneOutput] = [:]
+
+    /// Waits for `needle` in a pane's output.
+    ///
+    /// Subscribes rather than reading `pty.masterFD`. That is not a style choice: superd's pump
+    /// reads the master for the pane's whole life and hostd's duplicate is the same open file
+    /// description, so a `read` here does not observe the stream — it steals from it. See
+    /// ``PaneOutput``.
     private func readUntil(
-        fd: Int32,
+        pane pty: PTYProcess,
         needle: String,
         timeout: TimeInterval = 20.0,
     ) -> String {
-        let sink = ByteSink()
-        let needleData = Data(needle.utf8)
-        let deadline = Date().addingTimeInterval(timeout)
-        var buf = [UInt8](repeating: 0, count: 4096)
-        while true {
-            let remainingMs = Int32((deadline.timeIntervalSinceNow * 1000).rounded(.up))
-            if remainingMs <= 0 { break }
-            var pfd = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
-            let ready = poll(&pfd, 1, min(remainingMs, 100))
-            if ready < 0 {
-                if errno == EINTR { continue }
-                break
-            }
-            if ready == 0 { continue } // tick: re-check the deadline
-            // Readable (or HUP/ERR — read() then returns <= 0 without blocking and we stop).
-            let n = buf.withUnsafeMutableBytes { read(fd, $0.baseAddress, $0.count) }
-            if n > 0 {
-                if sink.append(buf[0..<n], contains: needleData) { break }
-            } else {
-                break
-            }
+        let key = ObjectIdentifier(pty)
+        if let existing = collectors[key] { return existing.waitFor(needle, timeout: timeout) }
+        do {
+            let made = try PaneOutput(pty)
+            collectors[key] = made
+            return made.waitFor(needle, timeout: timeout)
+        } catch {
+            XCTFail("could not subscribe to the pane's output: \(error)")
+            return ""
         }
-        return sink.string()
     }
 
     /// A throwaway HOME shared by this test instance's spawns; removed in `tearDown`.
     private var sandboxHome: URL?
 
+    /// A private `slopdesk-superd`, because nothing else in this repo forks a shell any more.
+    ///
+    /// These tests are about kernel behaviour a mock cannot have — a controlling terminal, a
+    /// `SIGWINCH` that reflows a real zsh, a hangup that makes it save its history. They were the
+    /// reason the fork window existed in Swift; the window is Rust now, so the daemon that owns it
+    /// is part of the rig. It is private (its own `SLOPDESK_SUPERD_DIR`) and never the developer's
+    /// live one, and the suite SKIPS if superd is not built rather than forking here
+    /// (`SupervisedPTYSupport`).
+    private var superd: SuperdFixture?
+
+    override func setUpWithError() throws {
+        superd = try SuperdFixture()
+    }
+
     override func tearDown() {
         if let sandboxHome { try? FileManager.default.removeItem(at: sandboxHome) }
         sandboxHome = nil
+        // Unsubscribe before the daemon goes: a collector outliving its superd would be asking a
+        // dead socket for bytes.
+        collectors.removeAll()
+        // Drops the client, then SIGTERMs the daemon — which drops the last master fd of every
+        // pane this test spawned, so no shell outlives the suite.
+        superd = nil
         super.tearDown()
+    }
+
+    /// A pane object bound to this test's daemon. Nothing is spawned until `spawnForTest`.
+    private func makePane() throws -> PTYProcess {
+        try PTYProcess(supervisor: XCTUnwrap(superd).client)
     }
 
     private func curatedEnv() -> [String: String] {
@@ -87,12 +107,12 @@ final class PTYProcessTests: XCTestCase {
     // MARK: Tests
 
     func testPTYRoundTripPrintf() throws {
-        let pty = PTYProcess()
-        try pty.spawn("/bin/sh", arguments: ["-c", "printf slopdesk-ok"], environment: curatedEnv())
+        let pty = try makePane()
+        try pty.spawnForTest("/bin/sh", arguments: ["-c", "printf slopdesk-ok"], environment: curatedEnv())
         XCTAssertGreaterThanOrEqual(pty.masterFD, 0)
         XCTAssertGreaterThan(pty.pid, 0)
 
-        let output = readUntil(fd: pty.masterFD, needle: "slopdesk-ok")
+        let output = readUntil(pane: pty, needle: "slopdesk-ok")
         XCTAssertTrue(output.contains("slopdesk-ok"), "expected 'slopdesk-ok', got: \(output)")
 
         let exp = expectation(description: "exit")
@@ -110,15 +130,15 @@ final class PTYProcessTests: XCTestCase {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let pty = PTYProcess()
-        try pty.spawn(
+        let pty = try makePane()
+        try pty.spawnForTest(
             "/bin/sh",
             arguments: ["-c", "pwd"],
             environment: curatedEnv(),
             cwd: dir.path,
         )
 
-        let output = readUntil(fd: pty.masterFD, needle: dir.path)
+        let output = readUntil(pane: pty, needle: dir.path)
         XCTAssertTrue(output.contains(dir.path), "expected child cwd \(dir.path), got: \(output)")
     }
 
@@ -137,10 +157,10 @@ final class PTYProcessTests: XCTestCase {
         let resolvedHome = home.resolvingSymlinksInPath().path
         XCTAssertNotEqual(resolvedHome, FileManager.default.currentDirectoryPath)
 
-        let pty = PTYProcess()
-        try pty.spawn("/bin/sh", arguments: ["-c", "pwd -P"], environment: env, cwd: nil)
+        let pty = try makePane()
+        try pty.spawnForTest("/bin/sh", arguments: ["-c", "pwd -P"], environment: env, cwd: nil)
 
-        let output = readUntil(fd: pty.masterFD, needle: resolvedHome)
+        let output = readUntil(pane: pty, needle: resolvedHome)
         XCTAssertTrue(output.contains(resolvedHome), "expected child cwd \(resolvedHome), got: \(output)")
         XCTAssertFalse(
             output.contains(FileManager.default.currentDirectoryPath),
@@ -187,14 +207,14 @@ final class PTYProcessTests: XCTestCase {
 
         var env = curatedEnv()
         env["HOME"] = home.path
-        let pty = PTYProcess()
-        try pty.spawn(
+        let pty = try makePane()
+        try pty.spawnForTest(
             "/bin/sh",
             arguments: ["-c", "pwd"],
             environment: env,
             cwd: "/nonexistent-slopdesk-\(UUID().uuidString)",
         )
-        let output = readUntil(fd: pty.masterFD, needle: home.lastPathComponent)
+        let output = readUntil(pane: pty, needle: home.lastPathComponent)
         XCTAssertTrue(
             output.contains(home.lastPathComponent),
             "an invalid cwd must fall back to HOME (\(home.path)), got: \(output)",
@@ -210,14 +230,14 @@ final class PTYProcessTests: XCTestCase {
     }
 
     func testPTYInteractiveEcho() throws {
-        let pty = PTYProcess()
-        try pty.spawn("/bin/sh", environment: curatedEnv())
+        let pty = try makePane()
+        try pty.spawnForTest("/bin/sh", environment: curatedEnv())
 
         // Cooked-mode line discipline echoes and the shell evaluates the command.
         let cmd = "echo HELLO_$((1+1))\n"
         Self.write(pty.masterFD, cmd)
 
-        let output = readUntil(fd: pty.masterFD, needle: "HELLO_2")
+        let output = readUntil(pane: pty, needle: "HELLO_2")
         XCTAssertTrue(output.contains("HELLO_2"), "expected 'HELLO_2', got: \(output)")
         pty.terminate()
     }
@@ -229,15 +249,15 @@ final class PTYProcessTests: XCTestCase {
         // POSIX_SPAWN_SETSID acquired the ctty — WITHOUT setsid they yield "/dev/tty: Device
         // not configured", whereas plain `tty`/`stty size` on fd 0 would still pass (making
         // this the regression-meaningful form).
-        let pty = PTYProcess()
-        try pty.spawn(
+        let pty = try makePane()
+        try pty.spawnForTest(
             "/bin/sh",
             arguments: ["-c", "tty </dev/tty; stty size </dev/tty"],
             environment: curatedEnv(),
             cols: 132, rows: 40,
         )
 
-        let output = readUntil(fd: pty.masterFD, needle: "40 132")
+        let output = readUntil(pane: pty, needle: "40 132")
         // WITH setsid `/dev/tty` resolves to itself; WITHOUT it → "Device not configured".
         // Those checks are what make this regression-meaningful for POSIX_SPAWN_SETSID —
         // fd 0/1/2's path would pass even with setsid broken, but /dev/tty would not.
@@ -276,11 +296,11 @@ final class PTYProcessTests: XCTestCase {
         guard FileManager.default.isExecutableFile(atPath: zsh) else {
             throw XCTSkip("/bin/zsh not present")
         }
-        let pty = PTYProcess()
+        let pty = try makePane()
         // Interactive zsh with NO rc files (-f) so the test is independent of the user's environment.
         var env = curatedEnv()
         env["ZDOTDIR"] = "/nonexistent-slopdesk-test" // belt-and-suspenders: no stray rc.
-        try pty.spawn(
+        try pty.spawnForTest(
             zsh,
             arguments: ["-f", "-i"],
             environment: env,
@@ -303,7 +323,7 @@ final class PTYProcessTests: XCTestCase {
         // slave is genuinely this session's controlling terminal — without that, `/dev/tty` reports
         // "Device not configured"/"not a tty" for interactive zsh.
         Self.write(pty.masterFD, "tty </dev/tty\n")
-        let ttyOut = readUntil(fd: pty.masterFD, needle: "/dev/tty")
+        let ttyOut = readUntil(pane: pty, needle: "/dev/tty")
         XCTAssertTrue(
             ttyOut.contains("/dev/tty"),
             "interactive zsh has NO controlling terminal (login_tty/TIOCSCTTY broken): \(ttyOut)",
@@ -323,7 +343,7 @@ final class PTYProcessTests: XCTestCase {
         pty.setWindowSize(cols: 132, rows: 40)
         Thread.sleep(forTimeInterval: 0.3)
         Self.write(pty.masterFD, "print -r -- SLOPDESK_COLS=$COLUMNS\n")
-        let colsOut = readUntil(fd: pty.masterFD, needle: "SLOPDESK_COLS=132")
+        let colsOut = readUntil(pane: pty, needle: "SLOPDESK_COLS=132")
         XCTAssertTrue(
             colsOut.contains("SLOPDESK_COLS=132"),
             "zsh did NOT update $COLUMNS after TIOCSWINSZ — SIGWINCH was not delivered to the "
@@ -367,10 +387,10 @@ final class PTYProcessTests: XCTestCase {
         env["HOME"] = sandbox.path // /etc/zshrc derives HISTFILE from ${ZDOTDIR:-$HOME} — sandbox both
         env.removeValue(forKey: "HISTFILE")
 
-        let pty = PTYProcess()
+        let pty = try makePane()
         // NO `-f`: the rc files must run so HISTFILE/SAVEHIST are live (that is the machinery
         // under test). Login argv0 matches the real spawn path.
-        try pty.spawn(zsh, arguments: ["-i"], environment: env, argv0: "-zsh", cols: 80, rows: 24)
+        try pty.spawnForTest(zsh, arguments: ["-i"], environment: env, argv0: "-zsh", cols: 80, rows: 24)
         defer { // guaranteed non-hang teardown even on assert early-out (see the SIGWINCH test)
             pty.forceTerminate()
             pty.waitUntilExited(timeout: 1.0)
@@ -380,10 +400,10 @@ final class PTYProcessTests: XCTestCase {
         // Wait for the first prompt (ZLE up, history machinery live), then type a marker whose
         // OUTPUT differs from its echoed input — seeing `slopdesk_hist_41001` proves the command
         // RAN (was accepted into history), not merely that the terminal echoed the keystrokes.
-        _ = readUntil(fd: pty.masterFD, needle: "hist-test")
+        _ = readUntil(pane: pty, needle: "hist-test")
         let marker = "echo slopdesk_hist_$((41000+1))"
         Self.write(pty.masterFD, marker + "\n")
-        let ran = readUntil(fd: pty.masterFD, needle: "slopdesk_hist_41001")
+        let ran = readUntil(pane: pty, needle: "slopdesk_hist_41001")
         XCTAssertTrue(ran.contains("slopdesk_hist_41001"), "zsh never ran the marker: \(ran)")
 
         // THE destroy ladder from `MuxChannelSession.shutdown()` — including the master drain:
@@ -411,17 +431,17 @@ final class PTYProcessTests: XCTestCase {
     }
 
     func testResizeAfterSpawn() throws {
-        let pty = PTYProcess()
-        try pty.spawn("/bin/sh", environment: curatedEnv(), cols: 80, rows: 24)
+        let pty = try makePane()
+        try pty.spawnForTest("/bin/sh", environment: curatedEnv(), cols: 80, rows: 24)
 
         pty.setWindowSize(cols: 80, rows: 24)
         Self.write(pty.masterFD, "stty size\n")
-        let first = readUntil(fd: pty.masterFD, needle: "24 80")
+        let first = readUntil(pane: pty, needle: "24 80")
         XCTAssertTrue(first.contains("24 80"), "expected '24 80', got: \(first)")
 
         pty.setWindowSize(cols: 120, rows: 40)
         Self.write(pty.masterFD, "stty size\n")
-        let second = readUntil(fd: pty.masterFD, needle: "40 120")
+        let second = readUntil(pane: pty, needle: "40 120")
         XCTAssertTrue(second.contains("40 120"), "expected '40 120' after resize, got: \(second)")
 
         pty.terminate()
@@ -443,8 +463,8 @@ final class PTYProcessTests: XCTestCase {
     /// ordering guarantee, so `stty` often ran before the ioctl landed and reported the OLD size).
     /// Reading the applied size removes both: hard 2s ceiling, no shell, no second sub-channel.
     func testResizeDebounceConvergesToFinalSizeAndFlushesOnAck() throws {
-        let pty = PTYProcess()
-        try pty.spawn("/bin/sh", environment: curatedEnv(), cols: 80, rows: 24)
+        let pty = try makePane()
+        try pty.spawnForTest("/bin/sh", environment: curatedEnv(), cols: 80, rows: 24)
 
         // Inert in-memory sub-channels: muxSend is a no-op (we assert only on the PTY's applied
         // winsize via `TIOCGWINSZ`, never the wire). `.zero` debounce ⇒ the pending size applies on
@@ -498,8 +518,8 @@ final class PTYProcessTests: XCTestCase {
     /// not the timer. Applied size read directly via `TIOCGWINSZ` in a bounded poll (no `stty size`
     /// round-trip → no unbounded read, no ordering race).
     func testResizeFlushedOnBye() throws {
-        let pty = PTYProcess()
-        try pty.spawn("/bin/sh", environment: curatedEnv(), cols: 80, rows: 24)
+        let pty = try makePane()
+        try pty.spawnForTest("/bin/sh", environment: curatedEnv(), cols: 80, rows: 24)
 
         let data = MuxSubChannel(channelID: 1, channel: .data) { _, _ in }
         let control = MuxSubChannel(channelID: 1, channel: .control) { _, _ in }
@@ -533,23 +553,30 @@ final class PTYProcessTests: XCTestCase {
     }
 
     /// Every APPLIED winsize lands in the disk journal's size sidecar — the geometry a later
-    /// daemon life's snapshot restore parses the journaled bytes at. Two writers pin both
-    /// record points: `startRelay()` seeds the spawn-time size (a headless CLI client may
-    /// never send a `.resize`), and a flushed client resize overwrites it (last-wins).
+    /// daemon life's snapshot restore parses the journaled bytes at. Two record points are
+    /// pinned: the SPAWN seeds it (a headless CLI client may never send a `.resize`), and a
+    /// flushed client resize overwrites it (last-wins).
+    ///
+    /// superd writes the file, from the same `spawn`/`resize` requests that reach the kernel — so
+    /// what this pins is that hostd still tells it, not that hostd still writes.
     func testAppliedResizeRecordsJournalSizeSidecar() throws {
         let journalDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("resize-sidecar-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: journalDir) }
-        let store = ScrollbackJournalStore(directory: journalDir)
         let sessionID = UUID()
 
-        let pty = PTYProcess()
-        try pty.spawn("/bin/sh", environment: curatedEnv(), cols: 80, rows: 24)
+        let pty = try XCTUnwrap(superd).pty(
+            "/bin/sh",
+            environment: curatedEnv(),
+            cols: 80,
+            rows: 24,
+            sessionID: sessionID.uuidString,
+            journal: JournalSpawnRequest(directory: journalDir.path, capBytes: 1 << 20),
+        )
         let data = MuxSubChannel(channelID: 1, channel: .data) { _, _ in }
         let control = MuxSubChannel(channelID: 1, channel: .control) { _, _ in }
         let session = MuxChannelSession(
             channelID: 1, pty: pty, data: data, control: control, resizeDebounce: .zero,
-            scrollbackJournal: store.journal(for: sessionID),
         )
         session.startRelay()
 
@@ -564,7 +591,7 @@ final class PTYProcessTests: XCTestCase {
             }
             return last
         }
-        XCTAssertEqual(pollSidecar(until: "24 80\n"), "24 80\n", "startRelay seeds the spawn-time size")
+        XCTAssertEqual(pollSidecar(until: "24 80\n"), "24 80\n", "the spawn seeds the spawn-time size")
 
         let exp = expectation(description: "resize-delivered")
         Task {
@@ -581,8 +608,8 @@ final class PTYProcessTests: XCTestCase {
     }
 
     func testExitCode() throws {
-        let pty = PTYProcess()
-        try pty.spawn("/bin/sh", arguments: ["-c", "exit 7"], environment: curatedEnv())
+        let pty = try makePane()
+        try pty.spawnForTest("/bin/sh", arguments: ["-c", "exit 7"], environment: curatedEnv())
 
         let exp = expectation(description: "exit7")
         Task {
@@ -597,8 +624,8 @@ final class PTYProcessTests: XCTestCase {
         // WIFSIGNALED branch of the reaper: a child that signals itself reports 128 + signal (shell
         // convention). SIGTERM (15) -> 143. Exercises the `(status & 0o177)` arithmetic that the
         // normal-exit test never touches.
-        let pty = PTYProcess()
-        try pty.spawn("/bin/sh", arguments: ["-c", "kill -TERM $$"], environment: curatedEnv())
+        let pty = try makePane()
+        try pty.spawnForTest("/bin/sh", arguments: ["-c", "kill -TERM $$"], environment: curatedEnv())
 
         let exp = expectation(description: "signal-exit-143")
         Task {
@@ -617,8 +644,8 @@ final class PTYProcessTests: XCTestCase {
         let n = 40
         let before = Self.openFDCount()
         for _ in 0..<n {
-            let pty = PTYProcess()
-            try pty.spawn("/bin/sh", arguments: ["-c", "printf hi; exit 0"], environment: curatedEnv())
+            let pty = try makePane()
+            try pty.spawnForTest("/bin/sh", arguments: ["-c", "printf hi; exit 0"], environment: curatedEnv())
             // Inert in-memory sub-channels (muxSend is a no-op) — we exercise only the PTY spawn →
             // relay → shutdown fd hygiene, not the wire.
             // ⚠️ Keep the PTY output well UNDER MuxFlowControl.initialWindowBytes (256 KiB): the DATA
@@ -628,7 +655,7 @@ final class PTYProcessTests: XCTestCase {
             let control = MuxSubChannel(channelID: 1, channel: .control) { _, _ in }
             let session = MuxChannelSession(channelID: 1, pty: pty, data: data, control: control)
             session.startRelay()
-            _ = readUntil(fd: pty.masterFD, needle: "\u{04}", timeout: 1) // drain to EOF
+            _ = readUntil(pane: pty, needle: "\u{04}", timeout: 1) // drain to EOF
             session.shutdown()
             XCTAssertEqual(pty.masterFD, -1, "closeMaster() must mark the master fd -1 after shutdown")
         }
@@ -659,10 +686,10 @@ final class PTYProcessTests: XCTestCase {
     /// instead of wedging the whole suite. (Contrast `drainExitAndShutdown`, which avoided the hang by
     /// writing `exit` so the child died first.)
     func testShutdownReturnsPromptlyWithLiveInteractiveChild() throws {
-        let pty = PTYProcess()
+        let pty = try makePane()
         // No args ⇒ an interactive login-style shell that blocks on its tty awaiting input and never
         // exits on its own — exactly the production case (a pane's shell when the client disconnects).
-        try pty.spawn("/bin/sh", environment: curatedEnv())
+        try pty.spawnForTest("/bin/sh", environment: curatedEnv())
         XCTAssertGreaterThanOrEqual(pty.masterFD, 0)
         XCTAssertGreaterThan(pty.pid, 0)
 
@@ -702,8 +729,8 @@ final class PTYProcessTests: XCTestCase {
     /// pane on the shared connection for ~0.25s per pane close. An interactive `/bin/sh` ignores
     /// SIGTERM, so `shutdown()` itself takes ~250ms — far longer than the caller-return ceiling.
     func testShutdownDetachedReturnsImmediatelyAndStillReapsChild() throws {
-        let pty = PTYProcess()
-        try pty.spawn("/bin/sh", environment: curatedEnv())
+        let pty = try makePane()
+        try pty.spawnForTest("/bin/sh", environment: curatedEnv())
         let data = MuxSubChannel(channelID: 1, channel: .data) { _, _ in }
         let control = MuxSubChannel(channelID: 1, channel: .control) { _, _ in }
         let session = MuxChannelSession(channelID: 1, pty: pty, data: data, control: control)
@@ -734,8 +761,8 @@ final class PTYProcessTests: XCTestCase {
             (try? FileManager.default.contentsOfDirectory(atPath: "/dev/fd"))?.count ?? -1
         }
         func runOneCycle() throws {
-            let pty = PTYProcess()
-            try pty.spawn("/bin/sh", arguments: ["-c", "exit 0"], environment: curatedEnv())
+            let pty = try makePane()
+            try pty.spawnForTest("/bin/sh", arguments: ["-c", "exit 0"], environment: curatedEnv())
             let data = MuxSubChannel(channelID: 1, channel: .data) { _, _ in }
             let control = MuxSubChannel(channelID: 1, channel: .control) { _, _ in }
             let session = MuxChannelSession(channelID: 1, pty: pty, data: data, control: control)
@@ -761,8 +788,8 @@ final class PTYProcessTests: XCTestCase {
     }
 
     func testCloseMasterIsIdempotent() throws {
-        let pty = PTYProcess()
-        try pty.spawn("/bin/sh", arguments: ["-c", "exit 0"], environment: curatedEnv())
+        let pty = try makePane()
+        try pty.spawnForTest("/bin/sh", arguments: ["-c", "exit 0"], environment: curatedEnv())
         XCTAssertGreaterThanOrEqual(pty.masterFD, 0)
         pty.closeMaster()
         XCTAssertEqual(pty.masterFD, -1)
@@ -775,7 +802,7 @@ final class PTYProcessTests: XCTestCase {
     /// `nudgeRedraw()` on an unspawned `PTYProcess` (masterFD = -1, pid = -1) must be a safe no-op —
     /// the guard rejects the invalid fd/pid before any syscall. No crash, no assertion failure.
     func testNudgeRedrawIsNoOpOnUnspawnedPTY() {
-        let pty = PTYProcess()
+        let pty = unattachedPTY()
         // Guard path: masterFD == -1 → returns immediately without calling tcgetpgrp/killpg.
         pty.nudgeRedraw() // must not crash or trap
     }
@@ -784,10 +811,10 @@ final class PTYProcessTests: XCTestCase {
     /// is a safe no-op. Verifies the TOCTOU discipline — the method reads `masterFD` under `exitLock`,
     /// so a concurrent close cannot race the subsequent `tcgetpgrp` call.
     func testNudgeRedrawIsNoOpAfterCloseMaster() throws {
-        let pty = PTYProcess()
-        try pty.spawn("/bin/sh", arguments: ["-c", "exit 0"], environment: curatedEnv())
+        let pty = try makePane()
+        try pty.spawnForTest("/bin/sh", arguments: ["-c", "exit 0"], environment: curatedEnv())
         XCTAssertGreaterThanOrEqual(pty.masterFD, 0)
-        _ = readUntil(fd: pty.masterFD, needle: "\u{04}", timeout: 1) // drain to EOF
+        _ = readUntil(pane: pty, needle: "\u{04}", timeout: 1) // drain to EOF
         pty.closeMaster()
         XCTAssertEqual(pty.masterFD, -1)
         pty.nudgeRedraw() // must not crash: fd is -1, guard fires
@@ -803,10 +830,10 @@ final class PTYProcessTests: XCTestCase {
         guard FileManager.default.isExecutableFile(atPath: zsh) else {
             throw XCTSkip("/bin/zsh not present")
         }
-        let pty = PTYProcess()
+        let pty = try makePane()
         var env = curatedEnv()
         env["ZDOTDIR"] = "/nonexistent-slopdesk-test"
-        try pty.spawn(zsh, arguments: ["-f", "-i"], environment: env, argv0: "-zsh", cols: 80, rows: 24)
+        try pty.spawnForTest(zsh, arguments: ["-f", "-i"], environment: env, argv0: "-zsh", cols: 80, rows: 24)
 
         defer {
             pty.forceTerminate()
@@ -823,7 +850,7 @@ final class PTYProcessTests: XCTestCase {
 
         // zsh's TRAPWINCH fires and prints NUDGE_COLS=<current columns> (80 at spawn). We only need
         // the marker to appear — its presence proves SIGWINCH was delivered.
-        let out = readUntil(fd: pty.masterFD, needle: "NUDGE_COLS=")
+        let out = readUntil(pane: pty, needle: "NUDGE_COLS=")
         XCTAssertTrue(
             out.contains("NUDGE_COLS="),
             "nudgeRedraw() must deliver SIGWINCH to the interactive zsh foreground pgrp "
@@ -847,8 +874,8 @@ final class PTYProcessTests: XCTestCase {
     /// bare same-size SIGWINCH only repaints the rows the app believes changed, leaving the replayed
     /// frame's collapsed rows (input dividers, status line) permanently blank.
     func testRedrawJiggleShrinksOneRowThenRestores() throws {
-        let pty = PTYProcess()
-        try pty.spawn("/bin/sh", environment: curatedEnv(), cols: 80, rows: 24)
+        let pty = try makePane()
+        try pty.spawnForTest("/bin/sh", environment: curatedEnv(), cols: 80, rows: 24)
         defer {
             pty.forceTerminate()
             pty.waitUntilExited(timeout: 1.0)
@@ -876,8 +903,8 @@ final class PTYProcessTests: XCTestCase {
     /// already delivered a real-size-change SIGWINCH at the size the client actually wants, and
     /// restoring the pre-jiggle size would stomp it.
     func testRedrawJiggleRestoreYieldsToInterveningResize() throws {
-        let pty = PTYProcess()
-        try pty.spawn("/bin/sh", environment: curatedEnv(), cols: 80, rows: 24)
+        let pty = try makePane()
+        try pty.spawnForTest("/bin/sh", environment: curatedEnv(), cols: 80, rows: 24)
         defer {
             pty.forceTerminate()
             pty.waitUntilExited(timeout: 1.0)
@@ -895,8 +922,8 @@ final class PTYProcessTests: XCTestCase {
 
     /// Degenerate single-row PTY: there is no row to give, so the jiggle shrinks a COLUMN instead.
     func testRedrawJiggleOnSingleRowShrinksColumnInstead() throws {
-        let pty = PTYProcess()
-        try pty.spawn("/bin/sh", environment: curatedEnv(), cols: 80, rows: 1)
+        let pty = try makePane()
+        try pty.spawnForTest("/bin/sh", environment: curatedEnv(), cols: 80, rows: 1)
         defer {
             pty.forceTerminate()
             pty.waitUntilExited(timeout: 1.0)
@@ -917,16 +944,16 @@ final class PTYProcessTests: XCTestCase {
     /// Unspawned master (`masterFD == -1`): `beginRedrawJiggle()` refuses with `nil` so the caller
     /// falls back to a plain `nudgeRedraw()` (which is itself a guarded no-op there).
     func testRedrawJiggleIsNilOnUnspawnedPTY() {
-        XCTAssertNil(PTYProcess().beginRedrawJiggle())
+        XCTAssertNil(unattachedPTY().beginRedrawJiggle())
     }
 
     func testMasterFDIsBlockingAfterSpawn() throws {
-        let pty = PTYProcess()
-        try pty.spawn("/bin/sh", arguments: ["-c", "exit 0"], environment: curatedEnv())
+        let pty = try makePane()
+        try pty.spawnForTest("/bin/sh", arguments: ["-c", "exit 0"], environment: curatedEnv())
         let flags = fcntl(pty.masterFD, F_GETFL)
         XCTAssertGreaterThanOrEqual(flags, 0)
         XCTAssertEqual(flags & O_NONBLOCK, 0, "O_NONBLOCK must be cleared on the master fd")
-        _ = readUntil(fd: pty.masterFD, needle: "\u{04}", timeout: 1) // drain until EOF
+        _ = readUntil(pane: pty, needle: "\u{04}", timeout: 1) // drain until EOF
     }
 
     // MARK: util
@@ -987,24 +1014,5 @@ final class PTYProcessTests: XCTestCase {
             let n = data[offset...].withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) }
             if n > 0 { offset += n } else { break }
         }
-    }
-}
-
-/// Thread-safe accumulator for the background PTY read in tests.
-final class ByteSink: @unchecked Sendable {
-    private let lock = NSLock()
-    private var data = Data()
-    /// Appends `bytes` and returns whether `needle` now appears in the accumulation.
-    func append(_ bytes: ArraySlice<UInt8>, contains needle: Data) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        data.append(contentsOf: bytes)
-        return data.contains(needle)
-    }
-
-    func string() -> String {
-        lock.lock()
-        defer { lock.unlock() }
-        return String(bytes: data, encoding: .utf8) ?? ""
     }
 }

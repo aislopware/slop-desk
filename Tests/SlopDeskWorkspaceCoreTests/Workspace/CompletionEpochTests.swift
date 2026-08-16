@@ -3,7 +3,6 @@ import SlopDeskAgentDetect
 import SlopDeskProtocol
 import SlopDeskWorkspaceModel
 import XCTest
-@testable import SlopDeskClient
 @testable import SlopDeskWorkspaceCore
 
 /// The unread-finish marker, as a comparison instead of a latch.

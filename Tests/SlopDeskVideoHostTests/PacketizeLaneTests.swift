@@ -2,27 +2,21 @@ import SlopDeskVideoProtocol
 import XCTest
 @testable import SlopDeskVideoHost
 
-/// FECScheme whose parity BLOCKS until released — pins "packetize is mid-flight" deterministically
-/// so the suite can prove input starvation/interleaving without timing races. Pure logic: no
-/// SCStream/VT/Metal is ever created (hang-safety), and the inner scheme is the production
-/// `m == 1` XOR-equivalent codec so the eventually-produced bytes are the real wire bytes.
-private final class GatedFEC: FECScheme, @unchecked Sendable {
-    let groupSize = 5
-    let parityCount = 1
-    private let inner = XORParityFEC(groupSize: 5, parityCount: 1)
-    /// Signaled when parity ENTERS (packetize is now mid-flight on whatever executor runs it).
-    let entered = DispatchSemaphore(value: 0)
-    /// The test signals this to let parity (and so the packetize) finish.
-    let release = DispatchSemaphore(value: 0)
-
-    func parity(forDataFragments dataFragments: [Data], groupSize: Int) -> [Data] {
-        entered.signal()
-        release.wait()
-        return inner.parity(forDataFragments: dataFragments, groupSize: groupSize)
+/// A flag two tasks write and read across a suspension, so the ordering assertion below can be
+/// stated as a fact rather than a timeout.
+private final class Latch: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = false
+    var isSet: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
     }
 
-    func recover(dataFragments: [Data?], parityFragments: [Data?], groupSize: Int) -> [Data?] {
-        inner.recover(dataFragments: dataFragments, parityFragments: parityFragments, groupSize: groupSize)
+    func set() {
+        lock.lock()
+        value = true
+        lock.unlock()
     }
 }
 
@@ -40,9 +34,17 @@ private actor SessionActorStandIn {
         self.lane = lane
     }
 
-    /// The fixed `onEncodedFrame` shape: hand the frame to the lane and suspend.
-    func pumpFrame(_ avcc: Data, keyframe: Bool = true) async -> PacketizeLane.PacketizedFrame {
-        await lane.packetize(
+    /// The fixed `onEncodedFrame` shape: hand the frame to the lane and suspend. `entered` is
+    /// signalled from ON this actor immediately before the hop, so a waiter that sees it knows the
+    /// pump is committed — inline work would begin here too, which is what makes the ordering
+    /// assertion discriminate the two shapes rather than merely time them.
+    func pumpFrame(
+        _ avcc: Data,
+        keyframe: Bool = true,
+        entered: DispatchSemaphore? = nil,
+    ) async -> PacketizeLane.PacketizedFrame {
+        entered?.signal()
+        return await lane.packetize(
             frame: avcc,
             keyframe: keyframe,
             crisp: false,
@@ -61,25 +63,36 @@ private actor SessionActorStandIn {
 
 final class PacketizeLaneTests: XCTestCase {
     /// The keystroke-latency contract: an input-injection hop onto the session actor completes
-    /// while a large frame is mid-packetize. Deterministic via ``GatedFEC`` — parity blocks until
-    /// the test releases it, so "mid-packetize" is pinned, not timed.
+    /// while a large frame is mid-packetize.
+    ///
+    /// What pins it is ORDER, not a timeout: `inject` must finish BEFORE the pump does. Under the
+    /// pre-fix shape — packetize inline on the session actor — that is impossible however long the
+    /// test waits, because the actor cannot admit `inject` until the whole packetize returns. The
+    /// frame is deliberately enormous so the window the two are ordered inside is milliseconds of
+    /// real work against a keystroke hop that costs microseconds.
     func testInputCompletesWhileLargeFrameMidPacketize() async {
-        let fec = GatedFEC()
-        let standIn = SessionActorStandIn(lane: PacketizeLane(fec: fec))
-        let frame = Data(repeating: 0xAB, count: 64 * 1024) // ~56 data fragments + parity
-        let pump = Task { await standIn.pumpFrame(frame) }
-        // Packetize is now genuinely mid-flight (parity entered and is blocked).
-        XCTAssertEqual(fec.entered.wait(timeout: .now() + 5), .success, "packetize never started")
+        let standIn = SessionActorStandIn(
+            lane: PacketizeLane(fec: XORParityFEC(groupSize: 5, parityCount: 1)),
+        )
+        let frame = Data(repeating: 0xAB, count: 24 * 1024 * 1024) // ~21k data fragments + parity
+        let entered = DispatchSemaphore(value: 0)
+        let pumped = Latch()
+        let pump = Task { () -> PacketizeLane.PacketizedFrame in
+            let out = await standIn.pumpFrame(frame, entered: entered)
+            pumped.set()
+            return out
+        }
+        XCTAssertEqual(entered.wait(timeout: .now() + 5), .success, "the pump never started")
         // A keystroke arriving NOW must be injectable: the actor must be free mid-packetize.
         let injectDone = expectation(description: "inject completed while packetize mid-flight")
         Task {
             await standIn.inject()
             injectDone.fulfill()
         }
-        await fulfillment(of: [injectDone], timeout: 2)
-        fec.release.signal()
+        await fulfillment(of: [injectDone], timeout: 5)
+        XCTAssertFalse(pumped.isSet, "inject was admitted only after the frame finished packetizing")
         let packetized = await pump.value
-        XCTAssertFalse(packetized.outgoings.isEmpty, "the frame still packetizes fully once released")
+        XCTAssertFalse(packetized.outgoings.isEmpty, "the frame still packetizes fully")
         let injected = await standIn.injected
         XCTAssertEqual(injected, 1)
     }

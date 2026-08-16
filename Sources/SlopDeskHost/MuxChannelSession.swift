@@ -1,7 +1,9 @@
 import Foundation
 import SlopDeskAgentDetect
 import SlopDeskProtocol
+import SlopDeskSupervisor
 import SlopDeskTransport
+import SlopDeskTTY
 
 /// Identity of ONE subscriber to a pane — the key the PTY-size fold and (from the fan-out on) the
 /// per-subscriber relay state are held under.
@@ -19,7 +21,7 @@ typealias MuxSubscriberID = UInt64
 /// Implemented over the ``MessageChannel`` protocol (which ``MuxSubChannel`` conforms to).
 ///
 /// Relay shape:
-/// - OUTPUT: a no-buffer ``PTYReadLoop`` → an ordered FIFO → one sequential awaiter that assigns a
+/// - OUTPUT: a no-buffer ``PaneOutputStream`` → an ordered FIFO → one sequential awaiter that assigns a
 ///   seq via the per-channel `ReplayBuffer` and writes `output` on the channel's DATA sub-channel;
 ///   `.title`/`.bell` sniffed non-destructively and written on the CONTROL sub-channel after.
 /// - INPUT: the DATA sub-channel's inbound `input` → master fd.
@@ -29,17 +31,17 @@ typealias MuxSubscriberID = UInt64
 ///
 /// ### Bounded output queue (always on)
 /// The DATA send window SUSPENDS the drain when a flooding channel runs out of credit — but without
-/// an upstream bound that just moves the unboundedness one hop: the `PTYReadLoop` would buffer the
+/// an upstream bound that just moves the unboundedness one hop: the reader would buffer the
 /// whole `yes` flood into the FIFO. So the queue is BOUNDED by a
 /// ``SlopDeskProtocol/BoundedQueuePolicy`` (byte high-water mark): when enqueued-not-yet-sent bytes
-/// cross the bound the ``PTYReadLoop`` is PAUSED (its `NSCondition` gate stops issuing `read()`, so
+/// cross the bound the ``PaneOutputStream`` is PAUSED (superd stops issuing `read()`, so
 /// the kernel PTY buffer fills and backpressures the shell — the real flood fix); it RESUMES when
 /// the drain brings the queue back under the bound.
 ///
 /// ### Detach / reattach (tmux-style survival)
 /// On client disconnect with detach enabled, ``detach()`` runs instead of
 /// ``shutdown()``: it cancels the relay tasks and engages the ReplayBuffer's offline gate to pause
-/// the PTY drain, but does NOT stop/close the ``PTYReadLoop`` — `stop()` is irreversible. The shell
+/// the PTY drain, but does NOT stop/close the ``PaneOutputStream`` — `stop()` is irreversible. The shell
 /// (and the paused read loop) survive. On return, ``rebindRelay(data:control:)`` swaps the stale
 /// sub-channels, KEEPS the out-FIFO (its chunks were never sequenced into the ReplayBuffer — they
 /// are the detached-window output the restarted drain must ship), clears the stateless control-out,
@@ -233,12 +235,6 @@ final class MuxChannelSession: @unchecked Sendable {
         return subscribers[id]
     }
 
-    /// The per-session ZDOTDIR shim directory, if the zsh shell-integration shim was installed for
-    /// this pane. Deleted in ``shutdown()`` once the child has exited — safe because the shell read
-    /// its rc files at exec time. Without this, every opened pane leaks one `slopdesk-zdotdir-*`
-    /// dir + 4 files into temp for the host's long-lived lifetime.
-    private let shimDir: URL?
-
     /// Whether host-side Claude-Code agent detection (the foreground process-watch) is enabled for
     /// this channel. When true, ``startRelay()`` spins a low-rate poll that resolves
     /// the PTY's foreground basename and drives ``ForegroundProcessDetector`` → type-26/27.
@@ -254,17 +250,21 @@ final class MuxChannelSession: @unchecked Sendable {
     /// not just installed on disk. Defaults `false` (no listener wired — the honest answer).
     private let agentHookListenerActive: @Sendable () -> Bool
 
-    /// Whether the additive "Blocks" tap runs for this channel. When false the byte pipeline
-    /// + the live ``HostOutputSniffer`` are byte-identical (the segmenter is never instantiated, no
-    /// type-28/29 ever emitted). Resolved from `SLOPDESK_BLOCKS` (default-ON) by the owner.
+    /// Whether this channel asked superd for a command-block tap. When false no segmenter touches
+    /// the pane's stream, no `0x05` frame ever arrives, and no type-28/29 is ever emitted. Resolved
+    /// from `SLOPDESK_BLOCKS` (default-ON) by the owner and sent with the `spawn`.
     private let blocksEnabled: Bool
 
-    /// The per-channel "Blocks" tracker (the segmenter + bounded output ring + dedup), or
-    /// `nil` when ``blocksEnabled`` is false. Touched from TWO contexts — the serial read-loop
-    /// thread (`ingest` in `onChunk`) and the control task (`serveOutput` on a `requestBlockOutput`)
-    /// — so it is guarded by ``blocksLock``. A pure value type, so it lives behind the lock.
+    /// The running command line, as superd's tap last reported it — `nil` at an idle prompt.
+    ///
+    /// A LATCH, not a query, and that distinction is load-bearing: ``PaneLiveness/capture`` reads it
+    /// for every pane on every reconciler tick, so it has to be a lock acquisition rather than a
+    /// round trip. Everything else about a pane's blocks IS a round trip (`blockOutput`,
+    /// `blockSnapshot`, `blockControl`), because every other reader is a person or an agent asking
+    /// once. Written on the read-loop thread as the `0x05` batches arrive; read from the control
+    /// socket's threads.
     private let blocksLock = NSLock()
-    private var blockTracker: CommandBlockTracker?
+    private var _runningCommand: String?
 
     /// The SINGLE per-pane Claude detector (ONE ``ClaudeStatusMachine``). Fed by ALL detection
     /// inputs — the foreground poll's `processPresent`, the per-poll `tick` (drives the `.done→.idle`
@@ -335,7 +335,7 @@ final class MuxChannelSession: @unchecked Sendable {
     /// on every cold start and so failed permanently.
     ///
     /// Stamped on `timeIntervalSinceReferenceDate`, deliberately matching
-    /// ``HostOutputSniffer/commandRunningSince()`` rather than the `systemUptime` the detector folds
+    /// the sniffer's `command_running_since` (`rust/slopdesk-superd/src/sniffer.rs`) rather than the `systemUptime` the detector folds
     /// on. The two stamps are COMPARED; on two different clocks — one of which stops during sleep —
     /// the comparison would be meaningless in exactly the case (a laptop that slept) where the user
     /// notices.
@@ -425,6 +425,10 @@ final class MuxChannelSession: @unchecked Sendable {
     var onTeardown: (@Sendable () -> Void)?
     private var teardownSignaled = false
 
+    /// How many times ``teardown(killChild:)`` has run all the way to its last statement. Guarded by
+    /// ``taskLock``, like every other teardown flag here. Read only by tests.
+    private var teardownCompletions = 0
+
     /// Observer closures registered by the agent-control `wait` and `subscribe` verbs. Each is
     /// called with the raw PTY chunk immediately after the sniffer pass (non-destructive, never
     /// modifies the byte stream). Guarded by `observersLock`.
@@ -435,7 +439,7 @@ final class MuxChannelSession: @unchecked Sendable {
     /// from the exit task. Guarded by `observersLock`.
     private var closeObservers: [UUID: @Sendable () -> Void] = [:]
     /// Block-observer closures registered by the agent-control `run --wait` verb. Called from
-    /// ``feedBlocks(_:)`` (the PTY read-loop thread) with each type-28 block-metadata emission,
+    /// ``notifyBlockObservers(_:)`` (the PTY read-loop thread) with each type-28 block-metadata emission,
     /// AFTER the tracker has retained the block's output (so a completion observer can fetch the
     /// body immediately). Guarded by `observersLock`.
     private var blockObservers: [UUID: @Sendable (CommandBlockUpdate) -> Void] = [:]
@@ -484,18 +488,17 @@ final class MuxChannelSession: @unchecked Sendable {
     /// replies, the client never hangs" contract holds under a flood.
     private static let maxMetadataInFlight = 32
 
-    /// ONE fused non-destructive sniffer for the PTY chunk path (title/bell + OSC 133 command
-    /// status — one pass, not two per-byte machines scanning the hot thread twice). Touched only
-    /// on the read-loop thread via ``ingestPTYChunk(_:)``.
-    private let sniffer = HostOutputSniffer()
+    /// How many times the read loop has asked superd to retire the title anchor. Read only by the
+    /// suite that pins WHEN the retirement is asked for; written only on the read-loop thread.
+    private var titleAnchorRetirements = 0
 
-    /// Disk scrollback journal for this session (nil = disk persistence off). Fed ONLY by
-    /// ``ingestPTYChunk(_:)`` — genuine PTY output — so a restored preamble (which enters via the
-    /// out-FIFO) is never re-journaled and transcripts don't double across daemon restarts.
-    /// Internal (not private): `HostServer`'s end-of-life paths pass THIS instance to the
-    /// store's identity-guarded `release(sessionID:instance:)`/`delete(sessionID:instance:)`,
-    /// so a stale teardown of a same-UUID ghost can never close the live successor's writer.
-    let scrollbackJournal: ScrollbackJournal?
+    /// The command-status truth the reattach re-assert reads, latched from the sniffed batch.
+    ///
+    /// superd holds the OSC-133 state machine; this is the one bit of its answer hostd has to
+    /// REMEMBER, because a client reconnecting mid-command asks what is running now and no new
+    /// event will arrive to tell it. Set on `C`, cleared on `D`, on the read-loop thread; read from
+    /// the reattach path's thread, hence under ``commandExitLock``.
+    private var commandRunningSince: TimeInterval?
 
     /// The prior life's distilled transcript (fresh-spawn restore, `HostServer.spawnFreshShell`).
     /// Enqueued as the FIRST output frame(s) by ``startRelay()`` — before the read loop starts —
@@ -504,6 +507,11 @@ final class MuxChannelSession: @unchecked Sendable {
     /// copy pinned up to the journal cap of bytes per restored pane. Guarded by `fifoLock`
     /// (written once post-init; the test seam reads it cross-thread).
     private var restoredScrollback: Data?
+    /// Where this pane's supervised output stream is picked up — see
+    /// ``PaneOutputStream``'s `fromOffset`. `0` (the whole ring) for a freshly spawned pane, whose
+    /// stream starts there anyway; the offset its predecessor stopped ingesting at for an ADOPTED
+    /// one, whose earlier bytes are already in ``restoredScrollback`` and must not arrive twice.
+    private let resumeFromOffset: UInt64
 
     private let taskLock = NSLock()
     private var replay: ReplayBuffer
@@ -538,7 +546,7 @@ final class MuxChannelSession: @unchecked Sendable {
     /// the read-loop thread + the exit task; `shutdown()` nils it — an unguarded optional
     /// read would race the teardown).
     private var outputWakeContinuation: AsyncStream<Void>.Continuation?
-    private var readLoop: PTYReadLoop?
+    private var readLoop: PaneOutputStream?
     private var started = false
 
     /// The output FIFO: a lock-guarded deque (NOT an AsyncStream of items — iterators
@@ -704,7 +712,7 @@ final class MuxChannelSession: @unchecked Sendable {
         }
     }
 
-    /// EOF latch: set true by ``PTYReadLoop``'s `onEOF` once the read loop has drained the
+    /// EOF latch: set true by ``PaneOutputStream``'s `onEOF` once superd has drained the
     /// master to EOF — which, per the read-loop contract, happens only AFTER every buffered output chunk
     /// has been yielded into the FIFO. The exit task awaits this before yielding `.exit`, so the
     /// reaper-driven exit can never overtake the final output tail on the shared FIFO (which would
@@ -897,7 +905,7 @@ final class MuxChannelSession: @unchecked Sendable {
 
     /// The ONE serial queue every PTY input write lands on — client `input` frames (live relay AND
     /// the rebound relay after a reattach) and the agent-control `write`/`send-keys` raw injection.
-    /// A dedicated serial queue (mirroring PTYReadLoop's dedicated read thread) because the master
+    /// A dedicated serial queue (mirroring the supervisor client's read thread) because the master
     /// fd is deliberately blocking; funneling EVERY writer here is what makes teardown safe:
     /// ``shutdown()`` closes ``inputWritesClosed`` and `sync`-drains this queue BEFORE
     /// `pty.closeMaster()`, so a stale write can never land on a recycled fd number after the close
@@ -976,13 +984,12 @@ final class MuxChannelSession: @unchecked Sendable {
         sizeSettle: Duration = .milliseconds(750),
         isSizePassive: Bool = false,
         replay: ReplayBuffer = MuxChannelSession.makeReplayBuffer(),
-        shimDir: URL? = nil,
         agentDetectEnabled: Bool = false,
         agentPollInterval: Duration = .seconds(1),
         agentHookListenerActive: @escaping @Sendable () -> Bool = { false },
         blocksEnabled: Bool = true,
-        scrollbackJournal: ScrollbackJournal? = nil,
         restoredScrollback: Data? = nil,
+        resumeFromOffset: UInt64 = 0,
         snapshotReplay: SnapshotReplayPolicy? = nil,
     ) {
         self.channelID = channelID
@@ -1001,23 +1008,14 @@ final class MuxChannelSession: @unchecked Sendable {
         self.replay = replay
         self.snapshotReplay = snapshotReplay
         coldBacklogTransform = replay.scrollbackDistiller
-        self.shimDir = shimDir
         self.agentDetectEnabled = agentDetectEnabled
         agentScreenDetectEnabled = agentDetectEnabled
         self.agentPollInterval = agentPollInterval
         self.agentHookListenerActive = agentHookListenerActive
         self.blocksEnabled = blocksEnabled
-        self.scrollbackJournal = scrollbackJournal
         self.restoredScrollback = restoredScrollback
+        self.resumeFromOffset = resumeFromOffset
         inputQueue = DispatchQueue(label: "slopdesk.host.pty-input.\(channelID)", qos: .userInitiated)
-        // Instantiate the per-channel Blocks tracker only when enabled — otherwise the byte
-        // pipeline + sniffer stay byte-identical (no segmenter touches the stream, no emit).
-        // The tracker's segmenter carries the resolved auto-progress prefix list (from
-        // `SLOPDESK_AUTO_PROGRESS_COMMANDS`, default the built-in slow-command list) so a matched
-        // slow command auto-drives a synthetic OSC-9;4 spinner alongside the type-28 block metadata.
-        blockTracker = blocksEnabled
-            ? CommandBlockTracker(autoProgressPrefixes: HostEnvironment.autoProgressPrefixes())
-            : nil
     }
 
     // MARK: - Relay builders (one per task; the ordering belongs to the CALLER)
@@ -1102,7 +1100,7 @@ final class MuxChannelSession: @unchecked Sendable {
     /// Builds `sub`'s INPUT relay: its DATA sub-channel's inbound `input` → the master fd.
     ///
     /// The blocking `write(2)` runs on the session's ONE serial `inputQueue` (mirroring
-    /// PTYReadLoop's dedicated read thread): the PTY master fd is deliberately blocking, so on the
+    /// the supervisor client's read thread): the PTY master fd is deliberately blocking, so on the
     /// cooperative pool a paste into a non-reading foreground program would park a width-limited
     /// thread — a few wedged writers would degrade every other pane's drains. Credit is granted only
     /// AFTER the write returns (credit-at-consumption), so a stalled PTY transitively parks the
@@ -1309,11 +1307,21 @@ final class MuxChannelSession: @unchecked Sendable {
         // so the set is right even for a client that never sends one.
         addResizeContributor(sizePassive: openedSizePassive)
 
-        let readLoop = PTYReadLoop(
-            fd: masterFD,
-            onChunk: { [weak self] chunk in self?.ingestPTYChunk(chunk) },
+        // superd does the reading now (`PaneOutputStream`) — hostd's duplicate of the master is for
+        // writes, `TIOCSWINSZ` and `tcgetpgrp` only. An unspawned pane's stream is EOF from the
+        // start, exactly as `PTYReadLoop` was with `masterFD == -1`, so nothing below is
+        // conditional on a child existing.
+        let readLoop = pty.makeOutputStream(
+            fromOffset: resumeFromOffset,
+            onChunk: { [weak self] chunk, _, sniffed, blocks in
+                // The offset is dropped on the floor here, and that is the shape of stage 27: the
+                // only thing hostd ever did with it was tell the journal how far the stream had
+                // got, and the process that numbers the stream writes the journal now.
+                self?.ingestPTYChunk(chunk, sniffed: sniffed, blocks: blocks)
+            },
             onEOF: { [weak self] in self?.signalEOFReached() },
         )
+        readLoop.onLog = { [weak self] line in self?.onLog?("mux: \(line)") }
         self.readLoop = readLoop
         // Build the bounded-queue gate now that the read loop exists, so pause/resume is
         // applied ATOMICALLY with the accounting (no lost-wakeup freeze).
@@ -1323,13 +1331,9 @@ final class MuxChannelSession: @unchecked Sendable {
         // Fresh-spawn history restore MUST land between the gate build (so its bytes are
         // accounted) and the read-loop start (so it precedes every live shell byte).
         enqueueRestoredScrollback()
-        // Seed the journal's size sidecar with the spawn-time winsize: a pane whose client
-        // never sends a `.resize` (headless CLI, scripts) still restores via snapshot in the
-        // next daemon life. Overwriting the PRIOR life's sidecar is safe — the restore read
-        // it back in `spawnFreshShell`, before this session existed.
-        if let size = pty.currentWindowSize() {
-            scrollbackJournal?.recordWindowSize(rows: Int(size.rows), cols: Int(size.cols))
-        }
+        // The geometry a later life's restore parses at is superd's to record: it stamps the
+        // spawn-time winsize when it forks the pane and every `resize` this session sends
+        // afterwards (`PTYProcess.setWindowSize`), so there is nothing to seed here.
         readLoop.start()
 
         startInputRelay(for: sub)
@@ -1340,7 +1344,7 @@ final class MuxChannelSession: @unchecked Sendable {
             let code = await pty.waitForExit()
             // Gate the exit yield on the read loop having drained the master to EOF, so the
             // FINAL output tail is enqueued AHEAD of `.exit` on the shared FIFO. `onEOF` is called by
-            // PTYReadLoop only AFTER it has yielded every buffered chunk, so awaiting the EOF latch here
+            // the stream only AFTER superd has drained every byte, so awaiting the EOF latch here
             // guarantees `.exit` follows the last `.chunk` (the FIFO + single sequential drain preserve
             // that order on the wire). Bounded so a wedged/paused read never hangs exit delivery forever.
             await self?.awaitEOFOrTimeout()
@@ -1632,7 +1636,7 @@ final class MuxChannelSession: @unchecked Sendable {
         to id: MuxSubscriberID = MuxChannelSession.primarySubscriberID,
     ) {
         var messages: [WireMessage] = []
-        if let running = sniffer.commandStatusForReattach() { messages.append(running) }
+        if commandStatusForReattach() != nil { messages.append(.commandStatus(.running)) }
         progressLock.lock()
         let progress = lastProgress
         progressLock.unlock()
@@ -1676,7 +1680,7 @@ final class MuxChannelSession: @unchecked Sendable {
 
     /// Non-destructively detaches the relay from its current client connection.
     ///
-    /// **The read loop is NOT stopped.** `PTYReadLoop.stop()` sets a PERMANENT `stopped`
+    /// **The read loop is NOT stopped.** `PaneOutputStream.stop()` sets a PERMANENT `stopped`
     /// flag (irreversible) and would prevent rebinding. Instead, `setClientOnline(false)`
     /// engages the ReplayBuffer's 64 MiB offline gate which causes `PausableQueueGate` to
     /// pause the read loop via its replay-pause source. The shell stays alive; the loop
@@ -2034,7 +2038,11 @@ final class MuxChannelSession: @unchecked Sendable {
         // must fit the seq budget or the LAST chunk would exceed the cap.
         guard rendered.count <= source.replaySeqs.count * MuxFlowControl.maxOutputFramePayloadBytes
         else { return nil }
-        let messages = ReplayBuffer.rechunkSnapshot(rendered, across: source.replaySeqs)
+        // Under the lock like every other call: the re-chunker writes the buffer's message slot,
+        // and the handle admits no overlapping call even for one that reads no session state.
+        replayLock.lock()
+        let messages = replay.rechunkSnapshot(rendered, across: source.replaySeqs)
+        replayLock.unlock()
         guard adopting else { return messages }
         consumeDetachedBacklog(backlog)
         // Adopt the rendered stream AS the retained history ("as if the host had emitted it
@@ -2149,28 +2157,73 @@ final class MuxChannelSession: @unchecked Sendable {
     /// Tears this channel down FOR GOOD and releases its PTY + master fd.
     ///
     /// ⚠️ DESTROY-ONLY. Every caller of `shutdown()` is a genuine end-of-session:
-    /// `HostServer.stop()` (daemon stopping) and `HostServer.removeMuxSession()` — itself
-    /// reached only from the child's own exit, a peer `channelClose`, or a whole-link drop
-    /// (peer crash / TCP reset). There is NO per-channel reconnect/resume, so none of those is
-    /// keep-alive: the shell MUST die here, or the PTY + master fd leak on every disconnect.
+    /// `HostServer.removeMuxSession()` — itself reached only from the child's own exit, a peer
+    /// `channelClose`, or a whole-link drop (peer crash / TCP reset) — and the two refuse-the-open
+    /// races in `HostServer` that tear down a session they never registered. There is NO
+    /// per-channel reconnect/resume, so none of those is keep-alive: the shell MUST die here, or
+    /// the PTY + master fd leak on every disconnect.
+    ///
+    /// **`HostServer.stop()` is NOT one of them any more** — a daemon stop goes through
+    /// ``relinquishDetached(completion:)`` → ``relinquish()``, which is the entire point of
+    /// `docs/51`. Do not route it back here.
     /// WHEN PER-CHANNEL RESUME LANDS, a resume-able disconnect must route to a NEW `detach()`
     /// that stops the read loop + closes the master WITHOUT killing the child — it must NOT
     /// come through here (this path SIGKILLs the shell).
     ///
-    /// ### Why the child is killed BEFORE `closeMaster()` (the latent-hang fix)
-    /// `closeMaster()` → `close(masterFD)` BLOCKS on macOS while the `PTYReadLoop` is parked
-    /// inside an in-flight kernel `read()` on that same fd. `readLoop?.stop()` signals the
-    /// loop's `NSCondition` gate but CANNOT interrupt a `read()` already in the kernel — that
-    /// read only returns when the slave closes, i.e. when the child dies. For a self-exiting
-    /// child the reader is already at EOF, but an INTERACTIVE shell (`/bin/sh` awaiting input)
-    /// never exits on its own, so without killing it `close()` hangs FOREVER. So: `hangup()`
-    /// (SIGHUP — "terminal closed"; an interactive zsh exits AND persists its command history
-    /// to `$HISTFILE`, which it never does under SIGTERM→SIGKILL) + `terminate()` (SIGTERM,
-    /// for children that catch it for graceful cleanup but treat SIGHUP as a reload) → bounded
-    /// wait for the reaper → `forceTerminate()` (SIGKILL) if neither took → short re-wait.
-    /// Once the child is dead the slave closes, the parked `read()` returns EOF/EIO, the loop
-    /// exits, and `closeMaster()` is non-blocking.
+    /// ### Why the child used to have to be killed BEFORE `closeMaster()`
+    /// `closeMaster()` → `close(masterFD)` BLOCKS on macOS while a reader is parked inside an
+    /// in-flight kernel `read()` on that same fd, and the in-process `PTYReadLoop` could not be
+    /// interrupted out of one: that read returns only when the slave closes, i.e. when the child
+    /// dies. So "stop the reader" implicitly meant "kill the shell", and this ladder — `hangup()`
+    /// (SIGHUP; an interactive zsh exits AND persists its history, which it never does under
+    /// SIGKILL) → `terminate()` → bounded wait → `forceTerminate()` — existed to produce the
+    /// corpse the close needed.
+    ///
+    /// ### None of that is true any more, and the difference is ``relinquish()``
+    /// This process no longer reads the master at all; superd does, and its reader parks in
+    /// `poll(2)` on a wake pipe as well. Nothing here is parked in a `read()`, so `close()` cannot
+    /// block on one. The signals below stay because this method's contract is still "destroy" —
+    /// they are simply no longer load-bearing for the close, which is exactly what made it possible
+    /// to let a pane GO without ending it.
     func shutdown() {
+        teardown(killChild: true)
+    }
+
+    /// Lets this pane GO: same teardown as ``shutdown()``, but the child is neither signalled nor
+    /// waited for, and superd is never told the pane is over.
+    ///
+    /// ⚠️ hostd-lifecycle ONLY — `HostServer.stop()`, and nothing else. The distinction is the
+    /// entire product change behind `docs/51`: "this daemon is going away" and "this pane is over"
+    /// used to be the same code path, so editing one Swift file cost the user every running agent.
+    /// Now hostd drops its duplicate of the master and exits; superd still holds the original, the
+    /// shell never sees a `SIGHUP`, and the next hostd adopts the pane back
+    /// (`HostServer.adoptSurvivingPanes()`).
+    ///
+    /// Two things it deliberately does NOT do, either:
+    /// - **delete the ZDOTDIR shim dir** — the shell is still running out of it;
+    /// - **delete or unregister anything keyed by the session id** — the journal file on disk is
+    ///   what the restart replays into the reattached pane.
+    func relinquish() {
+        // Nothing is written down on the way out any more. The boundary between "already on disk"
+        // and "still to come" used to be hostd's to publish here, because hostd was journaling a
+        // stream it did not own; superd owns both ends of that now and answers the same number from
+        // memory when the next daemon asks (`journalInfo`, `docs/51` §6.8). The stream is still
+        // stopped first, because a pane being let go is a pane in mid-sentence and its subscriber
+        // is going away.
+        stopSupervisedOutputStream()
+        teardown(killChild: false)
+    }
+
+    /// Unsubscribes this pane's supervised output, without touching the child. Idempotent —
+    /// ``teardown(killChild:)`` calls it again a moment later.
+    private func stopSupervisedOutputStream() {
+        taskLock.lock()
+        let stream = readLoop
+        taskLock.unlock()
+        stream?.stop()
+    }
+
+    private func teardown(killChild: Bool) {
         taskLock.lock()
         let signalTeardown = !teardownSignaled
         teardownSignaled = true
@@ -2194,6 +2247,9 @@ final class MuxChannelSession: @unchecked Sendable {
         agentWatchTask?.cancel() // stop the foreground-process poll
         screenScanTask?.cancel() // stop the screen-rule scan loop
         screenScanTask = nil
+        // Hand the pane's grid back to screend. Best-effort by construction — its registry evicts
+        // on its own — but a host that never says so keeps 256 dead grids warm for the day.
+        screenScanner.release()
         agentWatchTask = nil
         // `outputTask.cancel()` GENUINELY unblocks a drain parked on an exhausted DATA credit
         // window: `MuxSubChannel.awaitChunkCredit`'s park is cancellation-aware, so a cancelled sender
@@ -2235,16 +2291,41 @@ final class MuxChannelSession: @unchecked Sendable {
         // this pane since it opened) — plus SIGTERM for children that catch it for graceful
         // cleanup; then a bounded wait for the reaper to observe the exit; if the child
         // blocked/ignored both (or a foreground job kept the slave open), escalate to SIGKILL
-        // and re-wait briefly. This GUARANTEES the parked read() returns before
-        // close(masterFD), so close() never hangs.
-        pty.hangup()
-        pty.terminate()
-        // Drain the master while waiting: the read loop is already stopped, and a shell caught
-        // mid-prompt-redraw blocks in tcsetattr(TCSADRAIN) until its pending output is consumed
-        // — undrained, it never processes the SIGHUP (no history save) and eats the SIGKILL.
-        if !pty.waitUntilExitedDrainingMaster(timeout: 0.25) {
-            pty.forceTerminate()
-            pty.waitUntilExited(timeout: 0.25)
+        // and re-wait briefly.
+        //
+        // Skipped entirely on the relinquish path: there the shell is meant to still be running
+        // when this returns, which is the one thing the whole daemon exists to make possible.
+        if killChild {
+            pty.hangup()
+            pty.terminate()
+            // Drain the master while waiting: the read loop is already stopped, and a shell caught
+            // mid-prompt-redraw blocks in tcsetattr(TCSADRAIN) until its pending output is consumed
+            // — undrained, it never processes the SIGHUP (no history save) and eats the SIGKILL.
+            if !pty.waitUntilExitedDrainingMaster(timeout: 0.25) {
+                pty.forceTerminate()
+                if !pty.waitUntilExited(timeout: 0.25) {
+                    // Every signal above travelled the supervisor socket, and each one's error path
+                    // is deliberately empty — "this IS the escalation path", from a time when hostd
+                    // held the ONLY master fd and `closeMaster()` guaranteed a `SIGHUP` whatever
+                    // `kill(2)` did. It does not any more: superd holds the original, so a signal
+                    // that never arrived leaves the child running with nothing left to end it. The
+                    // user closes a tab, the `claude` behind it keeps going, and the next
+                    // `adoptSurvivingPanes()` hands the closed tab back, live.
+                    //
+                    // `release` is the authoritative end — superd drops its own master and kills —
+                    // and it is issued ONLY here, after the whole ladder failed. On the ordinary
+                    // path the child is already dead and a release would race the reaper for the
+                    // same pane.
+                    if !pty.release(kill: true) {
+                        onLog?(
+                            "pane \(sessionID.uuidString): the child survived SIGHUP, SIGTERM and "
+                                + "SIGKILL and superd could not be reached to release it — the "
+                                + "shell is still running under superd and can be ended with "
+                                + "`slopdesk-ctl`",
+                        )
+                    }
+                }
+            }
         }
         // Quiesce the PTY WRITER before closing the master — the write-side sibling of the
         // read-loop discipline above. Every input write runs as a blocking `write(2)` block on the
@@ -2254,14 +2335,63 @@ final class MuxChannelSession: @unchecked Sendable {
         // would inject bytes into an unrelated pane's PTY (the write-path TOCTOU). Bounded: the
         // child is already dead (SIGHUP/SIGTERM→SIGKILL above), so a write parked on a full kernel
         // PTY buffer returns EIO once the slave side is gone — the drain cannot hang.
+        //
+        // On the RELINQUISH path there is no such bound, and this used to be an unbounded
+        // `inputQueue.sync {}`. The child is alive by design, and a foreground program that is not
+        // reading its tty (a `claude` mid tool-call, a build) leaves a >8 KiB paste parked in the
+        // kernel for as long as it likes. `HostServer.stop()` awaits every one of these, so one
+        // such pane meant `slopdesk-hostd` never reached `exit(0)`: `make host-restart` timed out
+        // with the OLD daemon still on the port — a restart that cannot finish, which is worse than
+        // the restart cost this whole change set exists to remove. So the drain is bounded, and the
+        // TIMEOUT decides the close: an in-flight `write(2)` on a descriptor we then closed is the
+        // write-path TOCTOU (the fd number gets recycled by a concurrent `openpty()` and the stale
+        // write lands in an unrelated pane's terminal), so a drain that did not finish keeps
+        // hostd's duplicate OPEN. One leaked fd on a pane nobody could type into anyway, against a
+        // daemon that cannot exit or a pane that receives another's keystrokes.
         inputGateLock.lock()
         inputWritesClosed = true
         inputGateLock.unlock()
-        inputQueue.sync {}
-        pty.closeMaster()
-        // The child has exited, so its ZDOTDIR shim dir is dead — delete it so the host's temp dir
-        // does not accumulate one `slopdesk-zdotdir-*` dir per opened pane forever.
-        if let shimDir { try? FileManager.default.removeItem(at: shimDir) }
+        if quiesceInputWrites(timeout: killChild ? 5 : 2) {
+            pty.closeMaster()
+        } else {
+            onLog?(
+                "pane \(sessionID.uuidString): an input write is still parked in the kernel — "
+                    + "hostd's duplicate of the master is left open rather than closed under it. "
+                    + "The shell keeps running under superd; the fd goes when this process does",
+            )
+        }
+        // The LAST statement of the teardown, and the only thing a test can watch to know the whole
+        // path ran to the end. It used to watch the ZDOTDIR shim dir disappear here; that directory
+        // now belongs to superd, which is the only process that outlives hostd and can therefore
+        // clean it up at all (`shellintegration.rs`). Recording the fact directly says what those
+        // tests were actually asserting, instead of inferring it from a side effect.
+        taskLock.lock()
+        teardownCompletions += 1
+        taskLock.unlock()
+    }
+
+    /// How many times ``teardown(killChild:)`` has run to completion. A test seam.
+    ///
+    /// Teardown is dispatched to a queue, so "the session was shut down" is not observable at the
+    /// call site; this is.
+    var teardownCompletionsForTesting: Int {
+        taskLock.lock()
+        defer { taskLock.unlock() }
+        return teardownCompletions
+    }
+
+    /// Waits for every already-enqueued input write to finish, or `timeout`, whichever comes first.
+    ///
+    /// The gate (``inputWritesClosed``) is closed before this is called, so nothing new joins the
+    /// queue and the block enqueued here is the last one. `async` + a semaphore rather than `sync`,
+    /// because `sync` on a serial queue with a blocking `write(2)` on it has no way out.
+    ///
+    /// - Returns: `true` when the queue drained, `false` on timeout — see the caller for why that
+    ///   answer decides whether the master is closed.
+    private func quiesceInputWrites(timeout: TimeInterval) -> Bool {
+        let drained = DispatchSemaphore(value: 0)
+        inputQueue.async { drained.signal() }
+        return drained.wait(timeout: .now() + timeout) == .success
     }
 
     /// A serial-safe BACKGROUND queue for the blocking ``shutdown()`` work, kept OFF the cooperative
@@ -2290,6 +2420,15 @@ final class MuxChannelSession: @unchecked Sendable {
     func shutdownDetached(completion: (@Sendable () -> Void)? = nil) {
         Self.teardownQueue.async { [self] in
             shutdown()
+            completion?()
+        }
+    }
+
+    /// ``relinquish()`` on the teardown queue — the non-blocking form `HostServer.stop()` uses so
+    /// N panes are let go in parallel rather than one after another.
+    func relinquishDetached(completion: (@Sendable () -> Void)? = nil) {
+        Self.teardownQueue.async { [self] in
+            relinquish()
             completion?()
         }
     }
@@ -2442,13 +2581,10 @@ final class MuxChannelSession: @unchecked Sendable {
         {
             return // the PTY already holds exactly this grid.
         }
+        // The RESOLVED size, not the requester's offer — and the same call tells superd, which
+        // records it beside the transcript so a later life's restore parses those bytes at the
+        // geometry they were emitted for. A width no client ever had would re-wrap every line.
         pty.setWindowSize(cols: grid.cols, rows: grid.rows, pxWidth: grid.px, pxHeight: grid.py)
-        // Persist the RESOLVED size next to the disk journal — not the requester's offer. A later
-        // daemon life's snapshot restore parses the journaled bytes at the geometry they were
-        // emitted for, and a sidecar naming a width no client ever had re-wraps every line. Inside
-        // the writer section for the same reason as the ioctl: the sidecar describes the size the
-        // PTY holds, so it takes its order from the same total order.
-        scrollbackJournal?.recordWindowSize(rows: Int(grid.rows), cols: Int(grid.cols))
         // The resident screen grid is fixed-size — a geometry change rebuilds it from the ring
         // on the next scan (full-screen apps repaint at the new size anyway).
         markScreenModelDirty()
@@ -2642,13 +2778,13 @@ final class MuxChannelSession: @unchecked Sendable {
     // MARK: - Output FIFO / control-out producers (append-then-yield; no lost wake)
 
     /// The PTY read-loop chunk handler (runs on the read-loop thread, serial). Factored out of
-    /// the `onChunk` closure so the disk-journal + sniffer + FIFO path is drivable headlessly
-    /// (no PTY) via ``ingestPTYChunkForTesting(_:)``.
-    private func ingestPTYChunk(_ chunk: Data) {
-        // Disk journal FIRST (fire-and-forget onto the journal's serial queue — no file I/O on
-        // this hot thread). Only genuine PTY output lands here, so the restored preamble (which
-        // enters via ``enqueueRestoredScrollback()``) is never re-journaled.
-        scrollbackJournal?.append(chunk)
+    /// the `onChunk` closure so the sniffer + FIFO path is drivable headlessly (no PTY) via
+    /// ``ingestPTYChunkForTesting(_:)``.
+    private func ingestPTYChunk(
+        _ chunk: Data,
+        sniffed: [SniffedEvent] = [],
+        blocks: [BlockEvent] = [],
+    ) {
         // A title RETIREMENT folded on another thread since the last chunk (a detected agent
         // exited) also retires the sniffer's coalescing anchor — otherwise the NEXT agent's
         // opening title, which is very often byte-identical to the one just retired
@@ -2657,12 +2793,16 @@ final class MuxChannelSession: @unchecked Sendable {
         let forgetTitle = pendingTitleCoalescingReset
         pendingTitleCoalescingReset = false
         titleLock.unlock()
-        if forgetTitle { sniffer.forgetTitleCoalescing() }
-        // ONE fused non-destructive sniffer pass over the chunk (title/bell + OSC 133
-        // command status — one pass, not two per-byte machines scanning this hot thread
-        // twice). It only OBSERVES; the bytes are forwarded unchanged below. Emission
-        // order is byte-faithful interleaved (consumers fold each type independently).
-        let controlMsgs = sniffer.observe(chunk)
+        if forgetTitle {
+            pty.forgetTitleCoalescing()
+            titleAnchorRetirements &+= 1
+        }
+        // What the shell said out of band in THESE bytes, as superd's pump found it
+        // (`rust/slopdesk-superd/src/sniffer.rs`). hostd no longer runs an OSC state machine over
+        // every byte of every pane: the reader that already holds the bytes does one pass and sends
+        // the ANSWER, which arrives paired with the chunk it came from, so the emission order below
+        // is byte-faithful interleaved exactly as it was.
+        let controlMsgs = Self.wireMessages(from: sniffed)
         // Agent-control: cache the latest title from any sniffed title message so
         // `list-panes` can return it without an extra sniffer pass. Runs on the PTY
         // read-loop thread (serial) — update under titleLock (read from control socket
@@ -2686,10 +2826,21 @@ final class MuxChannelSession: @unchecked Sendable {
             // `lastExitCode` even with blocks tracking off. A code-less `D` keeps the prior latch
             // (the shim always reports `$?`; a bare `D` carries no new truth to replace it with).
             if case let .commandStatus(.idle(_, durationMS)) = msg {
-                // The duration is host-measured C→D wall clock and arrives on EVERY `D`, including
-                // the code-less one the exit latch below deliberately ignores.
+                // The duration is superd-measured C→D wall clock and arrives on EVERY `D`, including
+                // the code-less one the exit latch below deliberately ignores. The same `D` closes
+                // the running latch the reattach re-assert reads.
                 commandExitLock.lock()
                 lastDurationTruth = durationMS
+                commandRunningSince = nil
+                commandExitLock.unlock()
+            }
+            if case .commandStatus(.running) = msg {
+                // Stamped on receipt rather than carried in the event: the scale that matters is the
+                // one `pane/titleFresh` compares against (`systemUptime`, docs/45 §4.4), which is
+                // this process's, and superd's clock is not it. The two differ by the socket hop,
+                // which is orders of magnitude below the freshness window.
+                commandExitLock.lock()
+                commandRunningSince = ProcessInfo.processInfo.systemUptime
                 commandExitLock.unlock()
             }
             if case let .commandStatus(.idle(exitCode, _)) = msg, let exitCode {
@@ -2719,7 +2870,7 @@ final class MuxChannelSession: @unchecked Sendable {
         // Only OBSERVES; the bytes below are forwarded unchanged. `nil` when SLOPDESK_BLOCKS
         // is off, so the pipeline stays byte-identical. Kept OFF the data drain (its own
         // CONTROL FIFO) so block metadata never stalls data sends.
-        feedBlocks(chunk)
+        foldBlocks(blocks)
         // Screen-rule engine tap: APPEND-only on this thread (the scan task owns the grid and
         // all regex work). On overflow the buffer is dropped and the grid marked dirty — the
         // next scan rebuilds from the ring instead of replaying an unbounded backlog here.
@@ -3078,7 +3229,18 @@ final class MuxChannelSession: @unchecked Sendable {
     /// The `systemUptime` at which the CURRENT command block opened, `nil` at a prompt. The other
     /// half of the `pane/titleFresh` verdict.
     var commandStartedAtForControl: TimeInterval? {
-        sniffer.commandRunningSince()
+        commandStatusForReattach()
+    }
+
+    /// When the CURRENT command block opened, `nil` at a prompt.
+    ///
+    /// The reattach re-assert publishes ONLY the running case, and deliberately: idle IS the
+    /// client's reconnect reset state, and a synthetic `.idle` would fabricate a `lastCommand`
+    /// (exit nil / 0 ms) and a completion edge for a command that never finished.
+    private func commandStatusForReattach() -> TimeInterval? {
+        commandExitLock.lock()
+        defer { commandExitLock.unlock() }
+        return commandRunningSince
     }
 
     /// The host's own open command block — the pane's running command line, `nil` at a prompt or
@@ -3091,9 +3253,7 @@ final class MuxChannelSession: @unchecked Sendable {
     var runningCommandForControl: String? {
         blocksLock.lock()
         defer { blocksLock.unlock() }
-        guard let open = blockTracker?.openBlockForControl() else { return nil }
-        let text = open.commandText.trimmingCharacters(in: .whitespacesAndNewlines)
-        return text.isEmpty ? nil : text
+        return _runningCommand
     }
 
     /// The last foreground process name the watcher sampled (type 26's current value).
@@ -3140,35 +3300,22 @@ final class MuxChannelSession: @unchecked Sendable {
 
     // MARK: - Agent-control block surface (the `last-output` / `run --wait` verbs)
 
-    /// The last `limit` closed blocks with retained output, or `nil` when blocks tracking is
-    /// disabled (`SLOPDESK_BLOCKS=0`) — the caller distinguishes "no blocks yet" (`[]`) from
-    /// "feature off" (`nil`).
-    func recentBlocksForControl(limit: Int) -> [CommandBlockTracker.ControlBlock]? {
-        blocksLock.lock()
-        defer { blocksLock.unlock() }
-        return blockTracker?.recentBlocksForControl(limit: limit)
+    /// The last `limit` closed blocks with their retained output, the running command, and the
+    /// `run --wait` baseline — one round trip to superd, which holds all three.
+    ///
+    /// `nil` when the pane has no tap (`SLOPDESK_BLOCKS=0`, or superd never knew the pane), which
+    /// the caller reports differently from "no blocks yet" (an empty `recent`). One call rather than
+    /// three because the three are only consistent with each other if superd read them together.
+    func blockControlForControl(limit: Int) -> BlocksReply? {
+        guard blocksEnabled else { return nil }
+        return pty.blockControl(limit: limit)
     }
 
-    /// The still-RUNNING block snapshot (saw `C`, no `D`), `nil` when none / blocks disabled.
-    func openBlockForControl() -> CommandBlockSegmenter.CommandBlock? {
-        blocksLock.lock()
-        defer { blocksLock.unlock() }
-        return blockTracker?.openBlockForControl()
-    }
-
-    /// The `run --wait` baseline: the block index the next shell command will close under,
-    /// `nil` when blocks tracking is disabled.
-    func expectedNextBlockIndexForControl() -> UInt32? {
-        blocksLock.lock()
-        defer { blocksLock.unlock() }
-        return blockTracker?.expectedNextCommandIndex
-    }
-
-    /// The retained output bytes for a closed block, `nil` when evicted / unknown / disabled.
+    /// The retained output bytes for a closed block, `nil` when the pane has no tap and EMPTY when
+    /// the block was evicted or never existed.
     func blockOutputBytesForControl(index: UInt32) -> [UInt8]? {
-        blocksLock.lock()
-        defer { blocksLock.unlock() }
-        return blockTracker?.outputBytes(index: index)
+        guard blocksEnabled else { return nil }
+        return pty.blockOutput(index: index)
     }
 
     /// Registers a block observer for the `run --wait` verb (see ``CommandBlockUpdate``).
@@ -3236,14 +3383,32 @@ final class MuxChannelSession: @unchecked Sendable {
         for (_, observer) in observers { observer(chunk) }
     }
 
-    /// Feeds one outbound chunk to the per-channel Blocks tracker (under ``blocksLock``) and
-    /// enqueues any resulting type-28 `commandBlock` metadata on the CONTROL sender. A no-op when
-    /// blocks are disabled (`blockTracker == nil`), so the byte pipeline stays byte-identical.
-    private func feedBlocks(_ chunk: Data) {
-        guard blocksEnabled else { return }
-        blocksLock.lock()
-        let messages = blockTracker?.ingest(chunk) ?? []
-        blocksLock.unlock()
+    /// Folds what superd's command-block tap found in THIS chunk into the control stream.
+    ///
+    /// hostd no longer segments anything: the reader that already holds the bytes does the OSC 133
+    /// walk, dedupes the result, and sends the ANSWER on a `0x05` frame that rides immediately ahead
+    /// of the chunk that produced it (`rust/slopdesk-superd/src/blocks.rs`). What is left here is
+    /// the translation into type-28/type-32 and the two latches those feed.
+    ///
+    /// An empty batch — the overwhelming majority of chunks — costs the `isEmpty` test and nothing
+    /// else, and a pane with no tap never receives one at all.
+    ///
+    /// The flag is re-checked anyway. It is the same flag the spawn asked the tap for, so in
+    /// production this cannot fire; it is here because the flag also gates every block READ, and a
+    /// fold that ignored it could publish a block the reads would then refuse to elaborate on.
+    private func foldBlocks(_ blocks: [BlockEvent]) {
+        guard blocksEnabled, !blocks.isEmpty else { return }
+        // The running command line, for `PaneLiveness.capture`. Latched here rather than fetched
+        // because that capture runs for every pane on every reconciler tick and must stay a lock
+        // acquisition — see `_runningCommand`.
+        for event in blocks {
+            guard case let .block(meta) = event else { continue }
+            let text = meta.commandText.trimmingCharacters(in: .whitespacesAndNewlines)
+            blocksLock.lock()
+            _runningCommand = meta.complete || text.isEmpty ? nil : text
+            blocksLock.unlock()
+        }
+        let messages = Self.wireMessages(from: blocks)
         latchProgress(messages) // auto-progress is a second type-32 source — same reattach truth
         if !messages.isEmpty { broadcastControl(messages) }
         notifyBlockObservers(messages)
@@ -3466,9 +3631,7 @@ final class MuxChannelSession: @unchecked Sendable {
     /// Addressed to the JOINING subscriber — the navigator it is missing is its own.
     private func resendBlocksOnReattach(to id: MuxSubscriberID = MuxChannelSession.primarySubscriberID) {
         guard blocksEnabled else { return }
-        blocksLock.lock()
-        let messages = blockTracker?.snapshotForResync() ?? []
-        blocksLock.unlock()
+        let messages = pty.blockSnapshot()?.map(Self.commandBlockMessage) ?? []
         if !messages.isEmpty { sendControl(messages, to: id) }
     }
 
@@ -3479,10 +3642,8 @@ final class MuxChannelSession: @unchecked Sendable {
         index: UInt32,
         to id: MuxSubscriberID = MuxChannelSession.primarySubscriberID,
     ) {
-        blocksLock.lock()
-        let message = blockTracker?.serveOutput(index: index) ?? .blockOutput(index: index, output: Data())
-        blocksLock.unlock()
-        sendControl([message], to: id)
+        let bytes = blockOutputBytesForControl(index: index) ?? []
+        sendControl([.blockOutput(index: index, output: Data(bytes))], to: id)
     }
 
     /// Serves a `metadataRequest(requestID:verb:payload:)` by running the PURE
@@ -3539,7 +3700,7 @@ final class MuxChannelSession: @unchecked Sendable {
                 return
             }
             // The agent-hooks verbs (installAgentHooks = 11 / uninstallAgentHooks = 12 write or
-            // strip our entries in ~/.claude/settings.json via `AgentInstaller`; agentHookStatus = 13 is a
+            // strip our entries in ~/.claude/settings.json via ``AgentHooks``; agentHookStatus = 13 is a
             // pure read returning the 2-byte `[installed][listenerActive]` flags — the second byte is the
             // LIVE hook-listener bind state so the client can show installed-but-inactive). Handled
             // HERE — BEFORE, and never reaching, the read-only `MetadataResponseBuilder`. `response`
@@ -3711,6 +3872,26 @@ final class MuxChannelSession: @unchecked Sendable {
 
     /// Marks the read loop as having drained the master to EOF (called from `onEOF`, and from
     /// ``shutdown()`` so a torn-down exit task never waits the full timeout).
+    /// Re-opens this pane's output subscription after the supervisor connection came back.
+    ///
+    /// Returns whether output is flowing again. See ``PaneOutputStream/resubscribe()`` — the pane
+    /// and its shell are untouched by a control-socket drop, but the subscription is not.
+    @discardableResult
+    func resubscribeSupervisedOutput() -> Bool {
+        taskLock.lock()
+        let stream = readLoop
+        taskLock.unlock()
+        return stream?.resubscribe() ?? false
+    }
+
+    /// superd came back and does not know this pane: it restarted, so it was the last holder of
+    /// this master and the shell went with it. End the session on that fact rather than waiting for
+    /// an `exited` notice that nobody is left to send.
+    func supervisedPaneVanished() {
+        signalEOFReached()
+        pty.completeExitFromSupervisorLoss()
+    }
+
     private func signalEOFReached() { eofLock.lock()
         eofReached = true
         eofLock.unlock()
@@ -3769,22 +3950,23 @@ final class MuxChannelSession: @unchecked Sendable {
     ///   ring is disabled (cap = 0), disabling cold-reattach scrollback replay.
     /// - `SLOPDESK_SCROLLBACK_BYTES` — integer byte cap for the ring. Defaults to
     ///   `ReplayBuffer.defaultScrollbackBytes` (64 MiB). Ignored when scrollback persist is off.
-    /// - `SLOPDESK_SCROLLBACK_DISTILL` — default-ON (`env != "0"`). When ON, a ``ScrollbackDistiller``
+    /// - `SLOPDESK_SCROLLBACK_DISTILL` — default-ON (`env != "0"`). When ON, a distill pass
+    ///   (`rust/slopdesk-sanitize/src/distill.rs`)
     ///   is injected so a COLD-reattach scrollback replay collapses the transient B→C line-editor churn
     ///   (tab-completion menus, autosuggestions, per-keystroke redraws) to the committed OSC-133 command
     ///   line — the fresh terminal then re-renders a clean transcript instead of raw editing artifacts.
     ///   Set `"0"` to replay the raw scrollback bytes instead.
     /// - `SLOPDESK_SCROLLBACK_STRIP_QUERIES` — default-ON (`env != "0"`). When ON, a
-    ///   ``TerminalQueryStripper`` pass removes terminal queries / echoed responses / stale color
+    ///   query-stripper pass (`rust/slopdesk-sanitize/src/query.rs`) removes terminal queries / echoed responses / stale color
     ///   state from the replayed history, so the client terminal never re-answers a prior life's
     ///   DA/XTVERSION/OSC-color probes into the shell's stdin (the reattach "garbage input" bug).
     /// - `SLOPDESK_SCROLLBACK_STRIP_INPUT_MODES` — default-ON (`env != "0"`). When ON, a
-    ///   ``TerminalInputModeStripper`` pass removes mouse / kitty-keyboard / in-band-resize mode
+    ///   input-mode-stripper pass (`rust/slopdesk-sanitize/src/inputmode.rs`) removes mouse / kitty-keyboard / in-band-resize mode
     ///   changes from the replayed history (they'd transiently arm the client's input reporting
     ///   mid-replay) and re-asserts only the NET final state after the replay — a live TUI keeps
     ///   its modes, an exited one leaves nothing armed.
     /// - `SLOPDESK_SCROLLBACK_STRIP_EOL_MARKS` — default-ON (`env != "0"`). When ON, a
-    ///   ``PromptEOLMarkStripper`` pass normalizes zsh's width-dependent PROMPT_SP mark+fill
+    ///   prompt-EOL-mark pass (`rust/slopdesk-sanitize/src/prompteol.rs`) normalizes zsh's width-dependent PROMPT_SP mark+fill
     ///   clusters so replay at a different grid width doesn't grow stray `%` lines per prompt.
     /// The env-derived ``SnapshotReplayPolicy`` — `SLOPDESK_SCROLLBACK_SNAPSHOT` default-ON
     /// (`!= "0"`), warm threshold `SLOPDESK_SNAPSHOT_WARM_BYTES` (default 4 MiB). `nil`
@@ -3818,18 +4000,41 @@ final class MuxChannelSession: @unchecked Sendable {
             } else {
                 ReplayBuffer.defaultScrollbackBytes
             }
-        // Distill + query-strip composition — shared with the disk journal's restore so both
-        // replay paths stay behaviour-identical (see ``ScrollbackReplayTransform``).
+        // The replay passes are `rust/slopdesk-sanitize`, inside the handle — shared with the disk
+        // journal's restore so both replay paths stay behaviour-identical (see
+        // ``ScrollbackReplayTransform``).
         return ReplayBuffer(
             scrollbackBytes: scrollbackCap,
+            distill: ScrollbackReplayTransform.distills(environment: env),
             // reassert: the ring replays into a cold client of a LIVE session — a TUI that is
             // still running needs its input modes re-established after the (stripped) replay.
-            scrollbackDistiller: ScrollbackReplayTransform.make(environment: env, reassertInputModes: true),
+            reassertInputModes: true,
         )
     }
 
-    // MARK: - Test seams (replay-backpressure wiring)
+    // MARK: - Test seams that must live in the BODY (a stored property cannot sit in an extension)
 
+    /// Race seam — invoked by ``rebindRelay(data:control:onExit:)`` immediately after the restarted
+    /// output drain has been created and its detached-backlog kick delivered (see the call site).
+    /// `nil` in production; tests use it to pin that the control wake continuation/sender are
+    /// rebuilt BEFORE the output drain can run.
+    var onOutputDrainRestartedForTesting: (() -> Void)?
+
+    /// Race seam — fired inside ``joinSubscriber(id:data:control:sizePassive:)`` with
+    /// the joiner already in the set and its DATA sender not yet built: the window in which fanned-out
+    /// frames land in an outbox whose wake is nil.
+    var onJoinerAdmittedForTesting: (@Sendable () async -> Void)?
+}
+
+// MARK: - Test seams (replay-backpressure wiring, and the folds a PTY would otherwise gate)
+
+/// The headless seams, in an extension so the type body stays inside its length budget — every
+/// one of these drives PRODUCTION glue (the append/ack/online wiring, the chunk fold, the
+/// detection fold) against real collaborators, without a PTY or a running read loop.
+///
+/// `private` is file-scoped in Swift, so nothing here reaches further than the main body already
+/// does. Reached via `@testable import`; never used in production.
+extension MuxChannelSession {
     // These drive the append/ack/online glue against a real ``PausableQueueGate`` WITHOUT a PTY or
     // read loop, so the "retained ≥ cap → pause; ack → resume" wiring is provable headlessly. Reached
     // via `@testable import`; never used in production.
@@ -3866,6 +4071,14 @@ final class MuxChannelSession: @unchecked Sendable {
         defer { fanoutLock.unlock() }
         return fanoutActive
     }
+
+    /// The event→wire translation, for the suite that pins it against the same JSON superd emits.
+    static func wireMessagesForTesting(_ sniffed: [SniffedEvent]) -> [WireMessage] {
+        wireMessages(from: sniffed)
+    }
+
+    /// How many times the read loop has asked superd to retire the sniffer's title anchor.
+    var titleAnchorRetirementsForTesting: Int { titleAnchorRetirements }
 
     /// Drives the real ``setClientOnline(_:)`` glue (offline-gate side).
     func setClientOnlineForTesting(_ online: Bool) { setClientOnline(online) }
@@ -3912,25 +4125,12 @@ final class MuxChannelSession: @unchecked Sendable {
     /// the lock; the wake yield is a no-op pre-`startRelay` since the continuation is nil).
     /// Drives the REAL PTY chunk handler (disk-journal hook + sniffer + FIFO append) without a
     /// PTY or read loop — the production `onChunk` closure is exactly this call.
-    func ingestPTYChunkForTesting(_ chunk: Data) { ingestPTYChunk(chunk) }
-
-    /// Drives ``foldScreenDetection(_:at:)`` — the screen-rule verdict fold — with an injected
-    /// clock, mirroring the production scan-task call site.
-    func foldScreenDetectionForTesting(_ detection: AgentScreenDetection, at now: TimeInterval) {
-        foldScreenDetection(detection, at: now)
-    }
-
-    /// Drives the REAL fresh-spawn restore enqueue (the exact call ``startRelay()`` makes)
-    /// without needing a spawned PTY's master fd.
-    func enqueueRestoredScrollbackForTesting() { enqueueRestoredScrollback() }
-
-    /// Whether the fresh-spawn restore preamble is still pinned on the session. Must read
-    /// `false` after ``enqueueRestoredScrollback()`` — the out-FIFO copy is the only owner
-    /// from then on; a session-lifetime stored copy pinned up to the journal cap per pane.
-    var hasRestoredScrollbackForTesting: Bool {
-        fifoLock.lock()
-        defer { fifoLock.unlock() }
-        return restoredScrollback != nil
+    /// - Parameter sniffed: what superd's sniffer would have found in `chunk`. Supplied rather than
+    ///   derived, because deriving it would mean a second OSC state machine in Swift — the very
+    ///   thing the port deleted. The parse itself is pinned in `rust/slopdesk-superd`, against the
+    ///   same golden corpus; what these callers drive is the FOLD over the answer.
+    func ingestPTYChunkForTesting(_ chunk: Data, sniffed: [SniffedEvent] = []) {
+        ingestPTYChunk(chunk, sniffed: sniffed)
     }
 
     func enqueueChunkForTesting(bytes: Data, control: [WireMessage] = []) {
@@ -3983,17 +4183,6 @@ final class MuxChannelSession: @unchecked Sendable {
     }
 
     static var maxControlOutQueuedForTesting: Int { maxControlOutQueued }
-
-    /// Race seam — invoked by ``rebindRelay(data:control:onExit:)`` immediately after the restarted
-    /// output drain has been created and its detached-backlog kick delivered (see the call site).
-    /// `nil` in production; tests use it to pin that the control wake continuation/sender are
-    /// rebuilt BEFORE the output drain can run.
-    var onOutputDrainRestartedForTesting: (() -> Void)?
-
-    /// Race seam — fired inside ``joinSubscriber(id:data:control:sizePassive:)`` with
-    /// the joiner already in the set and its DATA sender not yet built: the window in which fanned-out
-    /// frames land in an outbox whose wake is nil.
-    var onJoinerAdmittedForTesting: (@Sendable () async -> Void)?
 
     /// Whether a subscriber's control sender has its wake continuation installed. Read
     /// under `controlOutLock` — the same lock the enqueue reads it under, so this answers
@@ -4063,9 +4252,15 @@ final class MuxChannelSession: @unchecked Sendable {
     func suspendMetadataQueueForTesting() { metadataQueue.suspend() }
     func resumeMetadataQueueForTesting() { metadataQueue.resume() }
 
-    /// Drives the real `feedBlocks` glue (segmenter tap → broadcastControl) WITHOUT a PTY/read loop,
-    /// so the type-28 emission + the byte-identical-when-off contract are provable headlessly.
-    func feedBlocksForTesting(_ chunk: Data) { feedBlocks(chunk) }
+    /// Drives the real `foldBlocks` glue (superd's `0x05` events → broadcastControl) WITHOUT a
+    /// PTY/read loop, so the type-28 emission + the byte-identical-when-off contract are provable
+    /// headlessly.
+    func foldBlocksForTesting(_ blocks: [BlockEvent]) { foldBlocks(blocks) }
+    /// The block-event→wire translation, for the suite that pins it against the same JSON superd emits.
+    static func wireMessagesForTesting(_ blocks: [BlockEvent]) -> [WireMessage] {
+        wireMessages(from: blocks)
+    }
+
     /// Drives the real `serveBlockOutput` glue (ring lookup → the requester's control queue).
     func serveBlockOutputForTesting(index: UInt32) { serveBlockOutput(index: index) }
     /// Whether the Blocks tap is active for this channel (the tracker was instantiated).
@@ -4073,23 +4268,82 @@ final class MuxChannelSession: @unchecked Sendable {
 
     private static func writeAll(fd: Int32, data: Data) {
         #if canImport(Darwin)
-        data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
-            guard let base = raw.baseAddress else { return }
-            var offset = 0
-            let total = raw.count
-            while offset < total {
-                let n = write(fd, base + offset, total - offset)
-                if n > 0 {
-                    offset += n
-                } else if n < 0 {
-                    if errno == EINTR { continue }
-                    return
-                } else {
-                    return
+        FileDescriptorWrite.all(fd: fd, data)
+        #endif
+    }
+}
+
+// MARK: - What the shell said, as what a client is told
+
+/// The translation from superd's sniff to this pane's control messages, in an extension because it
+/// is the one part of the fold that holds nothing: no latch, no lock, no order beyond the batch's
+/// own. `private` is file-scoped in Swift, so the main body reaches it unchanged.
+///
+/// The two vocabularies are deliberately separate. superd reports what the shell SAID; this session
+/// decides what a client is TOLD, and those differ for a cwd (host-gated, resolved into a project
+/// key downstream) and a notification (dropped while an agent's hook already banners the edge).
+private extension MuxChannelSession {
+    /// One sniffed batch as the control messages this pane publishes.
+    ///
+    /// An ``SniffedEvent/unknown(kind:)`` is dropped: it is a kind a NEWER superd knows and this
+    /// build does not, and inventing a message for it would be worse than staying quiet.
+    static func wireMessages(from sniffed: [SniffedEvent]) -> [WireMessage] {
+        sniffed.compactMap { event in
+            switch event {
+            case let .title(title): .title(title)
+            case .bell: .bell
+            case .commandRunning: .commandStatus(.running)
+            case let .commandIdle(exitCode, durationMS):
+                .commandStatus(.idle(exitCode: exitCode, durationMS: durationMS))
+            case let .cwd(path): .cwd(path)
+            case let .notification(title, body): .notification(title: title, body: body)
+            // OSC 9;4 crosses the socket unparsed, because the progress vocabulary belongs to
+            // `ProgressOSCParser` and a second copy of that grammar inside the byte reader is the
+            // drift this port exists to remove. A body that will not parse is dropped — it was
+            // progress either way, never a notification.
+            case let .progress(body):
+                ProgressOSCParser.parse(body).map { state, percent in
+                    .progress(state: state.rawValue, percent: percent)
                 }
+            case .unknown: nil
             }
         }
-        #endif
+    }
+
+    /// One command-block batch as the control messages this pane publishes.
+    ///
+    /// The synthetic badge is where the two vocabularies genuinely differ: superd says "a slow
+    /// command started", and only this side knows that is spelled as an INDETERMINATE type-32 and
+    /// its clear as a zeroed one. `ProgressState` lives in `SlopDeskProtocol`, which superd does not
+    /// and must not link.
+    ///
+    /// An unknown kind is dropped for the same reason it is above: it is a fact a NEWER superd
+    /// knows and this build does not, and inventing a message for it would be worse than silence.
+    static func wireMessages(from blocks: [BlockEvent]) -> [WireMessage] {
+        blocks.compactMap { event in
+            switch event {
+            case let .block(meta): commandBlockMessage(meta)
+            case .progress(.indeterminate):
+                .progress(state: ProgressState.indeterminate.rawValue, percent: 0)
+            case .progress(.clear):
+                .progress(state: ProgressState.clear.rawValue, percent: 0)
+            case .unknown: nil
+            }
+        }
+    }
+
+    /// One block's metadata as its type-28. Shared by the live fold and the reattach backfill, which
+    /// receive the same object from superd precisely so this can be one function.
+    static func commandBlockMessage(_ meta: BlockMetadata) -> WireMessage {
+        .commandBlock(
+            index: meta.index,
+            exitCode: meta.exitCode,
+            durationMS: meta.durationMS,
+            complete: meta.complete,
+            outputLen: meta.outputLen,
+            commandText: meta.commandText,
+            promptOrdinal: meta.promptOrdinal,
+        )
     }
 }
 
@@ -4552,6 +4806,14 @@ extension MuxChannelSession {
         defer { replayLock.unlock() }
         return replay.highestSeq
     }
+
+    /// The highest sequence number this session has ever assigned — the ceiling of any honest
+    /// resume verdict.
+    ///
+    /// Reattach needs it because a session's numbering is a property of the SESSION OBJECT, and an
+    /// adopted pane is a new object around an old shell: its buffer starts at zero while the client
+    /// coming back to it is warm and remembers thousands. See `HostServer.performReattach`.
+    var highestAssignedSeq: Int64 { replayHighestSeqLocked() }
 
     /// LEAVES: retires ONE member and reports whether the set is now EMPTY.
     ///

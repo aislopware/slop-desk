@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 
 /// Adaptive FEC: picks the per-frame XOR-parity group size from the host's
@@ -20,7 +21,7 @@ public enum AdaptiveFECPolicy {
     /// The default on-wire tier. Tier 0 routes to the endpoint's configured `fec.groupSize`
     /// on BOTH ends (5 in prod); its flags-byte bits are all-zero → byte-identical to the
     /// pre-adaptive path when the host always sends it.
-    public static let defaultTier: UInt8 = 0
+    public static let defaultTier = UInt8(truncatingIfNeeded: slopdesk_adaptive_fec_constant(0))
 
     // MARK: Multi-loss Reed-Solomon activation (SLOPDESK_FEC_M / SLOPDESK_FEC_K)
 
@@ -48,14 +49,14 @@ public enum AdaptiveFECPolicy {
         /// Allowed range for the parity-shard count `m` (per-group loss-recovery budget). Upper bound
         /// 8 is conservative (already heavy redundancy); the GF(2^8) bound `k + m <= 255` is enforced
         /// jointly below.
-        public static let mRange = 1...8
+        public static let mRange = Int(slopdesk_adaptive_fec_constant(7))...Int(slopdesk_adaptive_fec_constant(8))
         /// Allowed range for the fixed data-group size `k` (= the codec's column count when `m > 1`).
         /// Floored at 2 (a 1-data-shard group is degenerate), capped at 64 (well within MTU-bound
         /// fragment counts), with `k + m <= 255` enforced jointly.
-        public static let kRange = 2...64
+        public static let kRange = Int(slopdesk_adaptive_fec_constant(9))...Int(slopdesk_adaptive_fec_constant(10))
         /// Default fixed group size when multi-loss is active but `SLOPDESK_FEC_K` is unset (5 ⇒ prod
         /// default, 20% parity at `m == 1`; `m/k` overhead at `m > 1`).
-        public static let defaultK = 5
+        public static let defaultK = Int(slopdesk_adaptive_fec_constant(6))
 
         /// Resolved parity count `m` (clamped to ``mRange``; `1` = inactive / unchanged wire), read
         /// once from `SLOPDESK_FEC_M` at process start (env static — fixed for the lifetime, so host
@@ -87,18 +88,25 @@ public enum AdaptiveFECPolicy {
         /// PURE resolution of `SLOPDESK_FEC_M` (testable without process state): parse, default 1,
         /// clamp to ``mRange``. A non-numeric / out-of-range value clamps to the nearest bound.
         public static func resolveParityCount(env: [String: String]) -> Int {
-            guard let raw = env["SLOPDESK_FEC_M"], let m = Int(raw) else { return 1 }
-            return min(max(m, mRange.lowerBound), mRange.upperBound)
+            let raw = Array((env["SLOPDESK_FEC_M"] ?? "").utf8)
+            return raw.withUnsafeBufferPointer { m in
+                Int(slopdesk_adaptive_fec_resolve_parity_count(m.baseAddress, m.count))
+            }
         }
 
         /// PURE resolution of `SLOPDESK_FEC_K` (testable without process state): parse, default
         /// ``defaultK``, clamp to ``kRange``, then cap so `k + m <= 255` (the GF(2^8) field bound) for
         /// the resolved `m`. With `m == 1` the cap is inert (k <= 64 already satisfies k+1 <= 255).
         public static func resolveGroupSize(env: [String: String]) -> Int {
-            let m = resolveParityCount(env: env)
-            let raw = env["SLOPDESK_FEC_K"].flatMap { Int($0) } ?? defaultK
-            let clamped = min(max(raw, kRange.lowerBound), kRange.upperBound)
-            return min(clamped, 255 - m) // joint GF(2^8) bound k + m <= 255
+            let rawK = Array((env["SLOPDESK_FEC_K"] ?? "").utf8)
+            let rawM = Array((env["SLOPDESK_FEC_M"] ?? "").utf8)
+            return rawK.withUnsafeBufferPointer { k in
+                rawM.withUnsafeBufferPointer { m in
+                    Int(slopdesk_adaptive_fec_resolve_group_size(
+                        k.baseAddress, k.count, m.baseAddress, m.count,
+                    ))
+                }
+            }
         }
     }
 
@@ -124,9 +132,9 @@ public enum AdaptiveFECPolicy {
     /// — the hard `m > 1` constraint (the RS Cauchy encoder has exactly `k` columns; group-size tiers
     /// 2/3/4 map to `g != k` and so can NOT carry `m > 1`). Each tier resolves to a fixed receive `m`
     /// (2 / 3 / 5), consumed by the client reassembler.
-    public static let parityTierClean: UInt8 = 5 // m = 2 (least overhead, clean link)
-    public static let parityTierNormal: UInt8 = 6 // m = 3 (baseline, == legacy fixed FEC_M=3)
-    public static let parityTierBurst: UInt8 = 7 // m = 5 (heavy recovery on a loss burst)
+    public static let parityTierClean = UInt8(truncatingIfNeeded: slopdesk_adaptive_fec_constant(1))
+    public static let parityTierNormal = UInt8(truncatingIfNeeded: slopdesk_adaptive_fec_constant(2))
+    public static let parityTierBurst = UInt8(truncatingIfNeeded: slopdesk_adaptive_fec_constant(3))
 
     /// Whether the adaptive parity-count (`m`) ladder is active (`SLOPDESK_ADAPTIVE_FEC_M=1`),
     /// host-side. Default OFF.
@@ -159,10 +167,7 @@ public enum AdaptiveFECPolicy {
     /// to group size `= k` — safe for the `m > 1` Cauchy code. So pass the chosen m-tier straight
     /// through instead of forcing tier 0 (which would pin a single fixed `m`).
     public static func wireTier(adaptiveTier: UInt8) -> UInt8 {
-        if adaptiveMEnabled {
-            return adaptiveTier
-        }
-        return MultiLossFEC.isActive ? defaultTier : adaptiveTier
+        slopdesk_adaptive_fec_wire_tier(adaptiveTier, adaptiveMEnabled, MultiLossFEC.isActive)
     }
 
     // MARK: A. Wire codec (host packetize + client reassemble)
@@ -179,15 +184,11 @@ public enum AdaptiveFECPolicy {
     /// - tier 4 → 2   (severe, 50% overhead).
     /// - tier 5,6,7 and any other value → `default` (reserved → safe default, forward-compatible).
     public static func groupSize(forTier tier: UInt8, default defaultGroupSize: Int) -> Int? {
-        // Native Swift (single source of truth); TOTAL over every UInt8 — golden-vector
-        // `adaptiveGroupSize` pins it, and a corrupt-fragment tier can NEVER trap.
-        switch tier {
-        case 1: nil // OFF (clean link, no parity)
-        case 2: 10 // light (~10%)
-        case 3: 3 // heavy (~33%)
-        case 4: 2 // severe (50%)
-        default: defaultGroupSize // 0 + reserved 5,6,7 (+ any other) → safe default
-        }
+        // The absence comes back as the RETURN value, not as a reserved size: every size is legal
+        // here, including the 0 a caller may pass as its own default.
+        var size = 0
+        guard slopdesk_adaptive_fec_group_size(tier, defaultGroupSize, &size) else { return nil }
+        return size
     }
 
     // MARK: B. Loss → tier decision (host only)
@@ -219,65 +220,7 @@ public enum AdaptiveFECPolicy {
         previousTier: UInt8,
         allowOff: Bool = allowOffTierDefault,
     ) -> UInt8 {
-        // Native Swift (single source of truth); golden-vector `adaptiveTier` pins bit-exact parity.
-        let current = levelForTier(previousTier)
-        let target = max(
-            targetLevel(forLossRate: loss, currentLevel: current),
-            relaxFloorLevel(allowOff: allowOff),
-        )
-        let stepped: Int = if target > current { current + 1 } else if target < current { current - 1 } else { current }
-        return tierForLevel(stepped)
-    }
-
-    // MARK: Group-size ladder internals (level ↔ wire-tier translation + hysteretic target)
-
-    /// The lowest redundancy LEVEL the relax path may land on: 1 (g10) by default, 0 (OFF) only
-    /// behind the escape hatch. Escalation is unaffected (it only ever raises the level).
-    private static func relaxFloorLevel(allowOff: Bool) -> Int { allowOff ? 0 : 1 }
-
-    /// Internal redundancy LEVEL, monotonic in loss (0 = least redundancy … 4 = most):
-    ///  level 0 = OFF, 1 = g10, 2 = g5 (the default), 3 = g3, 4 = g2.
-    /// The wire tier numbering is NOT the redundancy order (tier 0 must be g5 for byte-identity),
-    /// so these maps translate between them.
-    private static func levelForTier(_ tier: UInt8) -> Int {
-        switch tier {
-        case 1: 0 // OFF
-        case 2: 1 // g10
-        case 0: 2 // g5 (default)
-        case 3: 3 // g3
-        case 4: 4 // g2
-        default: 2 // reserved → treat as the default/g5 level
-        }
-    }
-
-    private static func tierForLevel(_ level: Int) -> UInt8 {
-        switch level {
-        case 0: 1 // OFF
-        case 1: 2 // g10
-        case 2: 0 // g5 (default)
-        case 3: 3 // g3
-        case 4: 4 // g2
-        default: 0 // clamp → default
-        }
-    }
-
-    /// The redundancy level the loss demands, given the current level. Hysteretic: asymmetric
-    /// up/down thresholds create a dead-band so a loss oscillating around a boundary does NOT flap.
-    ///
-    /// Up-thresholds (raise redundancy):  ≥0.005→L1, ≥0.02→L2, ≥0.05→L3, ≥0.10→L4.
-    /// Down-thresholds (relax):  <0.002→L0, <0.012→L1, <0.035→L2, <0.08→L3.
-    private static func targetLevel(forLossRate loss: Double, currentLevel current: Int) -> Int {
-        let upLevel =
-            if loss >= 0.10 { 4 } else if loss >= 0.05 { 3 } else if loss >= 0.02 { 2 }
-            else if loss >= 0.005 { 1 } else { 0 }
-
-        let downLevel =
-            if loss < 0.002 { 0 } else if loss < 0.012 { 1 } else if loss < 0.035 { 2 }
-            else if loss < 0.08 { 3 } else { 4 }
-
-        if upLevel > current { return upLevel } // loss has risen → demand more redundancy
-        if downLevel < current { return downLevel } // loss low enough → relax
-        return current // dead-band → hold
+        slopdesk_adaptive_fec_tier(loss, previousTier, allowOff)
     }
 
     // MARK: Relax dwell (4G burst-flap fix)
@@ -298,7 +241,7 @@ public enum AdaptiveFECPolicy {
     /// version assumed. So ~12s = 240 reports, not 24. (The original 24 gave a 1.2s dwell — 10× too fast,
     /// defeating the anti-flap entirely; every ~8s burst still relaxed to OFF between bursts.) If that
     /// 50 ms cadence ever changes, re-derive this: `relaxDwellReports ≈ 12s / reportInterval`.
-    public static let relaxDwellReports = 240
+    public static let relaxDwellReports = Int(slopdesk_adaptive_fec_constant(4))
 
     /// STICKY RELAX: a report carrying UNRECOVERED frame loss proves the CURRENT redundancy was
     /// insufficient — relaxing soon after is exactly the measured blip-per-2.6s failure mode (see
@@ -306,7 +249,7 @@ public enum AdaptiveFECPolicy {
     /// dwell is DOUBLED (escalation stays immediate). Cheap: one countdown `Int` on ``TierState``. The
     /// window is `2 × dwell` BY CONSTRUCTION — a shorter window would close before a streak could reach
     /// the doubled dwell, reducing the mechanism to a one-report delay.
-    public static let stickyRelaxWindowReports = 2 * relaxDwellReports
+    public static let stickyRelaxWindowReports = Int(slopdesk_adaptive_fec_constant(5))
 
     /// Tier decision state for the dwell-gated variant: current wire tier, count of consecutive
     /// relax-demanding reports, and the sticky-relax countdown (reports left in the doubled-dwell
@@ -327,6 +270,24 @@ public enum AdaptiveFECPolicy {
             self.relaxStreak = relaxStreak
             self.stickyRelaxRemaining = stickyRelaxRemaining
         }
+
+        /// The same three fields in the layout the boundary passes by value. The state IS the
+        /// answer here, so it crosses whole rather than through a handle — three scalars are
+        /// cheaper to copy than an object is to own, and a value the host stores in its own session
+        /// cannot drift from a counter living somewhere else.
+        var wire: SlopDeskFecTierState {
+            SlopDeskFecTierState(
+                relax_streak: UInt32(max(0, relaxStreak)),
+                sticky_relax_remaining: UInt32(max(0, stickyRelaxRemaining)),
+                tier: tier,
+            )
+        }
+
+        init(_ wire: SlopDeskFecTierState) {
+            tier = wire.tier
+            relaxStreak = Int(wire.relax_streak)
+            stickyRelaxRemaining = Int(wire.sticky_relax_remaining)
+        }
     }
 
     /// Dwell-gated tier step — the production entry point (plain ``tier(forLossRate:previousTier:allowOff:)``
@@ -343,26 +304,9 @@ public enum AdaptiveFECPolicy {
         allowOff: Bool = allowOffTierDefault,
         sawUnrecoveredLoss: Bool = false,
     ) -> TierState {
-        // Native Swift (single source of truth). The whole hysteresis/dwell/sticky decision lives
-        // here; `dwell` + `allowOff` stay Swift-side env-derived params. Public API unchanged.
-        let sticky = sawUnrecoveredLoss ? stickyRelaxWindowReports : max(0, state.stickyRelaxRemaining - 1)
-        let effectiveDwell = sticky > 0 ? 2 * dwell : dwell
-        let current = levelForTier(state.tier)
-        let target = max(
-            targetLevel(forLossRate: loss, currentLevel: current),
-            relaxFloorLevel(allowOff: allowOff),
-        )
-        if target > current {
-            return TierState(tier: tierForLevel(current + 1), relaxStreak: 0, stickyRelaxRemaining: sticky)
-        }
-        if target < current {
-            let streak = state.relaxStreak + 1
-            if streak >= max(1, effectiveDwell) {
-                return TierState(tier: tierForLevel(current - 1), relaxStreak: 0, stickyRelaxRemaining: sticky)
-            }
-            return TierState(tier: state.tier, relaxStreak: streak, stickyRelaxRemaining: sticky)
-        }
-        return TierState(tier: state.tier, relaxStreak: 0, stickyRelaxRemaining: sticky)
+        TierState(slopdesk_adaptive_fec_next_tier_state(
+            loss, state.wire, UInt32(max(0, dwell)), allowOff, sawUnrecoveredLoss,
+        ))
     }
 
     /// Dwell-gated PARITY-tier step — the m-adaptive counterpart of ``nextTierState(forLossRate:state:dwell:allowOff:sawUnrecoveredLoss:)``.
@@ -377,62 +321,8 @@ public enum AdaptiveFECPolicy {
         dwell: Int = relaxDwellReports,
         sawUnrecoveredLoss: Bool = false,
     ) -> TierState {
-        // Native Swift (single source of truth). Asymmetric FAST-ATTACK / slow-decay over the
-        // 3-level parity-m ladder (clean/normal/burst → m 2/3/5), no OFF tier (floor = CLEAN).
-        let sticky = sawUnrecoveredLoss ? stickyRelaxWindowReports : max(0, state.stickyRelaxRemaining - 1)
-        let effectiveDwell = sticky > 0 ? 2 * dwell : dwell
-        let current = mLevelForTier(state.tier)
-        // Fast-attack: a real dropped frame floors the demand at NORMAL even before the EWMA reacts.
-        let target = sawUnrecoveredLoss
-            ? max(mTargetLevel(forLossRate: loss, currentLevel: current), 1)
-            : mTargetLevel(forLossRate: loss, currentLevel: current)
-
-        if target > current {
-            // Jump straight to the demanded level (not one step) — full parity by the next frame.
-            return TierState(tier: tierForMLevel(target), relaxStreak: 0, stickyRelaxRemaining: sticky)
-        }
-        if target < current {
-            let streak = state.relaxStreak + 1
-            if streak >= max(1, effectiveDwell) {
-                return TierState(tier: tierForMLevel(current - 1), relaxStreak: 0, stickyRelaxRemaining: sticky)
-            }
-            return TierState(tier: state.tier, relaxStreak: streak, stickyRelaxRemaining: sticky)
-        }
-        return TierState(tier: state.tier, relaxStreak: 0, stickyRelaxRemaining: sticky)
-    }
-
-    // MARK: Parity-m ladder internals (level ↔ parity-tier translation + hysteretic target)
-
-    /// Internal redundancy LEVEL for the parity-count ladder (0 = least `m` … 2 = most): 0=clean
-    /// (m2, tier 5), 1=normal (m3, tier 6), 2=burst (m5, tier 7). Any other tier (a corrupt read,
-    /// or a group-size tier) maps to the NORMAL baseline.
-    private static func mLevelForTier(_ tier: UInt8) -> Int {
-        switch tier {
-        case parityTierClean: 0
-        case parityTierBurst: 2
-        default: 1 // parityTierNormal and any other → baseline
-        }
-    }
-
-    private static func tierForMLevel(_ level: Int) -> UInt8 {
-        switch level {
-        case 0: parityTierClean
-        case 2: parityTierBurst
-        default: parityTierNormal // 1 and any clamp → baseline
-        }
-    }
-
-    /// The parity redundancy level the loss demands, given the current level. Hysteretic dead-band.
-    ///
-    /// Up-thresholds (raise `m`): ≥0.005 → L1, ≥0.03 → L2.
-    /// Down-thresholds (relax `m`): <0.002 → L0, <0.02 → L1.
-    private static func mTargetLevel(forLossRate loss: Double, currentLevel current: Int) -> Int {
-        let upLevel = if loss >= 0.03 { 2 } else if loss >= 0.005 { 1 } else { 0 }
-
-        let downLevel = if loss < 0.002 { 0 } else if loss < 0.02 { 1 } else { 2 }
-
-        if upLevel > current { return upLevel }
-        if downLevel < current { return downLevel }
-        return current
+        TierState(slopdesk_adaptive_fec_next_parity_tier_state(
+            loss, state.wire, UInt32(max(0, dwell)), sawUnrecoveredLoss,
+        ))
     }
 }

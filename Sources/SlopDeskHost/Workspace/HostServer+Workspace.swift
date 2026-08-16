@@ -268,10 +268,6 @@ extension HostServer {
 
     // MARK: - Test seams
 
-    func reconcileWorkspaceDocumentForTesting() async {
-        await reconcileWorkspaceDocument()
-    }
-
     func installWorkspaceDocumentForTesting() async {
         await installWorkspaceDocument()
     }

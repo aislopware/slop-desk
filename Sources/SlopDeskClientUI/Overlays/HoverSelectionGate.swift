@@ -18,8 +18,9 @@
 // A plain (non-`@Observable`) reference type on purpose: it mutates on every pointer move, and none of its
 // state is render input — observation would re-render the overlay per pixel of mouse travel.
 
-#if canImport(SwiftUI)
 import CoreGraphics
+
+#if canImport(SwiftUI)
 
 @MainActor
 final class HoverSelectionGate {

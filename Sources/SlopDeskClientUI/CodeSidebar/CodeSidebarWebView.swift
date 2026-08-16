@@ -12,6 +12,7 @@
 
 #if os(macOS)
 import AppKit
+import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 import SwiftUI
 import WebKit
@@ -553,19 +554,6 @@ final class CodeSidebarWebViewPool {
         })
     }
 
-    /// Pin every pooled webview's effective appearance (and first-paint backdrop) to the GROUND.
-    ///
-    /// The workbench is a SUNKEN PANEL, not an island (ONE ISLAND law 1, user-directed 2026-08-08):
-    /// it stands on the same cream ground as the navigator, so it follows the chrome's LIGHT
-    /// appearance and its seeded colour customizations paint the workbench in the ground tone —
-    /// panel and ground read as one continuous field. Creation pins new webviews the same way.
-    private func pinPooledWebViewsToGroundPolarity() {
-        for webView in webViews.values {
-            webView.appearance = NSAppearance(named: .aqua)
-            webView.underPageBackgroundColor = NSColor(slateHex: Slate.theme.groundHexValue)
-        }
-    }
-
     /// Remember the current first responder as the keyboard's rightful owner when
     /// ``CodeSidebarFocusPolicy/isTrackableKeyboardOwner(responderIsView:responderIsWindow:responderInsidePooledWebView:)``
     /// says it qualifies (a real view, not the window's orphan stand-in, not a pooled webview).
@@ -622,8 +610,11 @@ final class CodeSidebarWebViewPool {
         // Paint the GROUND behind the page so the first load / a bounce never flashes a tone the
         // column does not wear (the cmux `underPageBackgroundColor` trick).
         webView.underPageBackgroundColor = NSColor(slateHex: Slate.theme.groundHexValue)
-        // CHROME polarity — the workbench is a sunken panel on the ground, not an island
-        // (see `pinPooledWebViewsToGroundPolarity`).
+        // CHROME polarity — the workbench is a sunken panel on the ground, not an island (ONE ISLAND
+        // law 1): it stands on the same cream ground as the navigator, so it follows the chrome's
+        // LIGHT appearance and the seeded colour customizations paint it in the ground tone. Pinned
+        // HERE, at creation, and nowhere else — a re-pin pass over the pool existed and was never
+        // called, which was correct: `Slate.theme` does not change while the app runs.
         webView.appearance = NSAppearance(named: .aqua)
         // WebKit's own base canvas is WHITE until the page's first paint — with a multi-second
         // workbench boot that is a visible flash between the dark chrome and the dark editor. There
@@ -947,9 +938,7 @@ private final class CodeSidebarClipboardBridge: NSObject, WKScriptMessageHandler
         guard message.name == CodeSidebarPageDressing.clipboardHandlerName,
               let text = message.body as? String
         else { return }
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
+        ClientPasteboard.write(text)
     }
 }
 

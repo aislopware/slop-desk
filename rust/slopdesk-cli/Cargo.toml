@@ -1,0 +1,30 @@
+[package]
+name = "slopdesk-cli"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The pure core of the user-facing slopdesk CLI: flags, completions, config and output formatting"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[lints]
+workspace = true
+
+# ## Why this is a MEMBER of the root workspace, like `slopdesk-ctl` and unlike the five daemons
+# Every daemon had to leave because cargo profiles are workspace-global and a long-lived per-byte
+# server wants `opt-level = 3` / `panic = "unwind"`, the opposite of the hook's profile.
+#
+# `slopdesk` is the other short-lived program: a user types it, it does one thing, it exits. Startup
+# is the whole cost, so `opt-level = "z"` is right, and the process IS the request, so there is no
+# colleague connection for `panic = "unwind"` to protect. That is the same argument `slopdesk-ctl`
+# makes next door, which is why the two share a workspace rather than each having their own.
+#
+# This is the LIBRARY half only. The socket I/O, the GUI launch and the `exit` calls are the shell's,
+# and the shell is still Swift — see docs/DECISIONS.md, stage 16.
+[dependencies]
+# The same one dependency `slopdesk-ctl` takes, for the same reason: the rows this formats were
+# decoded from JSON a host produced out of bytes a foreign program drew into a PTY — pane titles,
+# cwd paths, command output. Hand-rolling an unescaper for that is the classic place to be wrong,
+# and `serde_json`'s object is a `BTreeMap`, so re-encoding reproduces Foundation's `.sortedKeys`
+# ordering for free — which is what keeps `--json` greppable and pipe-compatible across the port.
+serde_json = "1"

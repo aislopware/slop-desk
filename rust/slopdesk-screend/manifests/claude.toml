@@ -1,0 +1,198 @@
+id = "claude"
+version = "2026.08.11.1"
+# 3, not 2: the cross-region gate vetoes below are an engine-3 key, and an engine that ignored
+# them would drop every veto and read a repainting dialog as an idle prompt.
+min_engine_version = 3
+updated_at = "2026-08-11T00:00:00Z"
+aliases = ["claude-code"]
+
+[[rules]]
+id = "osc_title_working"
+state = "working"
+priority = 1100
+region = "osc_title"
+visible_working = true
+regex = ['^[\x{2800}-\x{28FF}] ']
+
+[[rules]]
+id = "btw_overlay_working"
+state = "working"
+priority = 975
+region = "bottom_non_empty_lines(5)"
+visible_working = true
+line_regex = [
+  '^\s*/btw(?:\s|$)',
+  '(?i)esc to close\s*$',
+]
+
+[[rules]]
+id = "transcript_viewer"
+state = "unknown"
+priority = 1000
+region = "bottom_non_empty_lines(3)"
+skip_state_update = true
+contains = ["showing detailed transcript"]
+any = [
+  { contains = ["ctrl+o", "to toggle"] },
+  { contains = ["ctrl+e", "show all"] },
+  { contains = ["ctrl+e", "collapse"] },
+  { contains = ["↑↓ scroll"] },
+  { contains = ["? for shortcuts"] },
+]
+
+[[rules]]
+id = "live_blocked_form"
+state = "blocked"
+priority = 980
+region = "after_last_horizontal_rule"
+visible_blocker = true
+contains = ["enter to select", "esc to cancel"]
+any = [
+  { contains = ["tab/arrow keys to navigate"] },
+  { contains = ["arrow keys to navigate"] },
+  { contains = ["arrows to navigate"] },
+  { contains = ["↑/↓ to navigate"] },
+  { contains = ["↑↓ to navigate"] },
+]
+
+[[rules]]
+id = "dynamic_workflow_prompt"
+state = "blocked"
+priority = 980
+region = "whole_recent"
+visible_blocker = true
+contains = ["run a dynamic workflow?", "esc to cancel"]
+
+[[rules]]
+id = "live_prompt_box"
+state = "idle"
+priority = 950
+region = "prompt_box_body"
+visible_idle = true
+line_regex = ['^\s*❯']
+not = [
+  { contains = ["enter to select"] },
+  { contains = ["esc to cancel"] },
+  { contains = ["tab/arrow keys"] },
+  { contains = ["arrow keys to navigate"] },
+  { contains = ["↑/↓ to navigate"] },
+  # ⚠️ DIVERGES FROM herdr (2026-08-11) — and this is the entry that matters.
+  #
+  # The five needles above are DEAD. They are evaluated against this rule's own region, and a
+  # modal dialog's footer sits BELOW the last horizontal rule — outside `prompt_box_body` by
+  # construction. So they never saw the thing they were written to veto, while the dialog's
+  # focused option (`❯ 1. …`) satisfied the `^\s*❯` caret above. One torn mid-repaint read of an
+  # `AskUserQuestion` therefore reported an IDLE PROMPT BOX with `visible_idle` — the strongest
+  # idle verdict the engine can produce — for a pane blocked on a human.
+  #
+  # This one looks where the evidence actually is. `after_last_horizontal_rule` is exactly
+  # `live_blocked_form`'s region, so the two rules are now strict complements: if a live form
+  # footer is on screen, this rule cannot fire, whatever the caret above it looks like.
+  { region = "after_last_horizontal_rule", any = [
+    { contains = ["enter to select"] },
+    { contains = ["esc to cancel"] },
+    { contains = ["tab/arrow keys"] },
+    { contains = ["arrow keys to navigate"] },
+    { contains = ["arrows to navigate"] },
+    { contains = ["↑/↓ to navigate"] },
+    { contains = ["↑↓ to navigate"] },
+  ] },
+  # …and the same veto read off the OPTION LIST rather than the footer, because a repaint
+  # ERASES lines before it rewrites them: mid-frame the footer is gone from every region, and
+  # the cross-region needle above has nothing left to find. The list survives, because it is
+  # what the caret is sitting in. `❯ 1. …` accompanied by a SIBLING `  2. …` is a menu, not
+  # somebody's typing — requiring the sibling is what keeps a human who types "1. foo" at a
+  # real prompt from being vetoed (and even then the cost is only losing `visible_idle`: the
+  # `✳` title rule still reports the pane idle).
+  { all = [
+    { line_regex = ['^\s*❯\s+\d+\.\s'] },
+    { line_regex = ['^\s{2,}\d+\.\s'] },
+  ] },
+]
+
+[[rules]]
+id = "model_picker_menu"
+state = "unknown"
+priority = 900
+region = "whole_recent"
+skip_state_update = true
+contains = ["select model", "enter to set as default", "esc to cancel"]
+not = [
+  { contains = ["do you want to proceed?"] },
+  { contains = ["enter to select"] },
+]
+
+[[rules]]
+id = "bash_permission_prompt"
+state = "blocked"
+priority = 850
+region = "whole_recent"
+visible_blocker = true
+contains = ["do you want to proceed?"]
+any = [
+  { contains = ["bash command"] },
+  { contains = ["bash("] },
+  { contains = ["contains expansion"] },
+  { contains = ["tab to amend"] },
+  { contains = ["ctrl+e to explain"] },
+]
+all = [
+  { any = [{ line_regex = ['(?i)^\s*❯?\s*yes\b'] }, { line_regex = ['(?i)^\s*1\.\s*yes\b'] }, { line_regex = ['(?i)^\s*2\.\s*no\b'] }] },
+]
+
+[[rules]]
+id = "generic_permission_prompt"
+state = "blocked"
+priority = 840
+region = "after_last_horizontal_rule"
+visible_blocker = true
+contains = ["do you want to proceed?", "esc to cancel"]
+all = [
+  { any = [
+    { line_regex = ['(?i)^\s*❯?\s*1\.\s*yes\b'] },
+    { line_regex = ['(?i)^\s*2\.\s*yes\b'] },
+    { line_regex = ['(?i)^\s*2\.\s*no\b'] },
+    { line_regex = ['(?i)^\s*3\.\s*no\b'] },
+  ] },
+]
+
+[[rules]]
+id = "legacy_no_prompt_blocker"
+state = "blocked"
+priority = 300
+region = "whole_recent"
+# ⚠️ DIVERGES FROM herdr (2026-08-11): upstream omits `visible_blocker` here, alone among the
+# blocked rules. That made a pane blocked through THIS rule carry a different visibility than a
+# pane blocked through any other, so alternating between them flipped `visible_blocker` and
+# published a type-27 saying something had changed when only the matching rule had. It also cost
+# the 800 ms stable-blocker refresh. A blocker the human can see is a visible blocker.
+visible_blocker = true
+any = [
+  { contains = ["do you want to"], any = [{ contains = ["yes"] }, { contains = ["❯"] }] },
+  { contains = ["would you like to"], any = [{ contains = ["yes"] }, { contains = ["❯"] }] },
+  { contains = ["waiting for permission"] },
+  { contains = ["do you want to allow this connection?"] },
+  { contains = ["tab to amend"] },
+  { contains = ["ctrl+e to explain"] },
+  { contains = ["do you want to proceed?", "esc to cancel"] },
+  { contains = ["review your answers"] },
+  { contains = ["skip interview and plan immediately"] },
+]
+not = [
+  { regex = ['(?m)^\s*❯\s*$'] },
+]
+
+[[rules]]
+id = "osc_title_idle"
+state = "idle"
+priority = 250
+region = "osc_title"
+visible_idle = true
+regex = ['^\x{2733} ']
+
+[[rules]]
+id = "osc_progress_idle"
+state = "idle"
+priority = 250
+region = "osc_progress"
+regex = ['^4;0']

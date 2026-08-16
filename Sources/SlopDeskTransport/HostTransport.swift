@@ -1,6 +1,5 @@
 import Foundation
 import Network
-import SlopDeskProtocol
 
 /// Host side of the SlopDesk transport: an `NWListener` that accepts shared-mux (CONTROL + DATA)
 /// TCP socket pairs, pairs the two physical connections by their preamble `connectionID` into one
@@ -340,11 +339,26 @@ public actor HostTransport {
     /// ``muxConnections`` for the mux relay owner. The first socket to arrive parks in `pendingMux`;
     /// the second completes the pair.
     private func associateMux(_ connection: NWConnection, connectionID: UUID, isControl: Bool) {
-        let link = NWMuxByteLink(connection: connection, label: isControl ? "host.control" : "host.data")
+        associateMux(
+            link: NWMuxByteLink(connection: connection, label: isControl ? "host.control" : "host.data"),
+            connectionID: connectionID,
+            isControl: isControl,
+        )
+    }
+
+    /// ``associateMux(_:connectionID:isControl:)`` once the physical socket has been wrapped as a
+    /// link. The split is not decoration: everything below this line — parking, the same-side
+    /// displacement close, the `createdAt` that the reaper measures against, the post-`stop()` refusal
+    /// — is reachable in a test only through a link it can build, and an `NWConnection` is not that.
+    /// The reaper's own doc claimed the expiry "is verified WITHOUT any wall-clock sleep" while there
+    /// was no test at all, because the only way in took a live socket.
+    ///
+    /// `internal` for exactly that reason, and no wider: the daemon's callers hand over connections.
+    func associateMux(link: any MuxByteLink, connectionID: UUID, isControl: Bool) {
         // After stop(), do NOT pair (yielding to the finished stream leaks the mux's 2 sockets)
         // or park (pendingMux is drained). Close this just-arrived link + any half-pair immediately.
         guard !stopped else {
-            Task { link.close() }
+            Task { await link.close() }
             if let existing = pendingMux.removeValue(forKey: connectionID) {
                 if let control = existing.control { Task { await control.close() } }
                 if let data = existing.data { Task { await data.close() } }

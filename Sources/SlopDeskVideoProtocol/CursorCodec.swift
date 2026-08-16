@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 
 /// Cursor side-channel message (doc 17 §3.3): the host strips the cursor from the
@@ -20,7 +21,8 @@ import Foundation
 /// off20: Float64 hotspotX
 /// off28: Float64 hotspotY
 /// ```
-/// = **36 bytes** — comfortably under the 64-byte budget.
+/// = **36 bytes** — comfortably under the 64-byte budget. `rust/slopdesk-video`'s `cursor` lays
+/// those bytes down and vends both numbers; this side only says which message it is.
 public struct CursorUpdate: Equatable, Sendable {
     /// Host-window-space position of the cursor (points).
     public var position: VideoPoint
@@ -39,45 +41,46 @@ public struct CursorUpdate: Equatable, Sendable {
     }
 
     /// On-wire message type byte for a cursor update.
-    public static let messageType: UInt8 = 1
+    public static let messageType = UInt8(slopdesk_cursor_constant(0))
     /// Encoded size in bytes (fixed).
-    public static let encodedSize = 36
+    public static let encodedSize = slopdesk_cursor_constant(1)
 
-    /// Encodes the update (fixed 36-byte big-endian message). Native Swift is the
-    /// single source of truth; the wire format is pinned by the `cursorUpdate` golden vector.
+    /// Encodes the update (fixed 36-byte big-endian message; the wire format is pinned by the
+    /// `cursorUpdate` golden vector).
     public func encode() -> Data {
-        var out = Data(capacity: Self.encodedSize)
-        out.append(Self.messageType)
-        out.appendBE(shapeID)
-        out.append(visible ? 1 : 0)
-        out.appendBE(position.x)
-        out.appendBE(position.y)
-        out.appendBE(hotspot.x)
-        out.appendBE(hotspot.y)
+        var out = Data(count: Self.encodedSize)
+        let written = out.withUnsafeMutableBytes { buffer in
+            slopdesk_cursor_encode(wire, nil, 0, buffer.baseAddress, buffer.count)
+        }
+        precondition(written == Self.encodedSize, "the cursor codec and its own fixed size disagree")
         return out
     }
 
     /// Decodes a cursor update (the wire format is pinned by the `cursorUpdate` golden vector).
-    /// Non-finite coordinates are rejected as `.malformed`: a NaN off the wire would otherwise
-    /// propagate through the client's aspect-fit math into a `CALayer` frame and crash with
-    /// `CALayerInvalidGeometry`. A malformed datagram must be DROPPED, not fatal.
+    /// Non-finite coordinates are rejected as `.malformed` by the Rust codec: a NaN off the wire
+    /// would otherwise propagate through the client's aspect-fit math into a `CALayer` frame and
+    /// crash with `CALayerInvalidGeometry`. A malformed datagram must be DROPPED, not fatal.
     public static func decode(_ data: Data) throws -> Self {
-        var reader = VideoByteReader(data)
-        let type = try reader.readUInt8()
-        guard type == messageType else {
-            throw VideoProtocolError.malformed("not a cursor update (type \(type))")
-        }
-        let shapeID = try reader.readUInt16()
-        let visible = try reader.readUInt8() != 0
-        let x = try reader.readFiniteFloat64("cursor.x")
-        let y = try reader.readFiniteFloat64("cursor.y")
-        let hx = try reader.readFiniteFloat64("cursor.hotspot.x")
-        let hy = try reader.readFiniteFloat64("cursor.hotspot.y")
+        let flat = try CursorChannelMessage.parse(data, expecting: messageType, called: "cursor update")
         return Self(
-            position: VideoPoint(x: x, y: y),
-            shapeID: shapeID,
-            hotspot: VideoPoint(x: hx, y: hy),
-            visible: visible,
+            position: VideoPoint(x: flat.x, y: flat.y),
+            shapeID: flat.shape_id,
+            hotspot: VideoPoint(x: flat.hotspot_x, y: flat.hotspot_y),
+            visible: flat.visible,
         )
+    }
+
+    /// The update flattened for the boundary — one value across, with `message_type` picking the
+    /// arm that reads it.
+    var wire: SlopDeskCursorMessage {
+        var flat = SlopDeskCursorMessage()
+        flat.message_type = Self.messageType
+        flat.x = position.x
+        flat.y = position.y
+        flat.hotspot_x = hotspot.x
+        flat.hotspot_y = hotspot.y
+        flat.shape_id = shapeID
+        flat.visible = visible
+        return flat
     }
 }

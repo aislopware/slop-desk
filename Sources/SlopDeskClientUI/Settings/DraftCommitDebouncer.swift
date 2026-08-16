@@ -13,8 +13,6 @@
 // idle (not k), the committed value is the FINAL text, and `flush` commits immediately while cancelling any
 // pending idle commit so it can never double-fire.
 
-import Foundation
-
 /// A tiny trailing-edge debouncer for draft-backed text fields: `schedule` (re)arms a one-shot idle commit
 /// (each call resets the timer, so a burst of keystrokes yields exactly one trailing commit of the LAST
 /// scheduled closure); `flush` commits NOW and disarms; `cancel` disarms without committing.

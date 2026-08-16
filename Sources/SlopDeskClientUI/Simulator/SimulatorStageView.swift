@@ -308,19 +308,14 @@ struct SimulatorStageView: View {
         .animation(Slate.Anim.smallFade, value: isRetryHovering)
     }
 
-    /// OPAQUE, on the stage's own tone rather than a dimming scrim. A scrim says "something is on top
-    /// of the picture"; there is no picture, and the truthful drawing is the stage itself, empty.
+    /// The empty stage and its caption are ``DevicePanelChrome``'s — a design decision both panels
+    /// make identically, kept in one place so a pass over one file cannot re-tone only one of them.
     private func veil(@ViewBuilder content: () -> some View) -> some View {
-        VStack(spacing: Slate.Metric.space2) { content() }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Slate.Surface.field)
-            .transition(.opacity)
+        DevicePanelChrome.veil(content: content)
     }
 
     private func caption(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: Slate.Typeface.footnote))
-            .foregroundStyle(Slate.Text.secondary)
+        DevicePanelChrome.caption(text)
     }
 
     /// How long the model may be loading before the veil admits it. MEASURED: a booted device's first
@@ -333,13 +328,10 @@ struct SimulatorStageView: View {
     /// way down. `.task(id:)` cancels this when the model's state flips, which is what makes the
     /// pending veil for a stream that arrived in time never appear at all.
     private func followLoading() async {
-        guard model.isAwaitingStream else {
-            showsLoading = false
-            return
-        }
-        try? await Task.sleep(for: Self.veilDelay)
-        guard !Task.isCancelled else { return }
-        showsLoading = true
+        guard let state = await DevicePanelChrome.loadingVeilState(
+            isAwaiting: model.isAwaitingStream, after: Self.veilDelay,
+        ) else { return }
+        showsLoading = state
     }
 
     // MARK: Feedback

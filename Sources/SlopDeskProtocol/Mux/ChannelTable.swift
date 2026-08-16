@@ -1,22 +1,22 @@
-import Foundation
+import CSlopDeskFFI
 
 /// Lifecycle state of one logical mux channel.
 ///
 /// SSH-style `CHANNEL_CLOSE` symmetry: a channel is only fully ``closed`` after BOTH
 /// sides have sent their close. While exactly one side has closed, the channel is
 /// ``halfClosed`` — frames may still arrive from the side that has not closed yet.
-public enum ChannelState: Sendable, Equatable {
+public enum ChannelState: UInt32, Sendable, Equatable {
     /// Allocated id with no `open` recorded yet (never carried data).
-    case idle
+    case idle = 0
     /// Both sides live; the channel routes data.
-    case open
+    case open = 1
     /// Exactly one side has sent `CHANNEL_CLOSE`; awaiting the peer's close.
-    case halfClosed
+    case halfClosed = 2
     /// Both sides have closed; the channel is dead and will not be reused.
-    case closed
+    case closed = 3
 }
 
-/// Pure value-type bookkeeping for the set of logical channels on one mux connection.
+/// Bookkeeping for the set of logical channels on one mux connection.
 ///
 /// Allocates **odd** channel ids (1, 3, 5, …) — even ids and 0 are reserved for the
 /// peer / future use — using a monotonic counter that NEVER reuses a live id (an id
@@ -24,80 +24,36 @@ public enum ChannelState: Sendable, Equatable {
 /// ``ChannelState`` with SSH `CHANNEL_CLOSE` symmetry: each side sends close, and the
 /// channel is fully closed only after both.
 ///
-/// No IO, no clock, no sockets — just the integer allocator and the per-channel state
-/// machine, so it is trivially unit-testable in isolation.
-public struct ChannelTable: Sendable, Equatable {
-    /// Per-channel state. Closed channels are retained so their ids are never reused.
-    private var states: [UInt32: ChannelState] = [:]
-    /// The last odd id handed out by ``allocate()``; 0 means none yet (first is 1).
-    private var lastAllocated: UInt32 = 0
+/// The allocator, the state machine and the eviction ring that bounds the retained entries against
+/// peer-chosen id churn all live in `rust/slopdesk-wire`'s `mux::channels`. This is the handle: a
+/// `final class` because a map plus a ring cannot cross a boundary in a call, and intentionally
+/// **not** `Sendable` — one table per connection, driven by its owner.
+public final class ChannelTable {
+    /// The Rust table. Owned outright: one `new` here, one `free` in `deinit`.
+    private let handle: OpaquePointer
 
-    /// Insertion-ordered ring of ids that have reached a terminal-ish state (``ChannelState/halfClosed``
-    /// or ``ChannelState/closed``). Terminal entries are otherwise retained forever (so a monotonic id
-    /// is never reused), but on the HOST the PEER chooses ids, so sustained channelOpen→channelClose
-    /// CHURN with a fresh id each cycle would grow `states` without bound — the live-channel cap never
-    /// trips because the live count returns to ~0 between cycles. This ring bounds the retained
-    /// terminal entries: once full, recording a new terminal id EVICTS the oldest terminal id from
-    /// `states`. Sized >= `maxChannelsPerConnection` so legitimate churn is never evicted while still
-    /// routable; an evicted id's late frame hits `state(of:) == nil` and is dropped as unknown (never a
-    /// crash). `lastAllocated` is monotonic and independent of `states`, so evicting a closed id can
-    /// never cause the local allocator to re-hand it out.
-    private var terminalRing: [UInt32] = []
-    private var terminalRingHead = 0
-    private static let terminalRingCap = 1024
-
-    public init() {}
-
-    /// Records `id` as newly terminal and, once the ring is full, evicts the oldest terminal id from
-    /// `states` (O(1) — overwrites a ring slot, no array shift). Call EXACTLY once per id, on its first
-    /// transition into a terminal state, so a single id never occupies two ring slots.
-    ///
-    /// INVARIANT (load-bearing): only ever record an id that is FULLY DETACHED from routing — i.e. its
-    /// owner has already removed it from the dispatch maps (`dataChannels`/`controlChannels`), so a frame
-    /// for an evicted id resolves to `state(of:) == nil` and is dropped as unknown (never a crash). A
-    /// `.halfClosed` id still counts as "live" in ``liveChannelIDs``, so eviction CAN drop a logically-
-    /// half-closed entry from `states`; that is safe today only because both close paths tear the
-    /// dispatch-map entry down at the FIRST close (when noteTerminal fires) and never resurrect it from
-    /// `states`. If a future change ever kept a half-closed channel ROUTABLE (true SSH half-close — the
-    /// unclosed direction keeps flowing), recording it here would let the ring silently drop a still-
-    /// flowing channel after 1024 distinct closes on one connection. Don't record routable ids.
-    private mutating func noteTerminal(_ id: UInt32) {
-        if terminalRing.count < Self.terminalRingCap {
-            terminalRing.append(id)
-        } else {
-            let evicted = terminalRing[terminalRingHead]
-            if evicted != id { states[evicted] = nil }
-            terminalRing[terminalRingHead] = id
-            terminalRingHead += 1
-            if terminalRingHead == Self.terminalRingCap { terminalRingHead = 0 }
+    public init() {
+        guard let handle = slopdesk_channel_table_new() else {
+            preconditionFailure("out of memory for a channel table")
         }
+        self.handle = handle
     }
+
+    deinit { slopdesk_channel_table_free(handle) }
 
     /// Allocates the next unused **odd** channel id (client-initiated convention) and
     /// records it as ``ChannelState/idle``. Monotonic: an id is never handed out
     /// twice, even across closes, so a stale frame for a dead id can never collide
     /// with a fresh channel.
-    public mutating func allocate() -> UInt32 {
-        // First id is 1; thereafter advance by 2 to stay odd.
-        let id = lastAllocated == 0 ? 1 : lastAllocated + 2
-        lastAllocated = id
-        states[id] = .idle
-        return id
+    public func allocate() -> UInt32 {
+        slopdesk_channel_table_allocate(handle)
     }
 
     /// Marks `id` as ``ChannelState/open`` (both sides live). Idempotent for an
-    /// already-open channel; a no-op for an unknown or already-closed id.
-    public mutating func open(_ id: UInt32) {
-        switch states[id] {
-        case .idle,
-             .open,
-             .none:
-            // `.none` lets a responder register a peer-initiated id it did not allocate.
-            states[id] = .open
-        case .halfClosed,
-             .closed:
-            break // closing/closed channels do not re-open
-        }
+    /// already-open channel; a no-op for an already-closed id. An id the table has never seen
+    /// becomes open, which is how a responder registers a peer-initiated channel.
+    public func open(_ id: UInt32) {
+        slopdesk_channel_table_open(handle, id)
     }
 
     /// Records that the responder REFUSED our channel-open (it replied
@@ -105,89 +61,63 @@ public struct ChannelTable: Sendable, Equatable {
     /// opened, so there is NO half-close handshake — the id goes straight to
     /// ``ChannelState/closed`` (retained, never reused, like any closed id).
     ///
-    /// Accepts the transition from BOTH `.idle` AND `.open`: the production client marks a
-    /// channel `.open` OPTIMISTICALLY in `openChannel()` — before the frame is even sent — so by
-    /// ack time the state is never `.idle`. An `.idle`-only guard would make a real host refusal
-    /// (`stopping`, reattach-key race) a silent no-op: the router would report `.open`, the
-    /// sub-channels would never finish, and the pane would hang open + silent forever.
-    /// A no-op for an id already closing/closed or never allocated (a stray refusal for an
-    /// unknown id creates no entry). Returns the resulting state.
+    /// A stray refusal for an id that was never allocated creates no entry.
     @discardableResult
-    public mutating func reject(_ id: UInt32) -> ChannelState {
-        switch states[id] {
-        case .idle,
-             .open:
-            states[id] = .closed
-            noteTerminal(id)
-        case .halfClosed,
-             .closed,
-             .none:
-            break // already terminal (ring-recorded at first close) or unknown — no entry created
-        }
-        return states[id] ?? .closed
+    public func reject(_ id: UInt32) -> ChannelState {
+        state(slopdesk_channel_table_reject(handle, id))
     }
 
     /// Records that THIS side sent `CHANNEL_CLOSE` on `id` and returns the resulting
     /// state. `open`/`idle` → ``ChannelState/halfClosed``; an already ``halfClosed``
     /// channel (peer closed first) → ``ChannelState/closed`` (both sides done).
     @discardableResult
-    public mutating func localClose(_ id: UInt32) -> ChannelState {
-        advanceClose(id)
+    public func localClose(_ id: UInt32) -> ChannelState {
+        state(slopdesk_channel_table_local_close(handle, id))
     }
 
     /// Records that the PEER sent `CHANNEL_CLOSE` on `id` and returns the resulting
     /// state. Symmetric with ``localClose(_:)``: the first close half-closes, the
     /// second fully closes.
     @discardableResult
-    public mutating func remoteClose(_ id: UInt32) -> ChannelState {
-        advanceClose(id)
-    }
-
-    /// Shared close transition used by both sides — `CHANNEL_CLOSE` symmetry means a
-    /// close from either direction advances the same one-step state machine.
-    private mutating func advanceClose(_ id: UInt32) -> ChannelState {
-        switch states[id] {
-        case .idle,
-             .open:
-            states[id] = .halfClosed // first close from either side
-            noteTerminal(id) // newly terminal — bound the retained entries
-            return .halfClosed
-        case .halfClosed:
-            states[id] = .closed // second close — both sides done (already ring-recorded at half-close)
-            return .closed
-        case .closed:
-            return .closed // already dead
-        case .none:
-            // A close for an id we NEVER registered must create NO entry. Inserting
-            // `states[id] = .closed` here would let a hostile peer grow `states` without bound by
-            // spamming `channelClose` for arbitrary peer-chosen ids — a small-frame-in /
-            // permanent-allocation-out router memory-DoS. The monotonic-no-reuse guarantee only
-            // needs to cover LOCALLY-allocated ids (which are always registered via
-            // `allocate`/`open`), never unknown peer ids.
-            return .closed
-        }
+    public func remoteClose(_ id: UInt32) -> ChannelState {
+        state(slopdesk_channel_table_remote_close(handle, id))
     }
 
     /// The current ``ChannelState`` of `id`, or `nil` if the id was never allocated /
-    /// registered.
+    /// registered — or if its terminal entry has since been evicted by the ring. Both read as
+    /// "unknown", and an unknown id's late frame is dropped rather than routed.
     public func state(of id: UInt32) -> ChannelState? {
-        states[id]
+        ChannelState(rawValue: slopdesk_channel_table_state(handle, id))
     }
 
     /// Whether `id` is currently routable (``ChannelState/open``). A ``halfClosed``
     /// channel is NOT considered open here — the caller decides whether to keep
     /// feeding it; ``isOpen(_:)`` is the strict "fully live" predicate.
     public func isOpen(_ id: UInt32) -> Bool {
-        states[id] == .open
+        slopdesk_channel_table_state(handle, id) == ChannelState.open.rawValue
     }
 
     /// Ids that are not fully ``ChannelState/closed`` (idle, open, or half-closed) —
     /// the channels still capable of carrying or completing traffic.
     public var liveChannelIDs: Set<UInt32> {
-        Set(states.compactMap { id, state in state == .closed ? nil : id })
+        let count = slopdesk_channel_table_live(handle, nil, 0)
+        guard count > 0 else { return [] }
+        return withUnsafeTemporaryAllocation(of: UInt32.self, capacity: count) { room in
+            let written = slopdesk_channel_table_live(handle, room.baseAddress, room.count)
+            // The table cannot grow between the sizing call and this one: both run inside this
+            // property, on the one thread its owner drives it from.
+            precondition(written == count, "the channel table resized between two reads of it")
+            return Set(room)
+        }
     }
 
     /// Total number of retained id entries (live + closed). Diagnostics / tests — used to assert the
     /// router table cannot be grown without bound by hostile channelOpen/Close spam.
-    public var stateCount: Int { states.count }
+    public var stateCount: Int { slopdesk_channel_table_state_count(handle) }
+
+    /// A state ordinal, read back. An unknown id answers ``ChannelState/closed`` here, which is what
+    /// every close-path caller has always been told: there is nothing left to close.
+    private func state(_ ordinal: UInt32) -> ChannelState {
+        ChannelState(rawValue: ordinal) ?? .closed
+    }
 }

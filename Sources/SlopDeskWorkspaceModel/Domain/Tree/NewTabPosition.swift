@@ -1,5 +1,3 @@
-import Foundation
-
 // MARK: - NewTabPosition (`new-tab-position` policy)
 
 /// Where a newly opened tab is inserted into the active session's tab bar — the `new-tab-position`

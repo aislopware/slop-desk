@@ -8,6 +8,14 @@ reconciliation rules.
 Written 2026-08-11, after a user-reported flap (Tab-switching an `AskUserQuestion` walked the pane's
 mark blocked ↔ idle, once per press) turned out to be a whole class of problem rather than one bug.
 
+**This is `rust/slopdesk-agent` (stage 31, 2026-08-13).** Every rule below — `kind`, `job`,
+`process`, `status`, `signal`, `screen`, `hold`, `input`, `machine` — is a zero-dependency library
+with an injected clock, reached from `Sources/SlopDeskAgentDetect` in-process over the FFI boundary
+(`docs/55`). The Swift that remains is the case lists a SwiftUI `switch` needs, plus the
+marshalling; `docs/55` §6 draws that line and `scripts/check-supervisor.sh` gates it. The split
+against `slopdesk-screend` (docs/52) is that **screend owns everything reading the BYTES and the
+agent crate owns everything reading the CLOCK**.
+
 ---
 
 ## 0. The one-paragraph version
@@ -68,7 +76,7 @@ a keystroke is one edge, not a feed.
 
 | Signal | Source | Reaches the machine as |
 | --- | --- | --- |
-| screen rule ladder | `PaneScreenScanner` → `AgentManifestCatalog` | `.screen(AgentScreenDetection)` |
+| screen rule ladder | `PaneScreenScanner` → screend's `detect` verb | `.screen(AgentScreenDetection)` |
 | OSC 0/2 title | `HostOutputSniffer` | `.oscTitle(String)` |
 | presence PRESENT | ~1 Hz foreground poll | `.processPresent(true)` |
 | coarse manifest verdict | the legacy ctl seam | `.manifestVerdict(ClaudeStatus)` |
@@ -181,10 +189,10 @@ loop's `catch`), carrying the same `tool_use_id`. Since an `.ask` entry is delib
 any other call's `PreToolUse`, that was the difference between a failed `AskUserQuestion`
 resolving and a hand staying raised over a vanished dialog for the rest of the turn. Both it and
 `PermissionDenied` are now installed and parsed, and both map to the same "this call is over"
-resolution. `AgentInstaller.installedEvents` is the list of what we register; a hook we do not
+resolution. `slopdesk-agenthooks`' `install::INSTALLED_EVENTS` is the list of what we register; a hook we do not
 register cannot be a signal, and a hook we register but do not parse is a silent drop.
 
-⚠️ **`isInstalled` means ALL of `installedEvents`, not any.** A settings file written by an older
+⚠️ **`is_installed` means ALL of `INSTALLED_EVENTS`, not any.** A settings file written by an older
 build carries the events THAT build knew; answering "installed" for it leaves every event added since
 permanently unregistered, and the Settings row that would offer the fix reads as already done.
 Under-reporting is the safe direction — the merge is idempotent, so re-installing over a complete
@@ -282,13 +290,16 @@ qualifier each one announces a turn that never finished.
 Two guards run in `PaneScreenScanner` / `AgentDetectionHold` BEFORE a verdict is ever published, so
 the machine only ever sees settled readings:
 
-- **`AgentSyncFrameTracker`** — never read a grid the program has not finished painting. A
-  byte-at-a-time DECSET/DECRST 2026 parser; while a synchronized update is open the scanner
-  publishes nothing and rechecks at 100 ms, bounded by `syncFrameHoldCap` (1 s). The cap is per
-  FRAME, keyed on `frameGeneration` — a busy TUI opens a new frame every few milliseconds, so a cap
-  anchored on "a frame was open last scan too" would let one second of ordinary repainting retire the
-  guard permanently. ESC inside a CSI aborts and re-enters escape (the VT500 anywhere-transition);
-  swallowing it lost the whole sequence that followed a re-sync.
+- **The synchronized-frame hold** — never read a grid the program has not finished painting.
+  screend's `syncwatch` is a byte-at-a-time DECSET/DECRST 2026 parser and reports `frameOpen` +
+  `frameGeneration` with every verdict; while a synchronized update is open the scanner publishes
+  nothing and rechecks at 100 ms, bounded by `syncFrameHoldCap` (1 s). The cap is per FRAME, keyed
+  on `frameGeneration` — a busy TUI opens a new frame every few milliseconds, so a cap anchored on
+  "a frame was open last scan too" would let one second of ordinary repainting retire the guard
+  permanently. ESC inside a CSI aborts and re-enters escape (the VT500 anywhere-transition);
+  swallowing it lost the whole sequence that followed a re-sync. The PARSER is screend's and the
+  DEADLINE is hostd's, which is the split throughout: screend owns everything that reads the bytes,
+  hostd owns everything that reads the clock.
 - **`AgentDetectionHold.shouldHoldBlockedToIdle`** — leaving a block takes three confirming reads.
   Ours, not herdr's, and deliberately stricter than its `working → idle` sibling: a VISIBLE idle
   does not bypass it, because the visible idle is the false verdict.
@@ -337,7 +348,7 @@ result was the strongest idle verdict the engine can produce, for a pane blocked
 
 Requiring the sibling option is what keeps a human who types `1. foo` at a real prompt from being
 vetoed — and even then the cost is only `visible_idle`, since the `✳` title rule still reports the
-pane idle. Pinned by `ManifestCrossRegionGateTests`. Validation is symmetric: a bogus `region` in a
+pane idle. Pinned by `rust/slopdesk-screend/tests/cross_region_gate.rs`. Validation is symmetric: a bogus `region` in a
 nested gate rejects the whole manifest, exactly as it does on a rule — and a gate region is an
 **engine-3** key, so a manifest that uses one must declare `min_engine_version >= 3`. An engine that
 predates it ignores the key silently, and silently ignoring a VETO is how a rule fires on the screen

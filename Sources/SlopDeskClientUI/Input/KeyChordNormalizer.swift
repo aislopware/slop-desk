@@ -12,7 +12,6 @@
 // `baseKey(for:)` does, so a rebind captured in the editor matches a chord the dispatcher produces.
 
 #if canImport(SwiftUI)
-import Foundation
 import SlopDeskWorkspaceCore
 
 /// Pure NSEvent→`KeyChord` normalization (no AppKit). The dispatcher passes the destructured event fields;

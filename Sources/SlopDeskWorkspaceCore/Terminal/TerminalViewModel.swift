@@ -303,17 +303,6 @@ public final class TerminalViewModel {
     /// workspace-focus change). No-op on a headless / preview model (``onReclaimKeyboardFocus`` unset).
     public func reclaimKeyboardFocus() { onReclaimKeyboardFocus?() }
 
-    /// Send to Chat: the active mouse-made libghostty selection text, or `nil` when there is no
-    /// selection (or it is empty). Reads libghostty truth ONLY through the same ``TerminalSurfaceActions`` seam
-    /// copy-mode uses (``copyCurrentSelectionOrScrollback``) — never a client-guessed range, never a hang-prone
-    /// real surface in a test (a headless / preview surface does not conform → `nil`). The Send-to-Chat capture
-    /// quotes this when present (selection wins over the last-command fallback).
-    public func currentSelectionText() -> String? {
-        guard let actions = surface as? TerminalSurfaceActions, actions.hasSelection(),
-              let selection = actions.readSelection(), !selection.isEmpty else { return nil }
-        return selection
-    }
-
     /// The PURE keybinding interceptor (the override-aware single-chord table) the libghostty surface's
     /// `keyDown` consults BEFORE its raw-byte branches. The store wires it (in `wireMaterializedLeaf`) so a
     /// rebindable ⌘D/⌘⇧D split is owned by the shared engine rather than a hard-coded split branch. `nil`
@@ -350,13 +339,13 @@ public final class TerminalViewModel {
 
     /// OBSERVABLE mirror of ``isCopyMode`` for the SwiftUI status-bar badge. ``isCopyMode`` itself is
     /// `@ObservationIgnored` because the keyDown intercept reads it from inside the renderer's AttributeGraph
-    /// update path (the infinite-render-loop hazard documented on ``surface``). The "COPY" chip in
-    /// ``PaneStatusBar`` reads THIS twin from a normal view body (reactive). Kept in lock-step by
+    /// update path (the infinite-render-loop hazard documented on ``surface``). The vi / copy-mode pill
+    /// (``ViModePill``) reads THIS twin from a normal view body (reactive). Kept in lock-step by
     /// ``isCopyMode``'s `didSet`.
     public private(set) var copyModeBadgeActive = false
 
-    /// The ⌘⇧C entry / Pane-menu "Copy Mode" / `q`·Esc exit hook — toggles the ``CopyModeOverlay``
-    /// `@State` in ``TerminalScreenView`` (set there so the closure captures THIS pane's overlay state, the
+    /// The ⌘⇧C entry / Pane-menu "Copy Mode" / `q`·Esc exit hook — toggles the copy-mode overlay's
+    /// `@State` in ``TerminalLeafView`` (set there so the closure captures THIS pane's overlay state, the
     /// exact ``onRequestFind`` pattern). The store reaches it via `requestCopyModeInActivePane()`.
     /// `@ObservationIgnored`: wiring, not view state. Nil for headless/preview callers (never invoked).
     @ObservationIgnored public var onRequestCopyMode: (() -> Void)?
@@ -445,12 +434,13 @@ public final class TerminalViewModel {
         Self.flashDebugLog("SETTLED — epoch \(promptJumpFlashEpoch)")
     }
 
-    /// stderr diagnostics for the landed-flash arm/settle chain, gated by `SLOPDESK_BLOCKS_DEBUG == "1"`
-    /// (default-OFF) — the same launch-from-terminal debugging flag the `BlockJump` choreography uses,
-    /// so one env var traces a jump end-to-end (issue → arm → scrollbar echo → settle/suppress).
-    private static func flashDebugLog(_ message: String) {
-        guard ProcessInfo.processInfo.environment["SLOPDESK_BLOCKS_DEBUG"] == "1" else { return }
-        FileHandle.standardError.write(Data("[flash] \(message)\n".utf8))
+    /// stderr diagnostics for the landed-flash arm/settle chain, through ``DebugTrace/blocks``
+    /// (`SLOPDESK_BLOCKS_DEBUG == "1"`, default-OFF) — the same launch-from-terminal debugging flag the
+    /// `BlockJump` choreography uses, so one env var traces a jump end-to-end (issue → arm → scrollbar
+    /// echo → settle/suppress → paint). The `[flash]` tag is shared with the overlay's paint end, which
+    /// is why both go through the funnel rather than each spelling the gate and the tag itself.
+    private static func flashDebugLog(_ message: @autoclosure () -> String) {
+        DebugTrace.blocks.write("flash", message())
     }
 
     /// The AppKit pasteboard write, injected so ``handleCopyModeKey`` stays PURE of AppKit (unit-testable
@@ -621,6 +611,10 @@ public final class TerminalViewModel {
     /// directly). Special keys (Esc / Return / ↑ / ↓) are recognised by their `NSEvent` key codes; any other
     /// key collapses to a `.char` carrying its first character + control/shift state (Command-combos are app
     /// shortcuts intercepted upstream, never reaching the surface keyDown).
+    ///
+    /// Its ONLY caller is `ThirdParty/ghostty/integration/GhosttySurface/GhosttyTerminalView.swift` — the
+    /// renderer the Xcode app target injects through `TerminalRendererFactory`. A grep over `Sources/` and
+    /// `Tests/` alone reads this as dead, and it is not.
     public static func makeCopyModeKey(event: NSEvent) -> CopyModeKey {
         let control = event.modifierFlags.contains(.control)
         let shift = event.modifierFlags.contains(.shift)
@@ -1941,26 +1935,19 @@ public final class TerminalViewModel {
     /// a no-reflow corner case does not linger a dim for seconds. Instance-settable so tests drive it without
     /// real-time waits.
     @ObservationIgnored var reflowScrimTimeout: Duration = .milliseconds(1200)
-    @ObservationIgnored private var reflowTimeoutTask: Task<Void, Never>?
+    @ObservationIgnored private let reflowDeadline = DeadlineLatch()
 
     /// Arms ``awaitingResizeReflow`` for a just-sent grid change and (re)starts the safety timeout.
     private func beginAwaitingReflow() {
         awaitingResizeReflow = true
-        reflowTimeoutTask?.cancel()
-        let timeout = reflowScrimTimeout
-        reflowTimeoutTask = Task { [weak self] in
-            try? await Task.sleep(for: timeout)
-            guard !Task.isCancelled else { return }
-            self?.endAwaitingReflow()
-        }
+        reflowDeadline.arm(after: reflowScrimTimeout) { [weak self] in self?.endAwaitingReflow() }
     }
 
     /// Clears ``awaitingResizeReflow`` (the reflow bytes landed, the link died, or the safety timeout fired) and
     /// cancels the pending timeout. Idempotent — the observable is only written on a real change, so the
     /// per-pass call from ``ingestPass`` is free once the flag is already down.
     private func endAwaitingReflow() {
-        reflowTimeoutTask?.cancel()
-        reflowTimeoutTask = nil
+        reflowDeadline.cancel()
         if awaitingResizeReflow { awaitingResizeReflow = false }
     }
 

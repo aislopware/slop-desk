@@ -1,6 +1,11 @@
 # SlopDesk Rust→Native-Swift Reverse-Migration Plan
 
-> **STATUS: SUPERSEDED / DONE.** The Rust tree (`rust/slopdesk-core`, `slopdesk-ffi`) is gone; the wire core is native Swift + `Sources/CSlopDeskSIMD`. Kept only as migration history. Current architecture: [00-overview.md](00-overview.md), [DECISIONS.md](DECISIONS.md) (“Single language: Swift”).
+> **STATUS: SUPERSEDED, AND THEN REVERSED.** This plan was carried out — the Rust was reabsorbed into
+> Swift — and the ruling behind it has since been struck. Rust is the default again (CLAUDE.md), the
+> wire core is Rust, `Sources/CSlopDeskSIMD` is deleted, and the FFI boundary this document set out
+> to remove is back as `CSlopDeskFFI` (`docs/55-ffi-boundary.md`). Kept as history of a round trip,
+> not as guidance: every "Goal" below is now the opposite of the rule. Current architecture:
+> [00-overview.md](00-overview.md), [DECISIONS.md](DECISIONS.md).
 
 **Goal (historical):** Reabsorb the `slopdesk-core` + `slopdesk-ffi` Rust into optimized native Swift, delete the FFI boundary, and collapse the cross-language `golden_parity` proof into a single-implementation Swift pin — without breaking one bit on the wire.
 

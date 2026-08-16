@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 import SlopDeskVideoProtocol
 
@@ -23,6 +24,9 @@ public struct SwipePeelChipState: Equatable, Sendable {
     }
 }
 
+/// The Swift face of `rust/slopdesk-video`'s `swipe_peel`, reached through the door of the same
+/// name.
+///
 /// Client-side mirror of the HOST's swipe-nav recogniser, run purely for FEEDBACK — the piece
 /// of native swipe-back that key translation can never give: something reacting WHILE the
 /// fingers are still on the glass. The host remains the sole authority on actually firing
@@ -37,8 +41,13 @@ public struct SwipePeelChipState: Equatable, Sendable {
 /// `SLOPDESK_SWIPE_NAV_TRAVEL`/`_SLOW` retune never desynchronises the feedback; the view only
 /// feeds the planner while the host says the target app is eligible at all.
 ///
-/// Pure value type (headless-testable): all AppKit work — chip publish, haptic — happens in
-/// the view from the returned ``Verdict``.
+/// A FOLD, and therefore still a pure value type: the planner IS the mirrored recogniser plus
+/// what the chip is doing, and the recogniser already crosses by value for the reason that
+/// matters here — the host's injector and this mirror have to reach the same verdict over the
+/// same events, which is only guaranteed if there is one law rather than two.
+///
+/// All AppKit work — chip publish, haptic — still happens in the view from the returned
+/// ``Verdict``.
 public struct SwipePeelPlanner: Sendable {
     /// What the view should do after feeding one scroll event.
     public enum Verdict: Equatable, Sendable {
@@ -53,31 +62,19 @@ public struct SwipePeelPlanner: Sendable {
         case retract
     }
 
+    /// The planner's fixed numbers, from the door, so neither language writes them down twice.
+    private static let law = slopdesk_peel_constants()
     /// Chip-fill quantum: progress is rounded to this so the @Published chip state changes at
     /// most ~32 times per fill, not once per 120 Hz event.
-    public static let progressQuantum: Double = 1.0 / 32.0
+    public static var progressQuantum: Double { law.progress_quantum }
+    /// The host's own default lift-fire travel, in points.
+    public static var defaultFireTravel: Double { SwipeNavRecognizer.defaultFireTravel }
 
-    private var recognizer: SwipeNavRecognizer
-    /// Overlay appearance threshold — the recogniser's own arm line (0.3× fire): below it the
-    /// horizontal component is jitter, and a slightly-diagonal ordinary scroll must not flash
-    /// the chip for its first few points of incidental Σx.
-    private let showTravel: Double
-    private var showing = false
-    /// The direction the visible chip sits on. A mid-gesture REVERSAL that jumps the ±show
-    /// dead zone in one event would otherwise emit consecutive `.show`s with flipped direction
-    /// and the chip would keep its SwiftUI identity — animating a full-pane slide from one edge
-    /// to the other instead of fading out and re-appearing. A flip therefore concludes the old
-    /// chip first (`.retract`); the next event re-shows on the new edge.
-    private var shownDirection: SwipeNavRecognizer.Direction?
-    /// Chip fill floor across the tracking→coasting seam: the denominator changes there
-    /// (`fireTravel` → `confirmTravel`), which would visibly DROP the fill mid-gesture even
-    /// though nothing regressed. Coast frames display at least the fill the on-glass segment
-    /// reached — unless dominance collapses to 0, which stays an honest retract.
-    private var glassProgress: Double = 0
+    /// The mirrored recogniser, and what the chip is doing.
+    private var record: SlopDeskPeelPlanner
 
-    public init(fireTravel: Double = 80, slowSwipe: Bool = true) {
-        recognizer = SwipeNavRecognizer(fireTravel: fireTravel, slowSwipe: slowSwipe)
-        showTravel = fireTravel * 0.3
+    public init(fireTravel: Double = Self.defaultFireTravel, slowSwipe: Bool = true) {
+        record = slopdesk_peel_new(fireTravel, slowSwipe)
     }
 
     /// Feeds one forwarded scroll event (same tuple the pipeline sends the host).
@@ -89,55 +86,13 @@ public struct SwipePeelPlanner: Sendable {
         continuous: Bool,
         now: TimeInterval,
     ) -> Verdict {
-        if let fired = recognizer.ingest(
-            dx: dx, dy: dy, scrollPhase: scrollPhase, momentumPhase: momentumPhase,
-            continuous: continuous, now: now,
-        ) {
-            showing = false
-            shownDirection = nil
-            glassProgress = 0
-            return .commit(fired)
-        }
-        guard let live = recognizer.liveCandidate(now: now), live.progress > 0,
-              abs(live.travelX) >= showTravel
-        else {
-            // No candidate, one that stopped being decisively horizontal (dominance / tier
-            // collapse), or incidental sub-arm Σx — the overlay must not promise a fire the
-            // host would reject, nor flash on an ordinary scroll's first diagonal points.
-            return concludeIfShowing()
-        }
-        if showing, let shown = shownDirection, live.direction != shown {
-            return concludeIfShowing()
-        }
-        var progress = live.progress
-        if live.coasting {
-            progress = Double.maximum(progress, glassProgress)
-        } else {
-            glassProgress = progress
-        }
-        showing = true
-        shownDirection = live.direction
-        let quantized = (progress / Self.progressQuantum).rounded(.down) * Self.progressQuantum
-        return .show(SwipePeelChipState(
-            direction: live.direction,
-            progress: Double.minimum(Double.maximum(quantized, Self.progressQuantum), 1),
-            committed: live.wouldFireAtLift,
-        ))
+        answered(slopdesk_peel_ingest(record, dx, dy, scrollPhase, momentumPhase, continuous, now))
     }
 
     /// The view stopped feeding this gesture mid-flight (scroll rerouted to canvas pan, pane
     /// lost focus, eligibility flipped off) — abandon the candidate and hide the chip.
     public mutating func cancel() -> Verdict {
-        _ = recognizer.ingest(dx: 0, dy: 0, scrollPhase: 8, momentumPhase: 0, continuous: true, now: 0)
-        return concludeIfShowing()
-    }
-
-    private mutating func concludeIfShowing() -> Verdict {
-        glassProgress = 0
-        shownDirection = nil
-        guard showing else { return .idle }
-        showing = false
-        return .retract
+        answered(slopdesk_peel_cancel(record))
     }
 
     /// History gate over one verdict (doc 20 §9.6): a candidate toward a direction the host
@@ -148,10 +103,35 @@ public struct SwipePeelPlanner: Sendable {
     /// on these swipes, so the mirror's internal state must keep tracking the gesture exactly
     /// as the host's does. UNKNOWN history fails open inside ``SwipeNavStatusMessage/allowsChip(_:)``.
     public static func historyGated(_ verdict: Verdict, status: SwipeNavStatusMessage) -> Verdict {
+        let code: UInt32
+        let direction: SwipeNavRecognizer.Direction
         switch verdict {
-        case let .show(chip) where !status.allowsChip(chip.direction): .retract
-        case let .commit(direction) where !status.allowsChip(direction): .retract
-        default: verdict
+        case let .show(chip): (code, direction) = (SLOPDESK_PEEL_SHOW, chip.direction)
+        case let .commit(fired): (code, direction) = (SLOPDESK_PEEL_COMMIT, fired)
+        default: return verdict
+        }
+        let gated = status.peelGated(
+            verdict: code, direction: direction == .back ? SLOPDESK_SWIPE_BACK : SLOPDESK_SWIPE_FORWARD,
+        )
+        return gated == code ? verdict : .retract
+    }
+
+    /// One answered ingest folded back onto this planner.
+    private mutating func answered(_ answer: SlopDeskPeelIngest) -> Verdict {
+        record = answer.planner
+        let direction: SwipeNavRecognizer.Direction =
+            answer.direction == SLOPDESK_SWIPE_FORWARD ? .forward : .back
+        switch answer.verdict {
+        case SLOPDESK_PEEL_SHOW:
+            return .show(SwipePeelChipState(
+                direction: direction,
+                progress: answer.progress,
+                committed: answer.committed,
+                confirming: answer.confirming,
+            ))
+        case SLOPDESK_PEEL_COMMIT: return .commit(direction)
+        case SLOPDESK_PEEL_RETRACT: return .retract
+        default: return .idle
         }
     }
 }

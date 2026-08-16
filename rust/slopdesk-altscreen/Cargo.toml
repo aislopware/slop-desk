@@ -1,0 +1,104 @@
+# `slopdesk-altscreen` — where a front-truncated terminal stream was, w.r.t. the alternate screen.
+#
+# ## Why it is a crate of its own
+# Three scrollback retainers cut their stream from the FRONT when it outgrows a cap, and all three
+# need the same answer before they can drop bytes: was the cut inside an open `?1049h` segment, and
+# if so, which mode opened it. The in-memory ring (`slopdesk-wire`'s `replay`) is one; superd's
+# on-disk journal is the other two (compaction, and the restore that reads it back).
+#
+# superd cannot depend on `slopdesk-wire` to get it. That crate is the PROTOCOL, and superd's whole
+# design rests on not knowing the protocol — it moves a pane's bytes without ever deciding what a
+# frame is (`docs/51` §1). Copying 150 lines of scanner into it instead would be the second
+# implementation this tree exists to delete, and the two copies would have to agree about a repair
+# whose whole invariant is that the state lives IN the bytes.
+#
+# So the scanner is its own crate: one implementation, two workspaces, no protocol in sight. It is
+# small enough that its own workspace costs nothing but two Makefile lines, and its dependency list
+# is empty for the same reason the wire codec's is — it parses bytes a foreign program wrote.
+[workspace]
+resolver = "3"
+
+[package]
+name = "slopdesk-altscreen"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Alternate-screen state at a front-truncation cut of a terminal byte stream"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[lib]
+name = "slopdesk_altscreen"
+path = "src/lib.rs"
+
+# The scanner runs on eviction, inside two long-lived daemons.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+debug = 1
+strip = "debuginfo"
+
+# ---------------------------------------------------------------------------- #
+# The same maximal-strict set its two consumers carry, copied rather than inherited for the same
+# reason they copy it: inheriting means membership, and membership means sharing a profile.
+[lints.rust]
+unsafe_code = "forbid"
+
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+missing_copy_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+single_use_lifetimes = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+variant_size_differences = "deny"
+elided_lifetimes_in_paths = "deny"
+let_underscore_drop = "deny"
+non_ascii_idents = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+indexing_slicing = "deny"
+integer_division = "deny"
+exit = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+mem_forget = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+verbose_file_reads = "deny"
+str_to_string = "deny"
+empty_structs_with_brackets = "deny"
+if_then_some_else_none = "deny"
+lossy_float_literal = "deny"
+try_err = "deny"
+
+# Disabled, with a reason:
+# - `suboptimal_flops` / `imprecise_flops` (nursery): both want `f64::mul_add`, which is exactly the
+#   fused multiply-add `CLAUDE.md` forbids — "keep `a * b + c` separate (never `addingProduct`/`fma`)".
+#   FMA rounds once where the wire rounds twice, so taking the advice changes the `f64` bit patterns
+#   `golden/golden_vectors.json` pins. Allowed in EVERY workspace, not only the ones doing float
+#   math today: the reason is a repo invariant, and a lint that fires the first time a float lands
+#   here would be obeyed before anyone reads this file.
+suboptimal_flops = "allow"
+imprecise_flops = "allow"

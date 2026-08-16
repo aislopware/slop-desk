@@ -1,5 +1,4 @@
 #if canImport(VideoToolbox)
-import SlopDeskVideoProtocol
 import XCTest
 @testable import SlopDeskVideoClient
 

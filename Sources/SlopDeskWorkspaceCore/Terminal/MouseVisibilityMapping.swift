@@ -1,5 +1,3 @@
-import Foundation
-
 // MARK: - mouse-hide-while-typing visibility mapping
 
 /// Swift mirror of libghostty's `ghostty_action_mouse_visibility_e` C enum (`apprt.action.MouseVisibility`,

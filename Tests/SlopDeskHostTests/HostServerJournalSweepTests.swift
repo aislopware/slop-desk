@@ -1,15 +1,18 @@
 import Foundation
-import SlopDeskTransport
 import XCTest
 @testable import SlopDeskHost
 
-/// Periodic disk-scrollback sweep (audit `scrollback-journal-sweep-once-at-startup`, high):
-/// `ScrollbackJournalStore.sweep()` — the maxAge/keepNewest bound on orphaned `<uuid>.scrollback`
-/// files — used to run exactly ONCE, in a `Task.detached` at `HostServer.init`. hostd is a
-/// week/month-long daemon: orphans from link-drop detaches and TTL evictions accumulated
-/// unbounded past that single pass. The fix keeps re-running `sweep()` on a fixed cadence for the
-/// life of the daemon and cancels the loop in `stop()` (mirrors `HostTransport`'s `reaperTask`
-/// shape) so a repeated Start→Stop cycle never leaks a background loop.
+/// Periodic disk-scrollback sweep (audit `scrollback-journal-sweep-once-at-startup`, high): the
+/// maxAge/keepNewest bound on orphaned `<uuid>.scrollback` files used to run exactly ONCE, in a
+/// `Task.detached` at `HostServer.init`. hostd is a week/month-long daemon: orphans from link-drop
+/// detaches and TTL evictions accumulated unbounded past that single pass. The fix keeps
+/// re-running the sweep on a fixed cadence for the life of the daemon and cancels the loop in
+/// `stop()` (mirrors `HostTransport`'s `reaperTask` shape) so a repeated Start→Stop cycle never
+/// leaks a background loop.
+///
+/// The UNLINKING moved to superd in stage 27 — it is the only process that knows which file a live
+/// pane is still writing — and this file kept the half that did not: WHEN hostd asks. The tick
+/// counter stands in for the request, so the pin needs no daemon.
 ///
 /// All headless: no NWListener, no spawned shell — these servers never call `start()`
 /// (hang-safety); the periodic task is wired at `init` regardless. The tiny injected
@@ -40,28 +43,27 @@ final class HostServerJournalSweepTests: XCTestCase {
     /// The schedule pin: over a short window with a tiny injected interval, `sweep()` must run
     /// more than once — a single init-time sweep would freeze the count at 1 forever.
     func testPeriodicSweepRunsRepeatedlyThenStopsAfterStop() async {
-        let store = ScrollbackJournalStore(directory: tempDir)
         let server = HostServer(
             port: 0,
             detachEnabled: true,
             resumeOnRecovery: true,
-            scrollbackJournals: store,
+            scrollbackTranscripts: ScrollbackTranscripts(directory: tempDir.path, byteCap: 1 << 20),
             scrollbackSweepInterval: .milliseconds(50),
         )
 
-        waitUntil { store.sweepCallCountForTesting() >= 2 }
+        waitUntil { server.journalSweepTicksForTesting >= 2 }
         XCTAssertGreaterThanOrEqual(
-            store.sweepCallCountForTesting(), 2,
-            "sweep() must keep re-running on a fixed cadence for the life of the daemon — a "
+            server.journalSweepTicksForTesting, 2,
+            "the sweep must keep re-running on a fixed cadence for the life of the daemon — a "
                 + "single sweep at init leaves later orphans (link-drop detach, TTL eviction) "
                 + "unbounded until a daemon restart",
         )
 
         await server.stop()
-        let countAtStop = store.sweepCallCountForTesting()
+        let countAtStop = server.journalSweepTicksForTesting
         try? await Task.sleep(for: .milliseconds(200)) // several intervals' worth, were the loop still alive
         XCTAssertEqual(
-            store.sweepCallCountForTesting(), countAtStop,
+            server.journalSweepTicksForTesting, countAtStop,
             "stop() must cancel the periodic sweep task — a repeated Start→Stop cycle must not "
                 + "leak a background loop",
         )

@@ -27,7 +27,7 @@ final class WorkspaceStoreLiveTreeTests: XCTestCase {
         let url = dir.appendingPathComponent("workspace.json")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         // …and removed when the test finishes. Without this every run left its fixture dir in TMPDIR;
-        // 720 of them had piled up. Same leak as `ShellIntegrationTests.makeTempDir()`.
+        // 720 of them had piled up. Same leak the shim's own scratch dirs used to have.
         addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
 
         let group = PaneGroup(name: "Servers")

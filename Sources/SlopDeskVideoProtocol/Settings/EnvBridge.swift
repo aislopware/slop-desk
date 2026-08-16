@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 
 /// The bridge between the settings MODELS and the `SLOPDESK_*` flags they override (W12).
@@ -59,11 +60,11 @@ public enum EnvBridge {
     /// Format a `Double` env value without a spurious exponent / trailing noise. Integral values print
     /// without a decimal point (`60.0` → `"60"`), matching what a user types and what `Double(_:)` /
     /// `Int(_:)` parse back at the read site.
+    ///
+    /// The rule is the far side's, and it is the SAME rule the libghostty config text writes its own
+    /// numbers by — one spelling, asked at two limits, and neither limit is a number this side types.
     static func formatDouble(_ v: Double) -> String {
-        if v.isFinite, v == v.rounded(), abs(v) < 1e15 {
-            return String(Int(v))
-        }
-        return String(v)
+        lentText { out, cap in slopdesk_settings_env_number_text(v, out, cap) }
     }
 
     // MARK: video-prefs.json sidecar (host daemon)

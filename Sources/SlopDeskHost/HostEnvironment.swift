@@ -26,6 +26,18 @@ public enum HostEnvironment {
     /// target's `MARKETING_VERSION` (`Apps/ClientApp-macOS/project.yml`) and `CLIVersion.version`.
     public static let buildVersion = "0.4.0"
 
+    /// The shell-integration opt-outs, forwarded from hostd's parent into the child.
+    ///
+    /// Each is read downstream of this process — `SLOPDESK_SHELL_INTEGRATION` by superd, which
+    /// decides whether to generate the shim at all, and the other two by the generated `.zshrc`
+    /// inside the spawned zsh (`${SLOPDESK_OSC133:-1}`, `${SLOPDESK_SHELL_CURSOR:-1}`). None of
+    /// them is hostd's to interpret; hostd's only job is not to drop them.
+    public static let shellIntegrationEnvKeys = [
+        "SLOPDESK_SHELL_INTEGRATION",
+        "SLOPDESK_OSC133",
+        "SLOPDESK_SHELL_CURSOR",
+    ]
+
     /// A curated child environment: inherit a safe allowlist from the parent and layer
     /// the terminal defaults on top. We deliberately do **not** forward the parent's
     /// `PATH` blindly ([12] §1.4) — we set a conservative default the child's login
@@ -35,7 +47,7 @@ public enum HostEnvironment {
     ///   - term: the `TERM` to advertise. Defaults to ``defaultTerm`` (`xterm-ghostty`),
     ///     matching what the libghostty client renders.
     ///   - agentSocketPath: when non-nil, exported as `SLOPDESK_SOCKET_PATH` so an installed
-    ///     Claude Code hook (``AgentInstaller``) knows where to POST hook events. Absent by
+    ///     Claude Code hook relay knows where to POST hook events. Absent by
     ///     default here (the daemon always supplies it); detection still works without hooks via
     ///     the foreground watcher (Decision #5).
     ///   - paneID: when non-nil, exported as `SLOPDESK_PANE_ID` so the hook can tag which pane
@@ -53,8 +65,9 @@ public enum HostEnvironment {
 
         // Mirror identity / locale-ish vars from the parent when present.
         //
-        // TERMINFO / TERMINFO_DIRS are mirrored because the host's terminfo PROBE
-        // (``TerminfoResolver/searchDirectories``) honours them when deciding whether `xterm-ghostty`
+        // TERMINFO / TERMINFO_DIRS are mirrored because the host's terminfo probe
+        // (`slopdesk-probe terminfo`, which hostd forks with its OWN environment) honours them when
+        // deciding whether `xterm-ghostty`
         // resolves. If the host was launched from a shell whose TERMINFO points at a non-standard dir
         // holding the ghostty entry (Nix / Homebrew / per-user install), the probe says "resolvable" and
         // we advertise `TERM=xterm-ghostty` — but a child lacking those vars searches only the default
@@ -95,19 +108,18 @@ public enum HostEnvironment {
         // before the login profile augments it. (Not forwarded blindly from parent.)
         env["PATH"] = parent["PATH"] ?? "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
-        // Forward the OSC-133 marks opt-out to the child: the shim's `.zshrc` reads
-        // `${SLOPDESK_OSC133:-1}` in the CHILD, so a daemon-side `SLOPDESK_OSC133=0` (the documented
-        // marks-only opt-out) only takes effect if carried across this allowlist. Forwarded ONLY when
-        // set — absent leaves the shim's default-on branch unchanged.
-        if let osc133 = parent[ShellIntegration.osc133EnvKey] { env[ShellIntegration.osc133EnvKey] = osc133 }
-
-        // Same contract for the cursor-shape opt-out: the shim's `.zshrc` reads
-        // `${SLOPDESK_SHELL_CURSOR:-1}` in the CHILD; forwarded ONLY when set.
-        if let cursor = parent[ShellIntegration.cursorEnvKey] { env[ShellIntegration.cursorEnvKey] = cursor }
+        // Forward the three shell-integration opt-outs. All are read from the CHILD'S env, not
+        // hostd's: the whole-shim flag by superd, which owns the shim (`shellintegration.rs`), and
+        // the two feature flags by the generated `.zshrc` inside the spawned zsh. So a daemon-side
+        // setting only takes effect if it is carried across this allowlist. Forwarded ONLY when set
+        // — absent leaves each default-on branch unchanged.
+        for key in Self.shellIntegrationEnvKeys {
+            if let value = parent[key] { env[key] = value }
+        }
 
         // Export the agent-hook socket path + pane id into the PTY env (Muxy's
         // MUXY_SOCKET_PATH / MUXY_PANE_ID analog). The installed hook script
-        // (``AgentInstaller/hookScript()``) reads these to POST hook events to the host;
+        // (`rust/slopdesk-hook`) reads these to POST hook events to the host;
         // absent → the hook is a silent no-op.
         if let agentSocketPath { env[Self.agentSocketEnvKey] = agentSocketPath }
         if let paneID { env[Self.agentPaneIDEnvKey] = paneID }
@@ -117,7 +129,7 @@ public enum HostEnvironment {
     }
 
     /// The PTY env var carrying the agent-hook listener socket path. The installed
-    /// Claude Code hook (``AgentInstaller``) POSTs to this socket; matches `MUXY_SOCKET_PATH`.
+    /// The Claude Code hook relay POSTs to this socket; matches `MUXY_SOCKET_PATH`.
     public static let agentSocketEnvKey = "SLOPDESK_SOCKET_PATH"
 
     /// The PTY env var carrying the pane id the hook should tag its events with;
@@ -128,9 +140,14 @@ public enum HostEnvironment {
     /// enabled. Agents shell out to `slopdesk-ctl` pointing at this socket.
     public static let agentControlSocketEnvKey = "SLOPDESK_CONTROL_SOCKET"
 
-    /// Whether the agent-control Unix-domain socket should be bound. Default idiom =
-    /// DEFAULT-OFF via `env[key] == "1"` (same as hooks) — writing to PTYs and spawning
-    /// shells is not something to enable silently. Only an explicit `"1"` enables it.
+    /// Whether hostd CLAIMS the agent-control listener. Default idiom = DEFAULT-OFF via
+    /// `env[key] == "1"` (same as hooks) — writing to PTYs and spawning shells is not something to
+    /// enable silently. Only an explicit `"1"` enables it.
+    ///
+    /// superd binds that socket either way and knows nothing about this flag; what the flag decides
+    /// is whether hostd `listen`s for the `control` kind. An unclaimed listener is never advertised
+    /// into a spawned child's environment, so off still means a child sees no
+    /// `SLOPDESK_CONTROL_SOCKET` (`docs/51` §6.6).
     public static let agentControlEnvKey = "SLOPDESK_AGENT_CONTROL"
 
     /// SENTINEL exported into a control-SPAWNED pane's env: `"1"` tells an agent running
@@ -143,7 +160,7 @@ public enum HostEnvironment {
     /// falls back to a PATH lookup of `slopdesk-ctl`.
     public static let ctlBinaryEnvKey = "SLOPDESK_CTL_BIN"
 
-    /// Resolves whether the agent-control socket should be bound. Default-OFF: only `"1"` enables.
+    /// Resolves whether hostd claims the agent-control listener. Default-OFF: only `"1"` enables.
     public static func agentControlEnabled(
         environment: [String: String] = ProcessInfo.processInfo.environment,
     ) -> Bool {
@@ -160,9 +177,9 @@ public enum HostEnvironment {
     // with no watch at all, and that is a test seam, not a user-facing switch.
 
     /// Whether the host segments the outbound PTY stream into Warp-style "Blocks" (the
-    /// additive parallel ``CommandBlockSegmenter`` tap + the type-28/29 wire). Default idiom =
+    /// additive parallel `CommandBlockSegmenter` tap (`rust/slopdesk-superd/src/commandblocks.rs`) + the type-28/29 wire). Default idiom =
     /// DEFAULT-ON via `env[key] != "0"` (only an explicit `"0"` disables): when off, the byte
-    /// pipeline + the live ``HostOutputSniffer`` stay byte-identical (no segmenter, no emit).
+    /// pipeline + the live sniffer (`rust/slopdesk-superd/src/sniffer.rs`) stay byte-identical (no segmenter, no emit).
     public static let blocksEnvKey = "SLOPDESK_BLOCKS"
 
     /// Resolves whether the Blocks tap is enabled. Default-ON: only the exact string `"0"`
@@ -177,25 +194,28 @@ public enum HostEnvironment {
         environment[blocksEnvKey] != "0"
     }
 
-    /// The env-bridge key carrying the client's "Auto Progress-Bar Commands" list to the
-    /// host's synthetic OSC-9;4 spinner matcher (``AutoProgressMatcher``). Value is NEWLINE-separated
+    /// The env-bridge key carrying the client's "Auto Progress-Bar Commands" list to the synthetic
+    /// OSC-9;4 spinner matcher, which lives in superd (`autoprogress.rs`). Value is NEWLINE-separated
     /// prefix entries (each a whitespace-delimited command prefix, e.g. `git push`). Resolved at THIS ONE
     /// shared site and read at host START. The edit surface is Settings → Advanced → **Raw overrides**
     /// (which folds into the `video-prefs.json` sidecar the host reads); the dedicated client toggle that
     /// used to claim this bridge never actually reached it and was removed. See docs/DECISIONS.md.
     public static let autoProgressCommandsEnvKey = "SLOPDESK_AUTO_PROGRESS_COMMANDS"
 
-    /// Resolves the host's auto-progress prefix list. UNSET ⇒ ``AutoProgressMatcher/builtInPrefixes``
-    /// (auto-progress ON for known slow commands); SET-but-EMPTY ⇒ `[]` (auto-progress DISABLED, the
-    /// "clear the field" behaviour); SET ⇒ the parsed entries. Same ``EnvConfig`` overlay resolution as
-    /// the other gates, so a GUI override reaches the matcher; an explicit `environment:` (tests) bypasses
-    /// the overlay.
-    public static func autoProgressPrefixes(
+    /// The bridge's value, UNPARSED, for the spawn request to carry across as-is.
+    ///
+    /// Deliberately not a `[String]`: superd owns the parse AND the built-in slow-command list, and
+    /// hostd resolving either here would be the second copy of both. The three states the feature has
+    /// survive the crossing intact — `nil` UNSET ⇒ the built-ins (auto-progress ON for known slow
+    /// commands); `""` SET-but-EMPTY ⇒ DISABLED, the "clear the field" behaviour; anything else ⇒ the
+    /// entries superd parses out. Same ``EnvConfig`` overlay resolution as the other gates, so a GUI
+    /// override reaches the matcher; an explicit `environment:` (tests) bypasses the overlay.
+    public static func autoProgressCommandsRaw(
         environment: [String: String] = configEnv(autoProgressCommandsEnvKey),
     )
-        -> [String]
+        -> String?
     {
-        AutoProgressMatcher.parsePrefixes(envValue: environment[autoProgressCommandsEnvKey])
+        environment[autoProgressCommandsEnvKey]
     }
 
     /// The env-bridge keys gating the agent-control ctl socket's MUTATING verbs. Default idiom =
@@ -251,7 +271,7 @@ public enum HostEnvironment {
 
     /// Whether the host holds a system-sleep assertion while ANY agent is processing
     /// ("Prevent Sleep While Processing"). Default idiom = DEFAULT-OFF via `env[key] == "1"` (like
-    /// ``agentHooksEnvKey``): blocking system sleep is not something to enable silently. The CLIENT toggle is
+    /// ``agentControlEnvKey``): blocking system sleep is not something to enable silently. The CLIENT toggle is
     /// the ``AgentPreferences/preventSleep`` field, shipped via the `video-prefs.json` sidecar (reconnect-
     /// tagged); the daemon reads this gate at launch and, when ON, drives ``PreventSleepAssertion`` off the
     /// `claudeStatus .working` aggregate it already computes.
@@ -269,7 +289,7 @@ public enum HostEnvironment {
     }
 
     /// Whether the host re-arms a detached agent session on connection recovery ("Resume on
-    /// Recovery"). Default idiom = DEFAULT-ON via `env[key] != "0"` (like ``agentDetectEnvKey``): re-arming a
+    /// Recovery"). Default idiom = DEFAULT-ON via `env[key] != "0"` (like ``blocksEnvKey``): re-arming a
     /// recovered session is the helpful default, opt-OUT only. The CLIENT toggle is
     /// ``AgentPreferences/resumeOnRecovery``, sidecar-borne (reconnect-tagged). ACTUATED by ``HostServer``:
     /// it AND-s this flag into ``HostServer/detachEnabled``, mapping "Resume on Recovery" onto the

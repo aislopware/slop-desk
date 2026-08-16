@@ -1,38 +1,60 @@
 # CLAUDE.md
 
-Non-derivable facts only. **`docs/46-gates-env-paths.md` = gate matrix, `SLOPDESK_*` env, three-path notes, golden procedure — read before picking a gate, touching a transport, or adding a flag.** Architecture: `docs/00-overview.md`; re-scoping → `docs/DECISIONS.md`; wire contract → `docs/20-wire-protocol.md` (update after wire changes); design language → `DESIGN.md`; shipping (sign/notarize/brew) → `docs/49-release-pipeline.md`; agent status detection (hook/TTY tiers) → `docs/50-agent-detection-architecture.md` — read before touching any detection path.
+SlopDesk — low-latency remote coding: a macOS host (`slopdesk-hostd`), macOS/iOS clients, and six
+Rust sidecar daemons. `make help` lists every build, lint and test target; read it rather than
+guessing one.
 
-SlopDesk = low-latency remote coding (macOS host, macOS/iOS clients). Swift owns the wire. Only C: `Sources/CSlopDeskSIMD` — GF(2⁸) NEON kernel + scalar fallback, wrapping `&*`/`&+` intentional, `GF256NeonDifferentialTests` pins NEON ≡ scalar (re-run + loopback-validate after kernel/hash edits). Only Rust: `rust/slopdesk-hook` — the Claude Code hook relay, a SEPARATE PROCESS with no FFI (`make hook`; gates `make lint-rust` / `make hook-test`; nightly only for `cargo fmt`). Clean checkout builds headless: `swift build`/`swift test` never see libghostty / VideoToolbox / ScreenCaptureKit — nor cargo.
+## Read before you touch
 
-## Gates
+| Working on | Read first |
+| --- | --- |
+| anything | `docs/00-overview.md` |
+| a gate, a transport, a `SLOPDESK_*` flag | `docs/46-gates-env-paths.md` |
+| agent status detection | `docs/50-agent-detection-architecture.md` |
+| a sidecar daemon | `docs/51` superd · `52` screend · `53` dropd · `54` inspectord · `48` androidd |
+| the wire | `docs/20-wire-protocol.md` — update it after wire changes |
+| Rust that Swift calls in-process | `docs/55-ffi-boundary.md` — the ABI, the artifact, the stale gate |
+| client UI | `DESIGN.md` |
+| release, signing, brew | `docs/49-release-pipeline.md` |
+| why something was scoped out | `docs/DECISIONS.md` |
 
-`make test-touched` after Swift edits (a partial green never warms the pre-push cache); `make test` before push. Every other path — FEC, iOS, launch restore, agent detect, GUI/video, multi-client, fan-out soak — has one dedicated script; match it in `docs/46` instead of guessing.
+## Rules
 
-## Invariants
+- **Rust is the default; perf parity is enough to move existing Swift.** Only SwiftUI/AppKit
+  justifies staying in Swift. A *measured* regression is the only veto.
+- **A port ships over a socket, or as a linked library — pick by lifetime.** A component that must
+  outlive its caller, be `execve`d, or be dialled by two processes is a binary on a socket; one that
+  is in-process by necessity and lifetime-coupled to its caller is an `.xcframework`, the way
+  `libghostty` and `CSlopDeskFFI` already are. **cargo never runs inside `swift build`** — the
+  artifact is built by `make ffi` (`scripts/build-ffi.sh`) beforehand, never by a build plugin that
+  shells out. A linked port has one failure mode a socket port does not: an artifact older than its
+  sources, green tests and all. `build-ffi.sh --check` is in `make lint` for exactly that, and it
+  derives its own inputs — a wrapped crate is covered by its `path = "../…"` edge to the shim, not
+  by a list anyone maintains. See `docs/55-ffi-boundary.md`.
+- **One implementation, never two languages.** Porting means deleting the original in the same
+  change: not a fallback, not a test fake, not a cross-language mirror fixture.
+- **Three crates may write `unsafe`, each about one thing** — `rust/slopdesk-posix` (a syscall with
+  no safe wrapper), `rust/slopdesk-ffi` (is this `(ptr, len)` from Swift live for the call) and
+  `rust/slopdesk-gfsimd` (does this 16-byte load stay inside its chunk). Every other crate is
+  `forbid(unsafe_code)`, which no downstream `allow` can lift. A fourth dissolves the isolation;
+  adding one is a design change, not a convenience, and the bar the third cleared is the bar: a
+  *measured* conflict where safe Rust cannot reach parity, paid for by a crate small enough to read
+  in a sitting and a differential suite that runs under Miri. Inside any of them, carry the
+  obligation that makes the code sound and nothing else: if the safety comment cannot be written
+  without naming slopdesk, the boundary is in the wrong place, so move the *operation* until the
+  obligation is local. Never lower a crate to `deny` to fit code in.
+- **Never `pkill` the host** — `make host-restart` replays hostd's recorded launch exactly. There is
+  no live config reload; the restart is the reload.
+- **superd owns `read` on every PTY master.** A second reader anywhere steals bytes rather than
+  observing them. Tests read through `PaneOutput`.
+- **The wire is golden-pinned** — never `>`-redirect the generator over `golden/golden_vectors.json`.
+- **No app-layer crypto or auth** — security is the WireGuard mesh. Do not add pairing or tokens.
+- **Bit-exact floats** — keep `a * b + c` separate (never `addingProduct`/`fma`); use
+  `Double.maximum`/`.minimum`, not `<`/`>` ternaries.
+- **Commit subjects are release input** — imperative, ≤72 chars, conventional-commit type. The type
+  picks the version bump; the subject lands verbatim in the changelog. Never hand-edit
+  `CHANGELOG.md` or bump a version by hand; `make release` owns every version site.
 
-- **Wire is golden-pinned** — manual binary encode, big-endian, UUIDs 16 raw bytes. `scripts/golden-check.sh` after changes; never `>`-redirect the generator over `golden/golden_vectors.json` (`docs/46`).
-- **Bit-exact floats** — keep `a * b + c` separate, never `addingProduct`/`fma`; `Double.maximum`/`.minimum`, not `<`/`>` ternaries; `==` only in test pins.
-- **Untrusted UDP: validate-then-drop** — decoders optional/throw; C bools as `byte != 0`.
-- **FEC `m == 1` ≡ old XOR**, byte-identical.
-- **Hang-safety** — never create `SCStream`, `VTCompressionSession`, `VTDecompressionSession` or a Metal device in unit tests.
-- **No app-layer crypto/auth** — security is the WireGuard mesh; do not reintroduce pairing/tokens.
-- **Detection is TWO TIERS, keyed on the FEED not the agent** — while a pane has an authoritative feed (Claude hooks OR any agent's ctl `report`), the screen engine may corroborate but never overrule; only the sustained-dissent watchdog can, and it first revokes coverage. A hook block is a LEDGER keyed by `tool_use_id`, not a flag. A pane belongs to ONE session (`ownerSessionID`) — the relay routes by the inherited env var `SLOPDESK_PANE_ID`, so a nested `claude -p` posts here too and is dropped whole; `/clear`+`/resume` are safe only because they await `SessionEnd` first. `docs/50`.
-- **herdr parity is NOT the ceiling** — the screen manifests were a 1:1 port; they are no longer. `DIVERGED_RULES` in `scripts/herdr-differential.py` names the RULES deliberately made better (today claude's `live_prompt_box` + `legacy_no_prompt_blocker`, via cross-region nested gates — a syntax herdr lacks). Divergence is scoped to the RULE, never the agent: every other rule of a diverged agent stays under test, and a mismatch is excused only when a diverged rule explains it. Diverging needs a written reason there + a test (`docs/50` §9).
-- **Hook relay = compiled binary, sync, both Pre AND PostToolUse** — the cost was fork (3 processes), never the AF_UNIX round-trip (11µs). Do NOT detach it (ordering is meaning) and do NOT drop `PostToolUse` (it resolves the `AskUserQuestion` block and keeps `lastAuthoritativeAt` fresh). AF_UNIX `SO_SNDBUF` defaults to 8KB on macOS vs TCP's 128KB — raise it before moving any BULK path to a unix socket, or it gets ~3× slower (`docs/DECISIONS.md` 2026-08-10).
-- **Three paths never merge** — terminal TCP / video UDP / inspector TCP: separate transport, message set, version `1`, no negotiation.
-- **ONE appearance** — ground cream `#FFFBEB`, terminal island glass `#22212C`, chrome = macOS native semantic colors. The theme system is terminal-profile-only; the theme picker was deleted. Do not reintroduce an appearance setting or hand-rolled chrome palettes (`DESIGN.md`).
-- **Client-UI dimensions go through `Slate` tokens** — raw `.font(.system(size:))` / `cornerRadius:` literals under `Sources/SlopDeskClientUI` fail `make lint`.
-- **No `.keyboardShortcut` in `WorkspaceCommands.swift`** — `WorkspaceKeyDispatcher`'s NSEvent monitor owns chords (a menu shortcut double-fires and eats prefix follow-ups).
-- **Multi-client sync has NO toggle** — workspace document and PTY fan-out are unconditional; do not reintroduce `SLOPDESK_WORKSPACE_DOC` / `SLOPDESK_PANE_FANOUT`.
-- **Commit subjects are release input, not prose** — the conventional-commit TYPE decides the version bump (`git cliff --bumped-version`) AND the `CHANGELOG.md` section, so an off-grammar subject contributes to neither, silently. The release body is ONE BULLET PER SUBJECT, VERBATIM, so the subject says what the change DOES, imperative, ≤72 chars, to a reader who was not here: `stop the plate sliding between projects`, never `the plate stops sliding between projects`. Gated at `commit-msg` by `scripts/check-commit-msg.sh` (rejects a leading `the`/`a`/`an`, third-person/past tense, a trailing period, >72 chars). Detail goes in the BODY, which the changelog never reads. Not retroactive — 91% of pre-rule history would fail it. Never hand-edit `CHANGELOG.md` or bump a version by hand: `make release` (→ `scripts/cut-release.sh`) owns the version, the notes, all six version sites, the commit and the tag; `scripts/bump-version.sh` alone if only the version is wrong. `cliff.toml` deliberately skips almost nothing — git-cliff drops a release whose commits were ALL skipped, header included, and `changelog-section.sh` then fails on a version that really shipped (`docs/49`).
-- **Panel runtime deps are PINNED, not brewed** — `code-server`/`baguette`/`adb`/`scrcpy-server` in `ThirdParty/tools/tools.lock` (URL + SHA-256), `make provision` → `.prefix/bin`, which outranks `PATH`. hostd only ever STATS — it never downloads. The `scrcpy-server` jar is COMMITTED (`ThirdParty/tools/vendor/`, reversing the old "never in this repo" rule). iOS simulators and the Android emulator are NOT vendorable (Xcode / `sdkmanager` licence, GB-scale) — do not try. `docs/46`.
-
-## Traps
-
-- prek fails on partial pathspec commits — commit related files together
-- `pkill` can leave a host on the port — check orphans before loopback tests
-- No contiguous secret literals in fixtures (GitHub push protection) — assemble at runtime
-- A test calling `HostServer.start()` must set `SLOPDESK_WORKSPACE_STATE_DIR` or inject `workspaceStore:`, else it overwrites the real workspace
-- The client app is SANDBOXED — its real state lives in `~/Library/Containers/com.slopdesk.client.macos/Data/`, not `~/Library/Application Support/SlopDesk` (that one belongs to hostd/CLI/tests)
-- Client-app verification builds must pass `CODE_SIGNING_ALLOWED=NO` — a signed build is sandboxed, so `defaults` writes are invisible
-- VT HEVC: no `max_ref_frames=1` (all-IDR); no `UsingHardware…` query under low-latency RC (`-12900`); no Lossless key; `DataRateLimits` = bitrate/8
+`make lint-supervisor` (`scripts/check-supervisor.sh`) ratchets the cross-language contracts — which
+Swift files must stay deleted, socket paths, relinquish-vs-terminate. Its failure messages name the
+doc section, so those rules are not restated here.

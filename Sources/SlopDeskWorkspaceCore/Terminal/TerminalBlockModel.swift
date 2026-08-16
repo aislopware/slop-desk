@@ -1,17 +1,49 @@
+// The per-pane command blocks, as the Swift face of `rust/slopdesk-terminal`'s `blocks`, reached
+// through `rust/slopdesk-ffi`'s `blocks` door.
+//
+// ## What is not here any more
+//
+// The ring and its bound, the ordered insert that tolerates a late lower index, the eviction that
+// takes the oldest block and its first-seen stamp with it, the bookmark set with its FIFO cap and
+// its restore-is-not-an-edit rule, the status a block derives from `complete` and `exitCode`, the
+// duration label, the jump-to-failed walk, and the coalescing and generation rules that decide
+// whether an output request goes on the wire at all. All Rust's, in a crate that forbids `unsafe`.
+//
+// ## What stays, and why it has to
+//
+// Two things cannot cross. The CALLBACKS a resolved request fans out to are Swift closures, so this
+// file keeps a bag of them keyed by index — a bag, not a rule: the door decides send-versus-coalesce
+// and owns the generation, and this side only remembers who to call. And the SF Symbol and label
+// strings a row displays are the surface's vocabulary, derived here from the door's status.
+//
+// ## Why `blocks` is a mirror rather than a query
+//
+// `@Observable` tracks stored properties, so the array SwiftUI reads has to live here. When the ring
+// MOVES — a new command, an eviction, a reset — it is rebuilt by one `slopdesk_block_store_project`
+// crossing that writes every row and the one arena their command texts share, rather than 64
+// crossings for one answer. When a known block merely CHANGES, the door names the slot it landed in
+// and this side writes that one element; rebuilding 64 rows to move one field measured at eight
+// times the cost, and that is the update the host sends most.
+
+import CSlopDeskFFI
 import Foundation
+import SlopDeskArena
 import SlopDeskClient
 
 // MARK: - CommandBlock (one Warp-style per-command block, client-side)
 
 /// One Warp-style "Block" as the client knows it: a per-command record built from the host's
 /// `commandBlock` metadata (wire type 28). Metadata ONLY — the captured OUTPUT bytes are fetched on
-/// demand (``TerminalBlockModel/requestOutput(index:send:)`` → wire type 15 → 29) so the CONTROL
-/// channel never floods with command output.
+/// demand (``TerminalBlockModel/requestOutput(index:send:completion:)`` → wire type 15 → 29) so the
+/// CONTROL channel never floods with command output.
 ///
 /// A PURE value type (metadata only, no SwiftUI/client) so the block model is headlessly testable.
+/// Every derived property — ``status``, ``isFailed``, ``durationLabel`` — asks the door, so the rule
+/// behind it has one speller.
 public struct CommandBlock: Equatable, Sendable, Identifiable {
     /// The 0-based block index in the channel's segmenter lifetime — the upsert key AND the
-    /// ``TerminalBlockModel/requestOutput(index:send:)`` request key. Stable for a block's lifetime.
+    /// ``TerminalBlockModel/requestOutput(index:send:completion:)`` request key. Stable for a
+    /// block's lifetime.
     public let index: UInt32
     /// The typed command line (no prompt), as the host segmented it. Empty for a still-forming block.
     public var commandText: String
@@ -50,6 +82,42 @@ public struct CommandBlock: Equatable, Sendable, Identifiable {
         self.promptOrdinal = promptOrdinal
     }
 
+    /// The wire fields as the door's record — everything but the command text, which no derived
+    /// property reads.
+    var fields: SlopDeskBlockFields {
+        SlopDeskBlockFields(
+            index: index,
+            has_exit_code: exitCode != nil,
+            exit_code: exitCode ?? 0,
+            has_duration_ms: durationMS != nil,
+            duration_ms: durationMS ?? 0,
+            complete: complete,
+            output_len: outputLen,
+            prompt_ordinal: promptOrdinal,
+        )
+    }
+
+    /// Builds a block from a projected row and the arena its command text sits in.
+    init(row: SlopDeskBlockRow, arena: UnsafeRawBufferPointer) {
+        // Bounds-checked by ``ArenaText`` — this reader had none at all, and a projected row whose
+        // pair ran past the arena would have read whatever followed it.
+        self.init(row: row, commandText: ArenaText.text(arena, row.command_offset, row.command_length))
+    }
+
+    /// Builds a block from a projected row and a command text already in hand — the carry-over path,
+    /// where the previous mirror's string is byte-identical and is passed on rather than rebuilt.
+    init(row: SlopDeskBlockRow, commandText: String) {
+        self.init(
+            index: row.fields.index,
+            commandText: commandText,
+            exitCode: row.fields.has_exit_code ? row.fields.exit_code : nil,
+            durationMS: row.fields.has_duration_ms ? row.fields.duration_ms : nil,
+            complete: row.fields.complete,
+            outputLen: row.fields.output_len,
+            promptOrdinal: row.fields.prompt_ordinal,
+        )
+    }
+
     // MARK: Status → presentation (the testable icon/label mapping)
 
     /// The block's high-level status, derived purely from `complete` + `exitCode`.
@@ -66,16 +134,14 @@ public struct CommandBlock: Equatable, Sendable, Identifiable {
     ///
     /// A block INTERRUPTED by a new prompt (a nested shell / ssh emits its own OSC-133 A/B without a
     /// `D`) is closed on the host as `complete == false` but with non-nil `durationMS` (the host stamps
-    /// the C→interrupt time). Treat "has a duration" as FINISHED so the row doesn't spin `running…`
-    /// forever — a genuinely-running block always arrives with `durationMS == nil`.
+    /// the C→interrupt time). "Has a duration" therefore counts as FINISHED so the row doesn't spin
+    /// `running…` forever — and that rule lives in the door, not here.
     public var status: Status {
-        guard complete || durationMS != nil else { return .running }
-        switch exitCode {
-        case nil,
-             0:
-            return .succeeded
-        case let code?:
-            return .failed(code: code)
+        let answer = slopdesk_block_status(fields)
+        switch answer.kind {
+        case UInt32(SLOPDESK_BLOCK_STATUS_RUNNING): return .running
+        case UInt32(SLOPDESK_BLOCK_STATUS_FAILED): return .failed(code: answer.code)
+        default: return .succeeded
         }
     }
 
@@ -101,18 +167,23 @@ public struct CommandBlock: Equatable, Sendable, Identifiable {
     /// failed; a completed exit-0 / no-code block is a success. The single predicate the "Failed"
     /// navigator filter + jump-to-failed both read.
     public var isFailed: Bool {
-        if case .failed = status { return true }
-        return false
+        slopdesk_block_status(fields).kind == UInt32(SLOPDESK_BLOCK_STATUS_FAILED)
     }
 
-    /// The duration formatted compactly ("1.25s", "340ms"), or `nil` while running / unknown.
+    /// The longest label the door can produce: `u32::MAX` milliseconds is `"4294967.3s"`, ten bytes.
+    /// A stack buffer this size turns the usual size-then-fill pair into ONE crossing and no heap
+    /// allocation — worth naming because this is read once per row per render, and the pair cost
+    /// twice what the whole label is worth.
+    private static let durationLabelCapacity = 16
+
+    /// The duration formatted compactly ("1.3s", "340ms"), or `nil` while running / unknown.
     public var durationLabel: String? {
-        guard let ms = durationMS else { return nil }
-        if ms >= 1000 {
-            // One decimal of seconds (1250ms → "1.3s"); integer-rounded so the chip never jitters width.
-            return String(format: "%.1fs", Double(ms) / 1000)
+        withUnsafeTemporaryAllocation(of: UInt8.self, capacity: Self.durationLabelCapacity) { buffer in
+            let written = slopdesk_block_duration_label(fields, buffer.baseAddress, buffer.count)
+            guard written > 0, written <= buffer.count else { return nil }
+            // swiftlint:disable:next optional_data_string_conversion
+            return String(decoding: buffer[..<written], as: UTF8.self)
         }
-        return "\(ms)ms"
     }
 }
 
@@ -125,18 +196,47 @@ public struct CommandBlock: Equatable, Sendable, Identifiable {
 /// PURE + headlessly testable: no SwiftUI / surface / actor state. The owning ``TerminalViewModel``
 /// folds the two block events in; the SwiftUI surfaces (navigator / sticky header / chrome chip) read
 /// its observable projections. `@MainActor @Observable` (fold + reads are both on the main actor), yet
-/// every method is a synchronous pure mutation a unit test drives directly.
+/// every method is a synchronous mutation a unit test drives directly.
 @preconcurrency
 @MainActor
 @Observable
 public final class TerminalBlockModel {
-    /// The block ring cap — mirrors the host `CommandBlockTracker`'s 64-block ring so the client can never
-    /// hold a block the host already evicted (an over-old index just yields an empty type-29). Eviction
-    /// drops the OLDEST (lowest-index) blocks.
+    /// The block ring cap — mirrors superd's 64-block ring (`rust/slopdesk-superd/src/blocks.rs`,
+    /// `DEFAULT_MAX_BLOCKS`) so the client can never hold a block the daemon already evicted (an
+    /// over-old index just yields an empty type-29). Eviction drops the OLDEST (lowest-index) blocks.
+    ///
+    /// Agreement with `blocks::MAX_BLOCKS` is a `check-supervisor.sh` gate, not a comment.
     public static let maxBlocks = 64
 
+    /// Cap on bookmarks per pane so a long-lived session can't grow the set unbounded. Over the cap, the
+    /// OLDEST-inserted bookmark is evicted (FIFO). Pinned against `blocks::MAX_BOOKMARKS` by the same gate.
+    public static let maxBookmarks = 256
+
     /// The blocks in INDEX order (oldest first). Newest is `last`. Bounded to ``maxBlocks``.
+    ///
+    /// A MIRROR of the door's ring, rebuilt after every mutation: `@Observable` tracks stored
+    /// properties, so the array the views read has to live on this side of the boundary.
     public private(set) var blocks: [CommandBlock] = []
+
+    /// The bookmarked block indices for this pane. Mirrored from the door alongside ``blocks`` so the
+    /// navigator star + "Bookmarked" filter re-render on a toggle.
+    public private(set) var bookmarkedIndices: Set<UInt32> = []
+
+    /// The door's store: the ring, the bookmark set and the request registry that resets with it.
+    ///
+    /// `nonisolated(unsafe)` for `deinit` alone: every OTHER touch is on the main actor with the
+    /// class, and by the time `deinit` runs the last reference is already gone, so the free races
+    /// with nothing.
+    @ObservationIgnored private nonisolated(unsafe) let store: OpaquePointer
+
+    public init() {
+        guard let handle = slopdesk_block_store_new() else {
+            preconditionFailure("the block store door would not open")
+        }
+        store = handle
+    }
+
+    deinit { slopdesk_block_store_free(store) }
 
     /// The newest block (the CURRENT / last command), or `nil` if none yet. Drives the sticky header +
     /// the chrome status chip.
@@ -145,17 +245,7 @@ public final class TerminalBlockModel {
     /// The blocks newest-first — the Command Navigator's display order (most recent at the top).
     public var navigatorBlocks: [CommandBlock] { blocks.reversed() }
 
-    public init() {}
-
     // MARK: First-seen timestamps (per-index client-receive time, for the Outline tab)
-
-    /// The CLIENT-RECEIVE time of the FIRST `commandBlock` update per block index — the Outline tab's
-    /// per-row relative-timestamp source. A SIDE-MAP (not a ``CommandBlock`` field) so its many call sites
-    /// + its `Equatable` stay untouched. Captured ONCE on the new-index upsert (a later in-place
-    /// running→complete update does NOT move it), dropped on eviction + ``reset()``. Client-receive rather
-    /// than the host clock because host time would differ by the link RTT and there is no wire timestamp
-    /// to use instead.
-    @ObservationIgnored private var firstSeenByIndex: [UInt32: Date] = [:]
 
     /// The clock first-seen capture reads — injectable so a unit test pins a fixed time (production default
     /// is the real wall clock). `@ObservationIgnored`: a wiring seam, not observed state.
@@ -163,22 +253,17 @@ public final class TerminalBlockModel {
 
     /// The client-receive time of `index`'s first `commandBlock` update, or `nil` if unknown / evicted —
     /// the Outline row's relative-timestamp source (rendered via ``OutlinePresentation/relativeTime(from:now:)``).
-    public func firstSeen(index: UInt32) -> Date? { firstSeenByIndex[index] }
+    ///
+    /// Captured ONCE on the new-index upsert (a later in-place running→complete update does NOT move it),
+    /// dropped on eviction + ``reset()`` — all of that inside the door. Client-receive rather than the host
+    /// clock because host time would differ by the link RTT and there is no wire timestamp to use instead.
+    public func firstSeen(index: UInt32) -> Date? {
+        let stamp = slopdesk_block_store_first_seen(store, index)
+        guard stamp.has_value else { return nil }
+        return Date(timeIntervalSince1970: Double(stamp.value) / 1000.0)
+    }
 
     // MARK: Bookmarks (star a block)
-
-    /// Cap on bookmarks per pane so a long-lived session can't grow the set unbounded. Over the cap, the
-    /// OLDEST-inserted bookmark is evicted (FIFO). Generous enough no real session hits it.
-    public static let maxBookmarks = 256
-
-    /// The bookmarked block indices, in INSERTION order (so the cap evicts the oldest). Stored as an
-    /// ordered array but exposed as a `Set` for membership; persistence rides ``onBookmarksChanged``.
-    @ObservationIgnored private var bookmarkOrder: [UInt32] = []
-
-    /// The bookmarked block indices for this pane. `private(set)` — mutated only through
-    /// ``toggleBookmark(index:)`` / ``setBookmarks(_:)`` so the cap + the change notification always run.
-    /// Observed so the navigator star + "Bookmarked" filter re-render on a toggle.
-    public private(set) var bookmarkedIndices: Set<UInt32> = []
 
     /// Fired on EVERY bookmark mutation with the current set so the wiring layer can persist it (the model
     /// stays `UserDefaults`-free / pure). `nil` (default) = no persistence (unit test or preview).
@@ -186,24 +271,16 @@ public final class TerminalBlockModel {
     @ObservationIgnored public var onBookmarksChanged: ((Set<UInt32>) -> Void)?
 
     /// Whether `index` is bookmarked.
-    public func isBookmarked(_ index: UInt32) -> Bool { bookmarkedIndices.contains(index) }
+    public func isBookmarked(_ index: UInt32) -> Bool {
+        slopdesk_block_store_is_bookmarked(store, index)
+    }
 
     /// Toggles `index`'s bookmark: removes it if set, else adds it (evicting the oldest if over the cap).
     /// Fires ``onBookmarksChanged`` with the resulting set. Idempotent in the sense that two toggles return
     /// to the original set.
     public func toggleBookmark(index: UInt32) {
-        if bookmarkedIndices.contains(index) {
-            bookmarkedIndices.remove(index)
-            bookmarkOrder.removeAll { $0 == index }
-        } else {
-            bookmarkedIndices.insert(index)
-            bookmarkOrder.append(index)
-            // Cap by count — evict the oldest-inserted bookmarks (FIFO) until under the bound.
-            while bookmarkOrder.count > Self.maxBookmarks {
-                let evicted = bookmarkOrder.removeFirst()
-                bookmarkedIndices.remove(evicted)
-            }
-        }
+        slopdesk_block_store_toggle_bookmark(store, index)
+        refreshBookmarks()
         onBookmarksChanged?(bookmarkedIndices)
     }
 
@@ -211,29 +288,26 @@ public final class TerminalBlockModel {
     /// not a user edit). Applies the same cap (a corrupt over-long set is trimmed to the FIRST
     /// ``maxBookmarks`` in the caller's order); insertion order is preserved for future FIFO eviction.
     public func setBookmarks(_ indices: [UInt32]) {
-        bookmarkOrder = []
-        bookmarkedIndices = []
-        for index in indices where !bookmarkedIndices.contains(index) {
-            guard bookmarkOrder.count < Self.maxBookmarks else { break }
-            bookmarkOrder.append(index)
-            bookmarkedIndices.insert(index)
-        }
+        slopdesk_block_store_set_bookmarks(store, indices, indices.count)
+        refreshBookmarks()
     }
 
     // MARK: Filtered views (status / bookmark navigator filter)
 
     /// The blocks NEWEST-FIRST matching `filter` — the navigator's filtered list (intersected with its text
     /// query in the view). `.all` is every block; `.failed` is completed non-zero exits (a RUNNING block is
-    /// never failed); `.bookmarked` is the starred set.
+    /// never failed); `.bookmarked` is the starred set. The rule is the door's; this maps the indices it
+    /// answers back onto the mirrored rows.
     public func blocks(filter: BlockNavigatorFilter) -> [CommandBlock] {
-        switch filter {
-        case .all:
-            navigatorBlocks
-        case .failed:
-            navigatorBlocks.filter(\.isFailed)
-        case .bookmarked:
-            navigatorBlocks.filter { bookmarkedIndices.contains($0.index) }
+        let count = slopdesk_block_store_filtered(store, filter.code, nil, 0)
+        guard count > 0 else { return [] }
+        var matched = [UInt32](repeating: 0, count: count)
+        let written = matched.withUnsafeMutableBufferPointer {
+            slopdesk_block_store_filtered(store, filter.code, $0.baseAddress, $0.count)
         }
+        guard written == count else { return [] }
+        let byIndex = Dictionary(blocks.map { ($0.index, $0) }, uniquingKeysWith: { first, _ in first })
+        return matched.compactMap { byIndex[$0] }
     }
 
     /// The block for `index`, or `nil` if unknown / evicted.
@@ -245,8 +319,8 @@ public final class TerminalBlockModel {
 
     /// Upserts a block from a `commandBlock` metadata update: a NEW index appends (kept index-ordered,
     /// evicting the oldest past ``maxBlocks``); a KNOWN index updates in place (running → completed,
-    /// growing `outputLen`, a late command-text fill). The host emits ascending indices, but we tolerate
-    /// any order: a linear scan finds the slot, and a brand-new lower index still inserts in order.
+    /// growing `outputLen`, a late command-text fill). The host emits ascending indices, but the door
+    /// tolerates any order: a brand-new lower index still inserts in order.
     public func upsert(
         index: UInt32,
         commandText: String,
@@ -265,16 +339,20 @@ public final class TerminalBlockModel {
             outputLen: outputLen,
             promptOrdinal: promptOrdinal,
         )
-        if let existing = blocks.firstIndex(where: { $0.index == index }) {
-            blocks[existing] = block
-            return
+        var text = commandText
+        let stamp = Int64((now().timeIntervalSince1970 * 1000).rounded())
+        let landed = text.withUTF8 {
+            slopdesk_block_store_upsert(store, block.fields, $0.baseAddress, $0.count, stamp)
         }
-        // New index — capture its client-receive time (Outline timestamp), insert at the index-ordered
-        // position (almost always the end), then evict the oldest to stay bounded.
-        firstSeenByIndex[index] = now()
-        let insertAt = blocks.firstIndex(where: { $0.index > index }) ?? blocks.endIndex
-        blocks.insert(block, at: insertAt)
-        evictIfNeeded()
+        // A known index REPLACES its slot with exactly the block just built, so the mirror is one
+        // element behind and nothing else moved. Reading the whole ring back for that costs the same
+        // as reading it back for a command that did not exist a moment ago, and this is the update
+        // that arrives on every output-length growth of whatever is running.
+        if landed.replaced, landed.position < blocks.count, blocks[landed.position].index == index {
+            blocks[landed.position] = block
+        } else {
+            refreshBlocks()
+        }
     }
 
     /// Folds one `SlopDeskClient.Event`. Only `.commandBlock` mutates the ring; `.blockOutput` resolves
@@ -295,31 +373,32 @@ public final class TerminalBlockModel {
         }
     }
 
-    private func evictIfNeeded() {
-        while blocks.count > Self.maxBlocks {
-            let evicted = blocks.removeFirst()
-            firstSeenByIndex.removeValue(forKey: evicted.index)
-        }
-    }
-
     /// Clears all blocks + cancels every pending output request with an empty result (so a caller awaiting
     /// one never hangs). Called on a session reset / reconnect — the dead session's blocks are stale.
+    ///
+    /// Bookmarks go WITHOUT firing ``onBookmarksChanged``: a reset must not overwrite the persisted set
+    /// with empty. Persistence keys by the session scope key — `LivePaneSession.bookmarkScopeKey` — not
+    /// the stable pane id, so a within-launch reconnect's reset leaves the prior set untouched on disk.
     public func reset() {
-        blocks.removeAll()
-        // First-seen timestamps die with the blocks (a fresh session re-captures them).
-        firstSeenByIndex.removeAll()
-        // Bookmarks are per-SESSION display state — a fresh session starts with none, re-seeded from
-        // persistence on the next attach (a new materialization mints a NEW per-session scope key, so a
-        // relaunch starts empty rather than re-applying stale indices). Cleared WITHOUT firing
-        // onBookmarksChanged so a reset doesn't overwrite the persisted set with empty (persistence keys
-        // by the session scope key — `LivePaneSession.bookmarkScopeKey` — not the stable pane id, so a
-        // within-launch reconnect's reset leaves the prior set untouched on disk).
-        bookmarkOrder.removeAll()
-        bookmarkedIndices.removeAll()
-        // Resolve every in-flight request as "unavailable" so its continuation never strands.
-        let stranded = pending
+        // The door drops the blocks, the stamps and the bookmarks and hands back every request it
+        // stranded, in one call — a reset that dropped the blocks without naming them would leave a
+        // continuation parked forever.
+        let count = slopdesk_block_store_reset(store)
+        var stranded = [UInt32](repeating: 0, count: count)
+        let written = stranded.withUnsafeMutableBufferPointer {
+            slopdesk_block_store_take_stranded(store, $0.baseAddress, $0.count)
+        }
+        precondition(written == count, "the stranded slot answered a size it would not fill")
+        refreshBlocks()
+        refreshBookmarks()
+        for index in stranded {
+            guard let callbacks = pending.removeValue(forKey: index) else { continue }
+            for callback in callbacks { callback(nil) }
+        }
+        // Anything the door did not name has no live slot, so nothing is waiting on the wire for it.
+        let orphaned = pending
         pending.removeAll()
-        for (_, callbacks) in stranded {
+        for (_, callbacks) in orphaned {
             for callback in callbacks { callback(nil) }
         }
     }
@@ -331,23 +410,17 @@ public final class TerminalBlockModel {
     /// "no output available" from "empty output" without hanging.
     public typealias OutputResult = Data?
 
-    /// In-flight output requests keyed by block index. A list of callbacks per index COALESCES concurrent
-    /// requests for the same block onto ONE wire request: the first request sends, later ones for the same
-    /// index just append a callback; the single type-29 reply fans out to all of them.
+    /// The callbacks waiting on each in-flight index. A BAG, not a rule: whether a request coalesces or
+    /// goes on the wire, and which generation it is under, are the door's answers. This only remembers who
+    /// to call when one resolves — a list per index so concurrent requests for the same block all get the
+    /// single reply.
     @ObservationIgnored private var pending: [UInt32: [(OutputResult) -> Void]] = [:]
 
-    /// Monotonic per-index REQUEST GENERATION, bumped each time a brand-new pending slot opens for an
-    /// index (NOT on a coalesced piggy-back). A timeout `Task` captures the generation it armed for and
-    /// passes it to ``timeoutPending(index:generation:)``; the timeout only fires if THAT generation is
-    /// still the live one — so a stale timer from an earlier request can never resolve a later request for
-    /// the same index. Resolving / timing out a slot leaves the counter alone (it only ever advances), so
-    /// the next request gets a strictly newer token.
-    @ObservationIgnored private var requestGeneration: [UInt32: UInt64] = [:]
-
     /// The generation currently armed for an in-flight request at `index`, or `nil` if none is pending —
-    /// the token a caller's timeout must match to fire. Bumped by ``requestOutput`` on a fresh send.
+    /// the token a caller's timeout must match to fire.
     public func currentRequestGeneration(index: UInt32) -> UInt64? {
-        pending[index] != nil ? requestGeneration[index] : nil
+        let armed = slopdesk_block_store_current_generation(store, index)
+        return armed.has_value ? armed.value : nil
     }
 
     /// Requests block `index`'s output, invoking `completion` with the RAW VT bytes when the host replies
@@ -363,17 +436,10 @@ public final class TerminalBlockModel {
         send: (UInt32) -> Void,
         completion: @escaping (OutputResult) -> Void,
     ) -> UInt64 {
-        if pending[index] != nil {
-            // Already in flight — coalesce: just register this callback, do NOT re-send. The live
-            // generation is the one armed when this slot opened; a coalesced caller shares it.
-            pending[index]?.append(completion)
-            return requestGeneration[index] ?? 0
-        }
-        let generation = (requestGeneration[index] ?? 0) &+ 1
-        requestGeneration[index] = generation
-        pending[index] = [completion]
-        send(index)
-        return generation
+        let decision = slopdesk_block_store_request(store, index)
+        pending[index, default: []].append(completion)
+        if decision.send { send(index) }
+        return decision.generation
     }
 
     /// Resolves a pending request for `index` from a `blockOutput` reply: an EMPTY `output` is treated as
@@ -381,29 +447,96 @@ public final class TerminalBlockModel {
     /// pending request is dropped (a stray / late type-29 must not crash). Fans out to every coalesced
     /// callback, then clears the slot.
     public func resolveOutput(index: UInt32, output: Data) {
-        guard let callbacks = pending.removeValue(forKey: index) else { return }
+        guard slopdesk_block_store_resolve(store, index) else { return }
+        let callbacks = pending.removeValue(forKey: index) ?? []
         let result: OutputResult = output.isEmpty ? nil : output
         for callback in callbacks { callback(result) }
     }
 
     /// Whether a request for `index` is still in flight (the view shows a copy spinner while true).
     public func isOutputPending(index: UInt32) -> Bool {
-        pending[index] != nil
+        slopdesk_block_store_is_pending(store, index)
     }
 
     /// Times out a still-pending request for `index`, resolving it as "unavailable" (`nil`) — the
     /// belt-and-braces guard for a host that drops the reply (so the UI's copy spinner never spins
     /// forever). A no-op if the request already resolved.
     ///
-    /// GENERATION-GATED: fires ONLY if `generation` is still the live token for this index. A copy
-    /// request resolves its slot and a SECOND copy of the same block opens a NEW slot with a NEWER
+    /// GENERATION-GATED by the door: it fires ONLY if `generation` is still the live token for this index.
+    /// A copy request resolves its slot and a SECOND copy of the same block opens a NEW slot with a NEWER
     /// generation; the first copy's parked timeout then carries a STALE generation and is correctly
-    /// ignored, so it can't resolve the fresh request as "unavailable". Passing `nil` keeps the old
-    /// unconditional behavior (any pending request for the index is timed out).
+    /// ignored. Passing `nil` times out whatever is pending.
     public func timeoutPending(index: UInt32, generation: UInt64? = nil) {
-        if let generation, requestGeneration[index] != generation { return } // stale timer — ignore.
-        guard let callbacks = pending.removeValue(forKey: index) else { return }
+        guard slopdesk_block_store_time_out(store, index, generation != nil, generation ?? 0) else { return }
+        let callbacks = pending.removeValue(forKey: index) ?? []
         for callback in callbacks { callback(nil) }
+    }
+
+    // MARK: Mirroring the door
+
+    /// The projection's landing ground, kept between calls and grown but never shrunk. An upsert is
+    /// not rare — it arrives on every output-length growth of a RUNNING command — and a fresh pair of
+    /// buffers per call was two allocations for an answer that is the same size as the last one.
+    @ObservationIgnored private var rowScratch: [SlopDeskBlockRow] = []
+    @ObservationIgnored private var arenaScratch: [UInt8] = []
+
+    /// Rebuilds ``blocks`` from the door — one crossing that writes every row and the one arena their
+    /// command texts share.
+    ///
+    /// Only a projection that does not fit the scratch costs a second crossing: §4 says nothing is
+    /// written unless BOTH buffers fit, and the sizes needed come back either way, so the sizing call
+    /// is the failure path rather than the usual one.
+    ///
+    /// This runs when the ring MOVED — a new command, an eviction, a reset. The far commoner update,
+    /// a running command's output length growing, replaces one slot and is written straight into
+    /// ``blocks`` by ``upsert(index:commandText:exitCode:durationMS:complete:outputLen:promptOrdinal:)``
+    /// without coming here at all; rebuilding 64 rows to change one field measured at eight times
+    /// what writing the one costs, and no arrangement of the rebuild closed that gap.
+    private func refreshBlocks() {
+        var written = project()
+        if written.row_count > rowScratch.count || written.arena_length > arenaScratch.count {
+            rowScratch = [SlopDeskBlockRow](
+                repeating: SlopDeskBlockRow(), count: Swift.max(written.row_count, Self.maxBlocks),
+            )
+            arenaScratch = [UInt8](repeating: 0, count: Swift.max(written.arena_length, 4096))
+            written = project()
+            precondition(
+                written.row_count <= rowScratch.count && written.arena_length <= arenaScratch.count,
+                "the projection outgrew a scratch sized to its own answer",
+            )
+        }
+        let count = written.row_count
+        blocks = count == 0 ? [] : arenaScratch.withUnsafeBytes { arena in
+            (0..<count).map { CommandBlock(row: rowScratch[$0], arena: arena) }
+        }
+    }
+
+    /// Asks the door to write the projection into the scratch, and returns the sizes it NEEDED —
+    /// which is what it wrote when the scratch was big enough, and what to grow to when it was not.
+    private func project() -> SlopDeskBlockCounts {
+        rowScratch.withUnsafeMutableBufferPointer { rows in
+            arenaScratch.withUnsafeMutableBufferPointer { arena in
+                slopdesk_block_store_project(
+                    store,
+                    rows.baseAddress, rows.count,
+                    arena.baseAddress, arena.count,
+                )
+            }
+        }
+    }
+
+    /// Rebuilds ``bookmarkedIndices`` from the door.
+    private func refreshBookmarks() {
+        let count = slopdesk_block_store_bookmarks(store, nil, 0)
+        guard count > 0 else {
+            bookmarkedIndices = []
+            return
+        }
+        var marked = [UInt32](repeating: 0, count: count)
+        let written = marked.withUnsafeMutableBufferPointer {
+            slopdesk_block_store_bookmarks(store, $0.baseAddress, $0.count)
+        }
+        bookmarkedIndices = written == count ? Set(marked) : []
     }
 }
 
@@ -416,6 +549,15 @@ public enum BlockNavigatorFilter: String, CaseIterable, Sendable, Hashable {
     case all
     case failed
     case bookmarked
+
+    /// The `SLOPDESK_BLOCK_FILTER_*` code the door reads.
+    var code: UInt32 {
+        switch self {
+        case .all: UInt32(SLOPDESK_BLOCK_FILTER_ALL)
+        case .failed: UInt32(SLOPDESK_BLOCK_FILTER_FAILED)
+        case .bookmarked: UInt32(SLOPDESK_BLOCK_FILTER_BOOKMARKED)
+        }
+    }
 
     /// The segment label.
     public var title: String {
@@ -438,45 +580,36 @@ public enum BlockNavigatorFilter: String, CaseIterable, Sendable, Hashable {
 
 // MARK: - BlockNavigation (jump-to-failed cursor stepping)
 
-/// PURE jump-to-failed navigation over a newest-first block list. Given the navigator's newest-first
-/// `blocks`, a cursor (a block INDEX, or `nil` = start from the newest end), and a direction, it finds the
-/// next/prev FAILED block — STOPPING at the ends (never wraps). Used by the active-pane "Jump to
-/// Previous/Next Failed" store ops; kept pure + `nonisolated` so it unit-tests with no view / actor.
+/// PURE jump-to-failed navigation over a newest-first block list — the Swift face of
+/// `blocks::adjacent_failed`.
+///
+/// It takes a LIST rather than the model because the walk runs over whatever the caller projected:
+/// the navigator's newest-first rows in production, a hand-built list in a test. Kept `nonisolated`
+/// so it unit-tests with no view / actor.
 enum BlockNavigation {
     /// The next (`forward == true`) / previous (`forward == false`) FAILED block from the cursor in the
     /// NEWEST-FIRST `blocks` list, or `nil` if there is none in that direction (no wrap).
     ///
     /// Direction is expressed over the newest-first list ORDER: "forward" steps toward later positions
     /// (older blocks), "backward" toward earlier positions (newer blocks). `fromIndex == nil` starts from
-    /// the newest end so a first "forward" jump lands on the newest failed block.
-    ///
-    /// If the cursor sits ON a failed block, the search ADVANCES PAST it (so repeated jumps walk through
-    /// every failure rather than sticking). A cursor index not present in `blocks` (evicted) starts from the
-    /// matching end.
+    /// the newest end so a first "forward" jump lands on the newest failed block. A cursor sitting ON a
+    /// failed block ADVANCES PAST it (so repeated jumps walk through every failure rather than sticking);
+    /// a cursor index not present in `blocks` (evicted) starts from the matching end.
     nonisolated static func adjacentFailed(
         in blocks: [CommandBlock],
         fromIndex: UInt32?,
         forward: Bool,
     ) -> CommandBlock? {
-        guard !blocks.isEmpty else { return nil }
-        // The cursor's position in the newest-first list, or a virtual position just OFF the matching end
-        // when there is no cursor / it was evicted: forward starts before position 0 (so it can land on 0),
-        // backward starts after the last position (so it can land on the last).
-        let cursorPos: Int = fromIndex
-            .flatMap { idx in blocks.firstIndex { $0.index == idx } } ?? (forward ? -1 : blocks.count)
-        if forward {
-            var pos = cursorPos + 1
-            while pos < blocks.count {
-                if blocks[pos].isFailed { return blocks[pos] }
-                pos += 1
-            }
-        } else {
-            var pos = cursorPos - 1
-            while pos >= 0 {
-                if blocks[pos].isFailed { return blocks[pos] }
-                pos -= 1
-            }
+        let fields = blocks.map(\.fields)
+        var found: UInt32 = 0
+        let hit = fields.withUnsafeBufferPointer { buffer in
+            slopdesk_block_adjacent_failed(
+                buffer.baseAddress, buffer.count,
+                fromIndex != nil, fromIndex ?? 0, forward,
+                &found,
+            )
         }
-        return nil
+        guard hit else { return nil }
+        return blocks.first { $0.index == found }
     }
 }

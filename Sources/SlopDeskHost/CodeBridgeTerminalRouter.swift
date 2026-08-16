@@ -23,6 +23,7 @@
 // Pure — no sockets, no sessions, no Darwin. `CodeBridgeServerTests` pins it directly.
 
 import Foundation
+import SlopDeskWorkspaceModel
 
 /// One candidate pane, flattened from the host's live session for the router's benefit.
 struct CodeBridgePane: Sendable, Equatable {
@@ -122,13 +123,11 @@ enum CodeBridgeTerminalRouter {
     }
 
     /// POSIX single-quote `value` so a shell reads it verbatim: wrap in `'…'`, rewriting each
-    /// embedded `'` as `'\''` (close, escaped quote, reopen). Mirrors the client-side actuator's
-    /// quoting (`LinkActionPolicy.shellSingleQuoted`) — the daemon does not link the client's
-    /// workspace target, so the four lines live in both places rather than widening the daemon's
-    /// dependency graph for them.
-    static func shellSingleQuoted(_ value: String) -> String {
-        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
-    }
+    /// embedded `'` as `'\''` (close, escaped quote, reopen).
+    ///
+    /// This used to be four lines the daemon kept rather than widen its dependency graph for. The
+    /// graph never had to widen: `ShellQuoting` sits in the value-model leaf hostd already links.
+    static func shellSingleQuoted(_ value: String) -> String { ShellQuoting.singleQuote(value) }
 
     /// The sentence the editor shows when nothing could take the command.
     static func message(for refusal: Refusal) -> String {

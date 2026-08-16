@@ -17,7 +17,12 @@
 // The connection and the phase machine are separable on purpose: `poll` and `phase(for:)` are pure
 // enough to test without a socket, and everything that is not is behind ``SimulatorControlling``.
 
-#if canImport(SwiftUI)
+// `os(macOS)` joins the guard: every type this file names is `#if os(macOS)` in the other
+// twenty-six files of this directory, and the mount, `CodeSidebarColumn`, is macOS-only too.
+// This was the one file in the cluster without it, so it still compiled for the iOS triple
+// and reached for symbols that are not there. Its twin, `AndroidSidebarModel`, had the same
+// gap, and both were invisible because `swift build` compiles the macOS slice only.
+#if canImport(SwiftUI) && os(macOS)
 import CoreGraphics
 import Foundation
 import SlopDeskProtocol
@@ -134,8 +139,9 @@ final class SimulatorSidebarModel {
     /// device cannot land on the current one.
     private var chromeLoad: Task<Void, Never>?
     /// Clears ``notice`` after its moment. Held so a second action replaces the first's timer rather
-    /// than having two racing to blank the same slot.
-    private var noticeClear: Task<Void, Never>?
+    /// than having two racing to blank the same slot — which is ``DeadlineLatch``'s whole job, so the
+    /// cancel-and-re-arm is not spelled out again here.
+    @ObservationIgnored private let noticeClear = DeadlineLatch()
     /// Gives up on a stream that never starts. Held so selecting a second device cancels the first
     /// device's verdict rather than letting it land on the new selection.
     private var streamWatchdog: Task<Void, Never>?
@@ -632,7 +638,7 @@ final class SimulatorSidebarModel {
     /// target.
     func report(_ text: String) {
         notice = nil
-        noticeClear?.cancel()
+        noticeClear.cancel()
         failure = text
     }
 
@@ -643,12 +649,7 @@ final class SimulatorSidebarModel {
     private func show(notice text: String) {
         failure = nil
         notice = text
-        noticeClear?.cancel()
-        noticeClear = Task { [weak self] in
-            try? await Task.sleep(for: Self.noticeLifetime)
-            guard !Task.isCancelled else { return }
-            self?.notice = nil
-        }
+        noticeClear.arm(after: Self.noticeLifetime) { [weak self] in self?.notice = nil }
     }
 
     // MARK: Chrome

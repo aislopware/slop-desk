@@ -66,25 +66,21 @@ struct SimulatorLogLine: Identifiable, Equatable {
 
     // MARK: The grammar
 
-    /// The next whitespace-delimited run, consumed from `rest`. `nil` at end of input.
+    /// The next whitespace-delimited run, consumed from `rest`. ``DeviceLogLexer``'s, because the
+    /// two consoles' grammars diverge AFTER the tokens, not at them.
     private static func token(_ rest: inout Substring) -> Substring? {
-        let start = rest.drop(while: \.isWhitespace)
-        guard !start.isEmpty else { return nil }
-        let end = start.firstIndex(where: \.isWhitespace) ?? start.endIndex
-        rest = start[end...]
-        return start[..<end]
+        DeviceLogLexer.token(&rest)
     }
 
-    /// `2026-08-04`. Shape only — the value is never read, so a date the panel cannot interpret is
-    /// still a date, and validating the calendar here would reject a log written across a timezone.
+    /// `2026-08-04` — the unified log prints the year, which is the one thing this grammar's date
+    /// does not share with `logcat`'s.
     private static func isDate(_ token: Substring) -> Bool {
-        token.count == 10 && token.allSatisfy { $0.isNumber || $0 == "-" }
+        DeviceLogLexer.isDate(token, length: 10)
     }
 
     /// `13:50:19.565`. Same reasoning as ``isDate``: shape, not value.
     private static func isTime(_ token: Substring) -> Bool {
-        token.count >= 8 && token.first?.isNumber == true
-            && token.allSatisfy { $0.isNumber || $0 == ":" || $0 == "." }
+        DeviceLogLexer.isTime(token)
     }
 
     /// One or two letters, capital first — `E`, `Df`, `Db`. Checked so a line whose third token

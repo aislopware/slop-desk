@@ -180,12 +180,14 @@ final class RepoStatusWatcher: @unchecked Sendable {
 
     // MARK: - Production closures (the seam defaults)
 
-    /// The production probe: `HostMetadataProbe.gitStatus` run AT the repo root (fd-less — the git
-    /// probes never touch the PTY), folded host-side by the shared porcelain fold. `repoRoot` is
-    /// pinned to the WATCH key — the canonical toplevel the type-34 resolver latched — so the
-    /// client's section lookup matches byte-for-byte.
+    /// The production probe: one `slopdesk-probe git-status` run AT the repo root, folded host-side by
+    /// the shared porcelain fold. It goes through ``HostProbe`` directly rather than through a pane's
+    /// ``HostMetadataProbe`` because there is no pane here — the fd-less `-1, -1` this used to
+    /// construct was a stand-in for a PTY the git questions never touched. `repoRoot` is pinned to the
+    /// WATCH key — the canonical toplevel the type-34 resolver latched — so the client's section
+    /// lookup matches byte-for-byte.
     static func probeProjectGitStatus(root: String) -> WireMessage.ProjectGitStatus? {
-        let payload = HostMetadataProbe(masterFD: -1, shellPID: -1).gitStatus(cwd: root)
+        let payload = HostProbe.gitStatus(cwd: root)
         guard payload.hasRepo else { return nil }
         let counts = payload.foldedCounts
         return WireMessage.ProjectGitStatus(

@@ -6,33 +6,18 @@ import XCTest
 /// not finish the whole inspector stream. Only a genuine framing desync (frameTooLarge)
 /// ends the stream so the client resubscribes. Pure: a hand-fed loopback channel.
 final class InspectorResilientDecodeTests: XCTestCase {
-    /// Builds a length-prefixed frame from a raw payload (`typeTag + body`), bypassing
-    /// `InspectorCodec.encode` so we can craft a *malformed* body deliberately.
-    private func frame(payload: Data) -> Data {
-        var out = Data()
-        let len = UInt32(payload.count)
-        out.append(UInt8(truncatingIfNeeded: len >> 24))
-        out.append(UInt8(truncatingIfNeeded: len >> 16))
-        out.append(UInt8(truncatingIfNeeded: len >> 8))
-        out.append(UInt8(truncatingIfNeeded: len))
-        out.append(payload)
-        return out
-    }
-
     private func good(_ text: String) throws -> Data {
-        try InspectorCodec.encode(.event(.message(MessageEvent(role: .assistant, text: text))))
+        try InspectorWireFixture.eventFrame(.message(MessageEvent(role: .assistant, text: text)))
     }
 
     /// A type-1 (event) frame whose body is NOT valid JSON → `CodecError.malformedBody`.
     private func malformedEventFrame() -> Data {
-        var payload = Data([1]) // type tag = .event
-        payload.append(Data("not-json{".utf8))
-        return frame(payload: payload)
+        InspectorWireFixture.frame(tag: 1, body: Data("not-json{".utf8))
     }
 
     /// A frame with an unknown type tag → `CodecError.unknownType`.
     private func unknownTypeFrame() -> Data {
-        frame(payload: Data([0x7F, 0x01, 0x02]))
+        InspectorWireFixture.frame(tag: 0x7F, body: Data([0x01, 0x02]))
     }
 
     /// good → malformed (event JSON garbage) → unknown-type → good : the two good events

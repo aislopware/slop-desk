@@ -15,11 +15,6 @@ import Foundation
 import SlopDeskAgentDetect
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
-#if canImport(AppKit)
-import AppKit // NSPasteboard for the client-side "Copy Path"
-#elseif canImport(UIKit)
-import UIKit // UIPasteboard for the client-side "Copy Path"
-#endif
 
 // MARK: - Data source protocol
 
@@ -352,11 +347,7 @@ public struct ActionsPaletteSource: PaletteDataSource {
     /// Write `string` to the platform pasteboard — the client-side local clipboard
     /// write. Host-routed Reveal/Open are a future addition.
     private static func copyToPasteboard(_ string: String) {
-        #if canImport(AppKit)
         ClientPasteboard.write(string)
-        #elseif canImport(UIKit)
-        UIPasteboard.general.string = string
-        #endif
     }
 
     /// The live registry glyph for `action`'s default chord (nil when unbound) — the ONE source the catalog

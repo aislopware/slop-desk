@@ -1,4 +1,4 @@
-import Foundation
+import CSlopDeskFFI
 
 #if canImport(CoreGraphics)
 import CoreGraphics
@@ -23,6 +23,9 @@ public struct VideoSize: Equatable, Sendable {
     public init(width: Double, height: Double) { self.width = width
         self.height = height
     }
+
+    /// The record this size crosses as.
+    var crossing: SlopDeskVideoSize { SlopDeskVideoSize(width: width, height: height) }
 }
 
 /// A pure rectangle (origin + size), in whatever coordinate space the caller states.
@@ -43,17 +46,19 @@ public struct VideoRect: Equatable, Sendable {
     public var maxX: Double { origin.x + size.width }
     public var maxY: Double { origin.y + size.height }
 
-    /// The area of intersection with `other` (0 when disjoint). Used by the
-    /// multi-monitor coordinate-mapping screen pick.
+    /// The area of intersection with `other` (0 when disjoint).
     ///
-    /// Native Swift, byte-identical to `geometry::VideoRect::intersection_area`. The
-    /// Rust core uses NaN-ignoring `f64::max`/`f64::min`, mirrored here with the IEEE
-    /// `Double.maximum`/`Double.minimum` static forms (NOT `Swift.max`/`Swift.min`,
-    /// which propagate NaN) so any NaN handling matches the core bit-for-bit.
+    /// No Swift caller: the multi-monitor screen pick that used to ask this now runs entirely inside
+    /// `rust/slopdesk-video`'s `coordinate_mapping`. The face stays because `check-supervisor` pins it
+    /// — the crate's NaN-ignoring maxima are what land a degenerate rect on a finite answer instead of
+    /// poisoning the pick, and a Swift `max(0, …)` written in its place would not do that.
     public func intersectionArea(_ other: Self) -> Double {
-        let ix = Double.maximum(0, Double.minimum(maxX, other.maxX) - Double.maximum(minX, other.minX))
-        let iy = Double.maximum(0, Double.minimum(maxY, other.maxY) - Double.maximum(minY, other.minY))
-        return ix * iy
+        slopdesk_geometry_intersection_area(crossing, other.crossing)
+    }
+
+    /// The record this rect crosses as.
+    var crossing: SlopDeskVideoRect {
+        SlopDeskVideoRect(x: origin.x, y: origin.y, width: size.width, height: size.height)
     }
 }
 
@@ -68,6 +73,10 @@ public struct VideoRect: Equatable, Sendable {
 public enum VideoContentMode: Sendable, Equatable {
     case fit
     case fill
+
+    /// The code this mode crosses as. Public because the cursor overlay asks the SAME transform
+    /// from another module, and a second spelling of two cases is what lets them drift apart.
+    public var code: UInt32 { self == .fill ? SLOPDESK_CONTENT_MODE_FILL : SLOPDESK_CONTENT_MODE_FIT }
 }
 
 /// Aspect geometry — the **single source of truth** for where the decoded video is
@@ -102,25 +111,12 @@ public enum AspectFit {
         videoNativeSize: VideoSize,
         mode: VideoContentMode = .fit,
     ) -> VideoRect {
-        // Native Swift — the single source of truth shared with the renderer's quad scale.
-        // Byte-identical to `geometry::aspect_fit::displayed_video_rect`.
-        let vw = videoNativeSize.width, vh = videoNativeSize.height
-        let capW = viewSize.width, capH = viewSize.height
-        guard vw > 0, vh > 0, capW > 0, capH > 0 else {
-            return VideoRect(x: 0, y: 0, width: Double.maximum(0, capW), height: Double.maximum(0, capH))
-        }
-        // `.fit` scales to the SMALLER axis ratio (contain → the whole video sits inside,
-        // bars on the longer axis). `.fill` scales to the LARGER axis ratio (cover → the
-        // video fills the view, the longer axis overflows and is cropped). Both use a single
-        // uniform `scale`, so neither distorts the aspect. NaN-ignoring IEEE min/max mirrors
-        // the core's `f64::min`/`f64::max` (inputs are guarded positive, so this is moot here
-        // but stays faithful to the Rust reference).
-        let scaleX = capW / vw, scaleY = capH / vh
-        let scale = (mode == .fit) ? Double.minimum(scaleX, scaleY) : Double.maximum(scaleX, scaleY)
-        let w = vw * scale, h = vh * scale
-        let ox = (capW - w) / 2
-        let oy = (capH - h) / 2
-        return VideoRect(x: ox, y: oy, width: w, height: h)
+        // The single source of truth shared with the renderer's quad scale — `geometry`'s, through
+        // the door, so the two can never be two.
+        let rect = slopdesk_geometry_displayed_video_rect(
+            viewSize.crossing, videoNativeSize.crossing, mode.code,
+        )
+        return VideoRect(x: rect.x, y: rect.y, width: rect.width, height: rect.height)
     }
 
     /// FORWARD render transform: maps a host-window-space point (points) to where it is
@@ -130,10 +126,10 @@ public enum AspectFit {
     /// overlay where clicks actually land (doc 17 §3.3 / §3.7).
     ///
     /// 1. host point → source 0..1 (`hostPoint / videoNativeSize`).
-    /// 2. invert the renderer's crop (`uv = (in.uv-0.5)·invZoom + 0.5 + pan`):
-    ///    `displayUV = (sourceUV - 0.5 - pan)·zoom + 0.5`.
-    /// 3. displayUV → view point inside the aspect-fit displayed rect.
-    /// Pan is clamped identically to the renderer (`panLimit = 0.5·(1-invZoom)`).
+    /// 2. invert the renderer's zoom/pan crop, giving the displayed 0..1 coordinate.
+    /// 3. that coordinate → a view point inside the aspect-fit displayed rect.
+    /// Pan is clamped exactly as the renderer clamps it. The three steps and the clamp are the
+    /// crate's; see `geometry::view_point` for the arithmetic they are written in.
     public static func viewPoint(
         forHostPoint hostPoint: VideoPoint,
         viewSize: VideoSize,
@@ -142,27 +138,15 @@ public enum AspectFit {
         pan: VideoPoint = VideoPoint(x: 0, y: 0),
         mode: VideoContentMode = .fit,
     ) -> VideoPoint {
-        // Native Swift — the exact inverse of the input encoder's `normalize`, derived from
-        // the same source so they can never drift. Byte-identical to
-        // `geometry::aspect_fit::view_point`.
-        let su = videoNativeSize.width > 0 ? hostPoint.x / videoNativeSize.width : 0
-        let sv = videoNativeSize.height > 0 ? hostPoint.y / videoNativeSize.height : 0
-        let z = Double.maximum(1, zoom)
-        let invZoom = 1 / z
-        // keep mul+add separate — FMA breaks bit-exact golden parity
-        let panLimit = 0.5 * (1 - invZoom)
-        // NaN-ignoring clamp — the core deliberately uses `f64::max`/`f64::min` so a NaN pan
-        // clamps to ±panLimit (a finite coordinate). Use IEEE `Double.maximum`/`Double.minimum`,
-        // NOT `Swift.max`/`Swift.min` (which would poison NaN → NaN as the pre-port Swift did).
-        // See the core's pan-clamp NOTE: the finite-clamping behaviour is the one we keep.
-        let px = Double.minimum(Double.maximum(pan.x, -panLimit), panLimit)
-        let py = Double.minimum(Double.maximum(pan.y, -panLimit), panLimit)
-        // keep mul+add separate — FMA breaks bit-exact golden parity
-        let du = (su - 0.5 - px) * z + 0.5
-        let dv = (sv - 0.5 - py) * z + 0.5
-        let r = displayedVideoRect(viewSize: viewSize, videoNativeSize: videoNativeSize, mode: mode)
-        // keep mul+add separate — FMA breaks bit-exact golden parity
-        return VideoPoint(x: r.origin.x + du * r.size.width, y: r.origin.y + dv * r.size.height)
+        // The exact inverse of the input encoder's `normalize`, derived from the same source so
+        // they can never drift — `geometry`'s, through the door. The separate multiplies and the
+        // NaN-ignoring pan clamp are the crate's, and this number is golden-pinned.
+        let answer = slopdesk_geometry_view_point(
+            SlopDeskVideoPoint(x: hostPoint.x, y: hostPoint.y),
+            viewSize.crossing, videoNativeSize.crossing, zoom,
+            SlopDeskVideoPoint(x: pan.x, y: pan.y), mode.code,
+        )
+        return VideoPoint(x: answer.x, y: answer.y)
     }
 }
 

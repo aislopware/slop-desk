@@ -677,7 +677,7 @@ hold_steady() {
 #
 # A BARE CHILD COUNT IS WRONG HERE, and it is what made this gate flaky. hostd forks non-PTY helpers
 # as well as shells: `TerminfoResolver` runs `/usr/bin/infocmp`, `HostMetadataProbe` runs
-# `/usr/bin/git` and `/usr/sbin/lsof`, `ShellIntegration` probes `$ZDOTDIR` with a `--norcs` zsh.
+# `/usr/bin/git` and `/usr/sbin/lsof`, superd's shim probes `$ZDOTDIR` with a `--norcs` zsh.
 # Each is a child of hostd for as long as it lives, and one of them fires REPEATEDLY inside the watch
 # window: `${WORK}` is under this repo, so the daemon's HOME is too, so a restored pane's project key
 # resolves to slop-desk itself — and this gate appends to `hostd.log` and `client.log` inside that

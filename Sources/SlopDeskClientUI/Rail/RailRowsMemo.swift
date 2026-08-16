@@ -23,7 +23,6 @@
 //
 // Headless (no SwiftUI import) so `RailRowsMemoTests` pins the hit/miss shape without a view.
 
-import Foundation
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 

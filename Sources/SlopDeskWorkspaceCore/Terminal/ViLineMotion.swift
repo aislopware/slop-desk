@@ -1,5 +1,3 @@
-import Foundation
-
 /// PURE vi word/column motions over ONE terminal row's text, in display CELL columns — the
 /// horizontal half of the copy-mode cursor engine (`TerminalViewModel.handleCopyModeKey`).
 ///

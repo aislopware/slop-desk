@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 
 /// The PATH 2 keepalive / idle-timeout-reaper timing contract (CONCURRENCY-HOST-1
@@ -15,25 +16,28 @@ public enum KeepaliveTiming {
     // MARK: Constants (the timing contract — RFC 7675 §5.1 / RFC 9000 §10.1.2)
 
     //
-    // Native Swift twin of `slopdesk_core::keepalive` — fixed compile-time constants (seconds),
+    // The face of `rust/slopdesk-video`'s `keepalive` — fixed compile-time constants (seconds),
     // the SINGLE source of truth shared by the client keepalive timer and the host idle-reaper so
-    // host and client cannot silently drift apart.
+    // host and client cannot silently drift apart. They cross as ONE record because they are one
+    // argument: the stall threshold tolerates two lost heartbeats, and the reaper tick is what
+    // makes the worst-case reclaim `idleTimeout + reaperTick`.
+    private static let timing = slopdesk_keepalive_timing()
 
     /// Client keepalive cadence (seconds). RFC 7675 §5.1 consent-check default is 5 s; well
     /// under the 30 s NAT-UDP mapping expiry (RFC 9000 §10.1.2) so a single empty 2-byte
     /// datagram per 5 s also refreshes the NetBird/WireGuard path mapping.
-    public static let keepaliveInterval: TimeInterval = 5.0
+    public static var keepaliveInterval: TimeInterval { timing.keepalive_interval }
 
     /// Host idle threshold (seconds) before a keepalive-proven flow is declared dead. RFC 7675
     /// 30 s consent expiry = 6× the 5 s interval, tolerating ~5 consecutive keepalive losses
     /// before reaping (mobile burst-loss safe). The minimum-safe ratio is 3× (RFC 9000
     /// §10.1.2 / WireGuard 10 s passive); 6× is comfortable for a video session where a 30 s
     /// slot-reclaim latency is fine.
-    public static let idleTimeout: TimeInterval = 30.0
+    public static var idleTimeout: TimeInterval { timing.idle_timeout }
 
     /// Host reaper scan cadence (seconds) — coarse, = the keepalive interval, so the
     /// worst-case reclaim latency is `idleTimeout + reaperTick` ≤ 35 s.
-    public static let reaperTick: TimeInterval = 5.0
+    public static var reaperTick: TimeInterval { timing.reaper_tick }
 
     /// HOST→client heartbeat cadence (seconds) — the stall-scrim liveness signal, the counterpart of
     /// the client keepalive above. While a session streams, the host sends a zero-body `keepalive` on
@@ -43,5 +47,5 @@ public enum KeepaliveTiming {
     /// directions (an old peer drops it inertly), so this is behaviour-only, no wire-format change.
     /// 1 s ⇒ the client's 3 s ``StreamStallPolicy/threshold`` tolerates two consecutive losses before
     /// declaring a stall, at a cost of one ~21-byte datagram per second per session.
-    public static let hostHeartbeatInterval: TimeInterval = 1.0
+    public static var hostHeartbeatInterval: TimeInterval { timing.host_heartbeat_interval }
 }

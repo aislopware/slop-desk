@@ -1,10 +1,12 @@
+import CSlopDeskFFI
 import Foundation
+import SlopDeskArena
 import SlopDeskVideoProtocol
 
-// PURE host-window feed snapshot logic (docs/45 host-windows rail). No AppKit, no CoreGraphics —
-// the videohostd glue enumerates `CGWindowListCopyWindowInfo` into ``WindowFeedSourceWindow``s and
-// everything from there (inclusion, flags, caps, ordering) is deterministic and headless-tested,
-// exactly the `SystemDialogDetector` split.
+// The Swift face of `rust/slopdesk-video`'s `window_feed_host`, reached through the door of the
+// same name. No AppKit, no CoreGraphics — the videohostd glue enumerates
+// `CGWindowListCopyWindowInfo` into ``WindowFeedSourceWindow``s and everything from there
+// (inclusion, flags, caps, ordering) is the crate's, exactly the `SystemDialogDetector` split.
 
 /// One raw host window as the enumeration glue sees it — the CGWindowList-shaped input record.
 /// Order in the array is the enumeration's z-order (front-to-back); the builder preserves it.
@@ -33,7 +35,7 @@ public struct WindowFeedSourceWindow: Equatable, Sendable {
     public var isMinimized: Bool
     /// Whether the AX probe has seen this window in its app's `kAXWindows` list (best-effort,
     /// budgeted; false when not probed). Off-screen windows need this evidence to be listed — see
-    /// ``WindowFeedSnapshotBuilder/records(from:)``.
+    /// `window_feed_host.rs`'s `snapshot_records`.
     public var isAXListed: Bool
 
     public init(
@@ -65,97 +67,97 @@ public struct WindowFeedSourceWindow: Equatable, Sendable {
         self.isMinimized = isMinimized
         self.isAXListed = isAXListed
     }
+
+    /// This window flattened for the boundary, its three strings appended to `arena`.
+    func row(into arena: inout Data) -> SlopDeskFeedSource {
+        var row = SlopDeskFeedSource()
+        row.window_id = windowID
+        row.owner = Self.intern(ownerName, into: &arena)
+        row.bundle = Self.intern(bundleID, into: &arena)
+        row.title = Self.intern(title, into: &arena)
+        row.layer = Int32(clamping: layer)
+        row.width_pt = Int32(clamping: widthPt)
+        row.height_pt = Int32(clamping: heightPt)
+        row.display_index = displayIndex
+        row.is_on_screen = isOnScreen
+        row.is_app_hidden = isAppHidden
+        row.is_frontmost_app = isFrontmostApp
+        row.is_minimized = isMinimized
+        row.is_ax_listed = isAXListed
+        return row
+    }
+
+    /// Appends one string's UTF-8 and answers the span naming it — ``ArenaText/intern(_:into:)``
+    /// wearing this door's C struct, which is the only part of it that is about this door.
+    private static func intern(_ value: String, into arena: inout Data) -> SlopDeskByteSpan {
+        let span = ArenaText.intern(value, into: &arena)
+        return SlopDeskByteSpan(offset: span.offset, length: span.length)
+    }
 }
 
-/// Which host windows appear in the picker AND the feed — the ONE inclusion policy, extracted from
-/// the picker's `pickerSummary` so the two surfaces can never drift (docs/45 §6).
+/// Which host windows appear in the picker AND the feed — the ONE inclusion policy, so the two
+/// surfaces can never drift (docs/45 §6). The excluded apps and the minimum dimension are the
+/// crate's; see `window_feed_host.rs` for why a transparent full-display overlay has to be excluded
+/// by NAME rather than by any visual heuristic.
 public enum WindowFeedInclusionPolicy {
-    /// System apps whose windows are never useful to stream (docs/31): desktop chrome, indicators.
-    /// "Cua Driver" is the cua automation agent's transparent full-display cursor overlay — a real
-    /// on-screen layer-0 window with nothing visible in it, so it must be excluded by name rather
-    /// than by any visual heuristic.
-    public static let excludedSystemApps: Set<String> = [
-        "", "Window Server", "Control Center", "Dock", "Notification Center", "Spotlight", "Wallpaper",
-        "Cua Driver",
-    ]
-
-    /// Phantom utility windows that survive the off-screen AX-evidence gate because their app
-    /// genuinely lists them in `kAXWindows` yet they never render: Finder's App Store `asverify`
-    /// receipt-verification window. Keyed (ownerName → titles) to stay surgical — real windows of
-    /// the same app are untouched.
-    static let junkTitlesByOwner: [String: Set<String>] = ["Finder": ["asverify"]]
-
     /// Windows under this size (points) are tiny indicators/popups, not streamable app windows.
-    public static let minDimensionPt = 80
+    public static var minDimensionPt: Int { Int(slopdesk_feed_constants().min_dimension_pt) }
 
     /// The shared picker/feed verdict for one window.
     public static func includes(ownerName: String, title: String = "", widthPt: Int, heightPt: Int) -> Bool {
-        !excludedSystemApps.contains(ownerName)
-            && junkTitlesByOwner[ownerName]?.contains(title) != true
-            && widthPt >= minDimensionPt && heightPt >= minDimensionPt
+        let owner = Array(ownerName.utf8)
+        let name = Array(title.utf8)
+        return owner.withUnsafeBufferPointer { ownerBytes in
+            name.withUnsafeBufferPointer { titleBytes in
+                slopdesk_feed_includes(
+                    ownerBytes.baseAddress, ownerBytes.count,
+                    titleBytes.baseAddress, titleBytes.count,
+                    Int32(clamping: widthPt), Int32(clamping: heightPt),
+                )
+            }
+        }
     }
 }
 
 /// Maps raw enumeration windows to the wire ``HostWindowRecord``s of one snapshot: inclusion
 /// filter, wire-cap string truncation, flag assembly, the single `focusedWindow` bit, and the
-/// 64-record cap — z-order preserved.
+/// record cap — z-order preserved. All of it `window_feed_host.rs`'s.
 public enum WindowFeedSnapshotBuilder {
+    /// The builder's fixed numbers, from the door, so neither language writes them down twice.
+    private static let law = slopdesk_feed_constants()
     /// Post-filter record cap (typical desktops are < 40; revisit only on evidence — docs/45 §5).
-    public static let maxRecords = 64
+    public static var maxRecords: Int { law.max_records }
     /// Wire caps for the two identity strings (the title cap lives on the codec —
     /// ``VideoControlMessage/feedTitleMaxBytes`` — because it is part of the packing contract).
-    public static let bundleIDMaxBytes = 128
-    public static let appNameMaxBytes = 64
+    public static var bundleIDMaxBytes: Int { law.bundle_id_max_bytes }
+    public static var appNameMaxBytes: Int { law.app_name_max_bytes }
 
+    /// The snapshot for one enumeration. Two calls: the first reports the shape, the second fills
+    /// the buffers it named — the build is pure, so recomputing costs a pass over at most `maxRecords`
+    /// rows, and nothing has to hold an answer nobody asked for.
     public static func records(from windows: [WindowFeedSourceWindow]) -> [HostWindowRecord] {
-        var out: [HostWindowRecord] = []
-        // Exactly ONE record carries `focusedWindow`: the frontmost app's first on-screen window in
-        // z-order (CGWindowList lists front-to-back, so the first hit IS the focused one).
-        var focusedAssigned = false
-        for w in windows {
-            guard w.layer == 0,
-                  WindowFeedInclusionPolicy.includes(
-                      ownerName: w.ownerName, title: w.title, widthPt: w.widthPt, heightPt: w.heightPt,
-                  )
-            else { continue }
-            // Off-screen windows need AX EVIDENCE to be listed: `.optionAll` enumeration is full of
-            // phantoms — Chrome tab caches, panel services, `loginwindow` — that would otherwise
-            // drown the rail. A REAL off-screen window (minimized, other Space, hidden app) shows up
-            // in its app's `kAXWindows`; phantom caches never do. Alpha/sharing-state are not usable
-            // signals here (phantoms report the same 1.0/1 as real windows). Cold cost: a real
-            // off-screen window may hide for the probe's first few budgeted ticks (≤3 pids/s, 3 s
-            // TTL) before appearing — junk-free beats instant.
-            guard w.isOnScreen || w.isMinimized || w.isAXListed else { continue }
-            var flags: HostWindowFlags = []
-            if w.isOnScreen { flags.insert(.onScreen) }
-            if w.isMinimized { flags.insert(.minimized) }
-            if w.isAppHidden { flags.insert(.appHidden) }
-            if w.isFrontmostApp { flags.insert(.frontmostApp) }
-            if w.isFrontmostApp, w.isOnScreen, !focusedAssigned {
-                flags.insert(.focusedWindow)
-                focusedAssigned = true
+        var arena = Data()
+        let sources = windows.map { window in window.row(into: &arena) }
+        return sources.withUnsafeBufferPointer { input in
+            arena.withUnsafeBytes { pool -> [HostWindowRecord] in
+                let shape = slopdesk_feed_snapshot(
+                    input.baseAddress, input.count, pool.baseAddress, pool.count, nil, 0, nil, 0,
+                )
+                let room = shape.count
+                guard room > 0 else { return [] }
+                var rows = [SlopDeskControlRecord](repeating: SlopDeskControlRecord(), count: room)
+                var built = Data(count: shape.arena_len)
+                let filled = rows.withUnsafeMutableBufferPointer { out in
+                    built.withUnsafeMutableBytes { outPool in
+                        slopdesk_feed_snapshot(
+                            input.baseAddress, input.count, pool.baseAddress, pool.count,
+                            out.baseAddress, out.count, outPool.baseAddress, outPool.count,
+                        )
+                    }
+                }
+                guard filled.count == shape.count else { return [] }
+                return rows.map { row in HostWindowRecord.of(row, arena: built) }
             }
-            out.append(HostWindowRecord(
-                windowID: w.windowID,
-                widthPt: UInt16(clamping: w.widthPt),
-                heightPt: UInt16(clamping: w.heightPt),
-                flags: flags,
-                displayIndex: w.displayIndex,
-                bundleID: truncatedUTF8(w.bundleID, maxBytes: bundleIDMaxBytes),
-                appName: truncatedUTF8(w.ownerName, maxBytes: appNameMaxBytes),
-                title: truncatedUTF8(w.title, maxBytes: VideoControlMessage.feedTitleMaxBytes),
-            ))
-            if out.count >= maxRecords { break }
         }
-        return out
-    }
-
-    /// Truncates to at most `maxBytes` of UTF-8 WITHOUT splitting a grapheme (dropping whole
-    /// `Character`s from the end) — a split scalar would decode to a replacement char client-side.
-    /// Also bounds the worst-case record size so the greedy chunk packer always progresses.
-    static func truncatedUTF8(_ string: String, maxBytes: Int) -> String {
-        var result = string
-        while result.utf8.count > maxBytes { result.removeLast() }
-        return result
     }
 }

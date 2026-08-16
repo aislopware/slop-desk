@@ -1,5 +1,3 @@
-import CoreGraphics
-
 // MARK: - The one responsive switch (pure)
 
 /// The single adaptation decision for the whole app (docs/22 §4): is the workspace being shown in a
@@ -9,6 +7,8 @@ import CoreGraphics
 /// Pulled out of the view as a pure, synchronously-testable function so the breakpoint is pinned in
 /// one place and unit-tested with zero SwiftUI. `WorkspaceRootView` computes it once from
 /// `@Environment(\.horizontalSizeClass)` + the detail width and branches exactly once on the result.
+import CoreGraphics
+
 public enum WorkspaceLayout {
     /// The width below which a regular layout collapses to compact when no size class is available
     /// (macOS has no `horizontalSizeClass`). This is a DETAIL-area width (the NavigationSplitView

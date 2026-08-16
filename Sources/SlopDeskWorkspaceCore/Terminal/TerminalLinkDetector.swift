@@ -1,6 +1,35 @@
-import Foundation
+// The terminal's path / `path:line:col` / URL scan, as the Swift face of `rust/slopdesk-terminal`'s
+// `link`, reached through `rust/slopdesk-ffi`'s `link_detect` door.
+//
+// ## What is not here any more
+//
+// The scan. Tokenizing a row into whitespace-delimited runs while counting display cells, the
+// balanced-bracket trim that keeps `…/Swift_(programming_language)` whole while stripping prose's
+// `(https://x.com).`, the scheme grammar and its always-on four, the `:line:col` split, the
+// lexical normalisation that resolves `a/../b` without touching the filesystem, and the
+// East-Asian-wide / zero-width cell table underneath all of it. All Rust's, in a crate that
+// forbids `unsafe`. This file owns the shape of the answer and one handle's lifetime.
+//
+// ## Why the scan crosses as an arena
+//
+// The answer is a list of records each carrying up to two strings, and neither the record count nor
+// the total text length is knowable before the scan runs — so there is no buffer for a caller to
+// size in advance. The door runs the scan, parks the result, and answers both counts; this file
+// reads the records out and copies the one flat string buffer once. Ten call sites see the same
+// free function they always did: the handle never escapes ``detect(rows:cwd:schemes:maxScanColumns:)``,
+// so two overlays scanning at once share nothing.
+//
+// ## Why there are two width entries behind one overload set
+//
+// ``displayCellWidth(of:)`` for a `Character` reaches the scalar entry, not the string one. The
+// callers that walk a line cell by cell — `ViLineMotion`, `HintLabelAssigner` — would otherwise
+// build a one-character `String` per column, allocating once per cell to ask a question about a
+// scalar they were already holding.
 
-// MARK: - Pure path / URL / link detector over the terminal grid
+import CSlopDeskFFI
+import SlopDeskArena
+
+// MARK: - The shape of a detected span
 
 /// The classification of a span detected by ``TerminalLinkDetector``. Mirrors the
 /// `docs/ui-shell/spec/user-interface__files-and-links.md` "Path and Link Detection" list.
@@ -70,6 +99,8 @@ public enum LinkSchemePolicy: Equatable, Hashable, Sendable {
     case custom([String])
 }
 
+// MARK: - The face
+
 /// The PURE, headless heart of the terminal's path/URL/link detection: scan
 /// `[String]` rows and return every detected path, `path:line:col`, URL, `file://`, and `mailto:`
 /// span with its cell columns and (where derivable) resolved absolute path.
@@ -90,10 +121,17 @@ public enum LinkSchemePolicy: Equatable, Hashable, Sendable {
 /// would light up.
 ///
 /// Pinned by `TerminalLinkDetectorTests` (each form, the CJK cell-column mapping, the scheme policy,
-/// the column bound, and the no-match noise are revert-to-confirm-fail).
+/// the column bound, and the no-match noise are revert-to-confirm-fail) on this side, and by
+/// `rust/slopdesk-terminal/src/link.rs`'s own tests on the other.
 public enum TerminalLinkDetector {
     /// Hard cap on emitted matches per row (output bound, independent of `maxScanColumns`).
+    ///
+    /// Agreement with `link::MAX_MATCHES_PER_ROW` is a `check-supervisor.sh` gate, not a comment.
     public static let maxMatchesPerRow = 512
+
+    /// Default per-row cell-scan ceiling — the anti-hang bound. Pinned against
+    /// `link::MAX_SCAN_COLUMNS` by the same gate.
+    public static let maxScanColumnsDefault = 4096
 
     /// Detect every interactive span in `rows`.
     ///
@@ -109,407 +147,119 @@ public enum TerminalLinkDetector {
         rows: [String],
         cwd: String?,
         schemes: LinkSchemePolicy,
-        maxScanColumns: Int = 4096,
+        maxScanColumns: Int = maxScanColumnsDefault,
     ) -> [DetectedLink] {
-        guard maxScanColumns > 0 else { return [] }
-        var out: [DetectedLink] = []
-        for (row, line) in rows.enumerated() {
-            var matchesThisRow = 0
-            for token in tokenize(line, maxScanColumns: maxScanColumns) {
-                if matchesThisRow >= maxMatchesPerRow { break }
-                let (core, leadingCells) = trimWrapping(token.text)
-                guard let link = classify(
-                    core: core,
-                    row: row,
-                    cellStart: token.cellStart + leadingCells,
-                    cwd: cwd,
-                    schemes: schemes,
-                ) else { continue }
-                out.append(link)
-                matchesThisRow += 1
-            }
-        }
-        return out
-    }
-
-    // MARK: - Tokenizing (bounded, single pass)
-
-    /// A whitespace-delimited run with the cell column of its first character.
-    private struct RawToken {
-        var text: String
-        var cellStart: Int
-    }
-
-    /// Split `line` into whitespace-delimited tokens, tracking display cell columns and stopping once
-    /// `maxScanColumns` cells have been consumed (the anti-hang bound). A token that began within
-    /// bounds but spills past the cap is kept truncated — bounded work, never a wrong span outside it.
-    private static func tokenize(_ line: String, maxScanColumns: Int) -> [RawToken] {
-        var tokens: [RawToken] = []
-        var cell = 0
-        var current = ""
-        var currentStart = 0
-        for character in line {
-            if cell >= maxScanColumns { break }
-            let width = cellWidth(of: character)
-            if character == " " || character == "\t" {
-                if !current.isEmpty {
-                    tokens.append(RawToken(text: current, cellStart: currentStart))
-                    current = ""
-                }
-                cell += width
-                continue
-            }
-            if current.isEmpty { currentStart = cell }
-            current.append(character)
-            cell += width
-        }
-        if !current.isEmpty {
-            tokens.append(RawToken(text: current, cellStart: currentStart))
-        }
-        return tokens
-    }
-
-    // MARK: - Wrapping-punctuation trim
-
-    private static let leadingTrim: Set<Character> = ["(", "[", "{", "<", "\"", "'", "`", "\u{201C}", "\u{2018}"]
-    private static let trailingTrim: Set<Character> = [
-        ".", ",", ";", "!", "?", ")", "]", "}", ">", "\"", "'", "`", "\u{201D}", "\u{2019}",
-    ]
-
-    /// Closing brackets whose trailing trim is BALANCED against their opener inside the token — so a URL
-    /// whose path legitimately ends in a matched close (`…/Swift_(programming_language)`, a `#L10)` prose
-    /// anchor) keeps it, while an unmatched wrapping close (prose `(https://x.com)`) is still stripped.
-    private static let balancedClosers: [Character: Character] = [")": "(", "]": "[", "}": "{"]
-
-    /// Strip wrapping brackets/quotes and trailing sentence punctuation so `(https://x.com).` →
-    /// `https://x.com`. Crucially `:` is NOT trailing-trimmed — the `:line:col` suffix must survive.
-    /// Returns the trimmed core plus the cell count removed from the FRONT (so the caller can advance
-    /// `cellStart`); trailing trims never move `cellStart`.
-    private static func trimWrapping(_ text: String) -> (core: String, leadingCells: Int) {
-        var chars = Array(text)
-        var leadingCells = 0
-        while let first = chars.first, leadingTrim.contains(first) {
-            leadingCells += cellWidth(of: first)
-            chars.removeFirst()
-        }
-        while let last = chars.last, trailingTrim.contains(last) {
-            // A closing bracket is only trailing-trimmed when UNBALANCED (more of it than its opener remains
-            // in the token) — a balanced pair (a wiki disambiguation `(…)`, a `[…]`/`{…}` in the path) is a
-            // real part of the URL and must survive, matching iTerm2/ghostty paren balancing.
-            if let opener = balancedClosers[last] {
-                let closeCount = chars.reduce(0) { $0 + ($1 == last ? 1 : 0) }
-                let openCount = chars.reduce(0) { $0 + ($1 == opener ? 1 : 0) }
-                if closeCount <= openCount { break }
-            }
-            chars.removeLast()
-        }
-        return (String(chars), leadingCells)
-    }
-
-    // MARK: - Classification
-
-    private static func classify(
-        core: String,
-        row: Int,
-        cellStart: Int,
-        cwd: String?,
-        schemes: LinkSchemePolicy,
-    ) -> DetectedLink? {
-        guard !core.isEmpty else { return nil }
-        if let link = classifyURL(core, row: row, cellStart: cellStart, schemes: schemes) { return link }
-        if let link = classifyMailto(core, row: row, cellStart: cellStart) { return link }
-        if let link = classifyPath(core, row: row, cellStart: cellStart, cwd: cwd) { return link }
-        return nil
-    }
-
-    /// `scheme://…` (and `file://…`). A scheme outside the policy is DROPPED, not reinterpreted as a
-    /// path — it is unambiguously a URL the user opted not to detect.
-    private static func classifyURL(
-        _ core: String,
-        row: Int,
-        cellStart: Int,
-        schemes: LinkSchemePolicy,
-    ) -> DetectedLink? {
-        guard let separator = core.range(of: "://") else { return nil }
-        let scheme = String(core[core.startIndex..<separator.lowerBound])
-        guard isValidScheme(scheme), separator.upperBound < core.endIndex else { return nil }
-        let lower = scheme.lowercased()
-        let kind: DetectedLinkKind
-        var resolved: String?
-        if lower == "file" {
-            kind = .fileURL
-            resolved = fileURLPath(core)
-        } else if isSchemeAllowed(lower, schemes) {
-            kind = .url
-        } else {
-            return nil
-        }
-        return DetectedLink(
-            row: row,
-            colStart: cellStart,
-            colEnd: cellStart + cellWidthOf(core),
-            kind: kind,
-            raw: core,
-            resolvedAbsolute: resolved,
-        )
-    }
-
-    /// `mailto:user@host` — always detected regardless of the scheme policy. Requires an `@`
-    /// so a bare `mailto:` is dropped (validate-then-drop).
-    private static func classifyMailto(_ core: String, row: Int, cellStart: Int) -> DetectedLink? {
-        guard core.lowercased().hasPrefix("mailto:") else { return nil }
-        let address = core.dropFirst("mailto:".count)
-        guard !address.isEmpty, address.contains("@") else { return nil }
-        return DetectedLink(
-            row: row,
-            colStart: cellStart,
-            colEnd: cellStart + cellWidthOf(core),
-            kind: .url,
-            raw: core,
-            resolvedAbsolute: nil,
-        )
-    }
-
-    private enum PathShape: Equatable {
-        case absolute
-        case tilde
-        case relativeDot
-        case bareRelative
-    }
-
-    /// Absolute / tilde / relative / `path:line[:col]` filesystem paths.
-    private static func classifyPath(
-        _ core: String,
-        row: Int,
-        cellStart: Int,
-        cwd: String?,
-    ) -> DetectedLink? {
-        // Strip trailing colons FIRST (a log "/path:" or "Error:", and — critically — the standard
-        // compiler-diagnostic form `path:line:col:` whose trailing `:` would otherwise defeat splitLineCol,
-        // leaving `:line:col` baked into the resolved path so open/reveal fails), THEN split the numeric
-        // `:line[:col]` suffix off the cleaned token so `path:line:col:` resolves as `.pathLineCol`.
-        var cleaned = core
-        while cleaned.hasSuffix(":") { cleaned.removeLast() }
-        let (pathPart, suffix) = splitLineCol(cleaned)
-        guard !pathPart.isEmpty, let shape = pathShape(pathPart) else { return nil }
-        // Decorative prompt art (starship cats, powerline glyphs) frequently begins with `/` — e.g. the
-        // `/ᐠ` in a `/ᐠ - ˕ -マ ≫` prompt — but is NOT a filesystem path. Such art is a SINGLE exotic glyph
-        // after the root; a real path is structured. So drop a candidate only when it is BOTH single-segment
-        // AND carries no ordinary path character (an ASCII letter or digit — dir/file names, extensions). A
-        // multi-segment path (`/дом/данные`, `~/デスクトップ` — the `~`/`.`/`..` anchor counts as a segment,
-        // and `/Users/名前/notes.txt`) or any path with an ASCII alnum still passes, so genuine non-Latin
-        // paths keep their ⌘-hover underline; only a lone-glyph decoration is validate-then-dropped.
-        let hasOrdinaryChar = pathPart.unicodeScalars.contains { $0.isASCIILetter || $0.isASCIIDigit }
-        let segmentCount = pathPart.split(separator: "/", omittingEmptySubsequences: true).count
-        guard hasOrdinaryChar || segmentCount >= 2 else { return nil }
-        let hasLineCol = !suffix.isEmpty
-        // A bare `dir/file` (no ./ ../ prefix) is only a link when it carries a line:col suffix —
-        // otherwise prose like `and/or` or an SCP remote `git@host:org/repo` would falsely match.
-        if shape == .bareRelative, !hasLineCol { return nil }
-        let raw = pathPart + suffix
-        return DetectedLink(
-            row: row,
-            colStart: cellStart,
-            colEnd: cellStart + cellWidthOf(raw),
-            kind: hasLineCol ? .pathLineCol : kind(for: shape),
-            raw: raw,
-            resolvedAbsolute: resolvePath(pathPart, shape: shape, cwd: cwd),
-        )
-    }
-
-    private static func pathShape(_ path: String) -> PathShape? {
-        if path.hasPrefix("/") { return .absolute }
-        if path == "~" || path.hasPrefix("~/") { return .tilde }
-        if path.hasPrefix("./") || path.hasPrefix("../") { return .relativeDot }
-        if path.contains("/") { return .bareRelative }
-        return nil
-    }
-
-    private static func kind(for shape: PathShape) -> DetectedLinkKind {
-        switch shape {
-        case .absolute: .absolutePath
-        case .tilde: .tildePath
-        case .relativeDot: .relativePath
-        case .bareRelative: .relativePath
-        }
-    }
-
-    /// Resolve to an absolute path PURELY (no `$HOME` / disk access). Tilde paths stay unresolved —
-    /// `~` expansion needs the host `$HOME`, done host-side in the open/reveal action.
-    private static func resolvePath(_ path: String, shape: PathShape, cwd: String?) -> String? {
-        if shape == .absolute { return lexicallyNormalize(path) }
-        if shape == .tilde { return nil } // ~ expansion is host-side, not pure
-        // relativeDot / bareRelative: resolve against an absolute cwd, else leave unresolved.
-        guard let cwd, cwd.hasPrefix("/") else { return nil }
-        return lexicallyNormalize(cwd + "/" + path)
-    }
-
-    // MARK: - Suffix / scheme / path helpers
-
-    /// Split a trailing `:line` or `:line:col` numeric suffix off `text`. Returns `(path, suffix)`
-    /// where `suffix` keeps its leading colon (or `""`). A `12:34` time yields `("12", ":34")` — the
-    /// `12` then fails the path-shape test, so times / `host:port` never light up.
-    private static func splitLineCol(_ text: String) -> (path: String, suffix: String) {
-        let chars = Array(text)
-
-        // Start index of a ":<digits>" run that ENDS at `end`, else nil.
-        func colonNumber(endingAt end: Int) -> Int? {
-            var index = end
-            var sawDigit = false
-            while index > 0, chars[index - 1].isASCIIDigit {
-                index -= 1
-                sawDigit = true
-            }
-            if sawDigit, index > 0, chars[index - 1] == ":" { return index - 1 }
-            return nil
-        }
-
-        guard let colStart = colonNumber(endingAt: chars.count) else { return (text, "") }
-        if let lineStart = colonNumber(endingAt: colStart) {
-            return (String(chars[0..<lineStart]), String(chars[lineStart...]))
-        }
-        return (String(chars[0..<colStart]), String(chars[colStart...]))
-    }
-
-    private static func isValidScheme(_ scheme: String) -> Bool {
-        guard let first = scheme.unicodeScalars.first, first.isASCIILetter else { return false }
-        for scalar in scheme.unicodeScalars where !scalar.isSchemeTail {
-            return false
-        }
-        return true
-    }
-
-    private static func isSchemeAllowed(_ lowercasedScheme: String, _ policy: LinkSchemePolicy) -> Bool {
-        if lowercasedScheme == "http" || lowercasedScheme == "https"
-            || lowercasedScheme == "file" || lowercasedScheme == "mailto"
-        {
-            return true
-        }
-        switch policy {
+        let (rowBlob, rowLengths) = flatten(rows)
+        let schemeList: [String]
+        let schemeMode: UInt32
+        switch schemes {
         case .all:
-            return true
-        case let .custom(list):
-            return list.contains { $0.lowercased() == lowercasedScheme }
+            schemeList = []
+            schemeMode = UInt32(SLOPDESK_LINK_SCHEMES_ALL)
+        case let .custom(allowed):
+            schemeList = allowed
+            schemeMode = UInt32(SLOPDESK_LINK_SCHEMES_CUSTOM)
         }
-    }
+        let (schemeBlob, schemeLengths) = flatten(schemeList)
+        let cwdBytes = Array((cwd ?? "").utf8)
 
-    /// The filesystem path of a `file://…` URL: `file:///a/b` → `/a/b`, `file://host/a/b` → `/a/b`,
-    /// percent-decoded so `%20` → space. `nil` when there is no path component.
-    private static func fileURLPath(_ core: String) -> String? {
-        guard let separator = core.range(of: "://") else { return nil }
-        let afterScheme = String(core[separator.upperBound...])
-        let path: String
-        if afterScheme.hasPrefix("/") {
-            path = afterScheme
-        } else if let slash = afterScheme.firstIndex(of: "/") {
-            path = String(afterScheme[slash...])
-        } else {
-            return nil
+        guard let scan = slopdesk_link_scan(
+            rowBlob, rowBlob.count,
+            rowLengths, rowLengths.count,
+            cwdBytes, cwdBytes.count,
+            schemeMode,
+            schemeBlob, schemeBlob.count,
+            schemeLengths, schemeLengths.count,
+            maxScanColumns,
+        ) else { return [] }
+        defer { slopdesk_link_scan_free(scan) }
+
+        let counts = slopdesk_link_scan_counts(scan)
+        var arena = [UInt8](repeating: 0, count: counts.arena_length)
+        let written = arena.withUnsafeMutableBufferPointer {
+            slopdesk_link_scan_take_arena(scan, $0.baseAddress, $0.count)
         }
-        return path.removingPercentEncoding ?? path
-    }
+        precondition(written == counts.arena_length, "the arena answered a size it would not fill")
 
-    /// Collapse `.` / `..` segments lexically (no disk access). An absolute input stays absolute and a
-    /// `..` cannot escape the root; a relative input keeps leading `..` it cannot resolve.
-    private static func lexicallyNormalize(_ path: String) -> String {
-        let isAbsolute = path.hasPrefix("/")
-        var stack: [String] = []
-        for segment in path.split(separator: "/", omittingEmptySubsequences: true) {
-            switch segment {
-            case ".":
-                continue
-            case "..":
-                if let last = stack.last, last != ".." {
-                    stack.removeLast()
-                } else if !isAbsolute {
-                    stack.append("..")
-                }
-            default:
-                stack.append(String(segment))
+        // One borrow for every string in the scan: the arena is read `link_count × 2` times at
+        // most, and each read is a rebase inside a buffer that is already there.
+        return arena.withUnsafeBytes { raw -> [DetectedLink] in
+            var out: [DetectedLink] = []
+            out.reserveCapacity(counts.link_count)
+            for index in 0..<counts.link_count {
+                let record = slopdesk_link_scan_link(scan, index)
+                guard let kind = kind(of: record.kind) else { continue }
+                out.append(DetectedLink(
+                    row: record.row,
+                    colStart: record.col_start,
+                    colEnd: record.col_end,
+                    kind: kind,
+                    raw: text(raw, record.raw_offset, record.raw_length),
+                    resolvedAbsolute: record.has_resolved
+                        ? text(raw, record.resolved_offset, record.resolved_length)
+                        : nil,
+                ))
             }
-        }
-        let joined = stack.joined(separator: "/")
-        return isAbsolute ? "/" + joined : joined
-    }
-
-    // MARK: - Display cell width (East-Asian-wide aware)
-
-    /// Display width of one grapheme cluster in terminal cells: 0 for a zero-width / combining base,
-    /// 2 for an East-Asian-wide / fullwidth / emoji base, else 1.
-    private static func cellWidth(of character: Character) -> Int {
-        guard let scalar = character.unicodeScalars.first else { return 0 }
-        if isZeroWidth(scalar) { return 0 }
-        if isWide(scalar) { return 2 }
-        return 1
-    }
-
-    private static func cellWidthOf(_ text: String) -> Int {
-        var total = 0
-        for character in text { total += cellWidth(of: character) }
-        return total
-    }
-
-    private static func isZeroWidth(_ scalar: Unicode.Scalar) -> Bool {
-        if scalar.properties.isDefaultIgnorableCodePoint { return true }
-        switch scalar.value {
-        case 0x0300...0x036F, // Combining Diacritical Marks
-             0x1AB0...0x1AFF,
-             0x1DC0...0x1DFF,
-             0x20D0...0x20FF, // Combining Diacritical Marks for Symbols
-             0xFE20...0xFE2F: // Combining Half Marks
-            return true
-        default:
-            return false
+            return out
         }
     }
 
-    private static func isWide(_ scalar: Unicode.Scalar) -> Bool {
-        switch scalar.value {
-        case 0x1100...0x115F, // Hangul Jamo
-             0x2E80...0x303E, // CJK Radicals … CJK Symbols & Punctuation
-             0x3041...0x33FF, // Hiragana, Katakana, … CJK compatibility
-             0x3400...0x4DBF, // CJK Unified Ideographs Extension A
-             0x4E00...0x9FFF, // CJK Unified Ideographs
-             0xA000...0xA4CF, // Yi Syllables / Radicals
-             0xAC00...0xD7A3, // Hangul Syllables
-             0xF900...0xFAFF, // CJK Compatibility Ideographs
-             0xFE30...0xFE4F, // CJK Compatibility Forms
-             0xFF00...0xFF60, // Fullwidth Forms
-             0xFFE0...0xFFE6, // Fullwidth signs
-             0x1F300...0x1FAFF, // Emoji & pictographs
-             0x20000...0x3FFFD: // CJK Unified Ideographs Extension B and beyond
-            true
-        default:
-            false
+    /// The kind a `SLOPDESK_LINK_KIND_*` code names. `nil` for `SLOPDESK_LINK_KIND_NONE` — the
+    /// door's answer to an index past the end, which the reader loop never asks for.
+    private static func kind(of code: UInt32) -> DetectedLinkKind? {
+        switch code {
+        case UInt32(SLOPDESK_LINK_KIND_ABSOLUTE_PATH): .absolutePath
+        case UInt32(SLOPDESK_LINK_KIND_TILDE_PATH): .tildePath
+        case UInt32(SLOPDESK_LINK_KIND_RELATIVE_PATH): .relativePath
+        case UInt32(SLOPDESK_LINK_KIND_PATH_LINE_COL): .pathLineCol
+        case UInt32(SLOPDESK_LINK_KIND_URL): .url
+        case UInt32(SLOPDESK_LINK_KIND_FILE_URL): .fileURL
+        default: nil
         }
+    }
+
+    /// Concatenates `values` into one UTF-8 buffer and the byte length of each — the boundary's
+    /// list-of-strings form, one allocation instead of one per element.
+    private static func flatten(_ values: [String]) -> (blob: [UInt8], lengths: [Int]) {
+        var blob: [UInt8] = []
+        var lengths: [Int] = []
+        lengths.reserveCapacity(values.count)
+        blob.reserveCapacity(values.reduce(0) { $0 + $1.utf8.count })
+        for value in values {
+            let before = blob.count
+            blob.append(contentsOf: value.utf8)
+            lengths.append(blob.count - before)
+        }
+        return (blob, lengths)
+    }
+
+    /// Reads one `(offset, length)` span out of the scan's arena.
+    ///
+    /// This door spells its pair `size_t`, the way §4 spells every length, so the `Int` overload is
+    /// the one it reaches for.
+    private static func text(_ arena: UnsafeRawBufferPointer, _ offset: Int, _ length: Int) -> String {
+        ArenaText.text(arena, offset, length)
     }
 }
 
-// MARK: - Display-cell width (shared with Hint Mode)
+// MARK: - Cell widths (the same table the scan's columns come from)
 
 public extension TerminalLinkDetector {
-    /// Display width of `character` in terminal cells (0 zero-width, 2 East-Asian-wide / fullwidth / emoji,
-    /// else 1) — the SAME convention this detector uses for `colStart ..< colEnd`. Exposed so the Hint Mode
-    /// label assigner (``HintLabelAssigner``) maps its git-hash / IP / custom-pattern matches to cell columns
-    /// that align with the link spans on a CJK row (single source of truth for the width).
-    static func displayCellWidth(of character: Character) -> Int { cellWidth(of: character) }
+    /// Display width of `character` in terminal cells — `0` for a zero-width/default-ignorable base,
+    /// `2` for East-Asian-wide/fullwidth/emoji, else `1`.
+    ///
+    /// Reaches the scalar entry, so walking a line cell by cell costs no allocation per column.
+    static func displayCellWidth(of character: Character) -> Int {
+        guard let scalar = character.unicodeScalars.first else { return 0 }
+        return slopdesk_link_scalar_cells(scalar.value)
+    }
 
     /// Display width of `text` in terminal cells — the sum over its grapheme clusters.
-    static func displayCellWidth(of text: String) -> Int { cellWidthOf(text) }
-}
-
-// MARK: - Small ASCII scalar predicates (avoid Foundation locale surprises)
-
-private extension Unicode.Scalar {
-    var isASCIIDigit: Bool { value >= 0x30 && value <= 0x39 }
-    var isASCIILetter: Bool { (value >= 0x41 && value <= 0x5A) || (value >= 0x61 && value <= 0x7A) }
-    /// A character permitted after the first in a URL scheme (`[A-Za-z0-9+.-]`).
-    var isSchemeTail: Bool { isASCIILetter || isASCIIDigit || self == "+" || self == "-" || self == "." }
-}
-
-private extension Character {
-    var isASCIIDigit: Bool {
-        guard let scalar = unicodeScalars.first, unicodeScalars.count == 1 else { return false }
-        return scalar.isASCIIDigit
+    ///
+    /// `withUTF8` rather than `Array(text.utf8)`: a native Swift string already holds contiguous
+    /// UTF-8, so the bytes are lent, not copied. The mutation is on this function's own copy.
+    static func displayCellWidth(of text: String) -> Int {
+        var text = text
+        return text.withUTF8 { slopdesk_link_text_cells($0.baseAddress, $0.count) }
     }
 }

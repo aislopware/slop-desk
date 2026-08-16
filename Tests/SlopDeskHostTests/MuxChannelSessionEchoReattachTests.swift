@@ -19,7 +19,7 @@ final class MuxChannelSessionEchoReattachTests: XCTestCase {
     private func makeSession() -> MuxChannelSession {
         MuxChannelSession(
             channelID: 1,
-            pty: PTYProcess(), // unspawned — relay never started; echo driven via injected seams
+            pty: unattachedPTY(), // unspawned — relay never started; echo driven via injected seams
             data: MuxSubChannel(channelID: 1, channel: .data) { _, _ in },
             control: MuxSubChannel(channelID: 1, channel: .control) { _, _ in },
         )

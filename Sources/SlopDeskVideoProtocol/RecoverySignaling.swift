@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 
 /// Client→host loss-recovery / acknowledgement messages (doc 17 §3.6).
@@ -137,11 +138,11 @@ public enum RecoveryMessage: Equatable, Sendable {
     /// ``requestLTRRefresh(fromFrameID:toFrameID:lastDecodedFrameID:)``. Cannot collide
     /// with a real id at session start: `FramePacketizer` ids begin at 0, so 0xFFFF_FFFF
     /// is ~2³² frames (≈2.3 years at 60 fps) away across the wrap.
-    public static let noFrameDecodedSentinel: UInt32 = 0xFFFF_FFFF
+    public static let noFrameDecodedSentinel = slopdesk_recovery_constant(0)
 
     /// Max fragment indices a single ``requestFragments(frameID:fragIndices:)`` NACK may carry;
     /// a larger loss escalates to an LTR refresh / IDR rather than a big selective retransmit.
-    public static let maxNackFragments = 64
+    public static let maxNackFragments = Int(slopdesk_recovery_constant(1))
 
     /// On-wire message-type byte.
     public var messageType: UInt8 {
@@ -156,60 +157,54 @@ public enum RecoveryMessage: Equatable, Sendable {
     }
 
     /// Serialises the message: `[UInt8 type][body...]`, byte-identical to the wire pinned by the
-    /// golden vectors + the round-trip tests.
+    /// golden vectors + the round-trip tests. The layout is `rust/slopdesk-video`'s; this method
+    /// flattens the case into the shape the boundary reads and copies the answer back.
     public func encode() -> Data {
-        // NACK (type 6) is variable-length (a frag-index list) → dedicated helper.
-        if case let .requestFragments(frameID, fragIndices) = self {
-            return Self.encodeRequestFragments(frameID: frameID, fragIndices: fragIndices)
-        }
-        var out = Data()
-        out.append(messageType)
+        var flat = SlopDeskRecoveryMessage()
+        flat.message_type = messageType
+        var frags: [UInt16] = []
         switch self {
         case let .ack(streamSeq):
-            out.appendBE(streamSeq)
+            flat.stream_seq = streamSeq
         case let .requestLTRRefresh(fromFrameID, toFrameID, lastDecodedFrameID):
-            out.appendBE(fromFrameID)
-            out.appendBE(toFrameID)
-            out.appendBE(lastDecodedFrameID)
+            flat.from_frame_id = fromFrameID
+            flat.to_frame_id = toFrameID
+            flat.last_decoded_frame_id = lastDecodedFrameID
         case let .requestIDR(lastDecodedFrameID):
-            out.appendBE(lastDecodedFrameID)
+            flat.last_decoded_frame_id = lastDecodedFrameID
         case let .requestCursorShape(shapeID):
-            out.appendBE(shapeID)
+            flat.shape_id = shapeID
         case let .networkStats(r):
-            out.appendBE(r.framesReceived)
-            out.appendBE(r.fecRecovered)
-            out.appendBE(r.unrecovered)
-            out.appendBE(r.latestHostSendTs)
-            out.appendBE(r.clientHoldMs)
-            out.appendBE(r.owdJitterMicros)
-            out.appendBE(r.owdTrendMilli)
-            out.appendBE(r.owdTrendFlags)
-            out.appendBE(r.pacerLateFrames)
-            out.appendBE(r.pacerPresentGaps)
-            out.appendBE(r.pacerDepth)
-        case .requestFragments:
-            // Handled by the helper above; unreachable here.
-            break
+            flat.frames_received = r.framesReceived
+            flat.fec_recovered = r.fecRecovered
+            flat.unrecovered = r.unrecovered
+            flat.latest_host_send_ts = r.latestHostSendTs
+            flat.client_hold_ms = r.clientHoldMs
+            flat.owd_jitter_micros = r.owdJitterMicros
+            flat.owd_trend_milli = r.owdTrendMilli
+            flat.owd_trend_flags = r.owdTrendFlags
+            flat.pacer_late_frames = r.pacerLateFrames
+            flat.pacer_present_gaps = r.pacerPresentGaps
+            flat.pacer_depth = r.pacerDepth
+        case let .requestFragments(frameID, fragIndices):
+            // The cap is the codec's; truncating here is the defensive backstop, never the live
+            // path — the caller bounds the list before it ever gets here.
+            frags = Array(fragIndices.prefix(Self.maxNackFragments))
+            flat.frame_id = frameID
+            flat.frag_count = UInt16(frags.count)
         }
-        return out
-    }
-
-    /// Encodes the NACK: `[6][frameID BE u32][count BE u16][idx BE u16]…`. The index list is capped
-    /// at ``maxNackFragments`` (the caller bounds it; truncation here is a defensive backstop,
-    /// never the live path).
-    static func encodeRequestFragments(frameID: UInt32, fragIndices: [UInt16]) -> Data {
-        let capped = fragIndices.prefix(maxNackFragments)
-        var d = Data(capacity: 1 + 4 + 2 + capped.count * 2)
-        d.append(6)
-        var be32 = frameID.bigEndian
-        withUnsafeBytes(of: &be32) { d.append(contentsOf: $0) }
-        var count16 = UInt16(capped.count).bigEndian
-        withUnsafeBytes(of: &count16) { d.append(contentsOf: $0) }
-        for idx in capped {
-            var be = idx.bigEndian
-            withUnsafeBytes(of: &be) { d.append(contentsOf: $0) }
+        let needed = frags.withUnsafeBufferPointer { indices in
+            slopdesk_recovery_encode(&flat, indices.baseAddress, nil, 0)
         }
-        return d
+        guard needed > 0 else { return Data() }
+        var written = 0
+        let bytes = [UInt8](unsafeUninitializedCapacity: needed) { out, count in
+            written = frags.withUnsafeBufferPointer { indices in
+                slopdesk_recovery_encode(&flat, indices.baseAddress, out.baseAddress, out.count)
+            }
+            count = Swift.min(written, out.count)
+        }
+        return written == needed ? Data(bytes) : Data()
     }
 
     /// Parses a recovery message. Throws ``VideoProtocolError`` on unknown type, short body, or
@@ -219,81 +214,62 @@ public enum RecoveryMessage: Equatable, Sendable {
     /// each decode identically yet bypass the byte-keyed dedup (re-triggering a second
     /// ForceLTRRefresh/IDR). No backcompat is owed here: both ends redeploy together, so a body
     /// missing a field is simply hostile input.
+    ///
+    /// Every guard is `rust/slopdesk-video`'s. The NACK indices come back in one pass: the codec
+    /// caps them, so a buffer that size can never be told to ask again.
     public static func decode(_ data: Data) throws -> Self {
-        // NACK (type 6) → the variable-length helper; the rest are fixed-width, read inline below.
-        // Every read is bounds-checked → a short body throws `.truncated` and the router drops the
-        // datagram (no OOB / overflow / force-unwrap surface, never a crash on hostile input).
-        if data.first == 6 {
-            return try decodeRequestFragments(data)
+        try withUnsafeTemporaryAllocation(of: UInt16.self, capacity: maxNackFragments) { indices in
+            try decode(data, into: indices)
         }
-        var reader = VideoByteReader(data)
-        let type = try reader.readUInt8()
-        let message: Self
-        switch type {
-        case 1:
-            message = try .ack(streamSeq: reader.readUInt32())
-        case 2:
-            // Three fixed-width UInt32s: a body < 12 bytes throws .truncated.
-            let from = try reader.readUInt32()
-            let to = try reader.readUInt32()
-            let lastDecoded = try reader.readUInt32()
-            message = .requestLTRRefresh(fromFrameID: from, toFrameID: to, lastDecodedFrameID: lastDecoded)
-        case 3:
-            // One UInt32 (lastDecodedFrameID): an empty body throws .truncated.
-            message = try .requestIDR(lastDecodedFrameID: reader.readUInt32())
-        case 4:
-            message = try .requestCursorShape(shapeID: reader.readUInt16())
-        case 5:
-            // Eleven fixed-width UInt32s: a body < 44 bytes throws .truncated.
-            let framesReceived = try reader.readUInt32()
-            let fecRecovered = try reader.readUInt32()
-            let unrecovered = try reader.readUInt32()
-            let latestHostSendTs = try reader.readUInt32()
-            let clientHoldMs = try reader.readUInt32()
-            let owdJitterMicros = try reader.readUInt32()
-            let owdTrendMilli = try reader.readUInt32()
-            let owdTrendFlags = try reader.readUInt32()
-            let pacerLateFrames = try reader.readUInt32()
-            let pacerPresentGaps = try reader.readUInt32()
-            let pacerDepth = try reader.readUInt32()
-            message = .networkStats(NetworkStatsReport(
-                framesReceived: framesReceived, fecRecovered: fecRecovered, unrecovered: unrecovered,
-                latestHostSendTs: latestHostSendTs, clientHoldMs: clientHoldMs, owdJitterMicros: owdJitterMicros,
-                owdTrendMilli: owdTrendMilli, owdTrendFlags: owdTrendFlags,
-                pacerLateFrames: pacerLateFrames, pacerPresentGaps: pacerPresentGaps, pacerDepth: pacerDepth,
-            ))
-        default:
-            throw VideoProtocolError.malformed("unknown recovery message type \(type)")
-        }
-        guard reader.bytesRemaining == 0 else {
-            throw VideoProtocolError.malformed("trailing bytes")
-        }
-        return message
     }
 
-    /// Decodes the NACK: bounds-checked fixed reads, the ``maxNackFragments`` cap, and the
-    /// TRAILING-bytes rejection (load-bearing for the host's byte-keyed dedup — body length must
-    /// equal `7 + 2 × count`).
-    static func decodeRequestFragments(_ data: Data) throws -> Self {
-        let bytes = [UInt8](data)
-        guard bytes.count >= 1 + 4 + 2 else { throw VideoProtocolError.truncated }
-        func be32(_ o: Int) -> UInt32 {
-            (UInt32(bytes[o]) << 24) | (UInt32(bytes[o + 1]) << 16)
-                | (UInt32(bytes[o + 2]) << 8) | UInt32(bytes[o + 3])
+    /// The decode proper, given somewhere to put the NACK indices.
+    ///
+    /// Split out only so the scratch buffer can be the stack: every arm but ``requestFragments``
+    /// leaves it untouched, and that one reads exactly the prefix the codec says it wrote.
+    private static func decode(
+        _ data: Data, into indices: UnsafeMutableBufferPointer<UInt16>,
+    ) throws -> Self {
+        var flat = SlopDeskRecoveryMessage()
+        let verdict = data.withUnsafeBytes { bytes in
+            slopdesk_recovery_decode(
+                bytes.baseAddress, bytes.count, &flat, indices.baseAddress, indices.count,
+            )
         }
-        func be16(_ o: Int) -> UInt16 { (UInt16(bytes[o]) << 8) | UInt16(bytes[o + 1]) }
-        let frameID = be32(1)
-        let count = Int(be16(5))
-        guard count <= maxNackFragments else {
-            throw VideoProtocolError.malformed("NACK fragment count exceeds the cap")
+        switch verdict {
+        case UInt32(SLOPDESK_RECOVERY_DECODE_TRUNCATED): throw VideoProtocolError.truncated
+        case UInt32(SLOPDESK_RECOVERY_DECODE_MALFORMED):
+            // The reason stays on the other side: nothing branches on it, and the datagram is being
+            // dropped either way.
+            throw VideoProtocolError.malformed("unacceptable recovery message")
+        default: break
         }
-        guard bytes.count == 1 + 4 + 2 + count * 2 else {
-            throw VideoProtocolError.malformed("NACK trailing/short bytes")
+        switch flat.message_type {
+        case 1: return .ack(streamSeq: flat.stream_seq)
+        case 2: return .requestLTRRefresh(
+                fromFrameID: flat.from_frame_id, toFrameID: flat.to_frame_id,
+                lastDecodedFrameID: flat.last_decoded_frame_id,
+            )
+        case 3: return .requestIDR(lastDecodedFrameID: flat.last_decoded_frame_id)
+        case 4: return .requestCursorShape(shapeID: flat.shape_id)
+        case 5: return .networkStats(NetworkStatsReport(
+                framesReceived: flat.frames_received, fecRecovered: flat.fec_recovered,
+                unrecovered: flat.unrecovered, latestHostSendTs: flat.latest_host_send_ts,
+                clientHoldMs: flat.client_hold_ms, owdJitterMicros: flat.owd_jitter_micros,
+                owdTrendMilli: flat.owd_trend_milli, owdTrendFlags: flat.owd_trend_flags,
+                pacerLateFrames: flat.pacer_late_frames, pacerPresentGaps: flat.pacer_present_gaps,
+                pacerDepth: flat.pacer_depth,
+            ))
+        case 6: return .requestFragments(
+                frameID: flat.frame_id,
+                fragIndices: Array(
+                    UnsafeBufferPointer(start: indices.baseAddress, count: Int(flat.frag_count)),
+                ),
+            )
+        default:
+            // Unreachable: the boundary refuses a type no arm answers to before it gets here.
+            throw VideoProtocolError.malformed("unknown recovery message type \(flat.message_type)")
         }
-        var frags = [UInt16]()
-        frags.reserveCapacity(count)
-        for i in 0..<count { frags.append(be16(7 + i * 2)) }
-        return .requestFragments(frameID: frameID, fragIndices: frags)
     }
 }
 
@@ -325,9 +301,10 @@ public struct RecoveryPolicy: Sendable {
     /// Pure env resolution for the lossy floor: `SLOPDESK_ESCALATION_FLOOR_MS`, default 60 ms,
     /// clamped to 20...500 ms; absent/garbage/out-of-band values keep the default.
     public static func escalationFloorSeconds(env: [String: String]) -> TimeInterval {
-        guard let s = env["SLOPDESK_ESCALATION_FLOOR_MS"], let v = Double(s), v.isFinite,
-              v >= 20, v <= 500 else { return 0.06 }
-        return v / 1000.0
+        let raw = Array((env["SLOPDESK_ESCALATION_FLOOR_MS"] ?? "").utf8)
+        return raw.withUnsafeBufferPointer {
+            slopdesk_recovery_escalation_floor_seconds($0.baseAddress, $0.count)
+        }
     }
 
     /// The process-wide resolved default floor (read once, like the host's env-static flags).
@@ -368,14 +345,10 @@ public struct RecoveryPolicy: Sendable {
     /// floor just guarantees an LTR refresh gets the time it physically needs before the IDR
     /// sledgehammer.
     public func shouldEscalateToIDR(elapsedSinceRequest: TimeInterval, rtt: TimeInterval, observingLoss: Bool) -> Bool {
-        let deadline: TimeInterval
-        if observingLoss {
-            let floor = max(lossyEscalationFloor, lossyEscalationFloorRTTMultiple * rtt)
-            deadline = max(lossyIdrTimeoutRTTMultiple * rtt, floor)
-        } else {
-            deadline = idrTimeoutRTTMultiple * rtt
-        }
-        return elapsedSinceRequest >= deadline
+        slopdesk_recovery_should_escalate_to_idr(
+            idrTimeoutRTTMultiple, lossyIdrTimeoutRTTMultiple, lossyEscalationFloor,
+            lossyEscalationFloorRTTMultiple, elapsedSinceRequest, rtt, observingLoss,
+        )
     }
 }
 
@@ -387,7 +360,7 @@ public struct RecoveryPolicy: Sendable {
 /// 100 ms at the bootstrap EWMA) of extra frozen frame — the ranked hitch tail.
 ///
 /// WHY 3 ms of spacing (not back-to-back like the input path's `redundantUpCount`): measured losses
-/// are BURSTY (up to ~15 adjacent wire datagrams — the FragmentInterleaver memory), so spacing
+/// are BURSTY (up to ~15 adjacent wire datagrams — the interleaver's own memory), so spacing
 /// decorrelates the copies' fate; at recovery time the send lane is mostly idle so wire adjacency
 /// is otherwise likely. COUPLING INVARIANT (vs the host dedup window, default 25 ms): the total
 /// spread (copies−1)·spacing must stay ≤ HALF the window for every legal copies count — 6 ms at
@@ -403,22 +376,24 @@ public struct RecoveryRequestRedundancy: Sendable, Equatable {
     public let spacing: TimeInterval
 
     public init(copies: Int = 3, spacing: TimeInterval = 0.003) {
-        self.copies = min(5, max(1, copies))
+        self.copies = slopdesk_recovery_clamped_copies(max(0, copies))
         self.spacing = spacing
     }
 
     /// Send-time offsets for one logical request: `[0, spacing, 2·spacing, ...]`.
     public var sendOffsets: [TimeInterval] {
-        (0..<copies).map { Double($0) * spacing }
+        let needed = slopdesk_recovery_send_offsets(copies, spacing, nil, 0)
+        var written = 0
+        let offsets = [TimeInterval](unsafeUninitializedCapacity: needed) { out, count in
+            written = slopdesk_recovery_send_offsets(copies, spacing, out.baseAddress, out.count)
+            count = Swift.min(written, out.count)
+        }
+        return written == needed ? offsets : []
     }
 
     /// P(all copies lost) under i.i.d. per-datagram loss `p`: `clamp01(p)^copies`.
     public static func allCopiesLostProbability(perDatagramLoss: Double, copies: Int) -> Double {
-        let p = min(1.0, max(0.0, perDatagramLoss))
-        let n = min(5, max(1, copies))
-        var out = 1.0
-        for _ in 0..<n { out *= p }
-        return out
+        slopdesk_recovery_all_copies_lost_probability(perDatagramLoss, max(0, copies))
     }
 
     /// Expected freeze added by REQUEST loss per loss event: P(all copies lost) × the escalation
@@ -428,7 +403,7 @@ public struct RecoveryRequestRedundancy: Sendable, Equatable {
         copies: Int,
         escalationDelay: TimeInterval,
     ) -> TimeInterval {
-        allCopiesLostProbability(perDatagramLoss: perDatagramLoss, copies: copies) * escalationDelay
+        slopdesk_recovery_expected_request_loss_freeze(perDatagramLoss, max(0, copies), escalationDelay)
     }
 }
 
@@ -448,22 +423,38 @@ public struct LossObservationWindow: Sendable, Equatable {
     private var events: [TimeInterval] = []
 
     public init(windowSeconds: TimeInterval = 1.0, minEvents: Int = 2, capacity: Int = 8) {
+        // Both floors are the boundary's — it reads these on every call and would apply them
+        // again, and a clamp written on both sides is the drift this port exists to remove.
         self.windowSeconds = windowSeconds
-        self.minEvents = max(1, minEvents)
-        self.capacity = max(1, capacity)
+        self.minEvents = minEvents
+        self.capacity = capacity
     }
 
     /// Records one loss-ish event (unrecoverable loss or FEC recovery) at `now`. Prunes events
     /// older than the window; drop-oldest at capacity (bounded regardless of feed rate).
+    ///
+    /// The ring is data and stays here; only the pruning law is `rust/slopdesk-video`'s. It is
+    /// handed over as ONE buffer the boundary rewrites in place — the answer is never longer than
+    /// the argument plus the event being recorded, so the spare slot appended here is all the room
+    /// it can need, and a window at its steady size stops allocating entirely.
     public mutating func noteEvent(now: TimeInterval) {
-        events.removeAll { now - $0 > windowSeconds }
-        if events.count >= capacity { events.removeFirst(events.count - capacity + 1) }
+        let held = events.count
         events.append(now)
+        let live = events.withUnsafeMutableBufferPointer { ring in
+            slopdesk_recovery_loss_window_note(
+                windowSeconds, capacity, ring.baseAddress, held, now, ring.count,
+            )
+        }
+        events.removeLast(events.count - Swift.min(live, events.count))
     }
 
     /// Whether ≥ `minEvents` events lie within `windowSeconds` of `now`. Pure read (no prune):
     /// stale entries simply fail the recency test.
     public func isObservingLoss(now: TimeInterval) -> Bool {
-        events.count(where: { now - $0 <= windowSeconds && now - $0 >= 0 }) >= minEvents
+        events.withUnsafeBufferPointer { held in
+            slopdesk_recovery_loss_window_observing(
+                windowSeconds, minEvents, held.baseAddress, held.count, now,
+            )
+        }
     }
 }

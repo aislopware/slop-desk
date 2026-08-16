@@ -1,0 +1,116 @@
+# `slopdesk-dropd` — the file-DROP service: PATH 4, the dedicated upload port.
+#
+# ## Why this is its OWN workspace, sitting inside `rust/`
+# The same reason `slopdesk-superd` and `slopdesk-screend` are (see their Cargo.toml files): cargo
+# profiles are workspace-global, and the hook's release profile — `opt-level = "z"`,
+# `panic = "abort"`, `lto = true` — is tuned for a binary forked twice per tool call, where startup
+# time is the whole cost.
+#
+# dropd is a long-lived daemon streaming multi-GiB bodies to disk, and a panic on one connection's
+# thread must cost that connection and nothing else: one hostile peer cannot be allowed to abort a
+# colleague's upload. Neither setting is expressible per-package, so the two cannot share a profile,
+# so they cannot share a workspace.
+[workspace]
+resolver = "3"
+
+[package]
+name = "slopdesk-dropd"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "File-drop service for slopdesk — the PATH-4 upload endpoint clients dial directly"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[[bin]]
+name = "slopdesk-dropd"
+path = "src/main.rs"
+
+[lib]
+name = "slopdesk_dropd"
+path = "src/lib.rs"
+
+# No dependencies, deliberately: a length-prefixed frame, a state machine and a file handle are
+# std's whole job description here, and an upload endpoint reachable from the tunnel is the last
+# place in the tree to widen a dependency tree for convenience.
+[dependencies]
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+debug = 1
+strip = "debuginfo"
+
+# ---------------------------------------------------------------------------- #
+# Same maximal-strict philosophy as `rust/Cargo.toml`. A literal copy rather than inherited, because
+# inheriting would mean being a member, which is the thing the profile forbids.
+[lints.rust]
+# `forbid`, not `deny` (stage 28): this crate has never contained an `unsafe` block, and `forbid`
+# is what turns that from a fact about today's code into one no downstream `allow` can undo. Every
+# syscall with no safe wrapper lives in `slopdesk-posix`; if this daemon ever needs one, it depends
+# on that crate rather than lifting the lint here.
+unsafe_code = "forbid"
+
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+missing_copy_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+single_use_lifetimes = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+variant_size_differences = "deny"
+elided_lifetimes_in_paths = "deny"
+let_underscore_drop = "deny"
+non_ascii_idents = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+indexing_slicing = "deny"
+integer_division = "deny"
+exit = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+mem_forget = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+verbose_file_reads = "deny"
+str_to_string = "deny"
+empty_structs_with_brackets = "deny"
+if_then_some_else_none = "deny"
+lossy_float_literal = "deny"
+try_err = "deny"
+
+# Disabled, with reasons:
+# - `print_stderr`: stderr IS dropd's log, exactly as it is superd's and screend's — superd holds it
+#   on a PTY and hostd reads the announce line off it, so routing it through a logging crate would
+#   add a dependency to say the same words.
+print_stderr = "allow"
+
+# Disabled, with a reason:
+# - `suboptimal_flops` / `imprecise_flops` (nursery): both want `f64::mul_add`, which is exactly the
+#   fused multiply-add `CLAUDE.md` forbids — "keep `a * b + c` separate (never `addingProduct`/`fma`)".
+#   FMA rounds once where the wire rounds twice, so taking the advice changes the `f64` bit patterns
+#   `golden/golden_vectors.json` pins. Allowed in EVERY workspace, not only the ones doing float
+#   math today: the reason is a repo invariant, and a lint that fires the first time a float lands
+#   here would be obeyed before anyone reads this file.
+suboptimal_flops = "allow"
+imprecise_flops = "allow"

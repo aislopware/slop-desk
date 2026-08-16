@@ -571,54 +571,6 @@ final class SwipeNavRecognizerTests: XCTestCase {
         )
     }
 
-    // MARK: Allowlist policy
-
-    func testKnownBrowsersAndFinderAreNavigable() {
-        for id in ["com.apple.Safari", "com.google.Chrome", "org.mozilla.firefox", "com.apple.finder"] {
-            XCTAssertTrue(SwipeNavPolicy.isNavigable(bundleID: id), id)
-        }
-    }
-
-    func testUnknownAndNilAppsAreNotNavigable() {
-        XCTAssertFalse(SwipeNavPolicy.isNavigable(bundleID: "com.microsoft.VSCode")) // ⌘[ = outdent!
-        XCTAssertFalse(SwipeNavPolicy.isNavigable(bundleID: "com.apple.dt.Xcode"))
-        XCTAssertFalse(SwipeNavPolicy.isNavigable(bundleID: nil))
-    }
-
-    func testExtraAppsParseAndExtend() {
-        let extras = SwipeNavPolicy.extraApps(from: " com.example.One , com.example.Two,,")
-        XCTAssertEqual(extras, ["com.example.One", "com.example.Two"])
-        XCTAssertTrue(SwipeNavPolicy.isNavigable(bundleID: "com.example.One", extraApps: extras))
-        XCTAssertFalse(SwipeNavPolicy.isNavigable(bundleID: "com.example.Three", extraApps: extras))
-        XCTAssertEqual(SwipeNavPolicy.extraApps(from: nil), [])
-    }
-
-    func testBrowserPreReleaseChannelsAreNavigable() {
-        // The list carries every browser's pre-release channels (Chrome beta/dev/canary, Brave
-        // beta/nightly, Firefox nightly/dev-edition) — Edge/Opera/Vivaldi's must not be the
-        // silent exceptions. Exact-match Set lookup ⇒ casing matters.
-        for id in [
-            "com.microsoft.edgemac.Beta", "com.microsoft.edgemac.Dev", "com.microsoft.edgemac.Canary",
-            "com.operasoftware.OperaNext", "com.operasoftware.OperaDeveloper",
-            "com.vivaldi.Vivaldi.snapshot",
-        ] {
-            XCTAssertTrue(SwipeNavPolicy.isNavigable(bundleID: id), id)
-        }
-    }
-
-    func testFireTravelEnvParseRejectsToDefaultAndAcceptsBounds() {
-        // The ONE parse both the injector's recogniser and the status push share — a typo must
-        // not make every scroll navigate (too low) or dead the feature silently (too high).
-        // Semantics are REJECT-to-default (80), not clamp-to-nearest-bound. The [20, 500]
-        // acceptance is also the crash guard for `UInt16(fireTravel)` in the status message.
-        for bad in [nil, "", "garbage", "nan", "inf", "-inf", "19.9", "0", "-5", "500.1", "1e9"] as [String?] {
-            XCTAssertEqual(SwipeNavPolicy.fireTravel(fromEnv: bad), 80, String(describing: bad))
-        }
-        XCTAssertEqual(SwipeNavPolicy.fireTravel(fromEnv: "20"), 20)
-        XCTAssertEqual(SwipeNavPolicy.fireTravel(fromEnv: "500"), 500)
-        XCTAssertEqual(SwipeNavPolicy.fireTravel(fromEnv: "240"), 240)
-    }
-
     // MARK: Live candidate (client peel feedback)
 
     func testLiveCandidateIsNilWhenIdle() {

@@ -1,6 +1,5 @@
 import Foundation
 import Network
-import SlopDeskProtocol
 
 /// Async bridges over the raw `NWConnection` callback API, used only during the
 /// pre-framing association/handshake phase (reading the fixed-size preamble and

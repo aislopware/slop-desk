@@ -1,9 +1,11 @@
+import CSlopDeskFFI
 import Foundation
+import SlopDeskArena
 
-// `slopdesk completions <shell>` — prints a shell completion script. PURE string generation, no
-// socket (a local op). Source-of-truth is the single `subcommands` list; every shell renderer
-// derives from it, so the Claude-only invariant (E20 exclusion §4: completions never list
-// `codex`/`opencode`) holds across all shells by construction.
+// `slopdesk completions <shell>` — the Swift face of `rust/slopdesk-cli`'s `completions`. The
+// scripts and the subcommand surface they are generated from are the crate's, so the Claude-only
+// invariant (E20 exclusion §4: completions never list `codex`/`opencode`) holds for all five shells
+// by construction, in one place.
 
 public enum CLICompletions {
     // MARK: - Shell
@@ -19,14 +21,35 @@ public enum CLICompletions {
         /// Parses a shell name as typed on the command line (case-insensitive; `pwsh` aliases
         /// `powershell`). Returns `nil` for an unknown shell (the caller reports the error).
         public init?(argument raw: String) {
-            switch raw.lowercased() {
-            case "bash": self = .bash
-            case "zsh": self = .zsh
-            case "fish": self = .fish
-            case "elvish": self = .elvish
-            case "powershell",
-                 "pwsh": self = .powershell
-            default: return nil
+            let bytes = Array(raw.utf8)
+            var code: UInt32 = 0
+            let known = bytes.withUnsafeBufferPointer { name in
+                slopdesk_cli_shell(name.baseAddress, name.count, &code)
+            }
+            guard known, let shell = Self.of(code) else { return nil }
+            self = shell
+        }
+
+        /// The code this shell crosses as.
+        var code: UInt32 {
+            switch self {
+            case .bash: SLOPDESK_SHELL_BASH
+            case .zsh: SLOPDESK_SHELL_ZSH
+            case .fish: SLOPDESK_SHELL_FISH
+            case .elvish: SLOPDESK_SHELL_ELVISH
+            case .powershell: SLOPDESK_SHELL_POWERSHELL
+            }
+        }
+
+        /// The shell a code names.
+        static func of(_ code: UInt32) -> Self? {
+            switch code {
+            case SLOPDESK_SHELL_BASH: .bash
+            case SLOPDESK_SHELL_ZSH: .zsh
+            case SLOPDESK_SHELL_FISH: .fish
+            case SLOPDESK_SHELL_ELVISH: .elvish
+            case SLOPDESK_SHELL_POWERSHELL: .powershell
+            default: nil
             }
         }
     }
@@ -36,97 +59,36 @@ public enum CLICompletions {
     /// The user-facing subcommand surface offered for completion. CLAUDE-ONLY: the only per-agent
     /// forms are `watch:claude` / `state:claude`; `codex`/`opencode` are deliberately absent
     /// (E20 exclusion §4 — completions/help never list non-Claude agents).
-    public static let subcommands: [String] = [
-        "open", "view", "edit",
-        "config", "font", "keybind",
-        "window", "windows", "tab", "tabs", "pane", "panes",
-        "watch", "watch:claude",
-        "jump", "learn", "ignore",
-        "import", "export", "features",
-        "completions", "version",
-        "state:claude", "ipc", "help",
-    ]
+    public static let subcommands: [String] = {
+        let shape = slopdesk_cli_subcommands(nil, 0, nil, 0)
+        let room = shape.count
+        guard room > 0 else { return [] }
+        var spans = [SlopDeskByteSpan](repeating: SlopDeskByteSpan(), count: shape.count)
+        var arena = Data(count: shape.arena_len)
+        spans.withUnsafeMutableBufferPointer { out in
+            arena.withUnsafeMutableBytes { pool in
+                _ = slopdesk_cli_subcommands(out.baseAddress, out.count, pool.baseAddress, pool.count)
+            }
+        }
+        return spans.map { span in
+            ArenaText.text(arena, offset: Int(span.offset), length: Int(span.length))
+        }
+    }()
 
     // MARK: - Entry point
 
     /// Returns the completion script for `shell`, terminated by a trailing newline.
     public static func completionScript(for shell: Shell) -> String {
-        switch shell {
-        case .bash: bashScript()
-        case .zsh: zshScript()
-        case .fish: fishScript()
-        case .elvish: elvishScript()
-        case .powershell: powershellScript()
-        }
+        answer { out, cap in slopdesk_cli_completion_script(shell.code, out, cap) }
     }
 
-    // MARK: - Per-shell renderers
-
-    private static func bashScript() -> String {
-        let words = subcommands.joined(separator: " ")
-        return """
-        # slopdesk bash completion (install via Settings > Shell > Install CLI).
-        _slopdesk() {
-            local cur="${COMP_WORDS[COMP_CWORD]}"
-            local subcommands="\(words)"
-            COMPREPLY=( $(compgen -W "${subcommands}" -- "${cur}") )
-        }
-        complete -F _slopdesk slopdesk
-        """ + "\n"
-    }
-
-    private static func zshScript() -> String {
-        let words = subcommands.joined(separator: " ")
-        return """
-        #compdef slopdesk
-        # slopdesk zsh completion.
-        _slopdesk() {
-            local -a subcommands
-            subcommands=(\(words))
-            _describe 'slopdesk subcommand' subcommands
-        }
-        if [ "$funcstack[1]" = "_slopdesk" ]; then
-            _slopdesk "$@"
-        else
-            compdef _slopdesk slopdesk
-        fi
-        """ + "\n"
-    }
-
-    private static func fishScript() -> String {
-        var lines = [
-            "# slopdesk fish completion.",
-            "complete -c slopdesk -f",
-        ]
-        for sub in subcommands {
-            lines.append("complete -c slopdesk -n __fish_use_subcommand -a '\(sub)'")
-        }
-        return lines.joined(separator: "\n") + "\n"
-    }
-
-    private static func elvishScript() -> String {
-        // Single-quote each candidate so tokens containing `:` (e.g. `watch:claude`) are plain
-        // strings, not elvish namespace references.
-        let quoted = subcommands.map { "'\($0)'" }.joined(separator: " ")
-        return """
-        # slopdesk elvish completion.
-        set edit:completion:arg-completer[slopdesk] = {|@words|
-            put \(quoted) | each {|sub| edit:complex-candidate $sub }
-        }
-        """ + "\n"
-    }
-
-    private static func powershellScript() -> String {
-        let quoted = subcommands.map { "'\($0)'" }.joined(separator: ",")
-        return """
-        # slopdesk PowerShell completion.
-        Register-ArgumentCompleter -Native -CommandName slopdesk -ScriptBlock {
-            param($wordToComplete, $commandAst, $cursorPosition)
-            $subcommands = @(\(quoted))
-            $subcommands | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
-                [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
-            }
-        }
-        """ + "\n"
+    /// One lent-buffer answer: ask for the size, then ask again with the room.
+    static func answer(_ ask: (UnsafeMutablePointer<UInt8>?, Int) -> Int) -> String {
+        let needed = ask(nil, 0)
+        guard needed > 0 else { return "" }
+        var bytes = [UInt8](repeating: 0, count: needed)
+        let written = bytes.withUnsafeMutableBufferPointer { out in ask(out.baseAddress, out.count) }
+        guard written == needed else { return "" }
+        return String(bytes: bytes, encoding: .utf8) ?? ""
     }
 }

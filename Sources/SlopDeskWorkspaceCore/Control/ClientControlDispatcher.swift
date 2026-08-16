@@ -1,5 +1,6 @@
 import Foundation
 import SlopDeskAgentDetect
+import SlopDeskProtocol
 
 // Client control dispatcher.
 //
@@ -376,18 +377,13 @@ public struct ClientControlDispatcher {
 
     /// Build an error response object.
     nonisolated static func error(id: String, message: String) -> [String: Any] {
-        ["id": id, "ok": false, "error": message]
+        ControlLine.error(id: id, message: message)
     }
 
     /// Serialize a response object to a NDJSON line (sorted keys + trailing `\n`). Falls back to a
     /// minimal error line on the (effectively impossible) serialization failure.
     nonisolated static func encodeLine(_ obj: [String: Any]) -> String {
-        guard let data = try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys]),
-              let str = String(bytes: data, encoding: .utf8)
-        else {
-            return #"{"ok":false,"error":"json encode failure"}"# + "\n"
-        }
-        return str + "\n"
+        ControlLine.encode(obj) + "\n"
     }
 
     /// Parse one NDJSON request line into `(id, method, params)`. Returns `nil` (validate-then-drop)
@@ -395,12 +391,6 @@ public struct ClientControlDispatcher {
     nonisolated static func parseRequest(_ line: String)
         -> (id: String, method: String, params: [String: Any])?
     {
-        guard let data = line.data(using: .utf8),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let id = obj["id"] as? String,
-              let method = obj["method"] as? String
-        else { return nil }
-        let params = obj["params"] as? [String: Any] ?? [:]
-        return (id, method, params)
+        ControlLine.parseRequest(line)
     }
 }

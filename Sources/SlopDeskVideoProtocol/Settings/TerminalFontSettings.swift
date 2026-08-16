@@ -1,5 +1,3 @@
-import Foundation
-
 // The leaf-level FONT-PARITY model: the four font-appearance enums + their libghostty token
 // mapping.
 //
@@ -33,17 +31,6 @@ public enum FontLigatures: String, Codable, Sendable, Equatable, CaseIterable {
     case calt
     /// Everything in ``calt`` plus discretionary ligatures → `font-feature = calt,dlig`.
     case dlig
-
-    /// The libghostty `font-feature` tokens for this mode. `off` emits the DISABLING set `-calt,-liga,-dlig`
-    /// (so a ligature-shipping font is actually un-ligated); `calt`/`dlig` opt in. The verified key + the
-    /// `±feat` token syntax are pinned by `Config.zig`'s `font-feature` (a `RepeatableString`).
-    public var baseFeatures: [String] {
-        switch self {
-        case .off: ["-calt", "-liga", "-dlig"]
-        case .calt: ["calt"]
-        case .dlig: ["calt", "dlig"]
-        }
-    }
 }
 
 // MARK: - FontStyleMode (`font-bold` / `font-italic`)
@@ -62,35 +49,6 @@ public enum FontStyleMode: String, Codable, Sendable, Equatable, CaseIterable {
     case primaryOnly = "primary-only"
     /// Synthesize a faux face via algorithmic thickening/slanting → `font-synthetic-style = {kind}`.
     case synthetic
-
-    /// The `font-synthetic-style` token(s) this mode contributes for `kind` (`"bold"` / `"italic"`), or an
-    /// empty list when the mode contributes nothing to the (single, combined) synthetic-style key. `auto`
-    /// and `off` add nothing (`off` is handled by the separate `font-style-{kind} = false` line).
-    ///
-    /// `font-synthetic-style` IS a real ghostty key — `Config.zig:218` `@"font-synthetic-style": FontSyntheticStyle = .{}`,
-    /// a packed flag-set of `bold`/`italic`/`bold-italic` (`Config.zig:8516-8520`, every field defaulting
-    /// `true` ⇒ synthesis ENABLED by default). The token vocabulary is pinned by `Config.zig:201-205`: "You can
-    /// disable specific styles using `no-bold`, `no-italic`, and `no-bold-italic` … Available style keys are:
-    /// `bold`, `italic`, `bold-italic`." So both tokens this mode emits are VALID, not no-ops:
-    ///   • `primaryOnly` → `no-{kind}` — DISABLES synthesis for that style (the flag-set parser, `cli/args.zig`
-    ///     `parsePackedStruct`, seeds from the all-true struct default and only flips the named flag, so
-    ///     `no-bold` ⇒ `{bold:false, italic:true, bold-italic:true}` → no faux bold, the "primary face only"
-    ///     intent).
-    ///   • `synthetic` → `{kind}` — re-asserts the default-ON synthesis for that style (ghostty would
-    ///     synthesize anyway, but the explicit token makes the user's "Synthetic" choice self-documenting and
-    ///     survives a future default flip). Emitting it never disables a sibling style (the parser flips only
-    ///     the named flag).
-    public func syntheticTokens(kind: String) -> [String] {
-        switch self {
-        case .auto,
-             .off: []
-        case .primaryOnly: ["no-\(kind)"]
-        case .synthetic: [kind]
-        }
-    }
-
-    /// `true` iff this mode emits an explicit `font-style-{kind} = false` (only ``off`` disables the face).
-    public var disablesFace: Bool { self == .off }
 }
 
 // MARK: - LineHeightMode (`line-height`)
@@ -111,7 +69,8 @@ public enum LineHeightMode: Codable, Sendable, Equatable {
     /// `loose` are exact integral constants (0 / 20) — NOT routed through the `(m-1)*100` formula, which on
     /// `1.2` would land on `19.999…%` (1.2 is not representable). `custom` uses the formula with PLAIN
     /// subtract-then-multiply (never fused / `addingProduct`, per the codec/controller convention). The
-    /// builder applies the ordered NaN-faithful clamp + integral formatting.
+    /// CLAMP and the formatting are the far side's — `slopdesk-terminal`'s `config` — which is why this
+    /// stays here rather than crossing as a mode: `CodeFontSync` reads the percent too.
     public var adjustCellHeightPercent: Double? {
         switch self {
         case .default: nil
@@ -133,9 +92,6 @@ public enum FontBlending: String, Codable, Sendable, Equatable, CaseIterable {
     case `default`
     /// macOS-native Display-P3 path → `font-thicken = true`.
     case macosLike = "macos-like"
-
-    /// `true` iff this mode maps to an emitted libghostty key (only ``macosLike`` → `font-thicken = true`).
-    public var thickens: Bool { self == .macosLike }
 }
 
 // The per-theme font SCOPE resolver that used to live here is gone with the theme picker

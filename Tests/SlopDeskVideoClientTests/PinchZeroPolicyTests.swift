@@ -16,11 +16,6 @@ final class PinchZeroPolicyTests: XCTestCase {
         XCTAssertTrue(PinchZeroPolicy.allowsReset(appName: ""))
     }
 
-    func testExtraUnsafeParsesAndExtends() {
-        let extras = PinchZeroPolicy.extraUnsafe(from: " Sketch , Final Cut Pro,,")
-        XCTAssertEqual(extras, ["Sketch", "Final Cut Pro"])
-        XCTAssertFalse(PinchZeroPolicy.allowsReset(appName: "Sketch", extraUnsafe: extras))
-        XCTAssertTrue(PinchZeroPolicy.allowsReset(appName: "Figma", extraUnsafe: extras))
-        XCTAssertEqual(PinchZeroPolicy.extraUnsafe(from: nil), [])
-    }
+    // The runtime extension list is pinned in `client_gestures.rs`, next to the parse: it needs an
+    // environment this process cannot restage, and the door answers it without one.
 }

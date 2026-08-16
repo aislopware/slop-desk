@@ -4,16 +4,15 @@ import Foundation
 
 /// The Outline tab's pure (no-SwiftUI) presentation mapping: a row's relative-timestamp string and its
 /// exit-status gutter classification. Kept free of `Slate` / SwiftUI so the ONLY theme-coupled part is the
-/// view's `Gutter → colour` map — the classification itself is headlessly unit-tested. Mirrors the
-/// ``MetadataFormatting/uptime(_:)`` precedent (a single coarse unit; integer arithmetic only — no float).
+/// view's `Gutter → colour` map — the classification itself is headlessly unit-tested. Follows the
+/// codebase's coarse-duration convention: a single coarse unit; integer arithmetic only — no float.
 public enum OutlinePresentation {
     /// Relative time from `from` to `now`: sub-second → "now", then "34s ago" / "4m ago" /
     /// "2h ago" / "3d ago" — the Outline row's exact shape (see `docs/ui-shell/screenshots/outline-panel.png` +
     /// `docs/ui-shell/spec/user-interface__outline.md` / `user-interface__details-panel.md`: "4m ago" / "7h ago" /
-    /// "7s ago"). It carries the "ago" suffix
-    /// that ``MetadataFormatting/uptime(_:)`` (the Process-section uptime) does NOT — that bare form is the
-    /// uptime callers' contract, while THIS is read only by the Outline (`OutlineView`), so the suffix lives
-    /// here. A SINGLE coarse unit; the Date delta is truncated to whole seconds ONCE and all bucketing is
+    /// "7s ago"). It carries the "ago" suffix that a bare duration render (an uptime, an elapsed
+    /// count) does NOT — the suffix is read only by the Outline (`OutlineView`), so it lives here.
+    /// A SINGLE coarse unit; the Date delta is truncated to whole seconds ONCE and all bucketing is
     /// integer division + ordered integer comparison (no float `<`/`>`, per the codebase float-math
     /// convention). A `from` in the future (clock skew) clamps to "now" rather than emitting a negative string.
     public static func relativeTime(from: Date, now: Date) -> String {

@@ -1,4 +1,3 @@
-import CoreGraphics
 import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskWorkspaceCore
@@ -29,9 +28,6 @@ final class SyncInputTests: XCTestCase {
         store.attachLoopbackWorkspaceDocument()
         return store
     }
-
-    /// The DFS-ordered leaf ids for `store`.
-    private func leaves(_ store: WorkspaceStore) -> [PaneID] { store.tree.allPaneIDs() }
 
     /// The active tab's id.
     private func activeTabID(_ store: WorkspaceStore) -> TabID? {

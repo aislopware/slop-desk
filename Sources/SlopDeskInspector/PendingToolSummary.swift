@@ -1,5 +1,3 @@
-import Foundation
-
 /// The PURE, headless formatter shared across all THREE call sites that speak "what tool call is
 /// pending" / "which todo is in flight": Peek & Reply's pending-tool block (``line(name:input:)``), the
 /// Peek header's todo-scent caption suffix, and the working-row tooltip's scent line (both via

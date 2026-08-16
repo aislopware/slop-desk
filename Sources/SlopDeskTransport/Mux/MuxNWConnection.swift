@@ -63,11 +63,11 @@ public actor MuxNWConnection {
     /// lifecycle independently of the other link.
     private var controlDecoder = MuxFrameDecoder()
     private var dataDecoder = MuxFrameDecoder()
-    private var controlTable = ChannelTable()
-    private var dataTable = ChannelTable()
+    private let controlTable = ChannelTable()
+    private let dataTable = ChannelTable()
     /// Allocator (client only): one shared odd-id counter so a pane's data + control sub-channels
     /// get the SAME id. The host registers ids it sees instead.
-    private var allocator = ChannelTable()
+    private let allocator = ChannelTable()
 
     /// Per-link dispatch: `channelID → the sub-channel whose inbound to feed`.
     private var controlChannels: [UInt32: MuxSubChannel] = [:]
@@ -411,9 +411,9 @@ public actor MuxNWConnection {
 
         let decision: MuxRoutingDecision =
             if link == .control {
-                MuxRoutingCore.route(frame, in: &controlTable)
+                MuxRoutingCore.route(frame, in: controlTable)
             } else {
-                MuxRoutingCore.route(frame, in: &dataTable)
+                MuxRoutingCore.route(frame, in: dataTable)
             }
 
         // windowAdjust RECEIPT: a peer grant replenishes THIS channel's DATA send window (matched by

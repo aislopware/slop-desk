@@ -1,4 +1,3 @@
-import Foundation
 import Network
 
 /// Canonical `NWParameters` for every SlopDesk PATH 1 socket.

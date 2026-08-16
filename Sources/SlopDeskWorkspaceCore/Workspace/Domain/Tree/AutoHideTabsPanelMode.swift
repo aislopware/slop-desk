@@ -1,5 +1,3 @@
-import Foundation
-
 // MARK: - AutoHideTabsPanelMode (`auto-hide-tabs-panel` policy)
 
 /// When the vertical TABS panel (sidebar) is shown — the `auto-hide-tabs-panel` config

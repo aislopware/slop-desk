@@ -137,10 +137,14 @@ final class TerminalConfigBuilderTests: XCTestCase {
         XCTAssertEqual(kept["foreground"], "AABBCC", "a nil override keeps the pref colour")
     }
 
-    func testScrollbackLimitClampsNonPositiveToZero() {
-        XCTAssertEqual(TerminalConfigBuilder.scrollbackLimitBytes(lines: 0), 0)
-        XCTAssertEqual(TerminalConfigBuilder.scrollbackLimitBytes(lines: -5), 0)
-        XCTAssertEqual(TerminalConfigBuilder.scrollbackLimitBytes(lines: 1), 256)
+    /// The line-to-byte conversion crosses rather than being restated here: a non-positive count is
+    /// none rather than a trap, and the per-line estimate is the far side's. The crate pins the
+    /// arithmetic; this pins that the arithmetic is what reaches libghostty.
+    func testScrollbackLimitCrossesAsBytes() {
+        for (lines, bytes) in [(0, "0"), (-5, "0"), (1, "256"), (10000, "2560000")] {
+            let map = parse(TerminalConfigBuilder.string(for: TerminalPreferences(scrollbackLines: lines)))
+            XCTAssertEqual(map["scrollback-limit"], bytes, "\(lines) lines")
+        }
     }
 
     func testKeybindLinesAreAppendedAndEmptyOnesSkipped() {

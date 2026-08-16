@@ -1,0 +1,63 @@
+//! Socket options `nix` does not wrap for a bare descriptor.
+
+use std::os::fd::RawFd;
+
+/// Widens a socket's send AND receive buffers to `bytes`.
+///
+/// Best-effort on purpose: a kernel that refuses the size keeps its own and every protocol above
+/// stays correct — this buys headroom on a byte path, it does not carry a guarantee. Both
+/// directions, because callers use both.
+///
+/// The reason it is ever needed: `AF_UNIX` defaults to 8 KB on macOS where TCP gets 128 KB, so a
+/// single 32 KiB output frame does not fit and the writer parks mid-frame the instant its reader is
+/// a beat behind.
+#[expect(unsafe_code, reason = "SO_SNDBUF has no nix wrapper taking a bare RawFd")]
+pub fn widen_buffers(socket: RawFd, bytes: libc::c_int) {
+    let size = bytes;
+    let length = u32::try_from(size_of::<libc::c_int>()).unwrap_or(4);
+    for option in [libc::SO_SNDBUF, libc::SO_RCVBUF] {
+        // SAFETY: `size` outlives the call and is exactly `length` bytes wide, which is the pair
+        // `setsockopt` requires; a closed or non-socket descriptor is answered with an errno.
+        let _ignored = unsafe {
+            libc::setsockopt(
+                socket,
+                libc::SOL_SOCKET,
+                option,
+                (&raw const size).cast::<libc::c_void>(),
+                length,
+            )
+        };
+    }
+}
+
+#[cfg(test)]
+// The fixtures here are known-good and built inline, so `unwrap` IS the assertion.
+#[expect(
+    clippy::unwrap_used,
+    reason = "a panic in a test is the failure report, not a runtime fault"
+)]
+mod tests {
+    use std::os::fd::AsRawFd as _;
+    use std::os::unix::net::UnixStream;
+
+    use super::widen_buffers;
+
+    /// The buffer really grows — a call that silently did nothing would leave the writer parking
+    /// mid-frame with every test still green.
+    #[test]
+    fn widening_raises_the_send_buffer() {
+        let (left, _right) = UnixStream::pair().unwrap();
+        let before = nix::sys::socket::getsockopt(&left, nix::sys::socket::sockopt::SndBuf).unwrap();
+        widen_buffers(left.as_raw_fd(), 256 * 1024);
+        let after = nix::sys::socket::getsockopt(&left, nix::sys::socket::sockopt::SndBuf).unwrap();
+        assert!(after > before, "{before} -> {after}");
+    }
+
+    /// Best-effort means best-effort: a descriptor that is not a socket must not panic or abort,
+    /// because the callers treat this as advice and carry on.
+    #[test]
+    fn a_non_socket_descriptor_is_ignored() {
+        let file = std::fs::File::open("/dev/null").unwrap();
+        widen_buffers(file.as_raw_fd(), 256 * 1024);
+    }
+}

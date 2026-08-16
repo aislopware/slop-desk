@@ -1,4 +1,3 @@
-import SlopDeskProtocol
 import XCTest
 @testable import SlopDeskHost
 

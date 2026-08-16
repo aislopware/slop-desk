@@ -1,4 +1,3 @@
-import Foundation
 import SlopDeskProtocol
 
 /// A bidirectional, framed transport for ``WireMessage``.

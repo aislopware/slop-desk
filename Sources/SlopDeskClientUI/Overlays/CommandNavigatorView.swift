@@ -25,11 +25,6 @@ import Foundation
 import SFSafeSymbols
 import SlopDeskWorkspaceCore
 import SwiftUI
-#if canImport(AppKit)
-import AppKit
-#elseif canImport(UIKit)
-import UIKit
-#endif
 
 /// Per-pane chrome holder driving the Command Navigator's visibility — a reference type so the pane model's
 /// `onRequestBlockNavigator` `@MainActor` closure can TOGGLE it (the seam doc: "show/hide"), exactly like the
@@ -483,11 +478,7 @@ struct CommandNavigatorView: View {
     private func copyOutput(_ block: CommandBlock) {
         store.copyBlockOutputInActivePane(index: block.index) { text in
             guard let text, !text.isEmpty else { return }
-            #if canImport(AppKit)
             ClientPasteboard.write(text)
-            #elseif canImport(UIKit)
-            UIPasteboard.general.string = text
-            #endif
             // The navigator stays OPEN on copy, so the pane's `COPIED · N` chip underneath is the
             // confirmation that the (possibly huge, VT-stripped) block output actually landed.
             model.noteClipboardCopy(text)

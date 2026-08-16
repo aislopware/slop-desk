@@ -1,5 +1,3 @@
-import Foundation
-
 /// A fully tolerant, `Codable`, `Sendable` JSON value.
 ///
 /// Tool inputs (the `input` of a `tool_use` block) and tool outputs are

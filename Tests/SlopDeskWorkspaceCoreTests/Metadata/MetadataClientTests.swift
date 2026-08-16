@@ -84,6 +84,45 @@ final class MetadataClientTests: XCTestCase {
         XCTAssertTrue(reply.payload.isEmpty)
     }
 
+    func testReplyThatLandsBeforeItsWaiterIsHeldNotDropped() async {
+        // The real ordering: `MetadataClient.request` mints the id, `await send(…)` — which frees the
+        // main actor — and only THEN awaits `reply(for:)`. A fast host answers inside that window, so
+        // resolve() runs with no waiter parked. Dropping it there costs the whole timeout and answers
+        // (error, empty). A long timeout here means ONLY the held reply can satisfy the await.
+        let registry = MetadataRequestRegistry(timeout: .seconds(30))
+        let id = registry.next()
+        registry.resolve(requestID: id, status: MetadataStatus.ok.rawValue, payload: Data([0xCE]))
+        XCTAssertFalse(registry.isPending(id), "nothing is parked yet — the reply beat its waiter")
+        let reply = await registry.reply(for: id)
+        XCTAssertEqual(reply.status, MetadataStatus.ok.rawValue)
+        XCTAssertEqual(reply.payload, Data([0xCE]))
+    }
+
+    func testAHeldReplyIsConsumedOnceAndNotByTheNextRequest() async {
+        // The held reply belongs to the id that was outstanding, and only to that one await. Once
+        // consumed the id is no longer outstanding, so a second await for the same id must time out
+        // rather than re-read the same answer.
+        let registry = MetadataRequestRegistry(timeout: .milliseconds(50))
+        let id = registry.next()
+        registry.resolve(requestID: id, status: MetadataStatus.ok.rawValue, payload: Data([0xCE]))
+        _ = await registry.reply(for: id)
+        let second = await registry.reply(for: id)
+        XCTAssertEqual(second.status, MetadataStatus.error.rawValue, "a held reply answers exactly one await")
+        XCTAssertTrue(second.payload.isEmpty)
+    }
+
+    func testCancelAllDiscardsAHeldReplyFromTheDeadSession() async {
+        // A reply held across a disconnect belongs to a session that no longer exists; handing it to a
+        // request made after the reconnect would be a cross-session answer.
+        let registry = MetadataRequestRegistry(timeout: .milliseconds(50))
+        let id = registry.next()
+        registry.resolve(requestID: id, status: MetadataStatus.ok.rawValue, payload: Data([0xCE]))
+        registry.cancelAll()
+        let reply = await registry.reply(for: id)
+        XCTAssertEqual(reply.status, MetadataStatus.error.rawValue)
+        XCTAssertTrue(reply.payload.isEmpty)
+    }
+
     // MARK: - MetadataClient (typed decode via the echoing send seam)
 
     func testProcessesDecodesEchoedReply() async {
@@ -261,7 +300,12 @@ final class MetadataClientTests: XCTestCase {
         let client = SlopDeskClient(makeTransport: { transport })
         try await client.connect(host: "h", port: 1)
 
-        let metadataClient = MetadataClient(timeout: .seconds(2), send: { [weak client] requestID, verb, payload in
+        // The fold runs on the MainActor, and under a loaded suite it can wait behind every other
+        // MainActor hop before it reaches its first `for await`. The reply is already buffered by
+        // then (the child stream subscribes at `client.events`, unbounded), so the only thing a
+        // short timeout measures is how busy the machine is — it bounds a HANG, not a latency, and
+        // the rest of this suite says 30 seconds. At 2 it failed this test roughly once a suite.
+        let metadataClient = MetadataClient(timeout: .seconds(30), send: { [weak client] requestID, verb, payload in
             try? await client?.requestMetadata(requestID: requestID, verb: verb, payload: payload)
         })
 

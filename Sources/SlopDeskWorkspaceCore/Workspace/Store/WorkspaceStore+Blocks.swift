@@ -1,4 +1,3 @@
-import Foundation
 import os
 import SlopDeskTerminal
 import SlopDeskWorkspaceModel
@@ -151,8 +150,7 @@ enum BlockJump {
     /// stderr diagnostics for the jump choreography, gated by `SLOPDESK_BLOCKS_DEBUG == "1"`
     /// (default-OFF) — the launch-from-terminal debugging seam (`SLOPDESK_VIDEO_DEBUG` idiom).
     private nonisolated static func debugLog(_ message: String) {
-        guard ProcessInfo.processInfo.environment["SLOPDESK_BLOCKS_DEBUG"] == "1" else { return }
-        FileHandle.standardError.write(Data("[blocks] \(message)\n".utf8))
+        DebugTrace.blocks.write("blocks", message)
     }
 }
 
@@ -215,7 +213,7 @@ public extension WorkspaceStore {
         }
     }
 
-    /// Whether the pane `id` is currently in copy-mode — drives the "COPY" badge in ``PaneStatusBar``. Reads
+    /// Whether the pane `id` is currently in copy-mode — drives the vi / copy-mode pill (``ViModePill``). Reads
     /// the OBSERVABLE ``TerminalViewModel/copyModeBadgeActive`` twin (NOT the keyDown-read `@ObservationIgnored`
     /// `isCopyMode`) so the badge re-renders reactively. Resolves the LIVE terminal model so pane A's copy-mode
     /// never lights pane B's badge (mirrors ``agentStatus(for:)``). `false` for a non-terminal / no-live-model
@@ -297,7 +295,7 @@ public extension WorkspaceStore {
     // MARK: - Jump to previous / next FAILED block
 
     /// Jumps the active pane's viewport to the next (`forward`) / previous (`!forward`) FAILED block from
-    /// the per-pane cursor (``WorkspaceStore/blockJumpCursor``), updating the cursor, via the SAME absolute
+    /// the per-pane cursor (``BlockBookmarkSeam/jumpCursor``), updating the cursor, via the SAME absolute
     /// re-anchor jump the navigator's per-row jump uses (``BlockJump``). Stops at the ends (no wrap). A
     /// no-op for a non-terminal pane / no failures / no surface seam.
     func jumpToFailedBlockInActivePane(forward: Bool) {

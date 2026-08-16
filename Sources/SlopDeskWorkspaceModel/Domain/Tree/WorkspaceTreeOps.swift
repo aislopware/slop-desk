@@ -1,5 +1,5 @@
 import CoreGraphics
-import Foundation
+import CSlopDeskFFI
 
 // MARK: - WorkspaceTreeOps (the facade over Session / Tab / split tree)
 
@@ -556,6 +556,17 @@ public enum WorkspaceTreeOps {
         case mainVertical
         case mainHorizontal
         case tiled
+
+        /// The CASE index — the crate's enum order, pinned by `scripts/check-supervisor.sh`.
+        var ffiByte: UInt8 {
+            switch self {
+            case .evenHorizontal: 0
+            case .evenVertical: 1
+            case .mainVertical: 2
+            case .mainHorizontal: 3
+            case .tiled: 4
+            }
+        }
     }
 
     /// Re-tiles the tab owning `pane` into `preset`, **preserving every leaf `PaneID`** (a pure geometry
@@ -622,82 +633,38 @@ public enum WorkspaceTreeOps {
         return (applyLayout(next, activeTabContaining: pane, in: ws), next)
     }
 
-    /// Builds the flat (depth ≤ 2) ``SplitNode`` tree for `preset` over `leaves` (caller guarantees
-    /// `leaves.count >= 2`). Every minted ``WeightedChild`` carries `.flex(1)` (re-normalized to an equal
-    /// share at solve time) and every `.split` gets a fresh out-of-tree ``SplitNodeID`` (reconcile keys on
-    /// ``PaneID``s, never split ids). Single-child intermediaries collapse to the bare leaf to honour the
-    /// `.split` ≥ 2-children invariant. Pure; the index math is integer arithmetic.
-    private static func rebuild(_ preset: LayoutPreset, leaves: [PaneID]) -> SplitNode {
-        switch preset {
-        case .evenHorizontal:
-            return flatSplit(.horizontal, leaves: leaves)
-        case .evenVertical:
-            return flatSplit(.vertical, leaves: leaves)
-        case .mainVertical:
-            // Active leaf large on the LEFT, the rest stacked on the right.
-            let rest = Array(leaves.dropFirst())
-            let right = flatSplit(.vertical, leaves: rest) // collapses to a bare leaf when rest.count == 1
-            return .split(
-                id: SplitNodeID(), axis: .horizontal,
-                children: [evenChild(.leaf(leaves[0])), evenChild(right)],
-            )
-        case .mainHorizontal:
-            // Active leaf large on TOP, the rest in a row below.
-            let rest = Array(leaves.dropFirst())
-            let bottom = flatSplit(.horizontal, leaves: rest)
-            return .split(
-                id: SplitNodeID(), axis: .vertical,
-                children: [evenChild(.leaf(leaves[0])), evenChild(bottom)],
-            )
-        case .tiled:
-            return tiled(leaves: leaves)
-        }
-    }
-
-    /// A `.split` along `axis` of `leaves` with equal `.flex(1)` weights — but a 1-element `leaves`
-    /// collapses to the bare leaf (never a 1-child split, which violates the ≥2-children invariant).
-    private static func flatSplit(_ axis: SplitAxis, leaves: [PaneID]) -> SplitNode {
-        if leaves.count == 1 { return .leaf(leaves[0]) }
-        return .split(id: SplitNodeID(), axis: axis, children: leaves.map { evenChild(.leaf($0)) })
-    }
-
-    /// A balanced grid (tmux "tiled"): `cols = ceil(sqrt(n))`, `rows = ceil(n / cols)`; an outer
-    /// `.vertical` split of `rows` row-nodes, each row a `.horizontal` split of its leaf slice. A grid /
-    /// row of one element collapses to the bare leaf.
+    /// The flat (depth ≤ 2) ``SplitNode`` tree for `preset` over `leaves` (caller guarantees
+    /// `leaves.count >= 2`), built by `rust/slopdesk-workspace`'s `tree_ops::rebuild` (docs/55).
     ///
-    /// Leaves spread across rows as `rows` NEAR-EQUAL slices (the first `n % rows` rows get one extra) — the
-    /// symmetric tmux `select-layout tiled` fill — rather than greedily packing each row to `cols` and
-    /// dumping the remainder in a lopsided last row (n=7 → `[3,3,1]` vs the balanced `[3,2,2]`). Same leaf
-    /// SET either way; only the cosmetic row distribution differs.
-    private static func tiled(leaves: [PaneID]) -> SplitNode {
-        let n = leaves.count
-        // Integer ceil(sqrt) and ceil division — pure index arithmetic (no float / fma concerns). ceil-sqrt
-        // increments `cols` while `cols*cols < n`, so there's no floating perfect-square rounding edge for
-        // large n.
-        var cols = 1
-        while cols * cols < n { cols += 1 }
-        let safeCols = max(cols, 1)
-        let rows = (n + safeCols - 1) / safeCols // ceil(n / cols)
-        let safeRows = max(rows, 1)
-        // Balance the n leaves across `safeRows` rows: `base` per row, the first `extra` rows get one more.
-        let base = n / safeRows
-        let extra = n % safeRows
-        var rowNodes: [SplitNode] = []
-        var start = 0
-        for r in 0..<safeRows {
-            let width = base + (r < extra ? 1 : 0)
-            let end = min(start + width, n)
-            let slice = Array(leaves[start..<end])
-            rowNodes.append(flatSplit(.horizontal, leaves: slice)) // a 1-leaf row collapses to the bare leaf
-            start = end
+    /// Only the tiler crossed, not ``applyLayout(_:activeTabContaining:in:)`` around it: that reads a
+    /// whole ``TreeWorkspace`` — sessions, tabs, titles, specs — and the document stays here, where
+    /// SwiftUI diffs it. What crosses is the leaf ORDER in and the tree out, which is the only part of
+    /// a re-tile that is a decision. The main-\* presets' "which leaf is large" choice is made by the
+    /// caller ordering `leaves`, so the notion of ACTIVE never has to cross at all.
+    ///
+    /// The crate mints nothing, so the split identities are minted here and passed as a pool. A tiled
+    /// layout of `n` leaves creates at most `n` splits, so `n + 1` entries cannot run dry.
+    private static func rebuild(_ preset: LayoutPreset, leaves: [PaneID]) -> SplitNode {
+        var ids = leaves.map(\.ffi)
+        var pool = (0...leaves.count).map { _ in SlopDeskWsUuid(SplitNodeID().raw) }
+        let tree = ids.withUnsafeMutableBufferPointer { panes -> SplitNode? in
+            pool.withUnsafeMutableBufferPointer { splits in
+                WsTree.decode(WsTree.answer { out, cap in
+                    slopdesk_ws_retile(
+                        panes.baseAddress,
+                        panes.count,
+                        preset.ffiByte,
+                        splits.baseAddress,
+                        splits.count,
+                        out,
+                        cap,
+                    )
+                })
+            }
         }
-        if rowNodes.count == 1 { return rowNodes[0] } // a single row IS the grid
-        return .split(id: SplitNodeID(), axis: .vertical, children: rowNodes.map { evenChild($0) })
-    }
-
-    /// A ``WeightedChild`` carrying `node` with the equal-share `.flex(1)` weight (the rebuilt-tree idiom).
-    private static func evenChild(_ node: SplitNode) -> WeightedChild {
-        WeightedChild(weight: .flex(1), node: node)
+        // Unreachable for the guarded `leaves.count >= 2`, and a bare first leaf is the only answer
+        // that keeps every pane addressable if it ever were reached.
+        return tree ?? .leaf(leaves[0])
     }
 
     // MARK: Focus

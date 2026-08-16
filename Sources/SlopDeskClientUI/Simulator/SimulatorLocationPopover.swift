@@ -9,7 +9,6 @@
 // use is a coordinate pasted out of a map, and no list can anticipate that one.
 
 #if os(macOS)
-import SFSafeSymbols
 import SwiftUI
 
 struct SimulatorLocationPopover: View {

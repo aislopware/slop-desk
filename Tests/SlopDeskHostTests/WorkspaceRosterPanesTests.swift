@@ -1,7 +1,6 @@
 import Foundation
 import SlopDeskProtocol
 import SlopDeskTransport
-import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskHost
 
@@ -54,7 +53,7 @@ final class WorkspaceRosterPanesTests: XCTestCase {
     private func makeSession(sessionID: UUID) -> MuxChannelSession {
         MuxChannelSession(
             channelID: 1,
-            pty: PTYProcess(), // unspawned: no PTY, no read loop
+            pty: unattachedPTY(), // unspawned: no PTY, no read loop
             data: MuxSubChannel(channelID: 1, channel: .data) { _, _ in },
             control: MuxSubChannel(channelID: 1, channel: .control) { _, _ in },
             sessionID: sessionID,

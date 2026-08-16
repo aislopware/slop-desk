@@ -1,6 +1,5 @@
 import SlopDeskTransport
 import XCTest
-@testable import SlopDeskHost
 
 /// Ring truncation vs alt-screen segments, end to end: when the 64 MiB scrollback ring's cut
 /// point lands INSIDE an open alt-screen segment, the cold-reattach replay must NOT pour the
@@ -19,17 +18,17 @@ final class ScrollbackRingTruncationTests: XCTestCase {
         return joined
     }
 
-    private func makeBuffer(cap: Int) throws -> ReplayBuffer {
-        let transform = try XCTUnwrap(ScrollbackReplayTransform.make(
-            environment: [:], reassertInputModes: true,
-        ))
-        return ReplayBuffer(scrollbackBytes: cap, scrollbackDistiller: transform)
+    /// The transform is linked (`slopdesk-sanitize`), so there is no daemon to require and no
+    /// passthrough these cases could quietly pass against: the ring applies it or the process
+    /// failed to start. `reassertInputModes` matches what `MuxChannelSession` builds.
+    private func makeBuffer(cap: Int) -> ReplayBuffer {
+        ReplayBuffer(scrollbackBytes: cap, reassertInputModes: true)
     }
 
     /// The segment CLOSED before reattach (Claude exited): with the cut repaired, the whole
     /// truncated segment pairs up and is dropped — its interior must never reach the client.
-    func testTruncatedThenClosedSegmentInteriorDoesNotLeakToMainScreen() throws {
-        var buf = try makeBuffer(cap: 64)
+    func testTruncatedThenClosedSegmentInteriorDoesNotLeakToMainScreen() {
+        let buf = makeBuffer(cap: 64)
         _ = buf.append(bytes: Data("old-history\n".utf8)) // 12B — evicted
         _ = buf.append(bytes: opener + Data("ALT-INTERIOR-ONE\n".utf8)) // 25B — evicted (mid-segment cut)
         _ = buf.append(bytes: Data("ALT-INTERIOR-TWO-no-nl".utf8)) // 22B — survives
@@ -50,8 +49,8 @@ final class ScrollbackRingTruncationTests: XCTestCase {
 
     /// The segment is STILL OPEN at reattach (the live TUI): the replay must enter the alt
     /// screen BEFORE the surviving interior, so the churn lands where it belongs.
-    func testTruncatedStillOpenSegmentReplaysBehindAltScreenEnter() throws {
-        var buf = try makeBuffer(cap: 64)
+    func testTruncatedStillOpenSegmentReplaysBehindAltScreenEnter() {
+        let buf = makeBuffer(cap: 64)
         _ = buf.append(bytes: Data("old-history\n".utf8)) // 12B — evicted
         _ = buf.append(bytes: opener + Data("ALT-FRAME-ONE-padding-x\n".utf8)) // 32B — evicted
         let s3 = buf.append(bytes: Data("ALT-FRAME-TWO-no-nl".utf8)) // 19B — survives

@@ -1,33 +1,42 @@
+import CSlopDeskFFI
 import Foundation
+import SlopDeskArena
 
 /// The per-verb payload codecs for the host metadata RPC. Each ``MetadataVerb`` that returns a
-/// STRUCTURED list rides one of these manual-binary sub-codecs INSIDE the opaque
+/// STRUCTURED list rides one of these sub-codecs INSIDE the opaque
 /// ``WireMessage/metadataResponse(requestID:status:payload:)`` payload — the envelope only
 /// length-prefixes the bytes; these codecs give them meaning. (The `cwd` / `gitDiff` /
 /// `readAgentSession` verbs carry raw UTF-8 / raw bytes and have NO nested codec — the envelope's
 /// length prefix already frames them.)
 ///
-/// All encodings are **manual big-endian binary** (never JSON/`Codable`), matching the path-1 wire
-/// contract: every multi-byte integer is big-endian, every string is length-prefixed UTF-8, every list
-/// is `[UInt16 count]`-prefixed. The codecs live in this caseless `enum` namespace so the value type
+/// Every layout, every clamp and every validation lives in `rust/slopdesk-wire`'s `metadata::codec`.
+/// This type is the Swift face of it: the value types below and the calls that flatten them across
+/// the boundary. The codecs live in this caseless `enum` namespace so the value type
 /// ``MetadataCodec/ProcessInfo`` does NOT shadow `Foundation.ProcessInfo` at module scope (the host
-/// reads `Foundation.ProcessInfo.processInfo` and imports this module — a top-level `ProcessInfo` would
-/// make that reference ambiguous and break the build).
+/// reads `Foundation.ProcessInfo.processInfo` and imports this module — a top-level `ProcessInfo`
+/// would make that reference ambiguous and break the build).
 ///
-/// **Validate-then-drop on untrusted bytes (a metadata payload arrives over the same trusted mesh as
-/// the rest of the wire, but is still treated as hostile input):**
-/// - every list `count` is checked against the reader's remaining bytes BEFORE the per-entry loop and
-///   before any `reserveCapacity` — a declared count larger than the body can hold throws
-///   ``SlopDeskError/truncated`` with no allocation (count-before-alloc);
-/// - every length-prefixed field is read via `BigEndianReader.readBytes`, which throws `truncated`
-///   rather than over-reading a hostile body;
-/// - every string field is STRICT UTF-8 (an invalid sequence throws
-///   ``SlopDeskError/malformedBody(_:)`` — never a lossy/replacement decode);
-/// - interop discriminator bytes (`isDir`, `hasRepo`) are read as `byte != 0`, never assumed `{0,1}`;
-/// - there is NO force-unwrap (`!`) on any decoded field;
-/// - on ENCODE every `UInt16` length field is clamped (string bytes clamped at a Unicode-scalar
-///   boundary to ≤ 65535; list counts clamped to ≤ 65535) so an absurd >64 KiB field or >65535-entry
-///   list can never WRAP the length/count and corrupt the trailer.
+/// **How a payload crosses.** A record — a LIST of them where the payload is a list — plus one
+/// ARENA holding every text field, each named by an `(offset, length)` pair into it. The same shape
+/// the wire codec (`rust/slopdesk-wire/src/codec.rs`) uses, for the same reason.
+///
+/// **A decode takes no probing call.** The payload bounds both buffers: no arena can exceed the
+/// payload's own length, and no list can hold more entries than `payload.count / fixedBytesPerEntry`
+/// — the divisor being ``slopdesk_metadata_constant(_:)``'s, never respelled here. So the sizes come
+/// off the bytes already in hand and the call happens ONCE. An encode is the §4 convention: size,
+/// then fill.
+///
+/// **The one payload that elides.** A clipboard clip runs to ``maxClipboardContentBytes`` (12 MiB),
+/// so its decode answers WHERE the content sits in the payload rather than copying it out — and its
+/// encode reads the content out of the caller's buffer rather than being handed a copy of it. Every
+/// other payload here is kilobytes and crosses whole.
+///
+/// **Validate-then-drop on untrusted bytes** (a metadata payload arrives over the same trusted mesh
+/// as the rest of the wire, but is still treated as hostile input) is unchanged and is enforced in
+/// the crate that owns the layout: a declared count larger than the body can hold is rejected before
+/// any allocation, every length-prefixed field throws rather than over-reading, every string field
+/// is STRICT UTF-8, interop discriminator bytes are read as `byte != 0`, and on ENCODE every length
+/// and count is clamped so an absurd field can never WRAP and corrupt the trailer.
 public enum MetadataCodec {
     // MARK: - Value types
 
@@ -160,7 +169,8 @@ public enum MetadataCodec {
         /// packing). Each file counts INDEPENDENTLY per axis — an `MM` file is BOTH staged and
         /// modified; `??` is untracked; a `U` on either side (or `AA`/`DD`) is a conflict. The ONE
         /// fold shared by the client's `PaneGitSummary` and the host's type-35 push, so the two
-        /// surfaces can never disagree on what "3 modified" means.
+        /// surfaces can never disagree on what "3 modified" means — which is why the fold itself
+        /// rides the boundary rather than being spelled on both sides of it.
         public struct FoldedCounts: Equatable, Sendable {
             public var staged: Int
             public var modified: Int
@@ -177,19 +187,17 @@ public enum MetadataCodec {
 
         /// See ``FoldedCounts``.
         public var foldedCounts: FoldedCounts {
-            var counts = FoldedCounts()
-            for file in files {
-                let x = file.statusCode >> 4, y = file.statusCode & 0x0F
-                if x == 7, y == 7 {
-                    counts.untracked += 1 // ??
-                } else if x == 6 || y == 6 || (x == 2 && y == 2) || (x == 3 && y == 3) {
-                    counts.conflicted += 1 // unmerged: U on either side, or the AA / DD both-changed states
-                } else {
-                    if x != 0 { counts.staged += 1 } // index change (X not space)
-                    if y != 0 { counts.modified += 1 } // worktree change (Y not space)
-                }
+            var counts = SlopDeskMetadataGitCounts()
+            // Only the status codes decide the fold, so only they cross — one byte per file, out
+            // of a scratch buffer, because a summary re-folds on every render.
+            withUnsafeTemporaryAllocation(of: UInt8.self, capacity: Swift.max(files.count, 1)) { codes in
+                for slot in 0..<files.count { codes[slot] = files[slot].statusCode }
+                slopdesk_metadata_fold_git_codes(codes.baseAddress, files.count, &counts)
             }
-            return counts
+            return FoldedCounts(
+                staged: Int(counts.staged), modified: Int(counts.modified),
+                untracked: Int(counts.untracked), conflicted: Int(counts.conflicted),
+            )
         }
     }
 
@@ -235,206 +243,154 @@ public enum MetadataCodec {
 
     // MARK: - ProcessList  ([UInt16 count] then [UInt32 pid][UInt32 uptimeSec][UInt16 nameLen][name])
 
-    /// Fixed bytes per ``ProcessInfo`` entry (pid + uptime + nameLen; name may be empty).
-    private static let processEntryFixedBytes = 4 + 4 + 2
-
     /// Encodes a process list. Count clamped to ≤ 65535; each name clamped to ≤ 65535 UTF-8 bytes.
     public static func encodeProcessList(_ items: [ProcessInfo]) -> Data {
-        var out = Data()
-        let count = clampedCount(items.count)
-        out.appendBE(UInt16(count))
-        for item in items.prefix(count) {
-            out.appendBE(item.pid)
-            out.appendBE(item.uptimeSec)
-            appendString(item.name, to: &out)
+        var pool: [UInt8] = []
+        let records = items.map {
+            SlopDeskMetadataProcess(pid: $0.pid, uptime_sec: $0.uptimeSec, name: intern($0.name, &pool))
         }
-        return out
+        return encode(records, pool, slopdesk_metadata_encode_processes)
     }
 
     /// Decodes a process list, validating the declared count before allocating and dropping a truncated
     /// or non-UTF-8 body (throws), never trapping.
     public static func decodeProcessList(_ data: Data) throws -> [ProcessInfo] {
-        var reader = BigEndianReader(data)
-        let count = try Int(reader.readUInt16())
-        // count-before-alloc: a count the body cannot possibly hold is rejected before reserveCapacity.
-        guard reader.bytesRemaining >= count * processEntryFixedBytes else { throw SlopDeskError.truncated }
-        var items: [ProcessInfo] = []
-        items.reserveCapacity(count)
-        for _ in 0..<count {
-            let pid = try reader.readUInt32()
-            let uptimeSec = try reader.readUInt32()
-            let name = try readString(&reader, "processList.name")
-            items.append(ProcessInfo(pid: pid, uptimeSec: uptimeSec, name: name))
+        try decode(data, entryBytes: 3, "processList", slopdesk_metadata_decode_processes) { record, pool in
+            ProcessInfo(pid: record.pid, uptimeSec: record.uptime_sec, name: text(pool, record.name))
         }
-        return items
     }
 
     // MARK: - PortList  ([UInt16 count] then [UInt16 port][UInt8 proto][UInt16 nameLen][procName])
 
-    /// Fixed bytes per ``PortInfo`` entry (port + proto + nameLen; procName may be empty).
-    private static let portEntryFixedBytes = 2 + 1 + 2
-
     /// Encodes a port list. An empty list ("No listening ports") encodes as `[UInt16 0]`.
     public static func encodePortList(_ items: [PortInfo]) -> Data {
-        var out = Data()
-        let count = clampedCount(items.count)
-        out.appendBE(UInt16(count))
-        for item in items.prefix(count) {
-            out.appendBE(item.port)
-            out.append(item.proto)
-            appendString(item.procName, to: &out)
+        var pool: [UInt8] = []
+        let records = items.map {
+            SlopDeskMetadataPort(proc_name: intern($0.procName, &pool), port: $0.port, proto: $0.proto)
         }
-        return out
+        return encode(records, pool, slopdesk_metadata_encode_ports)
     }
 
     /// Decodes a port list (validate-then-drop, count-before-alloc).
     public static func decodePortList(_ data: Data) throws -> [PortInfo] {
-        var reader = BigEndianReader(data)
-        let count = try Int(reader.readUInt16())
-        guard reader.bytesRemaining >= count * portEntryFixedBytes else { throw SlopDeskError.truncated }
-        var items: [PortInfo] = []
-        items.reserveCapacity(count)
-        for _ in 0..<count {
-            let port = try reader.readUInt16()
-            let proto = try reader.readUInt8()
-            let procName = try readString(&reader, "portList.procName")
-            items.append(PortInfo(port: port, proto: proto, procName: procName))
+        try decode(data, entryBytes: 4, "portList", slopdesk_metadata_decode_ports) { record, pool in
+            PortInfo(port: record.port, proto: record.proto, procName: text(pool, record.proc_name))
         }
-        return items
     }
 
     // MARK: - DirListing  ([UInt16 count] then [UInt8 isDir][UInt16 nameLen][leafName])
 
-    /// Fixed bytes per ``DirEntry`` (isDir + nameLen; name may be empty).
-    private static let dirEntryFixedBytes = 1 + 2
-
     /// Encodes a one-level directory listing (leaf names only). Count clamped to ≤ 65535.
     public static func encodeDirListing(_ items: [DirEntry]) -> Data {
-        var out = Data()
-        let count = clampedCount(items.count)
-        out.appendBE(UInt16(count))
-        for item in items.prefix(count) {
-            out.append(item.isDir ? 1 : 0)
-            appendString(item.name, to: &out)
+        var pool: [UInt8] = []
+        let records = items.map {
+            SlopDeskMetadataDirEntry(name: intern($0.name, &pool), is_dir: $0.isDir)
         }
-        return out
+        return encode(records, pool, slopdesk_metadata_encode_dir_listing)
     }
 
     /// Decodes a one-level directory listing (validate-then-drop, count-before-alloc). The `isDir`
     /// discriminator is read as `byte != 0` (never assumed `{0,1}`).
     public static func decodeDirListing(_ data: Data) throws -> [DirEntry] {
-        var reader = BigEndianReader(data)
-        let count = try Int(reader.readUInt16())
-        guard reader.bytesRemaining >= count * dirEntryFixedBytes else { throw SlopDeskError.truncated }
-        var items: [DirEntry] = []
-        items.reserveCapacity(count)
-        for _ in 0..<count {
-            let isDir = try reader.readUInt8() != 0
-            let name = try readString(&reader, "dirListing.name")
-            items.append(DirEntry(isDir: isDir, name: name))
+        try decode(data, entryBytes: 5, "dirListing", slopdesk_metadata_decode_dir_listing) { record, pool in
+            DirEntry(isDir: record.is_dir, name: text(pool, record.name))
         }
-        return items
     }
 
     // MARK: - GitStatus  ([UInt8 hasRepo]; if repo: branch, remote, repoRoot, [Int32 ahead][Int32 behind][Int32 stash], files)
-
-    /// Fixed bytes per ``GitFileChange`` (statusCode + pathLen; path may be empty).
-    private static let gitFileFixedBytes = 1 + 2
 
     /// Encodes a git status. When `hasRepo` is `false` only the single `0` byte is written (the
     /// remaining fields are not on the wire); otherwise branch + remote + repoRoot + ahead/behind + the
     /// changed-file list follow. Strings clamped to ≤ 65535 bytes, file count clamped to ≤ 65535.
     public static func encodeGitStatus(_ status: GitStatusPayload) -> Data {
-        var out = Data()
-        guard status.hasRepo else {
-            out.append(0)
-            return out
+        var pool: [UInt8] = []
+        // The head's three strings intern FIRST so a long file list cannot move their offsets.
+        var head = SlopDeskMetadataGitStatus(
+            branch: intern(status.branch, &pool),
+            remote_url: intern(status.remoteURL, &pool),
+            repo_root: intern(status.repoRoot, &pool),
+            ahead: status.ahead,
+            behind: status.behind,
+            stash_count: status.stashCount,
+            file_count: UInt32(clamping: status.files.count),
+            has_repo: status.hasRepo,
+        )
+        let records = status.files.map {
+            SlopDeskMetadataGitFile(path: intern($0.path, &pool), status_code: $0.statusCode)
         }
-        out.append(1)
-        appendString(status.branch, to: &out)
-        appendString(status.remoteURL, to: &out)
-        appendString(status.repoRoot, to: &out)
-        out.appendBE(status.ahead)
-        out.appendBE(status.behind)
-        out.appendBE(status.stashCount)
-        let count = clampedCount(status.files.count)
-        out.appendBE(UInt16(count))
-        for file in status.files.prefix(count) {
-            out.append(file.statusCode)
-            appendString(file.path, to: &out)
+        return records.withUnsafeBufferPointer { list in
+            pool.withUnsafeBufferPointer { arena in
+                sized { out, cap in
+                    slopdesk_metadata_encode_git_status(
+                        &head, list.baseAddress, list.count, arena.baseAddress, arena.count, out,
+                        cap,
+                    )
+                }
+            }
         }
-        return out
     }
 
     /// Decodes a git status (validate-then-drop, count-before-alloc). `hasRepo` is read as `byte != 0`;
     /// `hasRepo == false` returns ``GitStatusPayload/noRepo`` regardless of any trailing bytes.
     public static func decodeGitStatus(_ data: Data) throws -> GitStatusPayload {
-        var reader = BigEndianReader(data)
-        let hasRepo = try reader.readUInt8() != 0
-        guard hasRepo else { return .noRepo }
-        let branch = try readString(&reader, "gitStatus.branch")
-        let remoteURL = try readString(&reader, "gitStatus.remoteURL")
-        let repoRoot = try readString(&reader, "gitStatus.repoRoot")
-        let ahead = try reader.readInt32()
-        let behind = try reader.readInt32()
-        let stashCount = try reader.readInt32()
-        let count = try Int(reader.readUInt16())
-        guard reader.bytesRemaining >= count * gitFileFixedBytes else { throw SlopDeskError.truncated }
-        var files: [GitFileChange] = []
-        files.reserveCapacity(count)
-        for _ in 0..<count {
-            let statusCode = try reader.readUInt8()
-            let path = try readString(&reader, "gitStatus.file.path")
-            files.append(GitFileChange(statusCode: statusCode, path: path))
+        var head = SlopDeskMetadataGitStatus()
+        let (files, strings) = try decode(
+            data, entryBytes: 6, "gitStatus",
+            { payload, length, records, cap, arena, arenaCap, count in
+                slopdesk_metadata_decode_git_status(
+                    payload, length, &head, records, cap, arena, arenaCap, count,
+                )
+            },
+            { record, pool in
+                GitFileChange(statusCode: record.status_code, path: text(pool, record.path))
+            },
+        ) { pool in
+            // The head's strings live in the same arena, and are read before it is released.
+            (text(pool, head.branch), text(pool, head.remote_url), text(pool, head.repo_root))
         }
+        guard head.has_repo else { return .noRepo }
         return GitStatusPayload(
             hasRepo: true,
-            branch: branch,
-            remoteURL: remoteURL,
-            repoRoot: repoRoot,
-            ahead: ahead,
-            behind: behind,
-            stashCount: stashCount,
+            branch: strings.0,
+            remoteURL: strings.1,
+            repoRoot: strings.2,
+            ahead: head.ahead,
+            behind: head.behind,
+            stashCount: head.stash_count,
             files: files,
         )
     }
 
     // MARK: - AgentSessionList  ([UInt16 count] then kind, id, title, cwd, [Int64 mtimeMS])
 
-    /// Fixed bytes per ``AgentSessionInfo`` (kind + idLen + titleLen + cwdLen + mtimeMS; strings empty).
-    private static let agentSessionFixedBytes = 1 + 2 + 2 + 2 + 8
-
     /// Encodes an agent-session list. Count clamped to ≤ 65535; each string clamped to ≤ 65535 bytes.
     public static func encodeAgentSessionList(_ items: [AgentSessionInfo]) -> Data {
-        var out = Data()
-        let count = clampedCount(items.count)
-        out.appendBE(UInt16(count))
-        for item in items.prefix(count) {
-            out.append(item.agentKindByte)
-            appendString(item.id, to: &out)
-            appendString(item.title, to: &out)
-            appendString(item.cwd, to: &out)
-            out.appendBE(item.mtimeMS)
+        var pool: [UInt8] = []
+        let records = items.map {
+            SlopDeskMetadataAgentSession(
+                mtime_ms: $0.mtimeMS,
+                id: intern($0.id, &pool),
+                title: intern($0.title, &pool),
+                cwd: intern($0.cwd, &pool),
+                agent_kind: $0.agentKindByte,
+            )
         }
-        return out
+        return encode(records, pool, slopdesk_metadata_encode_agent_sessions)
     }
 
     /// Decodes an agent-session list (validate-then-drop, count-before-alloc).
     public static func decodeAgentSessionList(_ data: Data) throws -> [AgentSessionInfo] {
-        var reader = BigEndianReader(data)
-        let count = try Int(reader.readUInt16())
-        guard reader.bytesRemaining >= count * agentSessionFixedBytes else { throw SlopDeskError.truncated }
-        var items: [AgentSessionInfo] = []
-        items.reserveCapacity(count)
-        for _ in 0..<count {
-            let kind = try reader.readUInt8()
-            let id = try readString(&reader, "agentSession.id")
-            let title = try readString(&reader, "agentSession.title")
-            let cwd = try readString(&reader, "agentSession.cwd")
-            let mtimeMS = try reader.readInt64()
-            items.append(AgentSessionInfo(agentKindByte: kind, id: id, title: title, cwd: cwd, mtimeMS: mtimeMS))
+        try decode(
+            data, entryBytes: 7, "agentSessionList", slopdesk_metadata_decode_agent_sessions,
+        ) { record, pool in
+            AgentSessionInfo(
+                agentKindByte: record.agent_kind,
+                id: text(pool, record.id),
+                title: text(pool, record.title),
+                cwd: text(pool, record.cwd),
+                mtimeMS: record.mtime_ms,
+            )
         }
-        return items
     }
 
     // MARK: - Clipboard sync  (setClipboard = 15 / readClipboard = 16)
@@ -473,61 +429,73 @@ public enum MetadataCodec {
     /// The per-clip content cap (12 MiB) — well under the 16 MiB wire frame cap with envelope
     /// headroom. Both ends enforce it: the sender SKIPS an over-cap clip (the clipboard stays
     /// local, sync silently lags), the decoder rejects one as malformed.
-    public static let maxClipboardContentBytes = 12 * 1024 * 1024
+    public static let maxClipboardContentBytes = Int(slopdesk_metadata_constant(0))
 
     /// The ``MetadataVerb/readClipboard`` request value meaning "baseline probe": the host replies
     /// with its current `changeCount` and NO content, so a fresh connection learns where the host
     /// clipboard stands without pulling (and applying) stale pre-connection state.
-    public static let clipboardBaselineProbe: Int64 = -1
+    public static let clipboardBaselineProbe = slopdesk_metadata_constant(1)
 
     /// Encodes a ``MetadataVerb/setClipboard`` request payload: `[UInt8 kind][content]` (the content
     /// runs to the end of the payload — the RPC envelope already frames it).
     public static func encodeClipboardSet(_ clip: ClipboardClip) -> Data {
-        var out = Data(capacity: 1 + clip.bytes.count)
-        out.append(clip.kindByte)
-        out.append(clip.bytes)
-        return out
+        clip.lent { flat, content, contentLength in
+            sized { out, cap in
+                slopdesk_metadata_encode_clipboard_set(flat, content, contentLength, out, cap)
+            }
+        }
     }
 
     /// Decodes a ``MetadataVerb/setClipboard`` request payload (validate-then-drop): an empty payload
     /// throws `truncated`, an over-cap content throws `malformedBody`. The kind byte is carried RAW
     /// (an unknown future kind decodes fine; the applier refuses it with `.error`).
     public static func decodeClipboardSet(_ data: Data) throws -> ClipboardClip {
-        guard let kindByte = data.first else { throw SlopDeskError.truncated }
-        let bytes = data.dropFirst()
-        guard bytes.count <= maxClipboardContentBytes else {
-            throw SlopDeskError.malformedBody("clipboardSet: content exceeds cap")
-        }
-        return ClipboardClip(kindByte: kindByte, bytes: Data(bytes))
+        var flat = SlopDeskMetadataClip()
+        try throwIfFaulted(
+            data.spanning { payload, length in
+                slopdesk_metadata_decode_clipboard_set(
+                    payload?.assumingMemoryBound(to: UInt8.self), length, &flat,
+                )
+            },
+            "clipboardSet",
+        )
+        return ClipboardClip(kindByte: flat.kind, bytes: content(flat, in: data))
     }
 
     /// Encodes a ``MetadataVerb/readClipboard`` request payload: the `Int64` (BE) host `changeCount`
     /// the client last saw (``clipboardBaselineProbe`` = none yet — baseline probe).
     public static func encodeClipboardReadRequest(lastSeenChangeCount: Int64) -> Data {
-        var out = Data(capacity: 8)
-        out.appendBE(lastSeenChangeCount)
-        return out
+        sized { out, cap in
+            slopdesk_metadata_encode_clipboard_read_request(lastSeenChangeCount, out, cap)
+        }
     }
 
     /// Decodes a ``MetadataVerb/readClipboard`` request payload (throws `truncated` on a short body).
     public static func decodeClipboardReadRequest(_ data: Data) throws -> Int64 {
-        var reader = BigEndianReader(data)
-        return try reader.readInt64()
+        var count: Int64 = 0
+        try throwIfFaulted(
+            data.spanning { payload, length in
+                slopdesk_metadata_decode_clipboard_read_request(
+                    payload?.assumingMemoryBound(to: UInt8.self), length, &count,
+                )
+            },
+            "clipboardReadRequest",
+        )
+        return count
     }
 
     /// Encodes a ``MetadataVerb/readClipboard`` response payload:
     /// `[Int64 changeCount][UInt8 kind][content]`, where a `nil` clip writes kind `0` ("unchanged /
     /// empty / client's own push") and no content.
     public static func encodeClipboardReadResponse(changeCount: Int64, clip: ClipboardClip?) -> Data {
-        var out = Data(capacity: 8 + 1 + (clip?.bytes.count ?? 0))
-        out.appendBE(changeCount)
-        guard let clip else {
-            out.append(0)
-            return out
+        let carried = clip ?? ClipboardClip(kindByte: 0, bytes: Data())
+        return carried.lent(present: clip != nil) { flat, content, contentLength in
+            sized { out, cap in
+                slopdesk_metadata_encode_clipboard_read_response(
+                    changeCount, flat, content, contentLength, out, cap,
+                )
+            }
         }
-        out.append(clip.kindByte)
-        out.append(clip.bytes)
-        return out
     }
 
     /// Decodes a ``MetadataVerb/readClipboard`` response payload (validate-then-drop): kind `0`
@@ -536,20 +504,18 @@ public enum MetadataCodec {
     public static func decodeClipboardReadResponse(
         _ data: Data,
     ) throws -> (changeCount: Int64, clip: ClipboardClip?) {
-        var reader = BigEndianReader(data)
-        let changeCount = try reader.readInt64()
-        let kindByte = try reader.readUInt8()
-        let bytes = try reader.readBytes(reader.bytesRemaining)
-        guard kindByte != 0 else {
-            guard bytes.isEmpty else {
-                throw SlopDeskError.malformedBody("clipboardRead: content after kind-0 marker")
-            }
-            return (changeCount, nil)
-        }
-        guard bytes.count <= maxClipboardContentBytes else {
-            throw SlopDeskError.malformedBody("clipboardRead: content exceeds cap")
-        }
-        return (changeCount, ClipboardClip(kindByte: kindByte, bytes: bytes))
+        var flat = SlopDeskMetadataClip()
+        var changeCount: Int64 = 0
+        try throwIfFaulted(
+            data.spanning { payload, length in
+                slopdesk_metadata_decode_clipboard_read_response(
+                    payload?.assumingMemoryBound(to: UInt8.self), length, &changeCount, &flat,
+                )
+            },
+            "clipboardRead",
+        )
+        guard flat.present else { return (changeCount, nil) }
+        return (changeCount, ClipboardClip(kindByte: flat.kind, bytes: content(flat, in: data)))
     }
 
     // MARK: - Host vitals  (hostVitals = 17)
@@ -618,19 +584,20 @@ public enum MetadataCodec {
     /// is genuinely full, so the unreadable case needs its own value rather than borrowing zero —
     /// the client hides the metric on ``diskFreeUnknown`` and would otherwise draw a full-disk alarm
     /// for a failed syscall.
-    public static let diskFreeUnknown = UInt32.max
+    public static let diskFreeUnknown = UInt32(truncatingIfNeeded: slopdesk_metadata_constant(2))
 
     /// Encodes a ``MetadataVerb/hostVitals`` response payload: `[UInt8 cpu%][UInt8 mem%][UInt8
     /// pressure][UInt32 disk free MiB]`. Both percents are clamped to `0...100` at the SOURCE; a nil
     /// disk reading goes out as ``diskFreeUnknown``.
     public static func encodeHostVitals(_ vitals: HostVitals) -> Data {
-        var data = Data([
-            min(vitals.cpuPercent, 100),
-            min(vitals.memoryPercent, 100),
-            vitals.pressureByte,
-        ])
-        data.appendBE(vitals.diskFreeMiB ?? diskFreeUnknown)
-        return data
+        var flat = SlopDeskMetadataVitals(
+            disk_free_mib: vitals.diskFreeMiB ?? 0,
+            cpu_percent: vitals.cpuPercent,
+            memory_percent: vitals.memoryPercent,
+            pressure: vitals.pressureByte,
+            has_disk: vitals.diskFreeMiB != nil,
+        )
+        return sized { out, cap in slopdesk_metadata_encode_host_vitals(&flat, out, cap) }
     }
 
     /// Decodes a ``MetadataVerb/hostVitals`` response payload (validate-then-drop): a body shorter
@@ -639,14 +606,18 @@ public enum MetadataCodec {
     /// longer body is tolerated, its trailer ignored, so a future field can be appended without
     /// breaking this reader.
     public static func decodeHostVitals(_ data: Data) throws -> HostVitals {
-        var reader = BigEndianReader(data)
-        let cpu = try reader.readUInt8()
-        let mem = try reader.readUInt8()
-        let pressure = try reader.readUInt8()
-        let disk = try reader.readUInt32()
+        var flat = SlopDeskMetadataVitals()
+        try throwIfFaulted(
+            data.spanning { payload, length in
+                slopdesk_metadata_decode_host_vitals(
+                    payload?.assumingMemoryBound(to: UInt8.self), length, &flat,
+                )
+            },
+            "hostVitals",
+        )
         return HostVitals(
-            cpuPercent: min(cpu, 100), memoryPercent: min(mem, 100), pressureByte: pressure,
-            diskFreeMiB: disk == diskFreeUnknown ? nil : disk,
+            cpuPercent: flat.cpu_percent, memoryPercent: flat.memory_percent,
+            pressureByte: flat.pressure, diskFreeMiB: flat.has_disk ? flat.disk_free_mib : nil,
         )
     }
 
@@ -697,19 +668,24 @@ public enum MetadataCodec {
 
     /// Encodes an ensure-verb response payload: `[UInt8 state][UInt16 BE port]`.
     public static func encodeServiceEndpoint(_ endpoint: ServiceEndpoint) -> Data {
-        var data = Data([endpoint.stateByte])
-        data.appendBE(endpoint.port)
-        return data
+        var flat = SlopDeskMetadataEndpoint(port: endpoint.port, state: endpoint.stateByte)
+        return sized { out, cap in slopdesk_metadata_encode_service_endpoint(&flat, out, cap) }
     }
 
     /// Decodes an ensure-verb response payload (validate-then-drop): a body
     /// shorter than 3 bytes throws ``SlopDeskError/truncated``; a longer body is tolerated, its
     /// trailer ignored, so a future field can be appended without breaking this reader.
     public static func decodeServiceEndpoint(_ data: Data) throws -> ServiceEndpoint {
-        var reader = BigEndianReader(data)
-        let state = try reader.readUInt8()
-        let port = try reader.readUInt16()
-        return ServiceEndpoint(stateByte: state, port: port)
+        var flat = SlopDeskMetadataEndpoint()
+        try throwIfFaulted(
+            data.spanning { payload, length in
+                slopdesk_metadata_decode_service_endpoint(
+                    payload?.assumingMemoryBound(to: UInt8.self), length, &flat,
+                )
+            },
+            "serviceEndpoint",
+        )
+        return ServiceEndpoint(stateByte: flat.state, port: flat.port)
     }
 
     // MARK: - Code-open disposition  (openInCodeServer = 19)
@@ -726,7 +702,9 @@ public enum MetadataCodec {
 
     /// Encodes a ``MetadataVerb/openInCodeServer`` response payload: `[UInt8 disposition]`.
     public static func encodeCodeOpenDisposition(_ disposition: CodeOpenDisposition) -> Data {
-        Data([disposition.rawValue])
+        sized { out, cap in
+            slopdesk_metadata_encode_code_open_disposition(disposition.rawValue, out, cap)
+        }
     }
 
     /// Decodes a ``MetadataVerb/openInCodeServer`` response payload (validate-then-drop): an empty
@@ -734,8 +712,15 @@ public enum MetadataCodec {
     /// unknown future byte reads ``CodeOpenDisposition/workbench`` — revealing the panel is the
     /// benign fallback (worst case an expanded panel, never a silently invisible open).
     public static func decodeCodeOpenDisposition(_ data: Data) throws -> CodeOpenDisposition {
-        var reader = BigEndianReader(data)
-        let byte = try reader.readUInt8()
+        var byte: UInt8 = 0
+        try throwIfFaulted(
+            data.spanning { payload, length in
+                slopdesk_metadata_decode_code_open_disposition(
+                    payload?.assumingMemoryBound(to: UInt8.self), length, &byte,
+                )
+            },
+            "codeOpenDisposition",
+        )
         return CodeOpenDisposition(rawValue: byte) ?? .workbench
     }
 
@@ -766,11 +751,19 @@ public enum MetadataCodec {
     /// `[UInt16 len][family UTF-8][UInt64 BE size bitPattern][UInt64 BE lineHeight bitPattern]`.
     /// Doubles ride as IEEE-754 bit patterns (bit-exact floats invariant — no textual round-trip).
     public static func encodeCodeFontSpec(_ spec: CodeFontSpec) -> Data {
-        var data = Data()
-        appendString(spec.family, to: &data)
-        data.appendBE(spec.size.bitPattern)
-        data.appendBE(spec.lineHeight.bitPattern)
-        return data
+        var pool: [UInt8] = []
+        var flat = SlopDeskMetadataFontSpec(
+            size_bits: spec.size.bitPattern,
+            line_height_bits: spec.lineHeight.bitPattern,
+            family: intern(spec.family, &pool),
+        )
+        return pool.withUnsafeBufferPointer { arena in
+            sized { out, cap in
+                slopdesk_metadata_encode_code_font_spec(
+                    &flat, arena.baseAddress, arena.count, out, cap,
+                )
+            }
+        }
     }
 
     /// Decodes a ``MetadataVerb/syncCodeFont`` request payload (validate-then-drop): truncated bodies
@@ -779,63 +772,159 @@ public enum MetadataCodec {
     /// these into a file the workbench trusts; hostile bytes must die here, not there. A longer body
     /// is tolerated (trailer ignored) so a future field can be appended.
     public static func decodeCodeFontSpec(_ data: Data) throws -> CodeFontSpec {
-        var reader = BigEndianReader(data)
-        let family = try readString(&reader, "codeFontSpec.family")
-        let size = try Double(bitPattern: reader.readUInt64())
-        let lineHeight = try Double(bitPattern: reader.readUInt64())
-        guard !family.trimmingCharacters(in: .whitespaces).isEmpty else {
-            throw SlopDeskError.malformedBody("codeFontSpec.family: empty")
+        var flat = SlopDeskMetadataFontSpec()
+        // The family cannot outgrow the payload that carried it length-prefixed.
+        let room = Swift.max(data.count, 1)
+        return try withUnsafeTemporaryAllocation(of: UInt8.self, capacity: room) { arena in
+            try throwIfFaulted(
+                data.spanning { payload, length in
+                    slopdesk_metadata_decode_code_font_spec(
+                        payload?.assumingMemoryBound(to: UInt8.self), length, &flat,
+                        arena.baseAddress, arena.count,
+                    )
+                },
+                "codeFontSpec",
+            )
+            return CodeFontSpec(
+                family: text(UnsafeRawBufferPointer(arena), flat.family),
+                size: Double(bitPattern: flat.size_bits),
+                lineHeight: Double(bitPattern: flat.line_height_bits),
+            )
         }
-        guard size >= 4, size <= 128 else {
-            throw SlopDeskError.malformedBody("codeFontSpec.size: out of range")
-        }
-        guard lineHeight >= 0.5, lineHeight <= 4 else {
-            throw SlopDeskError.malformedBody("codeFontSpec.lineHeight: out of range")
-        }
-        return CodeFontSpec(family: family, size: size, lineHeight: lineHeight)
     }
 
-    // MARK: - Shared encode/decode helpers
+    // MARK: - Crossing the boundary
 
-    /// A list count clamped to the `[0, 65535]` the `UInt16` count field can hold, so a >65535-entry
-    /// list can never WRAP the count and desync the decoder (the encoder writes only the first 65535
-    /// entries — unreachable in production; the host caps every list well under this).
-    private static func clampedCount(_ count: Int) -> Int {
-        min(max(count, 0), Int(UInt16.max))
+    /// Appends `string`'s UTF-8 to `pool` and answers where it landed.
+    ///
+    /// The arena is a `[UInt8]` and not a `Data` on purpose: this runs once per text field of every
+    /// entry, and `Data.append` carries a per-call cost that `Array.append(contentsOf:)` over a
+    /// `String.UTF8View` does not.
+    private static func intern(_ string: String, _ pool: inout [UInt8]) -> SlopDeskMetadataText {
+        let offset = UInt32(clamping: pool.count)
+        pool.append(contentsOf: string.utf8)
+        return SlopDeskMetadataText(offset: offset, length: UInt32(clamping: pool.count) - offset)
     }
 
-    /// Appends a `[UInt16 len][UTF-8 bytes]` length-prefixed string, clamping the UTF-8 to ≤ 65535
-    /// bytes at a Unicode-scalar boundary so the length field can never WRAP and corrupt the trailer.
-    private static func appendString(_ string: String, to data: inout Data) {
-        let bytes = clampedUTF8(string)
-        data.appendBE(UInt16(bytes.count))
-        data.append(bytes)
+    /// Reads a text field out of an arena a decode filled.
+    private static func text(_ arena: UnsafeRawBufferPointer, _ field: SlopDeskMetadataText) -> String {
+        ArenaText.text(arena, field.offset, field.length)
     }
 
-    /// The UTF-8 of `string` clamped to ≤ 65535 bytes at a Unicode-scalar boundary (so it stays valid
-    /// UTF-8). Identity for any sane field (the host caps these well under 64 KiB); only an absurd
-    /// >64 KiB value is shortened. Mirrors `WireMessage.clamped*` so the convention is uniform.
-    private static func clampedUTF8(_ string: String) -> Data {
-        let full = Data(string.utf8)
-        guard full.count > Int(UInt16.max) else { return full }
-        var clamped = Data()
-        for scalar in string.unicodeScalars {
-            let scalarBytes = Array(String(scalar).utf8)
-            if clamped.count + scalarBytes.count > Int(UInt16.max) { break }
-            clamped.append(contentsOf: scalarBytes)
+    /// The clip content an eliding decode left in `payload`, as its own `Data`.
+    private static func content(_ flat: SlopDeskMetadataClip, in payload: Data) -> Data {
+        guard flat.content.length > 0 else { return Data() }
+        let start = payload.startIndex + Int(flat.content.offset)
+        return Data(payload[start..<start + Int(flat.content.length)])
+    }
+
+    /// Size, then fill — the §4 convention. `call` answers the bytes NEEDED and writes only when the
+    /// room it is given is enough, so the first call measures with no buffer at all.
+    private static func sized(_ call: (UnsafeMutablePointer<UInt8>?, Int) -> Int) -> Data {
+        let needed = call(nil, 0)
+        return WireBuffer.filled(needed) { out in
+            let written = call(out?.assumingMemoryBound(to: UInt8.self), needed)
+            precondition(
+                written == needed, "the metadata codec sized a payload differently than it wrote it",
+            )
         }
-        return clamped
     }
 
-    /// Reads a `[UInt16 len][UTF-8 bytes]` length-prefixed string: validates the declared length via
-    /// `readBytes` (throws ``SlopDeskError/truncated`` rather than over-reading a hostile body) and
-    /// requires STRICT UTF-8 (throws ``SlopDeskError/malformedBody(_:)`` on an invalid sequence).
-    private static func readString(_ reader: inout BigEndianReader, _ context: String) throws -> String {
-        let length = try Int(reader.readUInt16())
-        let bytes = try reader.readBytes(length)
-        guard let string = String(data: bytes, encoding: .utf8) else {
-            throw SlopDeskError.malformedBody("\(context): invalid UTF-8")
+    /// Encodes a list of records plus the arena their text fields live in.
+    private static func encode<Record>(
+        _ records: [Record],
+        _ pool: [UInt8],
+        _ call: (
+            UnsafePointer<Record>?, Int, UnsafePointer<UInt8>?, Int, UnsafeMutablePointer<UInt8>?, Int,
+        ) -> Int,
+    ) -> Data {
+        records.withUnsafeBufferPointer { list in
+            pool.withUnsafeBufferPointer { arena in
+                sized { out, cap in
+                    call(list.baseAddress, list.count, arena.baseAddress, arena.count, out, cap)
+                }
+            }
         }
-        return string
+    }
+
+    /// Decodes a list of records, sizing both buffers off the payload rather than probing for them.
+    ///
+    /// `entryBytes` is the ``slopdesk_metadata_constant(_:)`` INDEX of the per-entry fixed size, not
+    /// the size — the number itself stays in the crate that owns the layout.
+    private static func decode<Record, Item, Head>(
+        _ payload: Data,
+        entryBytes: UInt32,
+        _ context: String,
+        _ call: (
+            UnsafePointer<UInt8>?, Int, UnsafeMutablePointer<Record>?, Int,
+            UnsafeMutablePointer<UInt8>?, Int, UnsafeMutablePointer<Int>?,
+        ) -> UInt32,
+        _ build: (Record, UnsafeRawBufferPointer) -> Item,
+        _ readHead: (UnsafeRawBufferPointer) -> Head,
+    ) throws -> ([Item], Head) {
+        let fixed = Int(slopdesk_metadata_constant(entryBytes))
+        let room = Swift.max(payload.count / Swift.max(fixed, 1), 1)
+        let arenaRoom = Swift.max(payload.count, 1)
+        return try payload.spanning { bytes, length in
+            try withUnsafeTemporaryAllocation(of: Record.self, capacity: room) { records in
+                try withUnsafeTemporaryAllocation(of: UInt8.self, capacity: arenaRoom) { arena in
+                    var count = 0
+                    let verdict = call(
+                        bytes?.assumingMemoryBound(to: UInt8.self), length,
+                        records.baseAddress, records.count,
+                        arena.baseAddress, arena.count, &count,
+                    )
+                    try throwIfFaulted(verdict, context)
+                    let pool = UnsafeRawBufferPointer(arena)
+                    return ((0..<count).map { build(records[$0], pool) }, readHead(pool))
+                }
+            }
+        }
+    }
+
+    /// The list decode for a payload with no head fields.
+    private static func decode<Record, Item>(
+        _ payload: Data,
+        entryBytes: UInt32,
+        _ context: String,
+        _ call: (
+            UnsafePointer<UInt8>?, Int, UnsafeMutablePointer<Record>?, Int,
+            UnsafeMutablePointer<UInt8>?, Int, UnsafeMutablePointer<Int>?,
+        ) -> UInt32,
+        _ build: (Record, UnsafeRawBufferPointer) -> Item,
+    ) throws -> [Item] {
+        try decode(payload, entryBytes: entryBytes, context, call, build) { _ in () }.0
+    }
+
+    /// Throws the error a non-OK verdict names.
+    ///
+    /// `AGAIN` cannot reach a caller here: every buffer is sized off the payload that bounds it, so
+    /// a short one would be a boundary bug rather than a hostile body — and is trapped as one.
+    private static func throwIfFaulted(_ verdict: UInt32, _ context: String) throws {
+        switch verdict {
+        case SLOPDESK_WIRE_DECODE_OK: return
+        case SLOPDESK_WIRE_DECODE_TRUNCATED: throw SlopDeskError.truncated
+        case SLOPDESK_WIRE_DECODE_AGAIN:
+            preconditionFailure("\(context): a payload out-grew the buffers it bounds")
+        default: throw SlopDeskError.malformedBody("\(context): rejected by the metadata codec")
+        }
+    }
+}
+
+private extension MetadataCodec.ClipboardClip {
+    /// Lends the clip's content to `body` without copying it, alongside the flat record that names
+    /// it — a clip runs to 12 MiB, and an encode must not begin by duplicating them.
+    func lent<R>(
+        present: Bool = true,
+        _ body: (UnsafePointer<SlopDeskMetadataClip>, UnsafePointer<UInt8>?, Int) -> R,
+    ) -> R {
+        bytes.spanning { content, contentLength in
+            var flat = SlopDeskMetadataClip(
+                content: SlopDeskMetadataText(offset: 0, length: UInt32(clamping: contentLength)),
+                kind: kindByte,
+                present: present,
+            )
+            return body(&flat, content?.assumingMemoryBound(to: UInt8.self), contentLength)
+        }
     }
 }

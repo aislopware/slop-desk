@@ -151,52 +151,6 @@ final class DetachResumeIdentityTests: XCTestCase {
             "cold launch must present lastReceivedSeq=0",
         )
     }
-
-    // MARK: - Harness: a minimal WorkspaceStore (tree path) that exposes its connection
-
-    /// A thin harness that builds a REAL `WorkspaceStore` with `LiveModel.tree` and a REAL
-    /// `LivePaneSession` for one terminal pane, then exposes the `ConnectionViewModel` so tests
-    /// can inspect its wiring and call its closures directly. No network, no disk.
-    private struct SessionHarness {
-        let store: WorkspaceStore
-        let connection: ConnectionViewModel?
-    }
-
-    private func makeSession(paneID: PaneID) -> SessionHarness {
-        // Build a one-pane TreeWorkspace with the given paneID.
-        let session = Session(
-            name: "Test",
-            tabs: [Tab(root: .leaf(paneID), activePane: paneID)],
-            activeTabIndex: 0,
-            specs: [paneID: PaneSpec(kind: .terminal, title: "Terminal")],
-        )
-        let tree = TreeWorkspace(sessions: [session], activeSessionID: session.id)
-
-        // The store uses LivePaneSession.make as its production factory.
-        // We supply a makeClient that returns a never-connecting client (transport factory throws).
-        let store = WorkspaceStore(
-            restoringTree: tree,
-            liveModel: .tree,
-            makeSession: { seed in
-                LivePaneSession.make(
-                    paneID: seed.id, spec: seed.spec, spawnCwd: seed.spawnCwd,
-                    makeClient: { _ in
-                        SlopDeskClient(makeTransport: {
-                            // An inert transport: connect() is never called in these tests,
-                            // so fatalError is unreachable; the inbound stream is empty.
-                            StubInertTransport()
-                        })
-                    },
-                    makeInspector: { _ in nil },
-                    target: { .default },
-                )
-            },
-        )
-        store.attachLoopbackWorkspaceDocument()
-
-        let connection = (store.handle(for: paneID) as? LivePaneSession)?.connection
-        return SessionHarness(store: store, connection: connection)
-    }
 }
 
 // MARK: - SeedRecordingTransport
@@ -227,46 +181,6 @@ private actor SeedRecordingTransport: ClientTransporting {
         handshakeTimeout _: Duration,
     ) {
         connectArgs = (resume, lastReceivedSeq)
-    }
-
-    func sendInput(_: Data) {}
-    func sendResize(cols _: UInt16, rows _: UInt16, pxWidth _: UInt16, pxHeight _: UInt16) {}
-    func sendAck(seq _: Int64) {}
-    func sendBye() {}
-    func close() { continuation.finish() }
-}
-
-// MARK: - StubInertTransport
-
-/// An inert `ClientTransporting` conformer used by the harness: `connect()` suspends forever
-/// (never called in the capture-path tests), the inbound stream is empty. Actor-isolated so
-/// it satisfies the Sendable protocol requirement.
-private actor StubInertTransport: ClientTransporting {
-    var sessionID: UUID? { nil }
-    var resumeFromSeq: Int64 { 0 }
-    var returningClient: Bool { false }
-
-    private let continuation: AsyncThrowingStream<WireMessage, Error>.Continuation
-    nonisolated let inbound: AsyncThrowingStream<WireMessage, Error>
-
-    init() {
-        var c: AsyncThrowingStream<WireMessage, Error>.Continuation!
-        inbound = AsyncThrowingStream { c = $0 }
-        continuation = c
-    }
-
-    func connect(
-        host _: String,
-        port _: UInt16,
-        resume _: UUID,
-        lastReceivedSeq _: Int64,
-        handshakeTimeout _: Duration,
-    ) async throws {
-        // Suspend forever — these tests never call connect().
-        try await withTaskCancellationHandler(
-            operation: { try await withCheckedThrowingContinuation { (_: CheckedContinuation<Void, Error>) in } },
-            onCancel: {},
-        )
     }
 
     func sendInput(_: Data) {}

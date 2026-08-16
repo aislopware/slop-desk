@@ -8,24 +8,34 @@ Everything below the fold is **measured**, not read from a spec. `scrcpy` publis
 document — its own documentation says the control protocol is defined by the unit tests on both
 sides — so the dialect was transcribed from `control_msg.c` / `demuxer.c` / `server.c` at **v4.1**
 and recorded off a live emulator on 2026-08-04. The byte-level claims here are what
-`Tests/SlopDeskClientUITests/Android*Tests.swift` pin. If the Homebrew formula moves, re-measure
-before changing the decoder.
+`Tests/SlopDeskClientUITests/Android*Tests.swift` and `rust/slopdesk-androidd`'s own suite pin. If the
+Homebrew formula moves, re-measure before changing the decoder.
 
 Read this before touching anything under `Sources/SlopDeskClientUI/Android` or
-`Sources/SlopDeskHost/Android`.
+`rust/slopdesk-androidd`.
+
+> **2026-08-12 — the bridge left hostd.** It is `rust/slopdesk-androidd` now, a separate binary held
+> by superd, and the Swift original (`AndroidBridgeServer`, `AndroidToolchain`, `AndroidScrcpySession`,
+> `AndroidDeviceCatalog`, `AndroidEmulatorConsole`, `AndroidSocketIO`, `AndroidBridgeManager`) was
+> DELETED in the same change — there is no fallback and no mirror. **Nothing about the wire changed**:
+> the client already dialled the bridge port directly, so the panel, the reassembler and the control
+> encoder are untouched. What changed is which process pumps the H.264, and what a `make host-restart`
+> costs. Sections below that still read "inside hostd" have been rewritten; the measurements are the
+> same ones, taken against the same dialect.
 
 ---
 
 ## Shape
 
 ```
-client (SlopDeskClientUI/Android)                       host (SlopDeskHost/Android)
+client (SlopDeskClientUI/Android)                       host
 ──────────────────────────────────────────────────────────────────────────────────
-metadata verb 22  ensureAndroidBridge   ────────────►   HostAndroidPerformer
-                  [state][UInt16 BE port] ◄──────────   AndroidBridgeManager
-                                                              │ binds (IN hostd)
-                                                        AndroidBridgeServer  ── adb ──► device
-one TCP connection per operation:
+metadata verb 22  ensureAndroidBridge   ────────────►   HostAndroidPerformer   (hostd)
+                  [state][UInt16 BE port] ◄──────────   AndroidServiceManager
+                                                              │ spawn-or-adopt via superd
+                                                        slopdesk-androidd  ── adb ──► device
+                                                              ▲
+one TCP connection per operation, DIRECT to androidd ─────────┘ (hostd is not in this path):
   {"op":"list"}\n            ──► {"ok":true,"devices":[…]}\n              (then close)
   {"op":"boot","avd":…}\n    ──► {"ok":true}\n
   {"op":"shutdown",…}\n      ──► {"ok":true}\n
@@ -35,7 +45,7 @@ one TCP connection per operation:
   {"op":"open","serial":…}\n ──► {"ok":true,"device":…}\n + scrcpy video down / control up
 ```
 
-### Why the bridge exists at all — and why it is not a child process
+### Why the bridge exists at all — and why it is its own process
 
 `adb forward` binds **127.0.0.1 only**. A mesh client therefore cannot reach the device socket
 without something host-side to relay it. That is the bridge's whole job.
@@ -43,10 +53,32 @@ without something host-side to relay it. That is the bridge's whole job.
 `adb -a server -H 0.0.0.0` was considered and **rejected**: it is a machine-wide change to the user's
 `adb` and it hands every mesh peer a device shell.
 
-Unlike verb 21's `baguette serve`, the bridge is **inside hostd** — there is no third-party server to
-spawn, because the panel speaks `scrcpy-server`'s protocol itself. So `AndroidBridgeManager` has no
-port to learn from a log line and no readiness to poll: it either binds or it does not, and `ensure()`
-can answer `ready` on the first call.
+Unlike verb 21's `baguette serve` there is no third-party SERVER to spawn — the panel speaks
+`scrcpy-server`'s protocol itself — but the relay is still a child, and for the reasons the file-drop
+service moved (`docs/53`):
+
+- **hostd owns every keystroke.** A mirror is a few megabits a second pumped on threads competing
+  with the terminal wire, for a surface most sessions never open.
+- **A host restart took every mirror with it.** `make host-restart` is a ~0.2 s hiccup for panes,
+  which superd holds. The bridge, being in-process, died with the daemon and each mirror had to
+  re-push the jar, re-forward, re-handshake and re-key. It is a superd pane now (`service:androidd`),
+  so a rebuild costs the mirror nothing.
+- **Blast radius.** The bridge is the one part that ran on raw BSD sockets, and it is the part that
+  talks to whatever `adb` and the device do next. See the `SIGPIPE` section below for what that used
+  to be able to do to a terminal session.
+
+So `AndroidServiceManager` is shaped like `SimulatorServerManager` rather than like the old in-process
+one: it spawns-or-adopts through superd, learns the port from the daemon's own announce line
+(`androidd: listening on 0.0.0.0:<port> …`, replayed from offset 0 of the pane's ring), probes it
+once, and reports `starting` until then. `ensure()` still never waits — it answers on a metadata queue
+whose client-side timeout is 5 s.
+
+The port is **ephemeral** and is NOT verified against a wanted one, unlike dropd's `terminalPort + 2`:
+one host has one `adb` server and one set of AVDs, so an adopted survivor's port is simply the port,
+and it is by construction one something is listening on.
+
+`HostServer.stop()` **relinquishes** it. That line used to be a `shutdown()`, which is the regression
+`scripts/check-supervisor.sh` §8 now ratchets alongside the code and simulator backends.
 
 ### Not a fourth transport
 
@@ -58,22 +90,28 @@ it carries an address, not frames.
 **No auth, by invariant** — the bridge binds `0.0.0.0` with no credential; security is the WireGuard
 mesh (`docs/DECISIONS.md`).
 
-### ⚠️⚠️ Every descriptor here needs `SO_NOSIGPIPE`
+### ⚠️⚠️ `SO_NOSIGPIPE` — the bug that is now structurally absent
 
-The bridge is the one part of hostd written on blocking BSD sockets rather than Network.framework
-(`AndroidSocketIO` explains why), which means it is the one part that can be killed by a signal. A
-pump writes to its peer long after that peer may have gone — a client that quit, a mesh link that
-dropped, a device unplugged mid-frame — and the default disposition of `SIGPIPE` **terminates the
-process**. hostd ignores `SIGINT` and `SIGTERM`; it does not ignore this one.
+Kept because it is the sharpest illustration of what moving this out of hostd bought, and because the
+same trap is still live for anything else in Swift that opens a raw socket.
 
-The failure is total and gives nothing to read: hostd vanishes, every terminal pane on the machine
-dies with it, and there is **no crash report**, because a signal death is not a crash. It presents as
+The bridge was the one part of hostd written on blocking BSD sockets rather than Network.framework,
+which made it the one part that could be killed by a signal. A pump writes to its peer long after that
+peer may have gone — a client that quit, a mesh link that dropped, a device unplugged mid-frame — and
+the default disposition of `SIGPIPE` **terminates the process**. hostd ignores `SIGINT` and `SIGTERM`;
+it did not ignore this one.
+
+The failure was total and gave nothing to read: hostd vanishes, every terminal pane on the machine
+dies with it, and there is **no crash report**, because a signal death is not a crash. It presented as
 "the Android panel stopped working, and so did everything else". Demonstrated 2026-08-04 on a bare
-socket pair — a one-byte write to a closed peer exits `141` (`128 + SIGPIPE`) before it can print,
-and with the option set returns `-1`/`EPIPE` and the pump ends cleanly.
+socket pair — a one-byte write to a closed peer exits `141` (`128 + SIGPIPE`) before it can print, and
+with the option set returns `-1`/`EPIPE` and the pump ends cleanly.
 
-`AndroidSocket.init(descriptor:)` sets it, which covers the dialled leg and the accepted one at the
-single point they share. `CodeBridgeServer` learned this on its own accept loop first.
+Two things changed it. The pump is no longer in the process that owns the panes, so the blast radius
+is one mirror. And Rust's `std::net` sets `SO_NOSIGPIPE` on every socket it creates, so the ~230 lines
+of `setsockopt`/`withUnsafePointer` that `AndroidSocketIO` was are simply gone — the whole class of
+bug with them. `CodeBridgeServer`, which learned this on its own accept loop first, is still Swift and
+still has to set it by hand.
 
 ---
 
@@ -251,7 +289,7 @@ one probe:
 the same renderer (58.1 / 28 ms / 71 ms). The host's byte pump, the WireGuard hop and the client's
 decoder are all inside the noise.
 
-So `AndroidBridgeServer.boot` states `-gpu host` outright, and `SLOPDESK_ANDROID_EMULATOR_ARGS`
+So `protocol::emulator_arguments` states `-gpu host` outright, and `SLOPDESK_ANDROID_EMULATOR_ARGS`
 replaces it rather than fighting it if a host needs something else.
 
 ⚠️ **An emulator the panel did not boot keeps whatever flag it was started with.** Android Studio's
@@ -327,12 +365,22 @@ crash`) are exactly what someone reading a crash is looking for.
 | `SLOPDESK_ANDROID_EMULATOR_BIN` | overrides the `emulator` binary. Missing is NOT `unavailable` — a host with a phone plugged in still has devices to list |
 | `SLOPDESK_ANDROID_SERVER_JAR` | overrides `scrcpy-server`. **The jar IS in this repo now** — committed at `ThirdParty/tools/vendor/scrcpy-server` (716 KB), pinned in `ThirdParty/tools/tools.lock` against upstream's own v4.1 digest, which `VendoredToolsTests` re-verifies. It is the one dependency small enough to commit and the only one that is not an executable (the device's `app_process` runs it), so it carries no signing or architecture concern. Homebrew's `share/scrcpy` stays as the fallback for a hostd running outside a checkout. The HOST still never downloads one — `provision.sh` verifies the committed bytes. Missing ⇒ devices list and boot, nothing mirrors |
 | `SLOPDESK_ANDROID_EMULATOR_ARGS` | extra flags appended to the emulator launch, for a host whose GPU needs them |
-| `SLOPDESK_ANDROID_HW` | `=1` enables the hardware tests (`AndroidBridgeHardwareTests`), which need a booted device, an `adb` and the jar. Off ⇒ every one of them is a no-op, so a clean checkout stays green on a machine that has never seen the Android SDK |
+| `SLOPDESK_ANDROID_HW` | `=1` enables the hardware tests (`rust/slopdesk-androidd/tests/hardware.rs`), which need a booted device, an `adb` and the jar. Off ⇒ every one of them prints why it proved nothing and passes, so a clean checkout stays green on a machine that has never seen the Android SDK |
+| `SLOPDESK_ANDROIDD_BIN` | overrides which `slopdesk-androidd` hostd spawns. Absent ⇒ `RustServicePaths` (installed copy, then the crate's cargo target). None found ⇒ the panel reports `unavailable` |
 
 ---
 
 ## Gates
 
-`make test-touched` covers the whole panel: every runtime seam is injectable, so no test opens a
-socket or builds a display layer (hang-safety). The **sockets** are exercised only by
-`AndroidBridgeHardwareTests` behind `SLOPDESK_ANDROID_HW=1`, with a booted device.
+`make test-touched` covers the whole panel, on both sides of the socket: the client half in Swift
+(reassembler, control encoder, layout, scroll machine, logcat parser, device decode) and the bridge
+half as `rust/slopdesk-androidd`'s unit tests (catalogue, toolchain locator, console, argument
+vectors, refusals, request decode). Every runtime seam is injectable, so no test opens a device socket
+or builds a display layer (hang-safety). The **sockets** are exercised only by
+`rust/slopdesk-androidd/tests/hardware.rs` behind `SLOPDESK_ANDROID_HW=1`, with a booted device —
+`scripts/check-android.sh` is what sets it, having first resolved the same `adb` and jar production
+would.
+
+`scripts/check-supervisor.sh` §11 ratchets what is typed on both sides of the wire: every `op` the
+panel can send has an arm in `server.rs`, every device field it decodes is one `protocol.rs` encodes,
+the announce marker matches, and no Swift Android bridge has come back.

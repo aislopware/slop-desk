@@ -1,5 +1,3 @@
-import Foundation
-
 // MARK: - OSC-22 pointer-shape mapping
 
 /// Swift mirror of libghostty's `ghostty_action_mouse_shape_e` C enum (`terminal.MouseShape`,

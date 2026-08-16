@@ -1,5 +1,8 @@
+import CSlopDeskFFI
 import Foundation
 
+/// The Swift face of `rust/slopdesk-video`'s `idle_reap`, reached through the door of the same name.
+///
 /// Pure idle-timeout reap decision for a UDP video flow/lane (CONCURRENCY-HOST-1
 /// crash-without-bye + its UDP-mux analogue). No socket, no wall-clock — the caller stamps
 /// `now` and acts on the returned ids, exactly like ``LTREscalationTracker`` /
@@ -15,10 +18,15 @@ import Foundation
 ///
 /// `sawKeepalive` is **sticky**: once true it never resets to false for the life of that flow
 /// record — a live client that sends one keepalive then goes truly silent because it crashed is
-/// exactly the case we want to reap. Identity is `FlowID` (the `UInt32` channelID for the mux
-/// lanes), so a reconnect under a FRESH channelID gets a fresh record (`sawKeepalive == false`
-/// again — see ``forget(id:)``).
-public struct IdleReapDecider<FlowID: Hashable & Sendable>: Sendable {
+/// exactly the case we want to reap. Identity is the `UInt32` channelID the mux lanes use, so a
+/// reconnect under a FRESH channelID gets a fresh record (`sawKeepalive == false` again — see
+/// ``forget(id:)``).
+///
+/// A HANDLE, and therefore a CLASS: the flow map is held across every tick and the near side reads
+/// back only the short list of ids that are actually dead. The key is CONCRETE rather than generic
+/// for the same reason the rule crosses at all — a generic key would have to be interned into
+/// something the door understands, and that interning table would be a second identity rule.
+public final class IdleReapDecider: @unchecked Sendable {
     public struct Record: Sendable, Equatable {
         /// Host time (seconds, monotonic) of the most recent inbound datagram of ANY kind.
         public var lastInbound: TimeInterval
@@ -30,36 +38,52 @@ public struct IdleReapDecider<FlowID: Hashable & Sendable>: Sendable {
         }
     }
 
-    private var flows: [FlowID: Record] = [:]
+    /// The live flow records.
+    private let handle: OpaquePointer?
     /// Idle threshold in seconds (``KeepaliveTiming/idleTimeout``, 30 s).
     public let idleTimeout: TimeInterval
 
-    public init(idleTimeout: TimeInterval) { self.idleTimeout = idleTimeout }
+    public init(idleTimeout: TimeInterval) {
+        self.idleTimeout = idleTimeout
+        handle = slopdesk_idle_reaper_new(idleTimeout)
+    }
+
+    deinit {
+        slopdesk_idle_reaper_free(handle)
+    }
 
     /// Stamp an inbound datagram for `id` at host time `now`. `isKeepalive` latches
     /// `sawKeepalive` STICKY (never clears) so a later true silence is reapable. Any inbound —
     /// keepalive OR media/input — refreshes `lastInbound` (a client actively typing is obviously
     /// alive even between keepalives). A first-ever inbound creates the record.
-    public mutating func noteInbound(id: FlowID, now: TimeInterval, isKeepalive: Bool) {
-        var rec = flows[id] ?? Record(lastInbound: now, sawKeepalive: false)
-        rec.lastInbound = now
-        if isKeepalive { rec.sawKeepalive = true }
-        flows[id] = rec
+    public func noteInbound(id: UInt32, now: TimeInterval, isKeepalive: Bool) {
+        slopdesk_idle_reaper_note_inbound(handle, id, now, isKeepalive)
     }
 
     /// The ids to reap NOW: those that PROVED keepalive AND have been silent ≥ `idleTimeout`.
     /// PURE — does not mutate; the caller tears down each id then calls ``forget(id:)`` so a
     /// reaped flow is not re-reported on the next tick.
-    public func reap(now: TimeInterval) -> [FlowID] {
-        flows.compactMap { id, rec in
-            (rec.sawKeepalive && now - rec.lastInbound >= idleTimeout) ? id : nil
+    public func reap(now: TimeInterval) -> [UInt32] {
+        let count = slopdesk_idle_reaper_reap(handle, now, nil, 0)
+        guard count > 0 else { return [] }
+        var doomed = [UInt32](repeating: 0, count: count)
+        let copied = doomed.withUnsafeMutableBufferPointer { out in
+            slopdesk_idle_reaper_reap(handle, now, out.baseAddress, out.count)
         }
+        guard copied == count else { return [] }
+        return doomed
     }
 
     /// Drop a flow's record (after reaping, or on a clean `bye` / explicit retire) so it is
     /// neither re-reported nor leaked, and a reused id starts a FRESH record. Idempotent.
-    public mutating func forget(id: FlowID) { flows.removeValue(forKey: id) }
+    public func forget(id: UInt32) {
+        slopdesk_idle_reaper_forget(handle, id)
+    }
 
     /// Test / introspection: the current record for `id`, if any.
-    public func record(_ id: FlowID) -> Record? { flows[id] }
+    public func record(_ id: UInt32) -> Record? {
+        var found = SlopDeskFlowRecord(last_inbound: 0, saw_keepalive: false)
+        guard slopdesk_idle_reaper_record(handle, id, &found) else { return nil }
+        return Record(lastInbound: found.last_inbound, sawKeepalive: found.saw_keepalive)
+    }
 }

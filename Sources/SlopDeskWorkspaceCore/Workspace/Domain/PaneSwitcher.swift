@@ -1,4 +1,3 @@
-import Foundation
 import SlopDeskWorkspaceModel
 
 /// The ⌃⇥ switcher's pure model — a frozen most-recently-used ring plus a provisional highlight.

@@ -1,40 +1,6 @@
 import Foundation
 import SlopDeskVideoProtocol
 
-/// The logical sub-streams that share one PATH 2 UDP session (doc 17 §3.3/§3.6/§3.8).
-///
-/// This is the **client-side mirror** of `SlopDeskVideoHost.VideoChannel`: the raw
-/// values are the byte-identical wire tags (control=0 / video=1 / geometry=2 /
-/// cursor=3 / input=4) so the 1-byte media-socket channel tag matches the host
-/// exactly. The client and host live in separate modules (the client must not depend
-/// on the macOS-only host), so each carries the same pure enum — the wire contract is
-/// the agreement, not a shared Swift type. (The docs step should hoist this into
-/// `SlopDeskVideoProtocol` so both sides reference one definition.)
-public enum VideoChannel: UInt8, Sendable, CaseIterable {
-    /// Session bring-up control (``VideoControlMessage``): hello / helloAck / bye.
-    case control = 0
-    /// Encoded video fragments (``FrameFragment``) — received by the client.
-    case video = 1
-    /// Window move/resize/title (``WindowGeometryMessage``) — received by the client.
-    case geometry = 2
-    /// Cursor position + shape (``CursorChannelMessage``) — its own socket.
-    case cursor = 3
-    /// Client → host input (``InputEvent``) — SENT by the client.
-    case input = 4
-    /// Client → host loss recovery (``RecoveryMessage``: requestLTRRefresh /
-    /// requestIDR / ack) — SENT by the client. A DEDICATED channel (not multiplexed
-    /// onto `.input`): `RecoveryMessage`'s leading type bytes overlap `InputEvent`'s,
-    /// so sharing `.input` would have the host mis-decode recovery as a phantom mouse
-    /// event. Byte-identical raw value (5) to the host's `VideoChannel.recovery`.
-    case recovery = 5
-    /// Host → client app audio (``AudioChannelMessage``: a config packet + ~10 ms
-    /// encoded frames) — RECEIVED by the client on the media socket (the socket-selection
-    /// predicate routes every non-cursor tag there). Plain fire-and-forget datagrams: no
-    /// FEC, no retransmit — a lost frame is concealed by the client's jitter ring, never
-    /// waited for. Byte-identical raw value (6) to the host's `VideoChannel.audio`.
-    case audio = 6
-}
-
 /// Seam over the UDP transport the client orchestrator sends datagrams on (control /
 /// input) and receives host datagrams from (control / video / geometry on the media
 /// socket; cursor on the dedicated cursor socket).

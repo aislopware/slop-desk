@@ -1,28 +1,39 @@
-import Foundation
 import SlopDeskProtocol
+import SlopDeskSupervisor
 import SlopDeskTransport
 import XCTest
 @testable import SlopDeskHost
 
-/// WB1 — the host-glue wiring of the "Blocks" tap into ``MuxChannelSession``: the additive
-/// PARALLEL tap (env-gated `SLOPDESK_BLOCKS`) feeds the per-channel ``CommandBlockTracker`` on the
-/// SAME outbound chunks the live ``HostOutputSniffer`` sees, enqueues type-28 `commandBlock`
-/// metadata on the CONTROL sender, and serves type-29 `blockOutput` on a `requestBlockOutput`.
+/// WB1 — the host-glue wiring of the "Blocks" tap into ``MuxChannelSession``.
+///
+/// What this file asserts changed shape with the port, and the difference is worth stating. hostd
+/// used to OWN the segmentation: these tests fed a scripted OSC 133 stream and checked that a Swift
+/// state machine found the block in it. It owns none of that now — superd's pump segments the bytes
+/// it already read and hands over `[BlockEvent]` (`rust/slopdesk-superd/src/blocks.rs`, `docs/51`
+/// §6.14). So the fixture is the EVENT, not the stream, and what is under test is the only thing
+/// hostd still does with one: fold it into a type-28 `commandBlock`, and serve type 29 from superd's
+/// ring. The 133 truth table went with the segmenter, to `blocks.rs`'s own tests.
 ///
 /// Driven WITHOUT a PTY or running drain via the `_…ForTesting` seams (hang-safety). The control
-/// sender FIFO is read back via `takeControlBatchForTesting()`.
+/// sender FIFO is read back via `takeControlBatchForTesting()`. An unspawned PTY has no pane
+/// identity, so every read-through verb answers empty here — which is exactly the "never a trap"
+/// contract sections 2 and 3 are about.
 final class MuxChannelSessionBlocksTests: XCTestCase {
-    private let ESC = "\u{1B}"
-    private let BEL = "\u{07}"
-
-    private func cycle(command: String, output: String, exit: Int) -> String {
-        "\(ESC)]133;A\(BEL)$ \(ESC)]133;B\(BEL)\(command)\(ESC)]133;C\(BEL)\(output)\(ESC)]133;D;\(exit)\(BEL)"
+    private func closed(index: UInt32, command: String, outputLen: UInt32, exit: Int32) -> BlockEvent {
+        .block(BlockMetadata(
+            index: index,
+            exitCode: exit,
+            durationMS: 12,
+            complete: true,
+            outputLen: outputLen,
+            commandText: command,
+        ))
     }
 
     private func makeSession(blocksEnabled: Bool) -> MuxChannelSession {
         MuxChannelSession(
             channelID: 1,
-            pty: PTYProcess(), // unspawned — relay never started; tap driven via seams
+            pty: unattachedPTY(), // unspawned — relay never started; tap driven via seams
             data: MuxSubChannel(channelID: 1, channel: .data) { _, _ in },
             control: MuxSubChannel(channelID: 1, channel: .control) { _, _ in },
             blocksEnabled: blocksEnabled,
@@ -33,12 +44,12 @@ final class MuxChannelSessionBlocksTests: XCTestCase {
         (messages ?? []).filter { if case .commandBlock = $0 { true } else { false } }
     }
 
-    // MARK: 1. Flag ON — a scripted 133 stream enqueues type-28 metadata per block
+    // MARK: 1. Flag ON — a superd block event enqueues type-28 metadata
 
     func testBlocksEnabledEnqueuesCommandBlockMetadata() {
         let session = makeSession(blocksEnabled: true)
         XCTAssertTrue(session.blocksEnabledForTesting)
-        session.feedBlocksForTesting(Data(cycle(command: "echo hi", output: "hi\n", exit: 0).utf8))
+        session.foldBlocksForTesting([closed(index: 0, command: "echo hi", outputLen: 3, exit: 0)])
 
         let blocks = commandBlocks(session.takeControlBatchForTesting())
         // A complete metadata for index 0 pinned to the literal command.
@@ -51,22 +62,60 @@ final class MuxChannelSessionBlocksTests: XCTestCase {
         XCTAssertEqual(complete[0].1, "echo hi")
     }
 
-    // MARK: 2. requestBlockOutput → type-29 blockOutput with the right bytes
-
-    func testServeBlockOutputEnqueuesTypeAndBytes() {
+    /// Every field of the event reaches the wire message. The translation is the whole of hostd's
+    /// remaining job here, so a dropped exit code would otherwise be invisible until a client showed
+    /// a green tick on a failed command.
+    func testEveryFieldOfTheEventReachesTheWireMessage() {
         let session = makeSession(blocksEnabled: true)
-        session.feedBlocksForTesting(Data(cycle(command: "cat f", output: "alpha\nbeta\n", exit: 0).utf8))
-        _ = session.takeControlBatchForTesting() // drain the metadata emit
+        session.foldBlocksForTesting([.block(BlockMetadata(
+            index: 4,
+            exitCode: 130,
+            durationMS: 9871,
+            complete: true,
+            outputLen: 4096,
+            commandText: "cargo test",
+            promptOrdinal: 11,
+        ))])
 
-        session.serveBlockOutputForTesting(index: 0)
-        let batch = session.takeControlBatchForTesting() ?? []
-        guard let msg = batch.first, case let .blockOutput(index, output) = msg else {
-            XCTFail("expected a blockOutput on the control sender, got \(batch)")
+        guard case let .commandBlock(index, exit, duration, complete, outputLen, command, ordinal)
+            = commandBlocks(session.takeControlBatchForTesting()).first
+        else {
+            XCTFail("expected one type-28")
             return
         }
-        XCTAssertEqual(index, 0)
-        XCTAssertEqual(String(data: output, encoding: .utf8), "alpha\nbeta\n")
+        XCTAssertEqual(index, 4)
+        XCTAssertEqual(exit, 130)
+        XCTAssertEqual(duration, 9871)
+        XCTAssertTrue(complete)
+        XCTAssertEqual(outputLen, 4096)
+        XCTAssertEqual(command, "cargo test")
+        XCTAssertEqual(ordinal, 11)
     }
+
+    /// A synthetic progress badge is superd's decision about a slow command; the type-32 that
+    /// carries it is hostd's, because superd does not know the protocol.
+    func testASyntheticProgressEventBecomesATypeThirtyTwo() {
+        let session = makeSession(blocksEnabled: true)
+        session.foldBlocksForTesting([.progress(.indeterminate), .progress(.clear)])
+
+        let progress = (session.takeControlBatchForTesting() ?? []).compactMap { msg -> UInt8? in
+            guard case let .progress(state, _) = msg else { return nil }
+            return state
+        }
+        XCTAssertEqual(progress, [3, 0], "indeterminate then clear, in the order superd reported them")
+    }
+
+    /// A kind a NEWER superd knows must cost nothing but itself.
+    func testAnUnknownKindIsSkippedRatherThanTakingTheBatch() {
+        let session = makeSession(blocksEnabled: true)
+        session.foldBlocksForTesting([
+            .unknown(kind: "somethingLater"),
+            closed(index: 0, command: "echo hi", outputLen: 3, exit: 0),
+        ])
+        XCTAssertEqual(commandBlocks(session.takeControlBatchForTesting()).count, 1)
+    }
+
+    // MARK: 2. requestBlockOutput → type-29 blockOutput, always answered
 
     func testServeUnknownIndexEnqueuesEmptyBlockOutput() {
         let session = makeSession(blocksEnabled: true)
@@ -80,13 +129,14 @@ final class MuxChannelSessionBlocksTests: XCTestCase {
         XCTAssertTrue(output.isEmpty, "unknown block → empty served output, never a trap")
     }
 
-    // MARK: 3. Flag OFF — no segmenter, no emit (byte pipeline byte-identical)
+    // MARK: 3. Flag OFF — no tap asked for, no emit
 
     func testBlocksDisabledEmitsNothing() {
         let session = makeSession(blocksEnabled: false)
         XCTAssertFalse(session.blocksEnabledForTesting)
-        // Feeding a full 133 cycle produces NO control output at all.
-        session.feedBlocksForTesting(Data(cycle(command: "echo hi", output: "hi\n", exit: 0).utf8))
+        // The pane was spawned untapped, so superd sends nothing; the fold is gated anyway, which is
+        // what makes a stale event from a pane whose flag changed cost nothing.
+        session.foldBlocksForTesting([closed(index: 0, command: "echo hi", outputLen: 3, exit: 0)])
         XCTAssertNil(session.takeControlBatchForTesting(), "blocks OFF → no type-28 enqueued")
     }
 
@@ -103,38 +153,25 @@ final class MuxChannelSessionBlocksTests: XCTestCase {
         XCTAssertTrue(output.isEmpty)
     }
 
-    // MARK: 4. Differential: blocks ON vs OFF — the sniffer path is byte-identical, only the tap differs
+    // MARK: 4. Differential: blocks ON vs OFF — only the tap differs
 
     func testBlocksFlagIsADifferentialOnlyOnTheTap() {
-        // The Blocks tap is a SEPARATE parallel observer wired in `MuxChannelSession.start`'s read loop:
-        // it OBSERVES the same chunk the live `HostOutputSniffer` does but never touches the bytes the
-        // sniffer/commandStatus path emits. This test runs the SAME scripted PTY stream through both the
-        // flag-ON and flag-OFF worlds and asserts:
-        //   (a) the sniffer's emitted commandStatus/title/bell stream is IDENTICAL (the byte pipeline's
-        //       only observation is untouched by WB1 — the session constructs the sniffer the same way
-        //       regardless of the flag, so two independent sniffer passes over the same bytes must match);
-        //   (b) flag-ON enqueues type-28 metadata while flag-OFF enqueues ZERO type-28/29.
-        let scripted = Data(cycle(command: "echo hi", output: "hi\n", exit: 0).utf8)
+        // The same events through both worlds: flag-ON enqueues type-28, flag-OFF enqueues ZERO
+        // type-28/29 and the byte pipeline is byte-identical either way.
+        //
+        // The other half of the old differential — that the sniffed command-status stream is
+        // identical either way — is not assertable from here any more and no longer needs to be:
+        // the sniffer is superd's, it never sees this flag, and its own suite pins the
+        // prompt-ready → running → idle sequence for this exact cycle.
+        let events = [closed(index: 0, command: "echo hi", outputLen: 3, exit: 0)]
 
-        // (a) Sniffer stream — the SAME `HostOutputSniffer` the session's read loop uses. Two independent
-        // passes over the identical bytes (mirroring an ON-session vs OFF-session read loop) must agree.
-        let snifferOn = HostOutputSniffer(clock: { Date(timeIntervalSinceReferenceDate: 0) }).observe(scripted)
-        let snifferOff = HostOutputSniffer(clock: { Date(timeIntervalSinceReferenceDate: 0) }).observe(scripted)
-        XCTAssertEqual(snifferOn, snifferOff, "the sniffer/commandStatus stream is identical ON vs OFF")
-        XCTAssertEqual(snifferOn, [
-            .commandStatus(.idle(exitCode: nil, durationMS: 0)), // 133;B prompt-ready (startup idle)
-            .commandStatus(.running),
-            .commandStatus(.idle(exitCode: 0, durationMS: 0)),
-        ], "and is exactly the prompt-ready→running→idle status for this cycle (pinned, not tautological)")
-
-        // (b) The TAP differential: same scripted stream, flag ON enqueues type-28; flag OFF enqueues none.
         let onSession = makeSession(blocksEnabled: true)
-        onSession.feedBlocksForTesting(scripted)
+        onSession.foldBlocksForTesting(events)
         let onControl = onSession.takeControlBatchForTesting() ?? []
         XCTAssertFalse(commandBlocks(onControl).isEmpty, "blocks ON → type-28 metadata enqueued")
 
         let offSession = makeSession(blocksEnabled: false)
-        offSession.feedBlocksForTesting(scripted)
+        offSession.foldBlocksForTesting(events)
         let offControl = offSession.takeControlBatchForTesting()
         XCTAssertNil(offControl, "blocks OFF → ZERO type-28/29 enqueued (byte pipeline byte-identical)")
     }

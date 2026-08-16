@@ -177,8 +177,7 @@ public enum LaunchPresetEngine {
         return out
     }
 
-    /// Single-quote a shell path, escaping embedded single quotes the POSIX way (`'\''`). Pure string op.
-    private static func shellQuoted(_ path: String) -> String {
-        "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
-    }
+    /// Single-quote a shell path, escaping embedded single quotes the POSIX way (`'\''`). A face over
+    /// ``ShellQuoting/singleQuote(_:)``, which is the same door the template emitter's own `cd` asks.
+    private static func shellQuoted(_ path: String) -> String { ShellQuoting.singleQuote(path) }
 }

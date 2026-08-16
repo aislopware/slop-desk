@@ -1,0 +1,43 @@
+# rustfmt — maximal-strict, deterministic formatting for the one Rust crate in the tree
+# (rust/slopdesk-hook). Mirrors the Swift side's split: the FORMATTER owns layout, clippy owns
+# lint/bug/consistency. Width tracks the repo convention (SwiftFormat 120 on code, ruff 100).
+#
+# ⚠️ The options below marked NIGHTLY require `cargo +nightly fmt`; `unstable_features` unlocks
+# them. `make fmt-rust` / the prek hook pin the nightly toolchain for exactly this reason. The
+# BUILD stays on stable — only the formatter needs nightly.
+edition = "2024"
+style_edition = "2024"
+unstable_features = true
+
+max_width = 110
+comment_width = 100
+newline_style = "Unix"
+
+# Comments + docs are a deliberate asset in this tree, so they get formatted, not ignored.
+wrap_comments = true                # NIGHTLY
+format_code_in_doc_comments = true  # NIGHTLY
+doc_comment_code_block_width = 100  # NIGHTLY
+normalize_comments = true           # NIGHTLY
+normalize_doc_attributes = true     # NIGHTLY
+
+# Imports: one deterministic order, one granularity — no reviewer discretion.
+group_imports = "StdExternalCrate"  # NIGHTLY
+imports_granularity = "Module"      # NIGHTLY
+reorder_imports = true
+reorder_modules = true
+
+# Layout determinism.
+format_macro_matchers = true        # NIGHTLY
+format_strings = true               # NIGHTLY
+overflow_delimited_expr = true      # NIGHTLY
+condense_wildcard_suffixes = true   # NIGHTLY
+force_multiline_blocks = true       # NIGHTLY
+match_block_trailing_comma = true
+trailing_comma = "Vertical"
+use_field_init_shorthand = true
+use_try_shorthand = true
+hex_literal_case = "Upper"          # NIGHTLY
+
+# Alignment thresholds at 0: never align across lines (alignment churns diffs).
+enum_discrim_align_threshold = 0
+struct_field_align_threshold = 0

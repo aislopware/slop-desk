@@ -1,5 +1,4 @@
 import CoreGraphics
-import Foundation
 
 // MARK: - The pan-only camera
 

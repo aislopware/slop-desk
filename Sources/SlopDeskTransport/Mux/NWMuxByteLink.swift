@@ -1,6 +1,5 @@
 import Foundation
 import Network
-import SlopDeskProtocol
 
 /// A ``MuxByteLink`` backed by one real `NWConnection` — the production physical link under a
 /// shared ``MuxNWConnection`` (one such link is the CONTROL socket, one the DATA socket).

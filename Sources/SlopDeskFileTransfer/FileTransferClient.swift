@@ -1,5 +1,6 @@
 import Foundation
 import Network
+import SlopDeskNet
 
 /// A single upload's progress, surfaced to the UI. `id` is the client-scoped transfer id.
 public enum FileUploadEvent: Sendable, Equatable {
@@ -40,15 +41,16 @@ public struct FileTransferClient: Sendable {
         let connection = NWConnection(
             host: NWEndpoint.Host(host),
             port: nwPort,
-            using: NWFileTransferChannel.parameters(),
+            using: NWByteChannel.parameters(),
         )
-        let channel = NWFileTransferChannel(connection: connection)
+        let channel = NWByteChannel(connection: connection, label: "slopdesk.filetransfer.channel")
         await channel.start()
         await run(files: files, over: channel, onEvent: onEvent)
     }
 
-    /// The testable core: run the upload protocol over an already-open channel (a test wires a
-    /// ``LoopbackFileTransferChannel`` to a real ``FileTransferServer``).
+    /// The testable core: run the upload protocol over an already-open channel. The end-to-end test
+    /// dials a real `slopdesk-dropd` — there is no in-process host to wire a loopback to any more,
+    /// because the receiving end is a separate binary (`docs/53`).
     @preconcurrency
     public func run(
         files: [URL],
@@ -150,24 +152,24 @@ public struct FileTransferClient: Sendable {
         return nil
     }
 
-    private func send(_ message: FileTransferMessage, over channel: FileTransferChannel) async throws {
-        try await channel.send(FileTransferCodec.encodeFrame(message))
+    private func send(_ request: FileTransferRequest, over channel: FileTransferChannel) async throws {
+        try await channel.send(FileTransferCodec.encodeFrame(request))
     }
 }
 
-/// Pulls whole ``FileTransferMessage`` values off a channel's inbound byte stream, buffering partial
+/// Pulls whole ``FileTransferReply`` values off a channel's inbound byte stream, buffering partial
 /// frames across reads. One per connection, iterated by a single consumer.
 private struct FrameReader {
     private var iterator: AsyncThrowingStream<Data, Error>.AsyncIterator
-    private var decoder = FileTransferFrameDecoder()
+    private let decoder = FileTransferFrameDecoder()
 
     init(channel: FileTransferChannel) {
         iterator = channel.inbound.makeAsyncIterator()
     }
 
-    mutating func next() async throws -> FileTransferMessage? {
+    mutating func next() async throws -> FileTransferReply? {
         while true {
-            if let message = try decoder.nextMessage() { return message }
+            if let reply = try decoder.nextReply() { return reply }
             guard let bytes = try await iterator.next() else { return nil }
             decoder.append(bytes)
         }

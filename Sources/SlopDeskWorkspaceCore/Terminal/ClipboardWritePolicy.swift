@@ -1,5 +1,3 @@
-import Foundation
-
 // MARK: - The embedder side of the clipboard-WRITE "Ask" gate
 
 /// What the terminal embedder should do when libghostty asks it to WRITE the pasteboard — a

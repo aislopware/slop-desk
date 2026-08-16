@@ -1,4 +1,3 @@
-import Defaults
 import Foundation
 
 // MARK: - Terminal-control enums (the Controls / Mouse / Scroll multi-state knobs)

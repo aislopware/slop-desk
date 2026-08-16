@@ -1,4 +1,4 @@
-import SlopDeskVideoProtocol
+import CSlopDeskFFI
 
 /// The client's decode frontier: the wrap-aware highest frameID that SUCCESSFULLY decoded.
 /// Every recovery request (`requestIDR` / `requestLTRRefresh`) carries ``wireValue`` so the
@@ -6,26 +6,30 @@ import SlopDeskVideoProtocol
 /// recently-sent keyframe reached this client (request newer ⇒ delivered) or is a presumed
 /// casualty (request older + past the in-flight grace ⇒ bypass the cooldown).
 ///
-/// Pure value type — no transport, no clock — headlessly unit-testable. Monotonic by
-/// `UInt32.distanceWrapped` (same sequence-space discipline as the reassembler), so a late
-/// out-of-order decode can never move the frontier backwards.
+/// The law is `rust/slopdesk-video`'s `decode_admission`; this is its face. Two fields cross by
+/// value — the frontier and whether there is one — so a late out-of-order decode can never move it
+/// backwards and the sentinel is never a frame id.
 public struct DecodeFrontier: Sendable, Equatable {
-    public private(set) var lastDecodedFrameID: UInt32?
+    private var record: SlopDeskDecodeFrontier
 
-    public init() {}
+    public init() { record = slopdesk_decode_frontier_new() }
 
-    /// Folds one successfully-decoded frame. Keep-newest, wrap-aware; older/equal ids are no-ops.
-    /// Native Swift twin of `slopdesk_core::decode_frontier::DecodeFrontier::note_decoded`: a
-    /// late out-of-order decode (`frameID.distanceWrapped(from: current) <= 0`) is a no-op, so the
-    /// frontier only ever advances in `UInt32`-wrap sequence space.
-    public mutating func noteDecoded(frameID: UInt32) {
-        if let current = lastDecodedFrameID, frameID.distanceWrapped(from: current) <= 0 {
-            return
-        }
-        lastDecodedFrameID = frameID
+    /// The frontier itself, or `nil` when nothing has decoded.
+    public var lastDecodedFrameID: UInt32? {
+        record.has_last_decoded ? record.last_decoded_frame_id : nil
     }
 
-    /// The on-wire field value: the frontier id, or ``RecoveryMessage/noFrameDecodedSentinel``
+    /// Folds one successfully-decoded frame. Keep-newest, wrap-aware; older/equal ids are no-ops.
+    public mutating func noteDecoded(frameID: UInt32) {
+        record = slopdesk_decode_frontier_note_decoded(record, frameID)
+    }
+
+    /// The on-wire field value: the frontier id, or `RecoveryMessage.noFrameDecodedSentinel`
     /// when nothing has decoded yet (frameIDs start at 0, so 0 cannot be the sentinel).
-    public var wireValue: UInt32 { lastDecodedFrameID ?? RecoveryMessage.noFrameDecodedSentinel }
+    public var wireValue: UInt32 { slopdesk_decode_frontier_wire_value(record) }
+
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.record.has_last_decoded == rhs.record.has_last_decoded
+            && lhs.record.last_decoded_frame_id == rhs.record.last_decoded_frame_id
+    }
 }

@@ -1,5 +1,3 @@
-import Foundation
-
 /// `SlopDeskVideoProtocol` — the cross-platform, **pure** wire format for the GUI
 /// video path (PATH 2 / Phase 4, doc 17 §3, doc 18).
 ///

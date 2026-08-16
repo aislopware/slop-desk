@@ -17,6 +17,7 @@ let package = Package(
     ],
     products: [
         .library(name: "SlopDeskProtocol", targets: ["SlopDeskProtocol"]),
+        .library(name: "SlopDeskScreen", targets: ["SlopDeskScreen"]),
         .library(name: "SlopDeskTransport", targets: ["SlopDeskTransport"]),
         .library(name: "SlopDeskHost", targets: ["SlopDeskHost"]),
         .library(name: "SlopDeskClient", targets: ["SlopDeskClient"]),
@@ -42,7 +43,8 @@ let package = Package(
         // stays product-less on purpose: `swift build` still builds them, `--product` won't ship them.
         .executable(name: "slopdesk", targets: ["slopdesk"]),
         .executable(name: "slopdesk-hostd", targets: ["slopdesk-hostd"]),
-        .executable(name: "slopdesk-ctl", targets: ["slopdesk-ctl"]),
+        // No `slopdesk-ctl` product: the agent-control CLI is Rust (`rust/slopdesk-ctl`), built by
+        // `make ctl` and shipped straight out of `rust/target/release`.
     ],
     // External UI deps — attach ONLY to `SlopDeskClientUI` so the headless core + wire/codec/controller
     // targets stay dependency-free (`swift test` / golden never fetch). Trades "clean checkout builds
@@ -67,27 +69,57 @@ let package = Package(
     targets: [
         // MARK: Libraries
 
-        // Native SIMD kernels (replaces the Rust FFI NEON). A tiny C target SwiftPM COMPILES FROM
-        // SOURCE every build — no cbindgen, no marshalling, no prebuilt staticlib, no build-ordering.
-        // Holds the two genuine-SIMD kernels: the GF(2^8) split-table region multiply (`vqtbl1q_u8`)
-        // and the xxHash64 NV12 frame-hash fold (synthesized `vmull_u32` u64 lane multiply), each
-        // guarded `#if __aarch64__` with a scalar fallback so x86_64 CI/sim builds stay green. Swift
-        // links it via the `include/` modulemap; byte-identical to the scalar reference (pinned by a
-        // differential test). The ONLY remaining C/unsafe surface after the Rust core is reabsorbed.
-        .target(
-            name: "CSlopDeskSIMD",
-            path: "Sources/CSlopDeskSIMD",
-            cSettings: [.unsafeFlags(["-O3"])],
-        ),
+        // (The `CSlopDeskSIMD` C target lived here: a NEON GF(2^8) split-table region multiply
+        // for the FEC inner loop. The codec moved to `rust/slopdesk-video`, which is
+        // `forbid(unsafe_code)`; the kernel itself did not dissolve — it came back as
+        // `rust/slopdesk-gfsimd`, the third and smallest crate allowed to write `unsafe`, holding
+        // the two byte-region loops and nothing else. What went with the C target is the last
+        // hand-written implementation under `Sources/`, not the intrinsics — docs/DECISIONS.md.)
 
         // Pure-Swift wire format: framing, MessageType, seq(Int64), Hello/Ack. ZERO platform
         // dependency (no Network/Darwin) → builds macOS + iOS, unit-testable in isolation. Native
         // Swift codecs (single source of truth).
-        .target(name: "SlopDeskProtocol"),
+        // The Swift side of `docs/55` §4c's arena convention — a `(offset, length)` pair read back
+        // as text. Dependency-free ON PURPOSE, including of the shim: an offset and a length are
+        // arithmetic, not a boundary, so every leaf that reads an arena can name this one without
+        // any of them widening its graph. It was nine copies in five targets before it was one.
+        .target(name: "SlopDeskArena"),
+
+        // One `NWConnection` as a byte stream, for the two lanes that need one: the inspector's
+        // event channel and PATH-4's file transfer. It was the same actor in both, line for line,
+        // and a lifetime this fussy — three separate fd-leak fixes — must not be maintained twice.
+        // Foundation + Network only, so neither caller widens its graph by naming it.
+        .target(name: "SlopDeskNet"),
+
+        .target(name: "SlopDeskProtocol", dependencies: ["SlopDeskArena", "CSlopDeskFFI"]),
+
+        // The `NSPasteboard` ↔ `MetadataCodec.ClipboardClip` conversion, both directions. Clipboard
+        // sync has two ends — `HostClipboardPerformer` (daemon graph) and `ClipboardSyncEngine`
+        // (client graph) — and neither target can see the other, so the shared reading of the WIRE's
+        // own clip type had been written twice and had already drifted. The only thing below both is
+        // SlopDeskProtocol, which is the wire and has no business importing AppKit; hence a leaf of
+        // its own. macOS-only content behind `#if os(macOS)`, so the iOS client compiles it empty.
+        .target(name: "SlopDeskPasteboard", dependencies: ["SlopDeskProtocol"]),
+
+        // The Rust logic the Swift clients call in-process, as three arm64 static slices.
+        //
+        // Built by `scripts/build-ffi.sh` (any `make build`/`test`/`check` runs it first) and
+        // GITIGNORED: 17 MB of archive rewritten by every Rust edit is not a source. cargo still
+        // never runs inside `swift build` — the artifact is an input to it, the way
+        // `libghostty.xcframework` is to the Xcode targets.
+        //
+        // Unlike libghostty, this one IS in the SwiftPM graph, and that is the point: the
+        // one-implementation rule means a ported module's Swift original is DELETED, so the Rust
+        // has to be what `swift test` actually exercises. A binary target reachable only from Xcode
+        // would have left the Swift copy alive as the thing under test.
+        .binaryTarget(
+            name: "CSlopDeskFFI",
+            path: "ThirdParty/slopdesk-ffi/SlopDeskFFI.xcframework",
+        ),
 
         // NWConnection + TCP_NODELAY, dual data/control channel, ET-style replay
         // buffer, reconnect handshake. (Implemented in WF-2.)
-        .target(name: "SlopDeskTransport", dependencies: ["SlopDeskProtocol"]),
+        .target(name: "SlopDeskTransport", dependencies: ["SlopDeskProtocol", "CSlopDeskFFI"]),
 
         // macOS host: PTY (openpty + posix_spawn createSession), session mgr, no-buffer
         // PTY<->transport relay, TIOCSWINSZ resize. (WF-3.) Also hosts the inspector's
@@ -100,33 +132,46 @@ let package = Package(
         // W12 adds SlopDeskVideoProtocol for `EnvConfig` — the agent-detection gates
         // (`SLOPDESK_AGENT_DETECT`/`_HOOKS`) resolve through the settings overlay so a GUI toggle
         // reaches them (same `video-prefs.json` sidecar). Acyclic — SlopDeskVideoProtocol is the
-        // cross-platform PURE wire/settings leaf (deps only CSlopDeskSIMD), never imports a host module.
+        // cross-platform PURE wire/settings leaf (deps only CSlopDeskFFI), never imports a host module.
         .target(
             name: "SlopDeskHost",
             dependencies: [
                 "SlopDeskTransport", "SlopDeskProtocol", "SlopDeskInspector",
                 "SlopDeskAgentDetect", "SlopDeskVideoProtocol",
+                // The pasteboard↔clip conversion the client's sync engine reads from the same file.
+                "SlopDeskPasteboard",
+                // The `write(2)`-until-done loop the control listener and the mux session both
+                // used to spell. Zero-dependency leaf, so the daemon graph is unchanged.
+                "SlopDeskTTY",
+                // docs/51: `slopdesk-superd` forks the pane shells now, so the fork-to-exec window +
+                // argv/envp vectors live in the shared leaf and `PTYProcess` calls into them. This
+                // is also how hostd adopts a supervised master fd.
+                "SlopDeskSupervisor",
+                // docs/52: the VT screen engine is `slopdesk-screend`, a Rust binary over an
+                // AF_UNIX socket. This is the CLIENT end only — there is no Swift parser left.
+                "SlopDeskScreen",
                 // docs/45: the host owns the workspace document, so it needs the value model.
                 // Leaf target (Foundation + CoreGraphics), so this does NOT widen the daemon graph.
                 "SlopDeskWorkspaceModel",
             ],
-            // The Monokai Pro workbench themes (all eight variants, regenerated from the pinned
-            // upstream vsix by scripts/monokai-sync.sh) `CodeServerManager` seeds into the
-            // code-server extensions directory (too large for source literals).
-            resources: [.copy("Resources")],
         ),
 
         // The workspace VALUE MODEL — the Session→Tab→split tree, `PaneSpec`, the pure
         // `WorkspaceTreeOps`, the canvas value types, and (from docs/45) the host workspace-document
         // state + codec.
         //
-        // A LEAF: Foundation + CoreGraphics only, ZERO package dependencies. That is the whole point.
+        // A LEAF: Foundation + CoreGraphics, and no SWIFT package dependency. That is the whole point.
         // `SlopDeskWorkspaceCore` depends on SlopDeskClient/Transport/Inspector/ClaudeCode/
         // AgentDetect/Terminal/VideoProtocol/Defaults, so hostd — which depends on none of those —
         // could not import it and therefore could not so much as name a tab. Splitting the values out
         // lets the HOST own the workspace document (docs/45) without dragging the client graph into
-        // the daemon. Keep it dependency-free: anything needing a package dep belongs one level up.
-        .target(name: "SlopDeskWorkspaceModel"),
+        // the daemon. Keep it that way: anything needing a Swift package dep belongs one level up.
+        //
+        // `CSlopDeskFFI` is not a step back from that. It is the static archive `make ffi` builds
+        // (docs/55), the same one hostd and both clients already link, and it carries the SOLVERS this
+        // module used to hold a second copy of — focus, send-keys, the sidebar's ordering. The leaf is
+        // still a leaf: it names no other target here, and hostd links the archive regardless.
+        .target(name: "SlopDeskWorkspaceModel", dependencies: ["SlopDeskArena", "CSlopDeskFFI"]),
 
         // Shared client: connection mgr, reconnect, input encoding. (WF-4.)
         .target(name: "SlopDeskClient", dependencies: ["SlopDeskTransport", "SlopDeskProtocol"]),
@@ -135,9 +180,11 @@ let package = Package(
         // lives in the GUI app target (WF-5) and conforms to the same protocol.
         .target(name: "SlopDeskTerminal", dependencies: ["SlopDeskProtocol"]),
 
-        // Local-terminal raw-mode + termios save/restore + TIOCGWINSZ/TIOCSWINSZ helpers for the
-        // interactive CLI. A library so the save/restore + SIGWINCH mapping logic is unit-testable
-        // (the executable target is not importable).
+        // The leaf that owns a RAW DESCRIPTOR on the Swift side: local-terminal raw mode, termios
+        // save/restore, TIOCGWINSZ/TIOCSWINSZ, and the `write(2)`-until-done loop six call sites
+        // each used to spell (`FileDescriptorWrite`). A library so the save/restore + SIGWINCH
+        // mapping logic is unit-testable (the executable target is not importable). Zero
+        // dependencies, so naming it never widens a graph.
         .target(name: "SlopDeskTTY"),
 
         // Read-only structured inspector (WF-6). Tails Claude Code's JSONL transcript (+ subagent
@@ -145,7 +192,13 @@ let package = Package(
         // length-prefixed channel (NWConnection #2) to a SwiftUI client. INDEPENDENT of the terminal
         // byte pipeline — reuses only SlopDeskProtocol's framing *style*, never the terminal
         // WireMessage. Read-only: observes the transcript, never drives the agent.
-        .target(name: "SlopDeskInspector", dependencies: ["SlopDeskProtocol"]),
+        .target(
+            // CSlopDeskFFI: the inspector's FRAME lives in `rust/slopdesk-inspectord`, the daemon
+            // that speaks the other end of it, and this end reaches it in process. Only the event
+            // JSON is decoded here.
+            name: "SlopDeskInspector",
+            dependencies: ["SlopDeskProtocol", "SlopDeskNet", "CSlopDeskFFI"],
+        ),
 
         // Cross-platform Claude Code integration LOGIC (WF-7): the terminal-mode sniffer (DECSET/
         // DECRST 1049 + OSC 133, robust to sequences split across chunk boundaries), the input
@@ -161,7 +214,10 @@ let package = Package(
         // cues. Foundation-only — depends on NOTHING GUI/transport/video, so it physically cannot
         // import them; the `SlopDeskInspector.HookPayload` → `ClaudeSignal` adapter is W8/W10, not
         // here. Validate-then-drop on every foreign string; no force-unwrap.
-        .target(name: "SlopDeskAgentDetect"),
+        // docs/55: every RULE here — the alias table, the keystroke classes, the temporal hold and
+        // the status machine — is `rust/slopdesk-agent`, reached in-process. The Swift enums that
+        // remain are the case lists a SwiftUI switch needs, and nothing else.
+        .target(name: "SlopDeskAgentDetect", dependencies: ["CSlopDeskFFI"]),
 
         // Headless workspace CORE (L0 of the UI rewrite): the proven logic extracted from the dying
         // `SlopDeskClientUI` view target — the tree-of-intent domain value types, the single
@@ -181,6 +237,17 @@ let package = Package(
             dependencies: [
                 // The dependency-free workspace VALUE MODEL (tree, PaneSpec, canvas, tree ops).
                 "SlopDeskWorkspaceModel",
+                // The link/path/URL scan (`TerminalLinkDetector`) is the Swift face of
+                // `rust/slopdesk-terminal`'s `link`, so this target links the door directly rather
+                // than importing it through whichever neighbour happens to pull it in today.
+                "CSlopDeskFFI",
+                // …and the scan's arena is read through the one reader every face shares.
+                "SlopDeskArena",
+                // The pasteboard↔clip conversion the HOST's performer reads from the same file —
+                // clipboard sync's two ends agree by sharing it, not by staying in step by hand.
+                "SlopDeskPasteboard",
+                // The store dials the inspector's event lane over the shared byte channel.
+                "SlopDeskNet",
                 "SlopDeskClient",
                 "SlopDeskTransport",
                 "SlopDeskInspector",
@@ -211,6 +278,12 @@ let package = Package(
             name: "SlopDeskClientUI",
             dependencies: [
                 "SlopDeskWorkspaceCore",
+                // The one `write(2)`-until-done loop, for the control server's replies.
+                "SlopDeskTTY",
+                // The `ShellQuoting` face — one door for every place that types a path into a live
+                // shell. Transitive via WorkspaceCore, but a direct `import` needs it declared here
+                // (same rationale as Protocol/Inspector/Transport below).
+                "SlopDeskWorkspaceModel",
                 // E4: the Details-Panel inspector views name the host-metadata `MetadataCodec` value types
                 // (process / port / dir / git-file) directly. Transitive via WorkspaceCore, but a
                 // `swift build` import needs the module declared here (same as Transport below).
@@ -226,7 +299,7 @@ let package = Package(
                 "SlopDeskTransport",
                 // E20/WI-5: `WorkspaceControlBackend.jump` resolves the frecency/$HOME-toggle/`--no-cd`
                 // target through the PURE `JumpResolver` (the single source of truth the CLI tests pin).
-                // CLICore is a headless internal target (deps CtlCore/Protocol/WorkspaceCore, all already
+                // CLICore is a headless internal target (deps Protocol/WorkspaceCore/AgentDetect, all already
                 // below ClientUI) — no HW deps, no cycle.
                 "SlopDeskCLICore",
                 // L8: external UI libraries (chrome). Cross-platform: SwiftUIIntrospect (reach AppKit
@@ -261,7 +334,7 @@ let package = Package(
         // side-channel codec, window-geometry codec, coordinate-mapping math (multi-monitor
         // Cocoa-flip + Retina), and the client->host input-event codec. ZERO platform dependency (no
         // ScreenCaptureKit/VideoToolbox/AppKit) → builds macOS + iOS, unit-testable in isolation.
-        .target(name: "SlopDeskVideoProtocol", dependencies: ["CSlopDeskSIMD"]),
+        .target(name: "SlopDeskVideoProtocol", dependencies: ["SlopDeskArena", "CSlopDeskFFI"]),
 
         // macOS-only host capture + encode + input injection. USES ScreenCaptureKit / VideoToolbox /
         // CoreGraphics / AppKit. COMPILED + code-reviewed, NEVER executed in tests: SCStream capture
@@ -281,7 +354,15 @@ let package = Package(
 
         .target(
             name: "SlopDeskVideoHost",
-            dependencies: ["SlopDeskVideoProtocol", "CSlopDeskVirtualDisplay"],
+            // CSlopDeskFFI: the host's admission laws — the constant-QP AIMD and the recovery-IDR
+            // token bucket — are `rust/slopdesk-video`, reached in process. Named directly rather
+            // than inherited through SlopDeskVideoProtocol, so the link survives that target's deps
+            // changing.
+            // SlopDeskArena: the snapshot builder fills a text arena for `window_feed_pack`
+            // (docs/55 §4c) and interns through the one implementation of that convention.
+            dependencies: [
+                "SlopDeskVideoProtocol", "CSlopDeskVirtualDisplay", "CSlopDeskFFI", "SlopDeskArena",
+            ],
             // macOS-only: SCStream + VTCompressionSession + AX/CGEvent are macOS APIs.
             // (SlopDeskVideoProtocol stays cross-platform; only this host layer is gated.)
             swiftSettings: [],
@@ -290,7 +371,9 @@ let package = Package(
         // macOS + iOS client decode + Metal render + client-side cursor. USES VideoToolbox (decode) /
         // Metal / CoreVideo / QuartzCore. COMPILED + reviewed; decode is MEASURED-safe (~0.9-1.1ms
         // synchronous) but per the hang-safety rule NO VTDecompressionSession is instantiated in tests.
-        .target(name: "SlopDeskVideoClient", dependencies: ["SlopDeskVideoProtocol"]),
+        // CSlopDeskFFI: the client's presentation-depth laws — the one-way-delay spike detector and
+        // the promote/demote policy — are `rust/slopdesk-video`'s `pacer_depth` through the door.
+        .target(name: "SlopDeskVideoClient", dependencies: ["SlopDeskVideoProtocol", "CSlopDeskFFI"]),
 
         // MARK: PATH 4 — dedicated file-transfer channel
 
@@ -301,7 +384,28 @@ let package = Package(
         // leaf (no other SlopDesk module). The NWListener server + NWConnection client are COMPILED +
         // reviewed; the pure core (codec/decoder/FSM/sanitizer/disk-sink) is exercised over a loopback
         // channel + fake sink (hang-safety: no live socket / real disk in XCTest for the serve path).
-        .target(name: "SlopDeskFileTransfer"),
+        // PATH 4's codec is `rust/slopdesk-dropd`'s `client` module through the FFI door, so the
+        // one dependency this leaf has is the shim.
+        .target(name: "SlopDeskFileTransfer", dependencies: ["SlopDeskArena", "SlopDeskNet", "CSlopDeskFFI"]),
+
+        // The `slopdesk-superd` <-> `slopdesk-hostd` contract: SCM_RIGHTS fd passing, the frame, the
+        // message set, and the pane registry. A Darwin + Foundation LEAF with zero package
+        // dependencies — it has to be, since BOTH the daemon that outlives everything and the host
+        // that restarts constantly link it (docs/51).
+        //
+        // ⚠️ This is the ONE protocol here that must tolerate VERSION SKEW. The three wire paths are
+        // golden-pinned at version 1 with no negotiation because both ends ship together; superd is a
+        // LaunchAgent that outlives hostd's BUILD, so this one negotiates. Append-only, version in
+        // `hello`, unknown verbs answered `unsupported` — see SupervisorProtocol's doc comment before
+        // changing anything in here.
+        .target(name: "SlopDeskSupervisor", dependencies: ["SlopDeskTTY"]),
+
+        // hostd's END of the `slopdesk-screend` protocol: the request encoder, the reply
+        // decoder, and a pooled synchronous client. The VT parser, the renderer and the
+        // overprint collapser it addresses live ONCE, in `rust/slopdesk-screend` — this target
+        // deliberately contains no screen logic at all. Depends on SlopDeskSupervisor for the
+        // single `AF_UNIX` connect + `sockaddr_un` validation (one implementation, not two).
+        .target(name: "SlopDeskScreen", dependencies: ["SlopDeskSupervisor", "SlopDeskTTY"]),
 
         // MARK: Executables
 
@@ -310,23 +414,17 @@ let package = Package(
         // `terminalPort &+ 2` after the terminal + inspector servers (non-fatal on bind failure).
         .executableTarget(name: "slopdesk-hostd", dependencies: ["SlopDeskHost", "SlopDeskFileTransfer"]),
 
-        // Pure, testable core for slopdesk-ctl: arg-parsing (GlobalArgs / parseGlobal) + NDJSON
-        // request/response helpers (encodeRequestLine / decodeResponseLine / verb param builders).
-        // No socket I/O — Foundation-only, unit-testable without any AF_UNIX socket (hang-safety
-        // rule). The thin `slopdesk-ctl` executable adds the socket I/O + exit calls.
-        .target(name: "SlopDeskCtlCore"),
-
-        // Agent-control CLI: the reference client for the agent-control Unix-domain socket.
-        // Sends a single NDJSON request to $SLOPDESK_CONTROL_SOCKET (or --socket PATH),
-        // prints the result, and exits. Agents shell out to this. Pure socket I/O in main.swift;
-        // the testable logic lives in SlopDeskCtlCore.
-        .executableTarget(name: "slopdesk-ctl", dependencies: ["SlopDeskCtlCore"]),
+        // NOTE: the agent-control CLI (`slopdesk-ctl`) and its pure core (`SlopDeskCtlCore`) are
+        // GONE from this graph — it is Rust now (`rust/slopdesk-ctl`, `docs/DECISIONS.md`). Its cost
+        // was process startup and nothing else; the port removed 3 ms of it per agent invocation.
+        // The two NDJSON line helpers the `slopdesk` CLI still needed moved to
+        // `SlopDeskWorkspaceCore/Control/ClientControlProtocol.swift`.
 
         // PURE, testable core of the user-facing `slopdesk` CLI (E20): the global-flag parser
         // (`CLIArgs`), the `version` summary builder (`CLIVersion`), the per-shell completion
         // generator (`CLICompletions`), and (later WIs) list formatting / watch-progress / jump
         // resolution. No socket I/O, no exit — Foundation-only, unit-testable without an AF_UNIX
-        // socket or a GUI (hang-safety rule). Reuses `SlopDeskCtlCore`'s NDJSON line protocol; reads
+        // socket or a GUI (hang-safety rule). Reuses `ClientControlProtocol`'s NDJSON line protocol; reads
         // `SlopDeskProtocol` for the wire-version summary and `SlopDeskWorkspaceCore` for the
         // frecency/progress reuse seams.
         .target(
@@ -334,11 +432,16 @@ let package = Package(
             // SlopDeskAgentDetect supplies `ClaudeStatus`, which `WatchClaudeOutcome` (WI-8) maps to
             // the `watch:claude` exit codes. It is a transitive dep via SlopDeskWorkspaceCore, but
             // declared here so the `import` is explicit.
+            // CSlopDeskFFI: the flags, the completion scripts, the config file and the tables are
+            // `rust/slopdesk-cli`'s — this module is their Swift face (docs/55 §4).
             dependencies: [
-                "SlopDeskCtlCore",
                 "SlopDeskProtocol",
                 "SlopDeskWorkspaceCore",
                 "SlopDeskAgentDetect",
+                "CSlopDeskFFI",
+                // SlopDeskArena: the `(offset, length)` convention docs/55 §4c spells, both ways —
+                // the CLI builds an arena for `cli_parse` and reads one back out of it.
+                "SlopDeskArena",
             ],
         ),
 
@@ -354,7 +457,9 @@ let package = Package(
             // transitive via SlopDeskWorkspaceCore (pure wire/settings target, no HW deps), declared
             // here so the `import` is explicit.
             dependencies: [
-                "SlopDeskCLICore", "SlopDeskCtlCore", "SlopDeskVideoProtocol", "SlopDeskWorkspaceCore",
+                "SlopDeskCLICore", "SlopDeskVideoProtocol", "SlopDeskWorkspaceCore",
+                // The one `write(2)`-until-done loop, for the control-socket request.
+                "SlopDeskTTY",
             ],
         ),
 
@@ -373,13 +478,9 @@ let package = Package(
             dependencies: ["SlopDeskVideoHost", "SlopDeskVideoProtocol"],
         ),
 
-        // Differential-parity oracle for the herdr-ported detect engine: mirrors
-        // `herdr agent explain --file --agent --json` over our AgentManifestCatalog so
-        // scripts/herdr-differential.py can diff both engines on arbitrary screen corpora.
-        .executableTarget(
-            name: "slopdesk-detect-explain",
-            dependencies: ["SlopDeskAgentDetect"],
-        ),
+        // (The differential-parity oracle for the detect engine is `slopdesk-screend explain` —
+        // docs/52. It was a Swift executable target here only because the rule ladder was in Swift;
+        // the ladder moved, so scripts/herdr-differential.py drives the Rust binary directly.)
 
         // Headless closed-loop validation harness: synthetic CVPixelBuffer -> REAL HW
         // VideoEncoder -> VideoPacketizer (FEC tier + isLTR + hostSendTs) -> deterministic
@@ -440,7 +541,13 @@ let package = Package(
         .executableTarget(name: "slopdesk-vd-probe", dependencies: ["SlopDeskVideoHost"]),
 
         // Micro-benchmark for the Swift-level hot paths (frame hash, GF region multiply, RS FEC).
-        .executableTarget(name: "slopdesk-bench", dependencies: ["SlopDeskVideoProtocol"]),
+        .executableTarget(
+            name: "slopdesk-bench",
+            dependencies: [
+                "SlopDeskVideoProtocol", "SlopDeskProtocol", "SlopDeskFileTransfer",
+                "SlopDeskInspector",
+            ],
+        ),
 
         // Snapshot-replay composer benchmark: times `TerminalReplaySnapshot.compose` (the cold
         // reattach state-transfer render) over synthetic build/test churn at realistic history
@@ -475,11 +582,6 @@ let package = Package(
         ),
 
         // MARK: Tests
-
-        // slopdesk-ctl CLI: arg-parsing + request-encoding tests. No real socket — the pure
-        // SlopDeskCtlCore logic (parseGlobal, encodeRequestLine, verb param builders) is
-        // exercised directly (hang-safety: no AF_UNIX in tests).
-        .testTarget(name: "SlopDeskCtlTests", dependencies: ["SlopDeskCtlCore"]),
 
         // The user-facing `slopdesk` CLI core: global-flag parsing (`CLIArgs`), the `version`
         // summary builder, and the per-shell completion generator. PURE — no socket, no GUI, no
@@ -621,5 +723,12 @@ let package = Package(
         // name sanitizer, the collision-avoiding disk sink (in a temp dir), and the full serve↔client
         // upload over a LoopbackFileTransferChannel + fake sink. NO NWListener / live socket.
         .testTarget(name: "SlopDeskFileTransferTests", dependencies: ["SlopDeskFileTransfer"]),
+        // The supervisor contract. A `socketpair(2)` is NOT a live listener — no bind, no accept, no
+        // spawned daemon — so the hang-safety rule is satisfied while the load-bearing part (an fd
+        // genuinely crossing a process-style boundary and still working) is exercised for real,
+        // including against a live `openpty` master. Also pins the version-skew rules: an unknown
+        // verb must DECODE and be answerable, and unknown fields must not fail a decode.
+        .testTarget(name: "SlopDeskSupervisorTests", dependencies: ["SlopDeskSupervisor"]),
+        .testTarget(name: "SlopDeskScreenTests", dependencies: ["SlopDeskScreen"]),
     ],
 )

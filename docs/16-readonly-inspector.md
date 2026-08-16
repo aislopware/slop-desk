@@ -3,6 +3,12 @@
 > Direction: **Main = libghostty TUI** (full fidelity, all interaction through the TUI) + a **READ-ONLY inspector alongside it** (desktop + iOS) for things hard to read in scrollback: subagent content, full tool calls, CoT, todos, workflows. Source: `research/readonly-inspector-corpus.json`.
 >
 > *As-of: Claude Code v2.1.x (2026-06). Claims tied to versions + undocumented flags → verify on the target CC version.*
+>
+> **Where this lives now: `docs/54-inspector.md`.** This document is the RESEARCH — what the
+> transcript contains, what it does not, and what may not be invented. Since 2026-08-12 the
+> implementation of all of it is `rust/slopdesk-inspectord`, a daemon the client dials directly on
+> `terminalPort + 1`; Swift keeps the client end only. Read 54 before changing any behaviour
+> described here.
 
 ## Why this direction wins (differentiator)
 

@@ -2066,8 +2066,10 @@ public actor SlopDeskVideoClientSession {
 
     private func apply(_ effect: VideoClientStateMachine.Effect) {
         switch effect {
-        case let .sendControl(message):
-            transport.send(message.encode(), on: .control)
+        case let .sendControl(datagram):
+            // Already encoded by the door that decided to send it — the runtime only puts it on the
+            // wire, so the hello and the bye have exactly one encoder between them.
+            transport.send(Data(datagram), on: .control)
         case .primeCursorFlow:
             // Cursor side-channel (re-)prime: a 1-byte datagram on the CURSOR socket (the transport
             // frames it with this lane's channelID) so the host (re-)stamps the lane's cursor reply

@@ -1,5 +1,4 @@
 import Foundation
-import SlopDeskProtocol
 
 /// Drives reconnection for a ``SlopDeskClient`` after the transport drops.
 ///

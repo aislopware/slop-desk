@@ -11,7 +11,7 @@ import Foundation
 /// - ``copyOnly``: copy the selection but NEVER delete — read-only scrollback, or a full-screen / foreground
 ///   program owns the screen (the delete bytes would corrupt the program's input).
 /// - ``copyAndDelete``: an EDITABLE shell prompt — copy AND attempt to delete the selected run, subject to the
-///   SAME geometry ceiling as ``BackspaceSelectionPolicy`` (see ``CutSelectionPolicy/deleteCount(selection:selectionEndsAtCursor:)``).
+///   geometry ceiling ``CutSelectionPolicy/deleteCount(selection:selectionEndsAtCursor:)`` documents.
 public enum CutAction: Equatable, Sendable {
     case none
     case copyOnly
@@ -23,7 +23,7 @@ public enum CutAction: Equatable, Sendable {
 /// `copy_to_clipboard` binding action for a non-``CutAction/none`` decision, and on ``CutAction/copyAndDelete``
 /// sends ``deleteCount(selection:selectionEndsAtCursor:)`` DEL (`0x7F`) bytes.
 ///
-/// ## The gates (the safe defaults, mirroring ``BackspaceSelectionPolicy``)
+/// ## The gates (the safe defaults)
 /// 1. **No selection** → ``CutAction/none``: nothing to copy or cut.
 /// 2. **A full-screen / foreground program owns the screen** (`isAlternateScreen`) → ``CutAction/copyOnly``:
 ///    copy the native selection, but NEVER inject deletes (the key/bytes belong to the program).
@@ -49,15 +49,15 @@ public enum CutSelectionPolicy {
     /// The number of DEL (`0x7F`) bytes the GUI actuator sends for the delete half of a
     /// ``CutAction/copyAndDelete``.
     ///
-    /// Subject to the SAME geometry ceiling ``BackspaceSelectionPolicy/leadingDeleteCount(selection:selectionEndsAtCursor:)``
-    /// documents: DEL bytes ALWAYS erase the characters immediately BEFORE the host cursor, so they only erase
+    /// Subject to the geometry ceiling every pre-sent-DEL path carries: DEL bytes ALWAYS erase the
+    /// characters immediately BEFORE the host cursor, so they only erase
     /// the SELECTED run when that run ENDS AT THE CURSOR. The pinned libghostty fork exposes no
     /// set-selection / cursor-geometry API, so the embedder cannot prove that — and an optimistic pre-send of
     /// a mid-line selection would delete the WRONG characters (silent data loss). Therefore this returns a
     /// non-zero count ONLY when the caller can PROVE the selection ends at the cursor AND it is a single line;
     /// otherwise 0, so the cut degrades to copy-only (the documented ceiling).
     ///
-    /// Unlike Backspace there is NO fall-through key for ⌘X, so the FULL selection length is returned (not
+    /// Unlike a Backspace keystroke there is NO fall-through key for ⌘X, so the FULL selection length is returned (not
     /// `count - 1`). `selectionEndsAtCursor` is the documented seam for a FUTURE libghostty geometry API; until
     /// then the GUI passes `false` and the delete half is dormant.
     public static func deleteCount(selection: String, selectionEndsAtCursor: Bool) -> Int {

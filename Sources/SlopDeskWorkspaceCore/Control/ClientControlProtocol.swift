@@ -7,11 +7,11 @@ import Foundation
 // (windows/tabs/panes, badges, jump/view/edit, config, theme/font/keybind dumps, pane
 // capture/send-keys, agent status).
 //
-// This mirrors the style of `SlopDeskCtlCore/CtlCore.swift`'s `*Params` builders and reuses
-// the SAME NDJSON line protocol: a request is `{"id":…,"method":…,"params":{…}}` and a response
-// is `{"id":…,"ok":true,"result":{…}}` / `{"id":…,"ok":false,"error":"…"}`. The new CLI builds a
-// request line with `SlopDeskCtlCore.encodeRequestLine(id:method:params:)` and one of these
-// param builders, and decodes the reply with `SlopDeskCtlCore.decodeResponseLine(_:)`.
+// This mirrors the style of the host ctl's `*Params` builders (`rust/slopdesk-ctl/src/protocol.rs`)
+// and reuses the SAME NDJSON line protocol: a request is `{"id":…,"method":…,"params":{…}}` and a
+// response is `{"id":…,"ok":true,"result":{…}}` / `{"id":…,"ok":false,"error":"…"}`. The CLI builds a
+// request line with ``ClientControlProtocol/encodeRequestLine(id:method:params:)`` and one of these
+// param builders, and decodes the reply with ``ClientControlProtocol/decodeResponseLine(_:)``.
 //
 // PURE — no I/O, no socket, no SwiftUI. The dispatcher side (`ClientControlDispatcher`) parses a
 // request line and dispatches against the `ClientControlBackend` seam.
@@ -143,7 +143,35 @@ public enum ClientControlProtocol {
         FontScope(rawValue: token)
     }
 
-    // MARK: - Param builders (mirror CtlCore `*Params` style)
+    // MARK: - Line protocol
+
+    /// Encodes a request into an NDJSON line (WITHOUT the trailing LF — the caller appends it).
+    ///
+    /// `nil` only on a JSON-serialisation failure, which the param builders above cannot produce
+    /// (every value they emit is a `String`/`Bool`/`Int`/array/dict of the same).
+    ///
+    /// Lives here rather than in the CLI because the CLI is a thin socket shell (hang-safety rule)
+    /// and this is the one piece of its wire work worth unit-testing. It moved out of the deleted
+    /// `SlopDeskCtlCore` when `slopdesk-ctl` became Rust; the client CLI is the only Swift caller
+    /// left, and this is the module that already owns the client method vocabulary.
+    public static func encodeRequestLine(id: String, method: String, params: [String: Any]) -> String? {
+        let dict: [String: Any] = ["id": id, "method": method, "params": params]
+        guard let data = try? JSONSerialization.data(withJSONObject: dict, options: [.sortedKeys]),
+              let str = String(bytes: data, encoding: .utf8)
+        else { return nil }
+        return str
+    }
+
+    /// Parses one NDJSON response line into its object. `nil` on malformed / non-UTF-8 input
+    /// (validate-then-drop) — the caller reports a transport error rather than trapping.
+    public static func decodeResponseLine(_ line: String) -> [String: Any]? {
+        guard let data = line.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        return obj
+    }
+
+    // MARK: - Param builders
 
     /// `windows` — no params.
     public static func windowsParams() -> [String: Any] { [:] }

@@ -1,6 +1,3 @@
-import CoreGraphics
-import Foundation
-
 // MARK: - WorkspaceBindingRegistry routing (the action → store-op dispatch)
 
 /// The routing half of the single-source-of-truth registry (docs/42 §W6): dispatches a pure

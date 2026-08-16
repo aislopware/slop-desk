@@ -1,67 +1,33 @@
-import Foundation
+import CSlopDeskFFI
 
-/// PURE, headless builder: ``TerminalPreferences`` → a libghostty config string.
+/// The Swift face of `rust/slopdesk-terminal`'s `config`, reached through the door of the same name.
 ///
-/// libghostty's `ghostty_config_load_string` (header 1133) accepts the SAME newline-separated
-/// `key = value` syntax as `~/.config/ghostty/config`. `GhosttyTerminalView` feeds ``string(for:)``'s
-/// output through it BEFORE `ghostty_config_finalize`, so a font / theme / cursor change applies live
-/// (host PTY grid re-measured + resized after the reflow).
+/// libghostty's `ghostty_config_load_string` accepts the same newline-separated `key = value` syntax as
+/// `~/.config/ghostty/config`. `GhosttyTerminalView` feeds ``string(for:)``'s output through it BEFORE
+/// `ghostty_config_finalize`, so a font / theme / cursor change applies live (the host PTY grid is
+/// re-measured and resized after the reflow).
 ///
-/// Testable seam: the mapping is pure (no libghostty, no SwiftUI), so `TerminalConfigBuilderTests` pins
-/// every field → its Ghostty config key WITHOUT a surface (hang-safety rule — no `ghostty_*` in a test).
-/// The libghostty apply call site is compiled + code-reviewed only.
+/// What stays HERE is the crossing and nothing else. Every preference that is an enum on this side —
+/// the ligature mode, the two face modes, the blending mode, the cursor style and its blink tri-state —
+/// crosses as the RAW VALUE it persists as, and the far side decides which libghostty key that
+/// actuates. The one resolved value that crosses as a number is the cell-height percent, because
+/// ``LineHeightMode/adjustCellHeightPercent`` has a second reader on this side (`CodeFontSync`); the
+/// clamp and the formatting of it are the far side's.
 ///
-/// Ghostty config keys (verified against the upstream config reference / `ghostty +list-actions`):
-///   • `font-family`        — the monospace family name.
-///   • `font-size`          — point size.
-///   • `font-style`         — weight / style token (e.g. `Regular`, `Bold`).
-///   • `theme`              — named theme / palette.
-///   • `background`         — surface background colour (6-hex; overrides the theme).
-///   • `foreground`         — text colour (6-hex; overrides the theme).
-///   • `cursor-style`       — `block` / `block_hollow` / `bar` / `underline`.
-///   • `cursor-style-blink` — `true` / `false`, or OMITTED (tri-state `.default` defers to DEC mode 12).
-///   • `scrollback-limit`   — buffer size in BYTES (we map lines × a per-line estimate —
-///                            see ``scrollbackLimitBytes``).
-///   • `link-url`           — always `false`: SlopDesk owns regex link detection, highlighting and
-///                            ⌘click, so libghostty's built-in matcher would only double-draw the
-///                            underline. OSC 8 hyperlinks are unaffected.
-///   • `window-padding-balance` — always `true`: split the sub-cell remainder across all four edges
-///                            instead of dumping it on the right + bottom (see the emit site).
-///   • `keybind`            — one `keybind = <chord>=<action>` line per user rebind (additive).
+/// The record's runs — two dozen of them — ride in one blob lent to the door, and the two lists (the
+/// user's keybind lines, the theme's sixteen palette entries) ride as their own arrays of runs rather
+/// than as one delimited blob: a delimiter is a thing a value could contain and a count is not. The
+/// answer is asked for twice, as every text door here is: measure, then fill.
 public enum TerminalConfigBuilder {
-    /// Per-line byte estimate to convert user-facing "scrollback lines" → Ghostty's BYTE `scrollback-limit`.
-    /// Generous 256 B/line so the user gets at LEAST the lines they asked for; over-provisioning is cheap.
-    static let bytesPerScrollbackLine = 256
-
-    /// Convert a scrollback LINE count to Ghostty's BYTE `scrollback-limit`. Clamped at 0 (negative → 0,
-    /// never a trap). Pure integer math.
-    public static func scrollbackLimitBytes(lines: Int) -> Int {
-        let safe = lines > 0 ? lines : 0
-        return safe &* bytesPerScrollbackLine
-    }
-
-    /// Build the libghostty config string for `prefs` — one `key = value` line per setting, in a STABLE
-    /// order (font, theme, cursor, scrollback). Every value is emitted (real defaults, unlike the nil-able
-    /// video env overlay). An EMPTY family / theme is SKIPPED — an empty `font-family =` would clear
-    /// Ghostty's default to nothing (the one place "unset" is honoured).
+    /// Build the libghostty config string for `prefs`.
     ///
-    /// `backgroundOverride` / `foregroundOverride` (6-hex, no `#`) — a non-empty value REPLACES the pref's
-    /// own `background`/`foreground`; the seam the active THEME drives (``PreferencesStore`` passes
-    /// `terminalBackgroundHex`/`terminalForegroundHex`). Omit (`nil`) to keep the pref's colours.
-    /// `controls` — non-nil APPENDS the control passthrough block after the render lines; `nil`
-    /// (default) reproduces the base output BYTE-FOR-BYTE (wire / golden corpus untouched — client-side).
-    /// `paletteOverride` — the theme's 16-entry ANSI palette. Valid (exactly ``paletteCount``
-    /// clean 6-hex entries) → `palette = N=hex` lines (0–15) AFTER `foreground`; `nil`/malformed emits none.
-    /// `selectionBackgroundOverride` — valid 6-hex → `selection-background` after the palette;
-    /// `nil` / malformed ⇒ no line. Always pairs with `selection-foreground = cell-foreground` so each cell
-    /// keeps its original glyph colour under the highlight (libghostty v1.2+ token; NOT `auto` — that is
-    /// invalid and silently drops, restoring the default window fg↔bg invert).
-    /// FONT-PARITY keys read from `prefs`: all EXCEPT `font-feature` emit only for a non-default
-    /// value; `font-feature` emits UNCONDITIONALLY (ligatures-off's `-calt,-liga,-dlig` must always be sent
-    /// to un-ligate `calt`-on GSUB fonts — see ``appendFontParity``). So a default `prefs` gains exactly ONE
-    /// line beyond the base render — NOT byte-identical — but this string is CLIENT-only, so the golden corpus is
-    /// unaffected. Underline-off / SGR blink / `srgb-over`·`linear`·`perceptual` blending are PERSISTED but
-    /// NOT emitted (no verified libghostty key — deferred-apply).
+    /// `backgroundOverride` / `foregroundOverride` (6-hex, no `#`) — a non-empty value REPLACES the
+    /// pref's own `background`/`foreground`; the seam the active THEME drives (``PreferencesStore``
+    /// passes `terminalBackgroundHex`/`terminalForegroundHex`). `paletteOverride` — the theme's
+    /// 16-entry ANSI palette, emitted only when every entry is clean 6-hex.
+    /// `selectionBackgroundOverride` — same validation, one line. `controls` — non-nil APPENDS the
+    /// control passthrough block after the render lines; `nil` reproduces the base output
+    /// byte-for-byte.
     public static func string(
         for prefs: TerminalPreferences,
         keybinds: [String] = [],
@@ -71,281 +37,123 @@ public enum TerminalConfigBuilder {
         selectionBackgroundOverride: String? = nil,
         controls: TerminalControlsConfig? = nil,
     ) -> String {
-        var lines: [String] = []
-
-        // PRIMARY font family. There is ONE font slot since the theme picker was retired
-        // (user-directed 2026-08-08), so the pref's own family is the whole chain; empty is skipped (an
-        // empty `font-family =` would CLEAR Ghostty's default).
-        let family = prefs.fontFamily.trimmingCharacters(in: .whitespaces)
-        if !family.isEmpty {
-            lines.append("font-family = \(family)")
-            // ghostty has NO `font-family-fallback` key — `font-family` is a
-            // `RepeatableString`, so the FALLBACK CHAIN is REPEATED `font-family` lines, in order, AFTER the
-            // primary (covering CJK / Nerd Font glyphs). Only emitted when the primary is present (the first
-            // `font-family` must be the primary).
-            for fallback in fallbackFamilies(prefs.fontFamilyFallback) {
-                lines.append("font-family = \(fallback)")
-            }
-        }
-        lines.append("font-size = \(formatSize(prefs.fontSize))")
-        let weight = prefs.fontWeight.trimmingCharacters(in: .whitespaces)
-        if !weight.isEmpty { lines.append("font-style = \(weight)") }
-        // The font-parity block (per-face families / ligatures / bold-italic mode / line-height /
-        // blending). All gated on non-default EXCEPT `font-feature` — see ``appendFontParity`` and the doc above.
-        appendFontParity(&lines, prefs: prefs)
-        let theme = prefs.theme.trimmingCharacters(in: .whitespaces)
-        if !theme.isEmpty { lines.append("theme = \(theme)") }
-        // background/foreground AFTER `theme` so they override the named theme (which isn't bundled and
-        // won't resolve) — this is what actually pins the surface palette. Override wins; empty is skipped.
-        let background = resolved(backgroundOverride, or: prefs.background)
-        if !background.isEmpty { lines.append("background = \(background)") }
-        let foreground = resolved(foregroundOverride, or: prefs.foreground)
-        if !foreground.isEmpty { lines.append("foreground = \(foreground)") }
-        // Theme ANSI palette + selection colour, AFTER bg/fg. Both validate-then-drop — nil /
-        // malformed emits nothing.
-        appendPalette(
-            &lines,
-            paletteOverride: paletteOverride,
-            selectionBackgroundOverride: selectionBackgroundOverride,
+        var blob = Blob()
+        let percent = prefs.lineHeight.adjustCellHeightPercent
+        let font = SlopDeskTerminalFont(
+            family: blob.run(prefs.fontFamily),
+            fallback: blob.run(prefs.fontFamilyFallback),
+            weight: blob.run(prefs.fontWeight),
+            family_bold: blob.run(prefs.fontFamilyBold),
+            family_italic: blob.run(prefs.fontFamilyItalic),
+            family_bold_italic: blob.run(prefs.fontFamilyBoldItalic),
+            ligatures: blob.run(prefs.fontLigatures.rawValue),
+            bold: blob.run(prefs.fontBold.rawValue),
+            italic: blob.run(prefs.fontItalic.rawValue),
+            blending: blob.run(prefs.fontBlending.rawValue),
+            size: prefs.fontSize,
+            cell_height_percent: percent ?? 0,
+            auto_match_weight_style: prefs.autoMatchWeightStyle,
+            ligatures_alphabet: prefs.fontLigaturesAlphabet,
+            has_cell_height: percent != nil,
         )
-
-        lines.append("cursor-style = \(prefs.cursorStyle.rawValue)")
-        // `cursor-style-blink` is a libghostty OPTIONAL bool. Tri-state pref: `.default` → SKIP (defer to
-        // DEC mode 12), `.on`/`.off` → explicit `true`/`false`.
-        switch prefs.cursorBlink {
-        case .default: break
-        case .on: lines.append("cursor-style-blink = true")
-        case .off: lines.append("cursor-style-blink = false")
-        }
-        lines.append("scrollback-limit = \(scrollbackLimitBytes(lines: prefs.scrollbackLines))")
-        // ⌘-HOVER DOUBLE UNDERLINE. libghostty ships a default link matcher for URLs and bare paths
-        // (`Config.default` appends it, `link-url` gates it) and its renderer draws that match's own
-        // underline on the GPU quad. SlopDesk detects the same spans itself — `LinkHighlightOverlay`
-        // paints the accent underline, and the view's `mouseDown`/`mouseUp` SWALLOW the ⌘click to run
-        // `performLinkAction` — so libghostty's matcher was contributing nothing but a second rule,
-        // drawn at the glyph baseline in the cell foreground while ours sits a point lower in the
-        // accent. Two lines under one path, user-reported 2026-08-09.
-        //
-        // This turns OFF only the built-in REGEX matcher. OSC 8 hyperlinks are a separate set the
-        // renderer builds from the terminal's own hyperlink state (never from `config.link.links`),
-        // so their hover underline — and `GHOSTTY_ACTION_OPEN_URL`, which stays libghostty's — are
-        // untouched. Emitted unconditionally: it is a structural fact about who owns link rendering
-        // in this app, not a preference.
-        lines.append("link-url = false")
-
-        // GRID CENTRING. A pane's viewport is never an exact multiple of the cell size, and
-        // libghostty's default (`window-padding-balance = false`) makes the top-left cell hug the edge
-        // and dumps the WHOLE remainder on the right + bottom. With the leaf's even 8pt gutter
-        // (`TerminalLeafView`) that reads as left/top = 10pt against a right/bottom of 10pt + up to
-        // one cell — visibly off-centre at a 13pt font. `true` splits the remainder across all four
-        // edges instead. Cell overlays stay aligned: their origin is the `ghostty_surface_padding`
-        // readback, which reports the BALANCED padding, not the configured one.
-        // Emitted unconditionally — a structural fact about how the pane is laid out, not a preference.
-        lines.append("window-padding-balance = true")
-
-        // Additive keybind lines (one per user rebind), validate-then-skip an empty one.
-        for kb in keybinds where !kb.trimmingCharacters(in: .whitespaces).isEmpty {
-            lines.append("keybind = \(kb)")
-        }
-
-        // Control passthrough block — emitted ONLY when `controls` is supplied, so a `nil` build
-        // stays byte-identical (regression guard for the frozen golden corpus).
-        if let controls { appendControls(&lines, controls: controls, prefs: prefs) }
-
-        return lines.joined(separator: "\n")
+        let colors = SlopDeskTerminalColors(
+            theme: blob.run(prefs.theme),
+            background: blob.run(prefs.background),
+            foreground: blob.run(prefs.foreground),
+            background_override: blob.run(backgroundOverride ?? ""),
+            foreground_override: blob.run(foregroundOverride ?? ""),
+            selection_background: blob.run(selectionBackgroundOverride ?? ""),
+        )
+        let cursor = SlopDeskTerminalCursor(
+            style: blob.run(prefs.cursorStyle.rawValue),
+            blink: blob.run(prefs.cursorBlink.rawValue),
+            color: blob.run(prefs.cursorColor),
+            text_color: blob.run(prefs.cursorTextColor),
+            opacity: prefs.cursorOpacity,
+        )
+        let record = SlopDeskTerminalConfig(
+            font: font,
+            colors: colors,
+            cursor: cursor,
+            controls: controlsRecord(controls, &blob),
+            scrollback_lines: Int64(prefs.scrollbackLines),
+            has_controls: controls != nil,
+        )
+        let keybindRuns = keybinds.map { blob.run($0) }
+        let paletteRuns = (paletteOverride ?? []).map { blob.run($0) }
+        return built(record, blob.bytes, keybindRuns, paletteRuns)
     }
 
-    /// Append the FONT-PARITY lines (per-face families, `font-feature`, `font-style-bold/italic` +
-    /// `font-synthetic-style`, `adjust-cell-height`, `font-thicken`) from `prefs`. The fallback chain is NOT
-    /// here — it rides repeated `font-family` lines in ``string(for:)`` (no `font-family-fallback` key).
-    /// `font-feature` is ALWAYS emitted (off = the disabling set); the rest GATED on a NON-default value.
-    /// Underline-off / SGR blink / `srgb-over`·`linear`·`perceptual` blending are persisted but NOT emitted
-    /// (deferred-apply).
-    private static func appendFontParity(_ lines: inout [String], prefs: TerminalPreferences) {
-        // Explicit per-face families surface ONLY when "Auto-match weight & style" is OFF (the three manual
-        // pickers show only then); each empty face is skipped.
-        if !prefs.autoMatchWeightStyle {
-            let bold = prefs.fontFamilyBold.trimmingCharacters(in: .whitespaces)
-            if !bold.isEmpty { lines.append("font-family-bold = \(bold)") }
-            let italic = prefs.fontFamilyItalic.trimmingCharacters(in: .whitespaces)
-            if !italic.isEmpty { lines.append("font-family-italic = \(italic)") }
-            let boldItalic = prefs.fontFamilyBoldItalic.trimmingCharacters(in: .whitespaces)
-            if !boldItalic.isEmpty { lines.append("font-family-bold-italic = \(boldItalic)") }
-        }
-        // Ligatures → `font-feature` (always emitted). `off` emits the DISABLING set `-calt,-liga,-dlig` to
-        // un-ligate fonts that ship `calt`-on GSUB (Fira Code / JetBrains Mono); the alphabet flag extends
-        // ligation to alphabetic runs, but only when ligatures are ON.
-        var features = prefs.fontLigatures.baseFeatures
-        if prefs.fontLigatures != .off, prefs.fontLigaturesAlphabet { features.append("liga") }
-        lines.append("font-feature = \(features.joined(separator: ","))")
-        // Bold / italic FACE mode. `off` disables the face (`font-style-{kind} = false`); `primaryOnly` /
-        // `synthetic` feed a SINGLE combined `font-synthetic-style` key (avoid a duplicate); `auto` emits nothing.
-        if prefs.fontBold.disablesFace { lines.append("font-style-bold = false") }
-        if prefs.fontItalic.disablesFace { lines.append("font-style-italic = false") }
-        var synthetic = prefs.fontBold.syntheticTokens(kind: "bold")
-        synthetic.append(contentsOf: prefs.fontItalic.syntheticTokens(kind: "italic"))
-        if !synthetic.isEmpty { lines.append("font-synthetic-style = \(synthetic.joined(separator: ","))") }
-        // Line-height → `adjust-cell-height` (% of natural cell height). `.default` emits nothing; `compact`/
-        // `loose` are integral constants (0 / 20); `custom` uses `(m-1)*100` (PLAIN subtract-then-multiply,
-        // NEVER fused). Clamped NaN-faithfully + integral-formatted.
-        if let percent = prefs.lineHeight.adjustCellHeightPercent {
-            lines.append("adjust-cell-height = \(formatSize(clampCellHeightPercent(percent)))%")
-        }
-        // Blending → only `macos-like` maps (a verified `font-thicken`); the rest persist but are not emitted.
-        if prefs.fontBlending.thickens { lines.append("font-thicken = true") }
+    /// The control block's crossing form, or an all-zero one when there is no block — the `has_controls`
+    /// flag, not this record, is what decides whether any of it is read.
+    private static func controlsRecord(
+        _ controls: TerminalControlsConfig?,
+        _ blob: inout Blob,
+    ) -> SlopDeskTerminalControls {
+        guard let controls else { return SlopDeskTerminalControls() }
+        return SlopDeskTerminalControls(
+            clipboard_read: blob.run(controls.clipboardReadToken),
+            clipboard_write: blob.run(controls.clipboardWriteToken),
+            mouse_shift_capture: blob.run(controls.mouseShiftCaptureToken),
+            right_click_action: blob.run(controls.rightClickActionToken),
+            macos_option_as_alt: blob.run(controls.macosOptionAsAltToken),
+            scroll_multiplier: controls.scrollMultiplier,
+            copy_on_select: controls.copyOnSelect,
+            trim_trailing: controls.trimTrailing,
+            clear_on_typing: controls.clearOnTyping,
+            clear_on_copy: controls.clearOnCopy,
+            paste_protection: controls.pasteProtection,
+            bracketed_safe: controls.bracketedSafe,
+            hide_mouse_while_typing: controls.hideMouseWhileTyping,
+            click_to_move: controls.clickToMove,
+            allow_mouse_capture: controls.allowMouseCapture,
+            shift_arrow_select: controls.shiftArrowSelect,
+        )
     }
 
-    /// Ordered, NaN-faithful clamp of an `adjust-cell-height` % to a sane band (multiplier ~0.5…3.0 ⇒
-    /// −50 %…200 %). Uses ``Double/maximum(_:_:)`` / ``Double/minimum(_:_:)`` (NOT a bare `<`/`>` ternary)
-    /// so a NaN / ±inf multiplier resolves to a finite bound, not garbage — mirrors `CursorColorHex.channel`.
-    static func clampCellHeightPercent(_ percent: Double) -> Double {
-        Double.maximum(-50.0, Double.minimum(200.0, percent))
-    }
-
-    /// The number of ANSI palette entries a valid theme palette MUST declare (indices 0–15).
-    static let paletteCount = 16
-
-    /// `true` iff `value` is a 6-digit hex colour with NO leading `#` (case-insensitive). Rejects wrong
-    /// length, `#`-prefix, or any non-hex char (validate-then-drop); embedded whitespace also fails.
-    /// Used for palette / background / foreground / selection-background (libghostty `Color` is RGB-only —
-    /// no alpha channel; 8-digit `#rrggbbaa` is rejected by `Color.fromHex`).
-    static func isValidHex(_ value: String) -> Bool {
-        guard value.count == 6 else { return false }
-        for scalar in value.unicodeScalars {
-            let v = scalar.value
-            let isDigit = v >= 48 && v <= 57 // 0–9
-            let isUpperAF = v >= 65 && v <= 70 // A–F
-            let isLowerAF = v >= 97 && v <= 102 // a–f
-            if !(isDigit || isUpperAF || isLowerAF) { return false }
-        }
-        return true
-    }
-
-    /// Append the theme PALETTE lines (`palette = N=hex`, 0–15) + selection highlight.
-    /// Palette validate-then-drop: only when exactly ``paletteCount`` clean 6-hex entries.
-    /// Selection: always emit `selection-foreground = cell-foreground` (libghostty v1.2+ — keep each
-    /// cell's original glyph colour under the highlight; the default null path uses the *window*
-    /// bg as fg which reads as an invert). When a valid 6-hex `selectionBackgroundOverride` is present,
-    /// emit `selection-background` (opaque RGB fill — true alpha wash is not in the cell path).
-    private static func appendPalette(
-        _ lines: inout [String],
-        paletteOverride: [String]?,
-        selectionBackgroundOverride: String?,
-    ) {
-        if let paletteOverride,
-           paletteOverride.count == paletteCount,
-           paletteOverride.allSatisfy(isValidHex)
-        {
-            for (index, hex) in paletteOverride.enumerated() {
-                lines.append("palette = \(index)=\(hex)")
+    /// The text the door spells for one record: measure, then fill.
+    private static func built(
+        _ record: SlopDeskTerminalConfig,
+        _ text: [UInt8],
+        _ keybinds: [SlopDeskConfigRun],
+        _ palette: [SlopDeskConfigRun],
+    ) -> String {
+        // An empty config on the truncated branch is the same answer ``lentText`` gives everywhere:
+        // half a terminal configuration is worse than none.
+        text.withUnsafeBufferPointer { blob in
+            keybinds.withUnsafeBufferPointer { binds in
+                palette.withUnsafeBufferPointer { entries in
+                    lentText { out, cap in
+                        slopdesk_terminal_config_string(
+                            record, blob.baseAddress, blob.count,
+                            binds.baseAddress, binds.count, entries.baseAddress, entries.count,
+                            out, cap,
+                        )
+                    }
+                }
             }
         }
-        // Keep original cell colours (ANSI red stays red, etc.) under the selection fill.
-        lines.append("selection-foreground = cell-foreground")
-        if let selectionBackgroundOverride {
-            let selection = selectionBackgroundOverride.trimmingCharacters(in: .whitespaces)
-            if isValidHex(selection) { lines.append("selection-background = \(selection)") }
-        }
     }
 
-    /// Append the *control* passthrough lines (selection / copy / paste / mouse / scroll knobs + cursor
-    /// colour/opacity/text + the ⇧+arrow `adjust_selection` keybinds), STABLE order after the render lines.
-    /// Every token is a verified libghostty value (see ``TerminalControlsConfig``); cursor colours come from
-    /// `prefs` under the same "empty ⇒ skip" rule as `background` / `foreground`.
-    private static func appendControls(
-        _ lines: inout [String],
-        controls c: TerminalControlsConfig,
-        prefs: TerminalPreferences,
-    ) {
-        // Selection → pasteboard. `copy-on-select` is a libghostty tri-state; the bool maps ON → `clipboard`,
-        // OFF → `false`.
-        lines.append("copy-on-select = \(c.copyOnSelect ? "clipboard" : "false")")
-        lines.append("clipboard-trim-trailing-spaces = \(boolToken(c.trimTrailing))")
-        lines.append("selection-clear-on-typing = \(boolToken(c.clearOnTyping))")
-        lines.append("selection-clear-on-copy = \(boolToken(c.clearOnCopy))")
-        // Paste protection.
-        lines.append("clipboard-paste-protection = \(boolToken(c.pasteProtection))")
-        lines.append("clipboard-paste-bracketed-safe = \(boolToken(c.bracketedSafe))")
-        // OSC-52 clipboard access gates (token already resolved to libghostty's allow / deny / ask).
-        lines.append("clipboard-read = \(c.clipboardReadToken)")
-        lines.append("clipboard-write = \(c.clipboardWriteToken)")
-        // Mouse / pointer.
-        lines.append("mouse-hide-while-typing = \(boolToken(c.hideMouseWhileTyping))")
-        lines.append("mouse-shift-capture = \(c.mouseShiftCaptureToken)")
-        lines.append("cursor-click-to-move = \(boolToken(c.clickToMove))")
-        lines.append("mouse-reporting = \(boolToken(c.allowMouseCapture))")
-        // Right-Click Action — libghostty OWNS the bare-right-click dispatch. The token is the
-        // `right-click-action` enum value 1:1 (`RightClickAction.rawValue` = the Zig enum names), so the
-        // surface performs the action — the GUI view no longer re-reads `hasSelection()` after the surface
-        // has already word-selected under the cursor (a race). The view keeps ONLY the
-        // ⌃-right-always-menu override.
-        lines.append("right-click-action = \(c.rightClickActionToken)")
-        // One multiplier drives BOTH precision + discrete factors, PRESERVING libghostty's native per-axis
-        // ratio (precision:1, discrete:3). Emitting the SAME factor on both axes (the pre-fix bug) made
-        // discrete wheel scroll 3× slower than stock at the default `m == 1.0`. So precision rides `m`,
-        // discrete rides `3 × m` (PLAIN multiply — NEVER fused / `addingProduct`). Default emits
-        // `precision:1,discrete:3`.
-        let precision = formatSize(c.scrollMultiplier)
-        let discrete = formatSize(c.scrollMultiplier * 3)
-        lines.append("mouse-scroll-multiplier = precision:\(precision),discrete:\(discrete)")
-        // "Option as Alt" — the macOS Option-key→Alt/Meta behaviour. Token is `macos-option-as-alt` 1:1
-        // (`false`/`true`/`left`/`right`); the surface owns the key→byte encoding. Factory keeps `false`
-        // (Option stays free for accented characters).
-        lines.append("macos-option-as-alt = \(c.macosOptionAsAltToken)")
-        // Cursor colour / text-under / opacity (render prefs). Empty colour ⇒ skip (same as background /
-        // foreground); opacity always emits (numeric pref, formatted not fused).
-        let cursorColor = prefs.cursorColor.trimmingCharacters(in: .whitespaces)
-        if !cursorColor.isEmpty { lines.append("cursor-color = \(cursorColor)") }
-        let cursorText = prefs.cursorTextColor.trimmingCharacters(in: .whitespaces)
-        if !cursorText.isEmpty { lines.append("cursor-text = \(cursorText)") }
-        lines.append("cursor-opacity = \(formatSize(prefs.cursorOpacity))")
-        // ⇧+Arrow selection. The vendored fork binds shift+arrow → adjust_selection by DEFAULT, so the toggle
-        // must EXPLICITLY (re)bind when ON and `unbind` when OFF — emitting nothing for OFF would leave the
-        // default binding live and arrows would never reach the program. NEVER touch shift+cmd+arrow (the
-        // caret-move passthrough).
-        for dir in ["left", "right", "up", "down"] {
-            let action = c.shiftArrowSelect ? "adjust_selection:\(dir)" : "unbind"
-            lines.append("keybind = shift+\(dir)=\(action)")
+    /// A byte pool that answers, for each string interned, WHERE it landed — so a record carries
+    /// `(offset, length)` pairs rather than pointers, and no field makes the far side own a lifetime.
+    private struct Blob {
+        var bytes: [UInt8] = []
+
+        mutating func run(_ text: String) -> SlopDeskConfigRun {
+            let encoded = Array(text.utf8)
+            let run = SlopDeskConfigRun(offset: UInt32(bytes.count), length: UInt32(encoded.count))
+            bytes.append(contentsOf: encoded)
+            return run
         }
-    }
-
-    /// Split the comma-separated fallback-family string into ordered, trimmed, non-empty names — each a
-    /// repeated `font-family =` line after the primary. Blank entries are dropped, so
-    /// `"PingFang SC, , Symbols Nerd Font"` yields two families.
-    static func fallbackFamilies(_ raw: String) -> [String] {
-        raw.split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-    }
-
-    /// The `true` / `false` token for a libghostty boolean config value.
-    private static func boolToken(_ flag: Bool) -> String { flag ? "true" : "false" }
-
-    /// Resolve a colour: the `override` (trimmed) if non-empty, else the `fallback` (trimmed). Lets the
-    /// theme override win while an empty / absent one keeps the pref's colour.
-    static func resolved(_ override: String?, or fallback: String) -> String {
-        if let override {
-            let trimmed = override.trimmingCharacters(in: .whitespaces)
-            if !trimmed.isEmpty { return trimmed }
-        }
-        return fallback.trimmingCharacters(in: .whitespaces)
-    }
-
-    /// Format the font size without a spurious decimal / exponent: `13` for integral, `13.5` for fractional
-    /// — what Ghostty's parser accepts. Mirrors ``EnvBridge/formatDouble(_:)`` so the two surfaces agree.
-    static func formatSize(_ size: Double) -> String {
-        if size.isFinite, size == size.rounded(), abs(size) < 1e9 {
-            return String(Int(size))
-        }
-        return String(size)
     }
 }
 
 // MARK: - TerminalControlsConfig (the leaf, libghostty-token mirror the builder consumes)
 
 /// The PURE, libghostty-token mirror of the fire-time terminal CONTROL knobs, defined HERE in the
-/// leaf ``SlopDeskVideoProtocol`` so ``TerminalConfigBuilder`` (and its headless test) can emit the control
-/// lines WITHOUT importing `SlopDeskWorkspaceCore.TerminalControls` (which carries the `Defaults`-backed
+/// leaf ``SlopDeskVideoProtocol`` so ``TerminalConfigBuilder`` (and its headless test) can carry the control
+/// settings WITHOUT importing `SlopDeskWorkspaceCore.TerminalControls` (which carries the `Defaults`-backed
 /// `from(defaults:)` factory + multi-state enums `ClipboardAccess`, `MouseShiftCapture`, …). The module
 /// graph is one-way (`SlopDeskWorkspaceCore` → `SlopDeskVideoProtocol`, never the reverse — VideoProtocol
 /// stays a pure wire/settings leaf with no `Defaults` dependency), so the builder's input MUST live in the

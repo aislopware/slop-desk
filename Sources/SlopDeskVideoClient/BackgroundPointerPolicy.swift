@@ -1,3 +1,5 @@
+import CSlopDeskFFI
+
 // BackgroundPointerPolicy — the pure decisions behind "background interaction": a SATELLITE window
 // (the dedicated remote desktop / a ⌥⌘P pop-out) keeps taking POINTER input while it is NOT the key
 // window, so the user hovers/scrolls/clicks the remote desktop while typing stays in the window they
@@ -16,7 +18,7 @@ public enum BackgroundPointerPolicy {
     /// any background-pointer surface. The read-only gate (`inputEnabled`) stays a separate,
     /// downstream check on every relay.
     public static func forwardsPointer(isActive: Bool, backgroundPointer: Bool) -> Bool {
-        isActive || backgroundPointer
+        slopdesk_gesture_forwards_pointer(isActive, backgroundPointer)
     }
 
     /// Whether a mouse-down is a BACKGROUND click: forwarded to the host with the local window left
@@ -24,6 +26,6 @@ public enum BackgroundPointerPolicy {
     /// local focus must not move at all. A KEY window always takes the normal activate path:
     /// background mode changes only the not-key case.
     public static func backgroundClick(backgroundPointer: Bool, windowIsKey: Bool) -> Bool {
-        backgroundPointer && !windowIsKey
+        slopdesk_gesture_background_click(backgroundPointer, windowIsKey)
     }
 }

@@ -3,11 +3,12 @@
 # Android panel — the hardware gate.
 #
 # `make test` covers everything about this panel that is PURE: the scrcpy stream reassembler, the
-# control-message encoder, the layout, the scroll machine, the logcat parser, the device decode and
-# the bridge's ack/stream split. None of that opens a socket (hang-safety), which is exactly why it
-# proves nothing about the two things that can only be wrong against a real device: whether the
-# `scrcpy-server` handshake still completes at the pinned version, and whether the bridge's own
-# line-JSON-then-bytes framing survives a real `adb`.
+# control-message encoder, the layout, the scroll machine, the logcat parser, the device decode, the
+# bridge's ack/stream split, and — since the bridge moved to `rust/slopdesk-androidd` — the whole
+# catalogue, argument-vector and refusal surface as Rust unit tests. None of that opens a socket
+# (hang-safety), which is exactly why it proves nothing about the two things that can only be wrong
+# against a real device: whether the `scrcpy-server` handshake still completes at the pinned version,
+# and whether the bridge's own line-JSON-then-bytes framing survives a real `adb`.
 #
 # This script is that proof. It needs a booted emulator or an attached phone; the `adb` and the
 # `scrcpy-server` jar are vendored (`make provision`). Nothing here is destructive: it lists, screenshots,
@@ -35,6 +36,11 @@ if [[ -z "${ADB}" ]]; then
   exit 1
 fi
 echo "==> adb: ${ADB}"
+# Handed to the daemon under test rather than left to its own locator. The resolution above already
+# reproduced production's order; exporting the ANSWER is what makes the gate prove the handshake
+# against the same `adb` the panel runs, on a host where that one is not on `PATH` (a provisioned
+# prefix, which is the normal case).
+export SLOPDESK_ADB_BIN="${ADB}"
 
 # A device in any state other than `device` cannot be mirrored: `unauthorized` in particular means a
 # dialog is waiting on the device's own screen, and every shell below would fail with a message that
@@ -68,11 +74,13 @@ fi
 echo "==> scrcpy-server: ${JAR}"
 export SLOPDESK_ANDROID_SERVER_JAR="${JAR}"
 
-# The gate the tests themselves read. Without it every case in the bundle returns early, which is
-# what keeps a clean checkout green on a machine that has never seen the Android SDK.
+# The gate the tests themselves read. Without it every case in the bundle returns early after saying
+# why, which is what keeps a clean checkout green on a machine that has never seen the Android SDK.
 export SLOPDESK_ANDROID_HW=1
 
-echo "==> swift test --filter AndroidBridgeHardwareTests"
-swift test --filter AndroidBridgeHardwareTests
+# The gate's cases are `rust/slopdesk-androidd/tests/hardware.rs` now, not a `swift test` filter:
+# the bridge they exercise is that crate, and there is no Swift copy of it to test.
+echo "==> cargo test --test hardware (rust/slopdesk-androidd)"
+(cd rust/slopdesk-androidd && cargo test --test hardware -- --nocapture --test-threads=1)
 
 echo "==> Android hardware gate OK"

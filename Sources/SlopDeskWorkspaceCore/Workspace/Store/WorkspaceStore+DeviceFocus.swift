@@ -1,4 +1,3 @@
-import Foundation
 import SlopDeskWorkspaceModel
 
 // MARK: - WorkspaceStore × device-local focus (docs/45 §8.2)

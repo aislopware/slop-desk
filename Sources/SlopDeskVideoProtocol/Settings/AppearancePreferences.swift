@@ -1,5 +1,3 @@
-import Foundation
-
 /// CLIENT-chrome appearance prefs — the density tier the GUI client renders at.
 ///
 /// CRITICAL invariant (golden-safety): unlike ``VideoPreferences`` / ``AgentPreferences``, appearance is

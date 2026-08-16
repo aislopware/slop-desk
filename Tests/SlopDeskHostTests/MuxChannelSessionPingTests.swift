@@ -35,7 +35,7 @@ final class MuxChannelSessionPingTests: XCTestCase {
         }
         let session = MuxChannelSession(
             channelID: 9,
-            pty: PTYProcess(), // unspawned: the read loop EOFs immediately; harmless
+            pty: unattachedPTY(), // unspawned: the read loop EOFs immediately; harmless
             data: data,
             control: control,
         )

@@ -288,8 +288,8 @@ final class LaunchRestoreGateContractTests: XCTestCase {
     /// The gates that count how many shells the host is running.
     ///
     /// A child of hostd is not the same thing as a shell, which is what makes this rule necessary:
-    /// hostd forks helpers too. `TerminfoResolver` runs `/usr/bin/infocmp`, `HostMetadataProbe`
-    /// runs `/usr/bin/git` and `/usr/sbin/lsof`, `ShellIntegration` probes `$ZDOTDIR` with a
+    /// hostd forks helpers too. `slopdesk-probe` runs `/usr/bin/git` and `/usr/bin/infocmp`,
+    /// `HostMetadataProbe` runs `/usr/sbin/lsof`, superd's shim probes `$ZDOTDIR` with a
     /// `--norcs` zsh. Each is a child for as long as it lives, and `${WORK}` sits under this repo —
     /// so a pane's project key resolves to slop-desk and every line a gate appends to its own log
     /// arms `RepoStatusWatcher`'s debounced `git` probe, INSIDE the watch window.

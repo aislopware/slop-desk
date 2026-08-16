@@ -1,4 +1,4 @@
-import Foundation
+import CSlopDeskFFI
 import SlopDeskVideoProtocol
 
 /// PURE AIMD congestion controller for the live HEVC stream (adaptive bitrate).
@@ -75,18 +75,38 @@ import SlopDeskVideoProtocol
 /// starts AT the ceiling and is clamped there ⇒ a no-op. It NEVER decreases on absence-of-data, only
 /// on positive evidence. Inert and byte-identical in every telemetry-off permutation.
 ///
-/// All tunables are env-overridable (`SLOPDESK_ABR_*`) for HW A/B without a rebuild.
+/// THE LAW ITSELF LIVES BEHIND THE DOOR. Everything above describes what `slopdesk_abr_decide` does;
+/// what stays here is the part that is genuinely the host's — resolving every `SLOPDESK_ABR_*` knob
+/// through the overlay-aware ``EnvConfig`` (validate-then-default), naming the branches for the debug
+/// log, and holding the state between reports. The state crosses BY VALUE, whole, on every call:
+/// this is a `struct` its owner copies, and a handle would alias two values the type system says are
+/// separate.
 public struct LiveCongestionController: Sendable, Equatable {
     // MARK: Tunables (env-overridable SLOPDESK_ABR_*)
 
+    /// The defaults, spelled ONCE — on the far side, next to the law that reads them. Every static
+    /// below falls back to a field of this rather than to a literal, so a default can never be
+    /// changed in one language and not the other.
+    private static let defaults = slopdesk_abr_config_default()
+
     /// Reports to fold before ANY action — the cold-start guard (~10 × 50ms ≈ 500ms). `SLOPDESK_ABR_WARMUP`.
-    public static let warmupTicks: Int = envInt("SLOPDESK_ABR_WARMUP", 10, min: 0, max: 100_000)
+    public static let warmupTicks: Int = envInt(
+        "SLOPDESK_ABR_WARMUP",
+        Int(defaults.warmup_ticks),
+        min: 0,
+        max: 100_000,
+    )
     /// RAW per-report loss sample above which the link is "congested" → multiplicative decrease
     /// (see the type doc on why the raw sample, not the EWMA). `SLOPDESK_ABR_LOSS`.
-    public static let lossThreshold: Double = envDouble("SLOPDESK_ABR_LOSS", 0.02, min: 0, max: 1)
+    public static let lossThreshold: Double = envDouble("SLOPDESK_ABR_LOSS", defaults.loss_threshold, min: 0, max: 1)
     /// Raw-sample gate the catastrophic halve ALSO requires: the halve needs a sustained EWMA collapse
     /// (``catastrophicLossThreshold``) AND a currently-hot report. `SLOPDESK_ABR_SEVERE`.
-    public static let severeLossThreshold: Double = envDouble("SLOPDESK_ABR_SEVERE", 0.10, min: 0, max: 1)
+    public static let severeLossThreshold: Double = envDouble(
+        "SLOPDESK_ABR_SEVERE",
+        defaults.severe_loss_threshold,
+        min: 0,
+        max: 1,
+    )
     /// LOSS TOLERANCE: loss below ``catastrophicLossThreshold`` decreases ONLY when CORROBORATED by RTT
     /// inflation (both gates of the RTT predicate on the same report). Measured on the real inter-ISP
     /// path (iperf3, 1200B datagrams): loss is ~0.6–1.1% at 5, 12 AND 30Mbps — rate-INDEPENDENT
@@ -102,39 +122,87 @@ public struct LiveCongestionController: Sendable, Equatable {
     /// true collapse) to cross 0.25, while a single spike moves it ≤12.5%. Gated on the hold-down so
     /// the decaying EWMA tail after collapse cannot cascade halvings to the floor.
     /// `SLOPDESK_ABR_CATASTROPHIC`.
-    public static let catastrophicLossThreshold: Double = envDouble("SLOPDESK_ABR_CATASTROPHIC", 0.25, min: 0, max: 1)
+    public static let catastrophicLossThreshold: Double = envDouble(
+        "SLOPDESK_ABR_CATASTROPHIC",
+        defaults.catastrophic_loss_threshold,
+        min: 0,
+        max: 1,
+    )
     /// Multiplicative decrease factor on ordinary congestion (0.85 = drop to 85%). `SLOPDESK_ABR_DEC`.
-    public static let decreaseFactor: Double = envDouble("SLOPDESK_ABR_DEC", 0.85, min: 0.05, max: 0.999)
+    public static let decreaseFactor: Double = envDouble(
+        "SLOPDESK_ABR_DEC",
+        defaults.decrease_factor,
+        min: 0.05,
+        max: 0.999,
+    )
     /// Multiplicative decrease factor on the catastrophic branch (0.5 = halve). `SLOPDESK_ABR_SEVERE_DEC`.
-    public static let severeDecreaseFactor: Double = envDouble("SLOPDESK_ABR_SEVERE_DEC", 0.5, min: 0.05, max: 0.999)
+    public static let severeDecreaseFactor: Double = envDouble(
+        "SLOPDESK_ABR_SEVERE_DEC",
+        defaults.severe_decrease_factor,
+        min: 0.05,
+        max: 0.999,
+    )
     /// Additive-increase step = `ceiling / increaseDivisor` per clean tick (32 ⇒ ~3% of ceiling). `SLOPDESK_ABR_INC_DIV`.
-    public static let increaseDivisor: Int = envInt("SLOPDESK_ABR_INC_DIV", 32, min: 1, max: 100_000)
+    public static let increaseDivisor: Int = envInt(
+        "SLOPDESK_ABR_INC_DIV",
+        Int(defaults.increase_divisor),
+        min: 1,
+        max: 100_000,
+    )
     /// Minimum fraction of `current` the stream must actually be USING (offered encoded throughput)
     /// before the controller probes higher. Below it the stream is APPLICATION-limited (idle / near-
     /// static screen — "scroll-up-at-top, only the cursor blinks") so probing only inflates phantom
     /// headroom that a later burst overshoots into bufferbloat (RTT 90-110ms on a 5ms LAN) → the
     /// "scroll-down-hard → blur + lag" failure. Only consulted when the host supplies a utilization
-    /// signal (`decide(_:offeredBps:)`); the no-signal path is unaffected. Mirrors the core
-    /// `RAMP_UTILIZATION_FRACTION` (0.5). `SLOPDESK_ABR_RAMP_UTIL`.
-    public static let rampUtilizationFraction: Double = envDouble("SLOPDESK_ABR_RAMP_UTIL", 0.5, min: 0, max: 1)
+    /// signal (`decide(_:offeredBps:)`); the no-signal path is unaffected. `SLOPDESK_ABR_RAMP_UTIL`.
+    public static let rampUtilizationFraction: Double = envDouble(
+        "SLOPDESK_ABR_RAMP_UTIL",
+        defaults.ramp_utilization_fraction,
+        min: 0,
+        max: 1,
+    )
     /// Fraction of `current` below which the stream is DEEPLY idle → the target DECAYS toward offered
     /// (stricter than ``rampUtilizationFraction`` so a brief flick-pause holds but a sustained static
-    /// screen shrinks the target, preventing a post-idle burst forming a VBR monster frame). Mirrors
-    /// the core `DECAY_UTILIZATION_FRACTION` (0.25). `SLOPDESK_ABR_DECAY_UTIL`.
-    public static let decayUtilizationFraction: Double = envDouble("SLOPDESK_ABR_DECAY_UTIL", 0.25, min: 0, max: 1)
-    /// While idle the target decays toward `offered × this` (headroom above the measured use). Mirrors
-    /// core `DECAY_HEADROOM` (2.0). `SLOPDESK_ABR_DECAY_HEADROOM`.
-    public static let decayHeadroom: Double = envDouble("SLOPDESK_ABR_DECAY_HEADROOM", 2.0, min: 1, max: 100)
-    /// Geometric fraction of the gap to the decay target per idle tick. Mirrors core
-    /// `DECAY_STEP_FRACTION` (0.25). `SLOPDESK_ABR_DECAY_STEP`.
-    public static let decayStepFraction: Double = envDouble("SLOPDESK_ABR_DECAY_STEP", 0.25, min: 0, max: 1)
+    /// screen shrinks the target, preventing a post-idle burst forming a VBR monster frame).
+    /// `SLOPDESK_ABR_DECAY_UTIL`.
+    public static let decayUtilizationFraction: Double = envDouble(
+        "SLOPDESK_ABR_DECAY_UTIL",
+        defaults.decay_utilization_fraction,
+        min: 0,
+        max: 1,
+    )
+    /// While idle the target decays toward `offered × this` (headroom above the measured use).
+    /// `SLOPDESK_ABR_DECAY_HEADROOM`.
+    public static let decayHeadroom: Double = envDouble(
+        "SLOPDESK_ABR_DECAY_HEADROOM",
+        defaults.decay_headroom,
+        min: 1,
+        max: 100,
+    )
+    /// Geometric fraction of the gap to the decay target per idle tick. `SLOPDESK_ABR_DECAY_STEP`.
+    public static let decayStepFraction: Double = envDouble(
+        "SLOPDESK_ABR_DECAY_STEP",
+        defaults.decay_step_fraction,
+        min: 0,
+        max: 1,
+    )
     /// Reports to suppress any increase after a decrease — the anti-thrash hold-down (~20 × 50ms ≈ 1s). `SLOPDESK_ABR_HOLD`.
-    public static let holdTicks: Int = envInt("SLOPDESK_ABR_HOLD", 20, min: 0, max: 100_000)
+    public static let holdTicks: Int = envInt("SLOPDESK_ABR_HOLD", Int(defaults.hold_ticks), min: 0, max: 100_000)
     /// `smoothedRTT > minRTT × rttInflateFactor` (AND past the absolute slack) signals queue build-up. `SLOPDESK_ABR_RTT`.
-    public static let rttInflateFactor: Double = envDouble("SLOPDESK_ABR_RTT", 1.25, min: 1.0, max: 100)
+    public static let rttInflateFactor: Double = envDouble(
+        "SLOPDESK_ABR_RTT",
+        defaults.rtt_inflate_factor,
+        min: 1.0,
+        max: 100,
+    )
     /// ABSOLUTE smoothed-RTT inflation over the baseline (ms) ALSO required before the RTT path may
     /// signal congestion — keeps LAN scheduling wobble (a few ms on a ~5ms baseline) sub-threshold. `SLOPDESK_ABR_SLACK`.
-    public static let rttSlackMillis: Double = envDouble("SLOPDESK_ABR_SLACK", 15.0, min: 0, max: 10000)
+    public static let rttSlackMillis: Double = envDouble(
+        "SLOPDESK_ABR_SLACK",
+        defaults.rtt_slack_millis,
+        min: 0,
+        max: 10000,
+    )
     /// BASELINE-PROPORTIONAL slack (cellular wobble): effective slack is
     /// `max(rttSlackMillis, slackFraction × minRTT)`. The fixed 15ms suits ~5-10ms LAN baselines, but
     /// on the measured 4G path (minRTT ≈ 40-44ms) cellular scheduler wobble of ±50% is RATE-INDEPENDENT
@@ -143,30 +211,30 @@ public struct LiveCongestionController: Sendable, Equatable {
     /// gain). 0.75 reclassifies the sub-`1.75×min` band as weather while a REAL queue (smoothed ≥
     /// ~1.75× baseline) still cuts; LAN/WiFi baselines are unaffected (0.75×10ms < 15ms absolute
     /// floor). `SLOPDESK_ABR_SLACK_FRAC`.
-    public static let rttSlackFraction: Double = envDouble("SLOPDESK_ABR_SLACK_FRAC", 0.75, min: 0, max: 10)
+    public static let rttSlackFraction: Double = envDouble(
+        "SLOPDESK_ABR_SLACK_FRAC",
+        defaults.rtt_slack_fraction,
+        min: 0,
+        max: 10,
+    )
 
     /// The effective absolute-slack gate for a given path baseline (see ``rttSlackFraction``):
     /// `max(rttSlackMillis, rttSlackFraction × minRTT)`, or `rttSlackMillis` for a non-finite baseline.
+    ///
+    /// The frame-rate governor's congestion predicate consults the SAME rule, which is why it is a
+    /// free-standing entry rather than a step inside `decide` — the two controllers cannot drift
+    /// apart on what "inflated" means.
     public static func effectiveSlackMillis(minRTTMillis: Double) -> Double {
-        effectiveSlackMillis(
-            minRTTMillis: minRTTMillis, slackMillis: rttSlackMillis, slackFraction: rttSlackFraction,
-        )
-    }
-
-    /// The effective absolute-slack gate with the slack tunables passed in (mirrors
-    /// `effective_slack_millis_with`). NaN-faithful: uses `Double.maximum` (IEEE — returns the
-    /// non-NaN operand), NOT `Swift.max` (NaN-poisoning).
-    static func effectiveSlackMillis(minRTTMillis: Double, slackMillis: Double, slackFraction: Double) -> Double {
-        if minRTTMillis.isFinite {
-            // keep mul+add separate — FMA breaks bit-exact parity (pure multiply here).
-            let scaled = slackFraction * minRTTMillis
-            return Double.maximum(slackMillis, scaled)
-        }
-        return slackMillis
+        slopdesk_abr_effective_slack(config, minRTTMillis)
     }
 
     /// CONSECUTIVE inflated reports required before the RTT path decreases (~N × 50ms). `SLOPDESK_ABR_RTT_N`.
-    public static let rttStreakTicks: Int = envInt("SLOPDESK_ABR_RTT_N", 3, min: 1, max: 100_000)
+    public static let rttStreakTicks: Int = envInt(
+        "SLOPDESK_ABR_RTT_N",
+        Int(defaults.rtt_streak_ticks),
+        min: 1,
+        max: 100_000,
+    )
     /// Reports between ANY multiplicative decreases — RTT-path AND loss-path (~8 × 50ms ≈ 400ms).
     /// A full `holdTicks` (~1s) spacing would be the right anti-cascade guard for a FIXED ×0.85 step,
     /// but a REAL persistent queue (scroll demand > path capacity, measured live: RTT p90 80ms during
@@ -178,11 +246,16 @@ public struct LiveCongestionController: Sendable, Equatable {
     /// re-decrease needs a FRESH `rttStreakTicks` run of inflated reports. The LOSS path shares this
     /// spacing — a multi-report weather burst costs ONE cut per window, not one per report (see type
     /// doc). `SLOPDESK_ABR_CUT_HOLD`.
-    public static let cutHoldTicks: Int = envInt("SLOPDESK_ABR_CUT_HOLD", 8, min: 0, max: 100_000)
+    public static let cutHoldTicks: Int = envInt(
+        "SLOPDESK_ABR_CUT_HOLD",
+        Int(defaults.cut_hold_ticks),
+        min: 0,
+        max: 100_000,
+    )
     /// Hardest single proportional RTT decrease (0.6 = at most −40% in one step). `SLOPDESK_ABR_RTT_DEC_MIN`.
     public static let rttDecreaseFloorFactor: Double = envDouble(
         "SLOPDESK_ABR_RTT_DEC_MIN",
-        0.6,
+        defaults.rtt_decrease_floor_factor,
         min: 0.05,
         max: 0.999,
     )
@@ -190,19 +263,29 @@ public struct LiveCongestionController: Sendable, Equatable {
     /// (0.95 = −5%), and the post-congestion EWMA decay tail can never re-cut deeply. `SLOPDESK_ABR_RTT_DEC_MAX`.
     public static let rttDecreaseCapFactor: Double = envDouble(
         "SLOPDESK_ABR_RTT_DEC_MAX",
-        0.95,
+        defaults.rtt_decrease_cap_factor,
         min: 0.05,
         max: 0.999,
     )
     /// Additive-increase divisor applied ON TOP of ``increaseDivisor`` at/above the remembered knee
     /// (ssthresh): climbing back INTO the rate that just built a queue should be slow (probe), while
     /// recovery below it stays fast. 8 ⇒ ~0.4% of ceiling per tick above the knee. `SLOPDESK_ABR_KNEE_DIV`.
-    public static let kneeCautionDivisor: Int = envInt("SLOPDESK_ABR_KNEE_DIV", 8, min: 1, max: 100_000)
+    public static let kneeCautionDivisor: Int = envInt(
+        "SLOPDESK_ABR_KNEE_DIV",
+        Int(defaults.knee_caution_divisor),
+        min: 1,
+        max: 100_000,
+    )
     /// Reports the knee memory survives without a fresh queue-corroborated decrease (~1200 × 50ms ≈
     /// 60s). Path conditions drift; a stale knee must not cap the climb forever. `SLOPDESK_ABR_KNEE_TTL`.
-    public static let kneeTTLTicks: Int = envInt("SLOPDESK_ABR_KNEE_TTL", 1200, min: 1, max: 1_000_000)
+    public static let kneeTTLTicks: Int = envInt(
+        "SLOPDESK_ABR_KNEE_TTL",
+        Int(defaults.knee_ttl_ticks),
+        min: 1,
+        max: 1_000_000,
+    )
     /// Floor as a fraction of the ceiling (also clamped to ``LiveBitratePolicy/minimumBitrate``). `SLOPDESK_ABR_MINFRAC`.
-    public static let minFrac: Double = envDouble("SLOPDESK_ABR_MINFRAC", 0.25, min: 0.01, max: 1.0)
+    public static let minFrac: Double = envDouble("SLOPDESK_ABR_MINFRAC", defaults.min_fraction, min: 0.01, max: 1.0)
     /// Open-loop START fraction of `ceiling` for ``current`` (`SLOPDESK_ABR_SEED_FRAC`, DEFAULT 1.0 =
     /// start AT the ceiling — today's behaviour, byte-identical). `< 1` seeds BELOW the ceiling so the
     /// first heavy burst can't self-induce bufferbloat before the loop's first report/streak reacts
@@ -210,13 +293,23 @@ public struct LiveCongestionController: Sendable, Equatable {
     /// brief additive-increase ramp (softer image) at connect/resize, so keep 1.0 on a clean fast link
     /// where the resolution-derived ceiling is already link-plausible; lower it for a lossy/bufferbloaty
     /// WAN. Clamped `[minFrac, 1]`.
-    public static let seedFraction: Double = envDouble("SLOPDESK_ABR_SEED_FRAC", 1.0, min: minFrac, max: 1.0)
+    public static let seedFraction: Double = envDouble(
+        "SLOPDESK_ABR_SEED_FRAC",
+        defaults.seed_fraction,
+        min: minFrac,
+        max: 1.0,
+    )
     /// Actuation churn gate (fraction of ceiling): the host skips a re-actuation smaller than this. `SLOPDESK_ABR_MATERIAL`.
-    public static let materialFraction: Double = envDouble("SLOPDESK_ABR_MATERIAL", 0.05, min: 0.0, max: 1.0)
+    public static let materialFraction: Double = envDouble(
+        "SLOPDESK_ABR_MATERIAL",
+        defaults.material_fraction,
+        min: 0.0,
+        max: 1.0,
+    )
     /// Actuation churn gate (absolute bps floor): the host skips a re-actuation smaller than this. `SLOPDESK_ABR_MATERIAL_FLOOR`.
     public static let materialFloorBps: Int = envInt(
         "SLOPDESK_ABR_MATERIAL_FLOOR",
-        500_000,
+        Int(defaults.material_floor_bps),
         min: 0,
         max: 1_000_000_000,
     )
@@ -227,50 +320,93 @@ public struct LiveCongestionController: Sendable, Equatable {
     /// Multiplicative factor for a gradient-authorized cut. 0.85 = GCC overuse beta (libwebrtc
     /// AimdRateControl), same depth as the loss path — one early conventional cut, then the
     /// proportional path sizes any standing queue. `SLOPDESK_ABR_GRAD_DEC`.
-    public static let gradientDecreaseFactor: Double = envDouble("SLOPDESK_ABR_GRAD_DEC", 0.85, min: 0.05, max: 0.999)
+    public static let gradientDecreaseFactor: Double = envDouble(
+        "SLOPDESK_ABR_GRAD_DEC",
+        defaults.gradient_decrease_factor,
+        min: 0.05,
+        max: 0.999,
+    )
 
-    // MARK: State (all value-type ⇒ auto Equatable / Sendable)
+    /// The resolved tunables, as the law reads them: the defaults with every knob the host was
+    /// actually given a value for written over. Built once, because ``EnvConfig`` is resolved once.
+    static let config: SlopDeskAbrConfig = {
+        var c = defaults
+        c.warmup_ticks = UInt32(warmupTicks)
+        c.loss_threshold = lossThreshold
+        c.severe_loss_threshold = severeLossThreshold
+        c.loss_needs_rtt_corroboration = lossNeedsRTTCorroboration
+        c.catastrophic_loss_threshold = catastrophicLossThreshold
+        c.decrease_factor = decreaseFactor
+        c.severe_decrease_factor = severeDecreaseFactor
+        c.increase_divisor = Int64(increaseDivisor)
+        c.ramp_utilization_fraction = rampUtilizationFraction
+        c.decay_utilization_fraction = decayUtilizationFraction
+        c.decay_headroom = decayHeadroom
+        c.decay_step_fraction = decayStepFraction
+        c.hold_ticks = UInt32(holdTicks)
+        c.rtt_inflate_factor = rttInflateFactor
+        c.rtt_slack_millis = rttSlackMillis
+        c.rtt_slack_fraction = rttSlackFraction
+        c.rtt_streak_ticks = UInt32(rttStreakTicks)
+        c.cut_hold_ticks = UInt32(cutHoldTicks)
+        c.rtt_decrease_floor_factor = rttDecreaseFloorFactor
+        c.rtt_decrease_cap_factor = rttDecreaseCapFactor
+        c.knee_caution_divisor = Int64(kneeCautionDivisor)
+        c.knee_ttl_ticks = UInt32(kneeTTLTicks)
+        c.min_fraction = minFrac
+        c.seed_fraction = seedFraction
+        c.material_fraction = materialFraction
+        c.material_floor_bps = Int64(materialFloorBps)
+        c.gradient_decrease_factor = gradientDecreaseFactor
+        return c
+    }()
+
+    // MARK: State (one record, crossing whole)
+
+    /// Every number the next fold reads. The two optionals inside it are a value plus a flag, never
+    /// a sentinel — zero is a rate the floor forbids, but nothing stops a caller naming it.
+    private var state: SlopDeskAbrController
 
     /// The ``LiveBitratePolicy/targetBitrate(pixelWidth:pixelHeight:fps:floor:)`` result for THIS
     /// encoder build — the hard upper bound the controller can never exceed.
-    public let ceiling: Int
+    public var ceiling: Int { Int(state.ceiling) }
     /// The lowest the controller may drive the live rate. Always ≥ ``LiveBitratePolicy/minimumBitrate``
     /// (≥ 1 Mbps) ⇒ NEVER 0, and ≤ `ceiling`.
-    public let floor: Int
+    public var floor: Int { Int(state.floor) }
     /// USER BITRATE CEILING (wire `streamSettings`): an optional client-requested ceiling layered
     /// UNDER the policy ceiling. `nil` = none (auto — the pure policy ceiling rules, byte-identical
     /// to the pre-override control law). Set/cleared at runtime via ``setUserCeilingBps(_:)``.
-    public private(set) var userCeilingBps: Int?
+    public var userCeilingBps: Int? { state.has_user_ceiling ? Int(state.user_ceiling_bps) : nil }
     /// Whether the delay-gradient early-cut path is armed (see ``gradientCutEnabledDefault``).
     /// INSTANCE-level (injected at construction, env default in production) so the loopback harness
     /// and tests can A/B both arms in one process without env games.
-    public let gradientCutEnabled: Bool
+    public var gradientCutEnabled: Bool { state.gradient_cut_enabled }
     /// Current target bitrate (bps). Seeded to `ceiling` — an open-loop start.
-    public private(set) var current: Int
+    public var current: Int { Int(state.current) }
     /// Folded-report count — the controller's "clock" (see type doc).
-    public private(set) var ticks = 0
+    public var ticks: Int { Int(state.ticks) }
     /// No increase is permitted until `ticks` reaches this (set on every decrease).
-    public private(set) var holdUntilTick = 0
+    public var holdUntilTick: Int { Int(state.hold_until_tick) }
     /// Consecutive reports whose smoothed RTT cleared BOTH inflation gates (factor + slack). The RTT
     /// path may decrease only once this reaches ``rttStreakTicks`` — one noisy report never acts.
     /// Reset on EVERY decrease, so each re-decrease needs a fresh sustained run.
-    public private(set) var rttInflatedStreak = 0
+    public var rttInflatedStreak: Int { Int(state.rtt_inflated_streak) }
     /// No multiplicative decrease (RTT-path OR loss-path) is permitted until `ticks` reaches this
     /// (set on every decrease) — the short re-decrease spacing (see ``cutHoldTicks``), distinct from
     /// the long increase hold-down. The catastrophic branch keeps its own stronger `holdUntilTick`.
-    public private(set) var cutHoldUntilTick = 0
+    public var cutHoldUntilTick: Int { Int(state.cut_hold_until_tick) }
     /// The previous report's smoothed RTT — the one-report delay TREND. An RTT-path decrease
     /// additionally requires the smoothed RTT to be NOT IMPROVING (within 1ms) vs the last report: a
     /// queue already DRAINING (rate under capacity, the level is just the backlog flushing out) must
     /// not keep triggering cuts, or a ~900ms warmup backlog draining walks the rate down to the floor.
     /// A standing or growing queue reads flat/rising and keeps cutting. This is smoothed-EWMA vs
     /// smoothed-EWMA — NOT the per-report `owdGradientRising` jitter-sample coin-flip.
-    public private(set) var prevSmoothedRTTMillis = 0.0
+    public var prevSmoothedRTTMillis: Double { state.prev_smoothed_rtt_millis }
     /// The remembered "knee" (ssthresh): the rate the controller landed on after the most recent
     /// queue-corroborated decrease. Additive increase at/above this rate uses the cautious step
     /// (÷``kneeCautionDivisor``) — the controller hovers under the rate that built a queue instead of
     /// re-bashing the ceiling every recovery (the measured 25↔40Mbps pumping). `nil` = no knee known.
-    public private(set) var kneeBps: Int?
+    public var kneeBps: Int? { state.has_knee ? Int(state.knee_bps) : nil }
     /// Tick at which the knee memory expires (refreshed by every queue-corroborated decrease).
     ///
     /// The caution divisor is CONSTANT on purpose. An "escalating caution" variant — doubling the
@@ -281,7 +417,7 @@ public struct LiveCongestionController: Sendable, Equatable {
     /// rate PINS near the floor (3.45M for 91% of a session, soft image, zero latency benefit). The
     /// constant ÷8 caution rides through the wobble and breathes 3–11M — better quality at the same
     /// RTT. Keep the knee simple.
-    public private(set) var kneeExpiresAtTick = 0
+    public var kneeExpiresAtTick: Int { Int(state.knee_expires_at_tick) }
 
     // MARK: Init
 
@@ -294,25 +430,17 @@ public struct LiveCongestionController: Sendable, Equatable {
         seedFraction: Double = 1.0,
         gradientCutEnabled: Bool = Self.gradientCutEnabledDefault,
     ) {
-        let c = max(1, ceiling)
-        self.ceiling = c
-        self.floor = max(LiveBitratePolicy.minimumBitrate, min(floor, c))
-        // Seed `current` at `ceiling × seedFraction` (default 1.0 ⇒ AT ceiling, unchanged), never below
-        // the floor. Additive-increase then probes back up toward the ceiling on clean ticks.
-        let frac = min(1.0, max(0.0, seedFraction))
-        current = max(self.floor, Int((Double(c) * frac).rounded()))
-        self.gradientCutEnabled = gradientCutEnabled
+        // The seed is a per-construction choice, not a knob: the loopback harness builds controllers
+        // that start below the ceiling without touching the process's env.
+        var config = Self.config
+        config.seed_fraction = seedFraction
+        state = slopdesk_abr_new(Int64(ceiling), Int64(floor), config, gradientCutEnabled)
     }
 
     /// Convenience: derive the floor from `ceiling × minFrac` (the production wiring), keeping the
     /// floor-derivation policy in one place. Seeds `current` from the ``seedFraction`` env.
     public init(ceiling: Int, gradientCutEnabled: Bool = Self.gradientCutEnabledDefault) {
-        self.init(
-            ceiling: ceiling,
-            floor: Int(Double(max(1, ceiling)) * Self.minFrac),
-            seedFraction: Self.seedFraction,
-            gradientCutEnabled: gradientCutEnabled,
-        )
+        state = slopdesk_abr_with_ceiling(Int64(ceiling), Self.config, gradientCutEnabled)
     }
 
     // MARK: User ceiling override (wire streamSettings)
@@ -320,20 +448,16 @@ public struct LiveCongestionController: Sendable, Equatable {
     /// The ceiling every climb is clamped to: the policy ceiling bounded by the user override,
     /// itself floored at `floor` so a pathological low override can never starve the encoder below
     /// the usable minimum (the `[floor, ceiling]` invariant survives). With no override this is
-    /// exactly `ceiling` — the control law is untouched. Integer math, no float discipline needed.
-    public var effectiveCeiling: Int {
-        guard let user = userCeilingBps, user > 0 else { return ceiling }
-        return Swift.min(ceiling, Swift.max(floor, user))
-    }
+    /// exactly `ceiling` — the control law is untouched.
+    public var effectiveCeiling: Int { Int(slopdesk_abr_effective_ceiling(state)) }
 
     /// Sets (or with `nil`/≤0 clears) the user bitrate ceiling. A `current` above the new effective
     /// ceiling CLAMPS DOWN IMMEDIATELY — the override must bite on the very next actuation, not
-    /// after an AIMD episode — and every later additive climb is capped at ``effectiveCeiling``
-    /// (see `decideInner`). Clearing restores the pure policy ceiling; the reclaimed headroom is
-    /// climbed back through the ordinary additive probe, never jumped.
+    /// after an AIMD episode — and every later additive climb is capped at ``effectiveCeiling``.
+    /// Clearing restores the pure policy ceiling; the reclaimed headroom is climbed back through the
+    /// ordinary additive probe, never jumped.
     public mutating func setUserCeilingBps(_ userBps: Int?) {
-        userCeilingBps = (userBps ?? 0) > 0 ? userBps : nil
-        current = Swift.min(current, effectiveCeiling)
+        state = slopdesk_abr_set_user_ceiling(state, userBps != nil, Int64(userBps ?? 0))
     }
 
     // MARK: Control law
@@ -365,6 +489,24 @@ public struct LiveCongestionController: Sendable, Equatable {
         case gradient
         /// EWMA-keyed catastrophic halve (sustained ≥ catastrophic loss).
         case catastrophic
+
+        /// The reason a `SLOPDESK_ABR_REASON_*` code names. An unknown code reads as ``hold``: a
+        /// branch this side has never heard of moved nothing it can attribute, and inventing a cut
+        /// in the debug log would be worse than admitting nothing happened.
+        static func of(_ code: UInt32) -> Self {
+            switch code {
+            case UInt32(SLOPDESK_ABR_REASON_WARMUP): .warmup
+            case UInt32(SLOPDESK_ABR_REASON_DRAIN): .drain
+            case UInt32(SLOPDESK_ABR_REASON_PROBE): .probe
+            case UInt32(SLOPDESK_ABR_REASON_KNEE): .knee
+            case UInt32(SLOPDESK_ABR_REASON_APP_LIMITED): .appLimited
+            case UInt32(SLOPDESK_ABR_REASON_RTT_STREAK): .rttStreak
+            case UInt32(SLOPDESK_ABR_REASON_LOSS_CORROBORATED): .lossCorroborated
+            case UInt32(SLOPDESK_ABR_REASON_GRADIENT): .gradient
+            case UInt32(SLOPDESK_ABR_REASON_CATASTROPHIC): .catastrophic
+            default: .hold
+            }
+        }
     }
 
     /// One control-law tick's outcome: the new target plus why. Pure data — printing happens at
@@ -387,8 +529,7 @@ public struct LiveCongestionController: Sendable, Equatable {
 
     /// Folds one network estimate and returns the new target bitrate PLUS the attributed reason.
     /// When several cut branches fire the reason names the branch that set the FINAL (lowest) target;
-    /// on a tie the stronger evidence wins (rttStreak > lossCorroborated > gradient — the code order
-    /// below).
+    /// on a tie the stronger evidence wins (rttStreak > lossCorroborated > gradient).
     ///
     /// Decision order: warmup → catastrophic halve → ordinary-congestion multiplicative decrease →
     /// (past hold-down) additive increase. The result is ALWAYS within `[floor, ceiling]`.
@@ -397,189 +538,12 @@ public struct LiveCongestionController: Sendable, Equatable {
     /// the stream is APPLICATION-limited (offered far below `current` — an idle / near-static screen),
     /// the additive increase is SUPPRESSED so an idle period can't inflate the target into phantom
     /// headroom a sudden burst then overshoots into bufferbloat. `nil` (the default) ⇒ no utilization
-    /// gate ⇒ always probe. Core mirror: `LiveCongestionController::decide_with_utilization`.
+    /// gate ⇒ always probe.
     @discardableResult
     public mutating func decide(_ e: NetworkEstimate, offeredBps: Double? = nil) -> Decision {
-        // Native AIMD control law — mirrors `LiveCongestionController::decide_with_config`
-        // (decide_inner + decrease) byte-for-byte. The env-off defaults equal `Config::DEFAULT`.
-        ticks += 1
-        let decision = decideInner(e, offeredBps: offeredBps)
-        // Matches the core's post-step capture: `prevSmoothedRTTMillis` becomes THIS report's smoothed
-        // RTT for the NEXT report, whatever branch ran (including warmup).
-        prevSmoothedRTTMillis = e.smoothedRTTMillis
-        return decision
-    }
-
-    /// Additive-increase step in bps (≥ 1 so a tiny ceiling still makes progress). Mirrors
-    /// `increase_step`. NaN-free integer math.
-    private func increaseStep() -> Int {
-        max(ceiling / Self.increaseDivisor, 1)
-    }
-
-    /// Whether the stream is using enough of its current target to justify probing higher. `nil`
-    /// (no signal) always permits — mirrors `utilization_permits_ramp`.
-    private func utilizationPermitsRamp(_ offeredBps: Double?) -> Bool {
-        guard let offered = offeredBps, offered.isFinite else { return true }
-        // keep mul+add separate — FMA breaks bit-exact parity (pure multiply here). Ordered `>=` as Rust.
-        let gate = Double(current) * Self.rampUtilizationFraction
-        return offered >= gate
-    }
-
-    /// The decayed `current` for a DEEPLY application-limited tick, or `nil` when no decay applies.
-    /// Mirrors `app_limited_decay`. Rust `(x as f64 * f) as i64` truncates toward zero → `Int(_)`.
-    private func appLimitedDecay(_ offeredBps: Double?) -> Int? {
-        guard let offered = offeredBps, offered.isFinite else { return nil }
-        // keep mul+add separate — FMA breaks bit-exact parity. Ordered `>=` as Rust (NaN already excluded).
-        let idleGate = Double(current) * Self.decayUtilizationFraction
-        if offered >= idleGate { return nil } // not deeply idle — hold, don't decay
-        let decayTarget = offered * Self.decayHeadroom // keep mul+add separate — pure multiply
-        // Rust `f64::max(floor, (offered*headroom) as i64)` — integer max after truncation.
-        let target = Swift.max(floor, Int(decayTarget))
-        if target >= current { return nil } // already at/below the idle target
-        // Rust `((current - target) as f64 * step) as i64` — keep mul+add separate, truncate toward zero.
-        let stepF = Double(current - target) * Self.decayStepFraction
-        let step = Int(stepF)
-        return Swift.max(current - Swift.max(step, 1), target)
-    }
-
-    /// Applies a decrease and arms the hold-downs — ONLY when the target actually LOWERS `current`.
-    /// A queue-corroborated decrease additionally records the knee. Mirrors `decrease`.
-    private mutating func applyDecrease(_ next: Int, queueCorroborated: Bool) {
-        if next < current {
-            current = next
-            holdUntilTick = ticks + Self.holdTicks
-            cutHoldUntilTick = ticks + Self.cutHoldTicks
-            rttInflatedStreak = 0
-            if queueCorroborated {
-                kneeBps = current
-                kneeExpiresAtTick = ticks + Self.kneeTTLTicks
-            }
-        }
-    }
-
-    /// The control-law step over the folded estimate — mirrors `decide_inner` branch-for-branch.
-    private mutating func decideInner(_ e: NetworkEstimate, offeredBps: Double?) -> Decision {
-        if ticks < Self.warmupTicks {
-            return Decision(target: current, reason: .warmup)
-        }
-
-        let slack = Self.effectiveSlackMillis(
-            minRTTMillis: e.minRTTMillis, slackMillis: Self.rttSlackMillis,
-            slackFraction: Self.rttSlackFraction,
-        )
-        // keep mul+add separate — FMA breaks bit-exact parity. Ordered `>` / `+` as Rust.
-        let inflateThreshold = e.minRTTMillis * Self.rttInflateFactor
-        let slackThreshold = e.minRTTMillis + slack
-        let rttInflated = e.minRTTMillis.isFinite
-            && e.smoothedRTTMillis > inflateThreshold
-            && e.smoothedRTTMillis > slackThreshold
-        rttInflatedStreak = rttInflated ? rttInflatedStreak + 1 : 0
-        // keep mul+add separate — pure additive comparison `smoothed + 1.0 >= prev`.
-        let rttCongested = rttInflated
-            && rttInflatedStreak >= Self.rttStreakTicks
-            && ticks >= cutHoldUntilTick
-            && e.smoothedRTTMillis + 1.0 >= prevSmoothedRTTMillis
-
-        // Knee TTL: forget a knee not re-confirmed within `kneeTTLTicks`.
-        if kneeBps != nil, ticks >= kneeExpiresAtTick {
-            kneeBps = nil
-        }
-
-        let lossEvidence = !Self.lossNeedsRTTCorroboration || rttInflated
-        let lossCongested = e.lastLossSample > Self.lossThreshold
-            && lossEvidence
-            && ticks >= cutHoldUntilTick
-        let rawRTTInflated: Bool = {
-            guard let raw = e.lastRTTSampleMillis, e.minRTTMillis.isFinite else { return false }
-            // keep mul+add separate — FMA breaks bit-exact parity. Ordered `>` / `+` as Rust.
-            let rawInflate = e.minRTTMillis * Self.rttInflateFactor
-            let rawSlack = e.minRTTMillis + slack
-            return raw > rawInflate && raw > rawSlack
-        }()
-        let gradientCongested = gradientCutEnabled
-            && e.owdTrendOverusing
-            && rawRTTInflated
-            && ticks >= cutHoldUntilTick
-
-        if e.lossRate > Self.catastrophicLossThreshold, e.lastLossSample > Self.severeLossThreshold,
-           ticks >= holdUntilTick
-        {
-            // keep mul+add separate — pure multiply; Rust `(current * factor) as i64` truncates → Int(_).
-            let scaled = Double(current) * Self.severeDecreaseFactor
-            let target = Swift.max(floor, Int(scaled))
-            applyDecrease(target, queueCorroborated: rttInflated)
-            return Decision(target: current, reason: .catastrophic)
-        }
-        if rttCongested || lossCongested || gradientCongested {
-            var target = Int.max
-            var reason: CutReason = .hold // overwritten — at least one branch fired
-            if rttCongested {
-                // keep mul+add separate — pure additive `min + slack`.
-                let drained = e.minRTTMillis + slack
-                // NaN-faithful: Rust `cap.min(floor.max(drained/smoothed))` — IEEE min/max. Use
-                // Double.minimum/Double.maximum (return non-NaN operand), NOT Swift.min/max.
-                let ratio = drained / e.smoothedRTTMillis
-                let factor = Double.minimum(
-                    Self.rttDecreaseCapFactor,
-                    Double.maximum(Self.rttDecreaseFloorFactor, ratio),
-                )
-                let cutF = Double(current) * factor // keep mul+add separate — pure multiply
-                let cut = Int(cutF)
-                if cut < target {
-                    target = cut
-                    reason = .rttStreak
-                }
-            }
-            if lossCongested {
-                let cutF = Double(current) * Self.decreaseFactor // keep mul+add separate — pure multiply
-                let cut = Int(cutF)
-                if cut < target {
-                    target = cut
-                    reason = .lossCorroborated
-                }
-            }
-            if gradientCongested {
-                let cutF = Double(current) * Self.gradientDecreaseFactor // keep mul+add separate
-                let cut = Int(cutF)
-                if cut < target {
-                    target = cut
-                    reason = .gradient
-                }
-            }
-            applyDecrease(Swift.max(floor, target), queueCorroborated: rttInflated)
-            return Decision(target: current, reason: reason)
-        }
-        if ticks >= holdUntilTick,
-           !rttInflated,
-           !(gradientCutEnabled && e.owdTrendOverusing)
-        {
-            // Clean link past the hold-down: RAMP if using the allocation; DECAY while deeply idle;
-            // else hold. With no utilization signal this is always a ramp.
-            if utilizationPermitsRamp(offeredBps) {
-                let cautious: Bool = {
-                    guard let knee = kneeBps else { return false }
-                    return current >= knee
-                }()
-                let step = cautious
-                    ? Swift.max(increaseStep() / Self.kneeCautionDivisor, 1)
-                    : increaseStep()
-                // Climb cap: the USER-effective ceiling (== `ceiling` with no override, so the
-                // no-override law stays byte-identical to the Rust mirror).
-                current = Swift.min(effectiveCeiling, current + step)
-                return Decision(target: current, reason: cautious ? .knee : .probe)
-            }
-            if let decayed = appLimitedDecay(offeredBps) {
-                current = decayed
-                return Decision(target: current, reason: .appLimited)
-            }
-            // Moderately idle (between the two fractions): hold — fall through.
-        }
-        // keep mul+add separate — pure additive comparison `smoothed + 1.0 < prev`.
-        let drainGated = rttInflated
-            && rttInflatedStreak >= Self.rttStreakTicks
-            && ticks >= cutHoldUntilTick
-            && e.smoothedRTTMillis + 1.0 < prevSmoothedRTTMillis
-        return Decision(target: current, reason: drainGated ? .drain : .hold)
+        let decision = slopdesk_abr_decide(state, e.crossing, offeredBps != nil, offeredBps ?? 0)
+        state = decision.controller
+        return Decision(target: Int(decision.target), reason: CutReason.of(decision.reason))
     }
 
     // MARK: Actuation churn gate (pure — used by the host, unit-tested here)
@@ -589,12 +553,25 @@ public struct LiveCongestionController: Sendable, Equatable {
     /// so a single ~3%-of-ceiling additive tick does not actuate every 50ms; consecutive additive ticks
     /// accumulate against the last ACTUATED rate and cross the gate after a couple of reports.
     public static func isMaterialChange(previous: Int, target: Int, ceiling: Int) -> Bool {
-        // Mirrors `is_material_change_with`: |Δ| ≥ max(floorBps, ceiling × fraction). Rust
-        // `(ceiling.max(1) as f64 * fraction) as i64` truncates toward zero → Int(_).
-        // keep mul+add separate — FMA breaks bit-exact parity (pure multiply here).
-        let scaled = Double(Swift.max(1, ceiling)) * materialFraction
-        let threshold = Swift.max(materialFloorBps, Int(scaled))
-        return abs(target - previous) >= threshold
+        slopdesk_abr_is_material_change(Int64(previous), Int64(target), Int64(ceiling), config)
+    }
+
+    /// Equality is over the whole record, as the synthesised one was. C structs synthesise nothing,
+    /// so the comparison is spelled out; a field missing from it would let two controllers that
+    /// disagree on the next report compare equal.
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.state.ceiling == rhs.state.ceiling
+            && lhs.state.floor == rhs.state.floor
+            && lhs.state.current == rhs.state.current
+            && lhs.userCeilingBps == rhs.userCeilingBps
+            && lhs.kneeBps == rhs.kneeBps
+            && lhs.state.prev_smoothed_rtt_millis == rhs.state.prev_smoothed_rtt_millis
+            && lhs.state.ticks == rhs.state.ticks
+            && lhs.state.hold_until_tick == rhs.state.hold_until_tick
+            && lhs.state.rtt_inflated_streak == rhs.state.rtt_inflated_streak
+            && lhs.state.cut_hold_until_tick == rhs.state.cut_hold_until_tick
+            && lhs.state.knee_expires_at_tick == rhs.state.knee_expires_at_tick
+            && lhs.state.gradient_cut_enabled == rhs.state.gradient_cut_enabled
     }
 
     // MARK: Env parsing helpers

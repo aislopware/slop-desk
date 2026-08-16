@@ -1,22 +1,22 @@
-import Foundation
+import CSlopDeskFFI
 
 /// Top-level namespace for SlopDesk wire-protocol constants.
 ///
-/// `SlopDeskProtocol` is **pure Swift with zero platform dependency** (no `Network`,
-/// no `Darwin`/`Glibc`): it must build for both macOS and iOS and be unit-testable
-/// in isolation. Only `Foundation` (for `Data`/`UUID`) is imported.
+/// Every number here is ASKED for rather than spelled: `rust/slopdesk-wire` owns the wire, and a
+/// constant typed on both sides of a boundary is the cheapest possible way for the two to disagree
+/// — a version bump that lands in one language reads as a handshake failure, not as a mistake.
 public enum SlopDesk {
     /// Current wire-protocol version, sent in the `hello` handshake.
     ///
     /// Bumped whenever the framing, message-type table, or any body layout changes
     /// in a non-backward-compatible way.
-    public static let protocolVersion: UInt16 = 1
+    public static let protocolVersion = UInt16(slopdesk_wire_constant(0))
 
-    /// Maximum accepted frame payload size: 16 MiB.
+    /// Maximum accepted frame payload size.
     ///
     /// A length prefix larger than this is rejected with ``SlopDeskError/frameTooLarge(_:)``
     /// rather than buffered — it almost certainly means a corrupt or hostile stream,
     /// and we will not allocate unbounded memory for it. The PTY hot path produces
     /// small frames; legitimate output is chunked far below this ceiling.
-    public static let maxFramePayloadLength = 16 * 1024 * 1024
+    public static let maxFramePayloadLength = slopdesk_wire_constant(2)
 }

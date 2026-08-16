@@ -1,4 +1,6 @@
+import CSlopDeskFFI
 import Foundation
+import SlopDeskArena
 
 /// Session bring-up control messages for the GUI video path (PATH 2), sent on the
 /// **control** datagram type before any video/cursor/geometry/input flows.
@@ -429,11 +431,11 @@ public enum VideoControlMessage: Equatable, Sendable {
 
     /// One `blobChunk`'s max data bytes: `VideoPacketizer.maxDatagramSize` (1200) − 5 mux framing −
     /// 18 message header (type + kind + u64 id + 2×u16 meta + index + count + u16 byteCount). The
-    /// HOST's blob chunker packs against this.
-    public static let blobBytesPerChunk = 1177
+    /// HOST's blob chunker packs against this. Vended by the codec that writes the header.
+    public static let blobBytesPerChunk = slopdesk_video_control_constant(0)
     /// Blob size caps by kind (validate-then-drop: an assembled blob past its cap is hostile).
-    public static let iconBlobMaxBytes = 32 * 1024
-    public static let previewBlobMaxBytes = 48 * 1024
+    public static let iconBlobMaxBytes = slopdesk_video_control_constant(1)
+    public static let previewBlobMaxBytes = slopdesk_video_control_constant(2)
 
     /// The host-side byte cap for ONE `windowFeedSnapshot` chunk's RECORDS (excluding the 9-byte
     /// message header): control datagrams are not packetized, so a chunk must fit one mux datagram —
@@ -441,435 +443,391 @@ public enum VideoControlMessage: Equatable, Sendable {
     /// header (type + generation + chunkIndex + chunkCount + recordCount). The HOST's chunk packer
     /// greedy-packs against this; the codec itself does not enforce it (decode is bounds-checked
     /// per-field regardless).
-    public static let feedRecordBytesPerChunk = 1186
+    public static let feedRecordBytesPerChunk = slopdesk_video_control_constant(3)
     /// The host-side UTF-8 byte cap for a ``HostWindowRecord/title`` (truncated at a character
     /// boundary host-side) — bounds the worst-case record so the greedy packer always progresses.
-    public static let feedTitleMaxBytes = 120
+    public static let feedTitleMaxBytes = slopdesk_video_control_constant(4)
 
-    /// Encodes the message to its `[UInt8 type][body]` wire form. Single source of truth shared with the
-    /// Android client (pinned bit-for-bit by the `videoControl` golden vectors). For list messages the
-    /// CALLER (host) must cap the list to one UDP datagram (control is not packetized); the count
-    /// truncates to `UInt16`.
+    /// Encodes the message to its `[UInt8 type][body]` wire form. `rust/slopdesk-video`'s
+    /// `video_control` lays every byte down — including the length-prefixed strings and the record
+    /// order — and the format is pinned bit-for-bit by the `videoControl` golden vectors, which the
+    /// Android client reads too.
+    ///
+    /// Text does not ride inside the flat message: it is appended to one ARENA and each field names
+    /// its `(offset, length)` there. Five arms carry a list, so there is no single span to point at
+    /// the way the smaller wires do, and the arena is the shape that scales to a list.
+    ///
+    /// For list messages the CALLER (host) must still cap the list to one UDP datagram — control is
+    /// not packetized — and the count truncates to `UInt16` on the wire.
     public func encode() -> Data {
-        var out = Data()
-        out.append(messageType)
+        var arena = Data()
+        var records: [SlopDeskControlRecord] = []
+        var flat = SlopDeskVideoControl()
+        flat.message_type = messageType
         switch self {
         case let .hello(version, windowID, viewport):
-            out.appendBE(version)
-            out.appendBE(windowID)
-            out.appendBE(viewport.width)
-            out.appendBE(viewport.height)
-        case let .helloAck(accepted, streamID, w, h, bounds, fullRange):
-            out.append(accepted ? 1 : 0)
-            out.appendBE(streamID)
-            out.appendBE(w)
-            out.appendBE(h)
-            out.append(fullRange ? 1 : 0) // negotiated luma range (after captureHeight)
-            out.appendBE(bounds.origin.x)
-            out.appendBE(bounds.origin.y)
-            out.appendBE(bounds.size.width)
-            out.appendBE(bounds.size.height)
-        case .bye:
-            break
-        case let .resizeRequest(desired, epoch):
-            out.appendBE(desired.width)
-            out.appendBE(desired.height)
-            out.appendBE(epoch)
-        case let .resizeAck(w, h, epoch):
-            out.appendBE(w)
-            out.appendBE(h)
-            out.appendBE(epoch)
-        case .keepalive:
-            break
-        case .listWindows:
-            break
-        case let .windowList(windows):
-            // `UInt16 count` then per record: UInt32 id | UInt16 w | UInt16 h | len-prefixed app | len-prefixed title.
-            // The CALLER (host) must cap the list to fit one UDP datagram (control is not packetized).
-            out.appendBE(UInt16(truncatingIfNeeded: windows.count))
-            for w in windows {
-                out.appendBE(w.windowID)
-                out.appendBE(w.width)
-                out.appendBE(w.height)
-                out.appendVideoControlLengthPrefixed(w.appName)
-                out.appendVideoControlLengthPrefixed(w.title)
-            }
-        case .focusWindow:
-            break
-        case let .streamCadence(fps):
-            out.appendBE(fps)
-        case .listSystemDialogs:
-            break
-        case let .systemDialogList(dialogs):
-            // Mirrors windowList; CALLER caps the list to fit one UDP datagram (control is not packetized).
-            out.appendBE(UInt16(truncatingIfNeeded: dialogs.count))
-            for d in dialogs {
-                out.appendBE(d.windowID)
-                out.appendBE(d.width)
-                out.appendBE(d.height)
-                out.append(d.isSecure ? 1 : 0)
-                out.appendVideoControlLengthPrefixed(d.owner)
-                out.appendVideoControlLengthPrefixed(d.title)
-            }
-        case let .scrollOffset(dx, dy, bandTop, bandBottom):
-            // i16 → u16 is a bit-preserving reinterpret; the decoder casts back. Matches the Rust
-            // core's `dx.cast_unsigned()` / `band_*` raw-u16 layout.
-            out.appendBE(UInt16(bitPattern: dx))
-            out.appendBE(UInt16(bitPattern: dy))
-            out.appendBE(bandTop)
-            out.appendBE(bandBottom)
-        case let .contentMask(rects):
-            // `UInt16 count` then per rect: UInt16 x | UInt16 y | UInt16 w | UInt16 h.
-            // The CALLER (host) must cap the list to fit one UDP datagram (control is not packetized).
-            out.appendBE(UInt16(truncatingIfNeeded: rects.count))
-            for r in rects {
-                out.appendBE(r.x)
-                out.appendBE(r.y)
-                out.appendBE(r.width)
-                out.appendBE(r.height)
-            }
-        case let .displayMax(width, height):
-            out.appendBE(width)
-            out.appendBE(height)
-        case let .windowFeedSubscribe(knownGeneration):
-            out.appendBE(knownGeneration)
-        case let .windowFeedSnapshot(generation, chunkIndex, chunkCount, records):
-            // The CALLER (host) must byte-budget records to one datagram (`feedRecordBytesPerChunk`);
-            // the count truncates to UInt16 like the other list messages.
-            out.appendBE(generation)
-            out.append(chunkIndex)
-            out.append(chunkCount)
-            out.appendBE(UInt16(truncatingIfNeeded: records.count))
-            for r in records {
-                out.appendBE(r.windowID)
-                out.appendBE(r.widthPt)
-                out.appendBE(r.heightPt)
-                out.append(r.flags.rawValue)
-                out.append(r.displayIndex)
-                out.appendVideoControlLengthPrefixed(r.bundleID)
-                out.appendVideoControlLengthPrefixed(r.appName)
-                out.appendVideoControlLengthPrefixed(r.title)
-            }
-        case let .windowFeedCurrent(generation):
-            out.appendBE(generation)
-        case let .appIconRequest(sizePx, bundleID):
-            out.appendBE(sizePx)
-            out.appendVideoControlLengthPrefixed(bundleID)
-        case let .blobChunk(blobKind, blobID, metaA, metaB, chunkIndex, chunkCount, bytes):
-            // The CALLER (host) must cap `bytes` to one datagram (`blobBytesPerChunk`).
-            out.append(blobKind)
-            out.appendBE(blobID)
-            out.appendBE(metaA)
-            out.appendBE(metaB)
-            out.append(chunkIndex)
-            out.append(chunkCount)
-            out.appendBE(UInt16(truncatingIfNeeded: bytes.count))
-            out.append(bytes)
-        case let .windowPreviewRequest(windowID, maxWidthPx):
-            out.appendBE(windowID)
-            out.appendBE(maxWidthPx)
-        case .listDisplays:
-            break
-        case let .displayList(displays):
-            // Mirrors windowList; CALLER caps the list to fit one UDP datagram (control is not packetized).
-            out.appendBE(UInt16(truncatingIfNeeded: displays.count))
-            for d in displays {
-                out.appendBE(d.displayID)
-                out.appendBE(d.width)
-                out.appendBE(d.height)
-                out.append(d.isMain ? 1 : 0)
-            }
+            flat.protocol_version = version
+            flat.requested_id = windowID
+            flat.viewport_width = viewport.width
+            flat.viewport_height = viewport.height
         case let .helloDisplay(version, displayID, viewport):
-            out.appendBE(version)
-            out.appendBE(displayID)
-            out.appendBE(viewport.width)
-            out.appendBE(viewport.height)
+            flat.protocol_version = version
+            flat.requested_id = displayID
+            flat.viewport_width = viewport.width
+            flat.viewport_height = viewport.height
+        case let .helloAck(accepted, streamID, w, h, bounds, fullRange):
+            flat.accepted = accepted
+            flat.stream_id = streamID
+            flat.capture_width = w
+            flat.capture_height = h
+            flat.bounds_x = bounds.origin.x
+            flat.bounds_y = bounds.origin.y
+            flat.bounds_width = bounds.size.width
+            flat.bounds_height = bounds.size.height
+            flat.full_range = fullRange
+        case let .resizeRequest(desired, epoch):
+            flat.viewport_width = desired.width
+            flat.viewport_height = desired.height
+            flat.epoch = epoch
+        case let .resizeAck(w, h, epoch):
+            flat.capture_width = w
+            flat.capture_height = h
+            flat.epoch = epoch
+        case let .windowList(windows):
+            records = windows.map { window in
+                var row = SlopDeskControlRecord()
+                row.id = window.windowID
+                (row.name_offset, row.name_length) = Self.intern(window.appName, into: &arena)
+                (row.title_offset, row.title_length) = Self.intern(window.title, into: &arena)
+                row.width = window.width
+                row.height = window.height
+                return row
+            }
+        case let .systemDialogList(dialogs):
+            records = dialogs.map { dialog in
+                var row = SlopDeskControlRecord()
+                row.id = dialog.windowID
+                (row.name_offset, row.name_length) = Self.intern(dialog.owner, into: &arena)
+                (row.title_offset, row.title_length) = Self.intern(dialog.title, into: &arena)
+                row.width = dialog.width
+                row.height = dialog.height
+                row.is_secure = dialog.isSecure
+                return row
+            }
+        case let .displayList(displays):
+            records = displays.map { display in
+                var row = SlopDeskControlRecord()
+                row.id = display.displayID
+                row.width = display.width
+                row.height = display.height
+                row.is_main = display.isMain
+                return row
+            }
+        case let .contentMask(rects):
+            records = rects.map { rect in
+                var row = SlopDeskControlRecord()
+                row.x = rect.x
+                row.y = rect.y
+                row.width = rect.width
+                row.height = rect.height
+                return row
+            }
+        case let .windowFeedSnapshot(generation, chunkIndex, chunkCount, feed):
+            flat.generation = generation
+            flat.chunk_index = chunkIndex
+            flat.chunk_count = chunkCount
+            records = feed.map { record in
+                var row = SlopDeskControlRecord()
+                row.id = record.windowID
+                (row.bundle_offset, row.bundle_length) = Self.intern(record.bundleID, into: &arena)
+                (row.name_offset, row.name_length) = Self.intern(record.appName, into: &arena)
+                (row.title_offset, row.title_length) = Self.intern(record.title, into: &arena)
+                row.width = record.widthPt
+                row.height = record.heightPt
+                row.flags = record.flags.rawValue
+                row.display_index = record.displayIndex
+                return row
+            }
+        case let .streamCadence(fps):
+            flat.fps = fps
+        case let .scrollOffset(dx, dy, bandTop, bandBottom):
+            flat.scroll_dx = dx
+            flat.scroll_dy = dy
+            flat.band_top = bandTop
+            flat.band_bottom = bandBottom
+        case let .displayMax(width, height):
+            flat.display_max_width = width
+            flat.display_max_height = height
+        case let .windowFeedSubscribe(knownGeneration):
+            flat.generation = knownGeneration
+        case let .windowFeedCurrent(generation):
+            flat.generation = generation
+        case let .appIconRequest(sizePx, bundleID):
+            flat.size_px = sizePx
+            (flat.span_offset, flat.span_length) = Self.intern(bundleID, into: &arena)
+        case let .blobChunk(kind, blobID, metaA, metaB, chunkIndex, chunkCount, bytes):
+            flat.blob_kind = kind
+            flat.blob_id = blobID
+            flat.meta_a = metaA
+            flat.meta_b = metaB
+            flat.chunk_index = chunkIndex
+            flat.chunk_count = chunkCount
+            let span = ArenaText.intern(bytes: bytes, into: &arena)
+            flat.span_offset = span.offset
+            flat.span_length = span.length
+        case let .windowPreviewRequest(windowID, maxWidthPx):
+            flat.requested_id = windowID
+            flat.max_width_px = maxWidthPx
         case let .streamSettings(fpsCap, bitrateCeilingBps):
-            out.append(fpsCap)
-            out.appendBE(bitrateCeilingBps)
-        case let .audioControl(enabled):
-            out.append(enabled ? 1 : 0)
-        case let .hostStats(rttTenths, encodeTenths):
-            out.appendBE(rttTenths)
-            out.appendBE(encodeTenths)
-        case let .privacyMode(enabled):
-            out.append(enabled ? 1 : 0)
+            flat.fps_cap = fpsCap
+            flat.bitrate_ceiling_bps = bitrateCeilingBps
+        case let .audioControl(enabled),
+             let .privacyMode(enabled):
+            flat.enabled = enabled
+        case let .hostStats(rtt, encode):
+            flat.rtt_tenths_millis = rtt
+            flat.encode_tenths_millis = encode
+        // The bodyless arms: the type byte IS the message.
+        case .bye,
+             .focusWindow,
+             .keepalive,
+             .listDisplays,
+             .listSystemDialogs,
+             .listWindows:
+            break
         }
-        return out
+        flat.record_count = UInt32(records.count)
+        flat.arena_length = UInt32(arena.count)
+        return Self.write(flat, records, arena)
     }
 
-    /// Decodes a message from its `[UInt8 type][body]` payload, throwing ``VideoProtocolError/truncated``
-    /// for a short body and ``VideoProtocolError/malformed(_:)`` for a non-finite coordinate or unknown
-    /// type. The list decoders are hardened against an untrusted record count (a short datagram throws
-    /// `.truncated` rather than over-reading or pre-allocating); record strings decode lossily.
+    /// Parses a control datagram. Every guard is the Rust codec's: a short body (or a list count
+    /// that outruns the datagram) is `.truncated`; an unknown type byte, a non-finite coordinate and
+    /// a chunk that does not name a real slot in a real sequence are `.malformed`. A corrupt
+    /// datagram is DROPPED by both consumers, never fatal.
+    ///
+    /// A title that is not valid UTF-8 decodes LOSSILY, over there — a mangled title costs that
+    /// title and never the list it arrived in.
     public static func decode(_ data: Data) throws -> Self {
-        var reader = VideoByteReader(data)
-        let type = try reader.readUInt8()
-        switch type {
-        case 1:
-            let version = try reader.readUInt16()
-            let windowID = try reader.readUInt32()
-            let w = try reader.readFiniteFloat64("hello.viewport.w")
-            let h = try reader.readFiniteFloat64("hello.viewport.h")
-            return .hello(
-                protocolVersion: version,
-                requestedWindowID: windowID,
-                viewport: VideoSize(width: w, height: h),
+        // Sized from the datagram, so the answer fits on the first ask: a record is at least eight
+        // wire bytes, and lossy repair can only grow a string threefold (one bad byte → U+FFFD).
+        let recordRoom = data.count / 8 + 1
+        let arenaRoom = data.count * 3 + 1
+        var flat = SlopDeskVideoControl()
+        let parsed: Self? = try data.withUnsafeBytes { bytes -> Self? in
+            try withUnsafeTemporaryAllocation(of: SlopDeskControlRecord.self, capacity: recordRoom) { rows -> Self? in
+                try withUnsafeTemporaryAllocation(of: UInt8.self, capacity: arenaRoom) { arena -> Self? in
+                    let verdict = slopdesk_video_control_decode(
+                        bytes.baseAddress, bytes.count, &flat,
+                        rows.baseAddress, rows.count, arena.baseAddress, arena.count,
+                    )
+                    try check(verdict)
+                    guard verdict != UInt32(SLOPDESK_CONTROL_DECODE_AGAIN) else { return nil }
+                    return build(flat, UnsafeBufferPointer(rows), UnsafeRawBufferPointer(arena))
+                }
+            }
+        }
+        if let parsed { return parsed }
+        // The bound above is a proof rather than a guess, so this is the shape that has not happened
+        // yet — kept because the boundary's contract allows it, and a wrong guess must not truncate.
+        var rows = [SlopDeskControlRecord](repeating: SlopDeskControlRecord(), count: Int(flat.record_count))
+        var arena = [UInt8](repeating: 0, count: Int(flat.arena_length))
+        let again = data.withUnsafeBytes { bytes in
+            rows.withUnsafeMutableBufferPointer { rowBuffer in
+                arena.withUnsafeMutableBufferPointer { arenaBuffer in
+                    slopdesk_video_control_decode(
+                        bytes.baseAddress, bytes.count, &flat,
+                        rowBuffer.baseAddress, rowBuffer.count,
+                        arenaBuffer.baseAddress, arenaBuffer.count,
+                    )
+                }
+            }
+        }
+        try check(again)
+        return rows.withUnsafeBufferPointer { rowBuffer in
+            arena.withUnsafeBufferPointer { arenaBuffer in
+                build(flat, rowBuffer, UnsafeRawBufferPointer(arenaBuffer))
+            }
+        }
+    }
+
+    /// Turns a decode verdict into this side's error vocabulary. `again` is not a failure — the
+    /// caller re-asks with room — so it passes through.
+    private static func check(_ verdict: UInt32) throws {
+        switch verdict {
+        case UInt32(SLOPDESK_CONTROL_DECODE_TRUNCATED): throw VideoProtocolError.truncated
+        case UInt32(SLOPDESK_CONTROL_DECODE_MALFORMED):
+            throw VideoProtocolError.malformed("unacceptable video-control message")
+        default: break
+        }
+    }
+
+    /// Appends a string's UTF-8 to the arena and answers where it went —
+    /// ``ArenaText/intern(_:into:)``, which is the same write every other door makes.
+    private static func intern(_ text: String, into arena: inout Data) -> (UInt32, UInt32) {
+        let span = ArenaText.intern(text, into: &arena)
+        return (span.offset, span.length)
+    }
+
+    /// The §4 two-call encode, written into scratch so the ONE heap allocation this makes is the
+    /// answer, at its exact length.
+    ///
+    /// The bound is sized from what the message actually holds — the arena is the only part that
+    /// grows — so the sizing call is also the writing call for every message and short for none of
+    /// them. A `keepalive` is one byte, and paying a 48-byte `Data` for it and then shrinking it was
+    /// the whole cost of the heartbeat.
+    private static func write(
+        _ flat: SlopDeskVideoControl, _ records: [SlopDeskControlRecord], _ arena: Data,
+    ) -> Data {
+        let bound = Self.scalarBytes + arena.count + records.count * Self.recordBytes
+        return arena.withUnsafeBytes { pool in
+            records.withUnsafeBufferPointer { rows in
+                withUnsafeTemporaryAllocation(byteCount: bound, alignment: 1) { scratch -> Data in
+                    let needed = slopdesk_video_control_encode(
+                        flat, rows.baseAddress, rows.count, pool.baseAddress, pool.count,
+                        scratch.baseAddress, scratch.count,
+                    )
+                    precondition(needed > 0, "the control codec refused a message this type can express")
+                    guard needed > bound else {
+                        return Data(UnsafeRawBufferPointer(rebasing: scratch[..<needed]))
+                    }
+                    var grown = Data(count: needed)
+                    let written = grown.withUnsafeMutableBytes { buffer in
+                        slopdesk_video_control_encode(
+                            flat, rows.baseAddress, rows.count, pool.baseAddress, pool.count,
+                            buffer.baseAddress, buffer.count,
+                        )
+                    }
+                    precondition(written == needed, "the control codec sized a message differently than it wrote it")
+                    return grown
+                }
+            }
+        }
+    }
+
+    /// Room for the widest scalar body (a `helloAck`: type, flags and four `Float64`s) plus the
+    /// list count. Too small would only ever cost a second encode, never a wrong answer.
+    private static let scalarBytes = 48
+    /// Room for one record's fixed part — its ids, its two dimensions, its flags and the length
+    /// prefix each of its three strings carries. The string BYTES are already counted in the arena.
+    private static let recordBytes = 16
+
+    /// Puts the flat answer back together as this enum.
+    private static func build(
+        _ flat: SlopDeskVideoControl,
+        _ records: UnsafeBufferPointer<SlopDeskControlRecord>,
+        _ arena: UnsafeRawBufferPointer,
+    ) -> Self {
+        let viewport = VideoSize(width: flat.viewport_width, height: flat.viewport_height)
+        let rows = records.prefix(Int(flat.record_count))
+        switch flat.message_type {
+        case 1: return .hello(
+                protocolVersion: flat.protocol_version,
+                requestedWindowID: flat.requested_id,
+                viewport: viewport,
             )
         case 2:
-            let accepted = try reader.readUInt8() != 0
-            let streamID = try reader.readUInt32()
-            let cw = try reader.readUInt16()
-            let ch = try reader.readUInt16()
-            let fr = try reader.readUInt8() != 0 // negotiated luma range (after captureHeight)
-            let bx = try reader.readFiniteFloat64("helloAck.bounds.x")
-            let by = try reader.readFiniteFloat64("helloAck.bounds.y")
-            let bw = try reader.readFiniteFloat64("helloAck.bounds.w")
-            let bh = try reader.readFiniteFloat64("helloAck.bounds.h")
             return .helloAck(
-                accepted: accepted,
-                streamID: streamID,
-                captureWidth: cw,
-                captureHeight: ch,
-                windowBoundsCG: VideoRect(x: bx, y: by, width: bw, height: bh),
-                fullRange: fr,
+                accepted: flat.accepted, streamID: flat.stream_id,
+                captureWidth: flat.capture_width, captureHeight: flat.capture_height,
+                windowBoundsCG: VideoRect(
+                    x: flat.bounds_x, y: flat.bounds_y,
+                    width: flat.bounds_width, height: flat.bounds_height,
+                ),
+                fullRange: flat.full_range,
             )
-        case 3:
-            return .bye
-        case 4:
-            let w = try reader.readFiniteFloat64("resizeRequest.w")
-            let h = try reader.readFiniteFloat64("resizeRequest.h")
-            let epoch = try reader.readUInt32()
-            return .resizeRequest(desired: VideoSize(width: w, height: h), epoch: epoch)
-        case 5:
-            let w = try reader.readUInt16()
-            let h = try reader.readUInt16()
-            let epoch = try reader.readUInt32()
-            return .resizeAck(captureWidth: w, captureHeight: h, epoch: epoch)
-        case 6:
-            return .keepalive
-        case 7:
-            return .listWindows
+        case 3: return .bye
+        case 4: return .resizeRequest(desired: viewport, epoch: flat.epoch)
+        case 5: return .resizeAck(
+                captureWidth: flat.capture_width,
+                captureHeight: flat.capture_height,
+                epoch: flat.epoch,
+            )
+        case 6: return .keepalive
+        case 7: return .listWindows
         case 8:
-            let count = try Int(reader.readUInt16())
-            var windows: [WindowSummary] = []
-            // Do NOT reserveCapacity(count) — count is untrusted. Each record read throws `.truncated` the
-            // instant the datagram runs short, so a bogus huge count can't over-allocate or over-read.
-            for _ in 0..<count {
-                let id = try reader.readUInt32()
-                let w = try reader.readUInt16()
-                let h = try reader.readUInt16()
-                let app = try reader.readVideoControlLengthPrefixed()
-                let title = try reader.readVideoControlLengthPrefixed()
-                windows.append(WindowSummary(windowID: id, appName: app, title: title, width: w, height: h))
-            }
-            return .windowList(windows)
-        case 9:
-            return .focusWindow
-        case 10:
-            return try .streamCadence(fps: reader.readUInt16())
-        case 11:
-            return .listSystemDialogs
+            return .windowList(rows.map { row in
+                WindowSummary(
+                    windowID: row.id,
+                    appName: text(arena, row.name_offset, row.name_length),
+                    title: text(arena, row.title_offset, row.title_length),
+                    width: row.width, height: row.height,
+                )
+            })
+        case 9: return .focusWindow
+        case 10: return .streamCadence(fps: flat.fps)
+        case 11: return .listSystemDialogs
         case 12:
-            let count = try Int(reader.readUInt16())
-            var dialogs: [SystemDialogSummary] = []
-            // Same untrusted-count discipline as windowList: no reserveCapacity; each record read throws
-            // `.truncated` the instant the datagram runs short, so a bogus huge count can't over-read.
-            for _ in 0..<count {
-                let id = try reader.readUInt32()
-                let w = try reader.readUInt16()
-                let h = try reader.readUInt16()
-                let isSecure = try reader.readUInt8() != 0
-                let owner = try reader.readVideoControlLengthPrefixed()
-                let title = try reader.readVideoControlLengthPrefixed()
-                dialogs.append(SystemDialogSummary(
-                    windowID: id,
-                    owner: owner,
-                    title: title,
-                    width: w,
-                    height: h,
-                    isSecure: isSecure,
-                ))
-            }
-            return .systemDialogList(dialogs)
+            return .systemDialogList(rows.map { row in
+                SystemDialogSummary(
+                    windowID: row.id,
+                    owner: text(arena, row.name_offset, row.name_length),
+                    title: text(arena, row.title_offset, row.title_length),
+                    width: row.width, height: row.height, isSecure: row.is_secure,
+                )
+            })
         case 13:
-            // u16 → i16 is a bit-preserving reinterpret (counterpart to the encoder's `UInt16(bitPattern:)`).
-            let dx = try Int16(bitPattern: reader.readUInt16())
-            let dy = try Int16(bitPattern: reader.readUInt16())
-            let bandTop = try reader.readUInt16()
-            let bandBottom = try reader.readUInt16()
-            return .scrollOffset(dx: dx, dy: dy, bandTop: bandTop, bandBottom: bandBottom)
+            return .scrollOffset(
+                dx: flat.scroll_dx,
+                dy: flat.scroll_dy,
+                bandTop: flat.band_top,
+                bandBottom: flat.band_bottom,
+            )
         case 14:
-            let count = try Int(reader.readUInt16())
-            var rects: [MaskRect] = []
-            // Same untrusted-count discipline as windowList/systemDialogList: no reserveCapacity; each rect
-            // read throws `.truncated` the instant the datagram runs short, so a bogus huge count (e.g. 65535
-            // with no body) bails on the first missing byte rather than OOM-ing.
-            for _ in 0..<count {
-                let x = try reader.readUInt16()
-                let y = try reader.readUInt16()
-                let w = try reader.readUInt16()
-                let h = try reader.readUInt16()
-                rects.append(MaskRect(x: x, y: y, width: w, height: h))
-            }
-            return .contentMask(rects)
-        case 15:
-            let w = try reader.readUInt16()
-            let h = try reader.readUInt16()
-            return .displayMax(width: w, height: h)
-        case 16:
-            return try .windowFeedSubscribe(knownGeneration: reader.readUInt32())
+            return .contentMask(rows.map { MaskRect(x: $0.x, y: $0.y, width: $0.width, height: $0.height) })
+        case 15: return .displayMax(width: flat.display_max_width, height: flat.display_max_height)
+        case 16: return .windowFeedSubscribe(knownGeneration: flat.generation)
         case 17:
-            let generation = try reader.readUInt32()
-            let chunkIndex = try reader.readUInt8()
-            let chunkCount = try reader.readUInt8()
-            // Validate-then-drop: a chunk must identify a real slot in a real chunk sequence. A zero
-            // chunkCount or out-of-range index can only be corruption/hostile — drop the datagram
-            // rather than hand the assembler an unsatisfiable generation.
-            guard chunkCount >= 1, chunkIndex < chunkCount else {
-                throw VideoProtocolError.malformed(
-                    "windowFeedSnapshot chunk \(chunkIndex)/\(chunkCount) is not a valid slot",
-                )
-            }
-            let count = try Int(reader.readUInt16())
-            var records: [HostWindowRecord] = []
-            // Same untrusted-count discipline as windowList: no reserveCapacity; each record read
-            // throws `.truncated` the instant the datagram runs short, so a bogus huge count can't
-            // over-allocate or over-read.
-            for _ in 0..<count {
-                let id = try reader.readUInt32()
-                let w = try reader.readUInt16()
-                let h = try reader.readUInt16()
-                let flags = try HostWindowFlags(rawValue: reader.readUInt8())
-                let display = try reader.readUInt8()
-                let bundleID = try reader.readVideoControlLengthPrefixed()
-                let app = try reader.readVideoControlLengthPrefixed()
-                let title = try reader.readVideoControlLengthPrefixed()
-                records.append(HostWindowRecord(
-                    windowID: id,
-                    widthPt: w,
-                    heightPt: h,
-                    flags: flags,
-                    displayIndex: display,
-                    bundleID: bundleID,
-                    appName: app,
-                    title: title,
-                ))
-            }
             return .windowFeedSnapshot(
-                generation: generation, chunkIndex: chunkIndex, chunkCount: chunkCount, records: records,
+                generation: flat.generation, chunkIndex: flat.chunk_index, chunkCount: flat.chunk_count,
+                records: rows.map { row in
+                    HostWindowRecord(
+                        windowID: row.id, widthPt: row.width, heightPt: row.height,
+                        flags: HostWindowFlags(rawValue: row.flags), displayIndex: row.display_index,
+                        bundleID: text(arena, row.bundle_offset, row.bundle_length),
+                        appName: text(arena, row.name_offset, row.name_length),
+                        title: text(arena, row.title_offset, row.title_length),
+                    )
+                },
             )
-        case 18:
-            return try .windowFeedCurrent(generation: reader.readUInt32())
-        case 19:
-            let sizePx = try reader.readUInt16()
-            let bundleID = try reader.readVideoControlLengthPrefixed()
-            return .appIconRequest(sizePx: sizePx, bundleID: bundleID)
+        case 18: return .windowFeedCurrent(generation: flat.generation)
+        case 19: return .appIconRequest(sizePx: flat.size_px, bundleID: text(arena, flat.span_offset, flat.span_length))
         case 20:
-            let blobKind = try reader.readUInt8()
-            let blobID = try reader.readUInt64()
-            let metaA = try reader.readUInt16()
-            let metaB = try reader.readUInt16()
-            let chunkIndex = try reader.readUInt8()
-            let chunkCount = try reader.readUInt8()
-            // Validate-then-drop: a chunk must identify a real slot (mirrors windowFeedSnapshot).
-            guard chunkCount >= 1, chunkIndex < chunkCount else {
-                throw VideoProtocolError.malformed(
-                    "blobChunk chunk \(chunkIndex)/\(chunkCount) is not a valid slot",
-                )
-            }
-            let byteCount = try Int(reader.readUInt16())
-            // `readBytes` bounds-checks against the buffer BEFORE reading, so a corrupt byteCount
-            // drops the datagram rather than over-reading.
-            let bytes = try reader.readBytes(byteCount)
             return .blobChunk(
-                blobKind: blobKind, blobID: blobID, metaA: metaA, metaB: metaB,
-                chunkIndex: chunkIndex, chunkCount: chunkCount, bytes: bytes,
+                blobKind: flat.blob_kind, blobID: flat.blob_id, metaA: flat.meta_a, metaB: flat.meta_b,
+                chunkIndex: flat.chunk_index, chunkCount: flat.chunk_count,
+                // The same arena span, taken as bytes rather than as text — and through the same
+                // bounds check, which this read did not have either.
+                bytes: Data(ArenaText.span(arena, Int(flat.span_offset), Int(flat.span_length))),
             )
-        case 21:
-            let windowID = try reader.readUInt32()
-            let maxWidthPx = try reader.readUInt16()
-            return .windowPreviewRequest(windowID: windowID, maxWidthPx: maxWidthPx)
-        case 22:
-            return .listDisplays
+        case 21: return .windowPreviewRequest(windowID: flat.requested_id, maxWidthPx: flat.max_width_px)
+        case 22: return .listDisplays
         case 23:
-            let count = try Int(reader.readUInt16())
-            var displays: [DisplaySummary] = []
-            // Same untrusted-count discipline as windowList: no reserveCapacity; each record read
-            // throws `.truncated` the instant the datagram runs short.
-            for _ in 0..<count {
-                let id = try reader.readUInt32()
-                let w = try reader.readUInt16()
-                let h = try reader.readUInt16()
-                let isMain = try reader.readUInt8() != 0
-                displays.append(DisplaySummary(displayID: id, width: w, height: h, isMain: isMain))
-            }
-            return .displayList(displays)
+            return .displayList(rows.map {
+                DisplaySummary(displayID: $0.id, width: $0.width, height: $0.height, isMain: $0.is_main)
+            })
         case 24:
-            let version = try reader.readUInt16()
-            let displayID = try reader.readUInt32()
-            let w = try reader.readFiniteFloat64("helloDisplay.viewport.w")
-            let h = try reader.readFiniteFloat64("helloDisplay.viewport.h")
             return .helloDisplay(
-                protocolVersion: version,
-                requestedDisplayID: displayID,
-                viewport: VideoSize(width: w, height: h),
+                protocolVersion: flat.protocol_version,
+                requestedDisplayID: flat.requested_id,
+                viewport: viewport,
             )
-        case 25:
-            // Length is the only decode-time validation (a short body throws `.truncated`);
-            // out-of-range VALUES clamp on the host at apply time, per the case doc.
-            let fpsCap = try reader.readUInt8()
-            let ceiling = try reader.readUInt32()
-            return .streamSettings(fpsCap: fpsCap, bitrateCeilingBps: ceiling)
-        case 26:
-            // Body is the 1-byte enable flag; like every wire bool it decodes as `byte != 0`.
-            return try .audioControl(enabled: reader.readUInt8() != 0)
-        case 27:
-            // Length is the only decode-time validation (a short body throws `.truncated`); any
-            // value is a legal tenths reading (0 = none yet), so there is nothing to clamp.
-            let rttTenths = try reader.readUInt16()
-            let encodeTenths = try reader.readUInt16()
-            return .hostStats(rttTenthsMillis: rttTenths, encodeTenthsMillis: encodeTenths)
-        case 28:
-            // Body is the 1-byte enable flag; like every wire bool it decodes as `byte != 0`.
-            return try .privacyMode(enabled: reader.readUInt8() != 0)
-        default:
-            throw VideoProtocolError.malformed("unknown video control message type \(type)")
+        case 25: return .streamSettings(fpsCap: flat.fps_cap, bitrateCeilingBps: flat.bitrate_ceiling_bps)
+        case 26: return .audioControl(enabled: flat.enabled)
+        case 27: return .hostStats(
+                rttTenthsMillis: flat.rtt_tenths_millis,
+                encodeTenthsMillis: flat.encode_tenths_millis,
+            )
+        default: return .privacyMode(enabled: flat.enabled)
         }
     }
-}
 
-// MARK: - Length-prefixed UTF-8 string helpers
-
-// The UInt16-length-prefixed UTF-8 record-string contract used by `windowList` / `systemDialogList`,
-// kept byte/bit-parity with the Rust core (`put_length_prefixed_str` / `read_length_prefixed_str`
-// → `String::from_utf8_lossy`).
-
-private extension Data {
-    /// Appends a `UInt16`-length-prefixed UTF-8 string. UTF-8 exceeding `UInt16.max` bytes is truncated
-    /// at a byte boundary (titles are never that long; guards a pathological input) — matching the core's
-    /// wire contract.
-    mutating func appendVideoControlLengthPrefixed(_ string: String) {
-        var bytes = Array(string.utf8)
-        if bytes.count > Int(UInt16.max) { bytes = Array(bytes.prefix(Int(UInt16.max))) }
-        appendBE(UInt16(bytes.count))
-        append(contentsOf: bytes)
-    }
-}
-
-private extension VideoByteReader {
-    /// Reads a `UInt16`-length-prefixed UTF-8 string (counterpart to
-    /// ``Data/appendVideoControlLengthPrefixed(_:)``). `readBytes` throws
-    /// ``VideoProtocolError/truncated`` if the datagram is too short for the declared length (VALIDATED
-    /// against the buffer BEFORE the read), so a corrupt/oversized prefix DROPS the datagram rather than
-    /// over-reading or crashing. Invalid UTF-8 decodes lossily — a remote title must never crash the
-    /// receiver, and it matches the Rust core's `String::from_utf8_lossy` for byte/bit parity.
-    mutating func readVideoControlLengthPrefixed() throws -> String {
-        let len = try Int(readUInt16())
-        let bytes = try readBytes(len)
-        // The failable `String(bytes:encoding:)` the lint rule prefers returns nil on invalid UTF-8,
-        // diverging from the core's lossy parity, so the lossy initializer is kept on purpose.
-        // swiftlint:disable:next optional_data_string_conversion
-        return String(decoding: bytes, as: UTF8.self)
+    /// The arena span a `(offset, length)` names, as text. The bytes were written there by the Rust
+    /// decode, which already did the lossy repair, so this reads them and nothing else.
+    ///
+    /// This face was the one of nine that bounds-checked only the LENGTH, so it now gains the far-end
+    /// check the other eight already had.
+    private static func text(_ arena: UnsafeRawBufferPointer, _ offset: UInt32, _ length: UInt32) -> String {
+        ArenaText.text(arena, offset, length)
     }
 }

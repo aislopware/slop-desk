@@ -1,5 +1,3 @@
-import Foundation
-
 // MARK: - PUA function-key text filter
 
 /// The PURE, headless decision behind **what `text` a key event may carry into libghostty's encoder**

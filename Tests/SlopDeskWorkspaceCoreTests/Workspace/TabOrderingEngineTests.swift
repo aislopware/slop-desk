@@ -1,7 +1,5 @@
-import Foundation
 import SlopDeskWorkspaceModel
 import XCTest
-@testable import SlopDeskWorkspaceCore
 
 /// Tests for ``TabOrderingEngine`` — sectioning is always By-Project with the sections A→Z, no
 /// grouping/sort hamburger, so the engine is the key rules (``TabOrderingEngine/normalizedProjectKey(_:)``

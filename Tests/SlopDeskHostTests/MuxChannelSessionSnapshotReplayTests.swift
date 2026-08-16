@@ -1,4 +1,5 @@
 import SlopDeskProtocol
+import SlopDeskScreen
 import XCTest
 @testable import SlopDeskHost
 @testable import SlopDeskTransport
@@ -10,6 +11,18 @@ import XCTest
 /// `appendForTesting` (the real `nextSeq` glue), the detached-window backlog via
 /// `enqueueChunkForTesting`, and `replayTail` sends into recording sub-channels.
 final class MuxChannelSessionSnapshotReplayTests: XCTestCase {
+    /// The composer under test IS `slopdesk-screend`, and so is the oracle these tests read the
+    /// result with. Skips by name when the engine is not built rather than passing vacuously.
+    override func setUpWithError() throws {
+        try ScreendFixture.requireDaemon()
+    }
+
+    /// What a fresh terminal shows after `bytes`. The oracle used to be a Swift `TerminalScreenModel`
+    /// standing beside the composer; there is one screen engine now, and asking it is the point.
+    private func screen(_ bytes: Data, rows: Int = 24, cols: Int = 80) throws -> ScreenSnapshot {
+        try ScreenClient.shared.snapshot(raw: bytes, rows: rows, cols: cols)
+    }
+
     private final class SendRecorder: @unchecked Sendable {
         private let lock = NSLock()
         private let decoder = FrameDecoder()
@@ -46,7 +59,7 @@ final class MuxChannelSessionSnapshotReplayTests: XCTestCase {
     ) -> MuxChannelSession {
         MuxChannelSession(
             channelID: 1,
-            pty: PTYProcess(), // unspawned — currentWindowSize() is nil, composer uses 24×80
+            pty: unattachedPTY(), // unspawned — currentWindowSize() is nil, composer uses 24×80
             data: MuxSubChannel(channelID: 1, channel: .data) { _, _ in },
             control: MuxSubChannel(channelID: 1, channel: .control) { _, _ in },
             snapshotReplay: snapshot
@@ -78,7 +91,7 @@ final class MuxChannelSessionSnapshotReplayTests: XCTestCase {
     /// stream is a render (reset preamble first), rides the retained seqs with the LAST seq
     /// covered (ack-release), and reproduces the terminal's final visible state — including
     /// the detached-window FIFO backlog, which is consumed INTO the snapshot.
-    func testColdReattachComposesSnapshotIncludingDetachedBacklog() async {
+    func testColdReattachComposesSnapshotIncludingDetachedBacklog() async throws {
         let session = makeSession()
         session.installGateForTesting(PausableQueueGate(capacity: 1_000_000) { _ in })
         session.appendForTesting(Data("hello\r\n".utf8)) // seq 1
@@ -100,9 +113,7 @@ final class MuxChannelSessionSnapshotReplayTests: XCTestCase {
         XCTAssertTrue(bytes.starts(with: Data("\u{1B}[?1049l".utf8)))
 
         // Feeding it to a fresh terminal reproduces the final state — backlog included.
-        var terminal = TerminalScreenModel(rows: 24, cols: 80)
-        terminal.feed(bytes)
-        let snap = terminal.snapshot()
+        let snap = try screen(bytes)
         XCTAssertEqual(snap.lines[0], "hello")
         XCTAssertEqual(snap.lines[1], "world-away")
         XCTAssertEqual(snap.cursorRow, 1)
@@ -144,7 +155,7 @@ final class MuxChannelSessionSnapshotReplayTests: XCTestCase {
     func testConsumedBacklogReleasesGateAccounting() async {
         let session = MuxChannelSession(
             channelID: 1,
-            pty: PTYProcess(),
+            pty: unattachedPTY(),
             data: MuxSubChannel(channelID: 1, channel: .data) { _, _ in },
             control: MuxSubChannel(channelID: 1, channel: .control) { _, _ in },
             snapshotReplay: MuxChannelSession.SnapshotReplayPolicy(
@@ -214,7 +225,7 @@ final class MuxChannelSessionSnapshotReplayTests: XCTestCase {
     private func makeSpySession(_ spy: ComposeSpy) -> MuxChannelSession {
         MuxChannelSession(
             channelID: 1,
-            pty: PTYProcess(),
+            pty: unattachedPTY(),
             data: MuxSubChannel(channelID: 1, channel: .data) { _, _ in },
             control: MuxSubChannel(channelID: 1, channel: .control) { _, _ in },
             snapshotReplay: MuxChannelSession.SnapshotReplayPolicy(
@@ -230,7 +241,7 @@ final class MuxChannelSessionSnapshotReplayTests: XCTestCase {
     /// unless the compose ADOPTS the rendered stream as the retained history, a SECOND cold
     /// reattach (the first client died before acking) replays a history the backlog has
     /// vanished from.
-    func testDetachedBacklogSurvivesIntoSecondColdSnapshot() async {
+    func testDetachedBacklogSurvivesIntoSecondColdSnapshot() async throws {
         let spy = ComposeSpy()
         let session = makeSpySession(spy)
         session.installGateForTesting(PausableQueueGate(capacity: 1_000_000) { _ in })
@@ -245,9 +256,7 @@ final class MuxChannelSessionSnapshotReplayTests: XCTestCase {
         let second = SendRecorder()
         let secondComposed = await session.replayTail(after: 0, on: recordingChannel(second))
         XCTAssertTrue(secondComposed)
-        var terminal = TerminalScreenModel(rows: 24, cols: 80)
-        terminal.feed(second.outputBytes)
-        let snap = terminal.snapshot()
+        let snap = try screen(second.outputBytes)
         XCTAssertEqual(snap.lines[0], "hello")
         XCTAssertEqual(snap.lines[1], "away-output", "the consumed backlog must survive adoption")
 
@@ -290,9 +299,7 @@ final class MuxChannelSessionSnapshotReplayTests: XCTestCase {
             reattachInput.count, 64 * 1024,
             "reattach compose must walk the folded canonical ring, not ~240 KiB of raw churn",
         )
-        var terminal = TerminalScreenModel(rows: 24, cols: 80)
-        terminal.feed(recorder.outputBytes)
-        XCTAssertEqual(terminal.snapshot().lines[0], "tick 19999", "folded state stays correct")
+        XCTAssertEqual(try screen(recorder.outputBytes).lines[0], "tick 19999", "folded state stays correct")
     }
 
     // MARK: Warm reconnect
@@ -317,7 +324,7 @@ final class MuxChannelSessionSnapshotReplayTests: XCTestCase {
     /// A warm reconnect AT/ABOVE the threshold snapshots instead: the rendered preamble wipes
     /// the stale grid and the FULL history (acked ring included) re-renders, riding only the
     /// un-replayed seqs.
-    func testWarmReconnectOverThresholdSnapshotsFullHistory() async {
+    func testWarmReconnectOverThresholdSnapshotsFullHistory() async throws {
         let session = makeSession(warmThresholdBytes: 1)
         session.appendForTesting(Data("ring-line\r\n".utf8)) // seq 1 → ring after ack
         session.ackForTesting(upTo: 1)
@@ -329,9 +336,7 @@ final class MuxChannelSessionSnapshotReplayTests: XCTestCase {
         let outputs = recorder.outputMessages
         XCTAssertEqual(outputs.map(\.seq).last, 2)
         XCTAssertTrue(outputs.allSatisfy { $0.seq > 1 }, "rides only seqs above lastReceivedSeq")
-        var terminal = TerminalScreenModel(rows: 24, cols: 80)
-        terminal.feed(recorder.outputBytes)
-        let snap = terminal.snapshot()
+        let snap = try screen(recorder.outputBytes)
         XCTAssertEqual(snap.lines[0], "ring-line", "acked history re-renders after the wipe")
         XCTAssertEqual(snap.lines[1], "tail-line")
     }

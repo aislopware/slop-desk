@@ -556,52 +556,6 @@ public extension WorkspaceStore {
         guard !text.isEmpty else { return }
         handle(for: id)?.sendText(text)
     }
-
-    // MARK: Sidebar activity summary + liveness
-
-    /// A coarse session liveness verdict for the sidebar glyph: `alive` when ANY pane in the session has a
-    /// live (connected) connection, else `exitedResumable` (every pane disconnected/failed/unreachable —
-    /// the shell is detached but reattachable). Derived purely from the per-pane connection status the
-    /// client already holds (no host round-trip, no new wire field).
-    enum SessionLiveness: Sendable, Equatable { case alive, exitedResumable }
-
-    /// The session's liveness: `alive` iff at least one of its panes is connected.
-    func sessionLiveness(forSession sessionID: SessionID) -> SessionLiveness {
-        guard let session = tree.sessions.first(where: { $0.id == sessionID }) else { return .exitedResumable }
-        for id in session.allPaneIDs() {
-            if case .connected = (handle(for: id) as? LivePaneSession)?.connection?.status { return .alive }
-        }
-        return .exitedResumable
-    }
-
-    /// The cheap one-line activity summary for a session row: the rolled-up MOST-URGENT
-    /// pane's host-provided label (the type-27 blocking prompt / last assistant line) when present —
-    /// genuinely cheap (no scrollback, no LLM, no round-trip). When no pane carries a label, falls back to
-    /// the human STATE label ("needs permission" / "working" / "done" / "idle"). `nil` when the session is
-    /// entirely `.none` (no agent anywhere → the row stays clean).
-    func activitySummary(forSession sessionID: SessionID) -> String? {
-        guard let session = tree.sessions.first(where: { $0.id == sessionID }) else { return nil }
-        let rollup = rollupStatus(forSession: sessionID)
-        guard rollup != .none else { return nil }
-        // Prefer the label of the most-urgent pane (the one driving the rollup); else any non-empty label.
-        let urgentLabel = session.allPaneIDs()
-            .filter { agentStatus(for: $0) == rollup }
-            .compactMap { agentLabel(for: $0) }
-            .first
-        if let urgentLabel { return urgentLabel }
-        if let anyLabel = session.allPaneIDs().compactMap({ agentLabel(for: $0) }).first { return anyLabel }
-        // No host label: only fall back to the STATE label for the genuinely-informative attention states
-        // (needs permission / done). For a merely idle/working session the trailing AgentStatusDot already
-        // encodes that by colour, so an always-on "idle"/"working" caption would be pure chatter under the
-        // name — return nil and keep the row clean.
-        switch rollup {
-        case .needsPermission,
-             .done: return rollup.displayLabel
-        case .none,
-             .idle,
-             .working: return nil
-        }
-    }
 }
 
 // MARK: - The ⌘⇧U walk's mutable state

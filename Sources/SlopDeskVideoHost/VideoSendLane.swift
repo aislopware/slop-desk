@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 import SlopDeskVideoProtocol
 
@@ -45,6 +46,15 @@ public final class VideoSendLane: @unchecked Sendable {
             self.gapNanos = gapNanos
             self.chunkFragments = max(1, chunkFragments)
             self.leadingDelayNanos = leadingDelayNanos
+        }
+
+        /// The job as the schedule reads it — the parameters, never the datagrams. The floor on
+        /// the chunk size is applied over there too, so a zero can never stall the drain.
+        var wire: SlopDeskSendJob {
+            SlopDeskSendJob(
+                gap_nanos: gapNanos, leading_delay_nanos: leadingDelayNanos,
+                outgoing_count: outgoings.count, chunk_fragments: chunkFragments,
+            )
         }
     }
 
@@ -120,14 +130,12 @@ public final class VideoSendLane: @unchecked Sendable {
     /// send; the consumer never sends with an empty FIFO, so the lock-free send below is exclusive of
     /// the consumer's sends. Multi-chunk/paced jobs and the time-separated dup copies must still take
     /// ``enqueue(_:)`` — they NEED the async sleeps.
-    public func trySendInline(_ outgoings: [VideoSendScheduler.Outgoing]) -> Bool {
+    public func trySendInline(_ job: Job) -> Bool {
         lock.lock()
-        guard !closed, fifo.isEmpty, !transmitting else {
-            lock.unlock()
-            return false
-        }
+        let may = slopdesk_send_may_inline(job.wire, closed, fifo.count, transmitting)
         lock.unlock()
-        for outgoing in outgoings { send(outgoing.bytes, outgoing.channel) }
+        guard may else { return false }
+        for outgoing in job.outgoings { send(outgoing.bytes, outgoing.channel) }
         return true
     }
 
@@ -188,29 +196,31 @@ public final class VideoSendLane: @unchecked Sendable {
             guard currentGeneration() == gen else { return }
         }
         let outgoings = job.outgoings
-        if job.gapNanos == 0 || outgoings.count <= job.chunkFragments {
-            for outgoing in outgoings { send(outgoing.bytes, outgoing.channel) }
-            return
-        }
+        let plan = Self.plan(for: job)
         let clock = ContinuousClock()
         let start = clock.now
-        var chunk = 0
-        var i = 0
-        while i < outgoings.count {
-            let end = min(i + job.chunkFragments, outgoings.count)
-            var j = i
-            while j < end { send(outgoings[j].bytes, outgoings[j].channel)
-                j += 1
+        for (index, chunk) in plan.enumerated() {
+            for slot in chunk.start..<chunk.end { send(outgoings[slot].bytes, outgoings[slot].channel) }
+            guard index + 1 < plan.count else { return }
+            // The NEXT chunk's deadline is absolute, so an oversleep eats into its gap instead of
+            // pushing the rest of the schedule right, and a chunk already past due sends at once.
+            let deadline = start + .nanoseconds(Int64(plan[index + 1].due_nanos))
+            if deadline > clock.now {
+                try? await clock.sleep(until: deadline)
             }
-            i = end
-            chunk += 1
-            if i < outgoings.count {
-                let deadline = start + .nanoseconds(Int64(job.gapNanos) * Int64(chunk))
-                if deadline > clock.now {
-                    try? await clock.sleep(until: deadline)
-                }
-                guard currentGeneration() == gen else { return } // flushed/closed mid-pace
-            }
+            guard currentGeneration() == gen else { return } // flushed/closed mid-pace
         }
+    }
+
+    /// The job's chunk boundaries and deadlines, measured by the door and then filled by it.
+    private static func plan(for job: Job) -> [SlopDeskPacedChunk] {
+        let record = job.wire
+        let needed = slopdesk_send_pace_plan(record, nil, 0)
+        guard needed > 0 else { return [] }
+        var room = [SlopDeskPacedChunk](repeating: SlopDeskPacedChunk(), count: needed)
+        let written = room.withUnsafeMutableBufferPointer { slots in
+            slopdesk_send_pace_plan(record, slots.baseAddress, slots.count)
+        }
+        return written == needed ? room : []
     }
 }

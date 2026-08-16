@@ -1,7 +1,6 @@
 import SlopDeskProtocol
 import SlopDeskWorkspaceModel
 import XCTest
-@testable import SlopDeskClient
 @testable import SlopDeskWorkspaceCore
 
 /// B3 — the background-pane command-completion wiring in the store: a finished command (OSC 133;D, wire

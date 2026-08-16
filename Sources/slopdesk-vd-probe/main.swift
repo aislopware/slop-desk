@@ -60,13 +60,12 @@ while let a = it.next() {
 
 func eprint(_ s: String) { FileHandle.standardError.write(Data((s + "\n").utf8)) }
 
-/// The online displays as `(id, global-bounds)`, main-first for readability.
+/// The online displays as `(id, global-bounds)`, main-first — the same question
+/// ``VirtualDisplay/onlineDisplayBounds()`` asks before it pins anything, and the same answer. This
+/// probe reconfigures the arrangement and restores it, so it must read it the way the code it is
+/// de-risking does; a second `CGGetOnlineDisplayList` walk here would be a second set of displays.
 func snapshotArrangement() -> [(id: CGDirectDisplayID, bounds: CGRect)] {
-    var n: UInt32 = 0
-    guard CGGetOnlineDisplayList(0, nil, &n) == .success, n > 0 else { return [] }
-    var ids = [CGDirectDisplayID](repeating: 0, count: Int(n))
-    guard CGGetOnlineDisplayList(n, &ids, &n) == .success else { return [] }
-    return ids.prefix(Int(n)).map { (id: $0, bounds: CGDisplayBounds($0)) }
+    VirtualDisplay.onlineDisplayBounds()
 }
 
 func describeArrangement(_ a: [(id: CGDirectDisplayID, bounds: CGRect)]) -> String {

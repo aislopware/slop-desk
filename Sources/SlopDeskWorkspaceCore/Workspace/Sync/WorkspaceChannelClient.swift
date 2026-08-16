@@ -628,5 +628,4 @@ public final class WorkspaceChannelClient {
     /// The in-process document, for the handful of states no intent can reach — a tree with zero
     /// sessions, or one carrying a `.desktop` leaf the public surface refuses to build.
     var localDocumentForTesting: LoopbackWorkspaceDocument? { localDocument }
-    var presenceClockForTesting: Int64 { presenceClock }
 }

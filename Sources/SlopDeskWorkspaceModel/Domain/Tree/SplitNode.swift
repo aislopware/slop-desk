@@ -1,5 +1,3 @@
-import Foundation
-
 // MARK: - Split axis
 
 /// The direction a ``SplitNode/split(id:axis:children:)`` lays its children out (docs/42 §Domain model).

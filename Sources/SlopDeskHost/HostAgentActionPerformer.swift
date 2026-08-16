@@ -12,12 +12,12 @@ import SlopDeskProtocol
 /// instantiated in a unit test (it touches the host's home-directory settings file on disk; the
 /// hang/IO-safety rule). The CLIENT routing (verb 11/12/13 encode + ok/error decode + the 2-byte status
 /// flags) is the unit-tested half (``MetadataClient`` + `MetadataClientAgentHooksTests`), and the pure
-/// install/uninstall/marker logic is tested in `AgentInstallerTests` / `AgentInstallerStatusTests`.
+/// install/uninstall/marker logic is `slopdesk-agenthooks`'s, tested by `install::tests`.
 ///
 /// **Host-global, not pane-scoped.** Install/uninstall act on the host's single `~/.claude/settings.json`
 /// regardless of which pane's mux channel carried the request, so this shim ignores the request payload
-/// (the wire verbs carry an EMPTY payload). It resolves the target via ``AgentInstaller/defaultSettingsPath``
-/// / ``AgentInstaller/defaultScriptPath`` (honoring `CLAUDE_CONFIG_DIR`).
+/// (the wire verbs carry an EMPTY payload). ``AgentHooks`` resolves the target from the environment
+/// hostd is running in, honoring `CLAUDE_CONFIG_DIR`.
 ///
 /// **No exfiltration → no cwd confinement.** 11/12 return ONLY a status byte + empty payload; 13 returns
 /// the 2-byte `[installed][listenerActive]` flags (docs/20) — no host FILE contents ever cross the wire,
@@ -48,7 +48,7 @@ enum HostAgentActionPerformer {
         case .uninstallAgentHooks:
             return statusResponse(requestID: requestID, status: uninstallHooks())
         case .agentHookStatus:
-            let installed = AgentInstaller.isInstalled(settingsPath: AgentInstaller.defaultSettingsPath())
+            let installed = AgentHooks.isInstalled()
             return .metadataResponse(
                 requestID: requestID,
                 status: MetadataStatus.ok.rawValue,
@@ -66,31 +66,26 @@ enum HostAgentActionPerformer {
     }
 
     /// Installs the slopdesk Claude Code hooks (relay binary + `settings.json` merge) on the host.
-    /// `.ok` on a successful write, `.error` if the install threw (a disk / permission failure, or a
-    /// relay binary that was never staged beside the host). Named `installHooks`, NOT `install`, to
-    /// keep the shim's surface self-describing alongside `uninstallHooks`.
+    /// `.ok` on a successful write, `.error` if the installer reported one (a disk / permission
+    /// failure, or a relay that was never staged beside the host) or could not be run at all. Named
+    /// `installHooks`, NOT `install`, to keep the shim's surface self-describing alongside
+    /// `uninstallHooks`.
     static func installHooks() -> MetadataStatus {
-        do {
-            try AgentInstaller.install(
-                settingsPath: AgentInstaller.defaultSettingsPath(),
-                hookPath: AgentInstaller.defaultHookPath(),
-                binarySource: AgentInstaller.bundledBinaryPath(),
-            )
-            return .ok
-        } catch {
-            return .error
-        }
+        succeeded(AgentHooks.install())
     }
 
     /// Uninstalls the slopdesk Claude Code hooks (strips exactly our `settings.json` entries) on the
-    /// host. `.ok` on success, `.error` if the uninstall threw.
+    /// host. `.ok` on success, `.error` if the uninstall reported one.
     static func uninstallHooks() -> MetadataStatus {
-        do {
-            try AgentInstaller.uninstall(settingsPath: AgentInstaller.defaultSettingsPath())
-            return .ok
-        } catch {
-            return .error
-        }
+        succeeded(AgentHooks.uninstall())
+    }
+
+    /// Maps one installer answer to the wire status. A `nil` answer — no installer on this host —
+    /// is an error for the same reason a thrown one was: the client asked for a state change that
+    /// did not happen, and a green reply for it would be a lie.
+    private static func succeeded(_ answer: AgentHooks.Answer?) -> MetadataStatus {
+        guard let answer, answer.error == nil else { return .error }
+        return .ok
     }
 
     /// Builds an empty-payload `metadataResponse` carrying `status` (the 11/12 reply shape).

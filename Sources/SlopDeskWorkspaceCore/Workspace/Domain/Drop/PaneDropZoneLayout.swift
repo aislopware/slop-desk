@@ -1,12 +1,12 @@
-import CoreGraphics
-import Foundation
-
 // MARK: - Drop zones
 
 /// The five labelled drop targets the external-drop overlay shows over a pane (see
 /// `docs/ui-shell/spec/user-interface__drag-and-drop.md`, `screenshots/drop-overlay-frame-action.png`): a central
 /// vertical column of three circles (New Tab → Insert Path → Open In-Place, top-to-bottom) plus a
 /// large ellipse hugging each side edge (Split Left / Split Right, extending off-screen).
+import CoreGraphics
+import Foundation
+
 public enum DropZone: String, CaseIterable, Sendable, Equatable {
     /// Top-center small circle — open a new terminal tab rooted at the dropped folder.
     case newTab

@@ -4,14 +4,39 @@
 #   make fmt    — auto-format everything (writes)
 #   make fix    — fmt + apply every safe lint autofix (writes)
 #   make lint   — run every linter strictly, no writes (what CI gates on)
-#   make check  — lint + swift build + swift test + golden pin (the full local gate)
+#   make check  — lint + build + test + Miri + golden pin + the iOS triple (the full local gate)
 #
 # Tools are pinned/installed via `make install-tools`.
-# Swift + a tiny native SIMD C kernel (Sources/CSlopDeskSIMD) + ONE standalone Rust binary
-# (rust/slopdesk-hook, the Claude Code hook relay). There is still NO FFI: the relay is a separate
-# process that speaks the same socket framing as the sh script it replaces, so the wire, the
-# codecs and every test path stay pure Swift. `swift build` alone still compiles the package from
-# a clean checkout; `make build` additionally stages the relay beside the host binary.
+# Swift + Rust: two short-lived programs in
+# the root workspace (rust/slopdesk-hook, the Claude Code hook relay + its installer — stage 23;
+# rust/slopdesk-probe, the host metadata RPC's git/directory/session half + the TERM
+# resolution — stages 24 and 25;
+# rust/slopdesk-ctl, the
+# agent-control CLI; rust/slopdesk-cli, the `slopdesk` CLI core — stage 16; rust/slopdesk-codeseed,
+# the code panel's workbench profile — stage 22), six daemons and five library workspaces
+# (rust/slopdesk-wire, the terminal wire codec + the replay buffer + the OSC
+# vocabulary — stages 1, 14 and 16; rust/slopdesk-video, the PATH-2 FEC math — stage 5;
+# rust/slopdesk-workspace, the workspace document's domain rules + folder frecency + what the host
+# may listen on — stages 12, 16 and 17; rust/slopdesk-agent, per-pane agent detection — stages 13
+# and 16; rust/slopdesk-terminal, the client's read of the output stream for the input surface, the
+# grid's links and the command blocks — stages 15 and 18), each its own workspace. Stages 19 to 21
+# added no crate: they moved the generated ZDOTDIR shim into superd, which owns the child whose
+# lifetime that directory has, and then BOTH of the host's per-byte readers into superd's PUMP —
+# the one place a pane's bytes exist before anyone else sees them. hostd now receives the ANSWER on
+# a 0x04 frame (the out-of-band sniff) and a 0x05 frame (the OSC 133 command blocks) instead of
+# rescanning every byte in Swift, and superd holds each finished command's output — a ring in hostd
+# died on every rebuild (docs/51 §6.13-6.14). Stage 22 moved the code-server PROFILE — the seeded
+# settings, both seeded extensions and their registry, the child's argv and environment, the
+# resource files themselves — out of hostd and behind `slopdesk-codeseed`, a program hostd FORKS
+# rather than dials: every question it asks is asked at most once per boot.
+# Every DAEMON is still a separate process over a socket. What changed is the other half of the rule
+# in CLAUDE.md — "a port ships over a socket, or as a linked library, pick by lifetime": the
+# in-process, lifetime-coupled ports are linked, as `CSlopDeskFFI` from
+# `ThirdParty/slopdesk-ffi/SlopDeskFFI.xcframework` (docs/55). cargo still never runs inside
+# `swift build`; `make ffi` (scripts/build-ffi.sh) assembles that artifact beforehand.
+# `swift build` therefore needs the xcframework to EXIST before it can resolve the package graph, so
+# a clean checkout runs `make ffi` — or any of `make build`/`test`/`check`, which depend on it —
+# once. `make build` additionally stages the relay and the CLI beside the host binary.
 
 SWIFT_PATHS  := Sources Tests Apps
 # Format (SwiftFormat) also covers the package manifest; the SwiftLint scope stays
@@ -19,9 +44,23 @@ SWIFT_PATHS  := Sources Tests Apps
 SWIFTFMT_PATHS := Package.swift $(SWIFT_PATHS)
 # ThirdParty/ghostty/ only: that tree is the vendored libghostty build recipe, carried close to
 # upstream's own shape. ThirdParty/tools/provision.sh is OURS and meets the same bar as scripts/.
-SHELL_FILES  := $(shell git ls-files '*.sh' | grep -v '^ThirdParty/ghostty/')
-PY_FILES     := $(shell git ls-files '*.py')
+#
+# Read off the FILESYSTEM, not `git ls-files`. Tracking is not the same question as ownership, and
+# using it as a proxy silently dropped five scripts — `check-supervisor.sh` and `build-ffi.sh` among
+# them, the two this repo leans on hardest. They are untracked, so `git ls-files` never named them,
+# so shellcheck had never run on either and `make fmt-shell` had never touched them: a lint scope
+# that shrinks when a file is new is exactly backwards. Every `.sh` we own lives in `scripts/` (the
+# 25 tracked ones all do) plus the one under `ThirdParty/tools`, and a glob says so without a list.
+SHELL_FILES  := $(wildcard scripts/*.sh) ThirdParty/tools/provision.sh
+PY_FILES     := $(wildcard scripts/*.py)
 SHFMT_FLAGS  := -i 2 -ci -sr
+
+# Every Rust WORKSPACE ROOT: `rust/` itself, plus each crate that declares its own `[workspace]` and
+# is therefore invisible to `cargo --workspace` run at the root. Derived for the same reason the
+# shell list above is: the seventeen were spelled out by hand three times over (once in `fmt-rust`,
+# twice in `lint-rust`), so adding a crate meant remembering three places and forgetting one left it
+# silently unlinted — the failure `docs/46` warns about in the row about this very target.
+RUST_WORKSPACES := rust $(patsubst %/Cargo.toml,%,$(shell grep -l '^\[workspace\]' rust/*/Cargo.toml))
 
 .DEFAULT_GOAL := help
 
@@ -36,8 +75,24 @@ help: ## Show this help
 .PHONY: fmt fmt-swift fmt-shell fmt-python fmt-rust
 fmt: fmt-swift fmt-shell fmt-python fmt-rust ## Auto-format all languages
 
-fmt-swift: ## Format Swift (SwiftFormat)
+# `.swiftformat` states the division of labour: SwiftFormat owns formatting, SwiftLint owns lint.
+# The division does not survive contact with `leading_whitespace`. SwiftFormat cannot remove a blank
+# line at the START of a file — `consecutiveBlankLines` collapses three to two and stops, and no
+# other rule reaches file position 0 (checked against every rule's `--ruleinfo`). SwiftLint enforces
+# it, so `make fmt-swift` could not produce a tree `make lint-swift` accepts: the one thing a format
+# target exists to guarantee.
+#
+# So the WRITE half of SwiftLint lives here, in the target that writes, and `lint-swift` stays
+# strictly read-only (`--lint`, and `swiftlint` with no `--fix`). It is a no-op on a clean tree —
+# verified: zero output, byte-identical `git status` and diffstat — so it costs a pass over the tree
+# and changes nothing until something is genuinely unformatted.
+#
+# `--fix` only, never `analyze --fix`. The analyzer half (`unused_import`, `unused_declaration`)
+# judges by a compiler log from ONE configuration, so it deletes imports that only an `#if os(iOS)`
+# branch uses; it belongs to a deliberate, verified sweep, not to a formatter people run on reflex.
+fmt-swift: ## Format Swift (SwiftFormat, then SwiftLint's correctable rules)
 	swiftformat $(SWIFTFMT_PATHS)
+	swiftlint --fix --quiet
 
 fmt-shell: ## Format shell (shfmt)
 	@if [ -n "$(SHELL_FILES)" ]; then shfmt $(SHFMT_FLAGS) -w $(SHELL_FILES); fi
@@ -47,22 +102,26 @@ fmt-python: ## Format Python (ruff format)
 
 # rustfmt.toml turns on nightly-only options (wrap_comments, group_imports, format_strings …).
 # Only the FORMATTER needs nightly; the crate itself builds and tests on stable.
+# EVERY workspace, matching `lint-rust` — the daemons each have their own (see the note there), and a
+# formatter that skips what the linter checks means `make fmt && make lint` fails on its own output.
 fmt-rust: ## Format Rust (nightly rustfmt — rust/rustfmt.toml uses unstable options)
-	cd rust && cargo +nightly fmt --all
+	@for ws in $(RUST_WORKSPACES); do (cd $$ws && cargo +nightly fmt --all) || exit 1; done
 
 # ---------------------------------------------------------------------------- #
 # Autofix (writes) — formatting + every safe lint autocorrect
 .PHONY: fix
 fix: fmt ## Format + apply all safe lint autofixes
 	-swiftlint --fix --quiet
-	-cd rust && cargo clippy --workspace --all-targets --fix --allow-dirty --allow-staged
+	@# Every workspace, for the reason `fmt-rust` and `lint-rust` are: `cd rust && … --workspace`
+	@# autofixes the root's four members and leaves the other sixteen crates for `make lint` to fail on.
+	-@for ws in $(RUST_WORKSPACES); do (cd $$ws && cargo clippy --workspace --all-targets --fix --allow-dirty --allow-staged) || true; done
 	-[ -n "$(PY_FILES)" ] && ruff check --fix $(PY_FILES)
 	-[ -n "$(SHELL_FILES)" ] && shellcheck -f diff $(SHELL_FILES) | git apply --allow-empty 2>/dev/null
 
 # ---------------------------------------------------------------------------- #
 # Linting (no writes) — the CI gate
-.PHONY: lint lint-swift lint-shell lint-python lint-rust lint-ds-leaks lint-menu-shortcutless
-lint: lint-swift lint-shell lint-python lint-rust lint-ds-leaks lint-menu-shortcutless ## Run every linter strictly
+.PHONY: lint lint-swift lint-shell lint-python lint-rust lint-rust-clippy test-rust lint-ds-leaks lint-menu-shortcutless lint-supervisor
+lint: lint-swift lint-shell lint-python lint-rust lint-ds-leaks lint-menu-shortcutless lint-supervisor ## Run every linter strictly
 
 lint-swift: ## SwiftFormat --lint + SwiftLint --strict
 	swiftformat $(SWIFTFMT_PATHS) --lint
@@ -77,6 +136,14 @@ lint-ds-leaks: ## Design-system token-leak ratchet (raw font/radius literals)
 # WorkspaceCommands.swift — the NSEvent dispatcher owns chords (text-only, no compile). See the script.
 lint-menu-shortcutless: ## Menu-bar shortcut-less ratchet (no .keyboardShortcut in WorkspaceCommands)
 	bash scripts/check-menu-shortcutless.sh
+
+# hostd ↔ superd CONTRACT ratchet: the constants that are necessarily typed in both languages
+# (rendezvous socket name, protocol version, verbs, frame tags, body cap, PTY read chunk) compared
+# textually, plus the "nothing in Sources/ reads a PTY master" invariant. Text-only, no compile, no
+# daemon — the skew it catches is invisible to both languages' own suites, because each side is
+# internally consistent. `scripts/check-supervisor.sh --tests` adds the runs that need a toolchain.
+lint-supervisor: ## hostd/superd cross-language contract ratchet
+	bash scripts/check-supervisor.sh
 
 # The `if` form is load-bearing. A `[ -n … ] && cmd` chain exits nonzero on an EMPTY file
 # list, and the `|| true` that silences THAT silences every real diagnostic with it: the tool
@@ -94,44 +161,343 @@ lint-python: ## ruff check + ruff format --check
 # Rust: clippy at all/pedantic/nursery/cargo + a curated restriction slice, every group DENY
 # (rust/Cargo.toml `[workspace.lints]`), so `-D warnings` is the belt to those braces. `--all-targets`
 # reaches the test code too. The format check needs nightly for the same reason `fmt-rust` does.
-lint-rust: ## clippy -D warnings (all targets) + rustfmt --check
-	cd rust && cargo clippy --workspace --all-targets --all-features -- -D warnings
-	cd rust && cargo +nightly fmt --all -- --check
+# `slopdesk-superd` is a SEPARATE workspace (rust/slopdesk-superd/Cargo.toml explains why: the hook
+# needs `panic = "abort"`, superd needs `panic = "unwind"`, and profiles are workspace-global). It
+# is `exclude`d from rust/Cargo.toml, so `--workspace` does NOT reach it — hence the second pair of
+# invocations. Forgetting them is a silently unlinted daemon.
+lint-rust: lint-rust-clippy ## clippy -D warnings (all targets) + rustfmt --check, all 17 Rust workspaces
+	@for ws in $(RUST_WORKSPACES); do (cd $$ws && cargo +nightly fmt --all -- --check) || exit 1; done
 
-# SwiftLint analyzer rules need a compiler invocation log — heavier, run on demand.
+# Split out because the pre-commit hook wants clippy WITHOUT the `fmt --check`: prek runs hooks in
+# parallel, and the `rustfmt (apply)` hook is rewriting the very files a `--check` would be reading.
+lint-rust-clippy: ## clippy -D warnings across every Rust workspace (no fmt check)
+	@for ws in $(RUST_WORKSPACES); do (cd $$ws && cargo clippy --workspace --all-targets --all-features -- -D warnings) || exit 1; done
+
+# The pre-commit hook's Rust test sweep, and the same `--workspace`-does-not-reach-them story: the
+# hook used to run `cd rust && cargo test --workspace` while firing on ANY `rust/**.{rs,toml}` change,
+# so a commit to fifteen of the seventeen crates ran the OTHER two crates' tests and reported green.
+# ~16 s warm for the lot, which is what makes it a commit-time gate rather than a push-time one. The
+# named per-crate targets below stay: they are how you run ONE crate, and `make test` composes them.
+test-rust: ## cargo test across every Rust workspace (~16 s warm)
+	@for ws in $(RUST_WORKSPACES); do (cd $$ws && cargo test --workspace --quiet) || exit 1; done
+
+# SwiftLint analyzer rules need the compiler INVOCATIONS, which only a verbose build prints. Minutes,
+# not seconds — ~750 files, each re-parsed by a real frontend — so this stays out of `lint` and runs
+# on demand. `.swiftlint.yml` says `analyzer_rules: all`, so what it covers is every analyzer rule
+# SwiftLint ships.
+#
+# It fed `.build/debug.yaml`, which is llbuild's build MANIFEST and not a compiler log. SwiftLint
+# accepted the path, collected nothing out of it, and printed "Found 0 violations, 0 serious in 0
+# files" — a clean exit over an empty file set. The `|| echo <note>` that was meant to catch exactly
+# that could not fire, because nothing had failed: the target had never once run an analyzer rule and
+# had reported success for it every time. Same shape as the `|| true` warned about above `lint-shell`,
+# reached by a different road.
+#
+# So: a real `-v` log, no `|| echo`, and the file count asserted. Analysing zero files is the failure
+# it always was, and the exit status of the analyzer itself is what the target exits with — never
+# `tee`'s, which is why the log is written first and printed second.
+#
+# The clean is load-bearing, not caution. `-v` prints the commands SwiftPM RUNS, so a warm tree
+# prints none, the log carries no `swift-frontend` line, and the count assertion below fails on a
+# tree with nothing wrong with it. The price is a full rebuild every time this target is asked for,
+# and the reason it is out of `lint`.
 .PHONY: lint-swift-analyze
-lint-swift-analyze: ## SwiftLint analyzer rules (compiles the package first)
-	swift build --build-tests 2>/dev/null; \
-	swiftlint analyze --strict --compiler-log-path .build/debug.yaml 2>/dev/null || \
-		echo "note: run 'swift build -v | tee build.log' then 'swiftlint analyze --compiler-log-path build.log'"
+lint-swift-analyze: ## SwiftLint analyzer rules (full rebuild + analyze; minutes, not seconds)
+	swift package clean
+	swift build --build-tests -v > .build/swiftlint-compiler.log 2>&1 || \
+		{ tail -40 .build/swiftlint-compiler.log; exit 1; }
+	@swiftlint analyze --strict --compiler-log-path .build/swiftlint-compiler.log \
+		> .build/swiftlint-analyze.log 2>&1; \
+	status=$$?; \
+	cat .build/swiftlint-analyze.log; \
+	grep -qE 'in [1-9][0-9]* files' .build/swiftlint-analyze.log || \
+		{ echo "lint-swift-analyze: analysed 0 files — the compiler log carries no swiftc invocation"; exit 1; }; \
+	exit $$status
 
 # ---------------------------------------------------------------------------- #
 # Full gate
-.PHONY: check build test test-touched golden hook hook-test
-check: lint build test golden ## lint + build + test + golden pin (full local gate)
+.PHONY: check check-ios build test test-touched golden ffi ffi-test hook hook-test ctl ctl-test posix-test superd superd-test superd-install screend screend-test screend-install dropd dropd-test androidd androidd-test inspectord inspectord-test wire wire-test altscreen-test video video-test gfsimd-test miri workspace workspace-test agent agent-test terminal terminal-test cli cli-test codeseed codeseed-test probe probe-test host host-restart host-status
+check: lint build test miri golden check-ios ## lint + build + test + the unsafe memory audit + golden pin + the iOS triple (full local gate)
 
-build: hook ## swift build (Swift + CSlopDeskSIMD) + stage the Rust hook relay
+# `swift build` compiles the macOS slice ONLY — it never type-checks a `#if os(iOS)` source, so the
+# UIKit input host and the iOS components in Sources/SlopDeskClientUI/iOS/ compiled only in someone's
+# head. `scripts/check-ios.sh` has existed for exactly that and was reachable from no target, no
+# hook and no workflow. It was also RED: two xcframeworks each shipped `Headers/module.modulemap`,
+# Xcode copies both to `$BUILT_PRODUCTS_DIR/include/`, and neither app had built on either platform
+# since (fixed in scripts/build-ffi.sh, which now nests its headers and asserts the nesting).
+#
+# `check-macos.sh` is the sibling and is deliberately NOT here: it drives a real window and needs a
+# logged-in GUI session, so it cannot run from a headless gate.
+check-ios: ffi ## iOS-triple typecheck (the `#if os(iOS)` surface `swift build` never compiles)
+	bash scripts/check-ios.sh
+
+# The three arm64 static slices the Swift clients link, from `rust/slopdesk-ffi`. FIRST, and not
+# optional: `Package.swift` declares a `binaryTarget` at that path, so SwiftPM cannot even resolve
+# the graph without it. The script stamps its inputs and exits in milliseconds when nothing changed,
+# which is what makes it safe to put in front of every build.
+ffi: ## Build ThirdParty/slopdesk-ffi/SlopDeskFFI.xcframework (macos + ios + ios-sim arm64)
+	bash scripts/build-ffi.sh
+
+build: ffi hook ctl codeseed probe ## swift build (Swift + the linked Rust FFI slices) + the Rust hook relay, agent CLI, profile seeder and metadata probe
 	swift build
 	@cp rust/target/release/slopdesk-hook "$$(swift build --show-bin-path)/slopdesk-hook"
+	@cp rust/target/release/slopdesk-agenthooks "$$(swift build --show-bin-path)/slopdesk-agenthooks"
+	@cp rust/target/release/slopdesk-ctl "$$(swift build --show-bin-path)/slopdesk-ctl"
+	@cp rust/target/release/slopdesk-probe "$$(swift build --show-bin-path)/slopdesk-probe"
 
 # The Claude Code hook relay. Compiled, not a shell script: Claude Code runs hooks SYNCHRONOUSLY
 # on PreToolUse/PostToolUse — twice per tool call — and the sh+cat+nc script it replaces spent
 # ~10ms of its ~12.4ms forking three processes to move ~60 bytes. It is staged NEXT TO the host
-# binary, which is where AgentInstaller.bundledBinaryPath looks for it.
-hook: ## Build the Rust hook relay (rust/slopdesk-hook)
-	cd rust && cargo build --release
+# binary, which is where `AgentHooks.locate` looks for its sibling.
+#
+# The crate builds TWO binaries. `slopdesk-agenthooks` is the installer that writes the settings
+# entries pointing at the relay and stages the relay beside itself; it is separate because it needs
+# `serde_json` and the relay's cost IS its startup. The split is measured, not assumed: the relay's
+# release binary is byte-for-byte the same size either way, because nothing links what it cannot
+# reach.
+hook: ## Build the Rust hook relay + its installer (rust/slopdesk-hook)
+	cd rust && cargo build --release -p slopdesk-hook
 
 hook-test: ## cargo test for the hook relay
-	cd rust && cargo test
+	cd rust && cargo test -p slopdesk-hook
+
+# The agent-control CLI. Was Swift; ported for the same reason as the hook and measured the same
+# way — an agent forks it once per `read`/`wait`/`write`/`run`, so its cost IS process startup.
+# Above the fork/exec floor the Swift build spent 3.47 ms getting useful work done, this one spends
+# 0.73 ms. Same root workspace as the hook because it wants the same startup-tuned profile; staged
+# next to hostd by `build:`, which is where `slopdesk-hostd/main.swift` looks for the sibling it
+# exports as `SLOPDESK_CTL_BIN`.
+ctl: ## Build the Rust agent-control CLI (rust/slopdesk-ctl)
+	cd rust && cargo build --release -p slopdesk-ctl
+
+ctl-test: ## cargo test for the agent-control CLI
+	cd rust && cargo test -p slopdesk-ctl
+
+# The host metadata RPC's git, directory and session half. hostd forks it per request, which for
+# `gitStatus` — the verb the project-scoped watcher polls on a cadence — is FEWER spawns than before:
+# that one verb forked `git` four times from hostd's own queue, and now makes those four inside a
+# program hostd spawns once. The rest of the shim (the pane's cwd, its processes, its ports) needs
+# the PTY master fd and stays in Swift. It also answers the TERM question — whether this host can
+# resolve `xterm-ghostty` — which is the same shape of question about the same machine. Same root
+# workspace as the hook for the same startup-tuned profile; staged next to hostd by `build:`, which
+# is where `HostProbe.locate` looks.
+probe: ## Build the Rust host probe (rust/slopdesk-probe)
+	cd rust && cargo build --release -p slopdesk-probe
+
+probe-test: ## cargo test for the metadata probe
+	cd rust && cargo test -p slopdesk-probe
+
+# The process custodian (docs/51). Builds like the hook but is NOT staged next to the host binary:
+# it is a launchd agent installed out of the build tree, because launchd re-execs its path and a
+# `cargo clean` must not be able to leave the agent pointing at nothing.
+superd: ## Build slopdesk-superd (rust/slopdesk-superd)
+	cd rust/slopdesk-superd && cargo build --release
+
+superd-test: ## cargo test for the process custodian
+	cd rust/slopdesk-superd && cargo test
+
+# The whole of the tree's `unsafe`, and therefore the whole of what a reviewer has to check by hand.
+# `--all-features` is not optional here: `winsize-set` gates the one function superd may not call in
+# production, and a test run that skipped it would leave that code uncompiled and unlinted.
+posix-test: ## cargo test for the isolated unsafe surface (rust/slopdesk-posix)
+	cd rust/slopdesk-posix && cargo test --all-features
+
+# The C ABI, tested through the exported symbols rather than through the Rust functions behind
+# them — an entry point that marshals its arguments wrongly passes every test of the crate it wraps.
+ffi-test: ## cargo test for the C ABI Swift calls (rust/slopdesk-ffi)
+	cd rust/slopdesk-ffi && cargo test
+
+superd-install: ## Build + (re)install the com.slopdesk.superd LaunchAgent — RESTARTS superd
+	bash scripts/install-superd.sh
+
+# The VT screen engine (docs/52): the terminal parser, the snapshot renderer and the overprint
+# collapser, which used to be the hottest Swift in the tree (17.9 MiB/s against 186 in Rust). Its
+# own workspace for the same reason superd is: profiles are workspace-global and this one wants
+# `opt-level = 3` where the hook wants `"z"`.
+screend: ## Build slopdesk-screend (rust/slopdesk-screend)
+	cd rust/slopdesk-screend && cargo build --release
+
+screend-test: ## cargo test for the screen engine
+	cd rust/slopdesk-sanitize && cargo test
+	cd rust/slopdesk-screend && cargo test
+
+screend-install: ## Build + (re)install the com.slopdesk.screend LaunchAgent
+	bash scripts/install-screend.sh
+
+# PATH 4's daemon (docs/53): the file-drop endpoint clients dial DIRECTLY on `terminalPort + 2`.
+# hostd no longer binds that port or sees a body byte — superd spawns dropd and keeps it, so an
+# upload in flight survives a host restart. Its own workspace for the same profile reason as above.
+dropd: ## Build slopdesk-dropd (rust/slopdesk-dropd)
+	cd rust/slopdesk-dropd && cargo build --release
+
+dropd-test: ## cargo test for the file-drop service
+	cd rust/slopdesk-dropd && cargo test
+
+# The Android panel's bridge (docs/48): `adb` orchestration and the scrcpy byte pump, which clients
+# dial DIRECTLY. It used to be a listener inside hostd, so an H.264 mirror was pumped by the daemon
+# that owns every keystroke and `make host-restart` took every mirror down with it. Same
+# own-workspace reason as the three above.
+androidd: ## Build slopdesk-androidd (rust/slopdesk-androidd)
+	cd rust/slopdesk-androidd && cargo build --release
+
+# The SOCKET cases here need a booted device and are gated on SLOPDESK_ANDROID_HW=1
+# (`scripts/check-android.sh`); without it they print why they proved nothing and pass.
+androidd-test: ## cargo test for the Android bridge
+	cd rust/slopdesk-androidd && cargo test
+
+# PATH 3's daemon (docs/54): the read-only inspector clients dial DIRECTLY on `terminalPort + 1`.
+# hostd never relayed a byte of it — what it did contribute was the process, so a transcript tail
+# and a session's whole replay window died with every `make host-restart`. Same own-workspace
+# reason as the four above.
+inspectord: ## Build slopdesk-inspectord (rust/slopdesk-inspectord)
+	cd rust/slopdesk-inspectord && cargo build --release
+
+inspectord-test: ## cargo test for the inspector service (unit + the transcript corpus)
+	cd rust/slopdesk-inspectord && cargo test
+
+# Stage 1 of moving hostd off Swift (docs/DECISIONS.md): the PATH-1 terminal wire codec. A LIBRARY,
+# not a daemon — nothing links it yet, so `wire-test` is the only thing standing between it and a
+# silent drift away from the Swift codec it must stay byte-identical to. `wire-test` re-encodes the
+# committed golden corpus, so it is the parity gate, not a smoke test. Own workspace for the same
+# profile reason as the daemons: this ends up inside a per-byte loop and wants `opt-level = 3`.
+#
+# Stage 14 added the RETENTION side of the same wire: `replay` (the per-pane replay buffer and its
+# scrollback ring). `replay` lives here rather than in a crate of its own because it is defined over
+# `WireMessage` and `MuxFlowControl` — the seq budget and the window/2 payload cap are wire facts,
+# not transport ones. The alt-screen cut scanner it repairs evictions with LEFT in stage 27, for
+# `rust/slopdesk-altscreen`, so superd could share it without depending on the protocol.
+wire: ## Build slopdesk-wire (rust/slopdesk-wire)
+	cd rust/slopdesk-wire && cargo build --release
+
+wire-test: ## cargo test for the wire codec + replay buffer (unit + golden-vector parity vs Swift)
+	cd rust/slopdesk-wire && cargo test
+
+# The alt-screen cut scanner, lifted OUT of `wire` in stage 27 so superd could share it: three
+# scrollback retainers front-truncate a stream and all three need the same answer before they may
+# drop bytes — was the cut inside an open `?1049h` segment, and which mode opened it. The ring
+# (`wire`'s `replay`) is one; superd's journal is compaction and restore. superd cannot depend on
+# `wire`, which is the PROTOCOL and the one thing it must not know, so the scanner is its own
+# dependency-free crate rather than a second copy in Rust.
+altscreen-test: ## cargo test for the alt-screen cut scanner (rust/slopdesk-altscreen)
+	cd rust/slopdesk-altscreen && cargo test
+
+# Stage 5 of the same port: the PATH-2 video protocol, opening at the FEC math (GF(2^8),
+# Reed-Solomon, the erasure codec). A LIBRARY like `wire` — nothing links it yet, so `video-test` is
+# the only thing between it and a silent drift away from `Sources/SlopDeskVideoProtocol`. It replays
+# the committed `fecParity` / `fecRecover` corpus, so it is the parity gate, not a smoke test.
+video: ## Build slopdesk-video (rust/slopdesk-video)
+	cd rust/slopdesk-video && cargo build --release
+
+video-test: ## cargo test for the FEC codec (unit + golden-vector parity against the Swift codec)
+	cd rust/slopdesk-video && cargo test
+
+# The one crate `slopdesk-video` links, and the third in the tree allowed to write `unsafe`: the
+# GF(2^8) byte-region kernels, in NEON. Read its `Cargo.toml` header for why the isolation is drawn
+# where it is. Its tests are a differential against the scalar twin, which is the only thing that
+# says the shuffle and the field agree.
+gfsimd-test: ## cargo test for the SIMD kernels (vector path vs scalar oracle, guarded arenas)
+	cd rust/slopdesk-gfsimd && cargo test
+
+# The memory half of that: what actually reads the loads and stores for a pointer that left its
+# allocation or its provenance. `CLAUDE.md` says the third `unsafe` crate was bought with "a
+# differential suite that runs under Miri" — and until this line, NOTHING ran it. Not `check`, not
+# `test`, not the prek hooks, not the disabled CI. An obligation no target reaches is a sentence in
+# a document.
+#
+# It is in `check` because it turns out to be cheap: the `#[cfg(miri)]` seed reduction inside
+# `tests/differential.rs` brings the sweep to 47 s wall clock, compile included, against the
+# "minutes" this comment used to claim. Still out of `make test`, which the pre-push hook runs on
+# every push — that path is measured in the seconds it saves.
+miri: ## Run rust/slopdesk-gfsimd's differential suite under Miri (~47 s; the unsafe memory audit)
+	rustup component add miri --toolchain nightly
+	cd rust/slopdesk-gfsimd && cargo +nightly miri test
+
+# Stage 12: the workspace document's DOMAIN rules — the layout math the wire's intents drive. Also a
+# LIBRARY nothing links yet, so `workspace-test` is what stands between it and a silent drift away
+# from `Sources/SlopDeskWorkspaceModel`.
+workspace: ## Build slopdesk-workspace (rust/slopdesk-workspace)
+	cd rust/slopdesk-workspace && cargo build --release
+
+workspace-test: ## cargo test for the workspace domain rules
+	cd rust/slopdesk-workspace && cargo test
+
+# Stage 13: the half of agent detection that reads the CLOCK — the status state machine, the block
+# ledger, the dissent watchdog, the confirmation holds and the input classifier. screend (docs/52)
+# keeps the half that reads the BYTES. A LIBRARY nothing links yet, so `agent-test` is what stands
+# between it and a silent drift away from `Sources/SlopDeskAgentDetect`.
+agent: ## Build slopdesk-agent (rust/slopdesk-agent)
+	cd rust/slopdesk-agent && cargo build --release
+
+agent-test: ## cargo test for the agent-detection state machine
+	cd rust/slopdesk-agent && cargo test
+
+# Stage 15: the CLIENT side of the byte stream — which screen the host is presenting (DECSET 1049,
+# OSC 133) and which output bytes are only the PTY echoing the compose box back. screend reads the
+# HOST's bytes for detection, slopdesk-wire reads them as FRAMES; this reads them for the INPUT
+# SURFACE. A LIBRARY nothing links yet, so `terminal-test` is what stands between it and a silent
+# drift away from `Sources/SlopDeskClaudeCode`.
+terminal: ## Build slopdesk-terminal (rust/slopdesk-terminal)
+	cd rust/slopdesk-terminal && cargo build --release
+
+terminal-test: ## cargo test for the terminal mode tracker + input echo dedup
+	cd rust/slopdesk-terminal && cargo test
+
+# Stage 16: the pure core of the USER-facing `slopdesk` CLI — global flags, completions, the local
+# config-file ops and the list/inspect tables. A MEMBER of the root workspace, not a workspace of
+# its own: it wants the hook's startup-tuned profile for the same reason ctl does, and `lint-rust`
+# already reaches it through `cargo clippy --workspace`. The rest of what `SlopDeskCLICore` held
+# moved to the crate that owns the SUBJECT — see docs/DECISIONS.md, stage 16.
+cli: ## Build slopdesk-cli (rust/slopdesk-cli)
+	cd rust && cargo build --release -p slopdesk-cli
+
+cli-test: ## cargo test for the `slopdesk` CLI core
+	cd rust && cargo test -p slopdesk-cli
+
+# Stage 22: the code panel's workbench PROFILE — the settings seed and its whole retired corpus, the
+# theme + bridge extensions, the profile registry, the child's argv and environment. hostd keeps the
+# SUPERVISION (the handle, the readiness probe, the learned port); this owns every decision about a
+# FILE, which is what those 2.7k lines of Swift actually were. Its own workspace for the profile
+# reason the daemons record. NOT staged next to hostd: `RustServicePaths` finds it by walking up
+# to `rust/slopdesk-codeseed/target/`, the same way it finds every other daemon in this tree, so a
+# `cargo clean` can never leave a copy behind that lies about which profile the panel seeds.
+codeseed: ## Build slopdesk-codeseed (rust/slopdesk-codeseed)
+	cd rust/slopdesk-codeseed && cargo build --release
+
+codeseed-test: ## cargo test for the code-server profile seeder
+	cd rust/slopdesk-codeseed && cargo test
+
+# The inner loop for host work. `--product` compiles hostd and the libraries under it and NOT the
+# client app, the video host or the iOS surfaces — which is most of the package.
+host: ## Build ONLY slopdesk-hostd and its libraries
+	swift build --product slopdesk-hostd
+
+# The whole edit loop in one command, and the reason docs/51 exists: superd keeps every pane, both
+# child-facing sockets and the panel backends, so this costs a client reconnect rather than the
+# afternoon's work. It prints the observed downtime and superd's child count on either side.
+host-restart: ## Rebuild hostd and restart the running one, identically (docs/51 §9)
+	bash scripts/restart-hostd.sh
+
+host-status: ## Report the running hostd (pid, port, flags) and superd's child count; change nothing
+	bash scripts/restart-hostd.sh --status
 
 # `hook-test` runs FIRST and unconditionally. `swift build`/`swift test` never compile the Rust
 # crate, so a Swift-only gate is blind to it; and pre-push-test.sh's green-tree cache keys on the
 # Swift inputs alone (Package.swift Sources Tests Apps golden), so a rust/ change would hit the
 # cache and skip everything. Warm cargo costs ~0.07s and fails before the ~60s Swift run.
-test: hook-test ## cargo test (relay) + swift test --parallel with the green-tree cache
+#
+# `superd` is BUILT here, not merely tested, and that is load-bearing: hostd cannot fork a shell
+# any more (docs/51), so every test that needs a real pty boots a private daemon and SKIPS without
+# the binary (`SuperdFixture`). A bare `swift test` on a clean checkout still works and still never
+# sees cargo — it just reports those tests skipped, by name.
+test: ffi hook-test ctl-test probe-test posix-test ffi-test superd-test screend-test dropd-test androidd-test inspectord-test wire-test altscreen-test video-test gfsimd-test workspace-test agent-test terminal-test cli-test codeseed-test ctl superd screend dropd androidd inspectord ## cargo test (relay + agent CLI + metadata probe + the unsafe surface + the C ABI + custodian + screen engine + file drop + android bridge + inspector + wire codec + alt-screen cut scanner + FEC codec + SIMD kernels + workspace rules + agent detection + terminal input + CLI core + code-server profile) + swift test with the green-tree cache
 	bash scripts/pre-push-test.sh
 
-test-touched: ## Fast inner loop: incremental build + only the test targets the change set reaches
+# `superd` for the same load-bearing reason as `test:` above, and it matters MORE here: this is the
+# gate CLAUDE.md tells you to run after a Swift edit, and the code most of those edits touch is the
+# supervised pty path. Without the binary `SuperdFixture` throws `XCTSkip` from its initialiser, so
+# SupervisedPaneSurvivalTests, HostRestartSurvivalTests, PaneOutputStreamTests and PTYProcessTests
+# all report green having run nothing — a fast gate that cannot see the regressions it exists for.
+test-touched: ctl superd screend dropd androidd inspectord ## Fast inner loop: incremental build + only the test targets the change set reaches
 	bash scripts/test-touched.sh
 
 # Golden regression pin: regenerate the wire corpus from the live native-Swift codecs and assert

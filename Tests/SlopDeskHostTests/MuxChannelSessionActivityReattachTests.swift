@@ -12,9 +12,10 @@ import XCTest
 /// the new client what is still live. ``MuxChannelSession/reestablishActivityOnReattach`` (called from
 /// `rebindRelay`, right after the echo/blocks re-asserts) re-emits the CURRENT truths.
 ///
-/// Driven WITHOUT a PTY or running relay: the REAL chunk handler (`ingestPTYChunkForTesting` → the
-/// live ``HostOutputSniffer``) supplies the OSC 133/9;4 truths, and the injected-name detector fold
-/// (`foldForegroundSampleForTesting`) stands in for the `tcgetpgrp` probe (hang-safety rule).
+/// Driven WITHOUT a PTY or running relay: the REAL chunk handler (`ingestPTYChunkForTesting`, fed
+/// the events superd's sniffer would have found) supplies the OSC 133/9;4 truths, and the
+/// injected-name detector fold (`foldForegroundSampleForTesting`) stands in for the `tcgetpgrp`
+/// probe (hang-safety rule).
 ///
 /// REVERT-TO-FAIL: removing the `reestablishActivityOnReattach()` call from `rebindRelay` (or any of
 /// its four sources) turns the corresponding re-assert batch into `nil`/missing and these fail.
@@ -22,7 +23,7 @@ final class MuxChannelSessionActivityReattachTests: XCTestCase {
     private func makeSession(agentDetectEnabled: Bool = false) -> MuxChannelSession {
         MuxChannelSession(
             channelID: 1,
-            pty: PTYProcess(), // unspawned — relay never started; truths driven via the seams
+            pty: unattachedPTY(), // unspawned — relay never started; truths driven via the seams
             data: MuxSubChannel(channelID: 1, channel: .data) { _, _ in },
             control: MuxSubChannel(channelID: 1, channel: .control) { _, _ in },
             agentDetectEnabled: agentDetectEnabled,
@@ -47,7 +48,7 @@ final class MuxChannelSessionActivityReattachTests: XCTestCase {
         // output FIFO with its chunk (only the Blocks segmenter's type-28 lands on control-out) —
         // exactly why a reattach (which wiped control-out and reset the client) sees nothing
         // without the re-assert. Drain the live-emission side-products first.
-        session.ingestPTYChunkForTesting(osc("133;C"))
+        session.ingestPTYChunkForTesting(osc("133;C"), sniffed: [.commandRunning])
         drainControlOut(session)
 
         session.reestablishActivityOnReattachForTesting()
@@ -59,8 +60,8 @@ final class MuxChannelSessionActivityReattachTests: XCTestCase {
 
     func testReattachAfterCommandFinishedStaysQuiet() {
         let session = makeSession()
-        session.ingestPTYChunkForTesting(osc("133;C"))
-        session.ingestPTYChunkForTesting(osc("133;D;0"))
+        session.ingestPTYChunkForTesting(osc("133;C"), sniffed: [.commandRunning])
+        session.ingestPTYChunkForTesting(osc("133;D;0"), sniffed: [.commandIdle(exitCode: 0, durationMS: 0)])
         drainControlOut(session)
 
         session.reestablishActivityOnReattachForTesting()
@@ -74,7 +75,7 @@ final class MuxChannelSessionActivityReattachTests: XCTestCase {
 
     func testReattachReemitsLiveProgress() {
         let session = makeSession()
-        session.ingestPTYChunkForTesting(osc("9;4;3")) // indeterminate spinner up
+        session.ingestPTYChunkForTesting(osc("9;4;3"), sniffed: [.progress("4;3")]) // indeterminate spinner up
         drainControlOut(session)
 
         session.reestablishActivityOnReattachForTesting()
@@ -87,8 +88,8 @@ final class MuxChannelSessionActivityReattachTests: XCTestCase {
 
     func testReattachAfterProgressClearedStaysQuiet() {
         let session = makeSession()
-        session.ingestPTYChunkForTesting(osc("9;4;1;40"))
-        session.ingestPTYChunkForTesting(osc("9;4;0")) // the program cleared its indicator
+        session.ingestPTYChunkForTesting(osc("9;4;1;40"), sniffed: [.progress("4;1;40")])
+        session.ingestPTYChunkForTesting(osc("9;4;0"), sniffed: [.progress("4;0")]) // the program cleared its indicator
         drainControlOut(session)
 
         session.reestablishActivityOnReattachForTesting()
@@ -169,7 +170,7 @@ final class MuxChannelSessionActivityReattachTests: XCTestCase {
         // nvim set the pane title. The sniffed type-21 rides the merged output frame with its
         // chunk, so the returning client — whose control-out was wiped by `rebindRelay` — has no
         // way to learn it. Drain the live-emission side-products first.
-        session.ingestPTYChunkForTesting(osc("0;main.go - NVIM"))
+        session.ingestPTYChunkForTesting(osc("0;main.go - NVIM"), sniffed: [.title("main.go - NVIM")])
         drainControlOut(session)
 
         session.reestablishActivityOnReattachForTesting()
@@ -185,7 +186,7 @@ final class MuxChannelSessionActivityReattachTests: XCTestCase {
     func testReattachDoesNotResurrectRetiredTitle() {
         let session = makeSession(agentDetectEnabled: true)
         session.ingestAgentHookRecord(Data(#"{"hook_event_name":"SessionStart","session_id":"s1"}"#.utf8))
-        session.ingestPTYChunkForTesting(osc("0;✳ Claude Code"))
+        session.ingestPTYChunkForTesting(osc("0;✳ Claude Code"), sniffed: [.title("✳ Claude Code")])
         session.ingestAgentHookRecord(Data(#"{"hook_event_name":"SessionEnd","session_id":"s1"}"#.utf8))
         drainControlOut(session)
 
@@ -200,8 +201,8 @@ final class MuxChannelSessionActivityReattachTests: XCTestCase {
     /// land AFTER the type-23 in the same batch. A careless reorder silently regresses the fix.
     func testTitleIsEnqueuedAfterCommandStatus() {
         let session = makeSession()
-        session.ingestPTYChunkForTesting(osc("133;C"))
-        session.ingestPTYChunkForTesting(osc("0;main.go - NVIM"))
+        session.ingestPTYChunkForTesting(osc("133;C"), sniffed: [.commandRunning])
+        session.ingestPTYChunkForTesting(osc("0;main.go - NVIM"), sniffed: [.title("main.go - NVIM")])
         drainControlOut(session)
 
         session.reestablishActivityOnReattachForTesting()

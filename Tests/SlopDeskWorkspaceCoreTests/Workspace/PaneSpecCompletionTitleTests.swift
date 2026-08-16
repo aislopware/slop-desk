@@ -1,7 +1,5 @@
-import Foundation
 import SlopDeskWorkspaceModel
 import XCTest
-@testable import SlopDeskWorkspaceCore
 
 /// ``PaneLabel/completionNotificationTitle(title:cwd:liveTitle:)`` is what
 /// `WorkspaceStore`'s `onCommandCompleted` wiring feeds into the completion banner/toast (see

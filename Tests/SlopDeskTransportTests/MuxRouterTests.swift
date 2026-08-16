@@ -9,7 +9,7 @@ final class MuxRouterTests: XCTestCase {
     /// Opens `id` in the router via a channelOpen frame and asserts it became open.
     private func openChannel(
         _ id: UInt32,
-        in router: inout MuxRouter,
+        in router: MuxRouter,
         file: StaticString = #filePath,
         line: UInt = #line,
     ) {
@@ -27,9 +27,9 @@ final class MuxRouterTests: XCTestCase {
     }
 
     func testDemuxesTwoInterleavedChannelsIntoIndependentOutputs() {
-        var router = MuxRouter()
-        openChannel(1, in: &router)
-        openChannel(3, in: &router)
+        let router = MuxRouter()
+        openChannel(1, in: router)
+        openChannel(3, in: router)
 
         let payloadA1 = Data("A1".utf8)
         let payloadB1 = Data("B1".utf8)
@@ -51,8 +51,8 @@ final class MuxRouterTests: XCTestCase {
     }
 
     func testDataPayloadIsCarriedOpaqueByteIdentically() {
-        var router = MuxRouter()
-        openChannel(1, in: &router)
+        let router = MuxRouter()
+        openChannel(1, in: router)
         // A real inner WireMessage frame: must pass through untouched.
         let inner = WireMessage.output(seq: 5, bytes: Data("vt ✅".utf8)).encode()
         let decision = router.route(.channelData(channelID: 1, payload: inner))
@@ -64,8 +64,8 @@ final class MuxRouterTests: XCTestCase {
     }
 
     func testUnknownChannelDataIsDroppedNotCrashed() {
-        var router = MuxRouter()
-        openChannel(1, in: &router)
+        let router = MuxRouter()
+        openChannel(1, in: router)
         // Channel 99 was never opened: DATA for it must be dropped, never crash.
         let decision = router.route(.channelData(channelID: 99, payload: Data("orphan".utf8)))
         guard case .dropUnknownChannel(99, _) = decision else {
@@ -80,8 +80,8 @@ final class MuxRouterTests: XCTestCase {
     }
 
     func testDataOnNonOpenChannelIsDropped() {
-        var router = MuxRouter()
-        openChannel(1, in: &router)
+        let router = MuxRouter()
+        openChannel(1, in: router)
         // Half-close channel 1, then send data: a non-open channel drops (known) data.
         _ = router.route(.channelClose(channelID: 1))
         let decision = router.route(.channelData(channelID: 1, payload: Data("late".utf8)))
@@ -92,9 +92,9 @@ final class MuxRouterTests: XCTestCase {
     }
 
     func testCloseOnChannelALeavesChannelBRoutable() {
-        var router = MuxRouter()
-        openChannel(1, in: &router) // A
-        openChannel(3, in: &router) // B
+        let router = MuxRouter()
+        openChannel(1, in: router) // A
+        openChannel(3, in: router) // B
 
         // Close A.
         let closeDecision = router.route(.channelClose(channelID: 1))
@@ -117,7 +117,7 @@ final class MuxRouterTests: XCTestCase {
     }
 
     func testOpenAckMarksChannelOpen() {
-        var router = MuxRouter()
+        let router = MuxRouter()
         // Client allocated id 1 and is awaiting the host's ack.
         let id = router.allocateChannel()
         XCTAssertEqual(id, 1)
@@ -130,7 +130,7 @@ final class MuxRouterTests: XCTestCase {
     }
 
     func testOpenAckRejectedDoesNotOpenChannel() {
-        var router = MuxRouter()
+        let router = MuxRouter()
         // Client allocated id 1 and is awaiting the host's ack; the host REFUSES it.
         let id = router.allocateChannel()
         XCTAssertEqual(id, 1)
@@ -156,7 +156,7 @@ final class MuxRouterTests: XCTestCase {
     /// memory-DoS already closed for channelClose and channelOpen). A legit ack always
     /// lands on an id the client recorded `.open` at openChannel time, so an unknown-id ack is rejected.
     func testOpenAckForUnknownIdCreatesNoPhantomChannel() {
-        var router = MuxRouter()
+        let router = MuxRouter()
         let decision = router.route(.channelOpenAck(channelID: 99, accepted: true, resumeFromSeq: 0))
         guard case .lifecycle(99, .closed) = decision else {
             XCTFail("an ack for an unknown id reports .closed (no entry created), got \(decision)")
@@ -181,8 +181,8 @@ final class MuxRouterTests: XCTestCase {
     }
 
     func testWindowAdjustReportsLifecycleWithoutChangingOpenState() {
-        var router = MuxRouter()
-        openChannel(1, in: &router)
+        let router = MuxRouter()
+        openChannel(1, in: router)
         let decision = router.route(.windowAdjust(channelID: 1, bytesToAdd: 4096))
         guard case .lifecycle(1, .open) = decision else {
             XCTFail("windowAdjust on an open channel reports .open, got \(decision)")
@@ -192,7 +192,7 @@ final class MuxRouterTests: XCTestCase {
     }
 
     func testAllocateProducesOddMonotonicIDs() {
-        var router = MuxRouter()
+        let router = MuxRouter()
         XCTAssertEqual([router.allocateChannel(), router.allocateChannel(), router.allocateChannel()], [1, 3, 5])
     }
 }

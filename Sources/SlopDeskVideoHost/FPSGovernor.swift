@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 
 /// PURE content/congestion-adaptive FPS governor with a regular-cadence actuation model.
@@ -31,57 +32,105 @@ import Foundation
 ///    (smaller temporal deltas), so the fit test is biased safe.
 ///
 /// PURE + DETERMINISTIC: no wall-clock, no I/O. "Time" is the count of folded reports (`ticks`).
-/// Mirrors ``LiveCongestionController``'s discipline; env-overridable tunables (`SLOPDESK_FPS_GOV_*`).
+///
+/// THE LAW LIVES BEHIND THE DOOR — this is the face over `rust/slopdesk-video`'s `fps_governor`,
+/// reached through `frame_rate`. The state crosses BY VALUE, whole, on every call, because this is a
+/// `struct` its owner copies. The LADDER does not cross with it: it is a function of the base rate
+/// and the floor, so it is asked for once at construction and kept here for the call sites that read
+/// it. What else stays is the `SLOPDESK_FPS_GOV_*` resolution, which is the host's own.
 public struct FPSGovernor: Sendable, Equatable {
     // MARK: Tunables (env-overridable SLOPDESK_FPS_GOV_*)
+
+    /// The defaults, spelled ONCE — on the far side, next to the law that reads them.
+    private static let defaults = slopdesk_fps_config_default()
 
     /// Offered-load overage tolerated before "over budget" (1.2 = +20%). The ABR's own cuts absorb
     /// ≤20% by trimming rate; fps only engages when VT cannot coarsen under budget (the QP51
     /// entropy floor), i.e. offered exceeds the actuated rate by more than this. `SLOPDESK_FPS_GOV_HEADROOM`.
-    public static let headroomFactor: Double = envDouble("SLOPDESK_FPS_GOV_HEADROOM", 1.2, min: 1.0, max: 3.0)
+    public static let headroomFactor: Double = envDouble(
+        "SLOPDESK_FPS_GOV_HEADROOM",
+        defaults.headroom_factor,
+        min: 1.0,
+        max: 3.0,
+    )
     /// Consecutive over-budget+congested ticks (~150 ms) before a step-down — the same
     /// sustained-evidence bar as the ABR RTT path (`rttStreakTicks` = 3); one 50 ms report holds
     /// ~3 frames = quantization noise. `SLOPDESK_FPS_GOV_DOWN_N`.
-    public static let stepDownTicks: Int = envInt("SLOPDESK_FPS_GOV_DOWN_N", 3, min: 1, max: 1000)
+    public static let stepDownTicks: Int = envInt(
+        "SLOPDESK_FPS_GOV_DOWN_N",
+        Int(defaults.step_down_ticks),
+        min: 1,
+        max: 1000,
+    )
     /// Ticks (~400 ms) between step-downs — one rung per spacing window (mirrors the ABR
     /// `cutHoldTicks` cut-cascade fix), and the bytes-EWMA (~8-frame memory) re-converges to the
     /// new rung's frame sizes within ~270 ms at 30 fps before the next decision. `SLOPDESK_FPS_GOV_DOWN_HOLD`.
-    public static let stepDownHoldTicks: Int = envInt("SLOPDESK_FPS_GOV_DOWN_HOLD", 8, min: 0, max: 100_000)
+    public static let stepDownHoldTicks: Int = envInt(
+        "SLOPDESK_FPS_GOV_DOWN_HOLD",
+        Int(defaults.step_down_hold_ticks),
+        min: 0,
+        max: 100_000,
+    )
     /// Clean ticks (~3 s) per step-up rung — matches AdaptiveJitterController's 3 s shrink
     /// cooldown; a step-up is a visible cadence change, make it rare (full 15→60 ≈ 9 s). `SLOPDESK_FPS_GOV_UP_N`.
-    public static let stepUpTicks: Int = envInt("SLOPDESK_FPS_GOV_UP_N", 60, min: 1, max: 100_000)
+    public static let stepUpTicks: Int = envInt(
+        "SLOPDESK_FPS_GOV_UP_N",
+        Int(defaults.step_up_ticks),
+        min: 1,
+        max: 100_000,
+    )
     /// Reports to fold before ANY action — the cold-start guard (~500 ms, = ABR warmup). `SLOPDESK_FPS_GOV_WARMUP`.
-    public static let warmupTicks: Int = envInt("SLOPDESK_FPS_GOV_WARMUP", 10, min: 0, max: 100_000)
+    public static let warmupTicks: Int = envInt(
+        "SLOPDESK_FPS_GOV_WARMUP",
+        Int(defaults.warmup_ticks),
+        min: 0,
+        max: 100_000,
+    )
     /// Ladder floor fps — below this it is a slideshow; QP coarsening + the ABR floor cover the
     /// remainder. `SLOPDESK_FPS_GOV_MIN`.
-    public static let minFps: Int = envInt("SLOPDESK_FPS_GOV_MIN", 15, min: 5, max: 240)
+    public static let minFps: Int = envInt("SLOPDESK_FPS_GOV_MIN", Int(defaults.min_fps), min: 5, max: 240)
     /// EWMA weight for the per-frame bytes fold (matches the NetworkEstimate loss-EWMA discipline).
-    public static let bytesAlpha: Double = 0.125
+    public static let bytesAlpha: Double = defaults.bytes_alpha
 
-    // MARK: State (all value-type ⇒ auto Equatable / Sendable)
+    /// The resolved tunables, as the law reads them.
+    static let config: SlopDeskFpsConfig = {
+        var c = defaults
+        c.headroom_factor = headroomFactor
+        c.step_down_ticks = UInt32(stepDownTicks)
+        c.step_down_hold_ticks = UInt32(stepDownHoldTicks)
+        c.step_up_ticks = UInt32(stepUpTicks)
+        c.warmup_ticks = UInt32(warmupTicks)
+        c.min_fps = Int64(minFps)
+        c.bytes_alpha = bytesAlpha
+        return c
+    }()
+
+    // MARK: State (one record, crossing whole)
+
+    private var state: SlopDeskFpsGovernor
+
+    /// Clean-divisor rungs, descending (see ``ladder(baseFps:)``). Derived once at construction:
+    /// the record that crosses carries the base rate and the floor it comes from, never the rungs.
+    public let ladder: [Int]
 
     /// The session's configured capture/encode fps — the ladder's top rung, never exceeded.
-    public let baseFps: Int
-    /// Clean-divisor rungs, descending (see ``ladder(baseFps:)``).
-    public let ladder: [Int]
+    public var baseFps: Int { Int(state.base_fps) }
     /// The currently selected fps (starts at `baseFps`).
-    public private(set) var currentFps: Int
+    public var currentFps: Int { Int(state.current_fps) }
     /// Folded-report count — the governor's "clock".
-    public private(set) var ticks = 0
+    public var ticks: Int { Int(state.ticks) }
     /// Consecutive over-budget+congested ticks (the step-down streak).
-    public private(set) var overBudgetRun = 0
+    public var overBudgetRun: Int { Int(state.over_budget_run) }
     /// Consecutive clean (not over-budget) ticks (the step-up run).
-    public private(set) var cleanRun = 0
+    public var cleanRun: Int { Int(state.clean_run) }
     /// No step-down is permitted until `ticks` reaches this (set on every step-down).
-    public private(set) var downHoldUntilTick = 0
+    public var downHoldUntilTick: Int { Int(state.down_hold_until_tick) }
     /// EWMA of non-anchor encoded frame bytes (0 = unseeded — the governor never acts unseeded).
-    public private(set) var bytesPerFrameEWMA: Double = 0
+    public var bytesPerFrameEWMA: Double { state.bytes_per_frame_avg }
 
     public init(baseFps: Int) {
-        let base = max(1, baseFps)
-        self.baseFps = base
-        ladder = Self.ladder(baseFps: base)
-        currentFps = ladder[0]
+        state = slopdesk_fps_governor_new(Int64(baseFps), Self.config)
+        ladder = Self.ladder(baseFps: baseFps)
     }
 
     /// Clean-divisor ladder: divisors {1,2,3,4} of `baseFps`, floored at ``minFps``, dedup,
@@ -93,16 +142,14 @@ public struct FPSGovernor: Sendable, Equatable {
         ladder(baseFps: baseFps, minFps: minFps)
     }
 
-    /// Clean-divisor ladder with an explicit floor — divisors {1,2,3,4} of `baseFps`, floored at
-    /// `minFps`, deduplicated, descending. Always contains `baseFps`, so it is never empty.
+    /// Clean-divisor ladder with an explicit floor. Four rungs is the whole answer, so the buffer is
+    /// sized once and the count the door returns is what is read back out of it.
     static func ladder(baseFps: Int, minFps: Int) -> [Int] {
-        let base = max(1, baseFps)
-        var rungs: Set<Int> = [base]
-        for divisor in 2...4 {
-            let f = base / divisor // integer division
-            if f >= minFps { rungs.insert(f) }
+        var rungs = [Int64](repeating: 0, count: 4)
+        let count = rungs.withUnsafeMutableBufferPointer {
+            slopdesk_fps_ladder(Int64(baseFps), Int64(minFps), $0.baseAddress, $0.count)
         }
-        return rungs.sorted(by: >)
+        return rungs.prefix(Swift.min(count, rungs.count)).map(Int.init)
     }
 
     /// Fold one ENCODED frame's byte size (the motion/entropy proxy). `isAnchor` (keyframe ||
@@ -111,14 +158,7 @@ public struct FPSGovernor: Sendable, Equatable {
     /// LTR-refresh frames (≈1.49× a delta) ARE folded — they are steady-state stream cost, so the
     /// budget test self-accounts for the self-heal cadence.
     public mutating func noteEncodedFrame(bytes: Int, isAnchor: Bool) {
-        if isAnchor || bytes <= 0 { return }
-        let b = Double(bytes)
-        if bytesPerFrameEWMA == 0 {
-            bytesPerFrameEWMA = b // first non-anchor seeds exactly
-        } else {
-            // keep mul+add separate — FMA breaks bit-exact parity
-            bytesPerFrameEWMA = bytesPerFrameEWMA * (1.0 - Self.bytesAlpha) + b * Self.bytesAlpha
-        }
+        state = slopdesk_fps_governor_note_frame(state, Int64(bytes), isAnchor)
     }
 
     /// One tick per folded NetworkStats report (~50 ms). `targetBps` is the host's
@@ -127,51 +167,17 @@ public struct FPSGovernor: Sendable, Equatable {
     /// Returns the (possibly unchanged) selected fps.
     @discardableResult
     public mutating func onTick(targetBps: Int, congested: Bool) -> Int {
-        ticks += 1
-        if ticks < Self.warmupTicks || bytesPerFrameEWMA <= 0 || targetBps <= 0 {
-            return currentFps
-        }
-        // keep mul+add separate — FMA breaks bit-exact parity (no add term here, but the chained
-        // mul stays a plain multiply so no refactor folds it into an FMA).
-        let offeredBps = bytesPerFrameEWMA * 8.0 * Double(currentFps)
-        let overBudget = offeredBps > Double(targetBps) * Self.headroomFactor
-        if overBudget, congested {
-            cleanRun = 0
-            overBudgetRun += 1
-            if overBudgetRun >= Self.stepDownTicks, ticks >= downHoldUntilTick,
-               let next = ladder.first(where: { $0 < currentFps })
-            {
-                currentFps = next // ONE rung down
-                overBudgetRun = 0
-                downHoldUntilTick = ticks + Self.stepDownHoldTicks
-            }
-        } else if overBudget {
-            // Content-heavy but the link is holding: never step down on content alone.
-            overBudgetRun = 0
-            cleanRun = 0
-        } else {
-            overBudgetRun = 0
-            cleanRun += 1
-            // one rung UP, strict fit, NO headroom — `ladder` is descending so reversed() finds the
-            // smallest rung strictly above the current fps.
-            if currentFps < baseFps, cleanRun >= Self.stepUpTicks,
-               let next = ladder.reversed().first(where: { $0 > currentFps }),
-               bytesPerFrameEWMA * 8.0 * Double(next) <= Double(targetBps)
-            {
-                currentFps = next
-                cleanRun = 0
-            }
-        }
-        return currentFps
+        let tick = slopdesk_fps_governor_tick(state, Int64(targetBps), congested)
+        state = tick.governor
+        return Int(tick.fps)
     }
 
     /// PURE congestion-evidence predicate — the step-down gate's second AND-arm. Deliberately
-    /// reuses the SAME RTT constants as the ABR (``LiveCongestionController/rttInflateFactor`` /
-    /// ``LiveCongestionController/effectiveSlackMillis(minRTTMillis:)``) so the two controllers
-    /// agree on what "congested" means — do NOT fork these constants. ABR-below-ceiling is
-    /// included because that controller only cuts on positive evidence, making it a clean,
-    /// already-debounced congestion proxy — and it automatically composes with any new ABR cut
-    /// mechanism (anything that lowers `current` feeds this arm).
+    /// reads the ABR's OWN tunables (the same ``LiveCongestionController`` config the rate law
+    /// runs on) so the two controllers agree on what "congested" means — do NOT fork these
+    /// constants. ABR-below-ceiling is included because that controller only cuts on positive
+    /// evidence, making it a clean, already-debounced congestion proxy — and it automatically
+    /// composes with any new ABR cut mechanism (anything that lowers `current` feeds this arm).
     public static func congestionEvidence(
         lastLossSample: Double,
         smoothedRTTMillis: Double,
@@ -179,15 +185,23 @@ public struct FPSGovernor: Sendable, Equatable {
         abrCurrent: Int?,
         abrCeiling: Int?,
     ) -> Bool {
-        // The ABR is below its ceiling ⇒ it has already cut on positive evidence: a clean, debounced
-        // congestion proxy.
-        if let cur = abrCurrent, let ceil = abrCeiling, cur < ceil { return true }
-        if lastLossSample > LiveCongestionController.lossThreshold { return true }
-        let slackMillis = LiveCongestionController.effectiveSlackMillis(minRTTMillis: minRTTMillis)
-        // ordered `>` comparisons (NaN-faithful: false for a non-finite minRTT via the is-finite gate).
-        return minRTTMillis.isFinite
-            && smoothedRTTMillis > minRTTMillis * LiveCongestionController.rttInflateFactor
-            && smoothedRTTMillis > minRTTMillis + slackMillis
+        slopdesk_fps_congestion_evidence(
+            LiveCongestionController.config, lastLossSample, smoothedRTTMillis, minRTTMillis,
+            abrCurrent != nil, Int64(abrCurrent ?? 0), abrCeiling != nil, Int64(abrCeiling ?? 0),
+        )
+    }
+
+    /// Equality is over the whole record plus the rungs derived from it — a C struct synthesises
+    /// nothing, so the comparison is spelled out.
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.state.base_fps == rhs.state.base_fps
+            && lhs.state.current_fps == rhs.state.current_fps
+            && lhs.state.bytes_per_frame_avg == rhs.state.bytes_per_frame_avg
+            && lhs.state.ticks == rhs.state.ticks
+            && lhs.state.over_budget_run == rhs.state.over_budget_run
+            && lhs.state.clean_run == rhs.state.clean_run
+            && lhs.state.down_hold_until_tick == rhs.state.down_hold_until_tick
+            && lhs.ladder == rhs.ladder
     }
 
     // MARK: Env parsing helpers
@@ -239,18 +253,11 @@ public struct EncodeCadenceGate: Sendable, Equatable {
         toleranceSeconds: Double,
         forced: Bool,
     ) -> Bool {
-        if targetIntervalSeconds <= 0 { return true } // inert / ungoverned base-fps case
-        if forced || nextDueSeconds == 0 {
-            nextDueSeconds = now + targetIntervalSeconds
-            return true
-        }
-        if now + toleranceSeconds < nextDueSeconds { return false }
-        if now - nextDueSeconds > targetIntervalSeconds {
-            nextDueSeconds = now + targetIntervalSeconds // stall: re-anchor, no burst catch-up
-        } else {
-            nextDueSeconds += targetIntervalSeconds // drift-free schedule advance
-        }
-        return true
+        let verdict = slopdesk_fps_gate_admit(
+            nextDueSeconds, now, targetIntervalSeconds, toleranceSeconds, forced,
+        )
+        nextDueSeconds = verdict.next_due_seconds
+        return verdict.admitted
     }
 }
 
@@ -265,10 +272,7 @@ public struct EncodeCadenceGate: Sendable, Equatable {
 /// governor's bytes-EWMA, so the budget test self-accounts for them.
 public enum SelfHealCadence {
     public static func effectiveEvery(baseEvery: Int, baseFps: Int, governedFps: Int) -> Int {
-        if baseEvery <= 0 { return 0 } // disabled, passthrough
-        // keep mul+div separate; `.rounded()` defaults to .toNearestOrAwayFromZero == Rust f64::round.
-        let scaled = (Double(baseEvery) * Double(governedFps) / Double(max(1, baseFps))).rounded()
-        return max(2, Int(scaled))
+        Int(slopdesk_fps_self_heal_every(Int64(baseEvery), Int64(baseFps), Int64(governedFps)))
     }
 }
 
@@ -295,84 +299,69 @@ public enum SelfHealCadence {
 /// fight.
 ///
 /// PURE + DETERMINISTIC: "time" is the count of encoded frames folded (`ticks`); no wall-clock, no
-/// I/O. Value-type ⇒ auto `Equatable`/`Sendable`.
+/// I/O.
 public struct EncodeLoadPacer: Sendable, Equatable {
+    /// The defaults, spelled once on the far side. These are not env-overridable — the compute
+    /// budget is a property of the machine, not a knob.
+    private static let defaults = slopdesk_fps_pacer_config_default()
+
     /// EWMA weight for the encode-ms fold (~4-frame memory — encode spikes are bursty).
-    public static let alpha = 0.25
+    public static let alpha = defaults.alpha
     /// Step DOWN a rung when the encode-ms EWMA reaches this fraction of the CURRENT rung's budget
     /// (`1000/currentFps` ms). < 1 so the backlog is caught building, not only once it saturates.
-    public static let downFraction = 0.85
+    public static let downFraction = defaults.down_fraction
     /// Step UP a rung when the encode-ms EWMA (measured at the current, coarser rung ⇒ LARGER frames)
     /// still fits this fraction of the NEXT-higher rung's budget. Since the higher rung's frames are
     /// SMALLER (less motion each), fitting the bigger frames under its budget is a conservative,
     /// biased-safe projection (mirrors ``FPSGovernor``'s step-up fit).
-    public static let upFraction = 0.90
+    public static let upFraction = defaults.up_fraction
     /// Consecutive over-budget encoded frames before a step-down (~50 ms at 60 fps) — fast, so a
     /// scroll burst is caught within a few frames.
-    public static let downTicks = 3
+    public static let downTicks = Int(defaults.down_ticks)
     /// Consecutive headroom frames before a step-up — slow (a step is a visible cadence change);
     /// ~1.5 s at 30 fps.
-    public static let upTicks = 45
+    public static let upTicks = Int(defaults.up_ticks)
     /// Frames to fold before ANY action (cold-start guard).
-    public static let warmupTicks = 8
+    public static let warmupTicks = Int(defaults.warmup_ticks)
 
-    public let baseFps: Int
+    private var state: SlopDeskFpsPacer
+
     /// Clean-divisor rungs (reuses ``FPSGovernor/ladder(baseFps:)`` so the two controllers share the
     /// exact same metronome-regular divisor set).
     public let ladder: [Int]
-    public private(set) var currentFps: Int
-    public private(set) var encodeMsEWMA: Double = 0
-    public private(set) var ticks = 0
-    public private(set) var overRun = 0
-    public private(set) var cleanRun = 0
+
+    public var baseFps: Int { Int(state.base_fps) }
+    public var currentFps: Int { Int(state.current_fps) }
+    public var encodeMsEWMA: Double { state.encode_millis_avg }
+    public var ticks: Int { Int(state.ticks) }
+    public var overRun: Int { Int(state.over_run) }
+    public var cleanRun: Int { Int(state.clean_run) }
 
     public init(baseFps: Int) {
-        let base = max(1, baseFps)
-        self.baseFps = base
-        ladder = FPSGovernor.ladder(baseFps: base)
-        currentFps = ladder[0]
+        state = slopdesk_fps_pacer_new(Int64(baseFps), Self.defaults, Int64(FPSGovernor.minFps))
+        ladder = FPSGovernor.ladder(baseFps: baseFps)
     }
 
     /// The per-frame wall-clock budget (ms) at a given fps.
-    static func budgetMs(_ fps: Int) -> Double { 1000.0 / Double(max(1, fps)) }
+    static func budgetMs(_ fps: Int) -> Double { slopdesk_fps_budget_millis(Int64(fps)) }
 
     /// Fold one encoded frame's measured wall-time (ms) and return the (possibly unchanged) paced
     /// fps. ANCHOR frames (keyframe/crisp) are episodic 5–10× encode-time outliers — excluded, like
     /// the governor excludes them from its bytes EWMA — so a recovery IDR never fakes a step-down.
     @discardableResult
     public mutating func note(encodeMs: Double, isAnchor: Bool) -> Int {
-        if isAnchor || encodeMs < 0 { return currentFps }
-        ticks += 1
-        if encodeMsEWMA == 0 {
-            encodeMsEWMA = encodeMs // first sample seeds exactly
-        } else {
-            // keep mul+add separate — FMA breaks bit-exact parity
-            encodeMsEWMA = encodeMsEWMA * (1.0 - Self.alpha) + encodeMs * Self.alpha
-        }
-        if ticks < Self.warmupTicks { return currentFps }
+        let note = slopdesk_fps_pacer_note(state, encodeMs, isAnchor)
+        state = note.pacer
+        return Int(note.fps)
+    }
 
-        if encodeMsEWMA > Self.budgetMs(currentFps) * Self.downFraction {
-            cleanRun = 0
-            overRun += 1
-            if overRun >= Self.downTicks, let next = ladder.first(where: { $0 < currentFps }) {
-                currentFps = next // ONE rung down
-                overRun = 0
-            }
-        } else {
-            overRun = 0
-            // Step up only with sustained headroom for the tighter higher-rung budget.
-            if currentFps < baseFps, let up = ladder.reversed().first(where: { $0 > currentFps }),
-               encodeMsEWMA < Self.budgetMs(up) * Self.upFraction
-            {
-                cleanRun += 1
-                if cleanRun >= Self.upTicks {
-                    currentFps = up
-                    cleanRun = 0
-                }
-            } else {
-                cleanRun = 0
-            }
-        }
-        return currentFps
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.state.base_fps == rhs.state.base_fps
+            && lhs.state.current_fps == rhs.state.current_fps
+            && lhs.state.encode_millis_avg == rhs.state.encode_millis_avg
+            && lhs.state.ticks == rhs.state.ticks
+            && lhs.state.over_run == rhs.state.over_run
+            && lhs.state.clean_run == rhs.state.clean_run
+            && lhs.ladder == rhs.ladder
     }
 }

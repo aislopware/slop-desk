@@ -5,6 +5,11 @@ import XCTest
 /// The scan pipeline over the resident grid: grid upkeep, agent gating, startup grace,
 /// idle-scan skip, the working→idle hold, and publish dedupe — all with injected inputs.
 final class PaneScreenScannerTests: XCTestCase {
+    /// The pane's grid lives in `slopdesk-screend`; skip by name when it is not built.
+    override func setUpWithError() throws {
+        try ScreendFixture.requireDaemon()
+    }
+
     /// A claude working screen: the braille OSC title arrives via the tracker inside `pending`.
     private func workingBytes() -> Data {
         Data("\u{1B}]0;⠂ fixing the bug\u{07}some tool output\r\n".utf8)
@@ -143,17 +148,14 @@ final class PaneScreenScannerTests: XCTestCase {
 
 /// The detection-text extraction (herdr's `detection_text` shape) + the detector fold.
 final class ScreenDetectionFoldTests: XCTestCase {
-    func testDetectionTextTrimsTrailingBlankRowsAndJoins() {
-        var model = TerminalScreenModel(rows: 5, cols: 20)
-        model.feed(Data("hello\r\n  indented\r\n".utf8))
-        // Rows 3–5 are blank → dropped; leading whitespace preserved; one trailing newline.
-        XCTAssertEqual(model.snapshot().detectionText, "hello\n  indented\n")
+    /// The pane's grid lives in `slopdesk-screend`; skip by name when it is not built.
+    override func setUpWithError() throws {
+        try ScreendFixture.requireDaemon()
     }
 
-    func testDetectionTextEmptyScreenIsEmptyString() {
-        let model = TerminalScreenModel(rows: 4, cols: 10)
-        XCTAssertEqual(model.snapshot().detectionText, "")
-    }
+    // The detection-text SHAPE (trailing blanks dropped, one trailing newline, `""` for a blank
+    // screen) is pinned once, in `ScreenProtocolTests` — it is derived from `lines`, on this side of
+    // the socket, and `SlopDeskScreenTests` is where that derivation lives.
 
     func testScreenDetectionFoldEmitsType27() {
         var detector = ClaudePaneDetector()

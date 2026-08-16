@@ -1,7 +1,8 @@
 import Foundation
+import SlopDeskTTY
 
 /// The host end of the embedded editor's command channel — see
-/// `Sources/SlopDeskHost/Resources/bridge/extension.js` for the other end and the message set.
+/// `rust/slopdesk-codeseed/resources/bridge/extension.js` for the other end and the message set.
 ///
 /// The seam ``CodeServerManager`` opens files through. Production is ``CodeBridgeServer``; unit
 /// tests inject a fake, because binding an `AF_UNIX` listener is exactly the kind of real socket
@@ -86,6 +87,11 @@ final class CodeBridgeServer: CodeBridgeRouting, @unchecked Sendable {
     private let lock = NSLock()
     private var listenFD: Int32 = -1
     private var boundPath: String?
+    /// `(st_dev, st_ino)` of the socket file this server created, captured right after `bind`. The
+    /// path is pid-free and shared with every other hostd on the machine
+    /// (``CodeSeed/Paths/bridgeSocket``), so
+    /// "is this still my socket file?" is the only question ``stop`` may act on — see there.
+    private var boundIdentity: (dev: dev_t, ino: ino_t)?
     private var connections: [Int32: Connection] = [:]
     private var terminalRunner: (@Sendable (CodeBridgeRunRequest) -> CodeBridgeRunOutcome)?
 
@@ -136,24 +142,48 @@ final class CodeBridgeServer: CodeBridgeRouting, @unchecked Sendable {
         lock.lock()
         listenFD = fd
         boundPath = path
+        boundIdentity = Self.identity(ofFileAt: path)
         lock.unlock()
 
         Thread.detachNewThread { [weak self] in self?.acceptLoop(fd: fd) }
         onLog?("code-bridge socket listening at \(path)")
     }
 
+    /// Stops listening and drops every window connection.
+    ///
+    /// The socket file is removed only if it is still the one this server created. The name is
+    /// pid-free by design (``CodeSeed/Paths/bridgeSocket``), so between this server's `bind`
+    /// and this `stop` a SECOND hostd may have unlinked it and bound its own — and an unconditional
+    /// `unlink(path)` here would delete that live host's name out from under it. Nothing would put
+    /// it back: the victim's ``start(path:)`` returns early while it is bound, so its extension
+    /// hosts would reconnect for five minutes to a name nobody holds, and open-file and
+    /// run-in-terminal would stop working with no error anywhere. Comparing `(st_dev, st_ino)`
+    /// against what we recorded at bind time is exact: a rebind is a new inode, always.
     func stop() {
         lock.lock()
         let fd = listenFD
         let path = boundPath
+        let identity = boundIdentity
         let open = connections.keys
         listenFD = -1
         boundPath = nil
+        boundIdentity = nil
         connections.removeAll()
         lock.unlock()
         for connection in open { close(connection) }
         if fd >= 0 { close(fd) }
-        if let path { unlink(path) }
+        if let path, let identity, let onDisk = Self.identity(ofFileAt: path), onDisk == identity {
+            unlink(path)
+        }
+    }
+
+    /// `(st_dev, st_ino)` of the file at `path`, or `nil` when it is gone. Deliberately `stat` on
+    /// the PATH and not `fstat` on the listening fd: a bound `AF_UNIX` socket's fd reports the
+    /// socket object, not the directory entry, so only the path can answer who owns the name now.
+    private static func identity(ofFileAt path: String) -> (dev: dev_t, ino: ino_t)? {
+        var info = stat()
+        guard stat(path, &info) == 0 else { return nil }
+        return (dev: info.st_dev, ino: info.st_ino)
     }
 
     // MARK: Commanding
@@ -354,21 +384,9 @@ final class CodeBridgeServer: CodeBridgeRouting, @unchecked Sendable {
     /// connection: the peer is gone, and a half-written line would desynchronise its parser.
     private func write(_ line: String, to fd: Int32) -> Bool {
         let data = Data(line.utf8)
-        let wrote = data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) -> Bool in
-            guard let base = raw.baseAddress else { return false }
-            var offset = 0
-            while offset < raw.count {
-                let written = Darwin.write(fd, base + offset, raw.count - offset)
-                if written > 0 {
-                    offset += written
-                } else if written < 0, errno == EINTR {
-                    continue
-                } else {
-                    return false
-                }
-            }
-            return true
-        }
+        // A bridge client that cannot be written to is gone; the reaction is the drop below, and
+        // the loop is ``FileDescriptorWrite``.
+        let wrote = FileDescriptorWrite.all(fd: fd, data) == .complete
         if !wrote { drop(fd: fd) }
         return wrote
     }

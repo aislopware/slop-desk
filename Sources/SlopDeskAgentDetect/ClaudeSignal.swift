@@ -1,5 +1,3 @@
-import Foundation
-
 /// A semantic Claude Code hook event, decoupled from any transport. Each case carries
 /// ONLY the fields the state machine needs — not the full hook JSON. The adapter that
 /// maps `SlopDeskInspector.HookPayload` / the wire `claudeStatus` message → this enum
@@ -101,7 +99,7 @@ public enum ClaudeSignal: Sendable, Equatable {
     /// Host foreground-process watch: is `claude` the PTY's foreground process? (primary,
     /// zero-config signal — wire type 26). Presence is the FLOOR; absence forces `.none`.
     case processPresent(Bool)
-    /// The no-hooks fallback's coarse verdict (`ClaudeManifestMatcher`). A conservative
+    /// The no-hooks fallback's coarse verdict (`ClaudeProcessMatcher`). A conservative
     /// `.none` is IGNORED (never downgrades a present process); `.working`/`.needsPermission`
     /// promote only while a more-authoritative hook block is not in effect.
     case manifestVerdict(ClaudeStatus)

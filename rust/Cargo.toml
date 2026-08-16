@@ -1,10 +1,19 @@
 [workspace]
-members = ["slopdesk-hook"]
+# The SHORT-LIVED programs in the tree, plus the library halves of two of them. Each is forked per
+# event — the hook twice per tool call, ctl once per agent command, `slopdesk` once per keystroke a
+# user types, the probe once per metadata request a client makes — so all of them want the
+# startup-tuned profile below, and that shared requirement is the whole reason they share a
+# workspace. (`slopdesk-agenthooks` is the one member here that is NOT forked per event; it rides
+# the hook's crate because it installs the hook, and it inherits this profile harmlessly.)
+members = ["slopdesk-hook", "slopdesk-ctl", "slopdesk-cli", "slopdesk-probe"]
+# `slopdesk-superd` is a SEPARATE workspace living in this directory, not a member — see
+# `slopdesk-superd/Cargo.toml` for why. The exclude is what keeps cargo from adopting it.
+exclude = ["slopdesk-superd"]
 resolver = "3"
 
-# The hook runs on EVERY PreToolUse/PostToolUse — twice per tool call. Startup
-# time is the whole cost (the socket write itself is ~11µs), so the release
-# profile is tuned for a small, fast-starting binary rather than throughput.
+# The hook runs on EVERY PreToolUse/PostToolUse — twice per tool call, and ctl runs once per agent
+# command. Startup time is the whole cost for both (the hook's socket write itself is ~11µs), so the
+# release profile is tuned for a small, fast-starting binary rather than throughput.
 [profile.release]
 opt-level = "z"
 lto = true
@@ -79,3 +88,11 @@ try_err = "deny"
 # - `multiple_crate_versions` (cargo): zero dependencies, so it can only ever fire on a
 #   toolchain artefact outside our control.
 multiple_crate_versions = "allow"
+# - `suboptimal_flops` / `imprecise_flops` (nursery): both want `f64::mul_add`, which is exactly the
+#   fused multiply-add `CLAUDE.md` forbids — "keep `a * b + c` separate (never `addingProduct`/`fma`)".
+#   FMA rounds once where the wire rounds twice, so taking the advice changes the `f64` bit patterns
+#   `golden/golden_vectors.json` pins. Allowed in EVERY workspace, not only the ones doing float
+#   math today: the reason is a repo invariant, and a lint that fires the first time a float lands
+#   here would be obeyed before anyone reads this file.
+suboptimal_flops = "allow"
+imprecise_flops = "allow"

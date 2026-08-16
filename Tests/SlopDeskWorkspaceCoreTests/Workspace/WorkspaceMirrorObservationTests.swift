@@ -3,7 +3,6 @@ import Observation
 import SlopDeskProtocol
 import SlopDeskWorkspaceModel
 import XCTest
-@testable import SlopDeskClient
 @testable import SlopDeskWorkspaceCore
 
 /// A host frame landing on the mirror has to INVALIDATE the views that read it.

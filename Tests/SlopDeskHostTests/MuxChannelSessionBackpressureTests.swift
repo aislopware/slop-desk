@@ -30,7 +30,7 @@ final class MuxChannelSessionBackpressureTests: XCTestCase {
     private func makeSession(replay: ReplayBuffer) -> MuxChannelSession {
         MuxChannelSession(
             channelID: 1,
-            pty: PTYProcess(), // unspawned (masterFD == -1) — never touched; relay is not started
+            pty: unattachedPTY(), // unspawned (masterFD == -1) — never touched; relay is not started
             data: MuxSubChannel(channelID: 1, channel: .data) { _, _ in },
             control: MuxSubChannel(channelID: 1, channel: .control) { _, _ in },
             replay: replay,
@@ -191,36 +191,6 @@ final class MuxChannelSessionBackpressureTests: XCTestCase {
             start.duration(to: ContinuousClock.now),
             .milliseconds(200),
             "the gate releases shortly after exit-sent is signalled mid-wait",
-        )
-    }
-
-    // MARK: - ZDOTDIR shim-dir cleanup
-
-    /// `shutdown()` deletes the per-session ZDOTDIR shim dir once the child has exited — without this the
-    /// host's temp dir accumulated one `slopdesk-zdotdir-*` dir + 4 files per opened pane forever. Driven
-    /// with an UNSPAWNED PTY (terminate/forceTerminate guard `pid > 0`, closeMaster guards `fd >= 0`, so
-    /// the PTY teardown is a safe no-op) + a real temp dir standing in for the shim.
-    func testShutdownDeletesTheShimDirectory() throws {
-        let fm = FileManager.default
-        let dir = fm.temporaryDirectory.appendingPathComponent(
-            "slopdesk-zdotdir-\(UUID().uuidString)",
-            isDirectory: true,
-        )
-        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
-        try "shim".write(to: dir.appendingPathComponent(".zshrc"), atomically: true, encoding: .utf8)
-        XCTAssertTrue(fm.fileExists(atPath: dir.path), "precondition: the shim dir exists")
-
-        let session = MuxChannelSession(
-            channelID: 1,
-            pty: PTYProcess(), // unspawned — the PTY teardown in shutdown() is a guarded no-op
-            data: MuxSubChannel(channelID: 1, channel: .data) { _, _ in },
-            control: MuxSubChannel(channelID: 1, channel: .control) { _, _ in },
-            shimDir: dir,
-        )
-        session.shutdown()
-        XCTAssertFalse(
-            fm.fileExists(atPath: dir.path),
-            "shutdown() removes the per-session ZDOTDIR shim dir (no temp-dir leak per pane)",
         )
     }
 }

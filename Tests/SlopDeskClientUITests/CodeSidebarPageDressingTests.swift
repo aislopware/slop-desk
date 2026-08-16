@@ -102,7 +102,8 @@ final class CodeSidebarPageDressingTests: XCTestCase {
 
     func testFontFamilyNamesMatchTheHostSeededStack() {
         // The host seeds `editor.fontFamily: "'JetBrains Mono', ui-monospace, 'Symbols Nerd
-        // Font', monospace"` (CodeServerManager.seededUserSettings — a different module, so the
+        // Font', monospace"` (slopdesk-codeseed's resources/settings.json — a different program,
+        // so the
         // NAMES are pinned here as strings): the @font-faces must declare the exact families that
         // stack references.
         XCTAssertEqual(CodeSidebarPageDressing.monoFontFamilyName, "JetBrains Mono")

@@ -10,7 +10,6 @@
 
 import Foundation
 import Observation
-import SlopDeskAgentDetect
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 
@@ -80,18 +79,19 @@ public final class OverlayCoordinator {
 
     // MARK: Global Search state
 
-    /// Whether the cross-tab Global Search surface (⇧⌘F) is presented. UNLIKE the four scrimmed panels this is
-    /// deliberately a NON-modal, NON-scrimmed surface, so it must NOT dim the workspace and is
-    /// deliberately EXCLUDED from ``anyModalVisible``; ``OverlayHostView`` mounts it WITHOUT a ``Scrim`` and
+    /// Whether the cross-tab Global Search surface (⇧⌘F) is presented. UNLIKE the four modal panels this is
+    /// deliberately a NON-modal surface, so it must NOT swallow clicks over the workspace and is
+    /// deliberately EXCLUDED from ``anyModalVisible``; ``OverlayHostView`` mounts it WITHOUT the modal
+    /// hit-catching backdrop and
     /// gates hit-testing on this flag directly. Reopening RESTORES the store's last in-memory results
     /// (``WorkspaceStore/globalSearch``) until the query is re-run.
     public private(set) var globalSearchVisible = false
 
     // MARK: Open-Quickly state
 
-    /// Whether the Open-Quickly picker (⌘⇧O All / ⌘J Current) is presented. A floating, centered, SCRIMMED
-    /// quick-switcher card, so it is in ``anyModalVisible`` and mounted behind a
-    /// ``Scrim``. The picker reads its own sources (open panes / recents / folders / agents / the focused
+    /// Whether the Open-Quickly picker (⌘⇧O All / ⌘J Current) is presented. A floating, centered MODAL
+    /// quick-switcher card, so it is in ``anyModalVisible`` and mounted on ``OverlayHostView``'s
+    /// hit-catching (non-dimming) backdrop. The picker reads its own sources (open panes / recents / folders / agents / the focused
     /// pane's links + OSC-133 command index) — like Global Search, the coordinator owns only the flag + pill.
     public private(set) var openQuicklyVisible = false
 
@@ -102,10 +102,10 @@ public final class OverlayCoordinator {
 
     // MARK: Peek & Reply state (answer a blocked agent INLINE, ⌘⌥J)
 
-    /// Whether the Peek & Reply overlay (⌘⌥J) is presented. A centered, SCRIMMED card over the oldest pane
+    /// Whether the Peek & Reply overlay (⌘⌥J) is presented. A centered MODAL card over the oldest pane
     /// needing attention (``WorkspaceStore/peekReplyTargetPane(excluding:)``) that answers a blocked agent
     /// INLINE — observe + reply, **NEVER an approval gate**: the agent is never paused
-    /// pending a slopdesk confirmation. In ``anyModalVisible``, mounted behind a ``Scrim``.
+    /// pending a slopdesk confirmation. In ``anyModalVisible``, mounted on the hit-catching backdrop.
     public private(set) var peekReplyVisible = false
 
     /// The advance-to-next exclusion set accumulated while the overlay is open: each answered pane

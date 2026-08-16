@@ -1,6 +1,7 @@
 import Foundation
 import SlopDeskAgentDetect
 import SlopDeskProtocol
+import SlopDeskSupervisor
 import SlopDeskTransport
 
 /// The host daemon: owns the ``HostTransport`` (`NWListener`), accepts shared-mux connections, and
@@ -20,6 +21,20 @@ import SlopDeskTransport
 public final class HostServer: @unchecked Sendable {
     /// Requested TCP port (`0` lets the OS pick; read the result from ``boundPort()``).
     public let port: UInt16
+
+    /// Which hostd this is, stamped on every pane it spawns and read back at adoption.
+    ///
+    /// superd stores it verbatim and interprets nothing (`SpawnRequest.owner`). It exists because
+    /// `attached` cannot answer "is this pane mine?" on its own: after the rekey every hostd pane
+    /// id is a bare session UUID, and a pane is unattached for the whole ~0.2 s of its owner's
+    /// restart — so a second daemon starting in that window adopted a stranger's shells onto its
+    /// own TTL clock and its own journal files, while the restarted owner then found them
+    /// `attached` to someone else and left them alone forever.
+    ///
+    /// Built from the REQUESTED port (two live hostds cannot share one, and `restart-hostd.sh`
+    /// reproduces it exactly) and the workspace state directory when one is set — which is what
+    /// keeps two port-0 servers in one test process telling themselves apart from another test's.
+    public let supervisorOwnerIdentity: String
 
     /// Absolute path to the shell to spawn (defaults to the user's login shell).
     public let shellPath: String
@@ -48,13 +63,34 @@ public final class HostServer: @unchecked Sendable {
     /// registers a per-pane sink; an installed hook then POSTs status events for that pane.
     public let agentHookListener: AgentHookListener?
 
-    /// The filesystem path of the bound hook socket, exported as `SLOPDESK_SOCKET_PATH` into
-    /// every PTY env when ``agentHookListener`` is set. Empty when hooks are disabled.
-    public let agentHookSocketPath: String
+    /// Where the hook socket is, as superd reported it at `hello` — exported as
+    /// `SLOPDESK_SOCKET_PATH` into every PTY env. Empty before the handshake, or when no superd is
+    /// attached.
+    ///
+    /// **hostd has no answer of its own here, and that is deliberate.** It used to derive
+    /// `$TMPDIR/slopdesk-agent-<pid>.sock`, which is exactly the bug `docs/51` §1 exists to remove:
+    /// a running agent holds that path in an environment nobody can rewrite, so the next hostd bound
+    /// a different name and every hook POST went nowhere. A second answer to "where is the hook
+    /// socket" is the drift itself, so there is now only one, and it lives in superd.
+    public var agentHookSocketPath: String { supervisor.hookSocketPath ?? "" }
 
-    /// The filesystem path of the agent-control socket, exported as `SLOPDESK_CONTROL_SOCKET`
-    /// into every PTY env when ``agentControlEnabled`` is true. Empty when control is disabled.
-    public let agentControlSocketPath: String
+    /// Where the agent-control socket is, same source and same rule. Empty when the ctl surface is
+    /// off (`SLOPDESK_AGENT_CONTROL` unset), which is also when hostd does not claim that listener,
+    /// so superd advertises nothing either.
+    public var agentControlSocketPath: String {
+        agentControlEnabled ? (supervisor.controlSocketPath ?? "") : ""
+    }
+
+    /// Whether the ctl surface is on. Set at construction from `SLOPDESK_AGENT_CONTROL` by the
+    /// daemon; `false` in tests, which is what keeps the default-off promise honest there too.
+    public let agentControlEnabled: Bool
+
+    /// Serves the ctl connections superd hands over. Guarded by `lock`.
+    ///
+    /// WEAK, and installed after construction rather than injected: it holds this server strongly
+    /// for verb dispatch, so it cannot be an init parameter without a cycle, and the daemon owns it
+    /// for the process's life.
+    private weak var agentControlServer: AgentControlListener?
 
     /// The absolute path to the `slopdesk-ctl` binary, exported as `SLOPDESK_CTL_BIN` into a
     /// control-spawned pane's env (P1) so an agent self-orients with zero discovery. Empty → not
@@ -63,7 +99,25 @@ public final class HostServer: @unchecked Sendable {
 
     private let transport: HostTransport
     private let lock = NSLock()
+    /// Serialises ``attachSupervisor()``. Its own lock, not `lock`: the attach claims listeners and
+    /// re-subscribes every open pane, both of which take `lock` on their way through.
+    private let supervisorAttachLock = NSLock()
+    /// Where the reconnect backoff runs (``scheduleSupervisorReattach(after:)``). Off any caller's
+    /// thread on purpose: the disconnect observer fires on the dying reader thread, and a `connect`
+    /// plus a full re-subscribe is not work to do there.
+    private let supervisorReattachQueue = DispatchQueue(label: "com.slopdesk.host.supervisor-reattach")
+    /// Whether a reattach attempt is already queued, guarded by `lock`. Several sessions notice the
+    /// loss at once; one ladder is enough.
+    private var supervisorReattachScheduled = false
     private var muxAcceptTask: Task<Void, Never>?
+
+    /// The link to `slopdesk-superd`, which forks and outlives every pane (`docs/51`).
+    ///
+    /// Not optional and not lazily built: a pane cannot exist without it, and a nil here would only
+    /// push the failure to the moment a user opens a tab. ``connectSupervisor()`` runs in
+    /// ``start()`` and logs loudly on failure; ``spawnMuxChannel`` then refuses channels with a
+    /// message naming `make superd-install` rather than silently opening dead panes.
+    let supervisor = SupervisorClient()
 
     /// Agent-control: standalone sessions spawned by the `spawn` verb (no client connection).
     /// Keyed by `sessionID` (UUID), guarded by `lock`.  Drained on `stop()` alongside
@@ -175,7 +229,8 @@ public final class HostServer: @unchecked Sendable {
     /// silently dies. May be invoked off the main actor; the app hops to its actor.
     public var onListenerFailed: (@Sendable (SlopDeskTransportError) -> Void)?
 
-    /// Whether new channels run the additive "Blocks" tap (the ``CommandBlockSegmenter`` +
+    /// Whether new channels run the additive "Blocks" tap (the `CommandBlockSegmenter` in
+    /// `rust/slopdesk-superd/src/commandblocks.rs` +
     /// the type-28/29 wire). Resolved from `SLOPDESK_BLOCKS` (default-ON; only `"0"` disables) by
     /// the daemon and passed in. When false, a channel's byte pipeline is byte-identical to one with
     /// no Blocks tap at all.
@@ -222,15 +277,16 @@ public final class HostServer: @unchecked Sendable {
     /// wire never carries a type 35 and the client falls back to its poll cadence alone.
     public let gitWatchEnabled: Bool
 
-    /// Disk scrollback journals (history that survives the daemon — see ``ScrollbackJournalStore``).
+    /// Disk scrollback transcripts (history that survives the daemon — see ``ScrollbackTranscripts``).
+    /// superd writes the files; this is the policy side that asks it to, and reads them back.
     /// AND-ed with the detach gate: without detach the client never re-presents a session ID (so a
-    /// journal could never be restored) and a link drop routes through the journal-DELETING
+    /// transcript could never be restored) and a link drop routes through the transcript-DELETING
     /// `removeMuxSession` path. `nil` = disk persistence off (also the unit-test default, so tests
     /// never touch the real Application Support dir — hostd main wires `makeFromEnvironment()`).
-    private let scrollbackJournals: ScrollbackJournalStore?
+    private let scrollbackTranscripts: ScrollbackTranscripts?
 
-    /// Cadence for the periodic ``ScrollbackJournalStore/sweep()`` pass that runs for the life of
-    /// the daemon (see ``scrollbackJournals``'s docs). hostd is a week/month-long process: a
+    /// Cadence for the periodic ``ScrollbackTranscripts/sweep(supervisor:)`` pass that runs for the life of
+    /// the daemon (see ``scrollbackTranscripts``'s docs). hostd is a week/month-long process: a
     /// single sweep at init leaves orphaned `<uuid>.scrollback` files from link-drop detaches and
     /// TTL evictions unbounded until a daemon restart. Injectable so tests can drive the loop
     /// without a wall-clock day; production default = daily.
@@ -240,6 +296,11 @@ public final class HostServer: @unchecked Sendable {
     /// ``stop()`` so a repeated Start→Stop cycle never leaks a background loop (mirrors
     /// ``HostTransport``'s `reaperTask`).
     private var journalSweepTask: Task<Void, Never>?
+
+    /// How many times the sweep loop has come round, under ``lock``. The cadence and the
+    /// cancellation are hostd's half of the sweep — superd only unlinks what it is told to — and
+    /// this is what pins them without a wall-clock day (see `HostServerJournalSweepTests`).
+    private var journalSweepTicks = 0
 
     /// The host's single copy of the workspace (docs/45). Every host serves one: a client renders its
     /// tree FROM this document, so a host without one is a host a client cannot draw.
@@ -287,26 +348,25 @@ public final class HostServer: @unchecked Sendable {
         launchMode: LaunchMode = .shell,
         agentDetectEnabled: Bool = false,
         agentHookListener: AgentHookListener? = nil,
-        agentHookSocketPath: String = "",
-        agentControlSocketPath: String = "",
+        agentControlEnabled: Bool = false,
         ctlBinaryPath: String = "",
         blocksEnabled: Bool = true,
         detachEnabled: Bool? = nil,
         detachTTLSecs: Int? = nil,
         detachMaxSessions: Int? = nil,
         resumeOnRecovery: Bool? = nil,
-        scrollbackJournals: ScrollbackJournalStore? = nil,
+        scrollbackTranscripts: ScrollbackTranscripts? = nil,
         scrollbackSweepInterval: Duration = .seconds(24 * 3600),
         workspaceStore: HostWorkspaceStore? = nil,
         workspaceReconcileInterval: Duration = .milliseconds(500),
     ) {
         self.port = port
+        supervisorOwnerIdentity = Self.ownerIdentity(port: port)
         self.shellPath = shellPath ?? HostEnvironment.loginShell()
         self.launchMode = launchMode
         self.agentDetectEnabled = agentDetectEnabled
         self.agentHookListener = agentHookListener
-        self.agentHookSocketPath = agentHookSocketPath
-        self.agentControlSocketPath = agentControlSocketPath
+        self.agentControlEnabled = agentControlEnabled
         self.ctlBinaryPath = ctlBinaryPath
         self.blocksEnabled = blocksEnabled
         self.scrollbackSweepInterval = scrollbackSweepInterval
@@ -361,23 +421,19 @@ public final class HostServer: @unchecked Sendable {
         // then keep re-sweeping on ``scrollbackSweepInterval`` for the life of the daemon: hostd
         // is a week/month-long process, and a single init-time sweep would leave orphans from
         // link-drop detaches and TTL evictions unbounded until a daemon restart.
-        let journals = effectiveDetach ? scrollbackJournals : nil
-        self.scrollbackJournals = journals
-        if let journals {
-            startJournalSweep(journals: journals)
+        let transcripts = effectiveDetach ? scrollbackTranscripts : nil
+        self.scrollbackTranscripts = transcripts
+        if transcripts != nil {
+            startJournalSweep()
         }
 
         // Non-deliberate ends of life the store handles ITSELF (TTL + overflow eviction) never
-        // reach `removeMuxSession` — release the evictee's journal writer (fd + map entry; the
-        // FILE survives as the restore source) and drop its hook-sink key here, or both leak
-        // once per eviction for the daemon's lifetime. Fired outside the store lock; neither
-        // eviction path runs under `HostServer.lock` (see `DetachedSessionStore.onEvicted`).
+        // reach `removeMuxSession` — drop the evictee's hook-sink key here or it leaks once per
+        // eviction for the daemon's lifetime. The transcript writer is not ours to close: superd
+        // closes it when the pane is released, and the FILE survives as the restore source.
+        // Fired outside the store lock; neither eviction path runs under `HostServer.lock`
+        // (see `DetachedSessionStore.onEvicted`).
         detachedStore?.onEvicted = { [weak self] session in
-            // Identity-guarded: `instance`/`owner` matching means evicting a same-UUID ghost
-            // can never close the journal writer / hook-sink key a live successor session owns.
-            self?.scrollbackJournals?.release(
-                sessionID: session.sessionID, instance: session.scrollbackJournal,
-            )
             self?.unregisterHookSink(session: session)
             // The store killed a session behind the document's back. Without this the document goes
             // semantically stale with no signal and every client keeps rendering a live row for a
@@ -412,16 +468,18 @@ public final class HostServer: @unchecked Sendable {
         }
     }
 
-    /// Launches the periodic disk-scrollback sweep — ``ScrollbackJournalStore/sweep()`` re-run at
-    /// ``scrollbackSweepInterval`` cadence for the life of the daemon (see ``scrollbackJournals``'s
-    /// docs for why a single init-time sweep is not enough). Mirrors `HostTransport.startReaper()`'s
-    /// shape. No `self` capture needed: `journals` and the interval are plain values, and the loop
-    /// is torn down by cancelling ``journalSweepTask`` (``stop()``), not by `self` deallocating.
-    private func startJournalSweep(journals: ScrollbackJournalStore) {
+    /// Launches the periodic disk-scrollback sweep — ``ScrollbackTranscripts/sweep(supervisor:)``
+    /// re-run at ``scrollbackSweepInterval`` cadence for the life of the daemon (see
+    /// ``scrollbackTranscripts``'s docs for why a single init-time sweep is not enough). Mirrors
+    /// `HostTransport.startReaper()`'s shape. The loop is torn down by cancelling
+    /// ``journalSweepTask`` (``stop()``), not by `self` deallocating — hence the weak capture and
+    /// the `return` on a dead server.
+    private func startJournalSweep() {
         let interval = scrollbackSweepInterval
-        journalSweepTask = Task.detached(priority: .utility) {
+        journalSweepTask = Task.detached(priority: .utility) { [weak self] in
             while !Task.isCancelled {
-                journals.sweep()
+                guard let self else { return }
+                sweepScrollbackTranscriptsOnce()
                 do {
                     try await Task.sleep(for: interval)
                 } catch {
@@ -429,6 +487,14 @@ public final class HostServer: @unchecked Sendable {
                 }
             }
         }
+    }
+
+    /// One turn of that loop, off the async context so the tick counter can take ``lock``.
+    private func sweepScrollbackTranscriptsOnce() {
+        lock.lock()
+        journalSweepTicks += 1
+        lock.unlock()
+        scrollbackTranscripts?.sweep(supervisor: supervisor)
     }
 
     /// Launches the workspace reconciler's backstop tick (see ``workspaceReconcileInterval``). Lives
@@ -479,11 +545,25 @@ public final class HostServer: @unchecked Sendable {
         return framed.subdata(in: (framed.startIndex + 5)..<framed.endIndex)
     }
 
-    /// The stable pane id for a channel — the composite `(connectionID, channelID)` key, which
-    /// uniquely identifies one pane across simultaneous client connections. Exported into the
-    /// PTY env as `SLOPDESK_PANE_ID` and used as the hook-listener routing key.
-    static func paneID(connectionID: UUID, channelID: UInt32) -> String {
-        "\(connectionID.uuidString):\(channelID)"
+    /// The stable pane id for a session — its uuid, and nothing else.
+    ///
+    /// Exported into the PTY env as `SLOPDESK_PANE_ID`, used as the hook-listener routing key, and
+    /// the name superd files the pane under.
+    ///
+    /// ## Why it is the session uuid and not `(connectionID, channelID)`
+    /// It used to be that composite, and the composite is not RECOVERABLE. A pane now outlives the
+    /// hostd that spawned it (`docs/51`), so a restarted hostd has to be able to look at superd's
+    /// pane list and say which of its own sessions each entry belongs to — and it cannot, if the
+    /// name embeds a connection address that died with the old process. The session uuid is the one
+    /// identity that is already durable on both sides of a restart: the scrollback journal is filed
+    /// under it, the detached-session store is keyed by it, and the client re-sends it to rebind.
+    ///
+    /// It is also strictly simpler. The composite CHANGED on every reattach while the string baked
+    /// into the child's environment did not, which is why the hook sink has to remember its
+    /// original key rather than recompute one (``refreshHookSinkOnReattach(session:)``). Keyed on
+    /// the session, the key a reattach would recompute is the key it already had.
+    static func paneID(sessionID: UUID) -> String {
+        sessionID.uuidString
     }
 
     /// The port the listener actually bound to (resolved after ``start()``).
@@ -494,6 +574,11 @@ public final class HostServer: @unchecked Sendable {
     /// Starts the listener and begins accepting shared mux connections. Returns once the listener
     /// is ready (so the caller can read ``boundPort()``).
     public func start() async throws {
+        connectSupervisor()
+        // BEFORE the listener binds. A client that reconnects the instant the port opens must find
+        // its pane already parked and claimable, or its `channelOpen` takes the fresh-shell path
+        // and the surviving agent is stranded in superd with a live pane id nobody will ask for.
+        adoptSurvivingPanes()
         // Forward a POST-ready listener failure to this server's hook. Read the hook lazily
         // at failure time (`self?.onListenerFailed`) so the app's assignment after init is honoured;
         // `[weak self]` avoids retaining the server through the transport's listener handler.
@@ -524,6 +609,582 @@ public final class HostServer: @unchecked Sendable {
         }
     }
 
+    /// Attaches to `slopdesk-superd`, the process that owns every pane's shell.
+    ///
+    /// Failure is reported, never thrown: a hostd that cannot open panes is still a hostd that can
+    /// serve the workspace document, the inspector and the panel, and throwing here would take
+    /// those down too. What it must NOT do is fail quietly — the symptom of an absent superd is a
+    /// tab that opens and does nothing, which reads like a hang.
+    private func connectSupervisor() {
+        supervisor.onLog = { [weak self] message in self?.onLog?(message) }
+        supervisor.observeDisconnect { [weak self] in
+            self?.onLog?(
+                "supervisor: superd went away — every pane's SHELL is still alive (superd is not "
+                    + "the parent of hostd, it is the parent of the shells), but hostd can no "
+                    + "longer spawn, signal or learn about exits until it reconnects",
+            )
+            self?.scheduleSupervisorReattach()
+        }
+        attachSupervisor()
+    }
+
+    /// Reconnects to superd on its own, with backoff, until it is back.
+    ///
+    /// The disconnect observer used to only LOG, and reattaching was left to the next `spawn` —
+    /// which is a trigger the failure never reaches. superd going away (launchd restarting it,
+    /// `make superd-install`, a crash) takes every OPEN pane's output with it: the streams were
+    /// subscribed through the dead connection and nothing re-subscribes them. The user's windows
+    /// render nothing from that moment on while keystrokes still travel down hostd's own duplicate
+    /// of the master — a workspace of hung tabs, recoverable only by opening a NEW pane, which is
+    /// not a thing a user in front of a frozen terminal thinks to do.
+    ///
+    /// So the recovery ``resubscribeSupervisedOutput()`` performs is driven from the loss itself.
+    /// Backoff because superd is usually mid-restart: launchd's `KeepAlive` takes a moment, and a
+    /// tight `connect` loop against a socket nobody is bound to is a spin. Capped at
+    /// ``supervisorReattachMaxDelay`` and never given up on — a hostd that stopped trying is the
+    /// hang all over again, just quieter.
+    private func scheduleSupervisorReattach(after delay: TimeInterval = 0.25) {
+        lock.lock()
+        let alreadyStopping = stopping
+        let alreadyScheduled = supervisorReattachScheduled
+        if !alreadyStopping, !alreadyScheduled { supervisorReattachScheduled = true }
+        lock.unlock()
+        guard !alreadyStopping, !alreadyScheduled else { return }
+
+        supervisorReattachQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self else { return }
+            lock.lock()
+            supervisorReattachScheduled = false
+            let stoppingNow = stopping
+            lock.unlock()
+            guard !stoppingNow else { return }
+            if attachSupervisor() {
+                onLog?("supervisor: reattached to superd — every surviving pane is streaming again")
+                return
+            }
+            scheduleSupervisorReattach(after: min(delay * 2, Self.supervisorReattachMaxDelay))
+        }
+    }
+
+    /// The ceiling on the reconnect backoff. Long enough not to spin against an absent daemon,
+    /// short enough that a user staring at a stalled terminal is not staring at it for long.
+    private static let supervisorReattachMaxDelay: TimeInterval = 5
+
+    /// Connects to superd if we are not connected, and says so if it fails.
+    ///
+    /// Called from ``start()`` and again before every spawn, which is two things at once:
+    ///
+    /// 1. **Reconnection.** `onDisconnect` reports the loss and can do nothing about it — a
+    ///    launchd-restarted superd would otherwise leave hostd permanently unable to open a pane
+    ///    until the user restarted it too, which is the failure mode this whole change exists to
+    ///    remove. The next pane the user opens re-attaches.
+    /// 2. **Not requiring ``start()``.** `HostServer` is constructed and driven directly by a large
+    ///    part of the test suite and by the ctl path, and "you must have called `start()`" is a
+    ///    precondition that reads, at the point of failure, as `notConnected` — a symptom that
+    ///    names nothing.
+    ///
+    /// It is also a check-then-act, so it holds a lock of its own. Two threads reconnecting after a
+    /// superd restart is the ordinary case, not a corner: a client's receive loop opening a pane and
+    /// the ctl queue opening another both run `attachSupervisor()`, both see `isConnected == false`,
+    /// and `SupervisorClient.connect` installs its link unconditionally — so the loser's socket and
+    /// reader thread are orphaned, and its `claimChildListeners()`/`resubscribeSupervisedOutput()`
+    /// run against a link that is no longer the client's. `HostServiceSupervisor.connected()` has
+    /// always guarded this by discarding the spare; there is only ever one `supervisor` here, so the
+    /// guard is a lock instead. Held across the whole attach on purpose — the second caller must
+    /// wait for the first to finish claiming and resubscribing, then find itself already connected.
+    ///
+    /// - Returns: whether we are connected when it returns.
+    @discardableResult
+    private func attachSupervisor() -> Bool {
+        if supervisor.isConnected { return true }
+        supervisorAttachLock.lock()
+        defer { supervisorAttachLock.unlock() }
+        // Re-check under the lock: the winner of the race did this while we waited.
+        if supervisor.isConnected { return true }
+        do {
+            try supervisor.connect(clientName: "slopdesk-hostd")
+            claimChildListeners()
+            resubscribeSupervisedOutput()
+            return true
+        } catch {
+            onLog?(
+                "supervisor: NOT attached (\(error)) — panes cannot be opened. hostd does not fork "
+                    + "shells; `slopdesk-superd` does, so that it can outlive this process. "
+                    + "Install it with `make superd-install`.",
+            )
+            return false
+        }
+    }
+
+    /// Puts every open pane's output stream back after a reconnect, and ends the ones superd no
+    /// longer has.
+    ///
+    /// The half ``attachSupervisor()`` used to be missing. Reconnecting restores hostd's ability to
+    /// spawn and signal, but a `PaneOutputStream` subscribed through the DEAD connection is not
+    /// re-subscribed by anything: its handler went with the connection's table. Every terminal the
+    /// user already had open then renders nothing for the rest of the daemon's life while
+    /// keystrokes still travel (writes go down hostd's own duplicate of the master) — a window that
+    /// answers nothing, which reads as a hang and is not recoverable by any client action.
+    ///
+    /// Which panes still EXIST is asked of superd once, rather than inferred from a per-pane
+    /// subscribe error: a superd that restarted has none of them, and those sessions must be told
+    /// their shell is gone rather than left waiting for an `exited` that no process will send.
+    ///
+    /// **A failed question is not a "no".** `list()` throwing — the freshly reconnected socket
+    /// hiccuping, superd mid-restart, a decode error — used to collapse into an empty set, which
+    /// read as "superd has none of these panes" and ended EVERY live and detached session at once.
+    /// One request's blip would close every tab the user had open while the shells behind them (a
+    /// build, a `claude` mid-task) went on running under superd with no hostd that would ever adopt
+    /// them again. So the answer is three-valued: listed, not-listed, and not-asked — and
+    /// not-asked declares nothing dead. ``adoptSurvivingPanes()`` has always treated the identical
+    /// failure this way.
+    ///
+    /// **And a failed re-open is not a "no" either.** Only superd's own answer omitting the pane
+    /// ends a session — never our inability to re-subscribe it. `resubscribeSupervisedOutput()` on
+    /// the session returns false for reasons that say nothing about the shell: most of all a
+    /// session whose `startRelay()` has not run yet, which is the state of EVERY pane for the few
+    /// instructions between being published into the map and its relay starting. A reconnect
+    /// landing in that window used to close the user's brand-new tab with an exit status, on a
+    /// shell superd had just listed as alive. Those panes are counted, logged and left; the
+    /// reconnect ladder (``scheduleSupervisorReattach(after:)``) comes back for them.
+    ///
+    /// Both maps are walked. A ctl-spawned standalone pane lives only in `controlSessions`, and
+    /// leaving it out meant its stream was never re-opened AND it was never declared gone: `read`
+    /// returned nothing forever, `wait` blocked to its timeout every time, and the entry leaked for
+    /// the daemon's life because `removeControlSession` runs off an exit that could no longer come.
+    ///
+    /// A no-op on the first connect, when there are no sessions yet.
+    private func resubscribeSupervisedOutput() {
+        lock.lock()
+        let live = Self.distinct(muxSessions.values) + Self.distinct(controlSessions.values)
+        lock.unlock()
+        let sessions = Self.distinct(live + (detachedStore?.allSessions() ?? []))
+        guard !sessions.isEmpty else { return }
+
+        var supervised: Set<String>?
+        do {
+            supervised = try Set(supervisor.list().map(\.paneID))
+        } catch {
+            supervised = nil
+            onLog?(
+                "supervisor: could not list panes after reconnecting (\(error)) — every open pane "
+                    + "keeps its session and has its stream re-opened; a question that failed is "
+                    + "not an answer that the shells are gone",
+            )
+        }
+
+        var resumed = 0
+        var vanished = 0
+        var unknown = 0
+        for session in sessions {
+            guard let paneID = session.pty.paneID else { continue }
+            // `nil` = superd was never asked. Only an actual answer that omits the pane is proof.
+            let listed = supervised?.contains(paneID)
+            if listed == false {
+                vanished += 1
+                session.supervisedPaneVanished()
+                continue
+            }
+            if session.resubscribeSupervisedOutput() {
+                resumed += 1
+            } else {
+                unknown += 1
+            }
+        }
+        if resumed > 0 {
+            onLog?("supervisor: re-opened the output stream of \(resumed) live pane(s) after reconnecting")
+        }
+        if unknown > 0 {
+            onLog?(
+                "supervisor: \(unknown) pane(s) could not have their stream re-opened — left alone "
+                    + "rather than ended, because a failure on OUR side is not a statement about "
+                    + "the shell; the reconnect ladder tries them again",
+            )
+        }
+        if vanished > 0 {
+            onLog?(
+                "supervisor: \(vanished) pane(s) are gone from the new superd — their shells died "
+                    + "with the old one, and their sessions are ending",
+            )
+        }
+    }
+
+    /// Installs the ctl connection server. Call before ``start()`` — the claim goes out from there,
+    /// and a `control` connection arriving with nothing installed is closed.
+    public func serveAgentControl(with listener: AgentControlListener) {
+        lock.lock()
+        agentControlServer = listener
+        lock.unlock()
+    }
+
+    private var agentControlListener: AgentControlListener? {
+        lock.lock()
+        defer { lock.unlock() }
+        return agentControlServer
+    }
+
+    /// Tells superd which child-facing listeners this hostd will serve, and wires the hand-off.
+    ///
+    /// Runs on every fresh connection, before anything can spawn — the ordering matters and is not
+    /// incidental. A pane spawned before the claim lands is handed hostd's (empty) value for
+    /// `SLOPDESK_SOCKET_PATH` instead of superd's stable one, and a child's environment is a
+    /// snapshot taken at `execve` that can never be corrected afterwards.
+    ///
+    /// What is claimed is what this hostd can actually serve:
+    /// - `hook` whenever there is a hook listener at all, which the daemon always supplies;
+    /// - `control` only when the default-off ctl surface is on. Not claiming it is how that flag
+    ///   survives the move to superd — superd advertises no address for a listener nobody is behind,
+    ///   so it needs no copy of a hostd feature flag to honour it.
+    ///
+    /// Failure is logged and survived. An older superd answers `unsupported`, which costs the hook
+    /// path and nothing else: detection falls back to the screen engine, exactly as it does for a
+    /// host whose hooks were never installed.
+    private func claimChildListeners() {
+        var kinds: [String] = []
+        if agentHookListener != nil { kinds.append(SupervisorProtocol.ListenerKind.hook) }
+        if agentControlEnabled { kinds.append(SupervisorProtocol.ListenerKind.control) }
+        guard !kinds.isEmpty else { return }
+
+        supervisor.onConnection = { [weak self] kind, descriptor in
+            self?.serveChildConnection(kind: kind, descriptor: descriptor)
+        }
+        do {
+            try supervisor.listen(kinds: kinds)
+            agentHookListener?.markServing(kinds.contains(SupervisorProtocol.ListenerKind.hook))
+            onLog?("supervisor: serving the \(kinds.joined(separator: " + ")) listener(s)")
+        } catch {
+            agentHookListener?.markServing(false)
+            onLog?(
+                "supervisor: could not claim the child listeners (\(error)) — agents get no hook "
+                    + "or ctl socket, and detection falls back to the screen engine",
+            )
+        }
+    }
+
+    /// Routes one accepted child connection to whichever server owns that protocol.
+    ///
+    /// Called on the supervisor client's read-loop thread, so every branch has to hand the
+    /// descriptor off and return at once — that thread also carries every pane's output, and the
+    /// peer on a hook connection is blocking its agent. Both servers below dispatch and return.
+    ///
+    /// An unrecognised kind closes the descriptor rather than leaking one per connection.
+    private func serveChildConnection(kind: String, descriptor: Int32) {
+        switch kind {
+        case SupervisorProtocol.ListenerKind.hook where agentHookListener != nil:
+            agentHookListener?.serve(connection: descriptor)
+        case SupervisorProtocol.ListenerKind.control where agentControlListener != nil:
+            agentControlListener?.serve(connection: descriptor)
+        default:
+            onLog?("supervisor: nothing here serves a '\(kind)' connection — closing it")
+            close(descriptor)
+        }
+    }
+
+    /// Takes back every pane an earlier hostd left running, and parks each one ready to be
+    /// reattached.
+    ///
+    /// This is the payoff half of `docs/51`, and it only works because ``stop()`` relinquishes
+    /// rather than kills: the previous hostd dropped its duplicate of each master and exited,
+    /// superd kept the original, and the shells never noticed. Here we ask superd what it is
+    /// holding, adopt each master back, rebuild a session around it, and put it in the detached
+    /// store — the same place a client disconnect parks a pane. The returning client's
+    /// `channelOpen` then takes PATH A (reattach) exactly as if it had merely lost wifi, replays
+    /// the journal, and finds its agent mid-sentence.
+    ///
+    /// ### Rules it follows, and why
+    /// - **A pane it cannot claim is left alone, never released.** An unrecognised `paneID` is
+    ///   most likely another hostd's (a second daemon on another port) or one spawned by a build
+    ///   that named panes differently. The wrong answer is to tidy it up: that is a live `claude`.
+    /// - **A `service:` pane is not foreign, and not adopted here.** The panel backends live under
+    ///   superd too (``SupervisedServiceProcess``), and their manager adopts each one lazily on the
+    ///   first `ensure`. Skipping them silently would be wrong in the other direction — a surviving
+    ///   workbench is exactly the good news this whole change exists to deliver — so they get their
+    ///   own line, and never the "not ours" one.
+    /// - **Adoption failures are per-pane.** One pane superd refuses must not cost the others.
+    /// - **The journal is claimed, not replayed.** Nothing is enqueued here — the pane has no
+    ///   client yet. `performReattach` composes the replay when one arrives.
+    /// Pane ids a `HostServer` in THIS PROCESS has relinquished, so a later one can tell its
+    /// predecessor's panes from a live stranger's.
+    ///
+    /// `attached` is a property of the CONNECTION — `registry::detach_client` is the only thing
+    /// that clears it — and a stopped `HostServer` does not close its supervisor link, because a
+    /// deliberate `killPaneForControl` tears its pane down on a background queue and the `release`
+    /// still has to travel. (Disconnecting in `stop()` was tried; it cut exactly that verb, and a
+    /// pane the user had closed came back adopted after the restart.) The ordinary restart hides
+    /// the whole question behind `exit(0)`. The menu-bar host does not: it stops and starts in ONE
+    /// process, and there the next `start()` saw its own panes as another daemon's and refused to
+    /// adopt them — the shells surviving perfectly and never coming back to a tab.
+    ///
+    /// Static because the point is precisely that it outlives the `HostServer` that wrote it.
+    private static let relinquishedLock = NSLock()
+    private nonisolated(unsafe) static var relinquishedHere: Set<String> = []
+
+    /// Records every pane this server is about to let go. Called at the TOP of ``stop()``, before
+    /// the maps are drained — after that there is nothing left to enumerate.
+    private func notePanesThisProcessIsLettingGo() {
+        lock.lock()
+        let live = Self.distinct(muxSessions.values) + Self.distinct(controlSessions.values)
+        lock.unlock()
+        let ids = (live + (detachedStore?.allSessions() ?? [])).compactMap(\.pty.paneID)
+        guard !ids.isEmpty else { return }
+        Self.relinquishedLock.lock()
+        Self.relinquishedHere.formUnion(ids)
+        Self.relinquishedLock.unlock()
+    }
+
+    /// Whether an attached pane is one this process left behind.
+    ///
+    /// A pure question. Consuming the note here — which is what it used to do — spends the only
+    /// authorisation the pane will ever get on an ATTEMPT: `adoptSurvivingPane` throwing (a
+    /// supervisor blip, a `subscribe` that failed) then left the pane in no map and no store, with
+    /// its note gone, while superd still reported it `attached` because hostd deliberately never
+    /// closes its link. Every later `start()` in that process filed it under "another live hostd's"
+    /// and left it alone forever: a surviving `claude` with no tab that can ever reach it.
+    /// ``forgetRelinquished(_:)`` is what spends the note, and only success calls it.
+    private static func wasRelinquishedInThisProcess(_ paneID: String) -> Bool {
+        relinquishedLock.lock()
+        defer { relinquishedLock.unlock() }
+        return relinquishedHere.contains(paneID)
+    }
+
+    /// Spends the notes for panes this process has taken back — and for ids superd no longer has,
+    /// so the set cannot grow for the life of a long-running menu-bar host.
+    private static func forgetRelinquished(_ paneIDs: some Sequence<String>) {
+        relinquishedLock.lock()
+        relinquishedHere.subtract(paneIDs)
+        relinquishedLock.unlock()
+    }
+
+    /// Drops every note for a pane superd did not list. Those shells are gone; the note is not
+    /// authorising anything any more.
+    private static func pruneRelinquished(keeping live: Set<String>) {
+        relinquishedLock.lock()
+        relinquishedHere.formIntersection(live)
+        relinquishedLock.unlock()
+    }
+
+    private func adoptSurvivingPanes() {
+        guard supervisor.isConnected else { return }
+        guard let detachedStore else {
+            // Detach off ⇒ nowhere to park, and a pane with no home would be invisible to every
+            // enumeration. Report it rather than adopting into a void.
+            reportUnclaimedPanes(reason: "detach is disabled on this hostd")
+            return
+        }
+        let records: [PaneRecord]
+        do {
+            records = try supervisor.list()
+        } catch {
+            onLog?("supervisor: could not list surviving panes (\(error)) — none adopted")
+            return
+        }
+        // Notes for panes superd no longer holds are spent here rather than accumulating for the
+        // life of a menu-bar host that stops and starts many times.
+        Self.pruneRelinquished(keeping: Set(records.map(\.paneID)))
+        guard !records.isEmpty else { return }
+
+        var adopted = 0
+        var foreign: [String] = []
+        var services: [String] = []
+        var held: [String] = []
+        for record in records {
+            guard let sessionID = UUID(uuidString: record.paneID) else {
+                if record.paneID.hasPrefix(Self.servicePanePrefix) {
+                    services.append(String(record.paneID.dropFirst(Self.servicePanePrefix.count)))
+                } else {
+                    foreign.append(record.paneID)
+                }
+                continue
+            }
+            // ATTACHED means some hostd holds a duplicate of this master RIGHT NOW — and after the
+            // rekey to `paneID(sessionID:)` it is the only thing that can say so, because every
+            // hostd pane id is a bare session UUID and the parse above accepts all of them equally.
+            // Taking one would put a second daemon's shell in this one's detached store, on the
+            // same journal file, one eviction away from `SIGHUP`ing a pane a live client is using.
+            // Somebody else's pane, said by the pane itself rather than inferred from a flag whose
+            // false window is precisely that owner's restart.
+            guard paneOwnershipAllowsAdoption(record) else {
+                foreign.append(record.paneID)
+                continue
+            }
+            if record.attached, !Self.wasRelinquishedInThisProcess(record.paneID) {
+                held.append(record.paneID)
+                continue
+            }
+            do {
+                try adoptSurvivingPane(record, sessionID: sessionID, into: detachedStore)
+                adopted += 1
+                // Spent only now. A throw below leaves the note in place so the next `start()` in
+                // this process can try again, rather than reading its own pane as a stranger's.
+                Self.forgetRelinquished([record.paneID])
+            } catch {
+                onLog?("supervisor: pane \(record.paneID) (pid \(record.pid)) not adopted: \(error)")
+            }
+        }
+        if adopted > 0 {
+            onLog?(
+                "supervisor: adopted \(adopted) surviving pane(s) — their shells ran straight "
+                    + "through this restart and are parked for reattach",
+            )
+        }
+        if !services.isEmpty {
+            onLog?(
+                "supervisor: panel backend(s) ran straight through this restart and will be "
+                    + "adopted on first use: \(services.joined(separator: ", "))",
+            )
+        }
+        if !held.isEmpty {
+            onLog?(
+                "supervisor: \(held.count) supervised pane(s) are attached to another live hostd "
+                    + "and were left alone: \(held.joined(separator: ", "))",
+            )
+        }
+        if !foreign.isEmpty {
+            onLog?(
+                "supervisor: \(foreign.count) supervised pane(s) are not ours and were left "
+                    + "running: \(foreign.joined(separator: ", "))",
+            )
+        }
+    }
+
+    /// What ``SupervisedServiceProcess/paneID(for:)`` builds. Matched here, rather than imported as
+    /// a call, because this side has only the id — there is no service name to ask about.
+    private static let servicePanePrefix = "service:"
+
+    /// Builds ``supervisorOwnerIdentity``. Pure, so a test can pin the shape without a server.
+    static func ownerIdentity(
+        port: UInt16,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+    ) -> String {
+        let scope = environment["SLOPDESK_WORKSPACE_STATE_DIR"].flatMap { $0.isEmpty ? nil : $0 }
+        return "hostd port=\(port) state=\(scope ?? "default")"
+    }
+
+    /// Whether a surviving pane belongs to THIS hostd.
+    ///
+    /// Three answers, and only the middle one is new:
+    /// - **Ours** — the owner matches. Adoptable, subject to the `attached` rule as before.
+    /// - **A stranger's** — a different, non-empty owner. Left alone whatever `attached` says: it
+    ///   is another daemon's pane, and the window in which it looks free is that daemon restarting.
+    /// - **Unknown** — no owner recorded (a pane spawned before the field existed, or by a superd
+    ///   older than protocol 1.4). Treated exactly as it was before this check existed, because
+    ///   refusing here would strand real shells on the one upgrade where they most need adopting.
+    private func paneOwnershipAllowsAdoption(_ record: PaneRecord) -> Bool {
+        guard let owner = record.owner, !owner.isEmpty else { return true }
+        return owner == supervisorOwnerIdentity
+    }
+
+    /// One pane's adoption: take the master back, rebuild the session, park it.
+    private func adoptSurvivingPane(
+        _ record: PaneRecord,
+        sessionID: UUID,
+        into _: DetachedSessionStore,
+    ) throws {
+        let restored = scrollbackTranscripts?.restored(sessionID: sessionID, supervisor: supervisor)
+        let taken = try supervisor.adopt(paneID: record.paneID)
+        let pty = PTYProcess(supervisor: supervisor)
+        pty.adopt(
+            masterFD: taken.masterFD, pid: taken.record.pid, paneID: record.paneID,
+            spawnedAt: taken.record.spawnedAt,
+        )
+        // The size is NOT re-asserted here. The kernel's `winsize` on this master is the live truth
+        // and survived the restart intact; superd's record is only what hostd last told it, and a
+        // pane whose client never resized still carries the spawn-time 24×80. Writing that back
+        // would `SIGWINCH` a 200×50 `claude` into re-wrapping its whole frame at 80 columns — and
+        // `startRelay` would then persist 80×24 into the size sidecar, so the NEXT life's snapshot
+        // restore re-wraps the transcript too. `startRelay` reads `TIOCGWINSZ` for the sidecar,
+        // which is the number that was always right.
+
+        let resumeFrom = resumePointForSurvivor(sessionID: sessionID, paneID: record.paneID)
+
+        let session = MuxChannelSession(
+            channelID: 0, // No client channel yet; `rebindRelay` supplies the real one on reattach.
+            pty: pty,
+            data: MuxSubChannel(channelID: 0, channel: .data) { _, _ in },
+            control: MuxSubChannel(channelID: 0, channel: .control) { _, _ in },
+            sessionID: sessionID,
+            agentDetectEnabled: agentDetectEnabled,
+            agentHookListenerActive: { [weak listener = agentHookListener] in listener?.isListening ?? false },
+            blocksEnabled: blocksEnabled,
+            // The pane's transcript from BEFORE the restart, read off disk and pushed to the head
+            // of the output FIFO — where a detached session's backlog lives, so the client that
+            // comes back is handed its history and then the live stream, in that order.
+            //
+            // Required, not an optimisation: `performReattach` replays the SESSION's buffers, and
+            // an adopted session's buffers start empty. Without this the user reconnects to a live
+            // shell showing a blank pane, which looks exactly like having lost the work.
+            restoredScrollback: restored?.bytes,
+            resumeFromOffset: resumeFrom,
+            snapshotReplay: MuxChannelSession.makeSnapshotReplayPolicy(),
+        )
+        wireAgentStatusFanOut(session)
+        wireRepoWatch(session)
+        wireSubscriberEviction(session)
+        // Started, then immediately parked. The relay has to run — the shell is alive and its
+        // output must keep reaching the journal and the detector while nobody is watching, which
+        // is exactly the state a detached pane is already in.
+        session.startRelay()
+        if let cwd = record.cwd, !cwd.isEmpty { session.seedProjectTruthAtSpawn(cwd: cwd) }
+        registerHookSink(session: session)
+        // A synthetic key: the store needs one, and no connection owns this pane yet. Channel 0 is
+        // never a real client channel, which makes an adopted-but-never-reattached pane obvious in
+        // a log line rather than looking like a channel that went wrong.
+        detachMuxSession(key: MuxSessionKey(connectionID: UUID(), channelID: 0), session: session)
+    }
+
+    /// Names the panes superd is holding that this hostd is not going to take, so an operator can
+    /// see them. Called when adoption cannot run at all.
+    /// Where to pick up the supervised stream of a pane whose shell predates this `MuxChannelSession`.
+    ///
+    /// The transcript on disk already holds this pane's output up to the moment the last hostd let
+    /// it go, and superd's ring holds the same bytes as raw output — so a subscribe from 0 would
+    /// hand the user their history twice and re-feed the sniffer, the block ledger and the screen
+    /// engine with it.
+    ///
+    /// One question, one answer, and superd holds both: it numbers the stream AND writes the file,
+    /// so "how much of this stream is on disk" is a variable it already has (`journalInfo.head`),
+    /// exact by construction. There is no cross-process staleness window to trade against —
+    /// superd's death takes every pane with it, so a `head` that could be stale belongs to a pane
+    /// that no longer exists.
+    ///
+    /// Shared by BOTH ways a hostd can end up holding an old shell: `adoptSurvivingPane` at start,
+    /// and `spawnFreshShell` discovering mid-spawn that superd already had this pane and taking it
+    /// over (`PTYProcess.spawn`'s duplicate fallback). The second used to pass 0 unconditionally, on
+    /// a comment that said the pane "was forked a moment ago" — true of the path, not of the pane.
+    ///
+    /// What decides is whether the FILE already holds this pane's history, not whether a transcript
+    /// was restored into memory on this particular path. A WARM client (one that kept its window and
+    /// is only reconnecting a transport) is deliberately handed no restored transcript — `restored`
+    /// is computed only for `lastReceivedSeq == 0` — so keying on that alone would send exactly the
+    /// takeover case back to offset 0 and show its whole history a second time.
+    ///
+    /// A file with bytes but no `head` means the pane it belonged to is gone (superd forgets the
+    /// head when it closes the journal), which is the one case worth a log line: the transcript we
+    /// have, plus everything from NOW.
+    private func resumePointForSurvivor(sessionID: UUID, paneID: String) -> UInt64 {
+        guard let info = scrollbackTranscripts?.info(sessionID: sessionID, supervisor: supervisor),
+              info.bytes > 0
+        else { return 0 }
+        if let head = info.head { return head }
+        onLog?(
+            "supervisor: pane \(paneID) has a stored transcript but superd holds no position in "
+                + "its stream — resuming from now, so nothing is shown twice",
+        )
+        return PaneOutputStream.fromNowOn
+    }
+
+    private func reportUnclaimedPanes(reason: String) {
+        guard let records = try? supervisor.list() else { return }
+        // Panel backends are counted out: they are not unadopted, they are adopted elsewhere and
+        // later, and telling an operator to `slopdesk-ctl` them would be advice to kill the editor.
+        let shells = records.filter { !$0.paneID.hasPrefix(Self.servicePanePrefix) }
+        guard !shells.isEmpty else { return }
+        onLog?(
+            "supervisor: \(shells.count) supervised pane(s) left running and unadopted (\(reason)) "
+                + "— their shells are alive; `slopdesk-ctl` can end them deliberately",
+        )
+    }
+
     /// Boots the shared code-server ahead of any client — the daemon calls this once its
     /// listeners are up, so the panel's first expand meets a warm workbench instead of a cold
     /// seed + Node boot (``CodeServerManager/prewarm()``). Deliberately NOT folded into
@@ -539,23 +1200,29 @@ public final class HostServer: @unchecked Sendable {
         // receive loops keep running past the listener cancel) is REFUSED by `spawnMuxChannel` rather
         // than forking a shell that would be minted after the drain below and outlive the daemon.
         markStopping()
+        // Which panes THIS PROCESS is letting go, noted before the maps are drained — see
+        // ``notePanesThisProcessIsLettingGo()``.
+        notePanesThisProcessIsLettingGo()
         muxAcceptTask?.cancel()
         journalSweepTask?.cancel()
         journalSweepTask = nil
         await transport.stop()
-        // Tear the channels down in PARALLEL on the concurrent teardown queue rather than serially:
-        // each `shutdown()` blocks up to ~0.25s for an interactive shell that ignores SIGTERM, so N
-        // panes would cost ~N×0.25s serially while parking a cooperative-pool thread. `shutdownDetached`
-        // runs each on `MuxChannelSession.teardownQueue` (concurrent); we still AWAIT every completion
-        // before returning, preserving the CLI reap-before-exit invariant (children fully reaped + master
-        // fds closed before `slopdesk-hostd` calls `exit(0)`).
+        // RELINQUISH, do not destroy. This is the line the whole `docs/51` change is drawn along:
+        // a daemon stop means "hostd is going away", not "these panes are over". Every session here
+        // has its reader stopped, its writer quiesced and hostd's DUPLICATE of the master closed —
+        // and its shell is left running under superd, which still holds the original. The next
+        // hostd picks them back up in `adoptSurvivingPanes()`.
+        //
+        // In PARALLEL on the concurrent teardown queue, and still AWAITED in full before returning:
+        // the master fds must be closed before `slopdesk-hostd` calls `exit(0)` or a half-torn-down
+        // pane's last bytes never reach its journal.
         let liveMux = drainMuxSessions()
         let liveControl = drainControlSessions()
         await withTaskGroup(of: Void.self) { group in
             for session in liveMux + liveControl {
                 group.addTask {
                     await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
-                        session.shutdownDetached { c.resume() }
+                        session.relinquishDetached { c.resume() }
                     }
                 }
             }
@@ -567,20 +1234,38 @@ public final class HostServer: @unchecked Sendable {
         await workspaceStore?.flush()
         await workspaceDocument.shutdown()
         drainWorkspaceChannels()
-        // Kill every detached session — shells that were kept alive across a client disconnect.
-        detachedStore?.drainAll()
-        // Terminate the shared code-server child (the right sidebar's embedded VS Code). With no
-        // idle reaper this is its only stop, and a daemon stop must not strand a Node process.
-        HostCodeServerPerformer.sharedManager.shutdown()
-        // Same for the shared simulator server (the right panel's Simulators surface). It has no
-        // idle reaper of its own, so this is the ONLY thing that stops it — the simulated devices
-        // it booted are left running on purpose (machine state, not session state).
-        HostSimulatorPerformer.sharedManager.shutdown()
-        // Same again for the Android bridge (the right panel's Android surface): close its listener
-        // and every live mirror session, which is what stops the `scrcpy-server` processes on the
-        // devices. The devices themselves — including emulators this host booted — are left running,
-        // for the same reason.
-        HostAndroidPerformer.sharedManager.shutdown()
+        // Let every DETACHED session go too — panes whose client already left and whose shell the
+        // user has not finished with. Killing exactly these on a daemon stop was the sharpest edge
+        // of the old behaviour: they are the ones nobody was watching, so nobody could object.
+        if let detachedStore {
+            await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+                detachedStore.relinquishAll { c.resume() }
+            }
+        }
+        // LET GO of the shared code-server child (the right sidebar's embedded VS Code) — do not
+        // terminate it. superd holds it, exactly as it holds every pane, so the next hostd adopts
+        // a warm workbench instead of paying the Node boot again. This line used to be a
+        // `shutdown()`, and it is the reason a host edit cost the user a rebooting editor on top of
+        // everything else (`docs/51` §6.7).
+        HostCodeServerPerformer.sharedManager.relinquish()
+        // Same for the shared simulator server (the right panel's Simulators surface). The
+        // simulated devices it booted were already left running on purpose (machine state, not
+        // session state); now the server that talks to them is too.
+        HostSimulatorPerformer.sharedManager.relinquish()
+        // Same again for the Android bridge (the right panel's Android surface). This one used to be
+        // a `shutdown()` because the listener lived in THIS process, so a host edit tore down every
+        // live mirror along with it; the bridge is `slopdesk-androidd` under superd now, so letting
+        // it go keeps the mirrors — and the `scrcpy-server` processes behind them — up across the
+        // restart. The devices themselves, including emulators this host booted, were already left
+        // running on purpose: machine state, not session state.
+        HostAndroidPerformer.sharedManager.relinquish()
+        // And drop the services' superd connection, AFTER the three calls above have finished
+        // unsubscribing on it. Nothing about the children: superd notices a peer go away and
+        // updates one boolean, which is the whole point (`registry::detach_client`). Without this
+        // the panes stay `attached: true` to a hostd that is gone, and the next one to adopt them
+        // reads a lie. The connection is rebuilt on first use (`HostServiceSupervisor.connected()`),
+        // so a Start after this Stop costs one `connect`.
+        HostServiceSupervisor.shared.relinquish()
         // Cancel every repo FSEvents stream (the per-session teardown signals already released the
         // refcounts above; this is the belt-and-braces daemon-stop sweep).
         repoWatcher.shutdown()
@@ -905,11 +1590,11 @@ public final class HostServer: @unchecked Sendable {
         if session.isChildExited() {
             // Mirror `removeMuxSession`'s dead-child discipline: fan a final `.none` for the
             // prevent-sleep strict balance, then the non-blocking reap (idempotent). This is a
-            // non-deliberate end of life reached OUTSIDE `removeMuxSession`, so release the
-            // journal writer (file kept — a reconnect may still cold-restore) + hook-sink key.
+            // non-deliberate end of life reached OUTSIDE `removeMuxSession`, so drop the
+            // hook-sink key here (the transcript file is kept — a reconnect may still cold-restore
+            // it, and superd closed its writer when the pane was released).
             fanAgentTeardown(session)
             session.shutdownDetached()
-            scrollbackJournals?.release(sessionID: session.sessionID, instance: session.scrollbackJournal)
             unregisterHookSink(session: session)
             return
         }
@@ -1249,19 +1934,33 @@ public final class HostServer: @unchecked Sendable {
         // picked up on a phone. Re-resolve the fold's predicate for the connection this session now
         // rides, before any of its resize frames can land.
         session.addResizeContributor(sizePassive: sizePassiveForConnection(connectionID))
-        // Ack FIRST — synchronously, before the replay: the host-authoritative resume verdict
-        // (`resumeFromSeq = lastReceivedSeq`, docs/20 §8.2) rides the DATA link FIFO-ahead of
-        // the replayed `output` frames, so the awaiting client learns "same session resumed"
-        // before the first byte. If the rebind below then fails, the `accepted: false` refusal
-        // supersedes this ack (the router rejects the channel; the client reconnects) — the
+        // The verdict is host-authoritative, so it must not exceed what this session can actually
+        // number. `lastReceivedSeq` is the client's memory of a PREVIOUS session object; an ADOPTED
+        // pane is a new object around an old shell (`adoptSurvivingPane` builds a fresh
+        // `MuxChannelSession`, so its ReplayBuffer starts at zero and its first frame is seq 1).
+        // Echoing 4000 back at a warm client then told it to keep its dedup marks, and every frame
+        // this session went on to send — the restored transcript first, then all live output —
+        // arrived below the mark and was dropped. The terminal rendered nothing while keystrokes
+        // still reached the shell: a dead-looking pane, arrived at by the very path that exists to
+        // bring one back. Clamping to `highestAssignedSeq` makes the answer honest, and the zero it
+        // produces here is precisely the "reset your marks" the client already understands
+        // (`docs/20` §8.2 — only `resumeFromSeq == 0` resets).
+        let resumeFrom = min(open.lastReceivedSeq, session.highestAssignedSeq)
+        // Ack FIRST — synchronously, before the replay: the resume verdict rides the DATA link
+        // FIFO-ahead of the replayed `output` frames, so the awaiting client learns "same session
+        // resumed" before the first byte. If the rebind below then fails, the `accepted: false`
+        // refusal supersedes this ack (the router rejects the channel; the client reconnects) — the
         // same outcome a mid-replay link death always had.
-        await connection.sendOpenAck(open.channelID, accepted: true, resumeFromSeq: open.lastReceivedSeq)
+        await connection.sendOpenAck(open.channelID, accepted: true, resumeFromSeq: resumeFrom)
         // Replay the buffered tail to the NEW data sub-channel BEFORE rebinding so live output
         // does not interleave with the replay (the rebind starts the live drain). The client
         // sent `lastReceivedSeq` so we can skip already-received messages. A `true` return
         // means the replay was a RENDERED snapshot (state-transfer) — see the jiggle gate below.
         let replayStart = ContinuousClock.now
-        let snapshotComposed = await session.replayTail(after: open.lastReceivedSeq, on: open.data)
+        // `resumeFrom`, not the client's own number: replaying "after 4000" out of a buffer that
+        // has never issued a seq above 1 selects nothing, so an adopted pane would come back blank
+        // even with the ack fixed.
+        let snapshotComposed = await session.replayTail(after: resumeFrom, on: open.data)
         let replayElapsed = ContinuousClock.now - replayStart
         // Rebind the relay: swap sub-channels, clear stale queues, restart relay tasks.
         // onExit is threaded INTO rebindRelay so it is assigned under taskLock, atomically with
@@ -1275,7 +1974,11 @@ public final class HostServer: @unchecked Sendable {
             // COLD client (fresh surface): the detached-window out-FIFO backlog is replay-
             // transformed before the drain restarts, mirroring the ring/tail transform the
             // replayTail above already applied. A warm client needs the raw backlog.
-            transformDetachedBacklog: open.lastReceivedSeq == 0,
+            //
+            // Keyed on the VERDICT rather than on what the client asked for, so the two agree: a
+            // warm client reattaching to an adopted pane is being told to reset its marks and will
+            // render this session from scratch, which is the cold case however warm the client was.
+            transformDetachedBacklog: resumeFrom == 0,
         )
         guard rebound else {
             // The new link can die MID-REPLAY: `finishLink` parks the sub-channels and
@@ -1338,24 +2041,20 @@ public final class HostServer: @unchecked Sendable {
         connectionID: UUID,
         key: MuxSessionKey,
     ) {
-        // Disk scrollback (journal + restore) applies only to a REAL client-owned session ID —
-        // the zero sentinel (a raw/old client) can never be re-presented, so journaling it would
-        // only produce an orphan file.
+        // Disk scrollback (transcript + restore) applies only to a REAL client-owned session ID —
+        // the zero sentinel (a raw/old client) can never be re-presented, so asking superd to
+        // journal it would only produce an orphan file.
         let hasResumableID = open.sessionID != WireMessage.newSessionID
-        // `claimJournal` FIRST (exclusive fresh-spawn ownership): it registers the live writer —
-        // exempting the file from a concurrently-running `sweep()` — and ROTATES OUT a ghost
-        // instance a same-UUID predecessor may still hold (the detach-window race / claim-reaped
-        // dead child), flushing its tail so the restore below reads the complete transcript.
-        // Sharing the ghost's instance instead would interleave two writers into one file and
-        // let the ghost's late teardown close the live session's journaling forever.
-        let journal = hasResumableID ? scrollbackJournals?.claimJournal(for: open.sessionID) : nil
-        // Restore gate: a fresh spawn for a RETURNING id whose client is COLD (`lastReceivedSeq
-        // == 0` — a brand-new terminal surface). A WARM client (non-zero seq: transport dropped
-        // but the app kept running) still holds its rendered grid; replaying the transcript there
-        // would double-print it. The read (≤ ring cap) + distill run once per fresh spawn.
-        let restored: ScrollbackJournalStore.RestoredScrollback? =
+        // The RESTORE runs before the spawn, because the spawn is what starts writing under it:
+        // superd keeps a returning id's transcript and appends the new shell's output below it, so
+        // reading afterwards could hand the client bytes the live stream is about to deliver again.
+        // Gate: a fresh spawn for a RETURNING id whose
+        // client is COLD (`lastReceivedSeq == 0` — a brand-new terminal surface). A WARM client
+        // (non-zero seq: transport dropped but the app kept running) still holds its rendered grid;
+        // replaying the transcript there would double-print it.
+        let restored: ScrollbackTranscripts.Restored? =
             (hasResumableID && open.lastReceivedSeq == 0)
-                ? scrollbackJournals?.restoredScrollback(for: open.sessionID)
+                ? scrollbackTranscripts?.restored(sessionID: open.sessionID, supervisor: supervisor)
                 : nil
         if let restored {
             onLog?(
@@ -1365,10 +2064,8 @@ public final class HostServer: @unchecked Sendable {
             )
         }
 
-        let pty = PTYProcess()
-        // The per-session ZDOTDIR shim dir (if the zsh shim is installed) — captured so the session can
-        // delete it when the child exits, instead of leaking one temp dir per pane forever.
-        var shimDir: URL?
+        attachSupervisor()
+        let pty = PTYProcess(supervisor: supervisor)
         // The directory the child ACTUALLY lands in, which is not the requested one: `resolveCwd`
         // repairs an absent/stale/unusable request to HOME. Captured so the By-Project seed below
         // describes the pane's real cwd rather than skipping a pane that requested nothing.
@@ -1389,7 +2086,7 @@ public final class HostServer: @unchecked Sendable {
                 let term = resolveEffectiveTerm(requested: .ghostty, explicitOverride: false)
                 // When the opt-in hook listener is bound, export its socket path + this
                 // pane's id so an installed Claude hook can POST status events for this pane.
-                let paneID = Self.paneID(connectionID: connectionID, channelID: open.channelID)
+                let paneID = Self.paneID(sessionID: open.sessionID)
                 var env = HostEnvironment.curated(
                     term: term.rawValue,
                     agentSocketPath: agentHookListener != nil ? agentHookSocketPath : nil,
@@ -1401,28 +2098,32 @@ public final class HostServer: @unchecked Sendable {
                 // trusts an inherited `PWD` would print a prompt for a directory it is not in.
                 spawnCwd = PTYProcess.resolveCwd(open.initialCwd, home: env["HOME"])
                 if let spawnCwd { env["PWD"] = spawnCwd }
-                if let overrides = ShellIntegration.makeEnvironmentOverrides(
-                    parent: ProcessInfo.processInfo.environment,
-                    shellPath: shellPath,
-                    warn: { [weak self] in self?.onLog?($0) },
-                ) {
-                    for (k, value) in overrides { env[k] = value }
-                    // The shim's ZDOTDIR override IS the generated `slopdesk-zdotdir-*` dir — track it so the
-                    // session deletes it on the child's exit.
-                    shimDir = overrides["ZDOTDIR"].map { URL(fileURLWithPath: $0, isDirectory: true) }
-                }
-                try pty.spawn(shellPath, environment: env, argv0: argv0, cwd: spawnCwd)
+                try pty.spawn(
+                    shellPath,
+                    environment: env,
+                    argv0: argv0,
+                    cwd: spawnCwd,
+                    paneID: paneID,
+                    sessionID: open.sessionID.uuidString,
+                    owner: supervisorOwnerIdentity,
+                    // An interactive login shell: the one pane shape prompt machinery applies to.
+                    shellIntegration: true,
+                    // The same flag the session below reads, asked one layer earlier: superd holds
+                    // the block ring now, so the pane has to be TAPPED at spawn — a tap cannot be
+                    // added to a shell that is already running (`docs/51` §6.14).
+                    blocks: blocksEnabled,
+                    // Ask superd to keep this pane's transcript on disk as it pumps it. `nil` when
+                    // persistence is off or the id is the zero sentinel — superd then writes
+                    // nothing, and there is no file for the next daemon life to find.
+                    journal: hasResumableID
+                        ? scrollbackTranscripts?.spawnRequest(sessionID: open.sessionID.uuidString)
+                        : nil,
+                )
             }
         } catch {
             onLog?("mux channel \(open.channelID) (conn \(connectionID)): shell spawn failed: \(error)")
-            // The ZDOTDIR shim dir is written BEFORE the spawn, so a spawn failure (e.g. EMFILE / fork
-            // failure — conditions that can REPEAT) would leak it: no MuxChannelSession is created on
-            // this path to delete it later. Clean it up here so the "no leaked shim dir per pane"
-            // guarantee holds on the failure path too.
-            if let shimDir { try? FileManager.default.removeItem(at: shimDir) }
-            // Release the just-claimed journal writer (fd + map entry; file kept) — no session
-            // was created to own it, and a dangling live writer is also sweep-exempt forever.
-            if let journal { scrollbackJournals?.release(sessionID: open.sessionID, instance: journal) }
+            // Nothing to unwind on disk: a spawn that failed never got a pane, and superd opens the
+            // journal only as part of forking one.
             // Refuse the channel so the client's router marks it dead and never routes data to it.
             Task { await connection.sendOpenAck(open.channelID, accepted: false) }
             return
@@ -1437,15 +2138,27 @@ public final class HostServer: @unchecked Sendable {
             // Read from the connection's workspace channel, if it has subscribed yet; the subscribe
             // itself re-resolves this for panes that opened first.
             isSizePassive: sizePassiveForConnection(connectionID),
-            shimDir: shimDir,
             agentDetectEnabled: agentDetectEnabled,
             // Verb 13 reports the LIVE hook-listener bind state. Probed at request time (weak — the
             // listener outlives sessions anyway) so a bind failure reads honest-false, never a stale
             // construction-time snapshot.
             agentHookListenerActive: { [weak listener = agentHookListener] in listener?.isListening ?? false },
             blocksEnabled: blocksEnabled,
-            scrollbackJournal: journal,
             restoredScrollback: restored?.bytes,
+            // Usually 0: this pane was forked a moment ago, so its stream starts there and there is
+            // no history to arrive twice — the restore above is the PRIOR life's transcript, from a
+            // pane whose offsets died with it. But `pty.spawn` may have found superd already
+            // holding this id and TAKEN THAT SHELL OVER (an adoption that failed at start, or
+            // detach turned off), and then the ring holds the same bytes as the restore: subscribing
+            // from 0 prints the user's whole history a second time and re-feeds the sniffer and
+            // the block ledger with it. Same rule as `adoptSurvivingPane`, because it is the same
+            // situation.
+            resumeFromOffset: pty.tookOverASurvivor
+                ? resumePointForSurvivor(
+                    sessionID: open.sessionID,
+                    paneID: pty.paneID ?? Self.paneID(sessionID: open.sessionID),
+                )
+                : 0,
             snapshotReplay: MuxChannelSession.makeSnapshotReplayPolicy(),
         )
         // The shell-exit reaper closes over the SAME composite key so it only removes THIS
@@ -1461,9 +2174,6 @@ public final class HostServer: @unchecked Sendable {
             // running from `pty.spawn`, so `shutdown()` reaps it cleanly) and refuse the channel.
             lock.unlock()
             session.shutdown()
-            // The stopping path never reaches an end-of-life that would release the claimed
-            // writer — drop it here (file kept; the restart's restore reads it).
-            if let journal { scrollbackJournals?.release(sessionID: open.sessionID, instance: journal) }
             Task { await connection.sendOpenAck(open.channelID, accepted: false) }
             return
         }
@@ -1485,7 +2195,7 @@ public final class HostServer: @unchecked Sendable {
         }
         // Register this pane's hook sink so an installed Claude hook POSTing to the host
         // socket (with this pane's id) routes into THIS channel's per-pane status handler.
-        registerHookSink(session: session, connectionID: connectionID, channelID: open.channelID)
+        registerHookSink(session: session)
         Task { await connection.sendOpenAck(open.channelID, accepted: true) }
         // The PANE is named as well as the pid: both GUI gates assert on how many of these lines one
         // auto-connect produces, and a second line is only diagnosable if it says which pane asked.
@@ -1512,22 +2222,22 @@ public final class HostServer: @unchecked Sendable {
         }
     }
 
-    /// Registers the per-pane hook sink on the coordinator listener so a Claude hook POST
-    /// carrying this pane's id routes into the session's `ingestAgentHookRecord`.
+    /// Registers `session`'s ONE hook routing key on the coordinator listener, so a Claude hook
+    /// POST carrying this pane's id routes into the session's `ingestAgentHookRecord`.
     ///
-    /// FRESH-SPAWN ONLY — `(connectionID, channelID)` here is the identity `spawnFreshShell`
-    /// also bakes into the child env as `SLOPDESK_PANE_ID`, which is immutable for the shell's
-    /// life. The key is therefore recorded in ``hookPaneIDsBySession`` as the session's ONE
-    /// routing key: reattach refreshes it (``refreshHookSinkOnReattach(session:)``), never
-    /// re-keys, and every end of life unregisters it (``unregisterHookSink(sessionID:)``).
-    private func registerHookSink(session: MuxChannelSession, connectionID: UUID, channelID: UInt32) {
-        registerHookSink(session: session, paneID: Self.paneID(connectionID: connectionID, channelID: channelID))
+    /// FRESH-SPAWN ONLY. The key is ``paneID(sessionID:)`` — the same string `spawnFreshShell`
+    /// bakes into the child env as `SLOPDESK_PANE_ID`, immutable for the shell's life. Both spawn
+    /// paths (mux channel and ctl) compute it the same way, which is a change: the mux path used to
+    /// derive it from `(connectionID, channelID)` and so needed a second overload here.
+    ///
+    /// Recorded in ``hookPaneIDsBySession`` so reattach can refresh it
+    /// (``refreshHookSinkOnReattach(session:)``), never re-key, and every end of life can
+    /// unregister it (``unregisterHookSink(session:)``).
+    private func registerHookSink(session: MuxChannelSession) {
+        registerHookSink(session: session, paneID: Self.paneID(sessionID: session.sessionID))
     }
 
-    /// Registers `paneID` as `session`'s ONE hook routing key. The mux path derives it from
-    /// `(connectionID, channelID)`; a ctl-spawned pane has no channel pair and uses its session
-    /// uuid. Both bake the SAME string into the child env as `SLOPDESK_PANE_ID`, so the key is
-    /// immutable for the shell's life either way.
+    /// The half that touches the listener, split out so the tests can name a key explicitly.
     private func registerHookSink(session: MuxChannelSession, paneID: String) {
         guard let agentHookListener else { return }
         lock.lock()
@@ -1582,8 +2292,9 @@ public final class HostServer: @unchecked Sendable {
     /// Resolves the effective `TERM` for a new PTY against the host's terminfo database, logging
     /// the auto-fallback exactly when it fires.
     ///
-    /// Delegates to ``TerminfoResolver``. When the host cannot resolve `xterm-ghostty` and no explicit
-    /// `.xterm256` override is in effect, the resolver returns `.xterm256` with `fellBack == true`; we
+    /// Delegates to ``TerminfoResolver``, which forks `slopdesk-probe terminfo`. When the host cannot
+    /// resolve `xterm-ghostty` — or cannot be asked at all, because there is no probe beside hostd —
+    /// the resolver returns `.xterm256` with `fellBack == true`; we
     /// then emit ONE diagnostic via ``onLog`` (host stderr, NOT the PTY byte stream, so it never
     /// pollutes what the client renders). Gated on `fellBack`: nothing is logged when ghostty resolves
     /// or `.xterm256` was the explicit request. (The plain-shell path always passes `.ghostty` with no
@@ -1781,14 +2492,11 @@ public final class HostServer: @unchecked Sendable {
             if let session { self?.fanAgentTeardown(session) }
             // shutdownDetached is safe on an already-dead shell (idempotent fd close).
             session?.shutdownDetached()
-            // Non-deliberate end of life (never reaches `removeMuxSession`): RELEASE the disk
-            // journal — flush + close the fd, drop the map entry, KEEP the file (the restore
-            // source for a returning cold client) — and drop the hook-sink key. Without these,
-            // every parked death leaked one fd + one sink for the daemon's lifetime.
-            if let session {
-                self?.scrollbackJournals?.release(sessionID: id, instance: session.scrollbackJournal)
-                self?.unregisterHookSink(session: session)
-            }
+            // Non-deliberate end of life (never reaches `removeMuxSession`): drop the hook-sink
+            // key, or every parked death leaks one sink for the daemon's lifetime. The transcript
+            // is KEPT — it is the restore source for a returning cold client — and superd's own
+            // reaper flushed and closed it when the child died.
+            if let session { self?.unregisterHookSink(session: session) }
             self?.onLog?("detached session \(id): shell exited while parked")
         }
         // SYNCHRONOUS insert: a fire-and-forget `Task { await store.insert }` could lose to a fast
@@ -1827,7 +2535,7 @@ public final class HostServer: @unchecked Sendable {
         // guard keeps a child-exit RACING `stop()` from wiping a journal the restart is
         // supposed to restore.
         if let session, !isStopping {
-            scrollbackJournals?.delete(sessionID: session.sessionID, instance: session.scrollbackJournal)
+            scrollbackTranscripts?.delete(sessionID: session.sessionID, supervisor: supervisor)
         }
         // Drop this pane's hook sink so a late hook POST for a closed pane is dropped.
         // Keyed by the session's ORIGINAL pane id (not this close's composite key — after a
@@ -2113,6 +2821,39 @@ public final class HostServer: @unchecked Sendable {
             return true
         }
         lock.unlock()
+        // Check the DETACHED store — panes with no client attached right now.
+        //
+        // Two ways to be in here, and ctl must be able to end either: a client that disconnected,
+        // and a pane this hostd ADOPTED at start (`adoptSurvivingPanes`). The second is why this
+        // branch had to exist at all — a surviving pane is parked from the moment the daemon comes
+        // up, so without it every pane that outlived a restart was unkillable by ctl while being
+        // perfectly visible in `list-panes`.
+        if let paneUUID = UUID(uuidString: paneId), let detachedStore {
+            switch detachedStore.claim(paneUUID) {
+            case let .claimed(session):
+                fanAgentTeardown(session)
+                unregisterHookSink(session: session)
+                scrollbackTranscripts?.delete(sessionID: paneUUID, supervisor: supervisor)
+                session.shutdownDetached()
+                return true
+            case let .reapedDeadChild(session):
+                // Already dead; `claim` did the fd cleanup. Finish the bookkeeping and report
+                // success — "kill this pane" asked for a state that now holds.
+                //
+                // The teardown fan-out is NOT optional on this branch, for the same reason the
+                // other `.reapedDeadChild` handler in this file performs it: a session that died
+                // while detached may still carry a `.working` status and a prevent-sleep assertion
+                // that nobody will ever clear, because its exit closure is gated off by design.
+                // Skipping it leaves the row marked working in every attached client and the Mac
+                // awake for the rest of the daemon's life.
+                fanAgentTeardown(session)
+                unregisterHookSink(session: session)
+                scrollbackTranscripts?.delete(sessionID: paneUUID, supervisor: supervisor)
+                return true
+            case .notFound:
+                break
+            }
+        }
         return false
     }
 
@@ -2141,7 +2882,8 @@ public final class HostServer: @unchecked Sendable {
         guard !stopping else {
             throw ControlError.serverStopping
         }
-        let pty = PTYProcess()
+        attachSupervisor()
+        let pty = PTYProcess(supervisor: supervisor)
         let sessionID = UUID()
 
         // Build the environment. Thread the control socket path so a spawned agent can reach the
@@ -2151,25 +2893,16 @@ public final class HostServer: @unchecked Sendable {
         // unobserved: no hook route in, and (below) no detector to fold anything into.
         var environ = HostEnvironment.curated(
             agentSocketPath: agentHookListener != nil ? agentHookSocketPath : nil,
-            paneID: agentHookListener != nil ? sessionID.uuidString : nil,
+            paneID: agentHookListener != nil ? Self.paneID(sessionID: sessionID) : nil,
             controlSocketPath: agentControlSocketPath.isEmpty ? nil : agentControlSocketPath,
         )
         // Interactive login-shell spawn (`cmd == nil`) layers the SAME shell-integration shim the
         // mux path does: the shim's OSC-133 marks are what feed the pane's block segmentation, and
         // a control pane without them answers `last-output` with nothing and never resolves a
         // `run --wait`. A `cmd` pane is `$SHELL -c …` (non-interactive, no prompt cycles) — the
-        // shim is prompt machinery, so it is skipped there. Caller `env` still wins (merged after).
-        var shimDir: URL?
-        if cmd == nil || cmd?.isEmpty == true {
-            if let overrides = ShellIntegration.makeEnvironmentOverrides(
-                parent: ProcessInfo.processInfo.environment,
-                shellPath: shellPath,
-                warn: { [weak self] in self?.onLog?($0) },
-            ) {
-                for (k, value) in overrides { environ[k] = value }
-                shimDir = overrides["ZDOTDIR"].map { URL(fileURLWithPath: $0, isDirectory: true) }
-            }
-        }
+        // shim is prompt machinery, so it is skipped there. superd applies the shim's own
+        // `ZDOTDIR` over the env sent here, so a caller cannot ask for the shim and defeat it.
+        let wantsShellIntegration = cmd == nil || cmd?.isEmpty == true
         if let extraEnv { for (k, v) in extraEnv { environ[k] = v } }
         // Inject the pane self-id (same contract as a mux-spawned pane).
         environ[HostEnvironment.agentPaneIDEnvKey] = sessionID.uuidString
@@ -2195,22 +2928,22 @@ public final class HostServer: @unchecked Sendable {
         }
 
         // Spawn the child with the requested initial window size.
-        do {
-            try pty.spawn(
-                executable,
-                arguments: argv,
-                environment: environ,
-                argv0: argv0,
-                cwd: cwd,
-                cols: cols,
-                rows: rows,
-            )
-        } catch {
-            // The ZDOTDIR shim dir is written BEFORE the spawn (same as the mux path) — a spawn
-            // failure would leak it since no session exists to delete it on exit.
-            if let shimDir { try? FileManager.default.removeItem(at: shimDir) }
-            throw error
-        }
+        try pty.spawn(
+            executable,
+            arguments: argv,
+            environment: environ,
+            argv0: argv0,
+            cwd: cwd,
+            cols: cols,
+            rows: rows,
+            paneID: Self.paneID(sessionID: sessionID),
+            sessionID: sessionID.uuidString,
+            owner: supervisorOwnerIdentity,
+            shellIntegration: wantsShellIntegration,
+            // Blocks follow the server flag even with no GUI client — see the session below — but
+            // only where the shim went: no prompt marks, no segmentation to ask for.
+            blocks: blocksEnabled && wantsShellIntegration,
+        )
 
         // Build null sub-channels (no real connection).
         let nullData = await MuxSubChannel.makeNull(channel: .data)
@@ -2223,7 +2956,6 @@ public final class HostServer: @unchecked Sendable {
             data: nullData,
             control: nullControl,
             sessionID: sessionID,
-            shimDir: shimDir,
             // Agent detection follows the server flag, same as a mux pane. A ctl-spawned pane is
             // where an ORCHESTRATOR runs its agents, so it is the last place that should be blind
             // to them: without this the detector never polls, `list-panes` reports every such pane
@@ -2233,8 +2965,10 @@ public final class HostServer: @unchecked Sendable {
             // Blocks tracking follows the server flag even with no GUI client: the ctl socket
             // itself consumes the segmentation (`last-output` reads the block ring, `run --wait`
             // resolves on block close) — a control-spawned pane without it answers every
-            // block verb with "SLOPDESK_BLOCKS=0".
-            blocksEnabled: blocksEnabled,
+            // block verb with "no block tap". AND the shim, matching the spawn above: a
+            // `--cmd` pane has no prompt machinery, so there are no 133 marks to segment and a
+            // tap on it would report nothing for the pane's whole life.
+            blocksEnabled: blocksEnabled && wantsShellIntegration,
         )
         session.onExit = { [weak self] _ in self?.removeControlSession(sessionID) }
         wireAgentStatusFanOut(session)
@@ -2245,11 +2979,10 @@ public final class HostServer: @unchecked Sendable {
             session.shutdown()
             throw ControlError.serverStopping
         }
-        // Route this pane's hook POSTs to it. The env above advertises `SLOPDESK_PANE_ID` as the
-        // session uuid (a ctl pane's only identity — there is no `(connection, channel)` pair), so
-        // the sink is keyed by exactly that string. Registered AFTER the insert succeeds: a refused
-        // insert throws without any teardown path to retire the key.
-        registerHookSink(session: session, paneID: sessionID.uuidString)
+        // Route this pane's hook POSTs to it, under the same key the env above advertises as
+        // `SLOPDESK_PANE_ID`. Registered AFTER the insert succeeds: a refused insert throws without
+        // any teardown path to retire the key.
+        registerHookSink(session: session)
 
         session.startRelay()
         // Same spawn-cwd seed as the mux path: a ctl-spawned pane (often a raw command with no
@@ -2299,6 +3032,17 @@ public final class HostServer: @unchecked Sendable {
 
     /// The detached-session store (testing only; `nil` when detach is disabled).
     var detachedStoreForTesting: DetachedSessionStore? { detachedStore }
+
+    /// Connects to superd without `start()`ing a listener — for the headless tests whose subject
+    /// is a verb hostd sends (a journal delete, a sweep) rather than a pane it opens.
+    @discardableResult
+    func attachSupervisorForTesting() -> Bool { attachSupervisor() }
+
+    var journalSweepTicksForTesting: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return journalSweepTicks
+    }
 
     /// Registers `session` under `key` in the live map — the state `spawnMuxChannel`'s claim
     /// critical section leaves behind for `performReattach` (testing only).
@@ -2416,8 +3160,8 @@ public final class HostServer: @unchecked Sendable {
 
     /// Drives the REAL hook-sink registration `spawnFreshShell` performs — the fresh-spawn edge,
     /// where the pane id is also baked into the child env as `SLOPDESK_PANE_ID` (testing only).
-    func registerHookSinkForTesting(session: MuxChannelSession, connectionID: UUID, channelID: UInt32) {
-        registerHookSink(session: session, connectionID: connectionID, channelID: channelID)
+    func registerHookSinkForTesting(session: MuxChannelSession) {
+        registerHookSink(session: session)
     }
 
     /// Drives the REAL hook-sink step `performReattach` performs after a successful rebind

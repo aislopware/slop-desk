@@ -1,5 +1,3 @@
-import Foundation
-
 // MARK: - Prevent-sleep decision (pure, headless)
 
 /// The pure decision behind the host's "prevent sleep while an agent is processing" feature. Kept tiny and

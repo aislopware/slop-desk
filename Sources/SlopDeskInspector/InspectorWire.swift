@@ -1,10 +1,10 @@
+import CSlopDeskFFI
 import Foundation
-import SlopDeskProtocol
 
 /// The inspector's own wire message set for NWConnection #2 (doc 00 ③ / doc 16 §3).
 ///
 /// **Separate namespace from the terminal `WireMessage`** — the inspector channel is
-/// independent of the PTY byte pipeline and must not pollute it. We deliberately reuse
+/// independent of the PTY byte pipeline and must not pollute it. It deliberately reuses
 /// the *framing style* (a `UInt32` big-endian length prefix + a 1-byte type tag) from
 /// `SlopDeskProtocol` rather than the message type itself, so the two protocols share a
 /// proven framing shape without coupling.
@@ -14,41 +14,33 @@ import SlopDeskProtocol
 /// per-tool, not per-keystroke) and the schema is rich + evolving, so JSON's
 /// flexibility wins and its cost is irrelevant. Doc 16 explicitly calls for
 /// "length-prefixed JSON frames".
+/// A frame the CLIENT receives (host → client). Tags `1` and `2`.
+///
+/// The client's one outbound frame — `subscribe`, tag `3` — has no case here: it is written by
+/// ``InspectorCodec/encodeSubscribe(fromSeq:)`` and is never decoded on this side. That split is
+/// the ONE-IMPLEMENTATION rule applied to a protocol's two ends (`CLAUDE.md`): `slopdesk-inspectord`
+/// encodes what this end decodes and decodes what it encodes, each written once.
 public enum InspectorWireMessage: Sendable, Equatable {
-    // host → client
-    /// A structured inspector event (host → client). The whole read-only stream.
+    /// A structured inspector event. The whole read-only stream.
     case event(InspectorEvent)
-    /// Heartbeat / liveness (host → client), so a quiet workflow run is not mistaken
-    /// for a dead connection.
+    /// Heartbeat / liveness, so a quiet workflow run is not mistaken for a dead connection.
     case keepAlive
-
-    // client → host (lightweight control ONLY — never agent-driving)
-    /// Subscribe / replay-from control (doc 16 §3): the client asks the host to
-    /// (re)send events. `fromSeq == 0` = full replay; a higher value = resume after a
-    /// reconnect. This is read-only: it influences *what events the client receives*,
-    /// never the agent.
-    case subscribe(fromSeq: Int64)
-
-    /// The 1-byte type tag (its own namespace; values overlap the terminal protocol's
-    /// but are decoded by a different decoder, so there is no collision).
-    var typeTag: UInt8 {
-        switch self {
-        case .event: 1
-        case .keepAlive: 2
-        case .subscribe: 3
-        }
-    }
 }
 
-/// Encodes/decodes ``InspectorWireMessage`` to/from the length-prefixed frame format.
+/// The Swift face of the inspector's frame format, whose every byte lives in
+/// `rust/slopdesk-inspectord`'s `wire` module and is reached through `rust/slopdesk-ffi`.
 ///
-/// Frame layout (mirrors `SlopDeskProtocol` framing style, separate namespace):
+/// Frame layout:
 /// ```
 /// [ UInt32 BE payloadLength ][ UInt8 typeTag ][ body... ]
 /// ```
-/// `payloadLength` counts `typeTag + body` (excludes the 4 prefix bytes), capped at
-/// `SlopDesk.maxFramePayloadLength` (16 MiB) — reusing the terminal protocol's ceiling.
-/// `.event` and `.subscribe` bodies are JSON; `.keepAlive` has an empty body.
+/// `payloadLength` counts `typeTag + body` (excludes the 4 prefix bytes), capped at 16 MiB — the
+/// terminal protocol's ceiling, spelled once in the crate. The `.event` body is JSON, `.keepAlive`
+/// has an empty body, and a `subscribe` body is one big-endian `Int64`.
+///
+/// **What stays here is the JSON, and only the JSON.** `decode_client` answers WHICH frame arrived
+/// and WHERE its body sits, never what the body says; `InspectorEvent` is a document the daemon
+/// writes and this end reads, which is the two-ENDS shape rather than one capability written twice.
 public enum InspectorCodec {
     /// Errors distinct from `SlopDeskProtocol.SlopDeskError` (decode-time, inspector frames).
     public enum CodecError: Error, Equatable, Sendable {
@@ -58,158 +50,136 @@ public enum InspectorCodec {
         case malformedBody(String)
     }
 
-    static let prefixLength = 4
+    static let prefixLength = Int(slopdesk_inspector_constant(1))
 
-    // MARK: Encode
+    /// The tag of the client's only outbound frame.
+    static let subscribeTag = UInt8(truncatingIfNeeded: slopdesk_inspector_constant(2))
 
-    public static func encode(_ message: InspectorWireMessage) throws -> Data {
-        var body = Data()
-        body.append(message.typeTag)
-        switch message {
-        case let .event(event):
-            try body.append(JSONEncoder().encode(event))
-        case .keepAlive:
-            break
-        case let .subscribe(fromSeq):
-            body.appendBESeq(fromSeq)
+    // MARK: Encode (client → host: subscribe only)
+
+    /// The `subscribe` / replay-from control (doc 16 §3): the client asks the daemon to (re)send
+    /// events. `fromSeq == 0` = full replay; a higher value = resume after a reconnect. This is
+    /// read-only — it influences *what events the client receives*, never the agent.
+    ///
+    /// Non-throwing: the frame is always 13 bytes, so the 16 MiB cap cannot be reached.
+    public static func encodeSubscribe(fromSeq: Int64) -> Data {
+        let needed = slopdesk_inspector_encode_subscribe(fromSeq, nil, 0)
+        var out = Data(count: needed)
+        out.withUnsafeMutableBytes { buffer in
+            let written = slopdesk_inspector_encode_subscribe(
+                fromSeq, buffer.baseAddress?.assumingMemoryBound(to: UInt8.self), needed,
+            )
+            precondition(written == needed, "the inspector codec sized a subscribe differently than it wrote it")
         }
-
-        guard body.count <= SlopDesk.maxFramePayloadLength else {
-            throw CodecError.frameTooLarge(body.count)
-        }
-
-        var frame = Data()
-        frame.appendBELength(UInt32(body.count))
-        frame.append(body)
-        return frame
+        return out
     }
 
-    // MARK: Decode (one whole payload, type tag included)
+    // MARK: Decode (host → client: one whole payload, type tag included)
 
     public static func decode(payload: Data) throws -> InspectorWireMessage {
-        guard let tag = payload.first else { throw CodecError.truncated }
-        let body = payload.dropFirst()
-        switch tag {
-        case 1:
-            do {
-                let event = try JSONDecoder().decode(InspectorEvent.self, from: Data(body))
-                return .event(event)
-            } catch {
-                throw CodecError.malformedBody("event JSON: \(error)")
+        var record = SlopDeskInspectorFrame()
+        let verdict = payload.withUnsafeBytes { bytes in
+            slopdesk_inspector_decode_payload(
+                bytes.baseAddress?.assumingMemoryBound(to: UInt8.self), bytes.count, &record,
+            )
+        }
+        guard verdict == SLOPDESK_INSPECTOR_OK else { throw error(verdict, record.detail) }
+        return try message(record, payload)
+    }
+
+    // MARK: Shared with the frame splitter
+
+    /// The message a decoded record names, reading an event's JSON out of `buffer` in place.
+    static func message(_ record: SlopDeskInspectorFrame, _ buffer: Data) throws -> InspectorWireMessage {
+        guard record.tag == 1 else { return .keepAlive }
+        let start = buffer.startIndex + Int(record.body_offset)
+        // `Data.SubSequence` IS `Data`, so the body reaches the parser as a view onto the payload
+        // the caller already holds — no copy to hand it over.
+        return try event(buffer[start..<start + Int(record.body_length)])
+    }
+
+    /// The event `json` describes, or the malformed-body error naming why it is not one.
+    static func event(_ json: Data) throws -> InspectorWireMessage {
+        do {
+            return try .event(JSONDecoder().decode(InspectorEvent.self, from: json))
+        } catch {
+            throw CodecError.malformedBody("event JSON: \(error)")
+        }
+    }
+
+    /// The error a non-OK verdict names.
+    static func error(_ verdict: UInt32, _ detail: UInt64) -> CodecError {
+        switch verdict {
+        case SLOPDESK_INSPECTOR_UNKNOWN_TYPE: .unknownType(UInt8(truncatingIfNeeded: detail))
+        case SLOPDESK_INSPECTOR_FRAME_TOO_LARGE: .frameTooLarge(Int(detail))
+        default: .truncated
+        }
+    }
+}
+
+/// Streaming frame decoder for the inspector channel — a handle onto the splitter in
+/// `rust/slopdesk-inspectord`, which is the same one the daemon reads its own inbound frames with.
+///
+/// Partial reads return `nil` (not an error); a full frame decodes to one ``InspectorWireMessage``.
+/// Consumed frames are not removed per parse — a front-removal memmoves the whole tail forward, O(n)
+/// per frame and O(n²) for a chunk of many small ones, exactly the shape a full-history replay
+/// produces on reconnect — so a cursor advances and the head is compacted lazily.
+///
+/// A reference type, intentionally NOT `Sendable`: it owns one Rust splitter driven by a single
+/// per-connection receive loop.
+public final class InspectorFrameDecoder {
+    /// Where a frame's payload is read to, REUSED across calls and grown only when a frame does not
+    /// fit. Sizing it from what the splitter has BUFFERED instead would allocate and zero the whole
+    /// backlog once per frame, which on the shape that matters — a reconnect replaying the daemon's
+    /// history as one chunk packed with small frames — is the backlog re-zeroed once per frame in
+    /// it. It starts empty so a connection that never receives anything allocates nothing; the
+    /// first frame grows it to at least ``bodyFloor``, which holds every event this channel carries.
+    private var body: [UInt8] = []
+
+    /// What the first growth rounds up to, so a stream of ordinary events grows the buffer once.
+    private static let bodyFloor = 4096
+
+    private let handle: OpaquePointer
+
+    public init() {
+        guard let handle = slopdesk_inspector_decoder_new() else {
+            preconditionFailure("the inspector splitter could not be built")
+        }
+        self.handle = handle
+    }
+
+    deinit { slopdesk_inspector_decoder_free(handle) }
+
+    public func append(_ data: Data) {
+        guard !data.isEmpty else { return }
+        data.withUnsafeBytes { bytes in
+            slopdesk_inspector_decoder_append(
+                handle, bytes.baseAddress?.assumingMemoryBound(to: UInt8.self), bytes.count,
+            )
+        }
+    }
+
+    /// The next complete message, or `nil` when a whole frame is not yet buffered.
+    public func nextMessage() throws -> InspectorWireMessage? {
+        while true {
+            var record = SlopDeskInspectorFrame()
+            let verdict = body.withUnsafeMutableBufferPointer { buffer in
+                slopdesk_inspector_decoder_next(handle, &record, buffer.baseAddress, buffer.count)
             }
-        case 2:
-            return .keepAlive
-        case 3:
-            guard body.count == 8 else { throw CodecError.truncated }
-            return .subscribe(fromSeq: Data(body).readBESeq())
-        default:
-            throw CodecError.unknownType(tag)
+            switch verdict {
+            case SLOPDESK_INSPECTOR_PENDING:
+                return nil
+            case SLOPDESK_INSPECTOR_AGAIN:
+                // Nothing was consumed: the frame is still there, so grow once and ask again.
+                body = [UInt8](repeating: 0, count: Swift.max(Int(record.detail), Self.bodyFloor))
+            case SLOPDESK_INSPECTOR_OK:
+                guard record.tag == 1 else { return .keepAlive }
+                let run = Int(record.body_offset)..<Int(record.body_offset + record.body_length)
+                let json = body.withUnsafeBytes { Data(UnsafeRawBufferPointer(rebasing: $0[run])) }
+                return try InspectorCodec.event(json)
+            default:
+                throw InspectorCodec.error(verdict, record.detail)
+            }
         }
-    }
-}
-
-/// Streaming frame decoder for the inspector channel (the analogue of
-/// `SlopDeskProtocol.FrameDecoder`, separate namespace). Reassembles whole frames from
-/// arbitrary byte chunks: partial reads return `nil` (not an error); a full frame
-/// decodes to one ``InspectorWireMessage``.
-public struct InspectorFrameDecoder {
-    /// Reclaim the consumed prefix once the read cursor has advanced past this many bytes, so the
-    /// buffer's wasted head stays bounded during a long burst — the same idiom as
-    /// `SlopDeskProtocol.FrameDecoder`/`MuxFrameDecoder`. 64 KiB == the max single `recv` chunk, so in
-    /// the common case compaction happens at most once per received chunk.
-    private static let compactionThreshold = 64 * 1024
-
-    /// Received bytes. Completed frames are NOT removed per-parse (that front-removal memmoves the
-    /// entire tail forward — O(n) per frame, O(n²) for a chunk of many small frames, exactly the shape
-    /// an `InspectorReplayLog` full-history replay produces on reconnect). Instead a ``readOffset``
-    /// cursor advances past consumed frames and the head is compacted LAZILY (on a drain that returns
-    /// `nil`, or when the cursor crosses ``compactionThreshold``), amortizing total work to O(bytes).
-    /// All indexing is relative to `buffer.startIndex + readOffset`.
-    private var buffer = Data()
-
-    /// Number of leading bytes in ``buffer`` already consumed by completed frames but not yet
-    /// physically removed (reclaimed by ``compactConsumed()``).
-    private var readOffset = 0
-
-    public init() {}
-
-    public mutating func append(_ data: Data) {
-        buffer.append(data)
-    }
-
-    public mutating func nextMessage() throws -> InspectorWireMessage? {
-        // Bytes not yet consumed by a completed frame.
-        let available = buffer.count - readOffset
-        // Need at least the length prefix to know how big the frame is.
-        guard available >= InspectorCodec.prefixLength else { compactConsumed()
-            return nil
-        }
-
-        let payloadLength = Int(readPrefix())
-        guard payloadLength <= SlopDesk.maxFramePayloadLength else {
-            throw InspectorCodec.CodecError.frameTooLarge(payloadLength)
-        }
-
-        // Wait until the whole payload has arrived (partial read — not an error).
-        let frameLength = InspectorCodec.prefixLength + payloadLength
-        guard available >= frameLength else { compactConsumed()
-            return nil
-        }
-
-        // Slice out the payload (after the prefix) and ADVANCE the cursor past the frame (no per-frame
-        // front-removal). `base` is the absolute index of this frame's first byte.
-        let base = buffer.startIndex + readOffset
-        let payloadStart = base + InspectorCodec.prefixLength
-        let payload = Data(buffer[payloadStart..<base + frameLength])
-        readOffset += frameLength
-        // Bound the wasted head mid-burst; a drain that returns nil reclaims the rest.
-        if readOffset >= Self.compactionThreshold { compactConsumed() }
-
-        return try InspectorCodec.decode(payload: payload)
-    }
-
-    /// Physically drops the consumed prefix (`readOffset` bytes) from the front of the buffer ONCE,
-    /// resetting the cursor — the single O(remaining) memmove that replaces the per-frame one.
-    private mutating func compactConsumed() {
-        guard readOffset > 0 else { return }
-        buffer.removeSubrange(buffer.startIndex..<buffer.startIndex + readOffset)
-        readOffset = 0
-    }
-
-    /// Reads the 4-byte big-endian length prefix at the cursor without consuming it. (The cursor
-    /// advances in ``nextMessage()`` once the full frame is confirmed present, so an incomplete frame
-    /// leaves the prefix in place for the next call.)
-    private func readPrefix() -> UInt32 {
-        let base = buffer.startIndex + readOffset
-        var value: UInt32 = 0
-        for i in 0..<InspectorCodec.prefixLength {
-            value = (value << 8) | UInt32(buffer[base + i])
-        }
-        return value
-    }
-}
-
-// MARK: - Local big-endian helpers (self-contained; the SlopDeskProtocol ones are internal)
-
-private extension Data {
-    mutating func appendBELength(_ value: UInt32) {
-        append(UInt8(truncatingIfNeeded: value >> 24))
-        append(UInt8(truncatingIfNeeded: value >> 16))
-        append(UInt8(truncatingIfNeeded: value >> 8))
-        append(UInt8(truncatingIfNeeded: value))
-    }
-
-    mutating func appendBESeq(_ value: Int64) {
-        let bits = UInt64(bitPattern: value)
-        for shift in stride(from: 56, through: 0, by: -8) {
-            append(UInt8(truncatingIfNeeded: bits >> UInt64(shift)))
-        }
-    }
-
-    /// Reads an 8-byte BE Int64 from the front of this (exactly-8-byte) slice.
-    func readBESeq() -> Int64 {
-        var bits: UInt64 = 0
-        for i in 0..<8 { bits = (bits << 8) | UInt64(self[startIndex + i]) }
-        return Int64(bitPattern: bits)
     }
 }

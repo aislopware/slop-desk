@@ -1,8 +1,29 @@
-import SlopDeskVideoProtocol
+// The delivery-keyed recovery-IDR admission law, as the Swift face of `rust/slopdesk-video`'s
+// `recovery_idr`, reached through `rust/slopdesk-ffi`'s `rate_control` door.
+//
+// ## What is not here any more
+//
+// The token bucket and its refill, the ring of recently sent keyframes, the ack match that stops an
+// LTR-P ack masquerading as keyframe delivery, the wrap-aware comparisons, and the load-bearing
+// branch order the whole policy IS. All Rust's, in a crate that forbids `unsafe`.
+//
+// ## What stays, and why it has to
+//
+// ``Config``, because its numbers are resolved from `SLOPDESK_IDR_*` by the session, and ``Verdict``,
+// because a Swift `switch` needs cases rather than a `UInt32`. The mapping between the two verdict
+// spellings is the only thing this file decides, and the door's constants name every arm of it.
+//
+// ## Why this crosses as a handle and the quantiser does not
+//
+// It is a `final class` on purpose: a struct would be value-copied by mistake at every owner, and
+// the bucket is stateful and must stay one shared instance. That is exactly the shape a handle
+// models — one allocation, one owner, mutated in place.
 
-/// DELIVERY-KEYED recovery-IDR admission policy — replaces the capturer's sent-keyed F1 cooldown
-/// (`SLOPDESK_MIN_IDR_MS`, 500 ms) as the single authority on whether a client recovery request
-/// may force a real IDR.
+import CSlopDeskFFI
+
+/// DELIVERY-KEYED recovery-IDR admission policy — the single authority on whether a client recovery
+/// request may force a real IDR, replacing the capturer's sent-keyed F1 cooldown
+/// (`SLOPDESK_MIN_IDR_MS`, 500 ms).
 ///
 /// THE BUG THIS FIXES: keying the cooldown on keyframe SEND time can't distinguish send from
 /// delivery. If BOTH kfDup copies of a recovery IDR are lost (burst), the client's 2·RTT
@@ -25,18 +46,16 @@ import SlopDeskVideoProtocol
 ///    never blocked.
 ///
 /// PURE + WALL-CLOCK-ONLY: all time injected as `Double` seconds (the session's `systemUptime`
-/// domain), zero frame counting — immune to FPS-governor cadence changes. No Apple imports
-/// (`UInt32.distanceWrapped` comes from SlopDeskVideoProtocol). Headlessly unit-testable like
-/// ``LiveCongestionController``.
+/// domain), zero frame counting — immune to FPS-governor cadence changes.
 ///
-/// NATIVE SWIFT, the single source of truth. `final class`, not a value struct: a struct would be
-/// value-copied by mistake at every owner (forcing a `let`→`var` ripple to keep mutations visible),
-/// so callers instead hold and mutate this by reference — the token bucket is stateful and must
-/// stay a single shared instance. `@unchecked Sendable` is sound because the single owner
-/// (``SlopDeskVideoHostSession``) only touches it on the session actor (and the tests /
-/// loopback-validate from one thread), so no two threads race the mutable state. ``Config`` stays a
-/// pure Swift value type — env resolution (`SLOPDESK_IDR_*`) stays Swift-side.
+/// `final class`, not a value struct: a struct would be value-copied by mistake at every owner
+/// (forcing a `let`→`var` ripple to keep mutations visible), so callers hold and mutate this by
+/// reference — the token bucket is stateful and must stay a single shared instance.
+/// `@unchecked Sendable` is sound because the single owner (``SlopDeskVideoHostSession``) only
+/// touches it on the session actor (and the tests / loopback-validate from one thread), so no two
+/// threads race the state behind the handle.
 public final class RecoveryIDRPolicy: @unchecked Sendable {
+    /// The tuning, resolved Swift-side from `SLOPDESK_IDR_*` and handed to the door once.
     public struct Config: Sendable, Equatable {
         /// In-flight grace = `graceFraction × smoothedRTT`, clamped to [floor, ceil]. A crossing
         /// request arrives ≤ RTT/2 + jitter after the keyframe send; 0.75×RTT adds ~50% jitter
@@ -64,16 +83,8 @@ public final class RecoveryIDRPolicy: @unchecked Sendable {
         public init() {}
     }
 
-    /// One sent keyframe (a tuple won't synthesize Equatable).
-    public struct SentKeyframe: Sendable, Equatable {
-        public let id: UInt32
-        public let at: Double
-        public init(id: UInt32, at: Double) {
-            self.id = id
-            self.at = at
-        }
-    }
-
+    /// The admission answer, as a `switch` can read it. Each case is one of the door's
+    /// `SLOPDESK_IDR_VERDICT_*` constants and nothing more.
     public enum Verdict: Equatable, Sendable {
         case grant
         /// An IDR grant is already latched and unexpired — the duplicate-request absorber.
@@ -88,83 +99,57 @@ public final class RecoveryIDRPolicy: @unchecked Sendable {
     }
 
     public let config: Config
-    /// Newest-last ring of recently-sent keyframes, capped at `keyframeRingCapacity`.
-    private var recentKeyframes: [SentKeyframe] = []
-    /// Newest SENT-keyframe id the client decode-ACKED (ring-matched — an LTR-P ack never
-    /// masquerades as keyframe delivery).
-    private var deliveredKeyframeID: UInt32?
-    private var tokens: Double
-    private var lastRefillAt: Double?
-    /// Time of the last `.grant` not yet serviced by a `noteKeyframeSent` (nil = none pending).
-    private var grantedAt: Double?
+    /// The bucket, the keyframe ring and the latch, all of it Rust's.
+    private let policy: OpaquePointer
 
     public init(config: Config = Config()) {
         self.config = config
-        tokens = config.bucketCapacity
+        policy = slopdesk_idr_policy_new(
+            SlopDeskIdrConfig(
+                grace_fraction: config.graceFraction,
+                grace_floor_seconds: config.graceFloorSeconds,
+                grace_ceil_seconds: config.graceCeilSeconds,
+                bucket_capacity: config.bucketCapacity,
+                refill_tokens_per_second: config.refillTokensPerSecond,
+                grant_pending_timeout: config.grantPendingTimeout,
+                keyframe_ring_capacity: config.keyframeRingCapacity,
+            ),
+        )
     }
 
+    deinit { slopdesk_idr_policy_free(policy) }
+
     /// Read-only token level (observability/tests — proves suppress* verdicts spend nothing).
-    public var availableTokens: Double { tokens }
+    public var availableTokens: Double { slopdesk_idr_policy_available_tokens(policy) }
 
     /// Called from `onEncodedFrame` for EVERY keyframe handed to the wire (recovery, first-frame,
     /// static-crisp, heartbeat) with the frameID the `PacketizeLane` returned for that keyframe.
     public func noteKeyframeSent(frameID: UInt32, now: Double) {
-        recentKeyframes.append(SentKeyframe(id: frameID, at: now))
-        if recentKeyframes.count > config.keyframeRingCapacity { recentKeyframes.removeFirst() }
-        grantedAt = nil // a keyframe went out: any pending grant is serviced
+        slopdesk_idr_policy_note_keyframe_sent(policy, frameID, now)
     }
 
     /// Called from the `.ack` fold. Idempotent; only ids matching a ring entry count (an LTR-P
     /// ack must not masquerade as keyframe delivery). Wrap-aware keep-newest.
     public func noteKeyframeDelivered(frameID: UInt32) {
-        guard recentKeyframes.contains(where: { $0.id == frameID }) else { return }
-        if let delivered = deliveredKeyframeID, frameID.distanceWrapped(from: delivered) <= 0 { return }
-        deliveredKeyframeID = frameID
+        slopdesk_idr_policy_note_keyframe_delivered(policy, frameID)
     }
 
     /// THE admission decision for one IDR-issuing recovery request.
     /// `clientLastDecoded == nil` ⇔ wire sentinel "nothing decoded yet" (treated as maximally
     /// behind — the connect-time first-IDR-loss case rides the same bypass).
-    ///
-    /// BRANCH ORDER IS LOAD-BEARING and must read EXACTLY: refill → grant-pending → SuppressStale →
-    /// SuppressInFlight → SuppressRateLimited → Grant. A reordered branch changes behaviour (the
-    /// stale/in-flight/rate-limited tests pin this).
     public func decide(now: Double, clientLastDecoded: UInt32?, smoothedRTTSeconds: Double) -> Verdict {
-        refill(now: now)
-        if let granted = grantedAt, now - granted < config.grantPendingTimeout {
-            return .suppressGrantPending
+        let answer = slopdesk_idr_policy_decide(
+            policy, now, clientLastDecoded != nil, clientLastDecoded ?? 0, smoothedRTTSeconds,
+        )
+        switch answer {
+        case UInt32(SLOPDESK_IDR_VERDICT_GRANT): return .grant
+        case UInt32(SLOPDESK_IDR_VERDICT_SUPPRESS_GRANT_PENDING): return .suppressGrantPending
+        case UInt32(SLOPDESK_IDR_VERDICT_SUPPRESS_STALE): return .suppressStale
+        case UInt32(SLOPDESK_IDR_VERDICT_SUPPRESS_IN_FLIGHT): return .suppressInFlight
+        default: return .suppressRateLimited
         }
-        if let delivered = deliveredKeyframeID, let request = clientLastDecoded,
-           request.distanceWrapped(from: delivered) < 0
-        {
-            // Exact, not heuristic: the client's lastDecoded is monotonic, so a request older
-            // than a keyframe it ACKED was composed before that keyframe decoded — stale.
-            return .suppressStale
-        }
-        if let newest = recentKeyframes.last {
-            // nil lastDecoded (nothing decoded yet) is maximally behind by definition.
-            let clientBehind = clientLastDecoded.map { $0.distanceWrapped(from: newest.id) < 0 } ?? true
-            if clientBehind, now - newest.at < grace(rtt: smoothedRTTSeconds) {
-                return .suppressInFlight
-            }
-        }
-        guard tokens >= 1.0 else { return .suppressRateLimited }
-        tokens -= 1.0
-        grantedAt = now
-        return .grant
     }
 
     /// In-flight grace window for the given smoothed RTT: clamp(graceFraction × rtt, floor, ceil).
-    public func grace(rtt: Double) -> Double {
-        min(config.graceCeilSeconds, max(config.graceFloorSeconds, config.graceFraction * rtt))
-    }
-
-    private func refill(now: Double) {
-        defer { lastRefillAt = now }
-        guard let last = lastRefillAt, now > last else { return }
-        // mul THEN add THEN clamp — kept as separate operations (never fma): the elapsed `(now -
-        // last)` is multiplied by the refill rate, that product is added to the current `tokens`,
-        // and the sum is clamped to the bucket capacity with `min`.
-        tokens = min(config.bucketCapacity, tokens + (now - last) * config.refillTokensPerSecond)
-    }
+    public func grace(rtt: Double) -> Double { slopdesk_idr_policy_grace(policy, rtt) }
 }

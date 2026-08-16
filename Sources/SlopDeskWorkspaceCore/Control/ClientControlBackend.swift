@@ -1,4 +1,3 @@
-import Foundation
 import SlopDeskAgentDetect
 
 // Client control backend seam.

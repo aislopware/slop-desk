@@ -45,6 +45,11 @@ for site in "${swift_sites[@]}"; do
   perl -pi -e "s/\Q${key}\E\"[^\"]*\"/${key}\"${VERSION}\"/" "${file}"
 done
 
+# `Apps/ClientApp-iOS/{project,project-video}.yml` and its `Info.plist` are NOT here, and that is
+# deliberate: there is no iOS release, so its `0.1.0` is a spec version rather than a shipped one
+# (docs/49 §"No iOS client release"). Recorded here because the omission is indistinguishable from
+# the bug this script exists to prevent — a site sitting a release behind — and the next reader
+# would either "fix" it or, worse, add iOS to the release train and inherit the same silence.
 for spec in Apps/ClientApp-macOS/project.yml Apps/HostApp-macOS/project.yml; do
   [[ -f "${spec}" ]] || die "missing ${spec}"
   perl -pi -e "s/^(\s*CFBundleShortVersionString:\s*)\"[^\"]*\"/\${1}\"${VERSION}\"/" "${spec}"

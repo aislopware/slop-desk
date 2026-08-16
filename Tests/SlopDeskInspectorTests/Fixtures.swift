@@ -1,5 +1,4 @@
 import Foundation
-import XCTest
 
 /// Locates fixture files relative to this source file (`#filePath`), so the tests do
 /// not depend on SwiftPM resource bundling — the `Fixtures/` directory sits next to

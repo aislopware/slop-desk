@@ -1,5 +1,3 @@
-import Foundation
-
 // MARK: - ConnectionTarget (the ONE app-global host the whole app connects to)
 
 /// The single host the whole app connects to (docs/31 app-global connection): the TCP-mux terminal

@@ -1,5 +1,3 @@
-import Foundation
-
 // MARK: - Resolved drop action
 
 /// The concrete action a `(zone, content)` pair resolves to — the PURE output of the drop policy, an

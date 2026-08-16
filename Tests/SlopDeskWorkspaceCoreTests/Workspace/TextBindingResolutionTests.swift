@@ -36,6 +36,11 @@ final class TextBindingResolutionTests: XCTestCase {
             .init(key: "left", command: true, option: true),
             .init(key: "pageup", shift: true),
             .init(key: "home", shift: true),
+            // Every alias spelling folds on the way in, so the file's `pgup` and the dispatcher's
+            // `pageup` are one key — and ⌃⇧Space, which the config grammar used to refuse outright.
+            .init(key: "PGUP", shift: true),
+            .init(key: "enter", command: true),
+            .init(key: "space", shift: true, control: true),
         ]
         for original in prefsChords {
             guard let registry = original.asRegistryChord else {

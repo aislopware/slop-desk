@@ -1,14 +1,13 @@
+import CSlopDeskFFI
 import Foundation
+import SlopDeskArena
 
-// SlopDeskCLICore — the PURE, testable core of the user-facing `slopdesk` CLI.
+// SlopDeskCLICore — the Swift FACE of the `slopdesk` CLI's pure core, which is `rust/slopdesk-cli`.
 //
-// This is the CLI front-end (E20): one binary exposing a subcommand
-// surface onto the existing slopdesk control plane. `CLIArgs` is the global-flag parser; it is
-// a pure value transform (no I/O, no `exit`) so the whole arg surface is exhaustively
-// unit-testable without ever opening a socket or launching the GUI (hang-safety rule).
-//
-// Mirrors the split already used by `SlopDeskCtlCore` (`GlobalArgs`/`parseGlobal`): the thin
-// `Sources/slopdesk/main.swift` shell imports this, adds the socket I/O + GUI launch + the
+// This is the CLI front-end (E20): one binary exposing a subcommand surface onto the existing
+// slopdesk control plane. The flag grammar, the completion scripts, the config-file rules and the
+// output tables all live in the crate; this module marshals them across the door and nothing else.
+// The thin `Sources/slopdesk/main.swift` shell adds the socket I/O + GUI launch + the
 // per-subcommand dispatch, and is the only place that calls `exit`.
 
 // MARK: - Output format
@@ -18,6 +17,12 @@ import Foundation
 public enum CLIOutputFormat: String, Sendable, Equatable {
     case text
     case json
+
+    /// The code this format crosses as.
+    var code: UInt32 { self == .json ? SLOPDESK_CLI_JSON : SLOPDESK_CLI_TEXT }
+
+    /// The format a code names.
+    static func of(_ code: UInt32) -> Self { code == SLOPDESK_CLI_JSON ? .json : .text }
 }
 
 // MARK: - Parsed invocation
@@ -96,106 +101,91 @@ public enum CLIParseError: Error, Equatable, Sendable {
 // MARK: - Parser
 
 public enum CLIArgs {
-    /// Default IPC wait (`--timeout` default of 3000 ms).
-    public static let defaultTimeoutMs = 3000
+    /// Default IPC wait (`--timeout` default of 3000 ms), from the door so neither language writes
+    /// the number down twice.
+    public static let defaultTimeoutMs = Int(slopdesk_cli_default_timeout_ms())
 
     /// Parses the global flags + subcommand from `args` (including `args[0]`/program name, which is
-    /// skipped). Pure — no I/O, no exit.
+    /// skipped). Pure — no I/O, no exit. Every rule (which flags take values, where `-e` is
+    /// terminal, when `--` ends option parsing, which unknown flag is fatal) is `args.rs`'s.
     ///
-    /// Rules:
-    /// - The first non-flag token is the subcommand; subsequent non-flag tokens go to `rest`.
-    /// - Recognised global flags are consumed wherever they appear (before OR after the subcommand).
-    /// - An UNRECOGNISED flag BEFORE the subcommand is an error; AFTER the subcommand it is a
-    ///   subcommand-specific flag and passes through to `rest`.
-    /// - `-e <cmd> [args…]` (only before a subcommand) is the xterm/ghostty terminal-emulator flag: it
-    ///   launches the GUI (`launchGUI`) and captures the remainder verbatim into ``CLIInvocation/execCommand``
-    ///   (the command is forwarded to the first pane, NOT local-exec'd — a pane is a remote PTY). Per xterm
-    ///   semantics `-e` is terminal, so option parsing stops after it.
-    /// - A bare `--` (only valid after a subcommand) ends option parsing: it and everything after it
-    ///   pass through to `rest` verbatim (POSIX end-of-options; protects literal `send-keys` text).
+    /// Two calls: the first reports how many token spans and how many bytes the answer needs, the
+    /// second fills the buffers it named. The record itself is fixed-size and comes back on both.
     public static func parse(_ args: [String]) -> Result<CLIInvocation, CLIParseError> {
-        var inv = CLIInvocation()
-        var endOfOptions = false
-        var idx = 1 // skip argv[0]
-        while idx < args.count {
-            let arg = args[idx]
-
-            // After a bare `--`, everything is a literal operand.
-            if endOfOptions {
-                inv.rest.append(arg)
-                idx += 1
-                continue
+        var arena = Data()
+        let spans = args.map { argument in intern(argument, into: &arena) }
+        var record = SlopDeskCliInvocation()
+        let (tokens, text) = spans.withUnsafeBufferPointer { input -> ([SlopDeskByteSpan], Data) in
+            arena.withUnsafeBytes { pool -> ([SlopDeskByteSpan], Data) in
+                let shape = slopdesk_cli_parse(
+                    input.baseAddress, input.count, pool.baseAddress, pool.count,
+                    &record, nil, 0, nil, 0,
+                )
+                let (room, bytes) = (shape.count, shape.arena_len)
+                guard room > 0 || bytes > 0 else { return ([], Data()) }
+                var out = [SlopDeskByteSpan](repeating: SlopDeskByteSpan(), count: shape.count)
+                var built = Data(count: shape.arena_len)
+                out.withUnsafeMutableBufferPointer { tokens in
+                    built.withUnsafeMutableBytes { text in
+                        _ = slopdesk_cli_parse(
+                            input.baseAddress, input.count, pool.baseAddress, pool.count,
+                            &record, tokens.baseAddress, tokens.count, text.baseAddress, text.count,
+                        )
+                    }
+                }
+                return (out, built)
             }
-
-            switch arg {
-            case "--json":
-                inv.format = .json
-            case "--format":
-                guard idx + 1 < args.count else { return .failure(.missingValue("--format")) }
-                idx += 1
-                switch args[idx] {
-                case "json": inv.format = .json
-                case "text",
-                     "plain": inv.format = .text
-                default: return .failure(.invalidValue(flag: "--format", value: args[idx]))
-                }
-            case "--no-headers":
-                inv.noHeaders = true
-            case "--socket":
-                guard idx + 1 < args.count else { return .failure(.missingValue("--socket")) }
-                idx += 1
-                inv.socketPath = args[idx]
-            case "--config-file":
-                guard idx + 1 < args.count else { return .failure(.missingValue("--config-file")) }
-                idx += 1
-                inv.configFile = args[idx]
-            case "--timeout":
-                guard idx + 1 < args.count else { return .failure(.missingValue("--timeout")) }
-                idx += 1
-                guard let ms = Int(args[idx]), ms > 0 else {
-                    return .failure(.invalidValue(flag: "--timeout", value: args[idx]))
-                }
-                inv.timeoutMs = ms
-            case "-y",
-                 "--yes":
-                inv.assumeYes = true
-            case "-e":
-                // xterm/ghostty `-e <cmd> [args…]`: launch the GUI + forward <cmd> to the first pane. Only a
-                // launch flag at top level; after a subcommand it is a subcommand-specific token (pass-through).
-                guard inv.subcommand.isEmpty else {
-                    inv.rest.append(arg)
-                    break
-                }
-                guard idx + 1 < args.count else { return .failure(.missingValue("-e")) }
-                // `-e` is terminal: capture every remaining token verbatim (even leading-dash ones) and stop.
-                inv.execCommand = Array(args[(idx + 1)...])
-                idx = args.count
-                continue
-            case "-h",
-                 "--help":
-                inv.wantsHelp = true
-            case "--":
-                // End-of-options is only meaningful once a subcommand is known (it separates the
-                // subcommand's own flags from its literal operands).
-                guard !inv.subcommand.isEmpty else { return .failure(.unknownFlag("--")) }
-                inv.rest.append(arg)
-                endOfOptions = true
-            default:
-                if arg.hasPrefix("-") {
-                    // Unrecognised flag: hard error before the subcommand, pass-through after it.
-                    guard !inv.subcommand.isEmpty else { return .failure(.unknownFlag(arg)) }
-                    inv.rest.append(arg)
-                } else if inv.subcommand.isEmpty {
-                    inv.subcommand = arg
-                } else {
-                    inv.rest.append(arg)
-                }
-            }
-            idx += 1
         }
+        if let failure = failure(record, text) { return .failure(failure) }
+        return .success(invocation(record, tokens: tokens, text: text))
+    }
 
-        // A bare invocation (no subcommand, not `--help`) routes to the GUI, like bare `xterm`/`ghostty`.
-        inv.launchGUI = inv.subcommand.isEmpty && !inv.wantsHelp
-        return .success(inv)
+    /// The parse error a record carries, or `nil` when it parsed.
+    private static func failure(_ record: SlopDeskCliInvocation, _ text: Data) -> CLIParseError? {
+        let flag = string(record.error_flag, text)
+        switch record.error {
+        case SLOPDESK_CLI_UNKNOWN_FLAG: return .unknownFlag(flag)
+        case SLOPDESK_CLI_MISSING_VALUE: return .missingValue(flag)
+        case SLOPDESK_CLI_INVALID_VALUE:
+            return .invalidValue(flag: flag, value: string(record.error_value, text))
+        default: return nil
+        }
+    }
+
+    /// The invocation a record and its two buffers describe.
+    private static func invocation(
+        _ record: SlopDeskCliInvocation,
+        tokens: [SlopDeskByteSpan],
+        text: Data,
+    ) -> CLIInvocation {
+        let rest = tokens.prefix(record.rest_count).map { span in string(span, text) }
+        let exec = tokens.dropFirst(record.rest_count).prefix(record.exec_count)
+            .map { span in string(span, text) }
+        return CLIInvocation(
+            subcommand: string(record.subcommand, text),
+            rest: Array(rest),
+            format: CLIOutputFormat.of(record.format),
+            noHeaders: record.no_headers,
+            socketPath: record.has_socket ? string(record.socket_path, text) : nil,
+            configFile: record.has_config ? string(record.config_file, text) : nil,
+            timeoutMs: Int(record.timeout_ms),
+            assumeYes: record.assume_yes,
+            wantsHelp: record.wants_help,
+            launchGUI: record.launch_gui,
+            execCommand: record.has_exec ? Array(exec) : nil,
+        )
+    }
+
+    /// Appends one string's UTF-8 and answers the span naming it — ``ArenaText/intern(_:into:)``
+    /// wearing this door's C struct, which is the only part of it that is about this door.
+    private static func intern(_ value: String, into arena: inout Data) -> SlopDeskByteSpan {
+        let span = ArenaText.intern(value, into: &arena)
+        return SlopDeskByteSpan(offset: span.offset, length: span.length)
+    }
+
+    /// The text a span names, or "" when it names nothing — ``ArenaText/text(_:offset:length:)``
+    /// wearing this door's C struct.
+    private static func string(_ span: SlopDeskByteSpan, _ arena: Data) -> String {
+        ArenaText.text(arena, offset: Int(span.offset), length: Int(span.length))
     }
 }

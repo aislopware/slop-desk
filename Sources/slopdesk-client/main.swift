@@ -1,11 +1,9 @@
 #if canImport(Darwin)
-import Darwin
 #else
 import Glibc
 #endif
 import Foundation
 import SlopDeskClient
-import SlopDeskProtocol
 import SlopDeskTerminal
 import SlopDeskTransport
 import SlopDeskTTY
@@ -115,22 +113,7 @@ guard let args = parseArgs(CommandLine.arguments) else { usage() }
 /// Writes all of `data` to `fd`, looping over partial writes / EINTR. Used for the
 /// host→stdout path so a large burst is never truncated.
 func writeAll(fd: Int32, _ data: Data) {
-    data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
-        guard let base = raw.baseAddress else { return }
-        var offset = 0
-        let total = raw.count
-        while offset < total {
-            let n = write(fd, base + offset, total - offset)
-            if n > 0 {
-                offset += n
-            } else if n < 0 {
-                if errno == EINTR { continue }
-                return
-            } else {
-                return
-            }
-        }
-    }
+    FileDescriptorWrite.all(fd: fd, data)
 }
 
 // MARK: - SIGWINCH (terminal resize) plumbing

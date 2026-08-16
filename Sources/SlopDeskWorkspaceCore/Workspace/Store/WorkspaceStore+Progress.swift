@@ -1,4 +1,3 @@
-import Foundation
 import SlopDeskWorkspaceModel
 
 // MARK: - OSC 9;4 progress state (per-pane tab-badge + Dock aggregate)

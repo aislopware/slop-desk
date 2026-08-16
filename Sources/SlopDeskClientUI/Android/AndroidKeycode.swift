@@ -23,7 +23,6 @@
 
 #if os(macOS)
 import AppKit
-import Foundation
 
 /// One Android `KeyEvent` keycode. A struct rather than an enum: the constant list runs past 300 and
 /// the panel needs a couple of dozen, so an open type keeps a missing one from being unrepresentable.

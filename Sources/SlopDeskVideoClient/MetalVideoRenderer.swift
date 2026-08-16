@@ -2,9 +2,7 @@
 import CoreVideo
 import Foundation
 import Metal
-import OSLog
 import QuartzCore
-import simd
 import SlopDeskVideoProtocol
 
 /// Zero-copy NV12 → RGB Metal renderer for decoded frames (doc 04, doc 17 §3.7).
@@ -26,7 +24,6 @@ import SlopDeskVideoProtocol
 @preconcurrency
 @MainActor
 public final class MetalVideoRenderer {
-    private let log = Logger(subsystem: "slopdesk.video.client", category: "MetalVideoRenderer")
     public let device: MTLDevice
     private let commandQueue: MTLCommandQueue
     private let pipelineState: MTLRenderPipelineState

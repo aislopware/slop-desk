@@ -1,0 +1,130 @@
+# `slopdesk-gfsimd` — the THIRD crate in this repository allowed to write `unsafe`, and the smallest.
+#
+# ## Why it exists
+# `CLAUDE.md` allows exactly two: `slopdesk-posix` (a syscall with no safe wrapper) and
+# `slopdesk-ffi` (is this `(ptr, len)` from Swift live for the call). This is a third, added on an
+# explicit ruling that performance outranks safety where they genuinely conflict, and that the
+# sanctioned way to spend that is an isolated crate with careful memory testing rather than an
+# `#[allow]` somewhere warm.
+#
+# The conflict was measured, not assumed. `rust/slopdesk-video` ported the video FEC out of Swift
+# and a C target, deliberately WITHOUT the NEON kernel, on the theory that safe Rust would hold
+# parity. Two safe attempts at the region multiply — the byte table it inherited, then a bitsliced
+# `u64` kernel that folds `x * c` over `c`'s bits with per-lane carry containment — both landed at
+# roughly twice the Swift, and the second was within noise of the first. That is not a tuning gap:
+# a table lookup is a GATHER, which no autovectoriser will touch, and bitslicing replaces it with
+# about five operations per byte where `vqtbl1q_u8` does sixteen bytes in four. The algorithm the
+# fast path needs is a 16-byte table shuffle, and on stable Rust `vld1q_u8`/`vst1q_u8` take raw
+# pointers, so it cannot be written without `unsafe`.
+#
+# ## What may live here
+# Byte-region kernels, and their scalar twins. Nothing else — no field arithmetic, no tables built,
+# no policy. The two entry points take their lookup tables as arguments precisely so that this
+# crate does not know it is doing GF(2^8): it gathers two nibble-indexed tables and XORs the result
+# into a destination, and the same code would serve any 8-bit field. Apply `slopdesk-posix`'s test
+# for a new entry — could its safety comment be written without naming slopdesk at all? Here it is
+# stronger still: none of them names a FIELD either.
+#
+# ## Why `deny`, not `forbid`
+# Same reason as `slopdesk-posix`: `forbid` would defeat the purpose. What keeps this honest is
+# that every `unsafe` block sits under its own `#[expect(unsafe_code, reason = …)]`, which fails
+# the build the day it stops being needed.
+#
+# ## The memory testing that pays for it
+# Not optional here, because this crate's whole job is indexing past what the type system checks.
+# `tests/differential.rs` runs 256 table pairs across a length sweep that straddles the 16-byte
+# chunk boundary, at four alignments, inside a guarded arena — and `make miri` runs that same suite
+# under Miri, whose out-of-bounds and provenance checks are what actually read the `unsafe`. It is
+# a separate target rather than part of `make test` because Miri interprets every instruction; the
+# sweep narrows itself under `cfg(miri)` and still takes minutes. Both are also the reason the
+# scalar twin stays public rather than being folded into the tail: it is the oracle.
+[workspace]
+resolver = "3"
+
+[package]
+name = "slopdesk-gfsimd"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The isolated SIMD surface for slopdesk — GF(2^8) byte-region kernels, and nothing else"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[lib]
+name = "slopdesk_gfsimd"
+path = "src/lib.rs"
+
+[dependencies]
+
+# Mirrors `slopdesk-video`'s, because that is what links this.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+debug = 1
+strip = "debuginfo"
+
+# ---------------------------------------------------------------------------- #
+# A literal copy of `rust/slopdesk-video/Cargo.toml`'s block, with the one deviation the header
+# argues for.
+[lints.rust]
+# See the header: `deny` on purpose, with a self-expiring `#[expect]` at every site.
+unsafe_code = "deny"
+
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+missing_copy_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+single_use_lifetimes = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+variant_size_differences = "deny"
+elided_lifetimes_in_paths = "deny"
+let_underscore_drop = "deny"
+non_ascii_idents = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+indexing_slicing = "deny"
+integer_division = "deny"
+exit = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+mem_forget = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+verbose_file_reads = "deny"
+str_to_string = "deny"
+empty_structs_with_brackets = "deny"
+if_then_some_else_none = "deny"
+lossy_float_literal = "deny"
+try_err = "deny"
+
+multiple_crate_versions = "allow"
+# - `suboptimal_flops` / `imprecise_flops` (nursery): both want `f64::mul_add`, which is exactly the
+#   fused multiply-add `CLAUDE.md` forbids — "keep `a * b + c` separate (never `addingProduct`/`fma`)".
+#   FMA rounds once where the wire rounds twice, so taking the advice changes the `f64` bit patterns
+#   `golden/golden_vectors.json` pins. Allowed in EVERY workspace, not only the ones doing float
+#   math today: the reason is a repo invariant, and a lint that fires the first time a float lands
+#   here would be obeyed before anyone reads this file.
+suboptimal_flops = "allow"
+imprecise_flops = "allow"

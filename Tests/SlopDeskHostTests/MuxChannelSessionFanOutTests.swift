@@ -53,7 +53,7 @@ final class MuxChannelSessionFanOutTests: XCTestCase {
     }
 
     private func makeSession(data: MuxSubChannel, control: MuxSubChannel) -> MuxChannelSession {
-        MuxChannelSession(channelID: 1, pty: PTYProcess(), data: data, control: control)
+        MuxChannelSession(channelID: 1, pty: unattachedPTY(), data: data, control: control)
     }
 
     /// `window: nil` on a DATA channel means the production initial window; a SMALL value drives

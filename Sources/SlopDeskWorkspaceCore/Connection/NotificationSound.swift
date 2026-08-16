@@ -1,5 +1,3 @@
-import Foundation
-
 // MARK: - Bell / error-exit sound policy (E14/K10 — the PURE "should this beep" decisions)
 
 /// The PURE decision for the **Sound — Shell Controlled** bell: a `BEL` (`0x07`) rings the system

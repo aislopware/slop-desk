@@ -140,11 +140,7 @@ public final class FolderFrecencyStore {
             .appendingPathComponent("folders-frecency.json", isDirectory: false)
     }
 
-    private static func makeEncoder() -> JSONEncoder {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys] // reviewable, byte-stable round-trip
-        return encoder
-    }
+    private static func makeEncoder() -> JSONEncoder { SidecarJSON.encoder() }
 
     /// Reads + decodes the sidecar, returning an empty default on ANY failure (missing file, corrupt JSON, a
     /// mismatched/future `schemaVersion`). A structurally-valid file is sanitized: invalid (empty / over-long

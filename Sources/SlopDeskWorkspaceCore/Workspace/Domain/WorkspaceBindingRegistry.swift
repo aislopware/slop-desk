@@ -1,4 +1,3 @@
-import Foundation
 import SlopDeskWorkspaceModel
 
 // MARK: - WorkspaceAction (the tree-native command intent)
@@ -337,22 +336,22 @@ public struct WorkspaceBinding: Sendable, Equatable {
 // MARK: - WorkspaceBindingRegistry (the ONE source of truth)
 
 /// The single source of truth for the IDE-shell command surface (docs/42 §W6): ONE ``bindings`` table
-/// that the menu bar (``WorkspaceCommands``), the ⌘⇧P command palette (``CommandPaletteView``), the ⌘/
-/// cheat sheet (``KeyboardCheatSheet``), and the routing tests ALL read — so chord, menu item, palette
+/// that the menu bar (``WorkspaceCommands``), the ⌘⇧P command palette (`PaletteView`), the ⌘/
+/// cheat sheet (`KeyboardCheatSheetView`), and the routing tests ALL read — so chord, menu item, palette
 /// row, and cheat-sheet glyph can never drift (and settings has one table to make user-editable).
 ///
 /// Every chord is ⌘- or ⌥-prefixed (the load-bearing §5 conflict rule: a bare key / Ctrl-letter falls
 /// through to the focused terminal), and no two bindings share a chord — both pinned by
 /// `TreeCommandRoutingTests`. The chords follow the reference keymap: ⌘T new tab, ⌘W close, ⌘D
-/// split-right, ⌘⇧D split-down, ⌃⌘+arrows focus, ⌘⇧↩ zoom, ⌘⇧]/⌘⇧[ next/prev tab, ⌘1…9 select tab,
+/// split-right, ⌘⇧D split-down, ⌃⌘+arrows focus, ⌘⇧↩ zoom, ⌘⇧]/⌘⇧[ next/prev tab, ⌘1…9 select pane,
 /// ⌘⇧L toggle Tabs panel, ⌃⌘T break-pane-to-tab, ⌘⇧P palette,
 /// ⌘/ cheat sheet. Rename has no default chord — menu / palette / context-menu only (`chord: nil`).
 public enum WorkspaceBindingRegistry {
     /// The shipped binding table, in cheat-sheet / palette display order (panes, tabs, focus,
-    /// view). `.selectTab(n)` for n=1…9 is generated (one chord each) but is NOT listed here — it is
-    /// expanded by ``selectTabBindings`` so the table stays readable; the cheat sheet collapses the nine
-    /// slots to one representative row synthesized in ``groupedForDisplay`` (the menu builds its own "Select
-    /// Tab" submenu, the palette catalog omits the digits).
+    /// view). `.selectPane(n)` for n=1…9 is generated (one chord each) but is NOT listed here — it is
+    /// expanded by ``selectPaneBindings`` so the table stays readable; the cheat sheet collapses the nine
+    /// slots to the one representative row ``selectPaneRepresentative``, appended by ``groupedForDisplay``
+    /// (the menu builds its own "Select Pane" submenu, the palette catalog omits the digits).
     public static let bindings: [WorkspaceBinding] = [
         // Panes
         WorkspaceBinding(

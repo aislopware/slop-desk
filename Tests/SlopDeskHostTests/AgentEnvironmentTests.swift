@@ -61,10 +61,16 @@ final class AgentEnvironmentTests: XCTestCase {
         XCTAssertNil(env["SLOPDESK_SHELL_CURSOR"], "an unset cursor flag must not be materialized")
     }
 
-    func testPaneIDIsTheCompositeKey() {
-        let conn = UUID()
-        let id = HostServer.paneID(connectionID: conn, channelID: 4)
-        XCTAssertEqual(id, "\(conn.uuidString):4", "the pane id is the (connectionID, channelID) composite")
+    /// The pane id must be RECOVERABLE by a later hostd, so it names a session and nothing else —
+    /// no connection address, no channel number, nothing that dies with the process (`docs/51` §5).
+    func testPaneIDNamesTheSessionAndNothingElse() {
+        let sessionID = UUID()
+        let id = HostServer.paneID(sessionID: sessionID)
+        XCTAssertEqual(id, sessionID.uuidString)
+        // Stated as an assertion because this is the property that makes adopt-on-restart possible:
+        // the same session always yields the same pane id, on any hostd, forever.
+        XCTAssertEqual(id, HostServer.paneID(sessionID: sessionID))
+        XCTAssertNotEqual(id, HostServer.paneID(sessionID: UUID()))
     }
 
     // MARK: terminal-program identity (TERM_PROGRAM / TERM_PROGRAM_VERSION / CW_TERM)

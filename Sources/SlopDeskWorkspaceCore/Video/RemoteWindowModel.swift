@@ -489,13 +489,6 @@ public final class RemoteWindowModel {
     @ObservationIgnored private var pasteFeedbackTask: Task<Void, Never>?
     private let pasteFeedbackDuration: Duration
 
-    /// The paste-guard verdict for typing `text` into this target (`targetIsSecure` = a known password /
-    /// SecurityAgent field). The caller confirms before ``pasteAsKeystrokes(_:)`` on a non-`.ok` risk —
-    /// e.g. a secret about to be typed into an echoing field, or a whole file into a password prompt.
-    public func assessPaste(_ text: String, targetIsSecure: Bool) -> PasteRisk {
-        SecretPasteClassifier.assess(text: text, targetIsSecure: targetIsSecure)
-    }
-
     /// Replays `text` as individual key events over the live ``keyInjector`` (US-QWERTY; unmappable
     /// characters are skipped). Down+up per stroke, Shift folded into both edges, paced by
     /// ``pasteInterval``. NEVER logs the payload — it is frequently a password. No-op when no sink is
@@ -626,20 +619,14 @@ public final class RemoteWindowModel {
     /// even if the host never re-captures (a frozen window, a dropped UDP flow). Instance-settable so
     /// tests drive it without real-time waits.
     @ObservationIgnored var reflowScrimTimeout: Duration = .milliseconds(1200)
-    @ObservationIgnored private var reflowTimeoutTask: Task<Void, Never>?
+    @ObservationIgnored private let reflowDeadline = DeadlineLatch()
 
     /// The pane was resized (a layout-size change that will prompt a host re-capture at the new native
     /// size) — arm the resize scrim until the first re-captured frame lands. (Re)starts the safety
     /// timeout. Idempotent-safe to call per layout pass during a live drag — each call just re-arms.
     public func noteResized() {
         awaitingResizeReflow = true
-        reflowTimeoutTask?.cancel()
-        let timeout = reflowScrimTimeout
-        reflowTimeoutTask = Task { [weak self] in
-            try? await Task.sleep(for: timeout)
-            guard !Task.isCancelled else { return }
-            self?.endAwaitingReflow()
-        }
+        reflowDeadline.arm(after: reflowScrimTimeout) { [weak self] in self?.endAwaitingReflow() }
     }
 
     /// The first frame at the new native size rendered (the host re-capture caught up) — release the
@@ -649,8 +636,7 @@ public final class RemoteWindowModel {
     /// Clears ``awaitingResizeReflow`` + cancels the safety timeout. Idempotent — the observable is only
     /// written when it actually changes.
     private func endAwaitingReflow() {
-        reflowTimeoutTask?.cancel()
-        reflowTimeoutTask = nil
+        reflowDeadline.cancel()
         if awaitingResizeReflow { awaitingResizeReflow = false }
     }
 

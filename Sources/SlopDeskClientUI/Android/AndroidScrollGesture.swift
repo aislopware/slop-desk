@@ -28,7 +28,6 @@
 // timer.
 
 #if os(macOS)
-import CoreGraphics
 import Foundation
 
 struct AndroidScrollGesture {
@@ -43,12 +42,6 @@ struct AndroidScrollGesture {
         /// closed by the caller's idle timer.
         case wheel
     }
-
-    /// How far inside the frame the finger is kept. Two jobs: Android's gesture navigation owns the
-    /// outermost band on three edges (Back left and right, Home along the bottom), so a contact
-    /// planted there starts a system gesture instead of a scroll; and a re-grip needs somewhere to
-    /// land that is not the edge it just left.
-    static let edgeMargin: CGFloat = 24
 
     /// The finger's position in the fitted rect's own space, or `nil` when no contact is down.
     private(set) var finger: CGPoint?
@@ -129,39 +122,16 @@ struct AndroidScrollGesture {
         )
     }
 
-    /// A point moved inside the frame's safe area. Collapses to the centre when the frame is smaller
-    /// than two margins, which is a panel too narrow to scroll in but not a reason to send NaN.
+    /// The safe-area helpers both device panels share — ``DevicePanelGeometry``. A synthetic finger
+    /// obeys the same margin whichever platform it is planted on; only the message it becomes differs.
+    static var edgeMargin: CGFloat { DevicePanelGeometry.edgeMargin }
+
     static func planted(_ point: CGPoint, in fitted: CGRect) -> CGPoint {
-        let x = clamp(
-            point.x, low: edgeMargin, high: fitted.width - edgeMargin, fallback: fitted.width / 2,
-        )
-        let y = clamp(
-            point.y, low: edgeMargin, high: fitted.height - edgeMargin, fallback: fitted.height / 2,
-        )
-        return CGPoint(x: x, y: y)
+        DevicePanelGeometry.planted(point, in: fitted)
     }
 
-    /// Where the finger lands after running out of screen: at the far end of the axis it was
-    /// travelling along, so the next stretch of the same gesture has the full height to move through.
     static func regrip(travel: CGSize, in fitted: CGRect) -> CGPoint {
-        let far = { (extent: CGFloat, direction: CGFloat) -> CGFloat in
-            direction >= 0 ? edgeMargin : extent - edgeMargin
-        }
-        let isVertical = abs(travel.height) >= abs(travel.width)
-        return planted(
-            CGPoint(
-                x: isVertical ? fitted.width / 2 : far(fitted.width, travel.width),
-                y: isVertical ? far(fitted.height, travel.height) : fitted.height / 2,
-            ),
-            in: fitted,
-        )
-    }
-
-    private static func clamp(
-        _ value: CGFloat, low: CGFloat, high: CGFloat, fallback: CGFloat,
-    ) -> CGFloat {
-        guard low <= high else { return fallback }
-        return min(max(value, low), high)
+        DevicePanelGeometry.regrip(travel: travel, in: fitted)
     }
 }
 #endif

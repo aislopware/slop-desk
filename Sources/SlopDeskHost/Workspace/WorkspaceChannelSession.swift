@@ -435,7 +435,5 @@ final class WorkspaceChannelSession: @unchecked Sendable {
 
     // MARK: Test seams
 
-    var ackedStateNumForTesting: Int64 { ackedStateNum }
     var outstandingForTesting: Int64? { outstanding }
-    var needsSnapshotForTesting: Bool { needsSnapshot }
 }

@@ -12,6 +12,7 @@
 #if os(macOS)
 import AppKit
 import Foundation
+import SlopDeskWorkspaceCore
 
 @MainActor
 struct SimulatorChromeAssets {
@@ -54,12 +55,6 @@ enum SimulatorPasteboard {
     /// can tell "the bytes were not an image" from "the write happened" — a JPEG that fails to decode
     /// is a server problem worth reporting, not a silent no-op.
     @discardableResult
-    static func write(jpeg: Data) -> NSImage? {
-        guard let image = NSImage(data: jpeg) else { return nil }
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.writeObjects([image])
-        return image
-    }
+    static func write(jpeg: Data) -> NSImage? { ClientPasteboard.write(image: jpeg) }
 }
 #endif

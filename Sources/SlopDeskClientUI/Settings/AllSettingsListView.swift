@@ -286,7 +286,7 @@ struct AllSettingsListView: View {
                     .font(SettingsType.subtitle)
                     .foregroundStyle(SettingsInk.secondary)
                     .monospacedDigit()
-                Stepper("", value: refreshing($scrollMultiplier), in: 0.25...5, step: 0.25).labelsHidden()
+                Stepper("", value: store.refreshing($scrollMultiplier), in: 0.25...5, step: 0.25).labelsHidden()
             })
         case SettingsKey.onLaunchKey:
             menuPicker($onLaunch) {
@@ -359,30 +359,16 @@ struct AllSettingsListView: View {
     }
 
     private func boolControl(_ binding: Binding<Bool>, refresh: Bool = false) -> AnyView {
-        AnyView(Toggle("", isOn: refresh ? refreshing(binding) : binding).labelsHidden())
+        AnyView(Toggle("", isOn: refresh ? store.refreshing(binding) : binding).labelsHidden())
     }
 
     private func menuPicker(
         _ binding: Binding<some Hashable>, refresh: Bool = false, @ViewBuilder _ content: () -> some View,
     ) -> AnyView {
-        AnyView(Picker("", selection: refresh ? refreshing(binding) : binding, content: content)
+        AnyView(Picker("", selection: refresh ? store.refreshing(binding) : binding, content: content)
             .labelsHidden()
             .pickerStyle(.menu)
             .fixedSize())
-    }
-
-    /// Wrap a fire-time `Defaults` control binding so an inline edit ALSO re-applies the live terminal config
-    /// (the Controls passthrough), matching the Controls tab's `.onChange → refreshTerminalControls()`. The
-    /// global toggles live in `Defaults.standard`; the store stays isolated on its injected `UserDefaults`, so
-    /// the explicit refresh is the seam that re-reads them.
-    private func refreshing<V: Equatable>(_ binding: Binding<V>) -> Binding<V> {
-        Binding(
-            get: { binding.wrappedValue },
-            set: { newValue in
-                binding.wrappedValue = newValue
-                store.refreshTerminalControls()
-            },
-        )
     }
 
     /// The shared allow / deny / ask options for the OSC-52 clipboard-read and -write access pickers.

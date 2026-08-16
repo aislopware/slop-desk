@@ -1,6 +1,4 @@
 import Foundation
-import Network
-import SlopDeskProtocol
 
 /// The shared-mux channel-association preamble that pairs two physical TCP connections (DATA +
 /// CONTROL) into one shared ``MuxNWConnection`` carrying MANY logical channels.

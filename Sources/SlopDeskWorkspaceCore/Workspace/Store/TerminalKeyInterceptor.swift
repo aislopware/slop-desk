@@ -20,8 +20,6 @@
 // no AppKit/UIKit live in the view. (The tmux-style multi-key PREFIX engine that used to live here is
 // REMOVED — DECISIONS.md 2026-07-22: the ⌘ plane is the only workspace-chord surface.)
 
-import Foundation
-
 /// What a per-surface key path must DO with one keystroke, decided entirely here so the view stays a thin
 /// event→intent shim. A pure value type (no AppKit/UIKit) so the whole interceptor is unit-testable.
 public enum TerminalKeyDisposition: Equatable, Sendable {

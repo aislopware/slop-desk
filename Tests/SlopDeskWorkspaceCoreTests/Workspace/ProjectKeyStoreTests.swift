@@ -1,6 +1,4 @@
-import Foundation
 import Observation
-import SlopDeskAgentDetect
 import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskWorkspaceCore

@@ -1,47 +1,59 @@
+import CSlopDeskFFI
 import Foundation
 import SlopDeskVideoProtocol
 
-// PURE window-feed generation cache + chunk packer (docs/45 §5–6). No clock (callers pass `now`),
-// no sockets — the "decider beside the actor" discipline of `VideoMuxRouter`/`UnboundLaneByeDecider`,
-// so the generation/TTL/packing rules are headless-tested.
+// The Swift face of `rust/slopdesk-video`'s `window_feed_host` cache + chunk packer (docs/45 §5–6).
+// No clock (callers pass `now`), no sockets — the "decider beside the actor" discipline of
+// `VideoMuxRouter`/`UnboundLaneByeDecider`.
 
 /// Byte-budgeted greedy packer: splits one snapshot's records into `windowFeedSnapshot` chunks whose
-/// RECORD bytes fit ``VideoControlMessage/feedRecordBytesPerChunk`` — so every encoded chunk fits one
-/// mux datagram. Packing is byte-budgeted, NOT record-counted (real titles vary 14–320 B/record).
+/// RECORD bytes fit the per-chunk budget `window_feed_host.rs` holds — so every encoded chunk fits
+/// one mux datagram. Packing is byte-budgeted, NOT record-counted (titles vary 14–320 B/record).
 public enum WindowFeedChunkPacker {
-    /// The exact encoded size of one record: 4 id + 2 w + 2 h + 1 flags + 1 display + three
-    /// UInt16-length-prefixed strings.
-    static func recordEncodedSize(_ record: HostWindowRecord) -> Int {
-        14 + record.bundleID.utf8.count + record.appName.utf8.count + record.title.utf8.count
+    /// Encodes `records` (already builder-capped, so each string is wire-capped) into ready-to-send
+    /// chunk payloads for `generation`. ZERO records still yield ONE empty chunk — an empty desktop
+    /// is a real snapshot the client must be able to assemble.
+    ///
+    /// Two calls, like every other pure builder on this door: the first reports the shape, the
+    /// second fills the buffers it named.
+    public static func encodedChunks(generation: UInt32, records: [HostWindowRecord]) -> [Data] {
+        let (rows, arena) = HostWindowRecord.rows(records)
+        return rows.withUnsafeBufferPointer { input in
+            arena.withUnsafeBytes { pool -> [Data] in
+                let shape = slopdesk_feed_chunks(
+                    generation, input.baseAddress, input.count, pool.baseAddress, pool.count,
+                    nil, 0, nil, 0,
+                )
+                return payloads(shape) { spans, bytes in
+                    slopdesk_feed_chunks(
+                        generation, input.baseAddress, input.count, pool.baseAddress, pool.count,
+                        spans.baseAddress, spans.count, bytes.baseAddress, bytes.count,
+                    )
+                }
+            }
+        }
     }
 
-    /// Encodes `records` (already builder-capped, so ≤ 64 and each string wire-capped) into ready-to-
-    /// send chunk payloads for `generation`. ZERO records still yield ONE empty chunk — an empty
-    /// desktop is a real snapshot the client must be able to assemble.
-    public static func encodedChunks(generation: UInt32, records: [HostWindowRecord]) -> [Data] {
-        var groups: [[HostWindowRecord]] = []
-        var current: [HostWindowRecord] = []
-        var currentBytes = 0
-        for record in records {
-            let size = recordEncodedSize(record)
-            if !current.isEmpty, currentBytes + size > VideoControlMessage.feedRecordBytesPerChunk {
-                groups.append(current)
-                current = []
-                currentBytes = 0
-            }
-            current.append(record)
-            currentBytes += size
+    /// Copies a payload list out at the shape the door reported: one buffer of spans, one of the
+    /// concatenated bytes, cut back apart on this side. Shared by the packer and the cache's reply,
+    /// because both answer in exactly this shape.
+    static func payloads(
+        _ shape: SlopDeskFeedShape,
+        _ fill: (UnsafeMutableBufferPointer<SlopDeskByteSpan>, UnsafeMutableRawBufferPointer) -> SlopDeskFeedShape,
+    ) -> [Data] {
+        let room = shape.count
+        guard room > 0 else { return [] }
+        var spans = [SlopDeskByteSpan](repeating: SlopDeskByteSpan(), count: room)
+        var bytes = Data(count: shape.arena_len)
+        let filled = spans.withUnsafeMutableBufferPointer { out in
+            bytes.withUnsafeMutableBytes { pool in fill(out, pool) }
         }
-        if !current.isEmpty || groups.isEmpty { groups.append(current) }
-        // 64 records can't exceed 64 chunks; the clamp is a defensive bound, never expected to bite.
-        let chunkCount = UInt8(clamping: groups.count)
-        return groups.enumerated().map { index, chunkRecords in
-            VideoControlMessage.windowFeedSnapshot(
-                generation: generation,
-                chunkIndex: UInt8(clamping: index),
-                chunkCount: chunkCount,
-                records: chunkRecords,
-            ).encode()
+        guard filled.count == shape.count else { return [] }
+        return spans.map { span in
+            let start = Int(span.offset)
+            let end = start + Int(span.length)
+            guard start >= 0, end <= bytes.count, start <= end else { return Data() }
+            return Data(bytes[start..<end])
         }
     }
 }
@@ -51,46 +63,73 @@ public enum WindowFeedChunkPacker {
 /// guard, superseding per-channel coalescing for this path) + a generation counter that bumps ONLY
 /// when the records actually changed (so an unchanged desktop answers with the 5-byte
 /// `windowFeedCurrent`).
-public struct WindowFeedCache: Sendable {
-    /// The last published generation. `0` = nothing built yet — never published (it is the wire's
-    /// "client has nothing" sentinel), so the counter starts at 1 and skips 0 on wrap.
-    public private(set) var generation: UInt32 = 0
-    public private(set) var records: [HostWindowRecord] = []
-    /// The ready-to-send chunk payloads for `generation` (encoded once per bump, not per subscriber).
-    public private(set) var encodedChunks: [Data] = []
-    private var builtAt: TimeInterval = -.infinity
+///
+/// A HANDLE, and so a class: it holds the record list AND the datagrams that list packs into, and
+/// the near side reads one reply out of it per subscribe. That is doc 55 §4b's test. `@unchecked
+/// Sendable` is sound because the feed glue drives it from one queue.
+public final class WindowFeedCache: @unchecked Sendable {
+    /// The far-side cache, which owns the records, the chunks and the staleness stamp.
+    private let handle: OpaquePointer?
     /// How long a built snapshot answers subscribes without re-enumerating (docs/45 §6: 1 s).
     public let ttl: TimeInterval
 
     public init(ttl: TimeInterval = 1.0) {
         self.ttl = ttl
+        handle = slopdesk_feed_cache_new(ttl)
+    }
+
+    deinit { slopdesk_feed_cache_free(handle) }
+
+    /// The last published generation. `0` = nothing built yet — never published (it is the wire's
+    /// "client has nothing" sentinel), so the counter starts at 1 and skips 0 on wrap.
+    public var generation: UInt32 { slopdesk_feed_cache_generation(handle) }
+
+    /// The cached records, read back through the door in the same two-step shape everything else
+    /// on this boundary uses.
+    public var records: [HostWindowRecord] {
+        let shape = slopdesk_feed_cache_records(handle, nil, 0, nil, 0)
+        let room = shape.count
+        guard room > 0 else { return [] }
+        var rows = [SlopDeskControlRecord](repeating: SlopDeskControlRecord(), count: room)
+        var arena = Data(count: shape.arena_len)
+        let filled = rows.withUnsafeMutableBufferPointer { out in
+            arena.withUnsafeMutableBytes { pool in
+                slopdesk_feed_cache_records(handle, out.baseAddress, out.count, pool.baseAddress, pool.count)
+            }
+        }
+        guard filled.count == shape.count else { return [] }
+        return rows.map { row in HostWindowRecord.of(row, arena: arena) }
     }
 
     /// Whether the caller must enumerate + ``fold(_:now:)`` before answering (never built, or stale).
     public func needsRebuild(now: TimeInterval) -> Bool {
-        generation == 0 || now - builtAt >= ttl
+        slopdesk_feed_cache_needs_rebuild(handle, now)
     }
 
     /// Folds a freshly built record set: bumps the generation + re-encodes chunks ONLY when the
     /// records differ from the cached set (or nothing was ever built); an identical set just
     /// refreshes the TTL stamp.
-    public mutating func fold(_ fresh: [HostWindowRecord], now: TimeInterval) {
-        builtAt = now
-        guard generation == 0 || fresh != records else { return }
-        generation &+= 1
-        if generation == 0 { generation = 1 } // skip the "client has nothing" sentinel on wrap
-        records = fresh
-        encodedChunks = WindowFeedChunkPacker.encodedChunks(generation: generation, records: fresh)
+    public func fold(_ fresh: [HostWindowRecord], now: TimeInterval) {
+        let (rows, arena) = HostWindowRecord.rows(fresh)
+        rows.withUnsafeBufferPointer { input in
+            arena.withUnsafeBytes { pool in
+                slopdesk_feed_cache_fold(handle, input.baseAddress, input.count, pool.baseAddress, pool.count, now)
+            }
+        }
     }
 
     /// The datagrams answering one `windowFeedSubscribe(knownGeneration:)`: the 5-byte
     /// `windowFeedCurrent` ack when the client is already current, else the full chunk sequence
     /// (`isSnapshot` tells the sender to dup-send ×2). Empty only in the impossible never-built case.
     public func replyDatagrams(forKnownGeneration known: UInt32) -> (isSnapshot: Bool, payloads: [Data]) {
-        guard generation != 0 else { return (false, []) }
-        if known == generation {
-            return (false, [VideoControlMessage.windowFeedCurrent(generation: generation).encode()])
+        var isSnapshot = false
+        let shape = slopdesk_feed_cache_reply(handle, known, &isSnapshot, nil, 0, nil, 0)
+        let payloads = WindowFeedChunkPacker.payloads(shape) { spans, bytes in
+            var again = false
+            return slopdesk_feed_cache_reply(
+                handle, known, &again, spans.baseAddress, spans.count, bytes.baseAddress, bytes.count,
+            )
         }
-        return (true, encodedChunks)
+        return (isSnapshot, payloads)
     }
 }

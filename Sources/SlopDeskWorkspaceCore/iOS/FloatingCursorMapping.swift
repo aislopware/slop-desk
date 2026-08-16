@@ -1,5 +1,3 @@
-import Foundation
-
 /// Maps a floating-cursor horizontal drag into left/right arrow-key byte sequences
 /// (doc 17 §2.5 — on an iPhone with no hardware keyboard this is the *only* way to move the
 /// terminal cursor).

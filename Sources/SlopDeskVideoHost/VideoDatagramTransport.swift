@@ -1,43 +1,6 @@
 import Foundation
 import SlopDeskVideoProtocol
 
-/// The logical sub-streams that share one PATH 2 UDP session (doc 17 §3.3/§3.6/§3.8).
-///
-/// The cursor channel is a **separate UDP socket** (doc 17 §3.3: "KHÔNG multiplex
-/// chung socket video" — never multiplex with video, so video backpressure never
-/// delays the cursor). The orchestrator treats each `Channel` as an independent
-/// addressable lane; the concrete ``VideoDatagramTransport`` decides whether to back
-/// them with one socket + a tag, or distinct sockets. The proven design uses TWO
-/// sockets: a media socket (control / video / geometry / input) and a dedicated
-/// cursor socket.
-public enum VideoChannel: UInt8, Sendable, CaseIterable {
-    /// Session bring-up control (``VideoControlMessage``): hello / helloAck / bye.
-    case control = 0
-    /// Encoded video fragments (``FrameFragment``).
-    case video = 1
-    /// Window move/resize/title (``WindowGeometryMessage``).
-    case geometry = 2
-    /// Cursor position + shape (``CursorChannelMessage``) — its own socket.
-    case cursor = 3
-    /// Client → host input (``InputEvent``) — received, not sent, by the host.
-    case input = 4
-    /// Client → host loss recovery (``RecoveryMessage``: requestLTRRefresh /
-    /// requestIDR / ack) — received, not sent, by the host. A DEDICATED channel (not
-    /// multiplexed onto `.input`): `RecoveryMessage`'s leading type bytes (1/2/3)
-    /// overlap `InputEvent`'s (mouseMove/Down/Up), so sharing `.input` would mis-decode
-    /// a recovery datagram as a phantom mouse event. Keeping the per-purpose channel
-    /// design lets the host route recovery to ``InputDatagramRouter``-free handling.
-    case recovery = 5
-    /// Host → client app audio (``AudioChannelMessage``: config + ~10 ms encoded
-    /// frames) — sent, not received, by the host. Rides the shared MEDIA socket (the
-    /// socket-selection predicate routes every non-cursor tag there), one datagram per
-    /// message, always IMMEDIATE (`transport.send`) — never through
-    /// `VideoSendLane`/`sendPaced`, so audio never queues behind a fat video frame
-    /// (the cursor-channel discipline, minus the dedicated socket). No FEC, no
-    /// retransmit: a lost frame is concealed client-side (jitter-ring silence).
-    case audio = 6
-}
-
 /// Seam over the UDP transport the host orchestrator sends datagrams on and receives
 /// client datagrams from.
 ///

@@ -1,7 +1,5 @@
 #if canImport(SwiftUI) && canImport(QuartzCore) && canImport(Metal) && canImport(VideoToolbox)
 import CoreImage
-import CoreVideo
-import Metal
 import QuartzCore
 import SlopDeskVideoProtocol
 import SwiftUI
@@ -53,8 +51,6 @@ public final class VideoPaneControls: ObservableObject {
     var onToggleFill: () -> Void = {}
     var onResetZoom: () -> Void = {}
     public init() {}
-    func toggleFill() { onToggleFill() }
-    func resetZoom() { onResetZoom() }
 }
 
 /// A SwiftUI view that hosts the `CAMetalLayer` + cursor overlay for one remote GUI
@@ -1220,10 +1216,6 @@ final class MetalLayerBackedView: NSView {
     /// never zooms from a pinch — it is a fixed ACTUAL-SIZE viewport (footer zoom + edge-pan own
     /// local navigation), so the gesture's only meaning here is REMOTE zoom.
     private static let pinchKeysEnabled = EnvConfig.boolDefaultOn("SLOPDESK_PINCH_KEYS")
-    /// Runtime extension of ``PinchZeroPolicy``'s ⌘0 denylist (comma-separated app display names).
-    private static let pinchZeroExtraUnsafe = PinchZeroPolicy.extraUnsafe(
-        from: EnvConfig.string("SLOPDESK_PINCH_ZERO_UNSAFE_APPS"),
-    )
     /// The bound remote app's DISPLAY NAME (`RemoteWindowDescriptor.appName` — picker style,
     /// "Xcode"/"Google Chrome"); empty for a desktop pane or a legacy binding. Only consulted
     /// by the smart-zoom ⌘0 gate (``PinchZeroPolicy``) — everything else is app-agnostic.
@@ -1256,8 +1248,7 @@ final class MetalLayerBackedView: NSView {
     /// are the correct zoom chords in editors too.
     override func smartMagnify(with _: NSEvent) {
         guard isActive, inputEnabled, Self.pinchKeysEnabled else { return }
-        guard PinchZeroPolicy.allowsReset(appName: targetAppName, extraUnsafe: Self.pinchZeroExtraUnsafe)
-        else { return }
+        guard PinchZeroPolicy.allowsReset(appName: targetAppName) else { return }
         sendHostChord(keyCode: Self.keyZero)
     }
 

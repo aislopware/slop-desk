@@ -30,9 +30,7 @@
 // spend.
 
 #if canImport(SwiftUI)
-#if canImport(AppKit)
-import AppKit
-#endif
+import SlopDeskWorkspaceCore
 import SwiftUI
 
 /// One measured fact in a ``SlateFactLine``.
@@ -115,11 +113,10 @@ struct SlateFactLine: View {
         }
     }
 
-    static func copy(_ text: String) {
-        #if canImport(AppKit)
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-        #endif
-    }
+    /// Through the ONE funnel, never a second `NSPasteboard.general` pair. The clear-then-write is
+    /// load-bearing on AppKit and the platform fork belongs with it, both of which
+    /// ``ClientPasteboard/write(_:)`` already owns; a copy of them here is the drift that gate
+    /// exists to catch.
+    static func copy(_ text: String) { ClientPasteboard.write(text) }
 }
 #endif

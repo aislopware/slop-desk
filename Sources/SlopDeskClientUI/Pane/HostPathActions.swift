@@ -10,7 +10,6 @@
 // struct; this enum is not). The leaf wires it in `wirePaneCallbacks` and clears it in `clearPaneCallbacks`,
 // exactly like the find / hint / navigator callbacks.
 
-import Foundation
 import SlopDeskProtocol
 import SlopDeskWorkspaceCore
 

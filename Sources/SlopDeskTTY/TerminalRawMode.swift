@@ -3,7 +3,6 @@ import Darwin
 #else
 import Glibc
 #endif
-import Foundation
 
 /// Puts the LOCAL terminal into raw mode and **guarantees restore** on every exit path:
 /// `defer`, normal return, and asynchronous signals (Ctrl-C / SIGTERM / SIGHUP / crash).

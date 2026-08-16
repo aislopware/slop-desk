@@ -1,6 +1,5 @@
 import SlopDeskWorkspaceModel
 import XCTest
-@testable import SlopDeskClient
 @testable import SlopDeskWorkspaceCore
 
 /// The unseen-attention QUEUE (``WorkspaceStore/unseenAttentionPanes`` / ``hasUnseenAttention`` — the

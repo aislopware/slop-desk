@@ -2235,24 +2235,15 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
                         .utf8,
                 ))
         }
-        guard confMilli >= 500, shift != 0 else { return (0, 0, 0, 0) }
-        let normMilli = (Double(shift) / Double(h) * 10000.0).rounded()
-        let dy = Int16(max(-32767.0, min(32767.0, normMilli)))
-        // Normalize the moving-content band (current-frame rows, INCLUSIVE) → ten-thousandths of the
-        // frame height. The shader applies the reproject offset only inside [bandTop, bandBottom) and
-        // clamps the sample to it, so the static chrome above/below never slides. `-1` rows ⇒ no band
-        // (0, 0) ⇒ the client falls back to a whole-frame warp.
-        let (bandTop, bandBottom): (UInt16, UInt16)
-        if bandTopRow >= 0, bandBottomRow >= bandTopRow {
-            let top = (Double(bandTopRow) / Double(h) * 10000.0).rounded()
-            let bottom = (Double(Int(bandBottomRow) + 1) / Double(h) * 10000.0).rounded()
-            bandTop = UInt16(max(0.0, min(10000.0, top)))
-            bandBottom = UInt16(max(0.0, min(10000.0, bottom)))
-        } else {
-            bandTop = 0
-            bandBottom = 0
-        }
-        return (0, dy, bandTop, bandBottom)
+        // The confidence gate, the ten-thousandths scale and the band's inclusive-row → exclusive-edge
+        // conversion all live on the far side, beside the client's decode: they are ONE encoding, and a
+        // scale spelled on only one end is a scale the two ends can drift apart on. `-1` rows ⇒ no band
+        // ⇒ the client falls back to a whole-frame warp.
+        let hint = ScrollReprojector.Hint(
+            shift: shift, confidenceMilli: confMilli,
+            bandTopRow: bandTopRow, bandBottomRow: bandBottomRow, height: h,
+        )
+        return (hint.dx, hint.dy, hint.bandTop, hint.bandBottom)
     }
 
     /// ADAPTIVE-QP: compute the per-frame `MaxAllowedFrameQP` ceiling from the change magnitude between

@@ -1,4 +1,3 @@
-import Foundation
 import SlopDeskTerminal
 
 // MARK: - FontSizeStep (the ⌘+ / ⌘- / ⌘0 font-zoom intent the active-pane hooks route through)

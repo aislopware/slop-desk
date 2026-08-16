@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 
 /// Window-geometry metadata channel (doc 17 §3.8): a SEPARATE channel carrying a
@@ -31,59 +32,84 @@ public enum WindowGeometryMessage: Equatable, Sendable {
         }
     }
 
-    /// Serialises the message: a type byte then the variant payload as big-endian
-    /// `Float64`s (title trails as raw UTF-8 to the end of the datagram).
+    /// Serialises the message: a type byte then the variant payload as big-endian `Float64`s
+    /// (title trails as raw UTF-8 to the end of the datagram). `rust/slopdesk-video`'s
+    /// `window_geometry` lays the bytes down; this side only says which message it is.
     public func encode() -> Data {
-        var out = Data()
-        out.append(messageType)
-        switch self {
-        case let .move(p):
-            out.appendBE(p.x)
-            out.appendBE(p.y)
-        case let .resize(s):
-            out.appendBE(s.width)
-            out.appendBE(s.height)
-        case let .bounds(r):
-            out.appendBE(r.origin.x)
-            out.appendBE(r.origin.y)
-            out.appendBE(r.size.width)
-            out.appendBE(r.size.height)
-        case let .title(title):
-            out.append(Data(title.utf8))
+        let title = if case let .title(text) = self { Data(text.utf8) } else { Data() }
+        return title.withUnsafeBytes { bytes in
+            withUnsafeTemporaryAllocation(of: UInt8.self, capacity: Self.scratchBytes) { scratch in
+                let needed = slopdesk_window_geometry_encode(
+                    wire, bytes.baseAddress, bytes.count, scratch.baseAddress, scratch.count,
+                )
+                precondition(needed > 0, "the geometry codec refused a message this type can express")
+                guard needed > scratch.count else {
+                    return Data(UnsafeBufferPointer(start: scratch.baseAddress, count: needed))
+                }
+                // Only a long title outgrows the scratch; the four-Double arms are already written
+                // by the call that sized them.
+                var out = Data(count: needed)
+                let written = out.withUnsafeMutableBytes { buffer in
+                    slopdesk_window_geometry_encode(
+                        wire, bytes.baseAddress, bytes.count, buffer.baseAddress, buffer.count,
+                    )
+                }
+                precondition(written == needed, "the geometry codec sized a message differently than it wrote it")
+                return out
+            }
         }
-        return out
     }
 
-    /// Parses a window-geometry message. Coordinates are finite-checked (a non-finite
-    /// `Float64` → `.malformed`); the title is decoded as **strict** UTF-8 (invalid bytes
-    /// → `.malformed`, never lossy); an unknown type byte is `.malformed`; a short body is
-    /// `.truncated`.
+    /// Stack the fixed-size arms are written into on the first try. Comfortably above the widest of
+    /// them (bounds); too small would only ever be slower, never wrong.
+    private static let scratchBytes = 64
+
+    /// Parses a window-geometry message. Every guard is the Rust codec's: a non-finite coordinate,
+    /// a title that is not strictly UTF-8, and an unknown type byte are all `.malformed`; a short
+    /// body is `.truncated`. The reason stays on that side — the datagram is dropped either way.
     public static func decode(_ data: Data) throws -> Self {
-        var reader = VideoByteReader(data)
-        let type = try reader.readUInt8()
-        switch type {
-        case 1:
-            let x = try reader.readFiniteFloat64("geometry.move.x")
-            let y = try reader.readFiniteFloat64("geometry.move.y")
-            return .move(VideoPoint(x: x, y: y))
-        case 2:
-            let w = try reader.readFiniteFloat64("geometry.resize.w")
-            let h = try reader.readFiniteFloat64("geometry.resize.h")
-            return .resize(VideoSize(width: w, height: h))
-        case 3:
-            let x = try reader.readFiniteFloat64("geometry.bounds.x")
-            let y = try reader.readFiniteFloat64("geometry.bounds.y")
-            let w = try reader.readFiniteFloat64("geometry.bounds.w")
-            let h = try reader.readFiniteFloat64("geometry.bounds.h")
-            return .bounds(VideoRect(x: x, y: y, width: w, height: h))
-        case 4:
-            let bytes = reader.remaining()
-            guard let title = String(data: bytes, encoding: .utf8) else {
-                throw VideoProtocolError.malformed("window title not valid UTF-8")
-            }
-            return .title(title)
-        default:
-            throw VideoProtocolError.malformed("unknown window-geometry message type \(type)")
+        var flat = SlopDeskWindowGeometry()
+        let verdict = data.withUnsafeBytes { bytes in
+            slopdesk_window_geometry_decode(bytes.baseAddress, bytes.count, &flat)
         }
+        switch verdict {
+        case UInt32(SLOPDESK_METADATA_DECODE_TRUNCATED): throw VideoProtocolError.truncated
+        case UInt32(SLOPDESK_METADATA_DECODE_MALFORMED):
+            throw VideoProtocolError.malformed("unacceptable window-geometry message")
+        default: break
+        }
+        switch flat.message_type {
+        case 1: return .move(VideoPoint(x: flat.x, y: flat.y))
+        case 2: return .resize(VideoSize(width: flat.width, height: flat.height))
+        case 3: return .bounds(VideoRect(x: flat.x, y: flat.y, width: flat.width, height: flat.height))
+        default:
+            // The title arm: its bytes stay in the caller's datagram, and the decode above proved
+            // every one of them is UTF-8 before it reported where they start.
+            // swiftlint:disable:next optional_data_string_conversion
+            return .title(String(decoding: data.dropFirst(Int(flat.title_offset)), as: UTF8.self))
+        }
+    }
+
+    /// The message flattened for the boundary: one value with `messageType` saying which fields of
+    /// it carry meaning.
+    private var wire: SlopDeskWindowGeometry {
+        var flat = SlopDeskWindowGeometry()
+        flat.message_type = messageType
+        switch self {
+        case let .move(p):
+            flat.x = p.x
+            flat.y = p.y
+        case let .resize(s):
+            flat.width = s.width
+            flat.height = s.height
+        case let .bounds(r):
+            flat.x = r.origin.x
+            flat.y = r.origin.y
+            flat.width = r.size.width
+            flat.height = r.size.height
+        case .title:
+            flat.title_offset = slopdesk_window_geometry_constant(0)
+        }
+        return flat
     }
 }

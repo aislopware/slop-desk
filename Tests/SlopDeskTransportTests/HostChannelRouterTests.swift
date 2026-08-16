@@ -9,7 +9,7 @@ final class HostChannelRouterTests: XCTestCase {
     /// Registers a peer-initiated channel via channelOpen and asserts it opened.
     private func peerOpen(
         _ id: UInt32,
-        in router: inout HostChannelRouter,
+        in router: HostChannelRouter,
         file: StaticString = #filePath,
         line: UInt = #line,
     ) {
@@ -27,18 +27,18 @@ final class HostChannelRouterTests: XCTestCase {
     }
 
     func testRegistersPeerInitiatedChannelOnOpen() {
-        var router = HostChannelRouter()
+        let router = HostChannelRouter()
         // The host did NOT allocate id 1; the client did. channelOpen registers it.
         XCTAssertFalse(router.isOpen(1))
-        peerOpen(1, in: &router)
+        peerOpen(1, in: router)
         XCTAssertTrue(router.isOpen(1))
         XCTAssertEqual(router.liveChannelIDs, [1])
     }
 
     func testDemuxesTwoInterleavedChannelsIntoIndependentOutputs() {
-        var router = HostChannelRouter()
-        peerOpen(1, in: &router)
-        peerOpen(3, in: &router)
+        let router = HostChannelRouter()
+        peerOpen(1, in: router)
+        peerOpen(3, in: router)
 
         let a = Data("client->host A".utf8)
         let b = Data("client->host B".utf8)
@@ -58,8 +58,8 @@ final class HostChannelRouterTests: XCTestCase {
     }
 
     func testUnknownChannelDataIsDroppedNotCrashed() {
-        var router = HostChannelRouter()
-        peerOpen(1, in: &router)
+        let router = HostChannelRouter()
+        peerOpen(1, in: router)
         let decision = router.route(.channelData(channelID: 7, payload: Data("never-opened".utf8)))
         guard case .dropUnknownChannel(7, _) = decision else {
             XCTFail("expected dropUnknownChannel, got \(decision)")
@@ -73,9 +73,9 @@ final class HostChannelRouterTests: XCTestCase {
     }
 
     func testCloseOnChannelALeavesChannelBRoutable() {
-        var router = HostChannelRouter()
-        peerOpen(1, in: &router) // A
-        peerOpen(3, in: &router) // B
+        let router = HostChannelRouter()
+        peerOpen(1, in: router) // A
+        peerOpen(3, in: router) // B
 
         let closeDecision = router.route(.channelClose(channelID: 1))
         guard case .lifecycle(1, .halfClosed) = closeDecision else {
@@ -95,8 +95,8 @@ final class HostChannelRouterTests: XCTestCase {
     }
 
     func testDataPayloadCarriedOpaque() {
-        var router = HostChannelRouter()
-        peerOpen(1, in: &router)
+        let router = HostChannelRouter()
+        peerOpen(1, in: router)
         let inner = WireMessage.input(Data("ls -la\n".utf8)).encode()
         guard case let .deliverData(1, payload) = router.route(.channelData(channelID: 1, payload: inner)) else {
             XCTFail("expected deliverData")

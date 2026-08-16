@@ -1,7 +1,6 @@
 import CoreGraphics
 import SlopDeskWorkspaceModel
 import XCTest
-@testable import SlopDeskWorkspaceCore
 
 /// Pure tests for ``CanvasGeometry`` — the screen transform (a rigid 1:1 translate), the 8-anchor
 /// resize math, and new-pane placement (docs/30 §3, §9.1). The resize table is the canvas analogue of

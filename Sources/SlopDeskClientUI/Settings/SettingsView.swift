@@ -42,13 +42,10 @@ import SFSafeSymbols
 import SlopDeskCLICore
 import SlopDeskVideoProtocol
 import SlopDeskWorkspaceCore
-import SlopDeskWorkspaceModel
 import SwiftUI
 import UserNotifications
-#if os(macOS)
-import AppKit
-#elseif os(iOS)
-import UIKit
+#if os(iOS)
+import UIKit // UIApplication.openSettingsURLString — the notification-permission deep link.
 #endif
 
 // MARK: - Settings scene (stock SwiftUI, ⌘,)
@@ -886,7 +883,7 @@ private struct NotificationPermissionRow: View {
 /// `mouse-option.png`: **Selection**, **Copy & Paste**, **Scroll** (incl. SCROLLBACK depth — the `Settings →
 /// Controls → Scroll` home), **Mouse**, **Keyboard** (Undo at Prompt), and the slopdesk-specific **System**
 /// dialog-panes toggle. All LIVE — every `Defaults` row re-applies the libghostty config via
-/// `refreshTerminalControls()` (the `refreshing(_:)` wrapper); the scrollback stepper rebuilds via the
+/// `refreshTerminalControls()` (the `store.refreshing(_:)` wrapper); the scrollback stepper rebuilds via the
 /// `terminal` model's `didSet`. The cursor group is NOT here — it lives under **Appearance**
 /// (`cursor-style.png`), hosted by `CursorPreviewView`.
 private struct ControlsSettingsTab: View {
@@ -914,7 +911,7 @@ private struct ControlsSettingsTab: View {
     @Default(.undoAtPrompt) private var undoAtPrompt
     @Default(.optionAsAlt) private var optionAsAlt
     // Links (Settings → Controls → Open With / Link Schemes). Client-side link interaction —
-    // NOT libghostty config, so these bind DIRECTLY (no `refreshing(_:)` terminal-config rebuild).
+    // NOT libghostty config, so these bind DIRECTLY (no `store.refreshing(_:)` terminal-config rebuild).
     @Default(.linkDetection) private var linkDetection
     @Default(.linkCmdClick) private var linkCmdClick
     @Default(.linkCmdShiftClick) private var linkCmdShiftClick
@@ -994,7 +991,7 @@ private struct ControlsSettingsTab: View {
                         + "sequences (Emacs, Vim word-jumps, readline). Off keeps Option free for accented "
                         + "characters.",
                     options: SettingsOptionCatalog.optionAsAlt,
-                    selection: refreshing($optionAsAlt),
+                    selection: store.refreshing($optionAsAlt),
                 ) { option in
                     SettingsOptionKeyArt(mode: option.value)
                 }
@@ -1031,7 +1028,7 @@ private struct ControlsSettingsTab: View {
             SettingsSliderRow(
                 "Scroll multiplier",
                 subtitle: "Scales every scroll gesture's distance.",
-                value: refreshing($scrollMultiplier),
+                value: store.refreshing($scrollMultiplier),
                 range: SettingsScrollMultiplierLadder.range,
                 step: SettingsScrollMultiplierLadder.step,
                 presets: SettingsScrollMultiplierLadder.presets,
@@ -1068,7 +1065,7 @@ private struct ControlsSettingsTab: View {
                 subtitle: "What right-click does in the terminal viewport (Ctrl+right-click always opens the "
                     + "menu).",
                 options: SettingsOptionCatalog.rightClickActions,
-                selection: refreshing($rightClickAction),
+                selection: store.refreshing($rightClickAction),
             )
             toggleRow(
                 "Hide Mouse When Typing",
@@ -1105,7 +1102,7 @@ private struct ControlsSettingsTab: View {
     // MARK: - Links (Open With + Link Schemes)
 
     /// Settings → Controls → Open With. The link-interaction knobs are CLIENT-side (not libghostty
-    /// config), so they bind DIRECTLY — no `refreshing(_:)` rebuild.
+    /// config), so they bind DIRECTLY — no `store.refreshing(_:)` rebuild.
     ///
     /// HONESTY CEILING (docs/DECISIONS.md): a per-target "Open Files / Folders With → [app]" surrogate needs a
     /// LOCAL file/folder pane slopdesk can't offer for a REMOTE host (files live on the host; no file-transfer
@@ -1177,7 +1174,7 @@ private struct ControlsSettingsTab: View {
         }
     }
 
-    /// A dropdown row for a CLIENT-side link knob — like ``pickerRow`` but binds DIRECTLY (no `refreshing(_:)`
+    /// A dropdown row for a CLIENT-side link knob — like ``pickerRow`` but binds DIRECTLY (no `store.refreshing(_:)`
     /// terminal-config rebuild, since the link knobs are not libghostty config).
     private func linkPickerRow(
         _ title: String, _ subtitle: String? = nil,
@@ -1211,7 +1208,7 @@ private struct ControlsSettingsTab: View {
 
     /// Bridge the `scrollbackLines` Int model field to the slider's `Double`. Rounded (never truncated) so a
     /// float-stepped drag can't land one line BELOW the stop it visually snapped to — and written straight to
-    /// `store.terminal`, whose `didSet` rebuilds the libghostty config (no `refreshing(_:)` hop: this is a typed
+    /// `store.terminal`, whose `didSet` rebuilds the libghostty config (no `store.refreshing(_:)` hop: this is a typed
     /// render pref, not a fire-time `Defaults` toggle).
     private var scrollbackBinding: Binding<Double> {
         Binding(
@@ -1220,28 +1217,14 @@ private struct ControlsSettingsTab: View {
         )
     }
 
-    /// Wrap a fire-time `Defaults` control binding so a change ALSO re-applies the live terminal config (the
-    /// Controls passthrough). `PreferencesStore` is isolated on its injected `UserDefaults`; the global
-    /// Controls toggles live in `Defaults.standard`, so `refreshTerminalControls()` is the explicit re-read
-    /// seam (there is no `Defaults.observe` in the store, by design — see `PreferencesStore`).
-    private func refreshing<V: Equatable>(_ binding: Binding<V>) -> Binding<V> {
-        Binding(
-            get: { binding.wrappedValue },
-            set: { newValue in
-                binding.wrappedValue = newValue
-                store.refreshTerminalControls()
-            },
-        )
-    }
-
-    /// A toggle row with a leading glyph, wrapped in the `refreshing(_:)` seam so the change also re-applies the
+    /// A toggle row with a leading glyph, wrapped in the `store.refreshing(_:)` seam so the change also re-applies the
     /// live terminal config. `symbol` defaults to a neutral slider glyph for the rows whose meaning no icon
     /// improves — every row still lands on the icon RAIL, so a 20-switch page stays scannable.
     private func toggleRow(
         _ title: String, _ subtitle: String? = nil, symbol: SFSymbol = .sliderHorizontal3,
         isOn binding: Binding<Bool>,
     ) -> some View {
-        SettingsGlyphToggleRow(symbol, title, subtitle, isOn: refreshing(binding))
+        SettingsGlyphToggleRow(symbol, title, subtitle, isOn: store.refreshing(binding))
     }
 
     /// A dropdown row (label + subtext leading, a `.menu` picker trailing) for the multi-state Controls enums.
@@ -1250,7 +1233,7 @@ private struct ControlsSettingsTab: View {
         selection: Binding<some Hashable>, @ViewBuilder options: () -> some View,
     ) -> some View {
         LabeledContent {
-            Picker("", selection: refreshing(selection), content: options)
+            Picker("", selection: store.refreshing(selection), content: options)
                 .labelsHidden()
                 .pickerStyle(.menu)
                 .fixedSize()
@@ -1927,7 +1910,7 @@ private struct AdvancedSettingsTab: View {
                     "Allow programs to set the tab and window title via OSC 0 / OSC 2.",
                 )
             }
-            Toggle(isOn: refreshingControls($clipboardShellControlled)) {
+            Toggle(isOn: store.refreshing($clipboardShellControlled)) {
                 privilegeLabel(
                     "Clipboard — Shell Controlled",
                     "Master switch for OSC 52 clipboard access. When off, clipboard read and write are denied.",
@@ -1949,7 +1932,7 @@ private struct AdvancedSettingsTab: View {
         _ title: String, _ subtitle: String, _ selection: Binding<ClipboardAccess>,
     ) -> some View {
         LabeledContent {
-            Picker("", selection: refreshingControls(selection)) {
+            Picker("", selection: store.refreshing(selection)) {
                 Text("Ask").tag(ClipboardAccess.ask)
                 Text("Allow").tag(ClipboardAccess.allow)
                 Text("Deny").tag(ClipboardAccess.deny)
@@ -1972,19 +1955,6 @@ private struct AdvancedSettingsTab: View {
                 .foregroundStyle(SettingsInk.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-    }
-
-    /// Wrap a fire-time `Defaults` clipboard binding so a change ALSO re-applies the live terminal config —
-    /// the master + read/write tokens are read by `TerminalControls.from(defaults:)` into the libghostty
-    /// `clipboard-*` lines, so `refreshTerminalControls()` is the explicit re-read seam.
-    private func refreshingControls<V: Equatable>(_ binding: Binding<V>) -> Binding<V> {
-        Binding(
-            get: { binding.wrappedValue },
-            set: { newValue in
-                binding.wrappedValue = newValue
-                store.refreshTerminalControls()
-            },
-        )
     }
 
     /// Clear the local raw-overrides edit buffer after a reset. macOS-only buffer → a no-op on iOS.
@@ -2027,7 +1997,7 @@ private struct AdvancedSettingsTab: View {
                     if !FileManager.default.fileExists(atPath: path) {
                         try? "".write(to: url, atomically: true, encoding: .utf8)
                     }
-                    NSWorkspace.shared.open(url)
+                    ExternalOpen.url(url)
                 }
                 .buttonStyle(.bordered)
                 Button("Reload Config") {

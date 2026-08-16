@@ -15,6 +15,11 @@ import XCTest
 ///
 /// These tests pin the shape of the false verdict AND the two guards that make it unreachable.
 final class PaneScreenScannerSyncFrameTests: XCTestCase {
+    /// The pane's grid lives in `slopdesk-screend`; skip by name when it is not built.
+    override func setUpWithError() throws {
+        try ScreendFixture.requireDaemon()
+    }
+
     // MARK: The fixture — an `AskUserQuestion` screen, shaped like the captured one
 
     private static let rule = String(repeating: "─", count: 60)
@@ -76,31 +81,10 @@ final class PaneScreenScannerSyncFrameTests: XCTestCase {
         return (Data(head.utf8), Data(tail.utf8))
     }
 
-    // MARK: The false verdict itself (why the guards are needed)
-
-    /// ⚠️ DIVERGES FROM herdr (2026-08-11). herdr answers `live_prompt_box` here, and so did we
-    /// until the user released parity: a footerless dialog was called an IDLE pane showing real
-    /// prompt chrome — the one screen verdict strong enough to clear an authoritative hook block.
-    ///
-    /// The manifest now vetoes `live_prompt_box` on the OPTION LIST (`❯ 1. …` with a sibling
-    /// `  2. …`), which is what survives an erase-then-rewrite when the footer does not. So the
-    /// torn read is no longer merely outranked — it is no longer WRONG, and the guards below stop
-    /// being the only thing between a tear and a false finished turn.
-    func testAFooterlessDialogIsNoLongerMistakenForAnIdlePromptBox() {
-        let withFooter = AgentManifestCatalog.detect(
-            agent: .claude,
-            input: AgentDetectionInput(screen: Self.dialogScreen(footer: true)),
-        )
-        XCTAssertEqual(withFooter.state, .blocked)
-        XCTAssertEqual(withFooter.matchedRuleID, "live_blocked_form")
-
-        let torn = AgentManifestCatalog.detect(
-            agent: .claude,
-            input: AgentDetectionInput(screen: Self.dialogScreen(footer: false)),
-        )
-        XCTAssertNotEqual(torn.matchedRuleID, "live_prompt_box")
-        XCTAssertFalse(torn.visibleIdle, "nothing here is strong enough to lower a hand")
-    }
+    // (The false verdict ITSELF — that a footerless dialog must not read as an idle prompt box —
+    // is pinned where the rule ladder lives: `the_claude_dialog_never_reads_as_an_idle_prompt_box`
+    // in rust/slopdesk-screend/tests/cross_region_gate.rs. What is left here is the SCANNER's two
+    // guards, which are hostd's: they are about time, and the clock is on this side.)
 
     // MARK: Guard 1 — never read a grid the program has not finished painting
 

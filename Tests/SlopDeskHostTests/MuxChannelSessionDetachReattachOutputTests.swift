@@ -22,6 +22,13 @@ import XCTest
 /// `rebindRelay` makes BOTH tests fail — the recorder never sees the detached-era bytes, and
 /// the gate stays at full `outstanding` with the read loop paused forever.
 final class MuxChannelSessionDetachReattachOutputTests: XCTestCase {
+    /// Visible text followed by a CLOSED alt-screen segment — a whole TUI redrawing itself, which
+    /// pass 2 of the linked transform drops. The transform is no longer injectable, so a case that
+    /// wants to observe it running has to feed it bytes it demonstrably changes.
+    private static func churn(_ visible: String) -> Data {
+        Data("\(visible)\u{1B}[?1049hDRAW\n\u{1B}[?1049l".utf8)
+    }
+
     // MARK: - Helpers
 
     /// Records every framed byte a sub-channel's `muxSend` writes and decodes them back into
@@ -100,7 +107,7 @@ final class MuxChannelSessionDetachReattachOutputTests: XCTestCase {
     private func makeSession() -> MuxChannelSession {
         MuxChannelSession(
             channelID: 1,
-            pty: PTYProcess(), // unspawned — relay never started; producer driven via the seams
+            pty: unattachedPTY(), // unspawned — relay never started; producer driven via the seams
             data: MuxSubChannel(channelID: 1, channel: .data) { _, _ in },
             control: MuxSubChannel(channelID: 1, channel: .control) { _, _ in },
         )
@@ -299,21 +306,21 @@ final class MuxChannelSessionDetachReattachOutputTests: XCTestCase {
     /// at the new geometry), and the gate accounting must rebalance by the shrink delta so the
     /// books still reach zero once the drain ships the smaller backlog.
     func testColdReattachTransformsDetachedBacklog() async {
-        let dropDashes: @Sendable (Data) -> Data = { Data($0.filter { $0 != UInt8(ascii: "-") }) }
         let session = MuxChannelSession(
             channelID: 1,
-            pty: PTYProcess(),
+            pty: unattachedPTY(),
             data: MuxSubChannel(channelID: 1, channel: .data) { _, _ in },
             control: MuxSubChannel(channelID: 1, channel: .control) { _, _ in },
-            replay: ReplayBuffer(scrollbackBytes: 4096, scrollbackDistiller: dropDashes),
+            replay: ReplayBuffer(scrollbackBytes: 4096),
         )
         let gate = PausableQueueGate(capacity: 1_000_000) { _ in }
         session.installGateForTesting(gate)
         session.detach(onDetachedExit: { _ in })
 
-        session.enqueueChunkForTesting(bytes: Data("churn--1\n".utf8))
-        session.enqueueChunkForTesting(bytes: Data("churn--2\n".utf8))
-        XCTAssertEqual(gate.outstanding, 18, "precondition: raw backlog accounted")
+        let first = Self.churn("churn1\n"), second = Self.churn("churn2\n")
+        session.enqueueChunkForTesting(bytes: first)
+        session.enqueueChunkForTesting(bytes: second)
+        XCTAssertEqual(gate.outstanding, first.count + second.count, "precondition: raw backlog accounted")
 
         let recorder = SendRecorder()
         let newData = MuxSubChannel(channelID: 1, channel: .data) { _, frame in recorder.record(frame) }
@@ -323,6 +330,7 @@ final class MuxChannelSessionDetachReattachOutputTests: XCTestCase {
         ))
 
         let expected = Data("churn1\nchurn2\n".utf8)
+        XCTAssertLessThan(expected.count, first.count + second.count, "the transform must actually shrink it")
         await waitUntil { recorder.outputBytes == expected && gate.outstanding == 0 }
         XCTAssertEqual(recorder.outputBytes, expected, "cold backlog ships transformed")
         XCTAssertEqual(
@@ -334,26 +342,27 @@ final class MuxChannelSessionDetachReattachOutputTests: XCTestCase {
     /// WARM reattach (default `transformDetachedBacklog: false`): the backlog ships RAW —
     /// the client's live grid needs byte-exact continuation.
     func testWarmReattachKeepsRawDetachedBacklog() async {
-        let dropDashes: @Sendable (Data) -> Data = { Data($0.filter { $0 != UInt8(ascii: "-") }) }
         let session = MuxChannelSession(
             channelID: 1,
-            pty: PTYProcess(),
+            pty: unattachedPTY(),
             data: MuxSubChannel(channelID: 1, channel: .data) { _, _ in },
             control: MuxSubChannel(channelID: 1, channel: .control) { _, _ in },
-            replay: ReplayBuffer(scrollbackBytes: 4096, scrollbackDistiller: dropDashes),
+            replay: ReplayBuffer(scrollbackBytes: 4096),
         )
         session.installGateForTesting(PausableQueueGate(capacity: 1_000_000) { _ in })
         session.detach(onDetachedExit: { _ in })
-        session.enqueueChunkForTesting(bytes: Data("raw--bytes\n".utf8))
+        // Carries a closed segment the cold path WOULD strip, so byte-exactness here is evidence
+        // the transform did not run rather than evidence it had nothing to do.
+        let raw = Self.churn("raw bytes\n")
+        session.enqueueChunkForTesting(bytes: raw)
 
         let recorder = SendRecorder()
         let newData = MuxSubChannel(channelID: 1, channel: .data) { _, frame in recorder.record(frame) }
         let newControl = MuxSubChannel(channelID: 1, channel: .control) { _, _ in }
         XCTAssertTrue(session.rebindRelay(data: newData, control: newControl, onExit: nil))
 
-        let expected = Data("raw--bytes\n".utf8)
-        await waitUntil { recorder.outputBytes == expected }
-        XCTAssertEqual(recorder.outputBytes, expected, "warm backlog stays byte-exact")
+        await waitUntil { recorder.outputBytes == raw }
+        XCTAssertEqual(recorder.outputBytes, raw, "warm backlog stays byte-exact")
     }
 
     // MARK: - rebindRelay must NOT register a second PTY exit waiter

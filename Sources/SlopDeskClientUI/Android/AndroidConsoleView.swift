@@ -16,8 +16,8 @@
 // log.
 
 #if os(macOS)
-import AppKit
 import SFSafeSymbols
+import SlopDeskWorkspaceCore
 import SwiftUI
 
 struct AndroidConsoleView: View {
@@ -175,8 +175,7 @@ struct AndroidConsoleView: View {
     }
 
     private func copy(_ text: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
+        ClientPasteboard.write(text)
     }
 
     // MARK: Deriving

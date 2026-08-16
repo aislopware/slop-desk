@@ -27,8 +27,8 @@
 // the width.
 
 #if os(macOS)
-import AppKit
 import SFSafeSymbols
+import SlopDeskWorkspaceCore
 import SwiftUI
 
 /// One group of the list: a heading and its devices.
@@ -360,8 +360,7 @@ struct AndroidDeviceList: View {
     }
 
     private func copy(_ text: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
+        ClientPasteboard.write(text)
     }
 
     // MARK: Notices
@@ -372,12 +371,7 @@ struct AndroidDeviceList: View {
     // the thing being fixed.
 
     private func message(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: Slate.Typeface.base))
-            .foregroundStyle(Slate.Text.secondary)
-            .multilineTextAlignment(.center)
-            .padding(Slate.Metric.space3)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        DevicePanelChrome.notice(text)
     }
 }
 #endif
