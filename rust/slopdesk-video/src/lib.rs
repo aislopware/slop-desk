@@ -214,7 +214,7 @@ pub use blob::{BlobAssembler, BlobChunk, CompleteBlob, OneShotBlobFetch};
 pub use bytes::{ByteReader, ByteWriter};
 pub use capture_recovery::{CaptureFailureAction, VirtualDisplayRecreateGate};
 pub use client_gestures::{PinchZoomKeyPlanner, ScrollRoutePinner};
-pub use client_input::{CursorShapeRequestTracker, InputEventEncoder, ModifierLatchTracker, PointerMapping};
+pub use client_input::{CursorShapeRequestTracker, ModifierLatchTracker, PointerMapping};
 pub use client_jitter::{AdaptiveJitterController, OwdJitterEstimator};
 pub use client_session::{
     ClientEffect, RoutedDatagram, StallScrimLatch, VideoClientState, VideoClientStateMachine,

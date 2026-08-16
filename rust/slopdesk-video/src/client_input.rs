@@ -13,9 +13,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::geometry::{VideoContentMode, VideoPoint, VideoRect, VideoSize, displayed_video_rect};
-use crate::input_event::{
-    InputEvent, InputModifiers, KeyEvent, MouseButton, MouseButtonEvent, ScrollEvent, modifier_keys,
-};
+use crate::input_event::modifier_keys;
 
 /// How the renderer is mapping the texture onto the drawable right now.
 ///
@@ -125,158 +123,15 @@ const fn clamp_unit(value: f64) -> f64 {
     value.max(0.0).min(1.0)
 }
 
-/// Builds the client-to-host input events, stamping each with the self-inject filter tag.
-///
-/// The host writes the tag onto the injected event so its own cursor sampler and geometry watcher
-/// can drop what this client injected rather than echoing it back. The tag is monotonic per event.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct InputEventEncoder {
-    next_tag: u32,
-}
-
-impl Default for InputEventEncoder {
-    fn default() -> Self {
-        Self::new(1)
-    }
-}
-
-impl InputEventEncoder {
-    /// An encoder starting at the given tag.
-    #[must_use]
-    pub const fn new(initial_tag: u32) -> Self {
-        Self {
-            next_tag: initial_tag,
-        }
-    }
-
-    /// The tag the next emitted event will carry.
-    #[must_use]
-    pub const fn peek_next_tag(&self) -> u32 {
-        self.next_tag
-    }
-
-    /// A pure hover move.
-    pub fn mouse_move(
-        &mut self,
-        view_point: VideoPoint,
-        layer_size: VideoSize,
-        mapping: PointerMapping,
-    ) -> InputEvent {
-        InputEvent::MouseMove {
-            normalized: normalize(view_point, layer_size, mapping),
-            tag: self.take_tag(),
-        }
-    }
-
-    /// A button press.
-    pub fn mouse_down(
-        &mut self,
-        button: MouseButton,
-        view_point: VideoPoint,
-        layer_size: VideoSize,
-        mapping: PointerMapping,
-        click_count: u8,
-        modifiers: InputModifiers,
-    ) -> InputEvent {
-        let event = Self::button_event(button, view_point, layer_size, mapping, click_count, modifiers);
-        InputEvent::MouseDown(event, self.take_tag())
-    }
-
-    /// A button release.
-    pub fn mouse_up(
-        &mut self,
-        button: MouseButton,
-        view_point: VideoPoint,
-        layer_size: VideoSize,
-        mapping: PointerMapping,
-        click_count: u8,
-        modifiers: InputModifiers,
-    ) -> InputEvent {
-        let event = Self::button_event(button, view_point, layer_size, mapping, click_count, modifiers);
-        InputEvent::MouseUp(event, self.take_tag())
-    }
-
-    /// A move with a button HELD, said explicitly so the host can post a drag statelessly.
-    pub fn mouse_drag(
-        &mut self,
-        button: MouseButton,
-        view_point: VideoPoint,
-        layer_size: VideoSize,
-        mapping: PointerMapping,
-        click_count: u8,
-        modifiers: InputModifiers,
-    ) -> InputEvent {
-        let event = Self::button_event(button, view_point, layer_size, mapping, click_count, modifiers);
-        InputEvent::MouseDrag(event, self.take_tag())
-    }
-
-    /// A scroll or trackpad gesture, carrying the phases verbatim.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the wire event's own shape: two deltas, a position, two phases and a precision flag, none \
-                  of which the host can infer from the others"
-    )]
-    pub fn scroll(
-        &mut self,
-        dx: f64,
-        dy: f64,
-        view_point: VideoPoint,
-        layer_size: VideoSize,
-        mapping: PointerMapping,
-        scroll_phase: u8,
-        momentum_phase: u8,
-        continuous: bool,
-    ) -> InputEvent {
-        let event = ScrollEvent {
-            dx,
-            dy,
-            normalized: normalize(view_point, layer_size, mapping),
-            scroll_phase,
-            momentum_phase,
-            continuous,
-        };
-        InputEvent::Scroll(event, self.take_tag())
-    }
-
-    /// A key edge by host virtual keycode.
-    pub const fn key(&mut self, key_code: u16, down: bool, modifiers: InputModifiers) -> InputEvent {
-        InputEvent::Key(
-            KeyEvent {
-                key_code,
-                down,
-                modifiers,
-            },
-            self.take_tag(),
-        )
-    }
-
-    /// A layout-independent text insertion.
-    pub fn text(&mut self, string: impl Into<String>) -> InputEvent {
-        InputEvent::Text(string.into(), self.take_tag())
-    }
-
-    fn button_event(
-        button: MouseButton,
-        view_point: VideoPoint,
-        layer_size: VideoSize,
-        mapping: PointerMapping,
-        click_count: u8,
-        modifiers: InputModifiers,
-    ) -> MouseButtonEvent {
-        MouseButtonEvent {
-            button,
-            normalized: normalize(view_point, layer_size, mapping),
-            click_count,
-            modifiers,
-        }
-    }
-
-    const fn take_tag(&mut self) -> u32 {
-        let tag = self.next_tag;
-        self.next_tag = self.next_tag.wrapping_add(1);
-        tag
-    }
-}
+// There is no encoder type here, and its absence is the rule rather than an omission.
+//
+// The client's encoder is `SlopDeskVideoClient.InputEventEncoder`, and what it BUILDS is a Swift
+// `InputEvent` — a value the whole video client pattern-matches on, which is the shape of the
+// answer and so stays in Swift (docs/55 §6). Everything it DECIDES already crosses:
+// `slopdesk_input_normalize` wraps `normalize` above and `slopdesk_input_next_tag` is the tag step,
+// both in `slopdesk-ffi`. A Rust encoder would therefore be a second implementation of the same
+// eleven lines with no caller, reachable only from its own tests — which is what it was, until
+// 2026-08-16.
 
 /// Tracks which modifier keys were forwarded as down but whose release the view may never see.
 ///
@@ -502,17 +357,15 @@ impl CursorShapeRequestTracker {
 mod tests {
     #![expect(
         clippy::float_cmp,
-        clippy::panic,
-        reason = "the normalised positions are exact halves and quarters of the fixture sizes, and a wrong \
-                  event variant is a test failure with nothing to return"
+        reason = "the normalised positions are exact halves and quarters of the fixture sizes"
     )]
 
     use super::{
         CURSOR_SHAPE_RE_REQUEST_INTERVAL, CursorShapeRequestTracker, DEFAULT_MOTION_INTERVAL,
-        InputEventEncoder, ModifierLatchTracker, PointerMapping, motion_interval, normalize,
+        ModifierLatchTracker, PointerMapping, motion_interval, normalize,
     };
     use crate::geometry::{VideoContentMode, VideoPoint, VideoRect, VideoSize};
-    use crate::input_event::{InputEvent, InputModifiers, MouseButton, modifier_keys};
+    use crate::input_event::modifier_keys;
 
     fn point(x: f64, y: f64) -> VideoPoint {
         VideoPoint { x, y }
@@ -611,84 +464,6 @@ mod tests {
             normalize(point(10.0, 10.0), zero, PointerMapping::fit(zero)),
             point(0.0, 0.0),
         );
-    }
-
-    #[test]
-    fn every_emitted_event_carries_the_next_tag() {
-        let (layer, mapping) = pillarboxed();
-        let mut encoder = InputEventEncoder::default();
-        assert_eq!(encoder.peek_next_tag(), 1);
-        let moved = encoder.mouse_move(point(500.0, 250.0), layer, mapping);
-        assert_eq!(moved.tag(), 1);
-        let down = encoder.mouse_down(
-            MouseButton::Left,
-            point(500.0, 250.0),
-            layer,
-            mapping,
-            1,
-            InputModifiers::default(),
-        );
-        assert_eq!(down.tag(), 2);
-        let up = encoder.mouse_up(
-            MouseButton::Left,
-            point(500.0, 250.0),
-            layer,
-            mapping,
-            1,
-            InputModifiers::default(),
-        );
-        assert_eq!(up.tag(), 3);
-        assert_eq!(encoder.key(55, true, InputModifiers::default()).tag(), 4);
-        assert_eq!(encoder.text("hi").tag(), 5);
-        assert_eq!(encoder.peek_next_tag(), 6);
-    }
-
-    #[test]
-    fn a_drag_says_so_explicitly_rather_than_looking_like_a_hover() {
-        let (layer, mapping) = pillarboxed();
-        let mut encoder = InputEventEncoder::default();
-        let drag = encoder.mouse_drag(
-            MouseButton::Right,
-            point(500.0, 250.0),
-            layer,
-            mapping,
-            2,
-            InputModifiers::SHIFT,
-        );
-        match drag {
-            InputEvent::MouseDrag(event, _) => {
-                assert_eq!(event.button, MouseButton::Right);
-                assert_eq!(event.click_count, 2);
-                assert_eq!(event.modifiers, InputModifiers::SHIFT);
-                assert_eq!(event.normalized.x, 0.5);
-            },
-            other => panic!("expected a drag, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn a_scroll_carries_its_phases_verbatim() {
-        let (layer, mapping) = pillarboxed();
-        let mut encoder = InputEventEncoder::default();
-        let scrolled = encoder.scroll(-3.0, 12.0, point(500.0, 250.0), layer, mapping, 2, 0, true);
-        match scrolled {
-            InputEvent::Scroll(event, tag) => {
-                assert_eq!(tag, 1);
-                assert_eq!(event.dx, -3.0);
-                assert_eq!(event.dy, 12.0);
-                assert_eq!(event.scroll_phase, 2);
-                assert_eq!(event.momentum_phase, 0);
-                assert!(event.continuous);
-            },
-            other => panic!("expected a scroll, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn the_tag_wraps_rather_than_overflowing() {
-        let mut encoder = InputEventEncoder::new(u32::MAX);
-        assert_eq!(encoder.key(55, true, InputModifiers::default()).tag(), u32::MAX);
-        assert_eq!(encoder.peek_next_tag(), 0);
     }
 
     #[test]
