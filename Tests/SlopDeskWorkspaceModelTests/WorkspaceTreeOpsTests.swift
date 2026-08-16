@@ -25,6 +25,112 @@ final class WorkspaceTreeOpsTests: XCTestCase {
         return (ws, id)
     }
 
+    // MARK: The shape-building ops, run the way production runs them
+
+    //
+    // A split, a new tab, a new session and a zoom are INTENTS — the client asks, and
+    // `slopdesk_wire::document::apply` behind the FFI door decides. Their Swift twins were deleted
+    // on 2026-08-17 with the rest of the applier, so what builds a fixture here is the same call the
+    // ⌘D that produced it would make. That is strictly better than a private tree edit: a fixture
+    // that could not be reached by any gesture is a fixture testing a shape the product cannot hold.
+    //
+    // The signatures deliberately match the ops they replace, so the tests below read unchanged.
+
+    private func applied(
+        _ op: WorkspaceIntentOp,
+        _ args: Data,
+        _ ws: TreeWorkspace,
+        file: StaticString = #filePath,
+        line: UInt = #line,
+    ) -> TreeWorkspace {
+        let outcome = WorkspaceIntentApplier.apply(
+            op: op.rawValue, args: args, to: WorkspaceTopology(tree: ws), documentIsPristine: true,
+        )
+        guard let next = outcome.topology else {
+            XCTFail("the \(op) fixture was refused: \(outcome)", file: file, line: line)
+            return ws
+        }
+        return next.tree
+    }
+
+    /// Writes a minted pane's fixture spec. The op gives every new pane a plain terminal, and the
+    /// TITLE is what these fixtures name their panes by — so it is written here rather than asked
+    /// for, because a `renamePane` would also set the authored bit and change the subject.
+    private func titling(_ ws: inout TreeWorkspace, _ pane: PaneID, _ spec: PaneSpec) {
+        guard let index = ws.sessions.firstIndex(where: { $0.specs[pane] != nil }) else { return }
+        ws.sessions[index].specs[pane] = spec
+    }
+
+    private func splitPane(
+        _ target: PaneID,
+        axis: SplitAxis,
+        newSpec: PaneSpec,
+        before: Bool = false,
+        in ws: TreeWorkspace,
+        file: StaticString = #filePath,
+        line: UInt = #line,
+    ) -> (TreeWorkspace, PaneID) {
+        let minted = PaneID()
+        var next = applied(
+            .splitPane,
+            WorkspaceIntentArgs.encode(
+                target: target.raw, axis: axis, before: before, newPane: minted, spawnCwd: nil,
+            ),
+            ws, file: file, line: line,
+        )
+        titling(&next, minted, newSpec)
+        return (next, minted)
+    }
+
+    private func newTab(
+        in ws: TreeWorkspace,
+        spec: PaneSpec,
+        at position: NewTabPosition = .end,
+        file: StaticString = #filePath,
+        line: UInt = #line,
+    ) -> (TreeWorkspace, PaneID) {
+        guard let session = ws.activeSessionID else { return (ws, PaneID()) }
+        let minted = PaneID()
+        var next = applied(
+            .spawnTab,
+            WorkspaceIntentArgs.encode(
+                session: session, newPane: minted, position: position, spawnCwd: nil,
+            ),
+            ws, file: file, line: line,
+        )
+        titling(&next, minted, spec)
+        return (next, minted)
+    }
+
+    private func newSession(
+        in ws: TreeWorkspace,
+        name: String,
+        spec: PaneSpec,
+        file: StaticString = #filePath,
+        line: UInt = #line,
+    ) -> (TreeWorkspace, PaneID) {
+        let minted = PaneID()
+        var next = applied(
+            .newSession,
+            WorkspaceIntentArgs.encode(
+                newSession: SessionID(), newPane: minted, name: name, spawnCwd: nil,
+            ),
+            ws, file: file, line: line,
+        )
+        titling(&next, minted, spec)
+        return (next, minted)
+    }
+
+    private func setZoom(
+        _ pane: PaneID,
+        _ zoomed: Bool,
+        in ws: TreeWorkspace,
+        file: StaticString = #filePath,
+        line: UInt = #line,
+    ) -> TreeWorkspace {
+        applied(.setZoom, WorkspaceIntentArgs.encode(id: pane.raw, flag: zoomed), ws, file: file, line: line)
+    }
+
     /// Asserts the load-bearing invariant: the active session's spec keys are EXACTLY the set of leaf ids
     /// across every tab of that session, and globally every leaf has a resolvable spec.
     private func assertInvariant(
@@ -58,102 +164,15 @@ final class WorkspaceTreeOpsTests: XCTestCase {
         assertInvariant(ws)
     }
 
-    func testAllPaneIDsIsDFSAcrossSessionsTabsAndTree() throws {
-        // Two sessions; the first has two tabs; the second has a 2-leaf split. allPaneIDs must visit
-        // session → tab → pre-order tree, deterministically.
-        var ws = TreeWorkspace.singlePane(spec: termSpec("a"))
-        let a = ws.allPaneIDs()[0]
-        let (ws1, b) = WorkspaceTreeOps.splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
-        ws = ws1
-        // New tab with a single leaf c.
-        let (ws2, c) = WorkspaceTreeOps.newTab(in: ws, spec: termSpec("c"))
-        ws = ws2
-        // New session with a single leaf d.
-        let (ws3, d) = WorkspaceTreeOps.newSession(in: ws, name: "s2", spec: termSpec("d"))
-        ws = ws3
-        let ids = ws.allPaneIDs()
-        XCTAssertEqual(Set(ids), Set([a, b, c, d]))
-        // a and b come before c (same session, earlier tab); a,b,c (session 1) before d (session 2).
-        XCTAssertLessThan(try XCTUnwrap(ids.firstIndex(of: a)), try XCTUnwrap(ids.firstIndex(of: c)))
-        XCTAssertLessThan(try XCTUnwrap(ids.firstIndex(of: b)), try XCTUnwrap(ids.firstIndex(of: c)))
-        XCTAssertLessThan(try XCTUnwrap(ids.firstIndex(of: c)), try XCTUnwrap(ids.firstIndex(of: d)))
-        assertInvariant(ws)
-    }
-
     // MARK: Split
-
-    func testSplitReplacesLeafWithTwoChildSplitWhenNewAxis() throws {
-        let (ws, a) = singleLeaf()
-        let (after, b) = WorkspaceTreeOps.splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
-        let root = try activeRoot(after)
-        guard case let .split(_, axis, children) = root else {
-            XCTFail("split of a leaf must produce a 2-child split, got \(root)")
-            return
-        }
-        XCTAssertEqual(axis, .horizontal)
-        XCTAssertEqual(children.count, 2, "leaf → 2-child split")
-        XCTAssertEqual(root.allPaneIDs(), [a, b], "original first, new pane second")
-        // Equal flex weights.
-        for child in children {
-            guard case let .flex(w) = child.weight else {
-                XCTFail("expected flex weight")
-                return
-            }
-            XCTAssertEqual(w, 1, accuracy: 1e-9)
-        }
-        XCTAssertEqual(after.spec(for: b)?.title, "b")
-        assertInvariant(after)
-    }
-
-    func testSplitInsertsSiblingWhenParentAxisMatches() throws {
-        // a|b (horizontal). Split b horizontally again → a|b|c as a 3-way sibling list, NOT a nested split.
-        let (ws, a) = singleLeaf()
-        let (s1, b) = WorkspaceTreeOps.splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
-        let (s2, c) = WorkspaceTreeOps.splitPane(b, axis: .horizontal, newSpec: termSpec("c"), in: s1)
-        let root = try activeRoot(s2)
-        guard case let .split(_, axis, children) = root else {
-            XCTFail("expected split")
-            return
-        }
-        XCTAssertEqual(axis, .horizontal)
-        XCTAssertEqual(children.count, 3, "matching-axis split inserts a sibling — no nested intermediary")
-        XCTAssertEqual(root.allPaneIDs(), [a, b, c], "c inserted directly after b")
-        assertInvariant(s2)
-    }
-
-    func testSplitDifferentAxisNestsAtTheTarget() throws {
-        // a|b horizontal; split b VERTICALLY → a | (b stacked over c). b's slot becomes a vertical split.
-        let (ws, a) = singleLeaf()
-        let (s1, b) = WorkspaceTreeOps.splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
-        let (s2, c) = WorkspaceTreeOps.splitPane(b, axis: .vertical, newSpec: termSpec("c"), in: s1)
-        let root = try activeRoot(s2)
-        guard case let .split(_, axis, children) = root, axis == .horizontal, children.count == 2 else {
-            XCTFail("root must stay a 2-child horizontal split")
-            return
-        }
-        guard case let .split(_, innerAxis, inner) = children[1].node else {
-            XCTFail("b's slot must become a nested split")
-            return
-        }
-        XCTAssertEqual(innerAxis, .vertical)
-        XCTAssertEqual(inner.count, 2)
-        XCTAssertEqual(root.allPaneIDs(), [a, b, c])
-        assertInvariant(s2)
-    }
-
-    func testSplitFocusesAndActivatesTheNewPane() throws {
-        let (ws, a) = singleLeaf()
-        let (after, b) = WorkspaceTreeOps.splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
-        XCTAssertEqual(try activeTab(after).activePane, b, "the freshly split pane takes focus")
-    }
 
     // MARK: Close — collapse + rebalance
 
     func testClosePaneCollapsesSingleChildParentAndRebalances() {
         // a|b|c equal; close b → a|c, weights renormalize to equal (sum-preserve over survivors).
         let (ws, a) = singleLeaf()
-        let (s1, b) = WorkspaceTreeOps.splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
-        let (s2, c) = WorkspaceTreeOps.splitPane(b, axis: .horizontal, newSpec: termSpec("c"), in: s1)
+        let (s1, b) = splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
+        let (s2, c) = splitPane(b, axis: .horizontal, newSpec: termSpec("c"), in: s1)
         let s3 = WorkspaceTreeOps.closePane(b, in: s2)
         XCTAssertEqual(s3.allPaneIDs(), [a, c], "b removed; a and c survive")
         XCTAssertNil(s3.spec(for: b), "spec for the closed pane is dropped")
@@ -163,7 +182,7 @@ final class WorkspaceTreeOpsTests: XCTestCase {
     func testClosePaneCollapsesTwoChildSplitIntoSurvivor() throws {
         // a|b; close a → the split collapses into just b (a single leaf, no orphan split node).
         let (ws, a) = singleLeaf()
-        let (s1, b) = WorkspaceTreeOps.splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
+        let (s1, b) = splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
         let s2 = WorkspaceTreeOps.closePane(a, in: s1)
         let root = try activeRoot(s2)
         XCTAssertEqual(root, .leaf(b), "a 2-child split collapses to the lone survivor leaf")
@@ -173,7 +192,7 @@ final class WorkspaceTreeOpsTests: XCTestCase {
     func testCloseLastPaneInTabClosesTheTab() throws {
         // Session with two tabs; close the only pane of tab 0 → tab 0 disappears, tab 1 survives.
         let (ws, _) = singleLeaf()
-        let (s1, _) = WorkspaceTreeOps.newTab(in: ws, spec: termSpec("t2"))
+        let (s1, _) = newTab(in: ws, spec: termSpec("t2"))
         // s1 active tab is the new one (index 1). Close its lone pane.
         let secondTabPane = try XCTUnwrap(s1.activeSession?.tabs[1].root.allPaneIDs().first)
         XCTAssertEqual(s1.sessions[0].tabs.count, 2)
@@ -185,7 +204,7 @@ final class WorkspaceTreeOpsTests: XCTestCase {
     func testCloseLastPaneOfLastTabClosesTheSessionWhenAnotherSessionExists() {
         // Two sessions; close the lone pane of session 2 → session 2 is removed entirely.
         let (ws, _) = singleLeaf()
-        let (s1, d) = WorkspaceTreeOps.newSession(in: ws, name: "s2", spec: termSpec("d"))
+        let (s1, d) = newSession(in: ws, name: "s2", spec: termSpec("d"))
         XCTAssertEqual(s1.sessions.count, 2)
         let s2 = WorkspaceTreeOps.closePane(d, in: s1)
         XCTAssertEqual(s2.sessions.count, 1, "closing the last pane of the last tab closes the session")
@@ -209,8 +228,8 @@ final class WorkspaceTreeOpsTests: XCTestCase {
         // exact survivor (not merely "a or c") makes this fail if the neighbour pick regresses (e.g. flips
         // to the right, or falls through to the first leaf).
         let (ws, a) = singleLeaf()
-        let (s1, b) = WorkspaceTreeOps.splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
-        let (s2, c) = WorkspaceTreeOps.splitPane(b, axis: .horizontal, newSpec: termSpec("c"), in: s1)
+        let (s1, b) = splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
+        let (s2, c) = splitPane(b, axis: .horizontal, newSpec: termSpec("c"), in: s1)
         // b is active (split focuses the new pane = c, then we split again; re-focus b explicitly).
         let s2b = WorkspaceTreeOps.focusPane(b, in: s2)
         let s3 = WorkspaceTreeOps.closePane(b, in: s2b)
@@ -222,24 +241,10 @@ final class WorkspaceTreeOpsTests: XCTestCase {
 
     // MARK: Zoom — out of tree
 
-    func testToggleZoomLeavesTheTreeUnchanged() throws {
-        let (ws, a) = singleLeaf()
-        let (s1, b) = WorkspaceTreeOps.splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
-        let treeBefore = try activeRoot(s1)
-        let s2 = WorkspaceTreeOps.toggleZoom(b, in: s1)
-        let tab = try activeTab(s2)
-        XCTAssertEqual(tab.zoomedPane, b, "zoom records the pane out-of-tree")
-        XCTAssertEqual(tab.root, treeBefore, "zoom must NOT mutate the split tree")
-        // Toggling the same pane clears it.
-        let s3 = WorkspaceTreeOps.toggleZoom(b, in: s2)
-        XCTAssertNil(try activeTab(s3).zoomedPane)
-        XCTAssertEqual(try activeRoot(s3), treeBefore)
-    }
-
     func testClosingZoomedPaneClearsZoom() throws {
         let (ws, a) = singleLeaf()
-        let (s1, b) = WorkspaceTreeOps.splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
-        let s2 = WorkspaceTreeOps.toggleZoom(b, in: s1)
+        let (s1, b) = splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
+        let s2 = setZoom(b, true, in: s1)
         let s3 = WorkspaceTreeOps.closePane(b, in: s2)
         XCTAssertNil(try activeTab(s3).zoomedPane, "closing the zoomed pane clears the dangling zoom")
         assertInvariant(s3)
@@ -249,7 +254,7 @@ final class WorkspaceTreeOpsTests: XCTestCase {
 
     func testResizeDividerShiftsWeightBetweenAdjacentSiblingsSumPreserved() throws {
         let (ws, a) = singleLeaf()
-        let (s1, _) = WorkspaceTreeOps.splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
+        let (s1, _) = splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
         guard case let .split(splitID, _, before) = try activeRoot(s1) else {
             XCTFail("expected split")
             return
@@ -268,7 +273,7 @@ final class WorkspaceTreeOpsTests: XCTestCase {
     func testResizeDividerClampsAtMinWeight() throws {
         // A huge negative delta cannot starve the leading child below minWeight.
         let (ws, a) = singleLeaf()
-        let (s1, _) = WorkspaceTreeOps.splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
+        let (s1, _) = splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
         guard case let .split(splitID, _, before) = try activeRoot(s1) else {
             XCTFail("expected split")
             return
@@ -285,188 +290,9 @@ final class WorkspaceTreeOpsTests: XCTestCase {
 
     // MARK: Tabs / sessions cascade housekeeping
 
-    func testCloseTabSelectsAdjacentTab() throws {
-        let (ws, _) = singleLeaf()
-        let (s1, _) = WorkspaceTreeOps.newTab(in: ws, spec: termSpec("t2"))
-        let (s2, _) = WorkspaceTreeOps.newTab(in: s1, spec: termSpec("t3"))
-        // 3 tabs, active = index 2. Close it.
-        let closeID = try XCTUnwrap(s2.activeSession?.tabs[2].id)
-        let s3 = WorkspaceTreeOps.closeTab(closeID, in: s2)
-        XCTAssertEqual(s3.activeSession?.tabs.count, 2)
-        XCTAssertEqual(
-            try XCTUnwrap(s3.activeSession?.activeTabIndex),
-            1,
-            "active index clamps to a valid tab after close",
-        )
-        assertInvariant(s3)
-    }
-
-    func testCloseSessionSelectsAnother() throws {
-        let (ws, _) = singleLeaf()
-        let (s1, _) = WorkspaceTreeOps.newSession(in: ws, name: "s2", spec: termSpec("d"))
-        let closeID = try XCTUnwrap(s1.activeSessionID)
-        let s2 = WorkspaceTreeOps.closeSession(closeID, in: s1)
-        XCTAssertEqual(s2.sessions.count, 1)
-        XCTAssertEqual(s2.activeSessionID, s2.sessions[0].id, "active session repoints to a survivor")
-        assertInvariant(s2)
-    }
-
-    func testCloseLastSessionReseedsDefault() throws {
-        let (ws, _) = singleLeaf()
-        let onlyID = try XCTUnwrap(ws.activeSessionID)
-        let s1 = WorkspaceTreeOps.closeSession(onlyID, in: ws)
-        XCTAssertEqual(s1.sessions.count, 1, "the workspace always has ≥ 1 session")
-        XCTAssertEqual(s1.allPaneIDs().count, 1)
-        assertInvariant(s1)
-    }
-
     // MARK: Break pane to a new tab
 
-    func testBreakPaneToTabMovesLeafIntoANewTabAndCollapsesSource() {
-        // a|b|c in one tab; break b into a new tab. The source tab collapses to a|c (b removed, rebalanced),
-        // a NEW tab holds b as its lone leaf and is selected, and the spec stays in the same session table.
-        let (ws, a) = singleLeaf()
-        let (s1, b) = WorkspaceTreeOps.splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
-        let (s2, c) = WorkspaceTreeOps.splitPane(b, axis: .horizontal, newSpec: termSpec("c"), in: s1)
-        XCTAssertEqual(s2.sessions[0].tabs.count, 1, "precondition: one multi-pane tab")
-
-        let s3 = WorkspaceTreeOps.breakPaneToTab(b, in: s2)
-        XCTAssertEqual(s3.sessions[0].tabs.count, 2, "a new tab is appended")
-        // Source tab (index 0) collapsed to a|c, b gone.
-        XCTAssertEqual(s3.sessions[0].tabs[0].root.allPaneIDs(), [a, c], "source tab keeps a and c, drops b")
-        // New tab (index 1) holds exactly b as a single leaf, and is the active tab.
-        XCTAssertEqual(s3.sessions[0].tabs[1].root, .leaf(b), "the new tab is b as a lone leaf")
-        XCTAssertEqual(s3.sessions[0].tabs[1].activePane, b, "b is active in its new tab")
-        XCTAssertEqual(s3.sessions[0].activeTabIndex, 1, "the freshly-broken tab is selected")
-        XCTAssertEqual(s3.spec(for: b)?.title, "b", "b's spec is preserved in the same session table")
-        assertInvariant(s3)
-    }
-
-    func testBreakPaneToTabIsNoOpForALoneLeaf() {
-        // A tab's only pane can't be broken out (nothing to break from) — the workspace is unchanged.
-        let (ws, a) = singleLeaf()
-        let after = WorkspaceTreeOps.breakPaneToTab(a, in: ws)
-        XCTAssertEqual(after, ws, "breaking out a tab's sole leaf is a no-op")
-        XCTAssertEqual(after.sessions[0].tabs.count, 1, "no new tab is created")
-    }
-
-    func testBreakPaneToTabIsNoOpForAnAbsentPane() {
-        let (ws, _) = singleLeaf()
-        let after = WorkspaceTreeOps.breakPaneToTab(PaneID(), in: ws)
-        XCTAssertEqual(after, ws, "breaking out a pane not in the workspace is a no-op")
-    }
-
     // MARK: Move a leaf ACROSS tabs (the rail-drag MOVE of an already-streamed pane, docs/45)
-
-    func testMoveLeafAcrossTabsRelocatesBesideTargetAndRemovesTheEmptiedSourceTab() {
-        // Tab 0: a | b. Tab 1: c alone (active). Move c beside a, before → the destination tab
-        // becomes c | a | b with c focused + selected, c's emptied tab is gone, and c KEEPS its
-        // PaneID + spec (the live-stream-survives contract).
-        let (ws, a) = singleLeaf()
-        let (s1, b) = WorkspaceTreeOps.splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
-        let (s2, c) = WorkspaceTreeOps.newTab(in: s1, spec: termSpec("c"))
-        XCTAssertEqual(s2.sessions[0].activeTabIndex, 1, "precondition: the fresh tab is active")
-
-        let s3 = WorkspaceTreeOps.moveLeafAcrossTabs(c, beside: a, axis: .horizontal, before: true, in: s2)
-        XCTAssertEqual(s3.sessions[0].tabs.count, 1, "the emptied source tab is removed")
-        XCTAssertEqual(s3.sessions[0].tabs[0].root.allPaneIDs(), [c, a, b])
-        XCTAssertEqual(s3.sessions[0].tabs[0].activePane, c, "the moved pane keeps focus")
-        XCTAssertEqual(s3.sessions[0].activeTabIndex, 0, "the destination tab is selected")
-        XCTAssertEqual(s3.spec(for: c)?.title, "c", "the moved pane keeps its PaneID + spec")
-        assertInvariant(s3)
-    }
-
-    func testMoveLeafAcrossTabsShrinksAMultiPaneSourceTabAndRepointsItsFocus() {
-        // Tab 0: a (dest). Tab 1: b | c with c active. Move c beside a → tab 1 survives holding b
-        // (its focus repointed off the departed pane), the destination is selected with c focused.
-        let (ws, a) = singleLeaf()
-        let (s1, b) = WorkspaceTreeOps.newTab(in: ws, spec: termSpec("b"))
-        let (s2, c) = WorkspaceTreeOps.splitPane(b, axis: .horizontal, newSpec: termSpec("c"), in: s1)
-        XCTAssertEqual(s2.sessions[0].tabs[1].activePane, c, "precondition: the split pane is active")
-
-        let s3 = WorkspaceTreeOps.moveLeafAcrossTabs(c, beside: a, axis: .vertical, before: false, in: s2)
-        XCTAssertEqual(s3.sessions[0].tabs.count, 2, "a multi-pane source tab survives")
-        XCTAssertEqual(s3.sessions[0].tabs[0].root.allPaneIDs(), [a, c])
-        XCTAssertEqual(s3.sessions[0].tabs[0].activePane, c)
-        XCTAssertEqual(s3.sessions[0].activeTabIndex, 0)
-        XCTAssertEqual(s3.sessions[0].tabs[1].root.allPaneIDs(), [b])
-        XCTAssertEqual(s3.sessions[0].tabs[1].activePane, b, "the source tab's focus repoints to a survivor")
-        assertInvariant(s3)
-    }
-
-    func testMoveLeafAcrossTabsSameTabDelegatesToMoveLeaf() {
-        // Both ids in one tab → the plain same-tab relocation (one rule, two entries). Compared
-        // STRUCTURALLY: each rebuild mints fresh split ids, so two invocations are never `==`.
-        let (ws, a) = singleLeaf()
-        let (s1, b) = WorkspaceTreeOps.splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
-        let across = WorkspaceTreeOps.moveLeafAcrossTabs(b, beside: a, axis: .vertical, before: true, in: s1)
-        let plain = WorkspaceTreeOps.moveLeaf(b, beside: a, axis: .vertical, before: true, in: s1)
-        XCTAssertTrue(
-            across.sessions[0].tabs[0].root.isStructurallyEqual(to: plain.sessions[0].tabs[0].root),
-            "the same-tab path lands the identical tree shape",
-        )
-        XCTAssertEqual(across.sessions[0].tabs[0].activePane, plain.sessions[0].tabs[0].activePane)
-        assertInvariant(across)
-    }
-
-    func testMoveLeafAcrossTabsIsNoOpAcrossSessionsAndForAbsentIDs() {
-        // Sessions own their spec side tables — a pane never crosses one. Absent ids change nothing.
-        let (ws, a) = singleLeaf()
-        let (s1, d) = WorkspaceTreeOps.newSession(in: ws, name: "s2", spec: termSpec("d"))
-        XCTAssertEqual(
-            WorkspaceTreeOps.moveLeafAcrossTabs(d, beside: a, axis: .horizontal, before: false, in: s1),
-            s1, "a cross-SESSION move is a no-op",
-        )
-        XCTAssertEqual(
-            WorkspaceTreeOps.moveLeafAcrossTabs(PaneID(), beside: a, axis: .horizontal, before: false, in: s1),
-            s1, "an absent source is a no-op",
-        )
-    }
-
-    func testMoveLeafToActiveTabRootEdgeAdoptsAPaneFromABackgroundTab() {
-        // Tab 0: a. Tab 1: b alone (active). Dock a at the active tab's LEFT edge → the active tab
-        // becomes a | b (a full-span column against a LONE-leaf tab — the case the same-tab dock
-        // rejects), a's emptied tab is gone, a focused.
-        let (ws, a) = singleLeaf()
-        let (s1, b) = WorkspaceTreeOps.newTab(in: ws, spec: termSpec("b"))
-        XCTAssertEqual(s1.sessions[0].activeTabIndex, 1, "precondition: the fresh tab is active")
-
-        let s2 = WorkspaceTreeOps.moveLeafToActiveTabRootEdge(a, edge: .left, in: s1)
-        XCTAssertEqual(s2.sessions[0].tabs.count, 1, "the emptied source tab is removed")
-        XCTAssertEqual(s2.sessions[0].tabs[0].root.allPaneIDs(), [a, b])
-        XCTAssertEqual(s2.sessions[0].tabs[0].activePane, a, "the docked pane keeps focus")
-        XCTAssertEqual(s2.sessions[0].activeTabIndex, 0)
-        assertInvariant(s2)
-    }
-
-    func testMoveLeafToActiveTabRootEdgeSameTabDelegatesToMoveLeafToRootEdge() {
-        // Source already in the active tab → the same-tab dock (incl. its no-ops). Compared
-        // STRUCTURALLY — fresh split ids per rebuild, see the moveLeafAcrossTabs twin above.
-        let (ws, a) = singleLeaf()
-        let (s1, b) = WorkspaceTreeOps.splitPane(a, axis: .vertical, newSpec: termSpec("b"), in: ws)
-        let viaActive = WorkspaceTreeOps.moveLeafToActiveTabRootEdge(b, edge: .left, in: s1)
-        let plain = WorkspaceTreeOps.moveLeafToRootEdge(b, edge: .left, in: s1)
-        XCTAssertTrue(
-            viaActive.sessions[0].tabs[0].root.isStructurallyEqual(to: plain.sessions[0].tabs[0].root),
-            "the same-tab path lands the identical tree shape",
-        )
-        XCTAssertEqual(viaActive.sessions[0].tabs[0].activePane, plain.sessions[0].tabs[0].activePane)
-        assertInvariant(viaActive)
-    }
-
-    func testMoveLeafToActiveTabRootEdgeIsNoOpOutsideTheActiveSession() {
-        // The op targets the ACTIVE session's active tab; a source in another session never moves.
-        let (ws, a) = singleLeaf()
-        let (s1, _) = WorkspaceTreeOps.newSession(in: ws, name: "s2", spec: termSpec("d"))
-        XCTAssertEqual(
-            WorkspaceTreeOps.moveLeafToActiveTabRootEdge(a, edge: .right, in: s1),
-            s1, "a itself lives in the now-BACKGROUND session — no move",
-        )
-        XCTAssertEqual(
-            WorkspaceTreeOps.moveLeafToActiveTabRootEdge(PaneID(), edge: .right, in: s1),
-            s1, "an absent source is a no-op",
-        )
-    }
 
     // MARK: moveFocus facade (directional + cycle)
 
@@ -474,7 +300,7 @@ final class WorkspaceTreeOpsTests: XCTestCase {
         // a|b horizontal columns, a focused. Move focus right against a real bounds rect → lands on b
         // (the right column); move left from b → back to a.
         let (ws, a) = singleLeaf()
-        let (s1, b) = WorkspaceTreeOps.splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
+        let (s1, b) = splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
         let withA = WorkspaceTreeOps.focusPane(a, in: s1)
         let bounds = CGRect(x: 0, y: 0, width: 800, height: 400)
 
@@ -488,7 +314,7 @@ final class WorkspaceTreeOpsTests: XCTestCase {
     func testMoveFocusDirectionalIsNoOpAtAnEdge() {
         // a|b horizontal, a focused; move LEFT → no neighbour to the left → workspace unchanged (no-op).
         let (ws, a) = singleLeaf()
-        let (s1, _) = WorkspaceTreeOps.splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
+        let (s1, _) = splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
         let withA = WorkspaceTreeOps.focusPane(a, in: s1)
         let moved = WorkspaceTreeOps.moveFocus(.left, bounds: CGRect(x: 0, y: 0, width: 800, height: 400), in: withA)
         XCTAssertEqual(moved, withA, "moving past the left edge is a no-op (no neighbour)")
@@ -497,8 +323,8 @@ final class WorkspaceTreeOpsTests: XCTestCase {
     func testMoveFocusCycleAdvancesAndWrapsThroughLeaves() throws {
         // a|b|c (pre-order [a,b,c]); .next from a → b, from c wraps → a; .previous from a wraps → c.
         let (ws, a) = singleLeaf()
-        let (s1, b) = WorkspaceTreeOps.splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
-        let (s2, c) = WorkspaceTreeOps.splitPane(b, axis: .horizontal, newSpec: termSpec("c"), in: s1)
+        let (s1, b) = splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
+        let (s2, c) = splitPane(b, axis: .horizontal, newSpec: termSpec("c"), in: s1)
         let bounds = CGRect(x: 0, y: 0, width: 900, height: 400)
 
         let fromA = WorkspaceTreeOps.focusPane(a, in: s2)
@@ -530,7 +356,7 @@ final class WorkspaceTreeOpsTests: XCTestCase {
 
     func testSwapPanesExchangesTwoLeaves() throws {
         let (ws, a) = singleLeaf()
-        let (s1, b) = WorkspaceTreeOps.splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
+        let (s1, b) = splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
         let s2 = WorkspaceTreeOps.swapPanes(a, b, in: s1)
         XCTAssertEqual(
             try XCTUnwrap(s2.activeSession?.tabs[0].root.allPaneIDs()),
@@ -545,7 +371,7 @@ final class WorkspaceTreeOpsTests: XCTestCase {
     func testMovePaneInDirectionSwapsWithRightNeighbour() throws {
         // a|b horizontal, a active. Move a RIGHT → swaps with b → leaf order [b, a]; a stays active.
         let (ws, a) = singleLeaf()
-        let (s1, b) = WorkspaceTreeOps.splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
+        let (s1, b) = splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
         let withA = WorkspaceTreeOps.focusPane(a, in: s1)
         let bounds = CGRect(x: 0, y: 0, width: 800, height: 400)
 
@@ -561,7 +387,7 @@ final class WorkspaceTreeOpsTests: XCTestCase {
     func testMovePaneInDirectionIsNoOpWithoutANeighbour() {
         // a|b horizontal; move a LEFT → no left neighbour → unchanged.
         let (ws, a) = singleLeaf()
-        let (s1, _) = WorkspaceTreeOps.splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
+        let (s1, _) = splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
         let withA = WorkspaceTreeOps.focusPane(a, in: s1)
         let moved = WorkspaceTreeOps.movePaneInDirection(
             a, .left, bounds: CGRect(x: 0, y: 0, width: 800, height: 400), in: withA,
@@ -573,8 +399,8 @@ final class WorkspaceTreeOpsTests: XCTestCase {
         // a | (b over c): root horizontal [a, vertical[b, c]]. Move b DOWN → swaps with c (its vertical
         // neighbour), NOT a. Proves the move resolves against solved geometry, not tree order.
         let (ws, a) = singleLeaf()
-        let (s1, b) = WorkspaceTreeOps.splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
-        let (s2, c) = WorkspaceTreeOps.splitPane(b, axis: .vertical, newSpec: termSpec("c"), in: s1)
+        let (s1, b) = splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
+        let (s2, c) = splitPane(b, axis: .vertical, newSpec: termSpec("c"), in: s1)
         let bounds = CGRect(x: 0, y: 0, width: 800, height: 600)
 
         let moved = WorkspaceTreeOps.movePaneInDirection(b, .down, bounds: bounds, in: s2)
@@ -592,25 +418,6 @@ final class WorkspaceTreeOpsTests: XCTestCase {
 
     // MARK: Enclosing-split query (nearest ancestor split on an axis)
 
-    func testEnclosingSplitFindsNearestAncestorOnAxis() throws {
-        // a | (b over c). For b: the nearest VERTICAL ancestor is the inner [b,c] split (childIndex 0 of 2);
-        // the nearest HORIZONTAL ancestor is the root [a, inner] split (b lives in child subtree index 1).
-        let (ws, a) = singleLeaf()
-        let (s1, b) = WorkspaceTreeOps.splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
-        let (s2, c) = WorkspaceTreeOps.splitPane(b, axis: .vertical, newSpec: termSpec("c"), in: s1)
-        let root = try activeRoot(s2)
-
-        let vert = try XCTUnwrap(root.enclosingSplit(of: b, axis: .vertical), "b has a vertical ancestor")
-        XCTAssertEqual(vert.childIndex, 0, "b is the FIRST child of the inner vertical split")
-        XCTAssertEqual(vert.childCount, 2)
-
-        let horiz = try XCTUnwrap(root.enclosingSplit(of: b, axis: .horizontal), "b has a horizontal ancestor (root)")
-        XCTAssertEqual(horiz.childIndex, 1, "b lives in the SECOND child subtree of the root horizontal split")
-        XCTAssertEqual(horiz.childCount, 2)
-        XCTAssertNotEqual(vert.splitID, horiz.splitID, "the two enclosing splits are distinct nodes")
-        _ = c
-    }
-
     func testEnclosingSplitIsNilForASoleLeaf() throws {
         let (ws, a) = singleLeaf()
         let root = try activeRoot(ws)
@@ -623,7 +430,7 @@ final class WorkspaceTreeOpsTests: XCTestCase {
     func testResizeActivePaneGrowsWidthSumPreserved() throws {
         // a|b horizontal, resize a to the RIGHT (grow) → leading divider shifts so a grows, sum preserved.
         let (ws, a) = singleLeaf()
-        let (s1, _) = WorkspaceTreeOps.splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
+        let (s1, _) = splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
         guard case let .split(_, _, before) = try activeRoot(s1) else { XCTFail("expected split")
             return
         }
@@ -643,7 +450,7 @@ final class WorkspaceTreeOpsTests: XCTestCase {
         // a|b horizontal, b active (the LAST child). Grow b right → there is no divider to b's right, so the
         // i-1 divider must shift so the trailing child (b) grows and a shrinks.
         let (ws, a) = singleLeaf()
-        let (s1, b) = WorkspaceTreeOps.splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
+        let (s1, b) = splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
         guard case let .split(_, _, before) = try activeRoot(s1) else { XCTFail("expected split")
             return
         }
@@ -665,8 +472,8 @@ final class WorkspaceTreeOpsTests: XCTestCase {
         // resize b for HEIGHT (.down) must hit the INNER vertical split (b's row grows). Pin via which
         // weights move.
         let (ws, a) = singleLeaf()
-        let (s1, b) = WorkspaceTreeOps.splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
-        let (s2, c) = WorkspaceTreeOps.splitPane(b, axis: .vertical, newSpec: termSpec("c"), in: s1)
+        let (s1, b) = splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
+        let (s2, c) = splitPane(b, axis: .vertical, newSpec: termSpec("c"), in: s1)
 
         // WIDTH grow: the root horizontal split's children [a, inner] change; the inner vertical [b,c] stays.
         let wide = WorkspaceTreeOps.resizeActivePane(b, .right, step: 0.2, in: s2)
@@ -707,7 +514,7 @@ final class WorkspaceTreeOpsTests: XCTestCase {
     func testResizeActivePaneClampsAtMinWeight() throws {
         // A huge shrink can't starve the active pane below minWeight.
         let (ws, a) = singleLeaf()
-        let (s1, _) = WorkspaceTreeOps.splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
+        let (s1, _) = splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
         guard case let .split(_, _, before) = try activeRoot(s1) else { XCTFail("expected split")
             return
         }
@@ -724,7 +531,7 @@ final class WorkspaceTreeOpsTests: XCTestCase {
         // a|b horizontal, a active. A small .left nudge must SHRINK a and GROW b (the grow/shrink SIGN is
         // pinned positively, not just at the clamp floor). Fails if .left were mapped to grow.
         let (ws, a) = singleLeaf()
-        let (s1, _) = WorkspaceTreeOps.splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
+        let (s1, _) = splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
         guard case let .split(_, _, before) = try activeRoot(s1) else { XCTFail("expected split")
             return
         }
@@ -744,7 +551,7 @@ final class WorkspaceTreeOpsTests: XCTestCase {
         // a over b vertical, a active (the FIRST child). A small .up nudge must SHRINK a and GROW b. Pins the
         // .up (vertical, shrink) mapping — which is otherwise never exercised by resize. Fails if .up grows.
         let (ws, a) = singleLeaf()
-        let (s1, _) = WorkspaceTreeOps.splitPane(a, axis: .vertical, newSpec: termSpec("b"), in: ws)
+        let (s1, _) = splitPane(a, axis: .vertical, newSpec: termSpec("b"), in: ws)
         guard case let .split(_, .vertical, before) = try activeRoot(s1) else { XCTFail("expected vertical split")
             return
         }
@@ -765,8 +572,8 @@ final class WorkspaceTreeOpsTests: XCTestCase {
         // tab 0 must still land — the nudge targets the LOCATED tab, not whatever tab is active. Guards the
         // latent coupling where routing through the active-tab-scoped resizeDivider would silently no-op.
         let (ws, a) = singleLeaf()
-        let (s1, _) = WorkspaceTreeOps.splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
-        let (s2, _) = WorkspaceTreeOps.newTab(in: s1, spec: termSpec("c")) // tab 1 is now active
+        let (s1, _) = splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
+        let (s2, _) = newTab(in: s1, spec: termSpec("c")) // tab 1 is now active
         XCTAssertEqual(s2.activeSession?.activeTabIndex, 1, "the freshly opened tab is active")
 
         // a lives in tab 0; resize it RIGHT (grow).
@@ -786,7 +593,7 @@ final class WorkspaceTreeOpsTests: XCTestCase {
     func testResizeActivePaneIsNoOpForCycleDirections() {
         // .next/.previous have no divider-nudge meaning → resizeActivePane returns the workspace unchanged.
         let (ws, a) = singleLeaf()
-        let (s1, _) = WorkspaceTreeOps.splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
+        let (s1, _) = splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
         XCTAssertEqual(
             WorkspaceTreeOps.resizeActivePane(a, .next, step: 0.2, in: s1), s1, "resize .next is a no-op",
         )
@@ -798,7 +605,7 @@ final class WorkspaceTreeOpsTests: XCTestCase {
     func testMovePaneInDirectionIsNoOpForCycleDirections() {
         // .next/.previous have no directional-swap meaning → movePaneInDirection returns ws unchanged.
         let (ws, a) = singleLeaf()
-        let (s1, _) = WorkspaceTreeOps.splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
+        let (s1, _) = splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
         let bounds = CGRect(x: 0, y: 0, width: 800, height: 400)
         XCTAssertEqual(
             WorkspaceTreeOps.movePaneInDirection(a, .next, bounds: bounds, in: s1), s1, "move .next is a no-op",
@@ -870,8 +677,8 @@ final class WorkspaceTreeOpsTests: XCTestCase {
     func testBalanceSplitsEqualizesTheActiveTabAndPreservesInvariant() throws {
         // a|b|c horizontal then nudge a divider off-balance; balanceSplits resets to equal.
         let (ws, a) = singleLeaf()
-        let (s1, b) = WorkspaceTreeOps.splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
-        let (s2, c) = WorkspaceTreeOps.splitPane(b, axis: .horizontal, newSpec: termSpec("c"), in: s1)
+        let (s1, b) = splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
+        let (s2, c) = splitPane(b, axis: .horizontal, newSpec: termSpec("c"), in: s1)
         guard case let .split(splitID, _, _) = try activeRoot(s2) else { XCTFail("expected split")
             return
         }
@@ -894,16 +701,6 @@ final class WorkspaceTreeOpsTests: XCTestCase {
     }
 
     // MARK: updatingSpec mutates the side table, not the tree
-
-    func testUpdatingSpecChangesSpecNotTree() throws {
-        let (ws, a) = singleLeaf()
-        let (s1, _) = WorkspaceTreeOps.splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
-        let treeBefore = try XCTUnwrap(s1.activeSession?.tabs[0].root)
-        let s2 = WorkspaceTreeOps.updatingSpec(a, in: s1) { spec in spec.title = "renamed" }
-        XCTAssertEqual(s2.spec(for: a)?.title, "renamed")
-        XCTAssertEqual(try XCTUnwrap(s2.activeSession?.tabs[0].root), treeBefore, "a rename never churns the tree")
-        assertInvariant(s2)
-    }
 
     // MARK: normalizing repairs
 
@@ -938,19 +735,6 @@ final class WorkspaceTreeOpsTests: XCTestCase {
     }
 
     // MARK: Codable round-trip (matches W1 Domain style: Sendable/Equatable/Codable)
-
-    func testTreeWorkspaceRoundTrips() throws {
-        let (ws0, a) = singleLeaf()
-        let (ws1, _) = WorkspaceTreeOps.splitPane(a, axis: .vertical, newSpec: termSpec("b"), in: ws0)
-        let (ws2, _) = WorkspaceTreeOps.newTab(in: ws1, spec: termSpec("c"))
-        let (ws, _) = WorkspaceTreeOps.newSession(in: ws2, name: "s2", spec: termSpec("d"))
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        let data = try encoder.encode(ws)
-        let back = try JSONDecoder().decode(TreeWorkspace.self, from: data)
-        XCTAssertEqual(back, ws, "TreeWorkspace round-trips byte-stable")
-        XCTAssertEqual(try encoder.encode(back), data)
-    }
 
     // MARK: Helpers
 
