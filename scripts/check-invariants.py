@@ -23,6 +23,7 @@ Run directly, or through `make lint-supervisor`, which folds the exit status int
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -179,6 +180,31 @@ def every_script_sets_pipefail() -> Report:
     return missing, "a shell script does not set pipefail — a death inside a pipe would read green"
 
 
+def a_script_with_a_shebang_is_executable() -> Report:
+    """A shebang is a promise that `scripts/foo.sh --flag` works; the mode bit is what keeps it.
+
+    Four scripts had lost the bit and nothing noticed, because the Makefile invokes every one of
+    them as `bash scripts/foo.sh` — the one spelling that works either way. What breaks is the
+    spelling the scripts and `docs/46` tell a human to type (`scripts/restart-hostd.sh --status`),
+    which is exactly the path no gate walks. So the shebang is the declaration and this is its
+    check: `#!` on line one, no `x` bit, is a documented entry point that answers "permission
+    denied". Derived from the file itself, so a new script is covered the day it is written.
+    """
+    scripts = [
+        p
+        for p in [*repo_files("*.sh"), *repo_files("*.py"), *repo_files("*.awk")]
+        if not str(p.relative_to(REPO)).startswith("ThirdParty/")
+    ]
+    found = [
+        str(p.relative_to(REPO))
+        for p in scripts
+        if p.read_bytes()[:2] == b"#!" and not os.access(p, os.X_OK)
+    ]
+    if not found:
+        return None
+    return found, "a script declares a shebang but is not executable — running it by name fails"
+
+
 def pkill_never_reaches_the_developers_host() -> Report:
     """CLAUDE.md: "Never `pkill` the host — `make host-restart` replays hostd's recorded launch."
 
@@ -295,6 +321,7 @@ GATES = [
     no_swiftpm_build_plugin,
     no_fused_multiply_add,
     every_script_sets_pipefail,
+    a_script_with_a_shebang_is_executable,
     pkill_never_reaches_the_developers_host,
     shell_quoting_has_one_owner,
 ]

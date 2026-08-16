@@ -216,7 +216,7 @@ lint-swift-analyze: ## SwiftLint analyzer rules (full rebuild + analyze; minutes
 
 # ---------------------------------------------------------------------------- #
 # Full gate
-.PHONY: check check-ios build test test-touched golden ffi ffi-test hook hook-test ctl ctl-test posix-test superd superd-test superd-install screend screend-test screend-install dropd dropd-test androidd androidd-test inspectord inspectord-test wire wire-test altscreen-test video video-test gfsimd-test miri workspace workspace-test agent agent-test terminal terminal-test cli cli-test codeseed codeseed-test probe probe-test host host-restart host-status
+.PHONY: check check-ios check-ios-tests build test test-touched golden ffi ffi-test hook hook-test ctl ctl-test posix-test superd superd-test superd-install screend screend-test screend-install dropd dropd-test androidd androidd-test inspectord inspectord-test wire wire-test altscreen-test video video-test gfsimd-test miri workspace workspace-test agent agent-test terminal terminal-test cli cli-test codeseed codeseed-test probe probe-test host host-restart host-status
 check: lint build test miri golden check-ios ## lint + build + test + the unsafe memory audit + golden pin + the iOS triple (full local gate)
 
 # `swift build` compiles the macOS slice ONLY — it never type-checks a `#if os(iOS)` source, so the
@@ -230,6 +230,18 @@ check: lint build test miri golden check-ios ## lint + build + test + the unsafe
 # logged-in GUI session, so it cannot run from a headless gate.
 check-ios: ffi ## iOS-triple typecheck (the `#if os(iOS)` surface `swift build` never compiles)
 	bash scripts/check-ios.sh
+
+# The half `check-ios` does not do: it type-checks and runs ZERO tests. `swift test` compiles the
+# MACOS branch of every `#if os(iOS)` fork, so an iOS default asserted there is asserted about the
+# wrong branch — a macOS build of `platformDefaultFollowSessionFocus` reads the opposite value.
+# `scripts/check-ios-tests.sh` is the only thing in the repo that executes an assertion on the iOS
+# triple, and it too was reachable from no target: `docs/46` calls it the ONLY executor of iOS tests
+# and then nothing ran it.
+#
+# NOT in `check`: it boots a simulator, which a headless gate cannot assume — same reason
+# `check-macos.sh` stays out. Run it after touching anything inside an `#if os(iOS)`.
+check-ios-tests: ffi ## RUN the iOS tests on a booted simulator (the only assertions on that triple)
+	bash scripts/check-ios-tests.sh
 
 # The three arm64 static slices the Swift clients link, from `rust/slopdesk-ffi`. FIRST, and not
 # optional: `Package.swift` declares a `binaryTarget` at that path, so SwiftPM cannot even resolve
