@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 
 // MARK: - LaunchPreset (a named "launch configuration" — Warp/Zellij parity)
@@ -153,31 +154,33 @@ public enum LaunchPresetEngine {
     /// followed by `<command>\n` (only when a non-empty command is set). An empty command + empty cwd ⇒
     /// no bytes (a plain shell pane).
     ///
-    /// SECURITY: the `cd <cwd>` line is emitted as LITERAL UTF-8 bytes (NOT through ``SendKeysParser``).
-    /// The cwd is a filesystem PATH, never shell-control input — running it through `SendKeysParser`
-    /// would interpret `<Enter>`/`<cr>`/`<nl>` tokens INSIDE the (single-quoted) path, injecting a raw
-    /// 0x0D/0x0A that breaks out of the quoted `cd` line so the rest runs as a SEPARATE command (a cwd
-    /// of `/tmp/proj<Enter>rm -rf x` would execute `rm`). The quoting only escapes literal quotes, not
-    /// these tokens, so the path must bypass the token parser entirely. Only the `command` field —
-    /// intended shell input — legitimately goes through ``SendKeysParser`` (so `<Enter>`-style tokens IN
-    /// a command still resolve).
+    /// A face over `slopdesk-workspace`'s `templates::keystrokes`, which is where the rule lives and
+    /// where its tests are. It was written on both sides of the FFI, each carrying the same SECURITY
+    /// note: the `cd <cwd>` line is LITERAL UTF-8 and never goes through the token parser, because a
+    /// cwd is a filesystem PATH — a `<Enter>` inside one (`/tmp/proj<Enter>rm -rf x`) would end the
+    /// quoted line early and run the rest as a separate command. Quoting does not stop that; it
+    /// escapes quotes, not tokens. Only `command`, which is shell input by intent, is parsed.
     public static func keystrokes(command: String, cwd: String?) -> [UInt8] {
-        var out: [UInt8] = []
-        if let cwd, !cwd.isEmpty {
-            // Quote the path so a cwd with spaces survives, and emit the WHOLE `cd '<path>'` line as raw
-            // UTF-8 — never via SendKeysParser, whose `<…>` tokens would inject newlines into the path.
-            out += Array("cd \(shellQuoted(cwd))".utf8)
-            out.append(0x0A) // newline
+        Array(command.utf8).withUnsafeBufferPointer { commandBytes in
+            Array((cwd ?? "").utf8).withUnsafeBufferPointer { cwdBytes -> [UInt8] in
+                let needed = slopdesk_ws_launch_keystrokes(
+                    commandBytes.baseAddress, commandBytes.count,
+                    cwdBytes.baseAddress, cwdBytes.count,
+                    nil, 0,
+                )
+                guard needed > 0 else { return [] }
+                var out = [UInt8](repeating: 0, count: needed)
+                let written = out.withUnsafeMutableBufferPointer { room in
+                    slopdesk_ws_launch_keystrokes(
+                        commandBytes.baseAddress, commandBytes.count,
+                        cwdBytes.baseAddress, cwdBytes.count,
+                        room.baseAddress, room.count,
+                    )
+                }
+                // The door sized the buffer one call ago from the same inputs, so a short write is
+                // impossible; the empty answer is the safe one either way — a pane that runs nothing.
+                return written == needed ? out : []
+            }
         }
-        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty {
-            out += SendKeysParser.encode(command)
-            out.append(0x0A)
-        }
-        return out
     }
-
-    /// Single-quote a shell path, escaping embedded single quotes the POSIX way (`'\''`). A face over
-    /// ``ShellQuoting/singleQuote(_:)``, which is the same door the template emitter's own `cd` asks.
-    private static func shellQuoted(_ path: String) -> String { ShellQuoting.singleQuote(path) }
 }

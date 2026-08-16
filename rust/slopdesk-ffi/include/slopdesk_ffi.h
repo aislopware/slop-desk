@@ -341,6 +341,14 @@ bool   slopdesk_ws_looks_secret(const uint8_t *bytes, size_t len);
 uint8_t slopdesk_ws_paste_risk(const uint8_t *bytes, size_t len, bool target_is_secure,
                                size_t max_length);
 
+// What a preset or a template types into the pane it just opened: a literal `cd` line when a
+// directory is set, then the command through the token parser. A null or empty `cwd` is "no
+// directory". The `cd` line never reaches the parser — a `<Enter>` inside a path would otherwise
+// end the quoted line early and run the rest as its own command.
+size_t slopdesk_ws_launch_keystrokes(const uint8_t *command, size_t command_len,
+                                     const uint8_t *cwd, size_t cwd_len,
+                                     uint8_t *out, size_t cap);
+
 // What the host may listen on, and what to tell the operator when it cannot. `0` is a valid port
 // and means "OS-assigned"; the two errno questions are here because a bind conflict can arrive as
 // a FAILURE or hide inside the framework's retryable waiting state, and both spell it in text.

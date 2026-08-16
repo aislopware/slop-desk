@@ -40,6 +40,7 @@ use slopdesk_workspace::{
     Rect, ResizeAnchor, Size, SnapConfig, SolvedLayout, SplitAxis, SplitNode, SplitNodeId, SplitWeight,
     Stick, TabId, WeightedChild, canvas, canvas_arrange, canvas_geometry, canvas_non_overlap, canvas_snap,
     focus, geometry, listen, secrets, send_keys, shell_quoting, split_layout, state_codec, tab_ordering,
+    templates,
 };
 
 use crate::{borrow, deliver};
@@ -368,6 +369,48 @@ fn risk_byte(risk: secrets::PasteRisk) -> u8 {
         .iter()
         .position(|candidate| *candidate == risk)
         .unwrap_or(0) as u8
+}
+
+// MARK: What a preset or a template types into the pane it just opened
+
+/// The bytes a freshly spawned pane receives: a `cd` line when a directory is set, then the
+/// command.
+///
+/// The two callers that had this — a launch preset and a session template — send the same bytes on
+/// purpose, so a template pane behaves exactly like a preset one. Both cross here.
+///
+/// The security property is that the `cd` line is built from LITERAL bytes and never reaches the
+/// token parser: a working directory is a filesystem path, and a `<Enter>` inside one would end the
+/// quoted line early and run the rest as its own command. Quoting does not help — it escapes
+/// quotes, not tokens. Only `command`, which is shell input by intent, is parsed.
+///
+/// An empty command with no directory writes nothing, which is what lets a preset open a plain
+/// shell. A null or empty `cwd` is "no directory"; the two are the same answer here.
+///
+/// # Safety
+/// `command` and `cwd` must each be null or point to their stated length in initialised bytes live
+/// for the call; `out` must be null or writable for `cap` bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_ws_launch_keystrokes(
+    command: *const c_uchar,
+    command_len: usize,
+    cwd: *const c_uchar,
+    cwd_len: usize,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligations, restated above; `borrow` and `deliver` state their own.
+    unsafe {
+        // Text that is not UTF-8 cannot be typed as keystrokes either, so it reads as empty — the
+        // same answer the caller would get for a pane with nothing to run.
+        let command = core::str::from_utf8(borrow(command, command_len)).unwrap_or("");
+        let directory = core::str::from_utf8(borrow(cwd, cwd_len)).ok();
+        deliver(&templates::keystrokes(command, directory), out, cap)
+    }
 }
 
 // MARK: The listen port, and the bind conflict hiding inside a retryable state
