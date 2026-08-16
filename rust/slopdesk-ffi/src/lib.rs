@@ -56,6 +56,7 @@ pub mod cursor_overlay;
 pub mod cursor_wire;
 pub mod decode_admission;
 pub mod file_transfer;
+pub mod find_matches;
 pub mod folders;
 pub mod frame_decoder;
 pub mod frame_rate;

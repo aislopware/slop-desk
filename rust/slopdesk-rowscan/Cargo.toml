@@ -1,60 +1,62 @@
-# `slopdesk-hint` — Hint Mode's TARGET SCAN: every span in the visible viewport a two-letter label
-# can be pinned to, in the same display-cell columns the link overlay draws in.
+# `slopdesk-rowscan` — the scans over terminal ROWS that need a regex engine: Hint Mode's targets
+# and find-in-terminal's matches. Rows in, `(row, column, length)` spans out.
 #
-# ## Why not `slopdesk-terminal`, where the link scan lives
-# Because of the one dependency this crate has and that one does not. A user `hint-pattern` is a
-# REGEX the human typed into Settings, run against rows a remote program wrote — the one place in
-# the tree where an untrusted pattern meets untrusted text. `regex` is the answer to exactly that
-# pairing: it is a finite automaton with no backtracking, so its running time is linear in the row
-# no matter what the pattern is. The Swift this replaces used `NSRegularExpression`, which
-# backtracks, which means a `hint-pattern` a user pasted off the internet could hang the UI on a
-# long row. `slopdesk-terminal`'s manifest says it takes no external dependency because everything
-# it parses is untrusted; the honest reading of that rule is not to smuggle a crate in beside the
-# PTY hot path, so the module that needs one lives here instead and takes the link scan as a
-# sibling.
+# ## Why these two share a crate, and why it is not `slopdesk-terminal`
+# Because of the one dependency both need. A `hint-pattern` and a Cmd-F regex are PATTERNS a human
+# typed, run against rows a remote program wrote — the two places in the tree where untrusted input
+# meets untrusted input. `regex` is the answer to exactly that pairing: a finite automaton with no
+# backtracking, so a match costs time linear in the row no matter what the pattern says. The Swift
+# both replaced used `NSRegularExpression`, which backtracks, so a pattern pasted off the internet
+# could hang the overlay — or freeze the find bar on every keystroke — and no bound on the SCAN
+# fixes a pathological MATCH.
+#
+# `slopdesk-terminal`'s manifest says it takes no external dependency because everything it parses
+# is untrusted and it sits on the PTY hot path. The honest reading of that rule is not to smuggle a
+# crate in beside the tracker, so the modules that need one live here and take the link scan as a
+# sibling. That boundary is the whole reason this crate exists, and it is where a third module
+# belongs if one ever needs a pattern engine over rows.
 #
 # ## Why its own workspace
 # The same reason every library crate in this tree is: cargo profiles are workspace-global and the
 # root workspace's is tuned for the hook binary (`opt-level = "z"`, `panic = "abort"`). A hint scan
-# runs on a keystroke over a viewport and wants `opt-level = 3`; a panic in it must never abort a
-# client.
+# runs on the keystroke that opens the overlay and a find runs on every keystroke in the bar, so
+# both want `opt-level = 3`; a panic in either must never abort a client.
 #
 # ## What is NOT here
-# The LABELS. Assigning `count` collision-free two-letter labels over an alphabet and filtering them
-# against the keys typed so far is list arithmetic over 26 letters with no text, no bounds and no
-# untrusted input — it stays in Swift, where the overlay holding the labels already is. Crossing a
-# boundary twice per keystroke to slice 40 two-character strings would cost more than it computes.
+# Anything a caller does with the spans. Assigning two-letter labels, walking next/previous with
+# wrap, keeping a selection anchored across a recompute — list arithmetic over the answer, running
+# per keystroke beside the surface that already holds it. Those stay in Swift.
 
 [workspace]
 resolver = "3"
 
 [package]
-name = "slopdesk-hint"
+name = "slopdesk-rowscan"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "Hint Mode target scanning for slopdesk — links, git hashes, IPs and user patterns"
+description = "Regex-driven row scans for slopdesk — Hint Mode targets and find-in-terminal"
 license = "MIT"
 repository = "https://github.com/aislopware/slop-desk"
 
 [lib]
-name = "slopdesk_hint"
+name = "slopdesk_rowscan"
 path = "src/lib.rs"
 
 [dependencies]
-# The link scan, the display-cell widths and the per-row bound. Every column this crate reports has
-# to line up with one the link overlay drew, so both read the same clustering — the alternative is a
-# badge that sits half a glyph away from the span it labels on a CJK row.
+# The link scan, the display-cell widths and the per-row bound `hint` needs. Every column it reports
+# has to line up with one the link overlay drew, so both read the same clustering — the alternative
+# is a badge that sits half a glyph away from the span it labels on a CJK row.
 slopdesk-terminal = { path = "../slopdesk-terminal" }
 
-# The user-pattern engine. Linear-time by construction, which is the whole reason it is here rather
-# than a hand-written matcher or a backtracking one — see the header above. The same crate
+# The pattern engine. Linear-time by construction, which is the whole reason it is here rather than
+# a hand-written matcher or a backtracking one — see the header above. The same crate
 # `slopdesk-workspace` already takes for the secret shapes and `slopdesk-screend` for the detection
 # ladder, so this adds a version to the lock file and nothing to the tree.
 regex = "1"
 
-# A hint scan runs on the keystroke that opens the overlay, over a whole viewport, so this is a
-# latency-shaped library rather than the hook's startup-tuned profile.
+# Both scans run on a keystroke, so this is a latency-shaped library rather than the hook's
+# startup-tuned profile.
 [profile.release]
 opt-level = 3
 lto = "thin"

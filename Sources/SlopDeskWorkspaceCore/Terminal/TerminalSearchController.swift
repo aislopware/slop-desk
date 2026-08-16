@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 
 // MARK: - TerminalSearch (pure scrollback find-in-terminal core)
@@ -14,8 +15,10 @@ import Foundation
 /// ### Matching
 /// - **Literal** (default): a case-insensitive (or case-sensitive) substring scan, finding EVERY
 ///   occurrence on every line (overlapping matches advance by one, so "aa" in "aaa" yields two).
-/// - **Regex**: an `NSRegularExpression` over each line; an invalid pattern yields zero matches (never
-///   traps — validate-then-drop, the untrusted-input contract applied to a user-typed pattern).
+/// - **Regex**: the `regex` crate's dialect over each line — linear in the line, so no pattern can hang the
+///   find bar; the price is no lookaround and no backreferences. An invalid (or unsupported) pattern yields
+///   zero matches, never a trap — validate-then-drop, the untrusted-input contract applied to a user-typed
+///   pattern, and the same path an unfinished `(foo` already took on every keystroke.
 /// - **Whole-word** (the underlined `ab` toggle): a post-filter over EITHER mode keeping only the matches
 ///   whose immediately-adjacent code units are non-word (a letter / digit / `_`) — or the line edge — so the
 ///   query hits a standalone token but NOT a substring inside a larger word (`the` matches "the" but not
@@ -24,7 +27,7 @@ import Foundation
 /// the screen the way the eye reads it.
 public struct TerminalSearchController: Equatable, Sendable {
     /// One found occurrence: the 0-based line in the fed buffer and the UTF-16 column range within it
-    /// (UTF-16 so a regex `NSRange` maps back without re-encoding; the column is a code-unit offset).
+    /// (UTF-16 because that is what the highlighting surface indexes in; the column is a code-unit offset).
     public struct Match: Equatable, Sendable {
         public let line: Int
         public let column: Int
@@ -42,7 +45,7 @@ public struct TerminalSearchController: Equatable, Sendable {
     public private(set) var query: String = ""
     /// Case-sensitive literal/regex matching (default off — terminals are usually searched case-insensitively).
     public private(set) var caseSensitive: Bool = false
-    /// Treat ``query`` as an `NSRegularExpression` pattern instead of a literal substring.
+    /// Treat ``query`` as a regular expression instead of a literal substring.
     public private(set) var isRegex: Bool = false
     /// Whole-word matching (the underlined `ab` toggle): keep only matches that stand on word boundaries —
     /// the code units immediately before and after the match are non-word (letter/digit/`_`) or the line edge
@@ -151,9 +154,14 @@ public struct TerminalSearchController: Equatable, Sendable {
         }
     }
 
-    /// The pure match scanner (static so it can be reused / tested without an instance). Returns matches
+    /// The match scanner (static so it can be reused / tested without an instance). Returns matches
     /// ordered by line then column. `wholeWord` post-filters EITHER mode to word-boundary matches (defaulted
     /// off so existing callers — e.g. ``GlobalSearchController`` — are unaffected).
+    ///
+    /// The scan itself is `slopdesk_rowscan::find`; this is the marshaller. Three walks over the same rows
+    /// used to live here — a literal `NSString` scan, an `NSRegularExpression` pass and a boundary filter —
+    /// and the middle one BACKTRACKS, which is a hang waiting for the pattern that provokes it. The Rust
+    /// engine is a finite automaton, so a ⌘F pattern is linear in the line no matter what the user typed.
     public static func computeMatches(
         lines: [String],
         query: String,
@@ -162,79 +170,59 @@ public struct TerminalSearchController: Equatable, Sendable {
         wholeWord: Bool = false,
     ) -> [Match] {
         guard !query.isEmpty else { return [] }
-        let raw = isRegex
-            ? regexMatches(lines: lines, pattern: query, caseSensitive: caseSensitive)
-            : literalMatches(lines: lines, needle: query, caseSensitive: caseSensitive)
-        guard wholeWord else { return raw }
-        return raw.filter { isWholeWordMatch($0, in: lines) }
-    }
-
-    /// Whether `match` stands on word boundaries within its line: the code unit immediately before its start
-    /// and immediately after its end are both non-word characters (a letter / digit / `_`) — or the line edge.
-    /// Tested against single UTF-16 units (matches are UTF-16-column based), so `the` is whole-word inside
-    /// "the dog" but not inside "theory".
-    private static func isWholeWordMatch(_ match: Match, in lines: [String]) -> Bool {
-        guard lines.indices.contains(match.line) else { return false }
-        // swiftlint:disable:next legacy_objc_type
-        let ns = lines[match.line] as NSString
-        let start = match.column
-        let end = match.column + match.length
-        guard start >= 0, end <= ns.length else { return false }
-        if start > 0, isWordCodeUnit(ns.character(at: start - 1)) { return false }
-        if end < ns.length, isWordCodeUnit(ns.character(at: end)) { return false }
-        return true
-    }
-
-    /// A "word" UTF-16 code unit for whole-word boundary detection: a Unicode letter / digit, or `_` (the `\w`
-    /// sense). A lone surrogate half (no scalar) reads as a non-word boundary — safe: it never traps and an
-    /// emoji etc. is treated as a separator, which is the desired whole-word behaviour next to one.
-    private static func isWordCodeUnit(_ unit: unichar) -> Bool {
-        guard let scalar = Unicode.Scalar(UInt32(unit)) else { return false }
-        return CharacterSet.alphanumerics.contains(scalar) || scalar == "_"
-    }
-
-    /// Every case-(in)sensitive substring occurrence of `needle`, per line, advancing one UTF-16 unit
-    /// past each hit's start so overlapping matches ("aa" in "aaa") are all found.
-    private static func literalMatches(lines: [String], needle: String, caseSensitive: Bool) -> [Match] {
-        var out: [Match] = []
-        // swiftlint:disable:next legacy_objc_type
-        let nsNeedle = needle as NSString
-        let needleLen = nsNeedle.length
-        guard needleLen > 0 else { return [] }
-        let options: String.CompareOptions = caseSensitive ? [] : [.caseInsensitive]
-        for (lineIdx, line) in lines.enumerated() {
-            // swiftlint:disable:next legacy_objc_type
-            let ns = line as NSString
-            var searchStart = 0
-            while searchStart <= ns.length - needleLen {
-                let found = ns.range(
-                    of: needle,
-                    options: options,
-                    range: NSRange(location: searchStart, length: ns.length - searchStart),
+        let (rowBlob, rowLengths) = TerminalLinkDetector.flatten(lines)
+        var needle = query
+        return needle.withUTF8 { queryBytes -> [Match] in
+            let call = { (out: UnsafeMutableBufferPointer<UInt8>) -> Int in
+                slopdesk_find_matches(
+                    rowBlob, rowBlob.count,
+                    rowLengths, rowLengths.count,
+                    queryBytes.baseAddress, queryBytes.count,
+                    caseSensitive, isRegex, wholeWord,
+                    out.baseAddress, out.count,
                 )
-                if found.location == NSNotFound { break }
-                out.append(Match(line: lineIdx, column: found.location, length: found.length))
-                // Advance ONE unit past the match start (not past its end) so overlaps are not skipped.
-                searchStart = found.location + 1
+            }
+            // Most finds land a handful of hits, so guess a stack buffer wide enough for them and pay
+            // the second scan only for the query that matches half the scrollback.
+            return withUnsafeTemporaryAllocation(of: UInt8.self, capacity: firstGuessBytes) { guess in
+                let needed = call(guess)
+                guard needed > guess.count else { return decode(guess, needed) }
+                var wide = [UInt8](repeating: 0, count: needed)
+                return wide.withUnsafeMutableBufferPointer { buffer in
+                    let again = call(buffer)
+                    return again <= buffer.count ? decode(buffer, again) : []
+                }
             }
         }
-        return out
     }
 
-    /// Every regex match per line; an invalid pattern yields `[]` (validate-then-drop, never traps).
-    /// A zero-width match advances one unit to avoid an infinite loop.
-    private static func regexMatches(lines: [String], pattern: String, caseSensitive: Bool) -> [Match] {
-        var options: NSRegularExpression.Options = []
-        if !caseSensitive { options.insert(.caseInsensitive) }
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: options) else { return [] }
+    // MARK: The door
+
+    /// Room for 128 matches before the answer outgrows the stack: `[count]` plus 128 records.
+    private static let firstGuessBytes = 4 + 128 * recordBytes
+
+    /// `[uint32 line][uint32 column][uint32 length]`.
+    private static let recordBytes = 12
+
+    /// Reads `[uint32 count]` and that many fixed-stride records out of the door's answer.
+    ///
+    /// A short or truncated answer decodes to nothing rather than to a partial list — a find bar showing
+    /// "3 of 7" over four highlights is worse than one showing nothing, because the count is the thing
+    /// the user navigates by.
+    private static func decode(_ bytes: UnsafeMutableBufferPointer<UInt8>, _ length: Int) -> [Match] {
+        guard length >= 4 else { return [] }
+        let word = { (at: Int) -> Int in
+            var value = 0
+            for offset in at..<(at + 4) { value = value << 8 | Int(bytes[offset]) }
+            return value
+        }
+        let count = word(0)
+        guard length >= 4 + count * recordBytes else { return [] }
         var out: [Match] = []
-        for (lineIdx, line) in lines.enumerated() {
-            // swiftlint:disable:next legacy_objc_type
-            let ns = line as NSString
-            regex.enumerateMatches(in: line, range: NSRange(location: 0, length: ns.length)) { result, _, _ in
-                guard let r = result?.range, r.location != NSNotFound, r.length > 0 else { return }
-                out.append(Match(line: lineIdx, column: r.location, length: r.length))
-            }
+        out.reserveCapacity(count)
+        for index in 0..<count {
+            let at = 4 + index * recordBytes
+            out.append(Match(line: word(at), column: word(at + 4), length: word(at + 8)))
         }
         return out
     }

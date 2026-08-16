@@ -1,9 +1,9 @@
 //! Hint Mode's targets, in C.
 //!
-//! [`slopdesk_hint::targets`] answers a variable-length list of records each carrying up to three
-//! strings, which is the same shape [`crate::link_detect`] settled with §4b's handle over §4c's
-//! arena — so this is that convention again, not a new one. One scan is one handle: take every
-//! input at once, run it, read the records out, free it.
+//! [`slopdesk_rowscan::hint::targets`] answers a variable-length list of records each carrying up
+//! to three strings, which is the same shape [`crate::link_detect`] settled with §4b's handle over
+//! §4c's arena — so this is that convention again, not a new one. One scan is one handle: take
+//! every input at once, run it, read the records out, free it.
 //!
 //! ## Why a hint target is not just a link
 //!
@@ -28,7 +28,7 @@
 
 use core::ffi::c_uchar;
 
-use slopdesk_hint::{Pattern, Target, TargetKind, targets};
+use slopdesk_rowscan::hint::{Pattern, Target, TargetKind, targets};
 use slopdesk_terminal::link::LinkSchemePolicy;
 
 use crate::link_detect::{SLOPDESK_LINK_KIND_NONE, SLOPDESK_LINK_SCHEMES_CUSTOM, kind_code, split};

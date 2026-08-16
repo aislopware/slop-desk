@@ -147,9 +147,9 @@ dependencies = [
  "slopdesk-cli",
  "slopdesk-dropd",
  "slopdesk-fuzzy",
- "slopdesk-hint",
  "slopdesk-hookevent",
  "slopdesk-inspectord",
+ "slopdesk-rowscan",
  "slopdesk-sanitize",
  "slopdesk-terminal",
  "slopdesk-video",
@@ -166,14 +166,6 @@ name = "slopdesk-gfsimd"
 version = "0.1.0"
 
 [[package]]
-name = "slopdesk-hint"
-version = "0.1.0"
-dependencies = [
- "regex",
- "slopdesk-terminal",
-]
-
-[[package]]
 name = "slopdesk-hookevent"
 version = "0.1.0"
 dependencies = [
@@ -186,6 +178,14 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "slopdesk-rowscan"
+version = "0.1.0"
+dependencies = [
+ "regex",
+ "slopdesk-terminal",
 ]
 
 [[package]]

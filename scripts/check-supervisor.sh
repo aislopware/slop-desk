@@ -3623,7 +3623,7 @@ printf 'check-supervisor: one clustering answers the cursor and the badge.\n'
 # escape, so the Swift face must stay a marshaller.
 SWIFT_HINT=Sources/SlopDeskWorkspaceCore/Terminal/HintLabelAssigner.swift
 if hit=$(spells 'NSRegularExpression|NSString|force_try|displayCellWidth|boundedPrefix|overlapsAccepted' "${SWIFT_HINT}"); then
-  fail "${hit} scans for hint targets in Swift again — slopdesk-hint owns the scan"
+  fail "${hit} scans for hint targets in Swift again — slopdesk-rowscan owns the scan"
 fi
 for entry in 'slopdesk_hint_scan' 'slopdesk_hint_scan_target' 'slopdesk_hint_scan_take_arena'; do
   if ! spells "${entry}" "${SWIFT_HINT}" > /dev/null; then
@@ -3637,13 +3637,30 @@ for kept in 'static func labels' 'static func filter'; do
     fail "${SWIFT_HINT} lost ${kept} — the label arithmetic stays here on purpose (docs/55)"
   fi
 done
-if ! spells '^regex = ' rust/slopdesk-hint/Cargo.toml > /dev/null; then
-  fail "rust/slopdesk-hint dropped the regex crate — a hand-written or backtracking matcher is the hang"
+if ! spells '^regex = ' rust/slopdesk-rowscan/Cargo.toml > /dev/null; then
+  fail "rust/slopdesk-rowscan dropped the regex crate — a hand-written or backtracking matcher is the hang"
 fi
 if spells '^regex = ' rust/slopdesk-terminal/Cargo.toml > /dev/null; then
   fail "rust/slopdesk-terminal took an external dependency — that crate is on the PTY hot path"
 fi
 printf 'check-supervisor: one regex engine over the untrusted rows, and it does not backtrack.\n'
+
+# ── ⌘F is the second untrusted pattern, and it runs on the same engine ─────────────────────────
+# Find-in-terminal took a pattern the user retypes on every keystroke and ran it, backtracking,
+# over the whole scrollback. Same hazard as Hint Mode, reached far more often. The scan is
+# slopdesk-rowscan::find now, and the columns it answers in are UTF-16 units because that is what
+# the highlighting surface indexes — the door does not convert, so neither may this face.
+SWIFT_FIND=Sources/SlopDeskWorkspaceCore/Terminal/TerminalSearchController.swift
+if hit=$(spells 'NSRegularExpression|NSString|NSRange|NSNotFound|CharacterSet' "${SWIFT_FIND}"); then
+  fail "${hit} scans for matches in Swift again — slopdesk-rowscan::find owns the scan"
+fi
+if ! spells 'slopdesk_find_matches' "${SWIFT_FIND}" > /dev/null; then
+  fail "${SWIFT_FIND} no longer asks slopdesk_find_matches — the find scan is one implementation"
+fi
+if ! spells 'pub fn matches' rust/slopdesk-rowscan/src/find.rs > /dev/null; then
+  fail "rust/slopdesk-rowscan/src/find.rs lost matches() — ⌘F has nowhere to ask"
+fi
+printf 'check-supervisor: the find bar asks the same non-backtracking engine.\n'
 
 # ── One vocabulary of secret shapes, for the title and for the paste ───────────────────────────
 # Ten compiled NSRegularExpressions masked credentials out of untrusted titles, and a second Swift

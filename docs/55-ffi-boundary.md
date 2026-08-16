@@ -204,6 +204,24 @@ opposite of the presence-bitmask rule above — and it is right here for the rea
 a pattern with an empty template and a pattern with none behave identically at the actuation site,
 so a flag would name a distinction nothing downstream can act on.
 
+### The COUNT rides in the blob when zero is an answer
+
+`slopdesk_find_matches` answers a §4 blob, not §4b's handle, because a match carries no strings —
+three numbers per record, so the answer has a size before the scan runs and the ordinary
+size-then-read retry is enough. A handle here would buy a second crossing and nothing else.
+
+What it does need is a `[uint32 count]` in front of the records, even though the count is derivable
+from `needed / 12`. Zero matches is a state the find bar is in on most keystrokes, and a §4 return
+of `0` means *no answer*; deriving the count would make "nothing matched" and "ask again" the same
+number. Four bytes in front buys the distinction for every reader, and the same reader handles the
+truncated answer by refusing it whole: a find bar showing "3 of 7" over four highlights is worse
+than one showing nothing, because the count is what the user navigates by.
+
+Its columns are UTF-16 code units rather than bytes or scalars, which is the one place this boundary
+lets the *caller's* unit win. The surface that highlights a match indexes in UTF-16, so any other
+unit would be converted on the way out — by a second walk over the same line, in Swift, per match.
+Counting them inside the scan is a pass over a prefix it already has in hand.
+
 ### The header is written by hand
 
 cbindgen would have to run *somewhere*, and "somewhere" is either inside `swift build` (forbidden)

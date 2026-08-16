@@ -16141,7 +16141,7 @@ on `NSRegularExpression`, which backtracks — so a pattern copied off the inter
 overlay on a long row, and no amount of bounding the SCAN fixes a pathological match. `regex` is a
 finite automaton: linear in the row, whatever the pattern says. That crate cannot go in
 `slopdesk-terminal`, whose manifest takes no external dependency precisely because it sits on the
-PTY hot path parsing untrusted bytes, so `slopdesk-hint` is where the module that needs one lives,
+PTY hot path parsing untrusted bytes, so `slopdesk-rowscan` is where the module that needs one lives,
 taking the link scan as a sibling. The cost is a dialect change — the engine has no lookaround and
 no backreferences — and a pattern using either now DROPS, which is the same validate-then-drop an
 uncompilable pattern always had. The two built-in shapes lost their lookarounds too, and their
@@ -16155,3 +16155,32 @@ so the next person to move them has to argue it rather than slip it in.
 
 Both ports are pinned by their PRE-EXISTING Swift suites, unchanged: 12 `ViLineMotionTests` and 20
 `HintLabelAssignerTests` pass against the marshallers exactly as they did against the walks.
+
+## ⌘F was the same hazard as Hint Mode, reached far more often (2026-08-17)
+
+Hint Mode's `hint-pattern` is a regex a human pastes in once. Find-in-terminal's is a regex a human
+RETYPES on every keystroke, run against the whole scrollback, and `TerminalSearchController` ran it
+on `NSRegularExpression` — the same backtracking engine, the same untrusted-pattern × untrusted-text
+product, on the path the user is most often on. `(a+)+$` typed into a find bar over a long log line
+is a frozen window with no cancel.
+
+So the find scan moved beside the hint scan, into `slopdesk-rowscan` — which is why that crate is
+named for the rows it scans and not for hints. `find::matches` is the whole engine: literal or
+regex, case-sensitive or not, whole-word as a post-filter over either. Three walks over the same
+rows became one.
+
+**Two decisions inside it are worth naming.** The literal scan folds case per UTF-16 UNIT rather
+than calling `str::to_lowercase`, because the full Unicode mapping can change a string's LENGTH —
+`İ` lowercases to two scalars — and a column into a string of a different length is not a column
+into the line the caller will highlight. Folding one BMP unit at a time preserves every column
+exactly, at the price of the pairs nobody types into a find bar expecting the other (`ß`/`SS`). And
+the answer's columns are UTF-16 units, not scalars: the surface indexes in UTF-16, so counting them
+anywhere else would mean a second walk per match, in Swift.
+
+**The door is §4's blob, not §4b's handle**, because a match is three numbers and needs no arena.
+It leads with a `[uint32 count]` anyway — zero matches is where the find bar sits for most
+keystrokes, and a §4 return of `0` already means "no answer", so a derived count would make
+"nothing matched" indistinguishable from "ask again".
+
+Pinned by the PRE-EXISTING Swift suites, unchanged: 20 `TerminalSearchControllerTests` and 11
+`GlobalSearchControllerTests` pass against the marshaller exactly as they did against the walks.

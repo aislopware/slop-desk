@@ -2050,6 +2050,26 @@ intptr_t slopdesk_vi_column_step(const uint8_t *line, size_t len, size_t col, in
 intptr_t slopdesk_vi_snap_to_cell(const uint8_t *line, size_t len, size_t col);
 intptr_t slopdesk_vi_cell_width(const uint8_t *line, size_t len, size_t col);
 
+/* ---- find in terminal: every occurrence of what the user typed --------------------------
+ * A §4 blob rather than the hint scan's handle, because a match carries no strings — three
+ * numbers per record, so the whole answer has a size before the scan runs and the ordinary
+ * size-then-read retry is enough.
+ *
+ *   [uint32 count] ( [uint32 line][uint32 column][uint32 length] ) * count       all big-endian
+ *
+ * The count leads the blob so that ZERO matches is 4 bytes and not 0: a §4 return of 0 means "no
+ * answer", and a find bar is at zero matches on most keystrokes. Columns and lengths are UTF-16
+ * CODE UNITS, which is what the highlighting surface indexes in.
+ *
+ * The regex is the `regex` crate's — linear in the line, no lookaround, no backreferences. A
+ * pattern using either does not compile and answers zero matches, the same validate-then-drop an
+ * unfinished pattern always had.                                                              */
+size_t slopdesk_find_matches(const uint8_t *rows, size_t rows_len,
+                             const size_t *row_lengths, size_t row_count,
+                             const uint8_t *query, size_t query_len,
+                             bool case_sensitive, bool is_regex, bool whole_word,
+                             uint8_t *out, size_t cap);
+
 /* ---------------------------------------------------------------------------- *
  * The per-pane command blocks: one record per command the shell ran.
  *
