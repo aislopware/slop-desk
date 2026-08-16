@@ -230,9 +230,10 @@ final class TerminalViewModelBatchTests: XCTestCase {
         }
     }
 
-    /// Polls (bounded) until `condition` — replaces the megaYield-and-hope scheduling gamble
-    /// for "the pump has reached the backpressure park" (under `--parallel` worker contention
-    /// a fixed yield count routinely loses the race).
+    /// Polls (bounded) until `condition` — this REPLACED a fixed `Task.yield()` count for "the
+    /// pump has reached the backpressure park" (under `--parallel` worker contention a fixed count
+    /// routinely loses the race). The helper it replaced was deleted with its last caller rather
+    /// than left beside this one for someone to reach for again.
     private func waitUntil(
         _ condition: () -> Bool, timeout: Duration = .seconds(5),
     ) async {
@@ -329,13 +330,5 @@ final class TerminalViewModelBatchTests: XCTestCase {
         let model = TerminalViewModel(surface: surface)
         await model.ingestBatch([Data("hello".utf8)], epoch: model.sessionEpoch)
         XCTAssertEqual(surface.writes, [Data("hello".utf8)])
-    }
-}
-
-private extension Task where Success == Never, Failure == Never {
-    /// Yields enough times for already-runnable MainActor work to complete — the
-    /// parked-ingest assertions need the ingest Task to reach its first await.
-    static func megaYield() async {
-        for _ in 0..<20 { await yield() }
     }
 }
