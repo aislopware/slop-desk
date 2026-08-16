@@ -1,5 +1,6 @@
 #if canImport(AudioToolbox)
 import AudioToolbox
+import CSlopDeskFFI
 import Foundation
 import OSLog
 #if os(iOS) && canImport(AVFAudio)
@@ -55,7 +56,9 @@ final class AudioPlaybackEngine: @unchecked Sendable {
         // take them back). The spare capacity is slack so a flush's not-yet-skipped span never
         // blocks the re-primed hand-off.
         let samplesPerFrame = max(1, Int(sampleRate / 100)) * self.channels
-        ring = AudioSampleRing(capacity: stage.highWaterFrames * samplesPerFrame)
+        ring = AudioSampleRing(
+            capacity: slopdesk_audio_high_water_samples(stage.highWaterFrames, samplesPerFrame),
+        )
         pump = AudioPlaybackPump(stage: stage, ring: ring, samplesPerFrame: samplesPerFrame)
     }
 

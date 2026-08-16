@@ -360,59 +360,13 @@ fn kind_index(kind: slopdesk_agent::AgentKind) -> i32 {
         .unwrap_or(-1)
 }
 
-/// The lookup-normalised form of a process name.
-///
-/// # Safety
-/// `bytes` must be null or point to `len` initialised bytes live for the call; `out` must be null
-/// or writable for `cap` bytes.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_agent_kind_normalized(
-    bytes: *const c_uchar,
-    len: usize,
-    out: *mut c_uchar,
-    cap: usize,
-) -> usize {
-    // SAFETY: the caller's obligations, restated above; `borrow`/`deliver` state their own.
-    unsafe {
-        let Ok(text) = core::str::from_utf8(borrow(bytes, len)) else {
-            return 0;
-        };
-        deliver(
-            slopdesk_agent::AgentKind::normalized_lookup_name(text).as_bytes(),
-            out,
-            cap,
-        )
-    }
-}
-
-/// The basename of a path, without allocating a component list.
-///
-/// # Safety
-/// `bytes` must be null or point to `len` initialised bytes live for the call; `out` must be null
-/// or writable for `cap` bytes.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_agent_path_basename(
-    bytes: *const c_uchar,
-    len: usize,
-    out: *mut c_uchar,
-    cap: usize,
-) -> usize {
-    // SAFETY: the caller's obligations, restated above; `borrow`/`deliver` state their own.
-    unsafe {
-        let Ok(text) = core::str::from_utf8(borrow(bytes, len)) else {
-            return 0;
-        };
-        deliver(slopdesk_agent::kind::path_basename(text).as_bytes(), out, cap)
-    }
-}
+// Neither the lookup NORMALISATION nor the two-separator `path_basename` has a door.
+//
+// Swift never asks for either: it asks WHICH agent a name is (`slopdesk_agent_kind_identify`) and
+// what a Unix foreground poll called it (`slopdesk_agent_process_basename`, `/`-only on purpose).
+// Both rules stay reachable through the doors that DO answer a question a caller has, and both keep
+// their own tests in `slopdesk-agent` — a door onto a step of a rule invites a caller to rebuild
+// that rule out of steps and get the last one wrong.
 
 /// The basename of a PTY foreground process name: the last non-empty `/`-separated component, or
 /// the whole input when there is none.
@@ -1423,20 +1377,8 @@ mod tests {
         }
     }
 
-    fn text(bytes: &[u8]) -> String {
-        let mut buffer = [0u8; 256];
-        let needed =
-            unsafe { slopdesk_agent_kind_normalized(bytes.as_ptr(), bytes.len(), buffer.as_mut_ptr(), 256) };
-        String::from_utf8(buffer.get(..needed).unwrap_or_default().to_vec()).unwrap_or_default()
-    }
-
     #[test]
     fn a_wrapper_script_still_identifies_the_agent_it_wraps() {
-        let name = b"claude-wrapper.sh";
-        assert_eq!(
-            text(name),
-            slopdesk_agent::AgentKind::normalized_lookup_name("claude-wrapper.sh")
-        );
         assert!(unsafe { slopdesk_agent_is_likely_wrapper(b"/usr/bin/node".as_ptr(), 13) });
         // A shell is deliberately NOT a wrapper: it returning to the foreground IS the exit signal.
         assert!(!unsafe { slopdesk_agent_is_likely_wrapper(b"sh".as_ptr(), 2) });
@@ -1504,10 +1446,6 @@ mod tests {
             -1
         );
         assert!(!unsafe { slopdesk_agent_kind_is_generic(raw.as_ptr(), raw.len()) });
-        assert_eq!(
-            unsafe { slopdesk_agent_kind_normalized(raw.as_ptr(), raw.len(), core::ptr::null_mut(), 0) },
-            0
-        );
     }
 
     #[test]

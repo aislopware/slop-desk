@@ -194,9 +194,7 @@ typedef struct SlopDeskAgentHold    SlopDeskAgentHold;
 
 // Pure — §4's convention, nothing remembered between calls.
 int32_t slopdesk_agent_kind_identify(const uint8_t *bytes, size_t len);   // -1 = no agent
-size_t  slopdesk_agent_kind_normalized(const uint8_t *bytes, size_t len, uint8_t *out, size_t cap);
 bool    slopdesk_agent_kind_is_generic(const uint8_t *bytes, size_t len);
-size_t  slopdesk_agent_path_basename(const uint8_t *bytes, size_t len, uint8_t *out, size_t cap);
 size_t  slopdesk_agent_process_basename(const uint8_t *bytes, size_t len, uint8_t *out, size_t cap);
 size_t  slopdesk_agent_canonical_name(const uint8_t *bytes, size_t len, uint8_t *out, size_t cap);
 bool    slopdesk_agent_is_sensitive(const uint8_t *bytes, size_t len);
