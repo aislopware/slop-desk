@@ -1798,7 +1798,7 @@ extension EnvironmentValues {
     @Entry var agentHooksController: AgentHooksController?
 }
 
-extension View {
+package extension View {
     /// Inject the app-owned ``AgentHooksController`` into the environment (called at the Settings scene root).
     func agentHooksController(_ controller: AgentHooksController?) -> some View {
         environment(\.agentHooksController, controller)

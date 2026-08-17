@@ -59,7 +59,7 @@ import UIKit
 /// paints, the ANSI set, and the ink/edge/accent the SwiftUI chrome floating inside the island uses
 /// (status line, chips, focus corner) — ON-GLASS text must read against the profile, not against the
 /// OS appearance, because the glass does not follow the OS appearance.
-struct SlateTheme: Equatable, Sendable {
+package struct SlateTheme: Equatable, Sendable {
     // The glass surfaces
     /// The terminal cell surface — the island's ground.
     let terminal: Color
@@ -112,13 +112,13 @@ struct SlateTheme: Equatable, Sendable {
     let terminalErr: Color
 
     // The libghostty config values (6-hex, no `#`) — applied via ``TerminalConfigBuilder``.
-    let terminalBackgroundHex: String
-    let terminalForegroundHex: String
+    package let terminalBackgroundHex: String
+    package let terminalForegroundHex: String
     /// The 16 ANSI terminal colours (indices 0–15). Reaches the cells via `palette = N=<hex>`.
-    let ansiPalette: [String]
+    package let ansiPalette: [String]
     /// Selection highlight background, opaque RGB; paired with `selection-foreground =
     /// cell-foreground` so glyph colours stay under the fill (not an invert). `nil` ⇒ no line.
-    let selectionBackgroundHex: String?
+    package let selectionBackgroundHex: String?
     /// Cursor block colour; `nil` ⇒ follow the foreground.
     let cursorHex: String?
     /// Glyph-under-cursor colour; `nil` ⇒ follow the background.
@@ -213,7 +213,7 @@ struct SlateTheme: Equatable, Sendable {
     /// ANSI note: the Pro seven has no blue — the blue slot carries the purple, per Dracula's own
     /// terminal convention. Brights repeat the bases: the Pro accents are already
     /// lightness-normalized at the top of the band, so a +L derivation only washes them out.
-    static let app = profile(
+    package static let app = profile(
         glass: GlassSet(face: 0x22212C, ink: 0xF8F8F2, ink2: 0x7970A9, edge: 0x454158, accent: 0x9580FF),
         ansi: [
             0x454158, 0xFF9580, 0x8AFF80, 0xFFFF80, 0x9580FF, 0xFF80BF, 0x80FFEA, 0xF8F8F2,

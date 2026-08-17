@@ -18,14 +18,14 @@ import AppKit
 
 /// The app-level light-appearance pin.
 @MainActor
-enum SlateAppearancePin {
+package enum SlateAppearancePin {
     /// Pin now if `NSApp` exists; otherwise arm a one-shot re-pin for the moment it does.
     ///
     /// The launch-time call site runs inside `App.init`, BEFORE `NSApplicationMain` creates `NSApp`,
     /// so the direct pin silently no-ops there — which used to leave the chrome on the OS appearance
     /// while the glass wore its own palette. The didFinishLaunching observer closes that window and
     /// removes itself.
-    static func install() {
+    package static func install() {
         #if os(macOS)
         guard NSApp == nil else {
             pin()

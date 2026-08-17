@@ -26,7 +26,7 @@ import SlopDeskWorkspaceModel
 /// `WorkspaceBindingRegistry.route(...)` call (a bound single chord) or a passthrough. `@MainActor` —
 /// installed once at app launch and retained for the process lifetime.
 @MainActor
-final class WorkspaceKeyDispatcher {
+package final class WorkspaceKeyDispatcher {
     private let store: WorkspaceStore
     /// The view-overlay toggles `route(...)` takes (palette / cheat sheet / find / peek-reply). The live app
     /// wires these to its `@State`; `nil` keeps those actions graceful no-ops via `route`.
@@ -121,7 +121,7 @@ final class WorkspaceKeyDispatcher {
     /// self-heal below can run. Installed with the monitor.
     private var appResignObserver: NSObjectProtocol?
 
-    init(
+    package init(
         store: WorkspaceStore,
         togglePalette: (() -> Void)? = nil,
         toggleCheatSheet: (() -> Void)? = nil,
@@ -152,15 +152,15 @@ final class WorkspaceKeyDispatcher {
     /// Install the left sidebar / Tabs-panel toggle once `WorkspaceChromeState` exists (the root view wires
     /// this to `chrome.toggleSidebar` on appear). Without it ⌘⇧L falls back to `store.sidebarCollapsed` (which
     /// nothing reads on macOS); this closure makes ⌘⇧L actually collapse the native sidebar item.
-    func setToggleSidebar(_ toggle: @escaping () -> Void) { toggleSidebar = toggle }
+    package func setToggleSidebar(_ toggle: @escaping () -> Void) { toggleSidebar = toggle }
 
     /// Install the RIGHT code panel's toggle once `WorkspaceChromeState` exists (the root view wires
     /// this to `chrome.toggleCodeSidebar` on appear) — ⌘⇧R collapses/reveals the native code-panel item.
-    func setToggleCodeSidebar(_ toggle: @escaping () -> Void) { toggleCodeSidebar = toggle }
+    package func setToggleCodeSidebar(_ toggle: @escaping () -> Void) { toggleCodeSidebar = toggle }
 
     /// Install the code panel's keyboard hand-off once `WorkspaceChromeState` exists — ⌥⌘R moves the
     /// keyboard into the embedded editor and back out again.
-    func setFocusCodePanel(_ focus: @escaping () -> Void) { focusCodePanel = focus }
+    package func setFocusCodePanel(_ focus: @escaping () -> Void) { focusCodePanel = focus }
 
     /// The workspace actions that still fire while the embedded editor owns the keyboard. Everything
     /// else passes through to WebKit untouched (that is the whole point of the yield), so this set
@@ -198,14 +198,14 @@ final class WorkspaceKeyDispatcher {
     /// Install the "Pin Window" toggle once the `WorkspaceChromeState` exists (the root view wires this to
     /// `chrome.togglePin()` on appear). Pin Window is chord-less by default, so this only fires when a user
     /// binds a chord to the `.pinWindow` action; until installed `.pinWindow` is a graceful no-op.
-    func setTogglePinWindow(_ toggle: @escaping () -> Void) { togglePinWindow = toggle }
+    package func setTogglePinWindow(_ toggle: @escaping () -> Void) { togglePinWindow = toggle }
 
     /// Install the "Close Window" actuator once the scene's `NSWindow` is captured (the app wires this to
     /// `window.performClose(nil)`, which fires `windowShouldClose` → the existing close-confirmation gate).
     /// Until installed, `.closeWindow` falls back to `store.requestCloseWindow()` in `route` — never a dead
     /// chord. The closure makes ⌘⇧W ACTUATE a close (the bare store-park path never closed anything — no
     /// SwiftUI observer).
-    func setCloseWindow(_ close: @escaping () -> Void) { closeWindow = close }
+    package func setCloseWindow(_ close: @escaping () -> Void) { closeWindow = close }
 
     /// Install the local monitor. Returning `nil` from the handler SWALLOWS the event; returning the event
     /// passes it through to the focused responder (the terminal / video pane).
@@ -213,7 +213,7 @@ final class WorkspaceKeyDispatcher {
     /// `.flagsChanged` rides the same monitor because the ⌃⇥ tab switcher COMMITS on the ⌃ key-up: a
     /// modifier transition is the end of that gesture, not a keystroke. Those events are always passed
     /// through — the monitor reads them, it never consumes them.
-    func install() {
+    package func install() {
         guard monitor == nil else { return }
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
             guard let self else { return event }
@@ -275,10 +275,11 @@ final class WorkspaceKeyDispatcher {
     }
 
     /// Map one `NSEvent` keystroke to swallow (`nil`) or pass-through (the event), routing any resolved action
-    /// through `WorkspaceBindingRegistry.route(...)`. `internal` (not `private`) so the modal-yield gate
-    /// is unit-testable via `@testable` (a synthetic NSEvent is not a window-server resource — the hang-safety
-    /// rule is about SCStream/VT/Metal, not NSEvent).
-    func handle(_ event: NSEvent) -> NSEvent? {
+    /// through `WorkspaceBindingRegistry.route(...)`. `package` (not `private`) so the modal-yield gate is
+    /// unit-testable from the macOS shell's suite, which owns the gate predicate this is wired with (a
+    /// synthetic NSEvent is not a window-server resource — the hang-safety rule is about SCStream/VT/Metal,
+    /// not NSEvent).
+    package func handle(_ event: NSEvent) -> NSEvent? {
         // STUCK-HINT SELF-HEAL: a showing hint whose ⌘ is no longer physically down means the key-up
         // was swallowed past this monitor (menu tracking runs its own event loop; an app switch hands
         // the release to the next app). The next event of ANY kind — this one — clears it, so a

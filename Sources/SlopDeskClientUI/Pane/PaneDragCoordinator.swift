@@ -170,7 +170,9 @@ enum PaneDragResolver {
 /// sidebar / content columns and every satellite window, none of which share a hosting view.
 @MainActor
 @Observable
-final class PaneDragCoordinator {
+package final class PaneDragCoordinator {
+    package init() {}
+
     /// The published shape of a live drag. Mutated only when a field CHANGES (destination
     /// transitions), never per cursor frame — observers (row highlights, canvas previews, the New-Tab
     /// slot) re-render on transitions only.
@@ -207,7 +209,7 @@ final class PaneDragCoordinator {
 
     /// The live store — chip labels + the sole-leaf `.newTab` gate read it. Weak: the coordinator is
     /// app-lifetime glue, never an owner.
-    @ObservationIgnored weak var store: WorkspaceStore?
+    @ObservationIgnored package weak var store: WorkspaceStore?
 
     /// Whether the live TREE drag's source is the sole leaf of its tab — stashed per frame so the
     /// auto-scroll tick can re-resolve the external destination without re-asking the canvas.

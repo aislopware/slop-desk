@@ -1,6 +1,6 @@
 # Renderer-DISABLED iOS spec for the real-device GUI-video test (PATH 2 / ô ④).
 # Drops the libghostty renderer (the 566MB xcframework is not needed to verify video decode/
-# render) and keeps only SlopDeskClientUI + SlopDeskVideoClient. AppMain gates the renderer on
+# render) and keeps only SlopDeskPhoneUI + SlopDeskVideoClient. AppMain gates the renderer on
 # `#if canImport(CGhostty)`, so without CGhostty the terminal shows the placeholder while the
 # Remote-window video sheet (SlopDeskVideoClient) works fully — which is all this test needs.
 name: ClientApp-iOS
@@ -19,12 +19,12 @@ targets:
     type: application
     platform: iOS
     sources:
-      - path: ../Shared
+      - path: AppMain.swift
+      - path: ../Shared/Assets.xcassets
     dependencies:
-      # The rebuilt SwiftUI scene (L2): AppMain launches `SlopDeskClientApp` from this product, which
-      # transitively pulls in SlopDeskWorkspaceCore (logic + seam types) + SlopDeskDesignSystem (tokens).
+      # The iOS app shell: AppMain launches `SlopDeskPhoneApp` from this product.
       - package: SlopDesk
-        product: SlopDeskClientUI
+        product: SlopDeskPhoneUI
       - package: SlopDesk
         product: SlopDeskVideoClient
     info:

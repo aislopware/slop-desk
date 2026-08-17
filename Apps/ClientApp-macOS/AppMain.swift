@@ -1,20 +1,24 @@
-// This shell targets the `SlopDeskClientApp` scene (in the `SlopDeskClientUI` library, over
-// `SlopDeskWorkspaceCore` + `SlopDeskDesignSystem`). The SEAM types (`TerminalRendererFactory`,
+// AppMain (macOS) — the `@main` shell for `ClientApp-macOS`, over the `SlopDeskMacApp` scene in the
+// `SlopDeskMacUI` library (docs/56 §2: each app links exactly one UI target and neither imports the
+// other's). The iOS shell is its own file under `Apps/ClientApp-iOS`; the two were ONE file for as long
+// as one `@main` could serve both scenes, which stopped being true when the scene split.
+//
+// The SEAM types (`TerminalRendererFactory`,
 // `VideoWindowFactory`, `RemoteWindowDiscovery`, `RemoteWindowSummary`) live in
 // `SlopDeskWorkspaceCore`; the seam registrations below stay PRESERVED — only the production renderer/video/discovery
 // closures are injected here (the GUI app target links libghostty/SlopDeskVideoClient; the
 // cross-platform UI library cannot). This file is part of the xcodegen Xcode app target (NOT
 // `swift build`).
-import SlopDeskClientUI
+import SlopDeskMacUI
 import SlopDeskWorkspaceCore
 import SwiftUI
 #if canImport(SlopDeskVideoClient)
 import SlopDeskVideoClient
 #endif
 
-/// The `@main` entry for both Xcode app targets (ClientApp-macOS, ClientApp-iOS).
+/// The `@main` entry for the macOS Xcode app target.
 ///
-/// The whole scene lives in the `SlopDeskClientUI` SwiftPM library (`SlopDeskClientApp`); this
+/// The whole scene lives in the `SlopDeskMacUI` SwiftPM library (`SlopDeskMacApp`); this
 /// shell only attaches `@main` and, when the libghostty xcframework is present, registers the
 /// production terminal renderer with ``TerminalRendererFactory``. Until the xcframework is
 /// built, no factory is registered and the BUILD-STATUS placeholder shows (libghostty-only
@@ -37,7 +41,7 @@ struct ClientAppMain {
     // the rebuilt `SlopDeskClientApp` scene. This app target is NOT in `swift build`.
     static func main() {
         // PATH 1 (terminal, libghostty-only): register the production renderer. The
-        // cross-platform `SlopDeskClientUI` library cannot reference `GhosttyTerminalView`
+        // cross-platform `SlopDeskClientUI` view layer cannot reference `GhosttyTerminalView`
         // (it would force linking `libghostty.xcframework` + the `CGhostty` clang module
         // into the headless `swift build`/tests), so the GUI app target injects it here.
         //
@@ -53,7 +57,7 @@ struct ClientAppMain {
         #endif
 
         // PATH 2 (GUI video path, doc 17 §3): register the production remote-GUI-window
-        // view. The cross-platform `SlopDeskClientUI` library cannot reference
+        // view. The cross-platform view layer cannot reference
         // `SlopDeskVideoClient.VideoWindowView` directly (it would pull VideoToolbox + Metal
         // into the headless `swift build`/tests), so the GUI app target — which links
         // `SlopDeskVideoClient` — injects it here at launch. With no registration the seam
@@ -196,9 +200,8 @@ struct ClientAppMain {
         }
         #endif
 
-        // Launch the rebuilt SwiftUI scene (over `SlopDeskWorkspaceCore` + `SlopDeskDesignSystem`).
-        // `App.main()` runs the app run loop and never returns.
-        SlopDeskClientApp.main()
+        // Launch the macOS scene. `App.main()` runs the app run loop and never returns.
+        SlopDeskMacApp.main()
     }
 }
 

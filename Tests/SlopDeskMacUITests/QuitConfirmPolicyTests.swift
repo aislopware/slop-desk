@@ -1,6 +1,6 @@
 #if os(macOS)
 import XCTest
-@testable import SlopDeskClientUI
+@testable import SlopDeskMacUI
 
 /// The quit-confirmation decision (a stray ⌘Q — `performKeyEquivalent: → terminate:` in
 /// the log — killed the client mid-scroll and read as a CRASH). Pure policy; the NSAlert is GUI.

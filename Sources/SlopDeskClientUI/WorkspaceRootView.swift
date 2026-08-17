@@ -90,7 +90,7 @@ public struct WorkspaceRootView: View {
 
     // INTERNAL init (not `public`): constructed only inside this module (`SlopDeskClientApp`), and `chrome`
     // is the internal `WorkspaceChromeState`. Keeps the chrome model internal (no public-API widening).
-    init(
+    package init(
         store: WorkspaceStore,
         connection: AppConnection,
         overlay: OverlayCoordinator,

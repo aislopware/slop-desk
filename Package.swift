@@ -34,6 +34,10 @@ let package = Package(
         // REBUILD-V2: thin SwiftUI layer over SlopDeskWorkspaceCore, STOCK SwiftUI + system semantic
         // colours/fonts — no custom token target (the Warp-clone `SlopDeskDesignSystem` is deleted).
         .library(name: "SlopDeskClientUI", targets: ["SlopDeskClientUI"]),
+        // docs/56 stage C: the two APP SHELLS. Each Xcode app target links exactly one of them, and
+        // neither imports the other — the products exist so the two `@main`s can be linked apart.
+        .library(name: "SlopDeskMacUI", targets: ["SlopDeskMacUI"]),
+        .library(name: "SlopDeskPhoneUI", targets: ["SlopDeskPhoneUI"]),
         // PATH 2 (GUI video path, Phase 4 / WF-9).
         .library(name: "SlopDeskVideoProtocol", targets: ["SlopDeskVideoProtocol"]),
         .library(name: "SlopDeskVideoHost", targets: ["SlopDeskVideoHost"]),
@@ -429,6 +433,57 @@ let package = Package(
             ],
         ),
 
+        // docs/56 stage C: the macOS APP SHELL. `Apps/ClientApp-macOS` links this and nothing else of
+        // the UI; it is the only target that carries a macOS `@main`.
+        //
+        // Everything here is AppKit the way a Mac app is AppKit — `NSApplicationDelegate`, `NSWindow`
+        // and its close gate, the `NSEvent` chord monitor's install site, the Dock tile, the satellite
+        // windows, the menu bar — and NOT ONE `#if os(...)`. That absence is the point: a platform gate
+        // inside a platform target means the file is in the wrong target (docs/56 §3).
+        //
+        // It sits ABOVE `SlopDeskClientUI` rather than beside it. Stage D rewrites the macOS surfaces in
+        // AppKit and each one lands HERE as its SwiftUI original is deleted, so `SlopDeskClientUI`
+        // drains from both ends: its macOS half moves up into this target, and what is left when the
+        // last one goes is the phone's, which is then renamed `SlopDeskPhoneUI`. Until that day the two
+        // shells share the SwiftUI view layer instead of each carrying a copy of it.
+        .target(
+            name: "SlopDeskMacUI",
+            dependencies: [
+                // The SwiftUI view layer both shells still stand on (Stage D drains it upward).
+                "SlopDeskClientUI",
+                // `ClientComposition` — what the app IS, built once for both shells.
+                "SlopDeskClientCore",
+                "SlopDeskWorkspaceCore",
+                "SlopDeskWorkspaceModel",
+                // Live cell metrics for the `grid` window-size mode.
+                "SlopDeskTerminal",
+                // Reach THIS scene's `NSWindow` from the SwiftUI `WindowGroup` (never an
+                // `NSApplication.windows` scan).
+                .product(name: "SwiftUIIntrospect", package: "swiftui-introspect"),
+                // Fire-time reads of the Code Agent sound toggles in the attention sink.
+                .product(name: "Defaults", package: "Defaults"),
+            ],
+        ),
+
+        // docs/56 stage C: the iOS APP SHELL. `Apps/ClientApp-iOS` links this and nothing else of the
+        // UI; it is the only target that carries an iOS `@main`.
+        //
+        // The whole target is guarded `#if os(iOS)` — the ONE allowed platform gate, because `swift
+        // build` compiles every SwiftPM target on the host triple and this one has nothing to say
+        // there. Inside that guard there is no second gate.
+        //
+        // The two shells ship the SAME product: every feature the Mac has, the phone and the iPad have,
+        // laid out for the device. What is NOT owed is the same arrangement.
+        .target(
+            name: "SlopDeskPhoneUI",
+            dependencies: [
+                "SlopDeskClientUI",
+                "SlopDeskClientCore",
+                "SlopDeskWorkspaceCore",
+                "SlopDeskWorkspaceModel",
+            ],
+        ),
+
         // MARK: PATH 2 — GUI video path (Phase 4 / WF-9)
 
         // Cross-platform PURE wire format for the GUI video path: UDP frame packetizer/reassembler
@@ -809,6 +864,20 @@ let package = Package(
             // `TerminalSurface`/`TerminalSurfaceActions` (the scrollback-mirror + bind-action seam) to drive
             // the find bar's view-model headlessly — declare the (already-transitive) module explicitly.
             dependencies: ["SlopDeskClientUI", "SlopDeskWorkspaceCore", "SlopDeskProtocol", "SlopDeskTerminal"],
+        ),
+        // docs/56 stage C: the macOS SHELL's own suite, moved out of `SlopDeskClientUITests` with the
+        // code. All four are pure decisions the AppKit shims delegate to — should ⌘Q ask before
+        // quitting, does the drain reply once and only once, does a `windowShouldClose` resolve, does
+        // the chord monitor own the keyboard right now — so they run headlessly, without an `NSWindow`
+        // (the key-window gate takes `AnyObject` for exactly that reason).
+        .testTarget(
+            name: "SlopDeskMacUITests",
+            // `SlopDeskClientUI` is named because the key-window suite drives the real
+            // `WorkspaceKeyDispatcher` (still in the shared view target — the shell only wires it) against
+            // the shell's own gate predicate.
+            dependencies: [
+                "SlopDeskMacUI", "SlopDeskClientUI", "SlopDeskWorkspaceCore", "SlopDeskWorkspaceModel",
+            ],
         ),
 
         // docs/56: the device panels' DOMAIN suite, moved out of `SlopDeskClientUITests` with the code

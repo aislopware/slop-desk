@@ -9,10 +9,10 @@ import AppKit
 /// WebKit, or SwiftUI internals, and the interesting event is over by the time anything
 /// observable has changed. This is the tap that answers them at the moment it happens.
 @MainActor
-enum FocusDebugProbe {
+package enum FocusDebugProbe {
     private static var installed = false
 
-    static func installIfRequested(
+    package static func installIfRequested(
         env: [String: String] = ProcessInfo.processInfo.environment,
     ) {
         guard env["SLOPDESK_FOCUS_DEBUG"] == "1", !installed else { return }

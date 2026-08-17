@@ -14,7 +14,7 @@ import SlopDeskClientCore
 import SlopDeskWorkspaceCore
 import SwiftUI
 
-final class SlopDeskSplitViewController: NSSplitViewController {
+package final class SlopDeskSplitViewController: NSSplitViewController {
     private let store: WorkspaceStore
     private let connection: AppConnection
     private let chrome: WorkspaceChromeState
@@ -48,7 +48,7 @@ final class SlopDeskSplitViewController: NSSplitViewController {
     /// The sidebar (TABS panel) default thickness, shared with
     /// the window-size glue (`SlopDeskClientApp.applyInitialWindowSize`) so the `grid` mode's `chromeOverhead`
     /// uses the SAME width the split item adopts (no magic-number drift between the layout and the math).
-    static let defaultSidebarWidth: CGFloat = 220
+    package static let defaultSidebarWidth: CGFloat = 220
 
     /// The centre column's floor.
     static let contentMinWidth: CGFloat = 420
@@ -87,7 +87,7 @@ final class SlopDeskSplitViewController: NSSplitViewController {
     private var resizeSettleWork: DispatchWorkItem?
     private let resizeSettleDelay: TimeInterval = 0.1
 
-    override func viewDidLoad() {
+    override package func viewDidLoad() {
         super.viewDidLoad()
 
         splitView.dividerStyle = .thin
@@ -191,7 +191,7 @@ final class SlopDeskSplitViewController: NSSplitViewController {
     /// inside that window (window closed mid-resize), the work item would early-return on the nil `self` and
     /// leave forwarding suspended (the next session on the SAME store would never flush its grid). Resuming
     /// here on a real lifecycle hook (not a timer) closes that gap.
-    override func viewWillDisappear() {
+    override package func viewWillDisappear() {
         super.viewWillDisappear()
         guard resizeForwardingSuspended else { return }
         resizeSettleWork?.cancel()
@@ -235,7 +235,7 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         chrome.navigatorWidth = width
     }
 
-    override func viewDidAppear() {
+    override package func viewDidAppear() {
         super.viewDidAppear()
         pinWindowAppearance()
         publishNavigatorWidth()

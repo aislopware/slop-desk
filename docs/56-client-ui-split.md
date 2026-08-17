@@ -55,9 +55,16 @@ Sources/SlopDeskDevicePanels     the simulator + Android panels'    — BOTH
                                  domain (docs 47, 48)
 Sources/SlopDeskClientCore       PRESENTATION LOGIC: palette, rail, — BOTH
                                  overlays, settings catalog, chrome
+                                 + the COMPOSITION ROOT
+Sources/SlopDeskClientUI         the DRAINING FLOOR (transitional)  — BOTH
 Sources/SlopDeskMacUI            AppKit + Metal + CoreAnimation     — macOS only
 Sources/SlopDeskPhoneUI          SwiftUI                            — iOS only
 ```
+
+The `SlopDeskClientUI` row is scaffolding with an end date, not a layer: it is what the old single
+target became once the two shells were lifted off it, and stage D drains it upward one surface at a
+time (§3.5). When the last macOS surface leaves it, what remains is the phone's, and the target is
+renamed rather than emptied.
 
 The cut between the third row and the fourth is the one worth stating, because it is the one that
 would otherwise blur: **`SlopDeskWorkspaceCore` is the domain, `SlopDeskClientCore` is what a UI asks
@@ -69,7 +76,9 @@ Mac.
 
 `Apps/ClientApp-macOS` links `SlopDeskMacUI`; `Apps/ClientApp-iOS` links `SlopDeskPhoneUI`. Neither
 app links the other's UI target, and `Apps/Shared/AppMain.swift` — the last file that pretended one
-`@main` could serve both — forks into a per-app entry point.
+`@main` could serve both — has forked into `Apps/ClientApp-macOS/AppMain.swift` and
+`Apps/ClientApp-iOS/AppMain.swift`. What is left in `Apps/Shared` is the asset catalogue, which
+genuinely is shared.
 
 **The two halves ship the SAME product.** iOS is not a reduced macOS: every feature the desktop has,
 the phone and the iPad have. What differs is LAYOUT — a 6" screen and a touch pointer want a
@@ -118,6 +127,34 @@ secondary windows, a 40-row rail under a mouse — are macOS-shaped problems.
   compiles every SwiftPM target on the host triple.
 - **Layout diverges; capability does not.** A feature landing on one platform is owed to the other,
   laid out for it. What is NOT owed is the same arrangement.
+
+## 3.5 The stages, and where they stand
+
+The split lands incrementally, and the constraint on every increment is that the tree stays green and
+nothing is ever implemented twice. No stage copies a file: a surface either moves, or it waits.
+
+- **A — evacuate the logic (DONE).** Every model, socket client, wire codec, policy, formatter and
+  cache that was sitting in the view target left for `SlopDeskClientCore` / `SlopDeskDevicePanels`,
+  with its tests. What remains in the old target genuinely needs a view framework, which is what made
+  the rest of this possible.
+- **B — evacuate the composition root (DONE).** `SlopDeskClientApp.init()` was 300 lines of "what the
+  app IS" — the store, the connection, the preferences, the overlay coordinator, the folder frecency,
+  the agent hooks, the chrome and every seam between them — sitting inside a SwiftUI `App`. It is now
+  `ClientComposition` (`SlopDeskClientCore/App/ClientComposition.swift`), which both shells hold as
+  their single `@State`. **The platform seams are SINKS, not `#if`s:** the composition publishes
+  `backgroundNoticeSink`, `longCommandSink` and `agentAttentionSink`, the Mac shell fills them with
+  `UNUserNotificationCenter` + `NSSound`, and the phone leaves them nil because its in-app toast —
+  pushed by the composition on both platforms — is its whole notification surface.
+- **C — fork the shell (DONE).** `SlopDeskMacApp` (`SlopDeskMacUI`) and `SlopDeskPhoneApp`
+  (`SlopDeskPhoneUI`) are two `@main` scenes with two app targets and no `#if os(...)` between them,
+  where there used to be one scene with seventeen. The Mac's window actuators, termination drain,
+  close gate and quit policy moved with it, and so did their tests (`Tests/SlopDeskMacUITests`).
+- **D — move the macOS surfaces (NEXT).** Each surface is rewritten in AppKit inside `SlopDeskMacUI`
+  and its SwiftUI original is DELETED in the same change — never a fallback, never a mirror. The 118
+  `withAnimation`/`.animation(` sites and the 3 `matchedGeometryEffect` morphs are the real work.
+  When the last one moves, `SlopDeskClientUI` holds only what the phone renders and is renamed
+  `SlopDeskPhoneUI`.
+- **E — the Rust port (§4).**
 
 ## 4. What moves to Rust
 

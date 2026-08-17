@@ -491,13 +491,13 @@ private final class CodeSidebarNavigationObserver: NSObject, WKNavigationDelegat
 /// The host's code-server is a single shared instance; each pool entry is one project's WORKBENCH
 /// on it (same origin, its own `?folder=` and editor state).
 @MainActor
-final class CodeSidebarWebViewPool {
+package final class CodeSidebarWebViewPool {
     static let shared = CodeSidebarWebViewPool()
 
     /// The workspace's active tab — wired once by the app layer (the pool cannot see the store).
     /// Drives the focus-restore tab match; the `nil` default (headless tests, pre-wiring renders)
     /// simply never restores.
-    static var activeTabID: @MainActor () -> TabID? = { nil }
+    package static var activeTabID: @MainActor () -> TabID? = { nil }
 
     /// How many project workbenches stay warm at once. Three covers the rotation a person actually
     /// keeps in their head (the repo, its dependency, the thing they are comparing against) while

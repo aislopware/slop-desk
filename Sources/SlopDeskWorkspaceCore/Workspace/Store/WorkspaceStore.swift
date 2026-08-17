@@ -346,7 +346,8 @@ public final class WorkspaceStore {
     /// a direct store `await`; so the store holds the slot for this bounded settle past `teardown()` to cover
     /// the dismantle→stop lag. Injectable; DEFAULT `.zero` frees the slot immediately, so the OFF /
     /// terminal-only paths never enter this gate. The PRODUCTION app opts in with a small window
-    /// (``SlopDeskClientApp``). The real dismantle→stop lag is not hardware-measured.
+    /// (``ClientComposition``, the composition root). The real dismantle→stop lag is not
+    /// hardware-measured.
     private let videoTeardownSettle: Duration
 
     /// The pending debounced-save task. Cancelled + replaced on each mutation so only the last

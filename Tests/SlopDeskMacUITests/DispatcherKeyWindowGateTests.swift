@@ -13,8 +13,12 @@
 
 #if os(macOS)
 import AppKit
+
+// The dispatcher itself still lives in the shared view target — the macOS shell only WIRES it, and the
+// gate predicate it is wired with (`SlopDeskMacApp.workspaceWindowIsKey`) is what moved here.
+import SlopDeskClientUI
 import XCTest
-@testable import SlopDeskClientUI
+@testable import SlopDeskMacUI
 @testable import SlopDeskWorkspaceCore
 
 @MainActor
@@ -107,11 +111,11 @@ final class DispatcherKeyWindowGateTests: XCTestCase {
     func testNilCapturedWindowNeverReportsWorkspaceKey() {
         let someOtherWindow = NSObject() // stands in for the Settings window being key
         XCTAssertFalse(
-            SlopDeskClientApp.workspaceWindowIsKey(captured: nil, keyWindow: someOtherWindow),
+            SlopDeskMacApp.workspaceWindowIsKey(captured: nil, keyWindow: someOtherWindow),
             "a nil (uncaptured / deallocated) workspace window must not claim the keyboard",
         )
         XCTAssertFalse(
-            SlopDeskClientApp.workspaceWindowIsKey(captured: nil, keyWindow: nil),
+            SlopDeskMacApp.workspaceWindowIsKey(captured: nil, keyWindow: nil),
             "with no key window at all there is nothing to own chords for",
         )
     }
@@ -122,9 +126,9 @@ final class DispatcherKeyWindowGateTests: XCTestCase {
     func testWorkspaceWindowIsKeyRequiresIdentityWithTheKeyWindow() {
         let workspace = NSObject()
         let settings = NSObject()
-        XCTAssertTrue(SlopDeskClientApp.workspaceWindowIsKey(captured: workspace, keyWindow: workspace))
-        XCTAssertFalse(SlopDeskClientApp.workspaceWindowIsKey(captured: workspace, keyWindow: settings))
-        XCTAssertFalse(SlopDeskClientApp.workspaceWindowIsKey(captured: workspace, keyWindow: nil))
+        XCTAssertTrue(SlopDeskMacApp.workspaceWindowIsKey(captured: workspace, keyWindow: workspace))
+        XCTAssertFalse(SlopDeskMacApp.workspaceWindowIsKey(captured: workspace, keyWindow: settings))
+        XCTAssertFalse(SlopDeskMacApp.workspaceWindowIsKey(captured: workspace, keyWindow: nil))
     }
 
     /// End-to-end through the dispatcher: a STALE (empty) `WeakWindowBox` + another window key — built with the
@@ -135,7 +139,7 @@ final class DispatcherKeyWindowGateTests: XCTestCase {
         let box = WeakWindowBox() // never captured (or the workspace window was deallocated)
         let otherKeyWindow = NSObject()
         let dispatcher = WorkspaceKeyDispatcher(store: store, isWorkspaceWindowKey: {
-            SlopDeskClientApp.workspaceWindowIsKey(captured: box.window, keyWindow: otherKeyWindow)
+            SlopDeskMacApp.workspaceWindowIsKey(captured: box.window, keyWindow: otherKeyWindow)
         })
 
         let result = dispatcher.handle(keyDown("w", keyCode: 13, command: true))

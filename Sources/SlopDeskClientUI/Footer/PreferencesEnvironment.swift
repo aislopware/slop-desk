@@ -13,7 +13,7 @@ extension EnvironmentValues {
     @Entry var preferencesStore: PreferencesStore?
 }
 
-extension View {
+package extension View {
     /// Inject the live ``PreferencesStore`` into the environment (called once at the scene root).
     func preferencesStore(_ store: PreferencesStore?) -> some View {
         environment(\.preferencesStore, store)

@@ -10,7 +10,7 @@ extension EnvironmentValues {
     @Entry var overlayCoordinator: OverlayCoordinator?
 }
 
-extension View {
+package extension View {
     /// Inject the live ``OverlayCoordinator`` into the environment (called once at the scene root).
     func overlayCoordinator(_ coordinator: OverlayCoordinator?) -> some View {
         environment(\.overlayCoordinator, coordinator)

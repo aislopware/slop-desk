@@ -31,18 +31,18 @@ import SwiftUI
 /// The satellite `NSWindow` subclass — a MARKER: key-window-sensitive actuators (`overlayCoordinator
 /// .closeWindow`, the menu Close Window item) test `NSApp.keyWindow is SatellitePaneWindow` to target
 /// the satellite the user is looking at instead of the captured main workspace window.
-final class SatellitePaneWindow: NSWindow {
+package final class SatellitePaneWindow: NSWindow {
     /// A BORDERLESS-engaged satellite must keep taking keys/main (AppKit defaults a `.borderless`
     /// styleMask to neither) — the desktop stream is useless without keyboard input. Harmless for
     /// the titled resting state (titled windows already say yes).
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { true }
+    override package var canBecomeKey: Bool { true }
+    override package var canBecomeMain: Bool { true }
 
     /// Routes the standard fullscreen verb (the View-menu item / ⌃⌘F / the green-button chord)
     /// through the controller first: a borderless-engaged window EXITS borderless, and a desktop
     /// window whose presentation setting is `.borderless` ENTERS it — native Spaces fullscreen
     /// remains the fallthrough for everything else.
-    override func toggleFullScreen(_ sender: Any?) {
+    override package func toggleFullScreen(_ sender: Any?) {
         if let controller = delegate as? SatellitePaneWindowController, controller.handleFullscreenVerb() {
             return
         }
@@ -414,7 +414,9 @@ final class SatellitePaneWindowController: NSWindowController, NSWindowDelegate 
 /// scene's `.onChange(of: store.detachedPanes)` (plus one initial sync) — the store stays headless; only
 /// this app layer touches AppKit windows.
 @MainActor
-final class SatelliteWindowsCoordinator {
+package final class SatelliteWindowsCoordinator {
+    package init() {}
+
     private var controllers: [PaneID: SatellitePaneWindowController] = [:]
     /// Cascade origin so a burst of detaches doesn't stack windows exactly on top of each other.
     private var cascadeStep = 0
@@ -432,7 +434,7 @@ final class SatelliteWindowsCoordinator {
     /// the main scene, so the app supplies the injection exactly once here. `paneDrag` (optional) wires
     /// the grab strip into each satellite AND supplies the tear-off drop point: a pane detached by
     /// DRAGGING it out of the main window opens under the cursor, not in the centre-cascade.
-    func sync(
+    package func sync(
         _ detached: [DetachedPane], store: WorkspaceStore, paneDrag: PaneDragCoordinator? = nil,
         decorate: (AnyView) -> AnyView,
     ) {
@@ -504,7 +506,7 @@ final class SatelliteWindowsCoordinator {
     /// Brings `paneID`'s satellite to the front (the ``WorkspaceStore/revealSatelliteWindow`` seam) —
     /// Reveal-style ingresses call this instead of minting a duplicate live stream when the pane is
     /// already detached. Returns `false` if no controller exists yet (e.g. this sync pass hasn't run).
-    func reveal(_ paneID: PaneID) -> Bool {
+    package func reveal(_ paneID: PaneID) -> Bool {
         guard let controller = controllers[paneID] else { return false }
         controller.window?.makeKeyAndOrderFront(nil)
         return true

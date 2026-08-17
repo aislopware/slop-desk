@@ -24,7 +24,7 @@ import SwiftUI
 /// `.keyboardShortcut` (the `NSEvent` dispatcher owns chords — a shortcut here would double-fire / swallow a
 /// prefix tail). `@MainActor` because the button actions touch the `@MainActor` store + routing.
 @MainActor
-struct WorkspaceCommands: Commands {
+package struct WorkspaceCommands: Commands {
     /// The single live store every item routes against.
     let store: WorkspaceStore
     /// The view-overlay toggles `route(...)` takes (palette / cheat sheet / find / peek-reply). The app
@@ -66,7 +66,40 @@ struct WorkspaceCommands: Commands {
     /// a dead menu row, but the closure is what makes the menu item actually CLOSE the window.
     var closeWindow: (() -> Void)?
 
-    var body: some Commands {
+    /// The memberwise init, spelled out because an implicit one is never more than `internal` and the
+    /// macOS shell that builds this menu bar lives in its own target (docs/56 §3). Every toggle defaults
+    /// to `nil` — an unwired action stays a graceful no-op through `route`, never a dead menu item.
+    package init(
+        store: WorkspaceStore,
+        togglePalette: (() -> Void)? = nil,
+        toggleCheatSheet: (() -> Void)? = nil,
+        toggleFind: (() -> Void)? = nil,
+        togglePeekReply: (() -> Void)? = nil,
+        toggleSidebar: (() -> Void)? = nil,
+        toggleCodeSidebar: (() -> Void)? = nil,
+        toggleGlobalSearch: (() -> Void)? = nil,
+        toggleJumpTo: (() -> Void)? = nil,
+        openQuickly: (() -> Void)? = nil,
+        togglePinWindow: (() -> Void)? = nil,
+        pinWindowOn: Bool = false,
+        closeWindow: (() -> Void)? = nil,
+    ) {
+        self.store = store
+        self.togglePalette = togglePalette
+        self.toggleCheatSheet = toggleCheatSheet
+        self.toggleFind = toggleFind
+        self.togglePeekReply = togglePeekReply
+        self.toggleSidebar = toggleSidebar
+        self.toggleCodeSidebar = toggleCodeSidebar
+        self.toggleGlobalSearch = toggleGlobalSearch
+        self.toggleJumpTo = toggleJumpTo
+        self.openQuickly = openQuickly
+        self.togglePinWindow = togglePinWindow
+        self.pinWindowOn = pinWindowOn
+        self.closeWindow = closeWindow
+    }
+
+    package var body: some Commands {
         // One top-level menu per display category, in the registry's display order. A `CommandMenu` inserts
         // a brand-new top-level menu (after the app's standard menus) — the workspace's own action verbs.
         //
