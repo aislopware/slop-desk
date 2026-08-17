@@ -291,7 +291,7 @@ public struct SlopDeskMacApp: App {
     /// ON the app-level `keyDispatcher`, so each routes through the SAME NSEvent monitor that owns every
     /// other chord (the legacy `store.sidebarCollapsed` is not read here).
     private var workspaceRootView: some View {
-        WorkspaceRootView(
+        MacWorkspaceRootView(
             store: store,
             connection: connection,
             overlay: overlayCoordinator,

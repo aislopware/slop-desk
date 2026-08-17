@@ -57,7 +57,7 @@ package final class SlopDeskSplitViewController: NSSplitViewController {
     /// an editor column); anything narrower collapses the workbench into its mobile layout.
     static let codeSidebarMinWidth: CGFloat = 380
 
-    init(
+    package init(
         store: WorkspaceStore,
         connection: AppConnection,
         chrome: WorkspaceChromeState,
@@ -297,7 +297,7 @@ package final class SlopDeskSplitViewController: NSSplitViewController {
 
     /// Apply the chrome collapse flags to both flanking items (idempotent — only animates
     /// a real change so a steady-state update doesn't re-trigger the animation).
-    func applyCollapse(sidebarCollapsed: Bool, codeSidebarCollapsed: Bool) {
+    package func applyCollapse(sidebarCollapsed: Bool, codeSidebarCollapsed: Bool) {
         applyItemCollapse(sidebarItem, collapsed: sidebarCollapsed)
         applyItemCollapse(codeSidebarItem, collapsed: codeSidebarCollapsed)
     }

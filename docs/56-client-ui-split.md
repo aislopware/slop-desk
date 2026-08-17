@@ -152,8 +152,13 @@ nothing is ever implemented twice. No stage copies a file: a surface either move
 - **D — move the macOS surfaces (IN FLIGHT).** The floor came first: every colour token now has ONE
   value, `Slate.Native`, in the platform's own colour type, and the SwiftUI rung is a wrapper over it
   — an `NSView` fills with an `NSColor`, so without that the AppKit half would have grown a second
-  palette, which is the duplicate implementation this whole doc exists to prevent.
-  Each surface is then rewritten in AppKit inside `SlopDeskMacUI`
+  palette, which is the duplicate implementation this whole doc exists to prevent. Then the ROOT, and
+  it moves TOP-DOWN for a structural reason: `SlopDeskMacUI` sits ABOVE the draining floor, so a view
+  that has already moved can never be mounted by one that has not. `MacWorkspaceRootView` is the
+  macOS window root — the split shell, the pinned sidebar toggle, the agent rollup, the overlay layer,
+  the chrome wiring and the window title — and `WorkspaceRootView` is what is left: the phone's
+  `NavigationSplitView` and its toolbar, under the one whole-file `#if os(iOS)` this doc allows.
+  Each surface below them is then rewritten in AppKit inside `SlopDeskMacUI`
   and its SwiftUI original is DELETED in the same change — never a fallback, never a mirror. The 118
   `withAnimation`/`.animation(` sites and the 3 `matchedGeometryEffect` morphs are the real work.
   When the last one moves, `SlopDeskClientUI` holds only what the phone renders and is renamed

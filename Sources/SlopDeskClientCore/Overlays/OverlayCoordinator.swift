@@ -5,7 +5,7 @@
 //   - the toast stack (wired to the store's onPaneNotification / onLongCommandNotify / onAgentAttention),
 //   - and routes a palette row's `PaletteAction` to the store, then closes.
 //
-// Mounted once at `WorkspaceRootView` in a ZStack above the window. The busy-close modal is driven directly
+// Mounted once at each shell's root view in a ZStack above the window. The busy-close modal is driven directly
 // off the store's `pendingCloseSpec` — the coordinator owns only palette/settings/toasts.
 
 import Foundation
@@ -118,22 +118,22 @@ public final class OverlayCoordinator {
     /// Injected by the root.
     @ObservationIgnored public var connectionTarget: @MainActor () -> ConnectionTarget = { .default }
 
-    // MARK: Chrome toggles (injected by the root, which owns the live `WorkspaceChromeState`)
+    // MARK: Chrome toggles (injected by the macOS window root, which owns the live `WorkspaceChromeState`)
 
-    /// Toggles the left navigator / Tabs panel. Bound by ``WorkspaceRootView`` to `chrome.toggleSidebar()` so
+    /// Toggles the left navigator / Tabs panel. Bound by `MacWorkspaceRootView` to `chrome.toggleSidebar()` so
     /// the "Toggle Tabs Panel" row flips the SAME live `chrome.sidebarCollapsed` the ⌘⇧L chord + titlebar
     /// button + the palette ✓ read — never the legacy `store.sidebarCollapsed` the native shell ignores. No-op
     /// by default (iOS / tests / previews), so the row is never a trap.
     @ObservationIgnored public var toggleSidebar: @MainActor () -> Void = {}
-    /// Toggles the RIGHT code panel (the project-scoped embedded VS Code). Bound by ``WorkspaceRootView``
+    /// Toggles the RIGHT code panel (the project-scoped embedded VS Code). Bound by `MacWorkspaceRootView`
     /// to `chrome.toggleCodeSidebar()` — the SAME live `chrome.codeSidebarCollapsed` the ⌘⇧R chord + the
     /// palette ✓ read. No-op by default (iOS / tests / previews), so the row is never a trap.
     @ObservationIgnored public var toggleCodeSidebar: @MainActor () -> Void = {}
     /// Moves the keyboard into the code panel's embedded editor, or hands it back (⌥⌘R). Bound by
-    /// ``WorkspaceRootView`` to the same webview-pool hand-off the chord drives. No-op by default
+    /// `MacWorkspaceRootView` to the same webview-pool hand-off the chord drives. No-op by default
     /// (iOS / tests / previews), so the row is never a trap.
     @ObservationIgnored public var focusCodePanel: @MainActor () -> Void = {}
-    /// Toggles the window-pin flag (View ▸ Pin Window). Bound by ``WorkspaceRootView`` to
+    /// Toggles the window-pin flag (View ▸ Pin Window). Bound by `MacWorkspaceRootView` to
     /// `chrome.togglePin()` so any surface routed here flips the SAME live `WorkspaceChromeState.pinned` the
     /// menu Button + the macOS `NSWindow.level` glue read. No-op by default (iOS / tests / previews).
     @ObservationIgnored public var togglePinWindow: @MainActor () -> Void = {}
@@ -144,7 +144,7 @@ public final class OverlayCoordinator {
     @ObservationIgnored public var closeWindow: (@MainActor () -> Void)?
     /// EAGERLY resolve the focused pane's cwd (host `cwd()` RPC →
     /// ``WorkspaceStore/setLastKnownCwd(_:for:)``) so the WORKING DIRECTORY header's cwd pill is populated the
-    /// moment the palette opens. Bound by ``WorkspaceRootView`` to the live ``MetadataClient``. WITHOUT this
+    /// moment the palette opens. Bound by each shell's root view to the live ``MetadataClient``. WITHOUT this
     /// the pill stayed blank on a freshly-connected pane at a prompt: the only other `pane/cwd` writer — a
     /// command completing (OSC 133;D) — hadn't fired. Fired from ``openPalette(mode:query:)``; the resolution
     /// lands reactively within ~1 RTT, so the pill pops in without blocking the open. No-op by default (tests /

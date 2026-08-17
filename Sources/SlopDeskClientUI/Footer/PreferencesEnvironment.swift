@@ -8,7 +8,7 @@
 import SlopDeskWorkspaceCore
 import SwiftUI
 
-extension EnvironmentValues {
+package extension EnvironmentValues {
     /// The single live preferences owner (W4 notification persistence). `nil` outside the app scene.
     @Entry var preferencesStore: PreferencesStore?
 }

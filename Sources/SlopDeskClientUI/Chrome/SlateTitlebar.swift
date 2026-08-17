@@ -127,7 +127,7 @@ struct SlateTitlebar: View {
     // NOTE: the titlebar carries NO hidden SwiftUI `.keyboardShortcut` for the chrome chords. ⌘⇧L
     // "Toggle Tabs Panel" (sidebar) is owned by the app-level
     // `WorkspaceKeyDispatcher` NSEvent monitor (registry action `.toggleSidebar`,
-    // wired to `chrome.toggleSidebar` in `WorkspaceRootView`). A SwiftUI shortcut
+    // wired to `chrome.toggleSidebar` in `MacWorkspaceRootView`). A SwiftUI shortcut
     // here would be DEAD — the monitor swallows the chord before the responder chain sees it — so we keep a
     // SINGLE owner per chord. The visible plate buttons (the window's sidebar toggle and the panel
     // rail's) still drive the same `chrome` flags on click.

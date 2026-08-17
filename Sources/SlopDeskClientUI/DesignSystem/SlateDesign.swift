@@ -446,7 +446,7 @@ package enum Slate {
     /// 2026-08-11, every snapshot render in `SlateSnapshotRender`. Reach for `field` unless you
     /// specifically want the OS's aux-window backdrop.
     @MainActor
-    enum Surface {
+    package enum Surface {
         static let void = Color(slateNative: Native.Surface.void)
         /// ⚠️ NOT the app's ground — see the ladder's note above; you almost certainly want ``field``.
         static let ground = Color(slateNative: Native.Surface.ground)
@@ -465,7 +465,7 @@ package enum Slate {
         /// old name because the eight column call sites mean exactly this; ``island`` is its
         /// counterpart, the one lifted surface. `ground` above is a different thing — the semantic
         /// aux-window backdrop.
-        static var field: Color { Slate.theme.ground }
+        package static var field: Color { Slate.theme.ground }
         /// The terminal glass — the island's fixed profile surface (NOT appearance-following).
         static var terminal: Color { Slate.theme.terminal }
         /// THE ISLAND — the terminal canvas, the one lifted surface (law 1). Equal to ``terminal`` by

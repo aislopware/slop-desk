@@ -1,6 +1,6 @@
 // WindowSidebarToggle — the navigator's show/hide button, and the ONE place it is mounted.
 //
-// It hangs off the WINDOW ROOT (`WorkspaceRootView`'s macOS overlay), not off either column. That is
+// It hangs off the WINDOW ROOT (`MacWorkspaceRootView`'s overlay), not off either column. That is
 // the whole point: the navigator column and the content column both TRAVEL when the panel collapses
 // (the split animates the item's width on ``Slate/Anim/columnSlide``), so a button parked inside
 // either one rides that slide — it crawled out from under the traffic lights on its way across, which
@@ -22,10 +22,12 @@ import SFSafeSymbols
 import SlopDeskClientCore
 import SwiftUI
 
-struct WindowSidebarToggle: View {
-    let chrome: WorkspaceChromeState
+package struct WindowSidebarToggle: View {
+    package let chrome: WorkspaceChromeState
 
-    var body: some View {
+    package init(chrome: WorkspaceChromeState) { self.chrome = chrome }
+
+    package var body: some View {
         PlateIconButton(
             symbol: .sidebarLeft,
             // The glyph squashes on the state the click lands on — including a ⌘⇧L, a palette row or

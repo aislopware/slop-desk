@@ -312,9 +312,14 @@ struct RailStatusMarks: View {
 /// drag — so this view is a LEAF and must stay one. `RailStatusRollup` is a leaf for the store's
 /// per-pane dicts; this is a leaf for the split's geometry. Two different volatile sources, the same
 /// rule.
-struct RailStatusRollupMount: View {
-    let store: WorkspaceStore
-    let chrome: WorkspaceChromeState
+package struct RailStatusRollupMount: View {
+    package let store: WorkspaceStore
+    package let chrome: WorkspaceChromeState
+
+    package init(store: WorkspaceStore, chrome: WorkspaceChromeState) {
+        self.store = store
+        self.chrome = chrome
+    }
 
     /// ITS OWN memo, not the navigator's. The two views are siblings under the window root now, and
     /// a memo threaded down from there would put the structural row build in the ROOT's body — the
@@ -349,7 +354,7 @@ struct RailStatusRollupMount: View {
         return Swift.max(collapsedLead, parked)
     }
 
-    var body: some View {
+    package var body: some View {
         let lead = Self.lead(
             collapsed: chrome.sidebarCollapsed,
             // Before the split view has reported a width there is nothing to park against, so the

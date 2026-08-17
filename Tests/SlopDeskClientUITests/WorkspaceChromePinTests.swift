@@ -90,7 +90,7 @@ final class WorkspaceChromePinTests: XCTestCase {
         XCTAssertFalse(chrome.pinned, "a second togglePin() un-pins it")
     }
 
-    /// The `OverlayCoordinator.togglePinWindow` seam — bound by `WorkspaceRootView.wireChromeToggles()` to
+    /// The `OverlayCoordinator.togglePinWindow` seam — bound by `MacWorkspaceRootView.wireChromeToggles()` to
     /// `chrome.togglePin()` so the palette / any command surface flips the SAME live `chrome.pinned` the menu
     /// Button + the `NSWindow.level` glue read. Pins the wiring contract the app depends on. REVERT-TO-
     /// CONFIRM-FAIL: drop the `overlay.togglePinWindow = { chrome.togglePin() }` line from `wireChromeToggles`

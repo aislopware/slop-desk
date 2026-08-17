@@ -12,7 +12,7 @@
 // computed ``ActiveSheet`` is robust — it can never race two chained presentations, and a dismissal (Esc /
 // click-away) routes through `closeActiveSheet()` to the matching `close*()`.
 //
-// MOUNTING: the root view (`WorkspaceRootView`) attaches this as a top `.overlay` on the macOS
+// MOUNTING: each shell's root view attaches this as a top `.overlay` — `MacWorkspaceRootView` on the
 // `WorkspaceSplitRepresentable` and on the iOS `NavigationSplitView` — a `.sheet`/`.alert` presented from an
 // overlay composes over the window on both platforms.
 //
@@ -28,20 +28,32 @@ import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel // PaneID — the notification jump target
 import SwiftUI
 
-struct OverlayHostView: View {
+package struct OverlayHostView: View {
     /// The live store — passed to the palette / pickers (working-directory badge, sources) and read for the
     /// pane/tab close-confirmation parks (`pendingCloseSpec` / `pendingTabCloseID`).
-    let store: WorkspaceStore
+    package let store: WorkspaceStore
     /// The app-global connection — bound by ``ConnectHostView`` (the host/port form is a thin view over it).
-    let connection: AppConnection
+    package let connection: AppConnection
     /// The single overlay reducer — every overlay's visibility + close routes through it.
-    @Bindable var coordinator: OverlayCoordinator
+    @Bindable package var coordinator: OverlayCoordinator
     /// Whether a palette row currently shows its ✓ (toggled-on) gutter. Built by the root from the live chrome
     /// (see ``OverlayHostView/toggledState(for:store:)``) so the pure coordinator stays chrome-agnostic.
     /// Defaults to "nothing toggled" (iOS / previews).
-    var toggledState: @MainActor (PaletteItem) -> Bool = { _ in false }
+    package var toggledState: @MainActor (PaletteItem) -> Bool = { _ in false }
 
-    var body: some View {
+    package init(
+        store: WorkspaceStore,
+        connection: AppConnection,
+        coordinator: OverlayCoordinator,
+        toggledState: @escaping @MainActor (PaletteItem) -> Bool = { _ in false },
+    ) {
+        self.store = store
+        self.connection = connection
+        self.coordinator = coordinator
+        self.toggledState = toggledState
+    }
+
+    package var body: some View {
         // ⚠️ TWO LAYERS, deliberately not one chain. The ambient layer (toasts, chips, the ⌃⇥ readout)
         // is TRANSPARENT TO HITS unless a toast is up, so the workspace beneath stays clickable — and
         // `allowsHitTesting(false)` on it suppresses hits for everything composed into that chain,
@@ -287,7 +299,7 @@ struct OverlayHostView: View {
     /// the active pane (Read Only / Secure Keyboard Entry), read off the `store` so the ✓ tracks the real pane
     /// input gate / secure-entry state rather than staying perpetually dark.
     @MainActor
-    static func toggledState(
+    package static func toggledState(
         for chrome: WorkspaceChromeState, store: WorkspaceStore,
     ) -> @MainActor (PaletteItem) -> Bool {
         { item in

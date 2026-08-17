@@ -373,7 +373,7 @@ final class RailRowsMemoTests: XCTestCase {
     // MARK: - `RailStructureKey.titledByProcess`
 
     /// Pins the pure escape-order guard shared by the memo AND the titlebar / window-title reads
-    /// (``SlateTitlebar``'s `activeTitle`, `WorkspaceRootView.windowTitle(for:)`): only a terminal pane with
+    /// (``SlateTitlebar``'s `activeTitle`, ``WorkspaceChromePolicy/windowTitle(for:)``): only a terminal pane with
     /// a spec, no cwd folder name, and no non-empty user rename would actually resolve its title from the
     /// foreground-process dict — every OTHER shape must return `false` so those call sites can skip the
     /// dict read entirely without changing what the user sees.

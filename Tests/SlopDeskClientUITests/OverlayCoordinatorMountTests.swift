@@ -54,7 +54,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
     /// Opening the palette EAGERLY resolves the focused pane's cwd so the WORKING DIRECTORY
     /// header's cwd pill populates even on a fresh prompt (no OSC 133;D completion yet) with the Details/Info
     /// tab closed — the case the two lazy `lastKnownCwd` writers left blank. The app binds
-    /// `overlay.resolveActiveCwd` (in `WorkspaceRootView`) to the live `cwd()` RPC → `store.setLastKnownCwd`.
+    /// `overlay.resolveActiveCwd` (in each shell's root view) to the live `cwd()` RPC → `store.setLastKnownCwd`.
     /// Pin that `openPalette()` AND the ⌘⇧P toggle's open path BOTH fire it. REVERT-TO-CONFIRM-FAIL: drop the
     /// `resolveActiveCwd()` call from `openPalette()` and `fired` stays 0.
     func testOpenPaletteFiresActiveCwdResolution() {
@@ -671,7 +671,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
 
     // MARK: - The pill onTap / openConnect() route opens the connect overlay
 
-    /// `WorkspaceRootView.openConnect()` (the iOS pill `onTap`) calls `overlay.openConnect()`. Pin the flag.
+    /// The phone root's `openConnect()` (the connection pill `onTap`) calls `overlay.openConnect()`. Pin the flag.
     func testOpenConnectShowsConnectOverlay() {
         let (overlay, _) = makeCoordinator()
         XCTAssertFalse(overlay.connectVisible)
@@ -987,7 +987,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
 
     /// The CLOSED loop (the gap the predicate-only test above leaves): RUNNING the "Toggle Tabs Panel" row
     /// through the coordinator must flip the SAME `chrome.sidebarCollapsed` the ✓ predicate reads.
-    /// Wires `toggleSidebar` to the live chrome exactly as `WorkspaceRootView` does, then asserts the
+    /// Wires `toggleSidebar` to the live chrome exactly as `MacWorkspaceRootView` does, then asserts the
     /// predicate flips after `run`. FAILS on the old wiring (the row ran `store.toggleSidebarCollapsed()`, a
     /// dead flag the ✓ never reads — the predicate would never move).
     func testRunningToggleSidebarRowFlipsTheLiveChromeTheCheckmarkReads() throws {

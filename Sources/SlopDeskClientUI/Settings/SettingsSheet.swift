@@ -1,7 +1,7 @@
 // SettingsSheet — the iOS settings host.
 //
 // iOS has no `Settings` scene (⌘, opens a separate, system-chromed window only on macOS), so the client's
-// settings surface on iOS is an in-app SHEET, presented from the `WorkspaceRootView` toolbar gear. The
+// settings surface on iOS is an in-app SHEET, presented from the phone root's toolbar gear. The
 // macOS two-column navigator (`SettingsView`'s search pill + icon/label rows + content pane) does not map to
 // compact width, so this wraps the
 // SAME per-section structs in a `NavigationStack` + `List`-of-sections (the standard iOS Settings idiom):
@@ -26,7 +26,7 @@
 // CROSS-PLATFORM COMPILE: although this is only ever PRESENTED on iOS, the struct compiles on every platform
 // (the lone iOS-only modifier `.navigationBarTitleDisplayMode` is abstracted behind `inlineNavTitle()`) so
 // the iOS settings host is unit-testable on the headless macOS `swift test` host — iOS view code otherwise
-// rots silently (CLAUDE.md). It is referenced only inside `WorkspaceRootView`'s `#if os(iOS)` branch.
+// rots silently (CLAUDE.md). It is referenced only from the iOS-only `WorkspaceRootView`.
 //
 // Colour + type: `SettingsInk` / `SettingsType` (SYSTEM semantics — not the terminal theme); geometry
 // rides `Slate.Metric` (raw font/radius/height literals fail `scripts/check-ds-leaks.sh`).

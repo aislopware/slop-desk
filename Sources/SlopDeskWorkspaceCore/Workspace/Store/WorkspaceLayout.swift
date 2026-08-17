@@ -5,7 +5,7 @@
 /// full recursive split tree)?
 ///
 /// Pulled out of the view as a pure, synchronously-testable function so the breakpoint is pinned in
-/// one place and unit-tested with zero SwiftUI. `WorkspaceRootView` computes it once from
+/// one place and unit-tested with zero SwiftUI. The phone's root view computes it once from
 /// `@Environment(\.horizontalSizeClass)` + the detail width and branches exactly once on the result.
 import CoreGraphics
 
@@ -22,7 +22,7 @@ public enum WorkspaceLayout {
     /// against the OUTER WINDOW rather than the detail column (the macOS path — ITEM #6). The whole
     /// window is the right signal there: the detail GeometryReader can transiently report a half-laid
     /// NavigationSplitView width during a resize, so keying on `view.window?.frame.width` is steadier.
-    /// Set just below the 720pt macOS minimum-window floor (`minWidth: 720` in `WorkspaceRootView`) so
+    /// Set just below the 720pt macOS minimum-window floor (the window's own `contentMinSize`) so
     /// the floor window resolves REGULAR and only a genuinely sub-floor window (a future
     /// smaller-min platform, or a transient pre-constraint frame) falls back to compact.
     public static let compactWindowWidthThreshold: CGFloat = 680

@@ -58,7 +58,7 @@ struct ContentColumn: View {
                 // this column is not lazy: a rows build in the overlay would re-register every
                 // volatile per-pane dict as a dependency of the titlebar body and re-run on each
                 // status tick. `RailRowsMemo` returns the cached array when nothing structural
-                // moved (`WorkspaceRootView`'s own memo contract), and the strip's chips read their
+                // moved (the root view's own memo contract), and the strip's chips read their
                 // volatile chrome in their own leaves.
                 SlateTitlebar(
                     store: store, chrome: chrome,

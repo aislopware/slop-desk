@@ -25,7 +25,7 @@ import WebKit
 /// only a direct user MOUSE-DOWN inside the webview hands VS Code the keyboard; everything else
 /// (JS autofocus arrives with no current event, or riding whatever unrelated event is current) is
 /// refused. Pure — pinned by `CodeSidebarFocusPolicyTests`.
-enum CodeSidebarFocusPolicy {
+package enum CodeSidebarFocusPolicy {
     static func shouldAcceptFocus(eventType: NSEvent.EventType?, clickWasInsideWebView: Bool) -> Bool {
         switch eventType {
         case .leftMouseDown,
@@ -203,7 +203,7 @@ enum CodeSidebarFocusPolicy {
     /// covers the moves that pass through no choke point at all: a split's new leaf, a close's
     /// landing, another client's focus arriving in the document. Pure — pinned by
     /// `CodeSidebarFocusPolicyTests`.
-    enum FocusLandingAction: Equatable {
+    package enum FocusLandingAction: Equatable {
         /// Hand the arriving tab its own region (terminal or panel).
         case honourTabRegion
         /// A pane was named — the panel gives the keyboard back.
@@ -212,7 +212,7 @@ enum CodeSidebarFocusPolicy {
         case none
     }
 
-    static func landingAction(
+    package static func landingAction(
         intentNamedPane: Bool, intentIsFresh: Bool, tabChanged: Bool, paneChanged: Bool,
     ) -> FocusLandingAction {
         if intentIsFresh, intentNamedPane { return .yieldToPane }
@@ -770,7 +770,7 @@ package final class CodeSidebarWebViewPool {
     ///
     /// `liveTabs` prunes the memory of tabs that have since closed: the pool cannot see the store,
     /// and a `TabID` nobody can reach again would otherwise sit in the map for the session's life.
-    func noteActiveTabChanged(to tab: TabID?, liveTabs: Set<TabID>) {
+    package func noteActiveTabChanged(to tab: TabID?, liveTabs: Set<TabID>) {
         sidebarFocusMemory = sidebarFocusMemory.filter { liveTabs.contains($0.key) }
         switch CodeSidebarFocusPolicy.tabSwitchFocus(
             incoming: tab, memory: sidebarFocusMemory, editorHoldsKeyboard: holdsFirstResponder(),
@@ -794,7 +794,7 @@ package final class CodeSidebarWebViewPool {
     /// webview to resign. A fresh split then arrived with no keyboard, no focus corner and a hollow
     /// cursor, and only a CLICK into it — which forces first responder the hard way — put things
     /// right, which is what made it read as intermittent (user-reported 2026-08-10).
-    func noteWorkspacePaneFocused(tab: TabID?) {
+    package func noteWorkspacePaneFocused(tab: TabID?) {
         if let tab { sidebarFocusMemory.removeValue(forKey: tab) }
         guard holdsFirstResponder() else { return }
         yieldKeyboardToWorkspace()
@@ -851,7 +851,7 @@ package final class CodeSidebarWebViewPool {
     /// `reveal` shows the panel when it is collapsed; the claim is then deferred until the webview
     /// has actually been mounted by the resulting SwiftUI pass (two hops, the same settling the
     /// warm-swap restore uses). Returns nothing — every outcome is best-effort chrome.
-    func toggleKeyboardFocus(panelCollapsed: Bool, reveal: @MainActor () -> Void) {
+    package func toggleKeyboardFocus(panelCollapsed: Bool, reveal: @MainActor () -> Void) {
         switch CodeSidebarFocusPolicy.focusToggle(
             webViewHoldsKeyboard: holdsFirstResponder(),
             hasMountedWebView: mountedWebView() != nil,
