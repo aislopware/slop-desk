@@ -793,9 +793,19 @@ size_t slopdesk_ws_minted_ids_per_intent(void);
 // different number renders a ring whose tail the host already deleted, with no error anywhere.
 size_t slopdesk_ws_topology_ring_cap(uint8_t index);
 
+// Whether a (kind, field) pair is in the TOPOLOGY half — what a wholesale topology write REAPS by.
+// A pane splits by FIELD: its `title` is topology and its `liveTitle` is not, one byte apart under
+// the same object id. Two answers do not conflict, they silently delete or silently strand a cell.
+bool slopdesk_ws_key_is_topology(uint8_t kind, uint8_t field);
+
 // An intent argument cap the HOST validates against before it allocates: 0 a name's bytes,
 // 1 a reorderTabs list, 2 a sub-payload blob. Unknown index answers 0, refusing everything.
 size_t slopdesk_ws_intent_limit(uint8_t index);
+
+// One HALF of the pane field vocabulary: 0 the liveness fields, 1 the topology fields. §4-shaped.
+// The two PARTITION the vocabulary — a field in neither is written and reaped by nobody, one in
+// both makes a liveness recapture silently delete a persisted title.
+size_t slopdesk_ws_pane_fields(uint8_t half, uint8_t *out, size_t cap);
 
 // The `root` field numbers a topology write must NOT reap — reserved for config that does not
 // cross (docs/45 §5.3). §4-shaped, so a caller sizes from the answer.

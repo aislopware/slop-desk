@@ -502,24 +502,14 @@ public extension HostWorkspaceState {
     ///
     /// Pane keys split by FIELD, which is the whole reason this predicate exists: a pane's `title` is
     /// topology and its `liveTitle` is not, and they live one byte apart under the same objectID.
+    ///
+    /// ASKED, not decided here. This is the line a wholesale write REAPS by, so two answers do not
+    /// conflict — the wider one deletes a cell the host persisted, the narrower one strands a cell
+    /// nothing will ever clear, and neither says anything. The root reservations, the three kinds
+    /// that are wholly topology, the pane split and the deliberate `false` for a project's derived
+    /// git summary and for an unknown kind from a newer host all live on the far side.
     static func isTopology(_ key: WorkspaceKey) -> Bool {
-        switch WorkspaceObjectKind(rawValue: key.kind) {
-        case .root:
-            // The preset fields are reserved but do not cross yet; treating them as topology would
-            // make every `write(topology:)` DELETE whatever a future build had put there.
-            !WorkspaceTopologyOmissions.reservedRootFields.contains(key.field)
-        case .session,
-             .tab,
-             .splitNode:
-            true
-        case .pane:
-            PaneLiveness.topologyFields().contains(key.field)
-        case .project,
-             nil:
-            // A project's git summary is derived, and an unknown kind from a newer host is not ours
-            // to reap — dropping it would make this client's `entries` stop matching its own ack.
-            false
-        }
+        slopdesk_ws_key_is_topology(key.kind, key.field)
     }
 
     /// Replaces the topology half wholesale, leaving liveness and projects untouched.

@@ -2116,7 +2116,30 @@ done
 if [[ "$(grep -cE 'closedTabRingCap *= *[0-9]|focusMRUCap *= *[0-9]' "${SWIFT_TOPOLOGY}")" -ne 0 ]]; then
   fail "${SWIFT_TOPOLOGY} transcribed a ring cap back — ask slopdesk_ws_topology_ring_cap (docs/45 §5.3)"
 fi
-printf 'check-supervisor: the topology reaps by one set of numbers, and the client asks for them.\n'
+# The same reaping, one level up: WHICH keys the write reaps, rather than how many it keeps. The
+# predicate and the two pane-field halves are the line itself, and two answers to it do not conflict
+# — the wider one deletes a cell the host persisted, the narrower one strands a cell nothing will
+# ever clear. Neither says anything at the time.
+SWIFT_LIVENESS=Sources/SlopDeskWorkspaceModel/State/PaneLiveness.swift
+if [[ "$(grep -cE 'slopdesk_ws_key_is_topology\(' "${SWIFT_TOPOLOGY}")" -eq 0 ]]; then
+  fail "${SWIFT_TOPOLOGY} decides isTopology itself — ask slopdesk_ws_key_is_topology (docs/45 §5.3)"
+fi
+for half in 0 1; do
+  if [[ "$(grep -cE "slopdesk_ws_pane_fields\(${half}|slopdesk_ws_pane_fields\(half" "${SWIFT_LIVENESS}")" -eq 0 ]]; then
+    fail "${SWIFT_LIVENESS} stopped asking slopdesk_ws_pane_fields — a pane field on the wrong side of the reaping line deletes a persisted title (docs/45 §5.3)"
+  fi
+done
+# A field alone on its line is an ARRAY LITERAL element only when what OPENED it was a bracket, or
+# when the line above it was another such element. A wrapped call argument — which is how the
+# encoder legitimately names one field at a time — sits under a line that opened a paren instead.
+if [[ "$(awk '
+  /^ *WorkspacePaneField\.[A-Za-z]+,$/ && (prev ~ /\[$/ || prev ~ /^ *WorkspacePaneField\.[A-Za-z]+,$/) { n++ }
+  { prev = $0 }
+  END { print n + 0 }
+' "${SWIFT_LIVENESS}")" -ne 0 ]]; then
+  fail "${SWIFT_LIVENESS} transcribed a pane-field half back — ask slopdesk_ws_pane_fields (docs/45 §5.3)"
+fi
+printf 'check-supervisor: the topology reaps by one set of numbers and one line, and the client asks for both.\n'
 
 # The INTENT verbs and the object KIND tags, pinned the same way and for the same reason. An op byte
 # is the whole of what one end asks the other to do; two ends numbering them differently is a client

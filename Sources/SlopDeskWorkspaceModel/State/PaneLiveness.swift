@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 
 /// Everything the host knows about one pane's RUNNING PROCESS, as a value.
@@ -186,45 +187,36 @@ public struct PaneLiveness: Equatable, Sendable {
         return out
     }
 
+    /// One HALF of a pane's field vocabulary, from the crate that reaps by it.
+    ///
+    /// The two lists PARTITION ``WorkspacePaneField`` and must keep doing so: a field in neither is
+    /// written by nobody and reaped by nobody, and a field in both makes a liveness recapture
+    /// silently delete a persisted title. Asked for rather than transcribed BECAUSE of that
+    /// property — a second pair of lists can partition perfectly and still put a field on the wrong
+    /// side of the line the host reaps by, and nothing about that disagrees loudly.
+    private static func paneFields(half: UInt8) -> [UInt8] {
+        var out = [UInt8](repeating: 0, count: 32)
+        var needed = out.withUnsafeMutableBufferPointer { buffer in
+            slopdesk_ws_pane_fields(half, buffer.baseAddress, buffer.count)
+        }
+        if needed > out.count {
+            out = [UInt8](repeating: 0, count: needed)
+            needed = out.withUnsafeMutableBufferPointer { buffer in
+                slopdesk_ws_pane_fields(half, buffer.baseAddress, buffer.count)
+            }
+        }
+        guard needed <= out.count else { return [] }
+        return Array(out[0..<needed])
+    }
+
     /// Every liveness field key for one pane — what a merge must clear before writing, so a fact that
     /// STOPPED being true (an agent that exited, a command that finished) actually disappears instead
     /// of latching forever.
-    public static func livenessFields() -> [UInt8] {
-        [
-            WorkspacePaneField.liveTitle,
-            WorkspacePaneField.titleFresh,
-            WorkspacePaneField.cwd,
-            WorkspacePaneField.projectKey,
-            WorkspacePaneField.foregroundProcess,
-            WorkspacePaneField.runningCommand,
-            WorkspacePaneField.agentState,
-            WorkspacePaneField.agentLabel,
-            WorkspacePaneField.agentIntent,
-            WorkspacePaneField.progress,
-            WorkspacePaneField.commandRunning,
-            WorkspacePaneField.lastExitCode,
-            WorkspacePaneField.lastDurationMS,
-            WorkspacePaneField.grid,
-            WorkspacePaneField.liveness,
-            WorkspacePaneField.completionEpoch,
-            WorkspacePaneField.lastActivityMS,
-        ]
-    }
+    public static func livenessFields() -> [UInt8] { paneFields(half: 0) }
 
     /// The other half of one pane's fields — what an INTENT writes and a host restart restores.
-    ///
-    /// The two lists partition ``WorkspacePaneField`` and must keep doing so. A field in neither is
-    /// written by nobody and reaped by nobody; a field in both makes a liveness recapture silently
-    /// delete a persisted title. ``PaneLivenessFieldPartitionTests`` pins it.
-    public static func topologyFields() -> [UInt8] {
-        [
-            WorkspacePaneField.kind,
-            WorkspacePaneField.title,
-            WorkspacePaneField.userRenamed,
-            WorkspacePaneField.videoTarget,
-            WorkspacePaneField.spawnCwd,
-        ]
-    }
+    /// ``PaneLivenessFieldPartitionTests`` pins the partition.
+    public static func topologyFields() -> [UInt8] { paneFields(half: 1) }
 
     // MARK: Reconstruction
 

@@ -31,7 +31,7 @@ use core::ffi::c_uchar;
 use slopdesk_wire::WorkspaceIntentStatus;
 use slopdesk_wire::document::apply::{self, IntentOutcome};
 use slopdesk_wire::document::state::{HostWorkspaceState, WorkspaceEntry, WorkspaceKey};
-use slopdesk_wire::document::{codec as wire_codec, intent, topology};
+use slopdesk_wire::document::{codec as wire_codec, intent, liveness, topology};
 use slopdesk_workspace::identity::{IdSource, SessionId};
 use slopdesk_workspace::{PaneId, SplitNodeId, TabId};
 
@@ -299,6 +299,56 @@ pub const extern "C" fn slopdesk_ws_intent_limit(index: c_uchar) -> usize {
         2 => intent::MAX_BLOB_BYTES,
         _ => 0,
     }
+}
+
+/// Whether a `(kind, field)` pair belongs to the TOPOLOGY half — the half an intent writes and a
+/// host restart restores.
+///
+/// This is the predicate a wholesale topology write REAPS by, so the two ends disagreeing does not
+/// produce a conflict: the side holding the wider answer deletes a cell the other persisted, and
+/// the side holding the narrower one leaves behind a cell nothing will ever clear. A pane splits by
+/// FIELD — its `title` is topology and its `liveTitle` is not, one byte apart under the same object
+/// id — which is exactly the kind of line no second transcription of it stays on.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_ws_key_is_topology(kind: c_uchar, field: c_uchar) -> bool {
+    topology::is_topology(&WorkspaceKey {
+        kind,
+        object_id: [0; 16],
+        field,
+    })
+}
+
+/// One HALF of the pane field vocabulary, §4-shaped: `0` the liveness fields, `1` the topology
+/// fields. An unknown half answers 0, which is not a half.
+///
+/// The two lists PARTITION the vocabulary and must keep doing so — a field in neither is written by
+/// nobody and reaped by nobody, and a field in both makes a liveness recapture silently delete a
+/// persisted title. That property is only worth asserting about the lists the reaping actually
+/// uses, so both ends read these rather than each holding a copy that partitions on its own.
+///
+/// # Safety
+/// `out` must be null or writable for `cap` bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub const unsafe extern "C" fn slopdesk_ws_pane_fields(
+    half: c_uchar,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    let fields: &[u8] = match half {
+        0 => &liveness::LIVENESS_FIELDS,
+        1 => &liveness::TOPOLOGY_FIELDS,
+        _ => &[],
+    };
+    // SAFETY: the caller's obligation, restated above; `deliver` states its own.
+    unsafe { deliver(fields, out, cap) }
 }
 
 /// The `root` field numbers a topology write must NOT reap, §4-shaped.
