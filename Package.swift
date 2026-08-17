@@ -27,6 +27,9 @@ let package = Package(
         .library(name: "SlopDeskClaudeCode", targets: ["SlopDeskClaudeCode"]),
         .library(name: "SlopDeskAgentDetect", targets: ["SlopDeskAgentDetect"]),
         .library(name: "SlopDeskWorkspaceCore", targets: ["SlopDeskWorkspaceCore"]),
+        // docs/56: the simulator + Android panels' DOMAIN — their wire, their sockets, their device
+        // models. No view framework, so both UI halves reach the one implementation (docs 47, 48).
+        .library(name: "SlopDeskDevicePanels", targets: ["SlopDeskDevicePanels"]),
         // REBUILD-V2: thin SwiftUI layer over SlopDeskWorkspaceCore, STOCK SwiftUI + system semantic
         // colours/fonts — no custom token target (the Warp-clone `SlopDeskDesignSystem` is deleted).
         .library(name: "SlopDeskClientUI", targets: ["SlopDeskClientUI"]),
@@ -274,6 +277,40 @@ let package = Package(
             ],
         ),
 
+        // docs/56 stage A: the DEVICE-PANEL domain, evacuated out of the view target.
+        //
+        // The simulator panel (docs/47) and the Android panel (docs/48) are each a wire format, a
+        // socket client, a frame sink and a device model — none of which is a view, and all of which
+        // both UI halves need once iOS carries the same features macOS does. Leaving them inside
+        // `SlopDeskClientUI` would have forced the AppKit and SwiftUI halves to each carry a copy of
+        // `SimulatorSidebarModel` (731 lines) and `AndroidSidebarModel` (833), which is the same
+        // product implemented twice — what `CLAUDE.md`'s one-implementation rule exists to stop.
+        //
+        // Declarations are `package`, not `public`: every caller is inside this package (the two UI
+        // targets and the test target), and the Xcode app targets are outside it, so the app-facing
+        // surface does not grow by a symbol.
+        .target(
+            name: "SlopDeskDevicePanels",
+            dependencies: [
+                // The two sidebar models read the workspace store (a panel row opens a pane).
+                "SlopDeskWorkspaceCore",
+                // Pane specs + the `PaneID` a device row spawns against.
+                "SlopDeskWorkspaceModel",
+                // The metadata RPC the simulator control client rides.
+                "SlopDeskProtocol",
+                // `MuxNWConnection` — the Android bridge and the simulator stream are mux channels.
+                "SlopDeskTransport",
+                // `DevicePanelGeometry` maps a touch into VIDEO pixels (docs/48 — the jank fix), which
+                // is the video path's coordinate domain, not the panel's.
+                "SlopDeskVideoProtocol",
+                // The Android control codec + the device console grammars are Rust (`slopdesk-devicelog`).
+                "CSlopDeskFFI",
+                // Device-kind glyph names. A string enum, not a view framework — the UI half maps the
+                // name onto its own image type.
+                .product(name: "SFSafeSymbols", package: "SFSafeSymbols"),
+            ],
+        ),
+
         // REBUILD-V2: `SlopDeskClientUI` — pure SwiftUI views over `SlopDeskWorkspaceCore`, STOCK
         // SwiftUI + SYSTEM semantic colours/fonts (no custom token target — the old
         // `SlopDeskDesignSystem` was deleted in L0). The app SCENE + native IDE shell land here; the
@@ -284,6 +321,8 @@ let package = Package(
             name: "SlopDeskClientUI",
             dependencies: [
                 "SlopDeskWorkspaceCore",
+                // docs/56: the simulator + Android panel domain, which this target now only RENDERS.
+                "SlopDeskDevicePanels",
                 // The one `write(2)`-until-done loop, for the control server's replies.
                 "SlopDeskTTY",
                 // The `ShellQuoting` face — one door for every place that types a path into a live
@@ -716,6 +755,16 @@ let package = Package(
             // `TerminalSurface`/`TerminalSurfaceActions` (the scrollback-mirror + bind-action seam) to drive
             // the find bar's view-model headlessly — declare the (already-transitive) module explicitly.
             dependencies: ["SlopDeskClientUI", "SlopDeskWorkspaceCore", "SlopDeskProtocol", "SlopDeskTerminal"],
+        ),
+
+        // docs/56: the device panels' DOMAIN suite, moved out of `SlopDeskClientUITests` with the code
+        // it covers. Every one of these already tested a wire format, a socket client, a gesture
+        // recogniser or a device model — never a view — which is exactly why the code they cover could
+        // leave the view target at all. `Network`/`CoreMedia` are named because two of the tests drive
+        // an `NWConnection` framing seam and a `CMSampleBuffer` sink directly.
+        .testTarget(
+            name: "SlopDeskDevicePanelsTests",
+            dependencies: ["SlopDeskDevicePanels", "SlopDeskProtocol", "SlopDeskTransport"],
         ),
 
         // WF-9 GUI video path: ONLY the PURE SlopDeskVideoProtocol is unit-tested

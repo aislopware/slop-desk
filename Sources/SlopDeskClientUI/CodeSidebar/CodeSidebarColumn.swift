@@ -22,6 +22,7 @@
 
 #if os(macOS)
 import SFSafeSymbols
+import SlopDeskDevicePanels
 import SlopDeskProtocol
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel

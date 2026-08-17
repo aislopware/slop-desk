@@ -31,6 +31,7 @@
 import AppKit
 import AVFoundation
 import CoreMedia
+import SlopDeskDevicePanels
 import SwiftUI
 
 /// The AppKit surface. A plain `NSView` hosting the display layer, plus the mouse/scroll/key

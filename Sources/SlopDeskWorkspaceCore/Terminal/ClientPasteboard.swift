@@ -46,26 +46,49 @@ public enum ClientPasteboard {
         #endif
     }
 
-    #if canImport(AppKit)
+    /// What is on the clipboard as text, or `nil` when it holds something else.
+    ///
+    /// The read side of "paste into the device": the Android panel takes THIS machine's clipboard and
+    /// sends it, rather than asking the device for its own — a `GET_CLIPBOARD` would make the device
+    /// write a reply into the video stream (see `AndroidControlMessage`). It reads the same board
+    /// ``write(_:)`` writes, which under XCTest is the per-process one, so a test that copies and
+    /// then pastes sees its own bytes and not the developer's clipboard.
+    public static func text() -> String? {
+        #if canImport(AppKit)
+        return pasteboard.string(forType: .string)
+        #elseif canImport(UIKit)
+        return UIPasteboard.general.string
+        #else
+        return nil
+        #endif
+    }
+
     /// The same funnel for a captured FRAME: decode the bytes, then clear + write the image.
     ///
-    /// Answers the decoded `NSImage` so a caller can tell "those bytes were not an image" from "the
-    /// write happened" — a truncated capture is a server problem worth reporting, not a silent
-    /// no-op — and `nil` without touching the pasteboard, so a bad frame never destroys the clip
-    /// that was already there.
+    /// Answers whether the write happened, so a caller can tell "those bytes were not an image" from
+    /// "it is on the clipboard" — a truncated capture is a server problem worth reporting, not a
+    /// silent no-op — and a `false` never touches the pasteboard, so a bad frame cannot destroy the
+    /// clip that was already there.
     ///
-    /// Format-blind on purpose. The Android panel hands it PNG and the simulator panel JPEG;
-    /// `NSImage(data:)` sniffs either, and the two panels' copies of this differed in nothing but the
-    /// argument label. They keep their own named faces (`AndroidPasteboard.write(png:)`,
-    /// `SimulatorPasteboard.write(jpeg:)`) so each panel still says what its transport delivers.
-    ///
-    /// macOS-only because both device panels are: the mirror is a Mac window onto a local emulator.
+    /// Format-blind on purpose: the Android panel hands it PNG and the simulator panel JPEG, and both
+    /// system decoders sniff either. The two panels used to wrap this in a named face each
+    /// (`AndroidPasteboard.write(png:)`, `SimulatorPasteboard.write(jpeg:)`) whose only difference was
+    /// an argument label; both were AppKit files, which is what kept the panels' MODELS out of the
+    /// shared target. Returning `Bool` instead of the decoded image is what let them move (docs/56):
+    /// a domain model can say "copy this frame" without naming a platform image type.
     @discardableResult
-    public static func write(image bytes: Data) -> NSImage? {
-        guard let image = NSImage(data: bytes) else { return nil }
+    public static func writeImage(_ bytes: Data) -> Bool {
+        #if canImport(AppKit)
+        guard let image = NSImage(data: bytes) else { return false }
         pasteboard.clearContents()
         pasteboard.writeObjects([image])
-        return image
+        return true
+        #elseif canImport(UIKit)
+        guard let image = UIImage(data: bytes) else { return false }
+        UIPasteboard.general.image = image
+        return true
+        #else
+        return false
+        #endif
     }
-    #endif
 }

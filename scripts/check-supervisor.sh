@@ -86,8 +86,8 @@ RUST_DROP_PROTOCOL="rust/slopdesk-dropd/src/protocol.rs"
 RUST_DROP_CLIENT="rust/slopdesk-dropd/src/client.rs"
 RUST_DROP_FFI="rust/slopdesk-ffi/src/file_transfer.rs"
 RUST_DROP_SERVER="rust/slopdesk-dropd/src/server.rs"
-SWIFT_ANDROID_CLIENT="Sources/SlopDeskClientUI/Android"
-SWIFT_ANDROID_DEVICE="Sources/SlopDeskClientUI/Android/AndroidDevice.swift"
+SWIFT_ANDROID_CLIENT="Sources/SlopDeskDevicePanels/Android"
+SWIFT_ANDROID_DEVICE="Sources/SlopDeskDevicePanels/Android/AndroidDevice.swift"
 SWIFT_ANDROID_MANAGER="Sources/SlopDeskHost/AndroidServiceManager.swift"
 RUST_ANDROID_SERVER="rust/slopdesk-androidd/src/server.rs"
 RUST_ANDROID_PROTOCOL="rust/slopdesk-androidd/src/protocol.rs"
@@ -4040,7 +4040,7 @@ printf 'check-supervisor: one encoder for the screend frame, and both its ends i
 # whose own comment admitted it copied the buffer remainder on every message. Stage 17's rule puts a
 # protocol's client end in the crate that owns the protocol, and `slopdesk-androidd` owns scrcpy's
 # dialect. Nothing here may grow a second reader of that wire.
-SWIFT_ANDROID_STREAM=Sources/SlopDeskClientUI/Android/AndroidStreamProtocol.swift
+SWIFT_ANDROID_STREAM=Sources/SlopDeskDevicePanels/Android/AndroidStreamProtocol.swift
 if hit=$(spells 'func readUInt32|private mutating func take|maximumPacketSize|headerSize = |sessionFlag|keyFrameFlag' "${SWIFT_ANDROID_STREAM}"); then
   fail "${hit} frames the scrcpy stream in Swift again — slopdesk-androidd owns the framing"
 fi
@@ -4075,7 +4075,7 @@ printf 'check-supervisor: one reader for the scrcpy stream, and one walk over An
 # scrcpy publishes no wire specification — its own documentation says the protocol is defined by the
 # unit tests on both sides — so every layout was transcribed by hand, and the Swift copy laid each
 # field out with a local `appendBigEndian`: the same idiom already banned for the screend frame.
-SWIFT_ANDROID_CONTROL=Sources/SlopDeskClientUI/Android/AndroidControlMessage.swift
+SWIFT_ANDROID_CONTROL=Sources/SlopDeskDevicePanels/Android/AndroidControlMessage.swift
 if hit=$(spells 'mutating func appendBigEndian|appendPosition|truncatingIfNeeded:|func truncateUTF8|FixedPoint\(' "${SWIFT_ANDROID_CONTROL}"); then
   fail "${hit} lays out a scrcpy control message in Swift again — slopdesk-androidd owns every layout"
 fi
@@ -4110,7 +4110,7 @@ printf 'check-supervisor: one writer for the scrcpy control channel, and no repl
 # grapheme cluster, and both built four `String`s a row out of a `String` the row was a slice of.
 # They were also the SAME parser twice: four fields, the same verbatim fallback, one field name
 # apart. `slopdesk-devicelog` owns both grammars and one `DeviceLogLine` carries both consoles' rows.
-SWIFT_DEVICE_LOG=Sources/SlopDeskClientUI/DevicePanel/DeviceLogLine.swift
+SWIFT_DEVICE_LOG=Sources/SlopDeskDevicePanels/Shared/DeviceLogLine.swift
 if hit=$(spells 'func isDate|func isTime|func isPriority|func isSeverityToken|isNumber|isUppercase|allSatisfy|firstIndex\(of:|drop\(while:' "${SWIFT_DEVICE_LOG}"); then
   fail "${hit} walks a device log line in Swift again — slopdesk-devicelog owns both grammars"
 fi
@@ -4122,8 +4122,10 @@ done
 # The two structs are gone and must stay gone: they were one type spelled twice, and a second one
 # would immediately grow a second parse to fill it.
 for revived in 'struct AndroidLogLine' 'struct SimulatorLogLine'; do
-  if hit=$(spells "${revived}" Sources/SlopDeskClientUI/Android/*.swift \
-    Sources/SlopDeskClientUI/Simulator/*.swift Sources/SlopDeskClientUI/DevicePanel/*.swift); then
+  if hit=$(spells "${revived}" Sources/SlopDeskDevicePanels/Android/*.swift \
+    Sources/SlopDeskDevicePanels/Simulator/*.swift Sources/SlopDeskDevicePanels/Shared/*.swift \
+    Sources/SlopDeskClientUI/Android/*.swift Sources/SlopDeskClientUI/Simulator/*.swift \
+    Sources/SlopDeskClientUI/DevicePanel/*.swift); then
     fail "${hit} brought back ${revived} — one console row serves both device panels"
   fi
 done
@@ -4452,13 +4454,14 @@ printf 'check-supervisor: one write(2) and one read-exactly, and drop-or-report 
 # `DevicePanelSampleBuffer`; only `formatDescription` is genuinely per-panel (avcC record vs Annex-B).
 # shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
 panel_dupes=$(spells 'bounds.width / contentSize.width|CMBlockBufferCreateWithMemoryBlock|2\.0\.squareRoot' \
-  $(repo_files 'Sources/SlopDeskClientUI/**/*.swift' | grep -v '/DevicePanel/') 2> /dev/null || true)
+  $(repo_files 'Sources/SlopDeskClientUI/**/*.swift' 'Sources/SlopDeskDevicePanels/**/*.swift' |
+    grep -v 'SlopDeskDevicePanels/Shared/') 2> /dev/null || true)
 if [[ -n "${panel_dupes}" ]]; then
   printf '%s\n' "${panel_dupes}" >&2
-  fail "a device-panel law grew back outside Sources/SlopDeskClientUI/DevicePanel — it is shared"
+  fail "a device-panel law grew back outside Sources/SlopDeskDevicePanels/Shared — it is shared"
 fi
 # The panels' aspect fit is the video client's, through the door — not a fourth spelling of it.
-if ! grep -q 'AspectFit.displayedVideoRect' Sources/SlopDeskClientUI/DevicePanel/DevicePanelGeometry.swift; then
+if ! grep -q 'AspectFit.displayedVideoRect' Sources/SlopDeskDevicePanels/Shared/DevicePanelGeometry.swift; then
   fail "the device panels stopped using geometry::displayed_video_rect — a click lands where it is drawn"
 fi
 # The same holds for what the panels DRAW. The empty stage, its caption, the empty-list notice and
@@ -4473,8 +4476,8 @@ declare -a panel_shares=(
   "Sources/SlopDeskClientUI/Simulator/SimulatorStageView.swift:DevicePanelChrome.veil"
   "Sources/SlopDeskClientUI/Android/AndroidDeviceList.swift:DevicePanelChrome.notice"
   "Sources/SlopDeskClientUI/Simulator/SimulatorDeviceList.swift:DevicePanelChrome.notice"
-  "Sources/SlopDeskClientUI/Android/AndroidVideoFormat.swift:DevicePanelSampleBuffer.dimensions"
-  "Sources/SlopDeskClientUI/Simulator/SimulatorVideoFormat.swift:DevicePanelSampleBuffer.dimensions"
+  "Sources/SlopDeskDevicePanels/Android/AndroidVideoFormat.swift:DevicePanelSampleBuffer.dimensions"
+  "Sources/SlopDeskDevicePanels/Simulator/SimulatorVideoFormat.swift:DevicePanelSampleBuffer.dimensions"
 )
 for share in "${panel_shares[@]}"; do
   if ! spells "${share#*:}" "${share%%:*}" > /dev/null 2>&1; then
@@ -4496,10 +4499,13 @@ if [[ -n "${pasteboard}" ]]; then
   printf '%s\n' "${pasteboard}" >&2
   fail "a second client pasteboard write grew back — ClientPasteboard.write is the only one"
 fi
-# And the two device panels' image write is that same funnel, not a third `writeObjects` pair.
+# And the two device panels' capture write is that same funnel, not a third `writeObjects` pair.
+# It is `writeImage`, which answers a `Bool` rather than the decoded image — that return type is what
+# lets a panel MODEL say "copy this frame" without naming a platform image type, and is why the two
+# models could leave the view target at all (docs/56).
 declare -a pasteboard_shares=(
-  "Sources/SlopDeskClientUI/Android/AndroidPasteboard.swift:ClientPasteboard.write(image:"
-  "Sources/SlopDeskClientUI/Simulator/SimulatorChromeAssets.swift:ClientPasteboard.write(image:"
+  "Sources/SlopDeskDevicePanels/Android/AndroidSidebarModel.swift:ClientPasteboard.writeImage("
+  "Sources/SlopDeskDevicePanels/Simulator/SimulatorSidebarModel.swift:ClientPasteboard.writeImage("
 )
 for share in "${pasteboard_shares[@]}"; do
   if ! grep -qF "${share#*:}" "${share%%:*}"; then
@@ -4535,9 +4541,10 @@ fi
 # purpose for three lines of CoreFoundation.
 # shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
 smalls=$(spells 'obj\["method"\] as\? String|kCMSampleAttachmentKey_DisplayImmediately' \
-  $(repo_files 'Sources/SlopDeskClientUI/**/*.swift' 'Sources/SlopDeskHost/**/*.swift' \
-    'Sources/SlopDeskWorkspaceCore/**/*.swift' 'Sources/SlopDeskProtocol/**/*.swift' |
-    grep -vE 'SlopDeskProtocol/ControlLine.swift|SlopDeskClientUI/DevicePanel/') 2> /dev/null || true)
+  $(repo_files 'Sources/SlopDeskClientUI/**/*.swift' 'Sources/SlopDeskDevicePanels/**/*.swift' \
+    'Sources/SlopDeskHost/**/*.swift' 'Sources/SlopDeskWorkspaceCore/**/*.swift' \
+    'Sources/SlopDeskProtocol/**/*.swift' |
+    grep -vE 'SlopDeskProtocol/ControlLine.swift|SlopDeskDevicePanels/Shared/') 2> /dev/null || true)
 if [[ -n "${smalls}" ]]; then
   printf '%s\n' "${smalls}" >&2
   fail "an NDJSON control-line or CoreMedia rule grew back — ControlLine / DevicePanelSampleBuffer own them"
@@ -4643,9 +4650,9 @@ done <<< "$(grep -lF 'Task { [weak self] in' \
 declare -a latch_shares=(
   "Sources/SlopDeskWorkspaceCore/Terminal/TerminalViewModel.swift:reflowDeadline.arm"
   "Sources/SlopDeskWorkspaceCore/Video/RemoteWindowModel.swift:reflowDeadline.arm"
-  "Sources/SlopDeskClientUI/Android/AndroidSidebarModel.swift:noticeClear.arm"
-  "Sources/SlopDeskClientUI/Simulator/SimulatorSidebarModel.swift:noticeClear.arm"
-  "Sources/SlopDeskClientUI/Android/AndroidSidebarModel.swift:reattempt.arm"
+  "Sources/SlopDeskDevicePanels/Android/AndroidSidebarModel.swift:noticeClear.arm"
+  "Sources/SlopDeskDevicePanels/Simulator/SimulatorSidebarModel.swift:noticeClear.arm"
+  "Sources/SlopDeskDevicePanels/Android/AndroidSidebarModel.swift:reattempt.arm"
   "Sources/SlopDeskClientUI/Pane/PaneDragCoordinator.swift:springLoadTask.arm"
 )
 for share in "${latch_shares[@]}"; do

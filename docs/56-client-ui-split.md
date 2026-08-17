@@ -45,7 +45,7 @@ files (21 558 lines) only **11** import SwiftUI and **4** touch a `body`. The lo
 outside the views — that is the "pure decision + actuator" split this repo has been applying for a
 year — so the suite survives a view-layer rewrite nearly intact.
 
-## 2. The two targets
+## 2. Three targets, and the one rule that makes three work
 
 ```
 Sources/SlopDeskWorkspaceCore    pure logic, no view framework   — BOTH
@@ -58,28 +58,48 @@ Sources/SlopDeskPhoneUI          SwiftUI                         — iOS only
 app links the other's UI target, and `Apps/Shared/AppMain.swift` — the last file that pretended one
 `@main` could serve both — forks into a per-app entry point.
 
+**The two halves ship the SAME product.** iOS is not a reduced macOS: every feature the desktop has,
+the phone and the iPad have. What differs is LAYOUT — a 6" screen and a touch pointer want a
+different arrangement of the same capabilities, not fewer of them. The code panel, the simulator and
+Android panels, splits, the palette, the rail: all of it exists on both, laid out for the device.
+
+**That parity is exactly why the split cannot be a copy.** Two SwiftUI/AppKit halves that each carry
+their own `SimulatorSidebarModel` (731 lines), `AndroidSidebarModel` (833), `PaletteDataSource`,
+`RailRowsBuilder` and `OverlayCoordinator` would be the same product implemented twice — the failure
+mode `CLAUDE.md` bans by name. So the split has a PRECONDITION, and it is stage one of the work:
+
+> **Everything in the client that is not a view moves out of the UI target first.**
+
+A UI target may hold view types and nothing else. Every model, reducer, socket client, wire codec,
+policy, formatter and cache leaves for the shared logic target, where both halves — and, per §4,
+eventually Rust — reach it. After that evacuation the two UI targets hold layout and actuation only,
+so "the same feature, laid out differently" costs a view, not a subsystem.
+
 **macOS = AppKit.** `NSWindow`, `NSSplitViewController`, `NSView` subclasses, `CALayer`,
 `NSCollectionView`/`NSOutlineView` where a list is a list. Motion is CoreAnimation, not
 `withAnimation` — the 118 `withAnimation`/`.animation(` sites and the 3 `matchedGeometryEffect`
 morphs are the real work of the port, and they land as explicit `CAAnimation`/`NSAnimationContext`
 so the pixel-verify loop measures what the code says.
 
-**iOS = SwiftUI, and deliberately less app.** A phone is one pane, a keyboard and a way back to the
-session list. The iOS half does NOT get: the code panel, the simulator panel, the Android panel,
-satellite windows, floating panes, pane drag-and-drop, the pane switcher, hint mode, the control
-socket, or four separate search overlays. It gets: connect, sessions/tabs, one terminal (or one
-remote-GUI pane), find, settings, toasts.
+**iOS = SwiftUI.** At phone/tablet scale, with one pane on screen at a time and a system that hands
+you the keyboard, sheet and navigation behaviours for free, SwiftUI reaches the ceiling this product
+needs. The limitations that pushed macOS out — divider drags, cross-hosting-view drag-and-drop,
+secondary windows, a 40-row rail under a mouse — are macOS-shaped problems.
 
 ## 3. The boundary
 
 - **A view type never crosses.** `SlopDeskMacUI` and `SlopDeskPhoneUI` do not import each other and
-  have no common view ancestor. If both halves want the same behaviour, the *decision* moves down
-  into `SlopDeskWorkspaceCore` as a pure function and each half actuates it in its own framework.
-  This is the same seam the store already uses; it is not a new idea, only a new place to apply it.
-- **No `#if os(...)` inside either UI target.** A platform gate in a platform-specific target is a
-  sign the file is in the wrong target. `make lint-supervisor` ratchets this.
-- **Divergence is the point.** These are not two renderings of one design; they are two products
-  against one host. A feature landing on macOS creates no obligation on iOS, and the reverse.
+  have no common view ancestor. If both halves want the same behaviour, the *decision* lives in
+  `SlopDeskWorkspaceCore` as a pure function and each half actuates it in its own framework. This is
+  the same seam the store already uses; it is not a new idea, only a new place to apply it.
+- **A UI target holds views only.** Anything that would compile without a view framework belongs in
+  the shared logic target. This is what keeps feature parity from becoming duplicate code.
+- **`#if os(...)` inside a UI target is a smell, not a tool.** A platform gate in a
+  platform-specific target means the file is in the wrong target. The one allowed use is the
+  whole-file guard that declares `SlopDeskPhoneUI`'s iOS-only nature to `swift build`, which
+  compiles every SwiftPM target on the host triple.
+- **Layout diverges; capability does not.** A feature landing on one platform is owed to the other,
+  laid out for it. What is NOT owed is the same arrangement.
 
 ## 4. What moves to Rust
 

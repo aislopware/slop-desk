@@ -16515,8 +16515,21 @@ What the port actually costs is motion — 118 `withAnimation`/`.animation(` sit
 `matchedGeometryEffect` morphs become explicit `CAAnimation`/`NSAnimationContext`. That is work, not
 risk, and it puts the timing in the same place the pixel-verify loop measures it.
 
-**iOS is not a smaller macOS.** It gets its own SwiftUI app with less product in it: no code panel,
-no simulator or Android panel, no satellite or floating panes, no pane drag-and-drop, no control
-socket, one search surface instead of four. A phone is one pane, a keyboard, and a way back to the
-session list. Neither UI target imports the other, and neither may contain `#if os(...)` — a
-platform gate inside a platform-specific target means the file is in the wrong target.
+**iOS keeps every feature; only the LAYOUT differs.** The phone and the iPad are not a reduced
+desktop — the code panel, the simulator and Android panels, splits, the palette and the rail all
+exist there, arranged for a small screen and a touch pointer. SwiftUI reaches that ceiling: the
+limitations that pushed macOS out (divider drags, cross-hosting-view drag-and-drop, secondary
+windows) are macOS-shaped problems.
+
+**Which makes stage one an evacuation, not a copy.** Feature parity across two view frameworks is
+only affordable if the features are not IN the view framework. So before either half is written,
+everything in `SlopDeskClientUI` that is not a view type — models, reducers, socket clients, wire
+codecs, policies, caches — moves to the shared logic target. Two halves each carrying their own
+`SimulatorSidebarModel` (731 lines) and `AndroidSidebarModel` (833) would be one product implemented
+twice, which `CLAUDE.md` bans by name. After the evacuation a UI target holds layout and actuation
+only, and "the same feature, laid out differently" costs a view rather than a subsystem. It also
+puts every pure-logic file in one place, which is where §4 of doc 56 starts the Rust ports.
+
+Neither UI target imports the other. `#if os(...)` inside one is a smell — the file is in the wrong
+target — with one exception: the whole-file guard that declares `SlopDeskPhoneUI` iOS-only to
+`swift build`, which compiles every SwiftPM target on the host triple.

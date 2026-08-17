@@ -16,6 +16,7 @@
 
 #if os(macOS)
 import SFSafeSymbols
+import SlopDeskDevicePanels
 import SwiftUI
 
 struct AndroidDeviceHeader<Actions: View>: View {
@@ -41,7 +42,7 @@ struct AndroidDeviceHeader<Actions: View>: View {
                     // simulator header gives its runtime: it is half of what NAMES a device. Two
                     // Pixel 7 AVDs differ by nothing else, and on the facts line it would be one
                     // dot-separated figure among four.
-                    if let version = Self.version(of: device) {
+                    if let version = device.versionLabel {
                         Text(version)
                             .font(.system(size: Slate.Typeface.footnote))
                             .foregroundStyle(Slate.Text.tertiary)
@@ -66,15 +67,6 @@ struct AndroidDeviceHeader<Actions: View>: View {
         // so this reads as a caption over the device. See ``SimulatorStageView`` for the retired
         // MERIDIAN L5 split it used to carry.
         .background(Slate.Surface.field)
-    }
-
-    /// `Android 16` where the device says so, `API 36` where only the level is known — which is the
-    /// case for an AVD that has never booted, since the marketing string is a property the system
-    /// image sets at first boot.
-    static func version(of device: AndroidDevice) -> String? {
-        if let release = device.release, !release.isEmpty { return "Android " + release }
-        if let apiLevel = device.apiLevel { return "API \(apiLevel)" }
-        return nil
     }
 
     /// Ordered by how often it is the thing being checked: the screen, then the SERIAL, which is what

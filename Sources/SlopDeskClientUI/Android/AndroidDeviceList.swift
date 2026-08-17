@@ -28,36 +28,9 @@
 
 #if os(macOS)
 import SFSafeSymbols
+import SlopDeskDevicePanels
 import SlopDeskWorkspaceCore
 import SwiftUI
-
-/// One group of the list: a heading and its devices.
-///
-/// A SECTION rather than a flat sequence, and for the identity reason `docs/47` records: a device's
-/// key is stable across a boot — right for "is this the same device", wrong for "is this the same
-/// row", since the row's whole content is a function of the state that just changed. Every section
-/// gets its own container, so a device that boots is removed from one grid and inserted into another
-/// and cannot carry a stale view across.
-struct AndroidListSection: Identifiable {
-    let title: String
-    /// The platform version every member reports, or `nil` when they do not all agree.
-    let version: String?
-    let devices: [AndroidDevice]
-
-    var id: String { title }
-
-    /// The group of what is up — drawn as cards, and the only group not cut by family.
-    var isRunning: Bool { title == AndroidDeviceList.runningTitle }
-
-    /// A device prints its own version only where the heading has not already said it.
-    func showsVersion(_ device: AndroidDevice) -> Bool {
-        AndroidDeviceHeader<EmptyView>.version(of: device) != version
-    }
-
-    /// This section's rows, named by section — the value the list's reflow watches. Section-qualified
-    /// because the move a boot makes IS between sections, and a plain list of keys would not see it.
-    var rowIdentities: [String] { devices.map { "\(title)/\($0.key)" } }
-}
 
 /// The device family as a SHAPE, so the kind of machine is answered without reading a word. Shared by
 /// the rows and the cards so one device reads the same in both. Drawn in the ICON ink for the reason
@@ -91,47 +64,6 @@ struct AndroidDeviceList: View {
                 || ($0.release ?? "").localizedCaseInsensitiveContains(trimmed)
         }
     }
-
-    /// The whole list as sections. Running first, then the families in the enum's own rank order
-    /// rather than in encounter order, so the headings do not reshuffle because the host's device set
-    /// was edited.
-    static func sections(for devices: [AndroidDevice]) -> [AndroidListSection] {
-        var sections: [AndroidListSection] = []
-        // Anything with a transport goes in the top group, including a device that is `unauthorized`.
-        // That device is the one most in need of being noticed — it is plugged in and refusing — and
-        // burying it among the AVDs that are merely switched off is where it would go to hide.
-        let attached = devices.filter { $0.serial != nil }
-        if !attached.isEmpty {
-            sections.append(section(runningTitle, attached))
-        }
-        let families = Dictionary(grouping: devices.filter { $0.serial == nil }) {
-            AndroidDeviceKind.infer($0)
-        }
-        for (kind, members) in families.sorted(by: { $0.key.rank < $1.key.rank }) {
-            sections.append(section(kind.groupTitle, members))
-        }
-        return sections
-    }
-
-    /// One heading and its devices, with the platform version LIFTED into the heading when every
-    /// member shares it — the rule ``SimulatorDeviceList/section(_:_:)`` establishes for runtimes. A
-    /// device set is usually a handful of AVDs on one system image, so the per-row version was the
-    /// same eight characters printed down the whole column.
-    static func section(_ title: String, _ members: [AndroidDevice]) -> AndroidListSection {
-        AndroidListSection(title: title, version: sharedVersion(of: members), devices: members)
-    }
-
-    /// The version every member reports, or `nil` if they disagree. An absent version counts as a
-    /// disagreement rather than as a shared value — a heading reading `PHONE ·` would be the panel
-    /// lifting the absence of a fact into the place it prints facts.
-    static func sharedVersion(of members: [AndroidDevice]) -> String? {
-        guard let first = members.first.flatMap(AndroidDeviceHeader<EmptyView>.version(of:)),
-              members.allSatisfy({ AndroidDeviceHeader<EmptyView>.version(of: $0) == first })
-        else { return nil }
-        return first
-    }
-
-    static let runningTitle = "Attached"
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -177,7 +109,7 @@ struct AndroidDeviceList: View {
     // MARK: List
 
     private var list: some View {
-        let sections = Self.sections(for: matches)
+        let sections = AndroidDeviceSections.sections(for: matches)
         return ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 ForEach(sections) { section in
@@ -286,7 +218,7 @@ struct AndroidDeviceList: View {
     /// `config.ini` is its definition, not a lookalike's — and it is what tells two similarly-named
     /// AVDs apart when they share a system image.
     private func subtitle(for device: AndroidDevice, showsVersion: Bool) -> String? {
-        if showsVersion, let version = AndroidDeviceHeader<EmptyView>.version(of: device) {
+        if showsVersion, let version = device.versionLabel {
             return version
         }
         guard let width = device.width, let height = device.height else { return nil }

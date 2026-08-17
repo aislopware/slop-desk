@@ -48,6 +48,7 @@
 
 #if os(macOS)
 import SFSafeSymbols
+import SlopDeskDevicePanels
 import SwiftUI
 
 struct SimulatorDeviceHeader<Actions: View>: View {

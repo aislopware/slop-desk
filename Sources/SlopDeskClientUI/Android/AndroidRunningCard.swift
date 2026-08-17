@@ -23,6 +23,7 @@
 
 #if os(macOS)
 import SFSafeSymbols
+import SlopDeskDevicePanels
 import SwiftUI
 
 struct AndroidRunningCard: View {

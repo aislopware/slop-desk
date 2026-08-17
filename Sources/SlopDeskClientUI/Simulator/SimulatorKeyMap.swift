@@ -12,10 +12,8 @@
 
 #if os(macOS)
 import AppKit
-
-// The `kVK_*` virtual key codes live in Carbon's HIToolbox and have no AppKit equivalent — AppKit
-// exposes `NSEvent.keyCode` as a bare `UInt16` and leaves the table to Carbon.
 import Carbon.HIToolbox
+import SlopDeskDevicePanels
 
 enum SimulatorKeyMap {
     /// The `KeyboardEvent.code` for a macOS virtual key code, or `nil` when the key produces text and

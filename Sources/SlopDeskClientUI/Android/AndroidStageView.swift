@@ -30,6 +30,8 @@
 
 #if os(macOS)
 import SFSafeSymbols
+import SlopDeskDevicePanels
+import SlopDeskWorkspaceCore
 import SwiftUI
 
 struct AndroidStageView: View {
@@ -152,7 +154,7 @@ struct AndroidStageView: View {
             // deliberately cannot pull the device's back — a `GET_CLIPBOARD` makes the device write a
             // reply into the byte stream this panel is decoding as video. See ``AndroidControlMessage``.
             PlateIconButton(symbol: .documentOnClipboard) {
-                guard let text = AndroidPasteboard.text(), !text.isEmpty else {
+                guard let text = ClientPasteboard.text(), !text.isEmpty else {
                     model.report("The clipboard has no text.")
                     return
                 }

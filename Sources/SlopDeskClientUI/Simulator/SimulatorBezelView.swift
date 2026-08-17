@@ -17,6 +17,7 @@
 // way down would repeat on every accidental brush of the trackpad.
 
 #if os(macOS)
+import SlopDeskDevicePanels
 import SwiftUI
 
 struct SimulatorBezelView: View {

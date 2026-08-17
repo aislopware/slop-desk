@@ -41,6 +41,7 @@
 
 #if os(macOS)
 import SFSafeSymbols
+import SlopDeskDevicePanels
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -125,7 +126,7 @@ struct SimulatorStageView: View {
 
     private var device: some View {
         Group {
-            if let chrome = model.chrome {
+            if let bundle = model.chrome, let chrome = SimulatorChromeDecoder.assets(for: bundle) {
                 SimulatorBezelView(
                     assets: chrome, frames: model.frames, orientation: model.orientation,
                     send: { model.send($0) }, onContentSize: { model.observed(resolution: $0) },

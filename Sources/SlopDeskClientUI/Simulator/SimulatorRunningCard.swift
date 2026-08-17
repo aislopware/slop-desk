@@ -25,6 +25,7 @@
 #if os(macOS)
 import AppKit
 import SFSafeSymbols
+import SlopDeskDevicePanels
 import SwiftUI
 
 struct SimulatorRunningCard: View {
