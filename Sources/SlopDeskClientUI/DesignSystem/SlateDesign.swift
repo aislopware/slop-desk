@@ -50,8 +50,20 @@
 import SwiftUI
 #if canImport(AppKit)
 import AppKit
+
+/// The platform's own colour type — what a token IS before a view framework looks at it.
+///
+/// Every colour in this file was already built out of one of these (a semantic system colour, a
+/// dynamic light/dark pair, or a hex): SwiftUI's `Color` has never been the value, only a wrapper
+/// around it. Naming the wrapped type lets the AppKit half of the client (docs/56 stage D — an
+/// `NSView` cannot fill with a `Color`) read the SAME constant the SwiftUI half derives from,
+/// instead of a second palette that drifts.
+package typealias SlateNativeColor = NSColor
 #elseif canImport(UIKit)
 import UIKit
+
+/// See the AppKit branch — `UIColor` is the same thing on the phone.
+package typealias SlateNativeColor = UIColor
 #endif
 
 /// A TERMINAL PROFILE — the fixed palette of the terminal glass (the one deliberate-colour surface in
@@ -60,13 +72,19 @@ import UIKit
 /// (status line, chips, focus corner) — ON-GLASS text must read against the profile, not against the
 /// OS appearance, because the glass does not follow the OS appearance.
 package struct SlateTheme: Equatable, Sendable {
+    /// THE PROFILE, as the five hexes it publishes. Every glass colour below is COMPUTED from this
+    /// (and the two derivations beside it), because a profile has to reach two frameworks: SwiftUI
+    /// draws with `Color`, the AppKit surfaces draw with ``SlateNativeColor``, and a stored pair
+    /// would be the same tone spelled twice — see ``Slate/Native``.
+    package let glass: GlassSet
+
     // The glass surfaces
     /// The terminal cell surface — the island's ground.
-    let terminal: Color
+    var terminal: Color { Color(slateHex: glass.face) }
     /// The divider / seam line ON the glass (the profile's selection tone: one step off the face).
-    let terminalEdge: Color
+    var terminalEdge: Color { Color(slateHex: glass.edge) }
     /// A lifted plate ON the glass (chips, handles) — the selection fill.
-    let terminalRaised: Color
+    var terminalRaised: Color { Color(slateHex: glass.edge) }
     /// The RIM around a lifted plate ON the glass — one step BRIGHTER than the plate, never equal to
     /// it. Its own token because ``terminalEdge`` is a SEAM (a line drawn between two things that
     /// already differ — the pane divider, the island's own edge) and a rim is the only mark saying
@@ -77,18 +95,20 @@ package struct SlateTheme: Equatable, Sendable {
     /// be LIGHTER than it — the inverse of the light side's rule (``Slate/Line/overlayRim``), which is
     /// darker than its cream — so this is derived by lifting the plate toward the profile's own
     /// comment ink rather than by inventing a hex.
-    let terminalRim: Color
+    var terminalRim: Color { Color(slateHex: terminalRimHex) }
+    /// ``terminalRim``'s value: the plate lifted HALFWAY to the profile's comment ink.
+    package var terminalRimHex: UInt32 { Self.mix(glass.edge, glass.ink2) }
 
     /// THE GROUND — everything that is not the one island (law 1): the navigator, the code panel,
     /// the top band and the moat around the terminal. Alucard's published cream `#FFFBEB`, never
     /// invented (inventing a chrome hex is what sank the five dead worlds). FIXED,
     /// never appearance-resolved (the CGColor-snapshot trap family stays dead). Raw hex because the
     /// AppKit split shell resolves it as an `NSColor`.
-    let groundHexValue: UInt32
+    package let groundHexValue: UInt32
     /// The ISLAND tone — the terminal canvas, the ONE lifted surface. EQUAL to the glass face by
     /// construction, so a profile cannot ship an island in a tone its terminal does not wear. Raw
     /// hex for the AppKit side.
-    let chromeHexValue: UInt32
+    package var chromeHexValue: UInt32 { glass.face }
     /// ``groundHexValue`` as the SwiftUI colour the band, the side panels and the moat read.
     var ground: Color { Color(slateHex: groundHexValue) }
     /// ``chromeHexValue`` as the SwiftUI colour the island reads.
@@ -96,20 +116,32 @@ package struct SlateTheme: Equatable, Sendable {
 
     // The on-glass ink
     /// Primary on-glass ink — the profile foreground.
-    let terminalInk: Color
+    var terminalInk: Color { Color(slateHex: glass.ink) }
     /// Secondary on-glass ink (status line, captions on the glass).
-    let terminalInk2: Color
+    var terminalInk2: Color { Color(slateHex: glass.ink2) }
     /// The on-glass ACCENT (focus corner, divider drag line, drop washes) — profile-tuned because the
     /// window accent is appearance-tuned and the glass ignores the appearance.
-    let terminalAccent: Color
+    var terminalAccent: Color { Color(slateHex: glass.accent) }
     /// The on-glass OK ink — the profile's OWN green (its ANSI slot 2), not the system status green.
     /// A status mark drawn ON the glass has to answer to the glass: the system palette is tuned for
     /// the OS appearance and lands a saturated signal green beside a set of lightness-normalized
     /// pastels, which is exactly how the command ladder came to wear a colour the terminal under it
     /// never speaks (user-reported 2026-08-09).
-    let terminalOk: Color
+    var terminalOk: Color { Color(slateHex: terminalOkHex) }
     /// The on-glass ERROR ink — the profile's own red (ANSI slot 1). Same rationale as ``terminalOk``.
-    let terminalErr: Color
+    var terminalErr: Color { Color(slateHex: terminalErrHex) }
+
+    /// The status inks are READ OUT of the profile's own ANSI set rather than named a second time,
+    /// so a profile cannot ship a green for its cells and a different green for the chrome standing
+    /// on them. Index-guarded (never a trap on a short palette): a profile that shipped no ANSI at
+    /// all falls back to its ink, which is legible if colourless.
+    package var terminalOkHex: UInt32 { ansi.indices.contains(Self.ansiGreen) ? ansi[Self.ansiGreen] : glass.ink }
+    /// See ``terminalOkHex`` — the red slot.
+    package var terminalErrHex: UInt32 { ansi.indices.contains(Self.ansiRed) ? ansi[Self.ansiRed] : glass.ink }
+
+    /// The 16 ANSI colours as the profile publishes them (24-bit RGB); ``ansiPalette`` is the same
+    /// set in libghostty's 6-hex config form.
+    package let ansi: [UInt32]
 
     // The libghostty config values (6-hex, no `#`) — applied via ``TerminalConfigBuilder``.
     package let terminalBackgroundHex: String
@@ -126,12 +158,12 @@ package struct SlateTheme: Equatable, Sendable {
 
     /// The published GLASS palette a profile ships — the terminal's own five (face/ink/comment/
     /// selection-edge/accent), verbatim from the theme's spec.
-    struct GlassSet {
-        let face: UInt32
-        let ink: UInt32
-        let ink2: UInt32
-        let edge: UInt32
-        let accent: UInt32
+    package struct GlassSet: Equatable, Sendable {
+        package let face: UInt32
+        package let ink: UInt32
+        package let ink2: UInt32
+        package let edge: UInt32
+        package let accent: UInt32
     }
 
     /// Build the profile from 24-bit RGB values (single source for both the `Color` and hex forms).
@@ -143,25 +175,9 @@ package struct SlateTheme: Equatable, Sendable {
         ground: UInt32,
     ) -> Self {
         Self(
-            terminal: Color(slateHex: glass.face),
-            terminalEdge: Color(slateHex: glass.edge),
-            terminalRaised: Color(slateHex: glass.edge),
-            // The rim is the plate lifted HALFWAY to the profile's comment ink — in-family by
-            // construction (a profile cannot ship a rim in a hue its glass does not speak) and a
-            // clear step off the plate it bounds: on the shipped profile #454158 → #5F5880 against
-            // the ink's #7970A9, which reads as an edge without reaching the label's own weight.
-            terminalRim: Color(slateHex: mix(glass.edge, glass.ink2)),
+            glass: glass,
             groundHexValue: ground,
-            chromeHexValue: glass.face,
-            terminalInk: Color(slateHex: glass.ink),
-            terminalInk2: Color(slateHex: glass.ink2),
-            terminalAccent: Color(slateHex: glass.accent),
-            // The status inks are READ OUT of the profile's own ANSI set rather than named a second
-            // time, so a profile cannot ship a green for its cells and a different green for the
-            // chrome standing on them. Index-guarded (never a trap on a short palette): a profile
-            // that shipped no ANSI at all falls back to its ink, which is legible if colourless.
-            terminalOk: Color(slateHex: ansi.indices.contains(ansiGreen) ? ansi[ansiGreen] : glass.ink),
-            terminalErr: Color(slateHex: ansi.indices.contains(ansiRed) ? ansi[ansiRed] : glass.ink),
+            ansi: ansi,
             terminalBackgroundHex: hex6(glass.face),
             terminalForegroundHex: hex6(glass.ink),
             ansiPalette: ansi.map { hex6($0) },
@@ -264,8 +280,153 @@ package enum Slate {
     /// on light appearances, the Pro `#9580FF` on dark. The ONLY chrome colour that is not the
     /// system's — user-directed 2026-08-07 (fixed brand accent over the user-configurable system
     /// accent; purple replaced the Ember teal in the round-8 Dracula verdict).
-    private static let accentPurple = Color(slateDynamicLight: 0x644AC9, dark: 0x9580FF)
+    @MainActor private static let accentPurple = Color(slateNative: Native.accent)
     /// The accent's fill/badge band (filled pills, progress fills — white text sits on it).
+
+    /// THE TOKEN VALUES, in the platform's own colour type.
+    ///
+    /// Every colour rung below — ``Surface``, ``Text``, ``Line``, ``State``, ``Status``,
+    /// ``StatusInk``, ``Terminal`` — is `Color(slateNative:)` over a constant declared HERE, so a
+    /// token is one value with two views of it and never two spellings that can drift apart. The
+    /// AppKit half of the client (docs/56 stage D) reads these directly: an `NSView` fills with an
+    /// `NSColor`, and re-deriving the ladder in AppKit terms is exactly the duplicate implementation
+    /// `CLAUDE.md` forbids.
+    ///
+    /// Two rungs are deliberately absent because they are not colours the platform has an opinion
+    /// about: `Text/onAccent` and `Text/onWarn` are pinned white and black (``SlateNativeColor/white``
+    /// / `.black` reach them without a token), and ``ProjectTint``'s register is a list of bed
+    /// SOURCES that only ever composites through ``ProjectTint/wash(for:)``.
+    @MainActor
+    package enum Native {
+        /// The brand accent — see ``Slate/accentPurple``. The two hexes are spelled ONCE, here.
+        package static let accent = SlateNativeColor.slateDynamic(light: 0x644AC9, dark: 0x9580FF)
+
+        /// The chrome surface ladder — see ``Slate/Surface`` for what each rung means and for the
+        /// ⚠️ about `ground` not being the app's ground.
+        @MainActor
+        package enum Surface {
+            #if canImport(AppKit)
+            package static let void = SlateNativeColor.underPageBackgroundColor
+            package static let ground = SlateNativeColor.underPageBackgroundColor
+            package static let face = SlateNativeColor.windowBackgroundColor
+            package static let raised = SlateNativeColor.quaternarySystemFill
+            package static let lift = SlateNativeColor.tertiarySystemFill
+            package static let chip = SlateNativeColor.controlBackgroundColor
+            #else
+            package static let void = SlateNativeColor.secondarySystemBackground
+            package static let ground = SlateNativeColor.secondarySystemBackground
+            package static let face = SlateNativeColor.systemBackground
+            package static let raised = SlateNativeColor.quaternarySystemFill
+            package static let lift = SlateNativeColor.tertiarySystemFill
+            package static let chip = SlateNativeColor.secondarySystemGroupedBackground
+            #endif
+            /// THE GROUND — the profile's own cream, the one authored chrome tone.
+            package static var field: SlateNativeColor { SlateNativeColor(slateHex: Slate.theme.groundHexValue) }
+            package static var terminal: SlateNativeColor { Terminal.face }
+            package static var island: SlateNativeColor { SlateNativeColor(slateHex: Slate.theme.chromeHexValue) }
+        }
+
+        /// The ON-GLASS vocabulary, straight off the one terminal profile — see ``Slate/Terminal``.
+        @MainActor
+        package enum Terminal {
+            package static var face: SlateNativeColor { color(Slate.theme.glass.face) }
+            package static var ink: SlateNativeColor { color(Slate.theme.glass.ink) }
+            package static var ink2: SlateNativeColor { color(Slate.theme.glass.ink2) }
+            package static var edge: SlateNativeColor { color(Slate.theme.glass.edge) }
+            package static var raised: SlateNativeColor { edge }
+            package static var rim: SlateNativeColor { color(Slate.theme.terminalRimHex) }
+            package static var accent: SlateNativeColor { color(Slate.theme.glass.accent) }
+            package static var ok: SlateNativeColor { color(Slate.theme.terminalOkHex) }
+            package static var err: SlateNativeColor { color(Slate.theme.terminalErrHex) }
+
+            private static func color(_ hex: UInt32) -> SlateNativeColor { SlateNativeColor(slateHex: hex) }
+        }
+
+        /// The text ladder — see ``Slate/Text`` for why the two weak rungs left the system's.
+        @MainActor
+        package enum Text {
+            #if canImport(AppKit)
+            package static let primary = SlateNativeColor.labelColor
+            package static let secondary = SlateNativeColor.slatePinnedLight(
+                0x585751, darkSystem: .secondaryLabelColor,
+            )
+            #else
+            package static let primary = SlateNativeColor.label
+            package static let secondary = SlateNativeColor.slatePinnedLight(
+                0x585751, darkSystem: .secondaryLabel,
+            )
+            #endif
+            package static let tertiary = SlateNativeColor.slateDynamic(light: 0x6C6B64, dark: 0x89888B)
+            package static let icon = secondary
+        }
+
+        /// The rules and edges — see ``Slate/Line``.
+        @MainActor
+        package enum Line {
+            #if canImport(AppKit)
+            package static let divider = SlateNativeColor.separatorColor
+            package static let active = SlateNativeColor.tertiaryLabelColor
+            #else
+            package static let divider = SlateNativeColor.separator
+            package static let active = SlateNativeColor.tertiaryLabel
+            #endif
+            package static let card = divider
+            package static let subtle = divider.slateScalingAlpha(Opacity.muted)
+            package static let field = SlateNativeColor.slateDynamic(
+                light: 0x000000, dark: 0xFFFFFF, lightAlpha: Opacity.edge, darkAlpha: Opacity.edge,
+            )
+            package static let overlayRim = SlateNativeColor.slateDynamic(
+                light: 0x000000, dark: 0xFFFFFF, lightAlpha: Opacity.rim, darkAlpha: Opacity.rim,
+            )
+        }
+
+        /// The interaction fills and casts — see ``Slate/State``.
+        @MainActor
+        package enum State {
+            #if canImport(AppKit)
+            package static let hover = SlateNativeColor.quinarySystemFill
+            #else
+            package static let hover = SlateNativeColor.quaternarySystemFill
+            #endif
+            package static let selected = accent.slateScalingAlpha(Opacity.wash)
+            package static let accentMuted = accent.slateScalingAlpha(Opacity.faint)
+            package static let header = Text.secondary
+            package static let shadow = SlateNativeColor.slateDynamic(
+                light: 0x000000, dark: 0x000000, lightAlpha: 0.15, darkAlpha: 0.45,
+            )
+            package static let overlayShadow = SlateNativeColor.slateDynamic(
+                light: 0x000000, dark: 0x000000, lightAlpha: 0.30, darkAlpha: 0.55,
+            )
+        }
+
+        /// The status FILLS — see ``Slate/Status`` (marks and words take ``StatusInk`` instead).
+        @MainActor
+        package enum Status {
+            #if canImport(AppKit)
+            package static let ok = SlateNativeColor.systemGreen
+            package static let warn = SlateNativeColor.systemOrange
+            package static let err = SlateNativeColor.systemRed
+            #else
+            package static let ok = SlateNativeColor.systemGreen
+            package static let warn = SlateNativeColor.systemOrange
+            package static let err = SlateNativeColor.systemRed
+            #endif
+            package static let info = accent
+            package static let secureInput = SlateNativeColor(slateHex: 0x2D6FE8)
+            package static let syncInput = SlateNativeColor(slateHex: 0xD97A1F)
+        }
+
+        /// The six SOLVED status angles — see ``Slate/StatusInk`` before touching a hex.
+        @MainActor
+        package enum StatusInk {
+            package static let ok = SlateNativeColor.slateDynamic(light: 0x006817, dark: 0x00B12D)
+            package static let warn = SlateNativeColor.slateDynamic(light: 0x705500, dark: 0xBE9200)
+            package static let notice = SlateNativeColor.slateDynamic(light: 0x9F3600, dark: 0xFF6920)
+            package static let err = SlateNativeColor.slateDynamic(light: 0xB40034, dark: 0xFF6471)
+            package static let info = SlateNativeColor.slateDynamic(light: 0x005D91, dark: 0x00A0F4)
+            package static let aside = SlateNativeColor.slateDynamic(light: 0x9400BD, dark: 0xDB65FF)
+        }
+    }
 
     /// The chrome surface ladder — SEMANTIC system surfaces plus the one glass exception:
     /// `void` (aux-window backdrops) → `ground` (sidebar housing; on macOS the real sidebar material
@@ -282,36 +443,25 @@ package enum Slate {
     /// specifically want the OS's aux-window backdrop.
     @MainActor
     enum Surface {
-        #if canImport(AppKit)
-        static let void = Color(nsColor: .underPageBackgroundColor)
+        static let void = Color(slateNative: Native.Surface.void)
         /// ⚠️ NOT the app's ground — see the ladder's note above; you almost certainly want ``field``.
-        static let ground = Color(nsColor: .underPageBackgroundColor)
-        static let face = Color(nsColor: .windowBackgroundColor)
-        static let raised = Color(nsColor: .quaternarySystemFill)
-        static let lift = Color(nsColor: .tertiarySystemFill)
+        static let ground = Color(slateNative: Native.Surface.ground)
+        static let face = Color(slateNative: Native.Surface.face)
+        static let raised = Color(slateNative: Native.Surface.raised)
+        static let lift = Color(slateNative: Native.Surface.lift)
         /// The SOLID mini-island fill — the active sidebar row's chip (Canario's white active tab).
         /// Against ``field`` it carries the JetBrains Islands island↔field relationship in both
         /// appearances: WHITE on the grey light field (island lighter than field), and a step
         /// DARKER than the dark field (island darker than field) — the same deliberate ~1.2:1
-        /// whisper their theme ships, from a semantic colour instead of invented hex.
-        static let chip = Color(nsColor: .controlBackgroundColor)
+        /// whisper their theme ships, from a semantic colour instead of invented hex. On iOS the
+        /// nearest grouped rung stands in.
+        static let chip = Color(slateNative: Native.Surface.chip)
         /// THE GROUND — the one sunken tone every column paints: the navigator, the code panel, the
         /// top band and the island's moat (law 1: they SINK, they are not islands). Kept under its
         /// old name because the eight column call sites mean exactly this; ``island`` is its
         /// counterpart, the one lifted surface. `ground` above is a different thing — the semantic
         /// aux-window backdrop.
         static var field: Color { Slate.theme.ground }
-        #else
-        static let void = Color(uiColor: .secondarySystemBackground)
-        static let ground = Color(uiColor: .secondarySystemBackground)
-        static let face = Color(uiColor: .systemBackground)
-        static let raised = Color(uiColor: .quaternarySystemFill)
-        static let lift = Color(uiColor: .tertiarySystemFill)
-        /// See the AppKit notes — the solid active-row chip; the chrome ground is the profile's
-        /// own rung on iOS too, so both platforms stand on the same flat chrome.
-        static let chip = Color(uiColor: .secondarySystemGroupedBackground)
-        static var field: Color { Slate.theme.ground }
-        #endif
         /// The terminal glass — the island's fixed profile surface (NOT appearance-following).
         static var terminal: Color { Slate.theme.terminal }
         /// THE ISLAND — the terminal canvas, the one lifted surface (law 1). Equal to ``terminal`` by
@@ -384,17 +534,10 @@ package enum Slate {
     /// the dark rung if the profile's face or ink ever moves.
     @MainActor
     enum Text {
-        #if canImport(AppKit)
-        static let primary = Color(nsColor: .labelColor)
-        static let secondary = Color(slatePinnedLight: 0x585751, darkSystem: .secondaryLabelColor)
-        static let tertiary = Color(slateDynamicLight: 0x6C6B64, dark: 0x89888B)
+        static let primary = Color(slateNative: Native.Text.primary)
+        static let secondary = Color(slateNative: Native.Text.secondary)
+        static let tertiary = Color(slateNative: Native.Text.tertiary)
         static let icon = secondary
-        #else
-        static let primary = Color(uiColor: .label)
-        static let secondary = Color(slatePinnedLight: 0x585751, darkSystem: .secondaryLabel)
-        static let tertiary = Color(slateDynamicLight: 0x6C6B64, dark: 0x89888B)
-        static let icon = secondary
-        #endif
 
         /// Ink ON a saturated fill band — the fixed pills (secure blue / sync amber) and the
         /// accent's deep band. Appearance-INDEPENDENT white on purpose: those fills are pinned,
@@ -407,25 +550,15 @@ package enum Slate {
 
     @MainActor
     enum Line {
-        #if canImport(AppKit)
-        static let divider = Color(nsColor: .separatorColor)
-        static let card = Color(nsColor: .separatorColor)
-        static let subtle = Color(nsColor: .separatorColor).opacity(Opacity.muted)
-        static let active = Color(nsColor: .tertiaryLabelColor)
-        #else
-        static let divider = Color(uiColor: .separator)
-        static let card = Color(uiColor: .separator)
-        static let subtle = Color(uiColor: .separator).opacity(Opacity.muted)
-        static let active = Color(uiColor: .tertiaryLabel)
-        #endif
+        static let divider = Color(slateNative: Native.Line.divider)
+        static let card = Color(slateNative: Native.Line.card)
+        static let subtle = Color(slateNative: Native.Line.subtle)
+        static let active = Color(slateNative: Native.Line.active)
 
         /// The INPUT plate's boundary — see ``slateFieldPlate()``. Its own token, and NOT
         /// ``divider``: measured on the cream ground the separator lands at 1.25:1, which is a rule
         /// between two visible things, not an edge that can say where a field starts.
-        static let field = Color(
-            slateDynamicLight: 0x000000, dark: 0xFFFFFF,
-            lightAlpha: Opacity.edge, darkAlpha: Opacity.edge,
-        )
+        static let field = Color(slateNative: Native.Line.field)
 
         /// A FLOATING SURFACE's rim — the toast card, every summoned paper card, the sheet. Its own
         /// token, and NOT ``divider``: the system separator measures ~1.25 : 1 on this cream, which
@@ -437,10 +570,7 @@ package enum Slate {
         /// the surface it bounds — black on the light card here, and on the glass the mirror image
         /// (``Slate/Terminal/rim`` lifts the dark plate toward its ink). One idea, spelled once per
         /// ground, because each ground is the only thing its own rim can be solved against.
-        static let overlayRim = Color(
-            slateDynamicLight: 0x000000, dark: 0xFFFFFF,
-            lightAlpha: Opacity.rim, darkAlpha: Opacity.rim,
-        )
+        static let overlayRim = Color(slateNative: Native.Line.overlayRim)
     }
 
     /// The ALPHA ladder — a closed scale for translucency, the one dimension the closed colour
@@ -492,24 +622,20 @@ package enum Slate {
 
     @MainActor
     enum State {
-        #if canImport(AppKit)
         /// Row hover — the system's faintest fill (the same plate `List` hover uses).
-        static let hover = Color(nsColor: .quinarySystemFill)
-        #else
-        static let hover = Color(uiColor: .quaternarySystemFill)
-        #endif
+        static let hover = Color(slateNative: Native.State.hover)
         /// Selected row — the brand accent at a wash, so selection carries the one non-system colour.
-        static let selected = Slate.accentPurple.opacity(Opacity.wash)
+        static let selected = Color(slateNative: Native.State.selected)
         static let accent = Slate.accentPurple
-        static let accentMuted = Slate.accentPurple.opacity(Opacity.faint)
+        static let accentMuted = Color(slateNative: Native.State.accentMuted)
         static let header = Text.secondary
         /// Floating-panel drop shadow — soft black, heavier on dark appearances.
-        static let shadow = Color(slateDynamicLight: 0x000000, dark: 0x000000, lightAlpha: 0.15, darkAlpha: 0.45)
+        static let shadow = Color(slateNative: Native.State.shadow)
         /// The SUMMONED card's cast shadow — twice ``shadow``, and its own rung because it does twice the
         /// work. A panel that floats over the dark island is separated by tone alone; a paper card is the
         /// ground's own cream lifted off the ground, so nothing but the cast tells the two apart at the
         /// card's edges. Compared side by side at true size, `shadow` read as a halo and this reads as lift.
-        static let overlayShadow = Color(slateDynamicLight: 0x000000, dark: 0x000000, lightAlpha: 0.30, darkAlpha: 0.55)
+        static let overlayShadow = Color(slateNative: Native.State.overlayShadow)
         // NO `cardShadow` rung (user-directed 2026-08-09). The 4% whisper the selected tab chip
         // used to cast existed for a cream plate on a cream ground; the single profile made that
         // chip the island's dark glass, and a fill that far from the ground needs no cast to be
@@ -702,15 +828,9 @@ package enum Slate {
 
     @MainActor
     enum Status {
-        #if canImport(AppKit)
-        static let ok = Color(nsColor: .systemGreen)
-        static let warn = Color(nsColor: .systemOrange)
-        static let err = Color(nsColor: .systemRed)
-        #else
-        static let ok = Color(uiColor: .systemGreen)
-        static let warn = Color(uiColor: .systemOrange)
-        static let err = Color(uiColor: .systemRed)
-        #endif
+        static let ok = Color(slateNative: Native.Status.ok)
+        static let warn = Color(slateNative: Native.Status.warn)
+        static let err = Color(slateNative: Native.Status.err)
         /// Info rides the brand accent (the one non-system chrome colour).
         static let info = Slate.accentPurple
 
@@ -718,12 +838,12 @@ package enum Slate {
         /// vivid royal-blue everywhere so it can never be confused with the accent. Pinned to
         /// `secure-input.png`'s royal-blue; white pill text stays legible on light and dark alike.
         /// Never re-route this through a theme or the system palette.
-        static let secureInput = Color(slateHex: 0x2D6FE8)
+        static let secureInput = Color(slateNative: Native.Status.secureInput)
 
         /// FIXED sync-amber — same rationale as ``secureInput``: the `⚠ SYNC INPUT` pill flags a MODE
         /// where every keystroke fans into multiple shells, so it must read as the same unmistakable
         /// amber everywhere. Never re-route this through a theme or the system palette.
-        static let syncInput = Color(slateHex: 0xD97A1F)
+        static let syncInput = Color(slateNative: Native.Status.syncInput)
     }
 
     /// The status vocabulary as INK, because a colour tuned for a FILL is the wrong colour for a
@@ -773,20 +893,20 @@ package enum Slate {
     @MainActor
     enum StatusInk {
         /// Clean / done / `+staged` — the ramp's far end (h 140°).
-        static let ok = Color(slateDynamicLight: 0x006817, dark: 0x00B12D)
+        static let ok = Color(slateNative: Native.StatusInk.ok)
         /// Wants a human / awaiting input / `!modified` (h 85°).
-        static let warn = Color(slateDynamicLight: 0x705500, dark: 0xBE9200)
+        static let warn = Color(slateNative: Native.StatusInk.warn)
         /// `?untracked` — the rung between "you changed it" and "it is broken" (h 50°). Its own
         /// entry, not a second spelling of ``warn``: that collision is what flattened the ramp.
-        static let notice = Color(slateDynamicLight: 0x9F3600, dark: 0xFF6920)
+        static let notice = Color(slateNative: Native.StatusInk.notice)
         /// Broken — error / `~conflicted` (h 22°).
-        static let err = Color(slateDynamicLight: 0xB40034, dark: 0xFF6471)
+        static let err = Color(slateNative: Native.StatusInk.err)
         /// Bookkeeping against elsewhere — `↑↓` divergence (h 265°). BLUE now, not the accent: the
         /// accent means selection, and a run that borrowed it read as one.
-        static let info = Color(slateDynamicLight: 0x005D91, dark: 0x00A0F4)
+        static let info = Color(slateNative: Native.StatusInk.info)
         /// Parked on purpose — `$stash` (h 320°). Cool, off the warm ramp, and far enough from
         /// ``info`` to be told apart at a glance.
-        static let aside = Color(slateDynamicLight: 0x9400BD, dark: 0xDB65FF)
+        static let aside = Color(slateNative: Native.StatusInk.aside)
     }
 
     /// Geometry — theme-independent. Radii + the 8pt grid + chrome dimensions.
@@ -1247,12 +1367,19 @@ extension View {
 }
 
 extension Color {
+    /// The SwiftUI view of a token — the one bridge between the value (a ``SlateNativeColor``) and
+    /// the framework that draws it. Every rung in ``Slate`` comes through here.
+    init(slateNative color: SlateNativeColor) {
+        #if canImport(AppKit)
+        self.init(nsColor: color)
+        #elseif canImport(UIKit)
+        self.init(uiColor: color)
+        #endif
+    }
+
     /// 24-bit RGB hex literal initializer, e.g. `Color(slateHex: 0xFC_FB_F9)`.
     init(slateHex hex: UInt32) {
-        let r = Double((hex >> 16) & 0xFF) / 255
-        let g = Double((hex >> 8) & 0xFF) / 255
-        let b = Double(hex & 0xFF) / 255
-        self.init(.sRGB, red: r, green: g, blue: b, opacity: 1)
+        self.init(slateNative: SlateNativeColor(slateHex: hex))
     }
 
     /// An APPEARANCE-DYNAMIC colour pair — resolves `light`/`dark` per the effective appearance at
@@ -1262,20 +1389,9 @@ extension Color {
         slateDynamicLight light: UInt32, dark: UInt32,
         lightAlpha: Double = 1, darkAlpha: Double = 1,
     ) {
-        #if canImport(AppKit)
-        self.init(nsColor: NSColor(name: nil) { appearance in
-            let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            return isDark
-                ? NSColor(slateHex: dark, alpha: darkAlpha)
-                : NSColor(slateHex: light, alpha: lightAlpha)
-        })
-        #elseif canImport(UIKit)
-        self.init(uiColor: UIColor { traits in
-            traits.userInterfaceStyle == .dark
-                ? UIColor(slateHex: dark, alpha: darkAlpha)
-                : UIColor(slateHex: light, alpha: lightAlpha)
-        })
-        #endif
+        self.init(slateNative: .slateDynamic(
+            light: light, dark: dark, lightAlpha: lightAlpha, darkAlpha: darkAlpha,
+        ))
     }
 
     /// A LIGHT-PINNED ink: an exact colour on the one light ground this app owns, and the SYSTEM
@@ -1283,21 +1399,9 @@ extension Color {
     /// is a fixed cream this design measured its ladder against, while the dark side is whatever
     /// surface the glass subtrees happen to be, which only the system tiers can track. See
     /// ``Slate/Text`` for why the light rungs left the system ladder in the first place.
-    #if canImport(AppKit)
-    init(slatePinnedLight light: UInt32, darkSystem: NSColor) {
-        self.init(nsColor: NSColor(name: nil) { appearance in
-            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                ? darkSystem
-                : NSColor(slateHex: light)
-        })
+    init(slatePinnedLight light: UInt32, darkSystem: SlateNativeColor) {
+        self.init(slateNative: .slatePinnedLight(light, darkSystem: darkSystem))
     }
-    #elseif canImport(UIKit)
-    init(slatePinnedLight light: UInt32, darkSystem: UIColor) {
-        self.init(uiColor: UIColor { traits in
-            traits.userInterfaceStyle == .dark ? darkSystem : UIColor(slateHex: light)
-        })
-    }
-    #endif
 }
 
 #if canImport(AppKit)
@@ -1325,4 +1429,67 @@ extension UIColor {
     }
 }
 #endif
+
+// MARK: - The value side of both bridges
+
+extension SlateNativeColor {
+    /// An APPEARANCE-DYNAMIC pair — the mechanism every semantic system colour uses, spelled once
+    /// here so the AppKit rung and the SwiftUI rung are the same object rather than two builds of
+    /// the same two hexes.
+    static func slateDynamic(
+        light: UInt32, dark: UInt32, lightAlpha: Double = 1, darkAlpha: Double = 1,
+    ) -> SlateNativeColor {
+        #if canImport(AppKit)
+        NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                ? NSColor(slateHex: dark, alpha: darkAlpha)
+                : NSColor(slateHex: light, alpha: lightAlpha)
+        }
+        #elseif canImport(UIKit)
+        UIColor { traits in
+            traits.userInterfaceStyle == .dark
+                ? UIColor(slateHex: dark, alpha: darkAlpha)
+                : UIColor(slateHex: light, alpha: lightAlpha)
+        }
+        #endif
+    }
+
+    /// A hex on the light side, a SYSTEM semantic on the dark one — see ``Color/init(slatePinnedLight:darkSystem:)``.
+    static func slatePinnedLight(
+        _ light: UInt32, darkSystem: SlateNativeColor,
+    ) -> SlateNativeColor {
+        #if canImport(AppKit)
+        NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                ? darkSystem
+                : NSColor(slateHex: light)
+        }
+        #elseif canImport(UIKit)
+        UIColor { traits in
+            traits.userInterfaceStyle == .dark ? darkSystem : UIColor(slateHex: light)
+        }
+        #endif
+    }
+
+    /// The same colour at a FRACTION of its own alpha — what SwiftUI's `.opacity(_:)` does to a
+    /// `Color`, and NOT what `withAlphaComponent(_:)` does (that one REPLACES the alpha, which turns
+    /// the system separator — already a low-alpha black — into a solid rule). Stays dynamic: the
+    /// scale is applied to whatever the appearance resolves, not to one snapshot of it.
+    func slateScalingAlpha(_ factor: Double) -> SlateNativeColor {
+        #if canImport(AppKit)
+        return NSColor(name: nil) { [self] appearance in
+            var resolved = self
+            appearance.performAsCurrentDrawingAppearance {
+                resolved = self.usingColorSpace(.sRGB) ?? self
+            }
+            return resolved.withAlphaComponent(resolved.alphaComponent * factor)
+        }
+        #elseif canImport(UIKit)
+        return UIColor { [self] traits in
+            let resolved = resolvedColor(with: traits)
+            return resolved.withAlphaComponent(resolved.cgColor.alpha * factor)
+        }
+        #endif
+    }
+}
 #endif

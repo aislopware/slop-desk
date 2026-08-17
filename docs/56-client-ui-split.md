@@ -149,7 +149,11 @@ nothing is ever implemented twice. No stage copies a file: a surface either move
   (`SlopDeskPhoneUI`) are two `@main` scenes with two app targets and no `#if os(...)` between them,
   where there used to be one scene with seventeen. The Mac's window actuators, termination drain,
   close gate and quit policy moved with it, and so did their tests (`Tests/SlopDeskMacUITests`).
-- **D — move the macOS surfaces (NEXT).** Each surface is rewritten in AppKit inside `SlopDeskMacUI`
+- **D — move the macOS surfaces (IN FLIGHT).** The floor came first: every colour token now has ONE
+  value, `Slate.Native`, in the platform's own colour type, and the SwiftUI rung is a wrapper over it
+  — an `NSView` fills with an `NSColor`, so without that the AppKit half would have grown a second
+  palette, which is the duplicate implementation this whole doc exists to prevent.
+  Each surface is then rewritten in AppKit inside `SlopDeskMacUI`
   and its SwiftUI original is DELETED in the same change — never a fallback, never a mirror. The 118
   `withAnimation`/`.animation(` sites and the 3 `matchedGeometryEffect` morphs are the real work.
   When the last one moves, `SlopDeskClientUI` holds only what the phone renders and is renamed
