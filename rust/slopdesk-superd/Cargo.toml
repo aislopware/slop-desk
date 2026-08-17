@@ -45,6 +45,10 @@ libc = "0.2"
 # because a syscall cannot be asked for over a wire: it is lifetime-coupled to its caller by
 # definition, which is `CLAUDE.md`'s test for which shape a port takes.
 slopdesk-posix = { path = "../slopdesk-posix" }
+# The control socket's LAYOUT, which hostd reads and this daemon writes. Its own crate for
+# `slopdesk-screenwire`'s reason: it was spelled here AND in Swift, and the app must be able to link
+# the framing without linking `nix`, `base64` and a PTY supervisor with it.
+slopdesk-superwire = { path = "../slopdesk-superwire" }
 
 # The shared byte scanners over text a foreign program wrote. The `133;E` shim unescaping and the
 # percent decoding were spelled here AND in that crate, which is where they belong: `escape` sits

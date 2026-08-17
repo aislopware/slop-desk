@@ -401,7 +401,7 @@ let package = Package(
         // LaunchAgent that outlives hostd's BUILD, so this one negotiates. Append-only, version in
         // `hello`, unknown verbs answered `unsupported` — see SupervisorProtocol's doc comment before
         // changing anything in here.
-        .target(name: "SlopDeskSupervisor", dependencies: ["SlopDeskTTY"]),
+        .target(name: "SlopDeskSupervisor", dependencies: ["SlopDeskTTY", "CSlopDeskFFI"]),
 
         // hostd's END of the `slopdesk-screend` protocol: the request encoder, the reply
         // decoder, and a pooled synchronous client. The VT parser, the renderer and the

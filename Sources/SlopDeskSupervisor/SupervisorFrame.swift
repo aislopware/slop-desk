@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 import SlopDeskTTY
 
@@ -7,54 +8,53 @@ import SlopDeskTTY
 /// <1 byte tag> <4 bytes big-endian length> <length bytes body>
 /// ```
 ///
+/// ## Why the layout is not spelled here any more
+/// It was, and superd spelled it too: this file's doc comment and
+/// `rust/slopdesk-superd/src/frame.rs`'s module comment each opened by describing the other as a
+/// mirror. Two hand-written spellings of one byte layout, agreeing by inspection, in the one place
+/// where a disagreement shows up as a DESYNCHRONISED SOCKET rather than as a wrong value.
+///
+/// `slopdesk-superwire` is the one spelling now. What stays here is this side's I/O lane —
+/// `recvmsg` with `SCM_RIGHTS`, the write-until-gone loop, the read-exactly loop — because the
+/// descriptor has to land in THIS process, and because that lane already has a contract of its own.
+///
 /// ## Why the tag byte exists
 /// `SCM_RIGHTS` ancillary data is delivered to the **first `recvmsg` that reads any byte of the
 /// matching `sendmsg`**. On a `SOCK_STREAM` socket a multi-byte header can come up short, which
 /// would leave the fd already adopted while the header is still half-read — a state with no
 /// correct recovery. A one-byte read cannot be short, so the fd rides the tag and the rest of the
 /// frame is plain stream bytes. This is the whole reason the header is not simply a length.
-///
-/// ## Length bound
-/// A frame body is capped (``maximumBodyBytes``). A `spawn` carries a full child environment, which
-/// is bounded by `ARG_MAX` (1 MiB on macOS) — the cap sits above that and below anything that would
-/// let a corrupt or skewed peer make us allocate wildly. Over-long is refused, never truncated.
 public enum SupervisorFrame {
     /// Frame carries no file descriptor.
-    static let tagPlain: UInt8 = 0x01
+    static let tagPlain = slopdesk_supervisor_tag(UInt32(SLOPDESK_SUPERVISOR_TAG_PLAIN))
     /// Frame carries exactly one `SCM_RIGHTS` file descriptor.
-    static let tagWithDescriptor: UInt8 = 0x02
+    static let tagWithDescriptor =
+        slopdesk_supervisor_tag(UInt32(SLOPDESK_SUPERVISOR_TAG_WITH_DESCRIPTOR))
     /// Frame carries a pane's raw output bytes rather than JSON — see ``decodeOutput(_:)``.
     ///
     /// superd only ever sends one of these to a client that asked, with `subscribe`. That is what
     /// keeps a new tag inside the append-only rule: an older hostd has no such verb, so it can
     /// never be handed a tag it would reject.
-    public static let tagOutput: UInt8 = 0x03
+    public static let tagOutput = slopdesk_supervisor_tag(UInt32(SLOPDESK_SUPERVISOR_TAG_OUTPUT))
     /// Frame carries what the shell said OUT OF BAND in the chunk just sent — see ``decodeSniff(_:)``.
-    ///
-    /// Gated exactly as ``tagOutput`` is, and by the same kind of request: superd sniffs a pane only
-    /// when the `spawn` that made it set `shellIntegration`, and an older hostd does not know that
-    /// field — so it never asks, is never sniffed, and never sees this tag.
     ///
     /// It always arrives BEFORE the ``tagOutput`` frame carrying the bytes the events were found
     /// in, on the same connection under the same write lock. superd sends one only when a chunk
     /// actually contained something, so a receiver cannot wait to see whether one is coming — it
     /// can only hold what it has already been given. Events first is what lets the receiver hand
     /// them on WITH their chunk.
-    public static let tagSniff: UInt8 = 0x04
+    public static let tagSniff = slopdesk_supervisor_tag(UInt32(SLOPDESK_SUPERVISOR_TAG_SNIFF))
     /// Frame carries the command-block changes the chunk just sent produced — see
     /// ``decodeSniff(_:)``, which decodes it too (the two share a body shape).
     ///
-    /// Same placement and the same reason as ``tagSniff`` — ahead of its own ``tagOutput`` frame,
-    /// under one hold of superd's wire lock — and a gate of its own: superd segments a pane only
-    /// when the `spawn` that made it carried a `blocks` request, which an older hostd cannot send.
-    ///
-    /// A tag of its own rather than another kind inside the `0x04` batch, because the two answer to
-    /// DIFFERENT gates. The property that keeps a new tag safe is that it never reaches a peer that
-    /// did not ask for it, and that only holds while each tag has exactly one thing to ask for.
-    public static let tagBlocks: UInt8 = 0x05
+    /// Same placement and the same reason as ``tagSniff``, and a gate of its own: superd segments a
+    /// pane only when the `spawn` that made it carried a `blocks` request. A tag rather than
+    /// another kind inside the `0x04` batch, because the property that keeps a new tag safe — never
+    /// sent to a peer that did not ask — only holds while each tag has exactly one thing to ask for.
+    public static let tagBlocks = slopdesk_supervisor_tag(UInt32(SLOPDESK_SUPERVISOR_TAG_BLOCKS))
 
     /// The largest body this side will send or accept. Above `ARG_MAX`, far below trouble.
-    public static let maximumBodyBytes = 4 * 1024 * 1024
+    public static let maximumBodyBytes = slopdesk_supervisor_max_body()
 
     public enum FrameError: Error, Sendable {
         case bodyTooLarge(Int)
@@ -69,15 +69,14 @@ public enum SupervisorFrame {
     /// Not internally synchronised — a socket shared by several senders needs a lock around this
     /// call, or two frames interleave. ``SupervisorConnection`` owns that lock.
     public static func write(socket: Int32, body: [UInt8]) throws {
-        guard body.count <= maximumBodyBytes else { throw FrameError.bodyTooLarge(body.count) }
-        try FileDescriptorPassing.send(socket: socket, bytes: [tagPlain])
-
         var header = [UInt8](repeating: 0, count: 4)
-        let count = UInt32(body.count)
-        header[0] = UInt8truncating(count >> 24)
-        header[1] = UInt8truncating(count >> 16)
-        header[2] = UInt8truncating(count >> 8)
-        header[3] = UInt8truncating(count)
+        let sized = header.withUnsafeMutableBufferPointer { room in
+            slopdesk_supervisor_header(body.count, room.baseAddress, room.count)
+        }
+        // The door refuses a length past the cap rather than truncating it, because a truncated
+        // length loses the frame boundary and a socket with a lost boundary never resynchronises.
+        guard sized else { throw FrameError.bodyTooLarge(body.count) }
+        try FileDescriptorPassing.send(socket: socket, bytes: [tagPlain])
         try writeAll(socket: socket, bytes: header + body)
     }
 
@@ -88,9 +87,7 @@ public enum SupervisorFrame {
     public static func read(socket: Int32) throws -> (tag: UInt8, body: [UInt8], descriptor: Int32?) {
         let (tagBytes, descriptor) = try FileDescriptorPassing.receive(socket: socket, capacity: 1)
         guard let tag = tagBytes.first else { throw FrameError.peerClosed }
-        guard tag == tagPlain || tag == tagWithDescriptor || tag == tagOutput || tag == tagSniff
-            || tag == tagBlocks
-        else {
+        guard slopdesk_supervisor_is_known_tag(tag) else {
             // A descriptor may already have been installed in this process by the kernel before we
             // decided the tag was nonsense — close it rather than leak an fd per bad frame.
             if let descriptor { close(descriptor) }
@@ -98,9 +95,11 @@ public enum SupervisorFrame {
         }
 
         let header = try readExactly(socket: socket, count: 4, onFailureClose: descriptor)
-        let count =
-            Int(header[0]) << 24 | Int(header[1]) << 16 | Int(header[2]) << 8 | Int(header[3])
-        guard count <= maximumBodyBytes else {
+        let count = header.withUnsafeBufferPointer { bytes in
+            slopdesk_supervisor_body_length(bytes.baseAddress, bytes.count)
+        }
+        // `.max` is the door's refusal for a length past the cap. A real body can never reach it.
+        guard count != .max else {
             if let descriptor { close(descriptor) }
             throw FrameError.bodyTooLarge(count)
         }
@@ -127,16 +126,8 @@ public enum SupervisorFrame {
     public static func decodeOutput(
         _ body: [UInt8],
     ) -> (paneID: String, offset: UInt64, payload: Data)? {
-        guard body.count >= 2 else { return nil }
-        let nameLength = Int(body[0]) << 8 | Int(body[1])
-        let afterName = 2 + nameLength
-        guard body.count >= afterName + 8 else { return nil }
-        guard let paneID = String(bytes: body[2..<afterName], encoding: .utf8) else { return nil }
-        var offset: UInt64 = 0
-        for byte in body[afterName..<(afterName + 8)] {
-            offset = offset << 8 | UInt64(byte)
-        }
-        return (paneID, offset, Data(body[(afterName + 8)...]))
+        guard let record = parse(body, through: slopdesk_supervisor_parse_output) else { return nil }
+        return (name(body, record), record.offset, Data(payload(body, record)))
     }
 
     /// One out-of-band body, for either ``tagSniff`` or ``tagBlocks``:
@@ -148,17 +139,59 @@ public enum SupervisorFrame {
     /// The JSON is a `{"events": [...]}` object of ``SniffedEvent``, or a `{"blocks": [...]}` object
     /// of ``BlockEvent``. It is left undecoded here for the same reason the payload above is: this
     /// type owns the FRAME, and what rides inside one is the caller's vocabulary. The two tags share
-    /// a decode because they share a body — a second copy of this arithmetic would be a bug that
-    /// shows up as a desynchronised socket rather than as a wrong value.
+    /// a decode because they share a body.
     ///
     /// - Returns: `nil` for a body too short to hold its own header, or a pane id that is not UTF-8.
     public static func decodeSniff(_ body: [UInt8]) -> (paneID: String, json: Data)? {
-        guard body.count >= 2 else { return nil }
-        let nameLength = Int(body[0]) << 8 | Int(body[1])
-        let afterName = 2 + nameLength
-        guard body.count >= afterName else { return nil }
-        guard let paneID = String(bytes: body[2..<afterName], encoding: .utf8) else { return nil }
-        return (paneID, Data(body[afterName...]))
+        guard let record = parse(body, through: slopdesk_supervisor_parse_pane_json)
+        else { return nil }
+        return (name(body, record), Data(payload(body, record)))
+    }
+
+    // MARK: The crossing
+
+    /// The measure-nothing, copy-nothing call both decodes share. `nil` is the door's refusal, which
+    /// is validate-then-drop rather than a half-filled record.
+    private static func parse(
+        _ body: [UInt8],
+        through door: (UnsafePointer<UInt8>?, Int, UnsafeMutablePointer<SlopDeskSupervisorBody>?)
+            -> Bool,
+    ) -> SlopDeskSupervisorBody? {
+        var record = SlopDeskSupervisorBody()
+        let parsed = body.withUnsafeBufferPointer { bytes in
+            door(bytes.baseAddress, bytes.count, &record)
+        }
+        return parsed ? record : nil
+    }
+
+    /// The pane id, cut out of the body at the offset the door named.
+    ///
+    /// `slopdesk_supervisor_parse_output` refuses a body whose id is not UTF-8, so by the time these
+    /// bytes are here they have already been validated and the lossy decode cannot substitute
+    /// anything. The rule's failable alternative would buy an optional that can never be `nil`, paid
+    /// for with a `??` fallback naming no pane at all.
+    private static func name(_ body: [UInt8], _ record: SlopDeskSupervisorBody) -> String {
+        // swiftlint:disable:next optional_data_string_conversion
+        String(decoding: slice(body, record.pane_offset, record.pane_len), as: UTF8.self)
+    }
+
+    private static func payload(
+        _ body: [UInt8], _ record: SlopDeskSupervisorBody,
+    ) -> ArraySlice<UInt8> {
+        slice(body, record.payload_offset, record.payload_len)
+    }
+
+    /// A span the door named, clamped to the buffer it was measured against.
+    ///
+    /// Clamped rather than trusted: the offsets cross a C ABI, and a range past the end would be a
+    /// trap in this process rather than a dropped frame. The Rust suite pins that every span the
+    /// door answers is already inside the body.
+    private static func slice(
+        _ body: [UInt8], _ offset: UInt32, _ length: UInt32,
+    ) -> ArraySlice<UInt8> {
+        let start = Swift.min(Int(offset), body.count)
+        let end = Swift.min(start + Int(length), body.count)
+        return body[start..<end]
     }
 
     /// `write(2)` until every byte is gone, retrying `EINTR` and short writes.
@@ -192,12 +225,5 @@ public enum SupervisorFrame {
             if let descriptor { close(descriptor) }
             throw FrameError.ioFailed(errno: errno)
         }
-    }
-
-    /// `UInt8(truncatingIfNeeded:)` spelled as a function so the big-endian pack above stays one
-    /// readable column of shifts.
-    @inline(__always)
-    private static func UInt8truncating(_ value: UInt32) -> UInt8 {
-        UInt8(truncatingIfNeeded: value)
     }
 }

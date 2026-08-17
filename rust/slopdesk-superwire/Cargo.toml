@@ -1,0 +1,115 @@
+# `slopdesk-superwire` — the superd ↔ hostd control socket's framing, without the syscalls.
+#
+# ## Why it is its own crate
+# `slopdesk-screenwire`'s reason, exactly: two callers, one implementation. superd writes these
+# frames and hostd reads them, and BOTH ends were written out — superd's `frame.rs` in Rust, and
+# `Sources/SlopDeskSupervisor/SupervisorFrame.swift` in Swift, whose doc comment and superd's
+# module comment each described the other as a mirror. Two spellings of one byte layout, agreeing
+# by inspection, in the one place where a disagreement shows up as a DESYNCHRONISED SOCKET rather
+# than as a wrong value.
+#
+# Splitting it out is what lets the app link the framing without linking the DAEMON. superd carries
+# `nix`, `libc`, `base64` and a PTY supervisor, none of which the reading end needs and none of
+# which belongs in an iOS binary.
+#
+# ## What is NOT here
+# The syscalls. `sendmsg` with `SCM_RIGHTS`, the write-until-gone loop and the read-exactly loop
+# stay on each side, because the two lanes genuinely differ: superd sends a descriptor it owns
+# through `nix`, and hostd receives one through its own `FileDescriptorPassing`. What they share is
+# the LAYOUT — which tag, how long, and what the packed bodies mean — and that is all this crate is.
+#
+# ## No dependencies, on purpose
+# Every byte reaching the parsers was written by a peer that may be an older build. The whole crate
+# is `to_be_bytes`, `get` and a bounds check; a supply chain would buy nothing and would buy it on
+# the app's binary size.
+[workspace]
+resolver = "3"
+
+[package]
+name = "slopdesk-superwire"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The superd control-socket framing for slopdesk — tags, lengths and packed bodies"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[lib]
+name = "slopdesk_superwire"
+path = "src/lib.rs"
+
+[dependencies]
+
+# Linked into the app AND into a daemon on the per-chunk output path.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+debug = 1
+strip = "debuginfo"
+
+# ---------------------------------------------------------------------------- #
+# The strict block, copied rather than inherited — inheriting would mean being a workspace member,
+# which is what the profile forbids.
+[lints.rust]
+# `forbid`, not `deny` (stage 28): this crate has never contained an `unsafe` block, and `forbid`
+# is what turns that from a fact about today's code into one no downstream `allow` can undo. Every
+# syscall with no safe wrapper lives in `slopdesk-posix`; if this daemon ever needs one, it depends
+# on that crate rather than lifting the lint here.
+unsafe_code = "forbid"
+
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+missing_copy_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+single_use_lifetimes = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+variant_size_differences = "deny"
+elided_lifetimes_in_paths = "deny"
+let_underscore_drop = "deny"
+non_ascii_idents = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+integer_division = "deny"
+exit = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+mem_forget = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+verbose_file_reads = "deny"
+str_to_string = "deny"
+empty_structs_with_brackets = "deny"
+if_then_some_else_none = "deny"
+lossy_float_literal = "deny"
+try_err = "deny"
+
+# Disabled, with a reason:
+# - `suboptimal_flops` / `imprecise_flops` (nursery): both want `f64::mul_add`, which is exactly the
+#   fused multiply-add `CLAUDE.md` forbids — "keep `a * b + c` separate (never `addingProduct`/`fma`)".
+#   FMA rounds once where the wire rounds twice, so taking the advice changes the `f64` bit patterns
+#   `golden/golden_vectors.json` pins. Allowed in EVERY workspace, not only the ones doing float
+#   math today: the reason is a repo invariant, and a lint that fires the first time a float lands
+#   here would be obeyed before anyone reads this file.
+suboptimal_flops = "allow"
+imprecise_flops = "allow"

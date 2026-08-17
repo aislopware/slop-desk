@@ -5437,6 +5437,57 @@ bool slopdesk_logcat_parse(const unsigned char *line, size_t len,
 bool slopdesk_unified_log_parse(const unsigned char *line, size_t len,
                                 SlopDeskDeviceLogLine *out);
 
+// ---------------------------------------------------------------------------
+// The superd control socket's framing — `slopdesk_superwire`.
+//
+//     <1 byte tag> <4 bytes big-endian length> <length bytes body>
+//
+// superd writes these and hostd reads them, and the layout was written out
+// TWICE — superd's frame.rs and SupervisorFrame.swift each called the other a
+// mirror. One spelling now; each side keeps only its own syscalls, because the
+// descriptor has to land in the reading process.
+//
+// The tag rides its own one-byte read because SCM_RIGHTS ancillary data is
+// delivered to the first recvmsg that reads any byte of the matching sendmsg,
+// and a one-byte read cannot come up short.
+//
+// Every parser is validate-then-drop: `false`, never a half-filled record. The
+// peer may be an older or corrupt build.
+
+// Selectors for slopdesk_supervisor_tag — the tag NUMBERING is the wire, and a
+// side holding its own copy of it is how the two spellings drifted.
+#define SLOPDESK_SUPERVISOR_TAG_PLAIN 0
+#define SLOPDESK_SUPERVISOR_TAG_WITH_DESCRIPTOR 1
+#define SLOPDESK_SUPERVISOR_TAG_OUTPUT 2
+#define SLOPDESK_SUPERVISOR_TAG_SNIFF 3
+#define SLOPDESK_SUPERVISOR_TAG_BLOCKS 4
+
+typedef struct {
+    uint32_t pane_offset;
+    uint32_t pane_len;
+    uint32_t payload_offset;
+    uint32_t payload_len;
+    // The absolute stream position of the first payload byte, so a receiver can
+    // DETECT a gap rather than splice across one. Zero for a pane-JSON body.
+    uint64_t offset;
+} SlopDeskSupervisorBody;
+
+size_t slopdesk_supervisor_max_body(void);
+bool slopdesk_supervisor_is_known_tag(uint8_t tag);
+uint8_t slopdesk_supervisor_tag(uint32_t which);
+
+// `false` REFUSES a length past the cap, having written nothing: a truncated
+// length loses the frame boundary, and a socket with a lost boundary never
+// resynchronises.
+bool slopdesk_supervisor_header(size_t length, unsigned char *out, size_t cap);
+// SIZE_MAX for a length past the cap — a real one can never reach it.
+size_t slopdesk_supervisor_body_length(const unsigned char *header, size_t len);
+
+bool slopdesk_supervisor_parse_output(const unsigned char *body, size_t len,
+                                      SlopDeskSupervisorBody *out);
+bool slopdesk_supervisor_parse_pane_json(const unsigned char *body, size_t len,
+                                         SlopDeskSupervisorBody *out);
+
 #ifdef __cplusplus
 }
 #endif

@@ -94,6 +94,44 @@ final class SupervisorProtocolTests: XCTestCase {
         }
     }
 
+    // MARK: - The packed bodies, which are `slopdesk-superwire` behind a span record
+
+    // The LAYOUT and every validate-then-drop case live there. What can only fail here is the
+    // slicing: the door answers byte offsets into a buffer this side owns, and an off-by-one is
+    // silent — the pane id renders, at the right length, naming the wrong terminal.
+
+    func testAnOutputBodyIsCutAtTheOffsetsTheDoorNamed() throws {
+        // Assembled field by field, so the meaning of each byte is legible where it is asserted.
+        var body: [UInt8] = [0, 6]
+        body += Array("pane-7".utf8)
+        body += [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]
+        body += Array("hello".utf8)
+
+        let decoded = try XCTUnwrap(SupervisorFrame.decodeOutput(body))
+        XCTAssertEqual(decoded.paneID, "pane-7")
+        XCTAssertEqual(decoded.offset, 0x0102_0304_0506_0708)
+        XCTAssertEqual(decoded.payload, Data("hello".utf8))
+    }
+
+    func testAPaneJSONBodyIsCutTheSameWayAndBothTagsShareIt() throws {
+        var body: [UInt8] = [0, 1]
+        body += Array("p".utf8)
+        body += Array(#"{"events":[]}"#.utf8)
+
+        // `tagSniff` and `tagBlocks` differ only in what the JSON means, so one decode serves both.
+        let decoded = try XCTUnwrap(SupervisorFrame.decodeSniff(body))
+        XCTAssertEqual(decoded.paneID, "p")
+        XCTAssertEqual(decoded.json, Data(#"{"events":[]}"#.utf8))
+        XCTAssertNotEqual(SupervisorFrame.tagSniff, SupervisorFrame.tagBlocks)
+    }
+
+    /// A refusal is `nil`, not a half-filled tuple naming a pane that does not exist.
+    func testABodyTheDoorDeclinesBecomesNil() {
+        XCTAssertNil(SupervisorFrame.decodeOutput([]))
+        XCTAssertNil(SupervisorFrame.decodeOutput([0, 9, UInt8(ascii: "p")]))
+        XCTAssertNil(SupervisorFrame.decodeSniff([0, 9, UInt8(ascii: "p")]))
+    }
+
     func testUnknownTagIsRejected() throws {
         try FileDescriptorPassing.send(socket: ends[0], bytes: [0x7F])
         XCTAssertThrowsError(try SupervisorFrame.read(socket: ends[1])) { error in

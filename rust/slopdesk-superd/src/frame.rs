@@ -4,7 +4,12 @@
 //! <1 byte tag> <4 bytes big-endian length> <length bytes body>
 //! ```
 //!
-//! A mirror of `Sources/SlopDeskSupervisor/SupervisorFrame.swift`.
+//! The LAYOUT is `slopdesk_superwire` — which tag, how long, and what the packed bodies mean. It
+//! was written out twice, here and in `Sources/SlopDeskSupervisor/SupervisorFrame.swift`, each
+//! module's own doc describing the other as a mirror. What is left in this file is superd's SEND
+//! side: `sendmsg` with `SCM_RIGHTS`, the write-until-gone loop, and the read-exactly loop. The
+//! reading end keeps its own, because the two lanes genuinely differ — this one hands away a
+//! descriptor it owns through `nix`, and hostd receives one through its own passing code.
 //!
 //! ## Two body kinds, and why the second one is not JSON
 //! Control traffic is JSON ([`TAG_PLAIN`], [`TAG_WITH_DESCRIPTOR`]). A pane's OUTPUT is not
@@ -37,59 +42,12 @@ use std::os::fd::{AsRawFd as _, BorrowedFd, OwnedFd};
 
 use nix::errno::Errno;
 use nix::sys::socket::{ControlMessage, MsgFlags, sendmsg};
-
-/// Frame carries no file descriptor.
-const TAG_PLAIN: u8 = 0x01;
-/// Frame carries exactly one `SCM_RIGHTS` file descriptor.
-const TAG_WITH_DESCRIPTOR: u8 = 0x02;
-/// Frame carries a pane's raw output bytes rather than JSON. See [`write_output`].
-pub const TAG_OUTPUT: u8 = 0x03;
-/// Frame carries what the shell said OUT OF BAND in the chunk about to be sent. See
-/// [`write_sniff`].
-///
-/// Always precedes the `0x03` frame carrying those bytes, under the same hold of the wire lock, so
-/// the receiver can pair the two: one is sent only when there was something to say, which means a
-/// receiver can never wait to find out whether one is coming.
-///
-/// Gated exactly as `0x03` is, and by the same kind of request: superd sniffs a pane only when the
-/// spawn asked for shell integration, and an older hostd does not know that field — so it never
-/// asks, is never sniffed, and never sees this tag.
-pub const TAG_SNIFF: u8 = 0x04;
-/// Frame carries the command-block changes the chunk about to be sent produced. See
-/// [`write_blocks`].
-///
-/// Same placement and the same reason as [`TAG_SNIFF`] — ahead of its own `0x03` frame, under one
-/// hold of the wire lock — and a gate of its own: superd segments a pane only when the spawn asked
-/// for blocks, which an older hostd does not know how to ask for.
-///
-/// A tag rather than another kind inside the `0x04` batch, because the two answer to DIFFERENT
-/// gates. Folding them would make one frame's contents depend on two independent flags, and the
-/// property that keeps a new tag safe — never sent to a peer that did not ask — only holds while
-/// each tag has exactly one thing to ask for.
-pub const TAG_BLOCKS: u8 = 0x05;
-
-/// The largest body this side will send or accept.
-///
-/// A `spawn` carries a full child environment, bounded by `ARG_MAX` (1 MiB on macOS); the cap sits
-/// above that and below anything that would let a corrupt or skewed peer make us allocate wildly.
-/// Over-long is refused, never truncated.
-pub const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
-
-/// How many payload bytes one [`write_output`] frame can carry for `pane_id`.
-///
-/// [`MAX_BODY_BYTES`] less the output header — a 2-byte id length, the id, and the 8-byte offset.
-///
-/// A caller with a *backlog* has to respect this, and it is not a theoretical bound: a pane's ring
-/// defaults to [`crate::ring::DEFAULT_CAPACITY_BYTES`], which is exactly `MAX_BODY_BYTES`, so a
-/// hostd resuming a pane that filled its ring during the restart asks for a backlog that provably
-/// does not fit in one frame. Splitting is the answer rather than a smaller ring, because the
-/// offset is per-frame and absolute: N frames say the same thing as one, and the receiver splices
-/// them by the numbers it is given. Failing instead would lose the whole backlog in exactly the
-/// case this daemon exists for.
-#[must_use]
-pub const fn max_output_payload(pane_id: &str) -> usize {
-    MAX_BODY_BYTES.saturating_sub(2 + pane_id.len() + 8)
-}
+// The tags, the cap and the payload room are `slopdesk_superwire`'s — one spelling for the daemon
+// that writes them and the host that reads them. Re-exported rather than re-declared so a call site
+// here reads the way it always did.
+pub use slopdesk_superwire::{
+    MAX_BODY_BYTES, TAG_BLOCKS, TAG_OUTPUT, TAG_PLAIN, TAG_SNIFF, TAG_WITH_DESCRIPTOR, max_output_payload,
+};
 
 /// What can go wrong reading or writing a frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -204,29 +162,10 @@ pub fn write_output(
     offset: u64,
     payload: &[u8],
 ) -> Result<(), FrameError> {
-    let name = pane_id.as_bytes();
-    let name_length = u16::try_from(name.len()).map_err(|_ignored| FrameError::BodyTooLarge(name.len()))?;
-    let length = 2_usize
-        .saturating_add(name.len())
-        .saturating_add(8)
-        .saturating_add(payload.len());
-    if length > MAX_BODY_BYTES {
-        return Err(FrameError::BodyTooLarge(length));
-    }
-
-    let mut body = Vec::with_capacity(length);
-    body.extend_from_slice(&name_length.to_be_bytes());
-    body.extend_from_slice(name);
-    body.extend_from_slice(&offset.to_be_bytes());
-    body.extend_from_slice(payload);
-
-    let tag = [TAG_OUTPUT];
-    let iov = [IoSlice::new(&tag)];
-    send_all_of_first_byte(socket, &iov, &[])?;
-    // The cast cannot wrap: `length` was bounded by MAX_BODY_BYTES above.
-    let encoded = u32::try_from(length).map_err(|_ignored| FrameError::BodyTooLarge(length))?;
-    write_all(socket, &encoded.to_be_bytes())?;
-    write_all(socket, &body)
+    let length = 2 + pane_id.len() + 8 + payload.len();
+    let body =
+        slopdesk_superwire::pack_output(pane_id, offset, payload).ok_or(FrameError::BodyTooLarge(length))?;
+    send_body(socket, TAG_OUTPUT, &body)
 }
 
 /// Writes one sniffed-events frame: `<0x04> <4B be length> | <2B be pane-id length> <pane id>
@@ -261,53 +200,23 @@ pub fn write_blocks(socket: BorrowedFd<'_>, pane_id: &str, json: &[u8]) -> Resul
 /// means. A divergence in the framing would be a bug that shows up as a desynchronised socket
 /// rather than as a wrong value, which is the expensive kind.
 fn write_pane_json(socket: BorrowedFd<'_>, tag: u8, pane_id: &str, json: &[u8]) -> Result<(), FrameError> {
-    let name = pane_id.as_bytes();
-    let name_length = u16::try_from(name.len()).map_err(|_ignored| FrameError::BodyTooLarge(name.len()))?;
-    let length = 2_usize.saturating_add(name.len()).saturating_add(json.len());
-    if length > MAX_BODY_BYTES {
-        return Err(FrameError::BodyTooLarge(length));
-    }
+    let length = 2 + pane_id.len() + json.len();
+    let body = slopdesk_superwire::pack_pane_json(pane_id, json).ok_or(FrameError::BodyTooLarge(length))?;
+    send_body(socket, tag, &body)
+}
 
-    let mut body = Vec::with_capacity(length);
-    body.extend_from_slice(&name_length.to_be_bytes());
-    body.extend_from_slice(name);
-    body.extend_from_slice(json);
-
+/// The tag, the header and the body, in that order, for a frame carrying no descriptor.
+///
+/// One function rather than the same three writes at each packed-body call site — the ORDER is the
+/// frame, and a caller that got it wrong would desynchronise the socket rather than send a bad
+/// value.
+fn send_body(socket: BorrowedFd<'_>, tag: u8, body: &[u8]) -> Result<(), FrameError> {
+    let header = slopdesk_superwire::header(body.len()).ok_or(FrameError::BodyTooLarge(body.len()))?;
     let tag = [tag];
     let iov = [IoSlice::new(&tag)];
     send_all_of_first_byte(socket, &iov, &[])?;
-    let encoded = u32::try_from(length).map_err(|_ignored| FrameError::BodyTooLarge(length))?;
-    write_all(socket, &encoded.to_be_bytes())?;
-    write_all(socket, &body)
-}
-
-/// The pane id and JSON packed by [`write_sniff`] or [`write_blocks`] — the two share a body
-/// shape, so they share a decode. Validate-then-drop, like [`parse_output`].
-#[must_use]
-pub fn parse_sniff(body: &[u8]) -> Option<(String, &[u8])> {
-    let name_length = usize::from(u16::from_be_bytes([*body.first()?, *body.get(1)?]));
-    let after_name = 2_usize.checked_add(name_length)?;
-    let pane_id = String::from_utf8(body.get(2..after_name)?.to_vec()).ok()?;
-    Some((pane_id, body.get(after_name..)?))
-}
-
-/// The pane id, offset and payload packed by [`write_output`].
-///
-/// Returns `None` for a body too short to hold its own header or one whose id is not UTF-8 —
-/// validate-then-drop, the rule every untrusted decode in this repo follows.
-#[must_use]
-pub fn parse_output(body: &[u8]) -> Option<(String, u64, &[u8])> {
-    let name_length = usize::from(u16::from_be_bytes([*body.first()?, *body.get(1)?]));
-    let name = body.get(2..2_usize.checked_add(name_length)?)?;
-    let after_name = 2_usize.checked_add(name_length)?;
-    let offset_end = after_name.checked_add(8)?;
-    let offset_bytes: [u8; 8] = body.get(after_name..offset_end)?.try_into().ok()?;
-    let payload = body.get(offset_end..)?;
-    Some((
-        String::from_utf8(name.to_vec()).ok()?,
-        u64::from_be_bytes(offset_bytes),
-        payload,
-    ))
+    write_all(socket, &header)?;
+    write_all(socket, body)
 }
 
 /// Reads one frame. Blocks until a whole frame arrives, the peer closes, or the socket errors.
@@ -319,25 +228,19 @@ pub fn parse_output(body: &[u8]) -> Option<(String, u64, &[u8])> {
 /// and a leaked master fd is a pane that can never be hung up.
 pub fn read(socket: BorrowedFd<'_>) -> Result<Frame, FrameError> {
     let (tag, descriptor) = read_tag(socket)?;
-    if tag != TAG_PLAIN
-        && tag != TAG_WITH_DESCRIPTOR
-        && tag != TAG_OUTPUT
-        && tag != TAG_SNIFF
-        && tag != TAG_BLOCKS
-    {
+    if !slopdesk_superwire::is_known_tag(tag) {
         // The kernel may already have installed a descriptor before we decided the tag was
         // nonsense. `descriptor` is an OwnedFd, so dropping it here closes it.
         drop(descriptor);
         return Err(FrameError::UnknownTag(tag));
     }
 
-    let mut header = [0_u8; 4];
+    let mut header = [0_u8; slopdesk_superwire::HEADER_LEN];
     read_exactly(socket, &mut header)?;
-    let length = u32::from_be_bytes(header) as usize;
-    if length > MAX_BODY_BYTES {
+    let Some(length) = slopdesk_superwire::body_length(header) else {
         drop(descriptor);
-        return Err(FrameError::BodyTooLarge(length));
-    }
+        return Err(FrameError::BodyTooLarge(u32::from_be_bytes(header) as usize));
+    };
     let mut body = vec![0_u8; length];
     read_exactly(socket, &mut body)?;
     Ok(Frame {
@@ -443,7 +346,7 @@ mod tests {
         body.extend_from_slice(b"p");
         body.extend_from_slice(&42_u64.to_be_bytes());
         let (pane_id, offset, payload) = parse_output(&body).unwrap();
-        assert_eq!((pane_id.as_str(), offset), ("p", 42));
+        assert_eq!((pane_id, offset), ("p", 42));
         assert!(payload.is_empty());
     }
 
@@ -480,7 +383,7 @@ mod tests {
         let frame = read(theirs.as_fd()).unwrap();
         assert_eq!(frame.tag, TAG_SNIFF);
         assert!(frame.descriptor.is_none());
-        let (pane_id, json) = parse_sniff(&frame.body).unwrap();
+        let (pane_id, json) = parse_pane_json(&frame.body).unwrap();
         assert_eq!(pane_id, "pane-7");
         assert_eq!(json, br#"{"events":[{"kind":"bell"}]}"#);
     }
@@ -489,21 +392,20 @@ mod tests {
     /// `None` rather than panicking on a slice.
     #[test]
     fn a_truncated_sniff_body_is_refused_rather_than_guessed() {
-        assert!(parse_sniff(&[]).is_none());
-        assert!(parse_sniff(&[0x00]).is_none());
+        assert!(parse_pane_json(&[]).is_none());
+        assert!(parse_pane_json(&[0x00]).is_none());
         // Claims a 9-byte pane id and supplies 1.
-        assert!(parse_sniff(&[0x00, 0x09, b'p']).is_none());
+        assert!(parse_pane_json(&[0x00, 0x09, b'p']).is_none());
         // A well-formed id with an EMPTY payload parses — superd never sends one, but a receiver
         // that treated it as truncation would drop the connection over a harmless frame.
-        assert_eq!(
-            parse_sniff(&[0x00, 0x01, b'p']),
-            Some(("p".to_owned(), [].as_slice()))
-        );
+        assert_eq!(parse_pane_json(&[0x00, 0x01, b'p']), Some(("p", [].as_slice())));
     }
+
+    use slopdesk_superwire::{parse_output, parse_pane_json};
 
     use super::{
         FrameError, MAX_BODY_BYTES, TAG_OUTPUT, TAG_PLAIN, TAG_SNIFF, TAG_WITH_DESCRIPTOR,
-        max_output_payload, parse_output, parse_sniff, read, write, write_output, write_sniff,
+        max_output_payload, read, write, write_output, write_sniff,
     };
 
     fn pair() -> (std::os::fd::OwnedFd, std::os::fd::OwnedFd) {

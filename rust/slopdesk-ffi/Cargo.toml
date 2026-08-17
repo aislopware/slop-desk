@@ -60,6 +60,7 @@ slopdesk-hookevent = { path = "../slopdesk-hookevent" }
 slopdesk-inspectord = { path = "../slopdesk-inspectord" }
 slopdesk-sanitize = { path = "../slopdesk-sanitize" }
 slopdesk-screenwire = { path = "../slopdesk-screenwire" }
+slopdesk-superwire = { path = "../slopdesk-superwire" }
 slopdesk-terminal = { path = "../slopdesk-terminal" }
 slopdesk-video = { path = "../slopdesk-video" }
 slopdesk-altscreen = { path = "../slopdesk-altscreen" }

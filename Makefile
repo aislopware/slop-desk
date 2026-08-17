@@ -257,7 +257,7 @@ lint-swift-analyze: ## SwiftLint analyzer rules (full rebuild + analyze; minutes
 
 # ---------------------------------------------------------------------------- #
 # Full gate
-.PHONY: check quick check-ios check-ios-tests build test test-touched golden ffi ffi-test hook hook-test ctl ctl-test posix-test superd superd-test superd-install screend screend-test screend-install dropd dropd-test androidd androidd-test inspectord inspectord-test wire wire-test altscreen-test fuzzy-test devicelog-test hookevent-test rowscan-test video video-test gfsimd-test miri workspace workspace-test agent agent-test terminal terminal-test cli cli-test codeseed codeseed-test probe probe-test host host-restart host-status
+.PHONY: check quick check-ios check-ios-tests build test test-touched golden ffi ffi-test hook hook-test ctl ctl-test posix-test superd superd-test superd-install screend screend-test screend-install dropd dropd-test androidd androidd-test inspectord inspectord-test wire wire-test altscreen-test fuzzy-test devicelog-test superwire-test hookevent-test rowscan-test video video-test gfsimd-test miri workspace workspace-test agent agent-test terminal terminal-test cli cli-test codeseed codeseed-test probe probe-test host host-restart host-status
 check: lint build test miri golden check-ios ## lint + build + test + the unsafe memory audit + golden pin + the iOS triple (full local gate)
 
 # THE INNER LOOP. Run this after every edit; run `check` once before pushing.
@@ -496,6 +496,13 @@ fuzzy-test: ## cargo test for the fuzzy matcher (rust/slopdesk-fuzzy)
 devicelog-test: ## cargo test for the device console grammars (rust/slopdesk-devicelog)
 	cd rust/slopdesk-devicelog && cargo test
 
+# The superd control socket's framing — tags, lengths and the two packed bodies. Its own crate for
+# `slopdesk-screenwire`'s reason: superd writes these frames and hostd reads them, and the layout
+# was spelled in superd's `frame.rs` AND in `SupervisorFrame.swift`, each calling the other a
+# mirror. The app links the framing without linking `nix` and a PTY supervisor with it.
+superwire-test: ## cargo test for the superd control framing (rust/slopdesk-superwire)
+	cd rust/slopdesk-superwire && cargo test
+
 # What one Claude Code hook body SAYS, in the detection vocabulary — the mapping that used to be a
 # typed payload enum plus an adapter a module away, which is how the two drifted. Its own crate
 # because it takes `serde_json`, which `slopdesk-agent` (zero-dependency, every input untrusted)
@@ -618,7 +625,7 @@ host-status: ## Report the running hostd (pid, port, flags) and superd's child c
 # any more (docs/51), so every test that needs a real pty boots a private daemon and SKIPS without
 # the binary (`SuperdFixture`). A bare `swift test` on a clean checkout still works and still never
 # sees cargo — it just reports those tests skipped, by name.
-test: ffi hook-test ctl-test probe-test posix-test ffi-test superd-test screend-test dropd-test androidd-test inspectord-test wire-test altscreen-test fuzzy-test devicelog-test hookevent-test rowscan-test video-test gfsimd-test workspace-test agent-test terminal-test cli-test codeseed-test ctl superd screend dropd androidd inspectord ## cargo test (relay + agent CLI + metadata probe + the unsafe surface + the C ABI + custodian + screen engine + file drop + android bridge + inspector + wire codec + alt-screen cut scanner + fuzzy matcher + device console grammars + hook bodies + row scans + FEC codec + SIMD kernels + workspace rules + agent detection + terminal input + CLI core + code-server profile) + swift test with the green-tree cache
+test: ffi hook-test ctl-test probe-test posix-test ffi-test superd-test screend-test dropd-test androidd-test inspectord-test wire-test altscreen-test fuzzy-test devicelog-test superwire-test hookevent-test rowscan-test video-test gfsimd-test workspace-test agent-test terminal-test cli-test codeseed-test ctl superd screend dropd androidd inspectord ## cargo test (relay + agent CLI + metadata probe + the unsafe surface + the C ABI + custodian + screen engine + file drop + android bridge + inspector + wire codec + alt-screen cut scanner + fuzzy matcher + device console grammars + superd framing + hook bodies + row scans + FEC codec + SIMD kernels + workspace rules + agent detection + terminal input + CLI core + code-server profile) + swift test with the green-tree cache
 	bash scripts/pre-push-test.sh
 
 # `superd` for the same load-bearing reason as `test:` above, and it matters MORE here: this is the

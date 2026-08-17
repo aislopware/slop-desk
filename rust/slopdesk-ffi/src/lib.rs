@@ -98,6 +98,7 @@ pub mod scroll_reproject;
 pub mod scroll_resample;
 pub mod send_pacing;
 pub mod session_state;
+pub mod supervisor_frame;
 pub mod swipe_nav_config;
 pub mod swipe_recognizer;
 pub mod terminal_config;

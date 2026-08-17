@@ -212,35 +212,39 @@ fi
 same "listener kinds" "$(echo "${swift_kinds}" | tr '\n' ' ')" "$(echo "${rust_kinds}" | tr '\n' ' ')"
 
 # ── 4. Frame tags and the body cap ──────────────────────────────────────────────────────────────
-# The tag is the FIRST byte and the discriminator for whether an `SCM_RIGHTS` descriptor rides
-# along. Skew it and the receiver either drops a live fd or reads a length out of a payload.
-swift_plain=$(sed -n 's/.*tagPlain: UInt8 = \(0x[0-9a-fA-F]*\).*/\1/p' "${SWIFT_FRAME}" | head -1)
-swift_fd=$(sed -n 's/.*tagWithDescriptor: UInt8 = \(0x[0-9a-fA-F]*\).*/\1/p' "${SWIFT_FRAME}" | head -1)
-swift_out=$(sed -n 's/.*tagOutput: UInt8 = \(0x[0-9a-fA-F]*\).*/\1/p' "${SWIFT_FRAME}" | head -1)
-rust_plain=$(sed -n 's/.*TAG_PLAIN: u8 = \(0x[0-9a-fA-F]*\).*/\1/p' "${RUST_FRAME}" | head -1)
-rust_fd=$(sed -n 's/.*TAG_WITH_DESCRIPTOR: u8 = \(0x[0-9a-fA-F]*\).*/\1/p' "${RUST_FRAME}" | head -1)
-rust_out=$(sed -n 's/.*TAG_OUTPUT: u8 = \(0x[0-9a-fA-F]*\).*/\1/p' "${RUST_FRAME}" | head -1)
-swift_sniff=$(sed -n 's/.*tagSniff: UInt8 = \(0x[0-9a-fA-F]*\).*/\1/p' "${SWIFT_FRAME}" | head -1)
-rust_sniff=$(sed -n 's/.*TAG_SNIFF: u8 = \(0x[0-9a-fA-F]*\).*/\1/p' "${RUST_FRAME}" | head -1)
-swift_blocks=$(sed -n 's/.*tagBlocks: UInt8 = \(0x[0-9a-fA-F]*\).*/\1/p' "${SWIFT_FRAME}" | head -1)
-rust_blocks=$(sed -n 's/.*TAG_BLOCKS: u8 = \(0x[0-9a-fA-F]*\).*/\1/p' "${RUST_FRAME}" | head -1)
-same "frame tag (plain)" "${swift_plain}" "${rust_plain}"
-same "frame tag (with descriptor)" "${swift_fd}" "${rust_fd}"
-same "frame tag (output)" "${swift_out}" "${rust_out}"
-# The quietest skew this socket has: superd writes a tag hostd does not know, hostd answers
+# This gate used to COMPARE two spellings — `SupervisorFrame.swift`'s constants against superd's
+# `frame.rs` ones — because there were two. There is one now (`slopdesk-superwire`), which superd
+# re-exports and hostd reads through a door, so skew between the two ends is no longer expressible
+# and there is nothing left to compare. What is still worth pinning, and is now the only thing that
+# can go wrong, is the NUMBERING itself: it is the wire, every deployed peer of every version reads
+# it, and a shifted constant desynchronises all of them at once. So this is a one-sided pin.
+#
+# The quietest skew this socket ever had: superd writes a tag hostd does not know, hostd answers
 # `unknownTag` and drops the CONNECTION — every pane at once, on the first title anybody's shell
 # writes. An absent constant reads as an empty string here and fails the same way a wrong one does.
-same "frame tag (sniff)" "${swift_sniff}" "${rust_sniff}"
-# Same failure, one tag along. The block tap has its own tag rather than sharing the sniffer's batch
-# because the two answer to DIFFERENT gates (shellIntegration vs blocks), and what keeps a new tag
-# inside the append-only rule is that each tag has exactly one thing to ask for.
-same "frame tag (blocks)" "${swift_blocks}" "${rust_blocks}"
+SUPERWIRE=rust/slopdesk-superwire/src/lib.rs
+declare -a frame_tags=(
+  "plain:TAG_PLAIN:0x01"
+  "with descriptor:TAG_WITH_DESCRIPTOR:0x02"
+  "output:TAG_OUTPUT:0x03"
+  "sniff:TAG_SNIFF:0x04"
+  # The block tap has its own tag rather than sharing the sniffer's batch because the two answer to
+  # DIFFERENT gates (shellIntegration vs blocks), and what keeps a new tag inside the append-only
+  # rule is that each tag has exactly one thing to ask for.
+  "blocks:TAG_BLOCKS:0x05"
+)
+for entry in "${frame_tags[@]}"; do
+  label="${entry%%:*}"
+  rest="${entry#*:}"
+  found=$(sed -n "s/.*${rest%%:*}: u8 = \(0x[0-9a-fA-F]*\).*/\1/p" "${SUPERWIRE}" | head -1)
+  same "frame tag (${label})" "${found}" "${rest#*:}"
+done
 
-# The cap is a refusal on both sides, so the LOWER one governs. Equal is the only setting where
-# neither side can produce a frame the other will not take.
-swift_cap=$(sed -n 's/.*maximumBodyBytes = \(.*\)$/\1/p' "${SWIFT_FRAME}" | head -1 | tr -d ' ')
-rust_cap=$(sed -n 's/.*MAX_BODY_BYTES: usize = \(.*\);$/\1/p' "${RUST_FRAME}" | head -1 | tr -d ' ')
-same "maximum body bytes" "${swift_cap}" "${rust_cap}"
+# The cap is a refusal on both sides, so the LOWER one governs — and one declaration is how they
+# stay equal, which is the only setting where neither side can produce a frame the other will not
+# take. Pinned to the number rather than to another copy of it, for the same reason as the tags.
+super_cap=$(sed -n 's/.*MAX_BODY_BYTES: usize = \(.*\);$/\1/p' "${SUPERWIRE}" | head -1 | tr -d ' ')
+same "maximum body bytes" "${super_cap}" "4*1024*1024"
 
 # ── 5. The read chunk ───────────────────────────────────────────────────────────────────────────
 # Not a wire constant — superd alone reads with it — but a JOINT decision, and the Swift copy is
@@ -3849,6 +3853,45 @@ for module in logcat unified; do
 done
 printf 'check-supervisor: one grammar per device console, and neither of them in Swift.\n'
 
+# ── And ONE spelling of the superd control frame ──────────────────────────────────────────────
+# superd writes these frames and hostd reads them, and the LAYOUT was written out twice: superd's
+# `frame.rs` in Rust and `SupervisorFrame.swift` in Swift, each module's own doc calling the other a
+# mirror. Two hand-written spellings of one byte layout, agreeing by inspection, in the one place
+# where a disagreement shows up as a DESYNCHRONISED SOCKET rather than as a wrong value.
+# `slopdesk-superwire` is the spelling; each side keeps only its own syscalls, because the
+# descriptor has to land in the reading process.
+if hit=$(spells 'tagPlain: UInt8 = |tagOutput: UInt8 = |maximumBodyBytes = [0-9]|Int\(header\[0\]\)|<< 24|nameLength = Int' "${SWIFT_FRAME}"); then
+  fail "${hit} spells the superd frame layout in Swift again — slopdesk-superwire owns it"
+fi
+for entry in 'slopdesk_supervisor_tag' 'slopdesk_supervisor_is_known_tag' 'slopdesk_supervisor_header' \
+  'slopdesk_supervisor_body_length' 'slopdesk_supervisor_parse_output' \
+  'slopdesk_supervisor_parse_pane_json' 'slopdesk_supervisor_max_body'; do
+  if ! spells "${entry}" "${SWIFT_FRAME}" > /dev/null; then
+    fail "${SWIFT_FRAME} no longer asks ${entry} — the framing is one implementation"
+  fi
+done
+# The same for the daemon: superd must READ the shared layout rather than restate it, which is what
+# it did for the whole of the file's life before this.
+if ! spells '^slopdesk-superwire = ' rust/slopdesk-superd/Cargo.toml > /dev/null; then
+  fail "rust/slopdesk-superd dropped slopdesk-superwire — the frame layout would be spelled twice again"
+fi
+if hit=$(spells 'const TAG_PLAIN|const MAX_BODY_BYTES|pub fn parse_output|pub fn parse_sniff' rust/slopdesk-superd/src/frame.rs); then
+  fail "${hit} re-declares the frame layout inside superd — it belongs to slopdesk-superwire"
+fi
+# The SYSCALLS deliberately stay per side: superd hands away a descriptor it owns through `nix`, and
+# hostd receives one through its own passing code. If either ever grew a door, this is where that
+# decision gets argued rather than slipped in.
+for kept in 'FileDescriptorPassing.receive' 'FileDescriptorWrite.all' 'FileDescriptorRead.exactly'; do
+  if ! spells "${kept}" "${SWIFT_FRAME}" > /dev/null; then
+    fail "${SWIFT_FRAME} lost ${kept} — the SCM_RIGHTS lane stays on this side on purpose"
+  fi
+done
+# A span from the door slices this side's own buffer, so it is clamped rather than trusted.
+if ! spells 'Swift\.min\(Int\(offset\), body\.count\)' "${SWIFT_FRAME}" > /dev/null; then
+  fail "${SWIFT_FRAME}: a span from the door is sliced unclamped — that is a trap, not a bad frame"
+fi
+printf 'check-supervisor: one spelling of the superd control frame, and the syscalls stay per side.\n'
+
 # ── One regex engine meets the untrusted rows, and it does not backtrack ───────────────────────
 # Hint Mode ran ten compiled NSRegularExpressions over rows a remote program wrote, bridged through
 # NSString, mapping columns with a third cell walk. Two things were wrong with that and this pins
@@ -4692,7 +4735,7 @@ if [[ "${failures}" -ne 0 ]]; then
 fi
 
 printf 'check-supervisor: Swift and Rust agree — paths, protocol %s.%s, listeners (%s), frame tags, %s-byte cap, %s read chunk.\n' \
-  "${swift_major}" "${swift_minor}" "$(echo "${swift_kinds}" | tr '\n' ' ' | sed 's/ $//')" "${swift_cap}" "${swift_chunk}"
+  "${swift_major}" "${swift_minor}" "$(echo "${swift_kinds}" | tr '\n' ' ' | sed 's/ $//')" "${super_cap}" "${swift_chunk}"
 printf 'check-supervisor: screend agrees too — socket name, %s verbs, banner "%s", no Swift engine, ladder, manifest, boundary split or journal.\n' \
   "$(printf '%s\n' "${swift_screen_verbs}" | grep -c .)" "${swift_banner}"
 printf 'check-supervisor: dropd agrees too — version %s, types (%s→ %s), %s-byte frames, 8 door entries, announce line, no Swift receiver or codec.\n' \
