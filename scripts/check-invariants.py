@@ -205,6 +205,10 @@ def the_release_ships_every_sidecar_the_host_needs() -> Report:
     The shipped set is read from the tool ARRAYS, not from the file: a first draft grepped
     `package-release.sh` whole, which the comment above those arrays — it names every daemon —
     satisfied on its own. A gate a comment can pass is not a gate.
+
+    The arrays moved to `scripts/shipped-tools.sh` when a fourth reader appeared (per-tool version
+    stamping), so this reads them there. Same rule, one file over: a list four scripts share is a
+    list that must live in one of them and be sourced by the rest, or it is four lists.
     """
     wanted: set[str] = {"slopdesk-superd", "slopdesk-hook"}
     for path in repo_files("Sources/*.swift"):
@@ -216,7 +220,7 @@ def the_release_ships_every_sidecar_the_host_needs() -> Report:
             elif match.group("symbol") == "binaryName":
                 wanted.update(constants)
 
-    packaging = (REPO / "scripts/package-release.sh").read_text(errors="ignore")
+    packaging = (REPO / "scripts/shipped-tools.sh").read_text(errors="ignore")
     arrays = re.findall(
         r"^(?:SPM_TOOLS|RUST_ROOT_TOOLS|RUST_CRATE_TOOLS)=\((.*?)\)",
         packaging,
@@ -224,7 +228,7 @@ def the_release_ships_every_sidecar_the_host_needs() -> Report:
     )
     if not arrays:
         blind = "the release tool arrays are gone — this gate is blind"
-        return ["scripts/package-release.sh"], blind
+        return ["scripts/shipped-tools.sh"], blind
     shipped = {name for body in arrays for name in re.findall(r"\bslopdesk-[a-z]+\b", body)}
     missing = sorted(wanted - shipped)
     if not missing:
@@ -439,6 +443,113 @@ def live_docs_cite_files_that_exist() -> Report:
     return found, "a doc CLAUDE.md sends readers to cites a path that is not in the tree"
 
 
+def every_shipped_sidecar_carries_its_own_version() -> Report:
+    """A sidecar the pin has never heard of ships at whatever its Cargo.toml happened to say.
+
+    `MANIFEST.json` publishes a version per binary, and the install side restarts a daemon when
+    that version moves — so a tool missing from `scripts/tool-stamps.pin` is not a cosmetic gap.
+    `package-release.sh` would find no pinned version, and `bump-tool-versions.sh` would treat the
+    tool as new on every single run, bumping it whether or not it changed. Either way the number
+    stops meaning "this daemon is different from the one you have", which is the only thing the
+    number is for.
+
+    The wanted set is the ARRAYS in `scripts/shipped-tools.sh`, the same source
+    `the_release_ships_every_sidecar_the_host_needs` reads, so a seventh daemon is covered here the
+    day it is added there rather than the day someone remembers this file.
+
+    Only the CARGO tools: `slopdesk` and `slopdesk-hostd` are SwiftPM, they ARE the product, and
+    their version is the product's (`docs/49` §"The six version sites"). A pin entry for them would
+    be a seventh version site — exactly the thing `bump-version.sh` exists to prevent.
+    """
+    tools = (REPO / "scripts/shipped-tools.sh").read_text(errors="ignore")
+    arrays = re.findall(
+        r"^(?:RUST_ROOT_TOOLS|RUST_CRATE_TOOLS)=\((.*?)\)",
+        tools,
+        re.MULTILINE | re.DOTALL,
+    )
+    if not arrays:
+        return ["scripts/shipped-tools.sh"], "the cargo tool arrays are gone — this gate is blind"
+    shipped = {name for body in arrays for name in re.findall(r"\bslopdesk-[a-z]+\b", body)}
+
+    pin = REPO / "scripts/tool-stamps.pin"
+    if not pin.exists():
+        return ["scripts/tool-stamps.pin"], "the tool pin is missing — every sidecar is unversioned"
+    pinned = {
+        line.split()[0]
+        for line in pin.read_text(errors="ignore").splitlines()
+        if line.strip() and not line.startswith("#")
+    }
+
+    missing = sorted(shipped - pinned)
+    # A pin entry for a tool nobody ships is the same bug wearing the other hat: it keeps a stale
+    # version alive in `MANIFEST.json` for a binary that is not in the tarball.
+    orphaned = sorted(pinned - shipped)
+    if not missing and not orphaned:
+        return None
+    return (
+        missing + orphaned,
+        (
+            "scripts/tool-stamps.pin and the shipped cargo tools disagree"
+            " — run scripts/bump-tool-versions.sh"
+        ),
+    )
+
+
+def the_formula_installs_every_binary_the_release_ships() -> Report:
+    """A binary the tarball carries and the formula does not name is a feature `brew` cannot run.
+
+    This is the same failure `the_release_ships_every_sidecar_the_host_needs` catches one step
+    earlier, at the step nothing was watching. The tarball was fixed to carry all twelve tools; the
+    FORMULA went on installing three of them — `slopdesk`, `slopdesk-hostd`, `slopdesk-ctl` — for
+    four releases, so a `brew install` still produced a host with no superd and therefore no pane.
+    Nothing could see it, for the same reason as before and one repository over: the formula lived
+    in `aislopware/homebrew-tap`, and a file in another repository is checked by nobody.
+
+    So the formula lives in `packaging/homebrew/` and the release workflow COPIES it into the tap,
+    rewriting only `version` and `sha256`. That makes it a file in this tree, which makes it
+    gateable, which is this function.
+
+    `MANIFEST.json` is checked too, and it is not decoration: `slopdesk sidecars` diffs it against
+    the copy recorded by the previous install to say WHICH binaries an upgrade changed. Without it
+    installed the only honest answer is "all of them", which is the all-or-nothing upgrade the
+    per-tool version exists to end (`docs/49`).
+    """
+    site = "packaging/homebrew/Formula/slopdesk.rb"
+    formula = REPO / site
+    if not formula.exists():
+        return [site], "the formula is gone — the tap has no source of truth"
+    text = formula.read_text(errors="ignore")
+
+    installed_block = re.search(r"bin\.install\b(.*?)\n\n", text, re.DOTALL)
+    if not installed_block:
+        return [site], "the formula has no bin.install — this gate is blind"
+    installed = set(re.findall(r'"(slopdesk(?:-[a-z]+)?)"', installed_block.group(1)))
+
+    tools = (REPO / "scripts/shipped-tools.sh").read_text(errors="ignore")
+    arrays = re.findall(
+        r"^(?:SPM_TOOLS|RUST_ROOT_TOOLS|RUST_CRATE_TOOLS)=\((.*?)\)",
+        tools,
+        re.MULTILINE | re.DOTALL,
+    )
+    if not arrays:
+        return ["scripts/shipped-tools.sh"], "the release tool arrays are gone — this gate is blind"
+    shipped = {name for body in arrays for name in re.findall(r"\bslopdesk(?:-[a-z]+)?\b", body)}
+
+    missing = sorted(shipped - installed)
+    # The other direction is a bug too: a formula naming a binary the tarball does not carry makes
+    # `brew install` fail outright on the missing file, which at least is loud — but it is still a
+    # claim about the release that the release does not honour.
+    invented = sorted(installed - shipped)
+    if not text.count('prefix.install "MANIFEST.json"'):
+        return (
+            [site],
+            "the formula installs no MANIFEST.json — `slopdesk sidecars` cannot say what changed",
+        )
+    if not missing and not invented:
+        return None
+    return missing + invented, f"{site} and the shipped tool set disagree"
+
+
 GATES = [
     live_docs_cite_files_that_exist,
     no_app_layer_crypto,
@@ -447,6 +558,8 @@ GATES = [
     every_script_sets_pipefail,
     a_script_with_a_shebang_is_executable,
     the_release_ships_every_sidecar_the_host_needs,
+    every_shipped_sidecar_carries_its_own_version,
+    the_formula_installs_every_binary_the_release_ships,
     no_rust_module_is_written_and_then_never_called,
     pkill_never_reaches_the_developers_host,
     shell_quoting_has_one_owner,

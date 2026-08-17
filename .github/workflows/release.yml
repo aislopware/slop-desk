@@ -356,9 +356,28 @@ jobs:
           cli_sha="$(awk '/\.tar\.gz$/ {print $1}' dist/SHA256SUMS)"
 
           git clone --depth 1 "https://x-access-token:${token}@github.com/aislopware/homebrew-tap.git" tap
+
+          # COPY, then rewrite two lines. The tap used to be edited in place, which meant the
+          # formula in it was whatever the last hand-edit left — and for four releases that was a
+          # `bin.install` naming three of the twelve binaries, so a `brew install` had no superd and
+          # therefore a host that could not open a pane. `packaging/homebrew/` is the source of
+          # truth now, `check-invariants.py` derives its install list from `shipped-tools.sh`, and
+          # this job's only remaining freedom is the version and the two SHAs.
+          cp packaging/homebrew/Formula/slopdesk.rb tap/Formula/slopdesk.rb
+          cp packaging/homebrew/Casks/slopdesk.rb tap/Casks/slopdesk.rb
           cd tap
           sed -i -E "s/^  version \".*\"/  version \"${VERSION}\"/; s/^  sha256 \".*\"/  sha256 \"${cli_sha}\"/" Formula/slopdesk.rb
           sed -i -E "s/^  version \".*\"/  version \"${VERSION}\"/; s/^  sha256 \".*\"/  sha256 \"${dmg_sha}\"/" Casks/slopdesk.rb
+          # The `sed` above is one substitution per file and silently a no-op if the shape moves.
+          # Proving it landed here costs one grep and turns a shipped-wrong-SHA into a red job.
+          grep -q "^  version \"${VERSION}\"$" Formula/slopdesk.rb || {
+            echo "the formula's version line did not take the rewrite" >&2; exit 1; }
+          grep -q "^  sha256 \"${cli_sha}\"$" Formula/slopdesk.rb || {
+            echo "the formula's sha256 line did not take the rewrite" >&2; exit 1; }
+          grep -q "^  version \"${VERSION}\"$" Casks/slopdesk.rb || {
+            echo "the cask's version line did not take the rewrite" >&2; exit 1; }
+          grep -q "^  sha256 \"${dmg_sha}\"$" Casks/slopdesk.rb || {
+            echo "the cask's sha256 line did not take the rewrite" >&2; exit 1; }
           git config user.name "slopdesk-release"
           git config user.email "release@slopdesk.invalid"
           git commit -am "slopdesk ${VERSION}"

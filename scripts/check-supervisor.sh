@@ -69,6 +69,7 @@ SWIFT_FRAME="Sources/SlopDeskSupervisor/SupervisorFrame.swift"
 SWIFT_STREAM="Sources/SlopDeskHost/PaneOutputStream.swift"
 RUST_PATHS="rust/slopdesk-superd/src/paths.rs"
 RUST_PROTOCOL="rust/slopdesk-superd/src/protocol.rs"
+RUST_SUPERD_SERVER="rust/slopdesk-superd/src/server.rs"
 RUST_FRAME="rust/slopdesk-superd/src/frame.rs"
 RUST_PUMP="rust/slopdesk-superd/src/pump.rs"
 SWIFT_SCREEN_PATHS="Sources/SlopDeskScreen/ScreenPaths.swift"
@@ -92,6 +93,8 @@ RUST_ANDROID_SERVER="rust/slopdesk-androidd/src/server.rs"
 RUST_ANDROID_PROTOCOL="rust/slopdesk-androidd/src/protocol.rs"
 SWIFT_INSPECTOR_WIRE="Sources/SlopDeskInspector/InspectorWire.swift"
 SWIFT_INSPECTOR_MANAGER="Sources/SlopDeskHost/InspectorServiceManager.swift"
+# The one place the three announcing daemons' shared parses live, `AnnouncedPort` and `AnnouncedVersion`.
+SWIFT_LIFECYCLE="Sources/SlopDeskHost/SupervisedServiceLifecycle.swift"
 RUST_INSPECTOR_WIRE="rust/slopdesk-inspectord/src/wire.rs"
 RUST_INSPECTOR_FFI="rust/slopdesk-ffi/src/inspector.rs"
 RUST_INSPECTOR_SERVER="rust/slopdesk-inspectord/src/server.rs"
@@ -196,6 +199,22 @@ rust_major=$(sed -n 's/.*VERSION_MAJOR: i32 = \([0-9][0-9]*\).*/\1/p' "${RUST_PR
 rust_minor=$(sed -n 's/.*VERSION_MINOR: i32 = \([0-9][0-9]*\).*/\1/p' "${RUST_PROTOCOL}" | head -1)
 same "protocol major" "${swift_major}" "${rust_major}"
 same "protocol minor" "${swift_minor}" "${rust_minor}"
+
+# The minor above says what superd can SPEAK. It cannot say which BUILD is speaking — it moves only
+# on a wire change, so a superd rebuilt with a fixed reaper reports the minor it always did. superd
+# outlives hostd's build, so after an upgrade the binary on disk and the process on this socket are
+# routinely different code, and restarting it takes every live pane. `buildVersion` on the hello
+# reply is the one handle hostd has on which (`docs/49`); dropped on either side it reads as absent,
+# which the audit reports as "unknown" forever rather than failing.
+if ! grep -q 'rename = "buildVersion"' "${RUST_PROTOCOL}"; then
+  fail "superd's hello no longer carries buildVersion — hostd cannot tell a stale superd from a current one (docs/49)"
+fi
+if ! grep -q 'build_version: Some(env!("CARGO_PKG_VERSION")' "${RUST_SUPERD_SERVER}"; then
+  fail "superd's hello no longer answers with its OWN compile-time version — see ${RUST_SUPERD_SERVER}"
+fi
+if ! grep -q 'var buildVersion: String?' "${SWIFT_PROTOCOL}"; then
+  fail "${SWIFT_PROTOCOL}'s HelloReply no longer decodes buildVersion (docs/49)"
+fi
 
 # The reserved `id` that marks a reply as an unsolicited NOTIFICATION rather than an answer. Same
 # ratchet, and quieter than either version: a skew makes hostd read every notification as the answer
@@ -1731,6 +1750,22 @@ if ! grep -q "HELLO_BANNER: &\[u8\] = b\"${swift_banner}\"" "${RUST_SCREEN_PROTO
   fail "screend hello banner '${swift_banner}' is not what ${RUST_SCREEN_PROTOCOL} answers"
 fi
 
+# The banner is the PROTOCOL identity; the RUNNING BUILD's version follows it as a third field
+# (`docs/49`). screend is a LaunchAgent that outlives hostd's build, so an upgrade leaves the old
+# process serving — this field is the only thing that tells hostd so. Two halves are ratcheted here
+# because a skew in either is silent: a Swift side reading a field Rust stopped appending answers
+# `nil`, which the audit reports as "unknown" forever, and a Rust side that appended it somewhere
+# else would be read as a version that never matches.
+if ! grep -q 'pub fn hello_payload' "${RUST_SCREEN_PROTOCOL}"; then
+  fail "${RUST_SCREEN_PROTOCOL} no longer builds the hello payload — hostd cannot learn screend's build version (docs/49)"
+fi
+if ! grep -q 'hello_payload(env!("CARGO_PKG_VERSION"))' "${RUST_SCREEN_SERVER}"; then
+  fail "screend's hello no longer answers with its OWN compile-time version — see ${RUST_SCREEN_SERVER}"
+fi
+if ! grep -q 'func buildVersion(fromHello' "${SWIFT_SCREEN_PROTOCOL}"; then
+  fail "${SWIFT_SCREEN_PROTOCOL} no longer parses screend's build version out of hello (docs/49)"
+fi
+
 # The RESET frame's flag bits. Each is one bit of a byte hostd sets and screend reads, so a bit
 # claimed on one side and not the other does not fail to parse: a rebuild-replay flag read as
 # agent-changed rebuilds nothing and reports an agent that did not change. DERIVED both ways, so a
@@ -2668,6 +2703,88 @@ if [[ -n "${inspector_revived}" ]]; then
   printf '%s\n' "${inspector_revived}" >&2
   fail "a Swift inspector producer is back in Sources/ — inspectord owns the fold (docs/54)"
 fi
+
+# ── 12b. The announce line's OTHER number: which build is running ───────────────────────────────
+# dropd, inspectord and androidd outlive hostd — hostd re-learns their port by replaying superd's
+# ring, which is what §§10–12's announce-marker gates are about. The version of the build that is
+# RUNNING rides the same line, first in the parenthetical, for exactly that reason: it is the only
+# channel that describes a child this hostd did not start (`docs/49`).
+#
+# Four spellings, one string. A skew here is the quietest failure in this file: hostd's parser finds
+# no marker, reports `unknown`, and goes on running last week's daemon behind this week's version
+# number — green tests, working panel, wrong code.
+swift_version_marker=$(sed -n 's/^ *static let marker = "\(.*\)"$/\1/p' "${SWIFT_LIFECYCLE}" | head -1)
+if [[ -z "${swift_version_marker}" ]]; then
+  fail "no announce VERSION marker found in ${SWIFT_LIFECYCLE} — the extraction in this gate has gone stale"
+fi
+for announcing_server in "${RUST_DROP_SERVER}" "${RUST_INSPECTOR_SERVER}" "${RUST_ANDROID_SERVER}"; do
+  if ! grep -qF "ANNOUNCE_VERSION_PREFIX: &str = \"${swift_version_marker}\"" "${announcing_server}"; then
+    fail "the announce version marker '${swift_version_marker}' is not what ${announcing_server} prints (docs/49)"
+  fi
+  # Its OWN compile-time version, never a number read back off disk — a daemon that reported the
+  # installed version would compare equal to it forever, which is the failure inverted.
+  if ! grep -q 'ANNOUNCE_VERSION_PREFIX}{}' "${announcing_server}" ||
+    ! grep -q 'env!("CARGO_PKG_VERSION")' "${announcing_server}"; then
+    fail "${announcing_server} no longer announces its own compile-time version after the marker (docs/49)"
+  fi
+done
+# And the three managers that read it. A manager that stopped parsing reads `nil`, which the audit
+# reports as "unknown" rather than failing — so it is asserted here or nowhere.
+for announce_reader in "${SWIFT_DROP_MANAGER}" "${SWIFT_INSPECTOR_MANAGER}" "${SWIFT_ANDROID_MANAGER}"; do
+  if ! grep -q 'func parseAnnouncedVersion(fromLogLine' "${announce_reader}"; then
+    fail "${announce_reader} no longer reads the running daemon's version off its announce line (docs/49)"
+  fi
+done
+
+# ── 12c. The per-sidecar version POLICY: one table, in Rust ─────────────────────────────────────
+# What may be done about a stale sidecar has two callers, in two languages: hostd's startup audit
+# (Swift, through the FFI door) and `slopdesk sidecars` (the CLI's Rust core, over two MANIFEST.json
+# files). It is therefore the exact shape the one-implementation rule exists for, and the exact
+# shape that skews quietly — a Swift copy and a Rust copy would disagree about screend the first
+# time somebody changed its idle-exit and updated one of them, and every suite would stay green.
+#
+# So: the table lives in `rust/slopdesk-sidecars`, the doors carry it across, and the Swift side is
+# a decode. This gate is what keeps a "small local helper" from growing back on the near side.
+RUST_SIDECARS="rust/slopdesk-sidecars/src/lib.rs"
+RUST_SIDECARS_MANIFEST="rust/slopdesk-sidecars/src/manifest.rs"
+SWIFT_SIDECAR_AUDIT="Sources/SlopDeskHost/SidecarVersionAudit.swift"
+SWIFT_SIDECAR_CLI="Sources/SlopDeskCLICore/CLISidecars.swift"
+FFI_HEADER="rust/slopdesk-ffi/include/slopdesk_ffi.h"
+HOMEBREW_FORMULA="packaging/homebrew/Formula/slopdesk.rb"
+for sidecar_file in "${RUST_SIDECARS}" "${RUST_SIDECARS_MANIFEST}" "${SWIFT_SIDECAR_AUDIT}" \
+  "${SWIFT_SIDECAR_CLI}" "${FFI_HEADER}" "${HOMEBREW_FORMULA}"; do
+  [[ -f "${sidecar_file}" ]] || fail "${sidecar_file} is gone — the per-sidecar version policy has no home (docs/49)"
+done
+# The four policies, named in the crate. A case added on the Swift side alone decodes to
+# `operatorChoice` and reports "your call" about a daemon that should have been restarted.
+for sidecar_policy in Automatic SelfRetiring OperatorChoice NotResident; do
+  grep -q "    ${sidecar_policy}," "${RUST_SIDECARS}" ||
+    fail "${RUST_SIDECARS} no longer names the ${sidecar_policy} restart policy (docs/49)"
+done
+grep -q 'pub fn policy(tool: &str) -> RestartPolicy' "${RUST_SIDECARS}" ||
+  fail "${RUST_SIDECARS} no longer holds the policy table (docs/49)"
+grep -q 'pub fn plan(' "${RUST_SIDECARS_MANIFEST}" ||
+  fail "${RUST_SIDECARS_MANIFEST} no longer holds the manifest diff (docs/49)"
+# The near side DECODES. A `switch` over tool names, or a verdict computed here, is the second
+# implementation — which is the thing this whole block exists to prevent.
+if grep -qE 'case "slopdesk-(dropd|screend|superd)"' "${SWIFT_SIDECAR_AUDIT}"; then
+  fail "${SWIFT_SIDECAR_AUDIT} decides about a tool by name again — the table is ${RUST_SIDECARS} (docs/49)"
+fi
+# And the three doors, each called from the language that needs it.
+for sidecar_door in slopdesk_sidecar_audit slopdesk_sidecar_version_banner slopdesk_sidecar_upgrade_plan; do
+  grep -q "${sidecar_door}" "${FFI_HEADER}" ||
+    fail "${sidecar_door} is not declared in ${FFI_HEADER} — Swift cannot reach the policy (docs/55)"
+done
+grep -q 'slopdesk_sidecar_audit(' "${SWIFT_SIDECAR_AUDIT}" ||
+  fail "${SWIFT_SIDECAR_AUDIT} no longer asks the door for its verdict (docs/49)"
+grep -q 'slopdesk_sidecar_upgrade_plan(' "${SWIFT_SIDECAR_CLI}" ||
+  fail "${SWIFT_SIDECAR_CLI} no longer asks the door for the upgrade plan (docs/49)"
+# The install side must keep BOTH halves: the plan it prints, and the record that makes the NEXT
+# plan about one tool rather than all twelve. A formula whose post_install stopped recording leaves
+# every upgrade reading as a first install, which is a table that never says anything.
+grep -q 'sidecars", "--record"' "${HOMEBREW_FORMULA}" ||
+  fail "${HOMEBREW_FORMULA} no longer records the manifest — every upgrade would read as a first install (docs/49)"
+printf 'check-supervisor: the sidecar version policy is Rust, and the install side records what it read.\n'
 
 # ── 13. slopdesk-ctl: the agent-control CLI, and the verbs it may send ───────────────────────────
 # The SIXTH two-ended contract, and the only one where the far end is a program a USER types. hostd
