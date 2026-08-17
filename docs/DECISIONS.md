@@ -16440,3 +16440,48 @@ covered a LIVE op, so they were restored with the dead call edited out: a test t
 through `toggle_zoom` in order to assert what a SPLIT does to a zoom now sets `zoomed_pane` as a
 field, which is the more honest spelling anyway — the zoom verb is an intent, not a `tree_ops`
 function, so reaching for one to build a starting condition was always describing the wrong thing.
+
+## Four things the audit looked at and left alone (2026-08-17)
+
+The migrate/duplicate/leftover/reinvented sweep produced findings that were fixed, and four it
+deliberately did not. Each is a shape that reads like a violation from the outside, so each is
+written down with what makes it not one. Do not re-propose these.
+
+**The sniffer keeps its own escape-sequence state machine; `vte` is not the wheel it is missing.**
+`rust/slopdesk-superd/src/sniffer.rs` walks OSC 0/2/7/9/99/133/777 with a hand-written grammar, and
+alacritty's `vte` is the maintained parser that grammar resembles. Two things stop the swap, and
+both are in the file. First, the caps are per-OSC: 4096 for a title, 256 for a command mark, 1024
+for a notification, chosen by OSC number because a kitty payload and a status mark have nothing to
+do with each other's hostile case — `vte` has one raw buffer for all of them. Second,
+`skim_ground` is a bounded `ESC`/`BEL` scan, not a per-byte loop, and its own doc explains why the
+bound is there: this runs on every byte of every PTY's output, which is the hottest path in the
+product. A per-byte `Perform` dispatch is the measured regression `CLAUDE.md` names as the veto.
+`base64` was the opposite call and was taken (2026-08-15): a codec with one shape and no hot path.
+
+**`rust/slopdesk-fuzzy` stays a port of fzf, not a dependency on `nucleo-matcher`.** The crate says
+what it is in its first line — `FuzzyMatchV2`, the DEFAULT scheme's constants, the edge-triggered
+bonus matrix, upstream's tie-breaking. `nucleo` is actively maintained and fzf-LIKE, which is the
+problem: what the palette promises is that it ranks the way fzf ranks, and the crate's 31 tests are
+that promise written down. Swapping the ranker would keep the feature and delete the assertions,
+because there would no longer be anything to assert against.
+
+**`SupervisorProtocol.swift` is a vocabulary across a socket, not a second implementation.** Twenty
+`Codable` structs whose names also exist in `slopdesk-superd` is what a JSON message set looks like
+from both ends of a Unix socket. A separately-shipped binary cannot link the other's types, so the
+answer is the one `CLAUDE.md` already gives for a socket port: `check-supervisor.sh` ratchets the
+two spellings. It does.
+
+**`WorkspaceTopology.entries()` and `init?(entries:)` are marshalling, and the drift they can carry
+is now asserted rather than ported.** The Swift projection and `document::topology`'s look like one
+function written twice. They are not: the DECISION — what a split does, which tab takes focus —
+moved to `document::apply` on 2026-08-16 and exists once. What is written twice is each language's
+projection of ITS OWN model shape onto the shared document, and the Swift shape has to exist because
+SwiftUI diffs values. Dissolving it would mean `TreeWorkspace` becoming a handle, crossed once per
+frame of a divider drag.
+
+What the two projections DO share is the field alphabet, and that was the real finding: a byte
+keyed differently on the two sides is invisible to every Swift round-trip test, because a field
+mis-keyed by both the writer and the reader round-trips perfectly. Two gates now cover it —
+`check-shared-constants.py` ratchets `WorkspaceFields.swift` against `document::fields` letter for
+letter, and `WorkspaceTopologyTests.testTheWholeTopologyCrossesToTheCrateAndBack` sends the rich
+fixture through `slopdesk_ws_apply_intent` and back, which drops anything the crate keys elsewhere.
