@@ -2004,6 +2004,33 @@ size_t slopdesk_link_line_col_suffix(const uint8_t *text, size_t len, uint8_t *o
 size_t slopdesk_link_posix_parent(const uint8_t *text, size_t len, uint8_t *out, size_t cap);
 size_t slopdesk_link_cd_command_line(const uint8_t *text, size_t len, uint8_t *out, size_t cap);
 
+/* ---- What a DROP does, once the pasteboard is classified and a zone is under the pointer ----
+ * The same two-part answer as the link table above, for the same reason: an action with an empty
+ * payload is a real answer, so the length cannot double as the verb. A dead cell answers NOTHING,
+ * and the overlay reads that same answer to render the zone muted — what is offered and what would
+ * happen are one number, so they cannot drift. The split side rides the VERB rather than a
+ * companion flag. Nothing here can mint a video pane: that comes from the picker alone.          */
+#define SLOPDESK_DROP_ZONE_NEW_TAB       0u
+#define SLOPDESK_DROP_ZONE_INSERT_PATH   1u
+#define SLOPDESK_DROP_ZONE_OPEN_IN_PLACE 2u
+#define SLOPDESK_DROP_ZONE_SPLIT_LEFT    3u
+#define SLOPDESK_DROP_ZONE_SPLIT_RIGHT   4u
+
+#define SLOPDESK_DROP_CONTENT_FOLDER 0u
+#define SLOPDESK_DROP_CONTENT_FILE   1u
+#define SLOPDESK_DROP_CONTENT_URL    2u
+#define SLOPDESK_DROP_CONTENT_TEXT   3u
+
+#define SLOPDESK_DROP_ACTION_NOTHING        0u
+#define SLOPDESK_DROP_ACTION_INJECT_TEXT    1u
+#define SLOPDESK_DROP_ACTION_NEW_TAB_CD     2u
+#define SLOPDESK_DROP_ACTION_HOST_OPEN      3u
+#define SLOPDESK_DROP_ACTION_SPLIT_LEADING  4u
+#define SLOPDESK_DROP_ACTION_SPLIT_TRAILING 5u
+
+uint8_t slopdesk_drop_action(uint8_t zone, uint8_t content_kind, const uint8_t *value,
+                             size_t value_len, uint8_t *out, size_t cap, size_t *needed);
+
 /* ---- Hint Mode: every span in the viewport a two-letter label can pin to -----------------
  * The same handle-over-arena shape as the link scan above, because the answer is the same shape:
  * a variable list of records each carrying up to three strings. A LINK target carries the whole

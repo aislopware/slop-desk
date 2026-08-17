@@ -42,6 +42,7 @@
 //!   with trusted local input; through the workspace channel they now run against a network peer.
 //!   Nothing here indexes, unwraps or panics — the lint table denies all three.
 
+pub mod drop_action;
 pub mod focus;
 pub mod frecency;
 pub mod geometry;
