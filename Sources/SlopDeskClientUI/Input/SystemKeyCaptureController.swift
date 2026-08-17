@@ -21,6 +21,7 @@
 
 #if os(macOS)
 import AppKit
+import SlopDeskClientCore
 
 /// Owns ONE immersive-mode CGEvent tap: created on ``engage(forward:keyWindow:)``, torn down on
 /// ``disengage()`` (the toggle, the ⌃⌥⌘E escape chord, unmount) / deinit. Default state is OFF — nothing is

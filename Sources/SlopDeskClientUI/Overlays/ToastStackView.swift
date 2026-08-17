@@ -52,6 +52,7 @@
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
+import SlopDeskClientCore
 import SwiftUI
 
 // MARK: - Stack layout (the pure spine rule)

@@ -9,6 +9,7 @@
 // invalidates the stale close. These tests pin the coordinator-level guard headlessly.
 
 import XCTest
+@testable import SlopDeskClientCore
 @testable import SlopDeskClientUI
 
 @MainActor

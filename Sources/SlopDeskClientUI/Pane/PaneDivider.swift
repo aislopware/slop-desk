@@ -21,6 +21,7 @@
 // WITH the handle. SYSTEM/DS colours only (the accent hairline is a drag affordance, not a hover state).
 
 #if canImport(SwiftUI)
+import SlopDeskClientCore
 import SlopDeskWorkspaceCore
 import SwiftUI
 

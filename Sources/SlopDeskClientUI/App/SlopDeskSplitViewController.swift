@@ -10,6 +10,7 @@
 import AppKit
 import Defaults
 import ObjectiveC
+import SlopDeskClientCore
 import SlopDeskWorkspaceCore
 import SwiftUI
 

@@ -6,6 +6,7 @@
 #if canImport(SwiftUI)
 import SFSafeSymbols
 import SlopDeskAgentDetect
+import SlopDeskClientCore
 import SlopDeskWorkspaceCore
 import SwiftUI
 

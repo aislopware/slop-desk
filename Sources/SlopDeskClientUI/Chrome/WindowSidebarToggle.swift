@@ -19,6 +19,7 @@
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
+import SlopDeskClientCore
 import SwiftUI
 
 struct WindowSidebarToggle: View {

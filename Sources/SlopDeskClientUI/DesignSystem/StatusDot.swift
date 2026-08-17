@@ -41,6 +41,7 @@
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
+import SlopDeskClientCore
 import SwiftUI
 
 /// The status mark's geometry — pure constants, unit-testable.

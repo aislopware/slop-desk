@@ -40,6 +40,7 @@
 import Defaults
 import SFSafeSymbols
 import SlopDeskCLICore
+import SlopDeskClientCore
 import SlopDeskVideoProtocol
 import SlopDeskWorkspaceCore
 import SwiftUI

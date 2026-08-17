@@ -19,6 +19,7 @@
 
 #if os(macOS)
 import SFSafeSymbols
+import SlopDeskClientCore
 import SwiftUI
 
 struct PanelRail: View {

@@ -31,6 +31,7 @@
 // AppKit, so this compiles for iOS with the rest of `SlopDeskClientUI`, where the switcher never opens.
 
 #if canImport(SwiftUI)
+import SlopDeskClientCore
 import SlopDeskWorkspaceCore
 import SwiftUI
 

@@ -3,6 +3,7 @@
 // private-use runs (what `Text.nerdAware` splices into the symbols face). Headless — no view, no window.
 
 import XCTest
+@testable import SlopDeskClientCore
 @testable import SlopDeskClientUI
 
 final class NerdSymbolFontTests: XCTestCase {

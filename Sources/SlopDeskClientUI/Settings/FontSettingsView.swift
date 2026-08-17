@@ -39,6 +39,7 @@
 #if canImport(SwiftUI)
 import CoreText
 import SFSafeSymbols
+import SlopDeskClientCore
 import SlopDeskVideoProtocol
 import SlopDeskWorkspaceCore
 import SwiftUI

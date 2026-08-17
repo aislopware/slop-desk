@@ -7,6 +7,7 @@
 
 #if canImport(SwiftUI)
 import Defaults // fire-time reads of the Code Agent sound toggles in the attention sink
+import SlopDeskClientCore
 import SlopDeskTransport // ConnectionRegistry + LiveMuxConnectionFactory (the per-host shared mux pool)
 import SlopDeskVideoProtocol // EnvConfig — the behaviour-preserving config resolver (env → overlay → default)
 import SlopDeskWorkspaceCore

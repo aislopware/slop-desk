@@ -11,6 +11,7 @@ import SlopDeskAgentDetect
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 import XCTest
+@testable import SlopDeskClientCore
 @testable import SlopDeskClientUI
 
 #if os(macOS)

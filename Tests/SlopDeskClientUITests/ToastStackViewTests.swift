@@ -10,6 +10,7 @@
 import AppKit
 import SwiftUI
 import XCTest
+@testable import SlopDeskClientCore
 @testable import SlopDeskClientUI
 
 @MainActor

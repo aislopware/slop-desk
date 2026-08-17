@@ -42,40 +42,8 @@
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
+import SlopDeskClientCore
 import SwiftUI
-
-// MARK: - SettingsOption (the pure option descriptor)
-
-/// One choice in a ``SettingsOptionCards`` group or a ``SettingsOptionMenuRow``: the value it writes, its
-/// label, and an optional one-line caption. Pure data: declaring the options as a LIST (rather than inline
-/// `Text(…).tag(…)` children) is what lets a test pin the labels, captions, and order of a section's choices
-/// without rendering it (`SettingsOptionCatalogTests`).
-///
-/// `Sendable` (over a `Sendable` value) because the catalog holds these as top-level `static let` lists: pure,
-/// immutable option data, reachable from any isolation without a `@MainActor` hop.
-struct SettingsOption<Value: Hashable & Sendable>: Identifiable, Sendable {
-    let value: Value
-    let label: String
-    /// A short qualifier on the label — where a choice needs to be honest about a caveat ("same as End
-    /// today", "only if busy"). `nil` for the common case.
-    let caption: String?
-
-    var id: Value { value }
-
-    init(_ value: Value, _ label: String, caption: String? = nil) {
-        self.value = value
-        self.label = label
-        self.caption = caption
-    }
-
-    /// The one-line form a `.menu` `Picker` shows: the label, with the caveat folded in after an en dash
-    /// (a menu item has no second line to hang a caption on, and dropping the caption would drop the
-    /// honesty it carries).
-    var menuLabel: String {
-        guard let caption, !caption.isEmpty else { return label }
-        return "\(label) — \(caption)"
-    }
-}
 
 // MARK: - SettingsOptionMenuRow (the same list, as a native dropdown)
 

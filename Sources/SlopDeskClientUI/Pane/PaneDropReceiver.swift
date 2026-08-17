@@ -26,6 +26,7 @@
 
 #if canImport(SwiftUI)
 import Foundation
+import SlopDeskClientCore
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 import SwiftUI

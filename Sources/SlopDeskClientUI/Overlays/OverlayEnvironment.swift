@@ -2,6 +2,7 @@
 // views (per-pane toast emitters / overlay hooks) without threading it through every intermediate view.
 // The root injects it once; `nil` is the safe default (hooks degrade to a no-op in tests/previews).
 
+import SlopDeskClientCore
 import SwiftUI
 
 extension EnvironmentValues {

@@ -16,6 +16,7 @@
 // app-level `WorkspaceKeyDispatcher` owns (and swallows) the toggle chord and drives `cheatSheetVisible`.
 
 #if canImport(SwiftUI)
+import SlopDeskClientCore
 import SlopDeskWorkspaceCore
 import SwiftUI
 

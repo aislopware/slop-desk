@@ -30,6 +30,7 @@ let package = Package(
         // docs/56: the simulator + Android panels' DOMAIN — their wire, their sockets, their device
         // models. No view framework, so both UI halves reach the one implementation (docs 47, 48).
         .library(name: "SlopDeskDevicePanels", targets: ["SlopDeskDevicePanels"]),
+        .library(name: "SlopDeskClientCore", targets: ["SlopDeskClientCore"]),
         // REBUILD-V2: thin SwiftUI layer over SlopDeskWorkspaceCore, STOCK SwiftUI + system semantic
         // colours/fonts — no custom token target (the Warp-clone `SlopDeskDesignSystem` is deleted).
         .library(name: "SlopDeskClientUI", targets: ["SlopDeskClientUI"]),
@@ -311,6 +312,61 @@ let package = Package(
             ],
         ),
 
+        // docs/56 stage A: the client's PRESENTATION LOGIC, evacuated out of the view target.
+        //
+        // The layer between the domain and a view: what the palette offers and in what order, which
+        // rows the rail draws, which overlay is up, what a settings option means, how a key chord
+        // normalises. None of it draws — every file here imported neither SwiftUI nor AppKit while it
+        // still lived in the view target — and all of it is answered the same way on a phone as on a
+        // Mac, since the two halves ship the same features and differ only in layout (docs/56 §2).
+        //
+        // Distinct from `SlopDeskWorkspaceCore`, which is the DOMAIN: a store, a connection, a
+        // terminal, an agent. A rail row is not a domain concept; it is what a UI asks the domain
+        // for. Keeping the two apart is what stops the domain target from growing a view model every
+        // time a surface is added.
+        //
+        // The three files that name a framework name it as an ACTUATOR, not a view:
+        // `SecureKeyboardEntryController` (Carbon `EnableSecureEventInput` + the app-frontmost edge),
+        // `CodeSidebarFontSchemeHandler` (a `WKScriptMessageHandler`) and `WorkspaceControlBackend`
+        // (`NSFontManager`, for `font list`). A framework call is not a view; a `some View` is.
+        .target(
+            name: "SlopDeskClientCore",
+            dependencies: [
+                // The store, the connection, the settings keys, the terminal — what this layer
+                // presents.
+                "SlopDeskWorkspaceCore",
+                // Pane specs, `PaneID`, `ShellQuoting`.
+                "SlopDeskWorkspaceModel",
+                // The palette + the rail read host metadata (process / port / dir / git-file).
+                "SlopDeskProtocol",
+                // The rail's rows and the palette's agent entries are keyed by agent state.
+                "SlopDeskAgentDetect",
+                // `SessionResumeOutcome` — the fresh-vs-resumed reconnect verdict a toast reports.
+                "SlopDeskClient",
+                // `JumpResolver` — the PURE frecency/$HOME-toggle/`--no-cd` resolution the CLI pins.
+                "SlopDeskCLICore",
+                // The client control server answers over a mux channel and writes with `write(2)`.
+                "SlopDeskTransport",
+                "SlopDeskTTY",
+                // The pane's drop destination drives `FileTransferClient`.
+                "SlopDeskFileTransfer",
+                // Settings options name video-path knobs.
+                "SlopDeskVideoProtocol",
+                // `FuzzyMatcher` marshals `slopdesk_fuzzy_score` — fzf's `FuzzyMatchV2` is Rust, and
+                // every search field in the app ranks through it.
+                "CSlopDeskFFI",
+                // The `SettingsKey` app-flag namespace and the persisted chrome flags.
+                .product(name: "Defaults", package: "Defaults"),
+            ],
+            // The bundled faces: the Symbols Nerd Font (the SAME fallback face ghostty gives the
+            // terminal grid) and JetBrains Mono (the face libghostty falls back to when "SF Mono"
+            // does not resolve, which on a stock system it does not). They live with the CORE rather
+            // than with a UI target because the code sidebar injects the same bytes as @font-face
+            // data URIs — the webview's WebContent process cannot see a `CTFontManager` process-scope
+            // registration — and that dressing is not a view. MIT / OFL-1.1, licences beside them.
+            resources: [.copy("Resources/Fonts")],
+        ),
+
         // REBUILD-V2: `SlopDeskClientUI` — pure SwiftUI views over `SlopDeskWorkspaceCore`, STOCK
         // SwiftUI + SYSTEM semantic colours/fonts (no custom token target — the old
         // `SlopDeskDesignSystem` was deleted in L0). The app SCENE + native IDE shell land here; the
@@ -323,6 +379,8 @@ let package = Package(
                 "SlopDeskWorkspaceCore",
                 // docs/56: the simulator + Android panel domain, which this target now only RENDERS.
                 "SlopDeskDevicePanels",
+                // docs/56: the presentation logic this target now only DRAWS.
+                "SlopDeskClientCore",
                 // The one `write(2)`-until-done loop, for the control server's replies.
                 "SlopDeskTTY",
                 // The `ShellQuoting` face — one door for every place that types a path into a live
@@ -369,10 +427,6 @@ let package = Package(
                 // lives in `rust/slopdesk-fuzzy`, and every search field in the app ranks through it.
                 "CSlopDeskFFI",
             ],
-            // The bundled Symbols Nerd Font (the SAME fallback face ghostty gives the terminal grid),
-            // registered at first use by `NerdSymbolFont` so chrome text carrying nerd-font private-use
-            // glyphs (agent/program titles) renders them instead of tofu. MIT — licence ships beside it.
-            resources: [.copy("Resources/Fonts")],
         ),
 
         // MARK: PATH 2 — GUI video path (Phase 4 / WF-9)
@@ -617,7 +671,7 @@ let package = Package(
         // agreement) and throughput. macOS dev instrument: shells out to `fzf` when present (skips that
         // comparison otherwise), so it is NOT part of `swift test`. Depends on SlopDeskClientUI for
         // `FuzzyMatcher`. `swift run -c release slopdesk-fuzzybench [scaleN]`.
-        .executableTarget(name: "slopdesk-fuzzybench", dependencies: ["SlopDeskClientUI"]),
+        .executableTarget(name: "slopdesk-fuzzybench", dependencies: ["SlopDeskClientCore"]),
 
         // Golden-vector dumper: emits the golden reference corpus — a deterministic JSON corpus from
         // the SlopDeskVideoProtocol codecs + the pure realtime controllers (public API only) that the
@@ -765,6 +819,18 @@ let package = Package(
         .testTarget(
             name: "SlopDeskDevicePanelsTests",
             dependencies: ["SlopDeskDevicePanels", "SlopDeskProtocol", "SlopDeskTransport"],
+        ),
+
+        // docs/56: the client's presentation-logic suite, moved out of `SlopDeskClientUITests` with
+        // the code it covers. What is left in the UI suite is what actually renders — a snapshot, a
+        // layout, a mount — and the split is load-bearing rather than tidy: these run on a phone
+        // build too, and a rule that only a Mac can test is a rule the iOS half will re-derive.
+        .testTarget(
+            name: "SlopDeskClientCoreTests",
+            dependencies: [
+                "SlopDeskClientCore", "SlopDeskWorkspaceCore", "SlopDeskWorkspaceModel",
+                "SlopDeskProtocol", "SlopDeskClient",
+            ],
         ),
 
         // WF-9 GUI video path: ONLY the PURE SlopDeskVideoProtocol is unit-tested

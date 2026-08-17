@@ -1,5 +1,6 @@
 import SlopDeskWorkspaceModel
 import XCTest
+@testable import SlopDeskClientCore
 @testable import SlopDeskClientUI
 @testable import SlopDeskWorkspaceCore
 

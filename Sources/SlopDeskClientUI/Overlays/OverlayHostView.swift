@@ -23,6 +23,7 @@
 // carry their own content; the host adds only the shared card surface.
 
 #if canImport(SwiftUI)
+import SlopDeskClientCore
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel // PaneID — the notification jump target
 import SwiftUI

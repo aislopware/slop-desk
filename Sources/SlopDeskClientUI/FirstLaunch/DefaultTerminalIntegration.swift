@@ -17,6 +17,7 @@
 #if os(macOS)
 import AppKit
 import Foundation
+import SlopDeskClientCore
 import UniformTypeIdentifiers
 
 /// LOCAL "Set as Default Terminal" actions (first-launch step 2 system-default). `@MainActor` because it reads

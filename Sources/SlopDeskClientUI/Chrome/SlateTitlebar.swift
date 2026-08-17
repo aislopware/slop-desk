@@ -38,6 +38,7 @@
 import AppKit // NSPasteboard for "Copy Path"
 import Foundation
 import SFSafeSymbols
+import SlopDeskClientCore
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 import SwiftUI

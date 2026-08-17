@@ -9,6 +9,7 @@
 // `WorkspaceStore` over the tiny `MountTestPaneSession` double (defined in `OverlayCoordinatorMountTests`).
 
 import XCTest
+@testable import SlopDeskClientCore
 @testable import SlopDeskClientUI
 @testable import SlopDeskWorkspaceCore
 

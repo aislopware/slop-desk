@@ -43,6 +43,7 @@
 
 #if canImport(SwiftUI)
 import SlopDeskAgentDetect // ClaudeStatus — the raw agent status the working reading keys on
+import SlopDeskClientCore
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 import SwiftUI
@@ -350,7 +351,10 @@ struct RailStatusRollupMount: View {
 
     var body: some View {
         let lead = Self.lead(
-            collapsed: chrome.sidebarCollapsed, navigatorWidth: chrome.navigatorWidth,
+            collapsed: chrome.sidebarCollapsed,
+            // Before the split view has reported a width there is nothing to park against, so the
+            // design's own resting column stands in — which is what the divider will report anyway.
+            navigatorWidth: chrome.navigatorWidth ?? Slate.Metric.sidebarWidth,
         )
         RailStatusRollup(store: store, rows: rowsMemo.rows(for: store))
             .padding(.leading, lead)

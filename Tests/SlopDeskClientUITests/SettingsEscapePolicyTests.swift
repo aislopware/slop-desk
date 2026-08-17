@@ -19,6 +19,7 @@
 
 #if canImport(SwiftUI)
 import XCTest
+@testable import SlopDeskClientCore
 @testable import SlopDeskClientUI
 
 final class SettingsEscapePolicyTests: XCTestCase {

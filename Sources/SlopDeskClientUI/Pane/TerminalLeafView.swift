@@ -17,6 +17,7 @@
 #if canImport(SwiftUI)
 import Defaults // observe the Auto-Secure-Input / indicator defaults so the toggle is LIVE.
 import Foundation
+import SlopDeskClientCore
 import SlopDeskTerminal // TerminalViewportSnapshotting — the iOS letterbox reads the live cell advance.
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel // PaneID — the autotype seam's task key.

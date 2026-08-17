@@ -21,6 +21,7 @@ import SlopDeskTerminal
 import SlopDeskWorkspaceModel
 import SwiftUI
 import XCTest
+@testable import SlopDeskClientCore
 @testable import SlopDeskClientUI
 @testable import SlopDeskWorkspaceCore
 

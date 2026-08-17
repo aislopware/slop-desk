@@ -3740,7 +3740,7 @@ printf 'check-supervisor: one badge ladder for a tab row.\n'
 # lines of Swift beside the Rust that owns it now. This one carries IDENTITY: the order a palette
 # shows IS the product, so a second scorer does not fail a test, it just starts ranking differently
 # and nobody can say which copy the person is looking at. Every search field asks the same door.
-SWIFT_FUZZY=Sources/SlopDeskClientUI/Palette/FuzzyMatcher.swift
+SWIFT_FUZZY=Sources/SlopDeskClientCore/Palette/FuzzyMatcher.swift
 scorer_revived=$(among_deleted '(let|var|func|case) *(bonusBoundary|bonusCamel123|bonusConsecutive|scoreGapStart|scoreGapExtension|bonusMatrix|bonusFor|backtrace)\b')
 if [[ -n "${scorer_revived}" ]]; then
   printf '%s\n' "${scorer_revived}" >&2

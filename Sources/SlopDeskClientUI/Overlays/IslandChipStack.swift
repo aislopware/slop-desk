@@ -20,6 +20,7 @@
 // `Slate.*` tokens only (the ds-leaks ratchet).
 
 #if canImport(SwiftUI)
+import SlopDeskClientCore
 import SlopDeskWorkspaceCore
 import SwiftUI
 

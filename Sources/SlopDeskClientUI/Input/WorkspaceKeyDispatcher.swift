@@ -18,6 +18,7 @@
 
 #if os(macOS)
 import AppKit
+import SlopDeskClientCore
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 

@@ -8,6 +8,7 @@
 #if os(macOS)
 import CoreGraphics
 import XCTest
+@testable import SlopDeskClientCore
 @testable import SlopDeskClientUI
 
 final class SystemKeyCapturePolicyTests: XCTestCase {

@@ -45,14 +45,27 @@ files (21 558 lines) only **11** import SwiftUI and **4** touch a `body`. The lo
 outside the views — that is the "pure decision + actuator" split this repo has been applying for a
 year — so the suite survives a view-layer rewrite nearly intact.
 
-## 2. Three targets, and the one rule that makes three work
+## 2. The layers, and the one rule that makes them work
 
 ```
-Sources/SlopDeskWorkspaceCore    pure logic, no view framework   — BOTH
-Sources/SlopDeskWorkspaceModel   value types                     — BOTH
-Sources/SlopDeskMacUI            AppKit + Metal + CoreAnimation  — macOS only
-Sources/SlopDeskPhoneUI          SwiftUI                         — iOS only
+Sources/SlopDeskWorkspaceModel   value types                        — BOTH
+Sources/SlopDeskWorkspaceCore    the DOMAIN: store, connection,     — BOTH
+                                 terminal, agent
+Sources/SlopDeskDevicePanels     the simulator + Android panels'    — BOTH
+                                 domain (docs 47, 48)
+Sources/SlopDeskClientCore       PRESENTATION LOGIC: palette, rail, — BOTH
+                                 overlays, settings catalog, chrome
+Sources/SlopDeskMacUI            AppKit + Metal + CoreAnimation     — macOS only
+Sources/SlopDeskPhoneUI          SwiftUI                            — iOS only
 ```
+
+The cut between the third row and the fourth is the one worth stating, because it is the one that
+would otherwise blur: **`SlopDeskWorkspaceCore` is the domain, `SlopDeskClientCore` is what a UI asks
+the domain for.** A pane, a connection, an agent's state are domain. A rail ROW, a palette RANKING,
+which overlay is up, what a settings option is CALLED are not — they are a presentation of the
+domain, and they would have grown inside the domain target one view model at a time had they not been
+given their own floor. Nothing in either target draws; both are reachable from a phone and from a
+Mac.
 
 `Apps/ClientApp-macOS` links `SlopDeskMacUI`; `Apps/ClientApp-iOS` links `SlopDeskPhoneUI`. Neither
 app links the other's UI target, and `Apps/Shared/AppMain.swift` — the last file that pretended one
@@ -89,9 +102,14 @@ secondary windows, a 40-row rail under a mouse — are macOS-shaped problems.
 ## 3. The boundary
 
 - **A view type never crosses.** `SlopDeskMacUI` and `SlopDeskPhoneUI` do not import each other and
-  have no common view ancestor. If both halves want the same behaviour, the *decision* lives in
-  `SlopDeskWorkspaceCore` as a pure function and each half actuates it in its own framework. This is
-  the same seam the store already uses; it is not a new idea, only a new place to apply it.
+  have no common view ancestor. If both halves want the same behaviour, the *decision* lives below
+  the UI as a pure function and each half actuates it in its own framework. This is the same seam the
+  store already uses; it is not a new idea, only a new place to apply it.
+- **A framework call is not a view; a `some View` is.** Three files in `SlopDeskClientCore` name
+  AppKit, Carbon or WebKit — `EnableSecureEventInput`, the app-frontmost notification edge, a
+  `WKScriptMessageHandler`, `NSFontManager` for `font list`. They are actuators, and an actuator that
+  draws nothing belongs with the logic it actuates for. Drawing them out into the UI targets would
+  have made both halves carry the same three seams.
 - **A UI target holds views only.** Anything that would compile without a view framework belongs in
   the shared logic target. This is what keeps feature parity from becoming duplicate code.
 - **`#if os(...)` inside a UI target is a smell, not a tool.** A platform gate in a

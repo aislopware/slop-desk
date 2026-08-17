@@ -29,6 +29,7 @@
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
+import SlopDeskClientCore
 import SlopDeskWorkspaceCore
 import SwiftUI
 

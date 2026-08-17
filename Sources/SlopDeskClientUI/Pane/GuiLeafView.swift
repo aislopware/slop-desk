@@ -24,6 +24,7 @@
 #if canImport(SwiftUI)
 import Defaults
 import SFSafeSymbols
+import SlopDeskClientCore
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 import SwiftUI

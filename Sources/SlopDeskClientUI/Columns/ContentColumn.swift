@@ -5,6 +5,7 @@
 // for a clean resting silhouette. The shared `WorkspaceChromeState` drives the sidebar/Details toggles.
 
 #if canImport(SwiftUI)
+import SlopDeskClientCore
 import SlopDeskWorkspaceCore
 import SwiftUI
 
