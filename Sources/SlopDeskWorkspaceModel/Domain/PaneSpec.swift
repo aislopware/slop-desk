@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 
 // MARK: - Identity
@@ -257,14 +258,28 @@ public struct PaneSpec: Sendable, Equatable {
     /// falls back cleanly — never an empty title. Lifted into ``PaneSpec`` (WorkspaceCore) as the single
     /// source of truth so BOTH the pure completion title above and the client-UI rail row
     /// (``RailRowsBuilder`` delegates here) derive the same folder name from a cwd.
+    ///
+    /// A face over `slopdesk-workspace`'s `PaneSpec::cwd_display_name`, which `tab_ordering` already
+    /// reads on the Rust side: the same rule written twice is the shape where a sidebar row and the
+    /// project section it sorts into disagree about what one directory is called.
     public static func cwdDisplayName(_ cwd: String?) -> String? {
         guard let cwd else { return nil }
-        var path = cwd.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !path.isEmpty else { return nil }
-        while path.count > 1, path.hasSuffix("/") { path.removeLast() }
-        if path == "/" { return "/" }
-        let leaf = path.split(separator: "/").last.map(String.init) ?? path
-        return leaf.isEmpty ? nil : leaf
+        let bytes = Array(cwd.utf8)
+        return bytes.withUnsafeBufferPointer { input -> String? in
+            let needed = slopdesk_ws_cwd_display_name(input.baseAddress, input.count, nil, 0)
+            // Zero is "no name to show", not "did not fit": a real name is never empty.
+            guard needed > 0 else { return nil }
+            var room = [UInt8](repeating: 0, count: needed)
+            let written = room.withUnsafeMutableBufferPointer { out in
+                slopdesk_ws_cwd_display_name(input.baseAddress, input.count, out.baseAddress, out.count)
+            }
+            guard written == needed else { return nil }
+            // Non-failable on purpose: the door slices a leaf out of a `str` it already validated,
+            // so what comes back is UTF-8 by construction and a failable initialiser would only add
+            // an arm no input can reach.
+            // swiftlint:disable:next optional_data_string_conversion
+            return String(decoding: room, as: UTF8.self)
+        }
     }
 
     /// True when `path` is almost certainly a plugin-manager's TRANSIENT cache dir — not a directory the
@@ -287,8 +302,16 @@ public struct PaneSpec: Sendable, Equatable {
     /// tight, low-false-positive drop. Applied at BOTH the write sink (``WorkspaceStore/setLastKnownCwd``,
     /// blocks new poison) and the spawn seed (`LivePaneSession`'s `initialCwd`, so a persisted poison
     /// self-heals to the host default on the next launch).
+    ///
+    /// A face over `slopdesk-workspace`'s `PaneSpec::looks_like_transient_plugin_cwd`, which
+    /// `tab_ordering` already reads on the Rust side. Fourteen Swift call sites guard the pane
+    /// directory with this; a second copy of the signature means the sinks and the ordering can
+    /// disagree about which of them is poison.
     public static func looksLikeTransientPluginCwd(_ path: String) -> Bool {
-        path.split(separator: "/").contains { $0.contains("---") }
+        let bytes = Array(path.utf8)
+        return bytes.withUnsafeBufferPointer { input in
+            slopdesk_ws_transient_plugin_cwd(input.baseAddress, input.count)
+        }
     }
 
     public init(

@@ -347,6 +347,10 @@ size_t slopdesk_ws_shell_quote(const uint8_t *bytes, size_t len, bool bare_if_sa
                                size_t cap);
 size_t slopdesk_ws_redact_secrets(const uint8_t *bytes, size_t len, uint8_t *out, size_t cap);
 bool   slopdesk_ws_looks_secret(const uint8_t *bytes, size_t len);
+// The pane-directory classifier and the leaf a row shows. `slopdesk_ws_cwd_display_name` answers 0
+// for "no name to show" — an absent, blank or all-slashes path — which a real name can never be.
+bool   slopdesk_ws_transient_plugin_cwd(const uint8_t *bytes, size_t len);
+size_t slopdesk_ws_cwd_display_name(const uint8_t *bytes, size_t len, uint8_t *out, size_t cap);
 uint8_t slopdesk_ws_paste_risk(const uint8_t *bytes, size_t len, bool target_is_secure,
                                size_t max_length);
 

@@ -36,11 +36,11 @@ use slopdesk_workspace::canvas_snap::{GuideOrientation, OwnEdge, Resolution};
 use slopdesk_workspace::identity::{IdSource, SessionId};
 use slopdesk_workspace::tree_ops::{self, TileLayout};
 use slopdesk_workspace::{
-    Body, BodyId, Camera, FocusDirection, Guide, GuideKind, NonOverlapConfig, PaneGroupId, PaneId, Point,
-    Rect, ResizeAnchor, Size, SnapConfig, SolvedLayout, SplitAxis, SplitNode, SplitNodeId, SplitWeight,
-    Stick, TabId, WeightedChild, canvas, canvas_arrange, canvas_geometry, canvas_non_overlap, canvas_snap,
-    focus, geometry, listen, secrets, send_keys, shell_quoting, split_layout, state_codec, tab_ordering,
-    templates,
+    Body, BodyId, Camera, FocusDirection, Guide, GuideKind, NonOverlapConfig, PaneGroupId, PaneId, PaneSpec,
+    Point, Rect, ResizeAnchor, Size, SnapConfig, SolvedLayout, SplitAxis, SplitNode, SplitNodeId,
+    SplitWeight, Stick, TabId, WeightedChild, canvas, canvas_arrange, canvas_geometry, canvas_non_overlap,
+    canvas_snap, focus, geometry, listen, secrets, send_keys, shell_quoting, split_layout, state_codec,
+    tab_ordering, templates,
 };
 
 use crate::{borrow, deliver};
@@ -350,6 +350,56 @@ pub unsafe extern "C" fn slopdesk_ws_looks_secret(bytes: *const c_uchar, len: us
     // SAFETY: the caller's obligation, restated above; `borrow` states its own.
     let raw = unsafe { borrow(bytes, len) };
     core::str::from_utf8(raw).is_ok_and(secrets::looks_secret)
+}
+
+/// Whether `path` is almost certainly a plugin manager's TRANSIENT cache directory rather than
+/// somewhere a person navigated to.
+///
+/// The pane directory a split or a relaunch inherits. Without an OSC-7 hook it comes from asking
+/// the kernel what the shell's working directory is, which observes every internal `chdir` — so a
+/// plugin manager stepping into a cache directory to source it can be caught mid-step, and the
+/// pane then spawns its next shell THERE. Invalid UTF-8 is not a plugin path, so it is `false`.
+///
+/// # Safety
+/// `bytes` must be null or point to `len` initialised bytes live for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_ws_transient_plugin_cwd(bytes: *const c_uchar, len: usize) -> bool {
+    // SAFETY: the caller's obligation, restated above; `borrow` states its own.
+    let raw = unsafe { borrow(bytes, len) };
+    core::str::from_utf8(raw).is_ok_and(PaneSpec::looks_like_transient_plugin_cwd)
+}
+
+/// A directory's LEAF, as a sidebar row or a tab title shows it, under §4's convention.
+///
+/// `0` means there is no name to show — an absent, blank or all-slashes path — which is a real
+/// answer here rather than an empty buffer: a name that exists is never empty, so the two cannot
+/// be confused. Root answers `/`, because its leaf is itself.
+///
+/// # Safety
+/// `bytes` must be null or point to `len` live bytes; `out` null or writable for `cap` bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_ws_cwd_display_name(
+    bytes: *const c_uchar,
+    len: usize,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligations, restated above; `borrow` and `deliver` state their own.
+    let raw = unsafe { borrow(bytes, len) };
+    let name = core::str::from_utf8(raw)
+        .ok()
+        .and_then(|text| PaneSpec::cwd_display_name(Some(text)))
+        .unwrap_or_default();
+    // SAFETY: the caller's obligation, restated above.
+    unsafe { deliver(name.as_bytes(), out, cap) }
 }
 
 /// The risk of typing `bytes` into a field, as a `PasteRisk` discriminant.

@@ -3694,6 +3694,23 @@ if ! spells 'slopdesk_sync_input_keyboard_only' "${SWIFT_SYNC_INPUT}" > /dev/nul
 fi
 printf 'check-supervisor: one grammar for where an escape ends, and six copies is not it.\n'
 
+# ── One rule for what a pane's DIRECTORY is, and what it is called ─────────────────────────────
+# `looksLikeTransientPluginCwd` guards fourteen Swift call sites — every sink that can poison the
+# directory a split or a relaunch inherits — and `looks_like_transient_plugin_cwd` guards the Rust
+# `tab_ordering` that sorts the same panes into project sections. Both were live, in both languages,
+# neither reading the other: the sinks and the ordering could disagree about which directory is
+# poison, and a sidebar row could disagree with its own section header about a folder's name.
+SWIFT_PANE_SPEC=Sources/SlopDeskWorkspaceModel/Domain/PaneSpec.swift
+if hit=$(spells 'contains\("---"\)|hasSuffix\("/"\)|split\(separator: "/"\)\.last' "${SWIFT_PANE_SPEC}"); then
+  fail "${hit} classifies a cwd in Swift again — slopdesk-workspace::PaneSpec owns both rules"
+fi
+for entry in 'slopdesk_ws_transient_plugin_cwd' 'slopdesk_ws_cwd_display_name'; do
+  if ! spells "${entry}" "${SWIFT_PANE_SPEC}" > /dev/null; then
+    fail "${SWIFT_PANE_SPEC} no longer asks ${entry} — the cwd rules are one implementation"
+  fi
+done
+printf 'check-supervisor: one rule for a pane directory, and one name for it.\n'
+
 # ── One regex engine meets the untrusted rows, and it does not backtrack ───────────────────────
 # Hint Mode ran ten compiled NSRegularExpressions over rows a remote program wrote, bridged through
 # NSString, mapping columns with a third cell walk. Two things were wrong with that and this pins
