@@ -118,6 +118,7 @@ pub mod watch;
 pub mod window_feed;
 pub mod window_feed_host;
 pub mod window_placement;
+pub mod window_size;
 pub mod wire_message;
 pub mod workspace;
 pub mod workspace_channel;

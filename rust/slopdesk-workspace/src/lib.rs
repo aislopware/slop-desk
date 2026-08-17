@@ -61,6 +61,7 @@ pub mod state_codec;
 pub mod tab_ordering;
 pub mod templates;
 pub mod tree_ops;
+pub mod window_size;
 pub mod workspace;
 
 pub use focus::{FocusDirection, cycle, neighbor};

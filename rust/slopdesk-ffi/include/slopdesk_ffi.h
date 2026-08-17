@@ -3581,6 +3581,69 @@ SlopDeskWindowPlacement slopdesk_window_placement(double window_width, double wi
                                                   double display_width, double display_height);
 bool slopdesk_window_fits(double width, double height, double bounds_width, double bounds_height);
 
+/* ---- What content size a window OPENS at, and where it lands ----------------------------
+ * The sibling of the placement above, for the client's own window rather than a remoted one.
+ * Numbers in, numbers out — the only pointer is the saved descriptor's text.
+ *
+ * Two disciplines: validate-then-clamp (a persisted 0 / negative / five-figure value can never
+ * become a 0x0 or off-screen-gigantic window, and a corrupt descriptor yields NO answer rather
+ * than a degenerate rect), and ORDERED comparisons (a NaN font size or extent propagates instead
+ * of being swallowed by a NaN-ignoring minimum — the same spelling as the placement above).
+ *
+ * A rectangle arrives as the four scalars the caller derived from it, never as a rect: `CGRect`
+ * standardises its extents and `CGSize` does not, and that asymmetry stays with those types.   */
+
+#define SLOPDESK_WINDOW_SIZE_MODE_REMEMBER 0u
+#define SLOPDESK_WINDOW_SIZE_MODE_GRID     1u
+#define SLOPDESK_WINDOW_SIZE_MODE_FRAME    2u
+
+typedef struct { double width, height; } SlopDeskWindowExtent;
+typedef struct { double width, height; bool present; } SlopDeskWindowContentSize;
+typedef struct { double x, y; } SlopDeskWindowUnitPoint;
+
+typedef struct {
+  int32_t min_cells, max_cells;               /* the column / row band */
+  int32_t min_px, max_px;                     /* the pixel band */
+  double  min_content_width, min_content_height;
+  double  fallback_cell_width_ratio, fallback_cell_height_ratio;
+  double  min_font_point_size, max_font_point_size;
+} SlopDeskWindowSizeLimits;
+
+typedef struct {
+  uint8_t mode;                 /* SLOPDESK_WINDOW_SIZE_MODE_*; an unknown code sizes nothing */
+  int32_t cols, rows;           /* persisted counts, UNCLAMPED — the far side clamps */
+  int32_t width_px, height_px;  /* persisted pixels, UNCLAMPED */
+  double  cell_width, cell_height;         /* the live per-cell advance */
+  double  visible_width, visible_height;   /* the screen's visible extent, already standardised */
+  double  chrome_inset_width, chrome_inset_height;       /* out-of-content: title bar, borders */
+  double  chrome_overhead_width, chrome_overhead_height; /* in-content: sidebar, inspector, inset */
+} SlopDeskWindowSizeInputs;
+
+typedef struct {
+  double frame_x, frame_y, frame_width, frame_height;
+  double screen_x, screen_y, screen_width, screen_height;
+  bool   present;               /* false leaves every field zero — nothing may be sized from it */
+} SlopDeskWindowFrameDescriptor;
+
+SlopDeskWindowSizeLimits slopdesk_window_size_limits(void);
+int32_t slopdesk_window_size_clamp_cells(int32_t raw);
+int32_t slopdesk_window_size_clamp_px(int32_t raw);
+SlopDeskWindowExtent slopdesk_window_size_fallback_cell(double font_point_size);
+SlopDeskWindowExtent slopdesk_window_size_grid(int32_t cols, int32_t rows,
+                                               double cell_width, double cell_height);
+SlopDeskWindowExtent slopdesk_window_size_clamp_to_screen(double width, double height,
+                                                          double visible_width,
+                                                          double visible_height,
+                                                          double chrome_width,
+                                                          double chrome_height);
+SlopDeskWindowContentSize slopdesk_window_size_resolved(SlopDeskWindowSizeInputs inputs);
+SlopDeskWindowUnitPoint slopdesk_window_size_unit_position(double frame_min_x, double frame_max_y,
+                                                           double frame_width, double frame_height,
+                                                           double screen_min_x, double screen_max_y,
+                                                           double screen_width,
+                                                           double screen_height);
+SlopDeskWindowFrameDescriptor slopdesk_window_size_parse_frame(const uint8_t *text, size_t len);
+
 /* The off-screen window rescue, driven one step at a time: every effect it needs suspends on the
  * near side, and no C ABI can call back into that and wait. `step` is both what to do next and
  * where the rescue is — no two stages ask for the same step, so nothing else has to cross. No
