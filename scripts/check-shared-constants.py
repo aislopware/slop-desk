@@ -37,6 +37,10 @@ ROOT = Path(__file__).resolve().parent.parent
 
 # Names that collide but do NOT describe the same law. Folding either pair into one door would make
 # a change to one silently move the other.
+# Enums that share a name across the two languages without sharing a meaning. None yet: every pair
+# found so far is one wire alphabet. An entry here needs the reason the two are unrelated.
+HOMONYM_ENUMS: set[str] = set()
+
 HOMONYMS = {
     # A kernel TCP keepalive probe interval on PATH 1, against the video path's application-level
     # UDP keepalive that holds a NAT mapping open. Both happen to be 5 s.
@@ -104,6 +108,17 @@ SWIFT_CONST = re.compile(
     re.MULTILINE,
 )
 
+# An enum's discriminants are the same kind of alphabet as a field byte, and drift the same way: a
+# verb byte that moved in one language is a request the other end answers as a DIFFERENT verb. These
+# pair by NAME rather than by a declared list, because a wire enum is spelled the same in both
+# languages — so any enum both sides declare, sharing any case, must agree about every case.
+RUST_ENUM = re.compile(r"^pub enum ([A-Za-z][A-Za-z0-9]*)[^\n]*\{$", re.MULTILINE)
+SWIFT_ENUM = re.compile(
+    r"^(?:public |internal |private )?enum ([A-Za-z][A-Za-z0-9]*)[^\n]*\{$", re.MULTILINE
+)
+RUST_CASE = re.compile(r"^\s*([A-Z][A-Za-z0-9]*) = " + NUMBER + r",\s*$", re.MULTILINE)
+SWIFT_CASE = re.compile(r"^\s*case ([a-z][A-Za-z0-9]*) = " + NUMBER + r"\s*$", re.MULTILINE)
+
 
 def tracked(pattern: str) -> list[Path]:
     """Every git-tracked file matching a pathspec, so an untracked scratch file is not audited."""
@@ -124,6 +139,8 @@ def scopes(
 ) -> dict[str, dict[str, float]]:
     """Each `mod`/`enum` in `text`, mapped to the constants declared before the next one opens."""
     starts = [(m.group(1), m.end()) for m in opener.finditer(text)]
+    if not starts:
+        return {}
     ends = [start for _, start in starts[1:]] + [len(text)]
     bounds = [(name, at, end) for (name, at), end in zip(starts, ends, strict=True)]
     return {
@@ -159,6 +176,37 @@ def vocabulary_findings() -> list[str]:
                         f"  {swift_file}: `{swift_scope}.{name} = {here[name]:g}` against "
                         f"`{rust_scope}::{name} = {there[name]:g}`"
                     )
+    return out
+
+
+def enum_findings() -> list[str]:
+    """Every wire enum whose two spellings stopped agreeing, case for case."""
+    rust: dict[str, list[tuple[str, dict[str, float]]]] = {}
+    for path in tracked("rust/*.rs"):
+        text = path.read_text()
+        for name, cases in scopes(text, RUST_ENUM, RUST_CASE).items():
+            if cases:
+                rust.setdefault(name, []).append((str(path.relative_to(ROOT)), cases))
+
+    out: list[str] = []
+    for path in tracked("Sources/*.swift"):
+        here_file = str(path.relative_to(ROOT))
+        for name, here in scopes(path.read_text(), SWIFT_ENUM, SWIFT_CASE).items():
+            if not here or name in HOMONYM_ENUMS:
+                continue
+            for there_file, there in rust.get(name, []):
+                if not set(here) & set(there):
+                    continue  # same name, no case in common: not the same alphabet
+                for case in sorted(set(here) | set(there)):
+                    if case not in here:
+                        out.append(f"  {here_file}: `{name}` is missing `{case}`, in {there_file}")
+                    elif case not in there:
+                        out.append(f"  {there_file}: `{name}` is missing `{case}`, in {here_file}")
+                    elif here[case] != there[case]:
+                        out.append(
+                            f"  {here_file}: `{name}.{case} = {here[case]:g}` against "
+                            f"`{there[case]:g}` in {there_file}"
+                        )
     return out
 
 
@@ -202,7 +250,7 @@ def main() -> int:
         )
         return 1
 
-    drifted = vocabulary_findings()
+    drifted = vocabulary_findings() + enum_findings()
     if drifted:
         print("check-shared-constants: FAIL — a shared alphabet drifted\n")
         print("\n".join(drifted))
@@ -215,7 +263,7 @@ def main() -> int:
 
     print(
         "check-shared-constants: every shared number is asked for or ratcheted, and the field\n"
-        "vocabulary agrees letter for letter."
+        "vocabulary and the wire enums agree letter for letter."
     )
     return 0
 
