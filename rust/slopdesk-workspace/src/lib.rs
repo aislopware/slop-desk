@@ -51,6 +51,7 @@ pub mod json;
 pub mod jump;
 pub mod listen;
 pub mod persist;
+pub mod rail_list;
 pub mod rail_title;
 pub mod secrets;
 pub mod send_keys;

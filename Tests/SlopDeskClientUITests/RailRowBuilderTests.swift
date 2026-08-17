@@ -1156,13 +1156,19 @@ final class RailRowBuilderTests: XCTestCase {
         XCTAssertEqual(out[1].title, "myapp", "the explicit rename (cwd folder ≠ title) is left verbatim")
     }
 
-    /// The pure parent-qualifier helper: qualifies a folder-name title, declines an explicit rename / a
-    /// root-level path / a blank cwd.
-    func testParentQualifiedTitleHelper() {
-        XCTAssertEqual(RailRowsBuilder.parentQualifiedTitle(cwd: "/a/b/repo", title: "repo"), "b/repo")
-        XCTAssertNil(RailRowsBuilder.parentQualifiedTitle(cwd: "/a/b/repo", title: "renamed"), "not the folder name")
-        XCTAssertNil(RailRowsBuilder.parentQualifiedTitle(cwd: "/repo", title: "repo"), "no parent segment")
-        XCTAssertNil(RailRowsBuilder.parentQualifiedTitle(cwd: nil, title: "repo"))
+    /// A row with no parent to name keeps its colliding title: two identical rows are a smaller
+    /// problem than one row wearing a label that means nothing.
+    func testRootLevelCollisionIsLeftVerbatim() {
+        let row = { (cwd: String) in
+            RailRow(
+                id: PaneID(), tabID: TabID(), kind: .terminal, title: "repo", subtitle: nil, status: .none,
+                tabNumber: 1, badge: nil, processLabel: nil, readOnly: false, cwd: cwd,
+                isEditing: false, isSelected: false,
+            )
+        }
+        let out = RailRowsBuilder.disambiguated([row("/repo"), row("/a/b/repo")])
+        XCTAssertEqual(out[0].title, "repo", "no parent segment to qualify with")
+        XCTAssertEqual(out[1].title, "b/repo")
     }
 
     // MARK: - The row exposes inline-rename mode

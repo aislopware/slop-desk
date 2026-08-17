@@ -158,6 +158,41 @@ package func wsAnswer(_ call: (UnsafeMutablePointer<UInt8>?, Int) -> Int) -> Str
     return String(bytes: out[0..<needed], encoding: .utf8)
 }
 
+/// The sidebar's draw order for a list of things that each belong to a project — where each one
+/// lands, and in which section. `slopdesk_workspace::rail_list::plan`.
+///
+/// `tabRanks[i]` is where element `i`'s TAB sits in the display order, which is the within-section
+/// order; a list that IS its own order passes its own indices. Every element comes back exactly
+/// once, so a caller can rebuild its array from the answer without checking for a hole.
+package func wsRailPlan(keys: [String?], tabRanks: [Int]) -> [(element: Int, section: Int)] {
+    guard !keys.isEmpty else { return [] }
+    var strings = WsStrings()
+    var rows = keys.enumerated().map { index, key in
+        SlopDeskWsRailPlanRow(
+            project_key: strings.span(key),
+            // A rank the caller did not supply is an element whose tab is not in the order at all,
+            // which sorts last rather than first.
+            tab_rank: tabRanks.indices.contains(index) ? tabRanks[index] : Int.max,
+        )
+    }
+    var blob = strings.bytes
+    var out = [SlopDeskWsRailPlacement](
+        repeating: SlopDeskWsRailPlacement(row_index: 0, section: 0), count: keys.count,
+    )
+    let written = blob.withUnsafeMutableBufferPointer { text in
+        rows.withUnsafeMutableBufferPointer { planned in
+            out.withUnsafeMutableBufferPointer { placements in
+                slopdesk_ws_rail_plan(
+                    planned.baseAddress, planned.count, text.baseAddress, text.count,
+                    placements.baseAddress, placements.count,
+                )
+            }
+        }
+    }
+    guard written == keys.count else { return [] }
+    return out.map { (element: $0.row_index, section: $0.section) }
+}
+
 // MARK: - The split tree's walk
 
 /// The pre-order walk a ``SplitNode`` crosses the boundary as, in both directions.

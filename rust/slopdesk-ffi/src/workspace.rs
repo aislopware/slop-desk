@@ -1008,37 +1008,6 @@ pub unsafe extern "C" fn slopdesk_ws_normalized_program_title(
     }
 }
 
-/// The `parent/leaf` title a colliding folder name qualifies to. `0` is "leave the row alone".
-///
-/// # Safety
-/// Both `(bytes, len)` pairs must be null or point to that many initialised bytes; `out` null or
-/// writable for `cap` bytes. All live for the call.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub unsafe extern "C" fn slopdesk_ws_parent_qualified_title(
-    cwd: *const c_uchar,
-    cwd_len: usize,
-    cwd_present: bool,
-    title: *const c_uchar,
-    title_len: usize,
-    out: *mut c_uchar,
-    cap: usize,
-) -> usize {
-    // SAFETY: the caller's obligations, restated above; the helpers state their own.
-    unsafe {
-        let leaf = core::str::from_utf8(borrow(title, title_len)).unwrap_or_default();
-        let Some(qualified) =
-            rail_title::parent_qualified_title(optional_str(cwd, cwd_len, cwd_present), leaf)
-        else {
-            return 0;
-        };
-        deliver(qualified.as_bytes(), out, cap)
-    }
-}
-
 /// The pane's STRUCTURAL title — the identity it keeps between events.
 ///
 /// `0` is the EMPTY title here rather than "no answer": the at-root idle shell yields deliberately,

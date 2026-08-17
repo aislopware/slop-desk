@@ -326,28 +326,33 @@ package enum RailRowsBuilder {
     /// For any TITLE shared by more than one row, replace each colliding row's folder-name title
     /// with its parent-qualified form (`parent/leaf`). Only folder-derived titles are rewritten (an explicit
     /// rename that happens to collide is left verbatim), and only when a distinct parent segment exists; rows
-    /// with a unique title, no cwd, or no parent are returned unchanged. Pure so the collision rule is pinned
-    /// headlessly.
+    /// with a unique title, no cwd, or no parent are returned unchanged.
+    /// `slopdesk_workspace::rail_list::disambiguated_label` — the SAME rule
+    /// ``headerDisambiguated(_:)`` runs on the section headers.
     package static func disambiguated(_ rows: [RailRow]) -> [RailRow] {
-        var counts: [String: Int] = [:]
-        for row in rows { counts[row.title, default: 0] += 1 }
-        return rows.map { row in
-            guard (counts[row.title] ?? 0) > 1,
-                  let qualified = parentQualifiedTitle(cwd: row.cwd, title: row.title)
-            else { return row }
+        let labels = rows.map { (text: $0.title, source: $0.cwd) }
+        return rows.enumerated().map { index, row in
+            guard let qualified = disambiguatedLabel(labels, at: index) else { return row }
             return row.retitled(qualified)
         }
     }
 
-    /// The parent-qualified title `parent/leaf` for a folder-name row, or `nil` when it should be
-    /// left alone. `slopdesk_workspace::rail_title::parent_qualified_title`.
-    package static func parentQualifiedTitle(cwd: String?, title: String) -> String? {
-        withOptionalText(cwd) { bytes, len, present in
-            var title = title
-            return title.withUTF8 { leaf in
+    /// What `items[index]` should be CALLED once identical labels have been told apart, or `nil` to
+    /// leave it alone — the ONE collision rule, marshalled. The whole list crosses on every call
+    /// because a collision is a fact about the list rather than about one member.
+    private static func disambiguatedLabel(
+        _ items: [(text: String, source: String?)], at index: Int,
+    ) -> String? {
+        var strings = WsStrings()
+        var labels = items.map {
+            SlopDeskWsRailLabel(text: strings.span($0.text), source: strings.span($0.source))
+        }
+        var blob = strings.bytes
+        return blob.withUnsafeMutableBufferPointer { text in
+            labels.withUnsafeMutableBufferPointer { held in
                 wsAnswer { out, cap in
-                    slopdesk_ws_parent_qualified_title(
-                        bytes, len, present, leaf.baseAddress, leaf.count, out, cap,
+                    slopdesk_ws_rail_disambiguated_label(
+                        held.baseAddress, held.count, text.baseAddress, text.count, index, out, cap,
                     )
                 }
             }
@@ -655,17 +660,28 @@ package enum RailRowsBuilder {
         PaneSpec.cwdDisplayName(cwd)
     }
 
-    /// Filter rows by a lower-cased search query (empty query ⇒ all). Matches the visible title + subtitle AND
+    /// Filter rows by a search query (a blank one ⇒ all). Matches the visible title + subtitle AND
     /// the hidden keys — the raw `cwd` (a git-repo row's visible subtitle is the git line, not the
     /// path, so without this it would be unsearchable by path) and the foreground `processLabel`.
+    /// `slopdesk_workspace::rail_list::row_matches`, which is where the corpus and the case fold live.
     package static func filtered(_ rows: [RailRow], query: String) -> [RailRow] {
-        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !q.isEmpty else { return rows }
-        return rows.filter {
-            $0.title.lowercased().contains(q)
-                || ($0.subtitle?.lowercased().contains(q) ?? false)
-                || ($0.cwd?.lowercased().contains(q) ?? false)
-                || ($0.processLabel?.lowercased().contains(q) ?? false)
+        var needle = Array(query.utf8)
+        return needle.withUnsafeMutableBufferPointer { q in
+            rows.filter { row in
+                var strings = WsStrings()
+                let fields = SlopDeskWsRailRowFields(
+                    title: strings.span(row.title),
+                    subtitle: strings.span(row.subtitle),
+                    cwd: strings.span(row.cwd),
+                    process_label: strings.span(row.processLabel),
+                )
+                var blob = strings.bytes
+                return blob.withUnsafeMutableBufferPointer { text in
+                    slopdesk_ws_rail_row_matches(
+                        fields, text.baseAddress, text.count, q.baseAddress, q.count,
+                    )
+                }
+            }
         }
     }
 
@@ -690,45 +706,46 @@ package enum RailRowsBuilder {
     /// sorts under its BASENAME (`myapp`), with the parent segment breaking the tie — colliding worktrees
     /// stay adjacent instead of scattering to wherever their parent folders happen to fall in the alphabet.
     ///
-    /// The bucketing is ``TabOrderingEngine/bucketedByProject(_:projectKey:)`` — the SAME code the close
-    /// rule reads at tab granularity, so focus after a close can only land where this drew something.
+    /// The bucketing is `slopdesk_workspace::rail_list::plan` — the SAME rule
+    /// ``TabOrderingEngine/bucketedByProject(_:projectKey:)`` runs at tab granularity for the close
+    /// rule, so focus after a close can only land where this drew something. One call answers both
+    /// the section split and the within-section order: rows follow `tabOrder`, ties broken by pane
+    /// pre-order, and a row whose tab is absent from `tabOrder` sorts last without vanishing.
     package static func sectionedByProject(_ rows: [RailRow], tabOrder: [TabID], query: String) -> [RailRowGroup] {
         let survivors = filtered(rows, query: query)
-        let sections = TabOrderingEngine.bucketedByProject(survivors, projectKey: \.projectKey)
-        // Order rows WITHIN each section by the tab order, pane pre-order as the stable tiebreak.
-        // A row whose tab isn't in `tabOrder` (shouldn't happen) sorts last, stably.
         let rank = Dictionary(tabOrder.enumerated().map { ($0.element, $0.offset) }, uniquingKeysWith: { a, _ in a })
-        let groups = sections.map { section in
-            let sorted = section.elements.enumerated()
-                .sorted { lhs, rhs in
-                    let lRank = rank[lhs.element.tabID] ?? Int.max
-                    let rRank = rank[rhs.element.tabID] ?? Int.max
-                    if lRank != rRank { return lRank < rRank }
-                    return lhs.offset < rhs.offset
-                }
-                .map(\.element)
-            return RailRowGroup(
-                header: TabOrderingEngine.projectSectionHeader(for: section.key),
-                projectKey: section.key,
-                rows: sorted,
-            )
+        var sections: [(key: String?, rows: [RailRow])] = []
+        for place in wsRailPlan(
+            keys: survivors.map(\.projectKey),
+            tabRanks: survivors.map { rank[$0.tabID] ?? Int.max },
+        ) {
+            guard survivors.indices.contains(place.element) else { continue }
+            let row = survivors[place.element]
+            if place.section == sections.count - 1 {
+                sections[place.section].rows.append(row)
+            } else {
+                sections.append((TabOrderingEngine.normalizedProjectKey(row.projectKey), [row]))
+            }
         }
-        return headerDisambiguated(groups)
+        return headerDisambiguated(sections.map {
+            RailRowGroup(
+                header: TabOrderingEngine.projectSectionHeader(for: $0.key),
+                projectKey: $0.key,
+                rows: $0.rows,
+            )
+        })
     }
 
     /// For any two sections whose basename HEADER collides (same-named worktrees — `/w/feature-a/myapp`
     /// vs `/w/feature-b/myapp` are two distinct keys, two sections, one basename), parent-qualify each
     /// colliding header from its KEY (`feature-a/myapp`). The header is the place identity (a row at
     /// its project root no longer repeats the folder name), so the worktree-distinctiveness break
-    /// lives HERE, not on row titles. Pure + static so the rule is unit-pinned.
+    /// lives HERE, not on row titles — and it is ``disambiguated(_:)``'s rule applied to a different
+    /// pair of fields, which is why both reach the one crate function.
     package static func headerDisambiguated(_ groups: [RailRowGroup]) -> [RailRowGroup] {
-        var counts: [String: Int] = [:]
-        for group in groups {
-            if let header = group.header { counts[header, default: 0] += 1 }
-        }
-        return groups.map { group in
-            guard let header = group.header, (counts[header] ?? 0) > 1,
-                  let qualified = parentQualifiedTitle(cwd: group.projectKey, title: header)
+        let labels = groups.map { (text: $0.header ?? "", source: $0.projectKey) }
+        return groups.enumerated().map { index, group in
+            guard group.header != nil, let qualified = disambiguatedLabel(labels, at: index)
             else { return group }
             return RailRowGroup(header: qualified, projectKey: group.projectKey, rows: group.rows)
         }

@@ -90,6 +90,7 @@ pub mod mux_host;
 pub mod pacer_depth;
 pub mod paste_safety;
 pub mod present_queue;
+pub mod rail_list;
 pub mod rate_control;
 pub mod recovery;
 pub mod replay;

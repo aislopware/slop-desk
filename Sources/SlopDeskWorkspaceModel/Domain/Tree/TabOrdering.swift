@@ -116,21 +116,29 @@ public enum TabOrderingEngine {
     /// Sections are (key, elements) PAIRS keyed on `String?`, not a dictionary behind a stand-in string for
     /// the keyless case: a sentinel here would be a second literal that merely LOOKS coupled to the rail's
     /// "Other" collapse key, and the two answer different questions. `nil` is its own section, natively.
-    /// Linear section lookup is right at these counts (sections in the tens).
+    ///
+    /// The bucketing itself is `slopdesk_workspace::rail_list::plan`, which answers in the caller's
+    /// own indices; this walks the answer back into the (key, elements) shape Swift reads. The
+    /// elements never cross — a rail row is half a dozen strings and a selection flag, none of which
+    /// decides which section it is in.
     public static func bucketedByProject<Element>(
         _ elements: [Element],
         projectKey: (Element) -> String?,
     ) -> [(key: String?, elements: [Element])] {
+        let keys = elements.map(projectKey)
+        // A list with no tab order of its own IS its own order, so arrival is the rank.
         var sections: [(key: String?, elements: [Element])] = []
-        for element in elements {
-            let bucket = normalizedProjectKey(projectKey(element))
-            if let index = sections.firstIndex(where: { $0.key == bucket }) {
-                sections[index].elements.append(element)
+        for place in wsRailPlan(keys: keys, tabRanks: Array(elements.indices)) {
+            guard elements.indices.contains(place.element) else { continue }
+            if place.section == sections.count - 1 {
+                sections[place.section].elements.append(elements[place.element])
             } else {
-                sections.append((bucket, [element]))
+                sections.append((
+                    normalizedProjectKey(keys[place.element]), [elements[place.element]],
+                ))
             }
         }
-        return sections.sorted { sectionPrecedes($0.key, $1.key) }
+        return sections
     }
 
     /// The SECTION order: named projects A→Z by the header the sidebar actually shows, the keyless

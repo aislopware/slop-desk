@@ -440,7 +440,7 @@ bool slopdesk_ws_successor_after_close(SlopDeskWsUuid closing,
 
 // What a pane is CALLED, in the one precedence every surface that names one shares — the rail row,
 // the tab strip, the pane switcher, the window title. Each `0` below is documented per door: for
-// the name/mark/qualifier doors it is "no answer, keep your own rung"; for the two TITLE doors it
+// the name and mark doors it is "no answer, keep your own rung"; for the two TITLE doors it
 // is the EMPTY title, which the at-root idle shell yields on purpose so the live chain can speak.
 size_t slopdesk_ws_slot_process_name(const uint8_t *bytes, size_t len, bool present,
                                      uint8_t *out, size_t cap);
@@ -456,9 +456,6 @@ uint32_t slopdesk_ws_command_title_min_duration_ms(void);
 size_t slopdesk_ws_agent_marked_title(const uint8_t *bytes, size_t len, uint8_t *out, size_t cap);
 size_t slopdesk_ws_normalized_program_title(const uint8_t *bytes, size_t len, bool present,
                                             uint8_t *out, size_t cap);
-size_t slopdesk_ws_parent_qualified_title(const uint8_t *cwd, size_t cwd_len, bool cwd_present,
-                                          const uint8_t *title, size_t title_len,
-                                          uint8_t *out, size_t cap);
 
 // The two composite inputs. Every string is a span into the ONE `strings` blob passed alongside —
 // one pointer, one lifetime, one scope, where a `(ptr, len)` per field would mean seven nested
@@ -503,6 +500,52 @@ size_t slopdesk_ws_live_row_title(SlopDeskWsLiveRowTitle inputs,
                                   const SlopDeskWsCommandTitleBlock *blocks, size_t count,
                                   const uint8_t *strings, size_t strings_len,
                                   uint8_t *out, size_t cap);
+
+// ---- What the sidebar SHOWS, in what order, under which labels ----
+//
+// Both list doors answer in the CALLER's indices: a rail row is an id, a kind, a badge, a selection
+// flag and half a dozen strings, almost none of which decides where it goes, so the answer names
+// rows and the near side reorders the array it already holds.
+
+typedef struct {
+    SlopDeskWsSpan title;
+    SlopDeskWsSpan subtitle;
+    // Never drawn, always searchable: a git-repo row shows its git line where its path would be, so
+    // without the raw cwd it could not be found by path at all.
+    SlopDeskWsSpan cwd;
+    SlopDeskWsSpan process_label;
+} SlopDeskWsRailRowFields;
+
+// `tab_rank` is where the row's tab sits in the display order; SIZE_MAX for a tab absent from it,
+// which sorts last without dropping the row.
+typedef struct {
+    SlopDeskWsSpan project_key;
+    size_t         tab_rank;
+} SlopDeskWsRailPlanRow;
+
+typedef struct {
+    size_t row_index;
+    size_t section;
+} SlopDeskWsRailPlacement;
+
+// A label that may collide with an identical one, and the path it was derived from — a row's title
+// and its cwd, or a section's header and its project key. ONE rule breaks both.
+typedef struct {
+    SlopDeskWsSpan text;
+    SlopDeskWsSpan source;
+} SlopDeskWsRailLabel;
+
+bool slopdesk_ws_rail_row_matches(SlopDeskWsRailRowFields fields, const uint8_t *strings,
+                                  size_t strings_len, const uint8_t *query, size_t query_len);
+// Returns how many placements there ARE, which is always `count`. A short `cap` writes nothing and
+// returns the same number, so the retry is §4's.
+size_t slopdesk_ws_rail_plan(const SlopDeskWsRailPlanRow *rows, size_t count,
+                             const uint8_t *strings, size_t strings_len,
+                             SlopDeskWsRailPlacement *out, size_t cap);
+// `0` = keep the label you have. A qualified label is never empty, so the two never collide.
+size_t slopdesk_ws_rail_disambiguated_label(const SlopDeskWsRailLabel *items, size_t count,
+                                            const uint8_t *strings, size_t strings_len,
+                                            size_t index, uint8_t *out, size_t cap);
 
 // The minimum flex weight a divider may take, from the crate that enforces it — `repaired()`
 // clamps to this number, so a transcribed copy would describe a rule the client does not share.
