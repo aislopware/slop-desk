@@ -40,8 +40,10 @@ public struct FrameFragmentHeader: Equatable, Sendable {
         // the SAME tier; parity fragments additionally set `.parity` (bit 1, independent). Bits
         // 6,7 stay reserved. Tier 0 leaves all three bits zero → byte-identical to the plain
         // wire. These coexist with `.keyframe`/`.parity`/`.crisp` (disjoint bit masks).
-        public static let tierShift: UInt8 = 3
-        public static let tierMask: UInt8 = 0b0011_1000 // bits 3,4,5
+        /// Asked for: a shift one position off reads a keyframe marker as a tier, and the client
+        /// then splits data and parity by a group size the host never chose.
+        public static let tierShift = slopdesk_video_flags_tier_layout(0)
+        public static let tierMask = slopdesk_video_flags_tier_layout(1) // bits 3,4,5
 
         /// LTR-FRAME MARKER (bit 6): this frame is a Long-Term-Reference frame — the encoder
         /// emitted it carrying `kVTSampleAttachmentKey_RequireLTRAcknowledgementToken`, so a client

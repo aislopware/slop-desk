@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 
 // MARK: - Object kinds
@@ -51,7 +52,11 @@ public struct WorkspaceKey: Hashable, Sendable, Comparable {
 
     /// The wire size of a key. Fixed: this is what lets a truncated frame be rejected by arithmetic
     /// rather than by trial decoding.
-    public static let encodedSize = 18
+    ///
+    /// Asked for, because a reader holding a larger copy stops short of a trailing cell and one
+    /// holding a smaller copy reads a key out of the next key's bytes — neither of which is an
+    /// error the decoder can raise.
+    public static let encodedSize = Int(slopdesk_ws_key_encoded_size())
 
     /// The objectID's 16 bytes in wire order.
     public var objectIDBytes: [UInt8] {

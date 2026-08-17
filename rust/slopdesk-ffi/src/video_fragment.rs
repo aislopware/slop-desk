@@ -147,6 +147,26 @@ pub const extern "C" fn slopdesk_video_fragment_size(index: c_uchar) -> usize {
     }
 }
 
+/// Where the adaptive-FEC tier sits inside the flags byte: `0` the shift, `1` the mask.
+///
+/// The tier rides in bits the flags byte had spare, so it costs no header field and no size — and
+/// costs, instead, an agreement about WHICH bits. A shift transcribed one position off does not
+/// fail to parse: it reads a keyframe marker as a tier, so the client splits data and parity by a
+/// group size the host never chose and the recovery it computes is arithmetic on the wrong shards.
+/// An unknown index answers 0, which reads every frame as tier 0 — the plain wire.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_video_flags_tier_layout(index: c_uchar) -> u8 {
+    match index {
+        0 => Flags::TIER_SHIFT,
+        1 => Flags::TIER_MASK,
+        _ => 0,
+    }
+}
+
 #[cfg(test)]
 #[expect(
     unsafe_code,

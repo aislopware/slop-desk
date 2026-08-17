@@ -131,6 +131,27 @@ final class WorkspaceTopologyTests: XCTestCase {
         XCTAssertEqual(first.bitPattern, odd.bitPattern, "a re-parsed decimal is a different number")
     }
 
+    /// The round trips above are Swift's projection against Swift's own ingestion, and a field
+    /// spelled under the wrong key by BOTH of them survives every one of them. This one crosses: the
+    /// document goes out through ``WorkspaceIntentApplier`` to `slopdesk_wire::document::apply`,
+    /// which reads it with the crate's own projection and writes the answer back with the crate's
+    /// own. Anything the two sides key differently is dropped in transit — the intent asks for one
+    /// rename and nothing else, so every other field of the rich fixture must return unchanged.
+    func testTheWholeTopologyCrossesToTheCrateAndBack() throws {
+        let original = fixture()
+        let session = original.tree.sessions[0].id
+        var expected = original
+        expected.tree.sessions[0].name = "renamed"
+
+        let outcome = WorkspaceIntentApplier.apply(
+            op: WorkspaceIntentOp.renameSession.rawValue,
+            args: WorkspaceIntentArgs.encode(id: session.raw, name: "renamed"),
+            to: original,
+        )
+
+        XCTAssertEqual(try XCTUnwrap(outcome.topology), expected)
+    }
+
     // MARK: - Identity, not position
 
     /// The bug `ed76f137` fixed, one layer up. If the active tab crossed as an INDEX, a reorder on

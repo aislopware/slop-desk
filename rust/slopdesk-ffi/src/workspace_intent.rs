@@ -301,6 +301,21 @@ pub const extern "C" fn slopdesk_ws_intent_limit(index: c_uchar) -> usize {
     }
 }
 
+/// The wire size of one document key.
+///
+/// Fixed, and the reason a truncated snapshot is rejected by ARITHMETIC rather than by trial
+/// decoding: the reader divides by this before it reads anything. A caller holding a larger copy
+/// stops short and drops a trailing cell; one holding a smaller copy walks off the end of the
+/// frame and reads a key out of another key's bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_ws_key_encoded_size() -> usize {
+    WorkspaceKey::ENCODED_SIZE
+}
+
 /// Whether a `(kind, field)` pair belongs to the TOPOLOGY half — the half an intent writes and a
 /// host restart restores.
 ///

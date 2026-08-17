@@ -16,8 +16,12 @@ This repo settles it two ways, and which one is right follows from the LIFETIME 
   * ACROSS A SOCKET, to a sidecar — the two spellings are RATCHETED against each other by a gate in
     `check-supervisor.sh`, because a separately-shipped binary cannot link the other's constant.
 
-So a pair is a finding here only when it is neither. The allowlist below is for HOMONYMS: names that
-collide by accident and describe unrelated laws, where folding them into one door would be the bug.
+A VOCABULARY is the exception both answers miss, and it gets the third: an alphabet of field bytes
+that both ends must NAME, frozen on the wire, where an index-shaped door would only move the
+transcription. Those pairs are ratcheted here instead, letter for letter and in both directions.
+
+So a pair is a finding here only when it is none of the three. The allowlist below is for HOMONYMS:
+names that collide by accident and describe unrelated laws, where folding them would be the bug.
 
 Usage: scripts/check-shared-constants.py   (exit 1 on any finding)
 """
@@ -46,8 +50,36 @@ HOMONYMS = {
     "defaultK",
 }
 
+# A VOCABULARY is the one shared number a door cannot dissolve. A field byte is not a law anyone
+# may tune — it is a letter of the document's alphabet, frozen the moment a golden vector carries
+# one, and both ends must be able to NAME it (`WorkspacePaneField.liveTitle`) rather than reach for
+# it through an index that would itself be the transcription. So the pair is ratcheted instead:
+# every name in the scope must exist on both sides and carry the same byte, in both directions. A
+# field added to one language and not the other fails here rather than at a peer of another build.
+#
+# Each entry is (Swift file, Rust file, {Swift type: Rust module}).
+VOCABULARIES = [
+    (
+        "Sources/SlopDeskWorkspaceModel/State/WorkspaceFields.swift",
+        "rust/slopdesk-wire/src/document/fields.rs",
+        {
+            "WorkspaceRootField": "root",
+            "WorkspaceSessionField": "session",
+            "WorkspaceTabField": "tab",
+            "WorkspacePaneField": "pane",
+            "WorkspaceSplitNodeField": "split_node",
+            "WorkspaceProjectField": "project",
+        },
+    ),
+]
+
+RUST_SCOPE = re.compile(r"^pub mod ([a-z_]+) \{$", re.MULTILINE)
+SWIFT_SCOPE = re.compile(r"^public enum ([A-Za-z]+) \{$", re.MULTILINE)
+
 RUST_CONST = re.compile(
-    r"^pub const ([A-Z][A-Z_0-9]*): *"
+    # Indented, because a vocabulary declares its constants inside a `mod` — anchoring at column 0
+    # hid every field byte in `slopdesk_wire::document::fields` from this gate until 2026-08-17.
+    r"^[ \t]*pub const ([A-Z][A-Z_0-9]*): *"
     r"(?:usize|u8|u16|u32|u64|i8|i16|i32|i64|f32|f64) *= *([0-9][0-9_]*(?:\.[0-9]+)?)\s*;",
     re.MULTILINE,
 )
@@ -70,6 +102,49 @@ def numeric(text: str) -> float:
     return float(text.replace("_", ""))
 
 
+def scopes(
+    text: str, opener: re.Pattern[str], const: re.Pattern[str]
+) -> dict[str, dict[str, float]]:
+    """Each `mod`/`enum` in `text`, mapped to the constants declared before the next one opens."""
+    starts = [(m.group(1), m.end()) for m in opener.finditer(text)]
+    ends = [start for _, start in starts[1:]] + [len(text)]
+    bounds = [(name, at, end) for (name, at), end in zip(starts, ends, strict=True)]
+    return {
+        name: {n.replace("_", "").lower(): numeric(v) for n, v in const.findall(text[at:end])}
+        for name, at, end in bounds
+    }
+
+
+def vocabulary_findings() -> list[str]:
+    """Every way a declared alphabet stopped meaning the same thing letter for letter."""
+    out: list[str] = []
+    for swift_file, rust_file, pairs in VOCABULARIES:
+        swift = scopes((ROOT / swift_file).read_text(), SWIFT_SCOPE, SWIFT_CONST)
+        rust = scopes((ROOT / rust_file).read_text(), RUST_SCOPE, RUST_CONST)
+        for swift_scope, rust_scope in pairs.items():
+            here, there = swift.get(swift_scope, {}), rust.get(rust_scope, {})
+            if not here or not there:
+                out.append(f"  {swift_file}: `{swift_scope}` and `{rust_scope}` no longer pair up")
+                continue
+            for name in sorted(set(here) | set(there)):
+                if name not in here:
+                    out.append(
+                        f"  {swift_file}: `{swift_scope}` is missing `{name}`, "
+                        f"which {rust_scope} declares"
+                    )
+                elif name not in there:
+                    out.append(
+                        f"  {rust_file}: `{rust_scope}` is missing `{name}`, "
+                        f"which {swift_scope} declares"
+                    )
+                elif here[name] != there[name]:
+                    out.append(
+                        f"  {swift_file}: `{swift_scope}.{name} = {here[name]:g}` against "
+                        f"`{rust_scope}::{name} = {there[name]:g}`"
+                    )
+    return out
+
+
 def main() -> int:
     rust: dict[str, list[tuple[Path, str, float]]] = {}
     for path in tracked("rust/*.rs"):
@@ -79,8 +154,12 @@ def main() -> int:
     # A name a supervisor gate already compares is ratcheted, which is the sidecar answer.
     ratcheted = (ROOT / "scripts" / "check-supervisor.sh").read_text()
 
+    vocabulary = {ROOT / swift for swift, _, _ in VOCABULARIES}
+
     findings: list[str] = []
     for path in tracked("Sources/*.swift"):
+        if path in vocabulary:
+            continue  # ratcheted letter for letter below, which is stricter than this pass
         for name, value in SWIFT_CONST.findall(path.read_text()):
             for rust_path, rust_name, rust_value in rust.get(name.lower(), []):
                 if numeric(value) != rust_value:
@@ -103,7 +182,21 @@ def main() -> int:
         )
         return 1
 
-    print("check-shared-constants: every shared number is asked for or ratcheted, never twice.")
+    drifted = vocabulary_findings()
+    if drifted:
+        print("check-shared-constants: FAIL — a shared alphabet drifted\n")
+        print("\n".join(drifted))
+        print(
+            "\nA field byte is frozen on the wire and NAMED on both sides, so the two spellings\n"
+            "are ratcheted rather than folded into a door. Add the letter to both, or give it the\n"
+            "same byte on both — a mis-numbered field decodes cleanly into the wrong meaning."
+        )
+        return 1
+
+    print(
+        "check-shared-constants: every shared number is asked for or ratcheted, and the field\n"
+        "vocabulary agrees letter for letter."
+    )
     return 0
 
 

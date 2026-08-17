@@ -802,6 +802,10 @@ bool slopdesk_ws_key_is_topology(uint8_t kind, uint8_t field);
 // 1 a reorderTabs list, 2 a sub-payload blob. Unknown index answers 0, refusing everything.
 size_t slopdesk_ws_intent_limit(uint8_t index);
 
+// The wire size of one document key. Fixed, and the reason a truncated snapshot is rejected by
+// arithmetic rather than by trial decoding.
+size_t slopdesk_ws_key_encoded_size(void);
+
 // One HALF of the pane field vocabulary: 0 the liveness fields, 1 the topology fields. §4-shaped.
 // The two PARTITION the vocabulary — a field in neither is written and reaped by nobody, one in
 // both makes a liveness recapture silently delete a persisted title.
@@ -1091,6 +1095,10 @@ size_t slopdesk_video_fragment_encode(uint32_t stream_seq, uint32_t frame_id, ui
 // A fragment size budget: 0 the header, 1 the whole datagram (the MTU claim), 2 the payload
 // the two leave between them. Unknown index answers 0, which packetizes nothing.
 size_t slopdesk_video_fragment_size(uint8_t index);
+
+// Where the adaptive-FEC tier sits in the flags byte: 0 the shift, 1 the mask. Unknown index
+// answers 0, which reads every frame as tier 0 — the plain wire.
+uint8_t slopdesk_video_flags_tier_layout(uint8_t index);
 
 /* ---------------------------------------------------------------------------- *
  * The three measurements the capture path takes on a frame it has just locked.
