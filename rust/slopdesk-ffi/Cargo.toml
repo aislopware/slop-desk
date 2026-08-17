@@ -52,6 +52,7 @@ path = "src/lib.rs"
 slopdesk-agent = { path = "../slopdesk-agent" }
 slopdesk-androidd = { path = "../slopdesk-androidd" }
 slopdesk-cli = { path = "../slopdesk-cli" }
+slopdesk-devicelog = { path = "../slopdesk-devicelog" }
 slopdesk-dropd = { path = "../slopdesk-dropd" }
 slopdesk-fuzzy = { path = "../slopdesk-fuzzy" }
 slopdesk-rowscan = { path = "../slopdesk-rowscan" }

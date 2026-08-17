@@ -146,6 +146,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "slopdesk-devicelog"
+version = "0.1.0"
+
+[[package]]
 name = "slopdesk-dropd"
 version = "0.1.0"
 
@@ -157,6 +161,7 @@ dependencies = [
  "slopdesk-altscreen",
  "slopdesk-androidd",
  "slopdesk-cli",
+ "slopdesk-devicelog",
  "slopdesk-dropd",
  "slopdesk-fuzzy",
  "slopdesk-hookevent",

@@ -58,6 +58,7 @@ pub mod client_view;
 pub mod cursor_overlay;
 pub mod cursor_wire;
 pub mod decode_admission;
+pub mod device_log;
 pub mod file_transfer;
 pub mod find_matches;
 pub mod folders;

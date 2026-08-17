@@ -10,7 +10,7 @@
 // cannot see and did not ask for.
 //
 // Hang-safety: this constructs a real network object, so nothing here may be built in a unit test.
-// The parsing it delegates to (``SimulatorLogLine``, ``SimulatorLogMessage``) is pure and is where
+// The parsing it delegates to (``DeviceLogLine``, ``SimulatorLogMessage``) is pure and is where
 // the tests are.
 
 #if os(macOS)

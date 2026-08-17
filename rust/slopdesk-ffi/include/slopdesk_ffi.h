@@ -5394,6 +5394,49 @@ size_t slopdesk_android_control_encode(const SlopDeskAndroidControl *request,
                                        const unsigned char *text, size_t text_len,
                                        unsigned char *out, size_t cap);
 
+// ---------------------------------------------------------------------------
+// The two device consoles' line grammars — `slopdesk_devicelog`.
+//
+// A PURE door: the record names byte offsets INTO THE CALLER'S OWN LINE, so
+// nothing crosses back but six numbers and a severity and neither side
+// allocates. The grammars stay apart in two doors, because `logcat -v time`
+// and `log stream --style compact` put different things in the same slots and
+// a console that guessed would mis-colour every row of one device.
+//
+// An unrecognised line is not a failure: it answers PLAIN, an empty time and
+// name, and a message covering the whole input. Both sources emit their own
+// banners, and a swallowed banner is a console that looks like it silently
+// lost the boundary between two runs.
+
+// `logcat`'s V/D and the unified log's Df — most of a busy device's output.
+#define SLOPDESK_DEVICE_LOG_PLAIN 0
+// The unified log's Db and A. `logcat` never answers this.
+#define SLOPDESK_DEVICE_LOG_DEBUG 1
+#define SLOPDESK_DEVICE_LOG_INFO 2
+// `logcat`'s W. The unified log never answers this.
+#define SLOPDESK_DEVICE_LOG_WARNING 3
+#define SLOPDESK_DEVICE_LOG_ERROR 4
+// F in both, plus `logcat`'s A — its ASSERT, which a native abort prints.
+#define SLOPDESK_DEVICE_LOG_FATAL 5
+
+typedef struct {
+    uint32_t time_offset;
+    uint32_t time_len;
+    uint32_t name_offset;
+    uint32_t name_len;
+    uint32_t message_offset;
+    uint32_t message_len;
+    uint8_t severity;
+} SlopDeskDeviceLogLine;
+
+// `false` REFUSES a line longer than a uint32_t offset can name, having
+// written nothing — a truncated offset would name the wrong bytes of a real
+// line and render as a row someone might believe. No source writes one.
+bool slopdesk_logcat_parse(const unsigned char *line, size_t len,
+                           SlopDeskDeviceLogLine *out);
+bool slopdesk_unified_log_parse(const unsigned char *line, size_t len,
+                                SlopDeskDeviceLogLine *out);
+
 #ifdef __cplusplus
 }
 #endif

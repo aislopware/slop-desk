@@ -141,7 +141,7 @@ struct AndroidConsoleView: View {
         proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
     }
 
-    private func row(_ line: AndroidLogLine) -> some View {
+    private func row(_ line: DeviceLogLine) -> some View {
         HStack(alignment: .top, spacing: Slate.Metric.space1) {
             if !line.time.isEmpty {
                 Text(line.time)
@@ -149,8 +149,8 @@ struct AndroidConsoleView: View {
                     .fixedSize()
             }
             VStack(alignment: .leading, spacing: 0) {
-                if !line.tag.isEmpty {
-                    Text(line.tag)
+                if !line.name.isEmpty {
+                    Text(line.name)
                         .foregroundStyle(Self.tint(for: line.severity))
                 }
                 Text(line.message)
@@ -166,10 +166,10 @@ struct AndroidConsoleView: View {
         .contextMenu {
             Button("Copy Line") { copy(Self.plain(line)) }
             Button("Copy Console") { copy(visible.map(Self.plain).joined(separator: "\n")) }
-            if !line.tag.isEmpty {
+            if !line.name.isEmpty {
                 // The one filter action worth a menu item: a tag is what someone actually wants to
                 // isolate, and typing it into the field is the step this removes.
-                Button("Filter by \(line.tag)") { filter = line.tag }
+                Button("Filter by \(line.name)") { filter = line.name }
             }
         }
     }
@@ -182,12 +182,12 @@ struct AndroidConsoleView: View {
 
     /// Case-insensitive substring over the whole row — tag included, since "which tag is spamming
     /// this" is the first question anyone asks of a `logcat`.
-    private var visible: [AndroidLogLine] {
+    private var visible: [DeviceLogLine] {
         let trimmed = filter.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return model.logLines }
         return model.logLines.filter {
             $0.message.localizedCaseInsensitiveContains(trimmed)
-                || $0.tag.localizedCaseInsensitiveContains(trimmed)
+                || $0.name.localizedCaseInsensitiveContains(trimmed)
         }
     }
 
@@ -200,8 +200,8 @@ struct AndroidConsoleView: View {
             : "Connecting to logcat…"
     }
 
-    static func plain(_ line: AndroidLogLine) -> String {
-        [line.time, line.tag, line.message]
+    static func plain(_ line: DeviceLogLine) -> String {
+        [line.time, line.name, line.message]
             .filter { !$0.isEmpty }
             .joined(separator: " ")
     }
@@ -210,13 +210,17 @@ struct AndroidConsoleView: View {
     /// difference between the greys is how far back they sit. A warning is a grey too: `logcat` at
     /// warning level on an ordinary Android device is dozens of lines a minute of framework noise, so
     /// tinting it would spend the alarm colour on the state of nothing being wrong.
-    static func tint(for severity: AndroidLogLine.Severity) -> Color {
+    static func tint(for severity: DeviceLogSeverity) -> Color {
         switch severity {
         case .fatal,
              .error: Slate.StatusInk.err
         case .warning,
              .info: Slate.Text.secondary
-        case .plain: Slate.Text.tertiary
+        // `logcat`'s V and D both land in `plain`, and both should recede. `debug` is the unified
+        // log's bucket and `logcat` never answers it — it is here so this switch stays exhaustive
+        // over one shared ink scale rather than over an alphabet only Android has.
+        case .debug,
+             .plain: Slate.Text.tertiary
         }
     }
 

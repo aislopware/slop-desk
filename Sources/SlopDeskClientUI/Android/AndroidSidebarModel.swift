@@ -101,7 +101,7 @@ final class AndroidSidebarModel {
     /// process on the host per subscriber, so a console nobody can see must not stay subscribed.
     private(set) var isConsoleOpen = false
     private(set) var logLevel: AndroidLogLevel = .info
-    private(set) var logLines: [AndroidLogLine] = []
+    private(set) var logLines: [DeviceLogLine] = []
     /// True once the host reports its `logcat` child is up. The distinction the console draws is
     /// between a quiet device and a console that never started.
     private(set) var isLogStarted = false
@@ -770,7 +770,7 @@ final class AndroidSidebarModel {
     private func append(_ lines: [String]) {
         guard !lines.isEmpty else { return }
         logLines.append(contentsOf: lines.map { text in
-            var line = AndroidLogLine.parse(text)
+            var line = DeviceLogLine.logcat(text)
             logSequence &+= 1
             line.id = logSequence
             return line

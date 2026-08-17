@@ -160,7 +160,7 @@ struct SimulatorConsoleView: View {
         proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
     }
 
-    private func row(_ line: SimulatorLogLine) -> some View {
+    private func row(_ line: DeviceLogLine) -> some View {
         HStack(alignment: .top, spacing: Slate.Metric.space1) {
             if !line.time.isEmpty {
                 Text(line.time)
@@ -168,8 +168,8 @@ struct SimulatorConsoleView: View {
                     .fixedSize()
             }
             VStack(alignment: .leading, spacing: 0) {
-                if !line.process.isEmpty {
-                    Text(line.process)
+                if !line.name.isEmpty {
+                    Text(line.name)
                         .foregroundStyle(Self.tint(for: line.severity))
                 }
                 Text(line.message)
@@ -196,12 +196,12 @@ struct SimulatorConsoleView: View {
 
     /// Case-insensitive substring over the whole row — process included, since "which process is
     /// spamming this" is as common a question as "where is my message".
-    private var visible: [SimulatorLogLine] {
+    private var visible: [DeviceLogLine] {
         let trimmed = filter.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return model.logLines }
         return model.logLines.filter {
             $0.message.localizedCaseInsensitiveContains(trimmed)
-                || $0.process.localizedCaseInsensitiveContains(trimmed)
+                || $0.name.localizedCaseInsensitiveContains(trimmed)
         }
     }
 
@@ -214,8 +214,8 @@ struct SimulatorConsoleView: View {
             : "Connecting to the device log…"
     }
 
-    static func plain(_ line: SimulatorLogLine) -> String {
-        [line.time, line.process, line.message]
+    static func plain(_ line: DeviceLogLine) -> String {
+        [line.time, line.name, line.message]
             .filter { !$0.isEmpty }
             .joined(separator: " ")
     }
@@ -228,12 +228,16 @@ struct SimulatorConsoleView: View {
     /// state of nothing being wrong, and a wall half-green made the handful of red lines it exists to
     /// surface no easier to find. Debug still recedes, because a debug line IS lower-value than the
     /// default and luminance is the channel for that.
-    static func tint(for severity: SimulatorLogLine.Severity) -> Color {
+    static func tint(for severity: DeviceLogSeverity) -> Color {
         switch severity {
-        case .fault,
+        case .fatal,
              .error: Slate.StatusInk.err
         case .debug: Slate.Text.tertiary
+        // `warning` is `logcat`'s bucket and the unified log never answers it — it is here so this
+        // switch stays exhaustive over one shared ink scale rather than over an alphabet only the
+        // simulator has.
         case .info,
+             .warning,
              .plain: Slate.Text.secondary
         }
     }

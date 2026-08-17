@@ -196,8 +196,8 @@ final class SimulatorDeviceTests: XCTestCase {
     @MainActor
     func testOnlyAFaultIsInkedInColourAndEveryHealthyLevelIsAGrey() {
         XCTAssertEqual(SimulatorConsoleView.tint(for: .error), Slate.StatusInk.err)
-        XCTAssertEqual(SimulatorConsoleView.tint(for: .fault), Slate.StatusInk.err)
-        for healthy in [SimulatorLogLine.Severity.info, .plain, .debug] {
+        XCTAssertEqual(SimulatorConsoleView.tint(for: .fatal), Slate.StatusInk.err)
+        for healthy in [DeviceLogSeverity.info, .plain, .debug] {
             XCTAssertNotEqual(
                 SimulatorConsoleView.tint(for: healthy), Slate.StatusInk.err,
                 "\(healthy) is not a problem and must not borrow the problem colour",
@@ -250,7 +250,7 @@ final class SimulatorDeviceTests: XCTestCase {
 
     func testTheConsoleSocketPinsTheCompactStyleAndCarriesTheLevelAsAQueryItem() {
         // `style=compact` is not a preference: it is the one style whose line shape
-        // `SimulatorLogLine` can split, and a server default of anything else would leave every row
+        // `slopdesk_devicelog::unified` can split, and a server default of anything else would leave every row
         // unparsed. The level goes straight to the server's `log stream --level`.
         XCTAssertEqual(
             SimulatorEndpoints.logs(

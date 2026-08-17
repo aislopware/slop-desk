@@ -3807,6 +3807,48 @@ if ! spells 'enum AndroidBodilessMessage: UInt8' "${SWIFT_ANDROID_CONTROL}" > /d
 fi
 printf 'check-supervisor: one writer for the scrcpy control channel, and no reply-bearing type.\n'
 
+# ── And ONE grammar per device console, neither of them in Swift ───────────────────────────────
+# Two files parsed a device's own log output — `logcat -v time` and `log stream --style compact` —
+# over text a program on the far side of a device wrote, thousands of lines a minute, on the socket
+# read path. Both asked `Character.isNumber`/`isUppercase`, which are Unicode property lookups per
+# grapheme cluster, and both built four `String`s a row out of a `String` the row was a slice of.
+# They were also the SAME parser twice: four fields, the same verbatim fallback, one field name
+# apart. `slopdesk-devicelog` owns both grammars and one `DeviceLogLine` carries both consoles' rows.
+SWIFT_DEVICE_LOG=Sources/SlopDeskClientUI/DevicePanel/DeviceLogLine.swift
+if hit=$(spells 'func isDate|func isTime|func isPriority|func isSeverityToken|isNumber|isUppercase|allSatisfy|firstIndex\(of:|drop\(while:' "${SWIFT_DEVICE_LOG}"); then
+  fail "${hit} walks a device log line in Swift again — slopdesk-devicelog owns both grammars"
+fi
+for entry in 'slopdesk_logcat_parse' 'slopdesk_unified_log_parse'; do
+  if ! spells "${entry}" "${SWIFT_DEVICE_LOG}" > /dev/null; then
+    fail "${SWIFT_DEVICE_LOG} no longer asks ${entry} — the console grammars are one implementation"
+  fi
+done
+# The two structs are gone and must stay gone: they were one type spelled twice, and a second one
+# would immediately grow a second parse to fill it.
+for revived in 'struct AndroidLogLine' 'struct SimulatorLogLine'; do
+  if hit=$(spells "${revived}" Sources/SlopDeskClientUI/Android/*.swift \
+    Sources/SlopDeskClientUI/Simulator/*.swift Sources/SlopDeskClientUI/DevicePanel/*.swift); then
+    fail "${hit} brought back ${revived} — one console row serves both device panels"
+  fi
+done
+# One INK SCALE, six cases, and each console view switches over all of it. Two enums here is how the
+# two parsers grew apart the first time.
+if ! spells 'enum DeviceLogSeverity: UInt8' "${SWIFT_DEVICE_LOG}" > /dev/null; then
+  fail "${SWIFT_DEVICE_LOG}: the shared severity scale stopped being one closed enum"
+fi
+# The spans cross a C ABI and slice the caller's own buffer, so the Swift side clamps rather than
+# trusts. Without the clamp a door bug is a TRAP in the client, not a wrong row.
+if ! spells 'Swift\.min\(Int\(offset\), bytes\.count\)' "${SWIFT_DEVICE_LOG}" > /dev/null; then
+  fail "${SWIFT_DEVICE_LOG}: a span from the door is sliced unclamped — that is a trap, not a bad row"
+fi
+# Both halves of the crate, so neither grammar can be quietly folded into the other.
+for module in logcat unified; do
+  if ! spells 'pub fn parse' "rust/slopdesk-devicelog/src/${module}.rs" > /dev/null; then
+    fail "rust/slopdesk-devicelog/src/${module}.rs lost its parse — the two grammars stay apart"
+  fi
+done
+printf 'check-supervisor: one grammar per device console, and neither of them in Swift.\n'
+
 # ── One regex engine meets the untrusted rows, and it does not backtrack ───────────────────────
 # Hint Mode ran ten compiled NSRegularExpressions over rows a remote program wrote, bridged through
 # NSString, mapping columns with a third cell walk. Two things were wrong with that and this pins
@@ -4084,18 +4126,11 @@ fi
 if ! grep -q 'AspectFit.displayedVideoRect' Sources/SlopDeskClientUI/DevicePanel/DevicePanelGeometry.swift; then
   fail "the device panels stopped using geometry::displayed_video_rect — a click lands where it is drawn"
 fi
-# The same holds for what the panels DRAW and how they READ a line. The empty stage, its caption,
-# the empty-list notice and the loading-veil asymmetry are one design decision each, recorded in the
-# singular in docs/DECISIONS.md and written down twice; the console lexer is one grammar's worth of
-# tokenizing under two grammars that genuinely differ after it. The measured veil DELAYS stay per
-# panel (400 ms vs 600 ms, two pieces of hardware), and so does each console's own header shape.
-# shellcheck disable=SC2016,SC2046 # the quotes hold a REGEX, and the file list splits on purpose
-panel_chrome=$(spells 'firstIndex\(where: \\.isWhitespace\)|allSatisfy \{ \$0.isNumber \|\| \$0 == "-" \}' \
-  $(repo_files 'Sources/SlopDeskClientUI/Android/*.swift' 'Sources/SlopDeskClientUI/Simulator/*.swift') 2> /dev/null || true)
-if [[ -n "${panel_chrome}" ]]; then
-  printf '%s\n' "${panel_chrome}" >&2
-  fail "a device console lexed its own token or date — DeviceLogLexer owns both"
-fi
+# The same holds for what the panels DRAW. The empty stage, its caption, the empty-list notice and
+# the loading-veil asymmetry are one design decision each, recorded in the singular in
+# docs/DECISIONS.md and written down twice. The measured veil DELAYS stay per panel (400 ms vs
+# 600 ms, two pieces of hardware). The console LEXER used to be pinned here too; both grammars are
+# `slopdesk-devicelog` now, and the section above this one is what holds them there.
 # The panels' own files must READ the shared laws rather than restate them. A positive check,
 # because the veil and the notice are ordinary SwiftUI whose ingredients are used everywhere else.
 declare -a panel_shares=(
@@ -4103,8 +4138,6 @@ declare -a panel_shares=(
   "Sources/SlopDeskClientUI/Simulator/SimulatorStageView.swift:DevicePanelChrome.veil"
   "Sources/SlopDeskClientUI/Android/AndroidDeviceList.swift:DevicePanelChrome.notice"
   "Sources/SlopDeskClientUI/Simulator/SimulatorDeviceList.swift:DevicePanelChrome.notice"
-  "Sources/SlopDeskClientUI/Android/AndroidLogLine.swift:DeviceLogLexer.token"
-  "Sources/SlopDeskClientUI/Simulator/SimulatorLogLine.swift:DeviceLogLexer.token"
   "Sources/SlopDeskClientUI/Android/AndroidVideoFormat.swift:DevicePanelSampleBuffer.dimensions"
   "Sources/SlopDeskClientUI/Simulator/SimulatorVideoFormat.swift:DevicePanelSampleBuffer.dimensions"
 )

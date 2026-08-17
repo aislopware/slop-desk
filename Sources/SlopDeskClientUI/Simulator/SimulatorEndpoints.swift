@@ -92,7 +92,7 @@ enum SimulatorEndpoints {
     }
 
     /// The console's websocket. `style=compact` is not a preference — it is the only style whose
-    /// line shape ``SimulatorLogLine`` can colour by severity. `level` is passed to the server's own
+    /// line shape ``DeviceLogLine`` can colour by severity. `level` is passed to the server's own
     /// `log stream --level`, so only ``SimulatorLogLevel``'s closed set may reach it: an invented
     /// level still upgrades the socket and then dies when the child refuses it.
     static func logs(host: String, port: UInt16, udid: String, level: String) -> URL? {

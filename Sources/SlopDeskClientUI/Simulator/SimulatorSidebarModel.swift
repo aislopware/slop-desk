@@ -103,7 +103,7 @@ final class SimulatorSidebarModel {
     /// subscribed.
     private(set) var isConsoleOpen = false
     private(set) var logLevel: SimulatorLogLevel = .info
-    private(set) var logLines: [SimulatorLogLine] = []
+    private(set) var logLines: [DeviceLogLine] = []
     /// True once the server reports its `log stream` child is up. The distinction the console draws
     /// is between a quiet device and a console that never started.
     private(set) var isLogStarted = false
@@ -623,7 +623,7 @@ final class SimulatorSidebarModel {
     private func append(_ lines: [String]) {
         guard !lines.isEmpty else { return }
         logLines.append(contentsOf: lines.map { text in
-            var line = SimulatorLogLine.parse(text)
+            var line = DeviceLogLine.unified(text)
             logSequence &+= 1
             line.id = logSequence
             return line
