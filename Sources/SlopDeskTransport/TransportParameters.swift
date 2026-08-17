@@ -30,7 +30,10 @@ import Network
 public enum TransportParameters {
     /// TCP keepalive idle time (seconds) before the first probe.
     static let keepaliveIdleSeconds = 10
-    /// Interval (seconds) between keepalive probes.
+    /// Interval (seconds) between keepalive probes. NOT the video path's
+    /// `KEEPALIVE_INTERVAL_SECONDS`, which happens to be 5 as well: that one is an application
+    /// datagram the client sends over UDP to hold a NAT mapping open, this one is a kernel TCP
+    /// probe. Same number, two unrelated laws — do not fold them into one door.
     static let keepaliveIntervalSeconds = 5
     /// Number of unanswered keepalive probes before the connection is declared dead.
     static let keepaliveCount = 3

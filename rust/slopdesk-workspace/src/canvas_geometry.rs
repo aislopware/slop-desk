@@ -4,7 +4,7 @@
 //! All of it is arithmetic over the plane, which is the point — the resize math is the same rule
 //! whether a mouse or a network peer asked for it, and none of it needs a view to be exercised.
 
-use crate::geometry::{CASCADE_STEP, CULL_MARGIN, Camera, Point, Rect, Size, sanitize, sanitized_extent};
+use crate::geometry::{CASCADE_STEP, Camera, Point, Rect, Size, sanitize, sanitized_extent};
 
 /// Which corner or edge of a pane a resize is dragging.
 ///
@@ -261,32 +261,12 @@ pub fn is_visible<Id: PartialEq>(
         .intersects(camera.viewport_rect(viewport).outset_by(margin, margin))
 }
 
-/// Every pane that should stay mounted, at the standard overscan.
-pub fn visible_panes<'a, Id: PartialEq>(
-    panes: &'a [PlacedPane<Id>],
-    camera: Camera,
-    viewport: Size,
-    focused: Option<&'a Id>,
-) -> Vec<&'a PlacedPane<Id>> {
-    panes
-        .iter()
-        .filter(|pane| is_visible(pane, camera, viewport, focused, CULL_MARGIN))
-        .collect()
-}
-
-/// The panes whose frame touches the viewport itself — no overscan, no kind filter.
-///
-/// This is the "on screen" membership the live-video cap consumes, and it is kept separate from
-/// culling ON PURPOSE: terminals being held mounted must not pollute the set, or the cap would
-/// count panes that are nowhere near the screen.
-pub fn viewport_members<Id>(panes: &[PlacedPane<Id>], camera: Camera, viewport: Size) -> Vec<&Id> {
-    let rect = camera.viewport_rect(viewport);
-    panes
-        .iter()
-        .filter(|pane| pane.frame.intersects(rect))
-        .map(|pane| &pane.id)
-        .collect()
-}
+// There is no `visible_panes` / `viewport_members` here, and there was: two functions that filtered
+// a SLICE by the two predicates above. Nothing called them. The predicates are the decision and
+// they cross as `slopdesk_ws_pane_visible` and `slopdesk_ws_pane_in_viewport`; the LOOP is not a
+// decision, so it stays where the array already is, in `CanvasGeometry.visibleItems` and
+// `.viewportMembers`. Marshalling a whole pane array across the boundary to run a `filter` would
+// buy nothing and cost a copy per camera move.
 
 /// The default padding around the fit-all overview.
 pub const OVERVIEW_PADDING: f64 = 48.0;
@@ -455,8 +435,7 @@ mod tests {
 
     use super::{
         BEACON_INSET, BeaconEdge, OVERVIEW_PADDING, PlacedPane, ResizeAnchor, centered, collides,
-        default_placement, is_visible, offscreen_beacons, overview_layout, resizing, viewport_members,
-        visible_panes,
+        default_placement, is_visible, offscreen_beacons, overview_layout, resizing,
     };
     use crate::geometry::{CULL_MARGIN, Camera, MIN_ITEM_SIZE, Point, Rect, Size};
 
@@ -649,18 +628,27 @@ mod tests {
         );
     }
 
+    /// The two questions a canvas asks per camera move must not answer the same thing.
+    ///
+    /// Asked one pane at a time, the way the caller asks them: a terminal parked five thousand
+    /// points off screen still counts as VISIBLE (it stays mounted, because the compositor occludes
+    /// it for free), and must NOT count as a viewport MEMBER, because the live-video cap counts
+    /// members and a terminal nowhere near the screen would spend a decode slot on nothing.
     #[test]
     fn the_video_cap_membership_ignores_the_terminals_held_mounted() {
-        let panes = [
-            PlacedPane::new(1_u32, Rect::xywh(0.0, 0.0, 400.0, 300.0), true),
-            PlacedPane::new(2_u32, Rect::xywh(5000.0, 0.0, 400.0, 300.0), false),
-        ];
+        let near = PlacedPane::new(1_u32, Rect::xywh(0.0, 0.0, 400.0, 300.0), true);
+        let far = PlacedPane::new(2_u32, Rect::xywh(5000.0, 0.0, 400.0, 300.0), false);
         let camera = Camera::ZERO;
         let viewport = Size::new(1600.0, 1000.0);
-        assert_eq!(visible_panes(&panes, camera, viewport, None).len(), 2);
-        assert_eq!(
-            viewport_members(&panes, camera, viewport),
-            vec![&1_u32],
+        let screen = camera.viewport_rect(viewport);
+        assert!(is_visible(&near, camera, viewport, None, CULL_MARGIN));
+        assert!(
+            is_visible(&far, camera, viewport, None, CULL_MARGIN),
+            "a terminal is held mounted wherever it is",
+        );
+        assert!(near.frame.intersects(screen));
+        assert!(
+            !far.frame.intersects(screen),
             "only what actually touches the screen counts against the cap",
         );
     }

@@ -19,8 +19,8 @@ Absent — pane-level chrome: the `AgentInputFooter` coordinator+actions exist b
 | **Agent detection (foreground process poll)** | done | `ClaudePaneDetector.sample(name:at:)` at `Sources/SlopDeskHost/ClaudePaneDetector.swift:103`; ~1 Hz foreground basename poll via `MuxChannelSession.agentWatchTask` at `Sources/SlopDeskHost/MuxChannelSession.swift:538` |
 | **Agent detection (hook events — SessionStart/PreToolUse/Stop/Notification)** | done | `AgentHookListener`/`AgentHookHandler` at `Sources/SlopDeskHost/AgentHookListener.swift`; `ClaudePaneDetector.hook(bytes:at:)` at `Sources/SlopDeskHost/ClaudePaneDetector.swift:140`; hook socket wired in `HostServer.spawnFreshShell` |
 | **Agent detection (self-report via ctl verb)** | done | `AgentControlHandler.reportAgent` at `Sources/SlopDeskHost/AgentControlListener.swift:149`; `ClaudePaneDetector.report(state:message:at:)` at `Sources/SlopDeskHost/ClaudePaneDetector.swift:166`; grace-window stickiness prevents foreground-poll from wiping a self-reported state |
-| **Agent detection (screen tier)** | live | the rule ladder is `rust/slopdesk-screend`'s `detect` verb, driven by `PaneScreenScanner` (`docs/50` §2, `docs/52` §4b). `ClaudeProcessMatcher` is the process-name half of the old `ClaudeManifestMatcher`; its screen cues were deleted with the move. `ClaudePaneDetector.manifestVerdict` is the older coarse seam and is still not live-fed |
-| **awaiting-input / busy / done / idle status model** | done | `ClaudeStatus` enum (none/idle/working/done/needsPermission) at `Sources/SlopDeskAgentDetect/ClaudeStatus.swift`; state machine with `done → idle` decay at `Sources/SlopDeskAgentDetect/ClaudeStatusMachine.swift` |
+| **Agent detection (screen tier)** | live | the rule ladder is `rust/slopdesk-screend`'s `detect` verb, driven by `PaneScreenScanner` (`docs/50` §2, `docs/52` §4b). the process-name half of the old `ClaudeManifestMatcher` survives as `rust/slopdesk-agent`'s `process` predicates; its screen cues were deleted with the move, and the Swift `ClaudeProcessMatcher` wrapper over those predicates went when the fusion moved to `rust/slopdesk-agent::detector` |
+| **awaiting-input / busy / done / idle status model** | done | `ClaudeStatus` enum (none/idle/working/done/needsPermission) at `Sources/SlopDeskAgentDetect/ClaudeStatus.swift`; state machine with `done → idle` decay at `rust/slopdesk-agent/src/machine.rs`, constructed only by that crate's `PaneDetector` |
 | **Status wire transport (type 26 + type 27)** | done | `WireMessage.claudeStatus` / `WireMessage.foregroundProcess`; `ClaudePaneDetector.Emission` deduped at `Sources/SlopDeskHost/ClaudePaneDetector.swift:227`; `LivePaneSession.feedAgentSignal` sinks them at `Sources/SlopDeskWorkspaceCore/Workspace/Store/LivePaneSession.swift:402` |
 | **Per-pane status stored client-side** | done | `WorkspaceStore.paneAgentStatus: [PaneID: ClaudeStatus]` at `Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceStore.swift:2895`; `setAgentStatus` at `Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceStore+Attention.swift:35` |
 | **Status rollup (tab / session)** | done | `rollupStatus(forTab:)` / `rollupStatus(forSession:)` at `Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceStore+Attention.swift:56,62` |
@@ -40,7 +40,7 @@ Absent — pane-level chrome: the `AgentInputFooter` coordinator+actions exist b
 | **Fork / Branch session (/branch, /fork)** | na-remote | Spec at `docs/ui-shell/spec/agents__fork-branch-session.md`; fork runs inside the Claude Code process via its `/branch` slash command — slopdesk is a pass-through terminal, so the agent forks; slopdesk would only detect the new session and route it to a new pane. No slopdesk-side fork routing implemented. |
 | **Monitor Tasks / parallel-tasks (tab badge, prevent-sleep toggle, per-tab notification toggles)** | partial | Spec at `docs/ui-shell/spec/agents__parallel-tasks.md`; attention-edge notifications (done/needsPermission) live; per-tab toggle UI (Badge While Processing, Badge When Complete, Prevent Sleep, etc.) missing; no IOKit power assertion for prevent-sleep |
 | **Claude-specific: TerminalMode / alt-screen detection (B1 compose mode)** | done | `TerminalModeTracker` + `TerminalModeStream` + `InputDedupRing` at `Sources/SlopDeskClaudeCode/`; `InputBoxModel` switches affordance shell↔tuiCompose on alt-screen enter/exit |
-| **Claude-specific: OSC title detection** | done | `ClaudeStatusMachine.titleNamesClaude` at `Sources/SlopDeskAgentDetect/ClaudeStatusMachine.swift:222`; `oscTitle` signal lifts presence floor |
+| **Claude-specific: OSC title detection** | done | `ClaudeStatusMachine::title_names_claude` at `rust/slopdesk-agent/src/machine.rs`; the `slopdesk_agent_detector_title` fold lifts the presence floor |
 | **Agent-generic: subscribe verb (output streaming over ctl socket)** | done | `serveSubscribe` (per-pane) and `serveSubscribeAll` (supervision stream) at `Sources/SlopDeskHost/AgentControlListener.swift:606,743`; `agent_status_changed` NDJSON events on status change |
 | **Agent-generic: Claude Code profile (TERM, env seams)** | done | `ClaudeCodeProfile` at `Sources/SlopDeskHost/ClaudeCodeProfile.swift`; injected via `HostEnvironment.curated` in `spawnFreshShell` |
 
@@ -49,10 +49,10 @@ Absent — pane-level chrome: the `AgentInputFooter` coordinator+actions exist b
 ## Key files
 
 - `Sources/SlopDeskAgentDetect/ClaudeStatus.swift` — status enum, urgency, rollup
-- `Sources/SlopDeskAgentDetect/ClaudeStatusMachine.swift` — pure per-pane state machine
-- `Sources/SlopDeskAgentDetect/ClaudeSignal.swift` — signal vocabulary
-- `Sources/SlopDeskAgentDetect/ClaudeProcessMatcher.swift` — process-name classifier (`claude` vs a wrapper runtime)
-- `Sources/SlopDeskHost/ClaudePaneDetector.swift` — single per-pane fusion detector (P1)
+- `rust/slopdesk-agent/src/machine.rs` — pure per-pane state machine
+- `rust/slopdesk-agent/src/process.rs` — process-name classifier (`claude` vs a wrapper runtime)
+- `rust/slopdesk-agent/src/detector.rs` — the per-pane FUSION: the machine plus every dedupe anchor
+- `Sources/SlopDeskHost/ClaudePaneDetector.swift` — the handle over that fusion, plus the `WireMessage` shapes (P1)
 - `Sources/SlopDeskHost/AgentHookListener.swift` — hook socket server + `AgentHookHandler`
 - `Sources/SlopDeskHost/AgentControlListener.swift` — ctl socket server, all verbs incl. subscribe
 - `Sources/SlopDeskHost/AgentControlState.swift` — valid self-report states

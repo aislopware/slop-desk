@@ -30,7 +30,6 @@
 //! - [`split_layout`] — the flex partition that turns that tree into rectangles, and the solved
 //!   geometry the renderer and the focus resolver both read.
 //! - [`focus`] — moving focus by what is on screen rather than by tree position.
-//! - [`connection`] — the one host the whole app dials, and the port it derives rather than stores.
 //! - [`listen`] — the other end of that: what port the HOST may bind, and how to tell a bind
 //!   collision apart from a network that has not come up yet.
 //! - [`send_keys`] — text with control tokens in it, turned into the bytes a PTY receives.
@@ -56,7 +55,6 @@ pub mod canvas_arrange;
 pub mod canvas_geometry;
 pub mod canvas_non_overlap;
 pub mod canvas_snap;
-pub mod connection;
 pub mod focus;
 pub mod frecency;
 pub mod geometry;
@@ -81,7 +79,6 @@ pub use canvas::{AlignEdge, Canvas, CanvasItem, LayoutPreset, PaneGroup};
 pub use canvas_geometry::{OffscreenBeacon, OverviewLayout, PlacedPane, ResizeAnchor, placement, resizing};
 pub use canvas_non_overlap::{Body, BodyId, NonOverlapConfig, make_space, separate, slide};
 pub use canvas_snap::{Guide, GuideKind, SnapConfig, Stick, snap_move, snap_resize};
-pub use connection::ConnectionTarget;
 pub use focus::{FocusDirection, cycle, neighbor};
 pub use frecency::{FolderEntry, ReferenceSeconds};
 pub use geometry::{Camera, Point, Rect, Size, sanitize, sanitize_preserving_size};

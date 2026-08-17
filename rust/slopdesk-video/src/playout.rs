@@ -23,6 +23,9 @@ pub const DEFAULT_BASE_SECONDS: f64 = 0.004;
 pub const DEFAULT_FLOOR_SECONDS: f64 = 0.004;
 /// The maximum playout (seconds), capping the latency a pathological link can add.
 pub const DEFAULT_CEIL_SECONDS: f64 = 0.035;
+/// How much of the buffer one call may give back (seconds) — the SHRINK half of the hysteresis, and
+/// the reason a spike decays over several ticks instead of snapping back on the next quiet sample.
+pub const DEFAULT_SHRINK_STEP_SECONDS: f64 = 0.002;
 
 /// The tunable shape of the playout law, in the seconds domain.
 ///

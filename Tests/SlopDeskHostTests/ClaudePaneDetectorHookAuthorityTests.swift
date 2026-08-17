@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 import SlopDeskAgentDetect
 import SlopDeskProtocol
@@ -13,6 +14,11 @@ import XCTest
 /// torn read is fed DIRECTLY, so these pins hold even if every guard upstream of the machine fails.
 final class ClaudePaneDetectorHookAuthorityTests: XCTestCase {
     private func json(_ s: String) -> Data { Data(s.utf8) }
+
+    /// How long the screen must contradict an authoritative status before it may release a block.
+    /// Asked of the crate that runs the window: a test walking its own copy would prove the
+    /// detector agrees with the test rather than with the policy it implements.
+    private let screenDissentToRelease = slopdesk_agent_dissent_seconds(1)
 
     /// The exact payload Claude Code posts when it asks the human something.
     private func askHook(id: String) -> Data {
@@ -310,12 +316,12 @@ final class ClaudePaneDetectorHookAuthorityTests: XCTestCase {
         _ = d.hook(bytes: askHook(id: "ask-1"), at: 1)
 
         var now: TimeInterval = 1.3
-        while now < 1 + ClaudeStatusMachine.screenDissentToRelease {
+        while now < 1 + screenDissentToRelease {
             _ = d.screenDetection(tornRead, at: now)
             XCTAssertEqual(d.status, .needsPermission, "held at \(now)")
             now += 0.3
         }
-        while d.status == .needsPermission, now < 1 + ClaudeStatusMachine.screenDissentToRelease + 2 {
+        while d.status == .needsPermission, now < 1 + screenDissentToRelease + 2 {
             _ = d.screenDetection(tornRead, at: now)
             now += 0.3
         }
@@ -330,7 +336,7 @@ final class ClaudePaneDetectorHookAuthorityTests: XCTestCase {
         _ = d.sample(name: "claude", at: 0)
         _ = d.hook(bytes: askHook(id: "ask-1"), at: 1)
         var now: TimeInterval = 1.3
-        while now < 1 + ClaudeStatusMachine.screenDissentToRelease + 1 {
+        while now < 1 + screenDissentToRelease + 1 {
             _ = d.screenDetection(tornRead, at: now)
             now += 0.3
         }

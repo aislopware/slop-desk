@@ -126,6 +126,27 @@ pub unsafe extern "C" fn slopdesk_video_fragment_encode(
     unsafe { deliver(&datagram, out, cap) }
 }
 
+/// One of the fragment size budgets, by index: `0` the header, `1` the whole datagram, `2` the
+/// payload the two leave between them. An unknown index answers 0, which packetizes nothing.
+///
+/// The datagram budget is an MTU claim — 1200 bytes stays under a typical path MTU once
+/// `WireGuard`'s overhead is on it — and every other codec that shares this socket sizes its own
+/// chunk by subtracting from it. Transcribed, a raised budget would reach the packetizer and none
+/// of them, and the first symptom is a fragmented datagram on the slowest link, not an error here.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_video_fragment_size(index: c_uchar) -> usize {
+    match index {
+        0 => slopdesk_video::fragment::HEADER_SIZE,
+        1 => slopdesk_video::fragment::MAX_DATAGRAM_SIZE,
+        2 => slopdesk_video::fragment::MAX_PAYLOAD_SIZE,
+        _ => 0,
+    }
+}
+
 #[cfg(test)]
 #[expect(
     unsafe_code,

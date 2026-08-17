@@ -166,8 +166,8 @@ public final class FramePacer: @unchecked Sendable {
     private let playoutBaseMs: Double
     private let playoutFloorMs: Double
     private let playoutCeilMs: Double
-    /// Max shrink per recompute tick (seconds) — the shrink-slow rate that decays a transient spike.
-    private let playoutShrinkStepMs: Double = 2.0
+    /// Max shrink per recompute tick (ms) — the shrink-slow rate that decays a transient spike.
+    private let playoutShrinkStepMs = AdaptivePlayoutPolicy.defaultShrinkStepMs
     /// Folded-sample counter gating the ~1s recompute cadence (avoids per-fragment churn). ``lock``.
     private var playoutJitterSampleCount = 0
     /// Single pending frame + its deadline (latest-wins). Guarded by ``lock``.
@@ -241,10 +241,10 @@ public final class FramePacer: @unchecked Sendable {
         playoutDelayMs: Double = 20.0,
         adaptivePlayout: Bool = false,
         fixedPlayoutOverride: Bool = false,
-        playoutK: Double = 0.8,
-        playoutBaseMs: Double = 4.0,
-        playoutFloorMs: Double = 4.0,
-        playoutCeilMs: Double = 35.0,
+        playoutK: Double = AdaptivePlayoutPolicy.defaultK,
+        playoutBaseMs: Double = AdaptivePlayoutPolicy.defaultBaseMs,
+        playoutFloorMs: Double = AdaptivePlayoutPolicy.defaultFloorMs,
+        playoutCeilMs: Double = AdaptivePlayoutPolicy.defaultCeilMs,
         reprojector: ScrollReprojector? = nil,
         applyReprojection: ((SIMD2<Float>) -> Void)? = nil,
         renderCallback: @escaping RenderCallback,

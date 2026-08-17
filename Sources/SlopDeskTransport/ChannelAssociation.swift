@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 
 /// The shared-mux channel-association preamble that pairs two physical TCP connections (DATA +
@@ -20,8 +21,10 @@ enum ChannelAssociation {
     static let muxControlTag: UInt8 = 0x03
     /// Discriminator byte for a SHARED-MUX DATA connection.
     static let muxDataTag: UInt8 = 0x04
-    /// Length of a UUID on the wire (16 raw bytes), matching `SlopDeskProtocol`.
-    static let sessionIDByteCount = 16
+    /// Length of a UUID on the wire (its raw bytes). ASKED FOR rather than transcribed: the preamble
+    /// this file reads and the `hello` body `SlopDeskProtocol` decodes are the same field, so one
+    /// number spelled twice would let a preamble be framed at a width no message uses.
+    static let sessionIDByteCount = slopdesk_wire_constant(1)
 
     /// Encodes the shared-mux CONTROL preamble (`[0x03][16-byte connectionID]`). The connectionID
     /// pairs the two physical mux sockets (CONTROL + DATA) into ONE shared ``MuxNWConnection``.

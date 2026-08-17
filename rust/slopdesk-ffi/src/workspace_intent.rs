@@ -30,8 +30,8 @@ use core::ffi::c_uchar;
 
 use slopdesk_wire::WorkspaceIntentStatus;
 use slopdesk_wire::document::apply::{self, IntentOutcome};
-use slopdesk_wire::document::codec as wire_codec;
 use slopdesk_wire::document::state::{HostWorkspaceState, WorkspaceEntry, WorkspaceKey};
+use slopdesk_wire::document::{codec as wire_codec, intent, topology};
 use slopdesk_workspace::identity::{IdSource, SessionId};
 use slopdesk_workspace::{PaneId, SplitNodeId, TabId};
 
@@ -254,6 +254,70 @@ pub const extern "C" fn slopdesk_ws_intent_status(index: c_uchar) -> c_uchar {
 )]
 pub const extern "C" fn slopdesk_ws_minted_ids_per_intent() -> usize {
     MINTED_IDS_PER_INTENT
+}
+
+/// One of the topology's two RING caps, by index: 0 the closed-tab ring, 1 the per-session focus
+/// MRU. An unknown index answers 0, which no caller can mistake for a ring.
+///
+/// Exported rather than transcribed for the reason every cap here is. These are REAPING
+/// thresholds, and the host is the one that reaps: a client holding the larger number renders a
+/// ring whose tail the host already deleted, and a client holding the smaller one hides tabs
+/// ⇧⌘T would still reopen. Neither shows an error — the ring is just quietly the wrong length,
+/// which is exactly the class of drift the whole document exists to end.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_ws_topology_ring_cap(index: c_uchar) -> usize {
+    match index {
+        0 => topology::CLOSED_TAB_RING_CAP,
+        1 => topology::FOCUS_MRU_CAP,
+        _ => 0,
+    }
+}
+
+/// One of the intent grammar's argument caps, by index.
+///
+/// `0` a name's byte cap, `1` a `reorderTabs` list's length cap, `2` the cap on a blob carrying a
+/// whole sub-payload. An unknown index answers 0, which refuses everything rather than admitting
+/// anything.
+///
+/// These are the bounds the HOST validates against before it allocates, so a client that encodes to
+/// a transcribed larger copy builds intents the host silently drops, and one holding a smaller copy
+/// truncates a rename the host would have taken whole. Either way the client believes it sent
+/// something the document never received.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_ws_intent_limit(index: c_uchar) -> usize {
+    match index {
+        0 => intent::MAX_NAME_BYTES,
+        1 => intent::MAX_TAB_COUNT,
+        2 => intent::MAX_BLOB_BYTES,
+        _ => 0,
+    }
+}
+
+/// The `root` field numbers a topology write must NOT reap, §4-shaped.
+///
+/// Reserved for config that does not cross (`docs/45` §5.3). A write that reaped them would delete
+/// whatever a future build had put there, and a client that transcribed the wrong three would reap
+/// exactly the fields it was meant to leave alone — a data loss with no error and no symptom until
+/// the build that reads them ships.
+///
+/// # Safety
+/// `out` must be null or writable for `cap` bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub const unsafe extern "C" fn slopdesk_ws_reserved_root_fields(out: *mut c_uchar, cap: usize) -> usize {
+    // SAFETY: the caller's obligation, restated above; `deliver` states its own.
+    unsafe { deliver(&topology::RESERVED_ROOT_FIELDS, out, cap) }
 }
 
 #[cfg(test)]

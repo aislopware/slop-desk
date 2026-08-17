@@ -189,10 +189,12 @@ public final class FrameReassembler {
         )
     }
 
-    /// The verdict tags ``slopdesk_video_reassembler_ingest`` answers with.
-    private static let verdictCompleted: UInt32 = 1
-    private static let verdictDropped: UInt32 = 2
-    private static let verdictStale: UInt32 = 3
+    /// The verdict tags ``slopdesk_video_reassembler_ingest`` answers with, taken from the header
+    /// rather than restated: a switch that transcribed them would keep compiling if the crate
+    /// renumbered, and read a dropped frame as a completed one.
+    private static let verdictCompleted = SLOPDESK_REASSEMBLE_COMPLETED
+    private static let verdictDropped = SLOPDESK_REASSEMBLE_DROPPED
+    private static let verdictStale = SLOPDESK_REASSEMBLE_STALE
 
     /// The latched wire bits ``slopdesk_video_reassembler_frame_flags`` packs.
     private static let frameKeyframe: UInt32 = 1 << 0

@@ -998,9 +998,6 @@ enum Slate {
         // Control plate (PlateIconButton) — rides the ladder's control rung.
         static let plate: CGFloat = heightControl
         static let iconSize: CGFloat = 13
-        /// The host-identity monogram plate (``SlateMonogram``) — sized to sit inside a control-height row.
-        static let monogram: CGFloat = 18
-
         // Settings option CARDS (`SettingsOptionCards`) — the illustrated radio group used where the choice
         // has a SHAPE (cursor caret, tab position, key layout, window geometry, theme). ONE size for all of
         // them: a card that is bigger in one group than another reads as a different control.

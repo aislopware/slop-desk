@@ -122,7 +122,8 @@ extension ClaudeStatus: Comparable {
 ///
 /// It lives beside the status rather than inside one emitter because it is the WIRE's shape, not any
 /// one emitter's. Two of them anchored on it while it was nested in a third — a foreground-watch
-/// reducer that folded its own second ``ClaudeStatusMachine`` and that nothing in the host had
+/// reducer that folded its own second `ClaudeStatusMachine` (``rust/slopdesk-agent``'s
+/// `machine`) and that nothing in the host had
 /// constructed since agent detection was fused into one machine per pane.
 public struct ClaudeStatusTriple: Sendable, Equatable {
     /// The status urgency byte.

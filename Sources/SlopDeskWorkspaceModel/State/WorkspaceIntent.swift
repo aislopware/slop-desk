@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 
 // MARK: - Ops
@@ -92,14 +93,16 @@ public enum WorkspaceIntentOutcome: Equatable, Sendable {
 /// against the document before the op runs.
 public enum WorkspaceIntentArgs {
     /// Cap on a name a client may set. Long enough for any real title, short enough that a peer
-    /// cannot make the host retain megabytes per rename.
-    public static let maxNameBytes = 512
+    /// cannot make the host retain megabytes per rename. Every cap here is ASKED FOR, because the
+    /// host validates against its own copy before it allocates: a client encoding to a larger
+    /// transcribed number builds intents the document silently drops.
+    public static let maxNameBytes = slopdesk_ws_intent_limit(0)
     /// Cap on a `reorderTabs` list. Real sessions have single-digit tab counts.
-    public static let maxTabCount = 4096
+    public static let maxTabCount = slopdesk_ws_intent_limit(1)
     /// Cap on the two blobs that carry a whole sub-payload — a `layoutStructure` and a
     /// `videoTarget`. Both are bounded by their own grammars once decoded; this bounds them BEFORE
     /// anything is copied out of the reader.
-    public static let maxBlobBytes = 16384
+    public static let maxBlobBytes = slopdesk_ws_intent_limit(2)
 
     // MARK: Encode
 

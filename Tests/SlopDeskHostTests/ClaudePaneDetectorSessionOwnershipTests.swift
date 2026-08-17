@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 import SlopDeskAgentDetect
 import XCTest
@@ -9,6 +10,11 @@ import XCTest
 /// id, posting the full hook set to the pane that spawned it.
 final class ClaudePaneDetectorSessionOwnershipTests: XCTestCase {
     private func json(_ s: String) -> Data { Data(s.utf8) }
+
+    /// How long the screen must contradict an authoritative status before it may release a block.
+    /// Asked of the crate that runs the window: a test walking its own copy would prove the
+    /// detector agrees with the test rather than with the policy it implements.
+    private let screenDissentToRelease = slopdesk_agent_dissent_seconds(1)
 
     private func ask(session: String, id: String) -> Data {
         json(
@@ -122,7 +128,7 @@ final class ClaudePaneDetectorSessionOwnershipTests: XCTestCase {
         // The screen says otherwise, steadily, and eventually wins.
         let idleRead = AgentScreenDetection(state: .idle, visibleIdle: true)
         var now: TimeInterval = 2.3
-        while d.status == .working, now < 2 + ClaudeStatusMachine.screenDissentToRelease + 3 {
+        while d.status == .working, now < 2 + screenDissentToRelease + 3 {
             _ = d.screenDetection(idleRead, at: now)
             now += 0.3
         }

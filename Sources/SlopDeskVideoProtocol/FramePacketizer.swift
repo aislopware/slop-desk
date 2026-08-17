@@ -102,8 +102,8 @@ public struct FrameFragmentHeader: Equatable, Sendable {
         self.payloadLength = payloadLength
     }
 
-    /// Header size in bytes.
-    public static let size = 19
+    /// Header size in bytes, from the crate that writes and reads it.
+    public static let size = slopdesk_video_fragment_size(0)
 }
 
 /// One fragment datagram = header + payload, encoded/decoded for the wire.
@@ -188,11 +188,13 @@ public struct FrameFragment: Equatable, Sendable {
 /// which is also what discharges the no-overlap obligation); `@unchecked Sendable` to cross the actor
 /// boundary like the prior shell.
 public final class VideoPacketizer: @unchecked Sendable {
-    /// Max UDP payload size (doc 17 §3.6: "<= 1200 bytes" to stay under typical MTU
-    /// with WireGuard overhead).
-    public static let maxDatagramSize = 1200
+    /// Max UDP payload size (doc 17 §3.6: "<= 1200 bytes" to stay under typical MTU with WireGuard
+    /// overhead). Asked for, not transcribed: every other codec on this socket sizes its own chunk
+    /// by subtracting from this budget, so a raised copy here would reach the packetizer and none
+    /// of them — and the first symptom is a fragmented datagram on the slowest link.
+    public static let maxDatagramSize = slopdesk_video_fragment_size(1)
     /// Max payload bytes per fragment (datagram budget minus the header).
-    public static let maxPayloadSize = maxDatagramSize - FrameFragmentHeader.size
+    public static let maxPayloadSize = slopdesk_video_fragment_size(2)
 
     /// Optional FEC scheme; when set, parity fragments are appended to each frame. Read by the host
     /// for ``FECScheme/groupSize``, and by ``init(fec:)`` for the shape the Rust codec is built at —

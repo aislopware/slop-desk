@@ -39,8 +39,8 @@ use slopdesk_workspace::{
     Body, BodyId, Camera, FocusDirection, Guide, GuideKind, NonOverlapConfig, PaneGroupId, PaneId, PaneSpec,
     Point, Rect, ResizeAnchor, Size, SnapConfig, SolvedLayout, SplitAxis, SplitNode, SplitNodeId,
     SplitWeight, Stick, TabId, WeightedChild, canvas, canvas_arrange, canvas_geometry, canvas_non_overlap,
-    canvas_snap, focus, geometry, listen, secrets, send_keys, shell_quoting, split_layout, state_codec,
-    tab_ordering, templates,
+    canvas_snap, focus, geometry, listen, secrets, send_keys, shell_quoting, split_layout, split_tree,
+    state_codec, tab_ordering, templates,
 };
 
 use crate::{borrow, deliver};
@@ -786,6 +786,42 @@ pub extern "C" fn slopdesk_ws_sanitize_camera(origin: CPoint) -> CPoint {
 )]
 pub const extern "C" fn slopdesk_ws_coordinate_bound() -> f64 {
     geometry::COORDINATE_BOUND
+}
+
+/// One of the canvas and split metrics, by index: `0` the cascade step, `1` the cull margin, `2`
+/// the placement overlap threshold, `3` the minimum flex weight.
+///
+/// Each of these is a number some Rust routine here already ENFORCES — the cascade loop steps by
+/// it, the placement scan compares against it, `repaired()` clamps to it — so a client that draws
+/// or asserts against a transcribed copy is describing a rule it does not share. An unknown index
+/// answers 0, which is outside every one of their bands and so cannot pass for a metric.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_ws_canvas_metric(index: c_uchar) -> f64 {
+    match index {
+        0 => geometry::CASCADE_STEP,
+        1 => geometry::CULL_MARGIN,
+        2 => canvas_geometry::OVERLAP_THRESHOLD,
+        3 => split_tree::MIN_WEIGHT,
+        _ => 0.0,
+    }
+}
+
+/// The size a brand-new pane opens at, from the crate that opens it.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_ws_default_leaf() -> CPoint {
+    let size = geometry::DEFAULT_ITEM_SIZE;
+    CPoint {
+        x: size.width,
+        y: size.height,
+    }
 }
 
 /// A canvas rect in screen coordinates, under the pan-only camera.

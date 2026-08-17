@@ -266,7 +266,8 @@ final class MuxChannelSession: @unchecked Sendable {
     private let blocksLock = NSLock()
     private var _runningCommand: String?
 
-    /// The SINGLE per-pane Claude detector (ONE ``ClaudeStatusMachine``). Fed by ALL detection
+    /// The SINGLE per-pane Claude detector (ONE `ClaudeStatusMachine`, ``rust/slopdesk-agent``'s
+    /// `machine`). Fed by ALL detection
     /// inputs — the foreground poll's `processPresent`, the per-poll `tick` (drives the `.done→.idle`
     /// decay), and the hook socket's bytes — so the host is the single source of truth. Touched from
     /// TWO contexts (the serial `agentWatchTask` and the socket-accept thread when a hook POSTs), so

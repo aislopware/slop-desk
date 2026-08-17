@@ -69,8 +69,9 @@ public enum CanvasGeometry {
     // MARK: New-pane placement
 
     /// The fraction of overlap (relative to the candidate's own area) at or above which a placement
-    /// counts as colliding and must be nudged.
-    public static let overlapThreshold: CGFloat = 0.25
+    /// counts as colliding and must be nudged — asked of the crate that performs the comparison, so
+    /// an assertion here cannot describe a threshold the placement does not use.
+    public static var overlapThreshold: CGFloat { slopdesk_ws_canvas_metric(2) }
 
     /// A clean canvas-space frame for a NEW pane of `size`:
     /// - seeded at `near.origin + (cascade, cascade)` (the `NSWindow.cascadeTopLeft` convention) when

@@ -39,57 +39,11 @@ final class AgentGoneEdgeTests: XCTestCase {
 
     // MARK: Stop — the work that outlives the turn
 
-    /// The label a `Stop` arrives with, read through the one door. `background_tasks` rides the
-    /// real payload (verified against the shipped CLI), already filtered producer-side to
-    /// running/pending backgrounded tasks — a turn that left work running says so.
-    private func stopLabel(_ body: String) -> String? {
-        guard case let .stop(_, label)? = ClaudeHookBody.read(Data(body.utf8))?.event else {
-            XCTFail("expected a Stop event for \(body)")
-            return nil
-        }
-        return label
-    }
-
-    /// A turn that SPOKE keeps its own words — the count is a fallback, never a prefix that buries
-    /// the assistant's message.
-    func testStopLabelPrefersTheAssistantMessage() {
-        XCTAssertEqual(
-            stopLabel(#"""
-            {"hook_event_name":"Stop","session_id":"s1","last_assistant_message":"Fixed the parser",
-             "background_tasks":[{"id":"a","status":"running"},{"id":"b","status":"pending"}]}
-            """#),
-            "Fixed the parser",
-        )
-    }
-
-    /// A silent turn that left work running says so, instead of showing an empty done chip.
-    func testStopLabelFallsBackToLiveWork() {
-        XCTAssertEqual(
-            stopLabel(#"""
-            {"hook_event_name":"Stop","background_tasks":[{"id":"a","type":"local_bash","status":"running",
-             "description":"npm run dev"},{"id":"b","type":"local_agent","status":"pending","description":"review"},
-             {"id":"c","status":"running"}]}
-            """#),
-            "3 background tasks running",
-        )
-        XCTAssertEqual(
-            stopLabel(
-                #"{"hook_event_name":"Stop","last_assistant_message":"   ","background_tasks":[{"status":"running"}]}"#,
-            ),
-            "1 background task running",
-        )
-        XCTAssertNil(stopLabel(#"{"hook_event_name":"Stop"}"#), "nothing to say stays nothing")
-    }
-
-    /// Tolerant on an undocumented seam: absent, null or a wrong-shaped value all read as no live
-    /// work rather than failing the reading of an otherwise good Stop.
-    func testMissingOrMalformedBackgroundTasksSayNothing() {
-        for body in [
-            #"{"hook_event_name":"Stop","background_tasks":null}"#,
-            #"{"hook_event_name":"Stop","background_tasks":{"a":1}}"#,
-            #"{"hook_event_name":"Stop","background_tasks":7}"#,
-        ] {
-            XCTAssertNil(stopLabel(body), "tolerated: \(body)")
-        }
-    }
+    //
+    // The label a `Stop` arrives with is read where the body is parsed, in `rust/slopdesk-hookevent`
+    // — which is also where the four cases that used to sit here are pinned: a turn that spoke keeps
+    // its own words, a silent one that left work running says so, the singular reads "1 background
+    // task", and every non-array `background_tasks` shape counts zero rather than failing the Stop.
+    // Nothing between the socket and the fold is a value hostd holds, so there is nothing here to
+    // assert against.
 }

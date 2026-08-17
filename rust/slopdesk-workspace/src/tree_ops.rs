@@ -1,4 +1,20 @@
-//! Every operation a gesture or an intent performs on the arrangement.
+//! Every operation an INTENT performs on the arrangement.
+//!
+//! ## Why "intent" and not "gesture"
+//!
+//! It used to be both, and that is what left seventeen functions here with no caller. When
+//! `slopdesk_wire::document::apply` became the one decider of what a topology BECOMES, it reached
+//! into this module for the ops it needed — split, close, focus, swap, dock, detach, reattach, tab
+//! and session verbs — and the rest kept compiling with nothing calling them: a zoom toggle, a
+//! divider nudge, a keyboard resize, a re-tile, a directional focus step, a pane cycle. Every one
+//! of those is a VIEWPORT op. It needs the geometry the person is looking at, which the document
+//! does not have and must not grow, so it stayed on the client in
+//! `Sources/SlopDeskWorkspaceModel/Domain/Tree/WorkspaceTreeOps.swift` — thin navigation over the
+//! `slopdesk_ws_tree_*`, `slopdesk_ws_retile` and `slopdesk_ws_focus_*` doors, which is where the
+//! DECISIONS in it already live. The copies here were a second implementation of a live one, in
+//! the other language, and they were deleted rather than wired: routing them would have meant
+//! encoding a whole `TreeWorkspace` across the boundary once per divider frame. `docs/DECISIONS.md`
+//! carries the ruling so it is not re-proposed.
 //!
 //! Each one takes a workspace and answers a NEW one — no in-place mutation, no I/O, no view. Each
 //! preserves the two families of invariant [`crate::workspace`] states: the spec table matches the
@@ -255,22 +271,6 @@ fn cascade_after_tab_removal(
     })
 }
 
-/// Toggles render-only zoom on a pane. The split TREE is untouched — zoom is out-of-tree state.
-#[must_use]
-pub fn toggle_zoom(ws: &TreeWorkspace, target: PaneId) -> TreeWorkspace {
-    let Some((session, tab_index)) = locate(ws, target) else {
-        return ws.clone();
-    };
-    editing_tab(ws, session, tab_index, |tab| {
-        tab.zoomed_pane = if tab.zoomed_pane == Some(target) {
-            None
-        } else {
-            Some(target)
-        };
-        true
-    })
-}
-
 // ---------------------------------------------------------------------------------------------- //
 // Dividers
 // ---------------------------------------------------------------------------------------------- //
@@ -280,37 +280,6 @@ fn active_tab_index(ws: &TreeWorkspace) -> Option<(usize, usize)> {
     let session_index = ws.active_session_index()?;
     let session = ws.sessions.get(session_index)?;
     (session.active_tab_index < session.tabs.len()).then_some((session_index, session.active_tab_index))
-}
-
-/// Shifts flex weight across one divider of the active tab. Sum-preserving and clamped, so neither
-/// neighbour can be dragged out of existence.
-#[must_use]
-pub fn resize_divider(
-    ws: &TreeWorkspace,
-    split: SplitNodeId,
-    leading_index: usize,
-    delta: f64,
-) -> TreeWorkspace {
-    let Some((session, tab_index)) = active_tab_index(ws) else {
-        return ws.clone();
-    };
-    editing_tab(ws, session, tab_index, |tab| {
-        tab.root = tab.root.resizing_divider(split, leading_index, delta);
-        true
-    })
-}
-
-/// Evens ONLY the clicked seam, leaving every other dragged ratio intact — the divider
-/// double-click, unlike [`balance_splits`], which evens the whole tab.
-#[must_use]
-pub fn even_divider(ws: &TreeWorkspace, split: SplitNodeId, leading_index: usize) -> TreeWorkspace {
-    let Some((session, tab_index)) = active_tab_index(ws) else {
-        return ws.clone();
-    };
-    editing_tab(ws, session, tab_index, |tab| {
-        tab.root = tab.root.evening_divider(split, leading_index);
-        true
-    })
 }
 
 /// Sets a divider's leading weight to an ABSOLUTE value — the cursor-matched form for a live drag,
@@ -329,69 +298,6 @@ pub fn set_divider_weight(
         tab.root = tab
             .root
             .setting_divider_weight(split, leading_index, leading_weight);
-        true
-    })
-}
-
-/// Grows or shrinks a pane by nudging the nearest enclosing divider on the relevant axis — the
-/// keyboard counterpart to a drag-resize.
-///
-/// A non-last child is governed by the divider to its right; the LAST child has none, so the one to
-/// its left governs it with the sign flipped. The underlying nudge is clamped, so the active pane
-/// can never starve a sibling to nothing.
-#[must_use]
-pub fn resize_active_pane(
-    ws: &TreeWorkspace,
-    pane: PaneId,
-    direction: FocusDirection,
-    step: f64,
-) -> TreeWorkspace {
-    let (axis, grow) = match direction {
-        FocusDirection::Left => (SplitAxis::Horizontal, false),
-        FocusDirection::Right => (SplitAxis::Horizontal, true),
-        FocusDirection::Up => (SplitAxis::Vertical, false),
-        FocusDirection::Down => (SplitAxis::Vertical, true),
-        FocusDirection::Next | FocusDirection::Previous => return ws.clone(),
-    };
-    let Some((session_index, tab_index)) = locate(ws, pane) else {
-        return ws.clone();
-    };
-    let Some(enclosing) = ws
-        .sessions
-        .get(session_index)
-        .and_then(|session| session.tabs.get(tab_index))
-        .and_then(|tab| tab.root.enclosing_split(pane, axis))
-    else {
-        return ws.clone();
-    };
-    let last_index = enclosing.child_count.saturating_sub(1);
-    let (leading_index, delta) = if enclosing.child_index < last_index {
-        (enclosing.child_index, if grow { step } else { -step })
-    } else {
-        (
-            enclosing.child_index.saturating_sub(1),
-            if grow { -step } else { step },
-        )
-    };
-    // The LOCATED tab is edited directly rather than the active-tab-scoped `resize_divider`, so the
-    // nudge lands even when the pane is in a tab nobody is looking at.
-    editing_tab(ws, session_index, tab_index, |tab| {
-        tab.root = tab
-            .root
-            .resizing_divider(enclosing.split_id, leading_index, delta);
-        true
-    })
-}
-
-/// Resets every flex child in a tab to an equal share, leaving fixed bands untouched. The shape and
-/// the leaf set are unchanged — only the weights equalize.
-#[must_use]
-pub fn balance_splits(ws: &TreeWorkspace, pane: PaneId) -> TreeWorkspace {
-    let Some((session, tab_index)) = locate(ws, pane) else {
-        return ws.clone();
-    };
-    editing_tab(ws, session, tab_index, |tab| {
-        tab.root = tab.root.rebalanced();
         true
     })
 }
@@ -613,35 +519,6 @@ pub fn move_leaf_to_tab_root_edge(
     next
 }
 
-/// [`move_leaf_to_tab_root_edge`] aimed at the ACTIVE tab — the local gesture, where the
-/// destination is wherever the person is looking.
-///
-/// Also declines when the source lives outside the active session: a drop onto "the active tab"
-/// from another window's session names a destination the dragger is not even showing.
-#[must_use]
-pub fn move_leaf_to_active_tab_root_edge(
-    ws: &TreeWorkspace,
-    source: PaneId,
-    edge: PaneDropEdge,
-    ids: &mut impl IdSource,
-) -> TreeWorkspace {
-    let Some((session_index, _)) = locate(ws, source) else {
-        return ws.clone();
-    };
-    if ws.active_session_index() != Some(session_index) {
-        return ws.clone();
-    }
-    let Some(destination) = ws
-        .sessions
-        .get(session_index)
-        .and_then(|session| session.tabs.get(session.active_tab_index))
-        .map(|tab| tab.id)
-    else {
-        return ws.clone();
-    };
-    move_leaf_to_tab_root_edge(ws, source, destination, edge, ids)
-}
-
 /// Removes a leaf from one tab for a cross-tab move: the tab shrinks, or — when the leaf was its
 /// sole one — the tab goes.
 ///
@@ -662,75 +539,6 @@ fn prune_leaf_from_tab(session: &mut Session, source: PaneId, index: usize) {
     } else {
         session.tabs.remove(index);
     }
-}
-
-/// Inserts a NEW leaf at the outermost edge of the active tab — the mint-a-pane sibling of
-/// [`move_leaf_to_root_edge`].
-///
-/// Because it creates rather than relocates, it also works on a lone-leaf tab: a split against the
-/// only pane. The new pane takes focus and a zoom is exited.
-#[must_use]
-pub fn insert_pane_at_root_edge(
-    ws: &TreeWorkspace,
-    spec: PaneSpec,
-    edge: PaneDropEdge,
-    pane: PaneId,
-    ids: &mut impl IdSource,
-) -> TreeWorkspace {
-    let Some((session_index, tab_index)) = active_tab_index(ws) else {
-        return ws.clone();
-    };
-    let fresh_split = ids.split();
-    let mut next = ws.clone();
-    let Some(session) = next.sessions.get_mut(session_index) else {
-        return ws.clone();
-    };
-    let Some(tab) = session.tabs.get_mut(tab_index) else {
-        return ws.clone();
-    };
-    let grown = tab
-        .root
-        .inserting_at_root(pane, edge.axis(), edge.inserts_before(), fresh_split);
-    if grown.depth() > MAX_DEPTH {
-        return ws.clone();
-    }
-    tab.root = grown;
-    tab.active_pane = Some(pane);
-    tab.zoomed_pane = None;
-    session.specs.insert(pane, spec);
-    next
-}
-
-/// Moves a pane in a direction by EXCHANGING it with its geometric neighbour on that side.
-///
-/// The neighbour is resolved against the tab solved into `bounds` — the geometry the person
-/// actually sees — so "move left" means what it looks like. Cycling has no swap meaning, so it is a
-/// no-op.
-#[must_use]
-pub fn move_pane_in_direction(
-    ws: &TreeWorkspace,
-    pane: PaneId,
-    direction: FocusDirection,
-    bounds: Rect,
-) -> TreeWorkspace {
-    if !direction.is_directional() {
-        return ws.clone();
-    }
-    let Some((session_index, tab_index)) = locate(ws, pane) else {
-        return ws.clone();
-    };
-    let Some(tab) = ws
-        .sessions
-        .get(session_index)
-        .and_then(|session| session.tabs.get(tab_index))
-    else {
-        return ws.clone();
-    };
-    let solved = split_layout::solve_default(&tab.root, bounds);
-    let Some(found) = focus::neighbor(pane, direction, &solved).filter(|found| *found != pane) else {
-        return ws.clone();
-    };
-    swap_panes(ws, pane, found)
 }
 
 // ---------------------------------------------------------------------------------------------- //
@@ -816,69 +624,6 @@ impl TileLayout {
             .copied()
             .unwrap_or(Self::EvenHorizontal)
     }
-}
-
-/// Re-tiles the tab owning a pane, PRESERVING every leaf id — a pure geometry change, so nothing is
-/// materialized or torn down.
-///
-/// Every divider ratio resets to an equal share; prior drags are discarded on purpose, which is
-/// what a re-tile means. Leaf order is the tab's pre-order, except that the main-\* layouts move
-/// the ACTIVE leaf to the front to become the large pane. A zoom is cleared first, because
-/// re-tiling under a full-screen zoom is meaningless. A tab of fewer than two leaves is a no-op: a
-/// one-child split would violate the tree's own arity rule.
-#[must_use]
-pub fn apply_layout(
-    ws: &TreeWorkspace,
-    layout: TileLayout,
-    pane: PaneId,
-    ids: &mut impl IdSource,
-) -> TreeWorkspace {
-    let Some((session_index, tab_index)) = locate(ws, pane) else {
-        return ws.clone();
-    };
-    let Some(tab) = ws
-        .sessions
-        .get(session_index)
-        .and_then(|session| session.tabs.get(tab_index))
-    else {
-        return ws.clone();
-    };
-    let order = tab.root.all_pane_ids();
-    if order.len() <= 1 {
-        return ws.clone();
-    }
-    let active = tab.active_pane.filter(|id| order.contains(id));
-    let leaves = match (layout, active) {
-        (TileLayout::MainVertical | TileLayout::MainHorizontal, Some(active)) => {
-            let mut ordered = vec![active];
-            ordered.extend(order.iter().copied().filter(|id| *id != active));
-            ordered
-        },
-        _ => order,
-    };
-    let root = rebuild(layout, &leaves, ids);
-    editing_tab(ws, session_index, tab_index, |tab| {
-        tab.root = root;
-        tab.zoomed_pane = None;
-        true
-    })
-    .normalizing_specs()
-}
-
-/// Advances one step through [`TileLayout::ALL`] and re-tiles into it, answering the layout applied
-/// so the caller can store it as the next cursor.
-///
-/// A tab of fewer than two leaves still advances the returned layout — the cursor moves — while the
-/// tree itself is left alone.
-#[must_use]
-pub fn cycle_layout(
-    ws: &TreeWorkspace,
-    pane: PaneId,
-    current: Option<TileLayout>,
-    ids: &mut impl IdSource,
-) -> (TreeWorkspace, TileLayout) {
-    let next = current.map_or(TileLayout::EvenHorizontal, TileLayout::next);
-    (apply_layout(ws, next, pane, ids), next)
 }
 
 /// The flat (depth ≤ 2) tree a layout makes over `leaves`, which the caller guarantees has at least
@@ -1007,61 +752,6 @@ pub fn focus_pane(ws: &TreeWorkspace, target: PaneId) -> TreeWorkspace {
     next
 }
 
-/// Moves focus from the active pane, resolved geometrically against the tab solved into `bounds`,
-/// so "move left" matches the pane the person sees.
-///
-/// Cycling routes through [`cycle_pane_target`] rather than the geometry, so the two cycle paths
-/// read one enumerator and cannot drift.
-#[must_use]
-pub fn move_focus(ws: &TreeWorkspace, direction: FocusDirection, bounds: Rect) -> TreeWorkspace {
-    let Some((session_index, tab_index)) = active_tab_index(ws) else {
-        return ws.clone();
-    };
-    let Some(tab) = ws
-        .sessions
-        .get(session_index)
-        .and_then(|session| session.tabs.get(tab_index))
-    else {
-        return ws.clone();
-    };
-    let Some(from) = tab.active_pane else {
-        return ws.clone();
-    };
-    let target = if direction.is_directional() {
-        let solved = split_layout::solve_default(&tab.root, bounds);
-        focus::neighbor(from, direction, &solved)
-    } else {
-        cycle_pane_target(ws, direction == FocusDirection::Next)
-    };
-    target.map_or_else(|| ws.clone(), |next| focus_pane(ws, next))
-}
-
-/// The pane a sequential cycle step would focus — the single source of the wrap arithmetic.
-///
-/// A no-op when there is no active tab, when the tab holds fewer than two panes, or when the active
-/// pane is absent or dangling: a dangling active has no defined successor, and cycling must not
-/// silently jump focus to the front.
-#[must_use]
-pub fn cycle_pane_target(ws: &TreeWorkspace, forward: bool) -> Option<PaneId> {
-    let tab = ws.active_session()?.active_tab()?;
-    let ids = tab.all_pane_ids();
-    if ids.len() <= 1 {
-        return None;
-    }
-    let active = tab.active_pane?;
-    if !tab.root.contains(active) {
-        return None;
-    }
-    focus::cycle(&ids, active, forward)
-}
-
-/// Cycles focus through [`cycle_pane_target`] and [`focus_pane`], so the result holds the selection
-/// invariants the shared focus path guarantees.
-#[must_use]
-pub fn cycle_pane_focus(ws: &TreeWorkspace, forward: bool) -> TreeWorkspace {
-    cycle_pane_target(ws, forward).map_or_else(|| ws.clone(), |target| focus_pane(ws, target))
-}
-
 // ---------------------------------------------------------------------------------------------- //
 // Tabs
 // ---------------------------------------------------------------------------------------------- //
@@ -1139,21 +829,6 @@ pub fn close_tab(
     }
     session.tabs.remove(tab_index);
     cascade_after_tab_removal(&next, session_index, tab_index, successor, ids).normalized(ids)
-}
-
-/// Selects a tab of the active session by index.
-#[must_use]
-pub fn select_tab(ws: &TreeWorkspace, index: usize) -> TreeWorkspace {
-    let Some(session_index) = ws.active_session_index() else {
-        return ws.clone();
-    };
-    editing_session(ws, session_index, |session| {
-        if index >= session.tabs.len() {
-            return false;
-        }
-        session.active_tab_index = index;
-        true
-    })
 }
 
 /// Renames a tab.
@@ -1369,123 +1044,6 @@ pub fn reattach_pane(
     next
 }
 
-/// Reattaches a detached pane BESIDE a tree pane — the drag-to-merge commit.
-///
-/// The anchor must live in the pane's own session: a spec cannot leave its session's side table.
-/// The destination is revealed — session and tab selected, pane focused, zoom exited.
-#[must_use]
-pub fn reattach_pane_beside(
-    ws: &TreeWorkspace,
-    target: PaneId,
-    anchor: PaneId,
-    axis: SplitAxis,
-    before: bool,
-    ids: &mut impl IdSource,
-) -> TreeWorkspace {
-    let Some(session_index) = detached_owner(ws, target) else {
-        return ws.clone();
-    };
-    let Some((anchor_session, anchor_tab)) = locate(ws, anchor) else {
-        return ws.clone();
-    };
-    if anchor_session != session_index {
-        return ws.clone();
-    }
-    let fresh_split = ids.split();
-    let mut next = ws.clone();
-    let Some(session) = next.sessions.get_mut(session_index) else {
-        return ws.clone();
-    };
-    let id = session.id;
-    // The insert is validated BEFORE the detached entry goes, so a rejected drop leaves the pane
-    // floating rather than losing it to a tab that refused it.
-    let Some(grown) = session
-        .tabs
-        .get(anchor_tab)
-        .and_then(|tab| {
-            tab.root
-                .inserting_beside(target, anchor, axis, before, fresh_split)
-        })
-        .filter(|grown| grown.depth() <= MAX_DEPTH)
-    else {
-        return ws.clone();
-    };
-    session.detached.retain(|entry| entry.pane != target);
-    let Some(tab) = session.tabs.get_mut(anchor_tab) else {
-        return ws.clone();
-    };
-    tab.root = grown;
-    tab.active_pane = Some(target);
-    tab.zoomed_pane = None;
-    session.active_tab_index = anchor_tab;
-    next.active_session_id = Some(id);
-    next
-}
-
-/// Reattaches a detached pane at the outermost edge of its session's ACTIVE tab — the gutter drop.
-///
-/// Declines when the pane's session is not the active one: the canvas the person dropped on renders
-/// the active session, so any other destination is one they cannot see.
-#[must_use]
-pub fn reattach_pane_to_active_tab_root_edge(
-    ws: &TreeWorkspace,
-    target: PaneId,
-    edge: PaneDropEdge,
-    ids: &mut impl IdSource,
-) -> TreeWorkspace {
-    let Some(session_index) = detached_owner(ws, target) else {
-        return ws.clone();
-    };
-    if ws.active_session_index() != Some(session_index) {
-        return ws.clone();
-    }
-    let fresh_split = ids.split();
-    let mut next = ws.clone();
-    let Some(session) = next.sessions.get_mut(session_index) else {
-        return ws.clone();
-    };
-    let id = session.id;
-    let tab_index = session.active_tab_index;
-    let Some(grown) = session
-        .tabs
-        .get(tab_index)
-        .map(|tab| {
-            tab.root
-                .inserting_at_root(target, edge.axis(), edge.inserts_before(), fresh_split)
-        })
-        .filter(|grown| grown.depth() <= MAX_DEPTH)
-    else {
-        return ws.clone();
-    };
-    session.detached.retain(|entry| entry.pane != target);
-    let Some(tab) = session.tabs.get_mut(tab_index) else {
-        return ws.clone();
-    };
-    tab.root = grown;
-    tab.active_pane = Some(target);
-    tab.zoomed_pane = None;
-    next.active_session_id = Some(id);
-    next
-}
-
-/// Reattaches a detached pane into a FRESH tab of its own session — the drop on the new-tab slot.
-#[must_use]
-pub fn reattach_pane_to_new_tab(ws: &TreeWorkspace, target: PaneId, tab: TabId) -> TreeWorkspace {
-    let Some(session_index) = detached_owner(ws, target) else {
-        return ws.clone();
-    };
-    let mut next = ws.clone();
-    let Some(session) = next.sessions.get_mut(session_index) else {
-        return ws.clone();
-    };
-    let id = session.id;
-    session.detached.retain(|entry| entry.pane != target);
-    session.tabs.push(Tab::new(tab, SplitNode::Leaf(target)));
-    session.active_tab_index = session.tabs.len().saturating_sub(1);
-    next.active_session_id = Some(id);
-    next
-}
-
 /// Mints a brand-new pane DIRECTLY into the active session's detached list — it never passes
 /// through a tab.
 ///
@@ -1569,25 +1127,19 @@ mod tests {
         clippy::panic,
         reason = "a missing session, tab or pane is a test failure with nothing to return"
     )]
-    #![expect(clippy::float_cmp, reason = "the weights are exact literals, not computed")]
 
     use std::collections::BTreeMap;
 
     use super::{
-        TileLayout, apply_layout, balance_splits, break_pane_to_tab, close_detached_pane, close_pane,
-        close_session, close_tab, cycle_layout, cycle_pane_focus, cycle_pane_target, detach_pane,
-        even_divider, focus_pane, insert_pane_at_root_edge, insert_session, insert_tab, locate,
-        mint_detached_pane, move_focus, move_leaf, move_leaf_across_tabs, move_leaf_to_active_tab_root_edge,
-        move_leaf_to_root_edge, move_leaf_to_tab_root_edge, move_pane_in_direction, new_session, new_tab,
-        reattach_pane, reattach_pane_beside, reattach_pane_to_active_tab_root_edge, reattach_pane_to_new_tab,
-        rename_session, rename_tab, resize_active_pane, resize_divider, select_session, select_tab,
-        set_divider_weight, split_pane, swap_panes, toggle_zoom, updating_spec,
+        TileLayout, break_pane_to_tab, close_detached_pane, close_pane, close_session, close_tab,
+        detach_pane, focus_pane, insert_session, insert_tab, locate, mint_detached_pane, move_leaf,
+        move_leaf_across_tabs, move_leaf_to_root_edge, move_leaf_to_tab_root_edge, new_session, new_tab,
+        reattach_pane, rename_session, rename_tab, select_session, set_divider_weight, split_pane,
+        swap_panes, updating_spec,
     };
-    use crate::focus::FocusDirection;
-    use crate::geometry::{Point, Rect, Size};
     use crate::identity::{IdSource, PaneId, SessionId, SplitNodeId, TabId};
     use crate::session::{NewTabPosition, PaneKind, PaneSpec, Tab};
-    use crate::split_tree::{PaneDropEdge, SplitAxis, SplitNode, SplitWeight};
+    use crate::split_tree::{PaneDropEdge, SplitAxis, SplitNode};
     use crate::workspace::TreeWorkspace;
 
     /// A counter, so every minted id in these tests is predictable and every run gives one tree.
@@ -1636,10 +1188,6 @@ mod tests {
 
     fn spec(title: &str) -> PaneSpec {
         PaneSpec::new(PaneKind::Terminal, title)
-    }
-
-    fn bounds() -> Rect {
-        Rect::new(Point::ZERO, Size::new(800.0, 600.0))
     }
 
     fn one_pane() -> TreeWorkspace {
@@ -1693,10 +1241,28 @@ mod tests {
         assert_eq!(TileLayout::from_index(u8::MAX), None);
     }
 
+    /// Sets a tab's zoom directly.
+    ///
+    /// The zoom VERB is an intent (`SetZoom`) rather than a `tree_ops` function, so a test that
+    /// needs a zoomed tab as a STARTING CONDITION states it as a field rather than reaching for an
+    /// op — which is also the honest thing to write, since what is under test below is what a
+    /// split and a focus do to a zoom, not how the zoom got there.
+    fn zooming(ws: &TreeWorkspace, session: usize, tab: usize, target: PaneId) -> TreeWorkspace {
+        let mut copy = ws.clone();
+        let Some(entry) = copy
+            .sessions
+            .get_mut(session)
+            .and_then(|session| session.tabs.get_mut(tab))
+        else {
+            panic!("that tab");
+        };
+        entry.zoomed_pane = Some(target);
+        copy
+    }
+
     #[test]
     fn a_split_adds_a_leaf_that_takes_focus_and_exits_zoom() {
-        let zoomed = toggle_zoom(&one_pane(), pane(1));
-        assert_eq!(tab_of(&zoomed, 0, 0).zoomed_pane, Some(pane(1)));
+        let zoomed = zooming(&one_pane(), 0, 0, pane(1));
         let after = split_pane(
             &zoomed,
             pane(1),
@@ -1711,6 +1277,75 @@ mod tests {
         assert_eq!(tab.active_pane, Some(pane(2)));
         assert_eq!(tab.zoomed_pane, None, "the new focused pane has to be visible");
         assert!(after.invariant_holds());
+    }
+
+    #[test]
+    fn focusing_a_pane_selects_its_session_and_tab_and_exits_a_foreign_zoom() {
+        let two_tabs = new_tab(&one_pane(), spec("Two"), NewTabPosition::End, tab_id(2), pane(2));
+        let zoomed = zooming(&two_tabs, 0, 1, pane(2));
+        let after = focus_pane(&zoomed, pane(1));
+        let Some(session) = after.sessions.first() else {
+            panic!("one session");
+        };
+        assert_eq!(session.active_tab_index, 0);
+        assert_eq!(after.active_session_id, Some(session_id(1)));
+        assert_eq!(
+            tab_of(&after, 0, 1).zoomed_pane,
+            Some(pane(2)),
+            "the other tab keeps its zoom"
+        );
+
+        let kept = focus_pane(&zoomed, pane(2));
+        assert_eq!(
+            tab_of(&kept, 0, 1).zoomed_pane,
+            Some(pane(2)),
+            "re-focusing the zoomed pane keeps the zoom",
+        );
+    }
+
+    #[test]
+    fn renaming_rejects_what_is_not_there() {
+        let before = one_pane();
+        assert_eq!(rename_tab(&before, tab_id(9), "Nope"), before);
+        assert_eq!(select_session(&before, session_id(9)), before);
+        assert_eq!(rename_session(&before, session_id(9), "Nope"), before);
+
+        let renamed = rename_tab(&before, tab_id(1), "Build");
+        assert_eq!(tab_of(&renamed, 0, 0).title, "Build");
+        let named = rename_session(&before, session_id(1), "Work");
+        assert_eq!(
+            named.sessions.first().map(|s| s.name.clone()),
+            Some("Work".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_video_pane_never_joins_a_tab() {
+        let mut ws = one_pane();
+        let Some(session) = ws.sessions.first_mut() else {
+            panic!("one session");
+        };
+        session
+            .specs
+            .insert(pane(70), PaneSpec::new(PaneKind::Desktop, "Display"));
+        session.detached.push(crate::session::DetachedPane {
+            pane: pane(70),
+            origin_tab: Some(tab_id(1)),
+        });
+        assert_eq!(reattach_pane(&ws, pane(70), tab_id(80), &mut ids()), ws);
+    }
+
+    #[test]
+    fn setting_an_absolute_divider_weight_lands_on_the_leading_child() {
+        let before = two_panes();
+        let SplitNode::Split { id, .. } = tab_of(&before, 0, 0).root else {
+            panic!("a split root");
+        };
+        let dragged = set_divider_weight(&before, id, 0, 1.5);
+        let SplitNode::Split { children, .. } = tab_of(&dragged, 0, 0).root else {
+            panic!("a split root");
+        };
+        assert_eq!(children.first().and_then(|child| child.weight.flex()), Some(1.5));
     }
 
     #[test]
@@ -1787,95 +1422,6 @@ mod tests {
         );
         assert_eq!(after.detached_pane_ids(), vec![pane(2)]);
         assert!(after.invariant_holds());
-    }
-
-    #[test]
-    fn a_zoom_toggles_and_never_touches_the_tree() {
-        let before = two_panes();
-        let zoomed = toggle_zoom(&before, pane(2));
-        assert_eq!(tab_of(&zoomed, 0, 0).zoomed_pane, Some(pane(2)));
-        assert_eq!(tab_of(&zoomed, 0, 0).root, tab_of(&before, 0, 0).root);
-        assert_eq!(tab_of(&toggle_zoom(&zoomed, pane(2)), 0, 0).zoomed_pane, None);
-    }
-
-    #[test]
-    fn a_divider_drag_is_sum_preserving() {
-        let before = two_panes();
-        let SplitNode::Split { id, .. } = tab_of(&before, 0, 0).root else {
-            panic!("a split root");
-        };
-        let after = resize_divider(&before, id, 0, 0.25);
-        let SplitNode::Split { children, .. } = tab_of(&after, 0, 0).root else {
-            panic!("a split root");
-        };
-        let total: f64 = children.iter().filter_map(|child| child.weight.flex()).sum();
-        assert_eq!(total, 2.0);
-        assert_eq!(children.first().and_then(|child| child.weight.flex()), Some(1.25));
-    }
-
-    #[test]
-    fn evening_one_seam_and_setting_an_absolute_weight_both_land() {
-        let before = two_panes();
-        let SplitNode::Split { id, .. } = tab_of(&before, 0, 0).root else {
-            panic!("a split root");
-        };
-        let dragged = set_divider_weight(&before, id, 0, 1.5);
-        let SplitNode::Split { children, .. } = tab_of(&dragged, 0, 0).root else {
-            panic!("a split root");
-        };
-        assert_eq!(children.first().and_then(|child| child.weight.flex()), Some(1.5));
-        let evened = even_divider(&dragged, id, 0);
-        let SplitNode::Split { children, .. } = tab_of(&evened, 0, 0).root else {
-            panic!("a split root");
-        };
-        assert_eq!(children.first().and_then(|child| child.weight.flex()), Some(1.0));
-    }
-
-    #[test]
-    fn a_keyboard_resize_grows_the_active_pane_from_either_side() {
-        let before = two_panes();
-        let grown = resize_active_pane(&before, pane(1), FocusDirection::Right, 0.2);
-        let SplitNode::Split { children, .. } = tab_of(&grown, 0, 0).root else {
-            panic!("a split root");
-        };
-        assert_eq!(children.first().and_then(|child| child.weight.flex()), Some(1.2));
-
-        // The LAST child has no divider to its right, so the one to its left governs it with the
-        // sign flipped.
-        let trailing = resize_active_pane(&before, pane(2), FocusDirection::Right, 0.2);
-        let SplitNode::Split { children, .. } = tab_of(&trailing, 0, 0).root else {
-            panic!("a split root");
-        };
-        assert_eq!(children.get(1).and_then(|child| child.weight.flex()), Some(1.2));
-    }
-
-    #[test]
-    fn a_cycle_direction_is_not_a_resize_or_a_move() {
-        let before = two_panes();
-        assert_eq!(
-            resize_active_pane(&before, pane(1), FocusDirection::Next, 0.2),
-            before
-        );
-        assert_eq!(
-            move_pane_in_direction(&before, pane(1), FocusDirection::Next, bounds()),
-            before
-        );
-    }
-
-    #[test]
-    fn balancing_evens_every_seam_in_the_tab() {
-        let before = two_panes();
-        let SplitNode::Split { id, .. } = tab_of(&before, 0, 0).root else {
-            panic!("a split root");
-        };
-        let dragged = set_divider_weight(&before, id, 0, 1.8);
-        let balanced = balance_splits(&dragged, pane(1));
-        let SplitNode::Split { children, .. } = tab_of(&balanced, 0, 0).root else {
-            panic!("a split root");
-        };
-        for child in &children {
-            assert_eq!(child.weight, SplitWeight::Flex(1.0));
-        }
     }
 
     #[test]
@@ -2021,159 +1567,6 @@ mod tests {
     }
 
     #[test]
-    fn a_gutter_drop_aimed_at_the_active_tab_declines_from_another_session() {
-        let two_sessions = new_session(&one_pane(), "Other", spec("Elsewhere"), &mut ids());
-        assert_eq!(
-            move_leaf_to_active_tab_root_edge(&two_sessions, pane(1), PaneDropEdge::Left, &mut ids()),
-            two_sessions,
-            "the dragger is not even showing that destination",
-        );
-    }
-
-    #[test]
-    fn inserting_a_pane_at_the_root_edge_works_on_a_lone_leaf_tab() {
-        let after = insert_pane_at_root_edge(
-            &one_pane(),
-            spec("Two"),
-            PaneDropEdge::Bottom,
-            pane(2),
-            &mut ids(),
-        );
-        let tab = tab_of(&after, 0, 0);
-        assert_eq!(tab.all_pane_ids(), vec![pane(1), pane(2)]);
-        assert_eq!(tab.active_pane, Some(pane(2)));
-        assert!(after.invariant_holds());
-    }
-
-    #[test]
-    fn moving_a_pane_in_a_direction_exchanges_it_with_what_is_there() {
-        let after = move_pane_in_direction(&two_panes(), pane(1), FocusDirection::Right, bounds());
-        assert_eq!(tab_of(&after, 0, 0).all_pane_ids(), vec![pane(2), pane(1)]);
-    }
-
-    #[test]
-    fn every_re_tile_keeps_the_leaf_set_and_resets_the_weights() {
-        let mut ws = one_pane();
-        for byte in 2..=7 {
-            ws = split_pane(
-                &ws,
-                pane(1),
-                SplitAxis::Horizontal,
-                spec("More"),
-                false,
-                pane(byte),
-                &mut ids(),
-            );
-        }
-        let before: Vec<PaneId> = tab_of(&ws, 0, 0).all_pane_ids();
-        for layout in TileLayout::ALL {
-            let after = apply_layout(&ws, layout, pane(1), &mut ids());
-            let mut got = tab_of(&after, 0, 0).all_pane_ids();
-            let mut want = before.clone();
-            got.sort_unstable();
-            want.sort_unstable();
-            assert_eq!(got, want, "{} must not lose a leaf", layout.raw());
-            assert!(after.invariant_holds());
-        }
-    }
-
-    #[test]
-    fn the_main_layouts_put_the_active_pane_first() {
-        let three = split_pane(
-            &two_panes(),
-            pane(2),
-            SplitAxis::Horizontal,
-            spec("Three"),
-            false,
-            pane(3),
-            &mut ids(),
-        );
-        let focused = focus_pane(&three, pane(3));
-        let after = apply_layout(&focused, TileLayout::MainVertical, pane(3), &mut ids());
-        assert_eq!(tab_of(&after, 0, 0).all_pane_ids().first(), Some(&pane(3)));
-    }
-
-    #[test]
-    fn a_tiled_grid_spreads_the_rows_evenly_rather_than_greedily() {
-        let mut ws = one_pane();
-        for byte in 2..=7 {
-            ws = split_pane(
-                &ws,
-                pane(1),
-                SplitAxis::Horizontal,
-                spec("More"),
-                false,
-                pane(byte),
-                &mut ids(),
-            );
-        }
-        let after = apply_layout(&ws, TileLayout::Tiled, pane(1), &mut ids());
-        let SplitNode::Split { children, .. } = tab_of(&after, 0, 0).root else {
-            panic!("a grid root");
-        };
-        let widths: Vec<usize> = children.iter().map(|child| child.node.leaf_count()).collect();
-        assert_eq!(widths, vec![3, 2, 2], "seven panes tile as 3/2/2, never 3/3/1");
-    }
-
-    #[test]
-    fn a_re_tile_of_a_lone_leaf_tab_is_a_no_op_but_the_cursor_still_moves() {
-        let before = one_pane();
-        let (after, layout) = cycle_layout(&before, pane(1), Some(TileLayout::Tiled), &mut ids());
-        assert_eq!(after, before);
-        assert_eq!(layout, TileLayout::EvenHorizontal, "the cycle wraps");
-    }
-
-    #[test]
-    fn focusing_a_pane_selects_its_session_and_tab_and_exits_a_foreign_zoom() {
-        let two_tabs = new_tab(&one_pane(), spec("Two"), NewTabPosition::End, tab_id(2), pane(2));
-        let zoomed = toggle_zoom(&two_tabs, pane(2));
-        let after = focus_pane(&zoomed, pane(1));
-        let Some(session) = after.sessions.first() else {
-            panic!("one session");
-        };
-        assert_eq!(session.active_tab_index, 0);
-        assert_eq!(after.active_session_id, Some(session_id(1)));
-        assert_eq!(
-            tab_of(&after, 0, 1).zoomed_pane,
-            Some(pane(2)),
-            "the other tab keeps its zoom"
-        );
-
-        let kept = focus_pane(&zoomed, pane(2));
-        assert_eq!(
-            tab_of(&kept, 0, 1).zoomed_pane,
-            Some(pane(2)),
-            "re-focusing the zoomed pane keeps the zoom",
-        );
-    }
-
-    #[test]
-    fn moving_focus_lands_on_the_pane_the_person_sees() {
-        let after = move_focus(&two_panes(), FocusDirection::Left, bounds());
-        assert_eq!(tab_of(&after, 0, 0).active_pane, Some(pane(1)));
-    }
-
-    #[test]
-    fn cycling_wraps_at_both_ends_and_declines_a_dangling_active() {
-        let before = two_panes();
-        assert_eq!(cycle_pane_target(&before, true), Some(pane(1)));
-        assert_eq!(cycle_pane_target(&before, false), Some(pane(1)));
-        let cycled = cycle_pane_focus(&before, true);
-        assert_eq!(tab_of(&cycled, 0, 0).active_pane, Some(pane(1)));
-
-        let mut dangling = before;
-        let Some(tab) = dangling.sessions.first_mut().and_then(|s| s.tabs.first_mut()) else {
-            panic!("one tab");
-        };
-        tab.active_pane = Some(pane(90));
-        assert_eq!(
-            cycle_pane_target(&dangling, true),
-            None,
-            "cycling must not silently jump focus to the front",
-        );
-    }
-
-    #[test]
     fn a_new_tab_lands_where_the_position_says() {
         let end = new_tab(&one_pane(), spec("Two"), NewTabPosition::End, tab_id(2), pane(2));
         let after = new_tab(
@@ -2228,23 +1621,6 @@ mod tests {
         assert!(after.spec_for(pane(2)).is_none());
         assert_eq!(after.all_pane_ids(), vec![pane(3)]);
         assert!(after.invariant_holds());
-    }
-
-    #[test]
-    fn selecting_and_renaming_reject_what_is_not_there() {
-        let before = one_pane();
-        assert_eq!(select_tab(&before, 7), before);
-        assert_eq!(rename_tab(&before, tab_id(9), "Nope"), before);
-        assert_eq!(select_session(&before, session_id(9)), before);
-        assert_eq!(rename_session(&before, session_id(9), "Nope"), before);
-
-        let renamed = rename_tab(&before, tab_id(1), "Build");
-        assert_eq!(tab_of(&renamed, 0, 0).title, "Build");
-        let named = rename_session(&before, session_id(1), "Work");
-        assert_eq!(
-            named.sessions.first().map(|s| s.name.clone()),
-            Some("Work".to_owned())
-        );
     }
 
     #[test]
@@ -2344,73 +1720,6 @@ mod tests {
         let fresh = reattach_pane(&orphan, pane(1), tab_id(80), &mut ids());
         assert!(fresh.contains(pane(1)));
         assert!(fresh.invariant_holds());
-    }
-
-    #[test]
-    fn a_video_pane_never_joins_a_tab() {
-        let mut ws = one_pane();
-        let Some(session) = ws.sessions.first_mut() else {
-            panic!("one session");
-        };
-        session
-            .specs
-            .insert(pane(70), PaneSpec::new(PaneKind::Desktop, "Display"));
-        session.detached.push(crate::session::DetachedPane {
-            pane: pane(70),
-            origin_tab: Some(tab_id(1)),
-        });
-        assert_eq!(reattach_pane(&ws, pane(70), tab_id(80), &mut ids()), ws);
-        assert_eq!(reattach_pane_to_new_tab(&ws, pane(70), tab_id(80)), ws);
-        assert_eq!(
-            reattach_pane_beside(&ws, pane(70), pane(1), SplitAxis::Horizontal, false, &mut ids()),
-            ws,
-        );
-    }
-
-    #[test]
-    fn reattaching_beside_an_anchor_reveals_the_destination() {
-        let two_tabs = new_tab(
-            &two_panes(),
-            spec("Three"),
-            NewTabPosition::End,
-            tab_id(2),
-            pane(3),
-        );
-        let detached = detach_pane(&two_tabs, pane(1), &mut ids());
-        let after = reattach_pane_beside(&detached, pane(1), pane(3), SplitAxis::Vertical, true, &mut ids());
-        let Some(session) = after.sessions.first() else {
-            panic!("one session");
-        };
-        assert_eq!(session.active_tab_index, 1);
-        assert!(after.detached_pane_ids().is_empty());
-        assert_eq!(tab_of(&after, 0, 1).active_pane, Some(pane(1)));
-        assert!(after.invariant_holds());
-    }
-
-    #[test]
-    fn reattaching_into_the_active_tabs_gutter_declines_from_another_session() {
-        let detached = detach_pane(&two_panes(), pane(2), &mut ids());
-        let elsewhere = new_session(&detached, "Other", spec("Elsewhere"), &mut ids());
-        assert_eq!(
-            reattach_pane_to_active_tab_root_edge(&elsewhere, pane(2), PaneDropEdge::Left, &mut ids()),
-            elsewhere,
-        );
-        let after = reattach_pane_to_active_tab_root_edge(&detached, pane(2), PaneDropEdge::Left, &mut ids());
-        assert!(after.detached_pane_ids().is_empty());
-        assert_eq!(tab_of(&after, 0, 0).all_pane_ids().first(), Some(&pane(2)));
-        assert!(after.invariant_holds());
-    }
-
-    #[test]
-    fn reattaching_into_a_new_tab_appends_and_selects_it() {
-        let detached = detach_pane(&two_panes(), pane(2), &mut ids());
-        let after = reattach_pane_to_new_tab(&detached, pane(2), tab_id(9));
-        let Some(session) = after.sessions.first() else {
-            panic!("one session");
-        };
-        assert_eq!(session.tabs.len(), 2);
-        assert_eq!(session.active_tab_index, 1);
-        assert!(after.invariant_holds());
     }
 
     #[test]

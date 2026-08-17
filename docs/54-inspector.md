@@ -165,8 +165,8 @@ which is where Claude Code puts it. It need not exist.
 A hook record was read here once — a `HookIngest` file in this target holding a typed `HookPayload`
 enum that modelled the JSON, with a `mapToHookEvent` adapter a module away in `SlopDeskHost` turning
 a payload into the event the status machine folds. Both halves are gone. The
-reading is `rust/slopdesk-hookevent`, and Swift marshals it through
-`SlopDeskAgentDetect.ClaudeHookBody`.
+reading is `rust/slopdesk-hookevent`, and Swift marshals nothing at all: the body crosses as the
+raw bytes it arrived as, into the same `slopdesk_agent_detector_hook` call that folds it.
 
 It is worth being explicit about why it was ever here, because the file lived in the inspector's
 target and its types were named after transcript blocks. It never fed the inspector's event stream:

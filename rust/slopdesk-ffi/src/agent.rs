@@ -1,8 +1,8 @@
 //! Agent detection: `rust/slopdesk-agent` reached from the host's Swift.
 //!
 //! ## What crosses, and what deliberately does not
-//! The Swift side keeps `AgentKind`, `ClaudeStatus`, `AgentScreenState`, `ClaudeSignal` and friends
-//! as native enums, and that is NOT the second implementation this repo forbids. They carry no
+//! The Swift side keeps `AgentKind`, `ClaudeStatus`, `AgentScreenState` and friends as native
+//! enums, and that is NOT the second implementation this repo forbids. They carry no
 //! rules — a `switch` in a `SwiftUI` view needs a Swift enum, and marshalling one through C would
 //! buy nothing. What moved is every function that DECIDES: which agent a name names, whether a
 //! chunk holds a keystroke, whether a title was agent-written, when a screen verdict may be
@@ -14,16 +14,23 @@
 //! than silently reporting `working` for `blocked`.
 //!
 //! ## Strings arrive in one buffer, not one pointer each
-//! A hook event carries up to six optional strings. Six `(ptr, len)` pairs would mean six nested
-//! `withUnsafeBytes` on the Swift side per call, which is unreadable and easy to get subtly wrong.
-//! Instead the caller concatenates them into ONE buffer and passes `(offset, len, present)` triples
-//! into it: one pointer, one lifetime, one scope. Every offset is bounds-checked here against the
-//! buffer's real length, because a signal is untrusted input like everything else in this crate.
+//! A foreground job's process carries three optional strings, and a whole job carries several
+//! processes. That many `(ptr, len)` pairs would mean that many nested `withUnsafeBytes` on the
+//! Swift side per call, which is unreadable and easy to get subtly wrong. Instead the caller
+//! concatenates them into ONE buffer and passes `(offset, len, present)` triples into it: one
+//! pointer, one lifetime, one scope. Every offset is bounds-checked here against the buffer's real
+//! length, because this is untrusted input like everything else in this crate.
+//!
+//! ## A hook body does not arrive at all — it passes through
+//! It used to be the other big user of that buffer: Swift read the JSON, flattened the event into a
+//! `Signal` of spans, and this module rebuilt it. Both ends of that are gone. The body crosses as
+//! the raw bytes hostd read off the socket, and `slopdesk_agent_detector_hook` parses and folds it
+//! in the one call — so nothing between the socket and the fold is a value either language holds.
 
 use core::ffi::c_uchar;
 
 use slopdesk_agent::{
-    AgentDetectionHold, AgentScreenDetection, AgentScreenState, ClaudeHookEvent, ClaudeSignal, ClaudeStatus,
+    AgentDetectionHold, AgentScreenDetection, AgentScreenState, ClaudeHookEvent, ClaudeStatus,
     ClaudeStatusMachine, Emission, ForegroundJob, ForegroundJobProcess, NotificationKind, PaneDetector,
     badge,
 };
@@ -124,50 +131,11 @@ impl Detection {
     }
 }
 
-/// One input signal for the state machine, flattened.
-///
-/// Only the fields its `kind` (and, for a hook, its `hook`) name are read; the rest may be
-/// anything. That is what lets the Swift side build one zeroed value and fill in the two or three
-/// slots its case actually has.
-#[repr(C)]
-#[derive(Clone, Copy, Debug)]
-pub struct Signal {
-    /// 0 hook · 1 process-present · 2 manifest verdict · 3 OSC title · 4 tick · 5 screen · 6 input.
-    pub kind: u8,
-    /// 0 session-start · 1 user-prompt · 2 pre-tool · 3 post-tool · 4 notification · 5 stop ·
-    /// 6 subagent-stop · 7 interrupted · 8 session-end · 9 pre-compact.
-    pub hook: u8,
-    /// A `NotificationKind` discriminant: 0 permission · 1 waiting-for-input · 2 other.
-    pub notification: u8,
-    /// The manifest verdict's `ClaudeStatus` discriminant.
-    pub status: u8,
-    /// Whether the agent's process is present, for the process-present signal.
-    pub present: bool,
-    /// The screen verdict, for the screen signal.
-    pub screen: Detection,
-    /// The hook's session id, which is also a subagent-stop's agent id.
-    pub session_id: Span,
-    /// The tool name, for the pre/post-tool hooks.
-    pub tool: Span,
-    /// The call id that pairs a pre-tool with its post-tool.
-    pub tool_use_id: Span,
-    /// The stop/notification label, and also the OSC title text.
-    pub label: Span,
-    /// Which screen rule matched, carried through for explanations.
-    pub matched_rule_id: Span,
-    /// Why no rule matched, carried through for explanations.
-    pub fallback_reason: Span,
-    /// The buffer every `Span` above indexes into.
-    pub strings: *const c_uchar,
-    /// How many bytes `strings` points at. Every span is checked against it.
-    pub strings_len: usize,
-}
-
 /// The flat hook discriminants, as the event they name.
 ///
 /// Total over `hook`, defaulting to the session-start case, which changes no status a later signal
-/// cannot correct. ONE spelling on purpose: the same mapping serves a [`Signal`] Swift built by
-/// hand and a body `slopdesk-hookevent` just read off the socket, and two copies of it would be two
+/// cannot correct. ONE spelling on purpose: the same mapping serves the detector's hook door and a
+/// body `slopdesk-hookevent` just read off the socket, and two copies of it would be two
 /// answers to "is discriminant 7 an interrupt".
 fn hook_event_of(
     hook: u8,
@@ -208,81 +176,6 @@ fn hook_event_of(
         9 => ClaudeHookEvent::PreCompact { session_id },
         _ => ClaudeHookEvent::SessionStart { session_id },
     }
-}
-
-/// The signal plus the string bytes it points at, resolved once per call.
-struct Resolved<'a> {
-    signal: &'a Signal,
-    strings: &'a [u8],
-}
-
-impl Resolved<'_> {
-    /// A span as an owned string, or `None` when the caller marked it absent.
-    ///
-    /// Out-of-range and non-UTF-8 both answer `None` rather than panicking: this is a hook body a
-    /// nested agent could have written, and the machine's whole contract is that hostile input
-    /// produces a conservative answer.
-    fn text(&self, span: Span) -> Option<String> {
-        if !span.present {
-            return None;
-        }
-        let end = span.offset.checked_add(span.len)?;
-        let bytes = self.strings.get(span.offset..end)?;
-        core::str::from_utf8(bytes).ok().map(str::to_owned)
-    }
-
-    fn detection(&self) -> AgentScreenDetection {
-        let mut detection = self.signal.screen.resolve();
-        detection.matched_rule_id = self.text(self.signal.matched_rule_id);
-        detection.fallback_reason = self.text(self.signal.fallback_reason);
-        detection
-    }
-
-    /// The hook event this signal names.
-    fn hook_event(&self) -> ClaudeHookEvent {
-        hook_event_of(
-            self.signal.hook,
-            self.signal.notification,
-            self.text(self.signal.session_id),
-            self.text(self.signal.tool),
-            self.text(self.signal.tool_use_id),
-            self.text(self.signal.label),
-        )
-    }
-
-    /// The signal this value names. Total over `kind`, defaulting to `Tick`, which is the signal
-    /// that asserts nothing.
-    fn signal(&self) -> ClaudeSignal {
-        match self.signal.kind {
-            0 => ClaudeSignal::Hook(self.hook_event()),
-            1 => ClaudeSignal::ProcessPresent(self.signal.present),
-            2 => ClaudeSignal::ManifestVerdict(status_from(self.signal.status)),
-            3 => ClaudeSignal::OscTitle(self.text(self.signal.label).unwrap_or_default()),
-            5 => ClaudeSignal::Screen(self.detection()),
-            6 => ClaudeSignal::UserInput,
-            _ => ClaudeSignal::Tick,
-        }
-    }
-}
-
-/// Borrows a caller's signal and its string buffer for one call.
-///
-/// # Safety
-/// `signal` must be null or point to one live, initialised [`Signal`], whose `strings` pointer is
-/// itself null or valid for `strings_len` bytes — all for the duration of the call.
-#[expect(
-    unsafe_code,
-    reason = "this IS the boundary: a C struct pointer becoming a reference"
-)]
-const unsafe fn resolved<'a>(signal: *const Signal) -> Option<Resolved<'a>> {
-    if signal.is_null() {
-        return None;
-    }
-    // SAFETY: non-null and, by the caller's obligation, live and initialised for this call.
-    let signal = unsafe { &*signal };
-    // SAFETY: `borrow` states its own obligation, discharged by the same caller promise.
-    let strings = unsafe { borrow(signal.strings, signal.strings_len) };
-    Some(Resolved { signal, strings })
 }
 
 /// Borrows a caller's detection struct, answering the default verdict for null.
@@ -334,21 +227,9 @@ predicate!(
     slopdesk_agent_kind_is_generic, |text| slopdesk_agent::kind::AgentKind::is_generic_runtime_or_shell(text)
 );
 predicate!(
-    /// Whether a process name is `claude` itself.
-    slopdesk_agent_is_claude_running, |text| slopdesk_agent::process::is_claude_running(text)
-);
-predicate!(
-    /// Whether a process name is something that commonly WRAPS a `claude`.
-    slopdesk_agent_is_likely_wrapper, |text| slopdesk_agent::process::is_likely_wrapper(text)
-);
-predicate!(
     /// Whether a process name is a credential prompt or remote-shell entry point the control RPC
     /// must refuse to touch.
     slopdesk_agent_is_sensitive, |text| slopdesk_agent::process::is_sensitive(text)
-);
-predicate!(
-    /// Whether an OSC title was written by the agent rather than the shell.
-    slopdesk_agent_title_is_agent_written, |text| ClaudeStatusMachine::title_is_agent_written(text)
 );
 
 /// Which agent a process name names, as an `AgentKind` discriminant, or `-1` for none.
@@ -524,34 +405,6 @@ pub extern "C" fn slopdesk_agent_badge_needs_attention(badge: c_uchar) -> bool {
 )]
 pub extern "C" fn slopdesk_agent_badge_is_busy_tier(badge: c_uchar) -> bool {
     badge_from(badge).is_some_and(badge::TabBadge::is_busy_tier)
-}
-
-/// Whether an input chunk carries a real keystroke rather than the emulator's own replies.
-///
-/// # Safety
-/// `bytes` must be null or point to `len` initialised bytes live for the call.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_agent_contains_user_keystroke(bytes: *const c_uchar, len: usize) -> bool {
-    // SAFETY: the caller's obligation, restated above; `borrow` states its own.
-    slopdesk_agent::contains_user_keystroke(unsafe { borrow(bytes, len) })
-}
-
-/// Whether an input chunk carries `Esc` or `Ctrl-C` — the one unblock edge the host can see.
-///
-/// # Safety
-/// `bytes` must be null or point to `len` initialised bytes live for the call.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_agent_contains_cancel_keystroke(bytes: *const c_uchar, len: usize) -> bool {
-    // SAFETY: the caller's obligation, restated above; `borrow` states its own.
-    slopdesk_agent::contains_cancel_keystroke(unsafe { borrow(bytes, len) })
 }
 
 /// The rolled-up status of a run of statuses, given as discriminants.
@@ -818,194 +671,6 @@ pub unsafe extern "C" fn slopdesk_agent_hold_decide(
             has_last_refresh.then_some(last_refresh),
             now,
         )
-    }
-}
-
-// MARK: The state machine
-
-predicate!(
-    /// Whether an OSC title carries Claude Code's own busy spinner in the leading position.
-    slopdesk_agent_title_shows_spinner, |text| ClaudeStatusMachine::title_shows_spinner(text)
-);
-predicate!(
-    /// Whether an OSC title carries the `✳` rest telltale in the leading position.
-    slopdesk_agent_title_shows_rest, |text| ClaudeStatusMachine::title_shows_rest(text)
-);
-/// One of the machine's tuning constants, by index.
-///
-/// 0 default done→idle · 1 hook-block screen-override grace · 2 post-exit floor lockout · 3 screen
-/// dissent to raise · 4 screen dissent to release · 5 the label clamp, in bytes. An unknown index
-/// answers 0, which no caller can mistake for a window.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub extern "C" fn slopdesk_agent_machine_constant(index: u8) -> f64 {
-    match index {
-        0 => ClaudeStatusMachine::DEFAULT_DONE_TO_IDLE_TIMEOUT,
-        1 => ClaudeStatusMachine::HOOK_BLOCK_SCREEN_OVERRIDE_GRACE,
-        2 => ClaudeStatusMachine::POST_EXIT_FLOOR_LOCKOUT,
-        3 => ClaudeStatusMachine::SCREEN_DISSENT_TO_RAISE,
-        4 => ClaudeStatusMachine::SCREEN_DISSENT_TO_RELEASE,
-        5 => {
-            // The clamp is a byte count, and `f64` carries every `usize` this small exactly.
-            let clamp = u32::try_from(ClaudeStatusMachine::MAX_LABEL).unwrap_or(u32::MAX);
-            f64::from(clamp)
-        },
-        _ => 0.0,
-    }
-}
-
-/// Creates a status machine with the given done→idle decay. Exactly one
-/// [`slopdesk_agent_machine_free`] per call.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub extern "C" fn slopdesk_agent_machine_new(done_to_idle_timeout: f64) -> *mut ClaudeStatusMachine {
-    Box::into_raw(Box::new(ClaudeStatusMachine::new(done_to_idle_timeout)))
-}
-
-/// Frees a machine. Null is a no-op.
-///
-/// # Safety
-/// `handle` must be null, or a live pointer from [`slopdesk_agent_machine_new`] not yet freed.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_agent_machine_free(handle: *mut ClaudeStatusMachine) {
-    if handle.is_null() {
-        return;
-    }
-    // SAFETY: by the caller's obligation this came from `Box::into_raw` and has not been freed.
-    drop(unsafe { Box::from_raw(handle) });
-}
-
-/// A read-only accessor over the machine, answering `$fallback` for a null handle.
-macro_rules! machine_observer {
-    ($(#[$meta:meta])* $name:ident -> $type:ty, $fallback:expr, |$machine:ident| $body:expr) => {
-        $(#[$meta])*
-        ///
-        /// # Safety
-        /// `handle` must be null, or a live machine with no other call on it in flight.
-        #[unsafe(no_mangle)]
-        #[expect(
-            unsafe_code,
-            reason = "an exported C entry point is unsafe by definition in edition 2024"
-        )]
-        pub unsafe extern "C" fn $name(handle: *mut ClaudeStatusMachine) -> $type {
-            if handle.is_null() {
-                return $fallback;
-            }
-            // SAFETY: non-null and, by the caller's obligation, live and unaliased for this call.
-            let $machine = unsafe { &*handle };
-            $body
-        }
-    };
-}
-
-machine_observer!(
-    /// The current rolled-up status.
-    slopdesk_agent_machine_status -> u8, 0, |machine| status_byte(machine.status())
-);
-machine_observer!(
-    /// Whether the current status was reached quietly (no announcement is owed).
-    slopdesk_agent_machine_is_quiet -> bool, true, |machine| machine.is_quiet()
-);
-machine_observer!(
-    /// Whether a hook feed has claimed this pane, making screen verdicts corroboration.
-    slopdesk_agent_machine_has_authoritative_feed -> bool, false, |machine| machine.has_authoritative_feed()
-);
-machine_observer!(
-    /// How many blocking calls are outstanding in the ledger.
-    slopdesk_agent_machine_outstanding_blocks -> usize, 0, |machine| machine.outstanding_block_count()
-);
-machine_observer!(
-    /// The kind byte of the standing block, for the wire's status qualifier.
-    slopdesk_agent_machine_standing_block_kind -> u8, 0, |machine| machine.standing_block_kind()
-);
-
-/// The current label, or `-1` when there is none. A present-but-empty label answers 0.
-///
-/// # Safety
-/// `handle` must be null, or a live machine with no other call on it in flight; `out` must be null
-/// or writable for `cap` bytes.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_agent_machine_label(
-    handle: *mut ClaudeStatusMachine,
-    out: *mut c_uchar,
-    cap: usize,
-) -> isize {
-    if handle.is_null() {
-        return -1;
-    }
-    // SAFETY: the caller's obligations, restated above; `deliver` states its own.
-    unsafe {
-        let Some(label) = (*handle).label() else {
-            return -1;
-        };
-        isize::try_from(deliver(label.as_bytes(), out, cap)).unwrap_or(-1)
-    }
-}
-
-/// Folds one signal in and returns the resulting status discriminant.
-///
-/// # Safety
-/// `handle` must be null, or a live machine with no other call on it in flight; `signal` must be
-/// null or point to one live [`Signal`] whose string buffer is valid for the call.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_agent_machine_reduce(
-    handle: *mut ClaudeStatusMachine,
-    signal: *const Signal,
-    now: f64,
-) -> u8 {
-    if handle.is_null() {
-        return 0;
-    }
-    // SAFETY: the caller's obligations, restated above; `resolved` states its own.
-    unsafe {
-        let Some(resolved) = resolved(signal) else {
-            return status_byte((*handle).status());
-        };
-        status_byte((*handle).reduce(resolved.signal(), now))
-    }
-}
-
-/// Whether the machine would accept this hook event as its own pane's.
-///
-/// # Safety
-/// `handle` must be null, or a live machine with no other call on it in flight; `signal` must be
-/// null or point to one live [`Signal`] whose string buffer is valid for the call.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_agent_machine_accepts(
-    handle: *mut ClaudeStatusMachine,
-    signal: *const Signal,
-) -> bool {
-    if handle.is_null() {
-        return false;
-    }
-    // SAFETY: the caller's obligations, restated above; `resolved` states its own.
-    unsafe {
-        let Some(resolved) = resolved(signal) else {
-            return false;
-        };
-        (*handle).accepts(&resolved.hook_event())
     }
 }
 
@@ -1617,6 +1282,30 @@ impl slopdesk_agent::SymlinkResolver for Resolver {
     }
 }
 
+/// One of the screen-dissent windows, in seconds, by index.
+///
+/// `0` how long the screen must claim BLOCKED before it may raise a block the hook feed never
+/// announced; `1` how long it must contradict the authoritative status the other way before it may
+/// release one. An unknown index answers 0, which is no window at all rather than a plausible one.
+///
+/// The two are ASYMMETRIC on purpose and the asymmetry is the policy, so a caller that transcribed
+/// them would not merely drift — it would state a policy the detector does not run. Nothing in the
+/// shell decides by these; what asks is a test that has to drive the clock PAST one of them, and a
+/// test that walks its own copy of the window proves the detector agrees with the test rather than
+/// with itself.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_agent_dissent_seconds(index: c_uchar) -> f64 {
+    match index {
+        0 => ClaudeStatusMachine::SCREEN_DISSENT_TO_RAISE,
+        1 => ClaudeStatusMachine::SCREEN_DISSENT_TO_RELEASE,
+        _ => 0.0,
+    }
+}
+
 /// Creates an empty job for the given process group. Exactly one [`slopdesk_agent_job_free`] per
 /// call.
 #[unsafe(no_mangle)]
@@ -1800,6 +1489,44 @@ pub unsafe extern "C" fn slopdesk_agent_job_answer(
 mod tests {
     use super::*;
 
+    /// A span that runs past its buffer reads as ABSENT, and a present-but-empty one as `""`.
+    ///
+    /// The last door that takes `(offset, len, present)` spans into a caller-owned blob is the
+    /// foreground job's, so this is where the bounds discipline is held: a hostile length must
+    /// answer `None` rather than index out of the slice, and a zero LENGTH must stay apart from a
+    /// zero PRESENCE — an argv0 of `""` is a process that reported one, an absent argv0 is a
+    /// process that did not.
+    #[test]
+    fn a_span_past_its_buffer_is_absent_and_an_empty_one_is_not() {
+        let strings = b"abc";
+        let span = |offset: usize, len: usize, present: bool| Span { offset, len, present };
+        let handle = slopdesk_agent_job_new(7);
+        unsafe {
+            slopdesk_agent_job_push_process(
+                handle,
+                11,
+                span(0, 3, true),
+                // One byte past the end: a caller's arithmetic, not a caller's promise.
+                span(1, 99, true),
+                span(1, 0, true),
+                strings.as_ptr(),
+                strings.len(),
+            );
+        }
+        // SAFETY: the pointer came from `slopdesk_agent_job_new` above and nothing else holds it.
+        let staged = unsafe { &*handle };
+        let process = staged
+            .job
+            .processes
+            .first()
+            .unwrap_or_else(|| panic!("one pushed process"));
+        assert_eq!(process.name, "abc");
+        assert_eq!(process.argv0, None);
+        assert_eq!(process.cmdline.as_deref(), Some(""));
+        // SAFETY: as above, and this is the last use of the handle.
+        unsafe { slopdesk_agent_job_free(handle) };
+    }
+
     /// `ClaudeStatus::ALL`'s order IS the byte, and the two maps below agree with it.
     ///
     /// Three places write this order down: `ALL` in the crate, the pair of matches here, and the
@@ -1822,49 +1549,6 @@ mod tests {
         let past_the_end = u8::try_from(ClaudeStatus::ALL.len()).unwrap_or(u8::MAX);
         assert_eq!(status_from(past_the_end), ClaudeStatus::None);
         assert_eq!(status_from(u8::MAX), ClaudeStatus::None);
-    }
-
-    /// A zeroed signal: every case fills in only the two or three slots it owns, exactly as the
-    /// Swift wrapper does.
-    const fn blank() -> Signal {
-        const ABSENT: Span = Span {
-            offset: 0,
-            len: 0,
-            present: false,
-        };
-        Signal {
-            kind: 4,
-            hook: 0,
-            notification: 0,
-            status: 0,
-            present: false,
-            screen: Detection {
-                state: 3,
-                skip_state_update: false,
-                visible_idle: false,
-                visible_blocker: false,
-                visible_working: false,
-            },
-            session_id: ABSENT,
-            tool: ABSENT,
-            tool_use_id: ABSENT,
-            label: ABSENT,
-            matched_rule_id: ABSENT,
-            fallback_reason: ABSENT,
-            strings: core::ptr::null(),
-            strings_len: 0,
-        }
-    }
-
-    #[test]
-    fn a_wrapper_script_still_identifies_the_agent_it_wraps() {
-        assert!(unsafe { slopdesk_agent_is_likely_wrapper(b"/usr/bin/node".as_ptr(), 13) });
-        // A shell is deliberately NOT a wrapper: it returning to the foreground IS the exit signal.
-        assert!(!unsafe { slopdesk_agent_is_likely_wrapper(b"sh".as_ptr(), 2) });
-        assert!(unsafe { slopdesk_agent_is_claude_running(b"claude".as_ptr(), 6) });
-        // A trailing slash is untidy spelling, not a different program.
-        let trailing = b"/usr/local/bin/claude/";
-        assert!(unsafe { slopdesk_agent_is_claude_running(trailing.as_ptr(), trailing.len()) });
     }
 
     /// A null callback means "the crate resolves it", not "nothing resolves".
@@ -1943,100 +1627,6 @@ mod tests {
     }
 
     #[test]
-    fn a_span_that_runs_past_the_buffer_reads_as_absent_rather_than_out_of_bounds() {
-        let strings = b"abc";
-        let mut signal = blank();
-        signal.kind = 0;
-        signal.hook = 5;
-        signal.strings = strings.as_ptr();
-        signal.strings_len = strings.len();
-        // A length one byte past the end: a hostile hook body, not a caller mistake.
-        signal.label = Span {
-            offset: 1,
-            len: 99,
-            present: true,
-        };
-        signal.session_id = Span {
-            offset: 0,
-            len: 3,
-            present: true,
-        };
-
-        let Some(resolved) = (unsafe { resolved(&raw const signal) }) else {
-            panic!("a non-null signal resolves");
-        };
-        assert_eq!(resolved.text(signal.label), None);
-        assert_eq!(resolved.text(signal.session_id).as_deref(), Some("abc"));
-    }
-
-    #[test]
-    fn present_but_empty_is_not_the_same_answer_as_absent() {
-        let strings = b"x";
-        let mut signal = blank();
-        signal.strings = strings.as_ptr();
-        signal.strings_len = strings.len();
-        signal.tool = Span {
-            offset: 1,
-            len: 0,
-            present: true,
-        };
-        let Some(resolved) = (unsafe { resolved(&raw const signal) }) else {
-            panic!("a non-null signal resolves");
-        };
-        assert_eq!(resolved.text(signal.tool).as_deref(), Some(""));
-        assert_eq!(resolved.text(blank().tool), None);
-    }
-
-    #[test]
-    fn a_stop_hook_drives_the_handle_to_done_and_the_label_comes_back() {
-        let machine = slopdesk_agent_machine_new(8.0);
-        let strings = b"s-1ready";
-        let mut signal = blank();
-        signal.kind = 0;
-        signal.hook = 5;
-        signal.strings = strings.as_ptr();
-        signal.strings_len = strings.len();
-        signal.session_id = Span {
-            offset: 0,
-            len: 3,
-            present: true,
-        };
-        signal.label = Span {
-            offset: 3,
-            len: 5,
-            present: true,
-        };
-
-        let status = unsafe { slopdesk_agent_machine_reduce(machine, &raw const signal, 1.0) };
-        assert_eq!(status, status_byte(ClaudeStatus::Done));
-        assert_eq!(unsafe { slopdesk_agent_machine_status(machine) }, status);
-
-        let mut buffer = [0u8; 64];
-        let needed = unsafe { slopdesk_agent_machine_label(machine, buffer.as_mut_ptr(), 64) };
-        assert_eq!(needed, 5);
-        assert_eq!(buffer.get(..5), Some(b"ready".as_slice()));
-
-        unsafe { slopdesk_agent_machine_free(machine) };
-    }
-
-    #[test]
-    fn a_null_handle_is_inert_at_every_entry_point() {
-        let signal = blank();
-        assert_eq!(
-            unsafe { slopdesk_agent_machine_reduce(core::ptr::null_mut(), &raw const signal, 0.0) },
-            0
-        );
-        assert!(!unsafe { slopdesk_agent_machine_accepts(core::ptr::null_mut(), &raw const signal) });
-        assert_eq!(
-            unsafe { slopdesk_agent_machine_label(core::ptr::null_mut(), core::ptr::null_mut(), 0) },
-            -1
-        );
-        assert!(!unsafe { slopdesk_agent_hold_is_holding_idle(core::ptr::null_mut()) });
-        unsafe { slopdesk_agent_machine_free(core::ptr::null_mut()) };
-        unsafe { slopdesk_agent_hold_free(core::ptr::null_mut()) };
-    }
-
-    #[test]
     fn the_hold_suppresses_the_first_working_to_idle_the_same_way_in_process() {
         let hold = slopdesk_agent_hold_new();
         let working = Detection {
@@ -2109,13 +1699,5 @@ mod tests {
         );
         assert!((slopdesk_agent_hold_constant(5) - AgentDetectionHold::SCAN_INTERVAL).abs() < f64::EPSILON);
         assert!(slopdesk_agent_hold_constant(200).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn a_keystroke_is_told_apart_from_the_emulators_own_reply() {
-        assert!(unsafe { slopdesk_agent_contains_user_keystroke(b"a".as_ptr(), 1) });
-        assert!(unsafe { slopdesk_agent_contains_cancel_keystroke(b"\x1b".as_ptr(), 1) });
-        assert!(!unsafe { slopdesk_agent_contains_cancel_keystroke(b"a".as_ptr(), 1) });
-        assert!(!unsafe { slopdesk_agent_contains_user_keystroke(core::ptr::null(), 0) });
     }
 }

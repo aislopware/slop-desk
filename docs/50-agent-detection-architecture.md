@@ -62,14 +62,19 @@ So: tiers.
 
 ### Tier 1 — the agent describing itself (AUTHORITATIVE)
 
-| Signal | Source | Reaches the machine as |
+| Signal | Source | Reaches the detector as |
 | --- | --- | --- |
-| Claude Code hooks | `AgentHookListener` AF_UNIX socket → `ClaudeHookBody` | `.hook(ClaudeHookEvent)` |
-| ctl `report` verb | `slopdesk ctl report working\|blocked\|done\|idle` | `.hook(…)` (synthetic event) |
-| presence ABSENCE | ~1 Hz foreground poll | `.processPresent(false)` |
-| a CANCEL keystroke | client → PTY, `PaneInputClassifier` | `.userInput` |
+| Claude Code hooks | `AgentHookListener` AF_UNIX socket, raw body | `slopdesk_agent_detector_hook` |
+| ctl `report` verb | `slopdesk ctl report working\|blocked\|done\|idle` | `slopdesk_agent_detector_report` |
+| presence ABSENCE | ~1 Hz foreground poll | `slopdesk_agent_detector_sample` |
+| a CANCEL keystroke | client → PTY, raw bytes | `slopdesk_agent_detector_user_input` |
 
-The first two set **authoritative coverage** (`ClaudeStatusMachine.hasAuthoritativeFeed`). ⚠️ Note
+Nothing on that list becomes a Swift value first. Each door takes the input in the shape hostd
+already holds it — a hook body as the bytes off the socket, a keystroke as the chunk headed for the
+PTY — and `rust/slopdesk-agent`'s `detector` reads it and folds it in the same call. A Swift signal
+type in between would be a decode whose only consumer is the next call across the same boundary.
+
+The first two set **authoritative coverage** (`slopdesk_agent_detector_has_authoritative_feed`). ⚠️ Note
 what is NOT in that column: the agent's NAME. `ctl report` is available to any process in any pane,
 so a codex / gemini / opencode / bespoke-orchestrator wrapper that reports its own state gets
 tier-1 treatment identically, with zero per-agent code in the machine. That is the intended way to

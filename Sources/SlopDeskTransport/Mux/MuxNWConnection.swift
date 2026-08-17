@@ -4,7 +4,7 @@ import SlopDeskProtocol
 /// The shared physical mux connection for one host: ONE CONTROL ``MuxByteLink`` + ONE DATA
 /// ``MuxByteLink``, each carrying many panes' logical channels multiplexed by `channelID`.
 ///
-/// The IO layer for the pure ``MuxRouter`` / ``HostChannelRouter``: owns one ``MuxFrameDecoder``
+/// The IO layer for the pure ``MuxRouter``: owns one ``MuxFrameDecoder``
 /// per link, runs a receive loop on each, and dispatches every decoded ``MuxFrame`` through the
 /// router into the right per-channel ``MuxSubChannel``. So interleaved frames from many panes on
 /// one socket land on the correct per-pane inbound stream — the headline TCP-mux property.

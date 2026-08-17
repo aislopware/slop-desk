@@ -430,33 +430,34 @@ Swift original — passed unchanged the first time the door was wired in. That s
 is: it is the boundary's own test, not a mirror of `apply.rs`, and a dozen of its cases have no
 counterpart there.
 
-### The answer whose FIELDS are optional, and why a bitmask rides with them
+### The door that stopped being a door, because the answer had nowhere left to go
 
-`slopdesk_hook_event_parse` reads one Claude Code hook body — three discriminants and five optional
-strings (session id, tool, tool-use id, label, prompt), all written by whatever forked the agent's
-hook. It is §4-shaped, with one addition:
+A Claude Code hook body is three discriminants and five optional strings (session id, tool, tool-use
+id, label, prompt), all written by whatever forked the agent's hook. `rust/slopdesk-hookevent` reads
+it, and for a while it had a door of its own: a §4 answer of `[u8 hook][u8 notification][u8 kind]
+[u8 present] [u16 BE len]×5 [bytes]×present`, where `present` was a bitmask because **ABSENT and
+EMPTY are different answers here** — a body that sent no `session_id` must not read as one that sent
+`""`, since the empty string is a session, and attributing a record to it attributes the record to a
+PANE rather than to nobody. That is exactly the confusion the attribution exists to prevent (a
+nested `claude -p` that inherited `SLOPDESK_PANE_ID` driving the pane's own status), and a zero
+length cannot carry it, so a bit did.
 
-```text
-[u8 hook][u8 notification][u8 kind][u8 present]  [u16 BE len]×5  [bytes]×present
-```
+The bitmask rule stands wherever an optional string crosses — it is why `SlopDeskAgentSpan` carries
+a `present` flag next to its length. The DOOR does not. When the fusion moved
+(`rust/slopdesk-agent`'s `detector`), a hook body stopped needing to become a Swift value at all: it
+crosses as raw bytes into `slopdesk_agent_detector_hook`, which parses and folds it in one call.
+What the old door answered was a value whose only consumer was the next call across the same
+boundary — so it was deleted, module and all, on the rule that a door nothing calls is a second way
+to ask what a live door already answers.
 
-`present` is a bitmask, and it is not redundant with the lengths. **ABSENT and EMPTY are different
-answers here.** A body that sent no `session_id` must not read as one that sent `""`: the empty
-string is a session, and attributing a record to it attributes the record to a PANE rather than to
-nobody — which is exactly the confusion the attribution exists to prevent (a nested `claude -p` that
-inherited `SLOPDESK_PANE_ID` driving the pane's own status). A zero length cannot carry that
-distinction, so a bit does.
-
-The refusal is 0 bytes, which no answer can be: the header alone is fourteen. That is what the
-caller drops on — not JSON, an event name nothing knows, a tool event with no `tool_name`.
-
-What made this port worth doing is not speed. The body was read TWICE over: a typed `HookPayload`
-enum modelling the JSON in one target, and a `mapToHookEvent` adapter a module away in another
-turning a payload into the event the status machine folds. Splitting an event's IDENTITY from its
-MEANING is what let the two drift — a payload case could gain a field the adapter never read, and
-the rules that decide a pane's status (`AskUserQuestion` is a BLOCK, an interrupt is a FINISHED
-TURN, the idle nudge is not a raised hand) lived nowhere near the case they governed. One crate
-holds both halves now, and `scripts/check-supervisor.sh` fails if a second reading appears.
+What made the port worth doing was never the encoding. The body was read TWICE over: a typed
+`HookPayload` enum modelling the JSON in one target, and a `mapToHookEvent` adapter a module away in
+another turning a payload into the event the status machine folds. Splitting an event's IDENTITY
+from its MEANING is what let the two drift — a payload case could gain a field the adapter never
+read, and the rules that decide a pane's status (`AskUserQuestion` is a BLOCK, an interrupt is a
+FINISHED TURN, the idle nudge is not a raised hand) lived nowhere near the case they governed. One
+crate holds both halves now, and `scripts/check-supervisor.sh` fails if a second reading appears —
+including a Swift file that reaches for a standalone parse door again.
 
 ### The answer that is a NESTED shape, walked once
 
@@ -594,9 +595,12 @@ the same change" a diff a reviewer can check.
 status is an `enum` a SwiftUI `switch` reads, so *something* stays in Swift. The line, and it is
 gated:
 
-- **The case list stays.** `AgentKind`, `ClaudeStatus`, `AgentScreenState`, `ClaudeSignal`,
-  `ClaudeHookEvent`, `AgentStatusKind`. Declaring the same cases twice is not two implementations —
+- **The case list stays, for the cases a view still reads.** `AgentKind`, `ClaudeStatus`,
+  `AgentScreenState`, `AgentStatusKind`. Declaring the same cases twice is not two implementations —
   it is one vocabulary in two type systems, and marshalling an enum through C would buy nothing.
+  `ClaudeSignal` and `ClaudeHookEvent` were on that list until the fusion moved: no `switch` in a
+  view ever read them, and once the detector's doors took the raw input, the only thing left for a
+  Swift signal case to do was be rebuilt on the far side. They are gone.
 - **Every table and every walk moves.** The alias table, the wrapper basenames, the keystroke
   classes, the rollup rank, the display labels, the temporal hold's counters, the job-identify
   ladder, the 900-line status machine. `ClaudeStatus.urgency` moved for exactly this reason: it
@@ -610,12 +614,14 @@ grows or reorders a case fails the build rather than reporting `working` for `bl
 
 ### Two shapes the agent module added
 
-**One string buffer, not one pointer each.** A hook event carries up to six optional strings. Six
-`(ptr, len)` pairs is six nested `withUnsafeBytes` per call. Instead the caller concatenates into one
-buffer and passes `(offset, len, present)` spans into it — one pointer, one lifetime, one scope. The
-crate bounds-checks every span, because a hook body is untrusted input; an out-of-range span reads as
-absent. `present == false` is `nil`; `present == true, len == 0` is the empty string, and the machine
-tells those apart.
+**One string buffer, not one pointer each.** A foreground job's process carries three optional
+strings, and a hook event used to carry six. Six `(ptr, len)` pairs is six nested `withUnsafeBytes`
+per call. Instead the caller concatenates into one buffer and passes `(offset, len, present)` spans
+into it — one pointer, one lifetime, one scope. The crate bounds-checks every span, because this is
+untrusted input; an out-of-range span reads as absent. `present == false` is `nil`;
+`present == true, len == 0` is the empty string, and the crate tells those apart. The hook half of
+that no longer crosses — the body goes over raw — so `slopdesk_agent_job_push_process` is the door
+that holds the rule now, and `rust/slopdesk-ffi`'s own tests hold it there.
 
 **A staged handle for a shape too big to flatten.** A foreground job is a pgid plus N processes, each
 with three optional strings and a whole argv. `job_new` → `push_process` / `push_argv` per item →

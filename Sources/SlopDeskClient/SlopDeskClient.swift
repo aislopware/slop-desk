@@ -62,7 +62,8 @@ public actor SlopDeskClient {
         case notification(title: String, body: String)
         /// The PTY's current foreground-process basename (wire type 26, host → client). The COARSE
         /// Claude-Code detection signal: `"claude"` means a `claude` is in the foreground, `""`/any
-        /// other name clears it. The UI folds this into the pane's ``ClaudeStatusMachine`` presence
+        /// other name clears it. The UI folds this into the pane's `ClaudeStatusMachine`
+        /// (``rust/slopdesk-agent``'s `machine`) presence
         /// floor. The pane identity comes from the channel envelope, not this body.
         case foregroundProcess(name: String)
         /// A rich Claude-Code agent-status update (wire type 27, host → client). `state` is the raw

@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 
 // MARK: - Topology
@@ -72,11 +73,15 @@ public struct WorkspaceTopology: Equatable, Sendable {
 
     /// The cap. A ring that grew without bound would keep every pane the user ever closed alive in
     /// the document, on every client, forever.
-    public static let closedTabRingCap = 25
+    ///
+    /// ASKED, not transcribed. The host is what reaps, so a number spelled a second time here would
+    /// not disagree loudly — it would render a ring whose tail the host already deleted, or hide
+    /// tabs ⇧⌘T would still reopen, with nothing logged either way.
+    public static let closedTabRingCap = slopdesk_ws_topology_ring_cap(0)
 
     /// The MRU cap. A handful of switches back is all the close path can meaningfully use, and the
-    /// ring rides in every snapshot.
-    public static let focusMRUCap = 16
+    /// ring rides in every snapshot. Asked for ``closedTabRingCap``'s reason.
+    public static let focusMRUCap = slopdesk_ws_topology_ring_cap(1)
 
     public init(
         tree: TreeWorkspace,
@@ -116,11 +121,18 @@ public struct WorkspaceTopology: Equatable, Sendable {
 ///   not reap a value some future build put there — hence ``reservedRootFields``.
 public enum WorkspaceTopologyOmissions {
     /// The `root` fields reserved for config that does not cross.
-    public static let reservedRootFields: Set<UInt8> = [
-        WorkspaceRootField.layoutPresets,
-        WorkspaceRootField.launchPresets,
-        WorkspaceRootField.sessionTemplates,
-    ]
+    ///
+    /// ASKED, for the caps' reason and a sharper one: reaping a reserved field DELETES whatever a
+    /// future build put there. A set transcribed one number off would reap exactly the field it was
+    /// meant to leave alone, and nothing would say so until the build that reads it ships.
+    public static let reservedRootFields: Set<UInt8> = {
+        var out = [UInt8](repeating: 0, count: 16)
+        let needed = out.withUnsafeMutableBufferPointer { buffer in
+            slopdesk_ws_reserved_root_fields(buffer.baseAddress, buffer.count)
+        }
+        guard needed > 0, needed <= out.count else { return [] }
+        return Set(out[0..<needed])
+    }()
 }
 
 // MARK: - Projection

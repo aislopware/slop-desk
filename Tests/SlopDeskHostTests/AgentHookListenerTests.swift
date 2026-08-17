@@ -9,7 +9,8 @@ import XCTest
 /// and the one drain test that opens a real descriptor.
 ///
 /// The FOLD is not here any more. It was — an `AgentHookHandler` carrying its own
-/// ``ClaudeStatusMachine`` and its own dedupe anchor, driven by thirteen tests in this file and
+/// `ClaudeStatusMachine` (``rust/slopdesk-agent``'s `machine`) and its own dedupe anchor, driven by
+/// thirteen tests in this file and
 /// constructed by nothing in `Sources/`. Every behaviour they asserted belongs to the machine, and
 /// the live listener's sink reaches it through ``ClaudePaneDetector``, so they now run against the
 /// fold that actually executes — including the validate-then-drop cases, which had never been
@@ -17,30 +18,14 @@ import XCTest
 final class AgentHookListenerTests: XCTestCase {
     private func json(_ s: String) -> Data { Data(s.utf8) }
 
-    // MARK: body → event, at the door
+    // MARK: body → event — not here any more
 
-    /// The type-27 `kind` byte says which class of block the pane is in, and only a BLOCK has one.
-    func testTheKindByteNamesTheBlockClassAndNothingElse() {
-        func kind(_ body: String) -> UInt8? { ClaudeHookBody.read(json(body))?.kindByte }
-        XCTAssertEqual(
-            kind(#"{"hook_event_name":"Notification","message":"Claude needs your permission to use Bash"}"#),
-            1,
-        )
-        XCTAssertEqual(
-            kind(#"{"hook_event_name":"Notification","notification_type":"agent_needs_input","message":"?"}"#),
-            2,
-        )
-        // The idle nudge is not a raised hand — it is informational, kind 3.
-        XCTAssertEqual(kind(#"{"hook_event_name":"Notification","message":"Claude is waiting for your input"}"#), 3)
-        XCTAssertEqual(kind(#"{"hook_event_name":"Notification","message":"Authentication succeeded"}"#), 3)
-        XCTAssertEqual(kind(#"{"hook_event_name":"Stop","session_id":"s","last_assistant_message":"done"}"#), 0)
-    }
-
-    func testAStopBodyReadsAsAStopEvent() {
-        let reading = ClaudeHookBody
-            .read(json(#"{"hook_event_name":"Stop","session_id":"s","last_assistant_message":"done"}"#))
-        XCTAssertEqual(reading?.event, .stop(sessionID: "s", label: "done"))
-    }
+    //
+    // The reading itself is `rust/slopdesk-hookevent`'s, reached through the detector's one hook
+    // door: the body crosses as the bytes hostd read off the socket, and parsing and folding happen
+    // in that call. So the kind byte a `Notification` earns and the shape a `Stop` reads as are
+    // pinned in that crate, beside the parser that decides them, rather than against a second
+    // reading here.
 
     // MARK: record framing split (pane= header + JSON) — the pure routing piece
 

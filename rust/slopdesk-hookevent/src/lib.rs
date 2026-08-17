@@ -598,6 +598,22 @@ mod tests {
                 "message":"Claude needs your approval to run"}"#,
         );
         assert_eq!(event.notification, notification::PERMISSION);
+        assert_eq!(event.kind_byte, 1, "an unknown type still classifies by its text");
+    }
+
+    /// The kind byte names the class of BLOCK a pane is in, so an event that is not a block has
+    /// none — a `Stop` reading as any nonzero kind would put a finished turn in a dialog.
+    #[test]
+    fn only_a_block_carries_a_kind_byte() {
+        let plain = read(
+            r#"{"hook_event_name":"Notification","message":"Claude needs your permission to use Bash"}"#,
+        );
+        assert_eq!(
+            plain.kind_byte, 1,
+            "the text alone is enough to name a permission block"
+        );
+        let stop = read(r#"{"hook_event_name":"Stop","session_id":"s","last_assistant_message":"done"}"#);
+        assert_eq!(stop.kind_byte, 0);
     }
 
     #[test]
@@ -641,8 +657,23 @@ mod tests {
         let blank = read(r#"{"hook_event_name":"Stop","last_assistant_message":"   "}"#);
         assert_eq!(blank.label, None, "whitespace is not words");
 
-        let hostile = read(r#"{"hook_event_name":"Stop","background_tasks":{"not":"an array"}}"#);
-        assert_eq!(hostile.label, None, "a shape it cannot count counts zero");
+        // An undocumented seam is tolerated in EVERY non-array shape, not just the plausible one:
+        // absent, null, an object and a bare scalar all read as no live work, rather than failing
+        // the reading of an otherwise good Stop.
+        for tasks in ["{\"not\":\"an array\"}", "null", "7"] {
+            let hostile = read(&format!(
+                r#"{{"hook_event_name":"Stop","background_tasks":{tasks}}}"#
+            ));
+            assert_eq!(
+                hostile.label, None,
+                "a shape it cannot count counts zero: {tasks}"
+            );
+        }
+        assert_eq!(
+            read(r#"{"hook_event_name":"Stop"}"#).label,
+            None,
+            "nothing to say stays nothing"
+        );
     }
 
     #[test]

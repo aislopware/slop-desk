@@ -16,8 +16,10 @@ import SlopDeskProtocol
 ///
 /// **What is here, and what is not.** The FOLD is not: a received body goes to the owning pane's
 /// ``ClaudePaneDetector``, which is the one machine per pane. There used to be a second one right
-/// here — an `AgentHookHandler` reading the same body through the same ``SlopDeskAgentDetect/ClaudeHookBody``
-/// door, folding it through its own ``ClaudeStatusMachine``, dedupeing against its own anchor — and
+/// here — an `AgentHookHandler` reading the same body through a Swift
+/// `ClaudeHookBody` of its own, folding it through its own `ClaudeStatusMachine`, dedupeing against
+/// its own anchor. Both of those are ``rust/slopdesk-agent``'s now — `hookevent` reads the body and
+/// `machine` folds it, in the one call — and
 /// it was constructed by nothing outside its own test file. Two machines per pane is the bug the
 /// fused detector exists to prevent, so what is left here is the routing:
 ///

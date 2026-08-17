@@ -4,7 +4,8 @@ import SlopDeskAgentDetect
 import SlopDeskInspector
 import SlopDeskProtocol
 
-/// The SINGLE per-pane Claude-Code detector: ONE ``SlopDeskAgentDetect/ClaudeStatusMachine`` fed by
+/// The SINGLE per-pane Claude-Code detector: ONE `ClaudeStatusMachine` (``rust/slopdesk-agent``'s
+/// `machine`) fed by
 /// ALL the host's detection inputs, so the host is the **single source of truth** and the client is
 /// a passive display.
 ///
@@ -23,7 +24,7 @@ import SlopDeskProtocol
 /// is the crossing and the ``WireMessage`` shapes, because a wire enum is `SlopDeskProtocol`'s and a
 /// fold is not.
 ///
-/// A `final class` rather than the `struct` this was, for the reason ``ClaudeStatusMachine`` is one:
+/// A `final class` rather than the `struct` this was, for the reason `ClaudeStatusMachine` is one:
 /// it holds a handle, so a copy was never a copy — two `ClaudePaneDetector` values sharing one
 /// machine looked like value semantics and was not. Its owner holds exactly one per pane and never
 /// copies it. Overlapping calls on one handle are aliasing UB rather than a lost update, so an owner
@@ -109,7 +110,7 @@ public final class ClaudePaneDetector: @unchecked Sendable {
     public var isQuietTransition: Bool { slopdesk_agent_detector_is_quiet(handle) }
 
     /// TRUE while this pane's agent is announcing its own edges through the hook feed — the screen
-    /// engine is corroboration rather than authority (see ``SlopDeskAgentDetect/ClaudeStatusMachine``).
+    /// engine is corroboration rather than authority (see ``rust/slopdesk-agent``'s `machine`).
     public var hasAuthoritativeFeed: Bool {
         slopdesk_agent_detector_has_authoritative_feed(handle)
     }

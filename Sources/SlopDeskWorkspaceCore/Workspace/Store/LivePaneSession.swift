@@ -61,7 +61,8 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
 
     // MARK: Claude-Code auto-detection (client TRUSTS the host's type-27)
 
-    /// The CLIENT is a passive display — the HOST owns the one ``ClaudeStatusMachine`` and is the
+    /// The CLIENT is a passive display — the HOST owns the one `ClaudeStatusMachine`
+    /// (``rust/slopdesk-agent``'s `machine`) and is the
     /// single source of truth. The client does NOT run its own machine or re-derive presence from type-26
     /// (re-deriving from it fights the host's type-27 and causes inspector flap); it maps the host's type-27
     /// `state` byte → ``ClaudeStatus`` (forward-tolerant) and trusts it. Whether a terminal can ever host

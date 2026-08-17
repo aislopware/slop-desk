@@ -54,7 +54,7 @@ INVARIANTS_PID=$!
 #
 # The union is BUILT from the bans, not maintained beside them: `make lint` runs
 # `scripts/check-ban-union.py`, which fails if any ban's pattern is missing from it.
-DELETED_SWIFT_UNION='((enum|struct|final class) (GF256|NeonGf|ReedSolomonMatrix)\b)|((struct|enum|final class) StreamHasher\b|func (hashRow|hashNV12Scalar|rowHashes|rowHashesQuantized|borrowPlane|estimateVerticalShift|changedFraction|adaptiveMaxQP)\b)|(func (targetSeconds|stepSeconds|cgRectToCocoa|backingScaleFactor)\(|(struct|enum|final class) ScreenInfo\b)|((func|var) appendBE|(struct|enum|final class|class) BigEndianReader)|((enum|struct|final class|class|actor) (AgentManifest|CompiledAgentManifest|AgentManifestCatalog|TOMLSubsetParser|ManifestRegion|ManifestRuleEngine|BundledAgentManifests|AgentDetectionExplain|AgentOscTracker|AgentSyncFrameTracker|ClaudeManifestMatcher)\b)|((enum|struct|final class|class|actor) ShellIntegration\b|slopdesk-zdotdir-)|((enum|struct|final class|class|actor|protocol) (FileTransferServer|FileReceiveLogic|FileDropSink|DiskFileDropSink|FileNameSanitizer|LoopbackFileTransferChannel)\b)|((enum|struct|final class|class|actor|protocol) (AndroidBridgeServer|AndroidBridgeManager|AndroidToolchain|AndroidScrcpySession|AndroidDeviceCatalog|AndroidEmulatorConsole|AndroidSocket|AndroidListener|AndroidBridgeRequest)\b)|((enum|struct|final class|class|actor|protocol) (TranscriptParser|TranscriptTailer|TranscriptLine|LineAccumulator|SubagentWatcher|EventBuilder|InspectorEngine|InspectorReplayLog|InspectorSource|InspectorServer)\b)|((static (let|var|func)|let|var|func) (seededUserSettings|obsoleteSeeds|themeExtension[A-Za-z]*|bridgeExtension[A-Za-z]*|registerExtension|unregisterExtension|bundledMarketplaceExtensions|retiredExtensions|ownThemeResources)\b)|((enum|struct|final class|static (let|var|func)) (AgentInstaller|hookMarker|installedEvents|hookCommand|entryIsOurs)\b)|((struct|static (let|var|func)|private static func) (parseBranchHeader|parseStatusLine|statusNibble|packStatus|claudeProjectSlug|gitToplevel|gitStashCount|gitDiffArgumentPlan|resolveGitDiff|jsonlSessions|claudeSessions|opencodeSessions|sessionRoots|GhosttyTerminfoProbe|terminfoEntryExists|isGhosttyResolvable|effectiveTerm|liveProbe|runInfocmp)\b)|("/usr/bin/(git|infocmp)")|((let|var|func|case) *(bonusBoundary|bonusCamel123|bonusConsecutive|scoreGapStart|scoreGapExtension|bonusMatrix|bonusFor|backtrace)\b)|((enum|struct) *(HookPayload|StopInfo|ToolUseBlock|NotificationInfo)\b|func +(mapToHookEvent|classifyNotification|stopLabel)\b)|(func +(skipEscapeSequence|isEraseToLineEnd|applySGR|extendedColour)\b)|(enum TerminalScreenModel|struct TerminalScreenModel|enum LineOverprintCollapser|enum TerminalSnapshotRenderer)|((enum|struct|final class|class|actor) (TerminalInputModeStripper|InputModeFinalState|AltScreenSegmentStripper|SyncUpdateFrameCollapser|ScrollbackDistiller|TerminalQueryStripper|PromptEOLMarkStripper)\b)|(func (splitTrailingIncompleteEscape|splitTrailingIncompleteUTF8)\b|trailingEscapeScanBytes *[:=])|((enum|struct|final class|class|actor) (ScrollbackJournal|ScrollbackJournalStore)\b)|((createFile|forWritingTo|\.write\(to:).*\.(scrollback|resume)("|\)|$))|((enum|struct|final class|class|actor) (HostOutputSniffer|OutputSniffer)\b)|((enum|struct|final class|class|actor) (CommandBlockSegmenter|CommandBlockTracker|AutoProgressMatcher)\b)|(\[\[rules\]\]|min_engine_version\s*=|skip_state_update\s*=|line_regex\s*=)|(autoProgressCommands: \[String\]|autoProgressPrefixes)'
+DELETED_SWIFT_UNION='((enum|struct|final class) (GF256|NeonGf|ReedSolomonMatrix)\b)|((struct|enum|final class) StreamHasher\b|func (hashRow|hashNV12Scalar|rowHashes|rowHashesQuantized|borrowPlane|estimateVerticalShift|changedFraction|adaptiveMaxQP)\b)|(func (targetSeconds|stepSeconds|cgRectToCocoa|backingScaleFactor)\(|(struct|enum|final class) ScreenInfo\b)|((func|var) appendBE|(struct|enum|final class|class) BigEndianReader)|((enum|struct|final class|class|actor) (AgentManifest|CompiledAgentManifest|AgentManifestCatalog|TOMLSubsetParser|ManifestRegion|ManifestRuleEngine|BundledAgentManifests|AgentDetectionExplain|AgentOscTracker|AgentSyncFrameTracker|ClaudeManifestMatcher)\b)|((enum|struct|final class|class|actor) ShellIntegration\b|slopdesk-zdotdir-)|((enum|struct|final class|class|actor|protocol) (FileTransferServer|FileReceiveLogic|FileDropSink|DiskFileDropSink|FileNameSanitizer|LoopbackFileTransferChannel)\b)|((enum|struct|final class|class|actor|protocol) (AndroidBridgeServer|AndroidBridgeManager|AndroidToolchain|AndroidScrcpySession|AndroidDeviceCatalog|AndroidEmulatorConsole|AndroidSocket|AndroidListener|AndroidBridgeRequest)\b)|((enum|struct|final class|class|actor|protocol) (TranscriptParser|TranscriptTailer|TranscriptLine|LineAccumulator|SubagentWatcher|EventBuilder|InspectorEngine|InspectorReplayLog|InspectorSource|InspectorServer)\b)|((static (let|var|func)|let|var|func) (seededUserSettings|obsoleteSeeds|themeExtension[A-Za-z]*|bridgeExtension[A-Za-z]*|registerExtension|unregisterExtension|bundledMarketplaceExtensions|retiredExtensions|ownThemeResources)\b)|((enum|struct|final class|static (let|var|func)) (AgentInstaller|hookMarker|installedEvents|hookCommand|entryIsOurs)\b)|((struct|static (let|var|func)|private static func) (parseBranchHeader|parseStatusLine|statusNibble|packStatus|claudeProjectSlug|gitToplevel|gitStashCount|gitDiffArgumentPlan|resolveGitDiff|jsonlSessions|claudeSessions|opencodeSessions|sessionRoots|GhosttyTerminfoProbe|terminfoEntryExists|isGhosttyResolvable|effectiveTerm|liveProbe|runInfocmp)\b)|("/usr/bin/(git|infocmp)")|((let|var|func|case) *(bonusBoundary|bonusCamel123|bonusConsecutive|scoreGapStart|scoreGapExtension|bonusMatrix|bonusFor|backtrace)\b)|((enum|struct) *(HookPayload|StopInfo|ToolUseBlock|NotificationInfo|ClaudeHookBody|ClaudeHookEvent)\b|func +(mapToHookEvent|classifyNotification|stopLabel)\b)|((enum|struct|final class|class|actor) (ClaudeStatusMachine|ClaudeProcessMatcher|PaneInputClassifier)\b|enum ClaudeSignal\b)|(func +(skipEscapeSequence|isEraseToLineEnd|applySGR|extendedColour)\b)|(enum TerminalScreenModel|struct TerminalScreenModel|enum LineOverprintCollapser|enum TerminalSnapshotRenderer)|((enum|struct|final class|class|actor) (TerminalInputModeStripper|InputModeFinalState|AltScreenSegmentStripper|SyncUpdateFrameCollapser|ScrollbackDistiller|TerminalQueryStripper|PromptEOLMarkStripper)\b)|(func (splitTrailingIncompleteEscape|splitTrailingIncompleteUTF8)\b|trailingEscapeScanBytes *[:=])|((enum|struct|final class|class|actor) (ScrollbackJournal|ScrollbackJournalStore)\b)|((createFile|forWritingTo|\.write\(to:).*\.(scrollback|resume)("|\)|$))|((enum|struct|final class|class|actor) (HostOutputSniffer|OutputSniffer)\b)|((enum|struct|final class|class|actor) (CommandBlockSegmenter|CommandBlockTracker|AutoProgressMatcher)\b)|(\[\[rules\]\]|min_engine_version\s*=|skip_state_update\s*=|line_regex\s*=)|(autoProgressCommands: \[String\]|autoProgressPrefixes)'
 DELETED_SWIFT_CANDIDATES=$(grep -rlE "${DELETED_SWIFT_UNION}" Sources/ 2> /dev/null || true)
 # The candidates matching ONE ban, or nothing. An empty candidate list answers without a grep.
 among_deleted() {
@@ -140,6 +140,18 @@ if ! grep -q 'slopdesk-superd.sock' "${RUST_PATHS}"; then
   fail "${RUST_PATHS} no longer names slopdesk-superd.sock"
 fi
 
+# The OVERRIDE key for that same address, ratcheted for the same reason and with a quieter failure
+# than the address itself. `SLOPDESK_SUPERD_SOCKET` is read by superd to decide where to BIND and set
+# by hostd to decide where to DIAL, so a rename on one side does not disagree — hostd exports a
+# variable superd never reads, superd binds the default, hostd dials the override, and the only
+# symptom is the daemon appearing not to be running under a test harness that moved the socket.
+if ! grep -q '"SLOPDESK_SUPERD_SOCKET"' "${SWIFT_PATHS}"; then
+  fail "${SWIFT_PATHS} no longer names SLOPDESK_SUPERD_SOCKET — hostd would dial an address superd did not bind (docs/51 §1)"
+fi
+if ! grep -q '"SLOPDESK_SUPERD_SOCKET"' "${RUST_PATHS}"; then
+  fail "${RUST_PATHS} no longer names SLOPDESK_SUPERD_SOCKET"
+fi
+
 # The OTHER three are superd's alone, and Swift must not learn them. hostd is told the hook and
 # agent-control paths in the `hello` reply, which is the whole reason that reply carries them; the
 # lock file is none of its business. A Swift constant for any of them would be a second answer to
@@ -173,6 +185,13 @@ rust_major=$(sed -n 's/.*VERSION_MAJOR: i32 = \([0-9][0-9]*\).*/\1/p' "${RUST_PR
 rust_minor=$(sed -n 's/.*VERSION_MINOR: i32 = \([0-9][0-9]*\).*/\1/p' "${RUST_PROTOCOL}" | head -1)
 same "protocol major" "${swift_major}" "${rust_major}"
 same "protocol minor" "${swift_minor}" "${rust_minor}"
+
+# The reserved `id` that marks a reply as an unsolicited NOTIFICATION rather than an answer. Same
+# ratchet, and quieter than either version: a skew makes hostd read every notification as the answer
+# to whichever request happens to carry that id, and reply to a verb nobody sent.
+swift_notification=$(sed -n 's/.*notificationID: UInt64 = \([0-9][0-9]*\).*/\1/p' "${SWIFT_PROTOCOL}" | head -1)
+rust_notification=$(sed -n 's/.*NOTIFICATION_ID: u64 = \([0-9][0-9]*\).*/\1/p' "${RUST_PROTOCOL}" | head -1)
+same "notification id" "${swift_notification}" "${rust_notification}"
 
 # ── 3. Verbs and events ─────────────────────────────────────────────────────────────────────────
 # Every verb Swift can SEND must be one Rust can dispatch. Not the converse: superd is allowed to
@@ -1975,13 +1994,22 @@ done
 # Agent detection is `rust/slopdesk-agent` and the Swift module is vocabulary plus marshalling.
 # Same CONTENT check as the replay buffer above, for the same reason — these files still exist.
 printf 'check-supervisor: the agent-detection RULES are Rust, not Swift\n'
-for detect in AgentKind ClaudeProcessMatcher PaneInputClassifier ClaudeStatus \
-  ClaudeStatusMachine AgentDetectionHold AgentJobIdentifier; do
+for detect in AgentKind ClaudeStatus AgentDetectionHold AgentJobIdentifier; do
   detect_swift="Sources/SlopDeskAgentDetect/${detect}.swift"
   if [[ "$(grep -c 'import CSlopDeskFFI' "${detect_swift}")" -eq 0 ]]; then
     fail "${detect_swift} no longer calls the Rust crate — the port was undone (docs/55 §6)"
   fi
 done
+# The four that used to be on that list are not marshallers any more — they are GONE. Once the
+# fusion moved (`rust/slopdesk-agent::detector`, below), nothing in `Sources/` had a reason to name
+# a machine, a signal, a process matcher or an input classifier: the detector's own doors take the
+# raw input and answer the fold. A wrapper that only forwards is still a file another wrapper can
+# be written next to, so the check for these is that they stay deleted rather than stay thin.
+detect_wrappers_revived=$(among_deleted '(enum|struct|final class|class|actor) (ClaudeStatusMachine|ClaudeProcessMatcher|PaneInputClassifier)\b|enum ClaudeSignal\b')
+if [[ -n "${detect_wrappers_revived}" ]]; then
+  printf '%s\n' "${detect_wrappers_revived}" >&2
+  fail "a Swift machine/signal wrapper is back in Sources/ — the detector's doors take the raw input (docs/50)"
+fi
 # The tables and the walks a re-implementation would need, and a wrapper cannot have.
 for ghost in 'case "claude-code"' 'wrapperBasenames' 'cancelOnly' 'pendingIdleStartedAt' \
   'private var blockLedger' 'func wrappedAgentName'; do
@@ -2066,6 +2094,29 @@ if ! diff <(printf '%s\n' "${swift_fields}") <(printf '%s\n' "${rust_fields}") >
   fail "${fields_swift} and ${fields_rust} disagree — a mis-numbered field decodes cleanly into the wrong meaning (docs/45 §5.3)"
 fi
 printf 'check-supervisor: the document field vocabulary agrees — %s fields, both languages.\n' "${field_count}"
+
+# The field NUMBERS are compared above because both languages have to declare them — a `switch` on a
+# Swift enum needs Swift cases. The topology's two ring caps and its reserved-root set are a
+# different thing: they are NUMBERS, nothing switches on them, and the host is what applies them.
+# So they are ASKED, not compared — `slopdesk_ws_topology_ring_cap` and
+# `slopdesk_ws_reserved_root_fields`. What this gate stops is the transcription coming back, which
+# would not disagree loudly: a client with the larger cap renders a ring whose tail the host already
+# reaped, one with the smaller hides tabs ⇧⌘T would still reopen, and a reserved set one number off
+# DELETES the field it was meant to leave alone. None of those log anything.
+#
+# `spells` is not defined this early in the file, so these are plain greps — the neighbouring gates
+# in this section are too.
+SWIFT_TOPOLOGY=Sources/SlopDeskWorkspaceModel/State/WorkspaceTopology.swift
+for asked in 'slopdesk_ws_topology_ring_cap\(0\)' 'slopdesk_ws_topology_ring_cap\(1\)' \
+  'slopdesk_ws_reserved_root_fields\('; do
+  if [[ "$(grep -cE "${asked}" "${SWIFT_TOPOLOGY}")" -eq 0 ]]; then
+    fail "${SWIFT_TOPOLOGY} stopped asking ${asked//\\/} — a reaping threshold spelled twice reaps two different rings (docs/45 §5.3)"
+  fi
+done
+if [[ "$(grep -cE 'closedTabRingCap *= *[0-9]|focusMRUCap *= *[0-9]' "${SWIFT_TOPOLOGY}")" -ne 0 ]]; then
+  fail "${SWIFT_TOPOLOGY} transcribed a ring cap back — ask slopdesk_ws_topology_ring_cap (docs/45 §5.3)"
+fi
+printf 'check-supervisor: the topology reaps by one set of numbers, and the client asks for them.\n'
 
 # The INTENT verbs and the object KIND tags, pinned the same way and for the same reason. An op byte
 # is the whole of what one end asks the other to do; two ends numbering them differently is a client
@@ -2243,8 +2294,8 @@ bash scripts/build-ffi.sh --check || fail "the FFI artifact is stale — run 'ma
 #
 # `ClaudeManifestMatcher` is named for a different reason — it was a SECOND screen matcher in
 # Swift, three tables of literal Claude cues next to a nineteen-agent rule ladder. Its process-name
-# half survives as `ClaudeProcessMatcher`; the screen half is gone and must not come back under
-# either name.
+# half outlived it for a while as `ClaudeProcessMatcher`, a wrapper over the crate's own predicates;
+# that wrapper is gone too, so neither half may come back under either name.
 detect_revived=$(among_deleted '(enum|struct|final class|class|actor) (AgentManifest|CompiledAgentManifest|AgentManifestCatalog|TOMLSubsetParser|ManifestRegion|ManifestRuleEngine|BundledAgentManifests|AgentDetectionExplain|AgentOscTracker|AgentSyncFrameTracker|ClaudeManifestMatcher)\b')
 if [[ -n "${detect_revived}" ]]; then
   printf '%s\n' "${detect_revived}" >&2
@@ -3544,14 +3595,21 @@ printf 'check-supervisor: one fuzzy ranking, for every search field.\n'
 # decide a pane's status (`AskUserQuestion` is a BLOCK, an interrupt is a FINISHED TURN, the idle
 # nudge is not a raised hand) lived nowhere near the case they governed. `rust/slopdesk-hookevent`
 # owns both halves now; Swift marshals.
-SWIFT_HOOKBODY=Sources/SlopDeskAgentDetect/ClaudeHookBody.swift
-parser_revived=$(among_deleted '(enum|struct) *(HookPayload|StopInfo|ToolUseBlock|NotificationInfo)\b|func +(mapToHookEvent|classifyNotification|stopLabel)\b')
+#
+# The Swift MARSHALLER over that reader is gone too, and this gate no longer names a file it must
+# still exist in. It could not: a body now crosses as raw bytes inside the fold that reads it, so
+# a Swift file whose whole job was to turn a body into an event is a decode with nothing left to
+# hand its answer to. `ClaudeHookBody` and the `ClaudeHookEvent` vocabulary it carried went with
+# it, and so did the standalone `slopdesk_hook_event_parse` door and its whole module — a door
+# nothing calls is a second way to ask what `slopdesk_agent_detector_hook` already answers.
+parser_revived=$(among_deleted '(enum|struct) *(HookPayload|StopInfo|ToolUseBlock|NotificationInfo|ClaudeHookBody|ClaudeHookEvent)\b|func +(mapToHookEvent|classifyNotification|stopLabel)\b')
 if [[ -n "${parser_revived}" ]]; then
   printf '%s\n' "${parser_revived}" >&2
   fail "a Swift hook-body parser is back in Sources/ — rust/slopdesk-hookevent owns the reading AND the mapping"
 fi
-if ! spells 'slopdesk_hook_event_parse' "${SWIFT_HOOKBODY}" > /dev/null; then
-  fail "${SWIFT_HOOKBODY} stopped asking the door — it is a marshaller over the reader, not a second one"
+if hit=$(grep -rln 'slopdesk_hook_event_parse' Sources --include='*.swift' 2> /dev/null); then
+  printf '%s\n' "${hit}" >&2
+  fail "a standalone hook-body door is back — the body crosses raw, inside slopdesk_agent_detector_hook"
 fi
 # The DETECTOR used to be named here as the one caller of that door. It is not a caller at all now:
 # the body crosses as raw bytes and `rust/slopdesk-agent`'s detector reads it on the far side, in the

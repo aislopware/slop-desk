@@ -4,7 +4,7 @@
 // quick to assemble: the terminal-dialect `StatusGlyph` instrument, a key/value row, a
 // pill/badge, and an `.slateCard()` surface modifier.
 // All built on `Slate.*` tokens + `SlateTheme`. See also SlateControls (`SlatePlateButton`), SlateRow
-// (`SlateListRow` / `SlateSectionHeader`) and SlateMonogram (the host-identity plate).
+// (`SlateListRow` / `SlateSectionHeader`).
 
 #if canImport(SwiftUI)
 import SwiftUI

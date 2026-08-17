@@ -198,30 +198,6 @@ typedef struct {
     bool    visible_working;
 } SlopDeskAgentDetection;
 
-// One machine input. Only the fields its `kind` (and, for a hook, its `hook`) names are read, so a
-// caller may zero the rest.
-//   kind: 0 hook, 1 process-present, 2 manifest verdict, 3 OSC title, 4 tick, 5 screen, 6 input.
-//   hook: 0 session-start, 1 user-prompt, 2 pre-tool, 3 post-tool, 4 notification, 5 stop,
-//         6 subagent-stop, 7 interrupted, 8 session-end, 9 pre-compact.
-//   notification: 0 permission, 1 waiting-for-input, 2 other.
-typedef struct {
-    uint8_t                kind;
-    uint8_t                hook;
-    uint8_t                notification;
-    uint8_t                status;
-    bool                   present;
-    SlopDeskAgentDetection screen;
-    SlopDeskAgentSpan      session_id;
-    SlopDeskAgentSpan      tool;
-    SlopDeskAgentSpan      tool_use_id;
-    SlopDeskAgentSpan      label;       // also the OSC title text
-    SlopDeskAgentSpan      matched_rule_id;
-    SlopDeskAgentSpan      fallback_reason;
-    const uint8_t         *strings;
-    size_t                 strings_len;
-} SlopDeskAgentSignal;
-
-typedef struct SlopDeskAgentMachine  SlopDeskAgentMachine;
 typedef struct SlopDeskAgentHold     SlopDeskAgentHold;
 typedef struct SlopDeskAgentDetector SlopDeskAgentDetector;
 
@@ -236,11 +212,6 @@ int8_t  slopdesk_agent_tab_badge(uint8_t agent, int8_t completion, bool is_busy,
                                  int8_t progress, bool unseen_agent_done);
 bool    slopdesk_agent_badge_needs_attention(uint8_t badge);
 bool    slopdesk_agent_badge_is_busy_tier(uint8_t badge);
-bool    slopdesk_agent_is_claude_running(const uint8_t *bytes, size_t len);
-bool    slopdesk_agent_is_likely_wrapper(const uint8_t *bytes, size_t len);
-bool    slopdesk_agent_title_is_agent_written(const uint8_t *bytes, size_t len);
-bool    slopdesk_agent_contains_user_keystroke(const uint8_t *bytes, size_t len);
-bool    slopdesk_agent_contains_cancel_keystroke(const uint8_t *bytes, size_t len);
 uint8_t slopdesk_agent_status_rollup(const uint8_t *statuses, size_t len);
 // The rollup RANK — the wire's type-27 state byte — which is deliberately not the case order:
 // none(0) < idle(1) < done(2) < working(3) < needsPermission(4). from_urgency degrades unknown to
@@ -276,28 +247,6 @@ bool slopdesk_agent_hold_decide(SlopDeskAgentHold *handle,
                                 const SlopDeskAgentDetection *next,
                                 bool agent_changed, bool process_exited,
                                 double last_refresh, bool has_last_refresh, double now);
-
-// The OSC title telltales, and the machine's tuning constants by index: 0 default done->idle,
-// 1 hook-block screen-override grace, 2 post-exit floor lockout, 3 screen dissent to raise,
-// 4 screen dissent to release, 5 the label clamp in bytes.
-bool   slopdesk_agent_title_shows_spinner(const uint8_t *bytes, size_t len);
-bool   slopdesk_agent_title_shows_rest(const uint8_t *bytes, size_t len);
-double slopdesk_agent_machine_constant(uint8_t index);
-
-// The state machine. §4b's handle convention: no two calls on one handle may overlap.
-SlopDeskAgentMachine *slopdesk_agent_machine_new(double done_to_idle_timeout);
-void    slopdesk_agent_machine_free(SlopDeskAgentMachine *handle);
-uint8_t slopdesk_agent_machine_reduce(SlopDeskAgentMachine *handle,
-                                      const SlopDeskAgentSignal *signal, double now);
-bool    slopdesk_agent_machine_accepts(SlopDeskAgentMachine *handle,
-                                       const SlopDeskAgentSignal *signal);
-uint8_t slopdesk_agent_machine_status(SlopDeskAgentMachine *handle);
-bool    slopdesk_agent_machine_is_quiet(SlopDeskAgentMachine *handle);
-bool    slopdesk_agent_machine_has_authoritative_feed(SlopDeskAgentMachine *handle);
-size_t  slopdesk_agent_machine_outstanding_blocks(SlopDeskAgentMachine *handle);
-uint8_t slopdesk_agent_machine_standing_block_kind(SlopDeskAgentMachine *handle);
-// -1 = there is no label; a present-but-empty label answers 0.
-ptrdiff_t slopdesk_agent_machine_label(SlopDeskAgentMachine *handle, uint8_t *out, size_t cap);
 
 // The per-pane DETECTOR: one machine, plus everything that turns its verdicts into a control
 // stream — the type-26 basename edge, the type-27 dedupe anchor, the type-36 intent latch and the
@@ -373,6 +322,12 @@ uint8_t   slopdesk_agent_block_kind(uint8_t standing, uint8_t ledger, uint8_t ev
 
 // The foreground JOB: a process-group id plus N processes, each with up to three optional strings
 // and a whole argv. Too much shape for one flat struct, so it is STAGED — build it, then ask it.
+// A screen-dissent window in seconds: 0 how long the screen must claim BLOCKED before it may raise
+// a block the hook feed never announced, 1 how long it must contradict the other way before it may
+// release one. The two are asymmetric on purpose, and the asymmetry IS the policy. Unknown index
+// answers 0, which is no window rather than a plausible one.
+double slopdesk_agent_dissent_seconds(uint8_t index);
+
 // Its strings ride in a shared buffer as spans, exactly like a signal's.
 typedef struct SlopDeskAgentJob SlopDeskAgentJob;
 
@@ -484,6 +439,10 @@ SlopDeskWsRect  slopdesk_ws_sanitize(SlopDeskWsRect frame);
 // the caller would have to invent and then discard.
 SlopDeskWsPoint slopdesk_ws_sanitize_camera(SlopDeskWsPoint origin);
 double          slopdesk_ws_coordinate_bound(void);
+// A canvas or split metric a Rust routine here ENFORCES: 0 cascade step, 1 cull margin,
+// 2 placement overlap threshold, 3 minimum flex weight. Unknown index answers 0, which is
+// outside every one of their bands.
+double          slopdesk_ws_canvas_metric(uint8_t index);
 SlopDeskWsRect  slopdesk_ws_screen_rect(SlopDeskWsRect frame, SlopDeskWsPoint camera);
 SlopDeskWsPoint slopdesk_ws_canvas_point(SlopDeskWsPoint point, SlopDeskWsPoint camera);
 
@@ -648,8 +607,9 @@ typedef struct {
     double value;
 } SlopDeskWsShare;
 
-// The default floor on a solved leaf, as (width, height).
+// The default floor on a solved leaf, and the size a new pane opens at, as (width, height).
 SlopDeskWsPoint slopdesk_ws_min_leaf(void);
+SlopDeskWsPoint slopdesk_ws_default_leaf(void);
 
 // 0 = a tree the walk could not rebuild, which is the same answer an empty tree gives.
 size_t slopdesk_ws_solve_layout(const SlopDeskWsTreeNode *nodes, size_t count,
@@ -827,6 +787,19 @@ typedef struct {
 // The identity pool one intent can spend. Sized here rather than at the call site: a pool one short
 // REPEATS an identity rather than failing, and two tabs sharing an id surfaces days later.
 size_t slopdesk_ws_minted_ids_per_intent(void);
+
+// The topology's two RING caps, by index: 0 the closed-tab ring, 1 the per-session focus MRU. An
+// unknown index answers 0. These are REAPING thresholds the host applies, so a client holding a
+// different number renders a ring whose tail the host already deleted, with no error anywhere.
+size_t slopdesk_ws_topology_ring_cap(uint8_t index);
+
+// An intent argument cap the HOST validates against before it allocates: 0 a name's bytes,
+// 1 a reorderTabs list, 2 a sub-payload blob. Unknown index answers 0, refusing everything.
+size_t slopdesk_ws_intent_limit(uint8_t index);
+
+// The `root` field numbers a topology write must NOT reap — reserved for config that does not
+// cross (docs/45 §5.3). §4-shaped, so a caller sizes from the answer.
+size_t slopdesk_ws_reserved_root_fields(uint8_t *out, size_t cap);
 
 // The status byte for one outcome, by arm order: applied, stale, invalid, not-found, unknown-op.
 // Exported because the numbering is the WIRE's and therefore golden-pinned — a caller that wrote it
@@ -1105,6 +1078,9 @@ size_t slopdesk_video_fragment_encode(uint32_t stream_seq, uint32_t frame_id, ui
                                       uint16_t frag_count, uint8_t flags,
                                       uint32_t host_send_ts_millis, const uint8_t *payload,
                                       size_t payload_len, uint8_t *out, size_t cap);
+// A fragment size budget: 0 the header, 1 the whole datagram (the MTU claim), 2 the payload
+// the two leave between them. Unknown index answers 0, which packetizes nothing.
+size_t slopdesk_video_fragment_size(uint8_t index);
 
 /* ---------------------------------------------------------------------------- *
  * The three measurements the capture path takes on a frame it has just locked.
@@ -1223,6 +1199,10 @@ SlopDeskVideoPoint slopdesk_coord_window_point(double normalized_x, double norma
 double slopdesk_playout_step_ms(double jitter_seconds, double prev_playout_ms,
                                 double shrink_step_ms, double k, double base_ms, double floor_ms,
                                 double ceil_ms);
+/* The playout law's own default for each knob, in the units the knobs are configured in: 0 the
+ * dimensionless k, 1 base, 2 floor, 3 ceiling, 4 shrink step (the last four in ms). An unknown
+ * index answers NaN, which the law already reads as "take the default". */
+double slopdesk_playout_default_ms(unsigned char index);
 uint32_t slopdesk_stream_stall_verdict(SlopDeskLiveness inputs);
 
 /* The aspect geometry, and the virtual-display re-create throttle. The first two are pinned
@@ -1687,14 +1667,6 @@ size_t slopdesk_fuzzy_score(const uint8_t *query, size_t query_len, const uint8_
  * either side. `-1` is "no match"; a score is never negative, so the two cannot collide. */
 int64_t slopdesk_fuzzy_rank(const uint8_t *query, size_t query_len, const uint8_t *candidate,
                             size_t candidate_len);
-
-/* ---- hook events: what one Claude Code hook body says ----------------------------------- */
-
-/* `rust/slopdesk-hookevent`. The answer is a fixed 12-byte header followed by the present fields:
- *   [uint8 hook][uint8 notification][uint8 kind][uint8 present]  [uint16 BE len] x4  [bytes]...
- * `present` is a bitmask (bit 0 session id, 1 tool, 2 tool-use id, 3 label) because ABSENT and
- * EMPTY are different answers. 0 means the body is not a hook this codebase reads. */
-size_t slopdesk_hook_event_parse(const uint8_t *body, size_t len, uint8_t *out, size_t cap);
 
 /* ---- watch: what `slopdesk watch` decides, and the bytes it prints ---------------------- */
 
@@ -4253,7 +4225,8 @@ size_t slopdesk_video_packetizer_answer(SlopDeskVideoPacketizer *handle, uint8_t
  * router already reads frameID and hostSendTsMillis off every datagram for the one-way-delay
  * telemetry, so passing the bytes would decode them twice. `payload` is what follows the header.
  *
- * `ingest` answers a VERDICT: 0 incomplete, 1 completed, 2 dropped, 3 stale. The detail is parked —
+ * `ingest` answers one SLOPDESK_REASSEMBLE_* verdict, defined below rather than described here so
+ * a caller switches on the same numbering the crate returns. The detail is parked —
  * `frame_id` / `frame_flags` / `frame_avcc` for a completed or dropped frame, held until the next
  * ingest completes another one. `frame_flags` is a bitfield: 1 keyframe, 2 crisp, 4 recoveredViaFEC,
  * 8 isLTR, 16 ackedAnchored.
@@ -4263,6 +4236,11 @@ size_t slopdesk_video_packetizer_answer(SlopDeskVideoPacketizer *handle, uint8_t
  * out param and answers false when there is none, because every uint32_t is a legal frame id and no
  * value could have meant "none". `parity_count == 0` builds a reassembler with no FEC at all.
  * ---------------------------------------------------------------------------- */
+
+#define SLOPDESK_REASSEMBLE_INCOMPLETE 0u
+#define SLOPDESK_REASSEMBLE_COMPLETED 1u
+#define SLOPDESK_REASSEMBLE_DROPPED 2u
+#define SLOPDESK_REASSEMBLE_STALE 3u
 
 typedef struct SlopDeskVideoReassembler SlopDeskVideoReassembler;
 

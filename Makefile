@@ -120,8 +120,8 @@ fix: fmt ## Format + apply all safe lint autofixes
 
 # ---------------------------------------------------------------------------- #
 # Linting (no writes) — the CI gate
-.PHONY: lint lint-swift lint-shell lint-python lint-rust lint-rust-clippy test-rust lint-ds-leaks lint-menu-shortcutless lint-ffi-doors lint-ban-union lint-supervisor
-LINTERS := lint-swift lint-shell lint-python lint-rust lint-ds-leaks lint-menu-shortcutless lint-ffi-doors lint-ban-union lint-supervisor
+.PHONY: lint lint-swift lint-shell lint-python lint-rust lint-rust-clippy test-rust lint-ds-leaks lint-menu-shortcutless lint-ffi-doors lint-ban-union lint-shared-constants lint-supervisor
+LINTERS := lint-swift lint-shell lint-python lint-rust lint-ds-leaks lint-menu-shortcutless lint-ffi-doors lint-ban-union lint-shared-constants lint-supervisor
 
 # The seven linters run CONCURRENTLY. They read the tree and write nothing, so nothing orders them,
 # and serially they were the inner loop's largest fixed cost: 55 s, of which `lint-supervisor` alone
@@ -177,6 +177,13 @@ lint-ffi-doors: ## Dead-FFI-door ratchet (every exported door is called, or name
 # silent pass the gate has a whole section warning about. So the union is verified, not trusted.
 lint-ban-union: ## The one-walk ban filter really contains every ban that filters through it
 	python3 scripts/check-ban-union.py
+
+# TRANSCRIBED-CONSTANT ratchet, the counterpart of the dead-door one above. That gate catches a door
+# nothing calls; this catches the number that should have been a door — a constant with the same name
+# and the same value on both sides of the boundary. Nothing else would: both languages compile, both
+# suites pass, and the two copies agree right up until one of them is tuned. Text-only, no compile.
+lint-shared-constants: ## No number is spelled in both languages unless it is asked for or ratcheted
+	python3 scripts/check-shared-constants.py
 
 # hostd ↔ superd CONTRACT ratchet: the constants that are necessarily typed in both languages
 # (rendezvous socket name, protocol version, verbs, frame tags, body cap, PTY read chunk) compared

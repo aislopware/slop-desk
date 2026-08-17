@@ -16400,3 +16400,43 @@ the compiler hold it.
 the hello banner. `check-supervisor.sh` already pins those across the two languages the way it pins
 the other five daemons', and a door per constant would buy nothing that ratchet does not, at the
 cost of a call on a path that runs per scan.
+
+## A viewport op stays in Swift, and its Rust twin was deleted (2026-08-17)
+
+**Ruling: `rust/slopdesk-workspace`'s `tree_ops` keeps the ops an INTENT performs and nothing else.
+Seventeen functions that had no caller were deleted rather than wired to Swift.** Do not re-propose
+porting `WorkspaceTreeOps.swift` into them.
+
+The seventeen: `toggle_zoom`, `resize_divider`, `even_divider`, `resize_active_pane`,
+`balance_splits`, `move_pane_in_direction`, `apply_layout`, `cycle_layout`, `move_focus`,
+`cycle_pane_target`, `cycle_pane_focus`, `select_tab`, `insert_pane_at_root_edge`,
+`move_leaf_to_active_tab_root_edge`, `reattach_pane_beside`,
+`reattach_pane_to_active_tab_root_edge`, `reattach_pane_to_new_tab`. Every one had a live twin in
+`Sources/SlopDeskWorkspaceModel/Domain/Tree/WorkspaceTreeOps.swift` or an intent in
+`slopdesk_wire::document::apply` — which is what the audit was looking for, a second implementation
+in the other language, and it was the RUST half that was dead.
+
+**How they got there.** `tree_ops` was written as the whole op set, before the intent applier
+existed. When `document::apply` became the one decider of what a topology becomes, it reached in for
+the ops it needed — split, close, focus, swap, dock, detach, reattach, and the tab and session verbs
+— and left the rest compiling with nothing calling them. A zoom toggle became the `SetZoom` intent, a
+tab select became `FocusTab`, a gutter dock became `DockPaneAtTabEdge`, and each of those decides in
+`apply.rs` without touching the `tree_ops` function of the same name.
+
+**Why the answer is not "wire them up".** The ones left over are VIEWPORT ops: a divider nudge, a
+directional focus step, a directional move, a re-tile. Each needs the geometry the person is looking
+at — solved frames, a live rect — which the document does not have and must not grow. The Swift side
+is already thin: `WorkspaceTreeOps` navigates to a tab and calls `slopdesk_ws_tree_*`,
+`slopdesk_ws_retile`, `slopdesk_ws_focus_neighbor` or `slopdesk_ws_solve_layout`, so every DECISION
+in it is already in Rust; what is in Swift is which tab to apply it to. Routing the ops themselves
+would mean crossing a whole `TreeWorkspace` — the document's own snapshot encoding, the one
+`slopdesk_ws_apply_intent` uses — once per frame of a divider drag, to move one weight. That is the
+measured regression `CLAUDE.md` names as the only veto, and `slopdesk_ws_retile`'s own doc already
+ruled on the same question for the tiler: what crosses is the leaf ORDER in and the tree out,
+because that is the only part of a re-tile that is a decision.
+
+**What the deletion cost, stated.** Twenty-two tests went with the functions. Eleven of those also
+covered a LIVE op, so they were restored with the dead call edited out: a test that zoomed a tab
+through `toggle_zoom` in order to assert what a SPLIT does to a zoom now sets `zoomed_pane` as a
+field, which is the more honest spelling anyway — the zoom verb is an intent, not a `tree_ops`
+function, so reaching for one to build a starting condition was always describing the wrong thing.

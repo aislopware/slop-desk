@@ -1,9 +1,13 @@
 import SlopDeskProtocol
 
-/// The shared, side-agnostic demux core for ``MuxRouter`` (client) and
-/// ``HostChannelRouter`` (host).
+/// The demux core behind ``MuxRouter``, the CLIENT's side of the mux.
 ///
-/// Both sides apply the SAME pure rule to a decoded ``MuxFrame``:
+/// It was side-agnostic when the host was Swift too, and the name still says so; the host's half
+/// went to Rust with the rest of hostd and now lives in `slopdesk-wire`'s `mux::channels`, which
+/// holds the same allocator and the same SSH-symmetric close machine. What stays here is the one
+/// end that still has to decide in-process, beside the `NWConnection` whose bytes it is reading.
+///
+/// The rule it applies to a decoded ``MuxFrame`` is the one both ends apply:
 /// - `channelData` for an OPEN channel → deliver the opaque inner bytes upward;
 /// - `channelData` for an unknown / closed channel → DROP (a stale or hostile frame
 ///   must never crash the receiver — same contract as `InputDatagramRouter.drop`);

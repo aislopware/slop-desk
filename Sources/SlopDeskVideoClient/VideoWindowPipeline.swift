@@ -343,10 +343,11 @@ final class VideoWindowPipeline {
         let playoutMs = EnvConfig.string("SLOPDESK_PLAYOUT_MS").flatMap(Double.init) ?? 10.0
         let adaptivePlayout = env["SLOPDESK_ADAPTIVE_PLAYOUT"]
             .map { !($0 == "0" || $0.lowercased() == "false") } ?? true
-        let playoutK = env["SLOPDESK_PLAYOUT_K"].flatMap(Double.init) ?? 0.8
-        let playoutBaseMs = env["SLOPDESK_PLAYOUT_BASE_MS"].flatMap(Double.init) ?? 4.0
-        let playoutFloorMs = env["SLOPDESK_PLAYOUT_FLOOR_MS"].flatMap(Double.init) ?? 4.0
-        let playoutCeilMs = env["SLOPDESK_PLAYOUT_CEIL_MS"].flatMap(Double.init) ?? 35.0
+        let playoutK = env["SLOPDESK_PLAYOUT_K"].flatMap(Double.init) ?? AdaptivePlayoutPolicy.defaultK
+        let playoutBaseMs = env["SLOPDESK_PLAYOUT_BASE_MS"].flatMap(Double.init) ?? AdaptivePlayoutPolicy.defaultBaseMs
+        let playoutFloorMs = env["SLOPDESK_PLAYOUT_FLOOR_MS"].flatMap(Double.init) ?? AdaptivePlayoutPolicy
+            .defaultFloorMs
+        let playoutCeilMs = env["SLOPDESK_PLAYOUT_CEIL_MS"].flatMap(Double.init) ?? AdaptivePlayoutPolicy.defaultCeilMs
         // Cold-start content fps (coding-tool default 30, matching the host); the host's `streamCadence`
         // control message rebases this live via `setContentFps`, so a host/client default mismatch only
         // affects the brief pre-announce window. SLOPDESK_CONTENT_FPS overrides.

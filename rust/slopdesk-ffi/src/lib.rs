@@ -67,7 +67,6 @@ pub mod frame_rate;
 pub mod fuzzy;
 pub mod hevc_parameter_sets;
 pub mod hint_scan;
-pub mod hookevent;
 pub mod host_policy;
 pub mod host_state;
 pub mod input_box;

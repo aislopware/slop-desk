@@ -16,18 +16,24 @@ import CSlopDeskFFI
 
 /// The hysteretic playout-buffer law. The caller resolves the env knobs and passes them in, so this
 /// stays deterministic; the Swift shell holds only the last value (`prevPlayoutMs`).
+///
+/// The five defaults below are ASKED FOR, not transcribed: each `SLOPDESK_PLAYOUT_*` knob needs a
+/// fallback at the environment site, the pacer takes the same value as a default argument, and the
+/// law itself falls back to it when a knob arrives non-finite. Spelled by hand that is one law
+/// tuned in one place and applied by three.
 public enum AdaptivePlayoutPolicy {
-    /// Coefficient on the measured jitter (slightly `< 1`); the RFC3550 mean-deviation
-    /// underestimates the peak, but `+ base` and smoothing make `0.8` sufficient at the validated
-    /// link.
-    public static let defaultK = 0.8
-    /// Constant floor term (seconds) added before the clamp — a near-zero-jitter cold start still
-    /// seeds a real buffer (never present-on-arrival).
-    public static let defaultBaseSeconds = 0.004
-    /// Minimum playout (seconds). MUST stay `> 0` — a zero buffer exposes raw jitter to the eye.
-    public static let defaultFloorSeconds = 0.004
-    /// Maximum playout (seconds) — caps the latency a pathological link can add.
-    public static let defaultCeilSeconds = 0.035
+    /// Coefficient on the measured jitter, slightly `< 1`; the RFC3550 mean-deviation underestimates
+    /// the peak, but `+ base` and the smoothing make it enough at the validated link.
+    public static let defaultK = slopdesk_playout_default_ms(0)
+    /// Constant term (ms) added before the clamp — a near-zero-jitter cold start still seeds a real
+    /// buffer rather than presenting on arrival.
+    public static let defaultBaseMs = slopdesk_playout_default_ms(1)
+    /// Minimum playout (ms). Stays `> 0` on the far side — a zero buffer exposes raw jitter.
+    public static let defaultFloorMs = slopdesk_playout_default_ms(2)
+    /// Maximum playout (ms) — caps the latency a pathological link can add.
+    public static let defaultCeilMs = slopdesk_playout_default_ms(3)
+    /// How much of the buffer one recompute may give back (ms): the SHRINK half of the hysteresis.
+    public static let defaultShrinkStepMs = slopdesk_playout_default_ms(4)
 
     /// One hysteretic step of the playout delay (milliseconds): maps live `jitterSeconds` to the
     /// target `clamp(k·jitter + base, [floor, ceil])` and steps `prevPlayoutMs` toward it —

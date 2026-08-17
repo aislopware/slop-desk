@@ -13,7 +13,8 @@ import SlopDeskProtocol
 /// ``ClaudePaneDetector``, whose inputs are injected values and which is tested that way.
 ///
 /// ## Why there is no reducer beside them any more
-/// There was: a `ForegroundProcessDetector` holding its own ``ClaudeStatusMachine``, its own
+/// There was: a `ForegroundProcessDetector` holding its own `ClaudeStatusMachine`
+/// (``rust/slopdesk-agent``'s `machine`), its own
 /// basename edge anchor and its own status dedupe anchor. ``ClaudePaneDetector`` exists because two
 /// machines per pane fight — both emit type-27 with no reconciliation, and neither owns the
 /// `.done → .idle` decay — so detection was fused into ONE machine and this one stopped being

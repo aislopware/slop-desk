@@ -18,6 +18,8 @@
 //! NaN-ignoring maxima and the inclusive stall threshold; this module converts scalars to
 //! `#[repr(C)]` records and back, and returns them by value.
 
+use core::ffi::c_uchar;
+
 use slopdesk_video::capture_recovery::{
     RECREATE_COOLDOWN_SECONDS, arrange_streamable_windows, channels_to_disconnect, should_attempt_recreate,
 };
@@ -29,7 +31,10 @@ use slopdesk_video::keepalive::{
     HOST_HEARTBEAT_INTERVAL_SECONDS, IDLE_TIMEOUT_SECONDS, KEEPALIVE_INTERVAL_SECONDS, REAPER_TICK_SECONDS,
     StreamStallPolicy,
 };
-use slopdesk_video::playout::{PlayoutConfig, step_ms};
+use slopdesk_video::playout::{
+    DEFAULT_BASE_SECONDS, DEFAULT_CEIL_SECONDS, DEFAULT_FLOOR_SECONDS, DEFAULT_K,
+    DEFAULT_SHRINK_STEP_SECONDS, PlayoutConfig, step_ms,
+};
 use slopdesk_video::stream_stall::{Liveness, StreamVerdict, verdict};
 use slopdesk_video::ycbcr::{ColorRange, coefficients};
 
@@ -280,6 +285,32 @@ pub extern "C" fn slopdesk_playout_step_ms(
     )
 }
 
+/// One of the playout law's own defaults, by index.
+///
+/// In the units the KNOBS are configured in: `0` the dimensionless `k`, `1` the base, `2` the
+/// floor, `3` the ceiling, `4` the shrink step — the last four in milliseconds.
+///
+/// The client resolves five environment knobs and each needs a fallback, so without this door the
+/// numbers would be spelled at the env site, at the pacer's default arguments, and again here — and
+/// a law tuned in one place would then be applied by three. An unknown index answers NaN, which is
+/// not a hole: NaN is exactly what [`PlayoutConfig::from_millis`] already reads as "take the
+/// default", so a caller that mis-indexes gets the default rather than a zero buffer.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub const extern "C" fn slopdesk_playout_default_ms(index: c_uchar) -> f64 {
+    match index {
+        0 => DEFAULT_K,
+        1 => DEFAULT_BASE_SECONDS * 1000.0,
+        2 => DEFAULT_FLOOR_SECONDS * 1000.0,
+        3 => DEFAULT_CEIL_SECONDS * 1000.0,
+        4 => DEFAULT_SHRINK_STEP_SECONDS * 1000.0,
+        _ => f64::NAN,
+    }
+}
+
 /// Whether a connected stream has frozen: one of the four `SLOPDESK_STREAM_*` verdicts.
 #[unsafe(no_mangle)]
 #[expect(
@@ -505,8 +536,8 @@ pub unsafe extern "C" fn slopdesk_vd_channels_to_disconnect(
 mod tests {
     use super::{
         SLOPDESK_STREAM_LIVE, SLOPDESK_STREAM_NOT_CONNECTED, SLOPDESK_STREAM_STALLED,
-        SLOPDESK_STREAM_UNKNOWN, SlopDeskLiveness, slopdesk_coord_window_point, slopdesk_playout_step_ms,
-        slopdesk_stream_stall_verdict, slopdesk_ycbcr_coefficients,
+        SLOPDESK_STREAM_UNKNOWN, SlopDeskLiveness, slopdesk_coord_window_point, slopdesk_playout_default_ms,
+        slopdesk_playout_step_ms, slopdesk_stream_stall_verdict, slopdesk_ycbcr_coefficients,
     };
 
     #[test]
@@ -541,6 +572,26 @@ mod tests {
         let shrunk = slopdesk_playout_step_ms(0.0, grown, 2.0, 0.8, 4.0, 4.0, 35.0);
         assert!(shrunk >= grown - 2.0 - f64::EPSILON, "shrink is capped per call");
         assert!(shrunk < grown, "and it does shrink");
+    }
+
+    /// The defaults the client asks for are the ones the law falls back to on its own — so a knob
+    /// left unset and a knob set to garbage land on the same buffer.
+    #[test]
+    fn the_asked_for_defaults_are_the_laws_own_defaults() {
+        let asked = |index| slopdesk_playout_default_ms(index);
+        assert_eq!(asked(0), 0.8);
+        assert_eq!(asked(1), 4.0);
+        assert_eq!(asked(2), 4.0);
+        assert_eq!(asked(3), 35.0);
+        assert_eq!(asked(4), 2.0);
+        // Stepping with the asked-for knobs equals stepping with knobs the law had to default.
+        let with_asked =
+            slopdesk_playout_step_ms(0.020, asked(2), asked(4), asked(0), asked(1), asked(2), asked(3));
+        let with_defaulted =
+            slopdesk_playout_step_ms(0.020, asked(2), asked(4), f64::NAN, f64::NAN, f64::NAN, f64::NAN);
+        assert_eq!(with_asked, with_defaulted);
+        // An unknown index is that same "take the default" sentinel, never a zero buffer.
+        assert!(slopdesk_playout_default_ms(5).is_nan());
     }
 
     #[test]

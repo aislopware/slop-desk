@@ -104,14 +104,19 @@ public extension Canvas {
         return CGSize(width: floor.x, height: floor.y)
     }
 
-    /// Default size for a brand-new pane (a comfortable shell).
-    static let defaultItemSize = CGSize(width: 640, height: 420)
+    /// Default size for a brand-new pane (a comfortable shell) — from the crate that OPENS it, for
+    /// the same reason ``minItemSize`` is.
+    static var defaultItemSize: CGSize {
+        let size = slopdesk_ws_default_leaf()
+        return CGSize(width: size.x, height: size.y)
+    }
+
     /// Cascade step for new-pane placement (one title-bar + margin; the `NSWindow.cascadeTopLeft`
-    /// convention).
-    static let cascadeStep: CGFloat = 28
+    /// convention), from the crate whose placement loop steps by it.
+    static var cascadeStep: CGFloat { slopdesk_ws_canvas_metric(0) }
     /// Off-viewport overscan kept mounted so a video pane about to pan in is already warm before it
-    /// crosses the viewport edge (culling margin, docs/30 §1).
-    static let cullMargin: CGFloat = 600
+    /// crosses the viewport edge (culling margin, docs/30 §1), from the crate that culls by it.
+    static var cullMargin: CGFloat { slopdesk_ws_canvas_metric(1) }
     /// The maximum finite magnitude any canvas coordinate (item origin / size, camera origin) is clamped
     /// to. Far beyond any real layout (~13k screens), but bounding it keeps a corrupt/hand-edited file
     /// with extreme-but-finite coords from overflowing to ±inf in a bounding-box union (which would make
