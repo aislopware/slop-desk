@@ -74,7 +74,10 @@ RUST_PUMP="rust/slopdesk-superd/src/pump.rs"
 SWIFT_SCREEN_PATHS="Sources/SlopDeskScreen/ScreenPaths.swift"
 SWIFT_SCREEN_PROTOCOL="Sources/SlopDeskScreen/ScreenProtocol.swift"
 RUST_SCREEN_SERVER="rust/slopdesk-screend/src/server.rs"
-RUST_SCREEN_PROTOCOL="rust/slopdesk-screend/src/protocol.rs"
+# The wire left screend for its own crate, for `slopdesk-sanitize`'s reason: two callers, one
+# implementation. hostd is the other caller, and while the layouts lived inside the daemon the only
+# way to reach them was to BE the daemon — so hostd hand-wrote a second copy in Swift.
+RUST_SCREEN_PROTOCOL="rust/slopdesk-screenwire/src/lib.rs"
 SWIFT_DROP_PROTOCOL="Sources/SlopDeskFileTransfer/FileTransferProtocol.swift"
 SWIFT_DROP_DIR="Sources/SlopDeskFileTransfer"
 SWIFT_DROP_MANAGER="Sources/SlopDeskHost/FileDropServiceManager.swift"
@@ -3710,6 +3713,30 @@ for entry in 'slopdesk_ws_transient_plugin_cwd' 'slopdesk_ws_cwd_display_name'; 
   fi
 done
 printf 'check-supervisor: one rule for a pane directory, and one name for it.\n'
+
+# ── And ONE encoder for the screend frame ──────────────────────────────────────────────────────
+# `docs/DECISIONS.md` recorded in stage 17 that each protocol's client end moves into Rust, so the
+# round trip becomes a TEST rather than an agreement two files keep by review. dropd's Swift
+# original was deleted in that change; screend's was not, and `ScreenProtocol.swift` went on
+# hand-writing the same frame for a whole stage afterwards. The two had already diverged on an
+# over-long detect label — Swift threw where Rust truncated.
+SWIFT_SCREEN_PROTOCOL=Sources/SlopDeskScreen/ScreenProtocol.swift
+if hit=$(spells 'func appendBigEndian|truncatingIfNeeded: value|UInt16\(clamping: paneBytes' "${SWIFT_SCREEN_PROTOCOL}"); then
+  fail "${hit} lays out the screend frame in Swift again — slopdesk-screenwire owns every layout"
+fi
+for entry in 'slopdesk_screen_encode_request' 'slopdesk_screen_encode_detect_payload' 'slopdesk_screen_reply_status'; do
+  if ! spells "${entry}" "${SWIFT_SCREEN_PROTOCOL}" > /dev/null; then
+    fail "${SWIFT_SCREEN_PROTOCOL} no longer asks ${entry} — the screend wire is one implementation"
+  fi
+done
+# Both ends stay in ONE crate, which is what makes the round trip a test rather than two files
+# agreeing. Split them and the property the stage-17 ruling bought is gone.
+for half in 'pub fn encode_request' 'pub fn decode_request' 'pub fn encode_reply' 'pub fn decode_reply'; do
+  if ! spells "${half}" "${RUST_SCREEN_PROTOCOL}" > /dev/null; then
+    fail "${RUST_SCREEN_PROTOCOL} lost '${half}' — both ends live together so the round trip is a test"
+  fi
+done
+printf 'check-supervisor: one encoder for the screend frame, and both its ends in one crate.\n'
 
 # ── One regex engine meets the untrusted rows, and it does not backtrack ───────────────────────
 # Hint Mode ran ten compiled NSRegularExpressions over rows a remote program wrote, bridged through

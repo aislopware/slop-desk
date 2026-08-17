@@ -16369,3 +16369,34 @@ looks like. That is the silent pass this gate has an entire section warning abou
 `scripts/check-ban-union.py` runs in `make lint` and fails if any ban is not spliced into the union
 verbatim — which also forces the four shapes into one, since only the `among_deleted` form is seen. The check is textual on purpose: regex-superset is not a thing to decide in a lint gate,
 and verbatim splicing is both the convention and the whole argument.
+
+## The screend wire becomes a crate, because stage 17 only half-landed (2026-08-17)
+
+Stage 17 ruled that each protocol's client end moves INTO Rust so the round trip becomes a test
+rather than an agreement two files keep by review. dropd's Swift original was deleted in that
+change. screend's was not. `ScreenProtocol.swift` went on hand-writing the request frame, the
+detect payload and the reply split for a whole stage after the Rust versions landed beside the
+decoders that read them back — so the property the ruling bought was never actually bought here.
+
+**They had already diverged, which is the argument.** Both ends refused an over-long detect label
+and refused differently: Swift threw `frameTooLarge`, Rust truncated to the prefix's capacity. Rust's
+reading survives, and its own doc argues it — a truncation is a wrong answer where a throw is no
+answer at all, and no manifest label is within three orders of magnitude of 64 KiB.
+
+**The wire moved to `rust/slopdesk-screenwire` rather than staying in screend's crate.** This does
+not reopen the stage-17 ruling: both ENDS moved together, so the round trip is still one crate's
+test. What the split buys is that the app can link the WIRE without linking the ENGINE — screend
+carries `regex`, `toml`, `serde` and a per-byte screen model, none of which belongs in an iOS
+binary, and the whole point of screend being a daemon is that the app does not parse screens. It is
+`slopdesk-sanitize`'s reason exactly, and that crate came out of screend for it.
+
+**The crate keeps `indexing_slicing` denied where screend allows it.** screend's exemption is about
+a terminal GRID, whose coordinates are clamped on the way in. There is no grid in a framing layer:
+every byte it decodes arrived over a socket, so `decode_request` was rewritten onto
+`split_at_checked` plus a slice pattern. The length check is the proof and the pattern is what makes
+the compiler hold it.
+
+**What stayed in Swift is a VOCABULARY, not a layout** — verb numbers, status numbers, flag bits,
+the hello banner. `check-supervisor.sh` already pins those across the two languages the way it pins
+the other five daemons', and a door per constant would buy nothing that ratchet does not, at the
+cost of a call on a path that runs per scan.

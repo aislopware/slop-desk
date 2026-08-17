@@ -154,6 +154,7 @@ dependencies = [
  "slopdesk-inspectord",
  "slopdesk-rowscan",
  "slopdesk-sanitize",
+ "slopdesk-screenwire",
  "slopdesk-terminal",
  "slopdesk-video",
  "slopdesk-wire",
@@ -194,6 +195,10 @@ dependencies = [
 
 [[package]]
 name = "slopdesk-sanitize"
+version = "0.1.0"
+
+[[package]]
+name = "slopdesk-screenwire"
 version = "0.1.0"
 
 [[package]]

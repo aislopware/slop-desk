@@ -31,7 +31,9 @@ pub mod detect;
 pub mod manifest;
 pub mod model;
 pub mod osc;
-pub mod protocol;
+/// The wire, re-exported from [`slopdesk_screenwire`] so this crate's modules and its `main` keep
+/// naming it `protocol` — it is screend's wire whichever crate compiles it.
+pub use slopdesk_screenwire as protocol;
 pub mod region;
 pub mod registry;
 pub mod render;

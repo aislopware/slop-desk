@@ -71,6 +71,21 @@ size_t slopdesk_plaintext_holdback(const uint8_t *bytes, size_t len);
 size_t slopdesk_sync_input_keyboard_only(const uint8_t *bytes, size_t len, uint8_t *out,
                                         size_t cap);
 size_t slopdesk_input_mode_reset(uint8_t *out, size_t cap);
+
+// ── The screend wire's CLIENT end ─────────────────────────────────────────────────────────────
+// hostd encodes a request and reads a reply's status; screend decodes and answers. Both layouts
+// live in `rust/slopdesk-screenwire`, so the round trip is a test rather than two files agreeing.
+// `slopdesk_screen_encode_request` answers 0 for REFUSED — an unserved verb, a non-UTF-8 pane id,
+// or a body over 64 MiB — which a real frame's length can never be.
+// `slopdesk_screen_reply_status` answers 0/1/2 for ok/bad-request/internal, -1 for an empty body
+// and -2 for a status byte this build does not know. The payload is every byte after the first.
+size_t slopdesk_screen_encode_request(uint8_t verb, uint8_t flags, uint32_t rows, uint32_t cols,
+                                      const uint8_t *pane, size_t pane_len, const uint8_t *raw,
+                                      size_t raw_len, uint8_t *out, size_t cap);
+size_t slopdesk_screen_encode_detect_payload(const uint8_t *agent, size_t agent_len,
+                                             const uint8_t *raw, size_t raw_len, uint8_t *out,
+                                             size_t cap);
+int32_t slopdesk_screen_reply_status(const uint8_t *body, size_t len);
 // The STYLED reading — the clipboard's and the preview's, columns rewritten and colours kept.
 // Answer: [u32 BE lines] ( [u32 BE runs] ( [u8 flags][u8 fg][3] [u8 bg][3] [u32 BE len][text] )* )*
 // flags: bold 1, dim 2, italic 4, underline 8, inverse 16. A colour is [kind, a, b, c] with kind

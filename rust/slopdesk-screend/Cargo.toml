@@ -35,6 +35,11 @@ path = "src/lib.rs"
 # stopped needing a socket to reach them; screend reads them back through the same crate the app
 # links, so there is one implementation rather than a daemon copy and an app copy.
 slopdesk-sanitize = { path = "../slopdesk-sanitize" }
+# The wire, which left this crate for `slopdesk-sanitize`'s reason: two callers, one implementation.
+# The client end is hostd's, and while the wire lived here the only way to reach it was to BE the
+# daemon — so hostd hand-wrote a second copy in Swift. Both ends still sit in one crate, so the
+# round trip is still a test rather than an agreement kept by review.
+slopdesk-screenwire = { path = "../slopdesk-screenwire" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # The detection rule ladder runs untrusted PTY output through manifest patterns. `regex` is a

@@ -1,10 +1,16 @@
+import CSlopDeskFFI
 import Foundation
 
-/// hostd's END of the screend wire — the encoder for a request and the decoder for a reply.
+/// hostd's END of the screend wire — the vocabulary, and the marshalling to the one encoder.
 ///
-/// The other end is `rust/slopdesk-screend/src/protocol.rs`. Two ENDS of one protocol is the shape
-/// the tree allows (hostd encodes, screend decodes, one implementation each); what it forbids is
-/// the same capability twice, which is why nothing here parses a screen.
+/// Every LAYOUT is `rust/slopdesk-screenwire`, linked in, and both ends of the protocol live there:
+/// screend decodes what this encodes, so the round trip is a TEST rather than two files agreeing by
+/// review. That was already the recorded decision (`docs/DECISIONS.md`, stage 17) — but only dropd's
+/// Swift original was deleted when its client end moved. This file kept hand-writing the frame, and
+/// the two copies had already diverged on an over-long detect label.
+///
+/// What stays here is the VOCABULARY — verb numbers, status numbers, flag bits, the banner — which
+/// `check-supervisor.sh` pins across the two languages the way it pins the other five daemons'.
 ///
 /// ```text
 /// request  u32 len | u8 verb | u8 flags | u16 rows | u16 cols | u16 paneLen | pane… | raw…
@@ -95,6 +101,9 @@ public enum ScreenWire {
         case rejected(status: ScreenStatus, message: String)
     }
 
+    /// One framed request. `0` back from the door is a REFUSAL — an unserved verb, a pane id that
+    /// is not UTF-8, or a body over ``maximumFrameBytes`` — which a real frame's length can never
+    /// be, so it reads unambiguously as the error the caller used to compute here.
     public static func encodeRequest(
         verb: ScreenVerb,
         flags: UInt8 = 0,
@@ -103,54 +112,83 @@ public enum ScreenWire {
         pane: String = "",
         raw: Data = Data(),
     ) throws -> Data {
-        let paneBytes = Data(pane.utf8)
-        let bodyCount = 8 + paneBytes.count + raw.count
-        guard bodyCount <= maximumFrameBytes else { throw WireError.frameTooLarge(bytes: bodyCount) }
-        var out = Data(capacity: 4 + bodyCount)
-        appendBigEndian(UInt32(bodyCount), to: &out)
-        out.append(verb.rawValue)
-        out.append(flags)
-        appendBigEndian(UInt16(clamping: rows), to: &out)
-        appendBigEndian(UInt16(clamping: cols), to: &out)
-        appendBigEndian(UInt16(clamping: paneBytes.count), to: &out)
-        out.append(paneBytes)
-        out.append(raw)
-        return out
+        let paneBytes = Array(pane.utf8)
+        let rawBytes = [UInt8](raw)
+        let frame = paneBytes.withUnsafeBufferPointer { paneIn -> [UInt8]? in
+            rawBytes.withUnsafeBufferPointer { rawIn -> [UInt8]? in
+                let ask = { (out: UnsafeMutableBufferPointer<UInt8>?) -> Int in
+                    slopdesk_screen_encode_request(
+                        verb.rawValue, flags, UInt32(clamping: rows), UInt32(clamping: cols),
+                        paneIn.baseAddress, paneIn.count, rawIn.baseAddress, rawIn.count,
+                        out?.baseAddress, out?.count ?? 0,
+                    )
+                }
+                let needed = ask(nil)
+                guard needed > 0 else { return nil }
+                var room = [UInt8](repeating: 0, count: needed)
+                let written = room.withUnsafeMutableBufferPointer { ask($0) }
+                return written == needed ? room : nil
+            }
+        }
+        guard let frame else {
+            throw WireError.frameTooLarge(bytes: 8 + paneBytes.count + rawBytes.count)
+        }
+        return Data(frame)
     }
 
     /// ``ScreenVerb/detect``'s verb-local payload: `u16 agentLen | agent… | bytes…`.
     ///
     /// The label is length-prefixed rather than delimited because a manifest label is a foreign
-    /// string in the general case, and a delimiter is a rule about its contents.
+    /// string in the general case, and a delimiter is a rule about its contents. A label longer than
+    /// the prefix can hold is TRUNCATED rather than refused — the one behaviour that changed when
+    /// the two copies became one, and the surviving reading is argued where it now lives: a
+    /// truncation is a wrong answer where a throw is no answer at all, and no manifest label is
+    /// within three orders of magnitude of 64 KiB.
     public static func encodeDetectPayload(agent: String, raw: Data) throws -> Data {
-        let agentBytes = Data(agent.utf8)
-        guard agentBytes.count <= Int(UInt16.max) else {
-            throw WireError.frameTooLarge(bytes: agentBytes.count)
+        let agentBytes = Array(agent.utf8)
+        let rawBytes = [UInt8](raw)
+        let payload = agentBytes.withUnsafeBufferPointer { agentIn -> [UInt8]? in
+            rawBytes.withUnsafeBufferPointer { rawIn -> [UInt8]? in
+                let ask = { (out: UnsafeMutableBufferPointer<UInt8>?) -> Int in
+                    slopdesk_screen_encode_detect_payload(
+                        agentIn.baseAddress, agentIn.count, rawIn.baseAddress, rawIn.count,
+                        out?.baseAddress, out?.count ?? 0,
+                    )
+                }
+                let needed = ask(nil)
+                guard needed > 0 else { return nil }
+                var room = [UInt8](repeating: 0, count: needed)
+                let written = room.withUnsafeMutableBufferPointer { ask($0) }
+                return written == needed ? room : nil
+            }
         }
-        var out = Data(capacity: 2 + agentBytes.count + raw.count)
-        appendBigEndian(UInt16(agentBytes.count), to: &out)
-        out.append(agentBytes)
-        out.append(raw)
-        return out
+        guard let payload else { throw WireError.frameTooLarge(bytes: agentBytes.count) }
+        return Data(payload)
     }
 
     /// Splits a reply body into its status and payload. The caller has already read `len` bytes.
+    ///
+    /// The status reading is the door's: an unknown byte is NOT degraded to `ok`, because a status
+    /// is the answer to "did my request succeed" and guessing hands the caller a payload it has no
+    /// reason to trust.
     public static func decodeReply(_ body: Data) throws -> (status: ScreenStatus, payload: Data) {
-        guard let first = body.first else { throw WireError.truncatedReply }
-        guard let status = ScreenStatus(rawValue: first) else { throw WireError.unknownStatus(first) }
-        return (status, body.dropFirst().withUnsafeBytes { Data($0) })
-    }
-
-    private static func appendBigEndian(_ value: UInt32, to out: inout Data) {
-        out.append(UInt8(truncatingIfNeeded: value >> 24))
-        out.append(UInt8(truncatingIfNeeded: value >> 16))
-        out.append(UInt8(truncatingIfNeeded: value >> 8))
-        out.append(UInt8(truncatingIfNeeded: value))
-    }
-
-    private static func appendBigEndian(_ value: UInt16, to out: inout Data) {
-        out.append(UInt8(truncatingIfNeeded: value >> 8))
-        out.append(UInt8(truncatingIfNeeded: value))
+        let bytes = [UInt8](body)
+        let verdict = bytes.withUnsafeBufferPointer { input in
+            slopdesk_screen_reply_status(input.baseAddress, input.count)
+        }
+        switch verdict {
+        case 0,
+             1,
+             2:
+            guard let status = ScreenStatus(rawValue: UInt8(verdict)) else {
+                throw WireError.unknownStatus(UInt8(verdict))
+            }
+            return (status, body.dropFirst().withUnsafeBytes { Data($0) })
+        case -1:
+            throw WireError.truncatedReply
+        default:
+            throw WireError.unknownStatus(bytes.first ?? 0)
+        }
     }
 }
 

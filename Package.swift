@@ -408,7 +408,9 @@ let package = Package(
         // overprint collapser it addresses live ONCE, in `rust/slopdesk-screend` — this target
         // deliberately contains no screen logic at all. Depends on SlopDeskSupervisor for the
         // single `AF_UNIX` connect + `sockaddr_un` validation (one implementation, not two).
-        .target(name: "SlopDeskScreen", dependencies: ["SlopDeskSupervisor", "SlopDeskTTY"]),
+        // CSlopDeskFFI: the screend wire's layouts are `rust/slopdesk-screenwire`, which screend
+        // itself decodes with — so hostd's end of the frame is a marshaller, not a second copy.
+        .target(name: "SlopDeskScreen", dependencies: ["SlopDeskSupervisor", "SlopDeskTTY", "CSlopDeskFFI"]),
 
         // MARK: Executables
 

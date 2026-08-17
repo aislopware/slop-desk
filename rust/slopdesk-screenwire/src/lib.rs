@@ -59,11 +59,12 @@ pub enum Verb {
     // round trip — and the round trip was the mistake: `sanitize` is a pure function, so it is
     // `rust/slopdesk-sanitize` linked into the app now, not a verb. A future verb takes 10.
     /// STATELESS and GEOMETRY-FREE: return `raw` with only the zsh `PROMPT_SP` pass applied
-    /// (`crate::prompteol`). For the caller holding ONE captured command block rather than a replay
+    /// (`slopdesk_sanitize::prompteol`, which screend runs). For the caller holding ONE captured
+    /// command block rather than a replay
     /// stream — the whole transform would be wrong there, its other anchors already stripped.
     PromptEolMarks = 8,
     /// STATEFUL: feed a pane's new bytes and answer the DETECTION VERDICT
-    /// ([`crate::detect::Verdict`]) as JSON — not the screen.
+    /// (screend's `detect::Verdict`) as JSON — not the screen.
     ///
     /// `raw` is `u16 agent_len | agent… | bytes…`: the label of the pane's foreground agent (empty
     /// for none) followed by the PTY chunk. A verb-local framing rather than a wire-layout change,
@@ -192,19 +193,29 @@ impl std::error::Error for DecodeError {}
 /// # Errors
 /// [`DecodeError`] for a short body, an unknown verb or a non-UTF-8 pane id.
 pub fn decode_request(body: &[u8]) -> Result<Request<'_>, DecodeError> {
-    if body.len() < HEADER_LEN {
+    // Split-then-destructure rather than index. screend could index its way through this because
+    // its whole crate allows it — a terminal GRID is an indexed structure whose coordinates are
+    // clamped on the way in. There is no grid here: every byte below arrived over a socket, so the
+    // length check IS the proof and the pattern is what makes the compiler hold it.
+    let (header, rest) = body.split_at_checked(HEADER_LEN).ok_or(DecodeError::Truncated)?;
+    let &[
+        verb_byte,
+        flags,
+        rows_hi,
+        rows_lo,
+        cols_hi,
+        cols_lo,
+        pane_hi,
+        pane_lo,
+    ] = header
+    else {
         return Err(DecodeError::Truncated);
-    }
-    let verb = Verb::from_byte(body[0]).ok_or(DecodeError::UnknownVerb(body[0]))?;
-    let flags = body[1];
-    let rows = usize::from(u16::from_be_bytes([body[2], body[3]]));
-    let cols = usize::from(u16::from_be_bytes([body[4], body[5]]));
-    let pane_len = usize::from(u16::from_be_bytes([body[6], body[7]]));
-    let rest = &body[HEADER_LEN..];
-    if rest.len() < pane_len {
-        return Err(DecodeError::Truncated);
-    }
-    let (pane_bytes, raw) = rest.split_at(pane_len);
+    };
+    let verb = Verb::from_byte(verb_byte).ok_or(DecodeError::UnknownVerb(verb_byte))?;
+    let rows = usize::from(u16::from_be_bytes([rows_hi, rows_lo]));
+    let cols = usize::from(u16::from_be_bytes([cols_hi, cols_lo]));
+    let pane_len = usize::from(u16::from_be_bytes([pane_hi, pane_lo]));
+    let (pane_bytes, raw) = rest.split_at_checked(pane_len).ok_or(DecodeError::Truncated)?;
     let pane = std::str::from_utf8(pane_bytes).map_err(|_| DecodeError::PaneNotUtf8)?;
     Ok(Request {
         verb,
@@ -289,7 +300,9 @@ pub fn encode_reply(status: Status, payload: &[u8]) -> Vec<u8> {
 mod tests {
     #![expect(
         clippy::expect_used,
-        reason = "a panic in a test is the failure report, not a fault"
+        clippy::indexing_slicing,
+        reason = "a panic in a test is the failure report, not a fault — and a fixed offset into a frame \
+                  this test just built is the assertion, where `get` would soften it"
     )]
 
     use super::{

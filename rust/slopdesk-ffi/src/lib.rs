@@ -89,6 +89,7 @@ pub mod rate_control;
 pub mod recovery;
 pub mod replay;
 pub mod sanitize;
+pub mod screen;
 pub mod scroll_reproject;
 pub mod scroll_resample;
 pub mod send_pacing;

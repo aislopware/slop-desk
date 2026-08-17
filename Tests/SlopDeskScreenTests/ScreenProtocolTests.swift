@@ -1,14 +1,19 @@
 import SlopDeskScreen
 import XCTest
 
-/// hostd's END of the screend wire — the encoder and the reply decoder.
+/// hostd's END of the screend wire — the MARSHALLING, which is the only part of it that is Swift.
 ///
-/// The behaviour of the SERVICE is pinned in `rust/slopdesk-screend`, where it is implemented;
-/// re-asserting any of it here would be the cross-language mirror this tree forbids. What is
-/// testable on this side is the byte layout it emits and the answers it accepts, which is exactly
-/// what a wire END is.
+/// The byte LAYOUT is `rust/slopdesk-screenwire`, where the encoder sits beside the decoder screend
+/// reads it back with, so the round trip is one test rather than two languages agreeing. Asserting
+/// the offsets again here is what let a second copy of the frame live in this file for a whole
+/// migration stage after the first was recorded as moved.
+///
+/// What is left is real: the refusal reading (`0` from a §4 door means REFUSED, not "empty"), the
+/// UTF-8 hand-off, and the mapping from the door's verdict codes onto ``ScreenWire/WireError``.
 final class ScreenProtocolTests: XCTestCase {
-    func testRequestLayoutIsBigEndianAndLengthPrefixed() throws {
+    /// The door is linked and its answer is copied whole — a frame comes back the length its own
+    /// prefix declares.
+    func testTheEncoderDoorIsWiredAndTheFrameIsSelfConsistent() throws {
         let frame = try ScreenWire.encodeRequest(
             verb: .feed,
             flags: ScreenWire.flagReset,
@@ -17,27 +22,13 @@ final class ScreenProtocolTests: XCTestCase {
             pane: "ab",
             raw: Data([0xDE, 0xAD]),
         )
-        // len | verb | flags | rows | cols | paneLen | pane | raw
-        XCTAssertEqual([UInt8](frame), [
-            0, 0, 0, 12,
-            ScreenVerb.feed.rawValue,
-            ScreenWire.flagReset,
-            0, 24,
-            0, 80,
-            0, 2,
-            0x61, 0x62,
-            0xDE, 0xAD,
-        ])
-    }
-
-    /// The length counts everything after itself — the property that keeps a stream framed.
-    func testDeclaredLengthCoversTheWholeBody() throws {
-        let frame = try ScreenWire.encodeRequest(verb: .collapse, raw: Data(repeating: 0x41, count: 5000))
         let declared = Int(frame[0]) << 24 | Int(frame[1]) << 16 | Int(frame[2]) << 8 | Int(frame[3])
-        XCTAssertEqual(declared, frame.count - 4)
-        XCTAssertEqual(declared, 8 + 5000)
+        XCTAssertEqual(declared, frame.count - 4, "the length counts everything after itself")
+        XCTAssertEqual(frame.count, 4 + 8 + 2 + 2)
     }
 
+    /// A body over what the service will read comes back as `0` from the door, and the Swift side
+    /// must read that as the refusal it is rather than as an empty frame.
     func testAFrameLargerThanTheServiceWillReadIsRefusedHere() {
         let raw = Data(count: ScreenWire.maximumFrameBytes + 1)
         XCTAssertThrowsError(try ScreenWire.encodeRequest(verb: .compose, rows: 1, cols: 1, raw: raw)) { error in
@@ -47,22 +38,38 @@ final class ScreenProtocolTests: XCTestCase {
         }
     }
 
-    func testAPaneKeyIsEncodedAsUTF8Bytes() throws {
+    /// A pane key crosses as its UTF-8 BYTES, not its characters — the one thing the hand-off can
+    /// get wrong without the frame looking malformed.
+    func testAPaneKeyCrossesAsUTF8Bytes() throws {
         let frame = try ScreenWire.encodeRequest(verb: .forget, pane: "é")
         XCTAssertEqual([UInt8](frame.suffix(2)), [0xC3, 0xA9])
-        XCTAssertEqual(frame[10], 0, "paneLen high byte")
         XCTAssertEqual(frame[11], 2, "two BYTES, not one character")
     }
 
-    func testReplyDecodeSplitsStatusFromPayload() throws {
+    /// The detect payload's label crosses the same way, and an empty label is a real one rather
+    /// than a refusal.
+    func testAnEmptyDetectLabelIsAPayloadAndNotARefusal() throws {
+        let payload = try ScreenWire.encodeDetectPayload(agent: "", raw: Data([0x41]))
+        XCTAssertEqual([UInt8](payload), [0, 0, 0x41])
+    }
+
+    /// The door's verdict codes map onto the Swift errors: a status through, an empty body as
+    /// truncated, an unknown byte as unknown rather than degraded to `ok`.
+    func testTheReplyVerdictMapsOntoTheSwiftErrors() throws {
         let (status, payload) = try ScreenWire.decodeReply(Data([0, 0x68, 0x69]))
         XCTAssertEqual(status, .ok)
         XCTAssertEqual(payload, Data([0x68, 0x69]))
-    }
 
-    func testAnEmptyReplyAndAnUnknownStatusAreRejectedRatherThanGuessed() {
-        XCTAssertThrowsError(try ScreenWire.decodeReply(Data()))
-        XCTAssertThrowsError(try ScreenWire.decodeReply(Data([9])))
+        XCTAssertThrowsError(try ScreenWire.decodeReply(Data())) { error in
+            guard case ScreenWire.WireError.truncatedReply = error else {
+                return XCTFail("expected truncatedReply, got \(error)")
+            }
+        }
+        XCTAssertThrowsError(try ScreenWire.decodeReply(Data([9]))) { error in
+            guard case ScreenWire.WireError.unknownStatus(9) = error else {
+                return XCTFail("expected unknownStatus(9), got \(error)")
+            }
+        }
     }
 
     // MARK: Snapshot

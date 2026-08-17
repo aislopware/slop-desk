@@ -420,6 +420,7 @@ screend: ## Build slopdesk-screend (rust/slopdesk-screend)
 
 screend-test: ## cargo test for the screen engine
 	cd rust/slopdesk-sanitize && cargo test
+	cd rust/slopdesk-screenwire && cargo test
 	cd rust/slopdesk-screend && cargo test
 
 screend-install: ## Build + (re)install the com.slopdesk.screend LaunchAgent

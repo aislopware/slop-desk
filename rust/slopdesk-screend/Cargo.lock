@@ -156,8 +156,13 @@ dependencies = [
  "serde",
  "serde_json",
  "slopdesk-sanitize",
+ "slopdesk-screenwire",
  "toml",
 ]
+
+[[package]]
+name = "slopdesk-screenwire"
+version = "0.1.0"
 
 [[package]]
 name = "syn"
