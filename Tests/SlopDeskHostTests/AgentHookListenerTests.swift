@@ -70,7 +70,7 @@ final class AgentHookListenerTests: XCTestCase {
         let record = Data("pane=p1\n{\"hook_event_name\":\"UserPromptSubmit\"}".utf8)
         let (paneID, body) = AgentHookRecord.split(record)
         XCTAssertEqual(paneID, "p1")
-        var detector = ClaudePaneDetector()
+        let detector = ClaudePaneDetector()
         let emission = detector.hook(bytes: body, at: 0)
         XCTAssertEqual(
             emission.status,

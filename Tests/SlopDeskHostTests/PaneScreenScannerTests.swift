@@ -158,7 +158,7 @@ final class ScreenDetectionFoldTests: XCTestCase {
     // the socket, and `SlopDeskScreenTests` is where that derivation lives.
 
     func testScreenDetectionFoldEmitsType27() {
-        var detector = ClaudePaneDetector()
+        let detector = ClaudePaneDetector()
         _ = detector.sample(name: "claude", at: 0)
         let emission = detector.screenDetection(
             AgentScreenDetection(state: .blocked, visibleBlocker: true),
@@ -176,7 +176,7 @@ final class ScreenDetectionFoldTests: XCTestCase {
     }
 
     func testScreenDetectionNeverOpensTheStreamOnAnUndetectedPane() {
-        var detector = ClaudePaneDetector()
+        let detector = ClaudePaneDetector()
         // No presence, no prior emission: an unknown-state verdict must stay silent.
         let emission = detector.screenDetection(AgentScreenDetection(state: .unknown), at: 0)
         XCTAssertTrue(emission.isEmpty)

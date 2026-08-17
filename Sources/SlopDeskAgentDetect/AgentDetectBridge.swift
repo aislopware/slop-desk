@@ -94,9 +94,11 @@ extension AgentScreenState {
     }
 }
 
-extension AgentScreenDetection {
+public extension AgentScreenDetection {
     /// The compact form the temporal layer compares — the rule id and fallback reason are absent
-    /// because `hold` reads neither.
+    /// because `hold` reads neither, and neither does the state machine below it. Public because the
+    /// host's pane detector folds a verdict through the same struct, and a second spelling of these
+    /// five fields is exactly the drift the port removes.
     var ffiDetection: SlopDeskAgentDetection {
         SlopDeskAgentDetection(
             state: state.ffiByte,

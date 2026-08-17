@@ -273,7 +273,7 @@ final class MuxChannelSession: @unchecked Sendable {
     /// it is guarded by `agentDetectLock`. ONE machine, deliberately: a pair of independent machines
     /// (`foregroundDetector` + `agentHookHandler`) would fight over the one type-27 stream.
     private let agentDetectLock = NSLock()
-    private var agentDetector = ClaudePaneDetector()
+    private let agentDetector = ClaudePaneDetector()
 
     /// The foreground-watch poll task (cancel on shutdown).
     private var agentWatchTask: Task<Void, Never>?

@@ -37,7 +37,7 @@ final class ClaudePaneDetectorTeardownTests: XCTestCase {
     /// shell back at t≈1. That absence must terminate on the spot — it is the corroboration of the
     /// SessionEnd, not something to be defended against.
     func testAbsenceRightAfterSessionEndIsNotSuppressed() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.hook(bytes: json(#"{"hook_event_name":"SessionStart","session_id":"s1"}"#), at: 0)
         _ = d.sample(name: "claude", at: 0.5)
         XCTAssertEqual(d.status, .idle)
@@ -52,7 +52,7 @@ final class ClaudePaneDetectorTeardownTests: XCTestCase {
     /// still naming `claude` (measured at +34 ms .. +440 ms), then the real absence. The pane must
     /// stay dark the whole way — no re-lift, and no 30 s tail.
     func testSessionEndSurvivesAStillAliveForegroundPoll() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.hook(bytes: json(#"{"hook_event_name":"SessionStart","session_id":"s1"}"#), at: 0)
         _ = d.sample(name: "claude", at: 0.5)
         _ = d.hook(bytes: json(#"{"hook_event_name":"SessionEnd","session_id":"s1"}"#), at: 10)
@@ -66,7 +66,7 @@ final class ClaudePaneDetectorTeardownTests: XCTestCase {
     /// The grace itself is untouched for what it was built for: a wrapper-launched agent whose
     /// basename never classifies as `claude` still survives the poll on a MID-session hook.
     func testMidSessionHookStillArmsTheAbsenceGrace() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.hook(bytes: json(#"{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt":"hi"}"#), at: 10)
         XCTAssertEqual(d.status, .working)
         _ = d.sample(name: "node", at: 11)
@@ -78,7 +78,7 @@ final class ClaudePaneDetectorTeardownTests: XCTestCase {
     /// The captured shape: claude titles the pane `✳ Claude Code`, then `/exit`. The detector saw
     /// the agent take the title, so it owes the pane an explicit clear when the agent goes.
     func testAgentGoneRetiresTheTitleItOwned() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.hook(bytes: json(#"{"hook_event_name":"SessionStart","session_id":"s1"}"#), at: 0)
         _ = d.sample(name: "claude", at: 0.5)
         _ = d.title("✳ Claude Code", at: 1)
@@ -93,7 +93,7 @@ final class ClaudePaneDetectorTeardownTests: XCTestCase {
     /// The clear is a ONE-SHOT edge, not a state: the next fold must not keep re-clearing a title
     /// the shell may since have set.
     func testTitleClearIsEmittedOnce() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.sample(name: "claude", at: 0)
         _ = d.title("✳ Claude Code", at: 1)
         _ = d.hook(bytes: json(#"{"hook_event_name":"SessionEnd","session_id":"s1"}"#), at: 10)
@@ -105,7 +105,7 @@ final class ClaudePaneDetectorTeardownTests: XCTestCase {
     /// A pane whose title the agent never touched keeps it. A shell's own title (nvim, a long
     /// `make`) is not the detector's to throw away.
     func testAgentGoneLeavesAForeignTitleAlone() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.sample(name: "claude", at: 0)
         _ = d.title("nvim — README.md", at: 1)
         let end = d.hook(bytes: json(#"{"hook_event_name":"SessionEnd","session_id":"s1"}"#), at: 10)
@@ -115,7 +115,7 @@ final class ClaudePaneDetectorTeardownTests: XCTestCase {
     /// The same retirement on the hook-free path: presence absence is the only teardown signal a
     /// pane without installed hooks ever gets.
     func testPresenceAbsenceAlsoRetiresTheAgentTitle() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.sample(name: "claude", at: 0)
         _ = d.title("⠂ Say hi in one word", at: 1)
         let gone = d.sample(name: "zsh", at: 2)
@@ -124,7 +124,7 @@ final class ClaudePaneDetectorTeardownTests: XCTestCase {
 
     /// A live agent re-titling itself never triggers a clear — only the gone edge does.
     func testTitleChangesWhileTheAgentLivesEmitNoClear() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.sample(name: "claude", at: 0)
         XCTAssertNil(d.title("✳ Claude Code", at: 1).title)
         XCTAssertNil(d.title("⠂ Say hi in one word", at: 2).title)

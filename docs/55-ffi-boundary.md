@@ -622,10 +622,26 @@ with three optional strings and a whole argv. `job_new` → `push_process` / `pu
 `identify` → read the answer slot → `free`. Same staging pattern as the replay buffer's input slot,
 for the same reason: one item at a time, and no list encoding to get wrong.
 
+**A slot mask, where one fold owes several answers.** The pane detector's folds owe up to four
+messages of three different shapes. A single flat answer buffer encoding all four would be a second
+wire format nobody asked for, so a fold returns a BITMASK naming the slots it filled and the named
+slots are read back off the handle one at a time (`slopdesk_agent_detector_emit_*`). The emission
+lives on the handle until the next fold replaces it, which is why the Swift face reads it
+immediately and unconditionally rather than lazily. A fold on a null handle answers 0, which is
+indistinguishable from a fold that owed nothing — and that is the correct answer for both.
+
 ### What it cost
 
 Nine Swift files, 2,152 lines → 1,236, of which ~260 is the marshalling. The 135 tests in
 `SlopDeskAgentDetectTests` are unchanged and now exercise `rust/slopdesk-agent`.
+
+The FUSION followed on 2026-08-17: `ClaudePaneDetector` went 617 lines → 300, of which none is
+policy. It found a divergence the same way the first pass did — the two dedupe anchors are NOT
+symmetric, and only reading both sides against the tests made that legible. A never-emitted STATUS
+stream and a status of none are different frames, so that anchor compares optionals; a never-emitted
+INTENT stream and a cleared intent are the same silence, so that one collapses both sides to the
+empty string. Writing the second the way the first reads gave a pane that never had an intent an
+empty type-36 clear frame, telling every client to blank a row it had never filled.
 
 The port found a live bug, which is the honest argument for doing it: `process::basename` used
 `rsplit('/').next()` where Swift used `split(separator:).last`, so `/usr/local/bin/claude/` — a

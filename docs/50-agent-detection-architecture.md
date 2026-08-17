@@ -8,10 +8,16 @@ reconciliation rules.
 Written 2026-08-11, after a user-reported flap (Tab-switching an `AskUserQuestion` walked the pane's
 mark blocked ↔ idle, once per press) turned out to be a whole class of problem rather than one bug.
 
-**This is `rust/slopdesk-agent` (stage 31, 2026-08-13).** Every rule below — `kind`, `job`,
-`process`, `status`, `signal`, `screen`, `hold`, `input`, `machine` — is a zero-dependency library
-with an injected clock, reached from `Sources/SlopDeskAgentDetect` in-process over the FFI boundary
-(`docs/55`). The Swift that remains is the case lists a SwiftUI `switch` needs, plus the
+**This is `rust/slopdesk-agent` (stage 31, 2026-08-13; the fusion followed 2026-08-17).** Every rule
+below — `kind`, `job`, `process`, `status`, `signal`, `screen`, `hold`, `input`, `machine`,
+`detector` — is a zero-dependency library with an injected clock, reached from
+`Sources/SlopDeskAgentDetect` and `Sources/SlopDeskHost` in-process over the FFI boundary
+(`docs/55`). `detector` is the layer above `machine`: not "what is the status now" but what the host
+OWES the client after that fold — the type-26 basename edge, the type-27 dedupe anchor, the
+stickiness clock and its two absence suppressors, the block-class carry, the type-36 intent latch and
+the type-21 title ownership. It is the only thing anywhere that constructs a machine, and
+`ClaudePaneDetector` is the handle over it plus the `WireMessage` shapes, which is the one part that
+has to stay Swift. The Swift that remains is that, the case lists a SwiftUI `switch` needs, and the
 marshalling; `docs/55` §6 draws that line and `scripts/check-supervisor.sh` gates it. The split
 against `slopdesk-screend` (docs/52) is that **screend owns everything reading the BYTES and the
 agent crate owns everything reading the CLOCK**.

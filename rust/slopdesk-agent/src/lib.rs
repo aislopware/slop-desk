@@ -17,6 +17,9 @@
 //! - [`hold`] — the temporal layer over that verdict: the confirmation holds and the publish gate.
 //! - [`input`] — does an input chunk carry a keystroke, or only the emulator's own replies?
 //! - [`machine`] — the state machine itself, the one place all of it comes together.
+//! - [`detector`] — one layer up: not "what is the status now" but what the host OWES the client
+//!   after that fold — the dedupe anchors, the stickiness clock, the session intent, the title
+//!   ownership. One of these per pane, and it is the only thing that constructs a machine.
 //!
 //! ## What is guaranteed
 //! - **No `unsafe`.** `#![forbid(unsafe_code)]`, so not even a downstream `allow` can bring it
@@ -33,6 +36,7 @@
 #![forbid(unsafe_code)]
 
 pub mod badge;
+pub mod detector;
 pub mod hold;
 pub mod input;
 pub mod job;
@@ -44,6 +48,7 @@ pub mod signal;
 pub mod status;
 pub mod watch;
 
+pub use detector::{Emission, PaneDetector, StatusTriple, block_kind, intent_line, topic_line};
 pub use hold::AgentDetectionHold;
 pub use input::{contains_cancel_keystroke, contains_user_keystroke};
 pub use job::{ForegroundJob, ForegroundJobProcess, SymlinkResolver};

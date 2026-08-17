@@ -221,8 +221,9 @@ typedef struct {
     size_t                 strings_len;
 } SlopDeskAgentSignal;
 
-typedef struct SlopDeskAgentMachine SlopDeskAgentMachine;
-typedef struct SlopDeskAgentHold    SlopDeskAgentHold;
+typedef struct SlopDeskAgentMachine  SlopDeskAgentMachine;
+typedef struct SlopDeskAgentHold     SlopDeskAgentHold;
+typedef struct SlopDeskAgentDetector SlopDeskAgentDetector;
 
 // Pure — §4's convention, nothing remembered between calls.
 int32_t slopdesk_agent_kind_identify(const uint8_t *bytes, size_t len);   // -1 = no agent
@@ -297,6 +298,78 @@ size_t  slopdesk_agent_machine_outstanding_blocks(SlopDeskAgentMachine *handle);
 uint8_t slopdesk_agent_machine_standing_block_kind(SlopDeskAgentMachine *handle);
 // -1 = there is no label; a present-but-empty label answers 0.
 ptrdiff_t slopdesk_agent_machine_label(SlopDeskAgentMachine *handle, uint8_t *out, size_t cap);
+
+// The per-pane DETECTOR: one machine, plus everything that turns its verdicts into a control
+// stream — the type-26 basename edge, the type-27 dedupe anchor, the type-36 intent latch and the
+// type-21 title retirement. §4b's handle convention: no two calls on one handle may overlap.
+//
+// Every fold answers a SLOT MASK naming what it owes — 1 foreground, 2 status, 4 intent, 8 title
+// retirement — and the named slots are then read back off the handle. The emission lives there
+// until the next fold replaces it, so a caller reads it before folding again. A fold on a null
+// handle answers 0, which is indistinguishable from a fold that owed nothing, and is correct.
+#define SLOPDESK_AGENT_EMIT_FOREGROUND 1u
+#define SLOPDESK_AGENT_EMIT_STATUS     2u
+#define SLOPDESK_AGENT_EMIT_INTENT     4u
+#define SLOPDESK_AGENT_EMIT_TITLE      8u
+
+// detector_constant index: 0 default done->idle, 1 the report grace window, 2 the wrapper
+// suppression window, 3 the intent clamp in scalars.
+double slopdesk_agent_detector_constant(uint8_t index);
+
+SlopDeskAgentDetector *slopdesk_agent_detector_new(double done_to_idle_timeout);
+void slopdesk_agent_detector_free(SlopDeskAgentDetector *handle);
+
+uint32_t slopdesk_agent_detector_sample(SlopDeskAgentDetector *handle,
+                                        const uint8_t *name, size_t len, double now);
+// The raw hook POST body. Validate-then-drop: a body this build cannot read answers 0.
+uint32_t slopdesk_agent_detector_hook(SlopDeskAgentDetector *handle,
+                                      const uint8_t *body, size_t len, double now);
+// A null `message` is NO message, which is not the same as an empty one.
+uint32_t slopdesk_agent_detector_report(SlopDeskAgentDetector *handle,
+                                        const uint8_t *state, size_t state_len,
+                                        const uint8_t *message, size_t message_len, double now);
+uint32_t slopdesk_agent_detector_tick(SlopDeskAgentDetector *handle, double now);
+// The COMPACT detection: the rule id and fallback reason a full verdict carries are for
+// explanation, and nothing downstream of here reads either.
+uint32_t slopdesk_agent_detector_screen(SlopDeskAgentDetector *handle,
+                                        const SlopDeskAgentDetection *detection, double now);
+uint32_t slopdesk_agent_detector_title(SlopDeskAgentDetector *handle,
+                                       const uint8_t *title, size_t len, double now);
+uint32_t slopdesk_agent_detector_user_input(SlopDeskAgentDetector *handle,
+                                            const uint8_t *bytes, size_t len, double now);
+uint32_t slopdesk_agent_detector_reestablish(SlopDeskAgentDetector *handle);
+
+// The last fold's emission. -1 = that slot was not filled; 0 = filled with the empty string, which
+// is a real answer everywhere here (a cleared intent, a label the agent left blank).
+ptrdiff_t slopdesk_agent_detector_emit_foreground(SlopDeskAgentDetector *handle,
+                                                  uint8_t *out, size_t cap);
+ptrdiff_t slopdesk_agent_detector_emit_status_label(SlopDeskAgentDetector *handle,
+                                                    uint8_t *out, size_t cap);
+ptrdiff_t slopdesk_agent_detector_emit_intent(SlopDeskAgentDetector *handle,
+                                              uint8_t *out, size_t cap);
+// (state << 8) | kind — one door, because the two bytes are one frame.
+uint16_t slopdesk_agent_detector_emit_status_bytes(SlopDeskAgentDetector *handle);
+
+// The detector's CURRENT state, which is not the last emission.
+uint8_t slopdesk_agent_detector_status(SlopDeskAgentDetector *handle);
+bool    slopdesk_agent_detector_is_quiet(SlopDeskAgentDetector *handle);
+bool    slopdesk_agent_detector_has_authoritative_feed(SlopDeskAgentDetector *handle);
+bool    slopdesk_agent_detector_suppresses_child_notifications(SlopDeskAgentDetector *handle);
+ptrdiff_t slopdesk_agent_detector_status_label(SlopDeskAgentDetector *handle,
+                                               uint8_t *out, size_t cap);
+ptrdiff_t slopdesk_agent_detector_session_intent(SlopDeskAgentDetector *handle,
+                                                 uint8_t *out, size_t cap);
+// The type-27 anchor — the value BEHIND the edge, for a client that missed it.
+bool      slopdesk_agent_detector_has_last_status(SlopDeskAgentDetector *handle);
+uint8_t   slopdesk_agent_detector_last_status_state(SlopDeskAgentDetector *handle);
+uint8_t   slopdesk_agent_detector_last_status_kind(SlopDeskAgentDetector *handle);
+ptrdiff_t slopdesk_agent_detector_last_status_label(SlopDeskAgentDetector *handle,
+                                                    uint8_t *out, size_t cap);
+
+// The detector's pure statics, callable without one. -1 = no answer.
+ptrdiff_t slopdesk_agent_intent_line(const uint8_t *prompt, size_t len, uint8_t *out, size_t cap);
+ptrdiff_t slopdesk_agent_topic_line(const uint8_t *title, size_t len, uint8_t *out, size_t cap);
+uint8_t   slopdesk_agent_block_kind(uint8_t standing, uint8_t ledger, uint8_t event, bool blocked);
 
 // The foreground JOB: a process-group id plus N processes, each with up to three optional strings
 // and a whole argv. Too much shape for one flat struct, so it is STAGED — build it, then ask it.

@@ -38,7 +38,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// only TICKS advance time — and a tick past the timeout must emit a type-27 `.idle`. Without ticks
     /// advancing the host machine, a finished turn would stay `.done` (🔵) forever.
     func testStopThenOnlyTicksEmitsIdleAfterTimeout() {
-        var d = ClaudePaneDetector(doneToIdleTimeout: 5)
+        let d = ClaudePaneDetector(doneToIdleTimeout: 5)
         // Hook: Stop → done. (No foreground sample needed — the hook drives presence-independent status.)
         let stop = d.hook(bytes: json(#"{"hook_event_name":"Stop","last_assistant_message":"ok"}"#), at: 0)
         XCTAssertEqual(stateByte(stop.status), 2, "Stop → done (urgency 2)")
@@ -62,7 +62,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// claude turn) plus the 1 Hz tick — the block must SURVIVE: presence is a floor that never
     /// downgrades a richer hook status, and a redundant `sample("claude")` must not knock it back to idle.
     func testContinuedClaudePresenceKeepsHookBlock() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.sample(name: "claude", at: 0)
         _ = d.hook(bytes: json(#"{"hook_event_name":"Notification","message":"needs your permission"}"#), at: 1)
         XCTAssertEqual(d.status, .needsPermission)
@@ -79,7 +79,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// client mapping `ClaudeStatus(urgency:)`) back to the host machine's OWN status — proving the client
     /// (a passive display) can never diverge from the host's verdict.
     func testEmittedStateByteMatchesHostStatusForClient() {
-        var d = ClaudePaneDetector(doneToIdleTimeout: 5)
+        let d = ClaudePaneDetector(doneToIdleTimeout: 5)
         func assertAgrees(_ e: ClaudePaneDetector.Emission, _ file: StaticString = #filePath, _ line: UInt = #line) {
             guard let state = stateByte(e.status) else { return } // deduped → no frame, nothing to compare
             XCTAssertEqual(
@@ -106,7 +106,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// because the status never lifts off `.none` there is no type-27 churn that would flap the inspector.
     func testClaudePrefixedProcessIsNotClaudeNoInspectorFlap() {
         for name in ["claude-monitor", "myclaudewrapper", "/usr/local/bin/claude-monitor"] {
-            var d = ClaudePaneDetector()
+            let d = ClaudePaneDetector()
             let e = d.sample(name: name, at: 0)
             XCTAssertEqual(d.status, .none, "\(name) must not be treated as claude (exact basename)")
             // The first sample emits the anchor type-27 (none); the client maps byte 0 → .none (agreement).
@@ -127,7 +127,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// dedupe guard removed, every fold would emit a frame (the count would balloon) — so this fails
     /// loudly if the guard regresses, unlike a single `XCTAssertNil` on one repeat.
     func testRepeatedIdenticalStatusEmitsExactlyOneType27() {
-        var d = ClaudePaneDetector(doneToIdleTimeout: 5)
+        let d = ClaudePaneDetector(doneToIdleTimeout: 5)
         var emittedStates: [UInt8] = []
         func feedHook(_ json: String, at t: TimeInterval) {
             if let s = stateByte(d.hook(bytes: self.json(json), at: t).status) { emittedStates.append(s) }
@@ -156,7 +156,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// type-26 (`foregroundProcess`) fires only on a basename EDGE and is independent of the type-27
     /// status stream — a coarse display hint, never a second status source.
     func testType26IsBasenameEdgeOnly() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         let first = d.sample(name: "zsh", at: 0)
         XCTAssertEqual(first.foreground, .foregroundProcess(name: "zsh"), "first sample emits the basename")
         let same = d.sample(name: "zsh", at: 1)
@@ -171,7 +171,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// equivalent real hook would. Each is precedence-2 (authoritative), so it beats the bare
     /// foreground-process presence FLOOR (which only lifts `.none → .idle`).
     func testReportWorkingBlockedDoneIdle() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.sample(name: "claude", at: 0) // presence floor = idle
 
         let working = d.report(state: "working", message: nil, at: 1)
@@ -198,7 +198,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// the keystroke is the only host-visible signal that the modal is being handled. An answered
     /// dialog re-promotes via its own PreToolUse right after.
     func testUserKeystrokeDemotesABlockedPane() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         let blocked = d.hook(
             bytes: json(
                 #"{"hook_event_name":"Notification","notification_type":"permission_prompt","message":"Allow Bash?"}"#,
@@ -225,7 +225,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// Merely VISITING a blocked pane sends a focus-in report down the same input path — that is
     /// reading, not answering, and must leave the hand up. Same for a mouse-wheel scroll.
     func testFocusReportsAndScrollDoNotUnblock() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.hook(
             bytes: json(
                 #"{"hook_event_name":"Notification","notification_type":"permission_prompt","message":"Allow?"}"#,
@@ -245,7 +245,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// awaiting-input cue rang again on every keypress and every pointer move. Only Esc / Ctrl-C may
     /// unblock: every other resolution announces itself through its own hook.
     func testOnlyCancelKeysUnblockAnAskUserQuestion() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.hook(
             bytes: json(#"{"hook_event_name":"PreToolUse","tool_name":"AskUserQuestion"}"#),
             at: 0,
@@ -277,7 +277,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// lands on `.idle`, carried with the QUIET kind byte so the client — for whom `.working → .idle`
     /// is itself the hook-less completion edge — knows not to re-announce it.
     func testCompactionEmitsAQuietIdleNotADone() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.hook(bytes: json(#"{"hook_event_name":"UserPromptSubmit","prompt":"/compact"}"#), at: 0)
         XCTAssertEqual(d.status, .working)
         let compacting = d.hook(bytes: json(#"{"hook_event_name":"PreCompact","trigger":"manual"}"#), at: 1)
@@ -296,7 +296,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// The next REAL turn after a compaction still announces normally — the marker is a one-shot,
     /// and the quiet byte dies with the status it qualified.
     func testTurnAfterACompactionIsAnnouncedNormally() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.hook(bytes: json(#"{"hook_event_name":"PreCompact","trigger":"auto"}"#), at: 0)
         _ = d.hook(bytes: json(#"{"hook_event_name":"UserPromptSubmit","prompt":"ship it"}"#), at: 1)
         let done = d.hook(bytes: json(#"{"hook_event_name":"Stop","last_assistant_message":"shipped"}"#), at: 2)
@@ -312,7 +312,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// Keystrokes while NOT blocked never touch the machine (typing a prompt, a queued message
     /// mid-turn) — the unblock signal is scoped to exactly the modal-dialog state.
     func testKeystrokesOutsideABlockAreIgnored() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.hook(bytes: json(#"{"hook_event_name":"UserPromptSubmit","prompt":"do the thing"}"#), at: 0)
         XCTAssertEqual(d.status, .working)
         let typed = d.userInput(bytes: Data("more context\r".utf8), at: 1)
@@ -323,7 +323,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// Self-report beats the foreground heuristic: with NO claude present (presence would force
     /// `.none`), a `working` report still lifts the status — the authoritative hook fold wins.
     func testReportBeatsForegroundFloor() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.sample(name: "zsh", at: 0) // not claude → status .none
         XCTAssertEqual(d.status, .none)
         _ = d.report(state: "working", message: nil, at: 1)
@@ -332,7 +332,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
 
     /// An unknown report state is a no-op (validate-then-drop) — no emission, no status change.
     func testReportUnknownStateIsNoOp() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.sample(name: "claude", at: 0)
         let before = d.status
         let e = d.report(state: "frobnicating", message: nil, at: 1)
@@ -347,7 +347,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// machine ~1s after the report, fanning a spurious working→idle/none. This FAILS on the
     /// pre-fix code (the report is wiped on the very next poll).
     func testReportStickyAgainstForegroundAbsence() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.sample(name: "node", at: 0) // a non-claude wrapper → status .none
         XCTAssertEqual(d.status, .none)
         _ = d.report(state: "working", message: nil, at: 1)
@@ -373,7 +373,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// longer suppression window) while a hook/report-established status is live, see
     /// ``testWrapperAbsenceBeyondGraceWindowKeepsHookStatusWithinSuppressionWindow``.
     func testReportStickinessLapsesAfterGraceWindow() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.report(state: "working", message: nil, at: 0)
         XCTAssertEqual(d.status, .working)
         // A sample PAST the grace window with the shell back in the foreground → the agent really
@@ -393,7 +393,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// pre-fix only `report(...)` stamped `lastReportAt`, so the poll wiped the hook status ~1 s later
     /// (status flapped none↔working every second; a `.needsPermission` vanished before the user saw it).
     func testHookStatusStickyAgainstWrapperForegroundPoll() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.sample(name: "node", at: 0) // wrapper-launched claude → basename is never "claude"
         XCTAssertEqual(d.status, .none)
         _ = d.hook(bytes: json(#"{"hook_event_name":"UserPromptSubmit"}"#), at: 1)
@@ -410,7 +410,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// the exact lost-notification symptom: pre-fix the next poll tick wiped the blocked state (and its
     /// attention badge) within a second.
     func testHookNeedsPermissionSurvivesWrapperForegroundPoll() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.sample(name: "node", at: 0)
         _ = d.hook(bytes: json(#"{"hook_event_name":"Notification","message":"needs your permission"}"#), at: 1)
         XCTAssertEqual(d.status, .needsPermission)
@@ -424,7 +424,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// traffic) keeps its status while `node`/`npx`/`bun`/`deno`/`mise` holds the PTY foreground,
     /// for as long as the LONGER wrapper suppression window off the last hook/report.
     func testWrapperAbsenceBeyondGraceWindowKeepsHookStatusWithinSuppressionWindow() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.hook(bytes: json(#"{"hook_event_name":"SessionStart"}"#), at: 0) // hook-established idle
         XCTAssertEqual(d.status, .idle)
         let wayPast = ClaudePaneDetector.reportGraceWindow * 10 // 300 s — past grace, inside suppression
@@ -442,7 +442,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// suppression window lapses with no hook/report traffic to refresh it — the stale verdict
     /// must not ride an unrelated process forever.
     func testWrapperAbsencePastSuppressionWindowDecays() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.hook(bytes: json(#"{"hook_event_name":"UserPromptSubmit"}"#), at: 0)
         XCTAssertEqual(d.status, .working) // then killed abruptly — no SessionEnd ever fires
         let late = ClaudePaneDetector.wrapperSuppressionWindow + 1
@@ -458,7 +458,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// hooks keep firing stays preserved indefinitely, measured from the LAST hook — only silence
     /// for a whole window decays it.
     func testHookTrafficRefreshesWrapperSuppressionWindow() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.hook(bytes: json(#"{"hook_event_name":"UserPromptSubmit"}"#), at: 0)
         let mid = ClaudePaneDetector.wrapperSuppressionWindow - 100
         // A PostToolUse mid-run re-stamps the suppression anchor.
@@ -475,7 +475,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// hook-established status — a genuinely exited (or hard-killed) claude decays; the wrapper skip
     /// must not turn every absence into permanence.
     func testNonWrapperAbsencePastGraceWindowTerminatesHookStatus() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.hook(bytes: json(#"{"hook_event_name":"UserPromptSubmit"}"#), at: 0)
         XCTAssertEqual(d.status, .working)
         let late = ClaudePaneDetector.reportGraceWindow + 1
@@ -487,7 +487,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// A SessionEnd hook terminates immediately — and AFTER it, a wrapper foreground must NOT
     /// resurrect/preserve anything (the authority is gone with the session).
     func testSessionEndClearsAuthoritySoWrapperAbsenceStaysNone() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.hook(bytes: json(#"{"hook_event_name":"UserPromptSubmit"}"#), at: 0)
         _ = d.hook(bytes: json(#"{"hook_event_name":"SessionEnd"}"#), at: 1)
         XCTAssertEqual(d.status, .none, "SessionEnd terminates")
@@ -498,7 +498,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// A wrapper basename is NOT presence: with no hook/report authority it can never lift the floor
     /// off `.none` — a random `node` dev server must not light the agent dot.
     func testWrapperNeverLiftsPresenceFloor() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.sample(name: "node", at: 0)
         _ = d.sample(name: "node", at: 1)
         XCTAssertEqual(d.status, .none, "a wrapper foreground alone is not claude presence")
@@ -507,7 +507,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// A repeated identical self-report dedupes (no second type-27) — the change-hook only fires
     /// on a real transition.
     func testRepeatedReportDedupes() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.sample(name: "claude", at: 0)
         let first = d.report(state: "working", message: nil, at: 1)
         XCTAssertNotNil(first.status, "first working report emits")
@@ -523,7 +523,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// re-emits the CURRENT truth verbatim — and must leave the dedupe anchors consistent so the
     /// very next unchanged fold stays silent (no double-emit churn).
     func testReestablishOnReattachReemitsCurrentTruthAndKeepsDedupe() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.sample(name: "claude", at: 0)
         let hook = d.hook(bytes: json(#"{"hook_event_name":"UserPromptSubmit"}"#), at: 1)
         let announced = hook.status
@@ -541,7 +541,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// Before ANY fold (detection off / nothing ever sampled) the re-assert must emit NOTHING —
     /// keeping the no-type-26/27-stream contract byte-identical for detection-off sessions.
     func testReestablishBeforeAnyFoldEmitsNothing() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         XCTAssertTrue(d.reestablishOnReattach().isEmpty, "no truth yet — a fresh detector re-asserts nothing")
     }
 
@@ -550,7 +550,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// the returning client's stale status. The re-assert must carry the machine's CURRENT truth
     /// (not the last delivered one): agent finishes while the link is down → reattach re-tells done.
     func testReestablishCarriesStatusChangeFoldedWhileDetached() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.sample(name: "claude", at: 0)
         _ = d.hook(bytes: json(#"{"hook_event_name":"UserPromptSubmit"}"#), at: 1)
         XCTAssertEqual(d.status, .working)
@@ -573,7 +573,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// 36; an unchanged prompt emits nothing (dedupe); a slash-command leaves the standing intent
     /// untouched (no churn, no wipe).
     func testIntentFollowsLatestTitleablePrompt() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         let first = d.hook(
             bytes: json(#"{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt":"refactor the parser"}"#),
             at: 0,
@@ -605,7 +605,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// A slash-command / harness-XML first prompt has no titling value — the latch stays open so
     /// the session's first REAL prompt still names it.
     func testIntentSkipsSlashCommandThenLatchesRealPrompt() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         let slash = d.hook(
             bytes: json(#"{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt":"/compact"}"#),
             at: 0,
@@ -628,7 +628,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// session always retires the pane before the new one speaks — which is precisely what
     /// separates a replacement from a nested `claude -p` that just starts talking.
     func testIntentRederivesOnNewSession() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.hook(
             bytes: json(#"{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt":"fix CI"}"#),
             at: 0,
@@ -644,7 +644,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// SessionEnd clears the latched intent with an EMPTY type-36 push (the client drops its
     /// mirror); a pane whose intent stream never spoke stays silent — no spurious clear frame.
     func testSessionEndClearsIntentWithEmptyPush() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.hook(
             bytes: json(#"{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt":"fix CI"}"#),
             at: 0,
@@ -652,7 +652,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
         let end = d.hook(bytes: json(#"{"hook_event_name":"SessionEnd","session_id":"s1"}"#), at: 1)
         XCTAssertEqual(end.intent, .agentSessionIntent(""))
 
-        var quiet = ClaudePaneDetector()
+        let quiet = ClaudePaneDetector()
         let quietEnd = quiet.hook(bytes: json(#"{"hook_event_name":"SessionEnd","session_id":"s1"}"#), at: 0)
         XCTAssertNil(quietEnd.intent, "a never-intent pane never emits, not even the clear")
     }
@@ -660,7 +660,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// A presence termination (claude died without a SessionEnd — hooks are best-effort) clears the
     /// intent too: a dead session's task line must not squat on whatever runs in the pane next.
     func testPresenceAbsencePastGraceClearsIntent() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.sample(name: "claude", at: 0)
         _ = d.hook(
             bytes: json(#"{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt":"fix CI"}"#),
@@ -673,14 +673,14 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// The reattach re-assert re-tells the latched intent (the type-33/34 sibling rule): an intent
     /// latched while detached would otherwise be lost forever (its emission wiped with control-out).
     func testReestablishReassertsLatchedIntent() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.hook(
             bytes: json(#"{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt":"fix CI"}"#),
             at: 0,
         )
         XCTAssertEqual(d.reestablishOnReattach().intent, .agentSessionIntent("fix CI"))
 
-        var quiet = ClaudePaneDetector()
+        let quiet = ClaudePaneDetector()
         _ = quiet.sample(name: "claude", at: 0)
         XCTAssertNil(quiet.reestablishOnReattach().intent, "a never-intent stream stays silent")
     }
@@ -707,7 +707,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// `PermissionRequest` is the STRUCTURED blocked signal: urgency 4 + kind 1 (permission), the
     /// gated tool naming the label — it cannot be missed by message-text heuristics.
     func testPermissionRequestBlocksWithToolLabel() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         let e = d.hook(
             bytes: json(#"{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{}}"#),
             at: 0,
@@ -726,7 +726,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// question text as the label, never `.working`; the answered question resolves via the tool's
     /// own `PostToolUse` (→ working) like any answered prompt.
     func testAskUserQuestionPreToolUseIsWaitingForInput() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         let ask = #"{"hook_event_name":"PreToolUse","tool_name":"AskUserQuestion","# +
             #""tool_input":{"questions":[{"question":"Which DB should we use?"}]}}"#
         let e = d.hook(bytes: json(ask), at: 0)
@@ -745,7 +745,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// `StopFailure` (an API-error termination) ends the turn like a Stop — done with the error
     /// text as the label — instead of leaving the pane stuck `working` until absence wins.
     func testStopFailureEndsTheTurnAsDone() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.hook(
             bytes: json(#"{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt":"fix CI"}"#),
             at: 0,
@@ -764,7 +764,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// `idle_prompt` is PRESENCE, never a block: it lifts a fresh pane to idle (urgency 1) and
     /// must not raise the act-now hand a done→visited pane already retired.
     func testNotificationTypeFieldClassifies() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         let idle = d.hook(
             bytes: json(#"{"hook_event_name":"Notification","notification_type":"idle_prompt","message":"hm"}"#),
             at: 0,
@@ -795,7 +795,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// The Braille-spinner title promotes a DETECTED claude to working; the `✳` rest title demotes
     /// a live working back to idle — the missed-Stop stuck-working corrector.
     func testTitleSpinnerAndRestCorroborateLiveness() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.sample(name: "claude", at: 0) // presence → idle
         let spin = d.title("⠧ tests running", at: 1)
         XCTAssertEqual(stateByte(spin.status), 3, "spinner title → working")
@@ -807,7 +807,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// the prompt-derived intent on the wire-36 latch; the static startup "Claude Code" names the
     /// program, not the work, and never re-titles.
     func testTitleTopicSupersedesPromptIntent() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.sample(name: "claude", at: 0)
         let prompt = d.hook(
             bytes: json(#"{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt":"hello"}"#),
@@ -828,7 +828,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// A title folded on an undetected pane can corroborate nothing — and must not conjure an
     /// intent either (every shell titles its tab; only a DETECTED claude's title is a topic).
     func testTitleTopicNeverConjuresIntentOnUndetectedPane() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         XCTAssertNil(d.title("✳ Some topic", at: 0).intent)
         XCTAssertNil(d.title("plain shell title", at: 1).intent)
     }
@@ -848,7 +848,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// A title never conjures presence (`.none` stays `.none`) and never clears a hook block —
     /// in either direction (rest OR spinner).
     func testTitleNeverConjuresPresenceNorClearsHookBlock() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         let ghost = d.title("⠧ busy", at: 0)
         XCTAssertNil(ghost.status)
         XCTAssertEqual(d.status, .none, "a spinner title cannot conjure presence")
@@ -870,7 +870,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// it as claude (presence floor lifts) and emit the type-26 display name `claude`, never the
     /// meaningless raw version basename.
     func testVersionNamedClaudeBinaryClassifiesAsClaude() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         let e = d.sample(name: "/Users/abner/.local/share/claude/versions/2.1.218", at: 0)
         XCTAssertEqual(e.foreground, .foregroundProcess(name: "claude"), "the display name is the program")
         XCTAssertEqual(d.status, .idle, "presence classified — the floor lifts")
@@ -895,7 +895,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
 
     /// The rest title does NOT demote `.done` — the unseen-completion signal keeps its decay window.
     func testRestTitleKeepsDone() {
-        var d = ClaudePaneDetector(doneToIdleTimeout: 5)
+        let d = ClaudePaneDetector(doneToIdleTimeout: 5)
         _ = d.sample(name: "claude", at: 0)
         _ = d.hook(bytes: json(#"{"hook_event_name":"Stop","last_assistant_message":"done"}"#), at: 1)
         XCTAssertEqual(d.status, .done)
@@ -910,7 +910,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// from the first hook fold (the type-27 edge now owns notification duty), and false again once
     /// a genuine absence terminates the session (whatever runs in the pane next keeps its OSC path).
     func testChildNotificationSuppressionTracksHookAuthority() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         XCTAssertFalse(d.suppressesChildNotifications, "fresh detector — nothing to suppress")
 
         // Presence + busy title = the hook-FREE detection mix — the OSC notification must pass.
@@ -946,7 +946,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
             Data(),
             json(#"{"hook_event_name":"SomethingNew","session_id":"s"}"#),
         ] {
-            var d = ClaudePaneDetector()
+            let d = ClaudePaneDetector()
             let emission = d.hook(bytes: bytes, at: 0)
             XCTAssertTrue(emission.isEmpty, "an unreadable body emits nothing at all")
             XCTAssertEqual(d.status, .none, "…and moves the machine nowhere")
@@ -957,7 +957,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// what an earlier real one established. A fresh detector cannot tell "dropped" from "nothing
     /// happened yet", which is why this case is separate from the one above.
     func testADroppedBodyLeavesAnEstablishedStatusStanding() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.hook(bytes: json(#"{"hook_event_name":"UserPromptSubmit","session_id":"s1"}"#), at: 0)
         XCTAssertEqual(d.status, .working)
         let dropped = d.hook(bytes: json("}{ not a body"), at: 1)

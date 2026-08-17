@@ -33,7 +33,7 @@ final class ClaudePaneDetectorHookAuthorityTests: XCTestCase {
     // MARK: The reported bug, at the fusion point
 
     func testTornScreenReadsNeverWalkAHookBlockedPaneOutOfTheBlock() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.sample(name: "claude", at: 0)
         _ = d.hook(bytes: askHook(id: "ask-1"), at: 1)
         XCTAssertEqual(d.status, .needsPermission)
@@ -54,7 +54,7 @@ final class ClaudePaneDetectorHookAuthorityTests: XCTestCase {
     /// The second-order damage: each lap satisfied the hook-less completion shape, so every Tab
     /// press minted a finished turn. Pinned at the transition level the host counts.
     func testNoLapMeansNoFalseCompletionEdge() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.sample(name: "claude", at: 0)
         _ = d.hook(bytes: askHook(id: "ask-1"), at: 1)
 
@@ -77,7 +77,7 @@ final class ClaudePaneDetectorHookAuthorityTests: XCTestCase {
     // MARK: Nothing correct waits on the watchdog
 
     func testTheAnswerStillResolvesInstantly() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.sample(name: "claude", at: 0)
         _ = d.hook(bytes: askHook(id: "ask-1"), at: 1)
         _ = d.screenDetection(dialogRead, at: 1.3)
@@ -90,7 +90,7 @@ final class ClaudePaneDetectorHookAuthorityTests: XCTestCase {
 
     /// A sibling call in the same assistant turn finishing is not an answer.
     func testAParallelToolResultDoesNotHandTheDialogBack() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.sample(name: "claude", at: 0)
         _ = d.hook(bytes: askHook(id: "ask-1"), at: 1)
         let sibling = d.hook(bytes: postHook(tool: "Bash", id: "bash-7"), at: 1.5)
@@ -99,7 +99,7 @@ final class ClaudePaneDetectorHookAuthorityTests: XCTestCase {
     }
 
     func testEscCancelStillUnblocksInstantlyAndSilently() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.sample(name: "claude", at: 0)
         _ = d.hook(bytes: askHook(id: "ask-1"), at: 1)
         let cancelled = d.userInput(bytes: Data([0x1B]), at: 1.2)
@@ -119,7 +119,7 @@ final class ClaudePaneDetectorHookAuthorityTests: XCTestCase {
     /// so before this was parsed a failed `AskUserQuestion` left a hand raised over a dialog that
     /// was no longer on screen, for the rest of the turn.
     func testAFailedCallStillResolvesItsOwnBlock() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.sample(name: "claude", at: 0)
         _ = d.hook(bytes: askHook(id: "ask-1"), at: 1)
         XCTAssertEqual(d.status, .needsPermission)
@@ -146,7 +146,7 @@ final class ClaudePaneDetectorHookAuthorityTests: XCTestCase {
     /// human had cancelled. The pane goes idle at once, and QUIETLY: nobody needs telling about the
     /// Esc they just pressed.
     func testAnInterruptEndsTheTurnQuietlyRatherThanContinuingIt() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.sample(name: "claude", at: 0)
         _ = d.hook(bytes: askHook(id: "ask-1"), at: 1)
         XCTAssertEqual(d.status, .needsPermission)
@@ -169,7 +169,7 @@ final class ClaudePaneDetectorHookAuthorityTests: XCTestCase {
     /// "No" is an answer. `PermissionDenied` names the gated call, so the block resolves on the
     /// announcement rather than on the next `PreToolUse` standing in for one.
     func testADeniedPermissionResolvesOnItsOwnEvent() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.sample(name: "claude", at: 0)
         _ = d.hook(
             bytes: json(#"{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_use_id":"p-1"}"#),
@@ -192,7 +192,7 @@ final class ClaudePaneDetectorHookAuthorityTests: XCTestCase {
     /// id namespace (`elicitation_id`), so it pairs in the ledger exactly like a tool call does.
     /// Previously reachable only by classifying a `Notification` message as `elicitation_dialog`.
     func testAnMCPElicitationBlocksAndItsResultResolvesIt() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.sample(name: "claude", at: 0)
         _ = d.hook(
             bytes: json(
@@ -220,7 +220,7 @@ final class ClaudePaneDetectorHookAuthorityTests: XCTestCase {
     /// The server name is the fallback key: stable across the pair, and one server does not stack
     /// two elicitations on one human.
     func testAnIdlessElicitationIsStillPairedByItsServer() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.sample(name: "claude", at: 0)
         _ = d.hook(
             bytes: json(
@@ -251,7 +251,7 @@ final class ClaudePaneDetectorHookAuthorityTests: XCTestCase {
     /// "Permission needed" over an unanswered question for as long as it stood. The ledger knows
     /// which entries survive, so it outranks the standing byte.
     func testTheWireKindNamesTheBlockThatIsStillStanding() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.sample(name: "claude", at: 0)
         guard case let .claudeStatus(_, asked, _)? = d.hook(bytes: askHook(id: "ask-1"), at: 1).status else {
             XCTFail("the question should announce itself")
@@ -305,7 +305,7 @@ final class ClaudePaneDetectorHookAuthorityTests: XCTestCase {
     /// Hooks are best-effort. A relay that dies mid-block must not pin a hand nothing can lower —
     /// sustained, uninterrupted screen dissent takes authority back.
     func testAStalledHookFeedLosesAuthorityToASteadyScreen() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.sample(name: "claude", at: 0)
         _ = d.hook(bytes: askHook(id: "ask-1"), at: 1)
 
@@ -326,7 +326,7 @@ final class ClaudePaneDetectorHookAuthorityTests: XCTestCase {
 
     /// …and one live hook puts the pane straight back under coverage.
     func testAnyHookRestoresCoverage() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.sample(name: "claude", at: 0)
         _ = d.hook(bytes: askHook(id: "ask-1"), at: 1)
         var now: TimeInterval = 1.3
@@ -348,7 +348,7 @@ final class ClaudePaneDetectorHookAuthorityTests: XCTestCase {
     /// the screen may corroborate it but not overrule it, and the watchdog is still the escape
     /// hatch. No per-agent code anywhere in the machine.
     func testACtlReportEarnsTheSameAuthorityAHookDoes() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.sample(name: "codex", at: 0)
         _ = d.report(state: "blocked", message: "approve the patch?", at: 1)
         XCTAssertEqual(d.status, .needsPermission)
@@ -368,7 +368,7 @@ final class ClaudePaneDetectorHookAuthorityTests: XCTestCase {
 
     /// A pane with no authoritative feed at all keeps herdr's behaviour verbatim — the screen decides.
     func testAHookFreePaneIsUnaffected() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.sample(name: "claude", at: 0)
         _ = d.screenDetection(dialogRead, at: 4)
         XCTAssertEqual(d.status, .needsPermission)

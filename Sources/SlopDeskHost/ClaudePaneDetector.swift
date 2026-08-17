@@ -1,124 +1,73 @@
+import CSlopDeskFFI
 import Foundation
 import SlopDeskAgentDetect
 import SlopDeskInspector
 import SlopDeskProtocol
 
-/// The SINGLE per-pane Claude-Code detector: ONE ``ClaudeStatusMachine`` fed by ALL the host's
-/// detection inputs, so the host is the **single source of truth** and the client is a passive
-/// display.
+/// The SINGLE per-pane Claude-Code detector: ONE ``SlopDeskAgentDetect/ClaudeStatusMachine`` fed by
+/// ALL the host's detection inputs, so the host is the **single source of truth** and the client is
+/// a passive display.
 ///
 /// ## Why one detector
 /// Splitting detection across two independent machines — a foreground-watch reducer (the ~1 Hz
-/// poll) and a hook-socket handler — would have BOTH emit type-27 with no
-/// reconciliation, so they fight (a hook `.working` and a foreground-poll `.idle` clobber each other
-/// down the one CONTROL stream), and with no owner driving `.tick(at:)` the `.done → .idle` decay
-/// never fires (a finished turn stays 🔵 forever). Fusing every input into ONE machine gives ONE
-/// type-27 dedupe anchor and ONE type-26 edge anchor → one machine, one type-27 stream.
+/// poll) and a hook-socket handler — would have BOTH emit type-27 with no reconciliation, so they
+/// fight (a hook `.working` and a foreground-poll `.idle` clobber each other down the one CONTROL
+/// stream), and with no owner driving ``tick(at:)`` the `.done → .idle` decay never fires (a
+/// finished turn stays 🔵 forever). Fusing every input into ONE machine gives ONE type-27 dedupe
+/// anchor and ONE type-26 edge anchor.
+///
+/// ## This is a call, not an implementation
+/// Every rule above — the two dedupe anchors, the stickiness clock and its two absence suppressors,
+/// the block-class carry, the session-intent latch, the title ownership record — is
+/// `rust/slopdesk-agent::detector`, one layer above the machine it owns (docs/55). What is left here
+/// is the crossing and the ``WireMessage`` shapes, because a wire enum is `SlopDeskProtocol`'s and a
+/// fold is not.
+///
+/// A `final class` rather than the `struct` this was, for the reason ``ClaudeStatusMachine`` is one:
+/// it holds a handle, so a copy was never a copy — two `ClaudePaneDetector` values sharing one
+/// machine looked like value semantics and was not. Its owner holds exactly one per pane and never
+/// copies it. Overlapping calls on one handle are aliasing UB rather than a lost update, so an owner
+/// that ever shares one must serialise.
 ///
 /// ## Inputs (folded through the ONE machine, in the machine's precedence order)
-/// - ``sample(name:at:)`` — the ~1 Hz foreground poll: `.processPresent(isClaude)` (exact-basename
-///   classified via ``ClaudeProcessMatcher``) drives the presence FLOOR, and emits type-26 on a
-///   basename EDGE (a coarse process-name hint for display, NOT a status source).
-/// - ``hook(bytes:at:)`` — the hook socket: read via ``ClaudeHookBody`` and folded as `.hook(event)`.
+/// - ``sample(name:at:)`` — the ~1 Hz foreground poll: presence drives the FLOOR, and a basename
+///   EDGE emits type-26 (a coarse display hint, NOT a status source).
+/// - ``hook(bytes:at:)`` — the hook socket, read and folded in one crossing.
+/// - ``report(state:message:at:)`` — the P1 ctl `report` verb, an agent declaring its own state.
 /// - ``tick(at:)`` — the per-poll clock tick (~1 Hz) that drives the `.done → .idle` decay.
-/// - ``manifestVerdict(_:at:)`` — the no-hooks screen-text/title fallback (Decision #5 signal 3).
+/// - ``screenDetection(_:at:)`` — the herdr-port screen engine's published verdict.
+/// - ``title(_:at:)`` — a sniffed OSC 0/2 title.
+/// - ``userInput(bytes:at:)`` — the Esc-cancel unblock edge.
 ///
 /// After each fold, type-27 is emitted ONLY when the `(state, kind, label)` triple changes (dedupe);
-/// type-26 only on a basename edge. PURE + total: every input (empty/huge/hostile bytes, any name) is
-/// tolerated — validate-then-drop, never traps, never force-unwraps. The clock is injected (a plain
-/// `Double` seconds); the machine never reads a wall clock.
-public struct ClaudePaneDetector: Sendable {
-    /// The matcher used to classify a foreground basename as `claude` (exact basename — no
-    /// `claudefoo` false positive). One classifier.
-    private let matcher: ClaudeProcessMatcher
-
-    /// The ONE per-pane state machine — every signal folds through this single instance.
-    private var machine: ClaudeStatusMachine
-
-    /// The last foreground basename a type-26 was emitted for (`nil` before the first sample). A new
-    /// sample emits type-26 iff its basename differs from this.
-    private var lastEmittedName: String?
-
-    /// The last `(state, kind, label)` triple a type-27 was emitted for (`nil` before the first emit).
-    /// A new machine verdict emits type-27 iff this triple changed (dedupe).
-    private var lastEmittedStatus: ClaudeStatusTriple?
-
-    /// Absolute time (injected `now`) of the LAST authoritative fold — a ctl self-report (the P1
-    /// `report` verb) OR a parsed HOOK event — or `nil` if none.
-    /// Within ``reportGraceWindow`` seconds of this, a foreground-presence ABSENCE (`sample(name:)`
-    /// with a non-claude/empty basename) must NOT terminate the machine — both are the same
-    /// precedence-2 authoritative signal, and a custom orchestrator / node-wrapped CLI will not
-    /// classify as `claude`, so the ~1 Hz poll would otherwise wipe a just-set state on the very
-    /// next tick. A hook must stamp this too, not only `report`: otherwise a wrapper-launched
-    /// claude's hook status flaps none↔working every second.
-    private var lastAuthoritativeAt: TimeInterval?
-
-    /// TRUE while the machine's current (non-`.none`) status was established by an authoritative
-    /// hook/report fold; cleared whenever the machine terminates (a SessionEnd hook, or a genuine
-    /// absence termination). Gates the WRAPPER-basename absence skip in ``sample(name:at:)`` so a
-    /// wrapper foreground can only preserve a genuinely hook-driven status — it can never manufacture
-    /// presence on its own.
-    private var hookAuthority = false
-
+/// type-26 only on a basename edge. Every input (empty/huge/hostile bytes, any name) is tolerated —
+/// validate-then-drop, never traps. The clock is injected (a plain `Double` seconds); nothing here
+/// or below reads a wall clock.
+public final class ClaudePaneDetector: @unchecked Sendable {
     /// Seconds an authoritative fold (report/hook) stays STICKY against a foreground-presence
-    /// absence. Picked an order of magnitude above the ~1 Hz foreground poll so at least several
-    /// polls cannot wipe it; an agent that keeps working re-reports (or its hooks fire) well within
-    /// this, and a genuinely finished/exited agent decays normally once the window lapses.
-    static let reportGraceWindow: TimeInterval = 30
+    /// absence.
+    static let reportGraceWindow: TimeInterval = slopdesk_agent_detector_constant(1)
 
-    /// Seconds a hook/report-established status stays preserved by a WRAPPER-basename foreground
-    /// (suppressor (b) in ``sample(name:at:)``) past the last authoritative fold. An order of
-    /// magnitude above ``reportGraceWindow``: a wrapper-launched claude quietly between turns
-    /// refreshes the anchor with its next hook/report well inside this, while a claude that died
-    /// WITHOUT a SessionEnd (kill/crash/link drop — hooks are best-effort) cannot pin its stale
-    /// verdict onto an unrelated later `node`/`npx`/`bun` process reusing the same pane forever.
-    static let wrapperSuppressionWindow: TimeInterval = 600
+    /// Seconds a hook/report-established status stays preserved by a WRAPPER-basename foreground.
+    static let wrapperSuppressionWindow: TimeInterval = slopdesk_agent_detector_constant(2)
 
-    /// The wire `kind` byte for the LAST hook Notification class (`0` until a Notification arrives;
-    /// carried so a type-27 emitted by a subsequent tick/presence fold still reports the live block
-    /// class). Reset to `0` by any non-Notification transition through the machine that leaves the
-    /// blocked state — modelled here as: a Notification sets it, anything that takes the machine off
-    /// `.needsPermission` clears it back to `0`.
-    private var lastNotificationKind: UInt8 = 0
+    /// Scalar cap on the derived intent line — a sidebar title, not a transcript.
+    static let maxIntentChars = Int(slopdesk_agent_detector_constant(3))
 
-    /// The hook session id the current ``sessionIntent`` belongs to — a `UserPromptSubmit` whose
-    /// session differs re-derives the intent from scratch (a fresh `claude` run / `/clear`).
-    private var intentSessionID: String?
+    private let handle: OpaquePointer
 
-    /// The pane's AGENT-SESSION INTENT (wire type 36): claude's OWN session title when the OSC
-    /// title carries one (``topicLine(fromTitle:)``), else the session's LATEST titleable prompt —
-    /// `nil` = no intent (cleared on SessionEnd / presence termination).
-    private var sessionIntent: String?
-
-    /// The last type-36 intent string emitted (`nil` before the first emit) — the dedupe anchor.
-    /// Compared with a `?? ""` collapse so a session that never had an intent stays SILENT (no
-    /// spurious empty clear frame on the first hook fold).
-    private var lastEmittedIntent: String?
-
-    /// TRUE while the pane's OSC title is one the DETECTED agent wrote (a Braille-spinner / `✳`
-    /// telltale, or a claude-naming title) — i.e. the agent, not the shell, owns what the row shows.
-    ///
-    /// This is the ownership record the title retirement needs. Claude Code does emit its own
-    /// exit-time clear, but as an EMPTY `OSC 0` that the sniffer (`rust/slopdesk-superd/src/sniffer.rs`) drops on purpose
-    /// (zsh/p10k/starship emit empty titles mid prompt-redraw), and a plain zsh prompt never
-    /// re-titles afterwards — so the agent's `✳ <topic>` outlived the agent forever. Rather than
-    /// loosen a guard that exists for a good reason, the detector that watched the agent TAKE the
-    /// title gives it back on the agent-gone edge. Consumed (and cleared) by
-    /// ``titleEmissionIfAgentGone()``.
-    private var agentOwnsTitle = false
-
-    /// Character cap on the derived intent line — a sidebar title, not a transcript.
-    static let maxIntentChars = 120
-
-    public init(doneToIdleTimeout: TimeInterval = 8) {
-        matcher = ClaudeProcessMatcher()
-        machine = ClaudeStatusMachine(doneToIdleTimeout: doneToIdleTimeout)
-        lastEmittedName = nil
-        lastEmittedStatus = nil
+    public init(doneToIdleTimeout: TimeInterval = slopdesk_agent_detector_constant(0)) {
+        guard let handle = slopdesk_agent_detector_new(doneToIdleTimeout) else {
+            // A detector is a machine and ten small fields; a null here is the allocator being gone,
+            // and a pane with no detector would report `.none` for a live agent forever.
+            preconditionFailure("slopdesk_agent_detector_new returned null")
+        }
+        self.handle = handle
     }
 
-    /// One decision: the (possibly empty) CONTROL messages to enqueue for this fold. Shape-identical to
-    /// the hook listener's own emission so both drive the same `broadcastControl` wiring.
+    deinit { slopdesk_agent_detector_free(handle) }
+
+    /// One decision: the (possibly empty) CONTROL messages to enqueue for this fold.
     public struct Emission: Sendable, Equatable {
         /// The type-26 `foregroundProcess(name:)` to send, or `nil` (no basename edge).
         public var foreground: WireMessage?
@@ -146,471 +95,242 @@ public struct ClaudePaneDetector: Sendable {
         }
     }
 
-    /// The current rolled-up status (diagnostics / the live wiring's per-pane rollup).
-    public var status: ClaudeStatus { machine.status }
+    // MARK: - Current state (diagnostics, the ctl surface, the live rollup)
+
+    /// The current rolled-up status.
+    public var status: ClaudeStatus {
+        ClaudeStatus(ffiByte: slopdesk_agent_detector_status(handle))
+    }
 
     /// TRUE while the CURRENT status is one the host has qualified as BOOKKEEPING — the wire `kind`
-    /// byte already carries this to the client (``AgentStatusKind/quiet``), and the host reads it
-    /// too, so ``MuxChannelSession``'s completion epoch does not count a correction as a turn.
-    public var isQuietTransition: Bool { machine.isQuiet }
+    /// byte already carries this to the client (``SlopDeskAgentDetect/AgentStatusKind/quiet``), and
+    /// the host reads it too, so ``MuxChannelSession``'s completion epoch does not count a
+    /// correction as a turn.
+    public var isQuietTransition: Bool { slopdesk_agent_detector_is_quiet(handle) }
 
     /// TRUE while this pane's agent is announcing its own edges through the hook feed — the screen
-    /// engine is corroboration rather than authority (see ``ClaudeStatusMachine``). Surfaced for the
-    /// ctl/diagnostic surfaces.
-    public var hasAuthoritativeFeed: Bool { machine.hasAuthoritativeFeed }
+    /// engine is corroboration rather than authority (see ``SlopDeskAgentDetect/ClaudeStatusMachine``).
+    public var hasAuthoritativeFeed: Bool {
+        slopdesk_agent_detector_has_authoritative_feed(handle)
+    }
 
     /// The `(state, kind, label)` triple the type-27 stream currently stands at — the CURRENT VALUE
     /// behind the edge, `nil` before the first emission. The workspace document publishes this so a
     /// client that missed the edge still learns the pane's agent state.
-    public var lastEmittedStatusForControl: ClaudeStatusTriple? { lastEmittedStatus }
+    public var lastEmittedStatusForControl: ClaudeStatusTriple? {
+        guard slopdesk_agent_detector_has_last_status(handle) else { return nil }
+        return ClaudeStatusTriple(
+            state: slopdesk_agent_detector_last_status_state(handle),
+            kind: slopdesk_agent_detector_last_status_kind(handle),
+            label: text(slopdesk_agent_detector_last_status_label) ?? "",
+        )
+    }
 
     /// The agent's current session intent (type 36's value), `nil` when none is established.
-    public var sessionIntentForControl: String? { sessionIntent }
+    public var sessionIntentForControl: String? {
+        text(slopdesk_agent_detector_session_intent)
+    }
 
     /// The machine's short human label (blocking question / last assistant line), `nil` when empty.
     /// Surfaced by the ctl `list-panes` verb as `stateMessage` so an orchestrator can read WHY a
     /// pane is blocked without scraping scrollback.
-    public var statusLabel: String? { machine.displayLabel }
+    public var statusLabel: String? { text(slopdesk_agent_detector_status_label) }
 
-    /// TRUE while the pane's status is HOOK/REPORT-established (`hookAuthority`): the agent's own
-    /// terminal notification (OSC 9 / 777 / 99 → wire type 25) is then REDUNDANT — the type-27
-    /// agent edge already raises the client's agent banner, so forwarding the blind OSC copy would
-    /// double-bang every permission/idle prompt. A hook-free pane (presence/title detection only)
-    /// keeps `false` — the OSC notification is its only signal and must pass through. Cleared with
-    /// the authority itself (SessionEnd / genuine absence termination).
-    public var suppressesChildNotifications: Bool { hookAuthority }
+    /// TRUE while the pane's status is HOOK/REPORT-established: the agent's own terminal
+    /// notification (OSC 9 / 777 / 99 → wire type 25) is then REDUNDANT — the type-27 agent edge
+    /// already raises the client's agent banner, so forwarding the blind OSC copy would double-bang
+    /// every permission/idle prompt. A hook-free pane (presence/title detection only) keeps `false`:
+    /// the OSC notification is its only signal and must pass through.
+    public var suppressesChildNotifications: Bool {
+        slopdesk_agent_detector_suppresses_child_notifications(handle)
+    }
 
     // MARK: - Inputs (all fold through the ONE machine)
 
-    /// Fold one foreground-process sample at `now`. Emits type-26 on a basename edge (display hint) and
-    /// drives the presence FLOOR; a non-claude/empty name forces `.none`. The richer hook status is NOT
-    /// overridden by presence (presence only lifts `.none` → `.idle`; absence forces termination).
-    public mutating func sample(name rawName: String, at now: TimeInterval) -> Emission {
-        let base = ForegroundProcessName.canonicalName(of: rawName)
-        var emission = Emission()
-        if base != lastEmittedName {
-            lastEmittedName = base
-            emission.foreground = .foregroundProcess(name: base)
+    /// Fold one foreground-process sample at `now`. Emits type-26 on a basename edge (display hint)
+    /// and drives the presence FLOOR; a non-agent/empty name forces `.none` unless an authoritative
+    /// fold is still sticky. Presence never overrides a richer hook status — it only lifts `.none`.
+    public func sample(name rawName: String, at now: TimeInterval) -> Emission {
+        withBytes(rawName.utf8) { bytes, count in
+            emission(slopdesk_agent_detector_sample(handle, bytes, count, now))
         }
-        // Presence = ANY known agent, not just claude: the ported alias table (herdr's 21
-        // agents) means a codex/gemini/opencode pane lights the same status machinery its
-        // screen-manifest verdicts drive. The exact-basename discipline is preserved —
-        // `AgentKind.identify` matches whole canonical names/aliases, never substrings.
-        let present = matcher.isClaudeRunning(processName: base)
-            || AgentKind.identify(processName: base) != nil
-        // Stickiness: a recent authoritative fold (ctl self-report OR hook event) must not be wiped
-        // by a foreground-presence ABSENCE — the common supervised agent (a custom orchestrator,
-        // node-wrapped CLI, any non-`claude` basename) sets `working`/`blocked` authoritatively, and
-        // the ~1 Hz poll's `present == false` would otherwise terminate it on the next tick. Two
-        // suppressors:
-        // (a) within the grace window of the last authoritative fold, ANY absence is dropped;
-        // (b) while a hook/report-established status is live (`hookAuthority`), an absence whose
-        //     basename is a known WRAPPER (`node`/`npx`/`bun`/`deno`/`mise`) is dropped for the
-        //     LONGER ``wrapperSuppressionWindow`` — a wrapper-launched claude sitting quietly
-        //     between turns (no hook traffic to re-stamp the short window) must not flap to `.none`
-        //     while the wrapper still holds the PTY foreground. Still TIME-BOUND off the same
-        //     `lastAuthoritativeAt` anchor: hooks are best-effort, so a claude killed without a
-        //     SessionEnd would otherwise pin its stale verdict onto any later node-based tool
-        //     (`npm run dev`, `bun test`, …) run in the same pane for as long as it lives. A
-        //     wrapper never LIFTS the floor (absence cannot lift `.none`).
-        // Once neither holds, absence terminates normally (a genuinely exited agent decays).
-        // Ordered comparison (NaN-faithful) — never a bare `<` ternary.
-        let absenceSuppressed: Bool = {
-            guard !present else { return false }
-            if let authoritativeAt = lastAuthoritativeAt {
-                let elapsed = now - authoritativeAt
-                if Double.minimum(elapsed, Self.reportGraceWindow) < Self.reportGraceWindow,
-                   elapsed >= 0
-                { return true }
-                if hookAuthority, matcher.isLikelyWrapper(processName: base),
-                   Double.minimum(elapsed, Self.wrapperSuppressionWindow) < Self.wrapperSuppressionWindow,
-                   elapsed >= 0
-                { return true }
-            }
-            return false
-        }()
-        if absenceSuppressed {
-            // Skip the terminating absence fold; keep the authoritative status intact.
-            // (No presence floor to lift — absence cannot lift `.none`.)
-        } else {
-            machine.reduce(.processPresent(present), at: now)
-            // Presence absence terminates → not blocked anymore → forget the stale notification
-            // kind AND the authoritative provenance (a later wrapper foreground preserves nothing).
-            // The session intent dies with the session too (a claude killed without a SessionEnd
-            // must not pin its task line onto whatever runs in the pane next).
-            if !present {
-                lastNotificationKind = 0
-                hookAuthority = false
-                lastAuthoritativeAt = nil
-                intentSessionID = nil
-                sessionIntent = nil
-            }
-        }
-        emission.status = statusEmissionIfChanged()
-        emission.intent = intentEmissionIfChanged()
-        emission.title = titleEmissionIfAgentGone()
-        return emission
     }
 
-    /// Fold one received hook record (raw POST body bytes) at `now`. Reads it through
-    /// ``ClaudeHookBody`` (validate-then-drop: malformed/short/non-JSON bytes change nothing) and
-    /// folds the event through the SAME machine. Emits type-27 iff the status triple changed; never
-    /// a type-26 (the foreground process did not change).
-    public mutating func hook(bytes: Data, at now: TimeInterval) -> Emission {
-        var emission = Emission()
-        guard let read = ClaudeHookBody.read(bytes) else { return emission } // validate-then-drop
-        let event = read.event
-        // ⚠️ WHOSE hook is this? The relay routes by `SLOPDESK_PANE_ID`, an environment variable
-        // every descendant of the pane's shell inherits — so a `claude -p …` run from a script or
-        // from the pane agent's own Bash tool posts its whole hook set HERE. The door already
-        // ATTRIBUTED the record from the envelope's `session_id`; drop it whole if it names a
-        // different live session: not the status, not the liveness anchor, and not the session
-        // TITLE, which a nested prompt would otherwise rewrite.
-        guard machine.accepts(event) else { return emission }
-        // The INTENT fold (wire type 36) reads the prompt the door carried BESIDE the event: each
-        // titleable prompt re-titles the session, SessionEnd clears.
-        switch event {
-        case let .userPromptSubmit(sessionID):
-            foldIntent(sessionID: sessionID, prompt: read.prompt ?? "")
-        case .sessionEnd:
-            intentSessionID = nil
-            sessionIntent = nil
-        default:
-            break
+    /// Fold one received hook record (raw POST body bytes) at `now`. The body is read and folded in
+    /// ONE crossing — validate-then-drop, so malformed/short/non-JSON bytes change nothing. Emits
+    /// type-27 iff the status triple changed; never a type-26 (the foreground did not change).
+    public func hook(bytes: Data, at now: TimeInterval) -> Emission {
+        bytes.withUnsafeBytes { raw in
+            emission(slopdesk_agent_detector_hook(
+                handle,
+                raw.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                raw.count,
+                now,
+            ))
         }
-        // A REAL hook is the same precedence-2 authoritative signal as a ctl report, so it stamps
-        // the SAME stickiness anchor — otherwise the ~1 Hz foreground poll terminates a hook-set
-        // status within a second whenever claude runs under a wrapper (node/npx/mise) whose basename
-        // never classifies as `claude`. Stamped on every parsed record (Pre/PostToolUse traffic
-        // keeps a long turn's window fresh).
-        //
-        // EXCEPT `SessionEnd`. The anchor's whole job is to protect a LIVE state from a presence
-        // poll that cannot see the agent; a session that just ended has no live state to protect,
-        // and the absence the poll is about to report is the SessionEnd's own corroboration. Stamping
-        // here inverted the mechanism — the one signal announcing the end became what kept the dead
-        // state alive, for the full grace window. Clear the anchor instead, so the next absence
-        // terminates on contact.
-        if case .sessionEnd = event {
-            lastAuthoritativeAt = nil
-        } else {
-            lastAuthoritativeAt = now
-        }
-        machine.reduce(.hook(event), at: now)
-        hookAuthority = machine.status != .none // SessionEnd terminates → authority is gone with it
-        // Track the live block class: a BLOCKING notification carries its kind; any transition that
-        // leaves the blocked state forgets it (so a later tick/presence type-27 reports kind 0, not
-        // a stale class).
-        //
-        // ⚠️ A hook that is not itself a block must LEAVE a standing block's class alone. It used to
-        // overwrite unconditionally, so any mid-block traffic — a sibling call's `PostToolUse`, an
-        // informational `auth_success` — rewrote a live `waitingForInput` (kind 2) to kind 0 and
-        // shipped a type-27 saying the block had changed class when nothing about it had changed.
-        // With the block ledger holding the pane blocked through exactly that traffic, that stopped
-        // being a rarity and became the common case.
-        lastNotificationKind = Self.blockKind(
-            standing: lastNotificationKind,
-            ledger: machine.standingBlockKind,
-            event: read.kindByte,
-            blocked: machine.status == .needsPermission,
-        )
-        emission.status = statusEmissionIfChanged()
-        emission.intent = intentEmissionIfChanged()
-        emission.title = titleEmissionIfAgentGone()
-        return emission
     }
 
-    /// Fold an AGENT SELF-REPORT at `now` (the P1 `report` ctl verb). An agent inside a pane
-    /// declares its own state — this is authoritative (precedence-2, same as a real hook),
-    /// beating the foreground-process heuristic floor. The ctl state string is mapped to a
-    /// synthetic ``ClaudeHookEvent`` and folded through the SAME machine so the existing
-    /// precedence + dedupe apply unchanged:
-    ///   - `working` → `.userPromptSubmit` (a turn is in progress),
-    ///   - `blocked` → `.notification(.permission, label: message)` (needs a human),
-    ///   - `done`    → `.stop(label: message)` (turn finished),
-    ///   - `idle`    → `.sessionStart` (present & at rest, clears any stale block).
-    ///
-    /// Validate-then-drop: an unknown `state` string changes nothing and returns an empty
-    /// emission (the caller has already validated via ``AgentControlState/isValid(_:)``, but a
-    /// belt-and-braces guard here keeps this method safe in isolation). Emits type-27 iff the
-    /// machine's status triple changed; never a type-26 (the foreground process did not change).
-    public mutating func report(state: String, message: String?, at now: TimeInterval) -> Emission {
-        var emission = Emission()
-        let event: ClaudeHookEvent
-        switch state {
-        case "working":
-            event = .userPromptSubmit(sessionID: nil)
-        case "blocked":
-            event = .notification(kind: .permission, label: message)
-        case "done":
-            event = .stop(sessionID: nil, label: message)
-        case "idle":
-            event = .sessionStart(sessionID: nil)
-        default:
-            return emission // validate-then-drop: unknown state is a no-op
+    /// Fold an AGENT SELF-REPORT at `now` (the P1 `report` ctl verb) — authoritative, the same
+    /// precedence as a real hook. Validate-then-drop: an unknown `state` changes nothing, not even
+    /// the stickiness anchor.
+    public func report(state: String, message: String?, at now: TimeInterval) -> Emission {
+        withBytes(state.utf8) { stateBytes, stateCount in
+            // A nil message is NO message, which the door tells apart from an empty one.
+            guard let message else {
+                return emission(slopdesk_agent_detector_report(
+                    handle, stateBytes, stateCount, nil, 0, now,
+                ))
+            }
+            return withBytes(message.utf8) { messageBytes, messageCount in
+                emission(slopdesk_agent_detector_report(
+                    handle, stateBytes, stateCount, messageBytes, messageCount, now,
+                ))
+            }
         }
-        // Record the report time so a subsequent foreground-presence absence cannot wipe this
-        // authoritative state for the grace window (see `lastAuthoritativeAt` / `sample`). Only a
-        // VALID (folded) state stamps the floor — an unknown state already returned above.
-        lastAuthoritativeAt = now
-        machine.reduce(.hook(event), at: now)
-        hookAuthority = machine.status != .none
-        lastNotificationKind = (machine.status == .needsPermission) ? 1 : 0
-        emission.status = statusEmissionIfChanged()
-        emission.title = titleEmissionIfAgentGone()
-        return emission
     }
 
     /// A bare clock tick at `now` — drives the machine's `done → idle` decay. Emits type-27 iff the
     /// decay changed the status; never a type-26.
-    public mutating func tick(at now: TimeInterval) -> Emission {
-        machine.reduce(.tick, at: now)
-        if machine.status != .needsPermission { lastNotificationKind = 0 }
-        var emission = Emission()
-        emission.status = statusEmissionIfChanged()
-        emission.title = titleEmissionIfAgentGone()
-        return emission
+    public func tick(at now: TimeInterval) -> Emission {
+        emission(slopdesk_agent_detector_tick(handle, now))
     }
 
-    /// Fold the no-hooks manifest fallback's coarse verdict at `now` (Decision #5 signal 3). Conservative:
-    /// `.none` is ignored; richer verdicts apply only while a genuine HOOK block is not in effect (the
-    /// machine enforces the precedence). Emits type-27 iff the status triple changed.
-    ///
-    /// The P6 "screen-text source" deferral is CLOSED by the herdr-port screen engine (round 4):
-    /// the live feed drives ``screenDetection(_:at:)`` with the full manifest verdict off the
-    /// resident grid. This coarse seam stays for the ctl surface and its pinned tests.
-    public mutating func manifestVerdict(_ verdict: ClaudeStatus, at now: TimeInterval) -> Emission {
-        machine.reduce(.manifestVerdict(verdict), at: now)
-        if machine.status != .needsPermission { lastNotificationKind = 0 }
-        var emission = Emission()
-        emission.status = statusEmissionIfChanged()
-        emission.title = titleEmissionIfAgentGone()
-        return emission
+    /// Fold one SCREEN-RULE verdict at `now` — the herdr-port manifest engine's published detection
+    /// (the scan task has already applied the startup grace, idle-scan skip and the working→idle
+    /// hold). NOT an authoritative fold — it stamps no stickiness anchor.
+    public func screenDetection(_ detection: AgentScreenDetection, at now: TimeInterval) -> Emission {
+        var compact = detection.ffiDetection
+        return emission(slopdesk_agent_detector_screen(handle, &compact, now))
     }
 
-    /// Fold one SCREEN-RULE verdict at `now` — the herdr-port manifest engine's published
-    /// detection (the scan task has already applied the startup grace, idle-scan skip and the
-    /// working→idle hold). The machine reconciles it against the hook edges (a visible idle /
-    /// live spinner may clear even a hook block once it is past the paint grace — the screen is
-    /// ground truth; a plain fallback idle never clears a hook block). NOT an authoritative
-    /// fold — it stamps no stickiness anchor. Emits type-27 iff the status triple changed.
-    public mutating func screenDetection(_ detection: AgentScreenDetection, at now: TimeInterval) -> Emission {
-        machine.reduce(.screen(detection), at: now)
-        if machine.status != .needsPermission { lastNotificationKind = 0 }
-        var emission = Emission()
-        // Like `title`: never OPEN the type-27 stream while still `.none` (an unknown-state
-        // verdict on an undetected pane must not announce a churn frame).
-        guard machine.status != .none || lastEmittedStatus != nil else { return emission }
-        emission.status = statusEmissionIfChanged()
-        emission.title = titleEmissionIfAgentGone()
-        return emission
-    }
-
-    /// Fold one sniffed OSC 0/2 title at `now`. Claude Code writes its own busy/rest telltale
-    /// into the title (Braille spinner ⇒ working, `✳ ` ⇒ at rest), so the title corroborates
-    /// where hooks have gaps — most importantly, a missed Stop's stuck `.working` demotes to
-    /// `.idle` on the rest title. The machine applies the conservative precedence (a title never
-    /// clears a hook block, never conjures presence, never touches `.done`). NOT an authoritative
-    /// fold — it stamps no stickiness anchor. Emits type-27 iff the status triple changed.
-    ///
-    /// The title's TEXT is also claude's OWN session title: behind the telltale glyph rides a
-    /// background-model-generated topic summary (and a `/rename`d session's custom name) — the
-    /// canonical "what is this session about", the same string a tmux tab shows for the pane.
-    /// A real topic SUPERSEDES the prompt-derived intent (wire 36); the static startup
-    /// "Claude Code" names the program, not the work, and never re-titles. Folded only while
-    /// claude is DETECTED — a plain shell's title must not conjure an agent intent.
-    public mutating func title(_ title: String, at now: TimeInterval) -> Emission {
-        machine.reduce(.oscTitle(title), at: now)
-        if machine.status != .needsPermission { lastNotificationKind = 0 }
-        if machine.status != .none, let topic = Self.topicLine(fromTitle: title) {
-            sessionIntent = topic
+    /// Fold one sniffed OSC 0/2 title at `now`. Claude Code writes its own busy/rest telltale into
+    /// the title, so the title corroborates where hooks have gaps — and behind the telltale rides
+    /// claude's OWN session title, which supersedes the prompt-derived intent (wire 36). NOT an
+    /// authoritative fold.
+    public func title(_ title: String, at now: TimeInterval) -> Emission {
+        withBytes(title.utf8) { bytes, count in
+            emission(slopdesk_agent_detector_title(handle, bytes, count, now))
         }
-        // Ownership: a title the DETECTED agent wrote is the agent's to give back when it goes.
-        // A shell's own title (`nvim — README.md`, a long `make`) is not — it stays put.
-        if machine.status != .none, ClaudeStatusMachine.titleIsAgentWritten(title) { agentOwnsTitle = true }
-        var emission = Emission()
-        // EVERY shell titles its tab — a title folded on an undetected pane (still `.none`) must
-        // not OPEN the type-27 stream with a churn frame announcing the client's own default.
-        guard machine.status != .none || lastEmittedStatus != nil else { return emission }
-        emission.status = statusEmissionIfChanged()
-        emission.intent = intentEmissionIfChanged()
-        emission.title = titleEmissionIfAgentGone()
-        return emission
     }
 
-    /// Fold one client→PTY input chunk at `now` — the Esc-cancel unblock edge. Scoped hard: it
-    /// looks at the bytes ONLY while the machine sits at `.needsPermission`, and only a genuine
-    /// CANCEL key (``PaneInputClassifier/containsCancelKeystroke(_:)`` — `Esc` / `Ctrl-C`) demotes
-    /// the block to `.idle`. Esc-cancel fires no Stop hook and the ✳ rest title already shows while
-    /// the dialog is up, so this is the only host-visible unblock signal there is.
-    ///
-    /// ⚠️ It used to fire on ANY keystroke, on the reasoning that typing at a modal is HANDLING it.
-    /// That was both unnecessary and harmful. Unnecessary because every other way of resolving a
-    /// dialog announces itself with a hook that re-promotes the pane on its own — a permission
-    /// answer fires `PreToolUse`, an `AskUserQuestion` answer fires its `PostToolUse`. Harmful
-    /// because NAVIGATING a dialog is keystrokes too: arrowing between an `AskUserQuestion`'s
-    /// options demoted the block, the still-visible dialog re-raised it a scan later, and the fresh
-    /// entry rang the awaiting-input cue — once per keypress (user-reported 2026-08-10). NOT an
-    /// authoritative fold — it stamps no stickiness anchor. Emits type-27 iff the triple changed.
-    public mutating func userInput(bytes: Data, at now: TimeInterval) -> Emission {
-        var emission = Emission()
-        guard machine.status == .needsPermission,
-              PaneInputClassifier.containsCancelKeystroke(bytes)
-        else { return emission }
-        machine.reduce(.userInput, at: now)
-        if machine.status != .needsPermission { lastNotificationKind = 0 }
-        emission.status = statusEmissionIfChanged()
-        return emission
+    /// Fold one client→PTY input chunk at `now` — the Esc-cancel unblock edge. The bytes are read
+    /// ONLY while the machine sits at `.needsPermission`, and only a genuine CANCEL key demotes the
+    /// block. NOT an authoritative fold.
+    public func userInput(bytes: Data, at now: TimeInterval) -> Emission {
+        bytes.withUnsafeBytes { raw in
+            emission(slopdesk_agent_detector_user_input(
+                handle,
+                raw.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                raw.count,
+                now,
+            ))
+        }
     }
 
-    /// Reattach re-assert (the type-26/27 sibling of the echo re-anchor): the detector's
-    /// CURRENT truth as fresh messages for a returning client whose per-pane mirrors reset to none on
-    /// reconnect. Both streams are edge-triggered against the `lastEmitted*` anchors, so after
-    /// `rebindRelay` wiped the control-out queue nothing would ever re-tell the new client about a
-    /// foreground command / working agent that SPANS the reattach — and a status change folded WHILE
-    /// DETACHED (its emission wiped with control-out, its anchor already advanced) is otherwise lost
-    /// forever. The status is recomputed from the MACHINE (the truth), not replayed from the anchor,
-    /// and the anchor is re-pointed at it so the next unchanged fold still dedupes. Quiet before any
-    /// fold (both anchors nil): a detection-off session keeps its no-type-26/27-stream contract.
-    public mutating func reestablishOnReattach() -> Emission {
-        var emission = Emission()
-        if let name = lastEmittedName {
-            emission.foreground = .foregroundProcess(name: name)
-        }
-        if lastEmittedStatus != nil {
-            let triple = ClaudeStatusTriple(
-                state: UInt8(truncatingIfNeeded: machine.status.urgency),
-                kind: statusKindByte,
-                label: machine.displayLabel ?? "",
-            )
-            lastEmittedStatus = triple
-            emission.status = .claudeStatus(state: triple.state, kind: triple.kind, label: triple.label)
-        }
-        // The intent stream re-asserts the same way: current truth, anchor re-pointed, and quiet
-        // for a pane whose intent stream never spoke (no spurious empty clear frame).
-        if lastEmittedIntent != nil {
-            let current = sessionIntent ?? ""
-            lastEmittedIntent = current
-            emission.intent = .agentSessionIntent(current)
-        }
-        return emission
+    /// Reattach re-assert: the detector's CURRENT truth as fresh messages for a returning client
+    /// whose per-pane mirrors reset to none on reconnect. Both streams are edge-triggered against
+    /// their anchors, so after `rebindRelay` wiped the control-out queue nothing would ever re-tell
+    /// the new client about a foreground command / working agent that SPANS the reattach — and a
+    /// status change folded WHILE DETACHED is otherwise lost forever. Quiet before any fold: a
+    /// detection-off session keeps its no-type-26/27-stream contract.
+    public func reestablishOnReattach() -> Emission {
+        emission(slopdesk_agent_detector_reestablish(handle))
     }
 
-    // MARK: - Session intent (the type-36 latch)
-
-    /// Folds one `UserPromptSubmit` into the intent: a prompt from a NEW session re-derives from
-    /// scratch; within a session every TITLEABLE prompt re-titles (the row answers "what is the
-    /// agent doing NOW", not "what was it hired for" — a multi-turn session's title follows the
-    /// work). A non-titleable prompt (slash-command / harness XML / blank) leaves the standing
-    /// intent untouched — a `/compact` must not wipe the task line.
-    private mutating func foldIntent(sessionID: String?, prompt: String?) {
-        if sessionID != intentSessionID {
-            intentSessionID = sessionID
-            sessionIntent = nil
-        }
-        guard let line = Self.intentLine(from: prompt) else { return }
-        sessionIntent = line
-    }
+    // MARK: - The pure derivations, callable without a detector
 
     /// Derives the one-line intent from a submitted prompt: the first non-blank line, inner
     /// whitespace collapsed, clamped to ``maxIntentChars``. `nil` when the prompt has no titling
     /// value — blank, a slash-command (`/compact`), or a harness-injected XML block — so a later
-    /// REAL prompt can still name the session. Pure + total (any string tolerated).
+    /// REAL prompt can still name the session.
     static func intentLine(from prompt: String?) -> String? {
         guard let prompt else { return nil }
-        for rawLine in prompt.split(separator: "\n", omittingEmptySubsequences: true) {
-            let line = rawLine.trimmingCharacters(in: .whitespaces)
-            if line.isEmpty { continue }
-            if line.hasPrefix("/") || line.hasPrefix("<") { return nil }
-            let collapsed = line.split(whereSeparator: \.isWhitespace).joined(separator: " ")
-            return String(collapsed.prefix(Self.maxIntentChars))
+        return withBytes(prompt.utf8) { bytes, count in
+            answer { out, cap in slopdesk_agent_intent_line(bytes, count, out, cap) }
         }
-        return nil
     }
 
     /// Claude's own session title out of a sniffed OSC title, or `nil` when the title carries no
-    /// topic. Strips the leading busy/rest telltale (Braille spinner / `✳` + variation selectors)
-    /// and whitespace; rejects an empty remainder and the static startup "Claude Code" (which
-    /// names the program, not the work). Whitespace-collapsed and clamped like ``intentLine(from:)``
-    /// — the two feed the same wire-36 latch. Pure + total (any string tolerated).
+    /// topic. Strips the leading busy/rest telltale and whitespace; rejects an empty remainder and
+    /// the static startup "Claude Code", which names the program rather than the work.
     static func topicLine(fromTitle title: String) -> String? {
-        var scalars = title.unicodeScalars[...]
-        while let first = scalars.first,
-              (0x2800...0x28FF).contains(first.value) // Braille spinner frames
-              || first.value == 0x2733 // ✳ rest star
-              || first.value == 0xFE0E || first.value == 0xFE0F // variation selectors
-              || first.properties.isWhitespace
-        {
-            scalars.removeFirst()
+        withBytes(title.utf8) { bytes, count in
+            answer { out, cap in slopdesk_agent_topic_line(bytes, count, out, cap) }
         }
-        let text = String(String.UnicodeScalarView(scalars))
-        let collapsed = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
-        guard !collapsed.isEmpty, collapsed != "Claude Code" else { return nil }
-        return String(collapsed.prefix(Self.maxIntentChars))
-    }
-
-    // MARK: - Title retirement (the type-21 agent-gone edge)
-
-    /// Returns the type-21 title RETIREMENT — an explicit empty title — on the edge where the agent
-    /// that owned the pane's title has gone (`.none`), else `nil`.
-    ///
-    /// A ONE-SHOT edge: the ownership flag is consumed here, so a pane already handed back keeps
-    /// whatever the shell (or a later agent) titles it next. Empty is deliberate and unambiguous —
-    /// the sniffer (`rust/slopdesk-superd/src/sniffer.rs`) drops empty OSC 0/2 bodies, so the client can read an empty type-21 as
-    /// "the host means it" rather than as prompt-redraw noise.
-    private mutating func titleEmissionIfAgentGone() -> WireMessage? {
-        guard agentOwnsTitle, machine.status == .none else { return nil }
-        agentOwnsTitle = false
-        return .title("")
-    }
-
-    /// Returns a type-36 `agentSessionIntent` message iff the latched intent changed since the last
-    /// emit (`nil`-anchor collapses to "" so a never-intent pane stays silent); empty = cleared.
-    private mutating func intentEmissionIfChanged() -> WireMessage? {
-        let current = sessionIntent ?? ""
-        guard current != (lastEmittedIntent ?? "") else { return nil }
-        lastEmittedIntent = current
-        return .agentSessionIntent(current)
-    }
-
-    // MARK: - Status dedupe (ONE anchor for the ONE type-27 stream)
-
-    /// The wire `kind` byte for the CURRENT machine status — the qualifier the `state` byte has no
-    /// room for. Two disjoint producers, checked in urgency order: a live block reports its
-    /// ``lastNotificationKind`` (permission / waiting / other), and a QUIET transition (today: the
-    /// `/compact` boundary's `.idle`, ``ClaudeStatusMachine/isQuiet``) reports
-    /// ``AgentStatusKind/quiet`` so the client delivers the status without announcing it. They
-    /// cannot collide — the machine clears the quiet mark on every transition into a block.
-    private var statusKindByte: UInt8 {
-        if machine.isQuiet { return AgentStatusKind.quiet.rawValue }
-        return lastNotificationKind
     }
 
     /// The `kind` byte a fold should leave standing: `0` when the pane is not blocked, the EVENT's
-    /// class when the event is itself a blocking notification (`1 permission` / `2 waitingForInput`),
-    /// and otherwise the class already standing — mid-block traffic describes the turn, not the
-    /// block. Pure + total (any byte tolerated).
-    /// ⚠️ `ledger` outranks `standing` because blocks STACK. With `[AskUserQuestion, Bash(gated)]`
-    /// the approval dialog is raised second and, once approved, its `PreToolUse` arrives with event
-    /// byte 0 — leaving the standing byte naming a block that is already gone, so every client drew
-    /// "Permission needed" over an unanswered question for as long as it stood. The machine knows
-    /// which entries survive; this is that answer.
+    /// class when the event is itself a blocking notification, and otherwise the class already
+    /// standing — mid-block traffic describes the turn, not the block.
     static func blockKind(standing: UInt8, ledger: UInt8, event: UInt8, blocked: Bool) -> UInt8 {
-        guard blocked else { return 0 }
-        if ledger != 0 { return ledger }
-        if event == 1 || event == 2 { return event }
-        return standing
+        slopdesk_agent_block_kind(standing, ledger, event, blocked)
     }
 
-    /// Returns a type-27 `claudeStatus` message iff the machine's `(state, kind, label)` triple changed
-    /// since the last emit; `nil` when unchanged (dedupe). `kind` reflects the live block class.
-    private mutating func statusEmissionIfChanged() -> WireMessage? {
-        let triple = ClaudeStatusTriple(
-            state: UInt8(truncatingIfNeeded: machine.status.urgency),
-            kind: statusKindByte,
-            label: machine.displayLabel ?? "",
-        )
-        if triple == lastEmittedStatus { return nil }
-        lastEmittedStatus = triple
-        return .claudeStatus(state: triple.state, kind: triple.kind, label: triple.label)
+    // MARK: - The crossing
+
+    /// Reads the slot mask a fold answered and pulls back only the slots it names.
+    ///
+    /// The emission lives on the handle until the next fold replaces it, which is why this runs
+    /// immediately and unconditionally after every fold rather than lazily.
+    private func emission(_ slots: UInt32) -> Emission {
+        var out = Emission()
+        if slots & SLOPDESK_AGENT_EMIT_FOREGROUND != 0 {
+            out.foreground = .foregroundProcess(
+                name: text(slopdesk_agent_detector_emit_foreground) ?? "",
+            )
+        }
+        if slots & SLOPDESK_AGENT_EMIT_STATUS != 0 {
+            let packed = slopdesk_agent_detector_emit_status_bytes(handle)
+            out.status = .claudeStatus(
+                state: UInt8(truncatingIfNeeded: packed >> 8),
+                kind: UInt8(truncatingIfNeeded: packed),
+                label: text(slopdesk_agent_detector_emit_status_label) ?? "",
+            )
+        }
+        if slots & SLOPDESK_AGENT_EMIT_INTENT != 0 {
+            out.intent = .agentSessionIntent(text(slopdesk_agent_detector_emit_intent) ?? "")
+        }
+        if slots & SLOPDESK_AGENT_EMIT_TITLE != 0 {
+            out.title = .title("")
+        }
+        return out
     }
+
+    /// One `(handle, out, cap) -> ptrdiff_t` door, read through the §4 two-call convention.
+    private func text(
+        _ call: (OpaquePointer?, UnsafeMutablePointer<UInt8>?, Int) -> Int,
+    ) -> String? {
+        answer { out, cap in call(handle, out, cap) }
+    }
+}
+
+// MARK: - The buffer dance, shared by the doors above
+
+/// Calls a `(out, cap) -> ptrdiff_t` door, growing the buffer once if the first guess was short.
+///
+/// `-1` is the only refusal — a 0-length answer is a PRESENT empty string, which is a real answer at
+/// every door here (an intent that was cleared, a label the agent left blank). The wrapped functions
+/// are pure or read a handle nothing else is touching, so the second call cannot disagree with the
+/// first.
+private func answer(_ call: (UnsafeMutablePointer<UInt8>?, Int) -> Int) -> String? {
+    var out = [UInt8](repeating: 0, count: 256)
+    var needed = out.withUnsafeMutableBufferPointer { call($0.baseAddress, $0.count) }
+    guard needed >= 0 else { return nil }
+    if needed > out.count {
+        out = [UInt8](repeating: 0, count: needed)
+        needed = out.withUnsafeMutableBufferPointer { call($0.baseAddress, $0.count) }
+        guard needed >= 0, needed <= out.count else { return nil }
+    }
+    // The bytes came back from a Rust `String`, so the repairing initialiser has no reachable
+    // failure arm; the failable one would buy an optional that can never be `nil`.
+    // swiftlint:disable:next optional_data_string_conversion
+    return String(decoding: out[0..<needed], as: UTF8.self)
+}
+
+/// Lends one string's UTF-8 as a `(ptr, len)` pair for exactly the duration of `body`.
+private func withBytes<T>(
+    _ utf8: String.UTF8View,
+    _ body: (UnsafePointer<UInt8>?, Int) -> T,
+) -> T {
+    Array(utf8).withUnsafeBufferPointer { body($0.baseAddress, $0.count) }
 }

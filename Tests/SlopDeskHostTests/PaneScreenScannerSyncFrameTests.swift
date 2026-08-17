@@ -198,7 +198,7 @@ final class PaneScreenScannerSyncFrameTests: XCTestCase {
         // Cut the repaint at EVERY byte offset — one of them is the boundary that used to tear.
         for cut in stride(from: 1, to: frame.count, by: 7) {
             var scanner = PaneScreenScanner()
-            var detector = ClaudePaneDetector()
+            let detector = ClaudePaneDetector()
             _ = detector.sample(name: "claude", at: 0)
             _ = scanner.scan(input(pending: frame, seq: 1, now: 0))
             var out = scanner.scan(input(seq: 2, now: 4))

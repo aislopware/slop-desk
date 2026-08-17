@@ -24,7 +24,8 @@ use core::ffi::c_uchar;
 
 use slopdesk_agent::{
     AgentDetectionHold, AgentScreenDetection, AgentScreenState, ClaudeHookEvent, ClaudeSignal, ClaudeStatus,
-    ClaudeStatusMachine, ForegroundJob, ForegroundJobProcess, NotificationKind, badge,
+    ClaudeStatusMachine, Emission, ForegroundJob, ForegroundJobProcess, NotificationKind, PaneDetector,
+    badge,
 };
 
 use crate::{borrow, deliver};
@@ -162,6 +163,53 @@ pub struct Signal {
     pub strings_len: usize,
 }
 
+/// The flat hook discriminants, as the event they name.
+///
+/// Total over `hook`, defaulting to the session-start case, which changes no status a later signal
+/// cannot correct. ONE spelling on purpose: the same mapping serves a [`Signal`] Swift built by
+/// hand and a body `slopdesk-hookevent` just read off the socket, and two copies of it would be two
+/// answers to "is discriminant 7 an interrupt".
+fn hook_event_of(
+    hook: u8,
+    notification: u8,
+    session_id: Option<String>,
+    tool: Option<String>,
+    tool_use_id: Option<String>,
+    label: Option<String>,
+) -> ClaudeHookEvent {
+    match hook {
+        1 => ClaudeHookEvent::UserPromptSubmit { session_id },
+        2 => {
+            ClaudeHookEvent::PreToolUse {
+                session_id,
+                tool,
+                tool_use_id,
+            }
+        },
+        3 => {
+            ClaudeHookEvent::PostToolUse {
+                session_id,
+                tool,
+                tool_use_id,
+            }
+        },
+        4 => {
+            ClaudeHookEvent::Notification {
+                kind: notification_from(notification),
+                label,
+                tool_use_id,
+                session_id,
+            }
+        },
+        5 => ClaudeHookEvent::Stop { session_id, label },
+        6 => ClaudeHookEvent::SubagentStop { agent_id: session_id },
+        7 => ClaudeHookEvent::Interrupted { session_id },
+        8 => ClaudeHookEvent::SessionEnd { session_id },
+        9 => ClaudeHookEvent::PreCompact { session_id },
+        _ => ClaudeHookEvent::SessionStart { session_id },
+    }
+}
+
 /// The signal plus the string bytes it points at, resolved once per call.
 struct Resolved<'a> {
     signal: &'a Signal,
@@ -190,46 +238,16 @@ impl Resolved<'_> {
         detection
     }
 
-    /// The hook event this signal names. Total over `hook`, defaulting to the session-start case,
-    /// which changes no status a later signal cannot correct.
+    /// The hook event this signal names.
     fn hook_event(&self) -> ClaudeHookEvent {
-        let session_id = self.text(self.signal.session_id);
-        match self.signal.hook {
-            1 => ClaudeHookEvent::UserPromptSubmit { session_id },
-            2 => {
-                ClaudeHookEvent::PreToolUse {
-                    session_id,
-                    tool: self.text(self.signal.tool),
-                    tool_use_id: self.text(self.signal.tool_use_id),
-                }
-            },
-            3 => {
-                ClaudeHookEvent::PostToolUse {
-                    session_id,
-                    tool: self.text(self.signal.tool),
-                    tool_use_id: self.text(self.signal.tool_use_id),
-                }
-            },
-            4 => {
-                ClaudeHookEvent::Notification {
-                    kind: notification_from(self.signal.notification),
-                    label: self.text(self.signal.label),
-                    tool_use_id: self.text(self.signal.tool_use_id),
-                    session_id,
-                }
-            },
-            5 => {
-                ClaudeHookEvent::Stop {
-                    session_id,
-                    label: self.text(self.signal.label),
-                }
-            },
-            6 => ClaudeHookEvent::SubagentStop { agent_id: session_id },
-            7 => ClaudeHookEvent::Interrupted { session_id },
-            8 => ClaudeHookEvent::SessionEnd { session_id },
-            9 => ClaudeHookEvent::PreCompact { session_id },
-            _ => ClaudeHookEvent::SessionStart { session_id },
-        }
+        hook_event_of(
+            self.signal.hook,
+            self.signal.notification,
+            self.text(self.signal.session_id),
+            self.text(self.signal.tool),
+            self.text(self.signal.tool_use_id),
+            self.text(self.signal.label),
+        )
     }
 
     /// The signal this value names. Total over `kind`, defaulting to `Tick`, which is the signal
@@ -989,6 +1007,529 @@ pub unsafe extern "C" fn slopdesk_agent_machine_accepts(
         };
         (*handle).accepts(&resolved.hook_event())
     }
+}
+
+// MARK: The pane detector
+//
+// One layer above the machine: the FUSION every host input folds through, and the two dedupe
+// anchors that turn its verdicts into a control stream. See `slopdesk_agent::detector`.
+//
+// Every fold answers a BITMASK naming the slots it filled, and the filled slots are then pulled off
+// the handle one at a time. That is a departure from the pure §4 door, and it is the same departure
+// the job handle already makes for the same reason: one fold owes up to four values of three
+// different shapes, and a single flat answer buffer encoding all four would be a second wire format
+// nobody asked for. The emission lives on the handle exactly as long as it takes the caller to read
+// it — the next fold replaces it.
+
+/// A detector plus the emission its last fold produced.
+#[derive(Debug)]
+pub struct SlopDeskAgentDetector {
+    detector: PaneDetector,
+    emission: Emission,
+}
+
+impl SlopDeskAgentDetector {
+    /// Stores one fold's emission and answers the slot mask.
+    fn record(&mut self, emission: Emission) -> u32 {
+        let slots = emission.slots();
+        self.emission = emission;
+        slots
+    }
+}
+
+/// Delivers an optional answer, `-1` when the option is empty.
+///
+/// The distinction matters at every door below: an absent intent and an intent that was CLEARED are
+/// different frames, and a 0-length answer is the second one.
+///
+/// # Safety
+/// `out` must be null or writable for `cap` bytes.
+#[expect(
+    unsafe_code,
+    reason = "it forwards one obligation, `deliver`'s, and states it above"
+)]
+unsafe fn deliver_optional(answer: Option<&str>, out: *mut c_uchar, cap: usize) -> isize {
+    let Some(answer) = answer else {
+        return -1;
+    };
+    // SAFETY: the caller's obligation, restated above, is exactly `deliver`'s.
+    isize::try_from(unsafe { deliver(answer.as_bytes(), out, cap) }).unwrap_or(-1)
+}
+
+/// The detector's window constants, by index: 0 the done→idle default, 1 the report grace window,
+/// 2 the wrapper suppression window, 3 the intent clamp in scalars. An unknown index answers 0.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_agent_detector_constant(index: u8) -> f64 {
+    match index {
+        0 => ClaudeStatusMachine::DEFAULT_DONE_TO_IDLE_TIMEOUT,
+        1 => PaneDetector::REPORT_GRACE_WINDOW,
+        2 => PaneDetector::WRAPPER_SUPPRESSION_WINDOW,
+        3 => {
+            // A scalar count this small crosses an `f64` exactly.
+            let clamp = u32::try_from(PaneDetector::MAX_INTENT_CHARS).unwrap_or(u32::MAX);
+            f64::from(clamp)
+        },
+        _ => 0.0,
+    }
+}
+
+/// Creates a detector with the given done→idle decay. Exactly one
+/// [`slopdesk_agent_detector_free`] per call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_agent_detector_new(done_to_idle_timeout: f64) -> *mut SlopDeskAgentDetector {
+    Box::into_raw(Box::new(SlopDeskAgentDetector {
+        detector: PaneDetector::new(done_to_idle_timeout),
+        emission: Emission::default(),
+    }))
+}
+
+/// Frees a detector. Null is a no-op.
+///
+/// # Safety
+/// `handle` must be null, or a live pointer from [`slopdesk_agent_detector_new`] not yet freed.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_agent_detector_free(handle: *mut SlopDeskAgentDetector) {
+    if handle.is_null() {
+        return;
+    }
+    // SAFETY: by the caller's obligation this came from `Box::into_raw` and has not been freed.
+    drop(unsafe { Box::from_raw(handle) });
+}
+
+/// Folds one foreground-process sample and answers the slot mask.
+///
+/// # Safety
+/// `handle` must be null, or a live detector with no other call on it in flight; `name` must be
+/// null or point to `len` initialised bytes live for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_agent_detector_sample(
+    handle: *mut SlopDeskAgentDetector,
+    name: *const c_uchar,
+    len: usize,
+    now: f64,
+) -> u32 {
+    if handle.is_null() {
+        return 0;
+    }
+    // SAFETY: the caller's obligations, restated above; `borrow` states its own.
+    unsafe {
+        let text = core::str::from_utf8(borrow(name, len)).unwrap_or_default();
+        let emission = (*handle).detector.sample(text, now);
+        (*handle).record(emission)
+    }
+}
+
+/// Reads one raw hook POST body and folds what it says.
+///
+/// Validate-then-drop: a body that is not a hook this build answers — not JSON, not an object, an
+/// event name nothing knows, a tool call with no identity — changes nothing and answers 0.
+///
+/// # Safety
+/// `handle` must be null, or a live detector with no other call on it in flight; `body` must be
+/// null or point to `len` initialised bytes live for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_agent_detector_hook(
+    handle: *mut SlopDeskAgentDetector,
+    body: *const c_uchar,
+    len: usize,
+    now: f64,
+) -> u32 {
+    if handle.is_null() {
+        return 0;
+    }
+    // SAFETY: the caller's obligations, restated above; `borrow` states its own.
+    unsafe {
+        let Some(parsed) = slopdesk_hookevent::parse(borrow(body, len)) else {
+            return 0;
+        };
+        let event = hook_event_of(
+            parsed.hook,
+            parsed.notification,
+            parsed.session_id,
+            parsed.tool,
+            parsed.tool_use_id,
+            parsed.label,
+        );
+        let emission = (*handle)
+            .detector
+            .hook(event, parsed.kind_byte, parsed.prompt.as_deref(), now);
+        (*handle).record(emission)
+    }
+}
+
+/// Folds an agent self-report — the ctl `report` verb.
+///
+/// `message` is the optional human line; pass a null pointer for no message, which is NOT the same
+/// as an empty one (an empty message is a label the agent chose to make empty).
+///
+/// # Safety
+/// `handle` must be null, or a live detector with no other call on it in flight; each `(ptr, len)`
+/// pair must be null or point to that many initialised bytes live for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_agent_detector_report(
+    handle: *mut SlopDeskAgentDetector,
+    state: *const c_uchar,
+    state_len: usize,
+    message: *const c_uchar,
+    message_len: usize,
+    now: f64,
+) -> u32 {
+    if handle.is_null() {
+        return 0;
+    }
+    // SAFETY: the caller's obligations, restated above; `borrow` states its own.
+    unsafe {
+        let state = core::str::from_utf8(borrow(state, state_len)).unwrap_or_default();
+        let label = if message.is_null() {
+            None
+        } else {
+            core::str::from_utf8(borrow(message, message_len)).ok()
+        };
+        let emission = (*handle).detector.report(state, label, now);
+        (*handle).record(emission)
+    }
+}
+
+/// A read-only accessor over the detector, answering `$fallback` for a null handle.
+macro_rules! detector_observer {
+    ($(#[$meta:meta])* $name:ident -> $type:ty, $fallback:expr, |$subject:ident| $body:expr) => {
+        $(#[$meta])*
+        ///
+        /// # Safety
+        /// `handle` must be null, or a live detector with no other call on it in flight.
+        #[unsafe(no_mangle)]
+        #[expect(
+            unsafe_code,
+            reason = "an exported C entry point is unsafe by definition in edition 2024"
+        )]
+        pub unsafe extern "C" fn $name(handle: *mut SlopDeskAgentDetector) -> $type {
+            if handle.is_null() {
+                return $fallback;
+            }
+            // SAFETY: non-null and, by the caller's obligation, live and unaliased for this call.
+            let $subject = unsafe { &mut *handle };
+            $body
+        }
+    };
+}
+
+detector_observer!(
+    /// Re-asserts the detector's CURRENT truth as fresh messages for a returning client, and
+    /// answers the slot mask. Takes no clock: nothing here is folded, only re-read.
+    slopdesk_agent_detector_reestablish -> u32, 0, |subject| {
+        let emission = subject.detector.reestablish_on_reattach();
+        subject.record(emission)
+    }
+);
+detector_observer!(
+    /// The current rolled-up status.
+    slopdesk_agent_detector_status -> u8, 0, |subject| status_byte(subject.detector.status())
+);
+detector_observer!(
+    /// Whether the current status was reached quietly (no announcement is owed).
+    slopdesk_agent_detector_is_quiet -> bool, false, |subject| subject.detector.is_quiet()
+);
+detector_observer!(
+    /// Whether a hook feed has claimed this pane, making screen verdicts corroboration.
+    slopdesk_agent_detector_has_authoritative_feed -> bool, false,
+    |subject| subject.detector.has_authoritative_feed()
+);
+detector_observer!(
+    /// Whether the agent's own OSC notifications are redundant and must not be forwarded.
+    slopdesk_agent_detector_suppresses_child_notifications -> bool, false,
+    |subject| subject.detector.suppresses_child_notifications()
+);
+detector_observer!(
+    /// Whether the type-27 stream has ever emitted, which is what makes the anchor readable.
+    slopdesk_agent_detector_has_last_status -> bool, false,
+    |subject| subject.detector.last_emitted_status().is_some()
+);
+detector_observer!(
+    /// The anchor's state byte, or 0 when the stream has never emitted.
+    slopdesk_agent_detector_last_status_state -> u8, 0,
+    |subject| subject.detector.last_emitted_status().map_or(0, |triple| triple.state)
+);
+detector_observer!(
+    /// The anchor's kind byte, or 0 when the stream has never emitted.
+    slopdesk_agent_detector_last_status_kind -> u8, 0,
+    |subject| subject.detector.last_emitted_status().map_or(0, |triple| triple.kind)
+);
+
+/// Drives the done→idle decay one clock tick, and answers the slot mask.
+///
+/// # Safety
+/// `handle` must be null, or a live detector with no other call on it in flight.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_agent_detector_tick(handle: *mut SlopDeskAgentDetector, now: f64) -> u32 {
+    if handle.is_null() {
+        return 0;
+    }
+    // SAFETY: non-null and, by the caller's obligation, live and unaliased for this call.
+    unsafe {
+        let emission = (*handle).detector.tick(now);
+        (*handle).record(emission)
+    }
+}
+
+/// Folds one screen-rule verdict.
+///
+/// The COMPACT detection, not the [`Signal`] the machine's own screen fold takes: the two optional
+/// strings a full verdict carries — the matched rule id and the fallback reason — are carried for
+/// EXPLANATION, and nothing downstream of here reads either. Taking them anyway would mean a string
+/// buffer and six spans on the Swift side, per scan, to reach a field the machine never looks at.
+///
+/// # Safety
+/// `handle` must be null, or a live detector with no other call on it in flight; `detection` must
+/// be null or point to one live [`Detection`] for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_agent_detector_screen(
+    handle: *mut SlopDeskAgentDetector,
+    detection: *const Detection,
+    now: f64,
+) -> u32 {
+    if handle.is_null() {
+        return 0;
+    }
+    // SAFETY: the caller's obligations, restated above; `detection_at` states its own.
+    unsafe {
+        let verdict = detection_at(detection);
+        let emission = (*handle).detector.screen(verdict, now);
+        (*handle).record(emission)
+    }
+}
+
+/// Folds one sniffed OSC 0/2 title.
+///
+/// # Safety
+/// `handle` must be null, or a live detector with no other call on it in flight; `title` must be
+/// null or point to `len` initialised bytes live for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_agent_detector_title(
+    handle: *mut SlopDeskAgentDetector,
+    title: *const c_uchar,
+    len: usize,
+    now: f64,
+) -> u32 {
+    if handle.is_null() {
+        return 0;
+    }
+    // SAFETY: the caller's obligations, restated above; `borrow` states its own.
+    unsafe {
+        let text = core::str::from_utf8(borrow(title, len)).unwrap_or_default();
+        let emission = (*handle).detector.title(text, now);
+        (*handle).record(emission)
+    }
+}
+
+/// Folds one client→PTY input chunk — the Esc-cancel unblock edge.
+///
+/// # Safety
+/// `handle` must be null, or a live detector with no other call on it in flight; `bytes` must be
+/// null or point to `len` initialised bytes live for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_agent_detector_user_input(
+    handle: *mut SlopDeskAgentDetector,
+    bytes: *const c_uchar,
+    len: usize,
+    now: f64,
+) -> u32 {
+    if handle.is_null() {
+        return 0;
+    }
+    // SAFETY: the caller's obligations, restated above; `borrow` states its own.
+    unsafe {
+        let emission = (*handle).detector.user_input(borrow(bytes, len), now);
+        (*handle).record(emission)
+    }
+}
+
+/// A string read off the detector, `-1` when the slot is empty.
+macro_rules! detector_text {
+    ($(#[$meta:meta])* $name:ident, |$subject:ident| $body:expr) => {
+        $(#[$meta])*
+        ///
+        /// # Safety
+        /// `handle` must be null, or a live detector with no other call on it in flight; `out` must
+        /// be null or writable for `cap` bytes.
+        #[unsafe(no_mangle)]
+        #[expect(
+            unsafe_code,
+            reason = "an exported C entry point is unsafe by definition in edition 2024"
+        )]
+        pub unsafe extern "C" fn $name(
+            handle: *mut SlopDeskAgentDetector,
+            out: *mut c_uchar,
+            cap: usize,
+        ) -> isize {
+            if handle.is_null() {
+                return -1;
+            }
+            // SAFETY: non-null and, by the caller's obligation, live and unaliased for this call;
+            // `deliver_optional` states its own.
+            unsafe {
+                let $subject = &*handle;
+                deliver_optional($body, out, cap)
+            }
+        }
+    };
+}
+
+detector_text!(
+    /// The last fold's type-26 basename, or `-1` when it filled no foreground slot.
+    slopdesk_agent_detector_emit_foreground,
+    |subject| subject.emission.foreground.as_deref()
+);
+detector_text!(
+    /// The last fold's type-27 label, or `-1` when it filled no status slot. A blocked pane with no
+    /// question text answers 0, which is a label the client draws as empty rather than as absent.
+    slopdesk_agent_detector_emit_status_label,
+    |subject| subject.emission.status.as_ref().map(|triple| triple.label.as_str())
+);
+detector_text!(
+    /// The last fold's type-36 intent, or `-1` when it filled no intent slot. 0 means CLEARED.
+    slopdesk_agent_detector_emit_intent,
+    |subject| subject.emission.intent.as_deref()
+);
+detector_text!(
+    /// The machine's short human label, or `-1` when it has none.
+    slopdesk_agent_detector_status_label,
+    |subject| subject.detector.status_label()
+);
+detector_text!(
+    /// The anchor's label, or `-1` when the type-27 stream has never emitted.
+    slopdesk_agent_detector_last_status_label,
+    |subject| subject
+        .detector
+        .last_emitted_status()
+        .map(|triple| triple.label.as_str())
+);
+detector_text!(
+    /// The pane's current session intent, or `-1` when none is established.
+    slopdesk_agent_detector_session_intent,
+    |subject| subject.detector.session_intent()
+);
+
+/// The last fold's type-27 `(state, kind)` pair, packed as `state << 8 | kind`.
+///
+/// One door rather than two because the two bytes are one value: a caller that read the state and
+/// then folded again before reading the kind would ship a frame that never existed.
+///
+/// # Safety
+/// `handle` must be null, or a live detector with no other call on it in flight.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_agent_detector_emit_status_bytes(
+    handle: *mut SlopDeskAgentDetector,
+) -> u16 {
+    if handle.is_null() {
+        return 0;
+    }
+    // SAFETY: non-null and, by the caller's obligation, live and unaliased for this call.
+    let subject = unsafe { &*handle };
+    subject
+        .emission
+        .status
+        .as_ref()
+        .map_or(0, |triple| u16::from(triple.state) << 8 | u16::from(triple.kind))
+}
+
+/// The pure intent derivation — the first titleable line of a submitted prompt, or `-1`.
+///
+/// # Safety
+/// `prompt` must be null or point to `len` initialised bytes live for the call; `out` must be null
+/// or writable for `cap` bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_agent_intent_line(
+    prompt: *const c_uchar,
+    len: usize,
+    out: *mut c_uchar,
+    cap: usize,
+) -> isize {
+    // SAFETY: the caller's obligations, restated above; the helpers state their own.
+    unsafe {
+        let text = core::str::from_utf8(borrow(prompt, len)).unwrap_or_default();
+        deliver_optional(slopdesk_agent::intent_line(text).as_deref(), out, cap)
+    }
+}
+
+/// The pure topic derivation — claude's own session title behind its telltale glyph, or `-1`.
+///
+/// # Safety
+/// `title` must be null or point to `len` initialised bytes live for the call; `out` must be null
+/// or writable for `cap` bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_agent_topic_line(
+    title: *const c_uchar,
+    len: usize,
+    out: *mut c_uchar,
+    cap: usize,
+) -> isize {
+    // SAFETY: the caller's obligations, restated above; the helpers state their own.
+    unsafe {
+        let text = core::str::from_utf8(borrow(title, len)).unwrap_or_default();
+        deliver_optional(slopdesk_agent::topic_line(text).as_deref(), out, cap)
+    }
+}
+
+/// The `kind` byte a fold should leave standing. Pure and total over every byte.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_agent_block_kind(standing: u8, ledger: u8, event: u8, blocked: bool) -> u8 {
+    slopdesk_agent::block_kind(standing, ledger, event, blocked)
 }
 
 // MARK: The foreground job

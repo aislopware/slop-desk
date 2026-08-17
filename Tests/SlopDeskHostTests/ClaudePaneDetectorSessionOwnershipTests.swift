@@ -24,7 +24,7 @@ final class ClaudePaneDetectorSessionOwnershipTests: XCTestCase {
     /// A nested run must not answer a question asked by the pane's own agent, end its turn, or
     /// retire its session.
     func testANestedClaudeCannotDriveThePanesAgent() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.sample(name: "claude", at: 0)
         _ = d.hook(bytes: ask(session: "outer", id: "ask-1"), at: 1)
         XCTAssertEqual(d.status, .needsPermission)
@@ -59,7 +59,7 @@ final class ClaudePaneDetectorSessionOwnershipTests: XCTestCase {
 
     /// The owner's OWN exit still ends the pane — ownership must not become a way to get stuck.
     func testTheOwningSessionStillEndsThePane() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.sample(name: "claude", at: 0)
         _ = d.hook(bytes: event("SessionStart", session: "outer"), at: 1)
         _ = d.hook(bytes: event("UserPromptSubmit", session: "outer"), at: 1.1)
@@ -71,7 +71,7 @@ final class ClaudePaneDetectorSessionOwnershipTests: XCTestCase {
     /// …and once it has, the NEXT session claims the pane — `claude` run again in the same pane is
     /// the ordinary case and must work with zero delay.
     func testTheNextSessionClaimsAFreePane() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.sample(name: "claude", at: 0)
         _ = d.hook(bytes: event("SessionStart", session: "first"), at: 1)
         _ = d.hook(bytes: event("SessionEnd", session: "first"), at: 2)
@@ -85,7 +85,7 @@ final class ClaudePaneDetectorSessionOwnershipTests: XCTestCase {
     /// The same gate protects the SESSION TITLE (wire type 36). A nested run's prompt is not the
     /// human's prompt, and renaming the pane's session to it is a visible, sticky wrong answer.
     func testANestedPromptDoesNotRetitleTheSession() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.sample(name: "claude", at: 0)
         let mine = d.hook(
             bytes: json(
@@ -110,7 +110,7 @@ final class ClaudePaneDetectorSessionOwnershipTests: XCTestCase {
     /// (crash, `kill -9`) and is replaced inside one presence poll leaves a stale owner holding the
     /// pane — the dissent watchdog is what frees it, and then the replacement claims it.
     func testACrashedOwnerIsFreedByTheWatchdogSoAReplacementCanClaim() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.sample(name: "claude", at: 0)
         _ = d.hook(bytes: event("UserPromptSubmit", session: "dead"), at: 1)
         XCTAssertEqual(d.status, .working)
@@ -142,7 +142,7 @@ final class ClaudePaneDetectorSessionOwnershipTests: XCTestCase {
     /// call, so the parent is `working` or blocked at that instant — never at rest. The gate is the
     /// pane's own state, not a timer, so no window has to be guessed.
     func testARestartAfterACrashClaimsARestedPaneAtOnce() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.sample(name: "claude", at: 0)
         _ = d.hook(bytes: event("SessionStart", session: "dead"), at: 1)
         _ = d.hook(bytes: event("UserPromptSubmit", session: "dead"), at: 1.1)
@@ -169,7 +169,7 @@ final class ClaudePaneDetectorSessionOwnershipTests: XCTestCase {
     /// the pane back before the new one speaks. That is the whole difference between a replacement
     /// and a nested `claude -p`, which never says goodbye because it never had the pane.
     func testClearHandsThePaneOverImmediately() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.sample(name: "claude", at: 0)
         _ = d.hook(bytes: event("UserPromptSubmit", session: "before"), at: 1)
         XCTAssertEqual(d.status, .working)
@@ -186,7 +186,7 @@ final class ClaudePaneDetectorSessionOwnershipTests: XCTestCase {
     /// A pane whose agent never names a session (ctl `report`, or a hook payload without the field)
     /// keeps working exactly as before — ownership is opt-in evidence, not a requirement.
     func testUnattributedFeedsAreUnaffected() {
-        var d = ClaudePaneDetector()
+        let d = ClaudePaneDetector()
         _ = d.sample(name: "codex", at: 0)
         _ = d.report(state: "blocked", message: "approve?", at: 1)
         XCTAssertEqual(d.status, .needsPermission)
