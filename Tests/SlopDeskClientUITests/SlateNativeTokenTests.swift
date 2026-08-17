@@ -102,5 +102,34 @@ final class SlateNativeTokenTests: XCTestCase {
             "the on-glass ok ink is the profile's own ANSI green, not the system's",
         )
     }
+
+    // MARK: The motion rungs
+
+    /// A named motion is ONE curve: the SwiftUI rung and the CoreAnimation rung are built from the
+    /// same control points, so the split shell's column slide and the titlebar strip that lands with
+    /// it cannot drift apart. (The `emphasizedControlPoints` constant that used to name that curve a
+    /// second time for AppKit is gone with this.)
+    func testTheColumnSlideIsOneCurveForBothFrameworks() {
+        let curve = Slate.Motion.columnSlide
+        XCTAssertEqual(curve.duration, Slate.Anim.columnSlideDuration, "the delay token reads the rung")
+        var points = [Float](repeating: 0, count: 2)
+        curve.timingFunction.getControlPoint(at: 1, values: &points)
+        XCTAssertEqual(Double(points[0]), curve.x1, accuracy: 0.0001)
+        XCTAssertEqual(Double(points[1]), curve.y1, accuracy: 0.0001)
+        curve.timingFunction.getControlPoint(at: 2, values: &points)
+        XCTAssertEqual(Double(points[0]), curve.x2, accuracy: 0.0001)
+        XCTAssertEqual(Double(points[1]), curve.y2, accuracy: 0.0001)
+    }
+
+    /// The AppKit instrument voice is the SAME face the SwiftUI chrome sets — JetBrains Mono where
+    /// it is installed, SF Mono where it is not, never the proportional system face.
+    func testTheNativeInstrumentVoiceIsAMonoFaceAtTheAskedSize() {
+        let font = Slate.Typeface.instrumentNative(Slate.Typeface.small, weight: .semibold)
+        XCTAssertEqual(font.pointSize, Slate.Typeface.small, "the size ladder is the same ladder")
+        XCTAssertTrue(
+            font.familyName == Slate.Typeface.mono || (font.fontDescriptor.symbolicTraits.contains(.monoSpace)),
+            "a chrome label in the instrument voice is mono or it is not the instrument voice",
+        )
+    }
 }
 #endif

@@ -324,11 +324,8 @@ package final class SlopDeskSplitViewController: NSSplitViewController {
             // long, which is what keeps the arrival from reading as a snap (user-directed
             // 2026-08-09). The SwiftUI side of the same gesture — the titlebar strip that lands as
             // the sidebar leaves — is timed off the SAME token, so the two halves stay in step.
-            context.duration = Slate.Anim.columnSlideDuration
-            let points = Slate.Anim.emphasizedControlPoints
-            context.timingFunction = CAMediaTimingFunction(
-                controlPoints: points.x1, points.y1, points.x2, points.y2,
-            )
+            context.duration = Slate.Motion.columnSlide.duration
+            context.timingFunction = Slate.Motion.columnSlide.timingFunction
             item.animator().isCollapsed = collapsed
         } completionHandler: { [weak self] in
             guard restoresWidth else { return }

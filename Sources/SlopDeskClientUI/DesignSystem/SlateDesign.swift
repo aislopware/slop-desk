@@ -59,11 +59,15 @@ import AppKit
 /// `NSView` cannot fill with a `Color`) read the SAME constant the SwiftUI half derives from,
 /// instead of a second palette that drifts.
 package typealias SlateNativeColor = NSColor
+/// The platform's own font type — see ``SlateNativeColor`` for why the token layer names it.
+package typealias SlateNativeFont = NSFont
 #elseif canImport(UIKit)
 import UIKit
 
 /// See the AppKit branch — `UIColor` is the same thing on the phone.
 package typealias SlateNativeColor = UIColor
+/// See the AppKit branch.
+package typealias SlateNativeFont = UIFont
 #endif
 
 /// A TERMINAL PROFILE — the fixed palette of the terminal glass (the one deliberate-colour surface in
@@ -910,7 +914,7 @@ package enum Slate {
     }
 
     /// Geometry — theme-independent. Radii + the 8pt grid + chrome dimensions.
-    enum Metric {
+    package enum Metric {
         // MARK: The ONE-ISLAND geometry (law 3)
 
         /// The MOAT — the uniform strip of ground between the island and everything around it. The
@@ -927,7 +931,7 @@ package enum Slate {
         ///
         /// It is the OUTER margin only — nothing inside the island moves, so the panes keep their own
         /// spacing.
-        static let islandInset: CGFloat = 8
+        package static let islandInset: CGFloat = 8
         /// The island's corner — THE FRAME'S OWN, so the glass and the window that holds it speak one
         /// corner. Equal to the WINDOW's own by intent, not by coincidence: this app runs
         /// `.hiddenTitleBar`, and 16 is what macOS 26 Tahoe measures on a titlebar-only window —
@@ -958,17 +962,17 @@ package enum Slate {
         /// small because their islands tile a window edge to edge; ours is one card in a field.)
         ///
         /// History: 8 → 14 → 26 → 16.
-        static let islandRadius: CGFloat = 16
+        package static let islandRadius: CGFloat = 16
         /// The COMPACT island — the SELECTED tab's chip, at ``heightRow``/``plate`` scale. Not the
         /// big number scaled down (a corner is read against the surface it cuts, not as a ratio):
         /// this is one rung above the 8 macOS Tahoe puts on its own selected sidebar row (measured in
         /// System Settings), so a selected tab reads as a rounded island rather than the squarish
         /// card it was, while staying clear of the pill a 32pt row reaches at 16.
-        static let islandRadiusCompact: CGFloat = 10
+        package static let islandRadiusCompact: CGFloat = 10
         /// The GROUND BAND across the window's top — the strip the traffic lights and the hover
         /// titlebar stand on, beside the island. The height ladder's chrome-strip rung
         /// (``heightStrip`` / ``titlebarHeight``); the band is not a new measurement.
-        static let bandHeight: CGFloat = heightStrip
+        package static let bandHeight: CGFloat = heightStrip
         /// THE ISLAND'S TOP LINE — ``islandInset`` and nothing else, because the island keeps one
         /// moat on all four sides (user-directed 2026-08-09).
         ///
@@ -977,37 +981,37 @@ package enum Slate {
         /// and the top edge of every plate standing in the band are ONE line. At 12 it was a line
         /// that agreed with nothing — 4pt under the plates' tops, 20 above their bottoms — which is
         /// what read as "hơi lệch" across the top of the window.
-        static let bandInset: CGFloat = islandInset
+        package static let bandInset: CGFloat = islandInset
         /// Where a CONTROL in the band hangs from. Not the island's line: a control is 24 and a
         /// traffic light is 16, so hanging both from one line leaves the discs riding 4pt high
         /// against every plate beside them (user-reported 2026-08-09). This inset is the one that
         /// puts a plate's CENTRE on the lights' centre — measured at 20 on the running app, with the
         /// titlebar height declared (`SlopDeskClientApp.lowerTrafficLightsToTheTopLine`) — so the
         /// band reads as one row of centres and the island's edge runs just under the lights' own.
-        static let bandControlInset: CGFloat = space2
+        package static let bandControlInset: CGFloat = space2
 
         // Radii (from design-tokens.css)
-        static let radiusCard: CGFloat = 8
+        package static let radiusCard: CGFloat = 8
         /// A FLOATING panel's corner — the notification card, and any future free-standing panel. One rung
         /// softer than ``radiusCard``, which is tuned for content INSET into a surface: at the notification's
         /// 320pt × ~46pt an 8pt corner reads boxy, and 16 starts sliding toward a pill. 12 was picked
         /// by rendering 8 / 10 / 12 / 16 at true size side by side.
-        static let radiusPanel: CGFloat = 12
-        static let radiusTab: CGFloat = 6 // tab / sidebar-row card — rides the control-radius family
-        static let radiusControl: CGFloat = 6
-        static let radiusItem: CGFloat = 6
-        static let radiusSmall: CGFloat = 4 // small inner plate (e.g. tab close-button hover)
+        package static let radiusPanel: CGFloat = 12
+        package static let radiusTab: CGFloat = 6 // tab / sidebar-row card — rides the control-radius family
+        package static let radiusControl: CGFloat = 6
+        package static let radiusItem: CGFloat = 6
+        package static let radiusSmall: CGFloat = 4 // small inner plate (e.g. tab close-button hover)
 
         // 8pt spacing grid
-        static let space1: CGFloat = 4
-        static let space2: CGFloat = 8
-        static let space3: CGFloat = 12
-        static let space4: CGFloat = 16
+        package static let space1: CGFloat = 4
+        package static let space2: CGFloat = 8
+        package static let space3: CGFloat = 12
+        package static let space4: CGFloat = 16
 
         /// The STATE DOT: a filled circle that qualifies the text beside it (unsaved changes, a
         /// live indicator) rather than standing on its own. Sized to sit under a footnote's
         /// x-height so it reads as punctuation, not as a badge.
-        static let dot: CGFloat = 6
+        package static let dot: CGFloat = 6
 
         /// How far the island's transient chip stack (``IslandChipStack`` — copy receipt, notice,
         /// connection indicator) stands off the island's FOOT. Two rungs of the scale, not one,
@@ -1015,42 +1019,42 @@ package enum Slate {
         /// the island's bottom edge and covered the prompt line the user was typing on
         /// (user-reported 2026-08-09). At 24 there is a clear channel of glass under it, so the
         /// prompt stays readable while the chip is up.
-        static let islandChipInset: CGFloat = space4 + space2
+        package static let islandChipInset: CGFloat = space4 + space2
 
         // The HEIGHT LADDER (MERIDIAN C1) — the closed vertical rhythm, every step a multiple of 4.
         // View code picks a rung, never a raw `frame(height: N)` literal (`check-ds-leaks.sh` enforces it).
         /// Popover/menu rows, chips, the titlebar clusters, plate buttons.
-        static let heightControl: CGFloat = 24
+        package static let heightControl: CGFloat = 24
         /// Bars: the pane header, title-menu rows.
-        static let heightBar: CGFloat = 28
+        package static let heightBar: CGFloat = 28
         /// The standard single-line list row (palette results, footers).
-        static let heightRow: CGFloat = 32
+        package static let heightRow: CGFloat = 32
         /// The ROOMY single-line row — a list read at a GLANCE rather than scanned. One rung above
         /// `heightRow`.
-        static let heightRowTall: CGFloat = 44
+        package static let heightRowTall: CGFloat = 44
         /// The TWO-REGISTER row: an identity with its place set under it (the ⌃⇥ switcher). Two type
         /// sizes stacked (13 over 11) come to ~29pt of ink, so this rung is that plus a breath either
         /// side — one step above `heightRowTall`, which is the same row with only one thing to say.
-        static let heightRowStacked: CGFloat = 48
+        package static let heightRowStacked: CGFloat = 48
         /// The sidebar TAB row — the standard single-line row rung (`heightRow`), so the tab list
         /// keeps the ladder's beat: denser than a lounge list, taller than a menu row.
-        static let heightTabRow: CGFloat = heightRow
+        package static let heightTabRow: CGFloat = heightRow
         /// The chrome rail OUTSIDE the project islands — the connection footer's content inset and
         /// the empty-list label's. `space3`, one step wider than the rail inside an island, because
         /// nothing out here has an island edge to stand off from.
-        static let tabRowInset: CGFloat = space3
+        package static let tabRowInset: CGFloat = space3
         /// How far a project island holds its content off its OWN edge — the selected row's dark
         /// chip must float inside the bed rather than butt against it. A grid step (`space2`), and
         /// chosen at true size against 6 and 10 (user-directed 2026-08-08).
-        static let projectIslandInset: CGFloat = space2
+        package static let projectIslandInset: CGFloat = space2
         /// The text rail INSIDE a project island — header name, git line and every row title stand
         /// here. `projectIslandInset + islandRail` is held at 18 so the runs keep the rail the
         /// sidebar had before the islands arrived, minus nothing: what the island spends on its own
         /// breathing room, the rail gives back.
-        static let islandRail: CGFloat = 10
+        package static let islandRail: CGFloat = 10
         /// The sidebar project-group header row (gutter chevron + name). 24pt + the list's 2pt row
         /// spacing on both sides = the 28pt inter-group band; the air IS the separator.
-        static let heightSectionHeader: CGFloat = 24
+        package static let heightSectionHeader: CGFloat = 24
         /// Chrome strips: the titlebar / traffic-light band. NOT a free number — one control
         /// (``heightControl``) with ``bandControlInset`` above and a matching grid step below, so the
         /// row sits centred on the traffic lights' own centre. Every column's SECOND row starts
@@ -1061,28 +1065,28 @@ package enum Slate {
         /// The island's FIRST row does not: it starts at ``bandInset``, inside the band
         /// (user-directed 2026-08-09). A band the island merely hung below — tried at both 40 and 32
         /// — read as the middle column starting one row lower than the two beside it.
-        static let heightStrip: CGFloat = bandControlInset + heightControl + space2
+        package static let heightStrip: CGFloat = bandControlInset + heightControl + space2
         /// The overlay search-input strip (palette / navigator / global search / open-quickly).
-        static let heightInput: CGFloat = 48
+        package static let heightInput: CGFloat = 48
         /// A drawer that shares a column with the thing it is about (the simulator console under the
         /// device). Fixed rather than proportional: the drawer is a reading surface and a share-of-the
         /// -column would make its row count depend on the window height, so the same log would show
         /// four lines on a laptop and twenty on a display. Six rows plus the drawer's own strip.
-        static let heightDrawer: CGFloat = 180
+        package static let heightDrawer: CGFloat = 180
 
         /// A FORM card's fixed width (connect, peek-reply) — one width for every dialog-shaped overlay,
         /// so two cards summoned in a row read as the same object at the same distance. List overlays
         /// (palette / open-quickly / global search) size to their own content instead.
-        static let cardFormWidth: CGFloat = 460
+        package static let cardFormWidth: CGFloat = 460
         /// A PORT number's field on a form card — five digits wide, never the card's width: a field's
         /// width is part of what it says about its answer.
-        static let portFieldWidth: CGFloat = 96
+        package static let portFieldWidth: CGFloat = 96
 
         // Chrome dimensions (semantic aliases INTO the height ladder — never a sixth literal)
-        static let paneHeaderHeight: CGFloat = heightBar
+        package static let paneHeaderHeight: CGFloat = heightBar
         /// The hover-reveal titlebar strip height — the content area reserves this at its top so the
         /// terminal starts BELOW the titlebar (the resting silhouette), not under the centred title.
-        static let titlebarHeight: CGFloat = heightStrip
+        package static let titlebarHeight: CGFloat = heightStrip
         /// Where chrome may start on the traffic-light row: clear of the three system window
         /// controls. MEASURED on the running app with the titlebar declared at toolbar height
         /// (`SlopDeskClientApp.growTitlebarToBandHeight`) — three discs from a 12pt leading inset on
@@ -1091,44 +1095,44 @@ package enum Slate {
         /// starts a plate further right so the two never contend for the slot.
         /// ⚠️ This is AppKit's placement, not ours. Do not reintroduce a manual inset constant —
         /// positioning the buttons by frame is what made them flicker on every window re-title.
-        static let windowControlsLead: CGFloat = 80
-        static let sidebarWidth: CGFloat = 220
+        package static let windowControlsLead: CGFloat = 80
+        package static let sidebarWidth: CGFloat = 220
         /// The RIGHT PANEL'S RAIL — what the panel leaves behind instead of vanishing (user-directed
         /// 2026-08-09). One control plate with the grid's inset either side, which puts the rail's
         /// toggle at exactly the x the panel's own hide toggle stands at, so the one control the
         /// user aims at never moves between the two states. Everything below it — the surface tabs,
         /// turned on their side — is that same plate width.
-        static let panelRailWidth: CGFloat = plate + 2 * space2
+        package static let panelRailWidth: CGFloat = plate + 2 * space2
         /// A rail tab's LONG side, the one that runs down the rail. Every tab takes the same length
         /// (the widest name plus its mark and the plate's own padding), because a rail of tabs each
         /// as long as its own word reads as a ragged list rather than as a strip of tabs.
-        static let panelRailTabLength: CGFloat = 104
+        package static let panelRailTabLength: CGFloat = 104
         /// The Settings window's left navigator column (a two-column Settings layout — wider than the
         /// workspace sidebar so the icon+label section rows + the search pill sit comfortably).
-        static let settingsSidebarWidth: CGFloat = 260
-        static let hairline: CGFloat = 1
-        static let cardBorderWidth: CGFloat = 1
-        static let dividerHoverWidth: CGFloat = 2
+        package static let settingsSidebarWidth: CGFloat = 260
+        package static let hairline: CGFloat = 1
+        package static let cardBorderWidth: CGFloat = 1
+        package static let dividerHoverWidth: CGFloat = 2
         /// Active-pane focus marker: leg length (points) of the small FILLED accent triangle in the focused
         /// pane's TOP-LEFT corner (Warp-style), not a box/bracket/underline/dot/top-bar outline and not
         /// dimming the unfocused panes — a small corner mark signals focus without adding a border to the
         /// FLAT pane or making idle panes look disabled.
-        static let focusCornerSize: CGFloat = 12
+        package static let focusCornerSize: CGFloat = 12
 
         // Control plate (PlateIconButton) — rides the ladder's control rung.
-        static let plate: CGFloat = heightControl
-        static let iconSize: CGFloat = 13
+        package static let plate: CGFloat = heightControl
+        package static let iconSize: CGFloat = 13
         // Settings option CARDS (`SettingsOptionCards`) — the illustrated radio group used where the choice
         // has a SHAPE (cursor caret, tab position, key layout, window geometry, theme). ONE size for all of
         // them: a card that is bigger in one group than another reads as a different control.
         /// The illustration band inside one option card: the drawing area above the label. Two control
         /// rungs (2 × `heightControl`) — enough for a legible mini-diagram (including the theme swatch's
         /// title bar + three code lines), still a card and not a panel.
-        static let settingsCardArt: CGFloat = heightControl * 2
+        package static let settingsCardArt: CGFloat = heightControl * 2
         /// One option card's width — FIXED, not a minimum. The grid wraps at this width rather than
         /// stretching its columns, so every card in Settings is the same size (a theme swatch is exactly as
         /// wide as a caret card). 116 fits the longest card label ("Classic Light") without truncating.
-        static let settingsCardWidth: CGFloat = 116
+        package static let settingsCardWidth: CGFloat = 116
 
         // Simulator DEVICE cards + the device list's columns (`SimulatorDeviceList`). A right panel is
         // ~700pt wide and a device name is ~180 of it, so both of these exist to stop a list of names
@@ -1138,13 +1142,13 @@ package enum Slate {
         /// to what the server actually sends: its scale-6 capture is 202 × 438 (measured 2026-08-04),
         /// which at 2× is exactly a 200pt-tall box. Bigger would be upscaling; smaller would be paying
         /// for pixels and then throwing them away.
-        static let deviceCardArt: CGFloat = 200
+        package static let deviceCardArt: CGFloat = 200
         /// A device card's width — FIXED, like the Settings option card and for the same reason: an
         /// adaptive column stretches, so a single running device would be one 700pt-wide card with a
         /// 92pt phone floating in the middle of it. A portrait phone at ``deviceCardArt`` is the narrow
         /// case (92) and an iPad the wide one (150); both centre in this, so the two shapes read true
         /// against each other, and the caption under them still fits a name and its verb.
-        static let deviceCardWidth: CGFloat = 180
+        package static let deviceCardWidth: CGFloat = 180
         /// ``AndroidRobotMark``'s box in a tab plate — the ONE mark in the app that is a drawn path
         /// rather than an SF Symbol, and therefore the one that needs a number of its own.
         ///
@@ -1164,24 +1168,24 @@ package enum Slate {
         /// ears. The number survived the tabs gaining labels (`1f06cd0a` → the round after it): a
         /// mark beside its own word is no longer compared with the mark two tabs over, so the width
         /// this costs stopped mattering, and nothing recommended changing what the ink says.
-        static let androidMark: CGFloat = 17
+        package static let androidMark: CGFloat = 17
         /// The device-family mark's column (`SimulatorFamilyMark`). One control rung wide because the
         /// five silhouettes are NOT one width: measured at 13pt type the phone is 13 across, the
         /// landscape pad 20 and the vision headset 23. Sized to the narrowest, the wide ones spill into
         /// the gap and touch the name; sized to the widest, every name in the list starts on one rail
         /// no matter which family the row belongs to.
-        static let deviceMarkWidth: CGFloat = heightControl
+        package static let deviceMarkWidth: CGFloat = heightControl
         /// A device ROW's minimum column width in the list's grid. Fits the longest device name this
         /// server serves ("iPad Pro 13-inch (M5)") plus its verb without truncating, and wraps to two
         /// columns at panel width instead of stranding a triangle 500pt from the name it belongs to.
-        static let deviceRowWidth: CGFloat = 240
+        package static let deviceRowWidth: CGFloat = 240
 
         /// A popover's content width. FIXED for the same reason the notification card is: a popover that
         /// hugs its content is a popover whose width is decided by whichever row happens to hold the
         /// longest string, so the same control opens at a different size on different data. 260 is the
         /// sidebar's own working width — a popover anchored in the sidebar reads as belonging to it
         /// rather than as a window that happened to land there.
-        static let popoverWidth: CGFloat = 260
+        package static let popoverWidth: CGFloat = 260
 
         // Notification stack (`ToastStackView`) — a notification is a pane speaking from off-screen, so it
         // is a small card in the corner, never a sheet.
@@ -1192,29 +1196,29 @@ package enum Slate {
         /// card in a burst was whichever happened to have the longest name. A single column edge is what
         /// lets a stack read as one stack. 320 (down from the old 340) with the ✕ no longer holding a
         /// permanent slot, so a short title no longer stares across a gutter at a button.
-        static let toastWidth: CGFloat = 320
+        package static let toastWidth: CGFloat = 320
     }
 
     /// Typography scale — one named role per size; UI = system, instrument/rail = JetBrains Mono (SF Mono
     /// when absent). A closed scale (no raw `.font(.system(size:))` literals in view code —
     /// `scripts/check-ds-leaks.sh` enforces it).
-    enum Typeface {
+    package enum Typeface {
         /// Large empty-state / placeholder glyph (build-status / empty pane).
-        static let display: CGFloat = 40
+        package static let display: CGFloat = 40
         /// A floating card's TITLE — one rung above ``body``, the only size in the overlay family that
         /// outranks the content it names.
-        static let title: CGFloat = 15
+        package static let title: CGFloat = 15
         /// Primary content + the command input field — the slightly-larger reading size.
-        static let body: CGFloat = 13
+        package static let body: CGFloat = 13
         /// Default UI label size — the sidebar's ROW TITLES included.
-        static let base: CGFloat = 12
+        package static let base: CGFloat = 12
         /// Secondary labels, chips, pills, the sidebar's project headers.
-        static let footnote: CGFloat = 11
+        package static let footnote: CGFloat = 11
         /// Captions, kbd hints, tab subtext.
-        static let small: CGFloat = 10
+        package static let small: CGFloat = 10
         /// The instrument face: the same family libghostty embeds as the terminal's default, so the
         /// chrome's mono voice IS the pane's voice.
-        static let mono = "JetBrains Mono"
+        package static let mono = "JetBrains Mono"
 
         /// Whether ``mono`` is actually resolvable on this machine — `Font.custom` with a missing
         /// family falls back to the PROPORTIONAL system face silently (no mono at all), so the
@@ -1233,23 +1237,45 @@ package enum Slate {
         /// (cwd / git line / host-app / telemetry) renders in the mono face — the terminal's own
         /// register, so the chrome reads like terminal text. Numbers stay tabular by the face itself.
         /// Prose OUTSIDE the rail (menus, sentences, dialogs) keeps the system face.
-        static func instrument(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        package static func instrument(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
             monoInstalled
                 ? .custom(mono, size: size).weight(weight)
                 : .system(size: size, weight: weight, design: .monospaced)
         }
 
+        /// The SAME voice for an AppKit label (docs/56 stage D) — the same family, the same
+        /// installed check, the same SF Mono fallback, because the value here is the FACE and the
+        /// size ladder, not the font object either framework builds out of them.
+        ///
+        /// Not derived from ``instrument(_:weight:)`` by conversion, and deliberately not the other
+        /// way round either: `Font.custom(_:size:)` scales with Dynamic Type and `Font(_: NSFont)`
+        /// does not, so deriving the SwiftUI rung from this one would silently pin the phone's text
+        /// at a fixed size.
+        package static func instrumentNative(
+            _ size: CGFloat, weight: SlateNativeFont.Weight = .regular,
+        ) -> SlateNativeFont {
+            guard monoInstalled else { return .monospacedSystemFont(ofSize: size, weight: weight) }
+            let descriptor = SlateNativeFont.systemFont(ofSize: size, weight: weight)
+                .fontDescriptor.withFamily(mono)
+            #if canImport(AppKit)
+            return NSFont(descriptor: descriptor, size: size)
+                ?? .monospacedSystemFont(ofSize: size, weight: weight)
+            #else
+            return UIFont(descriptor: descriptor, size: size)
+            #endif
+        }
+
         /// Tracking (pt) for caps micro-labels set in the instrument voice — wide enough to read as
         /// engraving, applied ONLY to all-caps labels.
-        static let instrumentTracking: CGFloat = 1.2
+        package static let instrumentTracking: CGFloat = 1.2
         /// Tracking (pt) for the SIDEBAR's caps labels ("TABS", project headers) — the otty
         /// measurement (`.tracking(0.6)` on the system face), narrower than the instrument engraving.
-        static let capsTracking: CGFloat = 0.6
+        package static let capsTracking: CGFloat = 0.6
         /// Tracking (pt) for caps micro-labels on a PILL/BADGE plate (the secure-input pill, the
         /// mode badges) — measured off the system secure-input pill's own small-caps spacing, one
         /// shade tighter than the sidebar's ``capsTracking``; its own rung because it is a
         /// measurement, not a preference.
-        static let pillTracking: CGFloat = 0.5
+        package static let pillTracking: CGFloat = 0.5
     }
 
     /// The SHADOW ladder (round 13) — one named rung per depth a floating object can sit at, so a
@@ -1261,7 +1287,7 @@ package enum Slate {
     /// — a 2/1 whisper for a plate resting IN a surface — is gone with the selection chip's shadow
     /// (user-directed 2026-08-09): at-rest depth is the fill ladder's job, and a cast under a
     /// stationary plate is the flourish a flat vocabulary reads as dated.
-    enum Elevation {
+    package enum Elevation {
         /// A pill/chip floating over the glass: status pills, mode badges, instrument chips.
         case chip
         /// A pane ghost mid-drag — clearly lifted, still near.
@@ -1271,7 +1297,7 @@ package enum Slate {
         /// The command palette — the deepest float in the app.
         case palette
 
-        var radius: CGFloat {
+        package var radius: CGFloat {
             switch self {
             case .chip: 4
             case .ghost: 8
@@ -1280,7 +1306,7 @@ package enum Slate {
             }
         }
 
-        var y: CGFloat {
+        package var y: CGFloat {
             switch self {
             case .chip: 1
             case .ghost: 2
@@ -1291,43 +1317,70 @@ package enum Slate {
     }
 
     /// Animation timing — extracted verbatim from `ReplicaKit.Anim` (cubic-bezier, NO springs anywhere).
+    /// THE MOTION VALUES — a curve and a duration, before a framework animates with them.
+    ///
+    /// Same reason as ``Slate/Native``: `withAnimation` is SwiftUI's, and the AppKit surfaces stage D
+    /// is porting animate through `CAAnimation` / `NSAnimationContext`, which take control points and
+    /// a duration. One value, two views of it — ``Anim`` below is the SwiftUI view of this namespace,
+    /// and ``SlateCurve/timingFunction`` is the CoreAnimation one. The split shell has needed the raw
+    /// points since long before the port (`NSSplitViewItem.animator()` cannot take an `Animation`),
+    /// and it used to reach for a lone `emphasizedControlPoints` constant that named the curve a
+    /// second time.
+    package enum Motion {
+        /// Relayout / panel / tab-select / indicator slide — EaseInEaseOut 0.20s.
+        package static let standard = SlateCurve(0.42, 0, 0.58, 1, duration: 0.20)
+        /// animateIn / row reflow / toggle thumb — EaseOut 0.18s.
+        package static let fadeSlideIn = SlateCurve(0, 0, 0.58, 1, duration: 0.18)
+        /// Hover reveal / panel-toggle show — EaseOut 0.15s.
+        package static let reveal = SlateCurve(0, 0, 0.58, 1, duration: 0.15)
+        /// animateOut — EaseIn 0.14s.
+        package static let fadeOut = SlateCurve(0.42, 0, 1, 1, duration: 0.14)
+        /// Scroll fade / link pill / hover plate — EaseOut 0.12s.
+        package static let smallFade = SlateCurve(0, 0, 0.58, 1, duration: 0.12)
+        /// Divider / plate hover — EaseInEaseOut 0.16s.
+        package static let dividerHover = SlateCurve(0.42, 0, 0.58, 1, duration: 0.16)
+        /// The MERIDIAN L4 "needle" — see ``Anim/needle``.
+        package static let needle = SlateCurve(0.2, 0, 0, 1, duration: 0.24)
+        /// A whole COLUMN reflowing — see ``Anim/stackReflow``.
+        package static let stackReflow = SlateCurve(0.4, 0, 0.2, 1, duration: 0.28)
+        /// The selection plate travelling — see ``Anim/selectionMorph``.
+        package static let selectionMorph = SlateCurve(0.4, 0, 0.2, 1, duration: 0.26)
+        /// A split COLUMN opening or closing — the longest move in the app; see ``Anim/columnSlide``.
+        package static let columnSlide = SlateCurve(0.4, 0, 0.2, 1, duration: 0.32)
+        /// The one repeating shape — see ``Anim/pulse`` (the repeat itself is SwiftUI's).
+        package static let pulse = SlateCurve(0.42, 0, 0.58, 1, duration: 0.55)
+    }
+
     enum Anim {
         /// Relayout / panel / tab-select / indicator slide — EaseInEaseOut 0.20s.
-        static let standard = Animation.timingCurve(0.42, 0, 0.58, 1, duration: 0.20)
+        static let standard = Motion.standard.animation
         /// animateIn / row reflow / toggle thumb — EaseOut 0.18s.
-        static let fadeSlideIn = Animation.timingCurve(0, 0, 0.58, 1, duration: 0.18)
+        static let fadeSlideIn = Motion.fadeSlideIn.animation
         /// Hover reveal / panel-toggle show — EaseOut 0.15s.
-        static let reveal = Animation.timingCurve(0, 0, 0.58, 1, duration: 0.15)
+        static let reveal = Motion.reveal.animation
         /// animateOut — EaseIn 0.14s.
-        static let fadeOut = Animation.timingCurve(0.42, 0, 1, 1, duration: 0.14)
+        static let fadeOut = Motion.fadeOut.animation
         /// Scroll fade / link pill / hover plate — EaseOut 0.12s.
-        static let smallFade = Animation.timingCurve(0, 0, 0.58, 1, duration: 0.12)
+        static let smallFade = Motion.smallFade.animation
         /// How fast THE acknowledgement plays (`View.slateGlyphAck`) — a symbol bounce runs long by
         /// default and a click has to feel answered, not performed. Lives here rather than at the one
         /// call site because the effect is the app's, not any one button's.
         static let ackSpeed: Double = 1.4
         /// Divider / plate hover — EaseInEaseOut 0.16s.
-        static let dividerHover = Animation.timingCurve(0.42, 0, 0.58, 1, duration: 0.16)
+        static let dividerHover = Motion.dividerHover.animation
         /// MERIDIAN L4 "needle" — the mechanical settle used for the ONE orchestrated moment (the connect
         /// handshake's colour-in). Fast attack, long decel, no overshoot (no springs anywhere).
-        static let needle = Animation.timingCurve(0.2, 0, 0, 1, duration: 0.24)
-        /// The EMPHASIZED curve — a fast, decisive attack with a long settle, for the moves big
-        /// enough that the eye tracks the object rather than just noticing the result. Named once
-        /// here because two very different actuators spend it: SwiftUI (`stackReflow`, `columnSlide`)
-        /// and AppKit (`NSSplitViewItem.animator()`, which cannot take a SwiftUI `Animation` and so
-        /// needs the raw control points).
-        static let emphasizedControlPoints: (x1: Float, y1: Float, x2: Float, y2: Float)
-            = (0.4, 0, 0.2, 1)
+        static let needle = Motion.needle.animation
         /// A whole COLUMN reflowing (toast spine expand/collapse shifts every sibling card, not just the
         /// hovered one) — a shade longer than `standard`, gentle symmetric ease so the reverse (mouse-out)
         /// reads as calm as the forward. EaseInEaseOut 0.28s.
-        static let stackReflow = Animation.timingCurve(0.4, 0, 0.2, 1, duration: 0.28)
+        static let stackReflow = Motion.stackReflow.animation
         /// The SELECTION PLATE travelling between two chips (`SlateCompactIsland`'s morph). Longer
         /// than `standard` and on the emphasized curve on purpose: `standard` is sized for a state
         /// that CHANGES IN PLACE, and spent on a plate crossing the whole panel it read as a skip
         /// rather than a move (measured: the plate cleared 128pt in ~120ms). This is still well
         /// under the column slide — the plate is the smaller object and must not feel heavier.
-        static let selectionMorph = Animation.timingCurve(0.4, 0, 0.2, 1, duration: 0.26)
+        static let selectionMorph = Motion.selectionMorph.animation
         /// How far the selection plate is CLOSED at the start of an ignite — the height it opens
         /// FROM when it arrives in an island the previous selection was not in (user-directed
         /// 2026-08-10). Not a `Metric`: it is a ratio the motion spends, not a dimension the layout
@@ -1346,13 +1399,12 @@ package enum Slate {
         /// the emphasized curve and a beat more than `stackReflow` to keep the terminal's re-wrap
         /// from reading as a snap. Anything that has to LAND with the column (the titlebar strip
         /// arriving as the sidebar leaves) delays by this much.
-        static let columnSlideDuration: Double = 0.32
-        static let columnSlide = Animation.timingCurve(0.4, 0, 0.2, 1, duration: columnSlideDuration)
+        static let columnSlideDuration = Motion.columnSlide.duration
+        static let columnSlide = Motion.columnSlide.animation
         /// The ONE repeating shape in the vocabulary — a slow symmetric breathe for a preview that
         /// demonstrates blinking (the cursor preview). EaseInEaseOut 0.55s, autoreversing forever;
         /// never used on live chrome (the at-rest-motion purge stands).
-        static let pulse = Animation.timingCurve(0.42, 0, 0.58, 1, duration: 0.55)
-            .repeatForever(autoreverses: true)
+        static let pulse = Motion.pulse.animation.repeatForever(autoreverses: true)
     }
 }
 
@@ -1429,6 +1481,40 @@ extension UIColor {
     }
 }
 #endif
+
+/// A NAMED MOTION — a cubic Bézier and a duration, which is what both animation frameworks in this
+/// client actually take: SwiftUI wants an `Animation`, CoreAnimation wants control points plus a
+/// `duration` on the context. Spelling the rung once as the value and deriving both views of it is
+/// the same move ``Slate/Native`` makes for colour, and for the same reason — the AppKit surfaces
+/// (docs/56 stage D) must animate on the app's curve without re-typing its numbers.
+package struct SlateCurve: Equatable, Sendable {
+    package let x1: Double
+    package let y1: Double
+    package let x2: Double
+    package let y2: Double
+    /// Seconds. The one number a delay off this rung (`.delay(columnSlideDuration * 0.55)`) reads.
+    package let duration: Double
+
+    package init(_ x1: Double, _ y1: Double, _ x2: Double, _ y2: Double, duration: Double) {
+        self.x1 = x1
+        self.y1 = y1
+        self.x2 = x2
+        self.y2 = y2
+        self.duration = duration
+    }
+
+    /// The SwiftUI view of the rung.
+    package var animation: Animation { .timingCurve(x1, y1, x2, y2, duration: duration) }
+
+    #if canImport(AppKit)
+    /// The CoreAnimation view of the rung — for a `CAAnimation`'s `timingFunction` or an
+    /// `NSAnimationContext`'s (`NSSplitViewItem.animator()` has needed exactly this since before the
+    /// AppKit port began).
+    package var timingFunction: CAMediaTimingFunction {
+        CAMediaTimingFunction(controlPoints: Float(x1), Float(y1), Float(x2), Float(y2))
+    }
+    #endif
+}
 
 // MARK: - The value side of both bridges
 
