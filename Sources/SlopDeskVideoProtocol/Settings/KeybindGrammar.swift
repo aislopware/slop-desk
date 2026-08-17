@@ -27,11 +27,6 @@ import SlopDeskArena
 /// far side answers the base key as the user lowercased it, and `KeyChord.init` folds the aliases
 /// (`leftarrow` → `left`) as it does for every chord, parsed or dispatched.
 public enum KeybindGrammar {
-    /// The ESCAPE control byte (`0x1B`) — the lead byte of `esc:` and `csi:` (`ESC [`) sequences.
-    public static let esc: UInt8 = 0x1B
-    /// The CSI introducer that follows `ESC` in a `csi:` sequence: `[` (`0x5B`).
-    public static let csiIntroducer: UInt8 = 0x5B
-
     /// A parsed binding action — the typed right-hand side of one `keybind` entry. Literal-byte variants
     /// (`text`/`csi`/`esc`) carry the resolved bytes ready for `sendBytes`; `named` carries a stable action
     /// id + optional arg for the registry; `unbind` suppresses a default (the chord lives in ``ParsedBinding``).

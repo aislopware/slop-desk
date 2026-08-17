@@ -1720,6 +1720,24 @@ if ! grep -q "HELLO_BANNER: &\[u8\] = b\"${swift_banner}\"" "${RUST_SCREEN_PROTO
   fail "screend hello banner '${swift_banner}' is not what ${RUST_SCREEN_PROTOCOL} answers"
 fi
 
+# The RESET frame's flag bits. Each is one bit of a byte hostd sets and screend reads, so a bit
+# claimed on one side and not the other does not fail to parse: a rebuild-replay flag read as
+# agent-changed rebuilds nothing and reports an agent that did not change. DERIVED both ways, so a
+# fifth flag added to either side without the other fails here rather than at a running daemon.
+# `scripts/check-shared-constants.py` sends the pair here — a socket cannot link the other's const.
+swift_screen_flags=$(
+  sed -n 's/^ *public static let flag\([A-Za-z]*\): UInt8 = \(0x[0-9a-fA-F]*\)$/\1 \2/p' \
+    "${SWIFT_SCREEN_PROTOCOL}" | tr '[:upper:]' '[:lower:]' | sort | tr '\n' ' '
+)
+rust_screen_flags=$(
+  sed -n 's/^pub const FLAG_\([A-Z_]*\): u8 = \(0x[0-9a-fA-F]*\);$/\1 \2/p' \
+    "${RUST_SCREEN_PROTOCOL}" | tr -d '_' | tr '[:upper:]' '[:lower:]' | sort | tr '\n' ' '
+)
+if [[ -z "${swift_screen_flags}" ]]; then
+  fail "${SWIFT_SCREEN_PROTOCOL} names no reset flags — this gate reads nothing and would pass"
+fi
+same "screend reset flags" "${swift_screen_flags}" "${rust_screen_flags}"
+
 # No SWIFT screen engine. The parser, the renderer and the overprint collapser were DELETED when
 # they moved to Rust, and a re-added Swift copy is the cross-language mirror the tree forbids —
 # which is exactly the shape a "just a small fallback" commit takes (`CLAUDE.md`, `docs/52` §4).

@@ -73,19 +73,34 @@ VOCABULARIES = [
     ),
 ]
 
+# A DERIVED gate names no constant, which is what makes it a ratchet rather than a list — and what
+# makes it invisible to the "does check-supervisor.sh mention this name" test below. These pairs
+# declare the gate that already compares them, so the two are not counted twice.
+# Keyed by the gate's own label, which must still be there: an escape hatch pointing at a gate
+# someone deleted is a suppression, not a ratchet.
+DERIVED_RATCHETS = {
+    ("Sources/SlopDeskScreen/ScreenProtocol.swift", "rust/slopdesk-screenwire/src/lib.rs"): (
+        'same "screend reset flags"'
+    ),
+}
+
 RUST_SCOPE = re.compile(r"^pub mod ([a-z_]+) \{$", re.MULTILINE)
 SWIFT_SCOPE = re.compile(r"^public enum ([A-Za-z]+) \{$", re.MULTILINE)
+
+# Decimal, hex or binary — a flag byte is written `0x10` on both sides and a decimal-only pattern
+# reads neither of them, which is how four `slopdesk-screenwire` flags stayed unwatched.
+NUMBER = r"(0[xX][0-9a-fA-F_]+|0b[01_]+|[0-9][0-9_]*(?:\.[0-9]+)?)"
 
 RUST_CONST = re.compile(
     # Indented, because a vocabulary declares its constants inside a `mod` — anchoring at column 0
     # hid every field byte in `slopdesk_wire::document::fields` from this gate until 2026-08-17.
     r"^[ \t]*pub const ([A-Z][A-Z_0-9]*): *"
-    r"(?:usize|u8|u16|u32|u64|i8|i16|i32|i64|f32|f64) *= *([0-9][0-9_]*(?:\.[0-9]+)?)\s*;",
+    r"(?:usize|u8|u16|u32|u64|i8|i16|i32|i64|f32|f64) *= *" + NUMBER + r"\s*;",
     re.MULTILINE,
 )
 SWIFT_CONST = re.compile(
     r"^\s*(?:public |private |internal |fileprivate )?static let ([A-Za-z][A-Za-z0-9]*)"
-    r"(?: *: *[A-Za-z][A-Za-z0-9]*)? *= *([0-9][0-9_]*(?:\.[0-9]+)?)\s*$",
+    r"(?: *: *[A-Za-z][A-Za-z0-9]*)? *= *" + NUMBER + r"\s*$",
     re.MULTILINE,
 )
 
@@ -99,7 +114,9 @@ def tracked(pattern: str) -> list[Path]:
 
 
 def numeric(text: str) -> float:
-    return float(text.replace("_", ""))
+    """A literal's value, in whichever of the three notations it was written."""
+    plain = text.replace("_", "")
+    return float(int(plain, 0)) if plain[:2].lower() in {"0x", "0b"} else float(plain)
 
 
 def scopes(
@@ -165,6 +182,9 @@ def main() -> int:
                 if numeric(value) != rust_value:
                     continue  # a different number is a different constant, or a gate's business
                 if name in HOMONYMS or name in ratcheted or rust_name in ratcheted:
+                    continue
+                pair = (str(path.relative_to(ROOT)), str(rust_path.relative_to(ROOT)))
+                if DERIVED_RATCHETS.get(pair, "\0") in ratcheted:
                     continue
                 findings.append(
                     f"  {path.relative_to(ROOT)}: `{name} = {value}` restates "
