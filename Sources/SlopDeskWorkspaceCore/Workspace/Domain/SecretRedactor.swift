@@ -17,7 +17,17 @@ import Foundation
 public enum SecretRedactor {
     /// The fixed placeholder a masked secret collapses to. Contains no secret-shaped substring, so
     /// ``redact(_:)`` is idempotent (re-running never re-matches the mask).
-    public static let mask = "«redacted»"
+    ///
+    /// Asked for, not spelled: this is what the redaction tests assert against, and a transcribed
+    /// copy would pass on a mask the crate stopped producing.
+    public static let mask: String = {
+        var out = [UInt8](repeating: 0, count: 64)
+        let needed = out.withUnsafeMutableBufferPointer { room in
+            slopdesk_ws_secret_mask(room.baseAddress, room.count)
+        }
+        guard needed > 0, needed <= out.count else { return "" }
+        return String(bytes: out[0..<needed], encoding: .utf8) ?? ""
+    }()
 
     /// Returns `text` with any recognized secret masked. The crate answers with a cheap pre-filter for the
     /// common case (a short title with no trigger character), so this is safe to call on every render.

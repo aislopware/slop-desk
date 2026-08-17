@@ -152,6 +152,17 @@ if ! grep -q '"SLOPDESK_SUPERD_SOCKET"' "${RUST_PATHS}"; then
   fail "${RUST_PATHS} no longer names SLOPDESK_SUPERD_SOCKET"
 fi
 
+# The agent-control address, on the same footing. hostd EXPORTS it into every PTY's environment and
+# `slopdesk-ctl` — a separate binary an agent shells out to — READS it to find the socket. A rename
+# on one side is the quietest failure of the three: every `slopdesk-ctl` invocation simply reports
+# no host, which reads as "the control listener is off" and is the documented default.
+if ! grep -q '"SLOPDESK_CONTROL_SOCKET"' "Sources/SlopDeskHost/HostEnvironment.swift"; then
+  fail "Sources/SlopDeskHost/HostEnvironment.swift no longer exports SLOPDESK_CONTROL_SOCKET — slopdesk-ctl would find no host (docs/51 §1)"
+fi
+if ! grep -q '"SLOPDESK_CONTROL_SOCKET"' "rust/slopdesk-ctl/src/lib.rs"; then
+  fail "rust/slopdesk-ctl/src/lib.rs no longer reads SLOPDESK_CONTROL_SOCKET"
+fi
+
 # The OTHER three are superd's alone, and Swift must not learn them. hostd is told the hook and
 # agent-control paths in the `hello` reply, which is the whole reason that reply carries them; the
 # lock file is none of its business. A Swift constant for any of them would be a second answer to

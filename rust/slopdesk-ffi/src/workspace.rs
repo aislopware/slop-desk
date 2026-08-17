@@ -336,6 +336,24 @@ pub unsafe extern "C" fn slopdesk_ws_redact_secrets(
     }
 }
 
+/// The placeholder a masked credential collapses to. §4-shaped.
+///
+/// Asked for rather than transcribed because it is what a caller ASSERTS against — a test that
+/// spells its own copy passes on a mask the redactor stopped producing, which is the one failure a
+/// redaction test exists to catch.
+///
+/// # Safety
+/// `out` must be null or writable for `cap` bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub const unsafe extern "C" fn slopdesk_ws_secret_mask(out: *mut c_uchar, cap: usize) -> usize {
+    // SAFETY: the caller's obligation, restated above; `deliver` states its own.
+    unsafe { deliver(secrets::MASK.as_bytes(), out, cap) }
+}
+
 /// Whether `bytes` looks like a credential — a shape the redactor knows, or a single high-entropy
 /// token. The preview a clipboard ring renders asks this before it shows anything at all.
 ///

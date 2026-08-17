@@ -389,6 +389,10 @@ bool slopdesk_ws_key_token(const uint8_t *name, size_t len, uint8_t *out, size_t
 size_t slopdesk_ws_shell_quote(const uint8_t *bytes, size_t len, bool bare_if_safe, uint8_t *out,
                                size_t cap);
 size_t slopdesk_ws_redact_secrets(const uint8_t *bytes, size_t len, uint8_t *out, size_t cap);
+
+// The placeholder a masked credential collapses to. §4-shaped. Asked for because it is what a
+// caller ASSERTS against, and a transcribed copy passes on a mask the redactor stopped producing.
+size_t slopdesk_ws_secret_mask(uint8_t *out, size_t cap);
 bool   slopdesk_ws_looks_secret(const uint8_t *bytes, size_t len);
 // The pane-directory classifier and the leaf a row shows. `slopdesk_ws_cwd_display_name` answers 0
 // for "no name to show" — an absent, blank or all-slashes path — which a real name can never be.
