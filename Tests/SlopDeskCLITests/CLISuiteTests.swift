@@ -269,7 +269,7 @@ final class CLICompletionsTests: XCTestCase {
         "jump", "learn", "ignore",
         "import", "export", "features",
         "completions", "version",
-        "state:claude", "ipc", "help",
+        "state:claude", "sidecars", "ipc", "help",
     ]
 
     func testSubcommandSurfaceMatchesGolden() {

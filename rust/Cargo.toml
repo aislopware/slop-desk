@@ -5,7 +5,12 @@
 # startup-tuned profile below, and that shared requirement is the whole reason they share a
 # workspace. (`slopdesk-agenthooks` is the one member here that is NOT forked per event; it rides
 # the hook's crate because it installs the hook, and it inherits this profile harmlessly.)
-members = ["slopdesk-hook", "slopdesk-ctl", "slopdesk-cli", "slopdesk-probe"]
+#
+# `slopdesk-sidecars` is the one member that is not a program or a program's library half: it is the
+# per-tool version policy, and it is here because BOTH its callers are — `slopdesk sidecars`, which
+# is another fork-and-exit invocation, and the `.xcframework` the host links. Nothing in it wants a
+# daemon's profile; it holds no state and never blocks.
+members = ["slopdesk-hook", "slopdesk-ctl", "slopdesk-cli", "slopdesk-probe", "slopdesk-sidecars"]
 # `slopdesk-superd` is a SEPARATE workspace living in this directory, not a member — see
 # `slopdesk-superd/Cargo.toml` for why. The exclude is what keeps cargo from adopting it.
 exclude = ["slopdesk-superd"]

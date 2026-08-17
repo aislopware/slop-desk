@@ -1,0 +1,29 @@
+[package]
+name = "slopdesk-sidecars"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Is the sidecar that is RUNNING the sidecar that is INSTALLED — the verdict, the restart policy, and the manifest diff"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[lints]
+workspace = true
+
+# ## Why this is its own crate rather than a module of `slopdesk-cli`
+# It has two callers that share nothing else. `slopdesk sidecars` asks it what an UPGRADE changed,
+# from two `MANIFEST.json` files; hostd asks it, over the FFI door, whether the daemon answering
+# right now is the one on disk. Putting it in `slopdesk-cli` would make a long-lived host depend on
+# the flag parser of a short-lived program, and the split this tree already makes is on what a thing
+# is ABOUT, not on which binary happens to call it (`slopdesk-cli/src/lib.rs`, "What is deliberately
+# elsewhere").
+#
+# It is a MEMBER of the root workspace all the same: it is pure, it holds no state, and it is linked
+# into two short-lived programs and one `.xcframework`. Nothing here wants the daemons' profile.
+[dependencies]
+# The manifest is JSON a shell script wrote, and every field in it is a name or a version that came
+# off a `Cargo.toml` or a `--version` banner. `serde_json` is already the tree's answer for that in
+# `slopdesk-cli` and `slopdesk-ctl`, for the same reason: an unescaper written by hand is the
+# classic place to be wrong, and its object is a `BTreeMap`, so what is re-encoded here comes back
+# key-sorted and diffable.
+serde_json = "1"

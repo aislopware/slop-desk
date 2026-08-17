@@ -310,6 +310,11 @@ Task {
     // A daemon that will not start is logged loudly and NON-fatal — it must not tear down the
     // healthy terminal server, exactly as a failed bind did not.
     let env = ProcessInfo.processInfo.environment
+    // Held past the `if` so the version audit below can re-open dropd on the SAME destination it is
+    // serving now — a restart that silently moved the drop directory would be worse than the stale
+    // binary it was fixing.
+    var auditedDropPort: UInt16?
+    var auditedDropDirectory: URL?
     if env["SLOPDESK_FILE_TRANSFER"] != "0" {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let dropDir: URL = {
@@ -328,11 +333,32 @@ Task {
         fileDropService = drops
         if let served = await drops.start(port: ftPort, dropDirectory: dropDir) {
             log("file-drop service on 0.0.0.0:\(served) (drop dir \(dropDir.path))")
+            auditedDropPort = ftPort
+            auditedDropDirectory = dropDir
         } else {
             log("slopdesk-dropd did not come up on port \(ftPort) — continuing without file transfer")
             fileDropService = nil
         }
     }
+
+    // Last: with every sidecar either up or accounted for, ask each what version it is RUNNING and
+    // compare it against the binary on disk.
+    //
+    // Nothing above this point notices an upgrade. superd and screend are LaunchAgents held across
+    // logins; dropd, inspectord and androidd are superd's children that a restarted hostd ADOPTS
+    // rather than starts. So a `brew upgrade` writes ten new binaries and changes what is executing
+    // for none of them, and the failure mode is a host silently running last week's code with this
+    // week's version number on the box. This says so, once, in the log — and restarts the three
+    // whose restart costs a client a re-dial (`docs/49`).
+    await server.auditSidecarVersions(
+        drops: fileDropService,
+        inspector: inspectorService,
+        inspectorPort: parsed.inspectorEnabled ? bound &+ 1 : nil,
+        inspectorTranscriptPath: parsed.transcriptPath,
+        dropPort: auditedDropPort,
+        dropDirectory: auditedDropDirectory,
+        log: log,
+    )
 }
 
 // Keep the process alive for the listener + relay tasks; SIGINT drives exit().

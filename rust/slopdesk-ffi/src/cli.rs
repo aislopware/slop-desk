@@ -877,7 +877,7 @@ mod tests {
     #[test]
     fn the_subcommand_surface_crosses_whole() {
         let shape = unsafe { slopdesk_cli_subcommands(std::ptr::null_mut(), 0, std::ptr::null_mut(), 0) };
-        assert_eq!(shape.count, 25);
+        assert_eq!(shape.count, 26);
         let mut spans = vec![SlopDeskByteSpan::default(); shape.count];
         let mut arena = vec![0_u8; shape.arena_len];
         let filled = unsafe {

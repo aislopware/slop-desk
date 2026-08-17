@@ -54,7 +54,7 @@ impl Shell {
 ///
 /// CLAUDE-ONLY: the only per-agent forms are `watch:claude` and `state:claude`. `codex` and
 /// `opencode` are deliberately absent, and a test holds them out.
-pub const SUBCOMMANDS: [&str; 25] = [
+pub const SUBCOMMANDS: [&str; 26] = [
     "open",
     "view",
     "edit",
@@ -78,6 +78,7 @@ pub const SUBCOMMANDS: [&str; 25] = [
     "completions",
     "version",
     "state:claude",
+    "sidecars",
     "ipc",
     "help",
 ];

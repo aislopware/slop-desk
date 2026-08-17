@@ -169,6 +169,7 @@ dependencies = [
  "slopdesk-rowscan",
  "slopdesk-sanitize",
  "slopdesk-screenwire",
+ "slopdesk-sidecars",
  "slopdesk-superwire",
  "slopdesk-terminal",
  "slopdesk-video",
@@ -215,6 +216,13 @@ version = "0.1.0"
 [[package]]
 name = "slopdesk-screenwire"
 version = "0.1.0"
+
+[[package]]
+name = "slopdesk-sidecars"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
 
 [[package]]
 name = "slopdesk-superwire"

@@ -5561,6 +5561,39 @@ bool slopdesk_supervisor_parse_output(const unsigned char *body, size_t len,
 bool slopdesk_supervisor_parse_pane_json(const unsigned char *body, size_t len,
                                          SlopDeskSupervisorBody *out);
 
+// -- Sidecar versions: is what is RUNNING what is INSTALLED? ----------------------------------- //
+
+// `rust/slopdesk-sidecars`. Every daemon in this tree outlives the process asking about it — superd
+// and screend are launch agents, the other three are superd's children — so an upgrade replaces ten
+// binaries on disk and changes what is executing for none of them. These three answer the two
+// questions that follow from that, and neither of them restarts anything.
+//
+// All three answer as JSON TEXT: each is a small record with optional fields, and both near-side
+// callers already decode JSON on the same line of code. An absent version is an EMPTY pair in and
+// an ABSENT key out — never an empty string a UI would print as a version.
+
+// One sidecar's verdict + what may be done about it:
+//   {"tool","state":"current|stale|unknown","policy","restartable","summary",
+//    "running"?,"onDisk"?,"reason"?}
+// Zero when `tool` is empty. An empty `running`/`on_disk` is "it did not say", which is `unknown`.
+size_t slopdesk_sidecar_audit(const uint8_t *tool, size_t tool_len, const uint8_t *running,
+                              size_t running_len, const uint8_t *on_disk, size_t on_disk_len,
+                              uint8_t *out, size_t cap);
+
+// The version out of a `--version` banner: field two of line one, the one contract every shipped
+// binary honours. Zero when there is no second field.
+size_t slopdesk_sidecar_version_banner(const uint8_t *banner, size_t len, uint8_t *out, size_t cap);
+
+// What an upgrade changed, from two MANIFEST.json files and no processes at all:
+//   {"product","previousProduct":str|null,"changed":n,
+//    "tools":[{"tool","change":"unchanged|changed|added|removed","policy","note","previous"?,
+//              "current"?}]}
+// An empty `previous` is a first install — every tool reads "added". Zero when `current` is not a
+// readable manifest, which is the caller's cue to say so rather than act on a plan it does not have.
+size_t slopdesk_sidecar_upgrade_plan(const uint8_t *previous, size_t previous_len,
+                                     const uint8_t *current, size_t current_len, uint8_t *out,
+                                     size_t cap);
+
 #ifdef __cplusplus
 }
 #endif

@@ -1194,6 +1194,46 @@ public final class HostServer: @unchecked Sendable {
         HostCodeServerPerformer.sharedManager.prewarm()
     }
 
+    /// Asks every sidecar what version it is RUNNING, compares that with the binary installed on
+    /// disk, and restarts the ones whose restart costs nothing (`docs/49`).
+    ///
+    /// This exists because an upgrade does not reach a running daemon. superd is a `LaunchAgent`
+    /// held across logins, screend is one too, and dropd/inspectord/androidd are superd's children
+    /// that hostd re-adopts rather than starts — so `brew upgrade` writes ten new binaries and
+    /// changes what is executing for none of them. Restarting everything is not the answer either:
+    /// ending superd ends every live pane.
+    ///
+    /// Called once from `slopdesk-hostd`'s startup, AFTER the sidecars are up, for the same reason
+    /// ``prewarmCodeServer()`` is: unit tests build HostServers freely and must not be made to
+    /// exec five binaries to do it.
+    ///
+    /// - Parameters:
+    ///   - drops/inspector: the managers, or `nil` when that path is off or failed to start.
+    ///   - inspectorPort/dropPort/dropDirectory: what an automatic restart must re-open with, since
+    ///     these two serve a port hostd CHOSE and a client already holds.
+    ///   - log: the daemon's log sink; one line per sidecar, in a fixed order.
+    @discardableResult
+    public func auditSidecarVersions(
+        drops: FileDropServiceManager?,
+        inspector: InspectorServiceManager?,
+        inspectorPort: UInt16?,
+        inspectorTranscriptPath: String?,
+        dropPort: UInt16?,
+        dropDirectory: URL?,
+        log: (String) -> Void,
+    ) async -> [SidecarVersionReport] {
+        await SidecarVersionAuditor.forHost(
+            supervisor: supervisor,
+            drops: drops,
+            inspector: inspector,
+            android: HostAndroidPerformer.sharedManager,
+            inspectorPort: inspectorPort,
+            inspectorTranscriptPath: inspectorTranscriptPath,
+            dropPort: dropPort,
+            dropDirectory: dropDirectory,
+        ).run(log: log)
+    }
+
     /// Stops the listener and shuts down every live and detached channel.
     public func stop() async {
         // Mark stopping FIRST so any `channelOpen` racing this shutdown (the accepted connections'

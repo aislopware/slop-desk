@@ -50,6 +50,12 @@ func printUsage() {
       config path             Print the resolved keybind config-file path.
       config edit             Open the keybind config file in $EDITOR.
       config validate         Check the keybind config file's syntax.
+      sidecars [--record]     What the last upgrade changed, per shipped binary, and what each
+                              change means. Reads MANIFEST.json against the copy recorded by the
+                              previous install; --record writes that copy (a formula's post_install
+                              runs it). Restarts nothing: hostd restarts the sidecars it owns at its
+                              next start, screend retires itself, superd is yours to restart.
+                              --manifest/--previous point at either file explicitly.
 
     App-driving subcommands (require a running SlopDesk app):
       windows | window list                List windows.
@@ -194,6 +200,87 @@ func runCompletions(_ rest: [String]) -> Never {
         die("unsupported shell '\(shellArg)': expected bash | zsh | fish | elvish | powershell")
     }
     stdout(CLICompletions.completionScript(for: shell))
+    exit(0)
+}
+
+/// `sidecars [--record] [--json] [--manifest PATH] [--previous PATH]`
+///
+/// What the last upgrade changed, tool by tool, and what each change means. Reads two files and
+/// touches no process: `brew upgrade` runs while every daemon is still serving the OLD binaries, so
+/// asking a live daemon at that moment reports all ten as stale whether one changed or ten.
+///
+/// It NEVER ends a daemon. hostd owns the lifetime of the three it spawned and restarts the stale
+/// ones at its next start (`SidecarVersionAuditor`); screend retires itself; superd is the user's
+/// call because ending it ends every live pane. So the useful actions here are to SAY what changed
+/// and to `--record` the baseline the next upgrade is diffed against — which is what a formula's
+/// `post_install` runs, and the only reason the next diff can be about one tool rather than ten.
+func cmdSidecars(_ rest: [String]) -> Never {
+    var record = false
+    var manifestOverride: String?
+    var previousOverride: String?
+    var index = 0
+    while index < rest.count {
+        let argument = rest[index]
+        switch argument {
+        case "--record": record = true
+        case "--manifest":
+            index += 1
+            guard index < rest.count else { die("'--manifest' requires a path", code: 2) }
+            manifestOverride = rest[index]
+        case "--previous":
+            index += 1
+            guard index < rest.count else { die("'--previous' requires a path", code: 2) }
+            previousOverride = rest[index]
+        default:
+            die("unknown flag '\(argument)' for sidecars (run with --help)", code: 2)
+        }
+        index += 1
+    }
+
+    let installed = manifestOverride.map(URL.init(fileURLWithPath:))
+        ?? CLISidecars.installedManifestURL()
+    guard let installed, let currentText = try? String(contentsOf: installed, encoding: .utf8) else {
+        // Not a failure of the mechanism: a developer tree has no MANIFEST.json, because nothing
+        // packaged it. Saying which file was looked for beats "no manifest".
+        die("no MANIFEST.json — set \(CLISidecars.manifestEnvKey), or run this from an install", code: 4)
+    }
+    let recorded = previousOverride.map(URL.init(fileURLWithPath:)) ?? CLISidecars.recordedManifestURL()
+    let previousText = recorded.flatMap { try? String(contentsOf: $0, encoding: .utf8) }
+
+    let planJSON = CLISidecars.plan(previous: previousText, current: currentText)
+    guard let data = planJSON.data(using: .utf8),
+          let plan = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let steps = plan["tools"] as? [[String: Any]]
+    else { die("\(installed.path) is not a readable manifest", code: 4) }
+
+    if invocation.format == .json {
+        stdout(planJSON + "\n")
+    } else {
+        stdout(CLIFormatting.renderTable(
+            headers: ["TOOL", "WAS", "NOW", "CHANGE", "NEXT"],
+            rows: steps.map { step in
+                [
+                    step["tool"] as? String ?? "",
+                    step["previous"] as? String ?? "—",
+                    step["current"] as? String ?? "—",
+                    step["change"] as? String ?? "",
+                    step["note"] as? String ?? "",
+                ]
+            },
+            noHeaders: invocation.noHeaders,
+        ) + "\n")
+    }
+
+    if record {
+        guard let recorded else { die("cannot resolve the Application Support container", code: 4) }
+        do {
+            try CLISidecars.record(currentText, to: recorded)
+        } catch {
+            // A record that could not be written costs one upgrade's worth of detail and nothing
+            // else — the plan just above is still correct. Worth an exit code, not a lost report.
+            die("recorded nothing to \(recorded.path): \(error.localizedDescription)", code: 5)
+        }
+    }
     exit(0)
 }
 
@@ -1205,6 +1292,9 @@ case "watch":
 // App-driving: block until a Claude session reaches idle/closed (exit 0/4/9).
 case "watch:claude":
     cmdWatchClaude(invocation.rest)
+// Local op (no running app, no daemon dialled): what the last upgrade changed, from two manifests.
+case "sidecars":
+    cmdSidecars(invocation.rest)
 default:
     // ipc/state:claude are not yet implemented.
     die("subcommand '\(invocation.subcommand)' is not available yet (run with --help)", code: 2)

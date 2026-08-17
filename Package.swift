@@ -153,6 +153,12 @@ let package = Package(
                 // docs/45: the host owns the workspace document, so it needs the value model.
                 // Leaf target (Foundation + CoreGraphics), so this does NOT widen the daemon graph.
                 "SlopDeskWorkspaceModel",
+                // docs/49: the per-sidecar version policy is `rust/slopdesk-sidecars`, because the
+                // OTHER caller of that policy — `slopdesk sidecars` — is Rust, and two tables in two
+                // languages is the mirror `CLAUDE.md` bans. Named here rather than reached through
+                // one of the targets above: an import that works by transitivity works until the
+                // target it rode in on drops the dependency.
+                "CSlopDeskFFI",
             ],
         ),
 
@@ -444,6 +450,12 @@ let package = Package(
                 "SlopDeskWorkspaceCore",
                 "SlopDeskAgentDetect",
                 "CSlopDeskFFI",
+                // docs/49: `slopdesk sidecars` keeps the previous release's MANIFEST.json in the
+                // Application Support container, because Homebrew replaces the Cellar wholesale and
+                // the old manifest is gone by the time anything could read it. `SlopDeskAppSupport`
+                // is that container. Transitive via SlopDeskWorkspaceCore; declared so the `import`
+                // is explicit, like SlopDeskAgentDetect above.
+                "SlopDeskVideoProtocol",
                 // SlopDeskArena: the `(offset, length)` convention docs/55 §4c spells, both ways —
                 // the CLI builds an arena for `cli_parse` and reads one back out of it.
                 "SlopDeskArena",
