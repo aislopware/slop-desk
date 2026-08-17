@@ -41,6 +41,15 @@ ROOT = Path(__file__).resolve().parent.parent
 # found so far is one wire alphabet. An entry here needs the reason the two are unrelated.
 HOMONYM_ENUMS: set[str] = set()
 
+# Swift OptionSets whose members share a name with a WIRE flag set without sharing its law. A bit
+# position is only a shared law when the byte crosses; a set that never leaves the client may lay
+# its bits out however it likes.
+HOMONYM_BIT_FILES = {
+    # `KeyChord.Modifiers` is an `Int` the client keys chords by. It converts to nothing, so its
+    # agreement with the wire's `InputModifiers` about ⇧⌃⌥⌘ is convention, not a contract.
+    "Sources/SlopDeskWorkspaceCore/Workspace/Store/CommandInterpreter.swift",
+}
+
 HOMONYMS = {
     # A kernel TCP keepalive probe interval on PATH 1, against the video path's application-level
     # UDP keepalive that holds a NAT mapping open. Both happen to be 5 s.
@@ -117,6 +126,17 @@ SWIFT_ENUM = re.compile(
     r"^(?:public |internal |private )?enum ([A-Za-z][A-Za-z0-9]*)[^\n]*\{$", re.MULTILINE
 )
 RUST_CASE = re.compile(r"^\s*([A-Z][A-Za-z0-9]*) = " + NUMBER + r",\s*$", re.MULTILINE)
+
+# An OptionSet's bit POSITIONS are the third alphabet: `1 << 6` on both sides, spelled as an
+# expression rather than a literal, so neither of the patterns above reads one.
+RUST_BIT = re.compile(
+    r"^\s*pub const ([A-Z][A-Z_0-9]*): *Self *= *Self\(1 *<< *([0-9]+)\);", re.MULTILINE
+)
+SWIFT_BIT = re.compile(
+    r"^\s*(?:public |private |internal )?static let ([A-Za-z][A-Za-z0-9]*)"
+    r" *(?::[^=\n]+)?= *(?:Self|[A-Za-z][A-Za-z0-9]*)\(rawValue: *1 *<< *([0-9]+)\)",
+    re.MULTILINE,
+)
 SWIFT_CASE = re.compile(r"^\s*case ([a-z][A-Za-z0-9]*) = " + NUMBER + r"\s*$", re.MULTILINE)
 
 
@@ -210,6 +230,29 @@ def enum_findings() -> list[str]:
     return out
 
 
+def bit_findings() -> list[str]:
+    """Every wire flag whose bit moved in one language and not the other."""
+    rust: dict[str, list[tuple[str, str, int]]] = {}
+    for path in tracked("rust/*.rs"):
+        for name, bit in RUST_BIT.findall(path.read_text()):
+            key = name.replace("_", "").lower()
+            rust.setdefault(key, []).append((str(path.relative_to(ROOT)), name, int(bit)))
+
+    out: list[str] = []
+    for path in tracked("Sources/*.swift"):
+        here_file = str(path.relative_to(ROOT))
+        if here_file in HOMONYM_BIT_FILES:
+            continue
+        for name, bit in SWIFT_BIT.findall(path.read_text()):
+            for there_file, there_name, there_bit in rust.get(name.lower(), []):
+                if int(bit) != there_bit:
+                    out.append(
+                        f"  {here_file}: `{name} = 1 << {bit}` against "
+                        f"`{there_name} = 1 << {there_bit}` in {there_file}"
+                    )
+    return out
+
+
 def main() -> int:
     rust: dict[str, list[tuple[Path, str, float]]] = {}
     for path in tracked("rust/*.rs"):
@@ -250,7 +293,7 @@ def main() -> int:
         )
         return 1
 
-    drifted = vocabulary_findings() + enum_findings()
+    drifted = vocabulary_findings() + enum_findings() + bit_findings()
     if drifted:
         print("check-shared-constants: FAIL — a shared alphabet drifted\n")
         print("\n".join(drifted))
@@ -263,7 +306,7 @@ def main() -> int:
 
     print(
         "check-shared-constants: every shared number is asked for or ratcheted, and the field\n"
-        "vocabulary and the wire enums agree letter for letter."
+        "vocabulary, the wire enums and the flag bits agree letter for letter."
     )
     return 0
 
