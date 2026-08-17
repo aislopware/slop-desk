@@ -179,7 +179,8 @@ package enum PaneSwitcherRowsBuilder {
             : nil
         let note = facts.kind == .terminal
             ? note(projectKey: facts.projectKey, cwd: facts.cwd)
-            : facts.spec?.railSubtitle(cwd: facts.cwd, liveTitle: facts.liveTitle)
+            // No section headers here, so no key: the switcher shows the whole location.
+            : facts.spec?.railSubtitle(cwd: facts.cwd, liveTitle: facts.liveTitle, projectKey: nil)
         let resolved = title(facts: facts, chrome: chrome, project: project, note: note, store: store)
         // The agent's ✳ mark rides the IDENTITY, not just the sidebar view: the rail row draws its own
         // marker (`SlateTabRow.agentMarker`), so without this the switcher and the palette would show

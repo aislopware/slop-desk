@@ -223,6 +223,96 @@ pub fn row_title(inputs: RowTitle<'_>) -> String {
         .unwrap_or_else(|| fallback.to_owned())
 }
 
+/// The streamed host window behind a video pane, in the two fields a subtitle reads.
+#[derive(Clone, Copy, Debug)]
+pub struct SubtitleVideo<'a> {
+    /// The owning application on the host.
+    pub app_name: Option<&'a str>,
+    /// The window's own title.
+    pub title: Option<&'a str>,
+}
+
+/// Everything LINE TWO reads.
+#[derive(Clone, Copy, Debug)]
+pub struct Subtitle<'a> {
+    /// What kind of pane it is.
+    pub kind: PaneKind,
+    /// The title on the pane's spec, or `None` when there is no spec at all — which is the same
+    /// distinction [`RowTitle`] draws, and here it decides whether there is a second line to write.
+    pub spec_title: Option<&'a str>,
+    /// The streamed window, for a video pane.
+    pub video: Option<SubtitleVideo<'a>>,
+    /// The pane's working directory.
+    pub cwd: Option<&'a str>,
+    /// The title the running program last asserted.
+    pub live_title: Option<&'a str>,
+    /// The project section this pane is drawn under. `None` on a surface with no section headers,
+    /// where the full path is the only place the location can be shown.
+    pub project_key: Option<&'a str>,
+}
+
+/// A field as a second line may show it: trimmed, and absent when that leaves nothing — so a blank
+/// field is "no subtitle" rather than an empty line holding a row open.
+fn presentable(field: Option<&str>) -> Option<&str> {
+    let trimmed = field?.trim();
+    (!trimmed.is_empty()).then_some(trimmed)
+}
+
+/// What LINE TWO says, or `None` for a single-line row.
+///
+/// A terminal's second line is WHERE IT IS, said as briefly as the surface allows. Under a section
+/// header that already names the project there are three cases and they are all about not repeating
+/// the header: a pane AT the project root says nothing (the header said it), one that strayed into
+/// the subtree says the relative path (`packages/api`), and one that is somewhere else entirely
+/// says its full path — because a stale key across an un-re-pushed `cd` cannot form a relative
+/// path, and hiding the location would be a lie rather than a saving.
+///
+/// A surface with no headers passes no key and gets the full path, which is the same rule with
+/// nothing to subtract. A video pane says which host APP it is streaming — except when the window
+/// has no title of its own, where the app name has already collapsed into line one and printing it
+/// twice would fill a two-line row with one word.
+#[must_use]
+pub fn pane_subtitle(inputs: Subtitle<'_>) -> Option<String> {
+    // No spec at all is no second line: there is nothing yet to describe.
+    inputs.spec_title?;
+    let generic = generic_subtitle(&inputs);
+    if inputs.kind != PaneKind::Terminal {
+        return generic;
+    }
+    let (Some(key), Some(cwd)) = (
+        tab_ordering::normalized_project_key(inputs.project_key),
+        tab_ordering::normalized_project_key(inputs.cwd),
+    ) else {
+        return generic;
+    };
+    if cwd == key {
+        return None;
+    }
+    cwd.strip_prefix(&format!("{key}/"))
+        .map(str::to_owned)
+        .or(generic)
+}
+
+/// The KIND-GENERIC second line: where the shell is, else which host window this is.
+fn generic_subtitle(inputs: &Subtitle<'_>) -> Option<String> {
+    if let Some(cwd) = presentable(inputs.cwd) {
+        return Some(cwd.to_owned());
+    }
+    if !inputs.kind.is_video() {
+        return None;
+    }
+    let video = inputs.video?;
+    let Some(app) = presentable(video.app_name) else {
+        return presentable(video.title).map(str::to_owned);
+    };
+    // An untitled window's LABEL already collapsed to the app name, so line one is reading it too.
+    let line_one = presentable(inputs.live_title).or_else(|| presentable(inputs.spec_title));
+    if line_one == Some(app) && presentable(video.title) == Some(app) {
+        return None;
+    }
+    Some(app.to_owned())
+}
+
 /// One command block, in the two fields a title reads.
 #[derive(Clone, Copy, Debug)]
 pub struct CommandTitleBlock<'a> {
@@ -575,5 +665,106 @@ mod tests {
         assert_eq!(live_row_title(inputs, &[]), "slopdesk");
         inputs.cwd_title = None;
         assert_eq!(live_row_title(inputs, &[]), "Terminal");
+    }
+
+    // MARK: Line two
+
+    fn subtitle(cwd: Option<&str>) -> Subtitle<'_> {
+        Subtitle {
+            kind: PaneKind::Terminal,
+            spec_title: Some("Terminal"),
+            video: None,
+            cwd,
+            live_title: None,
+            project_key: None,
+        }
+    }
+
+    #[test]
+    fn a_pane_with_no_spec_has_no_second_line() {
+        let mut inputs = subtitle(Some("/w/app"));
+        inputs.spec_title = None;
+        assert_eq!(pane_subtitle(inputs), None);
+    }
+
+    #[test]
+    fn a_terminal_under_a_header_says_only_what_the_header_does_not() {
+        let mut inputs = subtitle(Some("/w/app"));
+        inputs.project_key = Some("/w/app");
+        assert_eq!(pane_subtitle(inputs), None, "at the root, the header said it");
+
+        inputs.cwd = Some("/w/app/packages/api");
+        assert_eq!(pane_subtitle(inputs), Some("packages/api".to_owned()));
+
+        inputs.cwd = Some("/elsewhere/entirely");
+        assert_eq!(
+            pane_subtitle(inputs),
+            Some("/elsewhere/entirely".to_owned()),
+            "no relative path can be formed, and hiding the location would lie"
+        );
+    }
+
+    #[test]
+    fn a_trailing_slash_does_not_make_a_root_pane_look_astray() {
+        let mut inputs = subtitle(Some("/w/app/"));
+        inputs.project_key = Some("/w/app");
+        assert_eq!(pane_subtitle(inputs), None);
+    }
+
+    #[test]
+    fn a_surface_with_no_headers_shows_the_whole_path() {
+        assert_eq!(
+            pane_subtitle(subtitle(Some("/w/app/packages/api"))),
+            Some("/w/app/packages/api".to_owned()),
+            "the same rule with nothing to subtract"
+        );
+        assert_eq!(
+            pane_subtitle(subtitle(Some("   "))),
+            None,
+            "a blank cwd is no line"
+        );
+        assert_eq!(pane_subtitle(subtitle(None)), None);
+    }
+
+    #[test]
+    fn a_video_pane_names_the_host_app_unless_line_one_already_did() {
+        let mut inputs = subtitle(None);
+        inputs.kind = PaneKind::Desktop;
+        inputs.video = Some(SubtitleVideo {
+            app_name: Some("Xcode"),
+            title: Some("SlopDesk.xcodeproj"),
+        });
+        inputs.live_title = Some("SlopDesk.xcodeproj");
+        assert_eq!(pane_subtitle(inputs), Some("Xcode".to_owned()));
+
+        // An untitled window's label collapses to the app name, so line one is reading it too.
+        inputs.video = Some(SubtitleVideo {
+            app_name: Some("Xcode"),
+            title: Some("Xcode"),
+        });
+        inputs.live_title = Some("Xcode");
+        assert_eq!(pane_subtitle(inputs), None);
+
+        inputs.video = Some(SubtitleVideo {
+            app_name: None,
+            title: Some("Xcode"),
+        });
+        assert_eq!(
+            pane_subtitle(inputs),
+            Some("Xcode".to_owned()),
+            "with no app to name, the window's own title stands"
+        );
+    }
+
+    #[test]
+    fn a_video_panes_cwd_still_wins_and_its_project_key_never_applies() {
+        let mut inputs = subtitle(Some("/w/app/sub"));
+        inputs.kind = PaneKind::Desktop;
+        inputs.project_key = Some("/w/app");
+        assert_eq!(
+            pane_subtitle(inputs),
+            Some("/w/app/sub".to_owned()),
+            "only a terminal's line two is relative to its section"
+        );
     }
 }

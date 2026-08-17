@@ -19,7 +19,8 @@ package struct RailRow: Identifiable, Equatable {
     /// The row's muted second line (``SlateTabRow`` subtitle). A terminal shows its cwd RELATIVE to
     /// its section's project key — and ONLY when it strayed from the project root (the git line moved
     /// up to the section header, and repeating the section's own path on every row is noise); a video
-    /// pane keeps its kind-generic ``PaneLabel/railSubtitle(kind:title:video:cwd:liveTitle:)``
+    /// pane keeps its kind-generic
+    /// ``PaneLabel/railSubtitle(kind:title:video:cwd:liveTitle:projectKey:)``
     /// (host-app/window label). `nil` ⇒ a
     /// single-line row (the common at-root pane).
     package let subtitle: String?
@@ -194,7 +195,7 @@ package enum RailRowsBuilder {
     /// Resolve one pane's volatile chrome — the SINGLE resolution rule behind both ``rows(for:)`` (the full
     /// model build) and ``liveChrome(for:store:)`` (the per-row view's fresh read), so the two can't drift.
     ///
-    /// Line 2 (``paneSubtitle(kind:spec:cwd:liveTitle:projectKey:)``): a terminal shows its cwd RELATIVE to its
+    /// Line 2 (``PaneSpec/railSubtitle(cwd:liveTitle:projectKey:)``): a terminal shows its cwd RELATIVE to its
     /// section's project key, and only when it differs (the git line lives on the section header now —
     /// the one per-pane fact left is "this pane strayed from the project root"); a
     /// `.desktop` video pane (no shell cwd) keeps the host-side target's owning app
@@ -219,8 +220,8 @@ package enum RailRowsBuilder {
         // The host's coarse foreground-process name (wire type 26): the trailing row label, a
         // badge-resolver input, AND the pane-title fallback when the cwd is not known yet.
         let processLabel = store.paneForegroundProcess[paneID]
-        let subtitle = Self.paneSubtitle(
-            kind: kind, spec: spec,
+        // The rail DRAWS section headers, so it hands the key over and gets the shortened line.
+        let subtitle = spec?.railSubtitle(
             cwd: store.paneCwd(for: paneID), liveTitle: store.liveProgramTitle(for: paneID),
             projectKey: kind == .terminal ? store.paneProjectKey(paneID) : nil,
         )
@@ -252,29 +253,6 @@ package enum RailRowsBuilder {
             isEditing: store.pendingTabRename == tabID && paneID == representativePane,
             question: question,
         )
-    }
-
-    /// The row's LINE-2 resolution: a terminal pane's cwd RELATIVE to its section key —
-    /// `nil` when the pane sits AT the project root (the section header already names the place; a
-    /// subtitle repeating it on every row is noise, and the row collapses to single-line height), the
-    /// relative path (`packages/api`) when it strayed INTO the project's subtree, and the kind-generic
-    /// kind-generic subtitle (the full cwd) when the cwd is OUTSIDE the key's subtree — a stale
-    /// key across an un-re-pushed `cd`, where a relative path can't be formed and hiding the location
-    /// would lie. Non-terminal kinds always keep the kind-generic subtitle (video host-app label).
-    /// Pure + static so the rule is unit-pinned without a view.
-    package static func paneSubtitle(
-        kind: PaneKind, spec: PaneSpec?, cwd paneCwd: String?, liveTitle: String?, projectKey: String?,
-    ) -> String? {
-        let generic = spec?.railSubtitle(cwd: paneCwd, liveTitle: liveTitle)
-        guard kind == .terminal, spec != nil else { return generic }
-        guard let key = TabOrderingEngine.normalizedProjectKey(projectKey),
-              var cwd = paneCwd?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !cwd.isEmpty
-        else { return generic }
-        while cwd.count > 1, cwd.hasSuffix("/") { cwd.removeLast() }
-        if cwd == key { return nil }
-        if cwd.hasPrefix(key + "/") { return String(cwd.dropFirst(key.count + 1)) }
-        return generic
     }
 
     /// The row VIEW's entry: resolve `row`'s CURRENT volatile chrome from the live store (the cached

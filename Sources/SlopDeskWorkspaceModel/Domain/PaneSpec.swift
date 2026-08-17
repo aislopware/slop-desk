@@ -373,55 +373,47 @@ public enum PaneLabel {
         liveTitle ?? PaneSpec.cwdDisplayName(cwd) ?? title
     }
 
-    /// The sidebar-rail SECOND LINE for a pane — the single, kind-generic source of truth the native
-    /// rail row (``RailRowsBuilder`` in `SlopDeskClientUI`) and any other surface bind their subtitle to,
-    /// so a video pane is a first-class peer of a terminal in the rail (carry-overs §0).
+    /// A pane's SECOND LINE — the single, kind-generic source of truth every surface that draws one
+    /// binds to, so a video pane is a first-class peer of a terminal in the rail (carry-overs §0).
+    /// `slopdesk_workspace::rail_title::pane_subtitle`, which is where the rule is decided and
+    /// documented: what a terminal says depends on how much of its location the surface has already
+    /// said, and what a video pane says depends on whether line one already said it.
     ///
-    /// - A `.terminal` pane shows its working directory, or NOTHING when the cwd is unknown — a
-    ///   single-line row, never a blank second line.
-    /// - A VIDEO pane (`.desktop`) has no shell cwd, so the host-side target's owning APP
-    ///   name (``VideoEndpoint/appName``) stands in — falling back to the window ``VideoEndpoint/title`` when
-    ///   the app name is empty (a manual-id binding). A remote-window row then reads as a *labelled window*
-    ///   (its window title on line 1, the host app on line 2) rather than a bare single line.
-    /// - A real cwd, if ever present, always wins (the subtitle never silently drops a working directory).
-    ///
-    /// Pure + total — NO kind is dropped (the non-video arm just yields the cwd-or-nil a terminal
-    /// already used), so the builder stays kind-generic and never branches the whole row. Mirrors the
-    /// Open-Quickly subtitle discipline (``OpenQuicklyModel`` `paneRowSubtitle`), which carries the leaner
-    /// window-title fold; the rail gets this richer host-app line. A non-empty trimmed-presence check keeps an
-    /// empty field from rendering a blank line (the ``OpenQuicklyModel`` `nonEmpty` discipline).
+    /// - Parameter projectKey: the section this pane is drawn under, supplied by a surface that
+    ///   DRAWS section headers so the line can shrink to what the header does not already cover. A
+    ///   surface without headers passes `nil` and gets the whole path.
     public static func railSubtitle(
         kind: PaneKind, title: String, video: VideoEndpoint?, cwd: String?, liveTitle: String?,
+        projectKey: String?,
     ) -> String? {
-        if let cwd = presentablePresence(cwd) { return cwd }
-        guard kind.isVideo, let video else { return nil }
-        if let app = presentablePresence(video.appName) {
-            // EMPTY HOST-TITLE PARITY: when the streamed window has NO title, the endpoint LABEL
-            // collapses to the app name — so the display title (line 1) AND the
-            // streamed window title are BOTH just the app name. Printing the host app on line 2 then shows it
-            // on both lines. Suppress to a single line ONLY in that all-collapsed case; a window WITH a real
-            // title keeps line 1 distinct, so the host-app subtitle still shows (a labelled window).
-            let line1 = presentablePresence(liveTitle) ?? presentablePresence(title)
-            if line1 == app, presentablePresence(video.title) == app { return nil }
-            return app
+        var strings = WsStrings()
+        let inputs = SlopDeskWsSubtitle(
+            kind: kind.ffiByte,
+            spec_title: strings.span(title),
+            video_present: video != nil,
+            video_app_name: strings.span(video?.appName),
+            video_title: strings.span(video?.title),
+            cwd: strings.span(cwd),
+            live_title: strings.span(liveTitle),
+            project_key: strings.span(projectKey),
+        )
+        var blob = strings.bytes
+        return blob.withUnsafeMutableBufferPointer { text in
+            wsAnswer { out, cap in
+                slopdesk_ws_pane_subtitle(inputs, text.baseAddress, text.count, out, cap)
+            }
         }
-        return presentablePresence(video.title)
-    }
-
-    /// A trimmed-presence helper: `nil` for `nil`/blank, the trimmed string otherwise — so an empty/whitespace
-    /// field becomes "no subtitle", never a blank second line.
-    private static func presentablePresence(_ s: String?) -> String? {
-        guard let s else { return nil }
-        let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
     }
 }
 
 public extension PaneSpec {
-    /// ``PaneLabel/railSubtitle(kind:title:video:cwd:liveTitle:)`` for THIS spec — the caller supplies
-    /// the two facts the spec does not carry.
-    func railSubtitle(cwd: String?, liveTitle: String?) -> String? {
-        PaneLabel.railSubtitle(kind: kind, title: title, video: video, cwd: cwd, liveTitle: liveTitle)
+    /// ``PaneLabel/railSubtitle(kind:title:video:cwd:liveTitle:projectKey:)`` for THIS spec — the
+    /// caller supplies the three facts the spec does not carry.
+    func railSubtitle(cwd: String?, liveTitle: String?, projectKey: String?) -> String? {
+        PaneLabel.railSubtitle(
+            kind: kind, title: title, video: video, cwd: cwd, liveTitle: liveTitle,
+            projectKey: projectKey,
+        )
     }
 }
 

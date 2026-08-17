@@ -292,7 +292,7 @@ final class RailRowBuilderTests: XCTestCase {
         XCTAssertTrue(RailRowsBuilder.filtered(rows, query: "zzz-nope").isEmpty)
     }
 
-    /// The relative-cwd subtitle rule (``RailRowsBuilder/paneSubtitle(kind:spec:projectKey:)``): a
+    /// The relative-cwd subtitle rule (``PaneSpec/railSubtitle(cwd:liveTitle:projectKey:)``): a
     /// pane INSIDE its project's subtree shows the path RELATIVE to the key, a pane AT the key shows
     /// nothing, and a pane whose cwd fell OUTSIDE the key's subtree (stale key across an
     /// un-re-pushed `cd`) falls back to the full cwd — hiding the location would lie. Fails on the

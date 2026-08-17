@@ -470,6 +470,20 @@ typedef struct {
     SlopDeskWsSpan project_key;
 } SlopDeskWsRowTitle;
 
+// Line two. `spec_title` absent is a pane with no spec, which has no second line at all;
+// `project_key` absent is a surface with no section headers, where the full path is the only place
+// the location can be shown.
+typedef struct {
+    uint8_t        kind;
+    SlopDeskWsSpan spec_title;
+    bool           video_present;
+    SlopDeskWsSpan video_app_name;
+    SlopDeskWsSpan video_title;
+    SlopDeskWsSpan cwd;
+    SlopDeskWsSpan live_title;
+    SlopDeskWsSpan project_key;
+} SlopDeskWsSubtitle;
+
 typedef struct {
     SlopDeskWsSpan structural_title;
     bool           user_renamed;
@@ -493,6 +507,9 @@ typedef struct {
 
 size_t slopdesk_ws_row_title(SlopDeskWsRowTitle inputs, const uint8_t *strings,
                              size_t strings_len, uint8_t *out, size_t cap);
+// `0` = no second line, which is a single-line row.
+size_t slopdesk_ws_pane_subtitle(SlopDeskWsSubtitle inputs, const uint8_t *strings,
+                                 size_t strings_len, uint8_t *out, size_t cap);
 size_t slopdesk_ws_last_command_title(const SlopDeskWsCommandTitleBlock *blocks, size_t count,
                                       const uint8_t *strings, size_t strings_len,
                                       uint8_t *out, size_t cap);

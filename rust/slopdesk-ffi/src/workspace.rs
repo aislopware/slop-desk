@@ -791,6 +791,29 @@ pub struct CRowTitle {
     pub project_key: Span,
 }
 
+/// Line two's inputs, each string spanning the blob passed alongside.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct CSubtitle {
+    /// A `PaneKind` byte: 0 terminal, 1 desktop.
+    pub kind: u8,
+    /// The title on the pane's spec; absent when there is no spec at all, which is what decides
+    /// whether the pane has a second line to write.
+    pub spec_title: Span,
+    /// Whether the two video fields below mean anything.
+    pub video_present: bool,
+    /// The owning application of the streamed host window.
+    pub video_app_name: Span,
+    /// That window's own title.
+    pub video_title: Span,
+    /// The pane's working directory.
+    pub cwd: Span,
+    /// The title the running program last asserted.
+    pub live_title: Span,
+    /// The project section the pane is drawn under; absent on a surface with no section headers.
+    pub project_key: Span,
+}
+
 /// The live title's inputs, each string spanning the blob passed alongside.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -1042,6 +1065,46 @@ pub unsafe extern "C" fn slopdesk_ws_row_title(
             project_key: text_of(inputs.project_key, blob),
         });
         deliver(title.as_bytes(), out, cap)
+    }
+}
+
+/// What LINE TWO says. `0` is "no second line", which is a single-line row.
+///
+/// # Safety
+/// `strings` must be null or point to `strings_len` initialised bytes; `out` null or writable for
+/// `cap` bytes. Both live for the call, and every span in `inputs` is bounds-checked against
+/// `strings` rather than trusted.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_ws_pane_subtitle(
+    inputs: CSubtitle,
+    strings: *const c_uchar,
+    strings_len: usize,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligations, restated above; the helpers state their own.
+    unsafe {
+        let blob = borrow(strings, strings_len);
+        let Some(line) = rail_title::pane_subtitle(rail_title::Subtitle {
+            kind: PaneKind::from_byte(inputs.kind),
+            spec_title: text_of(inputs.spec_title, blob),
+            video: inputs.video_present.then(|| {
+                rail_title::SubtitleVideo {
+                    app_name: text_of(inputs.video_app_name, blob),
+                    title: text_of(inputs.video_title, blob),
+                }
+            }),
+            cwd: text_of(inputs.cwd, blob),
+            live_title: text_of(inputs.live_title, blob),
+            project_key: text_of(inputs.project_key, blob),
+        }) else {
+            return 0;
+        };
+        deliver(line.as_bytes(), out, cap)
     }
 }
 
