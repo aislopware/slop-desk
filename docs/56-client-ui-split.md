@@ -158,7 +158,11 @@ nothing is ever implemented twice. No stage copies a file: a surface either move
   macOS window root — the split shell, the pinned sidebar toggle, the agent rollup, the overlay layer,
   the chrome wiring and the window title — and `WorkspaceRootView` is what is left: the phone's
   `NavigationSplitView` and its toolbar, under the one whole-file `#if os(iOS)` this doc allows.
-  Each surface below them is then rewritten in AppKit inside `SlopDeskMacUI`
+  The split shell itself followed the root: `SlopDeskSplitViewController` (535 lines of pure AppKit)
+  now lives beside it, and the three columns it hosts are handed over as view controllers by
+  `WorkspaceColumnHosts` — a factory per column that dies with the column when that column is
+  rewritten, rather than a `package` widening of three whole view structs that would outlive its
+  reason. Each surface below them is then rewritten in AppKit inside `SlopDeskMacUI`
   and its SwiftUI original is DELETED in the same change — never a fallback, never a mirror. The 118
   `withAnimation`/`.animation(` sites and the 3 `matchedGeometryEffect` morphs are the real work.
   When the last one moves, `SlopDeskClientUI` holds only what the phone renders and is renamed

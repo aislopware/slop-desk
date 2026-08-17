@@ -1,20 +1,20 @@
 // SlopDeskSplitViewController — the macOS shell. An `NSSplitViewController` with
-// two `NSSplitViewItem`s (sidebar | content), each an `NSHostingController` over a
-// SwiftUI column. Modelled on CodeEdit's `CodeEditSplitViewController`: an AppKit split shell with SwiftUI
+// three `NSSplitViewItem`s (navigator | content | code panel), each a view controller the draining
+// floor hands over (``WorkspaceColumnHosts``) while its column is still SwiftUI. Modelled on CodeEdit's `CodeEditSplitViewController`: an AppKit split shell with SwiftUI
 // INSIDE each column. Keeping the split in AppKit (not a SwiftUI `HSplitView` that rebuilds subtrees) is the
 // load-bearing no-teardown choice for L2's libghostty panes — a torn-down NSView kills the surface.
 // There is no Details column — the app is keyboard-centric; the Git details window opens from the
 // palette / View menu instead.
 
-#if os(macOS)
 import AppKit
 import Defaults
 import ObjectiveC
 import SlopDeskClientCore
+import SlopDeskClientUI // the three hosted columns, until each is rewritten in AppKit
 import SlopDeskWorkspaceCore
 import SwiftUI
 
-package final class SlopDeskSplitViewController: NSSplitViewController {
+final class SlopDeskSplitViewController: NSSplitViewController {
     private let store: WorkspaceStore
     private let connection: AppConnection
     private let chrome: WorkspaceChromeState
@@ -48,7 +48,7 @@ package final class SlopDeskSplitViewController: NSSplitViewController {
     /// The sidebar (TABS panel) default thickness, shared with
     /// the window-size glue (`SlopDeskClientApp.applyInitialWindowSize`) so the `grid` mode's `chromeOverhead`
     /// uses the SAME width the split item adopts (no magic-number drift between the layout and the math).
-    package static let defaultSidebarWidth: CGFloat = 220
+    static let defaultSidebarWidth: CGFloat = 220
 
     /// The centre column's floor.
     static let contentMinWidth: CGFloat = 420
@@ -57,7 +57,7 @@ package final class SlopDeskSplitViewController: NSSplitViewController {
     /// an editor column); anything narrower collapses the workbench into its mobile layout.
     static let codeSidebarMinWidth: CGFloat = 380
 
-    package init(
+    init(
         store: WorkspaceStore,
         connection: AppConnection,
         chrome: WorkspaceChromeState,
@@ -87,7 +87,7 @@ package final class SlopDeskSplitViewController: NSSplitViewController {
     private var resizeSettleWork: DispatchWorkItem?
     private let resizeSettleDelay: TimeInterval = 0.1
 
-    override package func viewDidLoad() {
+    override func viewDidLoad() {
         super.viewDidLoad()
 
         splitView.dividerStyle = .thin
@@ -109,10 +109,10 @@ package final class SlopDeskSplitViewController: NSSplitViewController {
         // (``WindowSidebarToggle``), so this column no longer owns a chrome control. It DOES own the
         // connection island at its foot again (user-directed 2026-08-09), hence `connection` +
         // `onConnect`.
-        let navigator = NSHostingController(rootView: NavigatorColumn(
+        let navigator = WorkspaceColumnHosts.navigator(
             store: store, connection: connection, onConnect: onConnect,
-            preferences: preferences, paneDrag: paneDrag,
-        ).overlayCoordinator(overlay))
+            preferences: preferences, paneDrag: paneDrag, overlay: overlay,
+        )
         let sidebarItem = NSSplitViewItem(viewController: navigator)
         sidebarItem.minimumThickness = Self.defaultSidebarWidth
         sidebarItem.maximumThickness = 360
@@ -122,33 +122,22 @@ package final class SlopDeskSplitViewController: NSSplitViewController {
         // 2) Content — the pane grid (terminal / desktop / remote window) + the hover-reveal titlebar
         //    overlay. The non-collapsible centre. `chrome` drives the titlebar's sidebar toggle; `onConnect`
         //    wires the titlebar's connection-status cluster to the Connect-to-Host editor.
-        let content = NSHostingController(
-            rootView: ContentColumn(
-                store: store, connection: connection, chrome: chrome, onConnect: onConnect,
-                paneDrag: paneDrag,
-            )
-            .overlayCoordinator(overlay),
+        let content = WorkspaceColumnHosts.content(
+            store: store, connection: connection, chrome: chrome, onConnect: onConnect,
+            paneDrag: paneDrag, overlay: overlay,
         )
         let contentItem = NSSplitViewItem(viewController: content)
         contentItem.minimumThickness = Self.contentMinWidth
 
-        // Each column hosts SwiftUI in its own NSHostingController, which by DEFAULT insets its content below
-        // the window's titlebar safe area (the traffic-light strip). With `.hiddenTitleBar` that pushed every
-        // column's top chrome — the hover-reveal titlebar's centred title, and the sidebar's
-        // "TABS" header — a full row BELOW the traffic lights. Dropping the safe-area regions lets each column
-        // start at the window's top edge, so the titlebar's controls land ON the traffic-light row (each
-        // column still reserves its own titlebar-height strip at the top).
         // 3) Code panel — the RIGHT sidebar: the project-scoped embedded VS Code (code-server in a
         //    pooled WKWebView, `CodeSidebarColumn`). A PLAIN trailing split item, deliberately NOT
         //    `NSSplitViewItem(inspectorWithViewController:)` — the inspector style's collapse tears the
         //    hosted view down, which would kill the webview; a plain item just unparents it while the
         //    pooled WKWebView (and its web-content process) survives for a warm re-expand. Same holding
         //    priority as the left sidebar so a window resize grows the CONTENT column.
-        let codeColumn = NSHostingController(
-            rootView: CodeSidebarColumn(
-                store: store, connection: connection, chrome: chrome, preferences: preferences,
-            )
-            .overlayCoordinator(overlay),
+        let codeColumn = WorkspaceColumnHosts.codeSidebar(
+            store: store, connection: connection, chrome: chrome, preferences: preferences,
+            overlay: overlay,
         )
         let codeSidebarItem = NSSplitViewItem(viewController: codeColumn)
         codeSidebarItem.minimumThickness = Self.codeSidebarMinWidth
@@ -158,10 +147,6 @@ package final class SlopDeskSplitViewController: NSSplitViewController {
         // opt-in (default hidden), and letting the representable's first update collapse it would
         // flash a fully-expanded column on every launch.
         codeSidebarItem.isCollapsed = chrome.codeSidebarCollapsed
-
-        navigator.safeAreaRegions = []
-        content.safeAreaRegions = []
-        codeColumn.safeAreaRegions = []
 
         addSplitViewItem(sidebarItem)
         addSplitViewItem(contentItem)
@@ -191,7 +176,7 @@ package final class SlopDeskSplitViewController: NSSplitViewController {
     /// inside that window (window closed mid-resize), the work item would early-return on the nil `self` and
     /// leave forwarding suspended (the next session on the SAME store would never flush its grid). Resuming
     /// here on a real lifecycle hook (not a timer) closes that gap.
-    override package func viewWillDisappear() {
+    override func viewWillDisappear() {
         super.viewWillDisappear()
         guard resizeForwardingSuspended else { return }
         resizeSettleWork?.cancel()
@@ -235,7 +220,7 @@ package final class SlopDeskSplitViewController: NSSplitViewController {
         chrome.navigatorWidth = width
     }
 
-    override package func viewDidAppear() {
+    override func viewDidAppear() {
         super.viewDidAppear()
         pinWindowAppearance()
         publishNavigatorWidth()
@@ -297,7 +282,7 @@ package final class SlopDeskSplitViewController: NSSplitViewController {
 
     /// Apply the chrome collapse flags to both flanking items (idempotent — only animates
     /// a real change so a steady-state update doesn't re-trigger the animation).
-    package func applyCollapse(sidebarCollapsed: Bool, codeSidebarCollapsed: Bool) {
+    func applyCollapse(sidebarCollapsed: Bool, codeSidebarCollapsed: Bool) {
         applyItemCollapse(sidebarItem, collapsed: sidebarCollapsed)
         applyItemCollapse(codeSidebarItem, collapsed: codeSidebarCollapsed)
     }
@@ -531,5 +516,3 @@ extension SlopDeskSplitViewController {
         return (left, right)
     }
 }
-
-#endif

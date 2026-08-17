@@ -1,6 +1,6 @@
 #if os(macOS)
 import XCTest
-@testable import SlopDeskClientUI
+@testable import SlopDeskMacUI
 
 /// ``SlopDeskSplitViewController/clampedCodeDividerPosition(proposed:contentMinX:splitWidth:dividerThickness:)``
 /// — the manual code-divider drag's clamp (the host-rail machinery, restored for the CODE panel).

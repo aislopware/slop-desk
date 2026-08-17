@@ -6,7 +6,7 @@
 
 #if canImport(SwiftUI) && canImport(AppKit)
 import XCTest
-@testable import SlopDeskClientUI
+@testable import SlopDeskMacUI
 
 @MainActor
 final class DividerMovabilityTests: XCTestCase {

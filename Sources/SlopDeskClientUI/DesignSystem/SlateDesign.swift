@@ -253,7 +253,7 @@ package enum Slate {
     /// THE terminal profile. A constant since the theme picker was retired (user-directed
     /// 2026-08-08) — the runtime store that used to indirect this is gone with it. Kept `@MainActor`
     /// (and a computed property) so no call site of the token layer had to move.
-    @MainActor static var theme: SlateTheme { .app }
+    @MainActor package static var theme: SlateTheme { .app }
 
     /// The colour scheme of the GLASS — forced onto the island subtree (`ContentColumn` / the
     /// satellite roots) so every semantic colour drawn ON the glass (status line, chips, overlays)
@@ -1457,7 +1457,7 @@ extension Color {
 }
 
 #if canImport(AppKit)
-extension NSColor {
+package extension NSColor {
     /// 24-bit sRGB hex + alpha (the dynamic-pair helper's leaf).
     convenience init(slateHex hex: UInt32, alpha: Double = 1) {
         self.init(
