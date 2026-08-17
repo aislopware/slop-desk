@@ -1,4 +1,3 @@
-#if os(macOS)
 import AppKit
 
 /// `SLOPDESK_FOCUS_DEBUG=1` — logs every `NSWindow.makeFirstResponder(_:)` (caller stack, target,
@@ -36,4 +35,3 @@ enum FocusDebugProbe {
         method_setImplementation(method, imp_implementationWithBlock(block))
     }
 }
-#endif

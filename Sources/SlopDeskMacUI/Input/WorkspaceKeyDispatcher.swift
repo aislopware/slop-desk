@@ -16,7 +16,6 @@
 // GhosttyTerminalView's `ghosttyMods` + `charactersIgnoringModifiers` for parity) so it's unit-tested
 // headlessly. Only NSEvent→intent wiring is here.
 
-#if os(macOS)
 import AppKit
 import SlopDeskClientCore
 
@@ -464,4 +463,3 @@ final class WorkspaceKeyDispatcher {
         )
     }
 }
-#endif

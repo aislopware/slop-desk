@@ -3,13 +3,12 @@
 // red-on-error tint (gated by `dock-icon-error-badge`), and a `requestUserAttention` bounce driven from
 // the notification OSCs (NOT the bell — wired off `CommandCompletionNotifier.bounceDock`). Every DECISION is
 // the pure ``DockTintPolicy`` (unit-pinned headlessly); this file is ONLY the AppKit drawing +
-// bounce + the dock-reveal hook. iOS no-ops (there is no Dock) — the file is `#if os(macOS)` and the shared
+// bounce + the dock-reveal hook. iOS no-ops (there is no Dock), and this target is the Mac's — the shared
 // aggregate state lives in ``WorkspaceStore`` (``WorkspaceStore/dockTileModel``), consumed only here.
 //
 // HANG-SAFETY: never instantiate `NSDockTile` in a test — the pure decision is pinned by
 // `DockTintPolicyTests`; this actuation is GUI-verified (`check-macos.sh` screenshot) only.
 
-#if os(macOS)
 import AppKit
 
 // The design system is still the shared view target's; the token layer is what stage D drains last.
@@ -186,4 +185,3 @@ private final class DockProgressContentView: NSView {
         }
     }
 }
-#endif

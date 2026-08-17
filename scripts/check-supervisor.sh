@@ -4553,6 +4553,66 @@ if [[ -n "${modes}" ]]; then
 fi
 printf 'check-supervisor: the small rules are spelled once — control line, sample buffer, mode event, pong.\n'
 
+# ── The UI split holds its shape (docs/56 §3) ───────────────────────────────────────────────────
+# Three boundaries, and each fails silently rather than loudly if it slips.
+#
+# A UI TARGET HOLDS VIEWS ONLY. A file in one that names no view framework compiles perfectly well
+# — it is simply logic sitting where only one of the two halves can reach it, which is how the same
+# model ends up written twice (the failure `CLAUDE.md` bans by name and this whole split exists to
+# prevent). The test is textual and deliberately blunt: import SwiftUI, AppKit or UIKit, or belong
+# in `SlopDeskClientCore`.
+ui_targets=(SlopDeskClientUI SlopDeskMacUI SlopDeskPhoneUI)
+frameworkless=""
+for target in "${ui_targets[@]}"; do
+  while IFS= read -r file; do
+    [[ -z "${file}" ]] && continue
+    grep -qE '^import (SwiftUI|AppKit|UIKit)$' "${file}" || frameworkless+="${file}"$'\n'
+  done < <(repo_files "Sources/${target}/*.swift" "Sources/${target}/**/*.swift")
+done
+if [[ -n "${frameworkless}" ]]; then
+  printf '%s' "${frameworkless}" >&2
+  fail "a UI target holds views only — a frameworkless file belongs in SlopDeskClientCore (docs/56 §3)"
+fi
+
+# A PLATFORM GATE IN A PLATFORM TARGET means the file is in the wrong target. `SlopDeskMacUI` is the
+# Mac's and nothing else builds it, so every `#if os(...)` in it is dead text that reads as a live
+# rule. The ONE allowed gate is `SlopDeskPhoneUI`'s whole-file `#if os(iOS)`, which is how an
+# iOS-only view declares itself to `swift build` (SwiftPM compiles every target on the host triple).
+# shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
+mac_gates=$(spells '#if os\(' \
+  $(repo_files 'Sources/SlopDeskMacUI/*.swift' 'Sources/SlopDeskMacUI/**/*.swift') 2> /dev/null || true)
+if [[ -n "${mac_gates}" ]]; then
+  printf '%s\n' "${mac_gates}" >&2
+  fail "a platform gate in the macOS UI target — the file is in the wrong target (docs/56 §3)"
+fi
+# shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
+phone_gates=$(spells '#if (os\((macOS|watchOS|tvOS)\)|canImport\(AppKit\))' \
+  $(repo_files 'Sources/SlopDeskPhoneUI/*.swift' 'Sources/SlopDeskPhoneUI/**/*.swift') 2> /dev/null || true)
+if [[ -n "${phone_gates}" ]]; then
+  printf '%s\n' "${phone_gates}" >&2
+  fail "the phone UI target gates on a platform it never builds for (docs/56 §3)"
+fi
+
+# NEITHER HALF IMPORTS THE OTHER, and the draining floor never imports upward. `Package.swift`
+# already makes the first two a link error; this catches the edit that would ADD the dependency
+# there, which is the moment a shared view ancestor becomes possible.
+declare -a ui_edges=(
+  "Sources/SlopDeskMacUI:import SlopDeskPhoneUI"
+  "Sources/SlopDeskPhoneUI:import SlopDeskMacUI"
+  "Sources/SlopDeskClientUI:import SlopDeskMacUI"
+  "Sources/SlopDeskClientUI:import SlopDeskPhoneUI"
+)
+for edge in "${ui_edges[@]}"; do
+  # shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
+  crossing=$(spells "${edge#*:}" \
+    $(repo_files "${edge%%:*}/*.swift" "${edge%%:*}/**/*.swift") 2> /dev/null || true)
+  if [[ -n "${crossing}" ]]; then
+    printf '%s\n' "${crossing}" >&2
+    fail "${edge%%:*} reached for ${edge#*import }: the two halves share no view ancestor (docs/56 §3)"
+  fi
+done
+printf 'check-supervisor: the UI split holds — views only, no dead gates, no ancestor between the halves.\n'
+
 # ── A pane's master is decided once, and it is OWNED ────────────────────────────────────────────
 # superd used to answer `spawn` by inserting the pane and then asking the map for its master fd by
 # name, and the two steps are not one decision. The reaper removes a pane and drops its master the

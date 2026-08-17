@@ -128,6 +128,13 @@ secondary windows, a 40-row rail under a mouse — are macOS-shaped problems.
 - **Layout diverges; capability does not.** A feature landing on one platform is owed to the other,
   laid out for it. What is NOT owed is the same arrangement.
 
+Three of these four are RATCHETED, in `scripts/check-supervisor.sh` (`make lint`): every file in a UI
+target must name a view framework, `SlopDeskMacUI` may not carry a platform gate (and `SlopDeskPhoneUI`
+may carry only its own), and neither half may import the other or the draining floor import upward.
+Each of the three fails silently rather than loudly if it slips — a frameworkless file compiles, a dead
+`#if` reads as a live rule, and the import that would give the two halves a common view ancestor is a
+one-line edit.
+
 ## 3.5 The stages, and where they stand
 
 The split lands incrementally, and the constraint on every increment is that the tree stays green and
