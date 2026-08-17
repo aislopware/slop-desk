@@ -1,15 +1,19 @@
-// SlopDeskClientApp — the native-SwiftUI app scene, rendering the native 3-pane IDE shell
-// (`WorkspaceRootView` → `NSSplitViewController` on macOS / `NavigationSplitView` on iOS).
+// SlopDeskClientApp — the SwiftUI app SCENE, rendering the 3-pane IDE shell (`WorkspaceRootView` →
+// `NSSplitViewController` on macOS / `NavigationSplitView` on iOS).
 //
-// It owns ONE `WorkspaceStore` + ONE `AppConnection` (docs/22 §7 / logic-api-surface §8), builds them
-// once in `init()` with the production `liveMakeSession` factory over the shared mux registry, honors
-// the AUTOCONNECT env seams (auto-connect + front-on-autoconnect), and renders `WorkspaceRootView`.
+// What the app IS — the ONE `WorkspaceStore`, the ONE `AppConnection`, the preferences, the overlay
+// coordinator, the Folders frecency, the Agents card, the chrome flags, and every closure seam between
+// them — is built by ``ClientComposition`` in `SlopDeskClientCore` (docs/56 §2). None of that wiring
+// draws, and once the UI splits per platform it would otherwise have had to be written twice.
+//
+// So what is left here is scene-shaped and nothing else: hold the composition, mount the root view,
+// run the launch tasks, and install the macOS-only actuators the composition leaves as open sinks (the
+// `UNUserNotification` banners, the Dock tile, the sound cue) plus the AppKit surfaces that have no
+// phone counterpart at all (the NSEvent chord monitor, the satellite windows, the window-close gate).
 
 #if canImport(SwiftUI)
 import Defaults // fire-time reads of the Code Agent sound toggles in the attention sink
 import SlopDeskClientCore
-import SlopDeskTransport // ConnectionRegistry + LiveMuxConnectionFactory (the per-host shared mux pool)
-import SlopDeskVideoProtocol // EnvConfig — the behaviour-preserving config resolver (env → overlay → default)
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 import SwiftUI
@@ -44,8 +48,14 @@ public struct SlopDeskClientApp: App {
     // swiftlint:enable unused_declaration
     #endif
 
-    @State private var store: WorkspaceStore
-    @State private var connection: AppConnection
+    /// THE COMPOSITION ROOT — the store, the connection, the preferences, the overlay coordinator, the
+    /// Folders frecency, the Agents card model and the chrome flags, built and wired once in
+    /// ``ClientComposition`` (docs/56 §2). None of that wiring draws, so none of it lives here: the two UI
+    /// targets each hold a scene like this one and share exactly one definition of what the app IS.
+    ///
+    /// The `store` / `connection` / … accessors below read straight through, so a body that touches an
+    /// `@Observable` field of one of them still registers its dependency normally.
+    @State private var app: ClientComposition
     #if os(macOS)
     @State private var clipboardMonitor: ClipboardMonitor
     /// Bidirectional clipboard sync with the host (copy here → paste there, and back) over the
@@ -56,25 +66,6 @@ public struct SlopDeskClientApp: App {
     /// iOS Dock. Fed the store's resolved ``WorkspaceStore/dockTileModel`` on each progress/completion edge;
     /// the Dock bounce rides ``CommandCompletionNotifier/bounceDock``.
     @State private var dockProgress: DockProgressController
-    #endif
-    @State private var preferences: PreferencesStore
-    /// The Agents settings-card model (install / uninstall / status of the Claude Code host hooks).
-    /// Owned here so it outlives the separate `Settings` scene; its async seams resolve the active
-    /// connection's first connected pane ``MetadataClient`` lazily at call time (a connection comes and goes).
-    @State private var agentHooks: AgentHooksController
-    /// The single overlay coordinator — command palette (⌘⇧P), keyboard cheat sheet (⌘/), the
-    /// toast stack, and the Connect-to-Host / remote-window-picker modals. Built once in `init()` after the
-    /// store + app connection, injected into the scene env (`\.overlayCoordinator`) and handed to
-    /// ``WorkspaceRootView``. The macOS ``WorkspaceKeyDispatcher`` threads its palette/cheat toggles so the
-    /// SAME NSEvent monitor that owns every chord drives the overlays; the store's background-event sinks
-    /// ALSO push an in-app toast through it.
-    @State private var overlayCoordinator: OverlayCoordinator
-    /// The app-owned, client-side Folders frecency store — the backing of the Open-Quickly
-    /// **Folders** pill (⌘Z). Owned HERE so it outlives the ``OverlayCoordinator``'s WEAK `folders` reference
-    /// (attached, like `store`, in `init()`); ``WorkspaceStore/onCwdVisited`` records each cwd change into it
-    /// (`record(cwd:)` validates-then-stores). On iOS the picker reads it too (the pill bar is shared ClientUI).
-    @State private var folderFrecency: FolderFrecencyStore
-    #if os(macOS)
     /// WS-B / B3: the live keybinding dispatcher. ONE app-level `NSEvent` `.keyDown` local monitor (the
     /// re-scope of DECISIONS.md's "no NSEvent monitor" rule — a multi-key prefix can't be a `.commands`
     /// menu item and the menu can't swallow a sequence's follow-up before the terminal first responder).
@@ -86,14 +77,6 @@ public struct SlopDeskClientApp: App {
     /// in a launch `.task`; compiled-only + never unit-tested (hang-safety, mirroring the host's
     /// `AgentControlListener`). macOS-only — the CLI install + OS integration are `#if os(macOS)`.
     @State private var clientControlServer: ClientControlServer
-    #endif
-    /// The chrome flags (sidebar collapse + window PIN) the toolbar / menu / palette
-    /// drive. OWNED HERE (not view-local `@State` inside ``WorkspaceRootView``) so the macOS scene's blessed
-    /// `.introspect(.window)` closure + the `.onChange(of: chrome.pinned)` actuator read the SAME flag the
-    /// titlebar / menu flip — ONE `NSWindow.level` source of truth, never `NSApplication.windows`. Passed into
-    /// ``WorkspaceRootView`` (both platforms); iOS reads only the two collapse flags (pin is an inert no-op).
-    @State private var chrome: WorkspaceChromeState
-    #if os(macOS)
     /// The host-windows feed: the `@Observable` store behind Open Quickly's host-window rows. (The
     /// RIGHT rail it was also built for was retired with the host-windows rail in `6a015eab` — the
     /// feed outlived it, see the `init` note.)
@@ -117,19 +100,33 @@ public struct SlopDeskClientApp: App {
     #endif
     @Environment(\.scenePhase) private var scenePhase
     @State private var lifecycleTask: Task<Void, Never>?
-    /// The PURE first-launch gating model (which steps for this platform, present-once).
-    /// Built once; the guided sheet presents when ``FirstLaunchModel/shouldPresent(hasCompleted:automationActive:)``
-    /// (a fresh install, no automation) — resolved in a launch `.task` into ``presentFirstLaunch``. Both
-    /// platforms (iOS keeps the cross-platform steps; the macOS-only steps drop out of `model.steps`).
-    @State private var firstLaunchModel = FirstLaunchModel()
     /// Whether the first-launch sheet is up — set true once at launch when ``FirstLaunchModel/shouldPresent``.
     @State private var presentFirstLaunch = false
+
+    // MARK: The composition's parts, read straight through
+
+    /// The ONE workspace store (docs/22 §7).
+    private var store: WorkspaceStore { app.store }
+    /// The ONE app-global connection.
+    private var connection: AppConnection { app.connection }
+    /// The ONE live settings store, handed to deep views via `\.preferencesStore`.
+    private var preferences: PreferencesStore { app.preferences }
+    /// The single overlay coordinator — palette (⌘⇧P), cheat sheet (⌘/), Open Quickly, Global Search,
+    /// Peek & Reply, the toast stack and the modals.
+    private var overlayCoordinator: OverlayCoordinator { app.overlay }
+    /// The Agents settings-card model, read by the `Settings` scene and the iOS settings sheet.
+    private var agentHooks: AgentHooksController { app.agentHooks }
+    /// The chrome flags (sidebar collapse + window PIN) the toolbar / menu / palette drive — ONE
+    /// `NSWindow.level` source of truth, never `NSApplication.windows`.
+    private var chrome: WorkspaceChromeState { app.chrome }
+    /// The PURE first-launch gating model (which steps for this platform, present-once).
+    private var firstLaunchModel: FirstLaunchModel { app.firstLaunch }
 
     public init() {
         // Promote `SLOPDESK_<KEY>=<VALUE>` launch arguments into the process environment BEFORE any
         // env-gated knob is read (a LaunchServices `open` sanitises the inherited env, so `--args` is the
         // only remote channel).
-        Self.applyLaunchArgumentEnvironment()
+        ClientComposition.applyLaunchArgumentEnvironment()
 
         // Pin the whole app to the LIGHT appearance — the ground is cream, so semantic chrome ink
         // must resolve light or the navigator draws white-on-cream under an OS in dark mode. Armed
@@ -150,174 +147,25 @@ public struct SlopDeskClientApp: App {
             )
         }
 
-        // Build the GUI Settings store FIRST so its apply paths run before the video pipeline / any
-        // `static let` env flag is forced (folds persisted prefs into `EnvConfig.overlay`).
-        let preferences = PreferencesStore()
-        // Fold the `~/.config/slopdesk/config.toml` keybind lines into the live keybindings.
-        // Setting `keybindings` republishes the merged model to `WorkspaceBindingRegistry.activeOverrides` via
-        // the store's `didSet`, which the dispatcher reads BEFORE the action table. The `text:` / `csi:` /
-        // `esc:` / `unbind:` directives need no registry and fold inside the loader; the NAMED / parameterized
-        // directives (`cmd+t:new_tab`, `cmd+1:goto_tab:1`) resolve HERE via `resolveNamedBinding` — the loader
-        // lives in `SlopDeskVideoProtocol` (which must not import the registry), so the app layer supplies the
-        // action-name → bindingID table. An unknown / out-of-range name resolves to `nil` and the line is
-        // dropped (validate-then-drop, no trap). A missing/broken file is a no-op, so a fresh install is
-        // behaviour-identical.
-        if let configURL = KeybindConfigLoader.defaultConfigURL() {
-            let merged = KeybindConfigLoader.loadFile(
-                at: configURL,
-                into: preferences.keybindings,
-                resolveNamedBinding: { named in
-                    guard let bindingID = WorkspaceBindingRegistry.bindingID(
-                        forConfigName: named.id, arg: named.arg,
-                    ) else { return nil }
-                    return (bindingID: bindingID, chord: named.chord)
-                },
-            )
-            if merged != preferences.keybindings { preferences.keybindings = merged }
-        }
-        _preferences = State(initialValue: preferences)
-
-        // Automation runs against the real Application Support dir; build the bootstrap store WITHOUT a
-        // persistence handle under automation so the throwaway autoconnect shape can never overwrite the
-        // developer's real workspace.json. A normal launch keeps the one persistence handle.
-        let isAutomation = Self.hasAutomationEnvironment()
-        let persistence: WorkspacePersistence? = isAutomation ? nil : WorkspacePersistence()
-
-        // Per-device live-video ceiling, resolved ONCE at launch.
+        // The composition root: the store, the connection, the preferences, the overlays, the Folders
+        // frecency, the Agents card and the chrome flags — everything the app IS, built and wired once
+        // in `SlopDeskClientCore` (docs/56 §2) so the AppKit and SwiftUI halves can never grow two
+        // copies of it. The device class resolves the concurrent live-video ceiling; asking the
+        // platform what it is running on is a UI-layer question, so it is answered here and passed in.
         #if os(macOS)
-        let liveVideoCap = VideoCapPolicy.cap(for: .mac)
+        let deviceClass = VideoDeviceClass.mac
         #elseif os(iOS)
-        let isPad = UIDevice.current.userInterfaceIdiom == .pad
-        let liveVideoCap = VideoCapPolicy.cap(for: isPad ? .pad : .phone)
+        let deviceClass = UIDevice.current.userInterfaceIdiom == .pad ? VideoDeviceClass.pad : .phone
         #else
-        let liveVideoCap = VideoCapPolicy.cap(for: .phone)
+        let deviceClass = VideoDeviceClass.phone
         #endif
-
-        // Per-host shared-connection pool (TCP-mux): EVERY pane rides one shared `MuxNWConnection` per
-        // host, each as a logical channel.
-        let muxRegistry = ConnectionRegistry(makeConnection: LiveMuxConnectionFactory.makeConnection)
-
-        // Honour the `On Launch` general setting (General → On Launch). `.restoreLastSession` (the
-        // default) restores the persisted tree; `.newWindow` seeds a fresh single-pane session instead
-        // (`launchTree` returns nil ⇒ the store uses `TreeWorkspace.defaultWorkspace()`), so the picker is a
-        // live control, not a dead accessor. nil in automation ⇒ bootstrap replaces it anyway.
-        let restoredTree = WorkspacePersistence.launchTree(
-            behavior: SettingsKey.onLaunch, persistence: persistence,
-        )
-        // Automation gets an in-memory value for the device-local facts, never rewriting the real
-        // `device-prefs.json` — the same discipline as `persistence` above. Built here rather than at
-        // the store's init because the connect-gate prefill reads it.
-        let devicePrefs: DevicePreferencesStore? = isAutomation ? nil : DevicePreferencesStore()
-        let seedTarget = Self.launchSeedTarget(isAutomation: isAutomation, devicePreferences: devicePrefs)
-        let appConnection = AppConnection(registry: muxRegistry, seed: seedTarget)
-        let store = WorkspaceStore(
-            restoringTree: restoredTree,
-            makeSession: WorkspaceStore.liveMakeSession(
-                makeInspector: WorkspaceStore.liveMakeInspector,
-                muxRegistry: muxRegistry,
-                target: { appConnection.target },
-            ),
-            liveVideoCap: liveVideoCap,
-            persistence: persistence,
-            devicePreferences: devicePrefs,
-            // The last picture of this host's document (docs/45 §7.3), so a launch paints folder names
-            // and respawns each pane's shell in its project directory before anything connects.
-            // Automation gets none, on the same terms as the two files above.
-            documentCache: isAutomation ? nil : WorkspaceCacheStore(),
-            cacheHostKey: DevicePreferences.hostKey(for: seedTarget),
-            // Hold a closed video pane's cap slot briefly past `teardown()` so the dismantle
-            // releases the stack before a same-tick sibling is admitted (avoids a transient cap+1).
-            videoTeardownSettle: .milliseconds(250),
-        )
-
-        // The pane status bar names the host before anything dials; the commit sink below re-stamps it.
-        store.committedConnectionTarget = seedTarget
-
-        // Automation seams: only when the env vars are present do we let the bootstrap REPLACE the
-        // restored workspace with the autoconnect/video shape (a normal launch restores untouched).
-        if isAutomation {
-            store.bootstrapFromEnvironment()
-        }
-        // File a committed target under its `host:port` in the device preferences (so re-dialling a known
-        // host restores the video ports it was reached on).
-        appConnection.onTargetCommitted = { [weak store] target in store?.commitConnectionTarget(target) }
-        // When the app-global connection (re)establishes, re-dial every pane channel stuck
-        // disconnected/failed/unreachable — the leaf's connect-on-appear `.task` never re-fires under
-        // keep-all-mounted, so without this fan-out a restored pane that gave up while the host was down stays
-        // a dead, blank terminal behind a green pill until a manual per-pane Reconnect.
-        // The workspace-document channel (`channelClass 1`, docs/45 §5) rides the SAME shared
-        // connection and holds it up on its own, so a client with every pane closed keeps rendering
-        // the rail. Re-opened on every establish: the previous subscription died with the old link,
-        // and the target may have changed.
-        store.installWorkspaceChannel(muxRegistry: muxRegistry, target: { appConnection.target })
-        store.attachCompletionSeenStore(preferences)
-        appConnection.onConnectionEstablished = { [weak store] in store?.handleConnectionEstablished() }
-        // Host identity: the titlebar speaks the host's NAME even when the user connected by
-        // IP. The resolver asks the host itself over the metadata RPC (verb 14) through whichever pane
-        // carries a live channel — resolved at call time like the Agents card, so the fetcher survives
-        // pane churn/reconnects.
-        appConnection.hostInfoFetcher = { [weak store] in
-            guard let store, let client = store.firstConnectedMetadataClient else { return nil }
-            return await client.hostInfo()
-        }
-        // Host pulse: the footer's second line (cpu/mem) reads the machine on the other end over the
-        // same metadata RPC (verb 17), resolved at call time through whichever pane has a live
-        // channel. The connection polls it on its own liveness clock.
-        appConnection.hostVitalsFetcher = { [weak store] in
-            guard let store, let client = store.firstConnectedMetadataClient else { return nil }
-            return await client.hostVitals()
-        }
-        // Gate the scene-level "Reconnect Pane" command on the app being connected.
-        store.isAppConnected = { [weak appConnection] in
-            if case .connected = appConnection?.status { return true }
-            return false
-        }
-        // ⌘+/⌘-/⌘0 zoom the terminal via the SINGLE source of truth (`terminal.fontSize`) so the
-        // Settings "Size" stepper stays in sync (the zoom rebuilds the libghostty config + reflows the PTY grid
-        // — a font-SIZE change is correctly NOT grid-preserving). Wired to the live `PreferencesStore`.
-        store.onFontSizeStep = { [weak preferences] step in
-            switch step {
-            case .increase: preferences?.increaseFontSize()
-            case .decrease: preferences?.decreaseFontSize()
-            case .reset: preferences?.resetFontSize()
-            }
-        }
-
-        // Build the client-side Folders frecency store (backing the Open-Quickly Folders pill,
-        // ⌘Z). Retained by `_folderFrecency` below; the coordinator holds it WEAKLY (like `store`). Under
-        // automation, point it at a THROWAWAY temp sidecar so an autoconnect run never pollutes the
-        // developer's real `folders-frecency.json` (mirroring the nil-persistence guard that protects
-        // `workspace.json`).
-        let folderFrecency: FolderFrecencyStore = isAutomation
-            ? FolderFrecencyStore(fileURL: FileManager.default.temporaryDirectory
-                .appendingPathComponent("slopdesk-automation-folders-frecency.json"))
-            : FolderFrecencyStore()
-        // Record a pane's cwd change into the frecency store. The store fires
-        // `onCwdVisited` ONLY when the known cwd actually changes (its own guard); the client owns the
-        // recording so `WorkspaceStore` stays store/SwiftUI-agnostic (a closure, not a direct dependency), and
-        // `record(cwd:)` validates-then-stores (drops an empty / over-long path). Held weakly — the app retains
-        // the store via `_folderFrecency`.
-        store.onCwdVisited = { [weak folderFrecency] cwd in folderFrecency?.record(cwd: cwd) }
-
-        // Build the single overlay coordinator HERE — after the store + app connection exist — so
-        // the macOS dispatcher (below) can thread its ⌘⇧P / ⌘/ toggles into the SAME NSEvent monitor that
-        // owns every chord, and the store's background-event sinks can ALSO surface an in-app toast.
-        // `connectionTarget` lets the remote-window-picker modal query the live host. The Folders frecency
-        // store is attached here (held weakly). Retained for the scene lifetime by `_overlayCoordinator` /
-        // `_folderFrecency` below.
-        let overlay = OverlayCoordinator(store: store, folders: folderFrecency)
-        overlay.connectionTarget = { [weak appConnection] in appConnection?.target ?? .default }
-        // SCREENSHOT FIXTURE ONLY (default-OFF): `SLOPDESK_TOAST_DEMO=<page>` seeds a STICKY
-        // notification page at launch, because the card's glass surface is a GPU backdrop effect that
-        // `ImageRenderer` cannot rasterise — the real window is the only place the shipping card can be
-        // photographed. Paged because the coordinator caps the stack at four and the spine expands only
-        // the newest two, so the full vocabulary is photographed two cards at a time. Sticky (no dwell)
-        // so the shot is stable; no real event path sets this.
-        if let page = WorkspaceStore.automationInputs()["SLOPDESK_TOAST_DEMO"], !page.isEmpty {
-            Self.seedDemoToasts(overlay, page: page)
-        }
+        let app = ClientComposition(deviceClass: deviceClass)
+        _app = State(initialValue: app)
 
         #if os(macOS)
+        let store = app.store
+        let overlay = app.overlay
+
         // EXPLICIT NOTIFICATIONS (OSC 9 / OSC 777) + long-command + agent-attention → local macOS
         // notifications, tagged with the pane id so a click reveals the pane (the router routes back).
         let explicitNotifier = CommandCompletionNotifier()
@@ -327,149 +175,87 @@ public struct SlopDeskClientApp: App {
         Self.notificationRouter = router
 
         // The macOS Dock progress/error-tint controller. The Dock bounce is driven from the notifier
-        // (a DELIVERED banner, NOT the bell): the "Bounce Dock Icon" toggle gates it HERE at the actuation seam
-        // so the pure `CommandCompletionNotifier` stays toggle-agnostic. Returning to the app while the Dock is
-        // red jumps to the next failing tab + clears the tint (the closest-faithful stand-in for the dock-click
-        // hook SwiftUI owns — see docs/DECISIONS.md). Retained for the scene lifetime by `_dockProgress` below.
+        // (a DELIVERED banner, NOT the bell): the "Bounce Dock Icon" toggle gates it HERE at the
+        // actuation seam so the pure `CommandCompletionNotifier` stays toggle-agnostic. Returning to the
+        // app while the Dock is red jumps to the next failing tab + clears the tint (the closest-faithful
+        // stand-in for the dock-click hook SwiftUI owns — see docs/DECISIONS.md).
         let dockProgress = DockProgressController()
         explicitNotifier.bounceDock = { [weak dockProgress] in
             guard SettingsKey.bounceDockIconEnabled else { return }
             dockProgress?.bounce()
         }
         dockProgress.onActivatedWhileErrored = { [weak store] in store?.revealNextErrorPane() }
-        #endif
+        _dockProgress = State(initialValue: dockProgress)
 
-        // Surface the SAME background events as IN-APP toasts on BOTH platforms. A toast
-        // is in-app UI, INDEPENDENT of the OS-notification setting — but it respects FOCUS: the pane the
-        // user is actively looking at gets no toast (they are watching the event happen). The macOS
-        // `UNUserNotification` is gated by the pure ``NotificationPolicy`` (the per-event toggle +
-        // the Notify-While-Foreground tri-state), applied inside the notifier with the store-supplied
-        // appActive + sourcePaneVisible. Each toast carries a stable `pane.<key>` id so a newer event for the
-        // same pane REPLACES the old one (the coordinator's de-dupe), and a flavour matching the event class.
-        store.onPaneNotification = { [weak overlay, weak store] paneID, paneTitle, title, body in
-            // An `slopdesk watch` finish carries the private WatchNotificationMarker sentinel in its
-            // title — route it to `.watchFinish` (gated by Notify on Watch Finish) with the marker STRIPPED;
-            // every other explicit notification stays `.explicitOSC` (the master switch).
-            let (event, displayTitle) = NotificationEvent.classifyExplicit(title: title, body: body)
-            guard let store else { return }
-            // SECURITY: the toast is in-app UI and — on iOS — the ONLY notification surface, so the secret
-            // redaction the macOS banner (`CommandCompletionNotifier`) and the pane title
-            // (`PanePresentation`) apply must ALSO run here, or an OSC 9/777 title/body carrying a token is
-            // shown verbatim. Done once at the construction site (`Toast.explicitOSC`) so both platforms benefit.
-            if !store.isSourcePaneFocused(paneID) {
-                overlay?.pushToast(Toast.explicitOSC(paneIDRaw: paneID.raw, title: displayTitle, body: body))
-            }
-            #if os(macOS)
-            // The OS banner goes through the pure NotificationPolicy (the per-event toggle resolved
-            // above + the Notify-While-Foreground tri-state) — the store supplies appActive + whether the
-            // SOURCE pane is visible (its tab on screen / its satellite key).
+        // The three OS-notification sinks the composition leaves open. iOS installs NONE of them —
+        // which is the honest statement that the in-app toast is its only notification surface. The
+        // toast half of each fan-out already fired inside the composition, on both platforms.
+        app.backgroundNoticeSink = { notice in
             explicitNotifier.notifyExplicit(
-                event: event,
-                paneIDKey: paneID.raw.uuidString, paneTitle: paneTitle, title: displayTitle, body: body,
-                appActive: store.isAppActive,
-                sourcePaneVisible: store.isSourcePaneVisible(paneID),
+                event: notice.event,
+                paneIDKey: notice.paneIDKey, paneTitle: notice.paneTitle,
+                title: notice.title, body: notice.body,
+                appActive: notice.appActive, sourcePaneVisible: notice.sourcePaneVisible,
                 settings: SettingsKey.notificationSettings,
             )
-            #endif
         }
-        // After an UNEXPECTED reconnect, surface WHICH kind it was as a transient toast —
-        // `.resumedSession` reattached the same live shell (scrollback intact); `.freshShell` spawned a fresh
-        // shell (the previous session ended). Otherwise a fresh shell silently drops the user's context with
-        // no signal. Pushed unconditionally (in-app UI, independent of OS-notification settings); the stable
-        // `pane.<key>` id de-dupes with the pane's other toasts.
-        store.onSessionResumeOutcome = { [weak overlay] paneID, outcome in
-            guard let toast = Toast.sessionResume(paneIDKey: paneID.raw.uuidString, outcome: outcome) else { return }
-            overlay?.pushToast(toast)
-        }
-        // A NON-pane-scoped copy (palette "Copy Path", rail "Copy Window Title") lights the coordinator's
-        // window-level `COPIED · N` chip — the pane-less twin of `TerminalViewModel.copyReceipt`.
-        store.onLocalCopy = { [weak overlay] text in
-            overlay?.noteCopy(text)
-        }
-        Self.wireWorkspaceNotices(store: store, overlay: overlay)
-        store.onLongCommandNotify = { [weak overlay, weak store] paneIDKey, paneTitle, exitCode, durationMS in
-            // The background "your build finished" cue. FOCUS-gated like the other toasts: the per-command
-            // policy path can authorise the sink while the source pane is the focused one (e.g. Notify While
-            // Foreground = Always), and the user watching the command exit needs no toast over it.
-            // SECURITY: `paneTitle` is the live OSC 0/2 pane
-            // title — remote/PTY-settable text (often the running command line such as `mysql -pSECRET`), and
-            // the toast is the ONLY notification surface on iOS, so the title is masked at the single
-            // construction site (`Toast.longCommand`) for parity with the macOS banner + the OSC toast.
-            if store?.isSourcePaneFocused(byIDString: paneIDKey) == false {
-                overlay?.pushToast(Toast.longCommand(
-                    paneIDKey: paneIDKey, paneTitle: paneTitle, exitCode: exitCode, durationMS: durationMS,
-                ))
-            }
-            #if os(macOS)
-            // Route the OS banner through NotificationPolicy — Notify on Finish (clean exit, default
-            // OFF) / Notify on Error Exit (non-zero, default ON) + the Notify-While-Foreground gate.
-            guard let store else { return }
+        // Notify on Finish (clean exit, default OFF) / Notify on Error Exit (non-zero, default ON) +
+        // the Notify-While-Foreground gate — the duration threshold is the notifier's own.
+        app.longCommandSink = { notice in
             explicitNotifier.notifyIfLong(
-                paneTitle: paneTitle, exitCode: exitCode, durationMS: durationMS, paneIDKey: paneIDKey,
-                appActive: store.isAppActive,
-                sourcePaneVisible: store.isSourcePaneVisible(byIDString: paneIDKey),
+                paneTitle: notice.paneTitle, exitCode: notice.exitCode, durationMS: notice.durationMS,
+                paneIDKey: notice.paneIDKey,
+                appActive: notice.appActive, sourcePaneVisible: notice.sourcePaneVisible,
                 settings: SettingsKey.notificationSettings,
             )
-            #endif
         }
-        #if os(macOS)
-        Self.wireAgentAttention(store: store, overlay: overlay, notifier: explicitNotifier)
-        #else
-        Self.wireAgentAttention(store: store, overlay: overlay, notifier: nil)
-        #endif
+        app.agentAttentionSink = { notice in
+            // The herdr-style sound cues (Submarine on a finish, Glass on awaiting-input), gated by the
+            // pure ``AgentSoundPolicy`` — which does NOT gate on focus: the TOAST is suppressed for a
+            // focused pane (a card over the event you are watching is spam), but the cue still rings,
+            // because a focused pane is routinely one in a background window or on another display.
+            // System sounds via `NSSound(named:)` — nothing bundled.
+            if let sound = AgentSoundPolicy.sound(
+                needsInput: notice.needsInput,
+                sourcePaneFocused: notice.sourcePaneFocused,
+                soundTaskComplete: Defaults[.agentSoundTaskComplete],
+                soundAwaitInput: Defaults[.agentSoundAwaitInput],
+            ) {
+                NSSound(named: sound.rawValue)?.play()
+            }
+            // Agent edges (reusing AttentionSupervision) ride their OWN per-event toggles —
+            // awaiting-input vs task-complete — NOT the shell-app master switch, then the
+            // Notify-While-Foreground gate.
+            explicitNotifier.notifyExplicit(
+                event: notice.needsInput ? .agentAwaitInput : .agentTaskComplete,
+                paneIDKey: notice.paneIDKey, paneTitle: notice.name,
+                title: notice.name, body: notice.body,
+                appActive: notice.appActive, sourcePaneVisible: notice.sourcePaneVisible,
+                settings: SettingsKey.notificationSettings,
+            )
+        }
 
-        // The Agents settings-card model. Its seams resolve the active session's FIRST connected
-        // pane metadata façade at CALL time (not at construction — no pane is connected yet) and route the
-        // install/uninstall/status verb through it. The card is host-global but `MetadataClient` is one-per-
-        // pane, so any live channel suffices; with no connected pane the status seam returns `nil` and the
-        // card lands on `.disconnected` ("Connect a session to manage hooks"), never a dead button.
-        let agentHooks = AgentHooksController(
-            install: { [weak store] in
-                guard let store, let client = store.firstConnectedMetadataClient else { return false }
-                return await client.installAgentHooks()
-            },
-            uninstall: { [weak store] in
-                guard let store, let client = store.firstConnectedMetadataClient else { return false }
-                return await client.uninstallAgentHooks()
-            },
-            refreshStatus: { [weak store] in
-                guard let store, let client = store.firstConnectedMetadataClient else { return nil }
-                return await client.agentHookStatus()
-            },
-        )
-
-        _store = State(initialValue: store)
-        _connection = State(initialValue: appConnection)
-        _agentHooks = State(initialValue: agentHooks)
-        _overlayCoordinator = State(initialValue: overlay)
-        _folderFrecency = State(initialValue: folderFrecency)
-        // The app owns the chrome flags (incl. window PIN) so the macOS scene's blessed
-        // `.introspect(.window)` closure reads the SAME `chrome.pinned` the titlebar / menu flip.
-        let chromeState = WorkspaceChromeState()
-        _chrome = State(initialValue: chromeState)
-        #if os(macOS)
-        // Host-windows FEED: Open Quickly's host-window rows. Its renewal loop (a scene `.task`
-        // below) gates on OQ visibility + connection — no OQ up costs the host exactly 0 Hz. The
-        // connection is weak like `overlay.connectionTarget`.
-        let feed = HostWindowFeed(
+        // Host-windows FEED: Open Quickly's host-window rows. Its renewal loop (a scene `.task` below)
+        // gates on OQ visibility + connection — no OQ up costs the host exactly 0 Hz. The connection is
+        // weak, like the coordinator's own `connectionTarget`.
+        _hostWindowFeed = State(initialValue: HostWindowFeed(
             isActive: { overlay.openQuicklyVisible },
-            isConnected: { [weak appConnection] in appConnection?.status == .connected },
-            target: { [weak appConnection] in appConnection?.target ?? .default },
-        )
-        _hostWindowFeed = State(initialValue: feed)
-        // QUIT-DRAIN: hand the termination delegate the single live store (weak — the App's `@State`
-        // owns it) so `applicationShouldTerminate` can drain the in-flight pane teardowns via
-        // `quiesce()` before the process dies. Set here, before any window exists, so the seam is live
-        // for the very first ⌘Q.
+            isConnected: { [weak app] in app?.connection.status == .connected },
+            target: { [weak app] in app?.connection.target ?? .default },
+        ))
+        // QUIT-DRAIN: hand the termination delegate the single live store (weak — the composition owns
+        // it) so `applicationShouldTerminate` can drain the in-flight pane teardowns via `quiesce()`
+        // before the process dies. Set here, before any window exists, so the seam is live for the very
+        // first ⌘Q.
         SlopDeskAppTerminationDelegate.store = store
-        // Held in a local so the keybinding dispatcher's `isWorkspaceWindowKey` closure below captures the SAME
-        // `WeakWindowBox` the `.introspect(.window)` hook fills — mirroring the `overlay` local pattern.
+        // Held in a local so the keybinding dispatcher's `isWorkspaceWindowKey` closure below captures
+        // the SAME `WeakWindowBox` the `.introspect(.window)` hook fills.
         let windowBox = WeakWindowBox()
         _windowBox = State(initialValue: windowBox)
         _clipboardMonitor = State(initialValue: ClipboardMonitor(store: store))
-        // CLIPBOARD SYNC: copy on this Mac → the HOST pasteboard mirrors it within a tick (so
-        // Claude Code's Ctrl+V image paste and a plain ⌘V in a remote-desktop pane just work), and a
-        // host-side copy flows back. Routed through whichever pane carries a live channel — same
+        // CLIPBOARD SYNC: copy on this Mac → the HOST pasteboard mirrors it within a tick (so Claude
+        // Code's Ctrl+V image paste and a plain ⌘V in a remote-desktop pane just work), and a host-side
+        // copy flows back. Routed through whichever pane carries a live channel — the same
         // resolve-at-call-time idiom as the Agents card / hostInfo fetcher.
         _clipboardSync = State(initialValue: ClipboardSyncEngine(
             push: { [weak store] clip in
@@ -481,78 +267,58 @@ public struct SlopDeskClientApp: App {
                 return await client.readClipboard(lastSeenChangeCount: lastSeen)
             },
         ))
-        // PASTE AS KEYSTROKES: the LIVE local-clipboard reader for the ⌥⌘V chord + the remote-GUI pane's
-        // paste menu. Reads the CURRENT pasteboard (not the up-to-1s-stale ring head), so it works even when
-        // clipboard-history recording is off. Main-actor only (route()/currentLocalClipboard() are @MainActor).
-        store.clipboardTextProvider = { ClientPasteboard.pasteboard.string(forType: .string) }
-        _dockProgress = State(initialValue: dockProgress)
         // Build the live keybinding dispatcher over the single store. A new-pane action (split /
-        // new-tab / new-session) mints a terminal pane directly via the store's routing, focused,
-        // so the user picks Terminal / Remote window INSIDE the new pane; ⌘T stays a direct-terminal escape
+        // new-tab / new-session) mints a terminal pane directly via the store's routing, focused, so the
+        // user picks Terminal / Remote window INSIDE the new pane; ⌘T stays a direct-terminal escape
         // hatch (it routes via `.newPane(.terminal)`, never `.newTab`).
         //
-        // The dispatcher's `textBinding`/`unbind` resolution is LIVE here regardless of the overlay layer —
-        // a user `text:`/`csi:`/`esc:` config binding injects via `sendBytes` and an `unbind:` passes through, both
-        // resolved from `WorkspaceBindingRegistry.activeOverrides`. The palette (⌘⇧P) +
-        // cheat-sheet (⌘/) toggles thread into THIS monitor so the overlay layer is driven by the SAME single chord
-        // owner (never a competing `.keyboardShortcut`). `toggleFind` stays nil — its `route` arm falls back
-        // to the tree-path `requestFindInActivePane()`. `togglePeekReply` IS wired here: ⌘⌥J
-        // opens the Peek & Reply overlay rather than falling back to `jumpToOldestAttentionPane()`.
-        // The ⇧⌘F Global Search toggle threads into the SAME NSEvent monitor that owns every chord, so
-        // the cross-tab results surface opens from the keyboard (and the View ▸ Global Search… menu item below).
-        let keyDispatcher = WorkspaceKeyDispatcher(
+        // The dispatcher's `textBinding`/`unbind` resolution is LIVE here regardless of the overlay
+        // layer — a user `text:`/`csi:`/`esc:` config binding injects via `sendBytes` and an `unbind:`
+        // passes through, both resolved from `WorkspaceBindingRegistry.activeOverrides`. The palette
+        // (⌘⇧P) + cheat-sheet (⌘/) toggles thread into THIS monitor so the overlay layer is driven by
+        // the SAME single chord owner (never a competing `.keyboardShortcut`). `toggleFind` stays nil —
+        // its `route` arm falls back to the tree-path `requestFindInActivePane()`.
+        _keyDispatcher = State(initialValue: WorkspaceKeyDispatcher(
             store: store,
             togglePalette: { [overlay] in overlay.togglePalette() },
             toggleCheatSheet: { [overlay] in overlay.toggleCheatSheet() },
-            // ⌘⌥J opens the Peek & Reply card over the oldest pane needing attention through
-            // the SAME NSEvent monitor that owns every chord. The coordinator's `togglePeekReply()` HONESTLY
-            // no-ops when nothing needs attention (so the chord does nothing rather than flashing an empty
-            // card), instead of falling back to `jumpToOldestAttentionPane()` in `route`. ⌘⇧J stays the
-            // Hint-to-Open chord (not repurposed for peek-reply).
+            // ⌘⌥J opens the Peek & Reply card over the oldest pane needing attention through the SAME
+            // NSEvent monitor that owns every chord. The coordinator's `togglePeekReply()` HONESTLY
+            // no-ops when nothing needs attention (so the chord does nothing rather than flashing an
+            // empty card). ⌘⇧J stays the Hint-to-Open chord (not repurposed for peek-reply).
             togglePeekReply: { [overlay] in overlay.togglePeekReply() },
             toggleGlobalSearch: { [overlay] in overlay.toggleGlobalSearch() },
-            // ⌘J opens the folded-in Jump-To — the Open-Quickly picker at the
-            // `.current` pill — through the SAME NSEvent monitor that owns every chord.
+            // ⌘J opens the folded-in Jump-To — the Open-Quickly picker at the `.current` pill.
             toggleJumpTo: { [overlay] in overlay.toggleOpenQuickly(filter: .current) },
-            // ⌘⇧O opens the Open-Quickly picker at the merged `.all` pill. ⌘⇧O + ⌘J are the ONLY
-            // GLOBAL Open-Quickly chords; the pill / ⌘1–9 / Tab / ⌘K chords are PICKER-LOCAL (handled by
+            // ⌘⇧O opens the picker at the merged `.all` pill. ⌘⇧O + ⌘J are the ONLY GLOBAL Open-Quickly
+            // chords; the pill / ⌘1–9 / Tab / ⌘K chords are PICKER-LOCAL (handled by
             // `OpenQuicklyView.onKeyPress`, never registered in `WorkspaceBindingRegistry`).
             toggleOpenQuickly: { [overlay] in overlay.toggleOpenQuickly(filter: .all) },
-            // While the Open-Quickly picker is presented the dispatcher yields the whole
-            // keyboard to it like a modal sheet (the picker's `.onKeyPress` owns ⌘0/⌘W/⌘R/⌘Z/⌘G/⌘J + ⌘1–9 +
-            // ⌘K). Without this the app monitor — which PREEMPTS the responder chain — resolves the GLOBAL
-            // chord behind the picker, so ⌘1–9 switched the background tab (not quick-pick) and ⌘W destroyed
-            // the focused pane. Esc / a scrim-tap still close it; ⌘⇧O / ⌘J stay global only while it is hidden.
-            // The Peek & Reply card YIELDS the same way — its reply field must receive normal
-            // typing + the bare-1–9 quick-answer (which a global ⌘-less chord can't steal, but a yield keeps
-            // any modeled chord from firing behind the focused card). Esc / a scrim-tap close it.
+            // While the Open-Quickly picker is presented the dispatcher yields the whole keyboard to it
+            // like a modal sheet. Without this the app monitor — which PREEMPTS the responder chain —
+            // resolves the GLOBAL chord behind the picker, so ⌘1–9 switched the background tab (not
+            // quick-pick) and ⌘W destroyed the focused pane. The Peek & Reply card YIELDS the same way.
             isOverlayCapturingKeys: { [overlay] in overlay.capturesKeyboardWhileVisible },
-            // Gate the app-wide NSEvent monitor
-            // on the WORKSPACE window being key, so the stock Settings scene (⌘,) + attached sheets receive
-            // their own keystrokes instead of a bound chord (⌘W/⌘T/⌘1–9/…) resolving against the hidden
-            // workspace tree behind them. The window is captured weakly in `windowBox` by the
-            // `.introspect(.window)` hook below; the predicate is a pure IDENTITY check against
-            // `NSApp.keyWindow` (`workspaceWindowIsKey`), so a nil capture — pre-introspect, or the weak box
-            // going stale after the window closes — NEVER claims the keyboard. A `?? true` default would let a
-            // stale/empty box swallow chords while Settings was frontmost. Every key then passes through
-            // until the workspace window is truly key again.
+            // Gate the app-wide NSEvent monitor on the WORKSPACE window being key, so the stock Settings
+            // scene (⌘,) + attached sheets receive their own keystrokes instead of a bound chord
+            // (⌘W/⌘T/⌘1–9/…) resolving against the hidden workspace tree behind them. The predicate is a
+            // pure IDENTITY check against `NSApp.keyWindow` (`workspaceWindowIsKey`), so a nil capture
+            // NEVER claims the keyboard.
             isWorkspaceWindowKey: { [windowBox] in
                 Self.workspaceWindowIsKey(captured: windowBox.window, keyWindow: NSApp.keyWindow)
             },
-        )
-        _keyDispatcher = State(initialValue: keyDispatcher)
+        ))
         // Diagnostics tap for the keyboard-focus saga — inert unless SLOPDESK_FOCUS_DEBUG=1.
         FocusDebugProbe.installIfRequested()
-        // The code panel's warm-swap focus restore needs the workspace's ACTIVE TAB (the pool
-        // cannot see the store) — same late-wiring idiom as the dispatcher's closures above.
+        // The code panel's warm-swap focus restore needs the workspace's ACTIVE TAB (the pool cannot see
+        // the store) — same late-wiring idiom as the dispatcher's closures above.
         CodeSidebarWebViewPool.activeTabID = { [store] in store.tree.activeSession?.activeTab?.id }
-        // The client control socket server over a ``WorkspaceControlBackend`` adapter on the SAME
-        // live stores the GUI uses (the backend holds them WEAKLY — the app retains the originals). Built
-        // here so it outlives the scene; BOUND in a launch `.task` (the bind/listen is deferred off init).
-        // The socket path is `SLOPDESK_CLIENT_SOCKET` env > the Application Support default.
+        // The client control socket server over a ``WorkspaceControlBackend`` adapter on the SAME live
+        // stores the GUI uses (the backend holds them WEAKLY — the composition retains the originals).
+        // Built here so it outlives the scene; BOUND in a launch `.task` (the bind/listen is deferred).
         _clientControlServer = State(initialValue: ClientControlServer(
             backend: WorkspaceControlBackend(
-                store: store, preferences: preferences, folders: folderFrecency,
+                store: store, preferences: app.preferences, folders: app.folders,
             ),
         ))
         #endif
@@ -617,7 +383,7 @@ public struct SlopDeskClientApp: App {
                 .task {
                     presentFirstLaunch = FirstLaunchModel.shouldPresent(
                         hasCompleted: SettingsKey.hasCompletedFirstLaunchEnabled,
-                        automationActive: Self.hasAutomationEnvironment(),
+                        automationActive: app.isAutomation,
                     )
                 }
                 // The chrome follows the OS appearance (semantic tokens resolve per-appearance at draw
@@ -627,14 +393,14 @@ public struct SlopDeskClientApp: App {
                 .onChange(of: scenePhase) { _, phase in handleScenePhase(phase) }
             #if os(macOS)
                 .task {
-                    guard !Self.hasAutomationEnvironment() else { return }
+                    guard !app.isAutomation else { return }
                     await clipboardMonitor.run()
                 }
                 // Clipboard-sync poll loop (push local copies to the host, pull host copies back).
                 // Skipped under automation like the monitor: an E2E run must not mirror the
                 // developer's real pasteboard onto the test host (or vice versa).
                 .task {
-                    guard !Self.hasAutomationEnvironment() else { return }
+                    guard !app.isAutomation else { return }
                     await clipboardSync.run()
                 }
                 // Install the app-level keybinding dispatcher's `.keyDown` local monitor once the
@@ -675,7 +441,7 @@ public struct SlopDeskClientApp: App {
                 // auto-reconnect task) or, on a fresh install, waits for the user to open the
                 // Connect-to-Host editor (the top-bar status pill / "Connect to Host…" palette action).
                 .task {
-                    guard Self.hasAutomationEnvironment() else { return }
+                    guard app.isAutomation else { return }
                     let env = WorkspaceStore.automationInputs()
                     if env["SLOPDESK_AUTOCONNECT_HOST"]?.isEmpty == false {
                         await connection.connect()
@@ -688,7 +454,7 @@ public struct SlopDeskClientApp: App {
                 // AUTO-RECONNECT (Goal B): normal launch silently re-connects to the MRU host. No-op under
                 // any AUTOCONNECT env (automation keeps precedence); SLOPDESK_SKIP_AUTO_RECONNECT=1 off.
                 .task {
-                    guard !Self.hasAutomationEnvironment() else { return }
+                    guard !app.isAutomation else { return }
                     await connection.connectIfSavedTarget()
                 }
             #if os(macOS)
@@ -747,7 +513,7 @@ public struct SlopDeskClientApp: App {
                     // observers (`applyRememberedFrame`) cover resize/move, but a plain ⌘Q after a
                     // zoom (no live-resize gesture) would otherwise miss the last frame. Automation
                     // quits never save (they run at the odiff reference geometry, not the user's).
-                    if SettingsKey.windowSize == .remember, !Self.hasAutomationEnvironment(),
+                    if SettingsKey.windowSize == .remember, !app.isAutomation,
                        let window = windowBox.window
                     {
                         SettingsKey.savedWindowFrame = window.frameDescriptor
@@ -886,206 +652,6 @@ public struct SlopDeskClientApp: App {
     }
 
     #if os(macOS)
-    /// The OS-banner actuator `wireAgentAttention` takes — ``CommandCompletionNotifier`` is a
-    /// macOS-only type, so the alias keeps the helper's ONE signature compiling on iOS too.
-    private typealias AgentBannerNotifier = CommandCompletionNotifier
-    #else
-    /// iOS has no OS-banner path (the toast is the only notification surface) — always nil.
-    private typealias AgentBannerNotifier = Never
-    #endif
-
-    /// Wires the agent attention sink — the ONE per-edge fan-out to the three surfaces: the sound cue
-    /// (macOS), the in-app toast, and the OS banner (macOS; `notifier` is nil on iOS, where the toast is
-    /// the only notification surface). Split from `init` so the scene body stays under the length lint.
-    @MainActor
-    private static func wireAgentAttention(
-        store: WorkspaceStore,
-        overlay: OverlayCoordinator,
-        notifier: AgentBannerNotifier?,
-    ) {
-        store.onAgentAttention = { [weak overlay, weak store] paneIDKey, name, needsInput, detail in
-            let headline = needsInput ? "needs your input" : "finished"
-            let body: String = {
-                guard let detail, !detail.isEmpty else { return headline }
-                return "\(headline) — \(detail)"
-            }()
-            guard let store else { return }
-            let sourcePaneFocused = store.isSourcePaneFocused(byIDString: paneIDKey)
-            #if os(macOS)
-            // The herdr-style sound cues (Submarine on a finish, Glass on awaiting-input), gated by the
-            // pure ``AgentSoundPolicy`` — which does NOT gate on focus: the TOAST is suppressed for a
-            // focused pane (a card over the event you are watching is spam), but the cue still rings,
-            // because a focused pane is routinely one in a background window or on another display.
-            // System sounds via `NSSound(named:)` — nothing bundled.
-            if let sound = AgentSoundPolicy.sound(
-                needsInput: needsInput,
-                sourcePaneFocused: sourcePaneFocused,
-                soundTaskComplete: Defaults[.agentSoundTaskComplete],
-                soundAwaitInput: Defaults[.agentSoundAwaitInput],
-            ) {
-                NSSound(named: sound.rawValue)?.play()
-            }
-            #endif
-            // Agent-needs-input is the highest-signal background event → `.attention`; a finish is `.success`.
-            // FOCUS-gated like the OSC toast: the agent pane the user is watching announces its own edge
-            // on screen (the blocked prompt / finished turn is right there) — no toast on top of it.
-            // The agent `detail` is host-provided (Claude label); mask any secret in it (and the name) for
-            // the same reason as the OSC toast above — the toast is the only iOS notification surface.
-            if !sourcePaneFocused {
-                overlay?.pushToast(Toast(
-                    id: "pane.\(paneIDKey)",
-                    flavor: needsInput ? .attention : .success,
-                    // `.agent` is what earns this card the "needs input" / "is done" headline instead of
-                    // a command's "finished" — flavour alone cannot tell "the agent finished its turn"
-                    // from "the command exited 0".
-                    source: .agent,
-                    title: Toast.redactSecretsIfEnabled(name),
-                    // The toast's detail line is the DETAIL ONLY. The derived headline already says
-                    // "needs input" / "is done", so passing `body` (which prefixes that same phrase for
-                    // the OS banner) would print the state twice on one card. The OS banner still gets
-                    // the full sentence below — it has no derived headline to carry it.
-                    body: detail.map { Toast.redactSecretsIfEnabled($0) },
-                    paneKey: paneIDKey,
-                ))
-            }
-            #if os(macOS)
-            // Agent edges (reusing AttentionSupervision) ride their OWN per-event toggles —
-            // awaiting-input vs task-complete — NOT the shell-app master switch, then the
-            // Notify-While-Foreground gate.
-            notifier?.notifyExplicit(
-                event: needsInput ? .agentAwaitInput : .agentTaskComplete,
-                paneIDKey: paneIDKey, paneTitle: name, title: name, body: body,
-                appActive: store.isAppActive,
-                sourcePaneVisible: store.isSourcePaneVisible(byIDString: paneIDKey),
-                settings: SettingsKey.notificationSettings,
-            )
-            #else
-            _ = body // feeds only the macOS banner; discarded for the warning-zero iOS build
-            #endif
-        }
-    }
-
-    /// The three workspace-level transient notices, wired to the overlay coordinator's chip.
-    ///
-    /// Grouped out of `init()` because they are one idea — a layout event with no visible trace of its
-    /// own gets SAID — and because `init()` sits on the `function_body_length` ceiling.
-    @MainActor
-    private static func wireWorkspaceNotices(store: WorkspaceStore, overlay: OverlayCoordinator) {
-        // Closing a tab is the workspace's most destructive ROUTINE action, and the ⇧⌘T reopen has no
-        // visible affordance at the moment it matters. The store fires this only when a REOPENABLE tab
-        // just landed on the LIFO, so the chip never promises an undo it can't deliver.
-        store.onTabCloseRecorded = { [weak overlay] in
-            overlay?.noteNotice(label: "Tab closed", keycap: "⇧⌘T", detail: "reopens")
-        }
-        // A teleport jump (⌘⇧U walk, palette / Open Quickly, a Global Search hit, a notification /
-        // connection-alert click) swaps the whole viewport in one frame. The store fires this ONLY when
-        // the landing crossed a tab/session boundary — the breadcrumb chip says where you are now.
-        // SECURITY: the breadcrumb embeds OSC/PTY-settable titles → mask at the display site.
-        store.onCrossTabJump = { [weak overlay] breadcrumb in
-            overlay?.noteNotice(
-                label: "Jumped", detail: Toast.redactSecretsIfEnabled(breadcrumb), dwell: .seconds(2.5),
-            )
-        }
-        // The workspace belongs to the host (docs/45 §7.2), so with the document out of reach every
-        // split, ⌘T, close and divider drag simply does not happen — while the window keeps rendering
-        // the last layout it knows and looks entirely normal. Saying so is the difference between a
-        // host that is unreachable and a UI that ignored the gesture.
-        store.onLayoutChangeUnavailable = { [weak overlay] in
-            overlay?.noteNotice(label: "Workspace offline", detail: "Layout is host-owned")
-        }
-    }
-
-    /// Promotes every `SLOPDESK_<KEY>=<VALUE>` launch argument into the process environment via `setenv`.
-    private static func applyLaunchArgumentEnvironment() {
-        for arg in CommandLine.arguments.dropFirst() {
-            guard arg.hasPrefix("SLOPDESK_"), let eq = arg.firstIndex(of: "=") else { continue }
-            let key = String(arg[..<eq])
-            let value = String(arg[arg.index(after: eq)...])
-            setenv(key, value, 1)
-        }
-    }
-
-    /// The connect gate's prefill, and the `host:port` the document cache is gated on.
-    ///
-    /// The layout is host-owned and arrives over the wire, so it names no host: the last successfully
-    /// connected target is the only host memory that exists before a connection, and it is the same
-    /// MRU the gate's "recent hosts" menu offers. That MRU carries the TERMINAL address only — the
-    /// video ports the host was last reached on are filed per `host:port` in
-    /// ``DevicePreferences/connectionByHostKey``, so the whole target comes back rather than its
-    /// terminal half plus two defaults.
-    private static func launchSeedTarget(
-        isAutomation: Bool,
-        devicePreferences: DevicePreferencesStore?,
-        env: [String: String] = WorkspaceStore.automationInputs(),
-    ) -> ConnectionTarget {
-        let seed: ConnectionTarget = isAutomation
-            ? (WorkspaceStore.videoTarget(from: env)?.0 ?? WorkspaceStore.terminalTarget(from: env) ?? .default)
-            : AppConnection.launchSeedTarget()
-        guard let devicePreferences else { return seed }
-        return devicePreferences.load().connectionTarget(seededBy: seed)
-    }
-
-    /// Whether any AUTOCONNECT env var is set (gates the bootstrap + the front-on-autoconnect path).
-    private static func hasAutomationEnvironment(_ env: [String: String] = WorkspaceStore
-        .automationInputs()) -> Bool
-    {
-        let keys = ["SLOPDESK_AUTOCONNECT_HOST", "SLOPDESK_VIDEO_AUTOCONNECT_HOST"]
-        return keys.contains { (env[$0]?.isEmpty == false) }
-    }
-
-    /// The `SLOPDESK_TOAST_DEMO` fixture pages. Page "1" is the four-deep greatest-hits stack (both
-    /// speakers + the collapsed spine tier); pages "2"–"7" walk the WHOLE vocabulary two cards at a
-    /// time, so every card photographs EXPANDED (body visible without a hover). Sticky so a screenshot
-    /// never races the dwell.
-    @MainActor
-    private static func seedDemoToasts(_ overlay: OverlayCoordinator, page: String) {
-        func push(
-            _ id: String, _ flavor: Toast.Flavor, _ source: Toast.Source,
-            _ title: String, _ body: String?, headline: String? = nil,
-        ) {
-            overlay.pushToast(Toast(
-                id: "demo.\(id)", flavor: flavor, source: source,
-                title: title, body: body, autoDismiss: nil, headline: headline,
-            ))
-        }
-        switch page {
-        case "2": // the agent's happy pair
-            push("input", .attention, .agent, "Claude", "slop-desk ▸ api")
-            push("done", .success, .agent, "Claude", "refactor the reducer")
-        case "3": // the agent's unhappy pair
-            push("agentfail", .error, .agent, "Claude", "turn failed")
-            push("working", .default, .agent, "Claude", "slop-desk ▸ api")
-        case "4": // a long command's two exits
-            push("cmdok", .success, .command, "make check", "exit 0 · 42s")
-            push("cmdfail", .error, .command, "make check", "exit 1 · 42s")
-        case "5": // the pass-through pair: an OSC notice and a cwd advisory
-            push("osc", .default, .command, "npm run dev", "listening on :3000")
-            push("advisory", .attention, .command, "cd'd on host", "may not exist there")
-        case "6": // the reconnect verdicts (explicit headlines)
-            push(
-                "reattach", .success, .command, "Session reattached",
-                "Same shell — context preserved", headline: "Session reattached",
-            )
-            push(
-                "fresh", .attention, .command, "Reconnected to a fresh shell",
-                "The previous session ended", headline: "Reconnected to a fresh shell",
-            )
-        case "7": // content edges: a middle-truncated command line, and the shortest possible card
-            push(
-                "long", .error, .command,
-                "docker compose -f ./deploy/compose.prod.yaml up --build --force-recreate api",
-                "exit 125 · 3s",
-            )
-            push("short", .success, .agent, "Claude", nil)
-        default: // "1": the four-deep stack — two spine rows above two full cards
-            push("osc", .default, .command, "npm run dev", "listening on :3000")
-            push("cmdfail", .error, .command, "make check", "exit 1 · 42s")
-            push("done", .success, .agent, "Claude", "refactor the reducer")
-            push("input", .attention, .agent, "Claude", "slop-desk ▸ api")
-        }
-    }
-
-    #if os(macOS)
     /// Wraps a satellite window's SwiftUI root with the scene-level environment. An `NSHostingView`
     /// root inherits NOTHING from the main scene (the known hosting-root env trap), so the injected
     /// stores must be re-applied here or the satellite's deep views resolve nil coordinators. No
@@ -1152,7 +718,7 @@ public struct SlopDeskClientApp: App {
     /// focus straight back the moment the user switched to another app. A non-automation launch is a no-op.
     @MainActor
     private static func automationBringToFrontOnce(_ window: NSWindow) {
-        guard hasAutomationEnvironment(),
+        guard ClientComposition.hasAutomationEnvironment(),
               objc_getAssociatedObject(window, &windowActivatedKey) == nil else { return }
         objc_setAssociatedObject(window, &windowActivatedKey, true, .OBJC_ASSOCIATION_RETAIN)
         NSApplication.shared.activate(ignoringOtherApps: true)
@@ -1221,7 +787,7 @@ public struct SlopDeskClientApp: App {
         if mode == .remember {
             // Automation launches keep the deterministic odiff geometry: no restore, and no
             // observers — an automation run must never overwrite the user's saved frame either.
-            if !hasAutomationEnvironment() { applyRememberedFrame(to: window) }
+            if !ClientComposition.hasAutomationEnvironment() { applyRememberedFrame(to: window) }
             objc_setAssociatedObject(window, &windowSizeAppliedKey, true, .OBJC_ASSOCIATION_RETAIN)
             return
         }
@@ -1270,7 +836,7 @@ public struct SlopDeskClientApp: App {
     /// Automation launches opt out (matching ``applyRememberedFrame(to:)``): the odiff reference
     /// geometry must stay the deterministic 1280×800.
     private static var rememberedFrameSeed: (frame: CGRect, screen: CGRect)? {
-        guard SettingsKey.windowSize == .remember, !hasAutomationEnvironment() else { return nil }
+        guard SettingsKey.windowSize == .remember, !ClientComposition.hasAutomationEnvironment() else { return nil }
         return WindowSizeMath.parseFrameDescriptor(SettingsKey.savedWindowFrame)
     }
 
