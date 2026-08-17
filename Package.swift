@@ -872,11 +872,11 @@ let package = Package(
         // (the key-window gate takes `AnyObject` for exactly that reason).
         .testTarget(
             name: "SlopDeskMacUITests",
-            // `SlopDeskClientUI` is named because the key-window suite drives the real
-            // `WorkspaceKeyDispatcher` (still in the shared view target — the shell only wires it) against
-            // the shell's own gate predicate.
+            // `SlopDeskClientUI` is named because the chord suites drive the real `WorkspaceKeyDispatcher`
+            // against seams the shared view target still owns (the code panel's first-responder hold).
             dependencies: [
-                "SlopDeskMacUI", "SlopDeskClientUI", "SlopDeskWorkspaceCore", "SlopDeskWorkspaceModel",
+                "SlopDeskMacUI", "SlopDeskClientUI", "SlopDeskClientCore", "SlopDeskWorkspaceCore",
+                "SlopDeskWorkspaceModel", "SlopDeskVideoProtocol",
             ],
         ),
 

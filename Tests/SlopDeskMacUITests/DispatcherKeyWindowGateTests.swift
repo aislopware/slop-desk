@@ -13,10 +13,6 @@
 
 #if os(macOS)
 import AppKit
-
-// The dispatcher itself still lives in the shared view target — the macOS shell only WIRES it, and the
-// gate predicate it is wired with (`SlopDeskMacApp.workspaceWindowIsKey`) is what moved here.
-import SlopDeskClientUI
 import XCTest
 @testable import SlopDeskMacUI
 @testable import SlopDeskWorkspaceCore

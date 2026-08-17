@@ -229,7 +229,7 @@ package struct SlateTheme: Equatable, Sendable {
 
 /// Static token namespace. CHROME tokens are semantic system colours (appearance-following, fixed at
 /// compile time); GLASS tokens read the one terminal profile.
-enum Slate {
+package enum Slate {
     /// THE terminal profile. A constant since the theme picker was retired (user-directed
     /// 2026-08-08) — the runtime store that used to indirect this is gone with it. Kept `@MainActor`
     /// (and a computed property) so no call site of the token layer had to move.
@@ -446,7 +446,7 @@ enum Slate {
     /// The ALPHA ladder — a closed scale for translucency, the one dimension the closed colour
     /// tokens did not govern (round 13): every `.opacity(N)` in chrome code picks a rung here, so
     /// two washes that mean the same thing can never drift apart by a few hundredths again.
-    enum Opacity {
+    package enum Opacity {
         /// A GROUND that has to stay a ground (``ProjectTint/wash(for:)``, and the connection
         /// island's neutral bed). Below ``faint``, because a bed that reads as a FILL stops being a
         /// ground: measured across the identity register the island lands 1.089–1.121× off the
@@ -468,26 +468,26 @@ enum Slate {
         /// that rung margin back: 4.46 → 4.60). And in ``Slate/ProjectTint/register``, whose hexes
         /// were solved for maximum separation AT an alpha: every step down scales the whole set
         /// toward the cream together.
-        static let bed = 0.08
+        package static let bed = 0.08
         /// The faint accent wash (``State/accentMuted``'s dose).
-        static let faint = 0.12
+        package static let faint = 0.12
         /// The selection/latch wash (``State/selected``'s dose).
-        static let wash = 0.15
+        package static let wash = 0.15
         /// An INPUT's boundary (``Line/field``). Its own rung because a field's edge answers to a
         /// different question than a hairline's: a rule separates two things that are both already
         /// visible, while this is the only mark saying where the typing area begins.
-        static let edge = 0.28
+        package static let edge = 0.28
         /// A FLOATING SURFACE's rim (``Line/overlayRim``). Between ``wash`` and ``edge`` on purpose:
         /// a card's border has to be found at a glance over busy content, but it bounds a whole
         /// surface rather than the one small typing area ``edge`` was solved for — at 0.28 the card
         /// reads as outlined instead of lifted.
-        static let rim = 0.20
+        package static let rim = 0.20
         /// De-emphasised ink ON a plate — a ruled-out hint letter, the dock badge's track.
-        static let dim = 0.35
+        package static let dim = 0.35
         /// Muted presence: soft hairlines (``Line/subtle``), secondary badge ink on a plate.
-        static let muted = 0.6
+        package static let muted = 0.6
         /// The near-opaque backdrop a readout stands on over live content (video HUD chips).
-        static let scrim = 0.88
+        package static let scrim = 0.88
     }
 
     @MainActor

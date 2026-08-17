@@ -13,7 +13,7 @@
 import AppKit
 import XCTest
 @testable import SlopDeskClientCore
-@testable import SlopDeskClientUI
+@testable import SlopDeskMacUI
 @testable import SlopDeskWorkspaceCore
 
 @MainActor

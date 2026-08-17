@@ -11,6 +11,9 @@
 
 #if os(macOS)
 import AppKit
+
+// The design system is still the shared view target's; the token layer is what stage D drains last.
+import SlopDeskClientUI
 import SlopDeskWorkspaceCore
 
 /// Drives the macOS Dock tile from the workspace's rolled-up OSC 9;4 progress / error aggregate.

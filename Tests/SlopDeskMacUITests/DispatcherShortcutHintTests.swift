@@ -11,7 +11,7 @@
 #if os(macOS)
 import AppKit
 import XCTest
-@testable import SlopDeskClientUI
+@testable import SlopDeskMacUI
 @testable import SlopDeskWorkspaceCore
 
 @MainActor

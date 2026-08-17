@@ -13,7 +13,7 @@ import AppKit
 import SlopDeskVideoProtocol
 import SlopDeskWorkspaceModel
 import XCTest
-@testable import SlopDeskClientUI
+@testable import SlopDeskMacUI
 @testable import SlopDeskWorkspaceCore
 
 @MainActor

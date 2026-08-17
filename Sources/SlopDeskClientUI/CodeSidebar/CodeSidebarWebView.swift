@@ -492,7 +492,7 @@ private final class CodeSidebarNavigationObserver: NSObject, WKNavigationDelegat
 /// on it (same origin, its own `?folder=` and editor state).
 @MainActor
 package final class CodeSidebarWebViewPool {
-    static let shared = CodeSidebarWebViewPool()
+    package static let shared = CodeSidebarWebViewPool()
 
     /// The workspace's active tab — wired once by the app layer (the pool cannot see the store).
     /// Drives the focus-restore tab match; the `nil` default (headless tests, pre-wiring renders)
@@ -913,7 +913,7 @@ package final class CodeSidebarWebViewPool {
     /// `WorkspaceKeyDispatcher`'s webview-yield predicate (while true, the embedded VS Code owns the
     /// keyboard). Checked per keystroke against the live responder; WebKit's actual first responder is
     /// an internal content subview, hence the descendant walk rather than an identity check.
-    func holdsFirstResponder() -> Bool {
+    package func holdsFirstResponder() -> Bool {
         // `NSApp` is an IMPLICITLY-unwrapped global that is genuinely nil in a headless test process —
         // touch it optionally or the default dispatcher predicate traps every dispatcher unit test.
         guard let app = NSApp as NSApplication?,
