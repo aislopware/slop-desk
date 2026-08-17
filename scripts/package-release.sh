@@ -17,7 +17,12 @@
 # ARTIFACTS (into dist/):
 #   SlopDesk-<version>-arm64.dmg          SlopDesk.app + SlopDeskHost.app, signed + stapled
 #   slopdesk-cli-<version>-arm64.tar.gz   slopdesk, slopdesk-hostd (SwiftPM) + every sidecar the
-#                                         host resolves at runtime (cargo), signed. See CLI_TOOLS.
+#                                         host resolves at runtime (cargo), signed. See CLI_TOOLS
+#                                         in scripts/shipped-tools.sh. Carries MANIFEST.json.
+#   MANIFEST.json                         one entry per shipped binary: its OWN version, its source
+#                                         stamp, its SHA. Attached to the release as well as
+#                                         packed, so an upgrade can ask what changed WITHOUT
+#                                         downloading the tarball first.
 #   SHA256SUMS                            what the Homebrew tap's cask + formula pin
 #
 # SIGNING / NOTARIZATION inputs (env — CI pulls them from the better-update vault, see
@@ -49,34 +54,14 @@ SIGN_IDENTITY="${SLOPDESK_SIGN_IDENTITY:-Developer ID Application: WEEBUILD VIET
 SKIP_NOTARIZE="${SLOPDESK_SKIP_NOTARIZE:-0}"
 
 # What the CLI tarball ships, in three lists because they are BUILT three ways. Everything after
-# staging treats them as one set.
-#
-# The tarball used to be three binaries, and that was a host that could not open a pane. superd
-# forks and owns every PTY master (`docs/51`), and `HostServiceSupervisor.connected()` puts the
-# consequence in one line — "hostd does not fork, so there is no fallback to have". The other five
-# daemons each cost a feature: no screen engine, no file drop, no inspector, no Android panel, no
-# profile seed. None of them shipped, because the release path is exercised by tagging and no gate
-# is a release. `check-invariants.py` derives the list below from the `RustServicePaths` call sites
-# now, so a seventh daemon cannot be forgotten the same way.
-SPM_TOOLS=(slopdesk slopdesk-hostd)
+# staging treats them as one set. The lists live in `scripts/shipped-tools.sh` because four scripts
+# need them now — this one to build and stage, `tool-stamps.sh` to hash each tool's sources,
+# `bump-tool-versions.sh` to move the versions that earned it, and `check-invariants.py` to prove
+# the host resolves no sidecar the release omits.
+# shellcheck source=scripts/shipped-tools.sh
+source "${REPO_ROOT}/scripts/shipped-tools.sh"
 
-# `rust/Cargo.toml`'s workspace members: ONE shared `rust/target/`, built with `-p` from `rust/`.
-# `slopdesk-hook` is a package producing TWO binaries (the relay and `slopdesk-agenthooks`, which
-# installs it) — and `agenthooks` finds the relay at `executable.parent()/slopdesk-hook`, so the
-# two must land in the same directory or the hook install silently has nothing to copy.
-RUST_ROOT_PACKAGES=(slopdesk-ctl slopdesk-probe slopdesk-hook)
-RUST_ROOT_TOOLS=(slopdesk-ctl slopdesk-probe slopdesk-hook slopdesk-agenthooks)
-
-# The daemons. Each is `exclude`d from the root workspace and carries its own, so each builds from
-# its own directory into its own `rust/<crate>/target/` — the same seam `RustServicePaths.locate`
-# walks. Building these with `-p` from `rust/` fails: cargo cannot see a package it excluded.
-RUST_CRATE_TOOLS=(
-  slopdesk-superd slopdesk-screend slopdesk-dropd
-  slopdesk-inspectord slopdesk-androidd slopdesk-codeseed
-)
-
-RUST_TOOLS=("${RUST_ROOT_TOOLS[@]}" "${RUST_CRATE_TOOLS[@]}")
-CLI_TOOLS=("${SPM_TOOLS[@]}" "${RUST_TOOLS[@]}")
+TOOL_PIN="${REPO_ROOT}/scripts/tool-stamps.pin"
 XCFRAMEWORK="${REPO_ROOT}/ThirdParty/ghostty/libghostty.xcframework"
 
 CLIENT_SPEC="${REPO_ROOT}/Apps/ClientApp-macOS/project.yml"
@@ -268,6 +253,41 @@ declared="$("${CLI_STAGE}/slopdesk" version | head -1 | awk '{print $2}')"
   Bump Sources/SlopDeskCLICore/CLIVersion.swift (and the MARKETING_VERSION in both
   Apps/*/project.yml) to ${VERSION} before tagging."
 
+# ── 2b. Every sidecar's OWN version, against the pin ────────────────────────────────────────
+# The gate above is the PRODUCT's, and it covers exactly one binary. Each sidecar now carries a
+# version of its own that moves only when its sources did (`scripts/bump-tool-versions.sh`), and
+# `MANIFEST.json` below publishes those numbers so the install side can restart the daemons that
+# changed and leave the rest running. A number that is wrong there is worse than no number at all:
+# it means a superd that DID change is reported unchanged, the restart is skipped, and the user
+# keeps running code this release does not contain — silently, because everything still works.
+#
+# So the same question the CLI gate asks is asked of every cargo tool, and the SAME way: ask the
+# BUILT binary, never the source. A `Cargo.toml` bumped without a rebuild, a stale binary picked up
+# by `locate_tool`, a crate that failed to recompile — all three produce a manifest that lies, and
+# all three are caught here rather than on a user's machine.
+step "Checking sidecar versions against ${TOOL_PIN#"${REPO_ROOT}/"}"
+[[ -f "${TOOL_PIN}" ]] || die "missing ${TOOL_PIN} — run scripts/bump-tool-versions.sh"
+tool_drift=0
+for tool in "${RUST_TOOLS[@]}"; do
+  pinned="$(awk -v t="${tool}" '$1 == t { print $2 }' "${TOOL_PIN}")"
+  [[ -n "${pinned}" ]] || {
+    echo "  MISSING  ${tool} has no entry in ${TOOL_PIN#"${REPO_ROOT}/"}" >&2
+    tool_drift=1
+    continue
+  }
+  # Same parse as the CLI gate above: field 2 of line 1. Every tool in the tree answers that shape.
+  reported="$("${CLI_STAGE}/${tool}" --version | head -1 | awk '{print $2}')"
+  if [[ "${reported}" == "${pinned}" ]]; then
+    printf '  ok       %-22s %s\n' "${tool}" "${pinned}"
+  else
+    echo "  DRIFT    ${tool}: the binary says ${reported}, the pin says ${pinned}" >&2
+    tool_drift=1
+  fi
+done
+[[ "${tool_drift}" -eq 0 ]] ||
+  die "a sidecar's binary disagrees with ${TOOL_PIN#"${REPO_ROOT}/"}.
+  Run \`scripts/bump-tool-versions.sh\` and rebuild, or find out why a stale binary was staged."
+
 step "Signing CLI binaries"
 for tool in "${CLI_TOOLS[@]}"; do
   # Hardened runtime + a secure timestamp are both notarization prerequisites. The CLI needs no
@@ -395,6 +415,53 @@ rm -f "${DMG}"
 hdiutil create -srcfolder "${DMG_ROOT}" -volname "SlopDesk ${VERSION}" \
   -fs HFS+ -format UDZO -quiet "${DMG}"
 codesign --force --sign "${SIGN_IDENTITY}" --timestamp "${DMG}"
+
+# ── 4b. MANIFEST.json — what this release actually contains, tool by tool ───────────────────
+# The upgrade side reads this. Under one product version there was no way to say "the Android
+# bridge changed and superd did not", so `brew upgrade` restarted everything — and restarting
+# superd costs the user every live pane, because it holds the master fd of each one (`docs/51`).
+# With a per-tool version here, an install can replace what moved and leave the rest alone.
+#
+# THE VERSION IS THE IDENTITY, NOT THE SHA, and the reason is three lines above this in the file:
+# every binary is signed with `--timestamp`, so an unchanged tool rebuilt and re-signed has
+# different bytes every single time. Comparing shipped SHAs across two releases would report all
+# every tool as changed, forever, which is the behaviour this whole mechanism exists to end. The
+# `sha256` field is therefore INTEGRITY ONLY — what this file should hash to right now — and the
+# `stamp` beside it is the source digest that decided whether `version` was allowed to move.
+#
+# Written AFTER signing so the SHA is of the file that actually ships, and INSIDE the staged
+# directory so it travels in the tarball rather than beside it.
+step "Writing MANIFEST.json"
+MANIFEST="${CLI_STAGE}/MANIFEST.json"
+{
+  printf '{\n'
+  printf '  "product": "%s",\n' "${VERSION}"
+  printf '  "arch": "arm64",\n'
+  printf '  "tools": [\n'
+  first=1
+  for tool in "${CLI_TOOLS[@]}"; do
+    # The SwiftPM pair ARE the product and carry no version of their own — `docs/49` §"The six
+    # version sites" is where their number lives, and duplicating it per-tool here would invent a
+    # seventh site. They appear with the product version and an empty stamp, because a manifest
+    # that lists ten of the twelve binaries in the tarball is a manifest a reader cannot trust.
+    if tools_contains "${tool}" "${SPM_TOOLS[@]}"; then
+      tool_version="${VERSION}"
+      tool_stamp=""
+    else
+      tool_version="$(awk -v t="${tool}" '$1 == t { print $2 }' "${TOOL_PIN}")"
+      tool_stamp="$(awk -v t="${tool}" '$1 == t { print $3 }' "${TOOL_PIN}")"
+    fi
+    tool_sha="$(shasum -a 256 "${CLI_STAGE}/${tool}" | awk '{print $1}')"
+    [[ "${first}" -eq 1 ]] || printf ',\n'
+    first=0
+    printf '    {"name": "%s", "version": "%s", "sha256": "%s", "stamp": "%s"}' \
+      "${tool}" "${tool_version}" "${tool_sha}" "${tool_stamp}"
+  done
+  printf '\n  ]\n}\n'
+} > "${MANIFEST}"
+python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "${MANIFEST}" ||
+  die "the manifest just written is not valid JSON — a tool name or version carried a quote"
+cp "${MANIFEST}" "${DIST}/MANIFEST.json"
 
 step "Building the CLI tarball"
 rm -f "${CLI_TARBALL}"

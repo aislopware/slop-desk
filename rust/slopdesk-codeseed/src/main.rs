@@ -35,6 +35,9 @@ fn main() -> ExitCode {
     let Some(subcommand) = arguments.first() else {
         return usage();
     };
+    if subcommand == "--version" {
+        return print_version();
+    }
     let environment = paths::process_environment();
     let answer = match subcommand.as_str() {
         "seed" => {
@@ -104,6 +107,27 @@ fn sync_font(arguments: &[String], environment: &paths::Environment) -> Option<V
         line_height?,
     );
     Some(json!({ "changed": changed }))
+}
+
+/// `--version`, on stdout with the rest of this program's output.
+///
+/// The SECOND whitespace-separated field of the FIRST line is the version, which is the shape
+/// every tool in this tree answers and the one `package-release.sh` parses when it checks a built
+/// binary against `scripts/tool-stamps.pin`.
+///
+/// The parenthetical names the two artefacts this program WRITES into the workbench profile, and
+/// they are why it needs a version banner at all despite speaking no wire: it is not a daemon
+/// anyone restarts, it is a seeder whose output outlives every run. A profile seeded by an older
+/// codeseed keeps that theme and that bridge until something reseeds it, so "which codeseed wrote
+/// this profile" is a question with real consequences, and these three numbers are its answer.
+fn print_version() -> ExitCode {
+    println!(
+        "slopdesk-codeseed {} (theme {}, bridge {})",
+        env!("CARGO_PKG_VERSION"),
+        extensions::THEME_VERSION,
+        extensions::BRIDGE_VERSION,
+    );
+    ExitCode::SUCCESS
 }
 
 /// The usage text, on stdout with the rest of this program's output — a caller that mis-invoked it

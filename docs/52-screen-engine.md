@@ -115,7 +115,7 @@ Big-endian, `len` counts everything after itself, 64 MiB frame ceiling on both e
 
 | verb | stateful | payload |
 | --- | --- | --- |
-| `hello` 0 | – | the banner `slopdesk-screend 1` |
+| `hello` 0 | – | `slopdesk-screend 1 <build>` — the pinned banner, then the RUNNING build's version |
 | `snapshot` 1 | no | the grid, JSON |
 | `feed` 2 | **yes**, keyed by `pane` | the grid, JSON |
 | `forget` 3 | yes | empty |
@@ -129,6 +129,16 @@ Big-endian, `len` counts everything after itself, 64 MiB frame ceiling on both e
 future verb takes 10, because a hostd built before the extraction would otherwise send a 7 meaning
 "clean this replay" to a daemon that answers something else. `check-supervisor.sh` fails the build
 if either enum allocates it again.
+
+`hello`'s reply carries two numbers that move for different reasons. `HELLO_BANNER` —
+`slopdesk-screend 1` — is the PROTOCOL identity, a ratcheted constant `check-supervisor.sh` compares
+against `ScreenWire.helloBanner`; it is matched as a **prefix**, never for equality. The third field
+is the version of the screend process that answered. screend is a LaunchAgent
+(`scripts/install-screend.sh`) and so outlives hostd's build: after an upgrade the binary on disk
+and the process on the socket are routinely different code, and this field is what tells them apart
+(`docs/49`). Nothing is done about a mismatch — screend exits after `SLOPDESK_SCREEND_IDLE_EXIT`
+(2 minutes) of quiet and `ScreenClient` starts the installed one on the next verb, so the stale
+window closes without anybody acting.
 
 `detect` has a verb-local payload — `u16 agentLen | agent… | bytes…` — because the agent label is
 its alone and the header is shared by eight. An EMPTY label folds the bytes and skips the ladder,

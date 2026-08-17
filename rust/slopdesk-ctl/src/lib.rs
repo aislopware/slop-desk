@@ -126,6 +126,21 @@ pub fn dispatch(
 pub fn run(argv: &[String], env: &Environment, io: &mut Io<'_>) -> Result<u8, String> {
     let program = program_name(argv.first().map(String::as_str));
 
+    // BEFORE `parse_global`, which would reject `--version` as an unknown flag — and ahead of the
+    // socket resolution for the reason the help branch below is: a version question must be
+    // answerable by a binary that cannot reach a host, because "which one is installed" is exactly
+    // what someone asks when nothing is answering.
+    //
+    // The SECOND whitespace-separated field of the FIRST line is the version, which is the shape
+    // every tool in this tree answers and the one `package-release.sh` parses when it checks a
+    // built binary against `scripts/tool-stamps.pin`.
+    if argv.get(1).is_some_and(|argument| argument == "--version") {
+        io.out
+            .write_all(format!("slopdesk-ctl {}\n", env!("CARGO_PKG_VERSION")).as_bytes())
+            .map_err(|err| format!("write failed: {err}"))?;
+        return Ok(0);
+    }
+
     let global = parse_global(argv).map_err(|err| {
         match err {
             ParseError::UnknownFlag(flag) => format!("unknown flag '{flag}' (run with --help)"),
@@ -180,6 +195,22 @@ mod tests {
             run(&argv(args), env, &mut io)
         };
         (code, String::from_utf8(out).expect("stdout is UTF-8"))
+    }
+
+    #[test]
+    fn version_answers_without_a_socket_and_puts_the_number_in_the_second_field() {
+        // A default `Environment` names no control socket, so a run that reached
+        // `resolve_socket_path` would fail — which is the point: `--version` is what someone types
+        // when nothing is answering.
+        let (code, text) = capture(&["slopdesk-ctl", "--version"], &Environment::default());
+        assert_eq!(code, Ok(0));
+
+        let first_line = text.lines().next().expect("a first line");
+        let mut fields = first_line.split_whitespace();
+        assert_eq!(fields.next(), Some("slopdesk-ctl"));
+        // The contract `package-release.sh` parses, and the reason this asserts on a FIELD rather
+        // than on the whole string: the banner may grow, the position of the version may not.
+        assert_eq!(fields.next(), Some(env!("CARGO_PKG_VERSION")));
     }
 
     #[test]

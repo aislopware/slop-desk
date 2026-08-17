@@ -795,6 +795,10 @@ impl Server {
                 superd_pid: pid_as_i32(),
                 hook_socket_path: Some(self.paths.hook.display().to_string()),
                 control_socket_path: Some(self.paths.control_agent.display().to_string()),
+                // The version of THIS process, baked in at compile time — never read back off
+                // disk. The binary at that path may already have been replaced by an upgrade,
+                // which is precisely the state hostd is trying to detect.
+                build_version: Some(env!("CARGO_PKG_VERSION").to_owned()),
             }),
             ..Reply::ok(request.id)
         }

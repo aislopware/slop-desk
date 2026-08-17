@@ -48,7 +48,11 @@ pub const VERSION_MAJOR: i32 = 1;
 /// [`verb::JOURNAL_INFO`] / [`verb::JOURNAL_DELETE`] / [`verb::JOURNAL_SWEEP`] read, remove and
 /// bound them. It replaces the `<uuid>.scrollback.resume` sidecar outright — [`JournalReply::head`]
 /// is the same number, answered by the process that numbers the stream.
-pub const VERSION_MINOR: i32 = 7;
+///
+/// `8` added [`HelloReply::build_version`] — the crate version of the superd that is RUNNING, which
+/// is the one thing hostd could not previously learn and the one thing an upgrade needs. See that
+/// field for why a protocol minor is not an answer to the question it asks.
+pub const VERSION_MINOR: i32 = 8;
 
 /// The verbs hostd may send. Kept as `&str` constants rather than an enum for rule 3.
 pub mod verb {
@@ -684,6 +688,27 @@ pub struct HelloReply {
     /// The stable agent-control socket path, same rule.
     #[serde(rename = "controlSocketPath", skip_serializing_if = "Option::is_none")]
     pub control_socket_path: Option<String>,
+    /// The `CARGO_PKG_VERSION` of the superd process ANSWERING — not of the binary on disk.
+    ///
+    /// ## Why the protocol minor above does not already answer this
+    /// The minor says what this superd can *speak*, and it moves only when a verb or a field is
+    /// added. A superd rebuilt with a fixed reaper, a corrected journal sweep, a faster pump —
+    /// every change that is not a wire change — has the same minor as the one it replaced. So
+    /// "does the running superd contain this release" is a question the minor cannot be asked.
+    ///
+    /// ## Why hostd needs it
+    /// superd is a `LaunchAgent` that outlives hostd's process AND hostd's build, which is the
+    /// whole premise of this file. A `brew upgrade` replaces the binary on disk and the running
+    /// superd carries on with the old code — correctly, because restarting it would take every
+    /// live pane with it. hostd compares this string against `slopdesk-superd --version` on
+    /// disk: equal means the upgrade reached it, different means a restart is PENDING and the
+    /// user gets to choose when to pay for it. Neither answer is available without this field.
+    ///
+    /// `Option` because a superd older than minor 8 does not send it, and "unknown" must stay
+    /// distinguishable from "same" — reporting an old superd as up to date is exactly the silent
+    /// wrong answer this exists to remove.
+    #[serde(rename = "buildVersion", skip_serializing_if = "Option::is_none")]
+    pub build_version: Option<String>,
 }
 
 /// Everything superd keeps about a pane.

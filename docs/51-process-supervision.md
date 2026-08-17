@@ -115,6 +115,22 @@ Rules that follow, and they are not negotiable:
    boring: spawn, list, signal, exited, and the socket forwarding. If a change seems to need a new
    verb, the change probably belongs in hostd.
 
+### The minor is not the build
+
+Rule 4 has a corollary that only shows up after a release. The minor says what superd can *speak*,
+and it moves only on a wire change — so a superd rebuilt with a fixed reaper, a corrected journal
+sweep or a faster pump reports the minor it always did. "Does the running superd contain this
+release" is a question the minor cannot be asked, and it is the question a `brew upgrade` raises:
+the binary on disk is replaced and the process on the socket carries on with the old code.
+
+Minor `8` answers it with a **field**, `buildVersion` on the hello reply — superd's own
+`CARGO_PKG_VERSION`, compiled in, never read back off disk. A field rather than a verb for exactly
+rule 4's reason: asking costs nothing, and the answer rides a handshake hostd already performs.
+`Option`/`String?` because a superd older than minor 8 sends none, and "unknown" must stay
+distinguishable from "same". hostd compares it against `slopdesk-superd --version` on disk and
+**reports** — restarting superd would take every live pane, so that stays the user's call
+(`docs/49`).
+
 This is the opposite of the three wire paths, which are golden-pinned and version `1` with no
 negotiation (`docs/46`). Those are frozen because both ends ship together. This one negotiates
 *because* they do not. It is a fourth local IPC, not a fourth path: no golden vectors, no

@@ -62,11 +62,17 @@ panel backends (`docs/51` §6.7): on a PTY, under a stable pane id, with the por
 replaying the ring from offset 0** and reading the child's own announce line —
 
 ```
-dropd: listening on 0.0.0.0:7702 (drop dir /Users/me/Downloads)
+dropd: listening on 0.0.0.0:7702 (v0.1.0, drop dir /Users/me/Downloads)
 ```
 
 There is no state file and no port handshake. If the adopted service turns out to be on the wrong
 port (a hostd relaunched with a different `--port`), the manager terminates it and respawns once.
+
+The `(v…` is the RUNNING build's version, first in the parenthetical so its position holds however
+the rest of that text grows. It rides this line rather than the wire for the same reason the port
+does: a dropd hostd adopted is one hostd did not start, and this line is the only channel that
+describes it. hostd compares it against `slopdesk-dropd --version` on disk and restarts a stale one
+on the same port and drop directory — cheap, because dropd is hostd's own child (`docs/49`).
 
 `HostServer.stop()` **relinquishes**: hostd goes away, dropd keeps running, and an upload in flight
 across a host restart is simply not hostd's business any more. Only a deliberate stop terminates.

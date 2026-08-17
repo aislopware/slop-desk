@@ -41,6 +41,32 @@ pub const DEFAULT_KEEP_ALIVE: Duration = Duration::from_secs(15);
 /// replaying superd's ring from offset 0 and reading the child's own words back.
 pub const ANNOUNCE_PREFIX: &str = "inspectord: listening on 0.0.0.0:";
 
+/// What the RUNNING build's version is prefixed with inside the announce parenthetical.
+///
+/// The announce line is already the one channel carrying facts about an inspectord hostd did not
+/// start — that is what "re-learns the port after a restart" above means — so the running build's
+/// version rides here rather than on a wire that has no handshake to add it to. FIRST in the
+/// parenthetical and `v`-prefixed so the position is stable however the rest of that text grows.
+/// Spelled identically in the other two announcing daemons and in `SidecarAnnounce.versionMarker`;
+/// `scripts/check-supervisor.sh` ratchets all four.
+pub const ANNOUNCE_VERSION_PREFIX: &str = "(v";
+
+/// The exact line [`Server::announce`] prints.
+///
+/// Split out so the shape hostd parses is a value a test can hold, rather than a side effect on a
+/// file descriptor. `env!` reads THIS binary's compile-time version — never a number off disk.
+#[must_use]
+pub fn announce_line(port: u16, transcript: Option<&std::path::Path>) -> String {
+    let source = transcript.map_or_else(
+        || "no transcript".to_owned(),
+        |path| format!("transcript {}", path.display()),
+    );
+    format!(
+        "{ANNOUNCE_PREFIX}{port} {ANNOUNCE_VERSION_PREFIX}{}, {source})",
+        env!("CARGO_PKG_VERSION"),
+    )
+}
+
 /// Per-read buffer. Matches the frame decoder's compaction threshold, so in the common case the
 /// buffer's consumed head is reclaimed at most once per read.
 const READ_CHUNK: usize = 64 * 1024;
@@ -89,11 +115,7 @@ impl Server {
     /// Any failure to read the bound address back.
     pub fn announce(&self, transcript: Option<&std::path::Path>) -> std::io::Result<u16> {
         let port = self.port()?;
-        let source = transcript.map_or_else(
-            || "no transcript".to_owned(),
-            |path| format!("transcript {}", path.display()),
-        );
-        eprintln!("{ANNOUNCE_PREFIX}{port} ({source})");
+        eprintln!("{}", announce_line(port, transcript));
         Ok(port)
     }
 
@@ -251,7 +273,7 @@ mod tests {
     use std::thread;
     use std::time::{Duration, Instant};
 
-    use super::Server;
+    use super::{ANNOUNCE_PREFIX, ANNOUNCE_VERSION_PREFIX, Server, announce_line};
     use crate::event::InspectorEvent;
     use crate::replay::ReplayLog;
     use crate::wire::{self, FrameDecoder, WireMessage};
@@ -262,6 +284,34 @@ mod tests {
 
     fn event(index: i64) -> InspectorEvent {
         InspectorEvent::HistoryTruncated { dropped_count: index }
+    }
+
+    #[test]
+    fn the_announce_line_still_leads_with_the_port_hostd_parses() {
+        let line = announce_line(7413, None);
+        let rest = line
+            .strip_prefix(ANNOUNCE_PREFIX)
+            .expect("the announce marker is the line's prefix");
+        // hostd takes the digits directly after the marker as a run, so nothing may sit between.
+        assert!(rest.starts_with("7413 "), "port must follow the marker: {line}");
+    }
+
+    #[test]
+    fn the_announce_line_carries_the_running_builds_version_first_in_the_parenthetical() {
+        for transcript in [None, Some(std::path::Path::new("/tmp/t.jsonl"))] {
+            let line = announce_line(7413, transcript);
+            let at = line
+                .find(ANNOUNCE_VERSION_PREFIX)
+                .expect("the version marker is on the line");
+            let after = line
+                .get(at + ANNOUNCE_VERSION_PREFIX.len()..)
+                .expect("the marker is not the line's tail");
+            let version = after
+                .split([',', ')'])
+                .next()
+                .expect("split always yields a first field");
+            assert_eq!(version, env!("CARGO_PKG_VERSION"), "in {line}");
+        }
     }
 
     struct Harness {

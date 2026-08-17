@@ -57,6 +57,7 @@ public final class InspectorServiceManager: @unchecked Sendable {
             spawner: spawner,
             binaryLocator: binaryLocator,
             parseAnnouncedPort: { Self.parseAnnouncedPort(fromLogLine: $0) },
+            parseAnnouncedVersion: { Self.parseAnnouncedVersion(fromLogLine: $0) },
             announceTimeout: announceTimeout,
         )
     }
@@ -88,6 +89,10 @@ public final class InspectorServiceManager: @unchecked Sendable {
     /// The port the running daemon announced, once it has.
     public var servedPort: UInt16? { service.servedPort }
 
+    /// The crate version of the inspectord actually running, off its announce line. `nil` when it
+    /// has not announced yet, or announced without one.
+    public var runningVersion: String? { service.announcedVersion }
+
     // MARK: - What makes it the inspector
 
     /// The child's argv. The transcript path is passed rather than read from the environment on the
@@ -113,6 +118,14 @@ public final class InspectorServiceManager: @unchecked Sendable {
 
     /// The announce prefix, spelled identically in `rust/slopdesk-inspectord/src/server.rs`.
     static let announceMarker = "inspectord: listening on 0.0.0.0:"
+
+    /// The crate version out of the same line's `(v<version>, transcript …)`, or `nil`.
+    ///
+    /// `nil` from an inspectord that predates the field — a survivor adopted across an upgrade is
+    /// exactly the case, and it must read `unknown` rather than `current`.
+    static func parseAnnouncedVersion(fromLogLine line: String) -> String? {
+        AnnouncedVersion.directlyAfter(announceMarker, in: line)
+    }
 
     /// The production ``Spawner`` — superd forks it, superd keeps it.
     static let defaultSpawner: Spawner = { binary, arguments, onLogLine in

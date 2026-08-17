@@ -24,6 +24,20 @@ use crate::sink::DiskSink;
 /// same discipline `SupervisedServiceProcess` applies to the panel backends (`docs/51` §6.7).
 pub const ANNOUNCE_PREFIX: &str = "dropd: listening on 0.0.0.0:";
 
+/// What the RUNNING build's version is prefixed with inside the announce parenthetical.
+///
+/// ## Why the version rides on this line rather than on the wire
+/// This daemon is superd's child, not hostd's, and it survives a hostd restart — which is the whole
+/// reason `ANNOUNCE_PREFIX` exists. hostd re-learns the port by reading this line back off the
+/// retained ring, so it is already the one channel that carries facts about a dropd hostd did not
+/// start. The running build's version is exactly such a fact, and putting it here means the adopt
+/// path and the spawn path learn it the same way, with no handshake added to a wire that has none.
+///
+/// FIRST in the parenthetical and `v`-prefixed so the position is stable however the rest of that
+/// text grows. Spelled identically in the other two announcing daemons and in
+/// `SidecarAnnounce.versionMarker`; `scripts/check-supervisor.sh` ratchets all four.
+pub const ANNOUNCE_VERSION_PREFIX: &str = "(v";
+
 /// Binds the upload port.
 ///
 /// # Errors
@@ -39,8 +53,21 @@ pub fn bind(port: u16) -> std::io::Result<TcpListener> {
 /// Propagates the failure to read the listener's own address.
 pub fn announce(listener: &TcpListener, drop_dir: &Path) -> std::io::Result<u16> {
     let port = listener.local_addr()?.port();
-    eprintln!("{ANNOUNCE_PREFIX}{port} (drop dir {})", drop_dir.display());
+    eprintln!("{}", announce_line(port, drop_dir));
     Ok(port)
+}
+
+/// The exact line [`announce`] prints.
+///
+/// Split out so the shape hostd parses is a value a test can hold, rather than a side effect on a
+/// file descriptor. `env!` reads THIS binary's compile-time version — never a number off disk.
+#[must_use]
+pub fn announce_line(port: u16, drop_dir: &Path) -> String {
+    format!(
+        "{ANNOUNCE_PREFIX}{port} {ANNOUNCE_VERSION_PREFIX}{}, drop dir {})",
+        env!("CARGO_PKG_VERSION"),
+        drop_dir.display(),
+    )
 }
 
 /// Accepts connections until the process is killed.
@@ -214,9 +241,36 @@ mod tests {
     )]
 
     use std::io::Cursor;
+    use std::path::Path;
 
-    use super::read_frame;
+    use super::{ANNOUNCE_PREFIX, ANNOUNCE_VERSION_PREFIX, announce_line, read_frame};
     use crate::protocol::MAX_FRAME_PAYLOAD;
+
+    #[test]
+    fn the_announce_line_still_leads_with_the_port_hostd_parses() {
+        let line = announce_line(7411, Path::new("/tmp/drop"));
+        let rest = line
+            .strip_prefix(ANNOUNCE_PREFIX)
+            .expect("the announce marker is the line's prefix");
+        // hostd takes the digits directly after the marker as a run, so nothing may sit between.
+        assert!(rest.starts_with("7411 "), "port must follow the marker: {line}");
+    }
+
+    #[test]
+    fn the_announce_line_carries_the_running_builds_version_first_in_the_parenthetical() {
+        let line = announce_line(7411, Path::new("/tmp/drop"));
+        let at = line
+            .find(ANNOUNCE_VERSION_PREFIX)
+            .expect("the version marker is on the line");
+        let after = line
+            .get(at + ANNOUNCE_VERSION_PREFIX.len()..)
+            .expect("the marker is not the line's tail");
+        let version = after
+            .split([',', ')'])
+            .next()
+            .expect("split always yields a first field");
+        assert_eq!(version, env!("CARGO_PKG_VERSION"));
+    }
 
     #[test]
     fn a_clean_eof_is_none_rather_than_an_error() {

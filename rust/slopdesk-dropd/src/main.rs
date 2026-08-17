@@ -13,10 +13,14 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use slopdesk_dropd::protocol::VERSION;
 use slopdesk_dropd::server::{announce, bind, serve};
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
+    if arguments.first().is_some_and(|argument| argument == "--version") {
+        return print_version();
+    }
     let (port, drop_dir) = match parse(&arguments) {
         Ok(parsed) => parsed,
         Err(message) => {
@@ -44,6 +48,24 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         },
     }
+}
+
+/// `--version`, on stdout because that is where a version belongs — the rest of this daemon's
+/// output is a log and goes to stderr.
+///
+/// The SECOND whitespace-separated field of the FIRST line is the version, which is the shape
+/// every tool in this tree answers and the one `package-release.sh` parses when it checks a built
+/// binary against `scripts/tool-stamps.pin`. The parenthetical is [`VERSION`], the PROTOCOL — a
+/// different number moving for a different reason: this daemon's version says what code is
+/// running, `VERSION` says what a client must speak. They are printed together precisely so nobody
+/// has to guess which is which.
+#[expect(clippy::print_stdout, reason = "a --version banner is stdout by convention")]
+fn print_version() -> ExitCode {
+    println!(
+        "slopdesk-dropd {} (protocol {VERSION})",
+        env!("CARGO_PKG_VERSION")
+    );
+    ExitCode::SUCCESS
 }
 
 /// `--port` (required) and `--drop-dir` (default `$HOME/Downloads`, which is where the Swift server

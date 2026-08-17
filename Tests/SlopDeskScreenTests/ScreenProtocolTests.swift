@@ -94,6 +94,24 @@ final class ScreenProtocolTests: XCTestCase {
         XCTAssertEqual(snapshot([]).detectionText, "")
     }
 
+    // MARK: - The hello reply's two numbers
+
+    /// The banner is the PROTOCOL identity and stays a pinned constant; the build version rides
+    /// after it. screend is a `LaunchAgent` that outlives hostd's build, so this third field is how
+    /// hostd tells the process on the socket from the binary an upgrade just wrote (`docs/49`).
+    func testTheBuildVersionFollowsThePinnedProtocolBanner() {
+        XCTAssertEqual(ScreenWire.buildVersion(fromHello: "slopdesk-screend 1 0.1.0"), "0.1.0")
+        XCTAssertEqual(ScreenWire.buildVersion(fromHello: "slopdesk-screend 1 0.2.3 extra"), "0.2.3")
+    }
+
+    /// A screend that predates the field, and anything that is not screend at all, must read as
+    /// absent — "unknown", never "current".
+    func testAHelloWithoutABuildVersionOrWithoutTheBannerIsAbsent() {
+        XCTAssertNil(ScreenWire.buildVersion(fromHello: "slopdesk-screend 1"))
+        XCTAssertNil(ScreenWire.buildVersion(fromHello: ""))
+        XCTAssertNil(ScreenWire.buildVersion(fromHello: "something-else 1 0.1.0"))
+    }
+
     private func snapshot(_ lines: [String]) -> ScreenSnapshot {
         ScreenSnapshot(
             rows: lines.count, cols: 10, cursorRow: 0, cursorCol: 0,

@@ -23,6 +23,9 @@ use slopdesk_inspectord::server::{DEFAULT_KEEP_ALIVE, Server};
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
+    if arguments.first().is_some_and(|argument| argument == "--version") {
+        return print_version();
+    }
     let options = match parse(&arguments) {
         Ok(options) => options,
         Err(message) => {
@@ -64,6 +67,25 @@ struct Options {
     port: u16,
     transcript: Option<PathBuf>,
     keep_alive: Duration,
+}
+
+/// `--version`, on stdout because that is where a version belongs — the rest of this daemon's
+/// output is a log and goes to stderr.
+///
+/// The SECOND whitespace-separated field of the FIRST line is the version, which is the shape
+/// every tool in this tree answers and the one `package-release.sh` parses when it checks a built
+/// binary against `scripts/tool-stamps.pin`.
+///
+/// No protocol parenthetical, and the omission is honest rather than an oversight: this daemon's
+/// wire carries no version field at all. It is a read-only event feed that hostd spawns and reaps
+/// within one host's lifetime, so both ends have always shipped together and there has been
+/// nothing to negotiate. The day that stops being true — the day an inspectord outlives the hostd
+/// that started it, the way superd already does — the number goes here and a handshake goes on the
+/// wire, in that order.
+#[expect(clippy::print_stdout, reason = "a --version banner is stdout by convention")]
+fn print_version() -> ExitCode {
+    println!("slopdesk-inspectord {}", env!("CARGO_PKG_VERSION"));
+    ExitCode::SUCCESS
 }
 
 /// `--port` (required), `--transcript` (optional), `--keep-alive-secs` (optional).

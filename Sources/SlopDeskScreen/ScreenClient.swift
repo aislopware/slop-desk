@@ -202,6 +202,12 @@ public final class ScreenClient: @unchecked Sendable {
         return String(bytes: payload, encoding: .utf8) ?? ""
     }
 
+    /// The crate version of the screend actually serving this socket, or `nil` when it predates the
+    /// field. One round trip; the caller compares it against `screend --version` on disk.
+    public func buildVersion() throws -> String? {
+        try ScreenWire.buildVersion(fromHello: hello())
+    }
+
     // MARK: Transport
 
     private func decodeSnapshot(_ payload: Data) throws -> ScreenSnapshot {

@@ -41,6 +41,18 @@ fn main() -> ExitCode {
         println!("{}", usage());
         return ExitCode::FAILURE;
     };
+    // Ahead of the path resolution, because "which one is installed" is asked precisely when the
+    // environment is the thing in doubt. The SECOND whitespace-separated field of the FIRST line is
+    // the version — the shape every tool in this tree answers and the one `package-release.sh`
+    // parses when it checks a built binary against `scripts/tool-stamps.pin`.
+    //
+    // NOT the JSON this program's real subcommands return: a version banner is read by a human and
+    // by one `awk` in the packaging script, and wrapping it in an object would make both work
+    // harder for nothing.
+    if subcommand == "--version" {
+        println!("slopdesk-agenthooks {}", env!("CARGO_PKG_VERSION"));
+        return ExitCode::SUCCESS;
+    }
     let environment = install::process_environment();
     let home = install::home_in(&environment);
     let settings = install::settings_path(&environment, &home);

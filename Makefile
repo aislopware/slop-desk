@@ -665,6 +665,24 @@ release: ## Cut a release: version + CHANGELOG.md + the six version sites + comm
 	bash scripts/cut-release.sh $(VERSION)
 
 # ---------------------------------------------------------------------------- #
+.PHONY: tool-versions
+# Which SIDECARS the next release would move, and which it would leave alone.
+#
+# The product version moves on every cut; a sidecar's moves only when its own sources did. That is
+# what lets an upgrade replace the daemon that changed and leave the others running — restarting
+# superd costs the user every live pane (`docs/51`), and it should cost that only when superd
+# actually changed. `scripts/tool-stamps.sh` is what can tell, and `MANIFEST.json` in the tarball
+# is where the answer ships.
+#
+# NOT part of `check` or `quick`, deliberately: a sidecar whose sources changed since the last
+# release is the ordinary state of `main`, so a gate here would be red almost always and mean
+# nothing when it was. The gate that DOES run is in `check-invariants.py` — every shipped sidecar
+# must have a pin entry — and the one that refuses to ship a lie is in `package-release.sh`, which
+# asks each built binary its version and compares it with the pin.
+tool-versions: ## Show which sidecars changed since the last release, and the bump each would take
+	bash scripts/bump-tool-versions.sh --dry-run
+
+# ---------------------------------------------------------------------------- #
 .PHONY: provision provision-check
 # The panel's RUNTIME deps (code-server, baguette, adb, scrcpy-server), pinned by URL + SHA-256 in
 # ThirdParty/tools/tools.lock. Not part of `build` or `test`: the whole Swift package builds and

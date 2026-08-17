@@ -74,11 +74,17 @@ the port **re-learned by replaying the ring from offset 0** and reading the chil
 line —
 
 ```
-inspectord: listening on 0.0.0.0:7701 (transcript /Users/me/.claude/projects/…/session.jsonl)
+inspectord: listening on 0.0.0.0:7701 (v0.1.0, transcript /Users/me/.claude/projects/…/session.jsonl)
 ```
 
 There is no state file and no port handshake. If the adopted service turns out to be on the wrong
 port (a hostd relaunched with a different `--port`), the manager terminates it and respawns once.
+
+The `(v…` is the RUNNING build's version, first in the parenthetical so its position holds however
+the rest of that text grows. It rides this line rather than the wire for the same reason the port
+does — an adopted inspectord is one hostd did not start — and this wire has no handshake to add it
+to. hostd compares it against `slopdesk-inspectord --version` on disk and restarts a stale one on
+the same port and transcript (`docs/49`).
 
 `HostServer.stop()` **relinquishes**: hostd goes away, inspectord keeps tailing, and the replay
 window a client is about to ask for is still there when it asks. Only a deliberate stop terminates.

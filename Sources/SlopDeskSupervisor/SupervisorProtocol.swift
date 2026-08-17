@@ -45,7 +45,12 @@ public enum SupervisorProtocol {
     /// `journalInfo` / `journalDelete` / `journalSweep` read, remove and bound them. The
     /// `<uuid>.scrollback.resume` sidecar went with it: `journalInfo` answers the same number from
     /// the process that numbers the stream.
-    public static let versionMinor = 7
+    ///
+    /// `8` added ``HelloReply/buildVersion`` — the crate version of the superd actually running, so
+    /// hostd can tell an upgrade that reached it from one still waiting on a restart. It is a
+    /// FIELD, not a verb, precisely because rule 4 applies: asking costs nothing, and the answer
+    /// rides a handshake hostd already performs.
+    public static let versionMinor = 8
 
     public enum Verb {
         public static let hello = "hello"
@@ -664,6 +669,19 @@ public struct HelloReply: Decodable, Sendable {
     public var hookSocketPath: String?
     /// The stable agent-control socket path, same rule.
     public var controlSocketPath: String?
+    /// The crate version of the superd process that answered — `slopdesk-superd`'s own
+    /// `CARGO_PKG_VERSION`, compiled in, never read back off disk.
+    ///
+    /// ``versionMinor`` above cannot answer this. The minor says what superd can *speak* and moves
+    /// only on a wire change; a superd rebuilt with a fixed reaper reports the same minor as the one
+    /// it replaced. But superd outlives hostd's build, so after an upgrade the binary on disk and
+    /// the process on the socket are routinely different code — and restarting it takes every live
+    /// pane. `SidecarVersionAudit` compares this against `slopdesk-superd --version` on disk to say
+    /// which, and hostd reports rather than acts.
+    ///
+    /// `nil` from a superd older than minor 8. "Unknown" must stay distinguishable from "same":
+    /// reporting a stale superd as current is exactly the silent wrong answer this removes.
+    public var buildVersion: String?
 
     public init(
         versionMajor: Int = SupervisorProtocol.versionMajor,
@@ -671,12 +689,14 @@ public struct HelloReply: Decodable, Sendable {
         superdPID: Int32,
         hookSocketPath: String? = nil,
         controlSocketPath: String? = nil,
+        buildVersion: String? = nil,
     ) {
         self.versionMajor = versionMajor
         self.versionMinor = versionMinor
         self.superdPID = superdPID
         self.hookSocketPath = hookSocketPath
         self.controlSocketPath = controlSocketPath
+        self.buildVersion = buildVersion
     }
 }
 

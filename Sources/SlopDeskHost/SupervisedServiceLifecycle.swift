@@ -55,6 +55,36 @@ enum AnnouncedPort {
     }
 }
 
+/// The OTHER fact an announce line carries: the crate version of the process that printed it.
+///
+/// It rides this line rather than a handshake because these three daemons outlive hostd — hostd
+/// re-learns a survivor's port by replaying superd's ring, so the line is already the one channel
+/// that describes a child hostd did not start. A version learned anywhere else would be missing on
+/// exactly the path that needs it.
+///
+/// Only OUR daemons announce one. `code-server` and the simulator server print third-party lines we
+/// do not control, so their managers pass no version parser and read `nil` — "unknown", which the
+/// audit never turns into "current".
+enum AnnouncedVersion {
+    /// Spelled identically as `ANNOUNCE_VERSION_PREFIX` in the three announcing daemons' `server.rs`,
+    /// and compared by `scripts/check-supervisor.sh`.
+    static let marker = "(v"
+
+    /// The version between ``marker`` and the parenthetical's first `,` or `)`, searched from the
+    /// end of `portMarker` so a `(v` inside a path earlier on the line cannot win.
+    ///
+    /// The daemons put it FIRST in the parenthetical for that reason, and so the position holds
+    /// however the rest of that text grows. Empty parses to `nil` — an empty string is not a
+    /// version, and reporting one as if it were would compare unequal to every real one forever.
+    static func directlyAfter(_ portMarker: String, in line: String) -> String? {
+        guard let markerRange = line.range(of: portMarker) else { return nil }
+        let rest = line[markerRange.upperBound...]
+        guard let versionRange = rest.range(of: marker) else { return nil }
+        let version = rest[versionRange.upperBound...].prefix { $0 != "," && $0 != ")" }
+        return version.isEmpty ? nil : String(version)
+    }
+}
+
 /// The lifecycle of a sidecar whose port the OS picks: spawn once, learn the port from the child's
 /// own line, probe until it answers, and report where it stands RIGHT NOW — never wait.
 ///
@@ -86,6 +116,9 @@ final class ProbedPortService: @unchecked Sendable {
         var handle: any HostServiceProcessHandle
         /// Learned from the child's announce line; `nil` until it prints one.
         var port: UInt16?
+        /// The crate version off the same line. `nil` for a third-party backend that announces no
+        /// version, and for one that predates the field — both mean "unknown", never "current".
+        var version: String?
         /// Latched on the first successful probe — a listening server is never un-probed.
         var ready = false
         var lastProbe: ContinuousClock.Instant?
@@ -142,11 +175,22 @@ final class ProbedPortService: @unchecked Sendable {
     /// respawn has already superseded the generation that produced it (a dying child's last line
     /// must not poison the new record).
     ///
+    /// `parseVersion` runs on the SAME line and is separate because the two facts have different
+    /// availability: every backend here announces a port, only ours announces a version.
+    ///
     /// Weak on purpose — the service holds the handle that holds this closure.
     func portSink(
-        generation: Int, parse: @escaping HostServiceProcess.PortParser,
+        generation: Int,
+        parseVersion: (@Sendable (String) -> String?)? = nil,
+        parse: @escaping HostServiceProcess.PortParser,
     ) -> @Sendable (String) -> Void {
         { [weak self] line in
+            // The version is read off the announce line, so it must be recorded BEFORE the port —
+            // `servedPort` turning non-nil is what a caller waits on, and a version that landed
+            // after it would be missed by anyone who audited on that signal.
+            if let version = parseVersion?(line) {
+                self?.recordVersion(version, spawnedAs: generation)
+            }
             guard let port = parse(line) else { return }
             self?.recordPort(port, spawnedAs: generation)
         }
@@ -155,6 +199,11 @@ final class ProbedPortService: @unchecked Sendable {
     /// The port the running child announced, once it has.
     var servedPort: UInt16? {
         locked { instance?.port }
+    }
+
+    /// The crate version the running child announced, or `nil` when it announced none.
+    var announcedVersion: String? {
+        locked { instance?.version }
     }
 
     /// Drops the record and answers the handle, for the caller to end (``shutdown``) or release
@@ -211,6 +260,16 @@ final class ProbedPortService: @unchecked Sendable {
             instance = live
         }
     }
+
+    /// Same first-writer-wins rule as ``recordPort(_:spawnedAs:)``, for the same reason: the child
+    /// announces once, and a later line that happened to contain the marker is not a new fact.
+    private func recordVersion(_ version: String, spawnedAs generation: Int) {
+        locked {
+            guard generation == spawnGeneration, var live = instance, live.version == nil else { return }
+            live.version = version
+            instance = live
+        }
+    }
 }
 
 /// The lifecycle of a sidecar whose port hostd CHOOSES: spawn (or adopt a survivor), wait a bounded
@@ -233,11 +292,15 @@ final class AnnouncedPortService: @unchecked Sendable {
     private let spawn: HostServiceProcess.Spawner
     private let locateBinary: HostServiceProcess.BinaryLocator
     private let parsePort: HostServiceProcess.PortParser
+    private let parseVersion: (@Sendable (String) -> String?)?
     private let announceTimeout: Duration
     private var handle: (any HostServiceProcessHandle)?
     private var announcedPort: UInt16?
+    private var announcedVersionValue: String?
 
     /// - Parameters:
+    ///   - parseAnnouncedVersion: reads the crate version off the same line. Optional because only
+    ///     the daemons in this repo print one.
     ///   - announceTimeout: how long ``start(port:arguments:)`` waits for the child's announce line
     ///     before giving up on verifying the port. Bounded, because this runs on the daemon's
     ///     startup path.
@@ -245,11 +308,13 @@ final class AnnouncedPortService: @unchecked Sendable {
         spawner: @escaping HostServiceProcess.Spawner,
         binaryLocator: @escaping HostServiceProcess.BinaryLocator,
         parseAnnouncedPort: @escaping HostServiceProcess.PortParser,
+        parseAnnouncedVersion: (@Sendable (String) -> String?)? = nil,
         announceTimeout: Duration = .seconds(3),
     ) {
         spawn = spawner
         locateBinary = binaryLocator
         parsePort = parseAnnouncedPort
+        parseVersion = parseAnnouncedVersion
         self.announceTimeout = announceTimeout
     }
 
@@ -294,6 +359,13 @@ final class AnnouncedPortService: @unchecked Sendable {
         return announcedPort
     }
 
+    /// The crate version the running daemon announced, or `nil` when it announced none.
+    var announcedVersion: String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return announcedVersionValue
+    }
+
     // MARK: - Internals
 
     private func forget() -> (any HostServiceProcessHandle)? {
@@ -301,13 +373,18 @@ final class AnnouncedPortService: @unchecked Sendable {
         let stranded = handle
         handle = nil
         announcedPort = nil
+        announcedVersionValue = nil
         lock.unlock()
         return stranded
     }
 
     private func launch(binary: String, arguments: [String]) throws -> any HostServiceProcessHandle {
         let parse = parsePort
+        let version = parseVersion
         let started = try spawn(binary, arguments) { [weak self] line in
+            // Before the port, for the reason ``ProbedPortService/portSink(generation:parseVersion:parse:)``
+            // gives: `servedPort` is what callers wait on, so anything learned after it is missed.
+            if let announced = version?(line) { self?.recordVersion(announced) }
             guard let port = parse(line) else { return }
             self?.recordPort(port)
         }
@@ -332,9 +409,16 @@ final class AnnouncedPortService: @unchecked Sendable {
         lock.unlock()
     }
 
+    private func recordVersion(_ version: String) {
+        lock.lock()
+        announcedVersionValue = version
+        lock.unlock()
+    }
+
     private func clearAnnouncement() {
         lock.lock()
         announcedPort = nil
+        announcedVersionValue = nil
         lock.unlock()
     }
 }

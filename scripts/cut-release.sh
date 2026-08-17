@@ -76,6 +76,8 @@ if [[ "${DRY_RUN}" == "1" ]]; then
   step "Dry run — the release body would be"
   printf '%s\n' "${notes}"
   git checkout -- CHANGELOG.md 2> /dev/null || rm -f CHANGELOG.md
+  step "Dry run — the sidecars that would move"
+  scripts/bump-tool-versions.sh --dry-run
   echo
   echo "cut-release: nothing was written. Re-run without --dry-run to cut v${VERSION}."
   exit 0
@@ -84,12 +86,35 @@ fi
 step "Writing the version into every site"
 scripts/bump-version.sh "${VERSION}"
 
+# The PRODUCT version above moves on every cut; a sidecar's does not. Each one is bumped only when
+# its own source stamp left `scripts/tool-stamps.pin` — so a release that touched nothing but the
+# client app leaves all ten sidecar versions exactly where they were, and the install side has a
+# reason not to restart a single daemon. That is the whole point: restarting superd costs the user
+# every live pane (`docs/51`), and it should cost that only when superd actually changed.
+#
+# AFTER `bump-version.sh`, and the order matters in one direction only: nothing here reads the
+# product version, but `bump-version.sh`'s final sweep fails on any version-shaped string in its
+# six sites that is not the new one, and a crate version is not in those files. Kept downstream
+# anyway so a failure in the six-site write stops the cut before any crate is touched.
+step "Bumping the sidecars that changed"
+scripts/bump-tool-versions.sh
+
 step "Committing and tagging"
 git add CHANGELOG.md \
   Sources/SlopDeskCLICore/CLIVersion.swift \
   Sources/SlopDeskHost/HostEnvironment.swift \
   Apps/ClientApp-macOS/project.yml Apps/ClientApp-macOS/Info.plist \
-  Apps/HostApp-macOS/project.yml Apps/HostApp-macOS/Info.plist
+  Apps/HostApp-macOS/project.yml Apps/HostApp-macOS/Info.plist \
+  scripts/tool-stamps.pin
+# The crate manifests and lock files `bump-tool-versions.sh` rewrote. `-u` rather than a path list,
+# because which crates moved is exactly what this script cannot know in advance — and leaving one
+# out would strand a bumped `Cargo.toml` in the working tree, where the release ships a binary
+# whose version was never committed and the next `make check` finds a dirty tree.
+#
+# `-u` over a whole directory is safe here for ONE reason, and it is checked far above: this script
+# refuses to run on a dirty tree. So the only modifications under `rust/` at this point are the
+# ones the bumper just made, and a sweep cannot catch work nobody reviewed as part of the release.
+git add -u rust
 
 # `chore(release)` is the one subject `cliff.toml` skips, so the release commit never
 # appears in the notes of the release after it.

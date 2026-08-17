@@ -159,6 +159,28 @@ final class SupervisorProtocolTests: XCTestCase {
         XCTAssertNil(decoded.hello?.controlSocketPath)
     }
 
+    /// Minor 8's field. superd outlives hostd's BUILD, so after an upgrade the binary on disk and
+    /// the process on this socket are routinely different code — and the protocol minor cannot say
+    /// which, because it moves only on a wire change (`docs/49`).
+    func testTheRunningSuperdsBuildVersionArrivesOnHello() throws {
+        let json = #"""
+        {"id":4,"status":"ok","hello":{"versionMajor":1,"versionMinor":8,"superdPID":321,
+        "buildVersion":"0.2.1"}}
+        """#
+        let decoded = try SupervisorCodec.decodeReply(Array(json.utf8))
+        XCTAssertEqual(decoded.hello?.buildVersion, "0.2.1")
+    }
+
+    /// A superd older than minor 8 sends nothing, and "unknown" must stay distinguishable from
+    /// "same" — reporting a stale superd as up to date is the silent wrong answer this removes.
+    func testAnOlderSuperdSendsNoBuildVersionAndItStaysAbsent() throws {
+        let json = #"""
+        {"id":4,"status":"ok","hello":{"versionMajor":1,"versionMinor":7,"superdPID":321}}
+        """#
+        let decoded = try SupervisorCodec.decodeReply(Array(json.utf8))
+        XCTAssertNil(decoded.hello?.buildVersion)
+    }
+
     /// `unsupported` must stay distinguishable from `error`. Collapsing them turns "you are older
     /// than me" into "something went wrong", and only the first one is recoverable by falling back.
     func testUnsupportedIsDistinctFromError() throws {

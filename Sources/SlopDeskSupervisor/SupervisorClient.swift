@@ -96,6 +96,13 @@ public final class SupervisorClient: @unchecked Sendable {
     public private(set) var superdPID: Int32?
     public private(set) var negotiatedMinor: Int?
 
+    /// The crate version of the superd process on the other end, from ``HelloReply/buildVersion``.
+    ///
+    /// `nil` when superd predates minor 8 and did not send one — which `SidecarVersionAudit` reads
+    /// as `.unknown`, never as "current". A superd that answered is running code that may be older
+    /// than the binary an upgrade just wrote to disk; this is the only handle hostd has on which.
+    public private(set) var superdBuildVersion: String?
+
     /// Per-pane output handlers, keyed by `paneID`. Installed by ``subscribe(paneID:fromOffset:onEvent:)``
     /// and removed by ``unsubscribe(paneID:)`` or by the pane's `exited`.
     private var outputHandlers: [String: @Sendable (PaneOutputEvent) -> Void] = [:]
@@ -195,6 +202,7 @@ public final class SupervisorClient: @unchecked Sendable {
         controlSocketPath = hello.controlSocketPath
         superdPID = hello.superdPID
         negotiatedMinor = min(hello.versionMinor, SupervisorProtocol.versionMinor)
+        superdBuildVersion = hello.buildVersion
         onLog?(
             "supervisor: attached to superd pid \(hello.superdPID) "
                 + "(protocol \(hello.versionMajor).\(hello.versionMinor))",

@@ -28,6 +28,9 @@ use slopdesk_androidd::server::{Bridge, announce, bind, locate_toolchain, serve}
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
+    if arguments.first().is_some_and(|argument| argument == "--version") {
+        return print_version();
+    }
     let options = match parse(&arguments) {
         Ok(parsed) => parsed,
         Err(message) => {
@@ -84,6 +87,28 @@ struct Options {
     vendored_bin: Option<PathBuf>,
     /// hostd's `ThirdParty/tools/vendor/scrcpy-server`.
     vendored_jar: Option<PathBuf>,
+}
+
+/// `--version`, on stdout because that is where a version belongs — the rest of this daemon's
+/// output is a log and goes to stderr.
+///
+/// The SECOND whitespace-separated field of the FIRST line is the version, which is the shape
+/// every tool in this tree answers and the one `package-release.sh` parses when it checks a built
+/// binary against `scripts/tool-stamps.pin`.
+///
+/// The parenthetical names the SCRCPY server this bridge speaks to, which is neither a version of
+/// this daemon nor a protocol either side of ours negotiates — it is a pin on somebody else's
+/// binary, and it belongs here because it is the one number that decides whether a mirror comes up
+/// on a given device. This daemon's own wire has no version field, for inspectord's reason: hostd
+/// spawns it and reaps it inside one host's lifetime, so the two ends have never been able to skew.
+#[expect(clippy::print_stdout, reason = "a --version banner is stdout by convention")]
+fn print_version() -> ExitCode {
+    println!(
+        "slopdesk-androidd {} (scrcpy {})",
+        env!("CARGO_PKG_VERSION"),
+        slopdesk_androidd::scrcpy::SERVER_VERSION,
+    );
+    ExitCode::SUCCESS
 }
 
 /// `--port` (required), plus the two paths hostd resolved.

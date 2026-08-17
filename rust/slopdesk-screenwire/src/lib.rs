@@ -4,10 +4,19 @@
 //! `SOCK_STREAM` socket.
 //!
 //! Deliberately NOT the mux wire and NOT golden-pinned — this is a private host↔service link
-//! between two binaries shipped together and version-locked by the build, so it carries no
-//! negotiation and no version field beyond [`HELLO_BANNER`]. It is also NOT the supervisor
-//! protocol: superd passes file descriptors and owns processes, screend touches neither and needs
-//! neither.
+//! between two binaries shipped together, so it carries no negotiation. It is also NOT the
+//! supervisor protocol: superd passes file descriptors and owns processes, screend touches neither
+//! and needs neither.
+//!
+//! ## "version-locked by the build" was half true, and the half that was false is why
+//! [`hello_payload`] exists
+//! Shipped together, yes. RUNNING together, no: `scripts/install-screend.sh` installs a
+//! `LaunchAgent`, so a screend started at login outlives every hostd of the day and survives the
+//! `brew upgrade` that replaces its binary. The pair are then two different builds talking to each
+//! other, which this wire tolerates — it is stable enough that they interoperate — while nothing
+//! could TELL that they were. [`HELLO_BANNER`] is unchanged and still the pinned protocol identity;
+//! the running build's version rides after it, so hostd can compare what is answering against what
+//! is on disk.
 //!
 //! ```text
 //! request  u32 len | u8 verb | u8 flags | u16 rows | u16 cols | u16 pane_len | pane… | raw…
@@ -18,9 +27,44 @@
 //! the tree: decode is validate-then-drop — a short, over-long or unrecognised frame yields an
 //! error the server answers with a status byte, never a panic.
 
-/// What a caller answering [`Verb::Hello`] receives — the build's identity, not a negotiated
-/// version. A mismatch means the two binaries were not shipped together, which is a packaging bug.
+/// The PROTOCOL identity, not a negotiated version and not the build's version. A mismatch means
+/// the two binaries were not shipped together, which is a packaging bug.
+///
+/// Ratcheted byte for byte against `SlopDeskScreen.ScreenProtocol.helloBanner` by
+/// `scripts/check-supervisor.sh`, so it is a constant on both sides and stays one. The running
+/// build's version is appended by [`hello_payload`] rather than folded in here, for exactly that
+/// reason: a constant a script compares cannot also carry a value that changes every release.
 pub const HELLO_BANNER: &[u8] = b"slopdesk-screend 1";
+
+/// What [`Verb::Hello`] actually answers: `slopdesk-screend <protocol> <build version>`.
+///
+/// Two numbers because they answer two questions that a single one keeps confusing. The protocol
+/// digit says what this screend will agree to speak, and changing it is a deliberate edit on both
+/// ends. The build version says which screend is speaking — and it moves on any release that
+/// touched this daemon's sources, wire or not.
+///
+/// hostd reads the second to decide whether the screend ANSWERING is the screend on disk. It can
+/// afford to act on the answer here where it cannot for superd: screend holds no children and no
+/// durable state, its per-pane grids are a cache the next repaint refills, and hostd starts one
+/// itself if none is listening (`scripts/install-screend.sh` says the same in its header). A
+/// restart costs a repaint. superd's costs every pane.
+///
+/// Space-separated and appended, never prefixed: `HELLO_BANNER` stays a prefix of this, so a
+/// reader that only knows the old payload — the gate scripts, the test fixtures that wait for a
+/// bind — keeps matching.
+///
+/// `build_version` is a PARAMETER rather than an `env!` here, and that is not ceremony: this crate
+/// is `slopdesk-screenwire`, so its own `CARGO_PKG_VERSION` is the wire crate's and not the
+/// daemon's. The number that ships, that `scripts/tool-stamps.pin` records and that hostd compares
+/// against `slopdesk-screend --version`, belongs to `slopdesk-screend`. Reading it here would have
+/// answered with a plausible, stable, wrong string.
+#[must_use]
+pub fn hello_payload(build_version: &str) -> Vec<u8> {
+    let mut payload = HELLO_BANNER.to_vec();
+    payload.push(b' ');
+    payload.extend_from_slice(build_version.as_bytes());
+    payload
+}
 
 /// The largest request screend will read.
 ///

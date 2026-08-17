@@ -43,6 +43,9 @@ fn main() -> ExitCode {
     let Some(subcommand) = arguments.first() else {
         return usage();
     };
+    if subcommand == "--version" {
+        return print_version();
+    }
     let Some(flags) = parse_flags(arguments.get(1..).unwrap_or_default()) else {
         return usage();
     };
@@ -123,6 +126,25 @@ fn print_bytes(answer: Option<Vec<u8>>) -> ExitCode {
 /// The subject does not exist — distinct from an empty answer, which exits 0 with nothing.
 fn not_found() -> ExitCode {
     ExitCode::from(NOT_FOUND)
+}
+
+/// `--version`, on STDOUT — the one thing this program prints there that is not a query answer.
+///
+/// The usage text below goes to stderr because two subcommands stream opaque bytes; a version
+/// banner is different in the way that matters, because nobody pipes `--version` into a patch. It
+/// is asked interactively, and an interactive answer belongs on stdout.
+///
+/// Through an explicit handle rather than `println!`, for the reason [`print_json`] gives: this
+/// crate shares the root workspace's ban on the print macros for the hook relay's sake, and one
+/// more exemption is one more thing to reason about.
+///
+/// The SECOND whitespace-separated field of the FIRST line is the version, which is the shape
+/// every tool in this tree answers and the one `package-release.sh` parses when it checks a built
+/// binary against `scripts/tool-stamps.pin`.
+fn print_version() -> ExitCode {
+    let mut out = std::io::stdout().lock();
+    let _unused = writeln!(out, "slopdesk-probe {}", env!("CARGO_PKG_VERSION"));
+    ExitCode::SUCCESS
 }
 
 /// The usage text, on stderr: stdout carries opaque bytes for two of these subcommands, and a

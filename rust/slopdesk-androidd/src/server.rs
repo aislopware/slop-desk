@@ -54,6 +54,16 @@ use crate::toolchain::{self, Toolchain};
 /// same discipline `SupervisedServiceProcess` applies to the panel backends (`docs/51` §6.7).
 pub const ANNOUNCE_PREFIX: &str = "androidd: listening on 0.0.0.0:";
 
+/// What the RUNNING build's version is prefixed with inside the announce parenthetical.
+///
+/// The announce line is already the one channel carrying facts about an androidd hostd did not
+/// start — that is what `ANNOUNCE_PREFIX` above is for — so the running build's version rides here
+/// rather than on a wire that has no handshake to add it to. FIRST in the parenthetical and
+/// `v`-prefixed so the position is stable however the rest of that text grows. Spelled identically
+/// in the other two announcing daemons and in `SidecarAnnounce.versionMarker`;
+/// `scripts/check-supervisor.sh` ratchets all four.
+pub const ANNOUNCE_VERSION_PREFIX: &str = "(v";
+
 /// One `adb shell` round trip carries both halves of a device probe; this splits them. Eight
 /// `getprop <key>` calls would be eight process spawns per device per poll.
 pub const PROBE_MARKER: &str = "--slopdesk-wm--";
@@ -124,10 +134,21 @@ pub fn bind(port: u16) -> std::io::Result<TcpListener> {
 /// Propagates the failure to read the listener's own address.
 pub fn announce(listener: &TcpListener, toolchain: &Toolchain) -> std::io::Result<u16> {
     let port = listener.local_addr()?.port();
+    eprintln!("{}", announce_line(port, toolchain));
+    Ok(port)
+}
+
+/// The exact line [`announce`] prints.
+///
+/// Split out so the shape hostd parses is a value a test can hold, rather than a side effect on a
+/// file descriptor. `env!` reads THIS binary's compile-time version — never a number off disk.
+#[must_use]
+pub fn announce_line(port: u16, toolchain: &Toolchain) -> String {
     // The two optional pieces are named here because "the panel lists but will not mirror" is a
     // question answered by this line and otherwise by a bisect.
-    eprintln!(
-        "{ANNOUNCE_PREFIX}{port} (adb {}, emulator {}, scrcpy-server {})",
+    format!(
+        "{ANNOUNCE_PREFIX}{port} {ANNOUNCE_VERSION_PREFIX}{}, adb {}, emulator {}, scrcpy-server {})",
+        env!("CARGO_PKG_VERSION"),
         toolchain.adb.display(),
         toolchain
             .emulator
@@ -137,8 +158,7 @@ pub fn announce(listener: &TcpListener, toolchain: &Toolchain) -> std::io::Resul
             .scrcpy_server_jar
             .as_ref()
             .map_or_else(|| "missing".to_owned(), |path| path.display().to_string()),
-    );
-    Ok(port)
+    )
 }
 
 /// Accepts connections until the process is killed.
@@ -595,12 +615,24 @@ mod tests {
         reason = "a panic in a test is the failure report, not a runtime fault"
     )]
 
-    use super::{ANNOUNCE_PREFIX, PROBE_MARKER, is_png, mirror_options};
+    use super::{
+        ANNOUNCE_PREFIX, ANNOUNCE_VERSION_PREFIX, PROBE_MARKER, announce_line, is_png, mirror_options,
+    };
     use crate::protocol::Request;
     use crate::scrcpy::{Codec, Options};
+    use crate::toolchain::Toolchain;
 
     fn request(text: &str) -> Request {
         Request::decode(text.as_bytes()).expect("decodes")
+    }
+
+    /// A host with `adb` and neither optional piece — the shape that exercises the `missing` arms.
+    fn bare_toolchain() -> Toolchain {
+        Toolchain {
+            adb: std::path::PathBuf::from("/opt/android/platform-tools/adb"),
+            emulator: None,
+            scrcpy_server_jar: None,
+        }
     }
 
     #[test]
@@ -608,6 +640,32 @@ mod tests {
         // Spelled identically in `AndroidServiceManager.announceMarker`, and compared by
         // `scripts/check-supervisor.sh` — a build that changes one and not the other fails there.
         assert_eq!(ANNOUNCE_PREFIX, "androidd: listening on 0.0.0.0:");
+    }
+
+    #[test]
+    fn the_announce_line_still_leads_with_the_port_hostd_parses() {
+        let line = announce_line(7414, &bare_toolchain());
+        let rest = line
+            .strip_prefix(ANNOUNCE_PREFIX)
+            .expect("the announce marker is the line's prefix");
+        // hostd takes the digits directly after the marker as a run, so nothing may sit between.
+        assert!(rest.starts_with("7414 "), "port must follow the marker: {line}");
+    }
+
+    #[test]
+    fn the_announce_line_carries_the_running_builds_version_first_in_the_parenthetical() {
+        let line = announce_line(7414, &bare_toolchain());
+        let at = line
+            .find(ANNOUNCE_VERSION_PREFIX)
+            .expect("the version marker is on the line");
+        let after = line
+            .get(at + ANNOUNCE_VERSION_PREFIX.len()..)
+            .expect("the marker is not the line's tail");
+        let version = after
+            .split([',', ')'])
+            .next()
+            .expect("split always yields a first field");
+        assert_eq!(version, env!("CARGO_PKG_VERSION"), "in {line}");
     }
 
     #[test]

@@ -15,10 +15,14 @@ use std::process::ExitCode;
 
 use slopdesk_screend::detect::explain;
 use slopdesk_screend::server::{default_socket_path, serve};
+use slopdesk_screenwire::HELLO_BANNER;
 
 fn main() -> ExitCode {
     let mut args = std::env::args_os().skip(1);
     let first = args.next();
+    if first.as_deref().is_some_and(|arg| arg == "--version") {
+        return print_version();
+    }
     if first.as_deref().is_some_and(|arg| arg == "explain") {
         return run_explain(args.map(|arg| arg.to_string_lossy().into_owned()).collect());
     }
@@ -30,6 +34,32 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         },
     }
+}
+
+/// `--version`, on stdout because that is where a version belongs — the rest of this daemon's
+/// output is a log and goes to stderr.
+///
+/// ## The format is a contract, not a banner
+/// The SECOND whitespace-separated field of the FIRST line is the version, and every tool in the
+/// tree answers that shape — `slopdesk version` has since before any of this, and
+/// `package-release.sh` has read it that way for as long. That script now asks every shipped
+/// binary the same question and refuses to package on a disagreement with
+/// `scripts/tool-stamps.pin`, so a crate version bumped in `Cargo.toml` and a binary built from
+/// something else cannot both reach a user.
+///
+/// The parenthetical is the PROTOCOL, which is a different number moving for a different reason:
+/// this daemon's version says what code you are running, [`HELLO_BANNER`]'s trailing `1` says what
+/// it will agree to speak. A reader who conflates them concludes a patch release requires a client
+/// update.
+#[expect(clippy::print_stdout, reason = "a --version banner is stdout by convention")]
+fn print_version() -> ExitCode {
+    let protocol = String::from_utf8_lossy(HELLO_BANNER);
+    println!(
+        "slopdesk-screend {} (protocol {})",
+        env!("CARGO_PKG_VERSION"),
+        protocol.rsplit(' ').next().unwrap_or("?"),
+    );
+    ExitCode::SUCCESS
 }
 
 /// `slopdesk-screend explain --file PATH --agent LABEL [--json]`.

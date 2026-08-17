@@ -83,7 +83,10 @@ final class AndroidServiceManager: @unchecked Sendable {
     func ensure() -> MetadataCodec.ServiceEndpoint {
         service.ensure { generation in
             guard let binary = locateBinary() else { return .notYet(.unavailable) }
-            let onLine = service.portSink(generation: generation) {
+            let onLine = service.portSink(
+                generation: generation,
+                parseVersion: { Self.parseAnnouncedVersion(fromLogLine: $0) },
+            ) {
                 Self.parseAnnouncedPort(fromLogLine: $0)
             }
             // A spawn that THREW is transient here, unlike the panel backends: superd unreachable
@@ -112,6 +115,10 @@ final class AndroidServiceManager: @unchecked Sendable {
 
     /// The port the running daemon announced, once it has.
     var servedPort: UInt16? { service.servedPort }
+
+    /// The crate version of the androidd actually running, off its announce line. `nil` when it has
+    /// not announced yet, or announced without one.
+    var runningVersion: String? { service.announcedVersion }
 
     // MARK: - What makes it the bridge
 
@@ -142,6 +149,14 @@ final class AndroidServiceManager: @unchecked Sendable {
 
     /// The announce prefix, spelled identically in `rust/slopdesk-androidd/src/server.rs`.
     static let announceMarker = "androidd: listening on 0.0.0.0:"
+
+    /// The crate version out of the same line's `(v<version>, adb …)`, or `nil`.
+    ///
+    /// `nil` from an androidd that predates the field — a survivor adopted across an upgrade is
+    /// exactly the case, and it must read `unknown` rather than `current`.
+    static func parseAnnouncedVersion(fromLogLine line: String) -> String? {
+        AnnouncedVersion.directlyAfter(announceMarker, in: line)
+    }
 
     // MARK: - Production seams
 

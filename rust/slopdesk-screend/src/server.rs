@@ -17,8 +17,8 @@ use crate::detect::{detect, detection_text};
 use crate::model::{MAX_COLS, MAX_ROWS, ScreenModel};
 use crate::overprint::collapse;
 use crate::protocol::{
-    FLAG_AGENT_CHANGED, FLAG_REASSERT_INPUT_MODES, FLAG_REBUILD_REPLAY, FLAG_RESET, HELLO_BANNER, MAX_FRAME,
-    Request, Status, Verb, decode_detect_payload, decode_request, encode_reply,
+    FLAG_AGENT_CHANGED, FLAG_REASSERT_INPUT_MODES, FLAG_REBUILD_REPLAY, FLAG_RESET, MAX_FRAME, Request,
+    Status, Verb, decode_detect_payload, decode_request, encode_reply, hello_payload,
 };
 use crate::registry::Registry;
 use crate::render::{render, render_transcript};
@@ -231,7 +231,10 @@ pub fn serve_request(body: &[u8], registry: &Mutex<Registry>) -> (Status, Vec<u8
         );
     }
     match request.verb {
-        Verb::Hello => (Status::Ok, HELLO_BANNER.to_vec()),
+        // `CARGO_PKG_VERSION` is read HERE, in the daemon's own crate, rather than inside
+        // `hello_payload` — see that function for why the wire crate's version would be the wrong
+        // string. This is the version of the process answering, not of the binary on disk.
+        Verb::Hello => (Status::Ok, hello_payload(env!("CARGO_PKG_VERSION"))),
         Verb::Snapshot => {
             let mut model = ScreenModel::new(request.rows, request.cols);
             model.feed(request.raw);
@@ -377,11 +380,30 @@ mod tests {
     }
 
     #[test]
-    fn hello_answers_with_the_banner() {
+    fn hello_still_leads_with_the_pinned_banner() {
         let registry = Mutex::new(Registry::new());
         let (status, payload) = call(&plain(Verb::Hello, b""), &registry);
         assert_eq!(status, Status::Ok);
-        assert_eq!(payload, HELLO_BANNER);
+        // A PREFIX, not an equality: the build version follows. Asserted as a prefix rather than
+        // against the whole composed string because that is the promise the appended field makes —
+        // every reader that only knows the banner keeps matching.
+        assert!(payload.starts_with(HELLO_BANNER), "hello lost its banner prefix");
+    }
+
+    #[test]
+    fn hello_carries_the_running_builds_version_after_the_banner() {
+        let registry = Mutex::new(Registry::new());
+        let (_, payload) = call(&plain(Verb::Hello, b""), &registry);
+        let text = String::from_utf8(payload).expect("the hello payload is UTF-8");
+
+        // `slopdesk-screend <protocol> <build version>` — the version is the THIRD field, and this
+        // asserts the position rather than the string, for the reason the `--version` banner test
+        // in `slopdesk-ctl` gives: hostd parses a position, so the position is the contract.
+        let mut fields = text.split(' ');
+        assert_eq!(fields.next(), Some("slopdesk-screend"));
+        assert!(fields.next().is_some(), "the protocol digit went missing");
+        assert_eq!(fields.next(), Some(env!("CARGO_PKG_VERSION")));
+        assert_eq!(fields.next(), None, "hello grew a fourth field nothing parses");
     }
 
     #[test]

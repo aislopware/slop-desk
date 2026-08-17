@@ -86,9 +86,28 @@ public enum ScreenWire {
     /// sequence spanning the change finalises normally, attributed to the new agent.
     public static let flagAgentChanged: UInt8 = 0x10
 
-    /// What screend answers `hello` with. Pinned here so a version bump has to be a deliberate edit
-    /// on both ends rather than a silent mismatch.
+    /// What screend's `hello` reply STARTS with. Pinned here so a version bump has to be a
+    /// deliberate edit on both ends rather than a silent mismatch.
+    ///
+    /// This is the PROTOCOL identity — `1` is the wire, not the build. The reply continues past it
+    /// (see ``buildVersion(fromHello:)``), so match it as a prefix, never for equality.
     public static let helloBanner = "slopdesk-screend 1"
+
+    /// The running screend's crate version, parsed out of a `hello` reply.
+    ///
+    /// The reply is `<name> <protocol> <build>`: the banner above, then the version of the screend
+    /// process that answered. screend is installed as a `LaunchAgent` by `scripts/install-screend.sh`
+    /// and so outlives hostd's build — after an upgrade the binary on disk and the process on the
+    /// socket are routinely different code, and this field is what tells them apart.
+    ///
+    /// `nil` from a screend that predates the third field, and `nil` if the banner does not lead —
+    /// "unknown", never "current". Callers pair it with `SidecarVersionAudit`.
+    public static func buildVersion(fromHello payload: String) -> String? {
+        guard payload.hasPrefix(helloBanner) else { return nil }
+        let fields = payload.split(separator: " ", omittingEmptySubsequences: true)
+        guard fields.count >= 3 else { return nil }
+        return String(fields[2])
+    }
 
     /// Refuses to frame more than screend will read (64 MiB) — a caller handing over a ring bigger
     /// than that gets an error here instead of a connection screend kills mid-stream.

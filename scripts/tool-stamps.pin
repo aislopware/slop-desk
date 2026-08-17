@@ -1,0 +1,27 @@
+# tool-stamps.pin — what each shipped cargo tool was, at the release that last shipped it.
+#
+#   <tool> <version> <source stamp>
+#
+# WRITTEN BY `scripts/bump-tool-versions.sh`, read by it and by `scripts/tool-stamps.sh --check`.
+# Never hand-edit: the stamp is a digest of the tool's source closure, so a value typed here that
+# no tree produces makes every future run report the tool as changed, forever.
+#
+# THE VERSION IS THE IDENTITY, NOT THE SHA. The release tarball's `MANIFEST.json` carries these
+# versions, and the install side restarts a daemon when its version moved. It cannot compare the
+# shipped BYTES instead: `package-release.sh` signs every binary with `--timestamp`, so a
+# rebuild-and-resign of an unchanged tool produces a different file every time. The stamp is what
+# makes the version honest — a version may only move when the stamp did — and the version is what
+# survives signing.
+#
+# SEEDED at product v0.4.0 with the versions the crates already declared. Every tool reads "same"
+# against this seed, which is correct: nothing has changed *since* it. They diverge from here.
+slopdesk-ctl 0.1.0 e1ff794e918bbfa18ec0652a39316b0a28a8b18fa0e171c9f1023a049dcb8200
+slopdesk-probe 0.1.0 06d75eb1fc53df4e10f84155237527ad9c4d23f5371cb2ed0c7689cf3c454e0a
+slopdesk-hook 0.1.0 e3d7dfab53c1852850afeea4af25824cb00bade894d6af076ca6e032ba54ac1f
+slopdesk-agenthooks 0.1.0 e3d7dfab53c1852850afeea4af25824cb00bade894d6af076ca6e032ba54ac1f
+slopdesk-superd 0.1.0 d2afeec54d3e0fadb566d26d868797697195d6216f23c1bd50e9e507ec629cc8
+slopdesk-screend 0.1.0 36d01ce973b4bf832f5d00ff27f4dc9cf8b513812eb281e71db2a923b4f02e9f
+slopdesk-dropd 0.1.0 809c0df66ea6caf71dc5ac042bddf824c62d90c0b98db7235540707bdb6f023d
+slopdesk-inspectord 0.1.0 51ccea382f52810625ff377b9416a6e0b1b2fe7ee4fb109c165b6b6cb6a8ce8c
+slopdesk-androidd 0.1.0 5d6f6c28d0e120926899b574bf3ecdc2dd248aa9317f8d92dc9d79ab5d6b6922
+slopdesk-codeseed 0.1.0 05c7f27e940e04d3467221dad17c7b126cca75eec6f25ec88cf14e773df18c83

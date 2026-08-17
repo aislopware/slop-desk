@@ -77,6 +77,12 @@ The port is **ephemeral** and is NOT verified against a wanted one, unlike dropd
 one host has one `adb` server and one set of AVDs, so an adopted survivor's port is simply the port,
 and it is by construction one something is listening on.
 
+That same line carries the RUNNING build's version, first in the parenthetical
+(`… :<port> (v0.1.0, adb …)`). hostd compares it against `slopdesk-androidd --version` on disk and
+**ends** a stale one — only ends it, because the port is the OS's: the next `ensure()` round finds
+the child gone and boots the installed binary, and starting a second one here would race that round
+for the panel's endpoint (`docs/49`).
+
 `HostServer.stop()` **relinquishes** it. That line used to be a `shutdown()`, which is the regression
 `scripts/check-supervisor.sh` §8 now ratchets alongside the code and simulator backends.
 
