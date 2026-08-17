@@ -128,7 +128,7 @@ final class AndroidScreenNSView: NSView, AndroidFrameRenderer {
         // keyframe is the documented recovery, and `RESET_VIDEO` asks the device for one.
         if renderer.status == .failed {
             renderer.flush()
-            send?(AndroidControlMessage.simple(AndroidControlMessage.resetVideo))
+            send?(AndroidControlMessage.simple(.resetVideo))
         }
         guard let sample = AndroidVideoFormat.sampleBuffer(
             accessUnit: accessUnit, formatDescription: formatDescription, isKeyframe: isKeyframe,

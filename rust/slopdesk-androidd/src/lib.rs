@@ -29,6 +29,7 @@
 //! | [`console`] | the emulator's own telnet control channel |
 //! | [`scrcpy`] | launching the device-side server and completing its handshake |
 //! | [`stream`] | the scrcpy stream's CLIENT end — framing in, access units out |
+//! | [`control`] | the scrcpy control channel's CLIENT end — everything the panel sends up |
 //! | [`net`] | the blocking socket primitives, and why they are blocking |
 //! | [`protocol`] | the one-line request protocol and the pure per-op decisions |
 //! | [`error`] | the sentences the panel renders |
@@ -47,6 +48,7 @@
 
 pub mod catalog;
 pub mod console;
+pub mod control;
 pub mod error;
 pub mod net;
 pub mod protocol;

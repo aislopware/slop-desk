@@ -5338,6 +5338,62 @@ size_t slopdesk_annexb_parameter_sets(const unsigned char *annexb, size_t len, b
 size_t slopdesk_annexb_to_avcc(const unsigned char *annexb, size_t len,
                                unsigned char *out, size_t cap);
 
+// ---------------------------------------------------------------------------
+// The scrcpy CONTROL channel's client end. rust/slopdesk-androidd's `control`
+// module owns every layout, transcribed from `app/src/control_msg.c` at v4.1.
+//
+// ONE door, not nine: the encoders differ only in which fields they read, and
+// every field is a scalar or one string, so the kind tag selects the encoder.
+//
+// GET_CLIPBOARD (8) and UHID_* (12..14) have no kind here, exactly as they have
+// no variant on the Rust side. They are unrepresentable, not merely unused: the
+// bridge gives the client ONE full-duplex connection, and a device reply would
+// land in the middle of the H.264 stream.
+// ---------------------------------------------------------------------------
+
+#define SLOPDESK_ANDROID_CONTROL_TOUCH 0u
+#define SLOPDESK_ANDROID_CONTROL_SCROLL 1u
+#define SLOPDESK_ANDROID_CONTROL_KEY 2u
+#define SLOPDESK_ANDROID_CONTROL_TEXT 3u
+// Always sequence zero — a non-zero sequence asks the device to acknowledge.
+#define SLOPDESK_ANDROID_CONTROL_SET_CLIPBOARD 4u
+#define SLOPDESK_ANDROID_CONTROL_BACK_OR_SCREEN_ON 5u
+#define SLOPDESK_ANDROID_CONTROL_DISPLAY_POWER 6u
+#define SLOPDESK_ANDROID_CONTROL_START_APP 7u
+#define SLOPDESK_ANDROID_CONTROL_BODILESS 8u
+
+typedef struct {
+    // One of the SLOPDESK_ANDROID_CONTROL_* values.
+    uint8_t kind;
+    // A MotionEvent action for a touch, a KeyEvent action for a key or a back press.
+    uint8_t action;
+    // The type byte, for a bodiless message.
+    uint8_t bodiless_type;
+    // SET_CLIPBOARD's paste flag, or SET_DISPLAY_POWER's on flag.
+    bool flag;
+    uint64_t pointer_id;
+    // Signed, because a drag legitimately leaves the frame.
+    int32_t x;
+    int32_t y;
+    uint16_t width;
+    uint16_t height;
+    float pressure;
+    float horizontal;
+    float vertical;
+    uint32_t action_button;
+    uint32_t buttons;
+    uint32_t keycode;
+    uint32_t repeat_count;
+    uint32_t meta_state;
+} SlopDeskAndroidControl;
+
+// 0 means REFUSED, which a real message's length can never be: every one is at
+// least its type byte. Refused are an unserved kind, an action byte naming no
+// action, a reply-bearing bodiless type, and an empty text or package name.
+size_t slopdesk_android_control_encode(const SlopDeskAndroidControl *request,
+                                       const unsigned char *text, size_t text_len,
+                                       unsigned char *out, size_t cap);
+
 #ifdef __cplusplus
 }
 #endif

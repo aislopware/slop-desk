@@ -630,7 +630,7 @@ final class AndroidSidebarModel {
     /// follows the device: a turn restarts the encoder and the new session packet names the new size.
     /// That is why this model, unlike ``SimulatorSidebarModel``, carries no orientation state at all.
     func rotate() {
-        send(AndroidControlMessage.simple(AndroidControlMessage.rotateDevice))
+        send(AndroidControlMessage.simple(.rotateDevice))
     }
 
     /// Turn the DEVICE's own screen off while the mirror keeps running — `scrcpy`'s

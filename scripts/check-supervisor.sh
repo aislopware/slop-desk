@@ -3775,6 +3775,38 @@ for half in 'pub fn split_ranges' 'pub fn to_avcc' 'pub fn h264_parameter_sets' 
 done
 printf 'check-supervisor: one reader for the scrcpy stream, and one walk over Annex-B.\n'
 
+# ── And ONE writer for the scrcpy control channel ──────────────────────────────────────────
+# scrcpy publishes no wire specification — its own documentation says the protocol is defined by the
+# unit tests on both sides — so every layout was transcribed by hand, and the Swift copy laid each
+# field out with a local `appendBigEndian`: the same idiom already banned for the screend frame.
+SWIFT_ANDROID_CONTROL=Sources/SlopDeskClientUI/Android/AndroidControlMessage.swift
+if hit=$(spells 'mutating func appendBigEndian|appendPosition|truncatingIfNeeded:|func truncateUTF8|FixedPoint\(' "${SWIFT_ANDROID_CONTROL}"); then
+  fail "${hit} lays out a scrcpy control message in Swift again — slopdesk-androidd owns every layout"
+fi
+if ! spells 'slopdesk_android_control_encode' "${SWIFT_ANDROID_CONTROL}" > /dev/null; then
+  fail "${SWIFT_ANDROID_CONTROL} no longer asks slopdesk_android_control_encode — one implementation"
+fi
+# THE invariant this protocol has. The bridge gives the client ONE full-duplex connection, and
+# scrcpy's three device→client messages are all REPLIES: to GET_CLIPBOARD, to a SET_CLIPBOARD with a
+# non-zero sequence, or to UHID. Send one and the device writes a clipboard message into a stream the
+# client is parsing as H.264. So those four types have no variant to name, on either side.
+RUST_ANDROID_CONTROL=rust/slopdesk-androidd/src/control.rs
+# `spells` strips `//` lines, so this reads DECLARATIONS and not the prose that explains why the
+# four are absent — which is the whole reason that prose can stay.
+if hit=$(spells 'GET_CLIPBOARD|Uhid' "${RUST_ANDROID_CONTROL}"); then
+  fail "${hit} names a reply-bearing control type — a device reply lands inside the video stream"
+fi
+# The sequence is a literal zero in the encoder, not a parameter with a default anyone can pass.
+if ! spells '0_u64\.to_be_bytes\(\)' "${RUST_ANDROID_CONTROL}" > /dev/null; then
+  fail "${RUST_ANDROID_CONTROL}: SET_CLIPBOARD's sequence stopped being the constant zero"
+fi
+# The bodiless set is closed on BOTH sides: a Swift enum with four cases, a Rust enum with four
+# variants. An open `UInt8` on either would put GET_CLIPBOARD one literal away.
+if ! spells 'enum AndroidBodilessMessage: UInt8' "${SWIFT_ANDROID_CONTROL}" > /dev/null; then
+  fail "${SWIFT_ANDROID_CONTROL}: the bodiless messages stopped being a closed enum"
+fi
+printf 'check-supervisor: one writer for the scrcpy control channel, and no reply-bearing type.\n'
+
 # ── One regex engine meets the untrusted rows, and it does not backtrack ───────────────────────
 # Hint Mode ran ten compiled NSRegularExpressions over rows a remote program wrote, bridged through
 # NSString, mapping columns with a third cell walk. Two things were wrong with that and this pins

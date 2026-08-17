@@ -78,8 +78,10 @@ final class AndroidScrollGestureTests: XCTestCase {
             delta: .zero, isPrecise: true, phase: .ended,
             pointer: CGPoint(x: 100, y: 200), surface: surface,
         ))
-        XCTAssertFalse(emitted.contains(AndroidControlMessage.injectScrollEvent))
-        XCTAssertTrue(emitted.allSatisfy { $0 == AndroidControlMessage.injectTouchEvent })
+        // The type bytes as literals: `slopdesk_androidd::control` owns the numbering now, and a
+        // Swift constant re-exported so a test could name it would be layout knowledge back here.
+        XCTAssertFalse(emitted.contains(3), "INJECT_SCROLL_EVENT — a notch, with no kinetics")
+        XCTAssertTrue(emitted.allSatisfy { $0 == 2 }, "INJECT_TOUCH_EVENT — a dragged finger")
     }
 
     func testTheContactIsPlantedUnderTheCursor() {
