@@ -174,6 +174,19 @@ nothing is ever implemented twice. No stage copies a file: a surface either move
   `withAnimation`/`.animation(` sites and the 3 `matchedGeometryEffect` morphs are the real work.
   When the last one moves, `SlopDeskClientUI` holds only what the phone renders and is renamed
   `SlopDeskPhoneUI`.
+  **The order inside stage D is settled by a measurement, not by taste.** An `NSHostingView` claims
+  every hit inside its own bounds — a full-bleed one over `Color.clear` returns ITSELF from
+  `hitTest(_:)`, not `nil` (measured 2026-08-17 with a two-view window: the corner of an empty hosted
+  layer over a plain `NSView` resolved to the hosting view). So the root's floating-overlay layer
+  cannot become an AppKit sibling of the split while the overlays inside it are still SwiftUI: the
+  window would go click-dead everywhere the palette is not. The same arithmetic applies to any small
+  chrome mount whose hosted frame is larger than its ink. What that means for the order:
+  - a SURFACE is ported whole (a hosted column and its subtree), never one shared leaf at a time —
+    a half-ported component kit would be the same button in two languages, which `CLAUDE.md` bans;
+  - the overlays become their own windows/views (an `NSPanel` for the palette, explicit frames for
+    the toasts) rather than a transparent layer over everything, which is what removes the last
+    SwiftUI mount from the window root;
+  - until then the root stays a SwiftUI composition over the AppKit shell, which is what it is today.
 - **E — the Rust port (§4).**
 
 ## 4. What moves to Rust
