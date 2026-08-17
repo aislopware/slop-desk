@@ -132,18 +132,6 @@ impl TreeWorkspace {
         })
     }
 
-    /// The selected session, falling back to the first when the pointer has gone stale.
-    #[must_use]
-    pub fn active_session(&self) -> Option<&Session> {
-        let Some(id) = self.active_session_id else {
-            return self.sessions.first();
-        };
-        self.sessions
-            .iter()
-            .find(|session| session.id == id)
-            .or_else(|| self.sessions.first())
-    }
-
     /// The index of the selected session, under the same fallback.
     #[must_use]
     pub fn active_session_index(&self) -> Option<usize> {
