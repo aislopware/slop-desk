@@ -2,6 +2,7 @@
 // "Panes" granularity: one row per visible pane of the active session's tabs). Kept pure + static so
 // SlopDeskClientUITests can pin the mapping (selection, title/subtitle, agent status) without a view.
 
+import CSlopDeskFFI
 import Foundation
 import SlopDeskAgentDetect
 import SlopDeskWorkspaceCore
@@ -338,34 +339,31 @@ package enum RailRowsBuilder {
         }
     }
 
-    /// The parent-qualified title `parent/leaf` for a folder-name row, or `nil` when it should be left alone:
-    /// the title is NOT the cwd's folder name (i.e. it is an explicit rename), the cwd is `nil`/blank, or the
-    /// path has no parent segment above the leaf. Pure + static so the collision rewrite is unit-pinned.
+    /// The parent-qualified title `parent/leaf` for a folder-name row, or `nil` when it should be
+    /// left alone. `slopdesk_workspace::rail_title::parent_qualified_title`.
     package static func parentQualifiedTitle(cwd: String?, title: String) -> String? {
-        guard let cwd, cwdFolderName(cwd) == title else { return nil }
-        var path = cwd.trimmingCharacters(in: .whitespacesAndNewlines)
-        while path.count > 1, path.hasSuffix("/") { path.removeLast() }
-        let comps = path.split(separator: "/").map(String.init)
-        guard comps.count >= 2 else { return nil }
-        return "\(comps[comps.count - 2])/\(title)"
+        withOptionalText(cwd) { bytes, len, present in
+            var title = title
+            return title.withUTF8 { leaf in
+                wsAnswer { out, cap in
+                    slopdesk_ws_parent_qualified_title(
+                        bytes, len, present, leaf.baseAddress, leaf.count, out, cap,
+                    )
+                }
+            }
+        }
     }
 
-    /// The row's LINE-1 title. A `.terminal` pane titles itself by its working directory's FOLDER NAME
-    /// (`/Volumes/…/slopdesk` → `slopdesk`) — the identity a coding tool actually navigates by — with
-    /// three escapes: an EXPLICIT user rename always wins (gated on ``PaneSpec/userRenamed``); a pane
-    /// sitting AT its project root (under By-Project grouping, via `projectKey`) titles by its
-    /// foreground PROGRAM instead — the folder name would restate the section header verbatim, so the
-    /// header says WHERE and line 1 says WHO (`claude` / `vim` / `make`, the tmux idiom), an idle shell
-    /// yielding "" so the VIEW's fallback reads — the pane's last long-running command
-    /// (``lastCommandTitle(blocks:)``), then the cwd folder name (``liveRowTitle``'s `cwdTitle` rung —
-    /// the basepath still beats the meaningless kind-generic "Terminal") — rather than an OSC shell
-    /// title restating the place; and a pane with no known cwd yet falls back to the host FOREGROUND-PROCESS name
-    /// (`processLabel`, wire type 26 — a real program, a bare login shell suppressed) before the generic
-    /// shell-title chain. Non-terminal kinds keep the `liveTitle ?? title` chain unchanged. Pure +
-    /// static so the mapping is unit-pinned without a view.
+    /// The row's LINE-1 STRUCTURAL title — the identity a pane keeps between events.
+    /// `slopdesk_workspace::rail_title::row_title`, which is where the precedence (rename, at-root
+    /// program, folder name, process, generic) is decided and documented.
     ///
-    /// - Parameter processLabel: the pane's host-reported foreground process (``WorkspaceStore/paneForegroundProcess``),
-    ///   used as the at-root title and the no-cwd fallback. Optional so the completion-title / test call
+    /// The empty answer is REAL here and the door says so: an at-root idle shell yields "" on
+    /// purpose, so the live chain below can speak for it. `nil` from the marshaller is that empty
+    /// title, not a missing one.
+    ///
+    /// - Parameter processLabel: the pane's host-reported foreground process
+    ///   (``WorkspaceStore/paneForegroundProcess``). Optional so the completion-title / test call
     ///   sites that do not thread the store's process map still resolve the cwd/rename precedence.
     /// - Parameter projectKey: the pane's By-Project section key (``WorkspaceStore/paneProjectKey(_:)``) —
     ///   supplied by the SIDEBAR builder only, where a section header already names the project. The
@@ -374,148 +372,120 @@ package enum RailRowsBuilder {
         kind: PaneKind, spec: PaneSpec?, cwd: String? = nil, liveTitle: String? = nil,
         processLabel: String? = nil, projectKey: String? = nil,
     ) -> String {
-        let fallback = liveTitle ?? spec?.title ?? ""
-        guard kind == .terminal, let spec else { return fallback }
-        // An EXPLICIT user rename (⌘R / palette / inline field) always wins — gated on the unambiguous
-        // `userRenamed` flag, NOT a `title != liveTitle` heuristic: that would latch a stale
-        // load-time-promoted title as a phantom "rename" the moment a shell emits a SECOND OSC title.
-        if spec.userRenamed, !spec.title.isEmpty {
-            return spec.title
-        }
-        // At the project root the folder name repeats the section header — title by the program.
-        if let key = TabOrderingEngine.normalizedProjectKey(projectKey),
-           TabOrderingEngine.normalizedProjectKey(cwd) == key
-        {
-            return processDisplayName(processLabel) ?? ""
-        }
-        // Folder name is the primary identity; when the cwd is not known yet (no OSC-7, host pull not
-        // landed) the pane is titled by its live foreground program before the generic "Terminal" chain.
-        return cwdFolderName(cwd)
-            ?? processDisplayName(processLabel)
-            ?? fallback
+        var strings = WsStrings()
+        let inputs = SlopDeskWsRowTitle(
+            kind: kind.ffiByte,
+            spec_title: strings.span(spec?.title),
+            user_renamed: spec?.userRenamed == true,
+            cwd: strings.span(cwd),
+            live_title: strings.span(liveTitle),
+            process_label: strings.span(processLabel),
+            project_key: strings.span(projectKey),
+        )
+        var blob = strings.bytes
+        return blob.withUnsafeMutableBufferPointer { text in
+            wsAnswer { out, cap in
+                slopdesk_ws_row_title(inputs, text.baseAddress, text.count, out, cap)
+            }
+        } ?? ""
     }
 
-    /// The host foreground-process name (wire type 26) as a pane-TITLE fallback, or `nil` to skip it.
-    /// Basenames the label and drops the leading `-` of a login-shell argv0
-    /// (``slotProcessName(_:)``), then SUPPRESSES a bare interactive shell (`zsh`/`bash`/`fish`/…) —
-    /// titling a pane "zsh" is no more useful than "Terminal", so those fall through to the generic
-    /// chain, while a real foreground program (`vim`, `npm`, `ssh`) titles the pane. Pure + static
-    /// so the fallback is unit-pinned.
+    /// The host foreground-process name (wire type 26) as a pane-TITLE fallback, or `nil` to skip
+    /// that rung — a bare interactive shell is suppressed, a real program titles the pane.
+    /// `slopdesk_workspace::rail_title::process_display_name`.
     package static func processDisplayName(_ label: String?) -> String? {
-        guard let name = slotProcessName(label), !loginShellNames.contains(name.lowercased())
-        else { return nil }
-        return name
+        withOptionalText(label) { bytes, len, present in
+            wsAnswer { out, cap in slopdesk_ws_process_display_name(bytes, len, present, out, cap) }
+        }
     }
 
-    /// The trailing-SLOT label for a row (`SlateTabRow/processLabel`): the same basename cleanup as
-    /// ``processDisplayName(_:)`` but a bare interactive shell KEEPS its name — "zsh" says nothing
-    /// as a pane TITLE, yet in the metadata slot it answers "what is this pane running" for an idle
-    /// shell row (an empty slot there reads as missing data, not quiet). Pure + static so the slot
-    /// mapping is unit-pinned.
+    /// The trailing-SLOT label for a row (`SlateTabRow/processLabel`): the same basename cleanup with
+    /// a bare shell KEPT — "zsh" says nothing as a pane title, yet in the metadata slot it answers
+    /// "what is this pane running". `slopdesk_workspace::rail_title::slot_process_name`.
     package static func slotProcessName(_ label: String?) -> String? {
-        guard let label else { return nil }
-        var name = label.trimmingCharacters(in: .whitespacesAndNewlines)
-        if name.hasPrefix("-") { name.removeFirst() } // login-shell argv0 convention (`-zsh`)
-        name = name.split(separator: "/").last.map(String.init) ?? name
-        return name.isEmpty ? nil : name
+        withOptionalText(label) { bytes, len, present in
+            wsAnswer { out, cap in slopdesk_ws_slot_process_name(bytes, len, present, out, cap) }
+        }
     }
 
     /// Whether a resting slot label names a COMMAND (`make`, `vim`, `npm`) rather than the shell that
     /// pane is idling in (`zsh`) — the split that decides which register the slot sets it in
     /// (``StatusPresentation/slotNameInk(isCommand:)``, ``StatusPresentation/slotNameWeight``).
-    ///
-    /// Reuses ``processDisplayName(_:)``'s login-shell set rather than re-spelling it: "is this a real
-    /// program" is one question with one answer, and the TITLE fallback has been asking it since long
-    /// before the slot needed to. Idempotent on an already-``slotProcessName(_:)``-cleaned label, which
-    /// is the form the row actually holds. Pure + static so the register is unit-pinned.
+    /// `slopdesk_workspace::rail_title::slot_label_is_command`.
     package static func slotLabelIsCommand(_ label: String?) -> Bool {
-        processDisplayName(label) != nil
+        withOptionalText(label) { bytes, len, present in
+            slopdesk_ws_slot_label_is_command(bytes, len, present)
+        }
     }
 
-    /// A PROGRAM-SET pane title cleaned for the sidebar row: one leading agent-activity glyph (any
-    /// braille spinner frame U+2800–U+28FF, or one of `·✢✳✶✻✽`, an optional variation selector, then
-    /// whitespace/end) is stripped — the glyph is claude's activity channel, already spoken by the
-    /// ring mark/badge — while any other leading symbol (`★ prod`) is user content and stays. Whitespace
-    /// trimmed; empty → `nil` so the caller's chain falls through. The herdr `stripped_terminal_title`
-    /// rule. Pure + static so the cleanup is unit-pinned.
     /// The canonical agent mark a normalized program title leads with — `✳` pinned to TEXT
-    /// presentation (`\u{FE0E}`; bare U+2733 renders as emoji on Apple platforms).
-    package static let agentTitleMark = "✳\u{FE0E}"
+    /// presentation (bare U+2733 renders as emoji on Apple platforms).
+    ///
+    /// ASKED for rather than transcribed: a copy pinned to a different presentation would draw a
+    /// different glyph beside the same rows the crate marked.
+    package static let agentTitleMark: String = wsAnswer { out, cap in
+        slopdesk_ws_agent_title_mark(out, cap)
+    } ?? "✳\u{FE0E}"
 
-    /// `title` led with the agent mark unless it already leads with one. The dedupe compares the
-    /// first SCALAR against U+2733, never `hasPrefix("✳")`: the variation selector rides the ✳'s
-    /// own grapheme cluster, so against the normalized `✳\u{FE0E}` lead that character-wise prefix
-    /// check answered FALSE — and a fresh agent whose program title still carried its own glyph
-    /// ("✳ Claude Code", no intent asserted yet) wore the mark TWICE on every surface that adds it.
+    /// `title` led with the agent mark unless it already leads with one.
+    /// `slopdesk_workspace::rail_title::agent_marked_title`.
     package static func agentMarkedTitle(_ title: String) -> String {
-        title.unicodeScalars.first == "✳" ? title : "\(agentTitleMark) \(title)"
+        var title = title
+        return title.withUTF8 { bytes in
+            wsAnswer { out, cap in
+                slopdesk_ws_agent_marked_title(bytes.baseAddress, bytes.count, out, cap)
+            }
+        } ?? title
     }
 
+    /// A PROGRAM-SET pane title cleaned for the sidebar row: every frame of the agent's activity
+    /// spinner folded onto the ONE static mark, any other leading symbol left as user content.
+    /// `slopdesk_workspace::rail_title::normalized_program_title`.
     package static func normalizedProgramTitle(_ title: String?) -> String? {
-        guard let title else { return nil }
-        var text = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let first = text.first, let scalar = first.unicodeScalars.first,
-           (0x2800...0x28FF).contains(scalar.value) || "·✢✳✶✻✽".unicodeScalars.contains(scalar)
-        {
-            let rest = text.dropFirst()
-            if rest.isEmpty || rest.first?.isWhitespace == true {
-                // NORMALIZE, don't drop: every frame of the agent's spinner family (braille frames,
-                // the ✢✳✶✻✽· asterisk cycle) maps to the ONE static ✳ mark, so the mark shows
-                // WITHOUT the title's text changing on every animation tick (the churn that made
-                // rows flash and SwiftUI replace leaves — the reason this used to strip).
-                let body = rest.trimmingCharacters(in: .whitespacesAndNewlines)
-                text = body.isEmpty ? "" : "\(agentTitleMark) \(body)"
+        withOptionalText(title) { bytes, len, present in
+            wsAnswer { out, cap in
+                slopdesk_ws_normalized_program_title(bytes, len, present, out, cap)
             }
         }
-        return text.isEmpty ? nil : text
     }
 
     /// A finished command must have RUN at least this long (host-measured C→D wall clock) to title an
-    /// idle pane — sub-second `ls`/`cd` chatter never takes the title, so the resting title doesn't
-    /// churn with every trivial command. Mirrors the busy-dot reveal default (1 s,
-    /// ``SettingsKey/tabBadgeBusyDelaySeconds``): a command that earns the dot earns the title.
-    package static let commandTitleMinDurationMS: UInt32 = 1000
+    /// idle pane. Mirrors the busy-dot reveal default (1 s, ``SettingsKey/tabBadgeBusyDelaySeconds``):
+    /// a command that earns the dot earns the title. From the crate that enforces it.
+    package static let commandTitleMinDurationMS: UInt32 = slopdesk_ws_command_title_min_duration_ms()
 
     /// The idle shell's LAST-COMMAND title: the most recent finished block whose command ran long
-    /// enough to matter (``commandTitleMinDurationMS``) — the pane's HISTORY identity ("the shell I
-    /// just ran `make check` in"), REGARDLESS of exit (status is the badge's + tooltip's story; the
-    /// title only says WHAT). Short/quick blocks are SKIPPED, not title-clearing — a `ls` after a
-    /// long build leaves the build's title standing rather than flashing the row back to the
-    /// generic "Terminal". A running block (no duration yet) never titles HERE — the live RUNNING
-    /// rung of ``liveRowTitle`` reads it from the open block instead; `nil` when no block
-    /// qualifies, so the caller keeps the kind-generic fallback. Pure + static so the rule is
-    /// unit-pinned.
+    /// enough to matter, regardless of exit. `slopdesk_workspace::rail_title::last_command_title`.
     package static func lastCommandTitle(blocks: [CommandBlock]) -> String? {
-        for block in blocks.reversed() {
-            guard let duration = block.durationMS, duration >= commandTitleMinDurationMS
-            else { continue }
-            let command = block.commandText.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !command.isEmpty { return command }
+        var strings = WsStrings()
+        var records = blocks.map {
+            SlopDeskWsCommandTitleBlock(
+                text: strings.span($0.commandText),
+                has_duration: $0.durationMS != nil,
+                duration_ms: $0.durationMS ?? 0,
+            )
         }
-        return nil
+        var blob = strings.bytes
+        return blob.withUnsafeMutableBufferPointer { text in
+            records.withUnsafeMutableBufferPointer { held in
+                wsAnswer { out, cap in
+                    slopdesk_ws_last_command_title(
+                        held.baseAddress, held.count, text.baseAddress, text.count, out, cap,
+                    )
+                }
+            }
+        }
     }
 
     // One flat rung list — a struct would only relabel the same nine inputs (the WindowSizeMath idiom).
     // swiftlint:disable function_parameter_count
     /// The live leaf's SHOWN title — ONE precedence rule shared by the macOS + iOS rows so the two
-    /// can't drift: an explicit user RENAME always wins; an AGENT session then titles by its
-    /// host-latched session INTENT (wire type 36 — the session's first prompt, the task identity)
-    /// over the structural folder/process title every agent row shares ("claude" ×4 says nothing);
-    /// a non-empty structural title reads next — EXCEPT that a bare foreground-PROGRAM title (the
-    /// at-root running pane, whose structural rung titles by `processDisplayName`) upgrades in
-    /// place to the full RUNNING command line when one is known ("sleep" → "sleep 30 && make",
-    /// the same fact with the arguments back; a FOLDER title is an identity and never yields); an
-    /// EMPTY structural title (the at-root idle shell) reads the running command, then the last
-    /// executed command (``lastCommandTitle(blocks:)`` — exit-agnostic history), then the pane's
-    /// cwd FOLDER NAME (`cwdTitle` — the basepath is still an identity, even when it restates the
-    /// section header); only a pane with NO cwd yet reads the kind-generic fallback. The caller
-    /// gates `runningCommand` on the busy-badge reveal, so the title upgrades with the spinner
-    /// and a fast `ls` never flashes in. Wherever the RUNNING command would title the row, a FRESH
-    /// `programTitle` (an OSC title the running program itself asserted —
-    /// ``WorkspaceStore/liveProgramTitle(for:)`` + `normalizedProgramTitle`) out-ranks it: nvim's
-    /// "main.swift - NVIM" says more than `vi .` (a program that sets no title keeps the command
-    /// line; a FOLDER structural title is an identity and never yields). Pure + static so the
-    /// chain is unit-pinned without a view.
+    /// can't drift. `slopdesk_workspace::rail_title::live_row_title`, which is where the chain
+    /// (rename, agent intent, structural title, running command, program title, command history, cwd,
+    /// generic) is decided and documented.
+    ///
+    /// The caller gates `runningCommand` on the busy-badge reveal, so the title upgrades with the
+    /// spinner and a fast `ls` never flashes in — that gate is a VIEW's, which is why it stays here.
     package static func liveRowTitle(
         structuralTitle: String, userRenamed: Bool, isAgent: Bool, intent: String?,
         runningCommand: String?, programTitle: String? = nil, processTitle: String?,
@@ -523,53 +493,48 @@ package enum RailRowsBuilder {
         cwdTitle: String? = nil,
         fallback: String,
     ) -> String {
-        // A "rename" that equals the kind-generic fallback carries no identity — it can only be an
-        // accidentally committed seed (the pre-guard inline field committed its unedited draft on
-        // blur, freezing "Terminal" as a sticky rename in persisted specs). Yielding here heals
-        // those panes without a migration; a rename to any REAL name still wins unconditionally.
-        if userRenamed, !structuralTitle.isEmpty, structuralTitle != fallback { return structuralTitle }
-        if isAgent, let intent = intent?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !intent.isEmpty
-        {
-            return intent
+        var strings = WsStrings()
+        let inputs = SlopDeskWsLiveRowTitle(
+            structural_title: strings.span(structuralTitle),
+            user_renamed: userRenamed,
+            is_agent: isAgent,
+            intent: strings.span(intent),
+            running_command: strings.span(runningCommand),
+            program_title: strings.span(programTitle),
+            process_title: strings.span(processTitle),
+            kind: kind.ffiByte,
+            cwd_title: strings.span(cwdTitle),
+            fallback: strings.span(fallback),
+        )
+        var records = blocks.map {
+            SlopDeskWsCommandTitleBlock(
+                text: strings.span($0.commandText),
+                has_duration: $0.durationMS != nil,
+                duration_ms: $0.durationMS ?? 0,
+            )
         }
-        let running = runningCommand?.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !structuralTitle.isEmpty {
-            if kind == .terminal, let running, !running.isEmpty, structuralTitle == processTitle {
-                return programTitle ?? running
+        var blob = strings.bytes
+        return blob.withUnsafeMutableBufferPointer { text in
+            records.withUnsafeMutableBufferPointer { held in
+                wsAnswer { out, cap in
+                    slopdesk_ws_live_row_title(
+                        inputs, held.baseAddress, held.count, text.baseAddress, text.count, out, cap,
+                    )
+                }
             }
-            return structuralTitle
-        }
-        guard kind == .terminal else { return fallback }
-        if let running, !running.isEmpty { return programTitle ?? running }
-        return lastCommandTitle(blocks: blocks) ?? cwdTitle ?? fallback
+        } ?? ""
     }
 
     // swiftlint:enable function_parameter_count
 
-    /// Bare interactive-shell basenames that must NOT title a pane — titling by the shell is no more
-    /// informative than the generic default, so the row keeps the cwd/generic chain instead.
-    private static let loginShellNames: Set<String> = [
-        "zsh", "bash", "sh", "fish", "tcsh", "csh", "ksh", "dash", "login",
-    ]
-
-    /// Agent-CLI basenames — a pane fronted by one of these is an AGENT session even before any status
-    /// verdict lands. A small allow-set matched against the cleaned ``processDisplayName(_:)`` (basename,
-    /// login-`-` stripped), never `contains`.
-    package static let agentProcessNames: Set<String> = [
-        "claude", "codex", "gemini", "opencode", "aider", "goose", "amp",
-    ]
-
     /// Whether a row is an AGENT session — the classification that holds the row's TALL two-line shell
     /// for the WHOLE session (the height rung changes only at session boundaries, never on a status
-    /// edge, so a question/done/error arriving can never move layout). True when the pane carries ANY
-    /// agent-status verdict (`.idle` included — an agent resting at its prompt is still a session) OR
-    /// its foreground process is a known agent CLI (covers the pre-verdict window). Pure + static so the
-    /// rung rule is unit-pinned.
+    /// edge, so a question/done/error arriving can never move layout).
+    /// `slopdesk_workspace::rail_title::is_agent_session`.
     package static func isAgentSession(status: ClaudeStatus, processLabel: String?) -> Bool {
-        if status != .none { return true }
-        guard let name = processDisplayName(processLabel)?.lowercased() else { return false }
-        return agentProcessNames.contains(name)
+        withOptionalText(processLabel) { bytes, len, present in
+            slopdesk_ws_is_agent_session(status != .none, bytes, len, present)
+        }
     }
 
     /// Whether a row's finish badge is the AGENT's TURN ENDING rather than a plain command's clean

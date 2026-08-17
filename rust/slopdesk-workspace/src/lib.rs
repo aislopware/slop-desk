@@ -13,6 +13,8 @@
 //!   minted here, and their canonical text form.
 //! - [`json`] — the subset of JSON both persistence files are written in, and why that is not a
 //!   crack in the manual-binary rule.
+//! - [`rail_title`] — what a pane is CALLED, in the one precedence every surface that names one
+//!   shares.
 //! - [`persist`] — the client's workspace file: the trees and their specs on disk, and the repairs
 //!   that bring a hand-edited one back rather than trapping on it.
 //! - [`split_tree`] — the n-ary tiled tree and every pure operation on it: split, dock, close,
@@ -48,6 +50,7 @@ pub mod json;
 pub mod jump;
 pub mod listen;
 pub mod persist;
+pub mod rail_title;
 pub mod secrets;
 pub mod send_keys;
 pub mod session;

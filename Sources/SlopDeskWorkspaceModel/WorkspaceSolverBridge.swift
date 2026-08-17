@@ -51,6 +51,20 @@ extension TabID {
     init(ffi: SlopDeskWsUuid) { self.init(raw: ffi.uuid) }
 }
 
+package extension PaneKind {
+    /// The CASE index — the crate's `PaneKind` order, pinned by `scripts/check-supervisor.sh`.
+    ///
+    /// The crate reads anything but `1` as a terminal, so a disagreement here degrades to the safe
+    /// kind rather than opening a dead video pane. That is a floor, not a licence: the gate compares
+    /// the two maps so the floor never has to catch anything.
+    var ffiByte: UInt8 {
+        switch self {
+        case .terminal: 0
+        case .desktop: 1
+        }
+    }
+}
+
 extension FocusDirection {
     /// The CASE index — the crate's enum order, pinned by `scripts/check-supervisor.sh`.
     var ffiByte: UInt8 {
@@ -72,7 +86,7 @@ extension FocusDirection {
 /// A first guess generous by an order of magnitude, and a retry that exists to be correct rather
 /// than to be travelled (docs/55 §4). `nil` distinguishes "no answer" from "the empty answer",
 /// which is the difference between an absent project key and a blank one.
-func wsTransform(
+package func wsTransform(
     _ text: String,
     _ call: (UnsafePointer<UInt8>?, Int, UnsafeMutablePointer<UInt8>?, Int) -> Int,
 ) -> [UInt8]? {
@@ -97,7 +111,7 @@ func wsTransform(
 ///
 /// The `withUnsafeBytes` scope IS the safety contract — the pointer is live for exactly the call
 /// inside it — so nothing else goes in the closure.
-func withOptionalText<T>(
+package func withOptionalText<T>(
     _ text: String?,
     _ body: (UnsafePointer<UInt8>?, Int, Bool) -> T,
 ) -> T {
@@ -112,17 +126,36 @@ func withOptionalText<T>(
 /// One buffer means one pointer, one lifetime, one scope, where a span per string would mean a
 /// nested `withUnsafeBytes` per element. The crate bounds-checks every span, so a caller that got
 /// the arithmetic wrong reads as "no key" rather than reading someone else's memory.
-struct WsStrings {
-    private(set) var bytes: [UInt8] = []
+package struct WsStrings {
+    package private(set) var bytes: [UInt8] = []
 
-    static let absent = SlopDeskWsSpan(offset: 0, len: 0, present: false)
+    package static let absent = SlopDeskWsSpan(offset: 0, len: 0, present: false)
 
-    mutating func span(_ text: String?) -> SlopDeskWsSpan {
+    package init() {}
+
+    package mutating func span(_ text: String?) -> SlopDeskWsSpan {
         guard let text else { return Self.absent }
         let offset = bytes.count
         bytes.append(contentsOf: text.utf8)
         return SlopDeskWsSpan(offset: offset, len: bytes.count - offset, present: true)
     }
+}
+
+/// Reads a `(out, cap) -> needed` answer, with the retry docs/55 §4 describes.
+///
+/// `nil` is "no answer", which is not the empty answer: an absent project key and a blank one are
+/// different facts about a pane, and so are a pane with no last command and one whose last command
+/// was blank. A door whose empty answer is REAL — the at-root idle shell's yielded title — says so
+/// where it is declared, and its caller maps `nil` to `""` there rather than here.
+package func wsAnswer(_ call: (UnsafeMutablePointer<UInt8>?, Int) -> Int) -> String? {
+    var out = [UInt8](repeating: 0, count: 256)
+    var needed = out.withUnsafeMutableBufferPointer { call($0.baseAddress, $0.count) }
+    if needed > out.count {
+        out = [UInt8](repeating: 0, count: needed)
+        needed = out.withUnsafeMutableBufferPointer { call($0.baseAddress, $0.count) }
+    }
+    guard needed > 0, needed <= out.count else { return nil }
+    return String(bytes: out[0..<needed], encoding: .utf8)
 }
 
 // MARK: - The split tree's walk

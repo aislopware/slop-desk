@@ -32,9 +32,9 @@ use core::ffi::c_uchar;
 use slopdesk_workspace::identity::{IdSource, SessionId};
 use slopdesk_workspace::tree_ops::{self, TileLayout};
 use slopdesk_workspace::{
-    FocusDirection, PaneId, PaneSpec, Rect, Size, SolvedLayout, SplitAxis, SplitNode, SplitNodeId,
-    SplitWeight, TabId, WeightedChild, focus, geometry, listen, secrets, send_keys, shell_quoting,
-    split_layout, split_tree, state_codec, tab_ordering, templates,
+    FocusDirection, PaneId, PaneKind, PaneSpec, Rect, Size, SolvedLayout, SplitAxis, SplitNode, SplitNodeId,
+    SplitWeight, TabId, WeightedChild, focus, geometry, listen, rail_title, secrets, send_keys,
+    shell_quoting, split_layout, split_tree, state_codec, tab_ordering, templates,
 };
 
 use crate::{borrow, deliver};
@@ -759,6 +759,394 @@ pub unsafe extern "C" fn slopdesk_ws_successor_after_close(
             return false;
         };
         deliver_id(found.bytes(), answer)
+    }
+}
+
+// MARK: What a pane is called
+//
+// Every surface that names a pane — the rail row, the tab strip, the pane switcher, the window
+// title — reads the SAME precedence, and the reason it is one rule rather than four is that two
+// surfaces disagreeing about a pane's name read as two panes. The rules are
+// `slopdesk_workspace::rail_title`; what is here is the marshalling, and the two composite inputs
+// arrive as spans into one blob for the reason the module docs give: one pointer, one lifetime, one
+// scope, where a `(ptr, len)` per string would mean seven nested borrows per row per frame.
+
+/// The structural title's inputs, each string spanning the blob passed alongside.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct CRowTitle {
+    /// A `PaneKind` byte: 0 terminal, 1 desktop.
+    pub kind: u8,
+    /// The title on the pane's spec; absent when there is no spec at all.
+    pub spec_title: Span,
+    /// Whether that title was typed by the user.
+    pub user_renamed: bool,
+    /// The pane's working directory.
+    pub cwd: Span,
+    /// The title the running program last asserted.
+    pub live_title: Span,
+    /// The host-reported foreground process.
+    pub process_label: Span,
+    /// The project section the pane is drawn under.
+    pub project_key: Span,
+}
+
+/// The live title's inputs, each string spanning the blob passed alongside.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct CLiveRowTitle {
+    /// What the structural rule answered.
+    pub structural_title: Span,
+    /// Whether that answer is a rename the user typed.
+    pub user_renamed: bool,
+    /// Whether the pane is an agent session.
+    pub is_agent: bool,
+    /// The agent's latched session intent.
+    pub intent: Span,
+    /// The command line running right now.
+    pub running_command: Span,
+    /// The normalised title the running program asserted.
+    pub program_title: Span,
+    /// The foreground-process title, so a structural rung can be recognised as one.
+    pub process_title: Span,
+    /// A `PaneKind` byte: 0 terminal, 1 desktop.
+    pub kind: u8,
+    /// The pane's folder name.
+    pub cwd_title: Span,
+    /// The kind-generic name.
+    pub fallback: Span,
+}
+
+/// One command block, in the two fields a title reads.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct CCommandTitleBlock {
+    /// What was typed, spanning the blob passed alongside.
+    pub text: Span,
+    /// Whether `duration_ms` means anything — false is a block still running, which is a different
+    /// fact from one that finished instantly.
+    pub has_duration: bool,
+    /// Host-measured wall clock; read only when `has_duration`.
+    pub duration_ms: u32,
+}
+
+/// Reads the blocks a title rule scans, each text spanning `blob`.
+fn command_blocks<'a>(
+    blocks: &'a [CCommandTitleBlock],
+    blob: &'a [u8],
+) -> Vec<rail_title::CommandTitleBlock<'a>> {
+    blocks
+        .iter()
+        .map(|block| {
+            rail_title::CommandTitleBlock {
+                command_text: text_of(block.text, blob).unwrap_or_default(),
+                duration_ms: block.has_duration.then_some(block.duration_ms),
+            }
+        })
+        .collect()
+}
+
+/// The foreground process as the metadata slot shows it. `0` is "nothing to show", which a real
+/// name never is.
+///
+/// # Safety
+/// `bytes` must be null or point to `len` initialised bytes; `out` null or writable for `cap`.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_ws_slot_process_name(
+    bytes: *const c_uchar,
+    len: usize,
+    present: bool,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligations, restated above; the helpers state their own.
+    unsafe {
+        let Some(name) = rail_title::slot_process_name(optional_str(bytes, len, present)) else {
+            return 0;
+        };
+        deliver(name.as_bytes(), out, cap)
+    }
+}
+
+/// The foreground process as a pane TITLE — the same cleanup with a bare shell suppressed. `0` is
+/// "skip this rung".
+///
+/// # Safety
+/// As [`slopdesk_ws_slot_process_name`].
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_ws_process_display_name(
+    bytes: *const c_uchar,
+    len: usize,
+    present: bool,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligations, restated above; the helpers state their own.
+    unsafe {
+        let Some(name) = rail_title::process_display_name(optional_str(bytes, len, present)) else {
+            return 0;
+        };
+        deliver(name.as_bytes(), out, cap)
+    }
+}
+
+/// Whether a slot label names a command rather than the shell the pane is idling in.
+///
+/// # Safety
+/// `bytes` must be null or point to `len` initialised bytes live for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_ws_slot_label_is_command(
+    bytes: *const c_uchar,
+    len: usize,
+    present: bool,
+) -> bool {
+    // SAFETY: the caller's obligation, restated above; `optional_str` states its own.
+    unsafe { rail_title::slot_label_is_command(optional_str(bytes, len, present)) }
+}
+
+/// Whether a pane is an agent session: any status verdict, or a known agent CLI in the foreground.
+///
+/// # Safety
+/// As [`slopdesk_ws_slot_label_is_command`].
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_ws_is_agent_session(
+    has_agent_status: bool,
+    bytes: *const c_uchar,
+    len: usize,
+    present: bool,
+) -> bool {
+    // SAFETY: the caller's obligation, restated above; `optional_str` states its own.
+    unsafe { rail_title::is_agent_session(has_agent_status, optional_str(bytes, len, present)) }
+}
+
+/// The canonical agent mark, asked for rather than transcribed: a copy pinned to a different
+/// presentation would draw a different glyph beside the same rows.
+///
+/// # Safety
+/// `out` must be null or writable for `cap` bytes for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const unsafe extern "C" fn slopdesk_ws_agent_title_mark(out: *mut c_uchar, cap: usize) -> usize {
+    // SAFETY: the caller's obligation, restated above; `deliver` states its own.
+    unsafe { deliver(rail_title::AGENT_TITLE_MARK.as_bytes(), out, cap) }
+}
+
+/// How long a finished command must have run to title the pane it ran in.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_ws_command_title_min_duration_ms() -> u32 {
+    rail_title::COMMAND_TITLE_MIN_DURATION_MS
+}
+
+/// `title` led with the agent mark, unless it already leads with one.
+///
+/// # Safety
+/// `bytes` must be null or point to `len` initialised bytes; `out` null or writable for `cap`.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_ws_agent_marked_title(
+    bytes: *const c_uchar,
+    len: usize,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligations, restated above; the helpers state their own.
+    unsafe {
+        let title = core::str::from_utf8(borrow(bytes, len)).unwrap_or_default();
+        deliver(rail_title::agent_marked_title(title).as_bytes(), out, cap)
+    }
+}
+
+/// A program-set title with any activity-spinner frame folded onto the one static mark. `0` is
+/// "nothing left to show", so the caller's chain falls through.
+///
+/// # Safety
+/// As [`slopdesk_ws_slot_process_name`].
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_ws_normalized_program_title(
+    bytes: *const c_uchar,
+    len: usize,
+    present: bool,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligations, restated above; the helpers state their own.
+    unsafe {
+        let Some(title) = rail_title::normalized_program_title(optional_str(bytes, len, present)) else {
+            return 0;
+        };
+        deliver(title.as_bytes(), out, cap)
+    }
+}
+
+/// The `parent/leaf` title a colliding folder name qualifies to. `0` is "leave the row alone".
+///
+/// # Safety
+/// Both `(bytes, len)` pairs must be null or point to that many initialised bytes; `out` null or
+/// writable for `cap` bytes. All live for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_ws_parent_qualified_title(
+    cwd: *const c_uchar,
+    cwd_len: usize,
+    cwd_present: bool,
+    title: *const c_uchar,
+    title_len: usize,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligations, restated above; the helpers state their own.
+    unsafe {
+        let leaf = core::str::from_utf8(borrow(title, title_len)).unwrap_or_default();
+        let Some(qualified) =
+            rail_title::parent_qualified_title(optional_str(cwd, cwd_len, cwd_present), leaf)
+        else {
+            return 0;
+        };
+        deliver(qualified.as_bytes(), out, cap)
+    }
+}
+
+/// The pane's STRUCTURAL title — the identity it keeps between events.
+///
+/// `0` is the EMPTY title here rather than "no answer": the at-root idle shell yields deliberately,
+/// so the live chain below can speak for it.
+///
+/// # Safety
+/// `strings` must be null or point to `strings_len` initialised bytes; `out` null or writable for
+/// `cap` bytes. Both live for the call, and every span in `inputs` is bounds-checked against
+/// `strings` rather than trusted.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_ws_row_title(
+    inputs: CRowTitle,
+    strings: *const c_uchar,
+    strings_len: usize,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligations, restated above; the helpers state their own.
+    unsafe {
+        let blob = borrow(strings, strings_len);
+        let title = rail_title::row_title(rail_title::RowTitle {
+            kind: PaneKind::from_byte(inputs.kind),
+            spec_title: text_of(inputs.spec_title, blob),
+            user_renamed: inputs.user_renamed,
+            cwd: text_of(inputs.cwd, blob),
+            live_title: text_of(inputs.live_title, blob),
+            process_label: text_of(inputs.process_label, blob),
+            project_key: text_of(inputs.project_key, blob),
+        });
+        deliver(title.as_bytes(), out, cap)
+    }
+}
+
+/// The idle shell's last-command title. `0` is "no block qualified", so the caller keeps its own
+/// rung.
+///
+/// # Safety
+/// `blocks` must be null or point to `count` live [`CCommandTitleBlock`]s; `strings` to
+/// `strings_len` bytes; `out` null or writable for `cap`. All live for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_ws_last_command_title(
+    blocks: *const CCommandTitleBlock,
+    count: usize,
+    strings: *const c_uchar,
+    strings_len: usize,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligations, restated above; the helpers state their own.
+    unsafe {
+        let blob = borrow(strings, strings_len);
+        let held = command_blocks(borrow_array(blocks, count), blob);
+        let Some(title) = rail_title::last_command_title(&held) else {
+            return 0;
+        };
+        deliver(title.as_bytes(), out, cap)
+    }
+}
+
+/// What a surface actually SHOWS for this pane right now.
+///
+/// `0` is the empty title, for the reason [`slopdesk_ws_row_title`] gives.
+///
+/// # Safety
+/// As [`slopdesk_ws_last_command_title`], plus: every span in `inputs` indexes the same `strings`
+/// blob and is bounds-checked against it.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_ws_live_row_title(
+    inputs: CLiveRowTitle,
+    blocks: *const CCommandTitleBlock,
+    count: usize,
+    strings: *const c_uchar,
+    strings_len: usize,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligations, restated above; the helpers state their own.
+    unsafe {
+        let blob = borrow(strings, strings_len);
+        let held = command_blocks(borrow_array(blocks, count), blob);
+        let title = rail_title::live_row_title(
+            rail_title::LiveRowTitle {
+                structural_title: text_of(inputs.structural_title, blob).unwrap_or_default(),
+                user_renamed: inputs.user_renamed,
+                is_agent: inputs.is_agent,
+                intent: text_of(inputs.intent, blob),
+                running_command: text_of(inputs.running_command, blob),
+                program_title: text_of(inputs.program_title, blob),
+                process_title: text_of(inputs.process_title, blob),
+                kind: PaneKind::from_byte(inputs.kind),
+                cwd_title: text_of(inputs.cwd_title, blob),
+                fallback: text_of(inputs.fallback, blob).unwrap_or_default(),
+            },
+            &held,
+        );
+        deliver(title.as_bytes(), out, cap)
     }
 }
 

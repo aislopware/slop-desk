@@ -2329,6 +2329,9 @@ compare_abi_enum() {
 compare_abi_enum "FocusDirection" \
   Sources/SlopDeskWorkspaceModel/WorkspaceSolverBridge.swift 'extension FocusDirection' \
   rust/slopdesk-workspace/src/focus.rs 'pub const fn index(self) -> u8'
+compare_abi_enum "PaneKind" \
+  Sources/SlopDeskWorkspaceModel/WorkspaceSolverBridge.swift 'extension PaneKind' \
+  rust/slopdesk-workspace/src/session.rs 'pub const fn as_byte(self) -> u8'
 compare_abi_enum "LayoutPreset/TileLayout" \
   Sources/SlopDeskWorkspaceModel/Domain/Tree/WorkspaceTreeOps.swift 'var ffiByte: UInt8' \
   rust/slopdesk-workspace/src/tree_ops.rs 'pub const fn index(self) -> u8'

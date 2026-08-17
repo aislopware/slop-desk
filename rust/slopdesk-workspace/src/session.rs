@@ -55,10 +55,17 @@ impl PaneKind {
         if byte == 1 { Self::Desktop } else { Self::Terminal }
     }
 
-    /// The on-wire byte.
+    /// The on-wire byte, and the byte a client's `ffiByte` must agree with.
+    ///
+    /// Spelled as a match rather than as `self as u8` so the map is one greppable claim per case:
+    /// `scripts/check-supervisor.sh` compares it against Swift's switch, and an implicit
+    /// discriminant is not something a gate can read.
     #[must_use]
     pub const fn as_byte(self) -> u8 {
-        self as u8
+        match self {
+            Self::Terminal => 0,
+            Self::Desktop => 1,
+        }
     }
 
     /// The persisted discriminator — human-readable, so a workspace file can be read and edited.

@@ -438,6 +438,72 @@ bool slopdesk_ws_successor_after_close(SlopDeskWsUuid closing,
                                        const SlopDeskWsUuid *history, size_t history_count,
                                        SlopDeskWsUuid *answer);
 
+// What a pane is CALLED, in the one precedence every surface that names one shares — the rail row,
+// the tab strip, the pane switcher, the window title. Each `0` below is documented per door: for
+// the name/mark/qualifier doors it is "no answer, keep your own rung"; for the two TITLE doors it
+// is the EMPTY title, which the at-root idle shell yields on purpose so the live chain can speak.
+size_t slopdesk_ws_slot_process_name(const uint8_t *bytes, size_t len, bool present,
+                                     uint8_t *out, size_t cap);
+size_t slopdesk_ws_process_display_name(const uint8_t *bytes, size_t len, bool present,
+                                        uint8_t *out, size_t cap);
+bool   slopdesk_ws_slot_label_is_command(const uint8_t *bytes, size_t len, bool present);
+bool   slopdesk_ws_is_agent_session(bool has_agent_status, const uint8_t *bytes, size_t len,
+                                    bool present);
+// Asked for rather than transcribed: a copy pinned to a different presentation would draw a
+// different glyph beside the same rows.
+size_t slopdesk_ws_agent_title_mark(uint8_t *out, size_t cap);
+uint32_t slopdesk_ws_command_title_min_duration_ms(void);
+size_t slopdesk_ws_agent_marked_title(const uint8_t *bytes, size_t len, uint8_t *out, size_t cap);
+size_t slopdesk_ws_normalized_program_title(const uint8_t *bytes, size_t len, bool present,
+                                            uint8_t *out, size_t cap);
+size_t slopdesk_ws_parent_qualified_title(const uint8_t *cwd, size_t cwd_len, bool cwd_present,
+                                          const uint8_t *title, size_t title_len,
+                                          uint8_t *out, size_t cap);
+
+// The two composite inputs. Every string is a span into the ONE `strings` blob passed alongside —
+// one pointer, one lifetime, one scope, where a `(ptr, len)` per field would mean seven nested
+// borrows per row per frame. `kind` is a PaneKind byte: 0 terminal, 1 desktop.
+typedef struct {
+    uint8_t        kind;
+    SlopDeskWsSpan spec_title;
+    bool           user_renamed;
+    SlopDeskWsSpan cwd;
+    SlopDeskWsSpan live_title;
+    SlopDeskWsSpan process_label;
+    SlopDeskWsSpan project_key;
+} SlopDeskWsRowTitle;
+
+typedef struct {
+    SlopDeskWsSpan structural_title;
+    bool           user_renamed;
+    bool           is_agent;
+    SlopDeskWsSpan intent;
+    SlopDeskWsSpan running_command;
+    SlopDeskWsSpan program_title;
+    SlopDeskWsSpan process_title;
+    uint8_t        kind;
+    SlopDeskWsSpan cwd_title;
+    SlopDeskWsSpan fallback;
+} SlopDeskWsLiveRowTitle;
+
+// `has_duration == false` is a block still RUNNING, which is a different fact from one that
+// finished instantly — the title rule skips both, but for different reasons.
+typedef struct {
+    SlopDeskWsSpan text;
+    bool           has_duration;
+    uint32_t       duration_ms;
+} SlopDeskWsCommandTitleBlock;
+
+size_t slopdesk_ws_row_title(SlopDeskWsRowTitle inputs, const uint8_t *strings,
+                             size_t strings_len, uint8_t *out, size_t cap);
+size_t slopdesk_ws_last_command_title(const SlopDeskWsCommandTitleBlock *blocks, size_t count,
+                                      const uint8_t *strings, size_t strings_len,
+                                      uint8_t *out, size_t cap);
+size_t slopdesk_ws_live_row_title(SlopDeskWsLiveRowTitle inputs,
+                                  const SlopDeskWsCommandTitleBlock *blocks, size_t count,
+                                  const uint8_t *strings, size_t strings_len,
+                                  uint8_t *out, size_t cap);
+
 // The minimum flex weight a divider may take, from the crate that enforces it — `repaired()`
 // clamps to this number, so a transcribed copy would describe a rule the client does not share.
 double slopdesk_ws_min_weight(void);

@@ -220,18 +220,4 @@ public enum TabOrderingEngine {
         }
         return found ? TabID(ffi: answer) : nil
     }
-
-    /// Reads a `(out, cap) -> needed` answer that has no input to lend, with the retry docs/55 §4
-    /// describes. `nil` is "no answer", which is not the empty answer: an absent project key and a
-    /// blank one are different facts about a pane.
-    private static func wsAnswer(_ call: (UnsafeMutablePointer<UInt8>?, Int) -> Int) -> String? {
-        var out = [UInt8](repeating: 0, count: 256)
-        var needed = out.withUnsafeMutableBufferPointer { call($0.baseAddress, $0.count) }
-        if needed > out.count {
-            out = [UInt8](repeating: 0, count: needed)
-            needed = out.withUnsafeMutableBufferPointer { call($0.baseAddress, $0.count) }
-        }
-        guard needed > 0, needed <= out.count else { return nil }
-        return String(bytes: out[0..<needed], encoding: .utf8)
-    }
 }
