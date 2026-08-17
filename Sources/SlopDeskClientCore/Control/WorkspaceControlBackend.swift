@@ -483,18 +483,10 @@ package final class WorkspaceControlBackend: ClientControlBackend {
         return focusedHandle()
     }
 
-    /// The id of the focused pane in the LIVE model. The backend operates over the `tree` (every list reads
-    /// `store.tree.sessions`), so in `.tree` mode focus truth is the active tab's active pane — NOT the
-    /// canvas-only `store.focusedPane`, which in tree mode names a SEPARATE, never-materialized canvas leaf
-    /// (so `handle(for:)` returns `nil` and `jump`/`send-keys`/`capture` would silently target nothing, and
-    /// `pane list`'s `isFocused` would never match). Falls back to the canvas passthrough for a `.canvas`-model
-    /// store (the pre-cutover test seam).
+    /// The id of the focused pane. The backend operates over the `tree` (every list reads
+    /// `store.tree.sessions`), so focus truth is the active session's active tab's active pane.
     private func focusedPaneID() -> PaneID? {
-        guard let store else { return nil }
-        switch store.liveModel {
-        case .tree: return store.tree.activeSession?.activeTab?.activePane
-        case .canvas: return store.focusedPane
-        }
+        store?.tree.activeSession?.activeTab?.activePane
     }
 
     /// The focused pane's live handle, or `nil`.

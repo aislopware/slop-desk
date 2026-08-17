@@ -16533,3 +16533,41 @@ puts every pure-logic file in one place, which is where §4 of doc 56 starts the
 Neither UI target imports the other. `#if os(...)` inside one is a smell — the file is in the wrong
 target — with one exception: the whole-file guard that declares `SlopDeskPhoneUI` iOS-only to
 `swift build`, which compiles every SwiftPM target on the host triple.
+
+## The canvas is deleted, two years after it stopped being live (2026-08-17)
+
+The 2026-06-20 W5 cutover made the `TreeWorkspace` the live source of truth and left the canvas
+"retained-but-dead": `Canvas`, `PaneGroup`, `Workspace`, the drag/snap/non-overlap/camera solvers,
+the free-floating `WorkspaceCommand` enum and its interpreter, all still compiling behind a
+`liveModel` switch that the app only ever constructed as `.tree`. The entry that made that call
+booked the deletion as "a later W5 follow-up". This is that follow-up.
+
+**What went.** Swift: `Canvas.swift`, `Canvas+Ops`, `Canvas+Codable`, `CanvasGeometry`,
+`CanvasNonOverlap`, `CanvasSnap`, `PaneGroup`, `Workspace`, `CompactLayoutResolver`,
+`CommandInterpreter`, and ~40 `WorkspaceStore` members that only the canvas reached (viewport
+membership, the focus-history ring, `addPane`/`closePane`/`duplicatePane`, the recently-closed
+single slot, zoom, `move`, the spec side-door). Rust: `canvas.rs`, `canvas_arrange.rs`,
+`canvas_geometry.rs`, `canvas_non_overlap.rs`, `canvas_snap.rs`, the camera half of `geometry.rs`,
+the canvas half of `persist.rs`, and `PaneGroupId`/`LayoutPresetId`. The `liveModel` switch itself
+went with them — a two-case enum whose second case has no model behind it is not a choice.
+
+**27 FFI doors went too, and that is why this landed as one commit.** `check-ffi-doors` fails on a
+door nothing calls, so deleting the Swift callers without deleting the doors is a red gate, and
+deleting the doors without the callers does not compile. The two languages are one change here, in
+exactly the way `CLAUDE.md`'s one-implementation rule says a port is: the original goes in the same
+commit, not a fallback, not a test fake.
+
+**The tests were ported, not deleted.** 22 canvas suites went, but the LIVE contracts inside them
+did not: agent-status eviction on close, the in-flight video-cap accounting, the quiesce fixpoint,
+the focus reassert, the phone video cap, the pause/resume fan-out, and the palette recents ring were
+each rewritten against the tree. A test deleted with its fixture is a contract that silently stopped
+being checked — which is the failure this repo has a supervisor script for.
+
+**The recents ring changed shape on the way.** It held `WorkspaceCommand` values, an enum that no
+longer exists; it now holds palette CATALOG IDs (`"action.closePane"`), which is what the palette
+was already keying rows by. One vocabulary instead of an enum plus a lookup table between it and the
+rows a person actually sees.
+
+Docs 30, 32 and 35 stay where they are, marked historical in `docs/README.md`'s index. They describe
+a design decision and its reasoning, and that reasoning is why the split tree looks the way it does.
+What they no longer describe is any code.

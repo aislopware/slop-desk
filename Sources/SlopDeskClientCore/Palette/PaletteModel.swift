@@ -82,8 +82,6 @@ public enum PaletteCategory: String, CaseIterable, Sendable, Hashable {
 public enum PaletteAction: Sendable {
     /// Run a closure against the store (the common case — a tree mutation / navigation).
     case store(@MainActor @Sendable (WorkspaceStore) -> Void)
-    /// Run a workspace command through the central `apply(_:to:)` dispatch (records recents at the chokepoint).
-    case command(WorkspaceCommand)
     /// Open the command palette in a fresh filter (a filter chip → re-query) — handled by the palette view.
     case selectFilter(QueryFilter)
     /// Open the Settings overlay (handled by the overlay coordinator).

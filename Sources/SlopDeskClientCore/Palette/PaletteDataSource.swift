@@ -75,7 +75,7 @@ public struct ActionsPaletteSource: PaletteDataSource {
             shortcut: glyph(.newTab), category: .tab,
             run: { store in
                 store.newTab(kind: .terminal)
-                store.recordRecentCommand(.newPane(.terminal))
+                store.recordRecentCommand("action.newTerminalTab")
             },
         ),
         // "Remote Desktop" (⌥⌘N): the dedicated desktop WINDOW — reveal-or-mint, never a tab.
@@ -84,7 +84,7 @@ public struct ActionsPaletteSource: PaletteDataSource {
             shortcut: glyph(.newDesktopTab), category: .tab,
             run: { store in
                 store.openDesktopWindow()
-                store.recordRecentCommand(.newPane(.desktop))
+                store.recordRecentCommand("action.newDesktopTab")
             },
         ),
         item(
@@ -111,7 +111,7 @@ public struct ActionsPaletteSource: PaletteDataSource {
             shortcut: glyph(.closePane), category: .pane,
             run: { store in
                 store.requestCloseActivePaneTree()
-                store.recordRecentCommand(.closePane)
+                store.recordRecentCommand("action.closePane")
             },
         ),
         item(
@@ -119,7 +119,7 @@ public struct ActionsPaletteSource: PaletteDataSource {
             shortcut: glyph(.toggleZoom), category: .pane,
             run: { store in
                 store.toggleZoomActivePane()
-                store.recordRecentCommand(.toggleZoom)
+                store.recordRecentCommand("action.toggleZoom")
             },
         ),
         item(
@@ -170,7 +170,7 @@ public struct ActionsPaletteSource: PaletteDataSource {
                 if let pane = store.tree.activeSession?.activeTab?.activePane {
                     store.reconnect(pane)
                 }
-                store.recordRecentCommand(.reconnectPane)
+                store.recordRecentCommand("action.reconnect")
             },
         ),
         // "Toggle Tabs Panel" toggles the LIVE `WorkspaceChromeState.sidebarCollapsed` (the macOS split + the

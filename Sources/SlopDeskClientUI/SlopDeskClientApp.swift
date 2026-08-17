@@ -212,7 +212,6 @@ public struct SlopDeskClientApp: App {
         let appConnection = AppConnection(registry: muxRegistry, seed: seedTarget)
         let store = WorkspaceStore(
             restoringTree: restoredTree,
-            liveModel: .tree,
             makeSession: WorkspaceStore.liveMakeSession(
                 makeInspector: WorkspaceStore.liveMakeInspector,
                 muxRegistry: muxRegistry,

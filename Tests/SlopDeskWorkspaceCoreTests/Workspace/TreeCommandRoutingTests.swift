@@ -14,8 +14,7 @@ import SwiftUI
 /// ``TreeWorkspace`` / registry change, never a recompute of the registry (no tautology).
 ///
 /// Injects the `makeSession` seam with a ``FakePaneSession`` (never a real `SlopDeskClient` / `HostServer`)
-/// and builds every store with ``WorkspaceStore/LiveModel/tree`` so the tree is the live source the routing
-/// drives. No SwiftUI view is built — `route(_:to:)` is the pure seam, identical to what a menu `Button` /
+/// so the tree is the live source the routing drives. No SwiftUI view is built — `route(_:to:)` is the pure seam, identical to what a menu `Button` /
 /// palette row / chord dispatch invokes.
 @MainActor
 final class TreeCommandRoutingTests: XCTestCase {
@@ -26,7 +25,6 @@ final class TreeCommandRoutingTests: XCTestCase {
     private func makeTreeStore(restoringTree: TreeWorkspace = .defaultWorkspace()) -> WorkspaceStore {
         let store = WorkspaceStore(
             restoringTree: restoringTree,
-            liveModel: .tree,
             makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: 2,
         )
@@ -590,9 +588,8 @@ final class TreeCommandRoutingTests: XCTestCase {
 
     // MARK: - Rename: ⌘⇧R targets the active TAB on the tree shell
 
-    /// `.renamePane` on a `.tree` store records the active TAB as the pending tab-rename target (the
-    /// `TabBarView` inline field opens) — the tree/registry are untouched, a command-layer UI nudge. It must
-    /// NOT set `pendingRename` (the canvas pane-rename request no tree view observes — the old dead-end).
+    /// `.renamePane` records the active TAB as the pending tab-rename target (the `TabBarView` inline
+    /// field opens) — the tree/registry are untouched, a command-layer UI nudge.
     func testRenameActionTargetsActiveTab() throws {
         let store = makeTreeStore()
         let activeTab = try XCTUnwrap(store.tree.activeSession?.activeTab?.id)
@@ -602,7 +599,6 @@ final class TreeCommandRoutingTests: XCTestCase {
         route(.renamePane, store)
 
         XCTAssertEqual(store.pendingTabRename, activeTab, "renamePane records the active TAB as the rename target")
-        XCTAssertNil(store.pendingRename, "the dead canvas pane-rename request is NOT set on the tree shell")
         XCTAssertEqual(store.tree, treeBefore, "renamePane never mutates the tree")
         XCTAssertEqual(store.allSessions.count, sessionsBefore, "renamePane never touches the registry")
     }

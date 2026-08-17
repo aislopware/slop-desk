@@ -9,7 +9,7 @@ import AppKit
 @MainActor
 final class ClipboardRingTests: XCTestCase {
     private func makeStore() -> WorkspaceStore {
-        WorkspaceStore(restoring: nil, makeSession: { seed in FakePaneSession(seed.spec) })
+        WorkspaceStore(makeSession: { seed in FakePaneSession(seed.spec) })
     }
 
     func testRecordPrependsDedupsAndCaps() {

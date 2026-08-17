@@ -22,7 +22,7 @@ import XCTest
 final class PaneDropReceiverActuateTests: XCTestCase {
     /// A live tree-model store whose sessions are headless doubles (no socket).
     private func makeStore() -> WorkspaceStore {
-        let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in MountTestPaneSession(seed.spec) })
+        let store = WorkspaceStore(makeSession: { seed in MountTestPaneSession(seed.spec) })
         store.attachLoopbackWorkspaceDocument()
         return store
     }

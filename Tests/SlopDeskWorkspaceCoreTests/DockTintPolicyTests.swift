@@ -115,7 +115,7 @@ final class DockTintPolicyTests: XCTestCase {
     // MARK: - store aggregate: dockTileModel reflects the cross-session union (default toggles)
 
     private func makeStore() -> WorkspaceStore {
-        let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in FakePaneSession(seed.spec) })
+        let store = WorkspaceStore(makeSession: { seed in FakePaneSession(seed.spec) })
         store.attachLoopbackWorkspaceDocument()
         return store
     }

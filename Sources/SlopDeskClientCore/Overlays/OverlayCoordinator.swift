@@ -406,35 +406,20 @@ public final class OverlayCoordinator {
         return out
     }
 
-    /// Map the store's `recentCommands` ring onto catalog rows (by matching the verb), MRU order. Verbs absent
-    /// from the catalog (focus/cycle/etc.) are skipped. Each row is re-id'd into the `recent.*` namespace
-    /// (``PaletteItem/namespacedForRecents()``) so it can't collide with its identical catalog row on the same
-    /// `ForEach`/`.id` key — the action is preserved, so accept still runs the catalog verb.
+    /// Map the store's `recentCommands` ring (palette catalog ids) onto catalog rows, MRU order. An id with
+    /// no catalog row left (a verb that has since been retired) is skipped. Each row is re-id'd into the
+    /// `recent.*` namespace (``PaletteItem/namespacedForRecents()``) so it can't collide with its identical
+    /// catalog row on the same `ForEach`/`.id` key — the action is preserved, so accept still runs the
+    /// catalog verb.
     private func recentPaletteItems() -> [PaletteItem] {
         guard let store else { return [] }
         var out: [PaletteItem] = []
-        for command in store.recentCommands {
-            if let item = Self.catalogItem(for: command) { out.append(item.namespacedForRecents()) }
+        for id in store.recentCommands {
+            if let item = ActionsPaletteSource.catalog.first(where: { $0.id == id }) {
+                out.append(item.namespacedForRecents())
+            }
         }
         return out
-    }
-
-    /// The catalog row that corresponds to `command` (used to surface recents). nil ⇒ no catalog row.
-    package static func catalogItem(for command: WorkspaceCommand) -> PaletteItem? {
-        let id: String? =
-            switch command {
-            case .newPane(.terminal),
-                 .newPaneDefault: "action.newTerminalTab"
-            case .newPane(.desktop): "action.newDesktopTab"
-            case .newPane: nil
-            case .closePane: "action.closePane"
-            case .toggleZoom: "action.toggleZoom"
-            case .renamePane: "action.renamePane"
-            case .reconnectPane: "action.reconnect"
-            default: nil
-            }
-        guard let id else { return nil }
-        return ActionsPaletteSource.catalog.first { $0.id == id }
     }
 
     /// The selectable rows (non-separators) of the current result list — keyboard nav target.
@@ -484,7 +469,7 @@ public final class OverlayCoordinator {
 
     /// Run one palette row's action against the store, then close (or apply a filter in place). Separators are
     /// no-ops. The ONE place a palette intent becomes a store mutation. `keepOpen` (the ⌘↩ chaining path)
-    /// suppresses the close for the chainable `.store`/`.command`/chrome-toggle rows; the overlay-switching
+    /// suppresses the close for the chainable `.store`/chrome-toggle rows; the overlay-switching
     /// rows (settings/connect/cheat/picker) always close-then-open. Chrome-toggle rows route through the
     /// injected ``toggleSidebar`` closure so they flip the LIVE `WorkspaceChromeState` — not the dead
     /// `store.sidebarCollapsed`.
@@ -493,9 +478,6 @@ public final class OverlayCoordinator {
         switch item.action {
         case let .store(closure):
             if let store { closure(store) }
-            if !keepOpen { closePalette() }
-        case let .command(command):
-            if let store { apply(command, to: store) }
             if !keepOpen { closePalette() }
         case .toggleSidebar:
             toggleSidebar()

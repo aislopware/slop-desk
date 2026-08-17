@@ -48,7 +48,6 @@ final class SharedFocusSettingTests: XCTestCase {
     /// A store whose device-local facts persist to THIS test's own `device-prefs.json` (never the real one).
     private func makeWorkspaceStore() -> WorkspaceStore {
         WorkspaceStore(
-            liveModel: .tree,
             makeSession: { seed in MountTestPaneSession(seed.spec) },
             devicePreferences: DevicePreferencesStore(fileURL: fileURL),
         )

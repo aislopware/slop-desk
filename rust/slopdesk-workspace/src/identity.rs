@@ -128,21 +128,6 @@ identity!(
 );
 
 identity!(
-    /// A named collection of panes on the plane.
-    ///
-    /// Membership is stored on the PANE, not as a list here, so closing a pane drops its membership
-    /// for free and there is no dangling id to repair.
-    PaneGroupId,
-    "group"
-);
-
-identity!(
-    /// A saved canvas layout, restorable by name.
-    LayoutPresetId,
-    "preset"
-);
-
-identity!(
     /// A named launch configuration — a command and the panes it opens into.
     LaunchPresetId,
     "launch preset"

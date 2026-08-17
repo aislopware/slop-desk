@@ -97,10 +97,7 @@ public extension WorkspaceStore {
             } else {
                 ordered[0]
             }
-        switch liveModel {
-        case .tree: focusPaneTree(target)
-        case .canvas: revealPane(target)
-        }
+        focusPaneTree(target)
         acknowledgeError(target)
     }
 

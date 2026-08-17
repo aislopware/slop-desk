@@ -30,7 +30,6 @@ final class ProjectKeyStoreTests: XCTestCase {
         let tree = TreeWorkspace(sessions: [session], activeSessionID: session.id)
         let store = WorkspaceStore(
             restoringTree: tree,
-            liveModel: .tree,
             makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: 2,
             persistence: nil,
@@ -154,7 +153,7 @@ final class ProjectKeyStoreTests: XCTestCase {
         )
         let store = WorkspaceStore(
             restoringTree: TreeWorkspace(sessions: [session], activeSessionID: session.id),
-            liveModel: .tree, makeSession: { seed in FakePaneSession(seed.spec) }, liveVideoCap: 2, persistence: nil,
+            makeSession: { seed in FakePaneSession(seed.spec) }, liveVideoCap: 2, persistence: nil,
         )
         store.attachLoopbackWorkspaceDocument()
         // Past the write guard, the way a pre-guard persisted value would have arrived.

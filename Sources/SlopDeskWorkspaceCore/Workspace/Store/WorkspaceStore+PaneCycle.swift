@@ -17,8 +17,7 @@ public extension WorkspaceStore {
 
     /// The pane a ``cyclePaneFocusTree(forward:)`` step would focus, or `nil` when it is a no-op (no active
     /// tab, fewer than two panes, or no resolvable tiled active pane to step from). Pure (no focus side
-    /// effect) so the `count > 1` wrap guard is unit-testable in isolation — mirrors
-    /// ``recentPaneTarget(forward:)`` / ``inGroupCycleTarget(forward:)``.
+    /// effect) so the `count > 1` wrap guard is unit-testable in isolation.
     ///
     /// Delegates straight to the pure ``WorkspaceTreeOps/cyclePaneTarget(forward:in:)`` so the
     /// DFS-wrap math has ONE source — the order is the active tab's ``Tab/allPaneIDs()`` (pre-order DFS),

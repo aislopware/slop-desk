@@ -134,17 +134,16 @@ final class VideoCapPolicyTests: XCTestCase {
         let phoneCap = VideoCapPolicy.cap(for: .phone)
         XCTAssertEqual(phoneCap, 1, "the phone tier admits exactly one live video pane")
 
-        // A single-desktop-pane canvas grown to two desktop leaves (no stray default terminal pane).
-        let rootID = PaneID()
-        let spec = PaneSpec(kind: .desktop, title: "Desktop")
+        // Two `.desktop` panes, one per display. A desktop pane is ALWAYS its own OS window — it is
+        // never a leaf in a tab (docs/DECISIONS.md 2026-07-22/23) — so the ingress that opens one is
+        // what the cap is about, and one display id each keeps the second from revealing the first.
         let store = WorkspaceStore(
-            restoring: Workspace.make(panes: [(rootID, spec)], focused: rootID),
             makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: phoneCap,
         )
-        store.addPane(kind: .desktop)
-        let ids = store.workspace.canvas.allIDs()
-        XCTAssertEqual(ids.count, 2, "two desktop leaves")
+        store.attachLoopbackWorkspaceDocument()
+        let ids = (0..<2).map { store.openDesktopWindow(displayID: UInt32($0)) }
+        XCTAssertEqual(Set(ids).count, 2, "two distinct desktop windows")
 
         XCTAssertTrue(store.activateVideo(ids[0]), "the single phone-cap slot admits the first pane")
         XCTAssertFalse(store.activateVideo(ids[1]), "the second desktop pane is gated at the phone cap of 1")

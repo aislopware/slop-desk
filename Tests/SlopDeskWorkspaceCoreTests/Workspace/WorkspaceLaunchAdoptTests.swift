@@ -36,7 +36,6 @@ final class WorkspaceLaunchAdoptTests: XCTestCase {
     ) -> WorkspaceStore {
         WorkspaceStore(
             restoringTree: tree,
-            liveModel: .tree,
             makeSession: { seed in
                 log.panes.append(seed.id)
                 return FakePaneSession(seed.spec)

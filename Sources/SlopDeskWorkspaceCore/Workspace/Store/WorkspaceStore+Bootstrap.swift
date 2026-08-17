@@ -40,10 +40,7 @@ public extension WorkspaceStore {
     }
 
     func bootstrapFromEnvironment(_ env: [String: String] = WorkspaceStore.automationInputs()) {
-        switch liveModel {
-        case .tree: bootstrapTree(from: env)
-        case .canvas: bootstrapCanvas(from: env)
-        }
+        bootstrapTree(from: env)
     }
 
     /// The app target from the terminal-autoconnect env vars, or `nil`.

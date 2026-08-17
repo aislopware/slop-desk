@@ -118,91 +118,6 @@ final class WorkspaceLayoutTests: XCTestCase {
         )
     }
 
-    // MARK: - BUG-F: a zoomed pane's geometric move resolves against the on-screen single leaf
-
-    /// Fixtures: a 3-leaf horizontal row on the single canvas, materialized through the fake seam.
-    private func makeThreeLeafStore() -> (WorkspaceStore, [PaneID]) {
-        let a0 = PaneID(), a1 = PaneID(), a2 = PaneID()
-        let store = WorkspaceStore(
-            restoring: Workspace.make(
-                panes: [
-                    (a0, PaneSpec(kind: .terminal, title: "a0")),
-                    (a1, PaneSpec(kind: .terminal, title: "a1")),
-                    (a2, PaneSpec(kind: .terminal, title: "a2")),
-                ],
-                focused: a1,
-            ),
-            makeSession: { seed in FakePaneSession(seed.spec) },
-        )
-        store.attachLoopbackWorkspaceDocument()
-        return (store, [a0, a1, a2])
-    }
-
-    /// A 3-pane row laid out left→right. The pre-zoom multi-pane layout makes `move(.left)` from the
-    /// middle pane land on the left pane — the regular-tree behaviour.
-    func testDirectionalMoveUsesReportedMultiPaneLayout() {
-        let (store, ids) = makeThreeLeafStore()
-        store.updateSolvedLayout(SolvedLayout(
-            frames: [
-                ids[0]: CGRect(x: 0, y: 0, width: 100, height: 100),
-                ids[1]: CGRect(x: 100, y: 0, width: 100, height: 100),
-                ids[2]: CGRect(x: 200, y: 0, width: 100, height: 100),
-            ],
-        ))
-        XCTAssertEqual(store.focusedPane, ids[1], "focused on the middle pane")
-        store.move(.left)
-        XCTAssertEqual(store.focusedPane, ids[0], "move(.left) lands on the left neighbour")
-    }
-
-    /// BUG-F: while a pane is ZOOMED the view reports a SINGLE-LEAF layout (the zoomed pane fills the
-    /// rect). A directional move then has no neighbour on screen and must NOT jump to an off-screen
-    /// pane that only exists in the stale pre-zoom rects — focus stays put.
-    func testZoomedSingleLeafLayoutSuppressesDirectionalMoveToOffscreenPane() {
-        let (store, ids) = makeThreeLeafStore()
-        // Pre-zoom multi-pane layout (what the regular tree reported before zoom).
-        store.updateSolvedLayout(SolvedLayout(
-            frames: [
-                ids[0]: CGRect(x: 0, y: 0, width: 100, height: 100),
-                ids[1]: CGRect(x: 100, y: 0, width: 100, height: 100),
-                ids[2]: CGRect(x: 200, y: 0, width: 100, height: 100),
-            ],
-        ))
-        // Zoom the focused (middle) pane. The FIX has PaneTreeView's zoomed branch report a single-leaf
-        // layout; simulate that report through the same store seam the view uses.
-        store.toggleZoom()
-        XCTAssertEqual(store.workspace.maximizedPane, ids[1], "middle pane is zoomed")
-        store.updateSolvedLayout(SolvedLayout(
-            frames: [ids[1]: CGRect(x: 0, y: 0, width: 300, height: 100)],
-        ))
-
-        // A directional move finds no neighbour in the single-leaf layout → focus is unchanged (no jump
-        // to the off-screen left/right pane the stale multi-pane rects would have offered).
-        store.move(.left)
-        XCTAssertEqual(store.focusedPane, ids[1], "move(.left) while zoomed does not jump off-screen")
-        store.move(.right)
-        XCTAssertEqual(store.focusedPane, ids[1], "move(.right) while zoomed does not jump off-screen")
-    }
-
-    /// BUG-F downstream: closing the zoomed pane refocuses a TREE neighbour (pre-order), not a stale
-    /// geometric rect. With a single-leaf layout reported, `neighbourForRefocus` falls through to the
-    /// tree's pre-order successor/predecessor — a real surviving pane.
-    func testCloseZoomedPaneRefocusesSurvivingTreeNeighbour() async throws {
-        let (store, ids) = makeThreeLeafStore()
-        store.toggleZoom() // zoom the middle pane (ids[1])
-        store.updateSolvedLayout(SolvedLayout(
-            frames: [ids[1]: CGRect(x: 0, y: 0, width: 300, height: 100)],
-        ))
-        store.closePane(ids[1])
-        let survivors = store.workspace.canvas.allIDs()
-        XCTAssertEqual(survivors.count, 2, "closing one of three leaves leaves two")
-        XCTAssertNotNil(store.focusedPane)
-        XCTAssertTrue(
-            try survivors.contains(XCTUnwrap(store.focusedPane)),
-            "refocus lands on a surviving pane, not the closed/zoomed one",
-        )
-        await store.quiesce()
-    }
-
     // MARK: - BUG-K: a focus change forces the newly-focused terminal to re-claim first responder
 
     /// A minimal fake first-responder host so the coordinator's claim/resign logic is assertable on
@@ -247,69 +162,27 @@ final class WorkspaceLayoutTests: XCTestCase {
 
     /// End-to-end through the store seam: focusing another pane whose terminal host is registered
     /// re-claims first responder and the coordinator's intent follows the newly-focused pane (the
-    /// BUG-K race shape). Two panes on the single canvas; we register hosts for both and drive focus.
-    func testFocusChangeReassertsFocusForNewlyFocusedHost() {
-        let pA = PaneID(), pB = PaneID()
+    /// BUG-K race shape). Two leaves in one tab; we register hosts for both and drive focus.
+    func testFocusChangeReassertsFocusForNewlyFocusedHost() throws {
         let store = WorkspaceStore(
-            restoring: Workspace.make(
-                panes: [
-                    (pA, PaneSpec(kind: .terminal, title: "A")),
-                    (pB, PaneSpec(kind: .terminal, title: "B")),
-                ],
-                focused: pA,
-            ),
+            restoringTree: .defaultWorkspace(),
             makeSession: { seed in FakePaneSession(seed.spec) },
         )
         store.attachLoopbackWorkspaceDocument()
+        let pA = try XCTUnwrap(store.tree.allPaneIDs().first)
+        store.splitActivePane(axis: .horizontal, kind: .terminal)
+        let pB = try XCTUnwrap(store.tree.allPaneIDs().first { $0 != pA }, "the split minted a second leaf")
+
         let hostA = FakeHost(), hostB = FakeHost()
         store.focusCoordinator.register(hostA, for: pA)
         store.focusCoordinator.register(hostB, for: pB)
 
-        // The init reconcile already reasserted focus to pane A (first sync = "focus changed" from
-        // nil). Snapshot B's claim count, then move focus to B.
+        // Snapshot B's claim count, then move focus back and forth so the LAST move lands on B.
+        store.focusPaneTree(pA)
         let bBefore = hostB.becomeCount
-        store.focus(pB)
-        XCTAssertEqual(store.focusedPane, pB)
+        store.focusPaneTree(pB)
+        XCTAssertEqual(store.tree.activeSession?.activeTab?.activePane, pB)
         XCTAssertGreaterThan(hostB.becomeCount, bBefore, "focusing pane B re-claims its terminal (BUG-K)")
         XCTAssertEqual(store.focusCoordinator.focusedPane, pB, "coordinator intent follows the newly-focused pane")
-    }
-
-    // MARK: - Group arithmetic (the single-canvas replacement for the retired tab arithmetic)
-
-    /// The pure group ops mirror what the old tab arithmetic did (add → rename → reorder → remove),
-    /// each returning a fresh ``Workspace`` and leaving the canvas's pane set untouched (a group is
-    /// metadata — removing one ungroups its members rather than closing any pane).
-    func testGroupArithmeticAddRenameReorderRemove() {
-        let p0 = PaneID(), p1 = PaneID()
-        let base = Workspace.make(
-            panes: [
-                (p0, PaneSpec(kind: .terminal, title: "p0")),
-                (p1, PaneSpec(kind: .terminal, title: "p1")),
-            ],
-            focused: p0,
-        )
-
-        // Add two groups; each returns the minted id.
-        let (afterFirst, g0) = base.addingGroup(name: "Left")
-        let (afterSecond, g1) = afterFirst.addingGroup(name: "Right")
-        XCTAssertEqual(afterSecond.groups.map(\.id), [g0, g1], "two groups appended in order")
-        XCTAssertEqual(afterSecond.group(g0)?.name, "Left")
-
-        // Rename the first group.
-        let renamed = afterSecond.renamingGroup(g0, to: "Primary")
-        XCTAssertEqual(renamed.group(g0)?.name, "Primary", "rename updates the group's name in place")
-
-        // Assign a pane into a group, then reorder the groups (the old "move tab" equivalent).
-        let assigned = renamed.assigning(pane: p0, toGroup: g0)
-        XCTAssertEqual(assigned.group(ofPane: p0)?.id, g0, "pane p0 now belongs to the first group")
-        let reordered = assigned.movingGroup(from: IndexSet(integer: 1), to: 0)
-        XCTAssertEqual(reordered.groups.map(\.id), [g1, g0], "movingGroup reorders the sidebar list")
-
-        // Removing a group ungroups its members but never drops a pane (the old "close tab" never
-        // closed panes either — there is no destructive analogue).
-        let removed = reordered.removingGroup(g0)
-        XCTAssertNil(removed.group(g0), "removed group is gone")
-        XCTAssertNil(removed.group(ofPane: p0), "its member pane survives as ungrouped")
-        XCTAssertEqual(removed.canvas.allIDs().count, 2, "no pane was closed by removing a group")
     }
 }

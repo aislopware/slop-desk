@@ -86,7 +86,6 @@ final class CloseConfirmationStoreTests: XCTestCase {
     private func makeTreeStore(restoringTree: TreeWorkspace) -> WorkspaceStore {
         let store = WorkspaceStore(
             restoringTree: restoringTree,
-            liveModel: .tree,
             makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: 2,
             persistence: nil,

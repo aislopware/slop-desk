@@ -4,9 +4,8 @@ import SlopDeskWorkspaceModel
 
 /// A tree-native workspace action — the intent the IDE-shell keyboard / menu / palette / cheat sheet
 /// produce, routed to the matching ``WorkspaceStore`` TREE op by ``WorkspaceBindingRegistry`` (docs/42
-/// §W6). The `Session → Tab → Pane` redesign's command vocabulary; distinct from the retained-but-dead
-/// canvas ``WorkspaceCommand`` (still routed in `.canvas` mode) — the tree has split-right/down, tabs,
-/// and sessions the flat canvas never had.
+/// §W6). The `Session → Tab → Pane` redesign's command vocabulary, and the ONLY one — the flat canvas
+/// command enum it replaced is deleted, along with the canvas model itself.
 ///
 /// A pure value enum (no SwiftUI / store import) so the chord → action mapping is unit-testable with no
 /// view.
@@ -18,7 +17,7 @@ public enum WorkspaceAction: Hashable, Sendable {
     case splitUp // ⌘⌥⇧D — split the active pane, inserting the new pane on the LEADING (top) side
     case closePane // ⌘W  — close the active pane (cascades the tab/session)
     case renamePane // no default chord — renames the active TAB on the tree shell (inline tab-strip
-    // field), or the active pane on the retained-but-dead canvas path. Title menu / context menu / palette only.
+    // field). Title menu / context menu / palette only.
     case breakPaneToTab // ⌃⌘T — eject the active pane into a new tab
     case detachPane // ⌥⌘P — pop the active pane out into its OWN macOS window (session survives; the
     // satellite window's close reattaches it). macOS only — a no-op routing on iOS (no NSWindow).
@@ -191,7 +190,7 @@ public extension WorkspaceAction {
     }
 
     /// Whether running this action requires an active pane (so the palette can omit it on an empty shell,
-    /// and the menu can grey it out) — mirrors ``WorkspaceCommand/requiresFocusedPane``.
+    /// and the menu can grey it out).
     var requiresActivePane: Bool {
         switch self {
         case .splitRight,

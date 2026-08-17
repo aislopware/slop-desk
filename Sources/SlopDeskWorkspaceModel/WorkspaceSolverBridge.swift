@@ -51,22 +51,6 @@ extension TabID {
     init(ffi: SlopDeskWsUuid) { self.init(raw: ffi.uuid) }
 }
 
-extension ResizeAnchor {
-    /// The CASE index — the crate's enum order, pinned by `scripts/check-supervisor.sh`.
-    var ffiByte: UInt8 {
-        switch self {
-        case .topLeft: 0
-        case .top: 1
-        case .topRight: 2
-        case .left: 3
-        case .right: 4
-        case .bottomLeft: 5
-        case .bottom: 6
-        case .bottomRight: 7
-        }
-    }
-}
-
 extension FocusDirection {
     /// The CASE index — the crate's enum order, pinned by `scripts/check-supervisor.sh`.
     var ffiByte: UInt8 {

@@ -19,7 +19,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
     /// Builds the coordinator the way the app does: headless tree-model store, `connectionTarget` seam
     /// injected. No socket, no video — the fake session never opens one.
     private func makeCoordinator() -> (OverlayCoordinator, WorkspaceStore) {
-        let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in MountTestPaneSession(seed.spec) })
+        let store = WorkspaceStore(makeSession: { seed in MountTestPaneSession(seed.spec) })
         store.attachLoopbackWorkspaceDocument()
         let overlay = OverlayCoordinator(store: store)
         overlay.connectionTarget = { store.committedConnectionTarget ?? .default }
@@ -130,8 +130,8 @@ final class OverlayCoordinatorMountTests: XCTestCase {
     func testZeroStateRowIDsUniqueWithRecents() {
         let (overlay, store) = makeCoordinator()
         // Populate the recents ring the way the store chokepoint does when these verbs run.
-        store.recordRecentCommand(.closePane)
-        store.recordRecentCommand(.newPane(.terminal))
+        store.recordRecentCommand("action.closePane")
+        store.recordRecentCommand("action.newTerminalTab")
         overlay.openPalette()
 
         let ids = overlay.rankedResults.map(\.id)
@@ -154,7 +154,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
     /// recents row is no longer index 0; locate it and pin that running it performs the New-Tab action.
     func testNamespacedRecentRowStillRunsCatalogAction() throws {
         let (overlay, store) = makeCoordinator()
-        store.recordRecentCommand(.newPane(.terminal))
+        store.recordRecentCommand("action.newTerminalTab")
         overlay.openPalette()
 
         let recentIndex = try XCTUnwrap(

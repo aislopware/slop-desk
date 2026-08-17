@@ -1,4 +1,3 @@
-import CoreGraphics
 import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskWorkspaceCore
@@ -7,10 +6,6 @@ import XCTest
 /// title redaction that reaches every title surface.
 @MainActor
 final class ReviewFixTests: XCTestCase {
-    private func makeStore(restoring: Workspace? = nil) -> WorkspaceStore {
-        WorkspaceStore(restoring: restoring, makeSession: { seed in FakePaneSession(seed.spec) }, liveVideoCap: 5)
-    }
-
     // MARK: - Titles are redacted everywhere
 
     /// displayTitle (now used by the carousel tab + top bar, not just the pill/sidebar) masks secrets,

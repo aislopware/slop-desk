@@ -11,11 +11,17 @@ import XCTest
 @MainActor
 final class WorkspaceStoreReconnectGuardTests: XCTestCase {
     private func makeStore() -> WorkspaceStore {
-        WorkspaceStore(restoring: nil, makeSession: { seed in FakePaneSession(seed.spec) }, liveVideoCap: 2)
+        let store = WorkspaceStore(
+            restoringTree: .defaultWorkspace(),
+            makeSession: { seed in FakePaneSession(seed.spec) },
+            liveVideoCap: 2,
+        )
+        store.attachLoopbackWorkspaceDocument()
+        return store
     }
 
     private func leafIDs(_ store: WorkspaceStore) -> [PaneID] {
-        store.workspace.canvas.allIDs()
+        store.tree.allPaneIDs()
     }
 
     /// The re-check is TRUE while the pane is live, and FALSE once it has been closed — so the detached
@@ -23,7 +29,7 @@ final class WorkspaceStoreReconnectGuardTests: XCTestCase {
     func testPaneStillRegisteredFlipsFalseAfterClose() async {
         let store = makeStore()
         let original = leafIDs(store)[0]
-        store.addPane(kind: .terminal)
+        store.splitActivePane(axis: .horizontal, kind: .terminal)
         let victim = leafIDs(store).first { $0 != original } ?? leafIDs(store)[1]
 
         guard let handle = store.handle(for: victim) else {
@@ -32,13 +38,13 @@ final class WorkspaceStoreReconnectGuardTests: XCTestCase {
         }
         XCTAssertTrue(store.paneStillRegistered(victim, as: handle), "a live pane is still registered")
 
-        store.closePane(victim)
+        store.closePaneTree(victim)
         await store.quiesce()
 
         XCTAssertNil(store.handle(for: victim), "the closed pane is gone from the registry")
         XCTAssertFalse(
             store.paneStillRegistered(victim, as: handle),
-            "after closePane the stale handle no longer matches — reconnect's detached dial must be skipped",
+            "after the close the stale handle no longer matches — reconnect's detached dial must be skipped",
         )
     }
 
@@ -47,7 +53,7 @@ final class WorkspaceStoreReconnectGuardTests: XCTestCase {
     func testPaneStillRegisteredIsByIdentityNotKeyPresence() throws {
         let store = makeStore()
         let id0 = leafIDs(store)[0]
-        store.addPane(kind: .terminal)
+        store.splitActivePane(axis: .horizontal, kind: .terminal)
         let id1 = try XCTUnwrap(leafIDs(store).first { $0 != id0 })
 
         guard let h0 = store.handle(for: id0), let h1 = store.handle(for: id1) else {

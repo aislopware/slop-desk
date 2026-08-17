@@ -75,9 +75,7 @@ final class RedialDetachedPaneTests: XCTestCase {
             left, axis: .horizontal, newSpec: PaneSpec(kind: .terminal, title: "right"), in: base,
         )
         let store = WorkspaceStore(
-            restoring: Workspace(canvas: Canvas(items: []), focusedPane: nil),
             restoringTree: ws,
-            liveModel: .tree,
             makeSession: { seed in
                 LivePaneSession.make(
                     paneID: seed.id, spec: seed.spec, spawnCwd: seed.spawnCwd,

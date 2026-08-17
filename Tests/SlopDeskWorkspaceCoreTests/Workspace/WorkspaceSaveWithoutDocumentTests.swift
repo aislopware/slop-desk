@@ -48,7 +48,6 @@ final class WorkspaceSaveWithoutDocumentTests: XCTestCase {
         let restored = seed()
         let store = WorkspaceStore(
             restoringTree: restored,
-            liveModel: .tree,
             makeSession: { FakePaneSession($0.spec) },
             persistence: persistence,
         )
@@ -75,7 +74,6 @@ final class WorkspaceSaveWithoutDocumentTests: XCTestCase {
         let pane = try XCTUnwrap(restored.allPaneIDs().first)
         let store = WorkspaceStore(
             restoringTree: restored,
-            liveModel: .tree,
             makeSession: { FakePaneSession($0.spec) },
             documentCache: cache,
             cacheHostKey: "mac-studio:7420",

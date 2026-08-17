@@ -12,7 +12,7 @@ final class OpenTerminalRootedStoreTests: XCTestCase {
     /// A live tree-model store whose sessions are headless fakes (no socket) — the same seam
     /// `WorkspaceStoreProgressTests` / `DockTintPolicyTests` use.
     private func makeStore() -> WorkspaceStore {
-        let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in FakePaneSession(seed.spec) })
+        let store = WorkspaceStore(makeSession: { seed in FakePaneSession(seed.spec) })
         store.attachLoopbackWorkspaceDocument()
         return store
     }

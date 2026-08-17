@@ -2,8 +2,7 @@
 //!
 //! A [`LaunchPreset`] is one command and the one or two panes it opens into the current session. A
 //! [`SessionTemplate`] is a whole named session — an n-ary layout whose every leaf carries its own
-//! working directory and startup command. Neither is a [`crate::canvas::LayoutPreset`], which
-//! restores geometry that already exists rather than creating anything.
+//! working directory and startup command.
 //!
 //! ## The expansion is pure
 //!

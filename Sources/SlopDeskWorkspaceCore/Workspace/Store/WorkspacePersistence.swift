@@ -3,7 +3,7 @@ import SlopDeskWorkspaceModel
 
 // MARK: - Workspace persistence (the tree of intent ↔ disk)
 
-/// Loads + saves the pure ``Workspace`` value tree to disk (docs/22 §6).
+/// Loads + saves the pure ``TreeWorkspace`` value tree to disk (docs/22 §6).
 ///
 /// The value tree IS the format — already `Codable` (each tab's flat ``Canvas`` has a defensive
 /// `Canvas.init(from:)` enforcing invariants on decode). Deliberately **IO-thin**: owns only the file
@@ -16,7 +16,7 @@ import SlopDeskWorkspaceModel
 ///
 /// ### Failure policy
 /// Any read/decode failure (missing file, corrupt JSON, unknown `schemaVersion`) falls back to
-/// ``Workspace/defaultWorkspace()`` — a corrupt store must never brick launch.
+/// ``TreeWorkspace/defaultWorkspace()`` — a corrupt store must never brick launch.
 /// `@unchecked Sendable`: the only stored properties are a `URL` (Sendable value) and a read-only,
 /// thread-safe `FileManager`, so a value can cross actor boundaries for the store's off-main-actor
 /// debounced write (docs/22 §6) without data-race risk.
@@ -63,15 +63,6 @@ public struct WorkspacePersistence: @unchecked Sendable {
 
     // MARK: Save
 
-    /// Encodes the retained-but-dead canvas ``Workspace`` atomically to ``fileURL``. Reachable only
-    /// from a `.canvas`-model store; the tree overload below is the live path.
-    public func save(_ workspace: Workspace) throws {
-        let directory = fileURL.deletingLastPathComponent()
-        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-        let data = try Self.makeEncoder().encode(workspace)
-        try data.write(to: fileURL, options: [.atomic])
-    }
-
     /// Encodes the ``TreeWorkspace`` atomically to ``fileURL`` — the live save path, since the tree is
     /// the persisted source of truth. Creates the parent dir if needed; a thrown error keeps the
     /// previous good file.
@@ -80,52 +71,6 @@ public struct WorkspacePersistence: @unchecked Sendable {
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         let data = try Self.makeEncoder().encode(tree)
         try data.write(to: fileURL, options: [.atomic])
-    }
-
-    // MARK: Load (canvas — the retained-but-dead path)
-
-    /// Reads + decodes the retained-but-dead canvas ``Workspace``. Never throws — launch must always
-    /// get a usable workspace:
-    /// - Read failure (missing file) → ``Workspace/defaultWorkspace()``.
-    /// - Decode failure, or a `schemaVersion` this build does not speak → ``Workspace/defaultWorkspace()``,
-    ///   with the old file preserved aside as a `.corrupt` sidecar.
-    ///
-    /// The version is a GATE, not a migration seam: there are no upgrade steps (single-user, no
-    /// backward compatibility — docs/DECISIONS.md).
-    public func load() -> Workspace {
-        guard let data = try? Data(contentsOf: fileURL) else {
-            return .defaultWorkspace() // missing file = first launch; nothing to back up
-        }
-        guard let decoded = try? JSONDecoder().decode(Workspace.self, from: data),
-              decoded.schemaVersion == Workspace.currentSchemaVersion
-        else {
-            // Hard-corrupt JSON, or a version this build does not speak. There is no upgrade step to
-            // take (single-user, no backward compatibility): reset, keeping the file aside.
-            return resetToDefault()
-        }
-        // Repair DUPLICATE item PaneIDs (the liveness registry is keyed 1:1 by PaneID, so duplicates
-        // would collapse two panes onto one session) by RE-MINTING in place — lossless, since restored
-        // sessions start idle. Then repair a dangling/nil focusedPane + maximizedPane (focus never
-        // pinned to a ghost pane) and any item pointing at a vanished group. An absurd item count would
-        // make the store eagerly allocate a session per item on the main actor — fall back to default
-        // rather than freeze on launch.
-        guard decoded.canvas.items.count <= Self.maxItems,
-              decoded.groups.count <= Self.maxItems else { return resetToDefault() }
-        var seen = Set<PaneID>()
-        var repaired = decoded
-        repaired.canvas = repaired.canvas.dedupingItemIDs(seen: &seen)
-        // Repair the side collections (duplicate group ids) too.
-        return repaired.normalizingCollections().normalizingFocus().normalizingGroups()
-    }
-
-    /// Best-effort copy the unrestorable file aside BEFORE the next `save()` overwrites it, so a
-    /// merely-unreadable-by-THIS-build file or a hard-corrupt one is recoverable, not silently
-    /// destroyed. Bounded to a single fixed-name `.corrupt` sidecar (overwrites any prior backup).
-    private func resetToDefault() -> Workspace {
-        let backup = fileURL.appendingPathExtension("corrupt")
-        try? FileManager.default.removeItem(at: backup)
-        try? FileManager.default.copyItem(at: fileURL, to: backup)
-        return .defaultWorkspace()
     }
 
     // MARK: Load (tree — LIVE path)

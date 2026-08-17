@@ -61,7 +61,7 @@ final class SlateSnapshotRender: XCTestCase {
             throw XCTSkip("set SLOPDESK_OVERLAY_SNAPSHOT_DIR=<dir> to render the overlay panels")
         }
 
-        let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in MountTestPaneSession(seed.spec) })
+        let store = WorkspaceStore(makeSession: { seed in MountTestPaneSession(seed.spec) })
         store.attachLoopbackWorkspaceDocument()
         let overlay = OverlayCoordinator(store: store)
         overlay.openPalette()
@@ -803,7 +803,6 @@ final class SlateSnapshotRender: XCTestCase {
         let tree = TreeWorkspace(sessions: [session], activeSessionID: session.id)
         let store = WorkspaceStore(
             restoringTree: tree,
-            liveModel: .tree,
             makeSession: { seed in MountTestPaneSession(seed.spec) },
             liveVideoCap: 2,
             persistence: nil,
@@ -922,7 +921,6 @@ final class SlateSnapshotRender: XCTestCase {
         let tree = TreeWorkspace(sessions: [session], activeSessionID: session.id)
         let store = WorkspaceStore(
             restoringTree: tree,
-            liveModel: .tree,
             makeSession: { seed in MountTestPaneSession(seed.spec) },
             liveVideoCap: 2,
             persistence: nil,

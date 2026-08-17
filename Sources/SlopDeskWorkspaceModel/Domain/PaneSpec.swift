@@ -21,17 +21,6 @@ public struct PaneID: Hashable, Codable, Sendable {
     public init(raw: UUID = UUID()) { self.raw = raw }
 }
 
-/// Stable identity for a ``PaneGroup`` — a named, ordered collection of panes on the single canvas
-/// (the replacement for the retired tab concept, docs/31).
-///
-/// Mirrors ``PaneID``: minted once, stable across the group's lifetime, survives the persistence
-/// round-trip (docs/22 §6) so a pane's `groupID` membership and the sidebar's group order stay valid
-/// after restore.
-public struct PaneGroupID: Hashable, Codable, Sendable {
-    public let raw: UUID
-    public init(raw: UUID = UUID()) { self.raw = raw }
-}
-
 // MARK: - Leaf intent (what a pane IS — never a live object)
 
 /// What a pane *is*. The kind selects which proven per-session stack the live layer will
@@ -225,8 +214,8 @@ public struct VideoPaneModes: Codable, Sendable, Equatable {
 /// or window via ``video``.
 ///
 /// A `PaneSpec` is pure intent: it is what the pane *should* be, not a handle to anything live.
-/// The store reads it to materialize a session; mutating it (e.g. rename) is done through
-/// ``Canvas/updatingSpec(_:_:)`` and triggers a reconcile downstream.
+/// The store reads it to materialize a session; mutating it (e.g. rename) is done through the tree's
+/// spec side table (`WorkspaceStore.updateSpecLive`) and triggers a reconcile downstream.
 ///
 /// ### What a spec does NOT carry
 /// The pane's live FACTS — its working directory, its By-Project key, the shell title it last asserted,

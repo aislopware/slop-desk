@@ -39,7 +39,7 @@ final class DispatcherCodeSidebarYieldTests: XCTestCase {
     /// A headless tree-model store with TWO leaves (a split), so a `.closePane` would be an immediate
     /// observable close — the destructive action the yield must suppress.
     private func makeTwoLeafStore() -> WorkspaceStore {
-        let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in MountTestPaneSession(seed.spec) })
+        let store = WorkspaceStore(makeSession: { seed in MountTestPaneSession(seed.spec) })
         store.attachLoopbackWorkspaceDocument()
         WorkspaceBindingRegistry.route(.splitRight, to: store)
         XCTAssertEqual(store.tree.allPaneIDs().count, 2, "precondition: the split gave the tab two leaves")

@@ -12,7 +12,6 @@ final class LaunchPresetStoreTests: XCTestCase {
     private func treeStore() -> WorkspaceStore {
         let store = WorkspaceStore(
             restoringTree: TreeWorkspace.defaultWorkspace(),
-            liveModel: .tree,
             makeSession: { seed in FakePaneSession(seed.spec) },
             persistence: nil,
         )

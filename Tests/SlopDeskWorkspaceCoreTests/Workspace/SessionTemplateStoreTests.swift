@@ -12,7 +12,6 @@ final class SessionTemplateStoreTests: XCTestCase {
     private func treeStore() -> WorkspaceStore {
         let store = WorkspaceStore(
             restoringTree: TreeWorkspace.defaultWorkspace(),
-            liveModel: .tree,
             makeSession: { seed in FakePaneSession(seed.spec) },
             persistence: nil,
         )
@@ -170,7 +169,6 @@ final class SessionTemplateStoreTests: XCTestCase {
 
         let store = WorkspaceStore(
             restoringTree: TreeWorkspace.defaultWorkspace(),
-            liveModel: .tree,
             makeSession: { seed in FakePaneSession(seed.spec) },
             devicePreferences: prefsStore,
         )

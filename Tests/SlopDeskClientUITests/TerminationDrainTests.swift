@@ -56,7 +56,7 @@ final class TerminationDrainTests: XCTestCase {
     /// bye reached the wire before the process would die). This is the ⌘W-then-⌘Q shape.
     func testDrainAwaitsInFlightPaneTeardownViaQuiesce() async throws {
         var fakes: [SlowTeardownPaneSession] = []
-        let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in
+        let store = WorkspaceStore(makeSession: { seed in
             let spec = seed.spec
             let fake = SlowTeardownPaneSession(spec, delay: .milliseconds(100))
             fakes.append(fake)

@@ -110,7 +110,7 @@ final class LoopbackWorkspaceDocumentTests: XCTestCase {
     /// layer, so an optimistic patch alone would satisfy it; `entries` moves only when a decoded
     /// document frame lands.
     func testAnIntentServedInProcessIsHostTruthOnTheNextLine() throws {
-        let store = WorkspaceStore(liveModel: .tree, makeSession: { FakePaneSession($0.spec) })
+        let store = WorkspaceStore(makeSession: { FakePaneSession($0.spec) })
         let document = store.attachLoopbackWorkspaceDocument()
         let tab = try XCTUnwrap(store.tree.activeSession?.activeTab?.id)
         let revisionBefore = store.workspaceMirrorRevision
@@ -256,7 +256,7 @@ final class LoopbackWorkspaceDocumentTests: XCTestCase {
     /// Installing the loopback on a store adopts the launch seed rather than replacing it: the tree
     /// the store restored is the document's opening state, per-pane cache included.
     func testInstallingOnAStoreAdoptsTheLaunchSeed() {
-        let store = WorkspaceStore(liveModel: .tree, makeSession: { FakePaneSession($0.spec) })
+        let store = WorkspaceStore(makeSession: { FakePaneSession($0.spec) })
         let seeded = store.workspaceMirror.mirror.entries
 
         let document = store.attachLoopbackWorkspaceDocument()
@@ -269,7 +269,7 @@ final class LoopbackWorkspaceDocumentTests: XCTestCase {
     /// A default store still has no channel and no document. This commit is a seam, not a cutover:
     /// nothing installs the loopback unless a caller asks for it.
     func testADefaultStoreInstallsNothing() {
-        let store = WorkspaceStore(liveModel: .tree, makeSession: { FakePaneSession($0.spec) })
+        let store = WorkspaceStore(makeSession: { FakePaneSession($0.spec) })
         XCTAssertNil(store.workspaceChannel)
     }
 }

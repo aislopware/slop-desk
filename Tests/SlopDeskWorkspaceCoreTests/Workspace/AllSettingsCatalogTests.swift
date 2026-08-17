@@ -395,7 +395,7 @@ final class AllSettingsCatalogTests: XCTestCase {
     /// reading "Off" beside its own `· Default: On` with nothing left to say the reset had missed it.
     func testResetEverySettingRestoresTheDeviceLocalRows() {
         let preferences = PreferencesStore(defaults: makeIsolatedDefaults(), sidecarURL: nil, applyOnInit: false)
-        let workspace = WorkspaceStore(liveModel: .tree, makeSession: { FakePaneSession($0.spec) })
+        let workspace = WorkspaceStore(makeSession: { FakePaneSession($0.spec) })
         let flipped = !DevicePreferences.platformDefaultFollowSessionFocus
         workspace.setFollowSessionFocus(flipped)
         XCTAssertEqual(workspace.devicePreferences.followSessionFocus, flipped, "precondition: it is off default")

@@ -22,7 +22,6 @@ final class BusyDotThresholdTests: XCTestCase {
     private func makeTreeStore() -> WorkspaceStore {
         let store = WorkspaceStore(
             restoringTree: .defaultWorkspace(),
-            liveModel: .tree,
             makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: 5,
         )

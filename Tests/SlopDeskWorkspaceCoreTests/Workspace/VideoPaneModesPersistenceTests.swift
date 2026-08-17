@@ -61,7 +61,6 @@ final class VideoPaneModesPersistenceTests: XCTestCase {
     /// ever triggers `connect()` in a headless store test).
     private func makeLiveStore(devicePreferences: DevicePreferencesStore? = nil) -> WorkspaceStore {
         let store = WorkspaceStore(
-            liveModel: .tree,
             makeSession: { seed in
                 LivePaneSession.make(
                     paneID: seed.id, spec: seed.spec, spawnCwd: seed.spawnCwd,

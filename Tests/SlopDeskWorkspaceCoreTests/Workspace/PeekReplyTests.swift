@@ -24,7 +24,6 @@ final class PeekReplyTests: XCTestCase {
     private func makeTreeStore() -> WorkspaceStore {
         let store = WorkspaceStore(
             restoringTree: .defaultWorkspace(),
-            liveModel: .tree,
             makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: 2,
         )
@@ -36,7 +35,6 @@ final class PeekReplyTests: XCTestCase {
     private func makeTerminalStore() -> WorkspaceStore {
         let store = WorkspaceStore(
             restoringTree: .defaultWorkspace(),
-            liveModel: .tree,
             makeSession: { seed in RecordingTerminalPaneSession(seed.spec) },
             liveVideoCap: 2,
         )

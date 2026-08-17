@@ -438,155 +438,9 @@ bool slopdesk_ws_successor_after_close(SlopDeskWsUuid closing,
                                        const SlopDeskWsUuid *history, size_t history_count,
                                        SlopDeskWsUuid *answer);
 
-SlopDeskWsRect  slopdesk_ws_sanitize(SlopDeskWsRect frame);
-// A camera's origin has no extent to floor, so it is its own door rather than a rect with a size
-// the caller would have to invent and then discard.
-SlopDeskWsPoint slopdesk_ws_sanitize_camera(SlopDeskWsPoint origin);
-double          slopdesk_ws_coordinate_bound(void);
-// A canvas or split metric a Rust routine here ENFORCES: 0 cascade step, 1 cull margin,
-// 2 placement overlap threshold, 3 minimum flex weight. Unknown index answers 0, which is
-// outside every one of their bands.
-double          slopdesk_ws_canvas_metric(uint8_t index);
-SlopDeskWsRect  slopdesk_ws_screen_rect(SlopDeskWsRect frame, SlopDeskWsPoint camera);
-SlopDeskWsPoint slopdesk_ws_canvas_point(SlopDeskWsPoint point, SlopDeskWsPoint camera);
-
-// The canvas SOLVERS. A body is a pane or a whole group moving as one; `kind == 1` is a group and
-// anything else a pane, because a body wrongly read as a pane moves alone where one wrongly read as
-// a group drags its neighbours with it.
-typedef struct {
-    uint8_t        kind;
-    SlopDeskWsUuid id;
-} SlopDeskWsBodyRef;
-
-typedef struct {
-    SlopDeskWsBodyRef id;
-    SlopDeskWsRect    rect;
-} SlopDeskWsBody;
-
-typedef struct {
-    double   gutter;
-    double   skin;
-    uint32_t max_slide_passes;
-    uint32_t max_relax_iterations;
-    double   insert_coverage;
-    bool     enabled;
-} SlopDeskWsNonOverlap;
-
-// The tuning both languages start from — exported, not transcribed.
-SlopDeskWsNonOverlap slopdesk_ws_non_overlap_default(void);
-
-SlopDeskWsRect slopdesk_ws_slide(SlopDeskWsRect snapped, SlopDeskWsPoint from,
-                                 const SlopDeskWsBody *bodies, size_t count,
-                                 SlopDeskWsNonOverlap config);
-// The answer INCLUDES the pinned body at its target, so one write commits the arrangement.
-size_t slopdesk_ws_separate(SlopDeskWsBodyRef pinned, SlopDeskWsRect pinned_rect,
-                            const SlopDeskWsBody *bodies, size_t count,
-                            SlopDeskWsNonOverlap config, SlopDeskWsBody *out, size_t cap);
-// SIZE_MAX = intent did not fire, which is not the same as a commit of zero bodies.
-size_t slopdesk_ws_make_space(SlopDeskWsRect target, SlopDeskWsBodyRef dragged,
-                              const SlopDeskWsBody *bodies, size_t count,
-                              SlopDeskWsNonOverlap config, SlopDeskWsBody *out, size_t cap);
-// Anchor: 0 top-left · 1 top · 2 top-right · 3 left · 4 right · 5 bottom-left · 6 bottom ·
-// 7 bottom-right.
-SlopDeskWsRect slopdesk_ws_clamp_resize(SlopDeskWsRect frame, uint8_t anchor,
-                                        const SlopDeskWsBody *bodies, size_t count,
-                                        double min_width, double min_height,
-                                        SlopDeskWsNonOverlap config);
-bool slopdesk_ws_separation(SlopDeskWsRect a, SlopDeskWsRect b, double gutter,
-                            double *dx, double *dy);
-
-typedef struct {
-    double engage;
-    double release;
-    double gutter;
-    double grid_spacing;
-    double grid_engage;
-    double grid_release;
-    bool   snaps_to_panes;
-    bool   snaps_to_grid;
-} SlopDeskWsSnap;
-
-// A held stick crosses in BOTH directions: the caller hands back what it got last frame, and that is
-// what makes the hold asymmetric rather than re-decided from scratch every frame.
-typedef struct {
-    bool    present;
-    uint8_t own_edge;  // 0 min · 1 mid · 2 max
-    double  target;
-    bool    is_grid;
-} SlopDeskWsStick;
-
-typedef struct {
-    uint8_t orientation;  // 0 vertical · 1 horizontal
-    double  position;
-    double  start;
-    double  end;
-    uint8_t kind;  // 0 gutter · 1 edge · 2 centre · 3 viewport
-} SlopDeskWsGuide;
-
-// Always written, even when the guide buffer was too small — a commit never has to size one.
-typedef struct {
-    SlopDeskWsRect  frame;
-    SlopDeskWsStick stick_x;
-    SlopDeskWsStick stick_y;
-} SlopDeskWsSnapAnswer;
-
-SlopDeskWsSnap slopdesk_ws_snap_default(void);
-
-// Both return the guide count the answer HAS.
-size_t slopdesk_ws_snap_move(SlopDeskWsRect proposed, const SlopDeskWsRect *others, size_t count,
-                             SlopDeskWsRect viewport, bool has_viewport, SlopDeskWsSnap config,
-                             SlopDeskWsStick previous_x, SlopDeskWsStick previous_y,
-                             SlopDeskWsSnapAnswer *answer,
-                             SlopDeskWsGuide *guides, size_t guides_cap);
-size_t slopdesk_ws_snap_resize(SlopDeskWsRect proposed, uint8_t anchor,
-                               const SlopDeskWsRect *others, size_t count,
-                               SlopDeskWsRect viewport, bool has_viewport,
-                               double min_width, double min_height, SlopDeskWsSnap config,
-                               SlopDeskWsStick previous_x, SlopDeskWsStick previous_y,
-                               SlopDeskWsSnapAnswer *answer,
-                               SlopDeskWsGuide *guides, size_t guides_cap);
-
-// A pane as the geometry rules see it: three facts, not a whole `CanvasItem`. None of these rules
-// consults a pane's spec, group or z, so what crosses is the projection rather than the document.
-typedef struct {
-    SlopDeskWsUuid id;
-    SlopDeskWsRect rect;
-    bool           is_video;
-} SlopDeskWsPlaced;
-
-typedef struct {
-    SlopDeskWsUuid id;
-    SlopDeskWsRect rect;
-} SlopDeskWsCard;
-
-typedef struct {
-    SlopDeskWsUuid  id;
-    SlopDeskWsPoint screen_point;
-    uint8_t         edge;  // 0 top · 1 bottom · 2 left · 3 right
-} SlopDeskWsBeacon;
-
-SlopDeskWsRect slopdesk_ws_resizing(SlopDeskWsRect frame, uint8_t anchor,
-                                    double delta_width, double delta_height,
-                                    double min_width, double min_height);
-SlopDeskWsRect slopdesk_ws_placement(SlopDeskWsRect near, bool has_near,
-                                     const SlopDeskWsRect *existing, size_t count,
-                                     SlopDeskWsRect viewport, double width, double height,
-                                     double cascade);
-bool slopdesk_ws_pane_visible(SlopDeskWsPlaced pane, SlopDeskWsPoint camera,
-                              double viewport_width, double viewport_height,
-                              SlopDeskWsUuid focused, bool has_focused, double margin);
-// Deliberately not the same question as visibility: terminals held mounted must not pollute the
-// video-cap membership set.
-bool slopdesk_ws_pane_in_viewport(SlopDeskWsRect rect, SlopDeskWsPoint camera,
-                                  double viewport_width, double viewport_height);
-// `scale` is written whenever non-null, even when the cards did not fit.
-size_t slopdesk_ws_overview_layout(const SlopDeskWsPlaced *panes, size_t count,
-                                   double viewport_width, double viewport_height, double padding,
-                                   double *scale, SlopDeskWsCard *out, size_t cap);
-size_t slopdesk_ws_offscreen_beacons(const SlopDeskWsPlaced *panes, size_t count,
-                                     SlopDeskWsPoint camera,
-                                     double viewport_width, double viewport_height, double inset,
-                                     SlopDeskWsBeacon *out, size_t cap);
+// The minimum flex weight a divider may take, from the crate that enforces it — `repaired()`
+// clamps to this number, so a transcribed copy would describe a rule the client does not share.
+double slopdesk_ws_min_weight(void);
 
 // The tiled tree, as its PRE-ORDER walk rather than as its persisted JSON. Both languages already
 // agree on that JSON, and reusing it here would have been two lines — but `solve` runs on every
@@ -611,9 +465,8 @@ typedef struct {
     double value;
 } SlopDeskWsShare;
 
-// The default floor on a solved leaf, and the size a new pane opens at, as (width, height).
+// The default floor on a solved leaf, as (width, height).
 SlopDeskWsPoint slopdesk_ws_min_leaf(void);
-SlopDeskWsPoint slopdesk_ws_default_leaf(void);
 
 // 0 = a tree the walk could not rebuild, which is the same answer an empty tree gives.
 size_t slopdesk_ws_solve_layout(const SlopDeskWsTreeNode *nodes, size_t count,
@@ -673,30 +526,6 @@ bool slopdesk_ws_tree_first_leaf(const SlopDeskWsTreeNode *nodes, size_t count,
                                  SlopDeskWsUuid *answer);
 bool slopdesk_ws_tree_structurally_equal(const SlopDeskWsTreeNode *left, size_t left_count,
                                          const SlopDeskWsTreeNode *right, size_t right_count);
-
-
-// MARK: The arrange commands
-//
-// Each reads `(id, frame)` pairs and answers only the frames that MOVED, so a caller applies the
-// answer by lookup and a pane nobody named is untouched by construction. `edge` is AlignEdge's case
-// index: left, right, top, bottom, centerHorizontal, centerVertical.
-
-size_t slopdesk_ws_align(const SlopDeskWsFrame *targets, size_t count, uint8_t edge,
-                         SlopDeskWsFrame *out, size_t cap);
-size_t slopdesk_ws_distribute(const SlopDeskWsFrame *targets, size_t count, bool horizontal,
-                              SlopDeskWsFrame *out, size_t cap);
-size_t slopdesk_ws_tidy(const SlopDeskWsFrame *items, size_t count, double gutter,
-                        SlopDeskWsFrame *out, size_t cap);
-// `targets` is the group's members and nothing else — the box they currently occupy is derived from
-// them, so there is no second box to compute and get wrong. `proposed` is floored at the minimum
-// pane size and every member is clamped back inside it: the non-overlap solver moves a group as one
-// rigid body from that box, and a member outside it corrupts the sweep.
-size_t slopdesk_ws_resize_group(const SlopDeskWsFrame *targets, size_t count, SlopDeskWsRect proposed,
-                                SlopDeskWsFrame *out, size_t cap);
-double slopdesk_ws_tidy_gutter(void);
-// False for no frames at all: an empty plane has no box, which is a different answer from a box at
-// the origin.
-bool slopdesk_ws_bounding_box(const SlopDeskWsRect *frames, size_t count, SlopDeskWsRect *answer);
 
 
 // MARK: The re-tile layouts

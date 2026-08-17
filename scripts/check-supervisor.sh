@@ -2262,8 +2262,7 @@ if ! grep -qF 'depthExceeded' "${codec_swift}"; then
 fi
 
 for solver in Domain/SendKeysParser Domain/FocusResolver Domain/Tree/TabOrdering \
-  Domain/CanvasGeometry Domain/CanvasNonOverlap Domain/CanvasSnap \
-  Domain/Tree/SplitLayoutSolver Domain/Tree/SplitNode+Ops Domain/Canvas+Ops \
+  Domain/Tree/SplitLayoutSolver Domain/Tree/SplitNode+Ops \
   Domain/Tree/WorkspaceTreeOps; do
   solver_swift="Sources/SlopDeskWorkspaceModel/${solver}.swift"
   if [[ "$(grep -c 'import CSlopDeskFFI' "${solver_swift}")" -eq 0 ]]; then
@@ -2327,15 +2326,9 @@ compare_abi_enum() {
     fail "${label}: the two languages disagree about which byte a case crosses as (docs/55)"
   fi
 }
-compare_abi_enum "AlignEdge" \
-  Sources/SlopDeskWorkspaceModel/Domain/Canvas+Ops.swift 'extension AlignEdge' \
-  rust/slopdesk-workspace/src/canvas.rs 'pub const fn index(self) -> u8'
 compare_abi_enum "FocusDirection" \
   Sources/SlopDeskWorkspaceModel/WorkspaceSolverBridge.swift 'extension FocusDirection' \
   rust/slopdesk-workspace/src/focus.rs 'pub const fn index(self) -> u8'
-compare_abi_enum "ResizeAnchor" \
-  Sources/SlopDeskWorkspaceModel/WorkspaceSolverBridge.swift 'extension ResizeAnchor' \
-  rust/slopdesk-workspace/src/canvas_geometry.rs 'pub const fn index(self) -> u8'
 compare_abi_enum "LayoutPreset/TileLayout" \
   Sources/SlopDeskWorkspaceModel/Domain/Tree/WorkspaceTreeOps.swift 'var ffiByte: UInt8' \
   rust/slopdesk-workspace/src/tree_ops.rs 'pub const fn index(self) -> u8'

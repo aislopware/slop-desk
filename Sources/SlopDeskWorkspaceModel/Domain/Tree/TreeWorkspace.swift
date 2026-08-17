@@ -165,7 +165,7 @@ public extension TreeWorkspace {
     /// spec entries (a spec for a pane no longer in any tab — this is also what silently retires the
     /// Stage era's persisted stage-pane specs) and re-seeds a default ``PaneSpec`` for a leaf whose
     /// spec went missing (so the store can always materialize it). Pure. (Validate-then-repair, the
-    /// CLAUDE.md contract for untrusted persisted data — mirrors ``Workspace/normalizingGroups()``.)
+    /// CLAUDE.md contract for untrusted persisted data.)
     func normalizingSpecs() -> TreeWorkspace {
         var copy = self
         copy.sessions = sessions.map { session in
@@ -195,8 +195,7 @@ public extension TreeWorkspace {
 
     /// Repairs the active-selection invariants: the workspace always has ≥ 1 session; `activeSessionID`
     /// points at a real session; each session's `activeTabIndex` is clamped to `tabs.indices`; each tab's
-    /// `activePane`/`zoomedPane` is dropped if it no longer names a leaf in that tab. Pure. (Mirrors
-    /// ``Workspace/normalizingFocus()`` for the tree-rooted model.)
+    /// `activePane`/`zoomedPane` is dropped if it no longer names a leaf in that tab. Pure.
     func normalizingActive() -> TreeWorkspace {
         var copy = self
         // Re-seed an empty workspace.

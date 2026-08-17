@@ -4,9 +4,8 @@
 /// truth** (docs/30 §3) consumed by BOTH the rendered layout AND ``FocusResolver`` — so "move focus
 /// left" can never disagree with the pane the user actually sees to the left.
 ///
-/// On the infinite canvas the frames are the items' **canvas-space** rects (camera-independent, so
-/// directional focus is stable across pans and an off-viewport pane stays keyboard-navigable —
-/// ``Canvas/solvedLayout()``).
+/// The frames are the active tab's container-space rects, solved by ``SplitLayoutSolver`` from the
+/// tab's split tree — so directional focus reads the same geometry the renderer laid out.
 import CoreGraphics
 import Foundation
 

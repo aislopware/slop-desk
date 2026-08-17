@@ -241,7 +241,6 @@ final class LaunchDialHoldTests: XCTestCase {
     private func makeStore(_ tree: TreeWorkspace, dials: Dials) -> WorkspaceStore {
         WorkspaceStore(
             restoringTree: tree,
-            liveModel: .tree,
             makeSession: { seed in
                 LivePaneSession.make(
                     paneID: seed.id,

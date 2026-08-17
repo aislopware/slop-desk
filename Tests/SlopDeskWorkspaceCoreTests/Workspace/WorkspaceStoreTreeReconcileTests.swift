@@ -3,34 +3,30 @@ import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// W4 (docs/42 §"W4 — Store retarget"): pins the **DORMANT** tree-driven reconcile path the store
-/// gains alongside the live canvas `reconcile()`. ``WorkspaceStore/reconcileTree()`` diffs the desired
-/// leaf set `tree.allPaneIDs()` against the SAME `[PaneID: any PaneSessionHandle]` registry the canvas
-/// path uses, materializing one idle handle per new leaf and tearing down orphaned ones — mirroring the
-/// canvas reconcile, but driven by the new ``TreeWorkspace`` of intent.
+/// The per-op half of the reconcile contract (docs/42 §"W4 — Store retarget"):
+/// ``WorkspaceStore/reconcileTree()`` diffs the desired leaf set `tree.allPaneIDs()` against the
+/// `[PaneID: any PaneSessionHandle]` registry, materializing one idle handle per new leaf and tearing
+/// down the orphans — once per tree op.
 ///
-/// These tests are an EXTENSION of ``WorkspaceStoreReconcileTests`` (same class) so the W4 verify
-/// `swift test --filter WorkspaceStoreReconcileTests` exercises both the canvas and the tree paths. They
-/// inject the spec-only `makeSession` seam with a ``FakePaneSession`` — never a `SlopDeskClient` /
-/// `HostServer` — and assert against the fake's RECORDED materialize (`adopt`) / `teardown` call counts,
-/// not against the reconcile's own recomputed output (no tautology).
+/// These tests are an EXTENSION of ``WorkspaceStoreReconcileTests`` (same class) so
+/// `swift test --filter WorkspaceStoreReconcileTests` runs the whole contract. They inject the
+/// spec-only `makeSession` seam with a ``FakePaneSession`` — never a `SlopDeskClient` / `HostServer` —
+/// and assert against the fake's RECORDED materialize (`adopt`) / `teardown` call counts, not against
+/// the reconcile's own recomputed output (no tautology).
 ///
-/// Each store is built EMPTY-canvas so the canvas-init reconcile leaves the registry empty; the tree path
-/// is then the sole driver, and a registry handle exists iff its leaf is in the tree.
+/// Every store here is seeded from an explicit tree and holds no detached panes, so a registry handle
+/// exists iff its leaf is in that tree.
 extension WorkspaceStoreReconcileTests {
-    // MARK: - Tree fixtures (empty-canvas store + a seeded tree)
+    // MARK: - Tree fixtures
 
-    /// A store whose canvas is EMPTY (so the canvas-init reconcile yields an empty registry) and whose
-    /// `tree` is seeded from `restoringTree`. The tree path is then the only thing that touches the
-    /// registry, so a tree test can assert the registry 1:1 against `tree.allPaneIDs()` with no canvas
-    /// pane confounding it. NEVER a real client/host (`FakePaneSession` seam).
+    /// A store whose `tree` is seeded from `restoringTree`. NEVER a real client/host
+    /// (`FakePaneSession` seam).
     private func makeTreeStore(
         restoringTree: TreeWorkspace,
         liveVideoCap: Int = 2,
         videoTeardownSettle: Duration = .zero,
     ) -> WorkspaceStore {
         let store = WorkspaceStore(
-            restoring: Workspace(canvas: Canvas(items: []), focusedPane: nil),
             restoringTree: restoringTree,
             makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: liveVideoCap,
@@ -299,24 +295,6 @@ extension WorkspaceStoreReconcileTests {
     }
 
     // MARK: - the canvas reconcile path is NOT perturbed by the tree path
-
-    /// The tree path uses the SAME registry but is dormant for the live canvas path: a store driven ONLY
-    /// by the canvas (default construction) never gains a tree leaf in its registry, and `tree` defaults to
-    /// the single-pane default without being reconciled at init (canvas `reconcile()` is the only init
-    /// reconcile). This pins that init does NOT call reconcileTree (no double-binding).
-    func testInitDoesNotReconcileTree() {
-        // Default construction (non-empty default canvas) — the canvas path materialized its pane.
-        let store = WorkspaceStore(makeSession: { seed in FakePaneSession(seed.spec) }, liveVideoCap: 2)
-        store.attachLoopbackWorkspaceDocument()
-        // The registry backs the CANVAS pane, NOT the tree's default leaf (init did not reconcileTree).
-        let canvasPane = store.workspace.canvas.allIDs()[0]
-        XCTAssertEqual(store.allSessions.count, 1, "init materialized exactly the canvas pane")
-        XCTAssertNotNil(store.handle(for: canvasPane), "canvas pane is registered")
-        // The default tree leaf is a DIFFERENT id and is NOT in the registry (dormant).
-        let treeLeaf = store.tree.allPaneIDs()[0]
-        XCTAssertNotEqual(treeLeaf, canvasPane, "tree default leaf is independent of the canvas pane")
-        XCTAssertNil(store.handle(for: treeLeaf), "the tree default leaf is NOT registered at init (dormant)")
-    }
 
     // MARK: - Finding 1: the tree path honors the SAME video-cap teardown accounting as the canvas path
 

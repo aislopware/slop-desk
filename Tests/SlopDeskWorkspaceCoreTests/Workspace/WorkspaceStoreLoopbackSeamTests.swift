@@ -17,7 +17,7 @@ final class WorkspaceStoreLoopbackSeamTests: XCTestCase {
     /// send through, `.live` so the send is not refused, and a topology so the optimistic patch has
     /// something to be computed against.
     func testAttachingTheLoopbackLeavesTheStoreHoldingALiveDocument() throws {
-        let store = WorkspaceStore(liveModel: .tree, makeSession: { FakePaneSession($0.spec) })
+        let store = WorkspaceStore(makeSession: { FakePaneSession($0.spec) })
 
         store.attachLoopbackWorkspaceDocument()
 

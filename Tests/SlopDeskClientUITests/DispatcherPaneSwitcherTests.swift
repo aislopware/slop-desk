@@ -56,7 +56,7 @@ final class DispatcherPaneSwitcherTests: XCTestCase {
     /// A store whose active session has THREE single-pane tabs, left with a visit order where the
     /// recency answer and the positional answer differ (active = A at index 0, ring = [A, C, B]).
     private func makeThreeTabStore() -> WorkspaceStore {
-        let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in MountTestPaneSession(seed.spec) })
+        let store = WorkspaceStore(makeSession: { seed in MountTestPaneSession(seed.spec) })
         store.attachLoopbackWorkspaceDocument()
         store.newTab(kind: .terminal)
         store.newTab(kind: .terminal)
@@ -104,7 +104,7 @@ final class DispatcherPaneSwitcherTests: XCTestCase {
     /// A lone tab has nothing to switch between, so ⌃⇥ must fall through to the pane rather than being
     /// swallowed into an overlay that cannot act.
     func testControlTabWithOneTabPassesThrough() {
-        let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in MountTestPaneSession(seed.spec) })
+        let store = WorkspaceStore(makeSession: { seed in MountTestPaneSession(seed.spec) })
         store.attachLoopbackWorkspaceDocument()
         XCTAssertEqual(store.tree.activeSession?.tabs.count, 1, "precondition: one tab")
         let dispatcher = WorkspaceKeyDispatcher(store: store)

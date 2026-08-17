@@ -7,8 +7,8 @@
 //! not measurable.
 //!
 //! It lives in the DOMAIN crate rather than the wire one because both of this product's persistence
-//! files are domain values — the host's document cells and the client's canvas — and the domain
-//! crate is the one both ends already depend on.
+//! files are domain values — the host's document cells and the client's workspace tree — and the
+//! domain crate is the one both ends already depend on.
 //!
 //! ## Why hand-written rather than a crate
 //!

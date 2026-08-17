@@ -39,7 +39,7 @@ final class DispatcherOverlayYieldTests: XCTestCase {
     /// non-cascading, non-busy mid-tab close that fires immediately (no confirmation park) — making the
     /// destructive close observable as a leaf-count drop.
     private func makeTwoLeafStore() -> WorkspaceStore {
-        let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in MountTestPaneSession(seed.spec) })
+        let store = WorkspaceStore(makeSession: { seed in MountTestPaneSession(seed.spec) })
         store.attachLoopbackWorkspaceDocument()
         WorkspaceBindingRegistry.route(.splitRight, to: store) // mints a focused terminal sibling leaf
         XCTAssertEqual(store.tree.allPaneIDs().count, 2, "precondition: the split gave the tab two leaves")
