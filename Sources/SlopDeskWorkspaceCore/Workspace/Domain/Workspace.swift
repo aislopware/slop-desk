@@ -41,13 +41,6 @@ public struct Workspace: Codable, Sendable, Equatable {
     /// no per-pane endpoint. Persisted so the connect-gate prefills the last-used host; `nil` until the
     /// user first connects (the gate then shows ``ConnectionTarget/default``).
     public var connection: ConnectionTarget?
-    /// Viewport bookmarks by slot (1–9): ⇧⌘n saves, ⌘n recalls — the single-key spatial jumps of the
-    /// daily loop (terminal → browser pane → Claude pane) on a pan-only canvas.
-    public var bookmarks: [Int: CanvasBookmark]
-    /// Named, savable canvas layouts ("ios-build", "monitoring", …): the user snapshots the current
-    /// canvas under a name and switches contexts in one action. Snapshot = canvas + groups + focus,
-    /// NOT the app connection (one host per session) — see ``LayoutPreset``.
-    public var layoutPresets: [LayoutPreset]
 
     public init(
         schemaVersion: Int = Self.currentSchemaVersion,
@@ -56,8 +49,6 @@ public struct Workspace: Codable, Sendable, Equatable {
         maximizedPane: PaneID? = nil,
         groups: [PaneGroup] = [],
         connection: ConnectionTarget? = nil,
-        bookmarks: [Int: CanvasBookmark] = [:],
-        layoutPresets: [LayoutPreset] = [],
     ) {
         self.schemaVersion = schemaVersion
         self.canvas = canvas
@@ -65,26 +56,6 @@ public struct Workspace: Codable, Sendable, Equatable {
         self.maximizedPane = maximizedPane
         self.groups = groups
         self.connection = connection
-        self.bookmarks = bookmarks
-        self.layoutPresets = layoutPresets
-    }
-}
-
-// MARK: - CanvasBookmark (a saved viewport jump)
-
-/// One saved viewport bookmark: the FOCUSED PANE at save time plus the raw camera origin. Recall
-/// prefers following the pane when it still exists (live panes relocate — a raw coordinate goes
-/// stale the moment the pane is dragged); the camera origin is the fallback when the pane is gone.
-/// `name` (the pane's title at save time) labels the menu items.
-public struct CanvasBookmark: Codable, Sendable, Equatable {
-    public var pane: PaneID?
-    public var cameraOrigin: CGPoint
-    public var name: String
-
-    public init(pane: PaneID?, cameraOrigin: CGPoint, name: String) {
-        self.pane = pane
-        self.cameraOrigin = cameraOrigin
-        self.name = name
     }
 }
 
@@ -95,9 +66,6 @@ public extension Workspace {
     /// higher/unrecognized version — or any older on-disk shape that no longer decodes — falls back to
     /// ``defaultWorkspace()``. Single-user project: there is no backward-compatibility path by design.
     /// 5: `VideoEndpoint` gained `appName` (pane rebind by app+title).
-    /// 6: ``Workspace/bookmarks`` (viewport bookmarks, ⇧⌘n/⌘n).
-    /// 7: ``Workspace/layoutPresets`` (named savable canvas layouts).
-    /// 8: ``LayoutPreset/triggerAppName`` (auto-switch a layout on host app launch).
     /// 9: `snippets` (saved command macros). That field is gone from this struct, but the version stays
     ///   unbumped — the stale persisted key just decode-ignores, so no bump was needed to drop it.
     static let currentSchemaVersion = 9
@@ -170,17 +138,14 @@ public extension Workspace {
         return copy
     }
 
-    /// Repairs the SIDE collections (groups / presets) against a corrupt or hand-edited file —
-    /// the same defensive contract the canvas gets from ``dedupingItemIDs``. Applied on BOTH the on-disk
-    /// load and a portable import: a duplicate ``PaneGroupID`` (two groups → one SwiftUI Identifiable id →
-    /// undefined render results) drops to the first occurrence; a duplicate preset NAME (the layout
-    /// palette entries are name-keyed) drops to the first. Pure.
+    /// Repairs the SIDE collections against a corrupt or hand-edited file — the same defensive
+    /// contract the canvas gets from ``dedupingItemIDs``. Applied on BOTH the on-disk load and a
+    /// portable import: a duplicate ``PaneGroupID`` (two groups → one SwiftUI Identifiable id →
+    /// undefined render results) drops to the first occurrence. Pure.
     func normalizingCollections() -> Workspace {
         var copy = self
         var seenGroups = Set<PaneGroupID>()
         copy.groups = groups.filter { seenGroups.insert($0.id).inserted }
-        var seenPresetNames = Set<String>()
-        copy.layoutPresets = layoutPresets.filter { seenPresetNames.insert($0.name).inserted }
         return copy
     }
 }

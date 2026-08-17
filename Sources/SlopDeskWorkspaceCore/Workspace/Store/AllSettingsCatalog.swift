@@ -569,16 +569,8 @@ public enum AllSettingsCatalog {
             keywords: "dock icon red error badge tint exit failing tab macos appearance",
         ),
 
-        // MARK: Agents behaviour toggles
+        // MARK: Advanced behaviour toggles
 
-        SettingEntry(
-            key: SettingsKey.autoSwitchLayouts,
-            label: "Auto-Switch Layouts",
-            description: "Switch to a layout when its trigger app launches on the host.",
-            defaultText: "On",
-            bucket: .advancedOnly,
-            keywords: "layout switch trigger app auto agent",
-        ),
         SettingEntry(
             key: SettingsKey.recordClipboardHistory,
             label: "Record Clipboard History",
@@ -688,7 +680,7 @@ public enum AllSettingsCatalog {
         SettingsKey.clipboardShellControlled,
         // Appearance + Agents
         SettingsKey.newTabPositionKey,
-        SettingsKey.autoSwitchLayouts, SettingsKey.recordClipboardHistory,
+        SettingsKey.recordClipboardHistory,
     ]
 
     /// Filter the catalog by a search query, matching (case-insensitively) against the key, label,

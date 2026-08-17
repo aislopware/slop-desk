@@ -57,7 +57,6 @@ public struct SlopDeskClientApp: App {
     /// the Dock bounce rides ``CommandCompletionNotifier/bounceDock``.
     @State private var dockProgress: DockProgressController
     #endif
-    @State private var appLaunchMonitor: AppLaunchMonitor
     @State private var preferences: PreferencesStore
     /// The Agents settings-card model (install / uninstall / status of the Claude Code host hooks).
     /// Owned here so it outlives the separate `Settings` scene; its async seams resolve the active
@@ -95,9 +94,9 @@ public struct SlopDeskClientApp: App {
     /// ``WorkspaceRootView`` (both platforms); iOS reads only the two collapse flags (pin is an inert no-op).
     @State private var chrome: WorkspaceChromeState
     #if os(macOS)
-    /// The host-windows feed: the `@Observable` store behind Open Quickly's host-window rows and
-    /// ``AppLaunchMonitor``'s layout auto-switch. (The RIGHT rail it was also built for was retired
-    /// with the host-windows rail in `6a015eab` — the feed outlived it, see the `init` note.)
+    /// The host-windows feed: the `@Observable` store behind Open Quickly's host-window rows. (The
+    /// RIGHT rail it was also built for was retired with the host-windows rail in `6a015eab` — the
+    /// feed outlived it, see the `init` note.)
     /// App-owned so its renewal loop outlives column mounts; the loop itself runs in a scene `.task`
     /// and self-gates on chrome/OQ/connection.
     @State private var hostWindowFeed: HostWindowFeed
@@ -420,15 +419,6 @@ public struct SlopDeskClientApp: App {
         Self.wireAgentAttention(store: store, overlay: overlay, notifier: nil)
         #endif
 
-        // The app-launch monitor: polls the host while connected.
-        let launchMonitor = AppLaunchMonitor(
-            store: store,
-            isConnected: { [weak appConnection] in
-                if case .connected = appConnection?.status { return true }
-                return false
-            },
-            target: { [weak appConnection] in appConnection?.target ?? .default },
-        )
         // The Agents settings-card model. Its seams resolve the active session's FIRST connected
         // pane metadata façade at CALL time (not at construction — no pane is connected yet) and route the
         // install/uninstall/status verb through it. The card is host-global but `MetadataClient` is one-per-
@@ -454,25 +444,20 @@ public struct SlopDeskClientApp: App {
         _agentHooks = State(initialValue: agentHooks)
         _overlayCoordinator = State(initialValue: overlay)
         _folderFrecency = State(initialValue: folderFrecency)
-        _appLaunchMonitor = State(initialValue: launchMonitor)
         // The app owns the chrome flags (incl. window PIN) so the macOS scene's blessed
         // `.introspect(.window)` closure reads the SAME `chrome.pinned` the titlebar / menu flip.
         let chromeState = WorkspaceChromeState()
         _chrome = State(initialValue: chromeState)
         #if os(macOS)
-        // Host-windows FEED: kept for `AppLaunchMonitor`'s layout auto-switch (its live snapshot
-        // answers the monitor's poll for free). Its renewal loop (a scene `.task` below) gates on OQ
-        // visibility + connection — no OQ up costs the host exactly 0 Hz; a dormant feed falls back
-        // to the monitor's own wire query. The connection is weak like `overlay.connectionTarget`.
+        // Host-windows FEED: Open Quickly's host-window rows. Its renewal loop (a scene `.task`
+        // below) gates on OQ visibility + connection — no OQ up costs the host exactly 0 Hz. The
+        // connection is weak like `overlay.connectionTarget`.
         let feed = HostWindowFeed(
             isActive: { overlay.openQuicklyVisible },
             isConnected: { [weak appConnection] in appConnection?.status == .connected },
             target: { [weak appConnection] in appConnection?.target ?? .default },
         )
         _hostWindowFeed = State(initialValue: feed)
-        // While the feed is live its snapshot answers the app-launch monitor's
-        // poll for free (one poller replaces two); a dormant feed falls back to the wire query.
-        launchMonitor.hostWindowFeed = feed
         // QUIT-DRAIN: hand the termination delegate the single live store (weak — the App's `@State`
         // owns it) so `applicationShouldTerminate` can drain the in-flight pane teardowns via
         // `quiesce()` before the process dies. Set here, before any window exists, so the seam is live
@@ -686,10 +671,6 @@ public struct SlopDeskClientApp: App {
                 .onChange(of: store.dockTileModel) { _, model in dockProgress.apply(model) }
                 .task { dockProgress.apply(store.dockTileModel) }
             #endif
-                .task {
-                    guard !Self.hasAutomationEnvironment() else { return }
-                    await appLaunchMonitor.run()
-                }
                 // AUTOMATION ONLY (env-gated): auto-connect so an autoconnect launch goes live without a
                 // manual click. A normal launch silently re-connects the saved host (see the
                 // auto-reconnect task) or, on a fresh install, waits for the user to open the

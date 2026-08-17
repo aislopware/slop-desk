@@ -127,16 +127,6 @@ final class WorkspaceStoreTreeHardeningTests: XCTestCase {
         XCTAssertFalse(store.tree.contains(leaf), "the idle leaf closed immediately")
     }
 
-    /// AppLaunchMonitor side: `liveLayoutPresets` resolves from the TREE under `.tree`, and
-    /// `presetForLaunchedApp` matches against it — so a tree-carried trigger preset is reachable while a
-    /// canvas one is dead. A regression here has the monitor read `workspace.layoutPresets` (the dead canvas's, empty).
-    func testLiveLayoutPresetsAreEmptyOnTheTreeShell() {
-        let store = makeTreeStore()
-
-        XCTAssertTrue(store.liveLayoutPresets.isEmpty, "a LayoutPreset embeds a Canvas the tree shell never renders")
-        XCTAssertNil(store.presetForLaunchedApp("grafana"), "so the app-launch trigger scan finds nothing to switch to")
-    }
-
     // MARK: - ⌘⇧R renames the active TAB (was a dead-end on .tree)
 
     /// Routing `.renamePane` on a `.tree` store records the active TAB as the pending rename target (the

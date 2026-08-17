@@ -419,7 +419,7 @@ public final class PreferencesStore {
         .newTabPosition, .autoHideTabsPanel,
         .dockIconAnimateProgress, .dockIconErrorBadge,
         // Agents
-        .autoSwitchLayouts, .recordClipboardHistory,
+        .recordClipboardHistory,
         .agentBadgeWhileProcessing, .agentBadgeWhenComplete, .agentBadgeWhenAwaitingInput,
     ]
 

@@ -3,61 +3,15 @@ import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// Pins the fixes from the session self-review:
-/// F1 switchToLayoutPreset clears pendingClose/pendingRename; F3 OSC notification rate limiter;
-/// F5 saveBookmark uses the live shell title. (F2 animation scope + F4 ⌘N default are covered by
-/// CanvasView eyeball / PaneCreationCommandTests respectively.)
+/// Pins the fixes from the session self-review: F3 the OSC notification rate limiter, and the
+/// title redaction that reaches every title surface.
 @MainActor
 final class ReviewFixTests: XCTestCase {
     private func makeStore(restoring: Workspace? = nil) -> WorkspaceStore {
         WorkspaceStore(restoring: restoring, makeSession: { seed in FakePaneSession(seed.spec) }, liveVideoCap: 5)
     }
 
-    // MARK: - F1: layout switch clears pending dialogs
-
-    func testSwitchLayoutClearsPendingClose() {
-        let a = PaneID()
-        let ws = Workspace(canvas: Canvas(items: [
-            CanvasItem(
-                id: a,
-                spec: PaneSpec(kind: .terminal, title: "A"),
-                frame: CGRect(x: 0, y: 0, width: 480, height: 320),
-                z: 0,
-            ),
-        ]), focusedPane: a)
-        let store = makeStore(restoring: ws)
-        store.saveLayoutPreset(name: "x")
-        (store.handle(for: a) as? FakePaneSession)?.isShellBusy = true
-        store.requestClosePane(a)
-        XCTAssertEqual(store.pendingClose, a, "a busy-shell close parks here")
-
-        store.switchToLayoutPreset(name: "x")
-
-        XCTAssertNil(store.pendingClose, "a layout switch orphans the pending id → no phantom dialog")
-        XCTAssertNil(store.pendingRename)
-    }
-
-    // MARK: - F5: bookmark uses the live title
-
-    func testBookmarkNameFallsBackToSpecTitleWithoutLiveTitle() {
-        // The FakePaneSession has no live terminal title, so displayTitle falls back to spec.title.
-        let a = PaneID()
-        let ws = Workspace(canvas: Canvas(items: [
-            CanvasItem(
-                id: a,
-                spec: PaneSpec(kind: .terminal, title: "MyShell"),
-                frame: CGRect(x: 0, y: 0, width: 480, height: 320),
-                z: 0,
-            ),
-        ]), focusedPane: a)
-        let store = makeStore(restoring: ws)
-        store.saveBookmark(1)
-        XCTAssertEqual(
-            store.workspace.bookmarks[1]?.name,
-            "MyShell",
-            "bookmark name resolves through displayTitle (live title when present, else spec)",
-        )
-    }
+    // MARK: - Titles are redacted everywhere
 
     /// displayTitle (now used by the carousel tab + top bar, not just the pill/sidebar) masks secrets,
     /// so a secret in the OSC/window title never leaks into ANY title surface.

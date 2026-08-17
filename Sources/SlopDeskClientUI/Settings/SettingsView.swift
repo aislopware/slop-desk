@@ -1569,7 +1569,6 @@ private struct AgentsSettingsTab: View {
     /// renders disabled ("Connect a session") rather than crashing.
     @Environment(\.agentHooksController) private var agentHooks
 
-    @Default(.autoSwitchLayouts) private var autoSwitchLayouts
     @Default(.recordClipboardHistory) private var recordClipboardHistory
 
     // The "Agent Behaviour" toggles. badge×3 + notify×2 are fire-time `Defaults.Keys` (apply
@@ -1597,7 +1596,6 @@ private struct AgentsSettingsTab: View {
             agentBehaviorHostSection
 
             slateFormSection("Behaviour") {
-                Toggle("Auto-switch layouts on trigger app", isOn: $autoSwitchLayouts)
                 Toggle("Record clipboard history", isOn: $recordClipboardHistory)
                 timingFooter(.live)
             }

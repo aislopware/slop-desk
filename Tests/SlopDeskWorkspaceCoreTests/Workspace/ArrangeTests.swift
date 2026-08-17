@@ -173,13 +173,6 @@ final class ArrangeTests: XCTestCase {
         XCTAssertEqual(fb.minX - fa.maxX, fc.minX - fb.maxX, accuracy: 1e-3, "distribute equalised the horizontal gaps")
     }
 
-    func testApplySaveLayoutOpensTheSavePrompt() {
-        let store = makeStore()
-        XCTAssertFalse(store.pendingSaveLayout)
-        apply(.saveLayout, to: store)
-        XCTAssertTrue(store.pendingSaveLayout, "the command opens the Save Current Layout… prompt")
-    }
-
     func testSelectAllPanesSelectsEveryPaneAndRoutes() {
         let a = PaneID(), b = PaneID(), c = PaneID()
         let store = makeStore(restoring: Workspace(canvas: Canvas(items: [

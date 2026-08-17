@@ -110,12 +110,11 @@ public struct WorkspacePersistence: @unchecked Sendable {
         // make the store eagerly allocate a session per item on the main actor — fall back to default
         // rather than freeze on launch.
         guard decoded.canvas.items.count <= Self.maxItems,
-              decoded.groups.count <= Self.maxItems,
-              decoded.layoutPresets.count <= Self.maxItems else { return resetToDefault() }
+              decoded.groups.count <= Self.maxItems else { return resetToDefault() }
         var seen = Set<PaneID>()
         var repaired = decoded
         repaired.canvas = repaired.canvas.dedupingItemIDs(seen: &seen)
-        // Repair the side collections (duplicate group ids / preset names) too.
+        // Repair the side collections (duplicate group ids) too.
         return repaired.normalizingCollections().normalizingFocus().normalizingGroups()
     }
 

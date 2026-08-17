@@ -78,25 +78,6 @@ final class CanvasScrollPanTests: XCTestCase {
         XCTAssertEqual(store.liveCameraOffset, .zero, "recenter discards the pending live scroll offset")
     }
 
-    /// Switching to a saved layout preset sets the camera ABSOLUTELY (the preset's saved camera), so it must
-    /// discard a still-pending live scroll — else a late `commitScrollPan()` folds a stale relative delta
-    /// onto the restored camera, jumping the viewport off the saved layout.
-    func testSwitchToLayoutPresetDiscardsPendingLiveScroll() {
-        let store = makeStore()
-        store.addPane(kind: .terminal)
-        store.saveLayoutPreset(name: "p", triggerAppName: nil)
-        store.scrollPan(by: CGSize(width: 120, height: 80))
-        XCTAssertNotEqual(store.liveCameraOffset, .zero, "precondition: a live scroll is pending")
-
-        store.switchToLayoutPreset(name: "p")
-
-        XCTAssertEqual(
-            store.liveCameraOffset,
-            .zero,
-            "switching to a saved layout preset discards the pending live scroll",
-        )
-    }
-
     /// The in-view-guarantee re-center in the placement paths (add / duplicate / reopen / system-dialog) is
     /// also an ABSOLUTE camera set, so it too must discard a pending live scroll when it fires.
     /// Drives the off-viewport branch by committing the camera far from where panes

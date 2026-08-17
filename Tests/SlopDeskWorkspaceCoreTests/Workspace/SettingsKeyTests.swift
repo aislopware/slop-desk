@@ -28,7 +28,6 @@ final class SettingsKeyTests: XCTestCase {
             SettingsKey.tabBadgeOnCommandFinish,
             SettingsKey.tabBadgeOnCommandFail,
             SettingsKey.tabBadgeOnCommandAwaitInput,
-            SettingsKey.autoSwitchLayouts,
             SettingsKey.redactSecrets,
             SettingsKey.recordClipboardHistory,
             SettingsKey.onLaunchKey,
@@ -90,16 +89,13 @@ final class SettingsKeyTests: XCTestCase {
         XCTAssertTrue(SettingsKey.longCommandNotificationsEnabled, "an unset key stays default-ON")
     }
 
-    func testPrivacyAndLayoutGatesDefaultOnAndRespectFalse() {
+    func testPrivacyGatesDefaultOnAndRespectFalse() {
         XCTAssertTrue(SettingsKey.redactSecretsEnabled)
         XCTAssertTrue(SettingsKey.recordClipboardHistoryEnabled)
-        XCTAssertTrue(SettingsKey.autoSwitchLayoutsEnabled)
         SettingsKey.store.set(false, forKey: SettingsKey.redactSecrets)
         SettingsKey.store.set(false, forKey: SettingsKey.recordClipboardHistory)
-        SettingsKey.store.set(false, forKey: SettingsKey.autoSwitchLayouts)
         XCTAssertFalse(SettingsKey.redactSecretsEnabled)
         XCTAssertFalse(SettingsKey.recordClipboardHistoryEnabled)
-        XCTAssertFalse(SettingsKey.autoSwitchLayoutsEnabled)
     }
 
     /// The chrome key strings are pinned so a rename can't split-brain the Settings UI from its consumers.

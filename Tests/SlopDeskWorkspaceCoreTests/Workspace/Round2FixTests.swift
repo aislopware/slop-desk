@@ -4,9 +4,9 @@ import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// Pins the 4 fixes from the round-2 self-review:
-/// G1 palette recents record from apply() (keyboard/menu, not just the palette); G2 deterministic
-/// auto-switch winner; G3 live group-drag offset broadcast; G4 nativeFrameSize eviction on close.
+/// Pins the fixes from the round-2 self-review:
+/// G1 palette recents record from apply() (keyboard/menu, not just the palette); G3 live group-drag
+/// offset broadcast; G4 nativeFrameSize eviction on close.
 @MainActor
 final class Round2FixTests: XCTestCase {
     private func makeStore(restoring: Workspace? = nil) -> WorkspaceStore {
@@ -32,37 +32,11 @@ final class Round2FixTests: XCTestCase {
 
     func testApplyDoesNotRecordNavigationVerbs() {
         let store = makeStore()
-        apply(.saveBookmark(1), to: store)
-        apply(.recallBookmark(1), to: store)
         apply(.centerAll, to: store)
         apply(.focus(.left), to: store)
         XCTAssertTrue(store.recentCommands.isEmpty, "navigation/transient verbs don't churn the recents ring")
-        XCTAssertFalse(WorkspaceCommand.saveBookmark(1).isRecentsWorthy)
+        XCTAssertFalse(WorkspaceCommand.centerAll.isRecentsWorthy)
         XCTAssertTrue(WorkspaceCommand.tidy.isRecentsWorthy)
-    }
-
-    // MARK: - G2: deterministic auto-switch order
-
-    func testAutoSwitchPicksFirstPresetInSavedOrder() {
-        // Two presets, two triggers — the FIRST-saved preset whose trigger appears wins, deterministically.
-        let a = PaneID(), b = PaneID()
-        let store = makeStore(restoring: Workspace(canvas: Canvas(items: [
-            item(a, CGRect(x: 0, y: 0, width: 480, height: 320)),
-            item(b, CGRect(x: 600, y: 0, width: 480, height: 320)),
-        ]), focusedPane: a))
-        // Save "first" (1 pane) with trigger Alpha, then "second" (2 panes) with trigger Beta.
-        store.closePane(b)
-        store.saveLayoutPreset(name: "first", triggerAppName: "Alpha")
-        store.addPane(kind: .terminal) // 2 panes
-        store.saveLayoutPreset(name: "second", triggerAppName: "Beta")
-        // Both triggers present: the loop iterates presets in saved order, so "first" wins.
-        // (Drive the store's per-app switch as the monitor would, in preset order.)
-        for preset in store.workspace.layoutPresets {
-            if let t = preset.triggerAppName, ["Alpha", "Beta"].contains(t) {
-                if store.autoSwitchForLaunchedApp(t) { break }
-            }
-        }
-        XCTAssertEqual(store.workspace.canvas.items.count, 1, "the first-saved matching layout (1 pane) won")
     }
 
     // MARK: - G3: live group-drag offset

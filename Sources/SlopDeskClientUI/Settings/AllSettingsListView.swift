@@ -58,7 +58,6 @@ struct AllSettingsListView: View {
     @Default(.focusFollowsMouse) private var focusFollowsMouse
     @Default(.paneSwitcherPreview) private var paneSwitcherPreview
     @Default(.scrollMultiplier) private var scrollMultiplier
-    @Default(.autoSwitchLayouts) private var autoSwitchLayouts
     @Default(.recordClipboardHistory) private var recordClipboardHistory
     // The remaining Controls / Mouse / Scroll knobs + the OSC-52 read/write access pickers (the
     // clipboard-read/write gates live under Advanced → All Settings — `copy-and-paste` spec). Mirror the
@@ -246,7 +245,6 @@ struct AllSettingsListView: View {
         case SettingsKey.focusFollowsMouse: boolControl($focusFollowsMouse)
         case SettingsKey.paneSwitcherPreview: boolControl($paneSwitcherPreview)
         case SettingsKey.undoAtPrompt: boolControl($undoAtPrompt)
-        case SettingsKey.autoSwitchLayouts: boolControl($autoSwitchLayouts)
         case SettingsKey.recordClipboardHistory: boolControl($recordClipboardHistory)
         // OSC-52 clipboard access gates (allow / deny / ask) — live under Advanced → All Settings; feed the
         // config passthrough, so refresh on change.

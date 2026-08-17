@@ -26,11 +26,8 @@ public enum WorkspaceCommand: Sendable, Equatable {
     case toggleBroadcast // ⇧⌘B — arm/disarm synchronized input to the pane group (tmux synchronize-panes)
     case renamePane // ⌘R   — rename the focused pane
     case reconnectPane // ⇧⌘R — re-dial the focused pane (primary failure recovery)
-    case saveBookmark(Int) // ⇧⌘1–9 — save the viewport as bookmark n
-    case recallBookmark(Int) // ⌘1–9  — jump back to bookmark n
     case align(AlignEdge) // align the Arrange targets (selection ≥2, else all) to an edge/centre
     case distribute(horizontal: Bool) // even-space the Arrange targets horizontally / vertically
-    case saveLayout // open the "Save Current Layout…" prompt
     case selectAllPanes // ⌥⌘A — multi-select every pane on the canvas
 }
 
@@ -45,8 +42,6 @@ public extension WorkspaceCommand {
              .cycleFocus,
              .switchRecentPane,
              .cycleFocusInGroup,
-             .saveBookmark,
-             .recallBookmark,
              .centerFocusedPane,
              .centerAll,
              .selectAllPanes:
@@ -283,14 +278,6 @@ public extension CommandInterpreter {
         // Reconnect the focused pane: ⇧⌘R — the primary failure-recovery command, bound so it's learnable
         // as a chord and surfaces its glyph in the menu + palette (not palette-only).
         map[KeyChord(character: "r", [.command, .shift])] = .reconnectPane
-
-        // Viewport bookmarks: ⇧⌘n saves the current viewport into slot n, ⌘n jumps back — the
-        // single-key spatial loop a pan-only canvas needs (no tabs ever claimed ⌘1–9 here).
-        for n in 1...9 {
-            let digit = Character("\(n)")
-            map[KeyChord(character: digit, [.command, .shift])] = .saveBookmark(n)
-            map[KeyChord(character: digit, [.command])] = .recallBookmark(n)
-        }
 
         return map
     }

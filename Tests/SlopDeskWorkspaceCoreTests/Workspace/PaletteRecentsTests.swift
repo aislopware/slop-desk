@@ -37,11 +37,9 @@ final class PaletteRecentsTests: XCTestCase {
         apply(.groupSelection, to: store)
         apply(.align(.left), to: store)
         apply(.distribute(horizontal: true), to: store)
-        apply(.saveLayout, to: store)
         XCTAssertTrue(store.recentCommands.contains(.groupSelection), "Group Selected Panes is a recent")
         XCTAssertTrue(store.recentCommands.contains(.align(.left)), "Align is a recent")
         XCTAssertTrue(store.recentCommands.contains(.distribute(horizontal: true)), "Distribute is a recent")
-        XCTAssertTrue(store.recentCommands.contains(.saveLayout), "Save Current Layout is a recent")
     }
 
     /// ⌘N (.newPaneDefault) opens a pane of the user's default kind, but the palette catalog has no
@@ -69,7 +67,6 @@ final class PaletteRecentsTests: XCTestCase {
         _ = store.groupSelection()
         store.alignPanes(to: .left)
         store.distributePanes(horizontal: true)
-        store.requestSaveLayout()
         XCTAssertTrue(
             store.recentCommands.isEmpty,
             "bypassing apply() must not record recents — that is the bug this routing fixes",
