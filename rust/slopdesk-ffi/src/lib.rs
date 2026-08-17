@@ -74,6 +74,7 @@ pub mod input_event;
 pub mod input_routing;
 pub mod inspector;
 pub mod keybind;
+pub mod link_action;
 pub mod link_detect;
 pub mod metadata;
 pub mod metadata_wire;

@@ -38,6 +38,7 @@ pub mod dedup;
 pub mod inputbox;
 pub mod keybind;
 pub mod link;
+pub mod link_action;
 pub mod mode;
 pub mod paste;
 pub mod tracker;
@@ -47,5 +48,6 @@ pub use blocks::{BlockNavigatorFilter, BlockRing, BlockStatus, CommandBlock, Out
 pub use dedup::InputDedupRing;
 pub use inputbox::{Ingested, InputAffordance, InputBoxModel};
 pub use link::{DetectedLink, DetectedLinkKind, LinkSchemePolicy};
+pub use link_action::{CmdClick, CmdShiftClick, LinkAction, LinkConfig, LinkTarget, LinkTrigger};
 pub use mode::{TerminalMode, TerminalModeEvent};
 pub use tracker::TerminalModeTracker;

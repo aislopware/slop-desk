@@ -1,3 +1,25 @@
+// What a gesture DOES to a detected link, as the Swift face of `rust/slopdesk-terminal`'s
+// `link_action`, reached through `rust/slopdesk-ffi`'s `link_action` door.
+//
+// ## What is not here any more
+//
+// The click-actions table: the ⌘click / ⌘⇧click branches, the URL rule that overrides the
+// path-oriented ⌘⇧click setting, the context menu's four items, and the config-INDEPENDENT explicit
+// open the keyboard affordances use. With it went the `:line[:col]` suffix scan that puts a
+// compiler location back onto a resolved path, the purely-lexical POSIX parent, and the `cd` line
+// with its parent fallback and its single-quoting. All Rust's, in the crate that already owns the
+// scan that produced the link. This file owns the vocabulary the actuators speak and the marshalling.
+//
+// ## Why the verb is the RETURN
+//
+// The answer has two halves — what to do, and what to do it to. `.nothing` has no payload and
+// `.copyPathClient("")` is a real (if degenerate) answer, so a length cannot double as the verb the
+// way it does for a door that answers one string. The verb rides the return, the payload rides the
+// usual `(out, cap)` pair, and `needed` carries docs/55 §4's retry number so a caller sizes its
+// buffer without asking the verb twice.
+
+import CSlopDeskFFI
+import Foundation
 import SlopDeskWorkspaceModel
 
 // MARK: - Pure link gesture/menu → action mapping
@@ -60,7 +82,7 @@ public enum LinkAction: Equatable, Sendable {
     case nothing
 }
 
-/// The PURE mapping `(gesture or menu item) × link kind × config → ``LinkAction``` behind the
+/// The mapping `(gesture or menu item) × link kind × config → ``LinkAction``` behind the
 /// "Click Actions" table (see `docs/ui-shell/spec/user-interface__files-and-links.md` §"Click Actions"):
 ///
 /// | Target | Click | ⌘click | ⌘⇧click |
@@ -68,11 +90,10 @@ public enum LinkAction: Equatable, Sendable {
 /// | Path | nothing | open in code panel (host workbench) / copy / nothing | reveal-Finder (host) / open-default (host) |
 /// | URL  | nothing | open URL (client) / copy / nothing | Copy URL (client) |
 ///
-/// Splitting it out as a pure enum keeps the click-actions table unit-testable headless (``LinkActionPolicyTests``,
-/// revert-to-confirm-fail) and lets BOTH the ⌘click/⌘⇧click renderer path and the right-click
-/// context menu (``TerminalContextMenu/LinkItem``) resolve through the SAME logic — no parallel switch
-/// that could drift. The renderer is the thin actuator: it feeds the ``DetectedLink`` under the pointer
-/// + the live config and dispatches the returned action.
+/// Every entry is `slopdesk_terminal::link_action`'s, so BOTH the ⌘click/⌘⇧click renderer path and the
+/// right-click context menu (``TerminalContextMenu/LinkItem``) resolve through the SAME table — no
+/// parallel switch that could drift, in either language. The renderer is the thin actuator: it feeds
+/// the ``DetectedLink`` under the pointer + the live config and dispatches the returned action.
 ///
 /// A path's actuation path uses ``DetectedLink/resolvedAbsolute`` when the detector could resolve it
 /// purely (an absolute path, a relative path joined to an absolute cwd, a `file://` path) and falls back
@@ -81,15 +102,7 @@ public enum LinkAction: Equatable, Sendable {
 public enum LinkActionPolicy {
     /// Resolve a left-click gesture on `link` under `config`.
     public static func action(for gesture: LinkGesture, link: DetectedLink, config: LinkActionConfig) -> LinkAction {
-        switch gesture {
-        case .plainClick:
-            // A bare click on a link does NOTHING — it prevents accidental opens.
-            .nothing
-        case .commandClick:
-            commandClickAction(link: link, behavior: config.cmdClick)
-        case .commandShiftClick:
-            commandShiftClickAction(link: link, behavior: config.cmdShiftClick)
-        }
+        resolve(trigger: gesture.ffiTrigger, link: link, config: config)
     }
 
     /// Resolve an EXPLICIT open intent on `link` — the keyboard-only affordances that MEAN "open": Hint-to-Open
@@ -107,49 +120,19 @@ public enum LinkActionPolicy {
 
     /// Resolve a right-click context-menu item on `link` (``TerminalContextMenu/LinkItem``). The menu
     /// only offers reveal / cd for path kinds (see ``TerminalContextMenu/linkItems(for:)``), so a URL +
-    /// reveal/cd is defensively ``LinkAction/nothing``.
+    /// reveal/cd is defensively ``LinkAction/nothing``. The four menu triggers read no config — the
+    /// menu says what it does on its own label — so the door takes the default one.
     public static func action(for menuItem: TerminalContextMenu.LinkItem, link: DetectedLink) -> LinkAction {
-        switch menuItem {
-        case .open:
-            if isURL(link) { .openURLClient(link.raw) } else { .openCodeHost(codeOpenTarget(link)) }
-        case .copyPath:
-            .copyPathClient(isURL(link) ? link.raw : effectivePath(link))
-        case .revealInFinder:
-            isURL(link) ? .nothing : .revealHost(effectivePath(link))
-        case .changeDirectoryHere:
-            isURL(link) ? .nothing : .changeDirectoryPTY(effectivePath(link))
-        }
-    }
-
-    // MARK: - Gesture sub-rules
-
-    private static func commandClickAction(link: DetectedLink, behavior: LinkCmdClick) -> LinkAction {
-        switch behavior {
-        case .open:
-            if isURL(link) { .openURLClient(link.raw) } else { .openCodeHost(codeOpenTarget(link)) }
-        case .copy:
-            .copyPathClient(isURL(link) ? link.raw : effectivePath(link))
-        case .nothing:
-            .nothing
-        }
-    }
-
-    private static func commandShiftClickAction(link: DetectedLink, behavior: LinkCmdShiftClick) -> LinkAction {
-        // A URL has no Finder target, so ⌘⇧click on a URL maps to *Copy URL* regardless of the
-        // (path-oriented) `link-cmd-shift-click` setting.
-        if isURL(link) { return .copyPathClient(link.raw) }
-        switch behavior {
-        case .revealFinder:
-            return .revealHost(effectivePath(link))
-        case .openSystemDefault:
-            return .openHost(effectivePath(link))
-        }
+        resolve(trigger: menuItem.ffiTrigger, link: link, config: .default)
     }
 
     // MARK: - Helpers
 
     /// A pure URL (`scheme://…` or `mailto:`), as opposed to a filesystem path. A `file://` URL is a PATH
     /// for action purposes — its filesystem target is what `Open` / `Reveal` / `Copy Path` act on.
+    ///
+    /// A field comparison, not a rule: the table that ACTS on it is the crate's. The menu's own labels
+    /// (`TerminalContextMenu.LinkItem.title(for:)`) ask the same question of the same field.
     static func isURL(_ link: DetectedLink) -> Bool { link.kind == .url }
 
     /// The best path string for a path-kind action: the purely-resolved absolute path when the detector
@@ -159,33 +142,23 @@ public enum LinkActionPolicy {
 
     /// The target string for an embedded-editor open (``LinkAction/openCodeHost(_:)``): the best path
     /// PLUS the detector's `:line[:col]` suffix when the match carried one (`resolvedAbsolute` drops
-    /// it, `raw` keeps it — an unresolved link rides `raw` as-is, suffix already in place). Pure;
-    /// pinned by ``LinkActionPolicyTests``.
+    /// it, `raw` keeps it — an unresolved link rides `raw` as-is, suffix already in place).
+    ///
+    /// `""` is a REAL answer here (an empty link has an empty target), so "no answer" maps to it.
     public static func codeOpenTarget(_ link: DetectedLink) -> String {
-        guard let resolved = link.resolvedAbsolute else { return link.raw }
-        return resolved + lineColSuffix(of: link.raw)
+        withOptionalText(link.raw) { raw, rawLength, _ in
+            withOptionalText(link.resolvedAbsolute) { resolved, resolvedLength, present in
+                wsAnswer { out, cap in
+                    slopdesk_link_code_open_target(raw, rawLength, resolved, resolvedLength, present, out, cap)
+                } ?? ""
+            }
+        }
     }
 
-    /// The trailing `:line[:col]` numeric suffix of `text` (leading colon included), or `""`. The
-    /// same shape ``TerminalLinkDetector``'s splitter accepts — at most two trailing colon-number
-    /// runs, digits only.
+    /// The trailing `:line[:col]` numeric suffix of `text` (leading colon included), or `""` — the
+    /// same shape ``TerminalLinkDetector``'s splitter accepts.
     static func lineColSuffix(of text: String) -> String {
-        let chars = Array(text)
-        func runStart(endingAt end: Int) -> Int? {
-            var index = end
-            var sawDigit = false
-            while index > 0, chars[index - 1].isNumber, chars[index - 1].isASCII {
-                index -= 1
-                sawDigit = true
-            }
-            if sawDigit, index > 0, chars[index - 1] == ":" { return index - 1 }
-            return nil
-        }
-        guard let colStart = runStart(endingAt: chars.count) else { return "" }
-        let start = runStart(endingAt: colStart) ?? colStart
-        // A "suffix" that consumes the whole text has no path ahead of it — not a suffix.
-        guard start > 0 else { return "" }
-        return String(chars[start...])
+        answer(text) { bytes, length, out, cap in slopdesk_link_line_col_suffix(bytes, length, out, cap) }
     }
 
     // MARK: - "Change Directory Here" actuation idiom (cd a FILE → its parent folder)
@@ -200,7 +173,7 @@ public enum LinkActionPolicy {
     /// one string (`Data(line.utf8)`) so the idiom cannot drift; NEVER via `SendKeysParser` (cd is verbatim).
     /// Pinned by ``LinkActionPolicyTests`` (revert-to-confirm-fail: a bare `cd '<file>'` must not regress).
     public static func changeDirectoryCommandLine(_ path: String) -> String {
-        "cd " + shellSingleQuoted(path) + " 2>/dev/null || cd " + shellSingleQuoted(posixParent(path)) + "\n"
+        answer(path) { bytes, length, out, cap in slopdesk_link_cd_command_line(bytes, length, out, cap) }
     }
 
     /// The POSIX-`dirname` of `path`, computed PURELY (no disk access): the path with its last component
@@ -208,15 +181,106 @@ public enum LinkActionPolicy {
     /// (`/a` → `/`); a bare name with no slash is the current dir `.` (`file` → `.`); root stays root.
     /// Pinned by ``LinkActionPolicyTests``.
     public static func posixParent(_ path: String) -> String {
-        var p = Substring(path)
-        // Drop a trailing slash run, but never collapse root "/" itself.
-        while p.count > 1, p.last == "/" { p = p.dropLast() }
-        guard let slash = p.lastIndex(of: "/") else { return "." }
-        if slash == p.startIndex { return "/" } // the only "/" is the leading one → parent is root
-        return String(p[p.startIndex..<slash])
+        answer(path) { bytes, length, out, cap in slopdesk_link_posix_parent(bytes, length, out, cap) }
     }
 
-    /// POSIX single-quote `s` so it survives the shell verbatim: wrap in `'…'` and rewrite each embedded `'`
-    /// as `'\''` (close-quote, escaped-quote, reopen-quote). Safe for spaces, `$`, `` ` ``, `;`, etc.
-    static func shellSingleQuoted(_ s: String) -> String { ShellQuoting.singleQuote(s) }
+    // MARK: - Marshalling
+
+    /// Feeds the link + the trigger through the table and reads the `(verb, payload)` pair back as the
+    /// action the actuators dispatch. An unknown verb — a door newer than this file — is ``LinkAction/nothing``,
+    /// which is the safe reading of "I do not know what this gesture does".
+    private static func resolve(trigger: UInt8, link: DetectedLink, config: LinkActionConfig) -> LinkAction {
+        let kind = TerminalLinkDetector.code(of: link.kind)
+        let (verb, payload) = withOptionalText(link.raw) { raw, rawLength, _ in
+            withOptionalText(link.resolvedAbsolute) { resolved, resolvedLength, present in
+                verbAnswer { out, cap, needed in
+                    slopdesk_link_action(
+                        trigger, config.cmdClick.ffiCode, config.cmdShiftClick.ffiCode, kind,
+                        raw, rawLength, resolved, resolvedLength, present, out, cap, needed,
+                    )
+                }
+            }
+        }
+        switch UInt32(verb) {
+        case SLOPDESK_LINK_ACTION_COPY_PATH_CLIENT: return .copyPathClient(payload)
+        case SLOPDESK_LINK_ACTION_CHANGE_DIRECTORY_PTY: return .changeDirectoryPTY(payload)
+        case SLOPDESK_LINK_ACTION_OPEN_CODE_HOST: return .openCodeHost(payload)
+        case SLOPDESK_LINK_ACTION_OPEN_HOST: return .openHost(payload)
+        case SLOPDESK_LINK_ACTION_REVEAL_HOST: return .revealHost(payload)
+        case SLOPDESK_LINK_ACTION_OPEN_URL_CLIENT: return .openURLClient(payload)
+        default: return .nothing
+        }
+    }
+
+    /// Reads the two-part answer: the verb from the return, the payload from `(out, cap)` with `needed`
+    /// carrying the retry number. Unlike ``wsAnswer``, `needed == 0` is not "no answer" — `.nothing`
+    /// legitimately has no payload — so the verb survives an empty read.
+    private static func verbAnswer(
+        _ call: (UnsafeMutablePointer<UInt8>?, Int, UnsafeMutablePointer<Int>?) -> UInt8,
+    ) -> (verb: UInt8, payload: String) {
+        var out = [UInt8](repeating: 0, count: 256)
+        var needed = 0
+        var verb = out.withUnsafeMutableBufferPointer { call($0.baseAddress, $0.count, &needed) }
+        if needed > out.count {
+            out = [UInt8](repeating: 0, count: needed)
+            verb = out.withUnsafeMutableBufferPointer { call($0.baseAddress, $0.count, &needed) }
+        }
+        guard needed > 0, needed <= out.count,
+              let payload = String(bytes: out[0..<needed], encoding: .utf8) else { return (verb, "") }
+        return (verb, payload)
+    }
+
+    /// One string in, one string out. `""` is the real answer for every door that reaches this — no
+    /// suffix, the parent of a bare name, the line for an empty path — so "no answer" maps to it.
+    private static func answer(
+        _ input: String,
+        _ call: (UnsafePointer<UInt8>?, Int, UnsafeMutablePointer<UInt8>?, Int) -> Int,
+    ) -> String {
+        wsTransform(input, call).flatMap { String(bytes: $0, encoding: .utf8) } ?? ""
+    }
+}
+
+// MARK: - The codes the door reads
+
+// Each case names its `SLOPDESK_LINK_*` macro rather than a number, so no code is spelled twice and
+// the two languages cannot drift apart over one — the same reason the detector's kinds cross that way.
+
+private extension LinkGesture {
+    var ffiTrigger: UInt8 {
+        switch self {
+        case .plainClick: UInt8(SLOPDESK_LINK_TRIGGER_PLAIN_CLICK)
+        case .commandClick: UInt8(SLOPDESK_LINK_TRIGGER_COMMAND_CLICK)
+        case .commandShiftClick: UInt8(SLOPDESK_LINK_TRIGGER_COMMAND_SHIFT_CLICK)
+        }
+    }
+}
+
+private extension TerminalContextMenu.LinkItem {
+    var ffiTrigger: UInt8 {
+        switch self {
+        case .open: UInt8(SLOPDESK_LINK_TRIGGER_OPEN)
+        case .copyPath: UInt8(SLOPDESK_LINK_TRIGGER_COPY_PATH)
+        case .revealInFinder: UInt8(SLOPDESK_LINK_TRIGGER_REVEAL_IN_FINDER)
+        case .changeDirectoryHere: UInt8(SLOPDESK_LINK_TRIGGER_CHANGE_DIRECTORY)
+        }
+    }
+}
+
+private extension LinkCmdClick {
+    var ffiCode: UInt8 {
+        switch self {
+        case .open: UInt8(SLOPDESK_LINK_CMD_CLICK_OPEN)
+        case .copy: UInt8(SLOPDESK_LINK_CMD_CLICK_COPY)
+        case .nothing: UInt8(SLOPDESK_LINK_CMD_CLICK_NOTHING)
+        }
+    }
+}
+
+private extension LinkCmdShiftClick {
+    var ffiCode: UInt8 {
+        switch self {
+        case .revealFinder: UInt8(SLOPDESK_LINK_CMD_SHIFT_CLICK_REVEAL_FINDER)
+        case .openSystemDefault: UInt8(SLOPDESK_LINK_CMD_SHIFT_CLICK_OPEN_SYSTEM_DEFAULT)
+        }
+    }
 }

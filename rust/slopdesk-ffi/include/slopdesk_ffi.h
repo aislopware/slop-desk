@@ -1959,6 +1959,51 @@ size_t slopdesk_link_scan_take_arena(SlopDeskLinkScan *handle, uint8_t *out, siz
 size_t slopdesk_link_scalar_cells(uint32_t scalar);
 size_t slopdesk_link_text_cells(const uint8_t *bytes, size_t len);
 
+/* ---- What a gesture DOES to a link ------------------------------------------------------
+ * The scan above says what a span IS; this says what happens to it. One table for all four
+ * actuators (⌘click, ⌘⇧click, the context menu, hint-to-open / the jump row's return), because
+ * per-actuator copies drift and each one looks right on its own.
+ *
+ * The answer has two halves — the verb and what it acts on — so the verb is the RETURN and the
+ * payload rides the usual (out, cap) pair with `needed` carrying the retry number. A verb with an
+ * empty payload is a real answer, which is why the length cannot double as the verb.
+ */
+#define SLOPDESK_LINK_TRIGGER_PLAIN_CLICK 0u
+#define SLOPDESK_LINK_TRIGGER_COMMAND_CLICK 1u
+#define SLOPDESK_LINK_TRIGGER_COMMAND_SHIFT_CLICK 2u
+#define SLOPDESK_LINK_TRIGGER_OPEN 3u
+#define SLOPDESK_LINK_TRIGGER_COPY_PATH 4u
+#define SLOPDESK_LINK_TRIGGER_REVEAL_IN_FINDER 5u
+#define SLOPDESK_LINK_TRIGGER_CHANGE_DIRECTORY 6u
+
+#define SLOPDESK_LINK_CMD_CLICK_OPEN 0u
+#define SLOPDESK_LINK_CMD_CLICK_COPY 1u
+#define SLOPDESK_LINK_CMD_CLICK_NOTHING 2u
+
+#define SLOPDESK_LINK_CMD_SHIFT_CLICK_REVEAL_FINDER 0u
+#define SLOPDESK_LINK_CMD_SHIFT_CLICK_OPEN_SYSTEM_DEFAULT 1u
+
+/* Each verb names WHERE it actuates: the file is on the host, the pasteboard and a URL are the
+ * client's. An actuator routes on this without re-deriving intent. */
+#define SLOPDESK_LINK_ACTION_NOTHING 0u
+#define SLOPDESK_LINK_ACTION_COPY_PATH_CLIENT 1u
+#define SLOPDESK_LINK_ACTION_CHANGE_DIRECTORY_PTY 2u
+#define SLOPDESK_LINK_ACTION_OPEN_CODE_HOST 3u
+#define SLOPDESK_LINK_ACTION_OPEN_HOST 4u
+#define SLOPDESK_LINK_ACTION_REVEAL_HOST 5u
+#define SLOPDESK_LINK_ACTION_OPEN_URL_CLIENT 6u
+
+uint8_t slopdesk_link_action(uint8_t trigger, uint8_t cmd_click, uint8_t cmd_shift_click,
+                             uint32_t kind, const uint8_t *raw, size_t raw_len,
+                             const uint8_t *resolved, size_t resolved_len, bool resolved_present,
+                             uint8_t *out, size_t cap, size_t *needed);
+size_t slopdesk_link_code_open_target(const uint8_t *raw, size_t raw_len,
+                                      const uint8_t *resolved, size_t resolved_len,
+                                      bool resolved_present, uint8_t *out, size_t cap);
+size_t slopdesk_link_line_col_suffix(const uint8_t *text, size_t len, uint8_t *out, size_t cap);
+size_t slopdesk_link_posix_parent(const uint8_t *text, size_t len, uint8_t *out, size_t cap);
+size_t slopdesk_link_cd_command_line(const uint8_t *text, size_t len, uint8_t *out, size_t cap);
+
 /* ---- Hint Mode: every span in the viewport a two-letter label can pin to -----------------
  * The same handle-over-arena shape as the link scan above, because the answer is the same shape:
  * a variable list of records each carrying up to three strings. A LINK target carries the whole

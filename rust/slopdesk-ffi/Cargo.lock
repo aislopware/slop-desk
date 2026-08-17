@@ -233,6 +233,7 @@ name = "slopdesk-terminal"
 version = "0.1.0"
 dependencies = [
  "slopdesk-sanitize",
+ "slopdesk-workspace",
 ]
 
 [[package]]
