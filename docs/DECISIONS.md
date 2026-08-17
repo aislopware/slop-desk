@@ -16485,3 +16485,38 @@ mis-keyed by both the writer and the reader round-trips perfectly. Two gates now
 `check-shared-constants.py` ratchets `WorkspaceFields.swift` against `document::fields` letter for
 letter, and `WorkspaceTopologyTests.testTheWholeTopologyCrossesToTheCrateAndBack` sends the rich
 fixture through `slopdesk_ws_apply_intent` and back, which drops anything the crate keys elsewhere.
+
+## The client UI was two products in one target, so it becomes two (2026-08-17)
+
+`SlopDeskClientUI` splits into `SlopDeskMacUI` (AppKit, macOS) and `SlopDeskPhoneUI` (SwiftUI, iOS).
+The full measurement and the boundary rules are [56-client-ui-split.md](56-client-ui-split.md); the
+three numbers that decided it are here.
+
+**It was already two targets.** 183 files, 48 410 lines — and 72 of those files compile to NOTHING
+on iOS. The macOS slice is 27 037 lines, the iOS slice 16 840, and a good share of the iOS slice is
+accidental: `CodeSidebarRecommendationTips` (838 lines), `WorkspaceControlBackend` (308),
+`PaneDragCoordinator` (246) and `ClientControlServer` (171) are compiled into the iOS app for a code
+panel, a control socket and a pane-drag gesture that platform does not have.
+
+**On macOS the escape hatch is already the norm.** 53 files import AppKit, with 19
+`NSView`/`NSViewController` subclasses, 13 `NSViewRepresentable`, 21 hosting mounts and 32
+`swiftui-introspect` sites — each of the last a place SwiftUI did not expose what was needed. Every
+hard interaction has already fallen out of SwiftUI and landed in AppKit: the divider drag, the rail
+drag-and-drop (both SwiftUI DnD sides failed — 2026-07-12), the satellite windows, and the shell
+itself. This entry therefore REVERSES "Shell = pure SwiftUI `NavigationSplitView`" (2026-07-03),
+which the code had already reversed in practice — macOS runs `SlopDeskSplitViewController` today.
+
+**The two arguments for keeping SwiftUI on macOS do not hold here.** `#Preview`/`PreviewProvider`
+across `Sources/` and `Tests/`: zero — the design loop is pixel-verify against a screenshot, which
+AppKit runs identically. And of 114 `SlopDeskClientUITests` files only 11 import SwiftUI and 4 touch
+a `body`: the logic is already outside the views, so the suite survives the port.
+
+What the port actually costs is motion — 118 `withAnimation`/`.animation(` sites and 3
+`matchedGeometryEffect` morphs become explicit `CAAnimation`/`NSAnimationContext`. That is work, not
+risk, and it puts the timing in the same place the pixel-verify loop measures it.
+
+**iOS is not a smaller macOS.** It gets its own SwiftUI app with less product in it: no code panel,
+no simulator or Android panel, no satellite or floating panes, no pane drag-and-drop, no control
+socket, one search surface instead of four. A phone is one pane, a keyboard, and a way back to the
+session list. Neither UI target imports the other, and neither may contain `#if os(...)` — a
+platform gate inside a platform-specific target means the file is in the wrong target.
