@@ -11,8 +11,8 @@ import XCTest
 /// - `nextFilter`/`prevFilter` Tab cycling that WRAPS the pill ring;
 /// - `sectioned` merging sources under ALL-CAPS headers in `.all` (empty sources omitted) vs a single
 ///   section in a specific filter (always present, so the view can render the honest empty-state);
-/// - the injected-scorer ranking (drop non-matches, score-descending, STABLE tie-break, blank query =
-///   zero-state) — reusing the same contract as `JumpToModel.filtered`;
+/// - the ranking (drop non-matches, best-first, STABLE tie-break, blank query = zero-state) — the same
+///   call as `JumpToModel.filtered`, which is the one every search field in the app makes;
 /// - `selectable` flattening sections to the navigable/quick-pick row list (headers skipped);
 /// - `quickPickIndex` mapping the 1-based `⌘1–9` chord onto a 0-based visible row (with `⌘0`/out-of-range
 ///   rejected);
@@ -44,29 +44,6 @@ final class OpenQuicklyModelTests: XCTestCase {
             searchText: search ?? title,
             act: .reopenRecentTab(index: 0),
         )
-    }
-
-    /// A deterministic, fzf-shaped stand-in scorer (subsequence; an EARLIER first-match scores higher), the
-    /// same shape `JumpToModelTests` uses — exercises the model's filter+order contract without pulling the
-    /// view-module `FuzzyMatcher` into the headless test.
-    private func subsequenceScore(_ query: String, _ haystack: String) -> Int? {
-        let h = Array(haystack.lowercased())
-        var hi = 0
-        var firstMatch: Int?
-        for qc in query.lowercased() {
-            var found = false
-            while hi < h.count {
-                if h[hi] == qc {
-                    if firstMatch == nil { firstMatch = hi }
-                    hi += 1
-                    found = true
-                    break
-                }
-                hi += 1
-            }
-            if !found { return nil }
-        }
-        return 1000 - (firstMatch ?? 0)
     }
 
     // MARK: - Pill taxonomy
@@ -134,7 +111,7 @@ final class OpenQuicklyModelTests: XCTestCase {
             .opened: [item("p1", "alpha", kind: .pane)],
             .folders: [item("f1", "beta", kind: .folder)],
         ]
-        let sections = OpenQuicklyModel.sectioned(sources: sources, filter: .all, query: "", score: subsequenceScore)
+        let sections = OpenQuicklyModel.sectioned(sources: sources, filter: .all, query: "")
         // Sections follow the canonical .all order (opened, recent, folders, agents, current), NOT dict order.
         XCTAssertEqual(sections.map(\.filter), [.opened, .folders, .current])
         XCTAssertEqual(sections.map(\.header), ["OPENED", "FOLDERS", "CURRENT"])
@@ -147,7 +124,7 @@ final class OpenQuicklyModelTests: XCTestCase {
             .recent: [],
             .folders: [item("f1", "beta", kind: .folder)],
         ]
-        let sections = OpenQuicklyModel.sectioned(sources: sources, filter: .all, query: "", score: subsequenceScore)
+        let sections = OpenQuicklyModel.sectioned(sources: sources, filter: .all, query: "")
         XCTAssertEqual(sections.map(\.filter), [.folders], "an empty source contributes no header to the All list")
     }
 
@@ -156,7 +133,7 @@ final class OpenQuicklyModelTests: XCTestCase {
             .opened: [item("p1", "a", kind: .pane), item("p2", "b", kind: .pane)],
             .folders: [item("f1", "x", kind: .folder)],
         ]
-        let sections = OpenQuicklyModel.sectioned(sources: sources, filter: .opened, query: "", score: subsequenceScore)
+        let sections = OpenQuicklyModel.sectioned(sources: sources, filter: .opened, query: "")
         XCTAssertEqual(sections.count, 1, "a specific pill shows only its own source")
         XCTAssertEqual(sections.first?.filter, .opened)
         XCTAssertEqual(sections.first?.items.count, 2)
@@ -165,14 +142,14 @@ final class OpenQuicklyModelTests: XCTestCase {
     func testSectionedSpecificFilterEmptySourceStillYieldsSectionForEmptyState() {
         // Folders with nothing visited yet: the section is still emitted (with no items) so the view can
         // render the honest "No folders yet" empty-state instead of a blank panel.
-        let sections = OpenQuicklyModel.sectioned(sources: [:], filter: .folders, query: "", score: subsequenceScore)
+        let sections = OpenQuicklyModel.sectioned(sources: [:], filter: .folders, query: "")
         XCTAssertEqual(sections.count, 1)
         XCTAssertEqual(sections.first?.filter, .folders)
         XCTAssertTrue(sections.first?.items.isEmpty ?? false)
     }
 
     func testSectionedAllAllEmptyYieldsNoSections() {
-        let sections = OpenQuicklyModel.sectioned(sources: [:], filter: .all, query: "", score: subsequenceScore)
+        let sections = OpenQuicklyModel.sectioned(sources: [:], filter: .all, query: "")
         XCTAssertTrue(sections.isEmpty, "an all-empty All list shows the global empty-state, no stray headers")
     }
 
@@ -190,7 +167,6 @@ final class OpenQuicklyModelTests: XCTestCase {
             sources: sources,
             filter: .current,
             query: "gs",
-            score: subsequenceScore,
         )
         XCTAssertEqual(
             sections.first?.items.map(\.title),
@@ -210,7 +186,6 @@ final class OpenQuicklyModelTests: XCTestCase {
             sources: sources,
             filter: .current,
             query: "abc",
-            score: subsequenceScore,
         )
         XCTAssertEqual(
             sections.first?.items.map(\.title),
@@ -230,7 +205,6 @@ final class OpenQuicklyModelTests: XCTestCase {
             sources: sources,
             filter: .current,
             query: "   ",
-            score: subsequenceScore,
         )
         XCTAssertEqual(
             sections.first?.items.map(\.title),
@@ -246,7 +220,7 @@ final class OpenQuicklyModelTests: XCTestCase {
             .opened: [item("p1", "a", kind: .pane)],
             .folders: [item("f1", "b", kind: .folder), item("f2", "c", kind: .folder)],
         ]
-        let sections = OpenQuicklyModel.sectioned(sources: sources, filter: .all, query: "", score: subsequenceScore)
+        let sections = OpenQuicklyModel.sectioned(sources: sources, filter: .all, query: "")
         let rows = OpenQuicklyModel.selectable(sections)
         XCTAssertEqual(
             rows.map(\.title),
@@ -322,7 +296,7 @@ final class OpenQuicklyModelTests: XCTestCase {
 
     func testRankActionsEmptyQueryReturnsAllInOrder() {
         let actions = [FakeAction(title: "Reopen Tab"), FakeAction(title: "Copy CWD Path")]
-        let out = OpenQuicklyModel.rankActions(actions, query: "  ", title: { $0.title }, score: subsequenceScore)
+        let out = OpenQuicklyModel.rankActions(actions, query: "  ", title: { $0.title })
         XCTAssertEqual(out, actions, "a blank query is the zero-state — every action, table order preserved")
     }
 
@@ -332,7 +306,7 @@ final class OpenQuicklyModelTests: XCTestCase {
             FakeAction(title: "Copy Path"), // "cp": c@0 (front) → high
             FakeAction(title: "Reopen Closed Pane"), // "cp": c@7 → lower than Copy Path
         ]
-        let out = OpenQuicklyModel.rankActions(actions, query: "cp", title: { $0.title }, score: subsequenceScore)
+        let out = OpenQuicklyModel.rankActions(actions, query: "cp", title: { $0.title })
         XCTAssertEqual(
             out.map(\.title),
             ["Copy Path", "Reopen Closed Pane"],
@@ -343,7 +317,7 @@ final class OpenQuicklyModelTests: XCTestCase {
     func testRankActionsStableTieBreakKeepsOriginalOrder() {
         // Two equal-scoring titles (both 'x' at index 0) keep their original relative order (stable sort).
         let actions = [FakeAction(title: "x-alpha"), FakeAction(title: "x-beta")]
-        let out = OpenQuicklyModel.rankActions(actions, query: "x", title: { $0.title }, score: subsequenceScore)
+        let out = OpenQuicklyModel.rankActions(actions, query: "x", title: { $0.title })
         XCTAssertEqual(out.map(\.title), ["x-alpha", "x-beta"])
     }
 

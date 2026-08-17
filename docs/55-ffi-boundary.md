@@ -167,8 +167,9 @@ is not `size_t`; a scalar door that wants a refusal has to say so in its own typ
 The same matcher also has `slopdesk_fuzzy_score`, which is §4-shaped because it answers a score AND a
 variable number of matched positions. Two doors over one implementation is not two answers — the
 score is bit-identical, and `rust/slopdesk-fuzzy` pins that in a test — it is one implementation told
-whether the caller will underline anything. Most callers will not: a filtered list ranks every row
-and highlights only the handful it draws.
+whether the caller will underline anything. Most rows will not be: a filtered list ranks every row
+and highlights only the handful it draws, which is why the list door below asks for positions BY
+TIER rather than for all of them.
 
 ### The scalar answer whose refusal is not a refusal
 
@@ -221,6 +222,25 @@ Its columns are UTF-16 code units rather than bytes or scalars, which is the one
 lets the *caller's* unit win. The surface that highlights a match indexes in UTF-16, so any other
 unit would be converted on the way out — by a second walk over the same line, in Swift, per match.
 Counting them inside the scan is a pass over a prefix it already has in hand.
+
+### Two answers in one call, and the second size that makes it retryable
+
+`slopdesk_ws_search_rank` fills TWO buffers: where each candidate placed, and one flat run of the
+scalar offsets the placements point into. They are one call because they are one pass — the matcher
+backtraces while its alignment matrix is still filled, so asking for the underline afterwards would
+mean scoring every title a second time on every keystroke, which is the cost this door exists to
+avoid.
+
+Two buffers need two sizes, and §4's return can only carry one. The return carries the row count,
+because that is what a caller loops over; the run's size comes back through a `size_t *needed`
+out-param. A short buffer of EITHER kind leaves both untouched and still reports both numbers, so the
+retry stays the one docs/55 §4 describes rather than becoming a two-step negotiation. In practice
+neither retry is travelled: no more rows can match than were offered, and a match carries exactly one
+offset per query scalar, so the caller's first guess is the arithmetic bound rather than an estimate.
+
+The ranking itself answers in the CALLER's indices. A palette row is an id, an icon, a shortcut and a
+closure, almost none of which decides where it goes, so the answer names rows and the near side
+reorders the array it already holds.
 
 ### The header is written by hand
 

@@ -193,6 +193,121 @@ package func wsRailPlan(keys: [String?], tabRanks: [Int]) -> [(element: Int, sec
     return out.map { (element: $0.row_index, section: $0.section) }
 }
 
+// MARK: - The one ranking every search field asks
+
+/// Where one candidate placed in a search field's list.
+package struct WsRanked {
+    /// Its index in the array the caller passed in.
+    package let candidate: Int
+    /// Which of its fields matched; 0 is the most important, and a lower tier always wins.
+    package let tier: Int
+    /// The fzf score within that tier.
+    package let score: Int
+    /// The scalar offsets the query matched, ascending — empty for every row but the ones that
+    /// matched the tier the caller said it would underline.
+    package let positions: [Int]
+}
+
+/// Every candidate that matches `query`, best first. `slopdesk_workspace::search_rank::rank`.
+///
+/// `fields` is ONE flat array holding `stride` fields per candidate in priority order — a search
+/// field with one searchable string and one with three differ by that number, not by having two
+/// rankings. `underlining` names the one tier the caller draws large; `nil` asks for no highlight
+/// at all, which is the matcher's cheap path.
+package func wsSearchRank(
+    query: String,
+    fields: [String?],
+    stride: Int,
+    underlining tier: Int?,
+) -> [WsRanked] {
+    let candidateCount = stride > 0 ? fields.count / stride : 0
+    guard candidateCount > 0 else { return [] }
+    var strings = WsStrings()
+    var spans = fields.map { strings.span($0) }
+    let inputs = SlopDeskWsSearchRankInputs(
+        candidate_count: candidateCount,
+        stride: stride,
+        positions_wanted: tier != nil,
+        positions_tier: tier ?? 0,
+    )
+    var blob = strings.bytes
+    var needle = Array(query.utf8)
+    var out = [SlopDeskWsSearchRanked](
+        repeating: SlopDeskWsSearchRanked(
+            candidate: 0, tier: 0, score: 0, position_offset: 0, position_count: 0,
+        ),
+        count: candidateCount,
+    )
+    // Both guesses are the arithmetic BOUND, not an estimate: no more rows can match than were
+    // offered, and a match carries exactly one offset per query scalar. The retry below is docs/55
+    // §4's, kept because a size the caller derived is still a size the caller could get wrong.
+    var positions = [UInt32](
+        repeating: 0, count: tier == nil ? 0 : candidateCount * query.unicodeScalars.count,
+    )
+    var needed = 0
+    func ask() -> Int {
+        blob.withUnsafeMutableBufferPointer { text in
+            needle.withUnsafeMutableBufferPointer { typed in
+                spans.withUnsafeMutableBufferPointer { held in
+                    out.withUnsafeMutableBufferPointer { placed in
+                        positions.withUnsafeMutableBufferPointer { runs in
+                            slopdesk_ws_search_rank(
+                                inputs, held.baseAddress, text.baseAddress, text.count,
+                                typed.baseAddress, typed.count, placed.baseAddress, placed.count,
+                                runs.baseAddress, runs.count, &needed,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+    var matched = ask()
+    if matched > out.count || needed > positions.count {
+        out = [SlopDeskWsSearchRanked](
+            repeating: SlopDeskWsSearchRanked(
+                candidate: 0, tier: 0, score: 0, position_offset: 0, position_count: 0,
+            ),
+            count: matched,
+        )
+        positions = [UInt32](repeating: 0, count: needed)
+        matched = ask()
+    }
+    guard matched <= out.count, needed <= positions.count else { return [] }
+    return out.prefix(matched).map { row in
+        let start = row.position_offset
+        let end = start + row.position_count
+        let run = end <= positions.count ? positions[start..<end] : positions[0..<0]
+        return WsRanked(
+            candidate: row.candidate, tier: row.tier, score: Int(row.score),
+            positions: run.map(Int.init),
+        )
+    }
+}
+
+/// `elements` ordered by how well each one's searchable text answers `query`, misses dropped.
+///
+/// The shape four overlays used to spell out for themselves: score, drop the misses, order by score
+/// with arrival breaking ties. A blank query is the list in its own order, which is a search field's
+/// zero state. An element with nothing to be found by passes `""` — a real query cannot match it, a
+/// blank one leaves it where it is, and neither needs a rule of its own.
+package func wsSearchRanked<Element>(
+    _ elements: [Element],
+    query: String,
+    searchText: (Element) -> String,
+) -> [Element] {
+    wsSearchRank(query: query, fields: elements.map(searchText), stride: 1, underlining: nil)
+        .compactMap { placed in
+            elements.indices.contains(placed.candidate) ? elements[placed.candidate] : nil
+        }
+}
+
+/// The most rows a search field hands back, however many matched.
+///
+/// Asked for rather than transcribed: a copy that drifted would let one surface build rows the one
+/// beside it capped away.
+package var wsMaxSearchResults: Int { slopdesk_ws_max_search_results() }
+
 // MARK: - The split tree's walk
 
 /// The pre-order walk a ``SplitNode`` crosses the boundary as, in both directions.

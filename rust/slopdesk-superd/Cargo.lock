@@ -179,6 +179,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "slopdesk-fuzzy"
+version = "0.1.0"
+
+[[package]]
 name = "slopdesk-posix"
 version = "0.1.0"
 dependencies = [
@@ -224,6 +228,7 @@ name = "slopdesk-workspace"
 version = "0.1.0"
 dependencies = [
  "regex",
+ "slopdesk-fuzzy",
 ]
 
 [[package]]

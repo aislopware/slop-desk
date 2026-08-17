@@ -410,7 +410,7 @@ struct OpenQuicklyView: View {
         let actions = filteredActions(for: item)
         return VStack(alignment: .leading, spacing: 0) {
             // A pre-focused fuzzy filter field (the ⌘K Actions popover is itself searchable). Typing narrows
-            // `actions` through the SAME `FuzzyMatcher.score` the main list uses; ↑/↓ move the highlight; ↩
+            // `actions` through the SAME ranking the main list uses; ↑/↓ move the highlight; ↩
             // runs the highlighted action.
             actionsSearchField
             divider
@@ -484,13 +484,9 @@ struct OpenQuicklyView: View {
     }
 
     /// The selected row's ⌘K action table, fuzzy-filtered + ranked by ``actionsQuery`` through the SAME
-    /// `FuzzyMatcher` scorer the main result list uses (an empty query returns every action in table order).
+    /// ranking the main result list uses (an empty query returns every action in table order).
     private func filteredActions(for item: OpenQuicklyItem) -> [LinkActionActuator.RowAction] {
-        OpenQuicklyModel.rankActions(
-            rowActions(for: item),
-            query: actionsQuery,
-            title: { $0.title },
-        ) { q, h in FuzzyMatcher.rank(q, h) }
+        OpenQuicklyModel.rankActions(rowActions(for: item), query: actionsQuery, title: { $0.title })
     }
 
     /// ↑/↓ move the highlight over the filtered actions (clamped); Esc closes just the popover. ↩ is handled
@@ -671,13 +667,9 @@ struct OpenQuicklyView: View {
     }
 
     /// The ranked, sectioned result list for the active pill — `.all` merges every non-empty source under its
-    /// ALL-CAPS header; a specific pill is one section. Ranks via `FuzzyMatcher` (integer scores).
+    /// ALL-CAPS header; a specific pill is one section.
     private var sections: [OpenQuicklySection] {
-        OpenQuicklyModel.sectioned(
-            sources: sources,
-            filter: coordinator.openQuicklyFilter,
-            query: query,
-        ) { q, h in FuzzyMatcher.rank(q, h) }
+        OpenQuicklyModel.sectioned(sources: sources, filter: coordinator.openQuicklyFilter, query: query)
     }
 
     /// The flattened, navigable rows (headers excluded) — the arrow-key / ⌘1–9 target.

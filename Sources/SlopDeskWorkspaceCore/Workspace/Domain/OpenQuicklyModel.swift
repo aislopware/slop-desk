@@ -254,14 +254,13 @@ public struct OpenQuicklySection: Identifiable, Equatable, Sendable {
 /// testable.
 ///
 /// ### Reuse
-/// - Ranking takes an INJECTED `score` closure (the view passes `FuzzyMatcher.rank(_:_:)`; the tests
-///   pass a deterministic subsequence scorer) — the same contract as ``JumpToModel/filtered(_:query:score:)``.
-///   Scores are `Int` (no float / FMA / NaN hazard — CLAUDE.md §2).
+/// - Ranking is `slopdesk_workspace::search_rank`, the one every search field in the app asks for —
+///   the same call as ``JumpToModel/filtered(_:query:)``.
 /// - The **Current** source is the existing ``JumpToModel`` output, wrapped 1:1 via ``currentItems(from:)``.
 public enum OpenQuicklyModel {
     // MARK: - Sectioning + ranking
 
-    /// Build the picker sections for `filter`, ranking each source against `query` with the injected `score`.
+    /// Build the picker sections for `filter`, ranking each source against `query`.
     ///
     /// - `.all`: one section per source in ``OpenQuicklyFilter/sectionOrder``, EMPTY sources omitted (no
     ///   stray header) — the merged-with-headers list.
@@ -271,37 +270,22 @@ public enum OpenQuicklyModel {
         sources: [OpenQuicklyFilter: [OpenQuicklyItem]],
         filter: OpenQuicklyFilter,
         query: String,
-        score: (_ query: String, _ haystack: String) -> Int?,
     ) -> [OpenQuicklySection] {
         if filter == .all {
             return OpenQuicklyFilter.sectionOrder.compactMap { source in
-                let ranked = rank(sources[source] ?? [], query: query, score: score)
+                let ranked = rank(sources[source] ?? [], query: query)
                 guard !ranked.isEmpty else { return nil }
                 return OpenQuicklySection(filter: source, items: ranked)
             }
         }
-        let ranked = rank(sources[filter] ?? [], query: query, score: score)
-        return [OpenQuicklySection(filter: filter, items: ranked)]
+        return [OpenQuicklySection(filter: filter, items: rank(sources[filter] ?? [], query: query))]
     }
 
-    /// Fuzzy-filter + rank `items` by `query`. An EMPTY query returns `items` unchanged (the zero-state). A
-    /// non-empty query drops every item the scorer rejects (`nil`) and orders survivors by score DESCENDING,
-    /// breaking ties by original order (a STABLE sort). Integer scores only — the `>`/`<` are ordered + total.
-    static func rank(
-        _ items: [OpenQuicklyItem],
-        query: String,
-        score: (_ query: String, _ haystack: String) -> Int?,
-    ) -> [OpenQuicklyItem] {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return items }
-        let scored: [(score: Int, order: Int, item: OpenQuicklyItem)] = items.enumerated().compactMap { offset, item in
-            guard let s = score(trimmed, item.searchText) else { return nil }
-            return (s, offset, item)
-        }
-        return scored.sorted { lhs, rhs in
-            if lhs.score != rhs.score { return lhs.score > rhs.score }
-            return lhs.order < rhs.order
-        }.map(\.item)
+    /// Fuzzy-filter + rank `items` by `query`. An EMPTY query returns `items` unchanged (the
+    /// zero-state); a non-empty one drops the misses and orders the survivors best-first, with the
+    /// source's own order breaking ties.
+    static func rank(_ items: [OpenQuicklyItem], query: String) -> [OpenQuicklyItem] {
+        wsSearchRanked(items, query: query) { $0.searchText }
     }
 
     /// The flattened, navigable row list (sections concatenated; headers are NOT rows). The basis for
@@ -328,27 +312,15 @@ public enum OpenQuicklyModel {
         return max(0, min(count - 1, current + delta))
     }
 
-    /// Fuzzy-filter + rank a list of titled actions by `query` — the `⌘K` Actions popover search. Generic
-    /// over the action type via a `title` projection so the view can reuse the SAME injected `score` contract
-    /// (and ordering) the row ranker uses. An EMPTY query returns `actions` unchanged; a non-empty query drops
-    /// every action the scorer rejects (`nil`), orders survivors by score DESCENDING, breaking ties by original
-    /// order (a STABLE sort). Integer scores only — the `>`/`<` are ordered + total (CLAUDE.md §2).
+    /// Fuzzy-filter + rank a list of titled actions by `query` — the `⌘K` Actions popover search.
+    /// Generic over the action type via a `title` projection, so the popover and the row ranker
+    /// differ in what they are found BY and in nothing else.
     public static func rankActions<Action>(
         _ actions: [Action],
         query: String,
         title: (Action) -> String,
-        score: (_ query: String, _ haystack: String) -> Int?,
     ) -> [Action] {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return actions }
-        let scored: [(score: Int, order: Int, action: Action)] = actions.enumerated().compactMap { offset, action in
-            guard let s = score(trimmed, title(action)) else { return nil }
-            return (s, offset, action)
-        }
-        return scored.sorted { lhs, rhs in
-            if lhs.score != rhs.score { return lhs.score > rhs.score }
-            return lhs.order < rhs.order
-        }.map(\.action)
+        wsSearchRanked(actions, query: query, searchText: title)
     }
 
     // MARK: - Filter cycling (Tab / ⇧Tab)

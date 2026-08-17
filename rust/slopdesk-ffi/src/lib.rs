@@ -98,6 +98,7 @@ pub mod sanitize;
 pub mod screen;
 pub mod scroll_reproject;
 pub mod scroll_resample;
+pub mod search_rank;
 pub mod send_pacing;
 pub mod session_state;
 pub mod sidecars;

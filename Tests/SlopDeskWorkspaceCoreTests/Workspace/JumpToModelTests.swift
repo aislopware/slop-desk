@@ -105,41 +105,16 @@ final class JumpToModelTests: XCTestCase {
 
     // MARK: - Filter / fuzzy ordering
 
-    /// A deterministic, fzf-shaped stand-in scorer for the headless test: returns `nil` unless every query
-    /// character appears in order (subsequence), else a score that rewards an EARLIER first-match position
-    /// (so a closer-to-front match ranks higher). This exercises the model's filter+order contract without
-    /// pulling the view-module `FuzzyMatcher` into the headless test.
-    private func subsequenceScore(_ query: String, _ haystack: String) -> Int? {
-        let h = Array(haystack.lowercased())
-        var hi = 0
-        var firstMatch: Int?
-        for qc in query.lowercased() {
-            var found = false
-            while hi < h.count {
-                if h[hi] == qc {
-                    if firstMatch == nil { firstMatch = hi }
-                    hi += 1
-                    found = true
-                    break
-                }
-                hi += 1
-            }
-            if !found { return nil }
-        }
-        // Higher score for an earlier first match (front-loaded matches rank first).
-        return 1000 - (firstMatch ?? 0)
-    }
-
     func testFilteredDropsNonMatchesAndOrdersByScore() {
         let items = JumpToModel.items(
             links: [],
             blocks: [
-                BlockSummary(index: 3, commandText: "git status"), // "gs": g@0
-                BlockSummary(index: 2, commandText: "regis status"), // "gs": g@3 (later → lower score)
+                BlockSummary(index: 3, commandText: "git status"), // "gs": both letters start a word
+                BlockSummary(index: 2, commandText: "regis status"), // "gs": g mid-word → lower score
                 BlockSummary(index: 1, commandText: "ls"), // no "g" → dropped
             ],
         )
-        let filtered = JumpToModel.filtered(items, query: "gs", score: subsequenceScore)
+        let filtered = JumpToModel.filtered(items, query: "gs")
         XCTAssertEqual(filtered.map(\.title), ["git status", "regis status"], "drops 'ls'; front match ranks first")
     }
 
@@ -148,7 +123,7 @@ final class JumpToModelTests: XCTestCase {
             links: [link(.absolutePath, raw: "/a")],
             blocks: [BlockSummary(index: 1, commandText: "echo hi")],
         )
-        let filtered = JumpToModel.filtered(items, query: "   ", score: subsequenceScore)
+        let filtered = JumpToModel.filtered(items, query: "   ")
         XCTAssertEqual(filtered, items, "a blank query is the zero-state — every row, original order")
     }
 
@@ -161,7 +136,7 @@ final class JumpToModelTests: XCTestCase {
                 BlockSummary(index: 1, commandText: "abc two"),
             ],
         )
-        let filtered = JumpToModel.filtered(items, query: "abc", score: subsequenceScore)
+        let filtered = JumpToModel.filtered(items, query: "abc")
         XCTAssertEqual(filtered.map(\.title), ["abc one", "abc two"], "equal scores keep the original order")
     }
 

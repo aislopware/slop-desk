@@ -11,7 +11,7 @@
 // the Navigator is a BLOCK/command jump WITHIN the pane. The PURE assembly + filtering live in
 // `CommandNavigatorModel` (headlessly tested, mirroring `JumpToModel`); this view snapshots nothing — it
 // reads the LIVE per-pane `TerminalBlockModel` so new commands appear as they run (a live-updating index) — ranks
-// via `FuzzyMatcher` (injected into `CommandNavigatorModel.filtered`), and jumps via
+// through `CommandNavigatorModel.filtered`, and jumps via
 // `WorkspaceStore.jumpToNavigatorBlockInActivePane(index:)` (the shared `BlockJump` re-anchor engine, so the
 // delta math is never re-derived here). The navigator only ever opens over the ACTIVE pane, so the store's
 // active-pane jump always re-anchors the pane this card floats over.
@@ -424,10 +424,10 @@ struct CommandNavigatorView: View {
         model.blocks.blocks(filter: filter)
     }
 
-    /// The filtered + ranked rows — `FuzzyMatcher` injected into the pure
-    /// ``CommandNavigatorModel/filtered(_:query:score:)`` (the same split as Jump-To).
+    /// The filtered + ranked rows — the pure ``CommandNavigatorModel/filtered(_:query:)`` (the same
+    /// split as Jump-To).
     private var visibleBlocks: [CommandBlock] {
-        CommandNavigatorModel.filtered(baseBlocks, query: query) { q, h in FuzzyMatcher.rank(q, h) }
+        CommandNavigatorModel.filtered(baseBlocks, query: query)
     }
 
     // MARK: - Act

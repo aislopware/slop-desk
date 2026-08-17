@@ -31,7 +31,12 @@ name = "slopdesk_workspace"
 path = "src/lib.rs"
 
 [dependencies]
-# The secret shapes, and the one dependency this crate takes. `src/secrets.rs` scans text a remote
+# The one matcher every search field in the app scores against. `src/search_rank.rs` decides the
+# ORDER a list comes back in, and the order is a fact about the scores — a ranking that scored
+# with a second matcher would put the palette and the fuzzy tests in different orders.
+slopdesk-fuzzy = { path = "../slopdesk-fuzzy" }
+
+# The secret shapes, and the other dependency this crate takes. `src/secrets.rs` scans text a remote
 # shell wrote — a title, a notification body, a clipboard — for credential patterns published as
 # regular expressions, which is the notation they should stay in: a new vendor prefix is then one
 # line, not a new byte loop to review. Same crate and same reason as `slopdesk-screend`: a finite

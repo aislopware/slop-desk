@@ -553,8 +553,9 @@ public struct TabsPaletteSource: PaletteDataSource {
 /// built). Ranks by per-item score, keeps source-registration order for ties, and inserts section
 /// separators before each non-empty source group.
 public struct SearchMixer: Sendable {
-    /// The maximum rows returned (warp `MAX_SEARCH_RESULTS = 250`).
-    public static let maxResults = 250
+    /// The maximum rows returned — asked for, not transcribed, so no two surfaces can disagree about
+    /// where the list stops.
+    public static var maxResults: Int { wsMaxSearchResults }
 
     private let sources: [any PaletteDataSource]
 
@@ -587,33 +588,17 @@ public struct SearchMixer: Sendable {
     public func ranked(query: String, activeFilter: QueryFilter? = nil) -> [RankedRow] {
         var out: [RankedRow] = []
         for source in sources where runs(source, for: activeFilter) {
-            // (row, score, tier, sourceOffset) — tier 1 = title match, tier 0 = subtitle-only match, tier -1
-            // = hidden-keyword (synonym) match. A higher tier always outranks a lower one (see the sort).
-            let scored: [(row: RankedRow, score: Int, tier: Int, offset: Int)] = source
-                .candidates(query: query)
-                .enumerated()
-                .compactMap { offset, item in
-                    if let title = FuzzyMatcher.score(query, item.title) {
-                        return (RankedRow(item: item, titleRanges: title.ranges), title.score, 1, offset)
-                    }
-                    // A subtitle and a keyword hit carry NO ranges — nothing underlines them — so
-                    // both ask the score-only door and skip the backtrace entirely.
-                    if let subtitle = item.subtitle, let sub = FuzzyMatcher.rank(query, subtitle) {
-                        return (RankedRow(item: item), sub, 0, offset)
-                    }
-                    // HIDDEN synonyms: a row's `keywords` (e.g. "Read Only" accepting `lock` / `freeze`
-                    // / `view only`) are searchable but never rendered, so a keyword hit sits at tier -1 —
-                    // below every title (1) and subtitle (0) hit — and carries NO title highlight ranges.
-                    if let keywords = item.keywords, let kw = FuzzyMatcher.rank(query, keywords) {
-                        return (RankedRow(item: item), kw, -1, offset)
-                    }
-                    return nil
+            // Title, then subtitle, then the HIDDEN synonyms — a row's `keywords` (e.g. "Read Only"
+            // accepting `lock` / `freeze` / `view only`) are searchable but never rendered, so a
+            // synonym hit sits below every visible one. Only the title is underlined, which is why
+            // it is the only field whose match positions come back.
+            let items = source.candidates(query: query)
+            let rows = FuzzyMatcher
+                .ranked(query, candidates: items.map { ($0.title, $0.subtitle, $0.keywords) })
+                .compactMap { placed -> RankedRow? in
+                    guard items.indices.contains(placed.candidate) else { return nil }
+                    return RankedRow(item: items[placed.candidate], titleRanges: placed.titleRanges)
                 }
-            let rows = scored.sorted { lhs, rhs in
-                if lhs.tier != rhs.tier { return lhs.tier > rhs.tier } // title beats subtitle-only
-                if lhs.score != rhs.score { return lhs.score > rhs.score }
-                return lhs.offset < rhs.offset // stable: keep source order for equal scores
-            }.map(\.row)
             guard !rows.isEmpty else { continue }
             if let title = source.sectionTitle {
                 out.append(RankedRow(item: .separator(title, filter: source.filters.first ?? .actions)))

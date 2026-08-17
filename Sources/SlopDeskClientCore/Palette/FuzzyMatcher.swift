@@ -1,5 +1,6 @@
 import CSlopDeskFFI
 import Foundation
+import SlopDeskWorkspaceModel
 
 // MARK: - FuzzyMatcher (the ranking every search field asks)
 
@@ -55,6 +56,38 @@ public enum FuzzyMatcher {
             }
         }
         return answer < 0 ? nil : Int(answer)
+    }
+
+    /// A whole list ranked at once: every candidate that matches, best first, with the underline for
+    /// the ONE field the caller draws large.
+    ///
+    /// A candidate is offered as its fields in priority order — the palette's title, subtitle and
+    /// hidden synonyms — and the FIRST one that matches decides both its score and its rank, so a row
+    /// found by its title leads a row found only by its synonyms whatever the two scored. That rule
+    /// is `slopdesk_workspace::search_rank`; what is here is the same thing ``score(_:_:)`` adds over
+    /// ``rank(_:_:)`` — scalar offsets are meaningless to a caller holding a `String`, so the run
+    /// merging stays on this side.
+    ///
+    /// This is ONE call rather than one per candidate because the underline is one pass with the
+    /// score: the matcher backtraces while its matrix is still filled, and asking afterwards would
+    /// mean scoring every title a second time on every keystroke.
+    public static func ranked(
+        _ query: String,
+        candidates: [(title: String, subtitle: String?, keywords: String?)],
+    ) -> [(candidate: Int, titleRanges: [Range<String.Index>])] {
+        var fields: [String?] = []
+        fields.reserveCapacity(candidates.count * 3)
+        for candidate in candidates {
+            fields.append(candidate.title)
+            fields.append(candidate.subtitle)
+            fields.append(candidate.keywords)
+        }
+        return wsSearchRank(query: query, fields: fields, stride: 3, underlining: 0).map { placed in
+            guard placed.tier == 0, candidates.indices.contains(placed.candidate) else {
+                return (placed.candidate, [])
+            }
+            return (placed.candidate, ranges(of: placed.positions, in: candidates[placed.candidate].title))
+        }
     }
 
     // MARK: The door

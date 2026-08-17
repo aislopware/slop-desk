@@ -14,7 +14,11 @@
 //! - [`json`] — the subset of JSON both persistence files are written in, and why that is not a
 //!   crack in the manual-binary rule.
 //! - [`rail_title`] — what a pane is CALLED, in the one precedence every surface that names one
-//!   shares.
+//!   shares, and what its second line says once the surface has said the rest.
+//! - [`rail_list`] — what happens to that pane once it is standing next to every other one:
+//!   filtered, sectioned, ordered, and told apart from its namesakes.
+//! - [`search_rank`] — the one ranking behind every search field, and why a title hit outranks a
+//!   subtitle hit that scored higher.
 //! - [`persist`] — the client's workspace file: the trees and their specs on disk, and the repairs
 //!   that bring a hand-edited one back rather than trapping on it.
 //! - [`split_tree`] — the n-ary tiled tree and every pure operation on it: split, dock, close,
@@ -36,8 +40,10 @@
 //! ## Invariants
 //!
 //! * **No `unsafe`, enforced by `forbid(unsafe_code)`.**
-//! * **Zero dependencies.** The domain is arithmetic and ordering; anything it needed from a crate
-//!   would be a sign a decision had leaked into it.
+//! * **Two dependencies, each a notation rather than a decision.** `regex` because a credential
+//!   shape belongs written as one, and `slopdesk-fuzzy` because a ranking that scored with a second
+//!   matcher would order the same list two ways. Everything else here is arithmetic and ordering,
+//!   where reaching for a crate would be a sign a decision had leaked in.
 //! * **Total functions over hostile input.** These rules used to run only on a client's main actor
 //!   with trusted local input; through the workspace channel they now run against a network peer.
 //!   Nothing here indexes, unwraps or panics — the lint table denies all three.
@@ -53,6 +59,7 @@ pub mod listen;
 pub mod persist;
 pub mod rail_list;
 pub mod rail_title;
+pub mod search_rank;
 pub mod secrets;
 pub mod send_keys;
 pub mod session;

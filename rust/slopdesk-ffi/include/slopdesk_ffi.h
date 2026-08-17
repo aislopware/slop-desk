@@ -518,6 +518,40 @@ size_t slopdesk_ws_live_row_title(SlopDeskWsLiveRowTitle inputs,
                                   const uint8_t *strings, size_t strings_len,
                                   uint8_t *out, size_t cap);
 
+// ---- The one ranking every search field asks for ----
+//
+// A candidate's fields ride as spans into the strings blob, `stride` of them per candidate in
+// PRIORITY order, so one searchable field and three are the same door with a different number. The
+// first field that matches decides both the score and the tier, and a lower tier always wins: the
+// row CALLED Read Only outranks the row that merely mentions locking, whatever they scored.
+
+typedef struct {
+    size_t candidate_count;
+    size_t stride;              // fields per candidate; 0 answers nothing
+    bool   positions_wanted;    // false skips every backtrace
+    size_t positions_tier;      // the ONE field the caller underlines
+} SlopDeskWsSearchRankInputs;
+
+typedef struct {
+    size_t  candidate;
+    size_t  tier;
+    int32_t score;
+    size_t  position_offset;    // into the `positions` array
+    size_t  position_count;     // 0 for a row nothing underlines
+} SlopDeskWsSearchRanked;
+
+// Returns how many rows matched. A `cap` or `positions_cap` too small leaves BOTH buffers untouched
+// and still reports both sizes, so one retry with the two numbers is always enough.
+size_t slopdesk_ws_search_rank(SlopDeskWsSearchRankInputs inputs, const SlopDeskWsSpan *fields,
+                               const uint8_t *strings, size_t strings_len,
+                               const uint8_t *query, size_t query_len,
+                               SlopDeskWsSearchRanked *out, size_t cap,
+                               uint32_t *positions, size_t positions_cap,
+                               size_t *positions_needed);
+// Asked for rather than transcribed: a drifted copy lets one surface build rows the one beside it
+// capped away.
+size_t slopdesk_ws_max_search_results(void);
+
 // ---- What the sidebar SHOWS, in what order, under which labels ----
 //
 // Both list doors answer in the CALLER's indices: a rail row is an id, a kind, a badge, a selection
