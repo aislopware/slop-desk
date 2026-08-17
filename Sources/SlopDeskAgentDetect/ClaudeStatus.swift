@@ -112,3 +112,29 @@ extension ClaudeStatus: Comparable {
         lhs.urgency < rhs.urgency
     }
 }
+
+/// The WIRE shape of one type-27 emission — the three fields the machine resolves, captured so a
+/// dedupe anchor compares what actually goes out rather than the richer ``ClaudeStatus``.
+///
+/// Two panes at the same ``ClaudeStatus`` can still owe different frames (a different label, a
+/// different notification kind), and two at different statuses can owe the same one. Only the triple
+/// answers "would this frame be a repeat", which is the question every emitter here is asking.
+///
+/// It lives beside the status rather than inside one emitter because it is the WIRE's shape, not any
+/// one emitter's. Two of them anchored on it while it was nested in a third — a foreground-watch
+/// reducer that folded its own second ``ClaudeStatusMachine`` and that nothing in the host had
+/// constructed since agent detection was fused into one machine per pane.
+public struct ClaudeStatusTriple: Sendable, Equatable {
+    /// The status urgency byte.
+    public let state: UInt8
+    /// The notification kind, or `0` for a transition that carries none.
+    public let kind: UInt8
+    /// The display label, or empty.
+    public let label: String
+
+    public init(state: UInt8, kind: UInt8, label: String) {
+        self.state = state
+        self.kind = kind
+        self.label = label
+    }
+}

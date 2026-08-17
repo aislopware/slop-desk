@@ -66,7 +66,7 @@ assumed from the man pages.
 
 **2.1 — A PTY master fd survives `SCM_RIGHTS` with all of its powers intact.** The receiver can
 `read()`, `TIOCSWINSZ`, and — the load-bearing one — `tcgetpgrp()`, which is the primary,
-zero-config agent-detection signal (`ForegroundProcessWatcher.foregroundName(masterFD:)`). A
+zero-config agent-detection signal (`PTYForegroundProbe.foregroundName(masterFD:)`). A
 non-parent can `kill()` the child; only the forking process can `waitpid()` it. The `CMSG_*` macros
 are invisible to Swift, but their arithmetic is stable and hand-rollable, so **no C shim is
 required** and the invariant stands that nothing under `Sources/` implements anything in C — the

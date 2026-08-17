@@ -880,14 +880,14 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// components to the owning app directory; every ordinary name stays the exact basename.
     func testCanonicalNameResolution() {
         XCTAssertEqual(
-            ForegroundProcessDetector.canonicalName(of: "/Users/a/.local/share/claude/versions/2.1.218"),
+            ForegroundProcessName.canonicalName(of: "/Users/a/.local/share/claude/versions/2.1.218"),
             "claude",
         )
-        XCTAssertEqual(ForegroundProcessDetector.canonicalName(of: "/opt/foo/versions/v1.2/bin/3.0.1"), "foo")
-        XCTAssertEqual(ForegroundProcessDetector.canonicalName(of: "/usr/local/bin/claude"), "claude")
-        XCTAssertEqual(ForegroundProcessDetector.canonicalName(of: "zsh"), "zsh")
-        XCTAssertEqual(ForegroundProcessDetector.canonicalName(of: "2.1.218"), "2.1.218", "no parents to name it")
-        XCTAssertEqual(ForegroundProcessDetector.canonicalName(of: ""), "")
+        XCTAssertEqual(ForegroundProcessName.canonicalName(of: "/opt/foo/versions/v1.2/bin/3.0.1"), "foo")
+        XCTAssertEqual(ForegroundProcessName.canonicalName(of: "/usr/local/bin/claude"), "claude")
+        XCTAssertEqual(ForegroundProcessName.canonicalName(of: "zsh"), "zsh")
+        XCTAssertEqual(ForegroundProcessName.canonicalName(of: "2.1.218"), "2.1.218", "no parents to name it")
+        XCTAssertEqual(ForegroundProcessName.canonicalName(of: ""), "")
         // Version-shape boundaries: at least one dot; digits+dots only (optional leading v).
         // The version SHAPE itself is pinned in `rust/slopdesk-agent::process` — this suite keeps
         // the answers that reach a caller (the canonical name above), not the predicate behind them.
@@ -929,5 +929,39 @@ final class ClaudePaneDetectorTests: XCTestCase {
         _ = d.sample(name: "zsh", at: 2 + ClaudePaneDetector.reportGraceWindow + 1)
         XCTAssertEqual(d.status, .none)
         XCTAssertFalse(d.suppressesChildNotifications, "claude gone — a later child's OSC notification passes again")
+    }
+
+    // MARK: - Validate-then-drop, at the fold that actually runs
+
+    /// Bytes the door cannot read change NOTHING — not the status, not the emission, and not by
+    /// trapping. The peer here is whatever POSTed to a host-local socket, so "any byte sequence is
+    /// tolerated" is a security property and not a nicety.
+    ///
+    /// These three cases came from `AgentHookListenerTests`, where they drove an `AgentHookHandler`
+    /// nothing constructed. Against THIS detector they had never been asserted, and it is the one
+    /// the live sink calls.
+    func testABodyTheDoorCannotReadIsDroppedWhole() {
+        for bytes in [
+            json("not json at all {{{"),
+            Data(),
+            json(#"{"hook_event_name":"SomethingNew","session_id":"s"}"#),
+        ] {
+            var d = ClaudePaneDetector()
+            let emission = d.hook(bytes: bytes, at: 0)
+            XCTAssertTrue(emission.isEmpty, "an unreadable body emits nothing at all")
+            XCTAssertEqual(d.status, .none, "…and moves the machine nowhere")
+        }
+    }
+
+    /// The same, but folded into a pane that already has a status: a dropped record must not clear
+    /// what an earlier real one established. A fresh detector cannot tell "dropped" from "nothing
+    /// happened yet", which is why this case is separate from the one above.
+    func testADroppedBodyLeavesAnEstablishedStatusStanding() {
+        var d = ClaudePaneDetector()
+        _ = d.hook(bytes: json(#"{"hook_event_name":"UserPromptSubmit","session_id":"s1"}"#), at: 0)
+        XCTAssertEqual(d.status, .working)
+        let dropped = d.hook(bytes: json("}{ not a body"), at: 1)
+        XCTAssertTrue(dropped.isEmpty)
+        XCTAssertEqual(d.status, .working, "a record nobody could read is not evidence the turn ended")
     }
 }

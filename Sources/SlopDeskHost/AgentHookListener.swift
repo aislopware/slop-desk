@@ -14,14 +14,15 @@ import SlopDeskProtocol
 /// Ranked second is not the same as switched off, and the difference was visible — only this path
 /// produces ``ClaudeStatus/done``.
 ///
-/// **Pure handler / thin shim split (hang-safety).** Two pieces:
+/// **What is here, and what is not.** The FOLD is not: a received body goes to the owning pane's
+/// ``ClaudePaneDetector``, which is the one machine per pane. There used to be a second one right
+/// here — an `AgentHookHandler` reading the same body through the same ``SlopDeskAgentDetect/ClaudeHookBody``
+/// door, folding it through its own ``ClaudeStatusMachine``, dedupeing against its own anchor — and
+/// it was constructed by nothing outside its own test file. Two machines per pane is the bug the
+/// fused detector exists to prevent, so what is left here is the routing:
 ///
-/// - ``AgentHookHandler`` — the PURE core. It asks ``SlopDeskAgentDetect/ClaudeHookBody`` what the
-///   received bytes SAY (one door over `rust/slopdesk-hookevent`: which event, which block class,
-///   whose session), folds the answer through the embedded ``ClaudeStatusMachine``, and produces the
-///   type-27 message with dedupe. It NEVER binds a socket — it is fed bytes directly in
-///   `AgentHookListenerTests` with real Claude hook JSON. Validate-then-drop: malformed /
-///   short / non-JSON bytes yield `nil` (ignored, never trap).
+/// - ``AgentHookRecord`` — the PURE record framing (`pane=<id>` header + raw hook JSON), split out
+///   so the routing is unit-testable without a socket.
 ///
 /// - ``AgentHookListener`` — the per-host coordinator. It does NOT bind anything: superd owns the
 ///   `AF_UNIX` listener, because that address is baked into every agent's environment and must
@@ -33,64 +34,9 @@ import SlopDeskProtocol
 /// depend on `SlopDeskAgentDetect`, so the bytes are the contract):
 /// - `state` = `ClaudeStatus.urgency` (`0 none / 1 idle / 2 done / 3 working / 4 needsPermission`).
 /// - `kind`  = `0 none / 1 permission / 2 waitingForInput / 3 other` (the last Notification class),
-///   plus `4 quiet` — emitted by ``ClaudePaneDetector`` (not this handler) for a status change the
-///   client must display but not announce. See `SlopDeskAgentDetect.AgentStatusKind`.
+///   plus `4 quiet` — for a status change the client must display but not announce. See
+///   `SlopDeskAgentDetect.AgentStatusKind`.
 /// - `label` = the Stop `last_assistant_message` / Notification `message`, clamped on the wire.
-public struct AgentHookHandler: Sendable {
-    /// The embedded per-pane state machine (W7). One handler instance = one pane's hook feed.
-    private var machine: ClaudeStatusMachine
-
-    /// The last-emitted `(state, kind, label)` triple — dedupe anchor (see ``ForegroundProcessDetector``).
-    private var lastEmittedStatus: ForegroundProcessDetector.StatusTriple?
-
-    public init(doneToIdleTimeout: TimeInterval = 8) {
-        machine = ClaudeStatusMachine(doneToIdleTimeout: doneToIdleTimeout)
-        lastEmittedStatus = nil
-    }
-
-    /// Fold one received hook payload (raw POST body bytes) at absolute time `now`, returning
-    /// the type-27 `claudeStatus` message to enqueue, or `nil` when:
-    /// - the bytes do not parse as a known Claude hook event (validate-then-drop), OR
-    /// - the resulting status `(state, kind, label)` triple is unchanged (dedupe).
-    ///
-    /// Pure + total: any byte sequence is tolerated. Never traps, never force-unwraps.
-    public mutating func handle(bytes: Data, at now: TimeInterval) -> WireMessage? {
-        // Validate-then-drop, and already ATTRIBUTED: the door reads the envelope's `session_id`
-        // into every event that describes a call, which is exactly what a nested `claude -p` would
-        // otherwise use to drive this pane.
-        guard let read = ClaudeHookBody.read(bytes) else { return nil }
-        // ⚠️ The machine drops a foreign session silently, but emitting on the way out would still
-        // ship the DROPPED record's `kind` byte — a wire frame announcing a block class change that
-        // never happened. Ask before folding, exactly as `ClaudePaneDetector` does.
-        guard machine.accepts(read.event) else { return nil }
-        machine.reduce(.hook(read.event), at: now)
-        return statusEmissionIfChanged(kindByte: read.kindByte)
-    }
-
-    /// A bare clock tick (drives the machine's `done → idle` decay) — emits type-27 iff the
-    /// decay changed the status. No hook bytes; the Notification kind resets to `0`.
-    public mutating func tick(at now: TimeInterval) -> WireMessage? {
-        machine.reduce(.tick, at: now)
-        return statusEmissionIfChanged(kindByte: 0)
-    }
-
-    /// The current rolled-up status (diagnostics / the live wiring's per-pane rollup).
-    public var status: ClaudeStatus { machine.status }
-
-    // MARK: - Status dedupe
-
-    private mutating func statusEmissionIfChanged(kindByte: UInt8) -> WireMessage? {
-        let triple = ForegroundProcessDetector.StatusTriple(
-            state: UInt8(truncatingIfNeeded: machine.status.urgency),
-            kind: kindByte,
-            label: machine.displayLabel ?? "",
-        )
-        if triple == lastEmittedStatus { return nil }
-        lastEmittedStatus = triple
-        return .claudeStatus(state: triple.state, kind: triple.kind, label: triple.label)
-    }
-}
-
 /// W10 — the PURE record framing the installed hook POSTs (a `pane=<id>` header line + the raw
 /// hook JSON). Split here so the routing is unit-testable without a socket; the socket shim
 /// only moves bytes. Validate-then-drop: a record with no `pane=` header yields a `nil` pane id
@@ -123,7 +69,7 @@ public enum AgentHookRecord {
 ///
 /// The host registers a sink (`{ paneID → ingest(jsonBytes) }`) when a channel opens and drops it on
 /// close. This stays pane-agnostic at the socket layer (one socket, many panes — the Muxy model)
-/// while keeping the per-pane state (the ``AgentHookHandler``) on the owning ``MuxChannelSession``.
+/// while keeping the per-pane state (the ``ClaudePaneDetector``) on the owning ``MuxChannelSession``.
 ///
 /// ## hostd does not bind this socket, and that is the point
 /// superd does (`rust/slopdesk-superd/src/listeners.rs`), because the address is baked into every
@@ -134,7 +80,7 @@ public enum AgentHookRecord {
 ///
 /// The framing matches the Muxy/Herdr convention the installed hook POSTs (docs/41 §2.1): one
 /// connection carries one newline-terminated record. This class reads the bytes, strips the trailing
-/// newline, and hands the raw JSON to the pane's sink — the handler does ALL parsing and validation
+/// newline, and hands the raw JSON to the pane's sink — the DETECTOR does all parsing and validation
 /// (validate-then-drop), so a malformed record is dropped without a trap.
 ///
 /// ## Two serial queues, and neither may be merged with the other
@@ -142,7 +88,7 @@ public enum AgentHookRecord {
 ///   drained in the order superd accepted them, which is the order the agent produced them.
 /// - `deliveryQueue` runs the routing. Serial for the same reason and a stronger one: hook events
 ///   are a state machine per pane (UserPromptSubmit → PreToolUse → Stop), and arrival order is the
-///   only thing keeping ``AgentHookHandler`` honest.
+///   only thing keeping that machine honest.
 ///
 /// Separate, because a slow SINK must not stall the next connection's drain — that is the shape the
 /// old accept loop had, and the reason it had it has not changed.

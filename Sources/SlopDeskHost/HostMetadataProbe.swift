@@ -1,6 +1,7 @@
 #if os(macOS)
 import Darwin
 import Foundation
+import SlopDeskAgentDetect
 import SlopDeskProtocol
 
 /// The THIN OS shim that backs the host metadata RPC for ONE pane (its PTY master fd + shell pid).
@@ -214,7 +215,7 @@ struct HostMetadataProbe: MetadataQuerying {
     private static func processName(_ pid: pid_t) -> String {
         var pathBuffer = [CChar](repeating: 0, count: Int(MAXPATHLEN))
         if proc_pidpath(pid, &pathBuffer, UInt32(pathBuffer.count)) > 0 {
-            return ForegroundProcessDetector.basename(of: string(fromCString: pathBuffer))
+            return ForegroundProcessName.basename(of: string(fromCString: pathBuffer))
         }
         var nameBuffer = [CChar](repeating: 0, count: 256)
         _ = proc_name(pid, &nameBuffer, UInt32(nameBuffer.count))

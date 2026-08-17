@@ -237,7 +237,7 @@ final class MuxChannelSession: @unchecked Sendable {
 
     /// Whether host-side Claude-Code agent detection (the foreground process-watch) is enabled for
     /// this channel. When true, ``startRelay()`` spins a low-rate poll that resolves
-    /// the PTY's foreground basename and drives ``ForegroundProcessDetector`` → type-26/27.
+    /// the PTY's foreground basename and drives ``ClaudePaneDetector`` → type-26/27.
     private let agentDetectEnabled: Bool
 
     /// The interval between foreground-process samples (~1 Hz; injected so a future test could
@@ -1364,7 +1364,7 @@ final class MuxChannelSession: @unchecked Sendable {
         }
 
         // Foreground-process watch — the PRIMARY agent-detection signal. A low-rate poll resolves
-        // the PTY's foreground basename and folds it through the pure ``ForegroundProcessDetector``,
+        // the PTY's foreground basename and folds it through the pure ``ClaudePaneDetector``,
         // enqueueing the resulting type-26/27 CONTROL messages on a basename edge / status change
         // (the detector dedupes — an idle `claude` does not spam identical frames). The OS probe
         // (`tcgetpgrp`/`proc_pidpath`) is the thin shim; the decision logic is the pure detector.

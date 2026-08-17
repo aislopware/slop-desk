@@ -60,8 +60,8 @@ import Foundation
 /// **Every rule above is `rust/slopdesk-agent::machine`** (docs/55) — the ledger, the two tiers,
 /// the dissent windows and the lockout. This is the handle that owns one machine's state and the
 /// marshalling that reaches it, which is why it is a `final class` where it used to be a `struct`:
-/// its two owners (``ClaudePaneDetector``, ``ForegroundProcessWatcher``) each hold exactly one and
-/// never copy it, so reference semantics cost nothing. Overlapping calls on one handle are
+/// its owner (``ClaudePaneDetector``, one per pane and the only one there is) holds exactly one and
+/// never copies it, so reference semantics cost nothing. Overlapping calls on one handle are
 /// aliasing UB rather than a lost update, so an owner that ever shares one must serialise.
 public final class ClaudeStatusMachine: @unchecked Sendable {
     /// Seconds a `.done` status lingers before decaying to `.idle`.

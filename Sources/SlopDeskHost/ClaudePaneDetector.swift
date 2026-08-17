@@ -8,8 +8,8 @@ import SlopDeskProtocol
 /// display.
 ///
 /// ## Why one detector
-/// Splitting detection across two independent machines — ``ForegroundProcessDetector`` (foreground
-/// watch) and ``AgentHookHandler`` (hook socket) — would have BOTH emit type-27 with no
+/// Splitting detection across two independent machines — a foreground-watch reducer (the ~1 Hz
+/// poll) and a hook-socket handler — would have BOTH emit type-27 with no
 /// reconciliation, so they fight (a hook `.working` and a foreground-poll `.idle` clobber each other
 /// down the one CONTROL stream), and with no owner driving `.tick(at:)` the `.done → .idle` decay
 /// never fires (a finished turn stays 🔵 forever). Fusing every input into ONE machine gives ONE
@@ -41,7 +41,7 @@ public struct ClaudePaneDetector: Sendable {
 
     /// The last `(state, kind, label)` triple a type-27 was emitted for (`nil` before the first emit).
     /// A new machine verdict emits type-27 iff this triple changed (dedupe).
-    private var lastEmittedStatus: ForegroundProcessDetector.StatusTriple?
+    private var lastEmittedStatus: ClaudeStatusTriple?
 
     /// Absolute time (injected `now`) of the LAST authoritative fold — a ctl self-report (the P1
     /// `report` verb) OR a parsed HOOK event — or `nil` if none.
@@ -118,7 +118,7 @@ public struct ClaudePaneDetector: Sendable {
     }
 
     /// One decision: the (possibly empty) CONTROL messages to enqueue for this fold. Shape-identical to
-    /// ``ForegroundProcessDetector/Emission`` so both drive the same `broadcastControl` wiring.
+    /// the hook listener's own emission so both drive the same `broadcastControl` wiring.
     public struct Emission: Sendable, Equatable {
         /// The type-26 `foregroundProcess(name:)` to send, or `nil` (no basename edge).
         public var foreground: WireMessage?
@@ -162,7 +162,7 @@ public struct ClaudePaneDetector: Sendable {
     /// The `(state, kind, label)` triple the type-27 stream currently stands at — the CURRENT VALUE
     /// behind the edge, `nil` before the first emission. The workspace document publishes this so a
     /// client that missed the edge still learns the pane's agent state.
-    public var lastEmittedStatusForControl: ForegroundProcessDetector.StatusTriple? { lastEmittedStatus }
+    public var lastEmittedStatusForControl: ClaudeStatusTriple? { lastEmittedStatus }
 
     /// The agent's current session intent (type 36's value), `nil` when none is established.
     public var sessionIntentForControl: String? { sessionIntent }
@@ -186,7 +186,7 @@ public struct ClaudePaneDetector: Sendable {
     /// drives the presence FLOOR; a non-claude/empty name forces `.none`. The richer hook status is NOT
     /// overridden by presence (presence only lifts `.none` → `.idle`; absence forces termination).
     public mutating func sample(name rawName: String, at now: TimeInterval) -> Emission {
-        let base = ForegroundProcessDetector.canonicalName(of: rawName)
+        let base = ForegroundProcessName.canonicalName(of: rawName)
         var emission = Emission()
         if base != lastEmittedName {
             lastEmittedName = base
@@ -477,7 +477,7 @@ public struct ClaudePaneDetector: Sendable {
             emission.foreground = .foregroundProcess(name: name)
         }
         if lastEmittedStatus != nil {
-            let triple = ForegroundProcessDetector.StatusTriple(
+            let triple = ClaudeStatusTriple(
                 state: UInt8(truncatingIfNeeded: machine.status.urgency),
                 kind: statusKindByte,
                 label: machine.displayLabel ?? "",
@@ -604,7 +604,7 @@ public struct ClaudePaneDetector: Sendable {
     /// Returns a type-27 `claudeStatus` message iff the machine's `(state, kind, label)` triple changed
     /// since the last emit; `nil` when unchanged (dedupe). `kind` reflects the live block class.
     private mutating func statusEmissionIfChanged() -> WireMessage? {
-        let triple = ForegroundProcessDetector.StatusTriple(
+        let triple = ClaudeStatusTriple(
             state: UInt8(truncatingIfNeeded: machine.status.urgency),
             kind: statusKindByte,
             label: machine.displayLabel ?? "",

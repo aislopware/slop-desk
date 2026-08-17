@@ -3479,7 +3479,7 @@ printf 'check-supervisor: one shell word, wherever a path is typed into a live s
 # The `claude` and wrapper matches already reduced a process name in Rust while Swift kept its own
 # reducer beside them, plus the version-directory walk and an eleven-name sensitive set with no
 # Rust twin at all. One name, read three ways, must reduce the same way each time.
-SWIFT_FOREGROUND=Sources/SlopDeskHost/ForegroundProcessWatcher.swift
+SWIFT_FOREGROUND=Sources/SlopDeskHost/ForegroundProcessProbes.swift
 if hit=$(spells 'split\(separator: "/"\)|isVersionShaped|"versions"' "${SWIFT_FOREGROUND}"); then
   fail "${hit} reduces a process name again — slopdesk-agent::process owns the basename and the version walk"
 fi
@@ -3553,17 +3553,60 @@ fi
 if ! spells 'slopdesk_hook_event_parse' "${SWIFT_HOOKBODY}" > /dev/null; then
   fail "${SWIFT_HOOKBODY} stopped asking the door — it is a marshaller over the reader, not a second one"
 fi
-for caller in Sources/SlopDeskHost/AgentHookListener.swift Sources/SlopDeskHost/ClaudePaneDetector.swift; do
-  if ! spells 'ClaudeHookBody\.read' "${caller}" > /dev/null; then
-    fail "${caller} reads a hook body some other way — every body enters through ClaudeHookBody"
-  fi
-done
+if ! spells 'ClaudeHookBody\.read' Sources/SlopDeskHost/ClaudePaneDetector.swift > /dev/null; then
+  fail "Sources/SlopDeskHost/ClaudePaneDetector.swift reads a hook body some other way — every body enters through ClaudeHookBody"
+fi
+# The LISTENER used to be named here too, because it read bodies itself: an `AgentHookHandler` at
+# the top of that file folded them through a second `ClaudeStatusMachine`. It routes now and reads
+# nothing, so the check inverts — a body read back there is a second fold growing back, which is a
+# stronger statement than "it still uses the right door".
+if hit=$(spells 'ClaudeHookBody|ClaudeStatusMachine' Sources/SlopDeskHost/AgentHookListener.swift); then
+  fail "${hit} reads a hook body again — the listener ROUTES; the pane's detector is what folds"
+fi
 for rule in 'pub fn parse' 'fn classify' 'fn stop_label' 'fn question_label'; do
   if ! spells "${rule}" rust/slopdesk-hookevent/src/lib.rs > /dev/null; then
     fail "rust/slopdesk-hookevent/src/lib.rs lost ${rule} — one body, one reading, one meaning"
   fi
 done
 printf 'check-supervisor: one reading of a hook body.\n'
+
+# ── And ONE state machine per pane ──────────────────────────────────────────────────────────────
+# `ClaudePaneDetector` exists because two machines per pane FIGHT: both emit type-27 with no
+# reconciliation, so a hook `.working` and a foreground-poll `.idle` clobber each other on the one
+# control stream, and with neither owning `.tick(at:)` the `.done → .idle` decay never fires — a
+# finished turn stays lit forever. The fusion landed, and the machine it replaced kept compiling
+# anyway: `ForegroundProcessDetector`, holding its own `ClaudeStatusMachine`, its own basename edge
+# anchor and its own status dedupe anchor, constructed by nothing in `Sources/` and kept alive by a
+# test file of its own. That is the shape `CLAUDE.md` names outright — a second implementation
+# surviving as a test fake — and it is what this gate is here to catch the next time.
+#
+# It was TWO, not one: `AgentHookHandler` beside the hook listener did the same thing for the same
+# reason — reading a body through the same `ClaudeHookBody` door, folding it through its own
+# machine, dedupeing against its own anchor — and it too was constructed only by its own tests.
+#
+# Counted rather than named, because the failure is arithmetic: exactly ONE `ClaudeStatusMachine`
+# may be constructed anywhere under `Sources/`, and it is the detector's. A second owner is the bug,
+# whatever it is called, so this cannot be satisfied by renaming the type that grows it back.
+machine_owners=$(grep -rln 'ClaudeStatusMachine(' Sources --include='*.swift' 2> /dev/null || true)
+if [[ "${machine_owners}" != 'Sources/SlopDeskHost/ClaudePaneDetector.swift' ]]; then
+  printf '%s\n' "${machine_owners}" >&2
+  fail "a ClaudeStatusMachine is constructed outside ClaudePaneDetector — two machines per pane fight (docs/50)"
+fi
+# The probe file is the shim half of that split, and it must stay a shim: the moment it folds a
+# signal or holds an emit anchor it has become the reducer again, under a new name.
+if hit=$(spells 'ClaudeStatusMachine|lastEmitted|struct Emission|mutating func sample|mutating func tick' "${SWIFT_FOREGROUND}"); then
+  fail "${hit} decides something — the probes resolve a NAME, ClaudePaneDetector folds it (docs/50)"
+fi
+# And the triple stays one type. Three emitters anchor on it; a fourth spelling of the same three
+# fields is how the dedupe anchors drift apart into two answers for "would this frame be a repeat".
+if ! spells 'public struct ClaudeStatusTriple:' Sources/SlopDeskAgentDetect/ClaudeStatus.swift > /dev/null; then
+  fail "ClaudeStatusTriple left Sources/SlopDeskAgentDetect/ClaudeStatus.swift — it is the vocabulary's, not an emitter's"
+fi
+if hit=$(grep -rln 'struct StatusTriple' Sources 2> /dev/null); then
+  printf '%s\n' "${hit}" >&2
+  fail "a second status triple is declared in Sources/ — ClaudeStatusTriple is the one shape of a type-27 emit"
+fi
+printf 'check-supervisor: one ClaudeStatusMachine per pane, and the probes only probe.\n'
 
 # ── One VT grammar for STYLED text, and the clipboard reads it destyled ────────────────────────
 # `AnsiStyledParser` was a SECOND VT grammar: a hand-rolled escape skipper, a hand-rolled SGR

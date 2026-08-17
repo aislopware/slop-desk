@@ -12,8 +12,8 @@ import SlopDeskProtocol
 /// parses). So the client cannot derive the no-echo state itself; the AUTO path genuinely needs this
 /// host→client message (see `docs/20-wire-protocol.md` and `DECISIONS.md`).
 ///
-/// **Pure core / thin shim split (hang-safety).** This file is TWO pieces, mirroring
-/// ``ForegroundProcessDetector`` / ``PTYForegroundProbe``:
+/// **Pure core / thin shim split (hang-safety).** This file is TWO pieces, the same shape as
+/// ``ClaudePaneDetector`` / ``PTYForegroundProbe``:
 ///
 /// - ``EchoModeDetector`` — the PURE core. Given an `echoOn` bool from an INJECTED source it
 ///   edge-detects vs the last emitted value and decides when to emit a type-31
@@ -30,7 +30,7 @@ import SlopDeskProtocol
 /// child actually deviates (a password prompt clears `ECHO` → `inputEcho(false)`) and again when it
 /// restores (→ `inputEcho(true)`). No chatter; the CONTROL stream stays byte-identical to the
 /// pre-feature one when no no-echo prompt ever appears. (This deliberately differs from
-/// ``ForegroundProcessDetector``'s nil-anchor first-emit: here the default is meaningful and the client
+/// ``ClaudePaneDetector``'s nil-anchor first-emit: here the default is meaningful and the client
 /// already assumes it, so emitting a redundant initial `inputEcho(true)` would be pure noise.)
 public struct EchoModeDetector: Sendable {
     /// The last echo state we emitted a type-31 for. Initialized to the canonical default (echo-on)

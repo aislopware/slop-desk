@@ -6,7 +6,7 @@ import SlopDeskProtocol
 /// so ``MetadataResponseBuilder`` is a PURE value-in/value-out reducer (unit-tested with an injected
 /// fake — `MetadataResponseBuilderTests`). The real ``HostMetadataProbe`` (`#if os(macOS)`) does the
 /// git/lsof/proc syscalls; it is compiled + code-reviewed only, never spun in a unit test (the
-/// hang-safety rule, exactly like ``PTYForegroundProbe`` splitting from ``ForegroundProcessDetector``).
+/// hang-safety rule, exactly like ``PTYForegroundProbe`` holding no decision of its own).
 ///
 /// **Confinement contract:** the builder NEVER calls a path/id-parameterized query method until it has
 /// validated and confined the request's argument against the pane's cwd subtree (or rejected an unsafe

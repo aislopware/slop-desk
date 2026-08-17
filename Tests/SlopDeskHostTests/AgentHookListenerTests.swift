@@ -5,153 +5,17 @@ import SlopDeskProtocol
 import XCTest
 @testable import SlopDeskHost
 
-/// The PURE ``AgentHookHandler`` core, fed REAL Claude Code hook JSON bytes directly, plus the ONE
-/// socket-shim test that binds (``testAWedgedSinkDoesNotBlockTheNextClient``). Asserts
-/// the correct type-27 ``WireMessage/claudeStatus`` emission + the embedded machine state, plus
-/// validate-then-drop on malformed bytes.
+/// The hook path's ROUTING: what one body reads as at the door, what a framed record splits into,
+/// and the one drain test that opens a real descriptor.
+///
+/// The FOLD is not here any more. It was — an `AgentHookHandler` carrying its own
+/// ``ClaudeStatusMachine`` and its own dedupe anchor, driven by thirteen tests in this file and
+/// constructed by nothing in `Sources/`. Every behaviour they asserted belongs to the machine, and
+/// the live listener's sink reaches it through ``ClaudePaneDetector``, so they now run against the
+/// fold that actually executes — including the validate-then-drop cases, which had never been
+/// asserted against it at all.
 final class AgentHookListenerTests: XCTestCase {
     private func json(_ s: String) -> Data { Data(s.utf8) }
-
-    // MARK: real hook JSON → type-27
-
-    func testSessionStartEmitsIdle() {
-        var h = AgentHookHandler()
-        let msg = h.handle(bytes: json(#"{"hook_event_name":"SessionStart","session_id":"s1"}"#), at: 0)
-        XCTAssertEqual(h.status, .idle)
-        XCTAssertEqual(msg, .claudeStatus(state: 1, kind: 0, label: ""), "SessionStart → idle (urgency 1), kind none")
-    }
-
-    func testUserPromptSubmitEmitsWorking() {
-        var h = AgentHookHandler()
-        _ = h.handle(bytes: json(#"{"hook_event_name":"SessionStart","session_id":"s1"}"#), at: 0)
-        let msg = h.handle(bytes: json(#"{"hook_event_name":"UserPromptSubmit","session_id":"s1"}"#), at: 1)
-        XCTAssertEqual(h.status, .working)
-        XCTAssertEqual(msg, .claudeStatus(state: 3, kind: 0, label: ""), "UserPromptSubmit → working (urgency 3)")
-    }
-
-    func testNotificationPermissionEmitsBlockedWithKindAndLabel() {
-        var h = AgentHookHandler()
-        let body = #"{"hook_event_name":"Notification","message":"Claude needs your permission to use Bash"}"#
-        let msg = h.handle(bytes: json(body), at: 0)
-        XCTAssertEqual(h.status, .needsPermission)
-        XCTAssertEqual(
-            msg,
-            .claudeStatus(state: 4, kind: 1, label: "Claude needs your permission to use Bash"),
-            "permission Notification → needsPermission (urgency 4), kind permission (1), label = message",
-        )
-    }
-
-    /// The idle "waiting for your input" nudge is informational — it lifts presence (idle), never
-    /// blocks. The genuine blocking classes keep kind 2 (`agent_needs_input` / `AskUserQuestion`).
-    func testNotificationIdleWaitingIsPresenceNotBlocked() {
-        var h = AgentHookHandler()
-        let body = #"{"hook_event_name":"Notification","message":"Claude is waiting for your input"}"#
-        let msg = h.handle(bytes: json(body), at: 0)
-        XCTAssertEqual(h.status, .idle)
-        guard case let .claudeStatus(state, kind, _)? = msg else { XCTFail("expected claudeStatus")
-            return
-        }
-        XCTAssertEqual(state, 1, "presence floor, not blocked")
-        XCTAssertEqual(kind, 3, "informational class")
-    }
-
-    func testNotificationAgentNeedsInputEmitsKind2() {
-        var h = AgentHookHandler()
-        let body = #"{"hook_event_name":"Notification","notification_type":"agent_needs_input","message":"?"}"#
-        let msg = h.handle(bytes: json(body), at: 0)
-        XCTAssertEqual(h.status, .needsPermission)
-        guard case let .claudeStatus(state, kind, _)? = msg else { XCTFail("expected claudeStatus")
-            return
-        }
-        XCTAssertEqual(state, 4)
-        XCTAssertEqual(kind, 2, "a genuine input block maps to kind 2")
-    }
-
-    func testStopEmitsDoneWithLabel() {
-        var h = AgentHookHandler()
-        let body = #"{"hook_event_name":"Stop","session_id":"s1","last_assistant_message":"All tests pass."}"#
-        let msg = h.handle(bytes: json(body), at: 0)
-        XCTAssertEqual(h.status, .done)
-        XCTAssertEqual(
-            msg,
-            .claudeStatus(state: 2, kind: 0, label: "All tests pass."),
-            "Stop → done (urgency 2), kind none, label = last_assistant_message",
-        )
-    }
-
-    func testSessionEndEmitsNone() {
-        var h = AgentHookHandler()
-        _ = h.handle(bytes: json(#"{"hook_event_name":"SessionStart","session_id":"s1"}"#), at: 0)
-        let msg = h.handle(bytes: json(#"{"hook_event_name":"SessionEnd","session_id":"s1"}"#), at: 1)
-        XCTAssertEqual(h.status, .none)
-        XCTAssertEqual(msg, .claudeStatus(state: 0, kind: 0, label: ""), "SessionEnd → none (urgency 0)")
-    }
-
-    // MARK: validate-then-drop on malformed / unknown bytes
-
-    /// A record naming a DIFFERENT session is dropped by the machine — and must not be announced
-    /// on the way out either. `handle` used to fold-then-emit unconditionally, so a nested
-    /// `claude -p`'s `PermissionRequest` shipped a type-27 saying the pane's block had changed
-    /// class while the machine had not moved at all.
-    func testAForeignSessionsRecordIsNotAnnouncedEither() {
-        var h = AgentHookHandler()
-        _ = h.handle(bytes: json(#"{"hook_event_name":"SessionStart","session_id":"outer"}"#), at: 0)
-        let body = #"{"hook_event_name":"Notification","session_id":"outer","#
-            + #""message":"Claude needs your permission to use Bash"}"#
-        _ = h.handle(bytes: json(body), at: 1)
-        XCTAssertEqual(h.status, .needsPermission)
-
-        let nested = h.handle(
-            bytes: json(#"{"hook_event_name":"PermissionRequest","session_id":"inner","tool_name":"Read"}"#),
-            at: 2,
-        )
-        XCTAssertEqual(h.status, .needsPermission, "the machine did not move…")
-        XCTAssertNil(nested, "…so nothing goes on the wire saying it did")
-    }
-
-    func testMalformedBytesAreDropped() {
-        var h = AgentHookHandler()
-        let msg = h.handle(bytes: json("not json at all {{{"), at: 0)
-        XCTAssertNil(msg, "malformed bytes must be dropped (validate-then-drop), not crash")
-        XCTAssertEqual(h.status, .none, "a dropped payload changes nothing")
-    }
-
-    func testEmptyBytesAreDropped() {
-        var h = AgentHookHandler()
-        XCTAssertNil(h.handle(bytes: Data(), at: 0))
-        XCTAssertEqual(h.status, .none)
-    }
-
-    func testUnknownHookEventIsDropped() {
-        var h = AgentHookHandler()
-        let msg = h.handle(bytes: json(#"{"hook_event_name":"SomethingNew","session_id":"s1"}"#), at: 0)
-        XCTAssertNil(msg, "an unrecognized hook event parses to nil → dropped")
-    }
-
-    // MARK: dedupe
-
-    func testIdenticalStatusIsNotReEmitted() {
-        var h = AgentHookHandler()
-        let m1 = h.handle(bytes: json(#"{"hook_event_name":"UserPromptSubmit","session_id":"s1"}"#), at: 0)
-        let m2 = h.handle(bytes: json(#"{"hook_event_name":"PreToolUse","tool_name":"Bash"}"#), at: 1)
-        XCTAssertNotNil(m1, "first working transition emits")
-        // PreToolUse is also working (same state, same kind, same empty label) → deduped.
-        XCTAssertNil(m2, "a second working transition with the same triple is deduped")
-        XCTAssertEqual(h.status, .working)
-    }
-
-    // MARK: done → idle decay via injected clock (no wall clock)
-
-    func testDoneDecaysToIdleOnTick() {
-        var h = AgentHookHandler(doneToIdleTimeout: 5)
-        _ = h.handle(bytes: json(#"{"hook_event_name":"Stop","last_assistant_message":"ok"}"#), at: 0)
-        XCTAssertEqual(h.status, .done)
-        let early = h.tick(at: 4) // before the timeout
-        XCTAssertNil(early, "still done before the timeout — no new status")
-        let decayed = h.tick(at: 6) // past the timeout
-        XCTAssertEqual(h.status, .idle)
-        XCTAssertEqual(decayed, .claudeStatus(state: 1, kind: 0, label: ""), "done → idle decay emits type 27")
-    }
 
     // MARK: body → event, at the door
 
@@ -201,14 +65,18 @@ final class AgentHookListenerTests: XCTestCase {
     }
 
     /// End-to-end over the pure pieces: split a real framed record, then feed the JSON to the
-    /// handler → the right type-27. (The socket shim is not touched — hang-safety.)
-    func testSplitThenHandleProducesStatus() {
+    /// detector the live sink feeds → the right type-27. (No socket is touched — hang-safety.)
+    func testSplitThenFoldProducesStatus() {
         let record = Data("pane=p1\n{\"hook_event_name\":\"UserPromptSubmit\"}".utf8)
         let (paneID, body) = AgentHookRecord.split(record)
         XCTAssertEqual(paneID, "p1")
-        var h = AgentHookHandler()
-        let msg = h.handle(bytes: body, at: 0)
-        XCTAssertEqual(msg, .claudeStatus(state: 3, kind: 0, label: ""), "framed UserPromptSubmit → working")
+        var detector = ClaudePaneDetector()
+        let emission = detector.hook(bytes: body, at: 0)
+        XCTAssertEqual(
+            emission.status,
+            .claudeStatus(state: 3, kind: 0, label: ""),
+            "framed UserPromptSubmit → working",
+        )
     }
 
     // MARK: - The drain (the only test that opens a real descriptor)
