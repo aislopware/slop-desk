@@ -50,6 +50,7 @@ path = "src/lib.rs"
 
 [dependencies]
 slopdesk-agent = { path = "../slopdesk-agent" }
+slopdesk-androidd = { path = "../slopdesk-androidd" }
 slopdesk-cli = { path = "../slopdesk-cli" }
 slopdesk-dropd = { path = "../slopdesk-dropd" }
 slopdesk-fuzzy = { path = "../slopdesk-fuzzy" }

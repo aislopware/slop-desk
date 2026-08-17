@@ -3738,6 +3738,43 @@ for half in 'pub fn encode_request' 'pub fn decode_request' 'pub fn encode_reply
 done
 printf 'check-supervisor: one encoder for the screend frame, and both its ends in one crate.\n'
 
+# ── The scrcpy stream is reassembled ONCE, and not in Swift ────────────────────────────────
+# The bridge relays the device's stream verbatim, so nothing in Rust had ever read it and the whole
+# decoder sat in Swift — a stateful reassembler over bytes a DEVICE wrote, on the per-frame path,
+# whose own comment admitted it copied the buffer remainder on every message. Stage 17's rule puts a
+# protocol's client end in the crate that owns the protocol, and `slopdesk-androidd` owns scrcpy's
+# dialect. Nothing here may grow a second reader of that wire.
+SWIFT_ANDROID_STREAM=Sources/SlopDeskClientUI/Android/AndroidStreamProtocol.swift
+if hit=$(spells 'func readUInt32|private mutating func take|maximumPacketSize|headerSize = |sessionFlag|keyFrameFlag' "${SWIFT_ANDROID_STREAM}"); then
+  fail "${hit} frames the scrcpy stream in Swift again — slopdesk-androidd owns the framing"
+fi
+# The Annex-B walk is `slopdesk-video`'s, beside the AVCC walker that is its other half: the two
+# framings carry the SAME NAL units, and the HEVC type reading is spelled out once there.
+if hit=$(spells 'codeLength|starts\.append|first & 0x1F|first >> 1' "${SWIFT_ANDROID_STREAM}"); then
+  fail "${hit} walks Annex-B in Swift again — slopdesk_video::annexb owns both start-code lengths"
+fi
+for entry in 'slopdesk_android_stream_new' 'slopdesk_android_stream_free' 'slopdesk_android_stream_append' \
+  'slopdesk_android_stream_next' 'slopdesk_android_stream_decodable_codec' 'slopdesk_annexb_split' \
+  'slopdesk_annexb_parameter_sets' 'slopdesk_annexb_to_avcc'; do
+  if ! spells "${entry}" "${SWIFT_ANDROID_STREAM}" > /dev/null; then
+    fail "${SWIFT_ANDROID_STREAM} no longer asks ${entry} — the scrcpy stream is one implementation"
+  fi
+done
+# `free` without `new` is a leak per mirror session; `new` without `free` is the same bug read the
+# other way. Both names above, and the handle held by a CLASS — a struct would copy the pointer.
+if ! spells 'final class AndroidStreamParser' "${SWIFT_ANDROID_STREAM}" > /dev/null; then
+  fail "${SWIFT_ANDROID_STREAM}: the parser stopped being a class — a copied handle is a double free"
+fi
+# Both start-code lengths, in the crate that owns them. Handling only the four-byte form does not
+# fail loudly: it yields NAL units with a start code embedded, which decode as corruption.
+RUST_ANNEXB=rust/slopdesk-video/src/annexb.rs
+for half in 'pub fn split_ranges' 'pub fn to_avcc' 'pub fn h264_parameter_sets' 'pub fn h265_parameter_sets'; do
+  if ! spells "${half}" "${RUST_ANNEXB}" > /dev/null; then
+    fail "${RUST_ANNEXB} lost '${half}' — the Annex-B walk is one implementation"
+  fi
+done
+printf 'check-supervisor: one reader for the scrcpy stream, and one walk over Annex-B.\n'
+
 # ── One regex engine meets the untrusted rows, and it does not backtrack ───────────────────────
 # Hint Mode ran ten compiled NSRegularExpressions over rows a remote program wrote, bridged through
 # NSString, mapping columns with a third cell walk. Two things were wrong with that and this pins

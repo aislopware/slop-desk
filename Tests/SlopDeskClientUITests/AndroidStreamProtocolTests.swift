@@ -1,9 +1,17 @@
-// AndroidStreamProtocolTests — the untrusted decoder for `scrcpy`'s stream.
+// AndroidStreamProtocolTests — the MARSHALLING for `scrcpy`'s stream, not the decoding.
 //
-// The reassembly is what these lean on hardest, for the reason the decoder's own file comment gives:
-// this is a BYTE STREAM, so a header can arrive split down the middle, and a reassembler that gets it
-// wrong does not throw — it decodes garbage into a display layer and shows a black rectangle. So every
-// framing case here is also fed ONE BYTE AT A TIME and asserted to produce the identical messages.
+// The framing itself is `rust/slopdesk-androidd/src/stream.rs` and the Annex-B walk is
+// `rust/slopdesk-video/src/annexb.rs`; every behaviour case this file used to carry was ported there
+// unchanged, including the one-byte-at-a-time reassembly sweep that is the reason this decoder has
+// tests at all. Repeating them here would be the cross-language mirror fixture the tree forbids: two
+// suites that can only ever agree or be a bug.
+//
+// What is left is what only exists on THIS side of the door and can only fail here:
+//
+// - the handle's lifetime — one `new`, one `free`, no double-read of a freed parser;
+// - the buffer sizing — `AGAIN` grows the array and the retry reads the same message;
+// - the slicing — `payload_len` bytes off the head of a buffer that is usually much longer;
+// - the mapping — a `kind` byte and a span array becoming the enum SwiftUI switches on.
 //
 // The fixtures are assembled field by field rather than pasted as one blob, so the meaning of each
 // byte is legible where it is asserted.
@@ -39,201 +47,163 @@ final class AndroidStreamProtocolTests: XCTestCase {
         return data
     }
 
-    /// Feeds a whole stream in one chunk.
-    private func decode(_ stream: Data) -> [AndroidStreamMessage] {
-        var parser = AndroidStreamParser()
-        return parser.consume(stream)
-    }
+    // MARK: The mapping
 
-    /// Feeds the same stream one byte at a time. Any difference from ``decode(_:)`` is a reassembly
-    /// bug — which is the class of bug this decoder exists to not have.
-    private func decodeByteAtATime(_ stream: Data) -> [AndroidStreamMessage] {
-        var parser = AndroidStreamParser()
-        var messages: [AndroidStreamMessage] = []
-        for byte in stream {
-            messages += parser.consume(Data([byte]))
-        }
-        return messages
-    }
-
-    // MARK: The head of the stream
-
-    func testTheCodecIdIsReadOnceAndOnlyOnce() {
-        var parser = AndroidStreamParser()
-        XCTAssertEqual(parser.consume(Data("h264".utf8)), [.codec("h264")])
-        // The next four bytes are a header, not a second codec id.
-        XCTAssertEqual(
-            parser.consume(sessionPacket(width: 1080, height: 2400)),
-            [.session(width: 1080, height: 2400)],
-        )
-    }
-
-    func testAThreeLetterCodecIsSpelledWithALeadingNul() {
-        // `scrcpy` pads `av1` into the four-byte field with a leading NUL. The name is what the
-        // caller compares against, so the padding is stripped here rather than at every call site.
-        XCTAssertEqual(decode(Data([0x00]) + Data("av1".utf8)), [.codec("av1")])
-    }
-
-    func testOnlyTheTwoDecodableCodecsResolve() {
-        // AV1 is deliberately not offered: `VTDecompressionSession` gains it only on M3-class
-        // hardware, so accepting it would make the panel's ability to show anything depend on which
-        // Mac the client runs on.
-        XCTAssertEqual(AndroidVideoCodec(streamIdentifier: "h264"), .h264)
-        XCTAssertEqual(AndroidVideoCodec(streamIdentifier: "h265"), .h265)
-        XCTAssertNil(AndroidVideoCodec(streamIdentifier: "av1"))
-    }
-
-    func testAnAllNulCodecIdIsCorruptRatherThanEmpty() {
-        var parser = AndroidStreamParser()
-        XCTAssertEqual(parser.consume(Data([0, 0, 0, 0])), [])
-        XCTAssertTrue(parser.isCorrupt)
-    }
-
-    // MARK: Framing
-
-    func testEachHeaderFlagSelectsItsMessage() {
+    /// Every `kind` the door can answer becomes its case, with its fields intact — the one thing a
+    /// wrong constant or a mis-read struct field would break, and the Rust suite cannot see.
+    func testEachKindBecomesItsCase() {
         var stream = Data("h264".utf8)
         stream.append(sessionPacket(width: 460, height: 1024))
         stream.append(mediaPacket(flags: 0x40, payload: Data([0xAA, 0xBB])))
         stream.append(mediaPacket(flags: 0x20, payload: Data([0xCC])))
         stream.append(mediaPacket(flags: 0x00, payload: Data([0xDD])))
 
-        let expected: [AndroidStreamMessage] = [
+        let parser = AndroidStreamParser()
+        XCTAssertEqual(parser.consume(stream), [
             .codec("h264"),
             .session(width: 460, height: 1024),
             .configuration(Data([0xAA, 0xBB])),
             .accessUnit(Data([0xCC]), isKeyframe: true),
             .accessUnit(Data([0xDD]), isKeyframe: false),
-        ]
-        XCTAssertEqual(decode(stream), expected)
-        XCTAssertEqual(decodeByteAtATime(stream), expected)
+        ])
+        XCTAssertFalse(parser.isCorrupt)
     }
 
-    func testAPacketSplitAcrossReceivesIsHeldUntilItIsWhole() {
-        // The failure this prevents: half an access unit handed to CoreMedia as a whole one.
-        var parser = AndroidStreamParser()
-        _ = parser.consume(Data("h264".utf8))
-        let packet = mediaPacket(flags: 0x20, payload: Data(repeating: 0xEE, count: 40))
-        XCTAssertEqual(parser.consume(packet.prefix(12 + 39)), [])
+    // MARK: The slicing
+
+    /// A payload is read off the HEAD of a buffer that stays large, so a stale tail must never leak
+    /// into a frame. Two different lengths back to back is what catches that.
+    func testAPayloadIsCutToItsOwnLengthAndNotTheBuffers() {
+        let parser = AndroidStreamParser()
+        XCTAssertEqual(parser.consume(Data("h264".utf8)), [.codec("h264")])
+
+        let long = Data(repeating: 0xEE, count: 900)
         XCTAssertEqual(
-            parser.consume(packet.suffix(1)),
-            [.accessUnit(Data(repeating: 0xEE, count: 40), isKeyframe: true)],
+            parser.consume(mediaPacket(flags: 0x20, payload: long)),
+            [.accessUnit(long, isKeyframe: true)],
+        )
+        let short = Data([0x01, 0x02])
+        XCTAssertEqual(
+            parser.consume(mediaPacket(flags: 0x00, payload: short)),
+            [.accessUnit(short, isKeyframe: false)],
+            "the previous frame's tail is still in the buffer and must not follow this one",
         )
     }
 
-    func testAHeaderSplitAcrossReceivesIsNotReadEarly() {
-        var parser = AndroidStreamParser()
-        _ = parser.consume(Data("h264".utf8))
-        let session = sessionPacket(width: 1080, height: 2400)
-        XCTAssertEqual(parser.consume(session.prefix(11)), [])
-        XCTAssertEqual(parser.consume(session.suffix(1)), [.session(width: 1080, height: 2400)])
+    // MARK: The sizing
+
+    /// The retry contract: a payload past the buffer's floor grows it once, and the message the
+    /// short call refused is the message the grown call reads.
+    func testAPayloadPastTheFloorIsStillReadWhole() {
+        let parser = AndroidStreamParser()
+        XCTAssertEqual(parser.consume(Data("h264".utf8)), [.codec("h264")])
+
+        // Past the 64 KiB the buffer first grows to, so the door must answer AGAIN at least once.
+        let big = Data(repeating: 0xAB, count: 200_000)
+        XCTAssertEqual(parser.consume(mediaPacket(flags: 0x20, payload: big)), [
+            .accessUnit(big, isKeyframe: true),
+        ])
     }
 
-    func testManyPacketsInOneReceiveAllComeOut() {
-        // The ordinary case under load: a 64 KiB read holds several frames.
-        var stream = Data("h264".utf8)
-        for index in 0..<8 {
-            stream.append(mediaPacket(flags: 0, payload: Data([UInt8(index)])))
-        }
-        XCTAssertEqual(decode(stream).count, 9)
-    }
+    // MARK: The lifetime
 
-    // MARK: Validate then drop
-
-    func testALengthOfZeroIsCorruptionRatherThanAnEmptyFrame() {
-        // `scrcpy`'s own demuxer rejects it outright; a zero here means the stream is no longer where
-        // we think it is, and there are no start markers to resynchronise on.
-        var parser = AndroidStreamParser()
-        _ = parser.consume(Data("h264".utf8))
-        XCTAssertEqual(parser.consume(mediaPacket(flags: 0, payload: Data())), [])
-        XCTAssertTrue(parser.isCorrupt)
-    }
-
-    func testAnAbsurdLengthIsRefusedRatherThanAllocated() {
-        // A misaligned header otherwise asks for a multi-gigabyte allocation, which turns a decode
-        // bug into a memory panic.
-        var parser = AndroidStreamParser()
-        _ = parser.consume(Data("h264".utf8))
-        var header = Data([0, 0, 0, 0, 0, 0, 0, 0])
-        header.append(bigEndian(UInt32(AndroidStreamParser.maximumPacketSize + 1)))
-        XCTAssertEqual(parser.consume(header), [])
-        XCTAssertTrue(parser.isCorrupt)
-    }
-
-    func testACorruptParserStaysSilentForever() {
-        // No resynchronisation is attempted, so nothing may leak out afterwards — the connection is
-        // torn down and redialled instead.
-        var parser = AndroidStreamParser()
-        _ = parser.consume(Data([0, 0, 0, 0]))
+    /// A corrupt verdict latches on THIS side too, so a torn-down session stops calling a parser it
+    /// has already been told is finished.
+    func testACorruptVerdictLatchesInSwift() {
+        let parser = AndroidStreamParser()
+        XCTAssertEqual(parser.consume(Data([0, 0, 0, 0])), [])
         XCTAssertTrue(parser.isCorrupt)
         XCTAssertEqual(parser.consume(mediaPacket(flags: 0x20, payload: Data([1]))), [])
     }
+
+    /// Two parsers are two handles: one being fed must not advance the other. The failure this
+    /// denies is a shared or double-freed pointer, which is the whole risk a handle ABI carries.
+    func testTwoParsersDoNotShareAHandle() {
+        let first = AndroidStreamParser()
+        let second = AndroidStreamParser()
+        XCTAssertEqual(first.consume(Data("h264".utf8)), [.codec("h264")])
+        XCTAssertEqual(
+            second.consume(Data("h265".utf8)), [.codec("h265")],
+            "the second parser is still at the head of its own stream",
+        )
+    }
+
+    /// The parser is freed when the last reference goes, and freeing must not take the process with
+    /// it. Nothing to assert but the absence of a crash — which is exactly what a double free is.
+    func testAReleasedParserFreesItsHandle() {
+        for _ in 0..<64 {
+            let parser = AndroidStreamParser()
+            _ = parser.consume(Data("h264".utf8))
+        }
+    }
+
+    // MARK: The codec vocabulary
+
+    /// The door decides which identifiers decode; this asserts the accepted one lands on the case
+    /// the decode session is configured from, and the refused one on `nil`.
+    func testOnlyTheDecodableCodecsResolve() {
+        XCTAssertEqual(AndroidVideoCodec(streamIdentifier: "h264"), .h264)
+        XCTAssertEqual(AndroidVideoCodec(streamIdentifier: "h265"), .h265)
+        XCTAssertNil(AndroidVideoCodec(streamIdentifier: "av1"))
+        XCTAssertNil(AndroidVideoCodec(streamIdentifier: ""))
+    }
 }
 
-// MARK: - Annex-B
-
+/// The span-array marshalling: a count, an array of offsets, and the slices they name.
 final class AndroidAnnexBTests: XCTestCase {
     private let fourByte = Data([0, 0, 0, 1])
     private let threeByte = Data([0, 0, 1])
 
-    func testBothStartCodeLengthsAreSplit() {
-        // `MediaCodec` writes the 4-byte form ahead of the parameter sets and the first slice and the
-        // 3-byte form between the slices of one frame. Handling only the long one yields NALs with
-        // `00 00 00 01` buried inside them, which decode as corruption rather than failing.
-        var unit = fourByte + Data([0x67, 0x01])
-        unit += threeByte + Data([0x68, 0x02])
-        unit += fourByte + Data([0x65, 0x03])
-        XCTAssertEqual(
-            AndroidAnnexB.nalUnits(in: unit),
-            [Data([0x67, 0x01]), Data([0x68, 0x02]), Data([0x65, 0x03])],
-        )
+    /// Every span the door reports is cut out of the caller's own buffer at the offset it named.
+    /// An off-by-one in that arithmetic is silent — it yields a NAL the decoder rejects — and it is
+    /// the one thing the Rust suite, which never sees a `Data`, cannot catch.
+    func testEverySpanIsCutAtTheOffsetItNames() {
+        var unit = fourByte
+        unit.append(Data([0x67, 0x01]))
+        unit.append(threeByte)
+        unit.append(Data([0x68, 0x02]))
+        unit.append(fourByte)
+        unit.append(Data([0x65, 0x03]))
+
+        XCTAssertEqual(AndroidAnnexB.nalUnits(in: unit), [
+            Data([0x67, 0x01]), Data([0x68, 0x02]), Data([0x65, 0x03]),
+        ])
     }
 
-    func testEveryNalIsRewrittenWithItsFourByteBigEndianLength() {
-        let unit = fourByte + Data([0x65, 0xAA, 0xBB]) + threeByte + Data([0x01])
+    /// A buffer with no start code answers an empty array rather than one span of everything.
+    func testNoStartCodeIsNoUnits() {
+        XCTAssertEqual(AndroidAnnexB.nalUnits(in: Data([0x00, 0x00, 0x00, 0x04, 0x65])), [])
+        XCTAssertEqual(AndroidAnnexB.nalUnits(in: Data()), [])
+    }
+
+    /// The measure-then-fill retry: the rewrite's needed length is what the second call writes, and
+    /// a refusal is `nil` rather than an empty `Data`.
+    func testTheRewriteCrossesWholeOrNotAtAll() {
+        var unit = fourByte
+        unit.append(Data([0x65, 0xAA, 0xBB]))
+        unit.append(threeByte)
+        unit.append(Data([0x01]))
+
         XCTAssertEqual(
             AndroidAnnexB.avccAccessUnit(from: unit),
-            Data([0, 0, 0, 3, 0x65, 0xAA, 0xBB]) + Data([0, 0, 0, 1, 0x01]),
+            Data([0, 0, 0, 3, 0x65, 0xAA, 0xBB, 0, 0, 0, 1, 0x01]),
         )
-    }
-
-    func testABufferWithNoStartCodeIsRefusedRatherThanPassedThrough() {
-        // A payload that is already length-prefixed would be silently mis-framed, and the panel would
-        // show a decoder producing nothing with no clue why.
         XCTAssertNil(AndroidAnnexB.avccAccessUnit(from: Data([0x00, 0x00, 0x00, 0x04, 0x65])))
-        XCTAssertNil(AndroidAnnexB.avccAccessUnit(from: Data()))
     }
 
-    func testAnEmptyNalBetweenTwoStartCodesIsSkipped() {
+    /// The codec argument reaches the door as the flag that picks the NAL-type reading — the one
+    /// place a swapped boolean would hand CoreMedia the wrong parameter sets.
+    func testTheCodecPicksTheReading() {
+        var config = fourByte
+        config.append(Data([0x67, 0x64])) // an H.264 SPS
+        config.append(fourByte)
+        config.append(Data([33 << 1, 0x02])) // an H.265 SPS
+
         XCTAssertEqual(
-            AndroidAnnexB.nalUnits(in: fourByte + fourByte + Data([0x65])), [Data([0x65])],
+            AndroidAnnexB.parameterSets(inConfiguration: config, codec: .h264), [Data([0x67, 0x64])],
         )
-    }
-
-    func testH264ParameterSetsKeepOnlySpsAndPps() {
-        // `CMVideoFormatDescriptionCreateFromH264ParameterSets` rejects the whole set if one member
-        // is not a parameter set, and `MediaCodec` is free to put an access unit delimiter or an SEI
-        // in the same config buffer.
-        var config = fourByte + Data([0x09, 0xF0]) // AUD
-        config += fourByte + Data([0x67, 0x64, 0x00]) // SPS
-        config += fourByte + Data([0x06, 0x05]) // SEI
-        config += fourByte + Data([0x68, 0xEE]) // PPS
         XCTAssertEqual(
-            AndroidAnnexB.parameterSets(inConfiguration: config, codec: .h264),
-            [Data([0x67, 0x64, 0x00]), Data([0x68, 0xEE])],
-        )
-    }
-
-    func testH265ReadsItsTypeFromTheOtherBits() {
-        // HEVC's NAL type is bits 1..6 of the first header byte, not the low five: 32 VPS, 33 SPS,
-        // 34 PPS. Reading it the H.264 way would keep an arbitrary set of slices instead.
-        var config = fourByte + Data([32 << 1, 0x01]) // VPS
-        config += fourByte + Data([33 << 1, 0x02]) // SPS
-        config += fourByte + Data([34 << 1, 0x03]) // PPS
-        config += fourByte + Data([1 << 1, 0x04]) // a slice
-        XCTAssertEqual(
-            AndroidAnnexB.parameterSets(inConfiguration: config, codec: .h265),
-            [Data([64, 0x01]), Data([66, 0x02]), Data([68, 0x03])],
+            AndroidAnnexB.parameterSets(inConfiguration: config, codec: .h265), [Data([66, 0x02])],
         )
     }
 }

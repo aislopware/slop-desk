@@ -43,6 +43,8 @@
 pub mod abr;
 pub mod adaptive_fec;
 pub mod agent;
+pub mod android_stream;
+pub mod annexb;
 pub mod audio_jitter;
 pub mod blob;
 pub mod blocks;

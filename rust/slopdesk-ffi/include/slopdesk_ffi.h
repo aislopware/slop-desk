@@ -5266,6 +5266,78 @@ SlopDeskCursorShapeAnswer slopdesk_cursor_shape_should_request(
     size_t out_pending_cap);
 
 
+// ---------------------------------------------------------------------------
+// The scrcpy STREAM's client end. rust/slopdesk-androidd's `stream` module owns
+// the framing: the four-byte codec id, the twelve-byte header, the 32 MiB cap,
+// the cursor-and-compact reassembler.
+//
+// A byte stream cannot be reassembled by a pure function — the half-message left
+// over from one recv is what the next one completes — so the parser is a HANDLE,
+// the same shape slopdesk_inspector_decoder_* uses for the same reason.
+// ---------------------------------------------------------------------------
+
+#define SLOPDESK_ANDROID_STREAM_OK 0u
+#define SLOPDESK_ANDROID_STREAM_PENDING 1u
+// Terminal: a desynchronised stream has no start marker to resynchronise on, so
+// the connection is redialled rather than recovered.
+#define SLOPDESK_ANDROID_STREAM_CORRUPT 2u
+// The body buffer was too small; `payload_len` says how much was needed and
+// NOTHING was consumed — grow and call again.
+#define SLOPDESK_ANDROID_STREAM_AGAIN 5u
+
+#define SLOPDESK_ANDROID_STREAM_KIND_NONE 0u
+#define SLOPDESK_ANDROID_STREAM_KIND_CODEC 1u
+#define SLOPDESK_ANDROID_STREAM_KIND_SESSION 2u
+#define SLOPDESK_ANDROID_STREAM_KIND_CONFIGURATION 3u
+#define SLOPDESK_ANDROID_STREAM_KIND_ACCESS_UNIT 4u
+
+typedef struct {
+    // One of the SLOPDESK_ANDROID_STREAM_KIND_* values.
+    uint8_t kind;
+    // Live only for an access unit.
+    bool is_keyframe;
+    // Live only for a session message.
+    uint32_t width;
+    uint32_t height;
+    // Bytes written into `body` — or, under AGAIN, bytes it would need.
+    uint32_t payload_len;
+} SlopDeskAndroidStreamMessage;
+
+typedef struct SlopDeskAndroidStreamParser SlopDeskAndroidStreamParser;
+
+SlopDeskAndroidStreamParser *slopdesk_android_stream_new(void);
+void slopdesk_android_stream_free(SlopDeskAndroidStreamParser *handle);
+void slopdesk_android_stream_append(SlopDeskAndroidStreamParser *handle,
+                                    const unsigned char *chunk, size_t chunk_len);
+uint32_t slopdesk_android_stream_next(SlopDeskAndroidStreamParser *handle,
+                                      SlopDeskAndroidStreamMessage *out,
+                                      unsigned char *body, size_t body_cap);
+// Narrower than the daemon's own codec parse, which knows AV1 too: a decode
+// session gains AV1 only on M3-class hardware and later.
+bool slopdesk_android_stream_decodable_codec(const unsigned char *identifier, size_t len);
+
+// ---------------------------------------------------------------------------
+// ANNEX-B NAL units — slopdesk_nal_split's other half. That door walks the
+// length-prefixed framing VideoToolbox speaks; these walk the start-code framing
+// MediaCodec produces, which is what arrives over scrcpy's stream.
+//
+// The bytes do not cross for a walk: an access unit is most of a frame and the
+// caller already holds it, so the answer is WHERE the units sit. Only the
+// rewrite copies, because a rewrite is by definition a different buffer.
+// ---------------------------------------------------------------------------
+
+size_t slopdesk_annexb_split(const unsigned char *annexb, size_t len,
+                             SlopDeskNalSpan *out, size_t cap);
+// `hevc` picks the reading: bits 1..6 and VPS/SPS/PPS, or the low five and
+// SPS/PPS. A boolean because those are the only two the panel decodes.
+size_t slopdesk_annexb_parameter_sets(const unsigned char *annexb, size_t len, bool hevc,
+                                      SlopDeskNalSpan *out, size_t cap);
+// 0 means REFUSED, not "did not fit": a buffer holding no start code at all is
+// not Annex-B, and passing it through would silently mis-frame a payload that is
+// already length-prefixed. A real rewrite is never empty.
+size_t slopdesk_annexb_to_avcc(const unsigned char *annexb, size_t len,
+                               unsigned char *out, size_t cap);
+
 #ifdef __cplusplus
 }
 #endif

@@ -137,6 +137,7 @@
 
 pub mod adaptive_fec;
 pub mod adaptive_qp;
+pub mod annexb;
 pub mod audio_jitter;
 pub mod audio_wire;
 pub mod blob;

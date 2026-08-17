@@ -131,6 +131,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "slopdesk-androidd"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "slopdesk-cli"
 version = "0.1.0"
 dependencies = [
@@ -147,6 +155,7 @@ version = "0.1.0"
 dependencies = [
  "slopdesk-agent",
  "slopdesk-altscreen",
+ "slopdesk-androidd",
  "slopdesk-cli",
  "slopdesk-dropd",
  "slopdesk-fuzzy",

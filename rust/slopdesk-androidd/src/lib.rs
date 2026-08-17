@@ -28,6 +28,7 @@
 //! | [`toolchain`] | finding `adb`, `emulator` and the scrcpy jar, and running them with a deadline |
 //! | [`console`] | the emulator's own telnet control channel |
 //! | [`scrcpy`] | launching the device-side server and completing its handshake |
+//! | [`stream`] | the scrcpy stream's CLIENT end — framing in, access units out |
 //! | [`net`] | the blocking socket primitives, and why they are blocking |
 //! | [`protocol`] | the one-line request protocol and the pure per-op decisions |
 //! | [`error`] | the sentences the panel renders |
@@ -51,6 +52,7 @@ pub mod net;
 pub mod protocol;
 pub mod scrcpy;
 pub mod server;
+pub mod stream;
 pub mod toolchain;
 
 pub use catalog::{Device, Listing};
@@ -58,4 +60,5 @@ pub use error::BridgeError;
 pub use protocol::Request;
 pub use scrcpy::{Codec, Options, Session};
 pub use server::{ANNOUNCE_PREFIX, Bridge, announce, bind, locate_toolchain, serve};
+pub use stream::{Message, StreamParser, decodable_codec};
 pub use toolchain::Toolchain;
