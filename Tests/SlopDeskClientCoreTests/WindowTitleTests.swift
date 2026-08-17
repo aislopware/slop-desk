@@ -1,4 +1,4 @@
-// WindowTitleTests — pins `WorkspaceRootView.windowTitle(for:)`, the pure map from the live store to the
+// WindowTitleTests — pins `WorkspaceChromePolicy.windowTitle(for:)`, the pure map from the live store to the
 // macOS WINDOW title (Window menu / Mission Control / screenshot names). The title tracks the FOCUSED pane
 // — its folder-name label (reusing the sidebar's `RailRowsBuilder.rowTitle`) — and changes whenever the
 // active tab/pane changes.
@@ -10,15 +10,14 @@
 import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskClientCore
-@testable import SlopDeskClientUI
 @testable import SlopDeskWorkspaceCore
 
 @MainActor
 final class WindowTitleTests: XCTestCase {
     /// A headless tree-model store over the fake session (one session, one tab, one terminal pane titled
-    /// "Terminal"), mirroring `RailRowBuilderTests`.
+    /// "Terminal"), mirroring `RailRowBuilderTests` (this target's `RecordingPaneSession`).
     private func makeStore() -> WorkspaceStore {
-        let store = WorkspaceStore(makeSession: { seed in MountTestPaneSession(seed.spec) })
+        let store = WorkspaceStore(makeSession: { seed in RecordingPaneSession(seed.spec) })
         store.attachLoopbackWorkspaceDocument()
         return store
     }
@@ -32,7 +31,7 @@ final class WindowTitleTests: XCTestCase {
     /// saw. This is the fallback the folder-name / OSC title replaces once one arrives (below).
     func testDefaultPaneTitleBeforeCwd() {
         let store = makeStore()
-        XCTAssertEqual(WorkspaceRootView.windowTitle(for: store), "Terminal")
+        XCTAssertEqual(WorkspaceChromePolicy.windowTitle(for: store), "Terminal")
     }
 
     /// The window title is the ACTIVE pane's cwd FOLDER NAME (the same line-1 label the sidebar row shows) —
@@ -41,7 +40,7 @@ final class WindowTitleTests: XCTestCase {
         let store = makeStore()
         let pane = try activePane(store)
         store.setLastKnownCwd("/Users/me/project-alpha", for: pane)
-        XCTAssertEqual(WorkspaceRootView.windowTitle(for: store), "project-alpha")
+        XCTAssertEqual(WorkspaceChromePolicy.windowTitle(for: store), "project-alpha")
     }
 
     /// Switching the active tab RE-TITLES the window to the newly-focused pane. Two tabs at distinct cwds;
@@ -57,12 +56,12 @@ final class WindowTitleTests: XCTestCase {
         store.setLastKnownCwd("/Users/me/beta", for: pane1)
 
         XCTAssertEqual(
-            WorkspaceRootView.windowTitle(for: store), "beta",
+            WorkspaceChromePolicy.windowTitle(for: store), "beta",
             "the window title is the active (2nd) tab's pane",
         )
         store.selectTab(0)
         XCTAssertEqual(
-            WorkspaceRootView.windowTitle(for: store), "alpha",
+            WorkspaceChromePolicy.windowTitle(for: store), "alpha",
             "switching tabs re-titles the window to the newly-active pane",
         )
     }
@@ -74,7 +73,7 @@ final class WindowTitleTests: XCTestCase {
         let pane = try activePane(store)
         store.setLastKnownCwd("/Users/me/project-alpha", for: pane)
         store.renamePane(pane, to: "build box")
-        XCTAssertEqual(WorkspaceRootView.windowTitle(for: store), "build box")
+        XCTAssertEqual(WorkspaceChromePolicy.windowTitle(for: store), "build box")
     }
 
     // MARK: - Process fallback
@@ -88,7 +87,7 @@ final class WindowTitleTests: XCTestCase {
         let store = makeStore()
         let pane = try activePane(store)
         store.setForegroundProcess("vim", for: pane)
-        XCTAssertEqual(WorkspaceRootView.windowTitle(for: store), "vim")
+        XCTAssertEqual(WorkspaceChromePolicy.windowTitle(for: store), "vim")
     }
 
     /// Once a cwd is known, the window title never depends on `paneForegroundProcess` at all — a process
@@ -98,6 +97,6 @@ final class WindowTitleTests: XCTestCase {
         let pane = try activePane(store)
         store.setLastKnownCwd("/Users/me/project-alpha", for: pane)
         store.setForegroundProcess("vim", for: pane)
-        XCTAssertEqual(WorkspaceRootView.windowTitle(for: store), "project-alpha")
+        XCTAssertEqual(WorkspaceChromePolicy.windowTitle(for: store), "project-alpha")
     }
 }
