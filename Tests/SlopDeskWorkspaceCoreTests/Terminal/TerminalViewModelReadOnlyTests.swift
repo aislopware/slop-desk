@@ -21,13 +21,13 @@ final class TerminalViewModelReadOnlyTests: XCTestCase {
         var sunk: [Data] = []
         var tapped: [Data] = []
         model.inputSink = { sunk.append($0) }
-        model.broadcastTap = { tapped.append($0) }
+        model.syncInputTap = { tapped.append($0) }
 
         model.enterReadOnly()
         model.sendInput(Data("blocked".utf8))
 
         XCTAssertEqual(sunk, [], "read-only drops the byte before inputSink — the host never sees it")
-        XCTAssertEqual(tapped, [], "read-only drops the byte before broadcastTap — siblings never see it")
+        XCTAssertEqual(tapped, [], "read-only drops the byte before syncInputTap — siblings never see it")
     }
 
     /// Exiting read-only restores the full funnel (the gate is not a one-way latch). A control proving the
@@ -37,7 +37,7 @@ final class TerminalViewModelReadOnlyTests: XCTestCase {
         var sunk: [Data] = []
         var tapped: [Data] = []
         model.inputSink = { sunk.append($0) }
-        model.broadcastTap = { tapped.append($0) }
+        model.syncInputTap = { tapped.append($0) }
 
         model.enterReadOnly()
         model.sendInput(Data("dropped".utf8))
@@ -45,7 +45,7 @@ final class TerminalViewModelReadOnlyTests: XCTestCase {
         model.sendInput(Data("typed".utf8))
 
         XCTAssertEqual(sunk, [Data("typed".utf8)], "after exit, inputSink forwards again (only the second byte)")
-        XCTAssertEqual(tapped, [Data("typed".utf8)], "after exit, broadcastTap forwards again")
+        XCTAssertEqual(tapped, [Data("typed".utf8)], "after exit, syncInputTap forwards again")
     }
 
     // MARK: Beep (rate-limited — beeps once under a flood)

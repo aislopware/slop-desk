@@ -54,7 +54,7 @@ final class FakePaneSession: @MainActor PaneSessionHandle, @MainActor Identifiab
 
     /// Optional re-entrancy probe: fired INSIDE ``sendBytes(_:)`` after recording, so a broadcast test can
     /// simulate a sibling whose delivery re-enters the store's fan-out (the production loop a sibling's
-    /// `sendInput` → `broadcastTap` → `fanBroadcastInput` would form) and prove the reentrancy guard holds.
+    /// `sendInput` → `syncInputTap` → `fanSyncInput` would form) and prove the reentrancy guard holds.
     /// Default `nil` ⇒ inert for every existing test.
     var onSendBytes: ((FakePaneSession, [UInt8]) -> Void)?
 

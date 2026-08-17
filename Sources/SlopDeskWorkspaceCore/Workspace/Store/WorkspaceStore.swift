@@ -1601,12 +1601,7 @@ public final class WorkspaceStore {
         reconcile()
     }
 
-    // MARK: - Broadcast / synchronized input (tmux synchronize-panes)
-
-    /// Whether broadcast input is ARMED: a submit in the focused pane's input bar is fanned to every
-    /// ``broadcastTargets()`` pane instead of only the focused one. Transient view state — never persisted
-    /// (a synchronized-typing mode should not survive a relaunch and surprise you).
-    public private(set) var broadcastActive: Bool = false
+    // MARK: - Synchronized input (tmux synchronize-panes)
 
     /// The set of tab IDs for which per-tab synchronized input is ON (Zellij `ToggleActiveSyncTab`): every
     /// keystroke typed in the focused pane of a sync-armed tab is ALSO sent to every OTHER pane in that
@@ -1621,73 +1616,11 @@ public final class WorkspaceStore {
         return workspaceMirror.topology?.syncInputTabs ?? []
     }
 
-    /// Arms / disarms broadcast input (⇧⌘B / Pane ▸ Broadcast Input).
-    public func toggleBroadcast() { broadcastActive.toggle() }
-
-    /// Sets broadcast mode explicitly (e.g. auto-disarm). Idempotent.
-    public func setBroadcast(_ active: Bool) { broadcastActive = active }
-
-    /// The panes a broadcast targets — resolved like ``arrangeTargets()`` but restricted to the kinds with
-    /// a text funnel (``PaneKind/canReceiveText``; the video panes have no input bar and are skipped): the
-    /// multi-selection when ≥2 are selected, else the focused pane's GROUP when it is grouped, else just
-    /// the focused pane. Deterministic canvas order. Pure — no mutation.
-    public func broadcastTargets() -> [PaneID] {
-        func textCapable(_ id: PaneID) -> Bool { workspace.canvas.spec(for: id)?.kind.canReceiveText == true }
-        if selectedPanes.count >= 2 {
-            return workspace.canvas.allIDs().filter { selectedPanes.contains($0) && textCapable($0) }
-        }
-        if let focused = workspace.focusedPane, let group = workspace.canvas.item(focused)?.groupID {
-            return workspace.canvas.ids(inGroup: group).filter(textCapable)
-        }
-        return workspace.focusedPane.flatMap { textCapable($0) ? [$0] : [] } ?? []
-    }
-
-    /// Types `text` into every broadcast target's shell (the synchronized-input fan-out — type a command
-    /// once, run it on every pane in the group). Returns how many panes it reached. Pure routing over the
-    /// live registry: no canvas mutation, no reconcile.
-    @discardableResult
-    public func broadcastText(_ text: String) -> Int {
-        let targets = broadcastTargets()
-        for id in targets { registry[id]?.sendText(text) }
-        return targets.count
-    }
-
-    /// Reentrancy guard for ``fanBroadcastInput(from:_:)``: when a fan-out mirrors bytes into a SIBLING
-    /// target, that sibling's own `TerminalViewModel.sendInput` re-fires the broadcast tap — without this
+    /// Reentrancy guard for ``fanSyncInput(from:_:)``: when a fan-out mirrors bytes into a SIBLING
+    /// target, that sibling's own `TerminalViewModel.sendInput` re-fires the sync tap — without this
     /// guard each keystroke would cross-multiply across the group (N panes → N² sends → a feedback storm).
     /// Set only for the synchronous duration of one fan-out (all on the main actor, so a flag suffices).
-    private var isFanningBroadcast = false
-
-    /// The live synchronized-input fan-out (tmux `synchronize-panes`): the SOURCE pane's terminal calls
-    /// this from ``TerminalViewModel/sendInput(_:)`` with the bytes it just sent to its own shell; when
-    /// broadcast is armed AND the source is part of the current target group, the SAME bytes are mirrored
-    /// into every OTHER target's shell — so a keystroke (macOS surface) or a composed line (iOS input bar),
-    /// both of which funnel through `sendInput`, types on every grouped pane at once.
-    ///
-    /// The source pane is intentionally skipped (it already delivered the bytes locally via its own
-    /// `inputSink`); siblings receive via ``PaneSessionHandle/sendBytes(_:)`` (→ their input funnel → their
-    /// `sendInput`), and the reentrancy guard keeps that re-entry from re-fanning. A no-op when disarmed,
-    /// when the source is not a target (you are typing in a non-broadcast pane), or when re-entered.
-    /// Returns the number of SIBLINGS reached (0 when it did nothing). Pure registry routing — no mutation.
-    @discardableResult
-    public func fanBroadcastInput(from sourceID: PaneID, _ data: Data) -> Int {
-        guard broadcastActive, !isFanningBroadcast, !data.isEmpty else { return 0 }
-        let targets = broadcastTargets()
-        guard targets.contains(sourceID), targets.count > 1 else { return 0 }
-        // KEYBOARD-ONLY mirror (see ``SyncInputByteFilter``): the tap rides `sendInput`, which also
-        // carries the terminal's query replies and mouse/focus reports — mirroring those types garbage
-        // into shells that never asked.
-        let bytes = Array(SyncInputByteFilter.keyboardOnly(data))
-        guard !bytes.isEmpty else { return 0 }
-        isFanningBroadcast = true
-        defer { isFanningBroadcast = false }
-        var reached = 0
-        for id in targets where id != sourceID {
-            registry[id]?.sendBytes(bytes)
-            reached += 1
-        }
-        return reached
-    }
+    private var isFanningSyncInput = false
 
     /// Toggles per-tab synchronized input for `tabID` (Zellij `ToggleActiveSyncTab`). When ON, every
     /// keystroke typed in any pane of the tab is also mirrored into the tab's other panes via
@@ -1719,14 +1652,14 @@ public final class WorkspaceStore {
     /// source pane just sent to its own shell into every OTHER pane in the same tab, when sync is armed for
     /// that tab. The source pane is intentionally SKIPPED (it already delivered locally via `inputSink`);
     /// sibling delivery is through ``PaneSessionHandle/sendBytes(_:)`` (→ their input funnel). The existing
-    /// ``isFanningBroadcast`` guard doubles as the sync-input re-entry guard (both run on the same
-    /// `@MainActor` flat flag): a sibling's `sendInput` re-fires `broadcastTap`, which would call
+    /// ``isFanningSyncInput`` guard (a `@MainActor` flat flag) is the re-entry guard: a sibling's
+    /// `sendInput` re-fires `syncInputTap`, which would call
     /// `fanSyncInput` again — the guard collapses the re-entrant call to a no-op, preventing a fan-storm.
     /// Returns the number of siblings reached (0 when disarmed, single-pane tab, or re-entrant).
     @discardableResult
     public func fanSyncInput(from sourceID: PaneID, _ data: Data) -> Int {
-        guard !data.isEmpty, !isFanningBroadcast else { return 0 }
-        // Resolve the containing tab by scanning sessions (tree-only; no canvas analogue).
+        guard !data.isEmpty, !isFanningSyncInput else { return 0 }
+        // Resolve the containing tab by scanning sessions.
         guard let (_, tabID) = tree.tab(containing: sourceID) else { return 0 }
         guard syncInputTabs.contains(tabID) else { return 0 }
         // Find the Tab value to enumerate siblings.
@@ -1745,8 +1678,8 @@ public final class WorkspaceStore {
         // and a later mirrored `↩` executes it. Strip everything that is not a key/paste byte.
         let bytes = Array(SyncInputByteFilter.keyboardOnly(data))
         guard !bytes.isEmpty else { return 0 }
-        isFanningBroadcast = true
-        defer { isFanningBroadcast = false }
+        isFanningSyncInput = true
+        defer { isFanningSyncInput = false }
         var reached = 0
         for id in siblings {
             registry[id]?.sendBytes(bytes)
@@ -3563,12 +3496,11 @@ public final class WorkspaceStore {
             // no-ops inside the session.
             (registry[id] as? LivePaneSession)?.reestablishInspectorOnReconnect()
         }
-        // SYNC-INPUT (tree path, Zellij ToggleActiveSyncTab): when the per-tab sync flag is on, mirror this
-        // pane's keystrokes into every other pane in its tab via the same broadcastTap seam the canvas
-        // broadcast path uses. The `fanSyncInput` guard (shared `isFanningBroadcast` flag) prevents a
-        // sibling's re-entrant sendInput from looping back into another fan-out. A no-op while disarmed.
+        // SYNC-INPUT (Zellij ToggleActiveSyncTab): when the per-tab sync flag is on, mirror this pane's
+        // keystrokes into every other pane in its tab. The `isFanningSyncInput` guard prevents a sibling's
+        // re-entrant sendInput from looping back into another fan-out. A no-op while disarmed.
         let terminal = (handle as? LivePaneSession)?.terminalModel
-        terminal?.broadcastTap = { [weak self] data in self?.fanSyncInput(from: id, data) }
+        terminal?.syncInputTap = { [weak self] data in self?.fanSyncInput(from: id, data) }
         // TILING from the terminal surface: the renderer's right-click "Split Right/Down" fires
         // `onContextMenuSplit` (the rebindable ⌘D/⌘⇧D flows through `wireKeyInterceptor` → the shared
         // `route(...)`, not here). A split MINTS a pane, so it offers the pane-type chooser (terminal / remote
@@ -4715,8 +4647,6 @@ public func apply(_ command: WorkspaceCommand, to store: WorkspaceStore) {
         store.toggleZoom()
     case .toggleOverview:
         store.toggleOverview()
-    case .toggleBroadcast:
-        store.toggleBroadcast()
     case .renamePane:
         // The rename UI is an inline text field (view `@State` in PaneSidebarView), so the command layer
         // cannot open it directly — it nudges `renameRequest`, which the sidebar observes via `.onChange`
