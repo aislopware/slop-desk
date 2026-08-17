@@ -1,11 +1,12 @@
-// SatellitePaneWindows — the macOS "detach pane into its own window" surface.
+// SatellitePaneWindows — the macOS "detach pane into its own window" surface: the WINDOWS.
 //
 // A DETACHED pane (``WorkspaceStore/detachedPanes``) lives outside every tab's split tree but keeps its
 // spec + live registry handle (reconcile counts detached ids as desired). This file materializes that
 // state as real windows: ``SatelliteWindowsCoordinator`` diffs one plain-AppKit `NSWindowController` per
-// detached pane into existence/away, each hosting the SAME ``PaneContainer`` leaf UI the split tree
-// mounts — so the terminal ring-replays into a fresh surface and a video pane re-hellos, while the
-// PTY / host session never dies.
+// detached pane into existence/away, each hosting the SAME leaf UI the split tree mounts — so the
+// terminal ring-replays into a fresh surface and a video pane re-hellos, while the PTY / host session
+// never dies. The content itself is still SwiftUI and comes over the ``SatellitePaneHost`` seam, the
+// way the split shell's columns do.
 //
 // Deliberately PURE AppKit (never a second SwiftUI `WindowGroup`): the app's chord dispatcher /
 // close-gate / pin actuator are single-window singletons keyed to the ONE workspace window captured via
@@ -16,166 +17,36 @@
 //
 // CLOSE = REATTACH, never destroy: `windowShouldClose` folds the pane back into its tab (origin tab when
 // alive) and vetoes the AppKit close — the store mutation drops the pane from `detachedPanes`, and the
-// coordinator's diff performs the one real window teardown. A PTY exit / explicit pane close routes
-// through `closePaneTree` → `closeDetachedPane`, which also leaves via the same diff.
+// coordinator's diff performs the one real window teardown.
 
-#if os(macOS) && canImport(SwiftUI)
 import AppKit
 import SlopDeskClientCore
+import SlopDeskClientUI // SatellitePaneHost — the hosted pane content, until the leaf UI is AppKit
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
-import SwiftUI
+import SwiftUI // AnyView — the scene-environment `decorate` the app supplies for each hosted root
 
 // MARK: - SatellitePaneWindow (marker class)
 
 /// The satellite `NSWindow` subclass — a MARKER: key-window-sensitive actuators (`overlayCoordinator
 /// .closeWindow`, the menu Close Window item) test `NSApp.keyWindow is SatellitePaneWindow` to target
 /// the satellite the user is looking at instead of the captured main workspace window.
-package final class SatellitePaneWindow: NSWindow {
+final class SatellitePaneWindow: NSWindow {
     /// A BORDERLESS-engaged satellite must keep taking keys/main (AppKit defaults a `.borderless`
     /// styleMask to neither) — the desktop stream is useless without keyboard input. Harmless for
     /// the titled resting state (titled windows already say yes).
-    override package var canBecomeKey: Bool { true }
-    override package var canBecomeMain: Bool { true }
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
 
     /// Routes the standard fullscreen verb (the View-menu item / ⌃⌘F / the green-button chord)
     /// through the controller first: a borderless-engaged window EXITS borderless, and a desktop
     /// window whose presentation setting is `.borderless` ENTERS it — native Spaces fullscreen
     /// remains the fallthrough for everything else.
-    override package func toggleFullScreen(_ sender: Any?) {
+    override func toggleFullScreen(_ sender: Any?) {
         if let controller = delegate as? SatellitePaneWindowController, controller.handleFullscreenVerb() {
             return
         }
         super.toggleFullScreen(sender)
-    }
-}
-
-// MARK: - Key-state relay (window key ⇄ pane focus)
-
-/// Relays the satellite window's key state into its SwiftUI root: `isKey` drives ``PaneContainer``'s
-/// `isFocused` — for a video pane that gates pointer/keycode forwarding (`RemotePaneContext.isActive`),
-/// so a background satellite never fights the main window (or another satellite) for host input.
-@MainActor
-@Observable
-final class SatelliteWindowKeyState {
-    var isKey = false
-}
-
-// MARK: - Root view
-
-/// The satellite window's content: the SAME leaf UI a split-tree slot mounts (``PaneContainer`` routes
-/// terminal / video by kind), sized by the window, focused iff the window is key, always on-screen
-/// (`isVisible: true` — a satellite has no tab to hide behind; miniaturizing keeps streaming, v1).
-/// A hover-revealed grab strip at the top is the MERGE-BACK affordance: drag it onto the main canvas
-/// (insert beside / dock), a sidebar row, or the New-Tab slot — the same pill + drop vocabulary as the
-/// in-canvas pane move.
-struct SatellitePaneRootView: View {
-    let store: WorkspaceStore
-    let paneID: PaneID
-    let keyState: SatelliteWindowKeyState
-    /// The cross-container drag rendezvous — `nil` (previews / no wiring) hides the grab strip.
-    var paneDrag: PaneDragCoordinator?
-
-    var body: some View {
-        GeometryReader { proxy in
-            PaneContainer(
-                store: store,
-                paneID: paneID,
-                isFocused: keyState.isKey,
-                isVisible: true,
-                size: proxy.size,
-            )
-        }
-        .background(Slate.Surface.terminal)
-        // A satellite IS glass edge-to-edge (no island margin — the window frame is the frame), so
-        // the whole root adopts the glass polarity like the main window's island subtree.
-        .environment(\.colorScheme, Slate.glassColorScheme)
-        .ignoresSafeArea()
-        .overlay(alignment: .top) {
-            // A `.desktop` satellite has NO merge-back affordance — the desktop never joins a tab
-            // (docs/DECISIONS.md 2026-07-22), so the grab strip would be a dead gesture.
-            if let paneDrag, store.tree.spec(for: paneID)?.kind != .desktop {
-                SatelliteDragStrip(store: store, paneID: paneID, coordinator: paneDrag)
-            }
-        }
-    }
-}
-
-/// The satellite's top grab strip: the same hover-revealed `-` pill as ``PaneMoveHandle``, but the drag
-/// tracks the GLOBAL mouse location (`NSEvent.mouseLocation`) — the destinations live in other windows,
-/// so the local gesture coordinates are meaningless. Release commits ONE store op: reattach beside the
-/// canvas target / dock at the canvas edge / beside a sidebar row's pane / into a fresh tab; anything
-/// else cancels (the pane simply stays a satellite). Every path keeps the `PaneID`, so the live PTY /
-/// video session survives and only the view remounts.
-private struct SatelliteDragStrip: View {
-    let store: WorkspaceStore
-    let paneID: PaneID
-    let coordinator: PaneDragCoordinator
-
-    @State private var hovering = false
-    @State private var dragging = false
-
-    private var revealed: Bool { hovering || dragging }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            ZStack {
-                // Same contrast plate as `PaneMoveHandle.contentIsUnthemed`: a satellite usually
-                // hosts a video stream, and the bare tertiary pill disappears over a light desktop.
-                if store.tree.spec(for: paneID)?.kind.isVideo == true {
-                    Capsule(style: .continuous)
-                        .fill(Slate.Surface.face)
-                        .overlay(
-                            Capsule(style: .continuous)
-                                .strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline),
-                        )
-                        .frame(width: 44, height: 10)
-                        .slateShadow(.chip)
-                        .opacity(revealed ? 1 : 0)
-                        .scaleEffect(hovering && !dragging ? 1.15 : 1)
-                }
-                Capsule()
-                    .fill(dragging ? Slate.State.accent : Slate.Text.tertiary)
-                    .frame(width: 30, height: 4)
-                    .opacity(revealed ? 1 : 0)
-                    .scaleEffect(hovering && !dragging ? 1.15 : 1)
-            }
-            .frame(width: 160, height: 14)
-            .contentShape(Rectangle())
-            .onHover { hovering = $0 }
-            .pointerStyle(dragging ? .grabActive : .grabIdle)
-            .gesture(
-                DragGesture(minimumDistance: 2)
-                    .onChanged { _ in
-                        dragging = true
-                        coordinator.updateDetachedDrag(source: paneID)
-                    }
-                    .onEnded { _ in
-                        dragging = false
-                        commit(coordinator.takeDestination())
-                    },
-            )
-            .animation(Slate.Anim.dividerHover, value: revealed)
-        }
-        .frame(maxWidth: .infinity, alignment: .center)
-    }
-
-    /// ONE store op on release — the reattach twin of `SplitContainer.commitDestination`.
-    private func commit(_ destination: PaneDragDestination) {
-        switch destination {
-        case let .canvas(.resplit(target, edge)):
-            store.reattachPaneTree(paneID, beside: target, axis: edge.axis, before: edge.insertsBefore)
-        case let .canvas(.dock(edge)):
-            store.reattachPaneToActiveTabRootEdgeTree(paneID, edge: edge)
-        case let .sidebarRow(anchor):
-            store.reattachPaneTree(paneID, beside: anchor, axis: .horizontal, before: false)
-        case .newTab:
-            store.reattachPaneToNewTabTree(paneID)
-        case .canvas,
-             .tearOff,
-             .none:
-            break // already its own window — releasing anywhere else keeps it one
-        }
     }
 }
 
@@ -229,8 +100,9 @@ final class SatellitePaneWindowController: NSWindowController, NSWindowDelegate 
         // The workspace window must survive every satellite: an `NSWindowController`-owned window
         // released on close mid-diff double-frees; the coordinator owns the lifetime instead.
         window.isReleasedWhenClosed = false
-        let root = SatellitePaneRootView(store: store, paneID: paneID, keyState: keyState, paneDrag: paneDrag)
-        window.contentView = NSHostingView(rootView: decorate(AnyView(root)))
+        window.contentView = SatellitePaneHost.contentView(
+            store: store, paneID: paneID, keyState: keyState, paneDrag: paneDrag, decorate: decorate,
+        )
         super.init(window: window)
         window.delegate = self
         window.center()
@@ -414,9 +286,7 @@ final class SatellitePaneWindowController: NSWindowController, NSWindowDelegate 
 /// scene's `.onChange(of: store.detachedPanes)` (plus one initial sync) — the store stays headless; only
 /// this app layer touches AppKit windows.
 @MainActor
-package final class SatelliteWindowsCoordinator {
-    package init() {}
-
+final class SatelliteWindowsCoordinator {
     private var controllers: [PaneID: SatellitePaneWindowController] = [:]
     /// Cascade origin so a burst of detaches doesn't stack windows exactly on top of each other.
     private var cascadeStep = 0
@@ -434,7 +304,7 @@ package final class SatelliteWindowsCoordinator {
     /// the main scene, so the app supplies the injection exactly once here. `paneDrag` (optional) wires
     /// the grab strip into each satellite AND supplies the tear-off drop point: a pane detached by
     /// DRAGGING it out of the main window opens under the cursor, not in the centre-cascade.
-    package func sync(
+    func sync(
         _ detached: [DetachedPane], store: WorkspaceStore, paneDrag: PaneDragCoordinator? = nil,
         decorate: (AnyView) -> AnyView,
     ) {
@@ -506,10 +376,9 @@ package final class SatelliteWindowsCoordinator {
     /// Brings `paneID`'s satellite to the front (the ``WorkspaceStore/revealSatelliteWindow`` seam) —
     /// Reveal-style ingresses call this instead of minting a duplicate live stream when the pane is
     /// already detached. Returns `false` if no controller exists yet (e.g. this sync pass hasn't run).
-    package func reveal(_ paneID: PaneID) -> Bool {
+    func reveal(_ paneID: PaneID) -> Bool {
         guard let controller = controllers[paneID] else { return false }
         controller.window?.makeKeyAndOrderFront(nil)
         return true
     }
 }
-#endif

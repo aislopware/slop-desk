@@ -486,7 +486,7 @@ package final class PaneDragCoordinator {
         pendingPlacements[pane] = point
     }
 
-    func takePlacement(for pane: PaneID) -> CGPoint? {
+    package func takePlacement(for pane: PaneID) -> CGPoint? {
         pendingPlacements.removeValue(forKey: pane)
     }
 
