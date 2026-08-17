@@ -12,9 +12,8 @@
 // Revert-to-confirm-fail: drop the `guard generation == self.generation` line from `applyClassified` and
 // `testStaleClassifyAfterResetDoesNotReactivateOverlay` fails (the stale write reactivates the overlay).
 
-#if canImport(SwiftUI)
 import XCTest
-@testable import SlopDeskClientUI
+@testable import SlopDeskClientCore
 @testable import SlopDeskWorkspaceCore
 
 @MainActor
@@ -62,4 +61,3 @@ final class PaneDropOverlayModelGenerationTests: XCTestCase {
         XCTAssertEqual(model.content, .text("second"), "the current entry's classify applies")
     }
 }
-#endif

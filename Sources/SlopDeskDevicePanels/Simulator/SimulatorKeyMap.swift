@@ -11,14 +11,13 @@
 // silent regression for every non-US layout.
 
 #if os(macOS)
-import AppKit
 import Carbon.HIToolbox
-import SlopDeskDevicePanels
+import SlopDeskVideoProtocol
 
-enum SimulatorKeyMap {
+package enum SimulatorKeyMap {
     /// The `KeyboardEvent.code` for a macOS virtual key code, or `nil` when the key produces text and
     /// belongs on the `type` path instead.
-    static func code(for keyCode: UInt16) -> String? {
+    package static func code(for keyCode: UInt16) -> String? {
         switch Int(keyCode) {
         case kVK_Return,
              kVK_ANSI_KeypadEnter: "Enter"
@@ -42,12 +41,17 @@ enum SimulatorKeyMap {
     /// The modifier names the server expects. `.function` and `.capsLock` are deliberately absent:
     /// neither has a name on this wire, and sending one would be an unknown token rather than a
     /// no-op.
-    static func modifiers(for flags: NSEvent.ModifierFlags) -> [SimulatorInputEnvelope.Modifier] {
+    ///
+    /// Takes `InputModifiers` — the wire's own held-modifier vocabulary, which the GUI-video input
+    /// path already sends host-ward — rather than an `NSEvent.ModifierFlags`, so the panel's key
+    /// mapping is one implementation and the reading of a key EVENT is the platform's half
+    /// (`SimulatorKeyEvent`, and `AndroidKeyEvent` beside it).
+    package static func modifiers(for held: InputModifiers) -> [SimulatorInputEnvelope.Modifier] {
         var modifiers: [SimulatorInputEnvelope.Modifier] = []
-        if flags.contains(.shift) { modifiers.append(.shift) }
-        if flags.contains(.control) { modifiers.append(.control) }
-        if flags.contains(.option) { modifiers.append(.option) }
-        if flags.contains(.command) { modifiers.append(.command) }
+        if held.contains(.shift) { modifiers.append(.shift) }
+        if held.contains(.control) { modifiers.append(.control) }
+        if held.contains(.option) { modifiers.append(.option) }
+        if held.contains(.command) { modifiers.append(.command) }
         return modifiers
     }
 }

@@ -9,22 +9,21 @@
 // neither machine), libghostty falls back to its EMBEDDED JetBrainsMono face, whose hhea metrics
 // (1020/−300/0 on upm 1000, through `Metrics.zig`'s rounding) pin the ratio at exactly 1.32.
 
-#if canImport(SwiftUI)
 #if canImport(AppKit)
 import AppKit
 #endif
 import SlopDeskProtocol
 import SlopDeskVideoProtocol
 
-enum CodeFontSync {
+package enum CodeFontSync {
     /// The embedded JetBrainsMono cell-height ratio (see the header) — the fallback whenever the
     /// preferred family does not resolve, because that is precisely when the terminal falls back
     /// to the embedded face too.
-    static let embeddedMonoRatio = 1.32
+    package static let embeddedMonoRatio = 1.32
 
     /// The spec for the live terminal prefs. `resolveRatio` is the installed-font metrics probe
     /// (injectable so tests stay deterministic against the machine's font library).
-    static func spec(
+    package static func spec(
         terminal: TerminalPreferences,
         resolveRatio: (String, Double) -> Double? = installedFontRatio,
     ) -> MetadataCodec.CodeFontSpec {
@@ -42,7 +41,7 @@ enum CodeFontSync {
     /// CoreText metrics ratio for an INSTALLED family at `size` — (ascender + |descender| +
     /// leading) / size, the same face-height-over-em walk ghostty's metrics take. `nil` when the
     /// family does not resolve (→ the embedded fallback above).
-    static func installedFontRatio(family: String, size: Double) -> Double? {
+    package static func installedFontRatio(family: String, size: Double) -> Double? {
         #if canImport(AppKit)
         guard size > 0, let font = NSFont(name: family, size: CGFloat(size)) else { return nil }
         // descender is NEGATIVE in AppKit; plain adds (never fused) per the float invariant.
@@ -63,7 +62,7 @@ enum CodeFontSync {
     /// round-trip that can only produce the answer "nothing changed", queued behind real metadata
     /// work. `.starting` DOES push: the seed has to land before the booting workbench reads its
     /// settings, so waiting for `.ready` would be a reload late.
-    static func shouldPush(
+    package static func shouldPush(
         endpoint: MetadataCodec.ServiceEndpoint?,
         spec: MetadataCodec.CodeFontSpec,
         lastSent: MetadataCodec.CodeFontSpec?,
@@ -72,4 +71,3 @@ enum CodeFontSync {
         return spec != lastSent
     }
 }
-#endif

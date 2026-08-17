@@ -1,7 +1,7 @@
 import SlopDeskProtocol
 import SlopDeskVideoProtocol
 import XCTest
-@testable import SlopDeskClientUI
+@testable import SlopDeskClientCore
 
 /// ``CodeFontSync`` — the client-side maths that folds the LIVE terminal prefs into the verb-20
 /// spec. The metrics probe is always injected here: the machine's font library must never decide

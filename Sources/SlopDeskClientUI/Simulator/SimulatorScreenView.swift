@@ -346,7 +346,7 @@ final class SimulatorScreenNSView: NSView, SimulatorFrameRenderer {
             if !text.isEmpty, !event.modifierFlags.contains(.command) { send(.type(text)) }
             return
         }
-        send(.key(code, modifiers: SimulatorKeyMap.modifiers(for: event.modifierFlags)))
+        send(.key(code, modifiers: SimulatorKeyMap.modifiers(for: event)))
     }
 }
 

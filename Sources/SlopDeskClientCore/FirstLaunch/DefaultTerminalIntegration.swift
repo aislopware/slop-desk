@@ -32,7 +32,7 @@ public enum DefaultTerminalIntegration {
 
     /// The shell-script content types the app registers for (the `.command`/`.sh`/`.tool` double-click /
     /// `open script.sh` path). Resolved leniently — a UTType that the SDK does not vend is skipped.
-    static var scriptContentTypes: [UTType] {
+    package static var scriptContentTypes: [UTType] {
         var types: [UTType] = [.shellScript]
         for ext in ["command", "tool"] {
             if let type = UTType(filenameExtension: ext) { types.append(type) }
