@@ -4544,6 +4544,29 @@ if grep -q 'ToastStackView(' Sources/SlopDeskClientUI/Overlays/OverlayHostView.s
 fi
 printf 'check-supervisor: one notification card, drawn twice and spelled once.\n'
 
+# ── The shared overlay host presents modals and nothing else ──────────────────────────────────
+# docs/56 stage D's dividend, and the reason it is a gate: an ALWAYS-MOUNTED full-bleed SwiftUI
+# layer claims every hit inside its bounds over the AppKit split, and the only way to survive that
+# is a hit-testing flag someone has to keep honest. Both ambient tenants are their own windows now —
+# the toasts and the ⌃⇥ readout — so the host holds modals alone, and neither may come back. The
+# switcher's SwiftUI half was deleted rather than kept: the phone has no modifier stream to open the
+# gesture with, so a second half could never render.
+# Comment lines are stripped first: the file's header is where the departure is RECORDED, and it has to
+# be free to name what left without the gate reading its own history as a regression.
+if sed -E 's#^[[:space:]]*//.*##' Sources/SlopDeskClientUI/Overlays/OverlayHostView.swift |
+  grep -qE '(PaneSwitcherOverlay|allowsHitTesting)'; then
+  fail "the shared overlay host grew an ambient layer again — an always-mounted host eats the split's clicks"
+fi
+if [[ -e Sources/SlopDeskClientUI/Overlays/PaneSwitcherOverlay.swift ]]; then
+  fail "PaneSwitcherOverlay.swift is back — the ⌃⇥ readout is AppKit only (SlopDeskMacUI/Overlays/MacPaneSwitcher.swift)"
+fi
+for shared in PaneSwitcherRowsBuilder PaneSwitcherMetrics; do
+  if ! grep -q "${shared}" Sources/SlopDeskMacUI/Overlays/MacPaneSwitcher.swift; then
+    fail "MacPaneSwitcher stopped reading ${shared} — the readout's rows and measurements live below the view"
+  fi
+done
+printf 'check-supervisor: the overlay host presents modals and nothing else.\n'
+
 # ── One device-panel law, two device protocols ────────────────────────────────────────────────
 # The simulator panel and the Android panel differ in almost everything and should — one rotates on
 # the client and the other on the device, one sends touches in the fitted rect's space and the other

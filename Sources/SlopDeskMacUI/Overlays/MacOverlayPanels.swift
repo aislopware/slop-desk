@@ -28,6 +28,9 @@ final class MacOverlayPanels {
     /// The notification corner. Built once per workspace window and kept — it orders itself out when
     /// the stack empties, so there is nothing to tear down between bursts.
     private var toasts: MacToastStackController?
+    /// The ⌃⇥ readout. Kept for the same reason as the corner: the gesture is often under 200ms, and
+    /// building a window inside it would spend the whole interaction on setup.
+    private var switcher: MacPaneSwitcherController?
 
     /// Reconciles the ⌘/ cheat sheet against `visible`.
     ///
@@ -77,5 +80,21 @@ final class MacOverlayPanels {
             onDismiss: { [coordinator] id in coordinator.dismissToast(id) },
             onJump: { [store] key in store.jumpToPaneNamedByNotification(key) },
         )
+    }
+
+    /// Reconciles the ⌃⇥ readout against the store's live gesture.
+    ///
+    /// `nil` is every one of the gesture's three endings at once — commit, cancel, or a window that
+    /// went away — so there is nothing here that has to tell them apart. The rows are rebuilt on each
+    /// step because the store's own recency ring is the source; the ring itself is frozen for the
+    /// gesture, so a step moves the plate rather than reordering anything.
+    func syncPaneSwitcher(_ gesture: PaneSwitcher?, host: NSWindow?, store: WorkspaceStore) {
+        guard let gesture, let host else {
+            switcher?.dismiss()
+            return
+        }
+        let controller = switcher ?? MacPaneSwitcherController(host: host)
+        switcher = controller
+        controller.show(PaneSwitcherRowsBuilder.rows(for: gesture, store: store))
     }
 }

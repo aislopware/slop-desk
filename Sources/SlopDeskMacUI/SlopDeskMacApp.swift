@@ -514,6 +514,13 @@ public struct SlopDeskMacApp: App {
                         stack, host: windowBox.window, store: store, coordinator: overlayCoordinator,
                     )
                 }
+                // THE ⌃⇥ READOUT, the last ambient tenant of the shared host and now an `NSPanel` that
+                // ignores the mouse outright. Driven off the store's gesture rather than a coordinator
+                // flag, because the gesture IS the state — the dispatcher owns open/step/commit/cancel
+                // and this only draws what it decided.
+                .onChange(of: store.paneSwitcher) { _, gesture in
+                    overlayPanels.syncPaneSwitcher(gesture, host: windowBox.window, store: store)
+                }
                 .task {
                     // Late-bind the drag coordinator's weak store (chip labels + destination gating) —
                     // `@State` objects cannot reference each other at property-init time.

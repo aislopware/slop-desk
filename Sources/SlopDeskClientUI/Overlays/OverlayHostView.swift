@@ -71,84 +71,75 @@ package struct OverlayHostView: View {
     }
 
     package var body: some View {
-        // ⚠️ TWO LAYERS, deliberately not one chain. The ambient layer (toasts, chips, the ⌃⇥ readout)
-        // is TRANSPARENT TO HITS unless a toast is up, so the workspace beneath stays clickable — and
-        // `allowsHitTesting(false)` on it suppresses hits for everything composed into that chain,
-        // INCLUDING overlays attached further down it. A modal card hung off the same chain therefore
-        // took no clicks at all: neither its rows nor its dismiss-backdrop responded (measured — a
-        // palette row click ran nothing). So the modal is a SIBLING in a ZStack, owning its own hit
-        // testing.
-        ZStack {
-            // The ⌃⇥ switcher readout, centred like the macOS app switcher it echoes. Deliberately NOT a
-            // `.sheet` (see `PaneSwitcherOverlay`): a sheet would take key focus and break the `flagsChanged`
-            // ⌃-release that commits the gesture, and its present animation outlasts the whole interaction.
-            //
-            // The transient chip stack (copy receipt · notice · connection indicator) is NOT here: it
-            // stands at the foot of the ISLAND (``IslandChipStack``, mounted by ``ContentColumn``).
-            // Centred on the window it drifted off the canvas it described, and its window-measured
-            // inset parked it on the island's bottom edge over the prompt line (user-directed
-            // 2026-08-09). Nor are the TOASTS — see the file header.
-            PaneSwitcherOverlay(store: store)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                // The readout is a readout: it never takes a click, and the workspace beneath this
-                // layer must stay clickable at all times.
-                .allowsHitTesting(false)
-                .animation(Slate.Anim.smallFade, value: activeSheet)
-
-            // ⚠️ The card is presented IN THIS WINDOW, not in a sheet, and that is the only way it can look
-            // like the ⌃⇥ switcher — which is the whole point of the family.
-            //
-            // A sheet is a separate WINDOW, and a window brings its own surface and its own mask. Two
-            // symptoms, one root: the sheet paints its ground across its whole frame, which flashed as a
-            // pale panel on open (and, once the card was inset to make room for its shadow, showed as a
-            // halo ringing it); and the sheet window's mask clipped the corner to the SYSTEM's radius
-            // instead of the island's 26, which is the one number the whole family is cut at.
-            //
-            // The card is also SHADOWED, and a shadow needs something to fall on. In-window it falls on the
-            // island and the ground — the same two tones the island's own cast lands on — so the card reads
-            // as one more thing lifted off this canvas. Presented in its own window it falls on nothing the
-            // user can see, and the depth cue the paper surface depends on is simply gone.
-            //
-            // (Until 2026-08-08 this note argued refraction: the card was Liquid Glass and a sheet had
-            // nothing behind it to refract. ONE ISLAND retired the material — see ``SlatePaperCard`` — but
-            // every other reason to stay in-window survived it intact.)
-            //
-            // The keyboard needs nothing from the sheet: it already yields on the COORDINATOR's flags
-            // (`capturesKeyboardWhileVisible` → the app's `isOverlayCapturingKeys` → the dispatcher's
-            // NSEvent monitor hands the event back to the responder chain), which is how a focused card
-            // here receives typing and its own ⌘-chords. Esc and click-away are the backdrop's job below.
-            modalOverlay
-        }
-        // CONNECT-TO-HOST is the ONE overlay presented as a real system sheet (user-directed
-        // 2026-08-08). It is the only surface in the set that is a FORM the user fills in and
-        // commits — every other card is a picker you summon, skim and dismiss in a second — and a
-        // form is exactly what the platform's own modal is for: it owns the window, it can't be
-        // dismissed by a stray click into the workspace mid-edit, and Esc/Return land on Cancel and
-        // Connect through the buttons' native roles rather than through a hand-rolled floor.
+        // ⚠️ ONE LAYER NOW, and that is the stage-D dividend. This used to be a ZStack of two: an
+        // AMBIENT chain (toasts, the ⌃⇥ readout) that had to carry `allowsHitTesting(false)` — which
+        // suppresses hits for everything composed into it, INCLUDING overlays attached further down,
+        // so a modal hung off the same chain took no clicks at all (measured: a palette row click ran
+        // nothing) — and the modal as its SIBLING. Both ambient tenants are their own windows now, so
+        // the host presents modals and nothing else, and the hit-testing hazard is gone with them.
         //
-        // The reasons the OTHER cards stay in-window (above) all still hold and none of them applied
-        // here: this card carries no glass, its corner is the family's own rather than the island's,
-        // and the depth cue a summoned picker gets from casting a shadow on the island is not what
-        // makes a modal form legible.
+        // The transient chip stack (copy receipt · notice · connection indicator) was never here: it
+        // stands at the foot of the ISLAND (``IslandChipStack``, mounted by ``ContentColumn``).
+        // Centred on the window it drifted off the canvas it described, and its window-measured
+        // inset parked it on the island's bottom edge over the prompt line (user-directed 2026-08-09).
         //
-        // `connectVisible` is `private(set)`, so the binding is one-way by construction: reads come
-        // from the coordinator, and any system dismissal routes back through `closeConnect()` — which
-        // also bumps `connectGeneration`, invalidating an in-flight connect Task exactly as Cancel does.
-        .sheet(isPresented: connectSheetBinding) {
-            ConnectHostView(connection: connection, coordinator: coordinator)
-        }
-        .alert(
-            closeAlertTitle,
-            isPresented: closeAlertBinding,
-            actions: {
-                // "Close" is the destructive action (it stops a running command / discards the pane/tab);
-                // Cancel is the safe default. Native roles give the macOS alert its standard button
-                // placement + tinting.
-                Button("Close", role: .destructive) { store.confirmPendingClose() }
-                Button("Cancel", role: .cancel) { store.cancelPendingClose() }
-            },
-            message: { Text(closeAlertMessage) },
-        )
+        // ⚠️ The card is presented IN THIS WINDOW, not in a sheet, and that is the only way it can look
+        // like the ⌃⇥ switcher — which is the whole point of the family.
+        //
+        // A sheet is a separate WINDOW, and a window brings its own surface and its own mask. Two
+        // symptoms, one root: the sheet paints its ground across its whole frame, which flashed as a
+        // pale panel on open (and, once the card was inset to make room for its shadow, showed as a
+        // halo ringing it); and the sheet window's mask clipped the corner to the SYSTEM's radius
+        // instead of the island's 26, which is the one number the whole family is cut at.
+        //
+        // The card is also SHADOWED, and a shadow needs something to fall on. In-window it falls on the
+        // island and the ground — the same two tones the island's own cast lands on — so the card reads
+        // as one more thing lifted off this canvas. Presented in its own window it falls on nothing the
+        // user can see, and the depth cue the paper surface depends on is simply gone.
+        //
+        // (Until 2026-08-08 this note argued refraction: the card was Liquid Glass and a sheet had
+        // nothing behind it to refract. ONE ISLAND retired the material — see ``SlatePaperCard`` — but
+        // every other reason to stay in-window survived it intact.)
+        //
+        // The keyboard needs nothing from the sheet: it already yields on the COORDINATOR's flags
+        // (`capturesKeyboardWhileVisible` → the app's `isOverlayCapturingKeys` → the dispatcher's
+        // NSEvent monitor hands the event back to the responder chain), which is how a focused card
+        // here receives typing and its own ⌘-chords. Esc and click-away are the backdrop's job below.
+        modalOverlay
+            // The card's `.transition(.opacity)` needs a transaction to ride, and the flags are
+            // mutated outside a `withAnimation` — so the value-keyed animation is what drives the
+            // diff. It sat on the ambient sibling while there was one; it belongs to the card.
+            .animation(Slate.Anim.smallFade, value: activeSheet)
+            // CONNECT-TO-HOST is the ONE overlay presented as a real system sheet (user-directed
+            // 2026-08-08). It is the only surface in the set that is a FORM the user fills in and
+            // commits — every other card is a picker you summon, skim and dismiss in a second — and a
+            // form is exactly what the platform's own modal is for: it owns the window, it can't be
+            // dismissed by a stray click into the workspace mid-edit, and Esc/Return land on Cancel and
+            // Connect through the buttons' native roles rather than through a hand-rolled floor.
+            //
+            // The reasons the OTHER cards stay in-window (above) all still hold and none of them applied
+            // here: this card carries no glass, its corner is the family's own rather than the island's,
+            // and the depth cue a summoned picker gets from casting a shadow on the island is not what
+            // makes a modal form legible.
+            //
+            // `connectVisible` is `private(set)`, so the binding is one-way by construction: reads come
+            // from the coordinator, and any system dismissal routes back through `closeConnect()` — which
+            // also bumps `connectGeneration`, invalidating an in-flight connect Task exactly as Cancel does.
+            .sheet(isPresented: connectSheetBinding) {
+                ConnectHostView(connection: connection, coordinator: coordinator)
+            }
+            .alert(
+                closeAlertTitle,
+                isPresented: closeAlertBinding,
+                actions: {
+                    // "Close" is the destructive action (it stops a running command / discards the pane/tab);
+                    // Cancel is the safe default. Native roles give the macOS alert its standard button
+                    // placement + tinting.
+                    Button("Close", role: .destructive) { store.confirmPendingClose() }
+                    Button("Cancel", role: .cancel) { store.cancelPendingClose() }
+                },
+                message: { Text(closeAlertMessage) },
+            )
         // No tint override anywhere on this layer: the app's ONE neutral accent (the AccentColor
         // asset) already makes stock controls, focus rings and selection read graphite — here and in
         // the workspace beneath alike (see ``SlateOverlayInk``).
@@ -182,8 +173,9 @@ package struct OverlayHostView: View {
     /// a macOS sheet did not dim either, so nothing regresses. It is not `Color.clear` either: a truly
     /// clear rectangle takes no hits, and catching the click that dismisses the card is its whole job.
     ///
-    /// It is a SIBLING in the ZStack rather than an `.overlay` on the ambient chain, because that chain
-    /// carries `allowsHitTesting(false)` whenever no toast is up.
+    /// It is now the host's WHOLE body rather than one sibling of a ZStack, and it can be because the two
+    /// ambient tenants left for windows of their own (docs/56 stage D). While they were here the modal had
+    /// to stand beside them: a chain that suppresses hits suppresses them for everything composed into it.
     @ViewBuilder
     private var modalOverlay: some View {
         if let sheet = activeSheet {

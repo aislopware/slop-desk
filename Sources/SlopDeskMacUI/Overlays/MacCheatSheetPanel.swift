@@ -211,6 +211,9 @@ final class MacCheatSheetView: NSView {
 /// glyphs in the same face in every menu, so this is also the register a reader already knows.
 final class MacKeycapView: NSView {
     private let field: NSTextField
+    /// Whether the row this cap sits on is the selected one — the cap brightens WITH its row rather
+    /// than staying at one fixed weight, so the eye tracks a single object down the list.
+    private var lit = false
 
     init(label: String) {
         field = NSTextField(labelWithString: label)
@@ -239,13 +242,21 @@ final class MacKeycapView: NSView {
     @available(*, unavailable)
     required init?(coder _: NSCoder) { fatalError("not from a nib") }
 
+    /// Re-cuts the cap for a row that changed — a switcher step moves the plate down the list, and the
+    /// cap has to travel with it rather than being rebuilt under it.
+    func relabel(_ label: String, lit: Bool) {
+        field.stringValue = label
+        self.lit = lit
+        needsDisplay = true
+    }
+
     override var wantsUpdateLayer: Bool { true }
 
     override func updateLayer() {
         effectiveAppearance.performAsCurrentDrawingAppearance {
             layer?.backgroundColor = Slate.Native.Overlay.plate.cgColor
             layer?.borderColor = Slate.Native.Overlay.hairline.cgColor
-            field.textColor = Slate.Native.Overlay.tertiary
+            field.textColor = lit ? Slate.Native.Overlay.secondary : Slate.Native.Overlay.tertiary
         }
     }
 

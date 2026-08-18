@@ -226,6 +226,22 @@ nothing is ever implemented twice. No stage copies a file: a surface either move
   `Color` on the phone, to `NSColor` on the Mac. `check-supervisor.sh` gates the three decays: either
   half dropping `ToastPresentation`, either half re-deriving the phrase from `(source, flavor)`, and
   the shared host mounting the column again.
+
+  **The third is the ⌃⇥ readout, and it closes the ambient layer.** `MacPaneSwitcher` is an `NSPanel`
+  that `ignoresMouseEvents` outright — the readout's whole gesture lives on the keyboard, so a click
+  during it belongs to the workspace — and it never becomes key, because stealing focus mid-gesture
+  would break the `flagsChanged` release that COMMITS the switch. Its rows and its measurements were
+  already below the view (`PaneSwitcherRowsBuilder`, `PaneSwitcherMetrics` in `SlopDeskClientCore`),
+  so the port is the drawing and nothing else. Unlike the cheat sheet and the toasts this surface has
+  ONE half rather than two: the phone has no modifier stream to open ⌃⇥ with, the SwiftUI overlay
+  could never render there, and it was deleted rather than kept as a cross-language mirror.
+
+  With both ambient tenants in their own windows, `OverlayHostView` is a modal presenter and nothing
+  else, and the hazard it was written around is gone with them: the host used to be a ZStack of an
+  ambient chain carrying `allowsHitTesting(false)` — which suppresses hits for *everything* composed
+  into it, including overlays attached further down, so a modal hung off the same chain took no
+  clicks at all — and the modal as its sibling. `check-supervisor.sh` gates the regression directly:
+  neither `PaneSwitcherOverlay` nor an `allowsHitTesting` may reappear in that file.
 - **E — the Rust port (§4).**
 
 ## 4. What moves to Rust
