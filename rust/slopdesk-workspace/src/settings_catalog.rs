@@ -117,11 +117,17 @@ pub enum Group {
     NotifyWhileForeground,
     /// Shell → Working Directory, shared by the window / tab / split rows.
     WorkingDirectory,
+    /// Controls → Open With → what ⌘-click does on a link.
+    LinkCmdClick,
+    /// Controls → Open With → what ⌘⇧-click does on a link.
+    LinkCmdShiftClick,
+    /// Controls → Link Schemes → which schemes are detected at all.
+    AutoDetectLinkSchemes,
 }
 
 impl Group {
     /// Every group, in case-index order — the numbering the boundary carries.
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 15] = [
         Self::CursorStyle,
         Self::NewTabPosition,
         Self::Density,
@@ -134,6 +140,9 @@ impl Group {
         Self::CloseConfirmationTab,
         Self::NotifyWhileForeground,
         Self::WorkingDirectory,
+        Self::LinkCmdClick,
+        Self::LinkCmdShiftClick,
+        Self::AutoDetectLinkSchemes,
     ];
 
     /// The case index a group crosses as.
@@ -152,6 +161,9 @@ impl Group {
             Self::CloseConfirmationTab => 9,
             Self::NotifyWhileForeground => 10,
             Self::WorkingDirectory => 11,
+            Self::LinkCmdClick => 12,
+            Self::LinkCmdShiftClick => 13,
+            Self::AutoDetectLinkSchemes => 14,
         }
     }
 
@@ -258,6 +270,27 @@ const WORKING_DIRECTORY: &[OptionRow] = &[
     OptionRow::plain("home", "Home Directory"),
 ];
 
+/// Controls → Open With → ⌘-click. A file or folder opens ON THE HOST and a URL in the client's
+/// browser, which is why the first option is "Open in the best handler" rather than naming an app.
+const LINK_CMD_CLICK: &[OptionRow] = &[
+    OptionRow::plain("open", "Open"),
+    OptionRow::plain("copy", "Copy"),
+    OptionRow::plain("nothing", "Do Nothing"),
+];
+
+/// Controls → Open With → ⌘⇧-click. Both actions happen on the HOST, where the file is.
+const LINK_CMD_SHIFT_CLICK: &[OptionRow] = &[
+    OptionRow::plain("reveal-finder", "Reveal in Finder"),
+    OptionRow::plain("open-system-default", "Open with System Default"),
+];
+
+/// Controls → Link Schemes. `http(s)`, `file` and `mailto` are detected under either choice; this
+/// only decides what happens to everything else.
+const AUTO_DETECT_LINK_SCHEMES: &[OptionRow] = &[
+    OptionRow::plain("all", "All"),
+    OptionRow::plain("custom", "Custom"),
+];
+
 /// The choices in a group, in the order they render.
 ///
 /// The tab close-confirmation row is the window row MINUS `multiple_tabs`, taken as a PREFIX rather
@@ -279,6 +312,9 @@ pub const fn group(group: Group) -> &'static [OptionRow] {
         Group::CloseConfirmationTab => CLOSE_CONFIRMATION.split_at(2).0,
         Group::NotifyWhileForeground => NOTIFY_WHILE_FOREGROUND,
         Group::WorkingDirectory => WORKING_DIRECTORY,
+        Group::LinkCmdClick => LINK_CMD_CLICK,
+        Group::LinkCmdShiftClick => LINK_CMD_SHIFT_CLICK,
+        Group::AutoDetectLinkSchemes => AUTO_DETECT_LINK_SCHEMES,
     }
 }
 

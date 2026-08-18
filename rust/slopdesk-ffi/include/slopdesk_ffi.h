@@ -970,7 +970,9 @@ size_t slopdesk_settings_row_page_label(size_t index, uint8_t *out, size_t cap);
 #define SLOPDESK_SETTINGS_CONTROL_CARDS   2
 #define SLOPDESK_SETTINGS_CONTROL_SLIDER  3
 #define SLOPDESK_SETTINGS_CONTROL_TEXT    4
-#define SLOPDESK_SETTINGS_CONTROL_BESPOKE 5
+// Prose belonging to the group rather than to a setting; its words are the row's subtitle.
+#define SLOPDESK_SETTINGS_CONTROL_NOTE    5
+#define SLOPDESK_SETTINGS_CONTROL_BESPOKE 6
 // What every `uint8_t` door here answers for a position that names nothing.
 #define SLOPDESK_SETTINGS_LAYOUT_NONE ((uint8_t)0xFF)
 size_t slopdesk_settings_layout_group_count(uint8_t section_index, bool mac);

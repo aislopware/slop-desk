@@ -693,7 +693,7 @@ private struct NotificationPermissionRow: View {
 private struct ControlsSettingsTab: View {
     @Bindable var store: PreferencesStore
 
-    // Selection (Settings → Controls → Selection).
+    // Selection.
     @Default(.shiftArrowSelect) private var shiftArrowSelect
     @Default(.clearSelectionOnTyping) private var clearSelectionOnTyping
     @Default(.clearSelectionOnCopy) private var clearSelectionOnCopy
@@ -714,288 +714,150 @@ private struct ControlsSettingsTab: View {
     // Keyboard.
     @Default(.undoAtPrompt) private var undoAtPrompt
     @Default(.optionAsAlt) private var optionAsAlt
-    // Links (Settings → Controls → Open With / Link Schemes). Client-side link interaction —
-    // NOT libghostty config, so these bind DIRECTLY (no `store.refreshing(_:)` terminal-config rebuild).
+    // Links. CLIENT-side link interaction, NOT libghostty config, so these bind DIRECTLY — no
+    // `store.refreshing(_:)` terminal-config rebuild.
     @Default(.linkDetection) private var linkDetection
     @Default(.linkCmdClick) private var linkCmdClick
     @Default(.linkCmdShiftClick) private var linkCmdShiftClick
     @Default(.autoDetectLinkSchemes) private var autoDetectLinkSchemes
     @Default(.customLinkSchemes) private var customLinkSchemes
-    // Secure Input — macOS-only (the iOS sheet hides the section). The keys still
-    // compile + round-trip on iOS; only the UI is gated.
-    #if os(macOS)
+    // Secure Input. The page draws these only on macOS (the table says so); the keys compile and
+    // round-trip on both platforms, which is why they need no gate here.
     @Default(.autoSecureInput) private var autoSecureInput
     @Default(.secureInputIndicator) private var secureInputIndicator
-    #endif
 
     var body: some View {
         Form {
-            slateFormSection("Selection") {
-                toggleRow(
-                    settingLabel(SettingsKey.shiftArrowSelect),
-                    "Use Shift+arrows to drive a native selection instead of forwarding the arrow escapes.",
-                    symbol: .characterCursorIbeam, isOn: $shiftArrowSelect,
-                )
-                toggleRow(
-                    settingLabel(SettingsKey.clearSelectionOnTyping),
-                    "Drop the selection the moment any key is sent to the program.",
-                    symbol: .keyboard, isOn: $clearSelectionOnTyping,
-                )
-                toggleRow(
-                    settingLabel(SettingsKey.clearSelectionOnCopy),
-                    "Drop the highlight after an explicit copy (does not apply when Copy on Select fires).",
-                    symbol: .documentOnDocument, isOn: $clearSelectionOnCopy,
-                )
-                timingFooter(.live)
-            }
-
-            slateFormSection("Copy & Paste") {
-                toggleRow(
-                    settingLabel(SettingsKey.copyOnSelect),
-                    "Copy the selection to the pasteboard as soon as it is made.",
-                    symbol: .documentOnDocument, isOn: $copyOnSelect,
-                )
-                toggleRow(
-                    settingLabel(SettingsKey.trimTrailingSpacesOnCopy),
-                    "Strip trailing whitespace from each copied line.",
-                    symbol: .scissors, isOn: $trimTrailingSpacesOnCopy,
-                )
-                toggleRow(
-                    settingLabel(SettingsKey.pasteProtection),
-                    "Warn before pasting multi-line, trailing-newline, sudo/su, or control-character text.",
-                    symbol: .shield, isOn: $pasteProtection,
-                )
-                toggleRow(
-                    settingLabel(SettingsKey.pasteBracketedSafe),
-                    "Skip the paste warning when the receiving program advertises bracketed-paste support.",
-                    symbol: .shieldLefthalfFilled, isOn: $pasteBracketedSafe,
-                )
-                timingFooter(.live)
-            }
-
-            scrollSection
-
-            mouseSection
-
-            openWithSection
-
-            linkSchemesSection
-
-            slateFormSection("Keyboard") {
-                toggleRow(
-                    settingLabel(SettingsKey.undoAtPrompt),
-                    "Press Cmd-Z at the shell prompt to emit the readline undo sequence.",
-                    symbol: .arrowUturnBackward, isOn: $undoAtPrompt,
-                )
-                // Four labels that read almost identically as prose become four distinct key-row
-                // silhouettes — the lit ⌥ caps ARE the setting.
-                SettingsOptionCards(
-                    settingLabel(SettingsKey.optionAsAltKey),
-                    subtitle: "Treat the macOS Option key as Alt/Meta so terminal apps see Esc-prefixed "
-                        + "sequences (Emacs, Vim word-jumps, readline). Off keeps Option free for accented "
-                        + "characters.",
-                    options: SettingsCatalog.options(.optionAsAlt),
-                    selection: store.refreshing($optionAsAlt),
-                ) { option in
-                    SettingsOptionKeyArt(mode: option.value)
+            ForEach(SettingsLayout.groups(SettingsSection.controls.rawValue, for: .current)) { group in
+                slateFormSection(group.title) {
+                    ForEach(group.rows) { row in control(row) }
+                    timingFooter(group.timing)
                 }
-                timingFooter(.live)
             }
-
-            // Secure Input — macOS-only (process-global `EnableSecureEventInput`). The
-            // whole Section is `#if os(macOS)`, so the iOS sheet hides it; the `SettingsKey` keys still compile.
-            #if os(macOS)
-            slateFormSection("Secure Input") {
-                toggleRow(
-                    "Auto Secure Input",
-                    "Automatically engage macOS Secure Keyboard Entry when the remote shell shows a hidden "
-                        + "password prompt (sudo, ssh, read -s), so no other app can read your keystrokes.",
-                    symbol: .lockShield, isOn: $autoSecureInput,
-                )
-                toggleRow(
-                    "Show Secure Input Indicator",
-                    "Show the SECURE INPUT pill in the pane while secure keyboard entry is active.",
-                    symbol: .eyeTrianglebadgeExclamationmark, isOn: $secureInputIndicator,
-                )
-                timingFooter(.live)
-            }
-            #endif
         }
         .formStyle(.grouped)
     }
 
-    /// Settings → Controls → Scroll. Extracted to keep the `Form` closure under `closure_body_length`.
-    private var scrollSection: some View {
-        slateFormSection("Scroll") {
-            // The stops name the values that MEAN something (half speed, the 1× identity, double, triple), so
-            // "put it back to normal" is one tap rather than a drag hunt for exactly 1.00.
-            SettingsSliderRow(
-                "Scroll multiplier",
-                subtitle: "Scales every scroll gesture's distance.",
-                value: store.refreshing($scrollMultiplier),
-                range: SettingsCatalog.Ladder.scrollMultiplier.range,
-                step: SettingsCatalog.Ladder.scrollMultiplier.step,
-                presets: SettingsCatalog.Ladder.scrollMultiplier.presets,
-                readout: SettingsCatalog.Ladder.scrollMultiplier.readout,
-            )
-            // Was a `Stepper` at 1 000 lines a click: crossing its own 1 000…100 000 range took 99 clicks, so
-            // the deep end was effectively unreachable. The magnitude stops make every useful depth one tap.
-            SettingsSliderRow(
-                "Scrollback",
-                subtitle: "How much history each pane keeps. Deeper buffers cost host memory per pane.",
-                value: scrollbackBinding,
-                range: SettingsCatalog.Ladder.scrollback.range,
-                step: SettingsCatalog.Ladder.scrollback.step,
-                presets: SettingsCatalog.Ladder.scrollback.presets,
-                readout: SettingsCatalog.Ladder.scrollback.readout,
-            )
-            timingFooter(.live)
-        }
-    }
-
-    /// `mouse-option.png` order. Extracted to keep the `Form` closure under `closure_body_length`.
-    private var mouseSection: some View {
-        slateFormSection("Mouse") {
-            toggleRow(
-                "Mouse Over to Focus",
-                "Focus the pane under the mouse cursor automatically.",
-                symbol: .pointerArrowRays, isOn: $focusFollowsMouse,
-            )
-            // A MENU, not cards: five actions with no shared geometry to draw. Their difference is the verb
-            // ("Copy" vs "Paste" vs "Ignore"), and a glyph standing in for a verb adds a picture frame, not
-            // information.
+    /// One row, by the setting it edits — see `GeneralSettingsTab.control(_:)` for why the binding is
+    /// the half that cannot cross.
+    ///
+    /// Every toggle here goes through `store.refreshing(_:)`, which is what makes this page's switch
+    /// different from Shell's: these are libghostty config, so a change must also re-apply the live
+    /// terminal config. That seam is a property of the PAGE, not of the row, so it stays here.
+    @ViewBuilder
+    private func control(_ row: SettingsLayout.Row) -> some View {
+        switch row.key {
+        case SettingsKey.shiftArrowSelect: toggle(row, $shiftArrowSelect)
+        case SettingsKey.clearSelectionOnTyping: toggle(row, $clearSelectionOnTyping)
+        case SettingsKey.clearSelectionOnCopy: toggle(row, $clearSelectionOnCopy)
+        case SettingsKey.copyOnSelect: toggle(row, $copyOnSelect)
+        case SettingsKey.trimTrailingSpacesOnCopy: toggle(row, $trimTrailingSpacesOnCopy)
+        case SettingsKey.pasteProtection: toggle(row, $pasteProtection)
+        case SettingsKey.pasteBracketedSafe: toggle(row, $pasteBracketedSafe)
+        case SettingsKey.focusFollowsMouse: toggle(row, $focusFollowsMouse)
+        case SettingsKey.mouseHideWhileTyping: toggle(row, $mouseHideWhileTyping)
+        case SettingsKey.clickToMove: toggle(row, $clickToMove)
+        case SettingsKey.allowMouseCapture: toggle(row, $allowMouseCapture)
+        case SettingsKey.undoAtPrompt: toggle(row, $undoAtPrompt)
+        case SettingsKey.autoSecureInput: toggle(row, $autoSecureInput)
+        case SettingsKey.secureInputIndicator: toggle(row, $secureInputIndicator)
+        // Surfaces as a plain ON/OFF switch (`spec/cursor-and-mouse`), not the leaf enum's 4-way:
+        // ON ⇒ ⇧ extends the selection, OFF ⇒ ⇧ is forwarded to the program. The getter projects
+        // through `extendsSelection` rather than `== .enabled` so a value left by the removed 4-way
+        // picker still reads sanely.
+        case SettingsKey.allowShiftClickKey:
+            toggle(row, Binding(
+                get: { allowShiftClick.extendsSelection },
+                set: { allowShiftClick = $0 ? .enabled : .disabled },
+            ))
+        case SettingsKey.linkDetection:
+            Toggle(isOn: $linkDetection) { rowLabel(row.label, row.subtitle) }
+        case SettingsKey.rightClickActionKey:
             SettingsOptionMenuRow(
-                settingLabel(SettingsKey.rightClickActionKey),
-                subtitle: "What right-click does in the terminal viewport (Ctrl+right-click always opens the "
-                    + "menu).",
+                row.label,
+                subtitle: row.subtitle,
                 options: SettingsCatalog.options(.rightClickAction),
                 selection: store.refreshing($rightClickAction),
             )
-            toggleRow(
-                settingLabel(SettingsKey.mouseHideWhileTyping),
-                "Hide the mouse cursor while the keyboard is in use.",
-                symbol: .pointerArrowSlash, isOn: $mouseHideWhileTyping,
-            )
-            // Surfaces as a simple ON/OFF switch (`spec/cursor-and-mouse`), not a 4-way picker: ON ⇒ ⇧ extends
-            // the selection (`MouseShiftCapture.enabled`, default), OFF ⇒ ⇧ forwarded to the program
-            // (`.disabled`). The leaf enum keeps `.always`/`.never` for the power-user token mapping. The
-            // getter projects through `extendsSelection` (NOT a bare `== .enabled`) so a value from the removed
-            // 4-way picker reads sanely: `.always` → ON, `.never` → OFF.
-            toggleRow(
-                settingLabel(SettingsKey.allowShiftClickKey),
-                "Hold Shift to select text even when the running app captures the mouse.",
-                symbol: .pointerArrowClick, isOn: Binding(
-                    get: { allowShiftClick.extendsSelection },
-                    set: { allowShiftClick = $0 ? .enabled : .disabled },
-                ),
-            )
-            toggleRow(
-                settingLabel(SettingsKey.clickToMove),
-                "Click in the prompt to move the shell cursor — sends arrow keys across soft-wrapped rows.",
-                symbol: .pointerArrowMotionlines, isOn: $clickToMove,
-            )
-            toggleRow(
-                settingLabel(SettingsKey.allowMouseCapture),
-                "Allow shell apps to capture mouse events (e.g. vim, tmux).",
-                symbol: .rectangleAndHandPointUpLeft, isOn: $allowMouseCapture,
-            )
-            timingFooter(.live)
-        }
-    }
-
-    // MARK: - Links (Open With + Link Schemes)
-
-    /// Settings → Controls → Open With. The link-interaction knobs are CLIENT-side (not libghostty
-    /// config), so they bind DIRECTLY — no `store.refreshing(_:)` rebuild.
-    ///
-    /// HONESTY CEILING (docs/DECISIONS.md): a per-target "Open Files / Folders With → [app]" surrogate needs a
-    /// LOCAL file/folder pane slopdesk can't offer for a REMOTE host (files live on the host; no file-transfer
-    /// sub-protocol). So instead of dead Browser / Finder target pickers, the actionable keys
-    /// (`link-cmd-click` / `link-cmd-shift-click`) are surfaced and the reduced target set is a footnote.
-    private var openWithSection: some View {
-        slateFormSection("Open With") {
-            Toggle(isOn: $linkDetection) {
-                rowLabel(
-                    settingLabel(SettingsKey.linkDetection),
-                    "Underline paths and URLs in terminal output on Cmd-hover so they are clickable.",
-                )
+        case SettingsKey.optionAsAltKey:
+            SettingsOptionCards(
+                row.label,
+                subtitle: row.subtitle,
+                options: SettingsCatalog.options(.optionAsAlt),
+                selection: store.refreshing($optionAsAlt),
+            ) { option in
+                SettingsOptionKeyArt(mode: option.value)
             }
-            linkPickerRow(
-                settingLabel(SettingsKey.linkCmdClickKey),
-                "Open in the best handler (files / folders open on the host, URLs in your browser), copy the "
-                    + "path / URL, or do nothing.",
-                selection: $linkCmdClick,
-            ) {
-                Text("Open").tag(LinkCmdClick.open)
-                Text("Copy").tag(LinkCmdClick.copy)
-                Text("Do Nothing").tag(LinkCmdClick.nothing)
-            }
-            linkPickerRow(
-                settingLabel(SettingsKey.linkCmdShiftClickKey),
-                "Reveal the path in the host Finder, or open it with the host's system-default app.",
-                selection: $linkCmdShiftClick,
-            ) {
-                Text("Reveal in Finder").tag(LinkCmdShiftClick.revealFinder)
-                Text("Open with System Default").tag(LinkCmdShiftClick.openSystemDefault)
-            }
-            Text(
-                "Files and folders live on the remote host, so per-target “Open in…” file / folder "
-                    + "panes are not available here — paths reveal or open on the host and URLs open in your "
-                    + "client browser.",
-            )
-            .font(SettingsType.subtitle)
-            .foregroundStyle(SettingsInk.secondary)
-            timingFooter(.live)
-        }
-    }
-
-    /// Settings → Controls → Link Schemes. The custom-scheme list is editable only when the
-    /// mode is Custom; `http(s)` / `file` / `mailto` are always detected regardless of this mode.
-    private var linkSchemesSection: some View {
-        slateFormSection("Link Schemes") {
-            linkPickerRow(
-                settingLabel(SettingsKey.autoDetectLinkSchemesKey),
-                "Which URL schemes get underlined on Cmd-hover and made clickable. All detects any "
-                    + "scheme://; Custom restricts to the schemes you list. http(s), file, and mailto are "
-                    + "always detected.",
-                selection: $autoDetectLinkSchemes,
-            ) {
-                Text("All").tag(AutoDetectLinkSchemes.all)
-                Text("Custom").tag(AutoDetectLinkSchemes.custom)
-            }
+        case SettingsKey.scrollMultiplier:
+            slider(row, store.refreshing($scrollMultiplier), .scrollMultiplier)
+        case AllSettingsCatalog.RenderKey.scrollbackLimit:
+            slider(row, scrollbackBinding, .scrollback)
+        case SettingsKey.linkCmdClickKey: linkMenu(row, .linkCmdClick, $linkCmdClick)
+        case SettingsKey.linkCmdShiftClickKey: linkMenu(row, .linkCmdShiftClick, $linkCmdShiftClick)
+        case SettingsKey.autoDetectLinkSchemesKey:
+            linkMenu(row, .autoDetectLinkSchemes, $autoDetectLinkSchemes)
+        // Drawn only while the mode above is Custom — a condition on another setting's VALUE, which
+        // is dynamic rather than layout, so the table lists the row and the page decides.
+        case SettingsKey.customLinkSchemes:
             if autoDetectLinkSchemes == .custom {
                 VStack(alignment: .leading, spacing: Slate.Metric.space1) {
-                    rowLabel(
-                        settingLabel(SettingsKey.customLinkSchemes),
-                        "Comma-separated extra schemes to additionally detect (e.g. codex, ssh, vscode).",
-                    )
+                    rowLabel(row.label, row.subtitle)
                     TextField("codex, ssh, vscode", text: customSchemesText)
                         .textFieldStyle(.roundedBorder)
                         .font(SettingsType.mono)
                 }
             }
-            timingFooter(.live)
+        default:
+            if case .note = row.control {
+                Text(row.subtitle)
+                    .font(SettingsType.subtitle)
+                    .foregroundStyle(SettingsInk.secondary)
+            }
         }
     }
 
-    /// A dropdown row for a CLIENT-side link knob — like ``pickerRow`` but binds DIRECTLY (no `store.refreshing(_:)`
-    /// terminal-config rebuild, since the link knobs are not libghostty config).
-    private func linkPickerRow(
-        _ title: String, _ subtitle: String? = nil,
-        selection: Binding<some Hashable>, @ViewBuilder options: () -> some View,
+    // MARK: - Row shapes
+
+    /// A toggle row through the `store.refreshing(_:)` seam, so the change re-applies the live
+    /// terminal config. A row whose meaning no icon improves still lands on the icon RAIL, so a
+    /// twenty-switch page stays scannable.
+    private func toggle(_ row: SettingsLayout.Row, _ binding: Binding<Bool>) -> some View {
+        SettingsGlyphToggleRow(glyph(row), row.label, row.subtitle, isOn: store.refreshing(binding))
+    }
+
+    private func slider(
+        _ row: SettingsLayout.Row, _ value: Binding<Double>, _ ladder: SettingsCatalog.Ladder,
     ) -> some View {
+        SettingsSliderRow(
+            row.label,
+            subtitle: row.subtitle,
+            value: value,
+            range: ladder.range,
+            step: ladder.step,
+            presets: ladder.presets,
+            readout: ladder.readout,
+        )
+    }
+
+    /// A dropdown for a CLIENT-side link knob: binds DIRECTLY, with no `store.refreshing(_:)` hop,
+    /// because the link knobs are not libghostty config.
+    private func linkMenu<Value: RawRepresentable & Hashable & Sendable>(
+        _ row: SettingsLayout.Row, _ group: SettingsCatalog.Group, _ selection: Binding<Value>,
+    ) -> some View where Value.RawValue == String {
         LabeledContent {
-            Picker("", selection: selection, content: options)
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .fixedSize()
+            Picker("", selection: selection) {
+                ForEach(SettingsCatalog.options(group, as: Value.self)) { Text($0.label).tag($0.value) }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .fixedSize()
         } label: {
-            rowLabel(title, subtitle)
+            rowLabel(row.label, row.subtitle)
         }
     }
 
-    /// Bridge the `[String]` custom-schemes key to a comma / space / newline separated text field (each token
-    /// trimmed, empties dropped). The setter persists the parsed list straight into `Defaults`.
+    /// Bridge the `[String]` custom-schemes key to a comma / space / newline separated field (each
+    /// token trimmed, empties dropped). The setter persists the parsed list straight into `Defaults`.
     private var customSchemesText: Binding<String> {
         Binding(
             get: { customLinkSchemes.joined(separator: ", ") },
@@ -1008,30 +870,15 @@ private struct ControlsSettingsTab: View {
         )
     }
 
-    // MARK: - Row helpers
-
-    /// Bridge the `scrollbackLines` Int model field to the slider's `Double`. Rounded (never truncated) so a
-    /// float-stepped drag can't land one line BELOW the stop it visually snapped to — and written straight to
-    /// `store.terminal`, whose `didSet` rebuilds the libghostty config (no `store.refreshing(_:)` hop: this is a typed
-    /// render pref, not a fire-time `Defaults` toggle).
+    /// Bridge the `scrollbackLines` Int model field to the slider's `Double`. Rounded (never
+    /// truncated) so a float-stepped drag cannot land one line BELOW the stop it visually snapped to
+    /// — and written straight to `store.terminal`, whose `didSet` rebuilds the libghostty config.
     private var scrollbackBinding: Binding<Double> {
         Binding(
             get: { Double(store.terminal.scrollbackLines) },
             set: { store.terminal.scrollbackLines = Int($0.rounded()) },
         )
     }
-
-    /// A toggle row with a leading glyph, wrapped in the `store.refreshing(_:)` seam so the change also re-applies the
-    /// live terminal config. `symbol` defaults to a neutral slider glyph for the rows whose meaning no icon
-    /// improves — every row still lands on the icon RAIL, so a 20-switch page stays scannable.
-    private func toggleRow(
-        _ title: String, _ subtitle: String? = nil, symbol: SFSymbol = .sliderHorizontal3,
-        isOn binding: Binding<Bool>,
-    ) -> some View {
-        SettingsGlyphToggleRow(symbol, title, subtitle, isOn: store.refreshing(binding))
-    }
-
-    /// The row label layout: a bold title with an optional gray subtext beneath.
 }
 
 // MARK: - Editor section (RESERVED — deferred)

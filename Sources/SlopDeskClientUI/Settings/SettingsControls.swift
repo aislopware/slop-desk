@@ -106,6 +106,7 @@ extension SettingsLayout.Control {
         case let .text(glyph): glyph
         case .cards,
              .slider,
+             .note,
              .bespoke: nil
         }
     }

@@ -604,6 +604,32 @@ pub const ROWS: &[SettingRow] = &[
         keywords: "cursor click move prompt arrow keys soft wrap",
         inline_editable: true,
     },
+    // macOS-only in the UI (`EnableSecureEventInput` is process-global and has no iOS form), but the
+    // keys compile and round-trip on both, so both are advertised — the LIST is a key index, not a
+    // second copy of the page's platform rules.
+    SettingRow {
+        key: "controls.autoSecureInput",
+        label: "Secure Input · Automatic",
+        page_label: "Auto Secure Input",
+        description: "Engage macOS Secure Keyboard Entry when the remote shell shows a hidden password \
+                      prompt.",
+        default_text: "On",
+        bucket: Bucket::HasDedicatedTab,
+        target_section: "controls",
+        keywords: "secure input keyboard entry password sudo ssh read hidden prompt keylog",
+        inline_editable: false,
+    },
+    SettingRow {
+        key: "controls.secureInputIndicator",
+        label: "Secure Input · Indicator",
+        page_label: "Show Secure Input Indicator",
+        description: "Show the SECURE INPUT pill in the pane while secure keyboard entry is active.",
+        default_text: "On",
+        bucket: Bucket::HasDedicatedTab,
+        target_section: "controls",
+        keywords: "secure input indicator pill badge keyboard entry visible",
+        inline_editable: false,
+    },
     SettingRow {
         key: "controls.undoAtPrompt",
         label: "Undo at Prompt",

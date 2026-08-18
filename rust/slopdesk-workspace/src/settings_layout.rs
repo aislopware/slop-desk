@@ -103,6 +103,10 @@ pub enum Control {
         /// The leading SF Symbol, when the group runs an icon rail through this row.
         glyph: Option<&'static str>,
     },
+    /// Prose that belongs to the group rather than to a setting — a footnote explaining why a
+    /// choice the reader might expect is not offered. The words are the row's `subtitle`; a
+    /// note has no label and no key, because it edits nothing.
+    Note,
     /// A group the renderer draws itself, named by id.
     ///
     /// The escape hatch, and it is deliberately NARROW: it is for a group that is not a list of
@@ -125,7 +129,8 @@ impl Control {
             Self::Cards { .. } => 2,
             Self::Slider { .. } => 3,
             Self::Text { .. } => 4,
-            Self::Bespoke { .. } => 5,
+            Self::Note => 5,
+            Self::Bespoke { .. } => 6,
         }
     }
 
@@ -138,7 +143,7 @@ impl Control {
         match self {
             Self::Menu { group, .. } | Self::Cards { group } => Some(group.index()),
             Self::Slider { ladder } => Some(ladder.index()),
-            Self::Toggle { .. } | Self::Text { .. } | Self::Bespoke { .. } => None,
+            Self::Toggle { .. } | Self::Text { .. } | Self::Note | Self::Bespoke { .. } => None,
         }
     }
 
@@ -148,7 +153,7 @@ impl Control {
         match self {
             Self::Toggle { glyph } => Some(glyph),
             Self::Menu { glyph, .. } | Self::Text { glyph } => glyph,
-            Self::Cards { .. } | Self::Slider { .. } | Self::Bespoke { .. } => None,
+            Self::Cards { .. } | Self::Slider { .. } | Self::Note | Self::Bespoke { .. } => None,
         }
     }
 
@@ -161,7 +166,8 @@ impl Control {
             | Self::Menu { .. }
             | Self::Cards { .. }
             | Self::Slider { .. }
-            | Self::Text { .. } => "",
+            | Self::Text { .. }
+            | Self::Note => "",
         }
     }
 }
@@ -521,6 +527,289 @@ pub const GROUPS: &[LayoutGroup] = &[
             platform: Platform::Mac,
         }],
     },
+    // ── Controls ───────────────────────────────────────────────────────────────────────────────
+    LayoutGroup {
+        section: Section::Controls,
+        title: "Selection",
+        timing: ApplyTiming::Live,
+        platform: Platform::Both,
+        rows: &[
+            LayoutRow {
+                key: "controls.shiftArrowSelect",
+                subtitle: "Use Shift+arrows to drive a native selection instead of forwarding the arrow \
+                           escapes.",
+                control: Control::Toggle {
+                    glyph: "character.cursor.ibeam",
+                },
+                platform: Platform::Both,
+            },
+            LayoutRow {
+                key: "controls.clearSelectionOnTyping",
+                subtitle: "Drop the selection the moment any key is sent to the program.",
+                control: Control::Toggle { glyph: "keyboard" },
+                platform: Platform::Both,
+            },
+            LayoutRow {
+                key: "controls.clearSelectionOnCopy",
+                subtitle: "Drop the highlight after an explicit copy (does not apply when Copy on Select \
+                           fires).",
+                control: Control::Toggle { glyph: "doc.on.doc" },
+                platform: Platform::Both,
+            },
+        ],
+    },
+    LayoutGroup {
+        section: Section::Controls,
+        title: "Copy & Paste",
+        timing: ApplyTiming::Live,
+        platform: Platform::Both,
+        rows: &[
+            LayoutRow {
+                key: "controls.copyOnSelect",
+                subtitle: "Copy the selection to the pasteboard as soon as it is made.",
+                control: Control::Toggle { glyph: "doc.on.doc" },
+                platform: Platform::Both,
+            },
+            LayoutRow {
+                key: "controls.trimTrailingSpaces",
+                subtitle: "Strip trailing whitespace from each copied line.",
+                control: Control::Toggle { glyph: "scissors" },
+                platform: Platform::Both,
+            },
+            LayoutRow {
+                key: "controls.pasteProtection",
+                subtitle: "Warn before pasting multi-line, trailing-newline, sudo/su, or control-character \
+                           text.",
+                control: Control::Toggle { glyph: "shield" },
+                platform: Platform::Both,
+            },
+            LayoutRow {
+                key: "controls.pasteBracketedSafe",
+                subtitle: "Skip the paste warning when the receiving program advertises bracketed-paste \
+                           support.",
+                control: Control::Toggle {
+                    glyph: "shield.lefthalf.filled",
+                },
+                platform: Platform::Both,
+            },
+        ],
+    },
+    LayoutGroup {
+        section: Section::Controls,
+        title: "Scroll",
+        timing: ApplyTiming::Live,
+        platform: Platform::Both,
+        rows: &[
+            // The stops name the values that MEAN something (half speed, the 1× identity, double,
+            // triple), so "put it back to normal" is one tap rather than a drag hunt for exactly 1.00.
+            LayoutRow {
+                key: "controls.scrollMultiplier",
+                subtitle: "Scales every scroll gesture's distance.",
+                control: Control::Slider {
+                    ladder: Ladder::ScrollMultiplier,
+                },
+                platform: Platform::Both,
+            },
+            // Was a stepper at 1 000 lines a click, so crossing its own range took 99 clicks and the
+            // deep end was unreachable. The magnitude stops make every useful depth one tap.
+            LayoutRow {
+                key: "scrollback-limit",
+                subtitle: "How much history each pane keeps. Deeper buffers cost host memory per pane.",
+                control: Control::Slider {
+                    ladder: Ladder::Scrollback,
+                },
+                platform: Platform::Both,
+            },
+        ],
+    },
+    LayoutGroup {
+        section: Section::Controls,
+        title: "Mouse",
+        timing: ApplyTiming::Live,
+        platform: Platform::Both,
+        rows: &[
+            LayoutRow {
+                key: "controls.focusFollowsMouse",
+                subtitle: "Focus the pane under the mouse cursor automatically.",
+                control: Control::Toggle {
+                    glyph: "pointer.arrow.rays",
+                },
+                platform: Platform::Both,
+            },
+            // A MENU, not cards: five actions with no shared geometry to draw. Their difference is
+            // the verb, and a glyph standing in for a verb adds a picture frame, not information.
+            LayoutRow {
+                key: "controls.rightClickAction",
+                subtitle: "What right-click does in the terminal viewport (Ctrl+right-click always opens \
+                           the menu).",
+                control: Control::Menu {
+                    group: Group::RightClickAction,
+                    glyph: None,
+                },
+                platform: Platform::Both,
+            },
+            LayoutRow {
+                key: "controls.mouseHideWhileTyping",
+                subtitle: "Hide the mouse cursor while the keyboard is in use.",
+                control: Control::Toggle {
+                    glyph: "pointer.arrow.slash",
+                },
+                platform: Platform::Both,
+            },
+            LayoutRow {
+                key: "controls.allowShiftClick",
+                subtitle: "Hold Shift to select text even when the running app captures the mouse.",
+                control: Control::Toggle {
+                    glyph: "pointer.arrow.click",
+                },
+                platform: Platform::Both,
+            },
+            LayoutRow {
+                key: "controls.clickToMove",
+                subtitle: "Click in the prompt to move the shell cursor — sends arrow keys across \
+                           soft-wrapped rows.",
+                control: Control::Toggle {
+                    glyph: "pointer.arrow.motionlines",
+                },
+                platform: Platform::Both,
+            },
+            LayoutRow {
+                key: "controls.allowMouseCapture",
+                subtitle: "Allow shell apps to capture mouse events (e.g. vim, tmux).",
+                control: Control::Toggle {
+                    glyph: "rectangle.and.hand.point.up.left",
+                },
+                platform: Platform::Both,
+            },
+        ],
+    },
+    // The HONESTY CEILING (docs/DECISIONS.md): a per-target "Open Files / Folders With → [app]"
+    // surrogate needs a LOCAL file pane slopdesk cannot offer for a REMOTE host. So instead of dead
+    // Browser / Finder target pickers, the actionable keys are surfaced and the rest is the footnote.
+    LayoutGroup {
+        section: Section::Controls,
+        title: "Open With",
+        timing: ApplyTiming::Live,
+        platform: Platform::Both,
+        rows: &[
+            LayoutRow {
+                key: "controls.linkDetection",
+                subtitle: "Underline paths and URLs in terminal output on Cmd-hover so they are clickable.",
+                control: Control::Toggle { glyph: "" },
+                platform: Platform::Both,
+            },
+            LayoutRow {
+                key: "controls.linkCmdClick",
+                subtitle: "Open in the best handler (files / folders open on the host, URLs in your \
+                           browser), copy the path / URL, or do nothing.",
+                control: Control::Menu {
+                    group: Group::LinkCmdClick,
+                    glyph: None,
+                },
+                platform: Platform::Both,
+            },
+            LayoutRow {
+                key: "controls.linkCmdShiftClick",
+                subtitle: "Reveal the path in the host Finder, or open it with the host's system-default \
+                           app.",
+                control: Control::Menu {
+                    group: Group::LinkCmdShiftClick,
+                    glyph: None,
+                },
+                platform: Platform::Both,
+            },
+            LayoutRow {
+                key: "",
+                subtitle: "Files and folders live on the remote host, so per-target \u{201C}Open \
+                           in…\u{201D} file / folder panes are not available here — paths reveal or open on \
+                           the host and URLs open in your client browser.",
+                control: Control::Note,
+                platform: Platform::Both,
+            },
+        ],
+    },
+    LayoutGroup {
+        section: Section::Controls,
+        title: "Link Schemes",
+        timing: ApplyTiming::Live,
+        platform: Platform::Both,
+        rows: &[
+            LayoutRow {
+                key: "controls.autoDetectLinkSchemes",
+                subtitle: "Which URL schemes get underlined on Cmd-hover and made clickable. All detects \
+                           any scheme://; Custom restricts to the schemes you list. http(s), file, and \
+                           mailto are always detected.",
+                control: Control::Menu {
+                    group: Group::AutoDetectLinkSchemes,
+                    glyph: None,
+                },
+                platform: Platform::Both,
+            },
+            // Drawn only while the mode above is Custom. That is a condition on another setting's
+            // VALUE, which is dynamic rather than layout, so it stays with the renderer.
+            LayoutRow {
+                key: "controls.customLinkSchemes",
+                subtitle: "Comma-separated extra schemes to additionally detect (e.g. codex, ssh, vscode).",
+                control: Control::Text { glyph: None },
+                platform: Platform::Both,
+            },
+        ],
+    },
+    LayoutGroup {
+        section: Section::Controls,
+        title: "Keyboard",
+        timing: ApplyTiming::Live,
+        platform: Platform::Both,
+        rows: &[
+            LayoutRow {
+                key: "controls.undoAtPrompt",
+                subtitle: "Press Cmd-Z at the shell prompt to emit the readline undo sequence.",
+                control: Control::Toggle {
+                    glyph: "arrow.uturn.backward",
+                },
+                platform: Platform::Both,
+            },
+            // Four labels that read almost identically as prose become four distinct key-row
+            // silhouettes — the lit ⌥ caps ARE the setting, which is what a card can show and a menu
+            // cannot.
+            LayoutRow {
+                key: "controls.optionAsAlt",
+                subtitle: "Treat the macOS Option key as Alt/Meta so terminal apps see Esc-prefixed \
+                           sequences (Emacs, Vim word-jumps, readline). Off keeps Option free for accented \
+                           characters.",
+                control: Control::Cards {
+                    group: Group::OptionAsAlt,
+                },
+                platform: Platform::Both,
+            },
+        ],
+    },
+    // macOS-only: `EnableSecureEventInput` is process-global and has no iOS form. The keys still
+    // compile and round-trip on both, so the all-settings list advertises them either way.
+    LayoutGroup {
+        section: Section::Controls,
+        title: "Secure Input",
+        timing: ApplyTiming::Live,
+        platform: Platform::Mac,
+        rows: &[
+            LayoutRow {
+                key: "controls.autoSecureInput",
+                subtitle: "Automatically engage macOS Secure Keyboard Entry when the remote shell shows a \
+                           hidden password prompt (sudo, ssh, read -s), so no other app can read your \
+                           keystrokes.",
+                control: Control::Toggle { glyph: "lock.shield" },
+                platform: Platform::Mac,
+            },
+            LayoutRow {
+                key: "controls.secureInputIndicator",
+                subtitle: "Show the SECURE INPUT pill in the pane while secure keyboard entry is active.",
+                control: Control::Toggle {
+                    glyph: "eye.trianglebadge.exclamationmark",
+                },
+                platform: Platform::Mac,
+            },
+        ],
+    },
 ];
 
 /// The groups one page shows on one half, in render order.
@@ -572,7 +861,7 @@ mod tests {
     fn every_row_names_a_setting_that_has_a_label() {
         for group in GROUPS {
             for row in group.rows {
-                if matches!(row.control, Control::Bespoke { .. }) {
+                if matches!(row.control, Control::Bespoke { .. } | Control::Note) {
                     assert!(
                         row.key.is_empty(),
                         "{} draws itself, so it names no single key",
@@ -730,8 +1019,18 @@ mod tests {
                         assert_eq!(control.glyph(), glyph);
                         assert!(control.argument().is_none() && control.bespoke_id().is_empty());
                     },
-                    Control::Bespoke { id } => {
+                    Control::Note => {
                         assert_eq!(control.kind(), 5);
+                        assert!(row.key.is_empty(), "a note edits nothing, so it names no key");
+                        assert!(
+                            !row.subtitle.is_empty(),
+                            "a note with no words is an empty paragraph"
+                        );
+                        assert!(control.argument().is_none() && control.glyph().is_none());
+                        assert!(control.bespoke_id().is_empty());
+                    },
+                    Control::Bespoke { id } => {
+                        assert_eq!(control.kind(), 6);
                         assert_eq!(control.bespoke_id(), id);
                         assert!(!id.is_empty(), "a bespoke group with no id names nothing to draw");
                         assert!(control.argument().is_none() && control.glyph().is_none());

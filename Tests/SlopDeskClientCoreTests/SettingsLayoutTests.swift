@@ -57,17 +57,22 @@ final class SettingsLayoutTests: XCTestCase {
         }
     }
 
-    /// A bespoke group names something to draw and edits no single key; every other row is the
-    /// reverse. Both halves of that, because a renderer switches on exactly this to decide whether to
-    /// look for a binding at all.
-    func testABespokeGroupNamesItselfAndEditsNoKey() {
+    /// A row that EDITS names a key; a row that merely DRAWS does not. That split is what a renderer
+    /// switches on to decide whether to go looking for a binding at all, so both directions matter: a
+    /// keyless toggle would silently render nothing, and a note with a key would send a renderer
+    /// hunting for a binding that does not exist.
+    func testOnlyARowThatEditsSomethingNamesAKey() {
         for half in [SettingsLayout.Half.mac, .phone] {
             for section in SettingsCatalog.sections {
                 for row in SettingsLayout.groups(section.id, for: half).flatMap(\.rows) {
-                    if case let .bespoke(id) = row.control {
+                    switch row.control {
+                    case let .bespoke(id):
                         XCTAssertFalse(id.isEmpty, "a bespoke row names nothing to draw")
                         XCTAssertTrue(row.key.isEmpty, "\(id) draws itself, so it edits no single key")
-                    } else {
+                    case .note:
+                        XCTAssertTrue(row.key.isEmpty, "a note edits nothing, so it names no key")
+                        XCTAssertFalse(row.subtitle.isEmpty, "a note with no words is an empty paragraph")
+                    default:
                         XCTAssertFalse(row.key.isEmpty, "a row with a real control edits nothing")
                     }
                 }

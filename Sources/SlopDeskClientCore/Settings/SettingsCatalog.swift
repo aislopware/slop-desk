@@ -59,6 +59,9 @@ package enum SettingsCatalog {
         case closeConfirmationTab = 9
         case notifyWhileForeground = 10
         case workingDirectory = 11
+        case linkCmdClick = 12
+        case linkCmdShiftClick = 13
+        case autoDetectLinkSchemes = 14
     }
 
     /// A group's choices, in the order they render, rebuilt as `Value`.

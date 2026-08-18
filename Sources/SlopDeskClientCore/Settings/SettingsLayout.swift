@@ -56,6 +56,9 @@ package enum SettingsLayout {
         case slider(ladder: SettingsCatalog.Ladder)
         /// A free-text field.
         case text(glyph: String?)
+        /// Prose belonging to the group rather than to a setting — a footnote explaining why a
+        /// choice the reader might expect is not offered. The words are the row's ``Row/subtitle``.
+        case note
         /// A group the renderer draws itself, named by id.
         case bespoke(id: String)
     }
@@ -141,6 +144,8 @@ package enum SettingsLayout {
             return SettingsCatalog.Ladder(rawValue: argument).map { .slider(ladder: $0) }
         case UInt8(SLOPDESK_SETTINGS_CONTROL_TEXT):
             return .text(glyph: glyph)
+        case UInt8(SLOPDESK_SETTINGS_CONTROL_NOTE):
+            return .note
         case UInt8(SLOPDESK_SETTINGS_CONTROL_BESPOKE):
             return string { slopdesk_settings_layout_row_bespoke_id(section, mac, group, row, $0, $1) }
                 .map(Control.bespoke(id:))
