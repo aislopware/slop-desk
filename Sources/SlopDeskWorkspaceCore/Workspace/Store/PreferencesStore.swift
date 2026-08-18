@@ -419,6 +419,10 @@ public final class PreferencesStore {
         // Appearance
         .newTabPosition, .autoHideTabsPanel,
         .dockIconAnimateProgress, .dockIconErrorBadge,
+        // Appearance → Window (macOS-only controls, but the keys round-trip on both platforms and
+        // are advertised either way, so a reset has to reach them on both)
+        .windowSize, .windowCols, .windowRows, .windowWidthPx, .windowHeightPx,
+        .desktopWindowPresentation, .satelliteBackgroundPointer,
         // Agents
         .recordClipboardHistory,
         .agentBadgeWhileProcessing, .agentBadgeWhenComplete, .agentBadgeWhenAwaitingInput,

@@ -26,7 +26,7 @@
 //!
 //! GOLDEN-SAFE: metadata only. Nothing here reads or writes a value or touches a wire codec.
 
-use crate::settings_catalog::{ApplyTiming, Group, Ladder, Section};
+use crate::settings_catalog::{ApplyTiming, Group, Ladder, Section, Stepper};
 
 /// Which UI half draws a group or a row.
 ///
@@ -98,6 +98,14 @@ pub enum Control {
         /// The scale, its stops and its readout.
         ladder: Ladder,
     },
+    /// A plus/minus numeric field over a [`Stepper`] range.
+    ///
+    /// The sibling of [`Control::Slider`], and the choice between them is whether the useful values
+    /// are a handful of magnitudes or a literal count — see [`Stepper`].
+    Stepper {
+        /// The ends, the granularity and the readout.
+        range: Stepper,
+    },
     /// A free-text field.
     Text {
         /// The leading SF Symbol, when the group runs an icon rail through this row.
@@ -128,21 +136,24 @@ impl Control {
             Self::Menu { .. } => 1,
             Self::Cards { .. } => 2,
             Self::Slider { .. } => 3,
-            Self::Text { .. } => 4,
-            Self::Note => 5,
-            Self::Bespoke { .. } => 6,
+            Self::Stepper { .. } => 4,
+            Self::Text { .. } => 5,
+            Self::Note => 6,
+            Self::Bespoke { .. } => 7,
         }
     }
 
-    /// The [`Group`] or [`Ladder`] index this control draws over, if it draws over one.
+    /// The [`Group`], [`Ladder`] or [`Stepper`] index this control draws over, if it draws over
+    /// one.
     ///
-    /// One accessor for both because no control carries both, and a renderer that has already read
-    /// [`Control::kind`] knows which of the two it is holding.
+    /// One accessor for all three because no control carries two, and a renderer that has already
+    /// read [`Control::kind`] knows which of them it is holding.
     #[must_use]
     pub const fn argument(self) -> Option<u8> {
         match self {
             Self::Menu { group, .. } | Self::Cards { group } => Some(group.index()),
             Self::Slider { ladder } => Some(ladder.index()),
+            Self::Stepper { range } => Some(range.index()),
             Self::Toggle { .. } | Self::Text { .. } | Self::Note | Self::Bespoke { .. } => None,
         }
     }
@@ -153,7 +164,11 @@ impl Control {
         match self {
             Self::Toggle { glyph } => Some(glyph),
             Self::Menu { glyph, .. } | Self::Text { glyph } => glyph,
-            Self::Cards { .. } | Self::Slider { .. } | Self::Note | Self::Bespoke { .. } => None,
+            Self::Cards { .. }
+            | Self::Slider { .. }
+            | Self::Stepper { .. }
+            | Self::Note
+            | Self::Bespoke { .. } => None,
         }
     }
 
@@ -166,6 +181,7 @@ impl Control {
             | Self::Menu { .. }
             | Self::Cards { .. }
             | Self::Slider { .. }
+            | Self::Stepper { .. }
             | Self::Text { .. }
             | Self::Note => "",
         }
@@ -195,7 +211,12 @@ pub struct LayoutRow {
 pub struct LayoutGroup {
     /// The page this group sits on.
     pub section: Section,
-    /// The group header.
+    /// The group header, or EMPTY for a self-drawing group.
+    ///
+    /// An empty title says the group supplies its own header — it is a whole surface rather than a
+    /// list of rows, so the renderer places it without a section wrapper of its own. Reserved for a
+    /// group whose single row is [`Control::Bespoke`]; anything with rows to list has a name for
+    /// them.
     pub title: &'static str,
     /// The rows, in reading order.
     pub rows: &'static [LayoutRow],
@@ -810,6 +831,220 @@ pub const GROUPS: &[LayoutGroup] = &[
             },
         ],
     },
+    // ── Appearance ─────────────────────────────────────────────────────────────────────────────
+    // There is no LAYOUT selector (Vertical Tabs / Tabs Top / Tabs Bottom) and no THEME gallery, and
+    // neither absence is a gap to backfill: slopdesk is vertical-tabs-only and ships ONE appearance
+    // (user-directed 2026-08-08), so both would be controls with a single actuatable state.
+    LayoutGroup {
+        section: Section::Appearance,
+        title: "Tabs",
+        timing: ApplyTiming::Live,
+        platform: Platform::Both,
+        rows: &[
+            // Cards, because the choice is a POSITION in a column and the diagram draws the incoming
+            // row at the slot the policy inserts it — which three words cannot.
+            LayoutRow {
+                key: "shell.newTabPosition",
+                subtitle: "Where a new tab lands in the sidebar.",
+                control: Control::Cards {
+                    group: Group::NewTabPosition,
+                },
+                platform: Platform::Both,
+            },
+            // Filed under Tabs rather than Keyboard: what it changes is what the WORKSPACE does while
+            // the chord is held, not what the chord is.
+            LayoutRow {
+                key: "controls.paneSwitcherPreview",
+                subtitle: "As ⌃⇥ walks the pane list, show each pane underneath the switcher.",
+                control: Control::Toggle {
+                    glyph: "rectangle.on.rectangle",
+                },
+                platform: Platform::Both,
+            },
+            LayoutRow {
+                key: "shell.autoHideTabsPanel",
+                subtitle: "When to show the tabs panel in Sidebar layout.",
+                control: Control::Menu {
+                    group: Group::AutoHideTabsPanel,
+                    glyph: None,
+                },
+                platform: Platform::Both,
+            },
+        ],
+    },
+    // macOS-only: a window's initial dimensions, a dedicated desktop window and background-pointer
+    // key semantics are all `NSWindow` concepts, and iOS has no resizable window to size.
+    LayoutGroup {
+        section: Section::Appearance,
+        title: "Window",
+        timing: ApplyTiming::Live,
+        platform: Platform::Mac,
+        rows: &[
+            // Each card draws the UNIT its mode measures in — a dashed ghost of the remembered frame,
+            // actual cells for the grid, the two pixel rules for the frame.
+            LayoutRow {
+                key: "window.size",
+                subtitle: "How new windows decide their initial dimensions. Applied once per window opened, \
+                           so a later manual resize is never fought.",
+                control: Control::Cards {
+                    group: Group::WindowSize,
+                },
+                platform: Platform::Mac,
+            },
+            // The four fields below are drawn in pairs, and which pair depends on the value of the
+            // row above. That is a condition on another setting's VALUE — dynamic, not layout — so
+            // the rows are here and the choosing stays with the renderer.
+            LayoutRow {
+                key: "window.cols",
+                subtitle: "",
+                control: Control::Stepper {
+                    range: Stepper::WindowCells,
+                },
+                platform: Platform::Mac,
+            },
+            LayoutRow {
+                key: "window.rows",
+                subtitle: "",
+                control: Control::Stepper {
+                    range: Stepper::WindowCells,
+                },
+                platform: Platform::Mac,
+            },
+            LayoutRow {
+                key: "window.widthPx",
+                subtitle: "",
+                control: Control::Stepper {
+                    range: Stepper::WindowPixels,
+                },
+                platform: Platform::Mac,
+            },
+            LayoutRow {
+                key: "window.heightPx",
+                subtitle: "",
+                control: Control::Stepper {
+                    range: Stepper::WindowPixels,
+                },
+                platform: Platform::Mac,
+            },
+            // Fullscreen is the Parsec model; borderless is the Parallels one, where the LOCAL menu
+            // bar needs a top-edge dwell because a bare touch there reaches the REMOTE menu bar.
+            LayoutRow {
+                key: "desktopWindow.presentation",
+                subtitle: "Fullscreen captures system shortcuts (⌘Tab) for the host while it lasts. \
+                           Borderless keeps the local menu bar away until the pointer dwells at the top \
+                           edge.",
+                control: Control::Cards {
+                    group: Group::DesktopPresentation,
+                },
+                platform: Platform::Mac,
+            },
+            LayoutRow {
+                key: "satelliteWindow.backgroundPointer",
+                subtitle: "Point, click and scroll in a remote desktop window without focusing it — typing \
+                           stays in the window you are working in.",
+                control: Control::Toggle {
+                    glyph: "hand.point.up.left",
+                },
+                platform: Platform::Mac,
+            },
+        ],
+    },
+    LayoutGroup {
+        section: Section::Appearance,
+        title: "Appearance",
+        timing: ApplyTiming::Live,
+        platform: Platform::Both,
+        rows: &[LayoutRow {
+            key: "appearance.density",
+            subtitle: "How much air each sidebar row gets.",
+            control: Control::Cards {
+                group: Group::Density,
+            },
+            platform: Platform::Both,
+        }],
+    },
+    // The font surface is scope tabs, an "Aa" specimen field and per-face families, and it draws its
+    // own headers — hence the empty title. Its four SETTINGS still have rows in the row table, so the
+    // all-settings list reaches them; what has not been described here is the SHAPE.
+    LayoutGroup {
+        section: Section::Appearance,
+        title: "",
+        timing: ApplyTiming::Live,
+        platform: Platform::Both,
+        rows: &[LayoutRow {
+            key: "",
+            subtitle: "",
+            control: Control::Bespoke { id: "font" },
+            platform: Platform::Both,
+        }],
+    },
+    // The one page position where the two halves differ in CONTENT rather than in presence, and the
+    // only place two groups share a title: macOS draws the live caret preview with its colour wells,
+    // both AppKit, and the phone draws the same two settings as plain rows. One header either way,
+    // and the same capability either way, which is the rule (docs/56 §3) — only the drawing diverges.
+    LayoutGroup {
+        section: Section::Appearance,
+        title: "Cursor",
+        timing: ApplyTiming::Live,
+        platform: Platform::Mac,
+        rows: &[LayoutRow {
+            key: "",
+            subtitle: "",
+            control: Control::Bespoke { id: "cursor-preview" },
+            platform: Platform::Mac,
+        }],
+    },
+    LayoutGroup {
+        section: Section::Appearance,
+        title: "Cursor",
+        timing: ApplyTiming::Live,
+        platform: Platform::Phone,
+        rows: &[
+            LayoutRow {
+                key: "cursor-style",
+                subtitle: "",
+                control: Control::Cards {
+                    group: Group::CursorStyle,
+                },
+                platform: Platform::Phone,
+            },
+            LayoutRow {
+                key: "cursor-style-blink",
+                subtitle: "",
+                control: Control::Menu {
+                    group: Group::CursorBlink,
+                    glyph: None,
+                },
+                platform: Platform::Phone,
+            },
+        ],
+    },
+    // macOS-only for the plainest reason there is: iOS has no Dock. Both toggles actuate
+    // `DockProgressController` through the pure `DockTintPolicy`, so neither is dead UI.
+    LayoutGroup {
+        section: Section::Appearance,
+        title: "Dock Icon",
+        timing: ApplyTiming::Live,
+        platform: Platform::Mac,
+        rows: &[
+            LayoutRow {
+                key: "appearance.dockIconAnimateProgress",
+                subtitle: "Fill the Dock tile as a running command progresses.",
+                control: Control::Toggle {
+                    glyph: "chart.bar.fill",
+                },
+                platform: Platform::Mac,
+            },
+            LayoutRow {
+                key: "appearance.dockIconErrorBadge",
+                subtitle: "Tint the Dock tile when a command exits non-zero.",
+                control: Control::Toggle {
+                    glyph: "exclamationmark.octagon",
+                },
+                platform: Platform::Mac,
+            },
+        ],
+    },
 ];
 
 /// The groups one page shows on one half, in render order.
@@ -914,20 +1149,60 @@ mod tests {
         }
     }
 
-    /// No page repeats a group header, and no group repeats a key.
+    /// A group with no header of its own draws ITSELF — the escape hatch for a surface that is not
+    /// a list of rows at all. Anything with rows to list has a name for them, so the empty
+    /// title is only ever paired with a single bespoke row.
+    #[test]
+    fn a_group_without_a_header_is_one_that_draws_itself() {
+        for group in GROUPS {
+            if !group.title.is_empty() {
+                continue;
+            }
+            assert_eq!(
+                group.rows.len(),
+                1,
+                "a headerless group on {} lists rows nothing names",
+                group.section.id(),
+            );
+            for row in group.rows {
+                assert!(
+                    matches!(row.control, Control::Bespoke { .. }),
+                    "a headerless group on {} holds a described row, which would render unlabelled",
+                    group.section.id(),
+                );
+            }
+        }
+    }
+
+    /// No page repeats a group header ON ONE HALF, and no group repeats a key.
+    ///
+    /// The qualifier is the interesting half of it. Two groups MAY share a title when their
+    /// platforms are disjoint — the cursor group is drawn one way on a Mac and another on a phone,
+    /// and calling the phone's "Cursor (iOS)" to satisfy a cruder check would put the divergence in
+    /// the reader's face instead of in the table. A headerless group is identified by its bespoke
+    /// id instead, which is what the near side keys it by.
     #[test]
     fn a_group_is_named_once_and_edits_each_setting_once() {
-        let mut seen_titles = Vec::new();
+        let mut seen_titles: Vec<(&str, &str, Platform)> = Vec::new();
         let mut seen_keys = Vec::new();
         for group in GROUPS {
-            let title = (group.section.id(), group.title);
+            let name = if group.title.is_empty() {
+                group.rows.first().map_or("", |row| row.control.bespoke_id())
+            } else {
+                group.title
+            };
             assert!(
-                !seen_titles.contains(&title),
-                "{} appears twice on {}",
-                group.title,
-                title.0
+                !seen_titles.iter().any(|&(section, seen, platform)| {
+                    section == group.section.id()
+                        && seen == name
+                        && [true, false]
+                            .iter()
+                            .any(|&mac| platform.shown_on(mac) && group.platform.shown_on(mac))
+                }),
+                "{name} appears twice on one half of {}",
+                group.section.id(),
             );
-            seen_titles.push(title);
+            seen_titles.push((group.section.id(), name, group.platform));
             for row in group.rows {
                 if row.key.is_empty() {
                     continue;
@@ -961,6 +1236,45 @@ mod tests {
             "Privacy & New Panes",
             "Shared Focus"
         ]);
+    }
+
+    /// Appearance is the page where the two halves differ in three different WAYS at once, which is
+    /// what makes it the sharpest test of a platform gate being data: a group the phone omits
+    /// (Window, Dock Icon), a group both draw identically (Tabs, Appearance), and one page position
+    /// where each half draws a different thing for the same two settings (the cursor).
+    #[test]
+    fn the_appearance_page_diverges_by_group_and_by_row() {
+        let titled = |mac: bool| -> Vec<&'static str> {
+            groups(Section::Appearance, mac)
+                .iter()
+                .map(|group| group.title)
+                .filter(|title| !title.is_empty())
+                .collect()
+        };
+        assert_eq!(titled(true), [
+            "Tabs",
+            "Window",
+            "Appearance",
+            "Cursor",
+            "Dock Icon"
+        ]);
+        assert_eq!(titled(false), ["Tabs", "Appearance", "Cursor"]);
+
+        // The cursor settings are reachable on BOTH, which is the property the omitted groups above
+        // are allowed to break and this one is not: the phone draws them as rows, the Mac inside the
+        // preview surface it draws itself.
+        let phone_keys: Vec<_> = groups(Section::Appearance, false)
+            .iter()
+            .flat_map(|group| rows(group, false))
+            .map(|row| row.key)
+            .collect();
+        assert!(phone_keys.contains(&"cursor-style") && phone_keys.contains(&"cursor-style-blink"));
+        assert!(
+            groups(Section::Appearance, true)
+                .iter()
+                .flat_map(|group| rows(group, true))
+                .any(|row| row.control.bespoke_id() == "cursor-preview"),
+        );
     }
 
     /// Positional lookup agrees with the filtered list it indexes into — the property the boundary
@@ -1014,13 +1328,18 @@ mod tests {
                         assert_eq!(control.argument(), Some(ladder.index()));
                         assert!(control.glyph().is_none() && control.bespoke_id().is_empty());
                     },
-                    Control::Text { glyph } => {
+                    Control::Stepper { range } => {
                         assert_eq!(control.kind(), 4);
+                        assert_eq!(control.argument(), Some(range.index()));
+                        assert!(control.glyph().is_none() && control.bespoke_id().is_empty());
+                    },
+                    Control::Text { glyph } => {
+                        assert_eq!(control.kind(), 5);
                         assert_eq!(control.glyph(), glyph);
                         assert!(control.argument().is_none() && control.bespoke_id().is_empty());
                     },
                     Control::Note => {
-                        assert_eq!(control.kind(), 5);
+                        assert_eq!(control.kind(), 6);
                         assert!(row.key.is_empty(), "a note edits nothing, so it names no key");
                         assert!(
                             !row.subtitle.is_empty(),
@@ -1030,7 +1349,7 @@ mod tests {
                         assert!(control.bespoke_id().is_empty());
                     },
                     Control::Bespoke { id } => {
-                        assert_eq!(control.kind(), 6);
+                        assert_eq!(control.kind(), 7);
                         assert_eq!(control.bespoke_id(), id);
                         assert!(!id.is_empty(), "a bespoke group with no id names nothing to draw");
                         assert!(control.argument().is_none() && control.glyph().is_none());

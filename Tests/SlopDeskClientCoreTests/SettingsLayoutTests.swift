@@ -19,11 +19,14 @@ final class SettingsLayoutTests: XCTestCase {
         for half in [SettingsLayout.Half.mac, .phone] {
             for section in SettingsCatalog.sections {
                 for group in SettingsLayout.groups(section.id, for: half) {
-                    XCTAssertFalse(group.title.isEmpty, "a group on \(section.id) crossed with no header")
                     XCTAssertFalse(
                         group.rows.isEmpty,
-                        "\(group.title) crossed empty for \(half) — a header with nothing under it",
+                        "\(group.id) crossed empty for \(half) — a header with nothing under it",
                     )
+                    // A headerless group supplies its own; the Rust side pins that only a bespoke
+                    // group may be one. What this side checks is that it still crossed as SOMETHING
+                    // identifiable, since `id` falls back to the bespoke row and `ForEach` needs it.
+                    XCTAssertFalse(group.id.isEmpty, "a group on \(section.id) crossed with no identity")
                     // A bespoke group draws itself and names no setting, so it has no label to
                     // cross — see `testABespokeGroupNamesItselfAndEditsNoKey` for that half.
                     for row in group.rows where !row.key.isEmpty {
@@ -109,6 +112,22 @@ final class SettingsLayoutTests: XCTestCase {
                 "\(half) cannot reach the one knob whose default it disagrees with the other half about",
             )
         }
+    }
+
+    /// The one page position where each half draws a DIFFERENT thing for the same two settings: the
+    /// Mac's live caret preview against the phone's two plain rows. Every other divergence in the
+    /// table is a group one half omits, so this is the arm that says a platform gate can also mean
+    /// "drawn differently" without meaning "unavailable".
+    func testTheCursorSettingsAreReachableOnBothHalvesByDifferentMeans() {
+        let phoneKeys = SettingsLayout.groups("appearance", for: .phone).flatMap(\.rows).map(\.key)
+        XCTAssertTrue(phoneKeys.contains(AllSettingsCatalog.RenderKey.cursorStyle))
+        XCTAssertTrue(phoneKeys.contains(AllSettingsCatalog.RenderKey.cursorStyleBlink))
+
+        let macControls = SettingsLayout.groups("appearance", for: .mac).flatMap(\.rows).map(\.control)
+        XCTAssertTrue(
+            macControls.contains(.bespoke(id: "cursor-preview")),
+            "the Mac reaches the same pair through the preview surface it draws itself",
+        )
     }
 
     /// A section id no section has is not a page. The lookup is by string, so this is the arm that

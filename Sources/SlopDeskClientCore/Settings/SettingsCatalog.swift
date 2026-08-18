@@ -62,6 +62,8 @@ package enum SettingsCatalog {
         case linkCmdClick = 12
         case linkCmdShiftClick = 13
         case autoDetectLinkSchemes = 14
+        case autoHideTabsPanel = 15
+        case cursorBlink = 16
     }
 
     /// A group's choices, in the order they render, rebuilt as `Value`.
@@ -195,6 +197,35 @@ package enum SettingsCatalog {
         /// What the slider's current value reads as.
         package func readout(_ value: Double) -> String {
             SettingsCatalog.string { slopdesk_settings_ladder_readout(rawValue, value, $0, $1) } ?? ""
+        }
+    }
+
+    // MARK: The stepper ranges
+
+    /// Which numeric field. The raw values are the boundary's own case indices.
+    ///
+    /// The ``Ladder`` sibling. A ladder exists where the useful values are a handful of magnitudes;
+    /// a range exists where the value is a literal the reader already knows the meaning of, and
+    /// every number in it is as reasonable as its neighbour. A range is named for the UNIT it
+    /// counts, not for a setting — the four window fields are two pairs sharing two ranges, and what
+    /// tells Columns from Rows is the row's label.
+    package enum Stepper: UInt8, Sendable, CaseIterable {
+        case windowCells = 0
+        case windowPixels = 1
+
+        /// The settable range. Empty for a range the boundary does not know, which no case is.
+        package var range: ClosedRange<Int> {
+            let bounds = slopdesk_settings_stepper(rawValue)
+            guard bounds.known, bounds.min <= bounds.max else { return 0...0 }
+            return Int(bounds.min)...Int(bounds.max)
+        }
+
+        /// How far one click moves it.
+        package var step: Int { Int(slopdesk_settings_stepper(rawValue).step) }
+
+        /// What the value reads as after the row's own label.
+        package func readout(_ value: Int) -> String {
+            SettingsCatalog.string { slopdesk_settings_stepper_readout(rawValue, Int64(value), $0, $1) } ?? ""
         }
     }
 

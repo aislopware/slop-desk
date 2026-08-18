@@ -22,7 +22,7 @@
 
 use core::ffi::c_uchar;
 
-use slopdesk_workspace::settings_catalog::{self, ApplyTiming, Group, Ladder, Section};
+use slopdesk_workspace::settings_catalog::{self, ApplyTiming, Group, Ladder, Section, Stepper};
 
 use crate::deliver;
 
@@ -37,6 +37,20 @@ pub struct SlopDeskSettingsLadder {
     /// The slider's granularity.
     pub step: f64,
     /// Whether `ladder` named a ladder at all. `false` leaves the three above at zero.
+    pub known: bool,
+}
+
+/// A stepper range's ends and granularity, flat.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct SlopDeskSettingsStepper {
+    /// The lowest settable value.
+    pub min: i64,
+    /// The highest.
+    pub max: i64,
+    /// How far one click moves it.
+    pub step: i64,
+    /// Whether `stepper` named a range at all. `false` leaves the three above at zero.
     pub known: bool,
 }
 
@@ -401,6 +415,51 @@ pub unsafe extern "C" fn slopdesk_settings_ladder_readout(
     cap: usize,
 ) -> usize {
     let Some(text) = Ladder::from_index(ladder).map(|id| id.readout(value)) else {
+        return 0;
+    };
+    // SAFETY: the caller's obligation, restated above.
+    unsafe { deliver(text.as_bytes(), out, cap) }
+}
+
+/// A stepper range's ends and granularity.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_settings_stepper(stepper: u8) -> SlopDeskSettingsStepper {
+    let Some(bounds) = Stepper::from_index(stepper).map(Stepper::bounds) else {
+        return SlopDeskSettingsStepper {
+            min: 0,
+            max: 0,
+            step: 0,
+            known: false,
+        };
+    };
+    SlopDeskSettingsStepper {
+        min: bounds.min,
+        max: bounds.max,
+        step: bounds.step,
+        known: true,
+    }
+}
+
+/// What a stepper's current value reads as.
+///
+/// # Safety
+/// `(out, cap)` must be writable for `cap` bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_settings_stepper_readout(
+    stepper: u8,
+    value: i64,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    let Some(text) = Stepper::from_index(stepper).map(|id| id.readout(value)) else {
         return 0;
     };
     // SAFETY: the caller's obligation, restated above.

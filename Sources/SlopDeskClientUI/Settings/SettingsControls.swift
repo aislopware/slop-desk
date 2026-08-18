@@ -46,31 +46,8 @@ import SlopDeskClientCore
 import SlopDeskWorkspaceCore
 import SwiftUI
 
-// MARK: - What a row is CALLED
+// MARK: - Which half is asking
 
-/// The label the setting `key` carries — read from the one row table
-/// (`slopdesk_workspace::settings_rows`) rather than typed at the control.
-///
-/// A setting is named in two places: on the section page where it is set, and in the searchable
-/// all-settings list. Those are the same words doing the same job, so they are one string. They were
-/// two, and two was already visibly one too many — the same row was spelled "Hide Mouse While Typing"
-/// in one place and "Hide Mouse When Typing" in the other, and "Long-Command Notification" against
-/// "Long-Command Completion", with nothing anywhere that would notice.
-///
-/// The DESCRIPTION deliberately does NOT come from here, and that is not an oversight. A row in a flat
-/// index of fifty-seven keys has to stand alone ("The UI density tier."); the same row under a THEME
-/// header on the Appearance page has the header's context already and can say the useful thing instead
-/// ("How much air each sidebar row gets."). Twenty-two of the thirty-one shared rows differ that way.
-/// Two registers, two sentences, one name.
-///
-/// The LABEL reaches for the same distinction in the minority of rows where it needs to, which is why
-/// this reads `pageLabel` rather than `label`: under a `Close Confirmation` header the row is
-/// "Closing a tab", while the same row in a headerless list of fifty-seven keys has to say
-/// "Close Confirmation · Tab" or name nothing. The boundary folds the fallback, so most rows return
-/// the one string they have and no caller here knows which are which.
-///
-/// An unknown key answers with the key itself, which is visible on screen rather than silent — a
-/// blank row label would look like a layout bug instead of a missing table entry.
 extension SettingsLayout.Half {
     /// The half THIS build renders.
     ///
@@ -106,8 +83,39 @@ extension SettingsLayout.Control {
         case let .text(glyph): glyph
         case .cards,
              .slider,
+             .stepper,
              .note,
              .bespoke: nil
+        }
+    }
+}
+
+/// A right-aligned timing chip used as a section footer so each section's apply timing is visible
+/// inline. Lives beside ``settingsGroup(_:row:)``, which is what places it under every group.
+func timingFooter(_ timing: ApplyTiming) -> some View {
+    HStack {
+        Spacer()
+        TimingChip(timing: timing)
+    }
+}
+
+/// One schema group as a form section: the header, the rows the asking half draws, and the chip that
+/// says when an edit here takes effect.
+///
+/// A group that ``SettingsLayout/Group/drawsItsOwnHeader`` is placed BARE — it is a whole surface
+/// (the font specimen, the live cursor preview) rather than a list of rows, so wrapping it would nest
+/// a section inside a section and print a header it already drew.
+@ViewBuilder
+func settingsGroup(
+    _ group: SettingsLayout.Group,
+    @ViewBuilder row: @escaping (SettingsLayout.Row) -> some View,
+) -> some View {
+    if group.drawsItsOwnHeader {
+        ForEach(group.rows) { row($0) }
+    } else {
+        slateFormSection(group.title) {
+            ForEach(group.rows) { row($0) }
+            timingFooter(group.timing)
         }
     }
 }
@@ -140,6 +148,31 @@ func glyphLabel(_ symbol: SFSymbol, _ title: String, _ subtitle: String?) -> som
     }
 }
 
+// MARK: - What a row is CALLED
+
+/// The label the setting `key` carries — read from the one row table
+/// (`slopdesk_workspace::settings_rows`) rather than typed at the control.
+///
+/// A setting is named in two places: on the section page where it is set, and in the searchable
+/// all-settings list. Those are the same words doing the same job, so they are one string. They were
+/// two, and two was already visibly one too many — the same row was spelled "Hide Mouse While Typing"
+/// in one place and "Hide Mouse When Typing" in the other, and "Long-Command Notification" against
+/// "Long-Command Completion", with nothing anywhere that would notice.
+///
+/// The DESCRIPTION deliberately does NOT come from here, and that is not an oversight. A row in a flat
+/// index of fifty-seven keys has to stand alone ("The UI density tier."); the same row under a THEME
+/// header on the Appearance page has the header's context already and can say the useful thing instead
+/// ("How much air each sidebar row gets."). Twenty-two of the thirty-one shared rows differ that way.
+/// Two registers, two sentences, one name.
+///
+/// The LABEL reaches for the same distinction in the minority of rows where it needs to, which is why
+/// this reads `pageLabel` rather than `label`: under a `Close Confirmation` header the row is
+/// "Closing a tab", while the same row in a headerless list of fifty-seven keys has to say
+/// "Close Confirmation · Tab" or name nothing. The boundary folds the fallback, so most rows return
+/// the one string they have and no caller here knows which are which.
+///
+/// An unknown key answers with the key itself, which is visible on screen rather than silent — a
+/// blank row label would look like a layout bug instead of a missing table entry.
 func settingLabel(_ key: String) -> String {
     AllSettingsCatalog.entries.first { $0.key == key }?.pageLabel ?? key
 }

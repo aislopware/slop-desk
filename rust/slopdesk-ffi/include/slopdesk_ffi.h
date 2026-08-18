@@ -917,6 +917,20 @@ size_t slopdesk_settings_ladder_preset_label(uint8_t ladder, size_t index, uint8
 // the BEHAVIOUR changing rather than a delay that happens to be short.
 size_t slopdesk_settings_ladder_readout(uint8_t ladder, double value, uint8_t *out, size_t cap);
 
+// A stepper range's ends and granularity — the ladder's sibling, for a value whose useful settings
+// are not a handful of magnitudes but any literal count in the range. `known` false leaves the three
+// numbers at zero. The pixel step is fifty because one pixel at a time across sixteen thousand is a
+// control that cannot reach its own far end.
+typedef struct {
+    int64_t min;
+    int64_t max;
+    int64_t step;
+    bool    known;
+} SlopDeskSettingsStepper;
+SlopDeskSettingsStepper slopdesk_settings_stepper(uint8_t stepper);
+// What the value reads as after the row's own label — bare for cells, ` px` for pixels.
+size_t slopdesk_settings_stepper_readout(uint8_t stepper, int64_t value, uint8_t *out, size_t cap);
+
 // ---- Every setting as a ROW ----
 //
 // The other half of the same page: one entry per configuration key, carrying the one label and the
@@ -969,10 +983,11 @@ size_t slopdesk_settings_row_page_label(size_t index, uint8_t *out, size_t cap);
 #define SLOPDESK_SETTINGS_CONTROL_MENU    1
 #define SLOPDESK_SETTINGS_CONTROL_CARDS   2
 #define SLOPDESK_SETTINGS_CONTROL_SLIDER  3
-#define SLOPDESK_SETTINGS_CONTROL_TEXT    4
+#define SLOPDESK_SETTINGS_CONTROL_STEPPER 4
+#define SLOPDESK_SETTINGS_CONTROL_TEXT    5
 // Prose belonging to the group rather than to a setting; its words are the row's subtitle.
-#define SLOPDESK_SETTINGS_CONTROL_NOTE    5
-#define SLOPDESK_SETTINGS_CONTROL_BESPOKE 6
+#define SLOPDESK_SETTINGS_CONTROL_NOTE    6
+#define SLOPDESK_SETTINGS_CONTROL_BESPOKE 7
 // What every `uint8_t` door here answers for a position that names nothing.
 #define SLOPDESK_SETTINGS_LAYOUT_NONE ((uint8_t)0xFF)
 size_t slopdesk_settings_layout_group_count(uint8_t section_index, bool mac);
@@ -990,8 +1005,8 @@ size_t slopdesk_settings_layout_row_bespoke_id(uint8_t section_index, bool mac, 
                                                size_t row_index, uint8_t *out, size_t cap);
 uint8_t slopdesk_settings_layout_row_control(uint8_t section_index, bool mac, size_t group_index,
                                              size_t row_index);
-// The option group or scalar ladder the control draws over; which of the two follows from the kind
-// the caller has necessarily already read.
+// The option group, scalar ladder or stepper range the control draws over; which of the three
+// follows from the kind the caller has necessarily already read.
 uint8_t slopdesk_settings_layout_row_control_argument(uint8_t section_index, bool mac,
                                                       size_t group_index, size_t row_index);
 

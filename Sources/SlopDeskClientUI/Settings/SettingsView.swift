@@ -148,7 +148,7 @@ typealias ApplyTiming = SettingsCatalog.ApplyTiming
 
 /// A small inline timing chip (symbol + label). The tint is resolved in the view body rather than on the
 /// nonisolated `ApplyTiming` enum.
-private struct TimingChip: View {
+struct TimingChip: View {
     let timing: ApplyTiming
     var body: some View {
         HStack(spacing: Slate.Metric.space1) {
@@ -295,10 +295,7 @@ private struct GeneralSettingsTab: View {
     var body: some View {
         Form {
             ForEach(SettingsLayout.groups(SettingsSection.general.rawValue, for: .current)) { group in
-                slateFormSection(group.title) {
-                    ForEach(group.rows) { row in control(row) }
-                    timingFooter(group.timing)
-                }
+                settingsGroup(group) { row in control(row) }
             }
         }
         .formStyle(.grouped)
@@ -496,10 +493,7 @@ private struct ShellSettingsTab: View {
     var body: some View {
         Form {
             ForEach(SettingsLayout.groups(SettingsSection.shell.rawValue, for: .current)) { group in
-                slateFormSection(group.title) {
-                    ForEach(group.rows) { row in control(row) }
-                    timingFooter(group.timing)
-                }
+                settingsGroup(group) { row in control(row) }
             }
         }
         .formStyle(.grouped)
@@ -729,10 +723,7 @@ private struct ControlsSettingsTab: View {
     var body: some View {
         Form {
             ForEach(SettingsLayout.groups(SettingsSection.controls.rawValue, for: .current)) { group in
-                slateFormSection(group.title) {
-                    ForEach(group.rows) { row in control(row) }
-                    timingFooter(group.timing)
-                }
+                settingsGroup(group) { row in control(row) }
             }
         }
         .formStyle(.grouped)
@@ -923,155 +914,164 @@ private struct EditorSettingsTab: View {
 
 // MARK: - Appearance section
 
-/// Appearance: the TABS group (New Tab Position — `tab-setting.png` shows it here, NOT Shell), the
-/// density tier, the terminal FONT (family + size) and CURSOR (style + blink) — font/cursor belong here,
-/// not the Editor/Controls tabs, per `font-setting.png` / `cursor-style.png` — plus the chrome toggles.
-/// All LIVE (font/cursor rebuild the libghostty config string and bump `TerminalConfigBroadcaster`; New
-/// Tab Position + chrome toggles are read at fire-time / next render). There is no theme picker: the app
-/// ships ONE appearance (user-directed 2026-08-08).
+/// Appearance, rendered from `settings_layout`'s table: the TABS group (New Tab Position —
+/// `tab-setting.png` shows it here, NOT Shell), the macOS WINDOW group, the density tier, the terminal
+/// FONT (family + size) and CURSOR (style + blink) — font/cursor belong here, not the Editor/Controls
+/// tabs, per `font-setting.png` / `cursor-style.png` — and the Dock icon toggles. All LIVE (font/cursor
+/// rebuild the libghostty config string and bump `TerminalConfigBroadcaster`; New Tab Position + chrome
+/// toggles are read at fire-time / next render).
+///
+/// Two absences are DECISIONS, not gaps: there is no LAYOUT selector (Vertical Tabs / Tabs Top / Tabs
+/// Bottom) because slopdesk is vertical-tabs-only, and no THEME gallery because the app ships ONE
+/// appearance (user-directed 2026-08-08). Either would be a control with a single actuatable state.
+///
+/// This is the page where the halves diverge in three ways at once, which is what makes it the sharpest
+/// case for a platform gate being data: groups the phone omits (Window, Dock Icon), groups both draw
+/// identically (Tabs, Appearance), and one position where each half draws a DIFFERENT thing for the same
+/// two settings — the Mac's live caret preview against the phone's two plain rows.
 private struct AppearanceSettingsTab: View {
     @Bindable var store: PreferencesStore
 
     @Default(.newTabPosition) private var newTabPosition
     @Default(.paneSwitcherPreview) private var paneSwitcherPreview
-    // Vertical-sidebar auto-hide (`auto-hide-tabs-panel`) — cross-platform (the sidebar is on
-    // both macOS + iPad). The decision is the pure `SidebarAutoHidePolicy`, which drives `chrome.sidebarCollapsed`.
     @Default(.autoHideTabsPanel) private var autoHideTabsPanel
-    #if os(macOS)
-    // window-size (`window-size`) — macOS-only: the initial dimensions are an `NSWindow`
-    // concept (iOS has no resizable window), so the keys are bound only where the `Window` section renders.
+    // The `window.*`, `desktopWindow.*` and `satelliteWindow.*` keys are declared on BOTH platforms
+    // and round-trip on both, so they need no gate here — the table is what says only the Mac draws
+    // them, and it says so once.
     @Default(.windowSize) private var windowSize
     @Default(.windowCols) private var windowCols
     @Default(.windowRows) private var windowRows
     @Default(.windowWidthPx) private var windowWidthPx
     @Default(.windowHeightPx) private var windowHeightPx
-    // Remote-desktop window presentation (`desktop-window`) — macOS-only like window-size (the
-    // dedicated desktop window is an `NSWindow`; iOS has no desktop window yet).
     @Default(.desktopWindowPresentation) private var desktopWindowPresentation
-    // Satellite background-pointer interaction (`satellite-window`) — macOS-only (key-window
-    // semantics are an `NSWindow` concept; iOS forwards no pointer input).
     @Default(.satelliteBackgroundPointer) private var satelliteBackgroundPointer
     @Default(.dockIconAnimateProgress) private var dockIconAnimateProgress
     @Default(.dockIconErrorBadge) private var dockIconErrorBadge
-    #endif
 
     var body: some View {
         Form {
-            // PRODUCT DECISION (pinned, NOT a regression): an Appearance page could open with a LAYOUT
-            // selector (Vertical Tabs / Tabs Top / Tabs Bottom). slopdesk is VERTICAL-TABS-ONLY by deliberate
-            // decision — no horizontal tab bar, so no layout selector, and a reviewer must NOT read the missing
-            // option as a gap to backfill. The "Auto Hide Tabs Panel" row and the WINDOW group below are both
-            // BACKED — Auto Hide drives `SidebarAutoHidePolicy`, Window Size + steppers
-            // feed `WindowSizeMath` via the macOS `NSWindow` glue. Not dead UI.
-            slateFormSection("Tabs") {
-                // The diagram is the vertical tab COLUMN slopdesk actually has, with the incoming row drawn in
-                // the accent at the slot the policy inserts it.
-                SettingsOptionCards(
-                    "New tab position",
-                    subtitle: "Where a new tab lands in the sidebar.",
-                    options: SettingsCatalog.options(.newTabPosition),
-                    selection: $newTabPosition,
-                ) { option in
-                    SettingsTabPositionArt(position: option.value)
-                }
-                // AUTO HIDE TABS PANEL (`auto-hide-tabs-panel`, `tab-setting.png`): `.auto` collapses
-                // the sidebar when the active session has one tab (reads `SidebarAutoHidePolicy`);
-                // `.default`/`.always` never auto-hide. Cross-platform.
-                // ⌃⇥ FOLLOW-ALONG PREVIEW. Filed under Tabs rather than Keyboard: what it changes is what
-                // the WORKSPACE does while a chord is held, not what the chord is.
-                SettingsGlyphToggleRow(
-                    .rectangleOnRectangle,
-                    settingLabel(SettingsKey.paneSwitcherPreview),
-                    "As ⌃⇥ walks the pane list, show each pane underneath the switcher.",
-                    isOn: $paneSwitcherPreview,
-                )
-                pickerRow(
-                    "Auto Hide Tabs Panel",
-                    "When to show the tabs panel in Sidebar layout",
-                    selection: $autoHideTabsPanel,
-                ) {
-                    Text("Default").tag(AutoHideTabsPanelMode.default)
-                    Text("Always").tag(AutoHideTabsPanelMode.always)
-                    Text("Auto").tag(AutoHideTabsPanelMode.auto)
-                }
-                timingFooter(.live)
+            ForEach(SettingsLayout.groups(SettingsSection.appearance.rawValue, for: .current)) { group in
+                settingsGroup(group) { row in control(row) }
             }
-
-            // WINDOW (`window-size`, `tab-setting.png`). macOS-only: initial dimensions are an
-            // `NSWindow` concept, so iOS omits it. Extracted to keep the `Form` closure under `closure_body_length`.
-            #if os(macOS)
-            windowSection
-            #endif
-
-            // DENSITY. The theme GALLERY that used to head this section is gone with the picker
-            // (user-directed 2026-08-08): the app has one appearance, so there is nothing to choose
-            // between and a one-card gallery would be a control that cannot be actuated.
-            slateFormSection("Appearance") {
-                SettingsOptionCards(
-                    settingLabel(SettingsKey.density),
-                    subtitle: "How much air each sidebar row gets.",
-                    options: SettingsCatalog.stringOptions(.density),
-                    selection: densityBinding,
-                ) { option in
-                    SettingsDensityArt(compact: option.value == SettingsCatalog.densityCompact)
-                }
-            }
-
-            // FONT: the Font-Family scope tabs, "Aa" specimen combobox, Auto-match, per-face
-            // families, size, line-height, ligatures, and bold/italic/underline/blink/blending controls, bound
-            // to `store.terminal` + `store.appearance.themeFonts` (`font-setting.png` /
-            // `font-setting-bold.png`). See `FontSettingsView`.
-            FontSettingsView(store: store)
-
-            // The FULL Cursor group (live preview + color / text-under / opacity / style / blink / animation)
-            // lives under Appearance (`cursor-style.png`). macOS hosts the rich `CursorPreviewView` (its color
-            // wells + preview caret are AppKit); the iOS sheet keeps the cross-platform Style + Blink controls
-            // (`CursorPreviewView` is `#if os(macOS)`).
-            #if os(macOS)
-            CursorPreviewView(store: store)
-            #else
-            slateFormSection("Cursor") {
-                // The SAME caret cards macOS shows (`SettingsCaretArt` is cross-platform) — only the colour
-                // wells + live prompt preview are macOS-only.
-                SettingsOptionCards(
-                    "Style",
-                    options: SettingsCatalog.options(.cursorStyle),
-                    selection: $store.terminal.cursorStyle,
-                ) { option in
-                    SettingsCaretArt(style: option.value, color: SettingsInk.primary)
-                }
-                Picker("Blink", selection: $store.terminal.cursorBlink) {
-                    Text("Default").tag(TerminalPreferences.CursorBlink.default)
-                    Text("On").tag(TerminalPreferences.CursorBlink.on)
-                    Text("Off").tag(TerminalPreferences.CursorBlink.off)
-                }
-            }
-            #endif
-
-            // DOCK ICON: under **Appearance** (terminal-features__progress-state.md).
-            // macOS-only (no Dock on iOS — the group is `#if os(macOS)`). Both toggles actuate
-            // ``DockProgressController`` via the pure ``DockTintPolicy`` (read fire-time through
-            // `WorkspaceStore.dockTileModel`) — not dead UI.
-            #if os(macOS)
-            slateFormSection("Dock Icon") {
-                SettingsGlyphToggleRow(
-                    .chartBarFill,
-                    "Animate Icon on Progress",
-                    "Fill the Dock tile as a running command progresses.",
-                    isOn: $dockIconAnimateProgress,
-                )
-                SettingsGlyphToggleRow(
-                    .exclamationmarkOctagon,
-                    settingLabel(SettingsKey.dockIconErrorBadge),
-                    "Tint the Dock tile when a command exits non-zero.",
-                    isOn: $dockIconErrorBadge,
-                )
-            }
-            #endif
-
-            Section { timingFooter(.live) }
         }
         .formStyle(.grouped)
+    }
+
+    /// One row, by the setting it edits — see `GeneralSettingsTab.control(_:)` for why the binding is
+    /// the half that cannot cross.
+    ///
+    /// Two rows here are conditional, and on the same thing: the grid steppers are drawn only in Grid
+    /// mode and the frame steppers only in Frame mode. That is a condition on another setting's VALUE
+    /// — dynamic rather than layout — so the table lists all four and the page picks the pair.
+    @ViewBuilder
+    private func control(_ row: SettingsLayout.Row) -> some View {
+        switch row.key {
+        case SettingsKey.newTabPositionKey:
+            cards(row, .newTabPosition, $newTabPosition) { SettingsTabPositionArt(position: $0) }
+        case SettingsKey.paneSwitcherPreview:
+            SettingsGlyphToggleRow(glyph(row), row.label, row.subtitle, isOn: $paneSwitcherPreview)
+        case SettingsKey.autoHideTabsPanelKey:
+            SettingsOptionMenuRow(
+                row.label,
+                subtitle: row.subtitle,
+                options: SettingsCatalog.options(.autoHideTabsPanel),
+                selection: $autoHideTabsPanel,
+            )
+        case SettingsKey.windowSizeKey:
+            cards(row, .windowSize, $windowSize) { windowSizeArt($0) }
+        case SettingsKey.windowColsKey: if windowSize == .grid { stepper(row, $windowCols) }
+        case SettingsKey.windowRowsKey: if windowSize == .grid { stepper(row, $windowRows) }
+        case SettingsKey.windowWidthPxKey: if windowSize == .frame { stepper(row, $windowWidthPx) }
+        case SettingsKey.windowHeightPxKey: if windowSize == .frame { stepper(row, $windowHeightPx) }
+        case SettingsKey.desktopWindowPresentationKey:
+            cards(row, .desktopPresentation, $desktopWindowPresentation) { desktopPresentationArt($0) }
+        case SettingsKey.satelliteBackgroundPointerKey:
+            SettingsGlyphToggleRow(glyph(row), row.label, row.subtitle, isOn: $satelliteBackgroundPointer)
+        case SettingsKey.density:
+            SettingsOptionCards(
+                row.label,
+                subtitle: row.subtitle,
+                options: SettingsCatalog.stringOptions(.density),
+                selection: densityBinding,
+            ) { option in
+                SettingsDensityArt(compact: option.value == SettingsCatalog.densityCompact)
+            }
+        case SettingsKey.dockIconAnimateProgress:
+            SettingsGlyphToggleRow(glyph(row), row.label, row.subtitle, isOn: $dockIconAnimateProgress)
+        case SettingsKey.dockIconErrorBadge:
+            SettingsGlyphToggleRow(glyph(row), row.label, row.subtitle, isOn: $dockIconErrorBadge)
+        // The two cursor settings, as the PHONE draws them. The Mac reaches the same pair through the
+        // live preview surface below, which is why neither half is missing a capability.
+        case AllSettingsCatalog.RenderKey.cursorStyle:
+            SettingsOptionCards(
+                row.label,
+                options: SettingsCatalog.options(.cursorStyle),
+                selection: $store.terminal.cursorStyle,
+            ) { option in
+                SettingsCaretArt(style: option.value, color: SettingsInk.primary)
+            }
+        case AllSettingsCatalog.RenderKey.cursorStyleBlink:
+            SettingsOptionMenuRow(
+                row.label,
+                subtitle: row.subtitle,
+                options: SettingsCatalog.options(.cursorBlink),
+                selection: $store.terminal.cursorBlink,
+            )
+        default: bespoke(row)
+        }
+    }
+
+    /// The groups this page draws itself rather than describing — see `SettingsLayout.Control.bespoke`.
+    /// Both are whole surfaces with their own headers, which is why their groups carry no title.
+    @ViewBuilder
+    private func bespoke(_ row: SettingsLayout.Row) -> some View {
+        if case let .bespoke(id) = row.control {
+            switch id {
+            // The Font-Family scope tabs, "Aa" specimen combobox, per-face families, size,
+            // line-height, ligatures and the bold/italic/underline controls (`font-setting.png`).
+            case "font": FontSettingsView(store: store)
+            // The live caret preview with its colour wells and text-under toggle (`cursor-style.png`)
+            // — AppKit, hence the gate, which dies with the AppKit port.
+            case "cursor-preview":
+                #if os(macOS)
+                CursorPreviewView(store: store)
+                #endif
+            default: EmptyView()
+            }
+        }
+    }
+
+    // MARK: - Row shapes
+
+    /// An illustrated radio group over a catalog group, with the art the page draws per option.
+    private func cards<Value: RawRepresentable & Hashable & Sendable>(
+        _ row: SettingsLayout.Row,
+        _ group: SettingsCatalog.Group,
+        _ selection: Binding<Value>,
+        @ViewBuilder art: @escaping (Value) -> some View,
+    ) -> some View where Value.RawValue == String {
+        SettingsOptionCards(
+            row.label,
+            subtitle: row.subtitle,
+            options: SettingsCatalog.options(group),
+            selection: selection,
+        ) { option in
+            art(option.value)
+        }
+    }
+
+    /// A plus/minus numeric field over the row's own range. The value's UNIT rides the range's
+    /// readout (`1000 px`), so "Width" and "Columns" are told apart by their label alone.
+    @ViewBuilder
+    private func stepper(_ row: SettingsLayout.Row, _ value: Binding<Int>) -> some View {
+        if case let .stepper(range) = row.control {
+            Stepper(
+                "\(row.label): \(range.readout(value.wrappedValue))",
+                value: value,
+                in: range.range,
+                step: range.step,
+            )
+        }
     }
 
     private var densityBinding: Binding<String> {
@@ -1080,67 +1080,6 @@ private struct AppearanceSettingsTab: View {
             set: { store.appearance.density = $0 },
         )
     }
-
-    // MARK: - Window section (macOS-only)
-
-    /// The WINDOW group (`tab-setting.png`): the `window-size` policy picker + mode-specific steppers.
-    /// `.remember` restores the autosaved frame (default); `.grid` sizes to `window-cols × window-rows`;
-    /// `.frame` to `window-width-px × window-height-px`. Raw values are clamped by `WindowSizeMath` and applied
-    /// ONCE per window open by the introspect glue, so a later manual resize is never fought. macOS-only.
-    #if os(macOS)
-    private var windowSection: some View {
-        slateFormSection("Window") {
-            // Each card draws the unit the mode MEASURES IN: a dashed ghost of the remembered frame, actual
-            // cells for the grid, the two pixel rules for the frame.
-            SettingsOptionCards(
-                "Window Size",
-                subtitle: "How new windows decide their initial dimensions.",
-                options: SettingsCatalog.options(.windowSize),
-                selection: $windowSize,
-            ) { option in
-                windowSizeArt(option.value)
-            }
-            switch windowSize {
-            case .remember:
-                EmptyView()
-            case .grid:
-                Stepper("Columns: \(windowCols)", value: $windowCols, in: 1...1000)
-                Stepper("Rows: \(windowRows)", value: $windowRows, in: 1...1000)
-            case .frame:
-                Stepper("Width: \(windowWidthPx) px", value: $windowWidthPx, in: 64...16384, step: 50)
-                Stepper("Height: \(windowHeightPx) px", value: $windowHeightPx, in: 64...16384, step: 50)
-            }
-            Text("Applied to the next window opened.")
-                .font(SettingsType.subtitle)
-                .foregroundStyle(SettingsInk.secondary)
-            // REMOTE DESKTOP (`desktop-window`): how the dedicated desktop window opens (⌥⌘N) —
-            // a regular window, straight into native fullscreen (the Parsec model), or a borderless
-            // cover of the current Space whose LOCAL menu bar needs a top-edge DWELL to reveal (the
-            // Parallels model — a bare touch at the top reaches the REMOTE menu bar). Read once per
-            // desktop-window open by the satellite coordinator; both fullscreen flavours auto-arm
-            // immersive system-key capture while they last.
-            SettingsOptionCards(
-                "Remote Desktop Opens",
-                subtitle: "Fullscreen captures system shortcuts (⌘Tab) for the host while it lasts. "
-                    + "Borderless keeps the local menu bar away until the pointer dwells at the top edge.",
-                options: SettingsCatalog.options(.desktopPresentation),
-                selection: $desktopWindowPresentation,
-            ) { option in
-                desktopPresentationArt(option.value)
-            }
-            // BACKGROUND INTERACTION (`satellite-window`): pointer interaction with a remote-desktop /
-            // pop-out window that is NOT key — hover, scroll and click forward to the host and a click
-            // leaves the window inactive, so typing stays where it is. Focusing for typing stays
-            // explicit (title-bar click / ⌥⌘N). Threaded per render by `GuiLeafView`.
-            Toggle("Background Interaction", isOn: $satelliteBackgroundPointer)
-            Text(
-                "Point, click, and scroll in a remote desktop window without focusing it — typing stays in the window you're working in.",
-            )
-            .font(SettingsType.subtitle)
-            .foregroundStyle(SettingsInk.secondary)
-        }
-    }
-    #endif
 
     /// The card art per window-size mode: the UNIT each mode measures in.
     private func windowSizeArt(_ mode: WindowSizeMode) -> some View {
@@ -1160,27 +1099,6 @@ private struct AppearanceSettingsTab: View {
             EmptyView()
         }
     }
-
-    // MARK: - Row helpers
-
-    /// A dropdown row (bold title + optional gray subtext, a `.menu` picker trailing) for Auto Hide Tabs Panel
-    /// + Window Size. Binds DIRECTLY (plain `Defaults`, not libghostty config — no rebuild), mirroring
-    /// `ControlsSettingsTab.pickerRow`.
-    private func pickerRow(
-        _ title: String, _ subtitle: String? = nil,
-        selection: Binding<some Hashable>, @ViewBuilder options: () -> some View,
-    ) -> some View {
-        LabeledContent {
-            Picker("", selection: selection, content: options)
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .fixedSize()
-        } label: {
-            rowLabel(title, subtitle)
-        }
-    }
-
-    /// The row label layout: a bold title with an optional gray subtext beneath.
 }
 
 // MARK: - Agents section
@@ -1733,16 +1651,6 @@ private struct VideoHostSettingsView: View {
             get: { binding.wrappedValue ?? def },
             set: { binding.wrappedValue = $0 },
         )
-    }
-}
-
-// MARK: - Shared timing footer
-
-/// A right-aligned timing chip used as a section footer so each section's apply timing is visible inline.
-private func timingFooter(_ timing: ApplyTiming) -> some View {
-    HStack {
-        Spacer()
-        TimingChip(timing: timing)
     }
 }
 #endif

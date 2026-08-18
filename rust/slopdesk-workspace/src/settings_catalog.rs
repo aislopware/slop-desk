@@ -123,11 +123,15 @@ pub enum Group {
     LinkCmdShiftClick,
     /// Controls → Link Schemes → which schemes are detected at all.
     AutoDetectLinkSchemes,
+    /// Appearance → Tabs → when the tabs panel hides itself.
+    AutoHideTabsPanel,
+    /// Appearance → Cursor → Blink.
+    CursorBlink,
 }
 
 impl Group {
     /// Every group, in case-index order — the numbering the boundary carries.
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 17] = [
         Self::CursorStyle,
         Self::NewTabPosition,
         Self::Density,
@@ -143,6 +147,8 @@ impl Group {
         Self::LinkCmdClick,
         Self::LinkCmdShiftClick,
         Self::AutoDetectLinkSchemes,
+        Self::AutoHideTabsPanel,
+        Self::CursorBlink,
     ];
 
     /// The case index a group crosses as.
@@ -164,6 +170,8 @@ impl Group {
             Self::LinkCmdClick => 12,
             Self::LinkCmdShiftClick => 13,
             Self::AutoDetectLinkSchemes => 14,
+            Self::AutoHideTabsPanel => 15,
+            Self::CursorBlink => 16,
         }
     }
 
@@ -291,6 +299,23 @@ const AUTO_DETECT_LINK_SCHEMES: &[OptionRow] = &[
     OptionRow::plain("custom", "Custom"),
 ];
 
+/// Appearance → Tabs → when the tabs panel hides itself. `default` and `always` both keep the panel
+/// up; they differ in whether the layout may take it away, which is why `auto` needs a caption and
+/// the other two do not.
+const AUTO_HIDE_TABS_PANEL: &[OptionRow] = &[
+    OptionRow::plain("default", "Default"),
+    OptionRow::plain("always", "Always"),
+    OptionRow::noted("auto", "Auto", "Hides at one tab"),
+];
+
+/// Appearance → Cursor → Blink. `default` is not "no opinion" but a real third behaviour — the
+/// program decides through DEC mode 12 — which is why it is an option rather than an absent one.
+const CURSOR_BLINKS: &[OptionRow] = &[
+    OptionRow::noted("default", "Default", "DEC mode 12"),
+    OptionRow::plain("on", "On"),
+    OptionRow::plain("off", "Off"),
+];
+
 /// The choices in a group, in the order they render.
 ///
 /// The tab close-confirmation row is the window row MINUS `multiple_tabs`, taken as a PREFIX rather
@@ -315,6 +340,8 @@ pub const fn group(group: Group) -> &'static [OptionRow] {
         Group::LinkCmdClick => LINK_CMD_CLICK,
         Group::LinkCmdShiftClick => LINK_CMD_SHIFT_CLICK,
         Group::AutoDetectLinkSchemes => AUTO_DETECT_LINK_SCHEMES,
+        Group::AutoHideTabsPanel => AUTO_HIDE_TABS_PANEL,
+        Group::CursorBlink => CURSOR_BLINKS,
     }
 }
 
@@ -592,6 +619,97 @@ impl Ladder {
             Self::ScrollMultiplier => format!("{value:.2}×"),
             Self::BusyDelay if value == 0.0 => "Instant".to_owned(),
             Self::BusyDelay => format!("{value:.1}s"),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// The stepper ranges
+// ---------------------------------------------------------------------------------------------
+
+/// A plus/minus numeric field's range.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StepperBounds {
+    /// The lowest settable value.
+    pub min: i64,
+    /// The highest.
+    pub max: i64,
+    /// How far one click moves it.
+    pub step: i64,
+}
+
+/// Which numeric field.
+///
+/// The counterpart to [`Ladder`], and the rule for picking between them is whether the useful
+/// values are a HANDFUL. Scrollback depth has four magnitudes anyone actually wants, so it is a
+/// ladder with stops; a window's column count is a literal the reader already knows the meaning of
+/// ("80 columns"), and every number in the range is as reasonable as its neighbour.
+///
+/// A range is named for the UNIT it counts, not for the setting, because the four window fields are
+/// two pairs sharing two ranges. What tells Columns from Rows is the row's label, which lives in
+/// [`settings_rows`](crate::settings_rows) with every other label.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stepper {
+    /// Appearance → Window → the grid mode's columns and rows, in terminal cells.
+    WindowCells,
+    /// Appearance → Window → the frame mode's width and height, in pixels.
+    WindowPixels,
+}
+
+impl Stepper {
+    /// Every range, in case-index order.
+    pub const ALL: [Self; 2] = [Self::WindowCells, Self::WindowPixels];
+
+    /// The case index a range crosses as.
+    #[must_use]
+    pub const fn index(self) -> u8 {
+        match self {
+            Self::WindowCells => 0,
+            Self::WindowPixels => 1,
+        }
+    }
+
+    /// The range a case index names.
+    #[must_use]
+    pub const fn from_index(index: u8) -> Option<Self> {
+        match index {
+            0 => Some(Self::WindowCells),
+            1 => Some(Self::WindowPixels),
+            _ => None,
+        }
+    }
+
+    /// This range's ends and granularity.
+    ///
+    /// The pixel step is fifty because one pixel at a time across sixteen thousand is a control
+    /// that cannot reach its own far end — the same reasoning that turned scrollback into a
+    /// ladder.
+    #[must_use]
+    pub const fn bounds(self) -> StepperBounds {
+        match self {
+            Self::WindowCells => {
+                StepperBounds {
+                    min: 1,
+                    max: 1000,
+                    step: 1,
+                }
+            },
+            Self::WindowPixels => {
+                StepperBounds {
+                    min: 64,
+                    max: 16384,
+                    step: 50,
+                }
+            },
+        }
+    }
+
+    /// What the value reads as after the row's label — `80` for cells, `1000 px` for pixels.
+    #[must_use]
+    pub fn readout(self, value: i64) -> String {
+        match self {
+            Self::WindowCells => value.to_string(),
+            Self::WindowPixels => format!("{value} px"),
         }
     }
 }

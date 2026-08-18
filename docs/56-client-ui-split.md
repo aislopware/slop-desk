@@ -847,3 +847,42 @@ ONE GATE IS LEFT, on purpose. `SettingsLayout.Half.current` is a single `#if os(
 `SlopDeskMacUI` takes Settings, at which point each shell names its own half. `check-supervisor`
 ratchets that it stays exactly one, that the ten layout doors are called by the near side and named by
 the header, and that no view types a group header the table already holds.
+
+### Increment 20 — the Shell, Controls and Appearance pages
+
+Three more pages render from the table, which took `SettingsView.swift` from 2102 lines and
+thirty-seven gates to 1656 and twenty-one. Each page contributed something the General page had not
+needed, and each also surfaced a real gap that the description forced into view.
+
+SHELL brought the four TAB BADGE settings and, with them, a Reset All that could not restore
+`tabBadge.busyDelaySeconds` — advertising the row was what made the omission fail a test instead of
+sitting there. It also killed a brittle assertion: `a_page_label_exists_only_where_it_differs` had
+pinned the override COUNT at two, and the count grew to six on this page. A count is not the
+invariant; the invariant is that a page label exists exactly where the index label is QUALIFIED, and
+checking that at all first required normalising two qualifier styles (`" · "` against an em dash) to
+one.
+
+CONTROLS brought the three link-behaviour pickers, which had each spelled their own choices inline, and
+the two SECURE INPUT settings, which were not advertised anywhere. It also brought a new element:
+`Control::Note`, prose belonging to a GROUP rather than to any setting — the Open With footnote
+explaining why per-target "Open in…" panes cannot exist for a remote host. Forcing that into `Bespoke`
+would have put the words back in a view, which is the thing the table removes.
+
+APPEARANCE is the page where the halves diverge in three ways at once, and it is the reason a ROW
+carries a platform of its own rather than only a group. Groups the phone omits (Window, Dock Icon);
+groups both draw identically (Tabs, Appearance); and one position where each half draws a DIFFERENT
+thing for the same two settings — the Mac's live caret preview with its colour wells against the
+phone's two plain rows. A gate that means "drawn differently" is not the same gate as one that means
+"unavailable", and only the second may cost the phone a capability (§3).
+
+Two additions came with it. `Control::Stepper` is `Slider`'s sibling, and the rule for choosing is
+whether the useful values are a handful of MAGNITUDES — scrollback depth, which is a ladder with stops
+— or any literal count in a range, like a window's 80 columns. And a group may now have an EMPTY
+title, meaning it supplies its own header: `FontSettingsView` draws four sections of its own, so
+claiming one header for it in the table would have been a lie. `CursorPreviewView` went the other way
+— it drew exactly one section called "Cursor", which is the same header the phone's version needs, so
+it gives that up and the table supplies it to both.
+
+Eight more settings became advertised rows here: `shell.autoHideTabsPanel`, the four `window.*`
+numbers, `desktopWindow.presentation` and `satelliteWindow.backgroundPointer` — and none of the seven
+window keys was in any reset set, so Reset All had been silently skipping every one of them.

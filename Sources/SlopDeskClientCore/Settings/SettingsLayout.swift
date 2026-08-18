@@ -54,6 +54,9 @@ package enum SettingsLayout {
         case cards(group: SettingsCatalog.Group)
         /// A slider with preset stops over a scalar ladder.
         case slider(ladder: SettingsCatalog.Ladder)
+        /// A plus/minus numeric field over a stepper range — the slider's sibling, for a value whose
+        /// useful settings are any literal count rather than a handful of magnitudes.
+        case stepper(range: SettingsCatalog.Stepper)
         /// A free-text field.
         case text(glyph: String?)
         /// Prose belonging to the group rather than to a setting — a footnote explaining why a
@@ -75,19 +78,33 @@ package enum SettingsLayout {
         /// What the row draws.
         public let control: Control
 
-        public var id: String { key.isEmpty ? subtitle : key }
+        /// A row that edits a setting is that key; one that does not is what it draws (a bespoke id)
+        /// or what it says (a note's words). Every row has exactly one of the three, so a `ForEach`
+        /// over a group never sees a duplicate.
+        public var id: String {
+            if !key.isEmpty { return key }
+            if case let .bespoke(bespokeID) = control { return bespokeID }
+            return subtitle
+        }
     }
 
     /// One titled group of rows.
     public struct Group: Identifiable, Sendable {
-        /// The group header.
+        /// The group header, or EMPTY for a group that supplies its own.
+        ///
+        /// A headerless group is a whole surface rather than a list of rows — the font specimen, the
+        /// live cursor preview — so a renderer places its single ``Control/bespoke(id:)`` row without
+        /// wrapping it in a section of its own. ``drawsItsOwnHeader`` is how to ask.
         public let title: String
         /// The rows the asking half draws, in reading order.
         public let rows: [Row]
         /// The footer saying when an edit here takes effect.
         public let timing: SettingsCatalog.ApplyTiming
 
-        public var id: String { title }
+        /// Whether the group draws its own header, and therefore its own section.
+        public var drawsItsOwnHeader: Bool { title.isEmpty }
+
+        public var id: String { title.isEmpty ? rows.first?.id ?? "" : title }
     }
 
     /// The groups one page shows to one half, in render order — already filtered, so a renderer that
@@ -100,13 +117,13 @@ package enum SettingsLayout {
         let index = UInt8(position)
         let mac = half.isMac
         return (0..<slopdesk_settings_layout_group_count(index, mac)).compactMap { position in
-            guard let title = string({ slopdesk_settings_layout_group_title(index, mac, position, $0, $1) }),
-                  let timing = SettingsCatalog.ApplyTiming(
-                      rawValue: slopdesk_settings_layout_group_timing(index, mac, position),
-                  )
-            else { return nil }
+            guard let timing = SettingsCatalog.ApplyTiming(
+                rawValue: slopdesk_settings_layout_group_timing(index, mac, position),
+            ) else { return nil }
+            // An absent title is a real answer here, not a marshalling slip: a self-drawing group
+            // has none. The TIMING is what says the position resolved to a group at all.
             return Group(
-                title: title,
+                title: string { slopdesk_settings_layout_group_title(index, mac, position, $0, $1) } ?? "",
                 rows: rows(index, mac, position),
                 timing: timing,
             )
@@ -142,6 +159,8 @@ package enum SettingsLayout {
             return SettingsCatalog.Group(rawValue: argument).map { .cards(group: $0) }
         case UInt8(SLOPDESK_SETTINGS_CONTROL_SLIDER):
             return SettingsCatalog.Ladder(rawValue: argument).map { .slider(ladder: $0) }
+        case UInt8(SLOPDESK_SETTINGS_CONTROL_STEPPER):
+            return SettingsCatalog.Stepper(rawValue: argument).map { .stepper(range: $0) }
         case UInt8(SLOPDESK_SETTINGS_CONTROL_TEXT):
             return .text(glyph: glyph)
         case UInt8(SLOPDESK_SETTINGS_CONTROL_NOTE):

@@ -95,7 +95,9 @@ struct CursorPreviewView: View {
     @State private var blinkVisible = true
 
     var body: some View {
-        slateFormSection("Cursor") {
+        // The rows only — the `Cursor` header and its timing chip come from the layout table, which
+        // is where the phone's version of this group gets them too.
+        Group {
             Text("Live preview of your cursor color, style, opacity and blink behavior.")
                 .font(SettingsType.subtitle)
                 .foregroundStyle(SettingsInk.secondary)
@@ -132,23 +134,11 @@ struct CursorPreviewView: View {
                 SettingsCaretArt(style: option.value, color: cursorPreviewColor)
             }
 
-            LabeledContent {
-                Picker("", selection: $store.terminal.cursorBlink) {
-                    Text("Default").tag(TerminalPreferences.CursorBlink.default)
-                    Text("On").tag(TerminalPreferences.CursorBlink.on)
-                    Text("Off").tag(TerminalPreferences.CursorBlink.off)
-                }
-                .labelsHidden()
-                .fixedSize()
-            } label: {
-                VStack(alignment: .leading, spacing: Slate.Metric.space1) {
-                    Text("Cursor blink style")
-                    Text("The `Default` option defers to DEC mode 12 to determine blinking state.")
-                        .font(SettingsType.subtitle)
-                        .foregroundStyle(SettingsInk.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
+            SettingsOptionMenuRow(
+                settingLabel(AllSettingsCatalog.RenderKey.cursorStyleBlink),
+                options: SettingsCatalog.options(.cursorBlink),
+                selection: $store.terminal.cursorBlink,
+            )
         }
     }
 
