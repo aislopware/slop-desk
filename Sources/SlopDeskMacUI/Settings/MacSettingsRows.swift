@@ -122,6 +122,10 @@ struct MacSettingsRowBuilder {
         switch id {
         case "os-integration": return MacOSIntegrationRows()
         case "cli-install": return MacCLIInstallCard()
+        // The chord editor is `Platform::Both`, so BOTH halves draw it — but the Mac's recorder is an
+        // `NSEvent` monitor scoped to this window, and a monitor is not a view to host. Both read the
+        // same registry and the same ``KeybindingCapture``; only the drawing differs.
+        case "keybindings": return MacKeybindingsEditor(store: bindings.store)
         default: break
         }
         // `.intrinsicContentSize` is what makes a SwiftUI subtree behave as a stack view arrangement:

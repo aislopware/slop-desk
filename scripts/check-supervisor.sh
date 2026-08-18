@@ -5198,6 +5198,41 @@ fi
 printf 'check-supervisor: a settings page is SHAPED once — %s groups crossed, one gate names the half.\n' \
   "$(printf '%s\n' "${layout_titles}" | grep -c .)"
 
+# ── One chord editor, drawn twice ─────────────────────────────────────────────────────────────
+# Key Bindings is `Platform::Both`, so it is the one BESPOKE group the Mac draws itself rather than
+# hosting: the recorder is an `NSEvent` monitor scoped to the Settings window, and a monitor is not a
+# view. Two drawings over one registry is fine; two answers to "what did the user just press" or "does
+# this row match the search" is not, and neither fails loudly — a second capture table just quietly
+# records a chord the dispatcher will never fire.
+for half in Sources/SlopDeskMacUI/Settings/MacKeybindingsEditor.swift \
+  Sources/SlopDeskClientUI/Settings/KeybindingsEditorView.swift; do
+  for spelling in WorkspaceBindingRegistry KeybindingsEditorModel; do
+    if ! grep -q "${spelling}" "${half}"; then
+      fail "${half} stopped reading ${spelling} — two chord editors, and the drift would be silent"
+    fi
+  done
+done
+# The RECORDER is the Mac's alone, and the phone says why rather than growing a second one: there is
+# no `UIKey` path to the macOS virtual key codes `KeybindingCapture` resolves against, so a capture UI
+# on the phone would have to invent a second answer to "what key is this".
+# Comments are stripped first — both headers NAME the rule they no longer carry, which is exactly
+# what a reader needs and exactly what a blunt grep would read as the regression.
+if spells 'KeybindingCapture' Sources/SlopDeskClientUI/Settings/KeybindingsEditorView.swift > /dev/null; then
+  fail "the phone's chord editor grew a recorder — KeybindingCapture resolves macOS virtual key codes"
+fi
+if ! grep -q 'KeybindingCapture.outcome' Sources/SlopDeskMacUI/Settings/MacKeybindingsEditor.swift; then
+  fail "the Mac's chord editor stopped asking KeybindingCapture — a chord it records may never fire"
+fi
+# The two override writers PRESERVE `textBindings` / `unbinds`. Rebuilding the model as
+# `KeybindingPreferences(overrides:)` defaults both to empty, so a single rebind in Settings silently
+# wipes every config.toml literal-byte binding — the audit bug, and it looks like nothing at all.
+# (`KeybindingPreferences()` with no arguments is the GLOBAL reset and is meant to clear everything.)
+if spells 'KeybindingPreferences\(overrides:' Sources/SlopDeskMacUI/Settings/MacKeybindingsEditor.swift \
+  Sources/SlopDeskClientUI/Settings/KeybindingsEditorView.swift > /dev/null; then
+  fail "a chord editor rebuilt KeybindingPreferences — that wipes the config.toml literal-byte bindings"
+fi
+printf 'check-supervisor: one chord editor, drawn twice, and only one half records.\n'
+
 # ── One device-panel law, two device protocols ────────────────────────────────────────────────
 # The simulator panel and the Android panel differ in almost everything and should — one rotates on
 # the client and the other on the device, one sends touches in the fitted rect's space and the other

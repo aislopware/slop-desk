@@ -1070,3 +1070,30 @@ sheet's did one increment earlier: the Mac's palette is an `NSPanel` that `Image
 render, so the probe was photographing the phone's card on a Mac and telling a reviewer nothing.
 
 The shared target is down to 81, and the biggest remaining block is the pane canvas.
+
+### Increment 27 — one chord editor, drawn twice, and only one half records
+
+Settings ▸ Key Bindings is `Platform::Both` in the Rust layout table, and the table already says why:
+a phone with a hardware keyboard runs the same bindings, and the LIST is worth reading with none. So
+this is the first bespoke group the Mac draws ITSELF (`MacKeybindingsEditor`) rather than hosting the
+shared SwiftUI surface — because its recorder is an `NSEvent` monitor scoped to the Settings window,
+and a monitor is not a view to put in an `NSHostingView`.
+
+**Only the Mac records, and the phone says why rather than growing a second recorder.**
+`KeybindingCapture` resolves a macOS VIRTUAL KEY CODE through `slopdesk_video::key_naming` — the same
+table the dispatcher builds chords from, which is what makes a recorded chord the chord that fires.
+`UIKey` carries a HID usage instead, a different numbering, so a capture UI on the phone would have to
+invent a second answer to "what key is this". That is the duplicate the split exists to prevent, so
+the phone renders every row and its effective chord and offers the global reset, and nothing else.
+`check-supervisor.sh` pins both directions: the phone may not reach for `KeybindingCapture`, the Mac
+must, and neither half may respell the registry read or the search filter.
+
+The monitor moved across as a plain view rather than an `NSViewRepresentable`, and its two hard-won
+details came with it: it captures ONLY events destined for its own key window (an unscoped local
+monitor fires for every window in the process, so clicking "Press a key…" and then clicking away used
+to swallow every keystroke app-wide and record the first as a bogus chord), and it stands down when
+that window resigns key. What changed is the teardown edge — `viewDidMoveToWindow` with no window,
+because the AppKit page rebuilds its sections whenever a value gates another row, and a discarded
+page mid-capture must not leave a monitor behind or leave Esc permanently disowned.
+
+`KeybindingsEditorView.swift` went from four platform gates to none. The shared target is at 77.

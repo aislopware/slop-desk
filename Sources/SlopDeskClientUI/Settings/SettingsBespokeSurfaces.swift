@@ -40,6 +40,11 @@ import SwiftUI
 /// they do is LaunchServices and `/usr/local/bin`, so the Mac draws them in AppKit and the phone never
 /// asks. A surface is drawn once — but "once" means once per platform that HAS it.
 ///
+/// `keybindings` is the other shape: `Platform::Both`, so it has an arm here AND an AppKit half
+/// (``SlopDeskMacUI/MacKeybindingsEditor``). It is the one bespoke group the Mac does not host, because
+/// its recorder is an `NSEvent` monitor scoped to the Settings window and a monitor is not a view. Both
+/// halves read the same registry and the same ``KeybindingCapture``; the drawing is what differs.
+///
 /// `onJump` is how the All-Settings index repoints the navigator: a SECTION ID, because the two halves
 /// navigate differently (a `List` selection here, an `NSTableView` row there) and neither owns the
 /// other's selection type.

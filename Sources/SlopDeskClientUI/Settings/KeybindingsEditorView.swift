@@ -8,28 +8,27 @@
 // persistence channel (D6 invariant). Conflicts come straight from `store.keybindingConflicts()`.
 //
 // SCOPE (D6): SINGLE-key chords only — the editor edits whatever the registry's chord model exposes.
-// Chord CAPTURE is a macOS-only `NSEvent` local monitor (the client's primary surface); on iOS the rows
-// render read-only (no hardware-key capture UI here).
+//
+// ⚠️ THE PHONE's, since docs/56 stage D: the Mac draws the same registry in AppKit
+// (``SlopDeskMacUI/MacKeybindingsEditor``), because the recorder there is an `NSEvent` monitor scoped to
+// the Settings window and a monitor is not a view. The Rust layout table calls this group
+// `Platform::Both` and says why — a phone with a hardware keyboard runs the same bindings, and the LIST
+// is worth reading with none — so this half renders every row and its effective chord, and RECORDING is
+// the one thing it does not offer: there is no `UIKey` path to the macOS virtual key codes
+// ``KeybindingCapture`` resolves against, so a capture UI here would have to invent a second answer to
+// "what key is this", which is the duplicate this whole split exists to prevent.
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
-import SlopDeskClientCore // SettingsChordCapture — the recorder's claim on Esc
 import SlopDeskVideoProtocol
 import SlopDeskWorkspaceCore
 import SwiftUI
-#if os(macOS)
-import AppKit
-#endif
 
 /// The Keybindings tab body: a scrollable, category-grouped list of every registry binding with its
 /// effective chord and a "record a new chord" affordance. Binds the live `PreferencesStore` (D4 hands it
 /// in as `@Bindable`); writes overrides through `store.keybindings`.
 struct KeybindingsEditorView: View {
     @Bindable var store: PreferencesStore
-
-    /// The binding id currently in capture mode (its row shows "Press a key…"), or `nil`. Only one row
-    /// records at a time so the local key monitor has a single unambiguous target.
-    @State private var recordingID: String?
 
     /// The live "Search key bindings" query (filters by action name OR chord). Empty ⇒ show all rows.
     @State private var searchQuery: String = ""
@@ -77,20 +76,6 @@ struct KeybindingsEditorView: View {
         } message: {
             Text("This clears every customized shortcut and restores the defaults.")
         }
-        #if os(macOS)
-        .background(KeyCaptureMonitor(
-            isActive: recordingID != nil,
-            onKey: { event in handleCapturedEvent(event) },
-            // Cancel recording if the Settings window loses focus (click-away / app switch) so a stray
-            // keystroke elsewhere is never silently recorded as the new chord.
-            onCancel: { recordingID = nil },
-        ))
-        // Publish the armed state so the window's Esc dismiss stands down while a chord is being
-        // recorded — there Esc means "cancel the capture", not "close Settings" (`SettingsEscapePolicy`).
-        // Cleared on disappear too: navigating away mid-capture must not leave Esc permanently disowned.
-        .onChange(of: recordingID) { _, new in SettingsChordCapture.shared.isCapturing = new != nil }
-        .onDisappear { SettingsChordCapture.shared.isCapturing = false }
-        #endif
     }
 
     // MARK: Sections
@@ -173,8 +158,7 @@ struct KeybindingsEditorView: View {
     }
 
     private func row(for binding: WorkspaceBinding, isConflicting: Bool) -> some View {
-        let isRecording = recordingID == binding.id
-        return HStack(spacing: Slate.Metric.space2) {
+        HStack(spacing: Slate.Metric.space2) {
             Image(systemName: binding.symbol)
                 .font(.system(size: Slate.Metric.iconSize))
                 .foregroundStyle(SettingsInk.icon)
@@ -190,36 +174,32 @@ struct KeybindingsEditorView: View {
                     .help("This shortcut conflicts with another command")
             }
             Spacer(minLength: Slate.Metric.space2)
-            // There is NO per-row revert — the chord chip records a replacement; Backspace (while recording)
-            // clears it, and the header's "Reset to Default" reverts everything at once.
-            chordChip(for: binding, isRecording: isRecording)
+            // There is NO per-row revert here and no recorder: the header's "Reset to Default" is the
+            // one edit this half offers, and it reverts everything at once.
+            chordChip(for: binding)
         }
         .padding(.vertical, Slate.Metric.space1)
     }
 
-    /// The trailing chord chip — the effective shortcut glyph, tappable to start recording. While recording
-    /// it reads "Press a key…"; click again (or Escape, handled by the monitor) to cancel.
-    private func chordChip(for binding: WorkspaceBinding, isRecording: Bool) -> some View {
-        Button {
-            toggleRecording(binding.id)
-        } label: {
-            Text(isRecording ? "Press a key…" : effectiveGlyph(for: binding))
-                .font(SettingsType.subtitle.weight(.medium))
-                .foregroundStyle(isRecording ? SettingsInk.accent : SettingsInk.secondary)
-                .lineLimit(1)
-                .padding(.horizontal, Slate.Metric.space2)
-                .padding(.vertical, 2)
-                .frame(minWidth: 64)
-                .background(
-                    isRecording ? SettingsInk.accentWash : SettingsInk.inset,
-                    in: RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous),
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous)
-                        .strokeBorder(isRecording ? SettingsInk.accent : SettingsInk.hairline, lineWidth: 1),
-                )
-        }
-        .buttonStyle(.plain)
+    /// The trailing chord chip — the effective shortcut, on the same inset plate the Mac's recorder
+    /// rests at. A plate rather than a button, because tapping it here does nothing: what it shows is
+    /// the chord that fires.
+    private func chordChip(for binding: WorkspaceBinding) -> some View {
+        Text(effectiveGlyph(for: binding))
+            .font(SettingsType.subtitle.weight(.medium))
+            .foregroundStyle(SettingsInk.secondary)
+            .lineLimit(1)
+            .padding(.horizontal, Slate.Metric.space2)
+            .padding(.vertical, 2)
+            .frame(minWidth: 64)
+            .background(
+                SettingsInk.inset,
+                in: RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous),
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous)
+                    .strokeBorder(SettingsInk.hairline, lineWidth: 1),
+            )
     }
 
     // MARK: Data helpers
@@ -262,146 +242,11 @@ struct KeybindingsEditorView: View {
 
     // MARK: Mutation (all routed through `store.keybindings`)
 
-    private func toggleRecording(_ id: String) {
-        recordingID = (recordingID == id) ? nil : id
-    }
-
-    /// Remove the override for `id` (restores the registry default). Writes a fresh model so the store's
-    /// `didSet` fires (it compares to `oldValue`).
-    private func clearOverride(_ id: String) {
-        guard store.keybindings.chord(for: id) != nil else { return }
-        // MUTATE the existing model (preserving textBindings / unbinds) — rebuilding it as
-        // `KeybindingPreferences(overrides:)` would default those to empty, silently wiping the user's
-        // config.toml literal-byte / unbind bindings on every edit.
-        store.keybindings = KeybindingsEditorModel.clearingOverride(for: id, in: store.keybindings)
-    }
-
     /// The global "Reset to Default": clear EVERY customization (single-chord, text-byte, and
     /// unbind overrides) at once by assigning a fresh empty model — the single persistence channel republishes
     /// the cleared overrides to the live registry.
     private func resetAllOverrides() {
-        recordingID = nil
         store.keybindings = KeybindingPreferences()
     }
-
-    /// Write `chord` as the override for `id` and stop recording. The single persistence channel: setting
-    /// `store.keybindings` republishes to `WorkspaceBindingRegistry.activeOverrides` (D6 invariant).
-    private func setOverride(_ chord: KeybindingPreferences.KeyChord, for id: String) {
-        // MUTATE the existing model (preserving textBindings / unbinds) — see clearOverride.
-        store.keybindings = KeybindingsEditorModel.settingOverride(chord, for: id, in: store.keybindings)
-        recordingID = nil
-    }
-
-    #if os(macOS)
-    /// Map a captured `NSEvent` to a ``KeybindingCaptureOutcome`` (pure, headless logic in
-    /// `KeybindingCapture`) and apply it to the recording row: Escape cancels (no write), Backspace /
-    /// Forward-Delete CLEAR the binding (unbind), a usable chord is recorded, and an unmappable key is
-    /// ignored (stays in recording mode).
-    private func handleCapturedEvent(_ event: NSEvent) {
-        guard let id = recordingID else { return }
-        let mods = event.modifierFlags
-        switch KeybindingCapture.outcome(
-            keyCode: event.keyCode,
-            charactersIgnoringModifiers: event.charactersIgnoringModifiers,
-            command: mods.contains(.command),
-            shift: mods.contains(.shift),
-            option: mods.contains(.option),
-            control: mods.contains(.control),
-        ) {
-        case .cancel:
-            recordingID = nil
-        case .clear:
-            clearOverride(id)
-            recordingID = nil
-        case .ignore:
-            break // no usable chord yet — keep recording
-        case let .bind(chord):
-            setOverride(chord, for: id)
-        }
-    }
-    #endif
 }
-
-#if os(macOS)
-/// A zero-size `NSViewRepresentable` that installs a LOCAL `NSEvent` keyDown monitor while `isActive` so a
-/// captured keystroke reaches `onKey` (and is SWALLOWED — the monitor returns `nil` so the keystroke does
-/// not also trigger a menu shortcut / type into a field while recording). Removed when inactive.
-///
-/// SCOPING (keyboard-audit fix): a `.keyDown` local monitor fires for events delivered to ANY window in the
-/// process. Without scoping, clicking "Press a key…" and then clicking away (into the Settings search field
-/// or the main workspace window) meant every keystroke app-wide was swallowed and the first one recorded as a
-/// bogus chord. So the monitor captures ONLY events destined for its OWN hosting key window; a keystroke aimed
-/// elsewhere passes THROUGH unchanged. It also observes its window losing key focus and fires `onCancel` so
-/// recording stops on click-away rather than lying in wait for a stray key.
-private struct KeyCaptureMonitor: NSViewRepresentable {
-    let isActive: Bool
-    let onKey: (NSEvent) -> Void
-    let onCancel: () -> Void
-
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView(frame: .zero)
-        context.coordinator.hostView = view
-        return view
-    }
-
-    func updateNSView(_ view: NSView, context: Context) {
-        context.coordinator.hostView = view
-        context.coordinator.onKey = onKey
-        context.coordinator.onCancel = onCancel
-        context.coordinator.isActive = isActive
-    }
-
-    func makeCoordinator() -> Coordinator { Coordinator() }
-
-    static func dismantleNSView(_: NSView, coordinator: Coordinator) {
-        coordinator.teardown()
-    }
-
-    @MainActor
-    final class Coordinator {
-        var onKey: (NSEvent) -> Void = { _ in }
-        var onCancel: () -> Void = {}
-        weak var hostView: NSView?
-        private var monitor: Any?
-        private var resignObserver: NSObjectProtocol?
-        var isActive: Bool = false {
-            didSet {
-                guard isActive != oldValue else { return }
-                if isActive { install() } else { teardown() }
-            }
-        }
-
-        private func install() {
-            guard monitor == nil else { return }
-            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-                guard let self else { return event }
-                // Only capture keystrokes aimed at THIS Settings window (the one hosting the recorder). A key
-                // delivered to any other window / field passes through UNCHANGED — never swallowed, never
-                // mis-recorded.
-                guard let window = hostView?.window, window.isKeyWindow, event.window === window else {
-                    return event
-                }
-                onKey(event)
-                return nil // swallow the keystroke while recording, only for our own window
-            }
-            // Cancel recording if our window loses key focus (click-away / app switch) so a later keystroke
-            // elsewhere can never be silently captured as the new chord.
-            if let window = hostView?.window {
-                resignObserver = NotificationCenter.default.addObserver(
-                    forName: NSWindow.didResignKeyNotification, object: window, queue: .main,
-                ) { [weak self] _ in
-                    MainActor.assumeIsolated { self?.onCancel() }
-                }
-            }
-        }
-
-        func teardown() {
-            if let monitor { NSEvent.removeMonitor(monitor) }
-            monitor = nil
-            if let resignObserver { NotificationCenter.default.removeObserver(resignObserver) }
-            resignObserver = nil
-        }
-    }
-}
-#endif
 #endif
