@@ -1,0 +1,171 @@
+import CSlopDeskFFI
+import Foundation
+import SlopDeskWorkspaceCore
+
+// MARK: - SettingsLayout (the near side of a settings page's SHAPE)
+
+/// Which groups a settings page shows, in what order, what each row is, and — the reason this exists
+/// rather than being spelled in a view — which platform each of those belongs to.
+///
+/// `slopdesk_workspace::settings_layout` holds the table; this reads it.
+///
+/// ## A platform gate is a VALUE here
+///
+/// The macOS Settings window had thirty-seven `#if os(macOS)` directives threaded through one 2100-line
+/// `body`. Every one of them was a fact about a group ("there is no Dock on iOS") wearing a compiler
+/// directive's clothes, and in that form it could not be read, counted or tested — the two UI halves
+/// could not even agree on how many there were. Here it is a `Platform` field on the Rust side and a ``Half`` argument on this one: ``groups(_:for:)`` filters
+/// by the half that asked, and NEITHER renderer carries a gate. That is what lets `SlopDeskMacUI` keep
+/// its "not one `#if os(...)`" rule while still drawing the macOS-only groups (docs/56 §3).
+///
+/// ## What each renderer still owns
+///
+/// Two things, and they are the two that genuinely cannot cross. A ``Row/key`` names a setting but
+/// carries no BINDING — `@Default(.onLaunch)` is a Swift property wrapper over `UserDefaults` — so
+/// key → binding stays a `switch` in each half, exactly as `AllSettingsListView.inlineControl(for:)`
+/// already is. And a ``Control`` names a widget KIND, not a widget; what a toggle looks like is the
+/// half's own business, which is the whole point of splitting them.
+///
+/// GOLDEN-SAFE: metadata only. Nothing here reads or writes a value or touches a wire codec.
+package enum SettingsLayout {
+    /// Which half draws a group or a row.
+    ///
+    /// The renderer does not choose: it passes its own identity to ``groups(_:for:)`` and receives what it
+    /// draws. The table's `Mac` and `Phone` mark the settings whose BACKING is absent on the other platform — a
+    /// Dock, `LaunchServices` deep-links, `NSSound`. Nothing is hidden merely because a small screen is
+    /// crowded: docs/56 §3 says layout diverges and capability does not.
+    public enum Half: Sendable {
+        case mac
+        case phone
+
+        /// What the boundary calls this half.
+        var isMac: Bool { self == .mac }
+    }
+
+    /// What a row DRAWS. Which widget suits a given setting is a design decision, so it is in the
+    /// table rather than in whichever half happened to be written first.
+    public enum Control: Equatable, Sendable {
+        /// A switch, with the leading SF Symbol the group's icon rail runs through.
+        case toggle(glyph: String)
+        /// A one-line pop-up menu over an option group.
+        case menu(group: SettingsCatalog.Group, glyph: String?)
+        /// A row of selectable cards over an option group — art per option, for options that differ
+        /// in a way a word cannot show.
+        case cards(group: SettingsCatalog.Group)
+        /// A slider with preset stops over a scalar ladder.
+        case slider(ladder: SettingsCatalog.Ladder)
+        /// A free-text field.
+        case text(glyph: String?)
+        /// A group the renderer draws itself, named by id.
+        case bespoke(id: String)
+    }
+
+    /// One row on a settings page.
+    public struct Row: Identifiable, Sendable {
+        /// The setting this row edits, or `""` for a ``Control/bespoke(id:)`` group. The renderer maps
+        /// it to a binding; the LABEL comes from the row table, so it is never spelled twice.
+        public let key: String
+        /// The row's name, in the page register — `AllSettingsCatalog`'s `pageLabel` for this key.
+        public let label: String
+        /// The gray line under the label. Deliberately NOT the flat index's description (docs/56 §18).
+        public let subtitle: String
+        /// What the row draws.
+        public let control: Control
+
+        public var id: String { key.isEmpty ? subtitle : key }
+    }
+
+    /// One titled group of rows.
+    public struct Group: Identifiable, Sendable {
+        /// The group header.
+        public let title: String
+        /// The rows the asking half draws, in reading order.
+        public let rows: [Row]
+        /// The footer saying when an edit here takes effect.
+        public let timing: SettingsCatalog.ApplyTiming
+
+        public var id: String { title }
+    }
+
+    /// The groups one page shows to one half, in render order — already filtered, so a renderer that
+    /// walks this cannot draw a group the other platform owns.
+    /// `section` is a ``SettingsCatalog/Section`` id (`"general"`, `"appearance"`, …). It crosses as
+    /// that section's POSITION in `SettingsCatalog.sections`, which is the numbering the boundary uses
+    /// for every section-keyed door.
+    public static func groups(_ section: String, for half: Half) -> [Group] {
+        guard let position = SettingsCatalog.sections.firstIndex(where: { $0.id == section }) else { return [] }
+        let index = UInt8(position)
+        let mac = half.isMac
+        return (0..<slopdesk_settings_layout_group_count(index, mac)).compactMap { position in
+            guard let title = string({ slopdesk_settings_layout_group_title(index, mac, position, $0, $1) }),
+                  let timing = SettingsCatalog.ApplyTiming(
+                      rawValue: slopdesk_settings_layout_group_timing(index, mac, position),
+                  )
+            else { return nil }
+            return Group(
+                title: title,
+                rows: rows(index, mac, position),
+                timing: timing,
+            )
+        }
+    }
+
+    // MARK: The crossing
+
+    /// The rows of one group, read position by position.
+    private static func rows(_ section: UInt8, _ mac: Bool, _ group: Int) -> [Row] {
+        (0..<slopdesk_settings_layout_row_count(section, mac, group)).compactMap { position in
+            guard let control = control(section, mac, group, position) else { return nil }
+            let key = string { slopdesk_settings_layout_row_key(section, mac, group, position, $0, $1) } ?? ""
+            return Row(
+                key: key,
+                label: AllSettingsCatalog.entries.first { $0.key == key }?.pageLabel ?? key,
+                subtitle: string { slopdesk_settings_layout_row_subtitle(section, mac, group, position, $0, $1) } ?? "",
+                control: control,
+            )
+        }
+    }
+
+    /// One row's control: a kind, plus at most one numeric and one string payload.
+    private static func control(_ section: UInt8, _ mac: Bool, _ group: Int, _ row: Int) -> Control? {
+        let glyph = string { slopdesk_settings_layout_row_glyph(section, mac, group, row, $0, $1) }
+        let argument = slopdesk_settings_layout_row_control_argument(section, mac, group, row)
+        switch slopdesk_settings_layout_row_control(section, mac, group, row) {
+        case UInt8(SLOPDESK_SETTINGS_CONTROL_TOGGLE):
+            return glyph.map(Control.toggle(glyph:))
+        case UInt8(SLOPDESK_SETTINGS_CONTROL_MENU):
+            return SettingsCatalog.Group(rawValue: argument).map { .menu(group: $0, glyph: glyph) }
+        case UInt8(SLOPDESK_SETTINGS_CONTROL_CARDS):
+            return SettingsCatalog.Group(rawValue: argument).map { .cards(group: $0) }
+        case UInt8(SLOPDESK_SETTINGS_CONTROL_SLIDER):
+            return SettingsCatalog.Ladder(rawValue: argument).map { .slider(ladder: $0) }
+        case UInt8(SLOPDESK_SETTINGS_CONTROL_TEXT):
+            return .text(glyph: glyph)
+        case UInt8(SLOPDESK_SETTINGS_CONTROL_BESPOKE):
+            return string { slopdesk_settings_layout_row_bespoke_id(section, mac, group, row, $0, $1) }
+                .map(Control.bespoke(id:))
+        default:
+            // `SLOPDESK_SETTINGS_LAYOUT_NONE`, or a kind this build predates. Dropping the row is the
+            // honest answer: a renderer cannot invent a widget it has no case for.
+            return nil
+        }
+    }
+
+    /// Reads one delivered string, retrying at the size the door named. `nil` for a zero length, which
+    /// every door uses for "there is nothing here" — a row with no glyph, a control with no bespoke id.
+    private static func string(_ door: (UnsafeMutablePointer<UInt8>?, Int) -> Int) -> String? {
+        var out = [UInt8](repeating: 0, count: inlineCapacity)
+        var written = out.withUnsafeMutableBufferPointer { door($0.baseAddress, $0.count) }
+        guard written > 0 else { return nil }
+        if written > out.count {
+            out = [UInt8](repeating: 0, count: written)
+            written = out.withUnsafeMutableBufferPointer { door($0.baseAddress, $0.count) }
+            guard written > 0, written <= out.count else { return nil }
+        }
+        return String(bytes: out.prefix(written), encoding: .utf8)
+    }
+
+    /// Long enough for every group title and glyph; a subtitle is a sentence and overflows it, which
+    /// makes the door report its size so the reader asks again.
+    private static let inlineCapacity = 64
+}

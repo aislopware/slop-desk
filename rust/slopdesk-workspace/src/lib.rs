@@ -86,6 +86,7 @@ pub mod secrets;
 pub mod send_keys;
 pub mod session;
 pub mod settings_catalog;
+pub mod settings_layout;
 pub mod settings_rows;
 pub mod shell_quoting;
 pub mod split_layout;

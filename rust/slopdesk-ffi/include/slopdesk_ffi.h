@@ -946,6 +946,52 @@ size_t slopdesk_settings_row_index(const uint8_t *key, size_t key_len);
 // The positions a query matched, under the same retry protocol as the string doors: a return larger
 // than `cap` means nothing was written — ask again at that size.
 size_t slopdesk_settings_row_matches(const uint8_t *query, size_t query_len, size_t *out, size_t cap);
+// The label a settings PAGE shows — the page register where the row has one, the index register
+// otherwise, so a caller never has to know which rows carry an override.
+size_t slopdesk_settings_row_page_label(size_t index, uint8_t *out, size_t cap);
+
+// ---- The SHAPE of a settings page ----
+//
+// Which groups a page shows, in what order, what each row is, and — the reason this table exists —
+// which platform each of those belongs to. A platform gate is DATA here: the Mac renderer asks with
+// `mac = true` and the phone with `mac = false`, and NEITHER carries an `#if`.
+//
+// `mac` is an argument rather than the compiled slice on purpose. The xcframework is built per
+// slice, so the table could have been filtered by `cfg!` — but then "which groups does the phone
+// show" would be unanswerable on a Mac, and that is exactly what the tests on both sides ask.
+//
+// Addressing is POSITIONAL WITHIN THE FILTER: a group index selects within the page's filtered
+// list, a row index within that group's filtered rows. A phone asking for group 4 of General gets
+// its own fourth group, never a hole where a macOS-only group was.
+//
+// Control kinds, as `slopdesk_settings_layout_row_control` returns them.
+#define SLOPDESK_SETTINGS_CONTROL_TOGGLE  0
+#define SLOPDESK_SETTINGS_CONTROL_MENU    1
+#define SLOPDESK_SETTINGS_CONTROL_CARDS   2
+#define SLOPDESK_SETTINGS_CONTROL_SLIDER  3
+#define SLOPDESK_SETTINGS_CONTROL_TEXT    4
+#define SLOPDESK_SETTINGS_CONTROL_BESPOKE 5
+// What every `uint8_t` door here answers for a position that names nothing.
+#define SLOPDESK_SETTINGS_LAYOUT_NONE ((uint8_t)0xFF)
+size_t slopdesk_settings_layout_group_count(uint8_t section_index, bool mac);
+size_t slopdesk_settings_layout_group_title(uint8_t section_index, bool mac, size_t group_index,
+                                            uint8_t *out, size_t cap);
+uint8_t slopdesk_settings_layout_group_timing(uint8_t section_index, bool mac, size_t group_index);
+size_t slopdesk_settings_layout_row_count(uint8_t section_index, bool mac, size_t group_index);
+size_t slopdesk_settings_layout_row_key(uint8_t section_index, bool mac, size_t group_index,
+                                        size_t row_index, uint8_t *out, size_t cap);
+size_t slopdesk_settings_layout_row_subtitle(uint8_t section_index, bool mac, size_t group_index,
+                                             size_t row_index, uint8_t *out, size_t cap);
+size_t slopdesk_settings_layout_row_glyph(uint8_t section_index, bool mac, size_t group_index,
+                                          size_t row_index, uint8_t *out, size_t cap);
+size_t slopdesk_settings_layout_row_bespoke_id(uint8_t section_index, bool mac, size_t group_index,
+                                               size_t row_index, uint8_t *out, size_t cap);
+uint8_t slopdesk_settings_layout_row_control(uint8_t section_index, bool mac, size_t group_index,
+                                             size_t row_index);
+// The option group or scalar ladder the control draws over; which of the two follows from the kind
+// the caller has necessarily already read.
+uint8_t slopdesk_settings_layout_row_control_argument(uint8_t section_index, bool mac,
+                                                      size_t group_index, size_t row_index);
 
 // ---- What the phone's keyboard sends ----
 //

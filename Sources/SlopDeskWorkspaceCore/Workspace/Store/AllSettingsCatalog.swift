@@ -48,8 +48,14 @@ public enum AllSettingsCatalog {
         /// The monospace config key shown in the row (a ``SettingsKey`` constant, or a config-style
         /// render-pref name like `font-family` for a typed-model field).
         public let key: String
-        /// The human-readable label (search-matched).
+        /// The human-readable label as the flat INDEX shows it — standalone, and qualified where it
+        /// needs to be, because the list has no section header above it to supply the context.
+        /// Search-matched.
         public let label: String
+        /// The label a settings PAGE shows, where a header already supplies what ``label`` has to
+        /// spell out. Equal to ``label`` for most rows; the boundary folds the fallback, so this is
+        /// never empty and a renderer never has to know which rows carry an override.
+        public let pageLabel: String
         /// A one-line description (search-matched; rendered gray beneath the key).
         public let description: String
         /// The default value rendered as `· Default: …` after the description.
@@ -133,6 +139,7 @@ public enum AllSettingsCatalog {
         SettingEntry(
             key: string { slopdesk_settings_row_key(index, $0, $1) } ?? "",
             label: string { slopdesk_settings_row_label(index, $0, $1) } ?? "",
+            pageLabel: string { slopdesk_settings_row_page_label(index, $0, $1) } ?? "",
             description: string { slopdesk_settings_row_description(index, $0, $1) } ?? "",
             defaultText: string { slopdesk_settings_row_default_text(index, $0, $1) } ?? "",
             bucket: SettingEntry.Bucket(rawValue: slopdesk_settings_row_bucket(index)) ?? .advancedOnly,

@@ -52,7 +52,26 @@ pub unsafe extern "C" fn slopdesk_settings_row_key(index: usize, out: *mut c_uch
     unsafe { row_field(index, out, cap, |row| row.key) }
 }
 
-/// A row's human label.
+/// The label a settings PAGE shows for a row — the page register where it has one, the index
+/// register otherwise, so the near side never has to know which rows carry an override.
+///
+/// # Safety
+/// `(out, cap)` must be writable for `cap` bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_settings_row_page_label(
+    index: usize,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligation, restated above; `deliver` writes at most `cap`.
+    unsafe { row_field(index, out, cap, SettingRow::page_label) }
+}
+
+/// A row's human label, as the flat INDEX shows it.
 ///
 /// # Safety
 /// `(out, cap)` must be writable for `cap` bytes.

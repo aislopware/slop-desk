@@ -265,33 +265,6 @@ struct SettingsSectionContent: View {
 
 // MARK: - General section
 
-/// The General-page SECTION group headers, in render order, as a PURE source list so the body can't drift
-/// from a headless taxonomy pin (`SettingsSectionTaxonomyTests`). macOS appends **OS Integration** — the
-/// home for Default Terminal / Finder Integration / Full Disk Access (`first-launch-default-terminal.png`,
-/// `spec/getting-started__first-launch.md §2`). iOS OMITS it: the LaunchServices registration +
-/// System-Settings deep-links are `#if os(macOS)` (`DefaultTerminalIntegration`), no iOS handler.
-enum GeneralSettingsLayout {
-    static let general = "General"
-    static let closeConfirmation = "Close Confirmation"
-    static let privacyAndNewPanes = "Privacy & New Panes"
-    /// The device-local half of focus (docs/45 §8.2) — cross-platform, and the group whose DEFAULT differs
-    /// by platform, which is exactly why it needs a control on both.
-    static let sharedFocus = "Shared Focus"
-    #if os(macOS)
-    static let osIntegration = "OS Integration"
-    #endif
-
-    /// The section headers the General page renders, in order. Drives the `Section(_:)` headers below so the
-    /// pure list and the rendered Form stay in lockstep.
-    static var sectionTitles: [String] {
-        var titles = [general, closeConfirmation, privacyAndNewPanes, sharedFocus]
-        #if os(macOS)
-        titles.append(osIntegration)
-        #endif
-        return titles
-    }
-}
-
 /// General: On-Launch behaviour, the tab/window close-confirmation policies (Close Confirmation lives on
 /// the General page — `launch-option.png`), privacy (redact secrets), and the default pane kind. All
 /// fire-time `Defaults.Keys` — applied LIVE. The NOTIFICATION group is NOT here — it's under **Shell**
@@ -321,78 +294,81 @@ private struct GeneralSettingsTab: View {
 
     var body: some View {
         Form {
-            slateFormSection(GeneralSettingsLayout.general) {
-                SettingsOptionMenuRow(
-                    settingLabel(SettingsKey.onLaunchKey),
-                    subtitle: "What a cold start opens.",
-                    options: SettingsCatalog.options(.onLaunch),
-                    selection: $onLaunch,
-                )
-                timingFooter(.live)
+            ForEach(SettingsLayout.groups(SettingsSection.general.rawValue, for: .current)) { group in
+                slateFormSection(group.title) {
+                    ForEach(group.rows) { row in control(row) }
+                    timingFooter(group.timing)
+                }
             }
-
-            // The tab row drops `multiple_tabs` (a tab close loses exactly one tab, so the policy could never
-            // fire) but otherwise shares the window row's wording — `closeConfirmationTab` is a prefix of the
-            // one list, so the two rows can never describe the same policy differently.
-            slateFormSection(GeneralSettingsLayout.closeConfirmation) {
-                SettingsOptionMenuRow(
-                    "Closing a tab",
-                    subtitle: "When to ask before a tab goes away. ⌘W closes a pane and only ever asks mid-command.",
-                    options: SettingsCatalog.options(.closeConfirmationTab),
-                    selection: $closeConfirmTab,
-                )
-                SettingsOptionMenuRow(
-                    "Closing a window",
-                    subtitle: "When to ask before a window goes away.",
-                    options: SettingsCatalog.options(.closeConfirmation),
-                    selection: $closeConfirmWindow,
-                )
-                timingFooter(.live)
-            }
-
-            slateFormSection(GeneralSettingsLayout.privacyAndNewPanes) {
-                SettingsGlyphToggleRow(
-                    .eyeSlash,
-                    "Redact likely secrets from titles",
-                    "Mask token- and key-shaped runs in tab titles so a screen share can't leak them.",
-                    isOn: $redactSecrets,
-                )
-                timingFooter(.live)
-            }
-
-            sharedFocusSection
-
-            // OS Integration — macOS-only. Reuses the SAME `DefaultTerminalIntegration` actions as
-            // the first-launch sheet, so the buttons stay REACHABLE after "Skip Setup" (the bug this fixes).
-            #if os(macOS)
-            osIntegrationSection
-            #endif
         }
         .formStyle(.grouped)
+        .onAppear { refreshBespokeState() }
     }
 
-    // MARK: - Shared Focus (docs/45 §8.2 — the one device-local knob on this page)
-
-    /// Settings → General → Shared Focus. The only control over
-    /// ``DevicePreferences/followSessionFocus``, whose default is per-PLATFORM (ON macOS, OFF iOS) — so
-    /// without a row a device keeps that default forever, and the "pick up your phone without yanking the
-    /// Mac" escape hatch is unreachable in the direction you did not start in.
+    /// One row, by the setting it edits.
     ///
-    /// Not a `Defaults.Key`: the value lives in `device-prefs.json` and is written through
-    /// ``WorkspaceStore/setFollowSessionFocus(_:)``, which also drops the device-local overlay when
-    /// following resumes. Greyed with no injected store (a preview) rather than writing nowhere.
-    private var sharedFocusSection: some View {
-        slateFormSection(GeneralSettingsLayout.sharedFocus) {
+    /// This switch is what does NOT cross, and the reason is worth naming: `$onLaunch` is a `@Default`
+    /// property wrapper over `UserDefaults`, so a key can travel but a BINDING cannot. What used to be
+    /// the page — headers, order, wording, and which platform sees what — is now
+    /// `slopdesk_workspace::settings_layout`; what is left here is a binding lookup and this half's
+    /// idea of what a toggle looks like.
+    ///
+    /// A key with no arm renders NOTHING rather than a dead control, and `SettingsLayoutTests` is what
+    /// notices: it walks the same table this does.
+    @ViewBuilder
+    private func control(_ row: SettingsLayout.Row) -> some View {
+        switch row.key {
+        case SettingsKey.onLaunchKey:
+            SettingsOptionMenuRow(
+                row.label,
+                subtitle: row.subtitle,
+                options: SettingsCatalog.options(.onLaunch),
+                selection: $onLaunch,
+            )
+        case SettingsKey.closeConfirmTabKey:
+            SettingsOptionMenuRow(
+                row.label,
+                subtitle: row.subtitle,
+                options: SettingsCatalog.options(.closeConfirmationTab),
+                selection: $closeConfirmTab,
+            )
+        case SettingsKey.closeConfirmWindowKey:
+            SettingsOptionMenuRow(
+                row.label,
+                subtitle: row.subtitle,
+                options: SettingsCatalog.options(.closeConfirmation),
+                selection: $closeConfirmWindow,
+            )
+        case SettingsKey.redactSecrets:
+            SettingsGlyphToggleRow(glyph(row), row.label, row.subtitle, isOn: $redactSecrets)
+        case AllSettingsCatalog.followSessionFocusKey:
             SettingsGlyphToggleRow(
-                .viewfinder,
-                "Follow the shared focus",
-                "Switching tab or pane here moves every device that follows. Off keeps this device's view "
-                    + "to itself — the others still see where it is looking.",
+                glyph(row),
+                row.label,
+                row.subtitle,
                 isOn: SharedFocusSetting.binding(workspaceStore),
             )
             .disabled(!SharedFocusSetting.isConfigurable(workspaceStore))
-            timingFooter(.live)
+        default:
+            bespoke(row)
         }
+    }
+
+    /// The groups this page draws itself rather than describing — see `SettingsLayout.Control.bespoke`.
+    @ViewBuilder
+    private func bespoke(_ row: SettingsLayout.Row) -> some View {
+        if case let .bespoke(id) = row.control, id == "os-integration" {
+            #if os(macOS)
+            osIntegrationRows
+            #endif
+        }
+    }
+
+    /// State a bespoke group needs read at display time rather than held in a table.
+    private func refreshBespokeState() {
+        #if os(macOS)
+        isDefaultTerminal = DefaultTerminalIntegration.isDefaultTerminal()
+        #endif
     }
 
     // MARK: - OS Integration (macOS-only, reachable post-first-launch)
@@ -404,8 +380,8 @@ private struct GeneralSettingsTab: View {
     /// remote-host editor's config can't be rewritten from the client — no dead button).
     /// macOS-only.
     #if os(macOS)
-    private var osIntegrationSection: some View {
-        slateFormSection(GeneralSettingsLayout.osIntegration) {
+    private var osIntegrationRows: some View {
+        Group {
             osIntegrationRow(
                 "Default Terminal",
                 "Handle `ssh://` links and shell scripts opened from Finder or `open`.",
@@ -445,9 +421,7 @@ private struct GeneralSettingsTab: View {
                 Button("Open System Settings") { DefaultTerminalIntegration.openFullDiskAccessSettings() }
                     .buttonStyle(.bordered)
             }
-            timingFooter(.live)
         }
-        .onAppear { isDefaultTerminal = DefaultTerminalIntegration.isDefaultTerminal() }
     }
 
     /// The OS-integration row layout: a bold title + gray subtext leading, the action control trailing.

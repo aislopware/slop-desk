@@ -5125,6 +5125,55 @@ fi
 printf 'check-supervisor: a setting is named once — %s rows, and no view spells one.\n' \
   "$(printf '%s\n' "${row_labels}" | grep -c .)"
 
+# ── A platform gate on a settings page is DATA ────────────────────────────────────────────────
+# Which groups a page shows, in what order, and which platform each belongs to is
+# `slopdesk_workspace::settings_layout`. `SettingsLayout.swift` is the near side.
+layout_swift=Sources/SlopDeskClientCore/Settings/SettingsLayout.swift
+if [[ ! -e "${layout_swift}" ]]; then
+  fail "${layout_swift} is gone — a settings page would have to spell its own shape again (docs/56)"
+fi
+for door in slopdesk_settings_layout_group_count slopdesk_settings_layout_group_title \
+  slopdesk_settings_layout_group_timing slopdesk_settings_layout_row_count \
+  slopdesk_settings_layout_row_key slopdesk_settings_layout_row_subtitle \
+  slopdesk_settings_layout_row_glyph slopdesk_settings_layout_row_bespoke_id \
+  slopdesk_settings_layout_row_control slopdesk_settings_layout_row_control_argument; do
+  if ! grep -qF "${door}" "${layout_swift}"; then
+    fail "${layout_swift} stopped calling ${door} — a page shape it holds itself is a table written twice"
+  fi
+  if ! grep -qF "${door}" rust/slopdesk-ffi/include/slopdesk_ffi.h; then
+    fail "${door} is missing from slopdesk_ffi.h — Swift cannot reach a door the header does not name"
+  fi
+done
+# The point of the table is that a gate became a VALUE, so the gate must not grow back. Exactly one
+# `#if os(` may remain across the settings pages per page that has not been ported yet, and the ONE
+# in `SettingsControls.swift` — `SettingsLayout.Half.current` — is the shared target's single
+# admission that it still renders both halves. It dies when `SlopDeskMacUI` takes Settings.
+# Counted from the comment-stripped source: the note above the helper explains what it replaced by
+# quoting `#if os(macOS)`, and a gate nobody may document is a gate nobody will understand.
+half_gate=$(grep -c '^Sources/SlopDeskClientUI/Settings/SettingsControls.swift:[0-9]*:.*#if os(' \
+  <<< "${settings_view_code}" || true)
+if [[ "${half_gate}" -ne 1 ]]; then
+  fail "SettingsControls.swift carries ${half_gate} platform gates — Half.current is meant to be the only one"
+fi
+if ! grep -q 'static var current' Sources/SlopDeskClientUI/Settings/SettingsControls.swift; then
+  fail "SettingsLayout.Half.current is gone — a settings page has no way to say which half it is"
+fi
+# A ported page renders from the table, so it may not name a group header it draws.
+layout_titles=$(sed -n 's/^        title: "\(.*\)",$/\1/p' rust/slopdesk-workspace/src/settings_layout.rs)
+if [[ -z "${layout_titles}" ]]; then
+  fail "no group titles parsed out of settings_layout.rs — the ratchet below would pass by reading nothing"
+fi
+typed_titles=$(printf '%s\n' "${layout_titles}" | while IFS= read -r title; do
+  [[ -z "${title}" ]] && continue
+  grep -F "slateFormSection(\"${title}\")" <<< "${settings_view_code}" || true
+done)
+if [[ -n "${typed_titles}" ]]; then
+  printf '%s\n' "${typed_titles}" >&2
+  fail "a settings view TYPED a group header the layout table already holds — render it from the table"
+fi
+printf 'check-supervisor: a settings page is SHAPED once — %s groups crossed, one gate names the half.\n' \
+  "$(printf '%s\n' "${layout_titles}" | grep -c .)"
+
 # ── One device-panel law, two device protocols ────────────────────────────────────────────────
 # The simulator panel and the Android panel differ in almost everything and should — one rotates on
 # the client and the other on the device, one sends touches in the fitted rect's space and the other

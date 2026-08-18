@@ -63,10 +63,56 @@ import SwiftUI
 /// ("How much air each sidebar row gets."). Twenty-two of the thirty-one shared rows differ that way.
 /// Two registers, two sentences, one name.
 ///
+/// The LABEL reaches for the same distinction in the minority of rows where it needs to, which is why
+/// this reads `pageLabel` rather than `label`: under a `Close Confirmation` header the row is
+/// "Closing a tab", while the same row in a headerless list of fifty-seven keys has to say
+/// "Close Confirmation · Tab" or name nothing. The boundary folds the fallback, so most rows return
+/// the one string they have and no caller here knows which are which.
+///
 /// An unknown key answers with the key itself, which is visible on screen rather than silent — a
 /// blank row label would look like a layout bug instead of a missing table entry.
+extension SettingsLayout.Half {
+    /// The half THIS build renders.
+    ///
+    /// ONE platform gate, in ONE place, standing in for the thirty-seven that used to be threaded
+    /// through the settings pages — and it is temporary by construction: it exists only while a single
+    /// target still renders both halves. `SlopDeskMacUI` names `.mac` and `SlopDeskPhoneUI` names
+    /// `.phone`, each with no gate at all, which is the rule docs/56 §3 ratchets.
+    static var current: Self {
+        #if os(macOS)
+        .mac
+        #else
+        .phone
+        #endif
+    }
+}
+
+/// The leading SF Symbol a schema row asks for, as this half's symbol type.
+///
+/// The NAME is the table's (`eye.slash`); resolving it to a drawable is the renderer's, which is why
+/// this is here and not at the boundary — `SFSafeSymbols` is a Swift package and an `NSImage` is not a
+/// string. A row that carries no glyph falls back to a neutral dot rather than leaving a hole in the
+/// group's icon rail.
+func glyph(_ row: SettingsLayout.Row) -> SFSymbol {
+    row.control.glyphName.map(SFSymbol.init(rawValue:)) ?? .circle
+}
+
+extension SettingsLayout.Control {
+    /// The glyph name this control carries, if it carries one.
+    var glyphName: String? {
+        switch self {
+        case let .toggle(glyph): glyph
+        case let .menu(_, glyph): glyph
+        case let .text(glyph): glyph
+        case .cards,
+             .slider,
+             .bespoke: nil
+        }
+    }
+}
+
 func settingLabel(_ key: String) -> String {
-    AllSettingsCatalog.entries.first { $0.key == key }?.label ?? key
+    AllSettingsCatalog.entries.first { $0.key == key }?.pageLabel ?? key
 }
 
 // MARK: - SettingsOptionMenuRow (the same list, as a native dropdown)

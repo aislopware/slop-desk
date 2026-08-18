@@ -70,8 +70,20 @@ pub struct SettingRow {
     /// The monospace configuration key — a `SettingsKey` constant, or a config-style render-field
     /// name like `font-family` for a typed model field that is not a `UserDefaults` entry.
     pub key: &'static str,
-    /// The human label. Searched.
+    /// The human label as the flat INDEX shows it — standalone, and qualified where it needs to be,
+    /// because the all-settings list has no section header above it to supply the context.
+    /// Searched.
     pub label: &'static str,
+    /// The label a PAGE shows, where a page header already supplies what [`SettingRow::label`] has
+    /// to spell out. Empty means the two are the same string, which is the common case.
+    ///
+    /// This is the same register split as the description (see the module doc), reaching the label
+    /// for the minority of rows where it does. Under a `Close Confirmation` header,
+    /// `Close Confirmation · Tab` stutters and `Closing a tab` is the row's name; in a list of
+    /// fifty-seven keys with no header, the second one names nothing. Read it through
+    /// [`SettingRow::page_label`], never directly — a renderer that reads the field sees an empty
+    /// string for most rows.
+    pub page_label: &'static str,
     /// The one-line description, rendered under the key. Searched.
     pub description: &'static str,
     /// The default, rendered after the description.
@@ -89,6 +101,19 @@ pub struct SettingRow {
     /// to its default arm, which is a dead value label with no control, and a row NOT marked here
     /// that the switch handles is a control nobody reaches.
     pub inline_editable: bool,
+}
+
+impl SettingRow {
+    /// The label to render on a settings PAGE — the page form where the row has one, the index form
+    /// otherwise.
+    #[must_use]
+    pub const fn page_label(&self) -> &'static str {
+        if self.page_label.is_empty() {
+            self.label
+        } else {
+            self.page_label
+        }
+    }
 }
 
 /// The `follow-session-focus` default, as the slice it is compiled for reads it.
@@ -126,6 +151,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "general.onLaunch",
         label: "On Launch",
+        page_label: "",
         description: "Restore the last session or open a fresh window when the app starts.",
         default_text: "Restore Last Session",
         bucket: Bucket::AdvancedOnly,
@@ -136,6 +162,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "features.redactSecrets",
         label: "Redact Secrets",
+        page_label: "",
         description: "Mask likely secrets in window titles and notification bodies.",
         default_text: "On",
         bucket: Bucket::AdvancedOnly,
@@ -146,6 +173,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "shell.closeConfirm.tab",
         label: "Close Confirmation · Tab",
+        page_label: "Closing a tab",
         description: "When to confirm before closing a tab. ⌘W closes a pane and only asks mid-command.",
         default_text: "Running Process",
         bucket: Bucket::AdvancedOnly,
@@ -156,6 +184,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "shell.closeConfirm.window",
         label: "Close Confirmation · Window",
+        page_label: "Closing a window",
         description: "When to confirm before closing a window.",
         default_text: "Running Process",
         bucket: Bucket::AdvancedOnly,
@@ -166,6 +195,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "follow-session-focus",
         label: "Follow the Shared Focus",
+        page_label: "",
         description: "Whether switching tab or pane on this device moves every device that follows, or only \
                       this one's own view.",
         default_text: FOLLOW_SESSION_FOCUS_DEFAULT,
@@ -177,6 +207,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "notifications.osc",
         label: "Explicit Notifications",
+        page_label: "",
         description: "Post OSC 9 / OSC 777 notifications emitted by the terminal.",
         default_text: "On",
         bucket: Bucket::AdvancedOnly,
@@ -187,6 +218,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "notifications.longCommand",
         label: "Long-Command Notification",
+        page_label: "",
         description: "Notify when a long-running command finishes in an unfocused pane.",
         default_text: "On",
         bucket: Bucket::AdvancedOnly,
@@ -197,6 +229,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "notifications.onFinish",
         label: "Notify on Command Finish",
+        page_label: "",
         description: "Notify when a background command finishes.",
         default_text: "Off",
         bucket: Bucket::AdvancedOnly,
@@ -207,6 +240,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "notifications.onError",
         label: "Notify on Error Exit",
+        page_label: "",
         description: "Notify when a command fails (exits non-zero).",
         default_text: "On",
         bucket: Bucket::AdvancedOnly,
@@ -217,6 +251,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "notifications.onWatchFinish",
         label: "Notify on Watch Finish",
+        page_label: "",
         description: "Notify when an `slopdesk watch`-wrapped command finishes.",
         default_text: "On",
         bucket: Bucket::AdvancedOnly,
@@ -227,6 +262,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "notifications.whileForeground",
         label: "Notify While Foreground",
+        page_label: "",
         description: "Banner behavior while the app is the foreground app — off, always, or only when the \
                       source tab is unfocused.",
         default_text: "Off",
@@ -238,6 +274,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "notifications.bounceDock",
         label: "Bounce Dock Icon",
+        page_label: "",
         description: "Bounce the Dock icon when a notification arrives and the app isn't focused.",
         default_text: "On",
         bucket: Bucket::AdvancedOnly,
@@ -248,6 +285,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "notifications.soundShellControlled",
         label: "Sound — Shell Controlled",
+        page_label: "",
         description: "Let shell apps ring the terminal bell (BEL) as the system alert sound.",
         default_text: "On",
         bucket: Bucket::AdvancedOnly,
@@ -258,6 +296,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "notifications.soundOnErrorExit",
         label: "Sound on Error Exit",
+        page_label: "",
         description: "Beep when a command exits non-zero (requires shell integration).",
         default_text: "Off",
         bucket: Bucket::AdvancedOnly,
@@ -268,6 +307,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "notifications.agentTaskComplete",
         label: "Code Agent — Notify When Task Completes",
+        page_label: "",
         description: "Notify when a coding agent finishes a task and goes idle.",
         default_text: "On",
         bucket: Bucket::AdvancedOnly,
@@ -278,6 +318,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "notifications.agentAwaitInput",
         label: "Code Agent — Notify When Awaiting Input",
+        page_label: "",
         description: "Notify when a coding agent needs approval or input.",
         default_text: "On",
         bucket: Bucket::AdvancedOnly,
@@ -288,6 +329,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "notifications.agentSoundTaskComplete",
         label: "Code Agent — Sound When Task Completes",
+        page_label: "",
         description: "Play a sound when a coding agent finishes in an unfocused pane.",
         default_text: "On",
         bucket: Bucket::AdvancedOnly,
@@ -298,6 +340,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "notifications.agentSoundAwaitInput",
         label: "Code Agent — Sound When Awaiting Input",
+        page_label: "",
         description: "Play a sound when a coding agent needs approval or input.",
         default_text: "On",
         bucket: Bucket::AdvancedOnly,
@@ -308,6 +351,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "shell.workingDirectory.newWindow",
         label: "Working Directory · New Window",
+        page_label: "",
         description: "Where a new window opens — the home directory or the active pane's directory.",
         default_text: "Home Directory",
         bucket: Bucket::AdvancedOnly,
@@ -318,6 +362,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "shell.workingDirectory.newTab",
         label: "Working Directory · New Tab",
+        page_label: "",
         description: "Where a new tab opens — the home directory or the active pane's directory.",
         default_text: "Same as Current",
         bucket: Bucket::AdvancedOnly,
@@ -328,6 +373,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "shell.workingDirectory.newSplit",
         label: "Working Directory · New Split",
+        page_label: "",
         description: "Where a new split opens — the home directory or the active pane's directory.",
         default_text: "Same as Current",
         bucket: Bucket::AdvancedOnly,
@@ -338,6 +384,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "controls.paneSwitcherPreview",
         label: "Preview While Switching Panes",
+        page_label: "",
         description: "As ⌃⇥ walks the pane list, show each pane underneath the switcher.",
         default_text: "On",
         bucket: Bucket::AdvancedOnly,
@@ -348,6 +395,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "controls.copyOnSelect",
         label: "Copy on Select",
+        page_label: "",
         description: "Copy the selection to the pasteboard as soon as it is made.",
         default_text: "Off",
         bucket: Bucket::AdvancedOnly,
@@ -358,6 +406,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "controls.trimTrailingSpaces",
         label: "Trim Trailing Spaces on Copy",
+        page_label: "",
         description: "Strip trailing whitespace from each copied line.",
         default_text: "On",
         bucket: Bucket::AdvancedOnly,
@@ -368,6 +417,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "controls.pasteProtection",
         label: "Paste Protection",
+        page_label: "",
         description: "Warn before pasting text that contains a newline or control character.",
         default_text: "On",
         bucket: Bucket::AdvancedOnly,
@@ -378,6 +428,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "controls.mouseHideWhileTyping",
         label: "Hide Mouse While Typing",
+        page_label: "",
         description: "Hide the pointer while typing into a pane.",
         default_text: "On",
         bucket: Bucket::AdvancedOnly,
@@ -388,6 +439,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "controls.focusFollowsMouse",
         label: "Focus Follows Mouse",
+        page_label: "",
         description: "Focus the pane the pointer is over without a click.",
         default_text: "Off",
         bucket: Bucket::AdvancedOnly,
@@ -398,6 +450,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "controls.scrollMultiplier",
         label: "Scroll Multiplier",
+        page_label: "",
         description: "Multiply the scroll-wheel delta.",
         default_text: "1.00×",
         bucket: Bucket::AdvancedOnly,
@@ -408,6 +461,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "controls.clearSelectionOnTyping",
         label: "Clear Selection on Typing",
+        page_label: "",
         description: "Clear the selection when the user starts typing.",
         default_text: "On",
         bucket: Bucket::AdvancedOnly,
@@ -418,6 +472,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "controls.clearSelectionOnCopy",
         label: "Clear Selection on Copy",
+        page_label: "",
         description: "Clear the selection after an explicit copy.",
         default_text: "Off",
         bucket: Bucket::AdvancedOnly,
@@ -428,6 +483,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "controls.shiftArrowSelect",
         label: "Shift+Arrow Select",
+        page_label: "",
         description: "Use Shift+arrows to drive native selection instead of forwarding arrow escapes.",
         default_text: "On",
         bucket: Bucket::AdvancedOnly,
@@ -438,6 +494,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "controls.pasteBracketedSafe",
         label: "Paste Bracketed Safe",
+        page_label: "",
         description: "Treat a bracketed paste as safe, skipping the warning when the program supports it.",
         default_text: "On",
         bucket: Bucket::AdvancedOnly,
@@ -448,6 +505,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "controls.clipboardRead",
         label: "Clipboard Read (OSC 52)",
+        page_label: "",
         description: "Whether a program may READ the clipboard via OSC 52.",
         default_text: "Ask",
         bucket: Bucket::AdvancedOnly,
@@ -458,6 +516,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "controls.clipboardWrite",
         label: "Clipboard Write (OSC 52)",
+        page_label: "",
         description: "Whether a program may WRITE the clipboard via OSC 52.",
         default_text: "Allow",
         bucket: Bucket::AdvancedOnly,
@@ -468,6 +527,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "controls.allowMouseCapture",
         label: "Allow Mouse Capture",
+        page_label: "",
         description: "Allow shell apps to capture mouse events (e.g. vim, tmux).",
         default_text: "On",
         bucket: Bucket::AdvancedOnly,
@@ -478,6 +538,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "controls.allowShiftClick",
         label: "Allow Shift with Mouse Click",
+        page_label: "",
         description: "Hold Shift to select text even when the running app captures the mouse.",
         default_text: "On",
         bucket: Bucket::AdvancedOnly,
@@ -488,6 +549,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "controls.clickToMove",
         label: "Cursor Click-to-Move",
+        page_label: "",
         description: "Click in the prompt to move the shell cursor, across soft-wrapped rows.",
         default_text: "On",
         bucket: Bucket::AdvancedOnly,
@@ -498,6 +560,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "controls.undoAtPrompt",
         label: "Undo at Prompt",
+        page_label: "",
         description: "Cmd-Z at the shell prompt emits the readline undo sequence.",
         default_text: "On",
         bucket: Bucket::AdvancedOnly,
@@ -508,6 +571,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "controls.rightClickAction",
         label: "Right-Click Action",
+        page_label: "",
         description: "What right-click does in the viewport (Ctrl+right-click always opens the menu).",
         default_text: "Context Menu",
         bucket: Bucket::AdvancedOnly,
@@ -518,6 +582,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "controls.optionAsAlt",
         label: "Option as Alt",
+        page_label: "",
         description: "Treat the macOS Option key as Alt/Meta so terminal apps see Esc-prefixed sequences; \
                       off keeps Option free for accented characters.",
         default_text: "Off",
@@ -529,6 +594,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "controls.linkDetection",
         label: "Detect Links & Paths",
+        page_label: "",
         description: "Detect paths and URLs in terminal output and underline them on Cmd-hover.",
         default_text: "On",
         bucket: Bucket::AdvancedOnly,
@@ -539,6 +605,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "controls.linkCmdClick",
         label: "Cmd-Click on Link",
+        page_label: "",
         description: "What Cmd+click on a detected link does — open in the best handler, copy, or nothing.",
         default_text: "Open",
         bucket: Bucket::AdvancedOnly,
@@ -549,6 +616,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "controls.linkCmdShiftClick",
         label: "Cmd-Shift-Click on Link",
+        page_label: "",
         description: "What Cmd+Shift+click on a detected link does — reveal on the host, or open with the \
                       system default.",
         default_text: "Reveal in Finder",
@@ -560,6 +628,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "controls.autoDetectLinkSchemes",
         label: "Auto-Detect Link Schemes",
+        page_label: "",
         description: "Which URL schemes are underlined and clickable. All detects any scheme://; Custom \
                       restricts to your list. http(s), file, and mailto are always detected.",
         default_text: "All",
@@ -571,6 +640,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "controls.customLinkSchemes",
         label: "Custom Link Schemes",
+        page_label: "",
         description: "Extra URL schemes to detect when Auto-Detect is set to Custom (e.g. codex, ssh, \
                       vscode).",
         default_text: "None",
@@ -582,6 +652,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "controls.titleShellControlled",
         label: "Title — Shell Controlled",
+        page_label: "",
         description: "Allow programs to set the tab and window title via OSC 0 / OSC 2.",
         default_text: "On",
         bucket: Bucket::AdvancedOnly,
@@ -592,6 +663,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "controls.clipboardShellControlled",
         label: "Clipboard — Shell Controlled",
+        page_label: "",
         description: "Master switch for OSC 52 clipboard access. When off, both clipboard read and write \
                       are denied regardless of the per-direction setting.",
         default_text: "On",
@@ -603,6 +675,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "shell.newTabPosition",
         label: "New Tab Position",
+        page_label: "",
         description: "Where a new tab is inserted in the active session's tab bar.",
         default_text: "Automatic",
         bucket: Bucket::AdvancedOnly,
@@ -613,6 +686,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "appearance.dockIconAnimateProgress",
         label: "Animate Dock Icon During Progress",
+        page_label: "",
         description: "Animate the macOS Dock icon while any session reports OSC 9;4 progress.",
         default_text: "Off",
         bucket: Bucket::HasDedicatedTab,
@@ -623,6 +697,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "appearance.dockIconErrorBadge",
         label: "Red Icon on Error",
+        page_label: "",
         description: "Tint the macOS Dock icon red on a non-zero exit; clicking jumps to the next failing \
                       tab.",
         default_text: "On",
@@ -634,6 +709,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "features.recordClipboardHistory",
         label: "Record Clipboard History",
+        page_label: "",
         description: "Archive copied text into the clipboard-history ring.",
         default_text: "On",
         bucket: Bucket::AdvancedOnly,
@@ -644,6 +720,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "font-family",
         label: "Font Family",
+        page_label: "",
         description: "The terminal font family.",
         default_text: "SF Mono",
         bucket: Bucket::HasDedicatedTab,
@@ -654,6 +731,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "font-size",
         label: "Font Size",
+        page_label: "",
         description: "The terminal font point size.",
         default_text: "13",
         bucket: Bucket::HasDedicatedTab,
@@ -664,6 +742,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "scrollback-limit",
         label: "Scrollback Lines",
+        page_label: "",
         description: "The terminal scrollback buffer size, in lines.",
         default_text: "10000",
         bucket: Bucket::HasDedicatedTab,
@@ -674,6 +753,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "cursor-style",
         label: "Cursor Style",
+        page_label: "",
         description: "The terminal cursor style.",
         default_text: "Block",
         bucket: Bucket::HasDedicatedTab,
@@ -684,6 +764,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "cursor-style-blink",
         label: "Cursor Blink",
+        page_label: "",
         description: "Whether the terminal cursor blinks. Default defers to DEC mode 12.",
         default_text: "Default",
         bucket: Bucket::HasDedicatedTab,
@@ -694,6 +775,7 @@ pub const ROWS: &[SettingRow] = &[
     SettingRow {
         key: "appearance.density",
         label: "Density",
+        page_label: "",
         description: "The UI density tier.",
         default_text: "Comfortable",
         bucket: Bucket::HasDedicatedTab,
@@ -751,6 +833,40 @@ impl SettingRow {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A page label that repeats the index label is noise: `page_label()` already falls back, so
+    /// the only reason to set the field is that the two registers really differ. This keeps the
+    /// exceptions countable — and countable is the whole point, since every one of them is a place
+    /// two strings can drift.
+    #[test]
+    fn a_page_label_exists_only_where_it_differs() {
+        let overrides: Vec<_> = ROWS.iter().filter(|row| !row.page_label.is_empty()).collect();
+        for row in &overrides {
+            assert_ne!(
+                row.page_label, row.label,
+                "{} sets a page label identical to its index label — drop the field and let it fall back",
+                row.key,
+            );
+        }
+        assert_eq!(
+            overrides.len(),
+            2,
+            "the rows whose page register differs from their index register: {:?}",
+            overrides.iter().map(|row| row.key).collect::<Vec<_>>(),
+        );
+    }
+
+    /// The fallback is the whole contract: every row has a page label, whether or not it set one.
+    #[test]
+    fn every_row_has_a_page_label() {
+        for row in ROWS {
+            assert!(
+                !row.page_label().is_empty(),
+                "{} renders nameless on a page",
+                row.key
+            );
+        }
+    }
 
     #[test]
     fn every_key_is_unique() {

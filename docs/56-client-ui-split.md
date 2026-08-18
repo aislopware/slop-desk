@@ -801,3 +801,49 @@ for a phone (docs/45 §8.2), and each side decides it independently — Swift on
 per SLICE, so the Rust constant is a property of the artifact and the Swift one a property of the
 compile. They can only disagree if those two come apart, which no compile-time check on either side
 can see, so `testTheSharedFocusRowPrintsTheDefaultTheResetRestores` asserts it at runtime.
+
+### Increment 19 — a platform gate is data
+
+The macOS Settings window is the largest surface still waiting on stage D, and the thing standing in
+its way was not its size. It was that 2100 lines of `body` carried **thirty-seven `#if os(macOS)`
+directives**, and stage D's rule is that `SlopDeskMacUI` may not carry one. Rewriting that page in
+AppKit meant deciding, thirty-seven times, what each gate had been for — with no way to check the
+answer, because a preprocessor directive has no runtime form. Nobody could ask how many there were,
+which groups they hid, or whether the phone was missing something it should have had.
+
+Every one of them was a FACT ABOUT A GROUP wearing a compiler directive's clothes: there is no Dock
+on iOS, no `LaunchServices` deep-link, no `NSSound`. `rust/slopdesk-workspace/src/settings_layout.rs`
+makes that fact a `Platform` field. `groups(section, mac)` filters by the half that asked, so the Mac
+renderer asks with `mac = true`, the phone with `mac = false`, and **neither carries a gate**. The
+table also holds what a page IS — the group headers, their order, each group's apply-timing footer,
+each row's subtitle and which widget KIND it draws — because once the shape is being described
+anyway, leaving half of it in a view body would just be the same drift with fewer places to look.
+
+`mac` is an ARGUMENT rather than the compiled slice, and that is the whole payoff. The xcframework is
+built per slice, so the table could have been filtered by `cfg!` for free — but then "which groups
+does the phone show" would still have no runtime form, and the property would have been given away
+again at the last moment. `SettingsLayoutTests.testAskingAsEachHalfFromOneProcessGivesTwoPages` is
+the assertion that could not previously be written: one process, two pages. The test it replaces
+(`testGeneralPageSurfacesOSIntegrationOnMacOSOnly`) had an `#if os(macOS)` down its middle, so its
+iOS expectation was dead text in every macOS run.
+
+WHAT STAYS IN EACH RENDERER, and it is two things. A row carries a KEY but not a BINDING —
+`@Default(.onLaunch)` is a Swift property wrapper over `UserDefaults` — so key → binding is a `switch`
+in each half, the same shape `AllSettingsListView.inlineControl(for:)` already had. And a `Control`
+names a widget KIND, never a widget: what a toggle looks like is the half's own business, which is
+the point of splitting them. The General page is the first ported, and its `body` went from five
+hand-written `Section`s with three gates to a `ForEach` over the table.
+
+A LABEL FOUND A SECOND REGISTER. Increment 18 said a row's label is one string; the General page
+proved that too strong, and the counter-example is exact. Under a `Close Confirmation` header the row
+is "Closing a tab"; in a headerless list of fifty-seven keys the same row must say "Close Confirmation
+· Tab" or name nothing at all. So `SettingRow` gains `page_label`, empty for all but two rows, folded
+by `page_label()` so no renderer knows which are which — the same index-vs-page split the description
+already had, reaching the label only where it must. `a_page_label_exists_only_where_it_differs` pins
+the count, because every override is a place two strings can drift.
+
+ONE GATE IS LEFT, on purpose. `SettingsLayout.Half.current` is a single `#if os(macOS)` in
+`SettingsControls.swift`, and it exists only while one target still renders both halves; it dies when
+`SlopDeskMacUI` takes Settings, at which point each shell names its own half. `check-supervisor`
+ratchets that it stays exactly one, that the ten layout doors are called by the near side and named by
+the header, and that no view types a group header the table already holds.

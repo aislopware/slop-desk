@@ -57,39 +57,11 @@ final class SettingsSectionTaxonomyTests: XCTestCase {
     /// The General page surfaces an **OS Integration** group on macOS — the reachable,
     /// post-first-launch home for Default Terminal / Finder Integration / Full Disk Access (governing
     /// screenshot `first-launch-default-terminal.png`, `spec/getting-started__first-launch.md §2`). Without
-    /// it, these actions live ONLY in the one-time first-launch sheet, so a user who clicks "Skip Setup"
-    /// can never reach "Set as Default Terminal" again. Pinned against an INDEPENDENT expectation (not the
-    /// helper's own derivation): macOS shows the groups in order with OS Integration last; iOS omits it
-    /// (the LaunchServices + System-Settings deep-links are `#if os(macOS)`). Reverting the
-    /// `titles.append(osIntegration)` line fails the macOS branch.
-    ///
-    /// **Shared Focus** is CROSS-PLATFORM and therefore in both lists: it is the only control over
-    /// `DevicePreferences.followSessionFocus` (docs/45 §8.2), whose default differs BY platform (ON macOS /
-    /// OFF iOS) — so a device that cannot reach it keeps its default forever, and the escape hatch is
-    /// unreachable in the direction that device did not start in. Dropping it from either platform fails
-    /// here.
-    func testGeneralPageSurfacesOSIntegrationOnMacOSOnly() {
-        let titles = GeneralSettingsLayout.sectionTitles
-        #if os(macOS)
-        XCTAssertEqual(
-            titles,
-            ["General", "Close Confirmation", "Privacy & New Panes", "Shared Focus", "OS Integration"],
-            "macOS General page must home the OS Integration group (E20 M1) so it is reachable post-first-launch",
-        )
-        XCTAssertEqual(GeneralSettingsLayout.osIntegration, "OS Integration")
-        #else
-        XCTAssertEqual(
-            titles,
-            ["General", "Close Confirmation", "Privacy & New Panes", "Shared Focus"],
-            "iOS omits OS Integration — no LaunchServices / System-Settings handler",
-        )
-        XCTAssertFalse(titles.contains("OS Integration"), "OS Integration is macOS-only")
-        #endif
-        XCTAssertTrue(
-            titles.contains("Shared Focus"),
-            "both platforms must reach the follow-the-shared-focus control (docs/45 §8.2 defaults differ)",
-        )
-    }
+    /// The General page's platform difference — macOS shows OS Integration, iOS omits it — used to be
+    /// pinned here, against `GeneralSettingsLayout.sectionTitles` under an `#if os(macOS)`. It moved to
+    /// `SettingsLayoutTests` with the table it describes, and got stronger doing it: a `#if` can only
+    /// assert about the half that COMPILED, so the iOS expectation in a macOS test run was dead text.
+    /// The table takes the half as an argument, so one process now checks both.
 
     /// The compact sheet's list is the taxonomy MINUS what needs a Mac, and the `isMacOSOnly` flag has to
     /// survive the crossing for that subtraction to happen at all — a door that answered `false` for every

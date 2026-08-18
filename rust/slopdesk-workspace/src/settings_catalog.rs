@@ -390,6 +390,15 @@ impl ApplyTiming {
         }
     }
 
+    /// The case index a timing crosses as — the inverse of [`ApplyTiming::from_index`].
+    #[must_use]
+    pub const fn index(self) -> u8 {
+        match self {
+            Self::Live => 0,
+            Self::Reconnect => 1,
+        }
+    }
+
     /// The timing a case index names.
     #[must_use]
     pub const fn from_index(index: u8) -> Option<Self> {
