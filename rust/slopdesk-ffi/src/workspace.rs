@@ -1511,6 +1511,52 @@ pub extern "C" fn slopdesk_ws_divider_clamped_weight(handle: DividerHandle, prop
     handle.resolve().clamped_leading_weight(proposed)
 }
 
+/// One incremental pixel drag along `handle`'s axis, as the flex-weight delta to offset from.
+///
+/// The seam's own span and flex sum are already inside the handle, so a caller cannot pair one
+/// split's span with another's partition. A handle without geometry answers `0`.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_ws_divider_weight_delta(handle: DividerHandle, pixel_increment: f64) -> f64 {
+    handle.resolve().weight_delta(pixel_increment)
+}
+
+/// The live drag's ratio readout: the pair as whole percentages that sum to exactly 100.
+///
+/// `false` is a degenerate pair — a fixed side, or float residue — and then neither out-param is
+/// touched: the readout is ABSENT rather than wrong. The two percentages cross as two numbers
+/// rather than one plus a complement, so no caller can round the second one itself.
+///
+/// # Safety
+/// `leading` and `trailing` must each be null or point to one writable `u32`, live for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_ws_divider_percents(
+    handle: DividerHandle,
+    leading: *mut u32,
+    trailing: *mut u32,
+) -> bool {
+    let Some((lead, trail)) = handle.resolve().split_percents() else {
+        return false;
+    };
+    // SAFETY: the caller's obligations, restated above.
+    unsafe {
+        if !leading.is_null() {
+            leading.write(lead);
+        }
+        if !trailing.is_null() {
+            trailing.write(trail);
+        }
+    }
+    true
+}
+
 // MARK: The tree's own operations
 //
 // Every one of these ANSWERS a tree, so the walk crosses in both directions. The encoder below is
@@ -3077,11 +3123,11 @@ mod tests {
     use super::{
         CRect, CVideoTarget, DividerHandle, Frame, KeyedTab, Span, TreeNode, Uuid, decode_tree, encode_tree,
         slopdesk_ws_decode_video_target, slopdesk_ws_divider_can_move, slopdesk_ws_divider_clamped_weight,
-        slopdesk_ws_divider_thickness, slopdesk_ws_dividers, slopdesk_ws_encode_video_target,
-        slopdesk_ws_focus_cycle, slopdesk_ws_focus_neighbor, slopdesk_ws_project_key,
-        slopdesk_ws_section_header, slopdesk_ws_section_precedes, slopdesk_ws_send_keys,
-        slopdesk_ws_solve_layout, slopdesk_ws_successor_after_close, slopdesk_ws_tree_removing,
-        slopdesk_ws_tree_splitting,
+        slopdesk_ws_divider_percents, slopdesk_ws_divider_thickness, slopdesk_ws_divider_weight_delta,
+        slopdesk_ws_dividers, slopdesk_ws_encode_video_target, slopdesk_ws_focus_cycle,
+        slopdesk_ws_focus_neighbor, slopdesk_ws_project_key, slopdesk_ws_section_header,
+        slopdesk_ws_section_precedes, slopdesk_ws_send_keys, slopdesk_ws_solve_layout,
+        slopdesk_ws_successor_after_close, slopdesk_ws_tree_removing, slopdesk_ws_tree_splitting,
     };
 
     const fn id(byte: u8) -> Uuid {
@@ -3409,6 +3455,24 @@ mod tests {
         assert_eq!(slopdesk_ws_divider_clamped_weight(seam, 0.0), 0.8);
         assert_eq!(slopdesk_ws_divider_clamped_weight(seam, 9.0), 1.2);
         assert_eq!(slopdesk_ws_divider_thickness(), 16.0);
+        // The drag reads the seam's OWN span and flex sum out of the handle it was given: 120 px
+        // over 400 pt at a flex sum of 2 is 0.6 of weight, which renders as 120 pt of movement.
+        assert_eq!(slopdesk_ws_divider_weight_delta(seam, 120.0), 0.6);
+
+        let (mut lead, mut trail) = (0, 0);
+        // SAFETY: two live local u32s, borrowed for the duration of the call.
+        let readable = unsafe { slopdesk_ws_divider_percents(seam, &raw mut lead, &raw mut trail) };
+        assert!(readable);
+        assert_eq!((lead, trail), (50, 50));
+
+        let fixed_side = DividerHandle {
+            leading_weight: 0.0,
+            ..seam
+        };
+        // SAFETY: the same two locals, still live.
+        let absent = unsafe { slopdesk_ws_divider_percents(fixed_side, &raw mut lead, &raw mut trail) };
+        assert!(!absent, "a fixed side has no ratio to read");
+        assert_eq!((lead, trail), (50, 50), "a refusal writes nothing");
     }
 
     #[test]

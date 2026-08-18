@@ -4472,6 +4472,27 @@ if spells 'dwellSeconds *[:=] *0\.5|revealZonePoints *[:=] *2\b' Sources/SlopDes
 fi
 printf 'check-supervisor: one dwell decides who owns the top edge.\n'
 
+# ── One pixel→weight conversion, and the seam owns it ─────────────────────────────────────────
+# `Δweight = Δpixel / parent_span * flex_sum` is the inverse of the partition the solver tiles with,
+# so it can only be right against the seam's OWN span and flex sum. Written out anywhere else it
+# takes those from whatever is in scope — which is how the seam came to trail the cursor at half
+# speed. It lives on `SplitDividerHandle` now, sourced from `slopdesk_workspace::split_layout`, and
+# nothing else — not a view, not a test helper — may spell the formula again.
+if ! grep -q 'slopdesk_ws_divider_weight_delta' Sources/SlopDeskWorkspaceModel/Domain/Tree/SplitLayoutSolver.swift; then
+  fail "SplitDividerHandle stopped calling slopdesk_ws_divider_weight_delta — the seam trails the cursor"
+fi
+if ! grep -q 'slopdesk_ws_divider_percents' Sources/SlopDeskWorkspaceModel/Domain/Tree/SplitLayoutSolver.swift; then
+  fail "SplitDividerHandle stopped calling slopdesk_ws_divider_percents — the ratio readout has two answers"
+fi
+# shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
+drag_dupes=$(spells 'Double\(span\)|/ *Double\(.*[Ss]pan\)|axisSpan|PaneMath' \
+  $(repo_files 'Sources/**/*.swift' 'Tests/**/*.swift') 2> /dev/null || true)
+if [[ -n "${drag_dupes}" ]]; then
+  printf '%s\n' "${drag_dupes}" >&2
+  fail "the pixel→weight conversion grew back in Swift — SplitDividerHandle.weightDelta is the one"
+fi
+printf 'check-supervisor: one pixel-to-weight conversion, and the seam owns it.\n'
+
 # ── One device-panel law, two device protocols ────────────────────────────────────────────────
 # The simulator panel and the Android panel differ in almost everything and should — one rotates on
 # the client and the other on the device, one sends touches in the fitted rect's space and the other

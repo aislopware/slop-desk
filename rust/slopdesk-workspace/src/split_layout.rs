@@ -243,6 +243,59 @@ impl Divider {
         }
     }
 
+    /// An incremental pixel drag along this seam's axis, as a flex-weight delta.
+    ///
+    /// A flex child's on-screen extent is `span * weight / flex_sum` — see [`extents`] — so moving
+    /// the seam by Δpixels needs `Δweight = Δpixel / span * flex_sum`. Without the `flex_sum`
+    /// factor a 50/50 split (`flex_sum == 2`) tracks at HALF cursor speed, and a nested split —
+    /// smaller span, same flex sum — under-tracks further.
+    ///
+    /// The seam carries its OWN span and flex sum, so the conversion can never be run against
+    /// another split's partition. A handle without geometry answers `0`: the drag then sends
+    /// nothing rather than a number derived from a division by zero.
+    #[must_use]
+    pub fn weight_delta(self, pixel_increment: f64) -> f64 {
+        if !self.parent_span.is_finite()
+            || self.parent_span <= 0.0
+            || !self.flex_sum.is_finite()
+            || self.flex_sum <= 0.0
+            || !pixel_increment.is_finite()
+        {
+            return 0.0;
+        }
+        pixel_increment / self.parent_span * self.flex_sum
+    }
+
+    /// The live drag's ratio readout: the pair as whole percentages that sum to exactly 100.
+    ///
+    /// The trailing side is the COMPLEMENT of the rounded leading side, so the pair can never read
+    /// `62 · 39`. A degenerate pair — a `Fixed` side reports weight `0`, or float residue — answers
+    /// `None`, and the cue is then absent rather than wrong.
+    ///
+    /// Weight ratio equals on-screen extent ratio, since both sides share the same
+    /// `span / flex_sum` factor, so these percentages are the pixel truth and not an approximation
+    /// of it.
+    #[must_use]
+    pub fn split_percents(self) -> Option<(u32, u32)> {
+        let (leading, trailing) = (self.leading_weight, self.trailing_weight);
+        if !leading.is_finite() || !trailing.is_finite() || leading <= 0.0 || trailing <= 0.0 {
+            return None;
+        }
+        let sum = leading + trailing;
+        if sum <= 0.0 {
+            return None;
+        }
+        // Separate divide and multiply, never fused — the readout must round the way the tests read.
+        let lead = (leading / sum * 100.0).round().clamp(0.0, 100.0);
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "clamped to 0..=100 on the line above, and `round` left no fraction"
+        )]
+        let lead = lead as u32;
+        Some((lead, 100 - lead))
+    }
+
     /// A live drag's proposed leading weight, clamped so the pair keeps its pixel floor.
     ///
     /// The tree's own floor is RELATIVE, so on a wide parent it alone lets a drag squash a pane to
@@ -728,6 +781,47 @@ mod tests {
             0.001,
             "without geometry the proposal passes through to the tree's own floor",
         );
+    }
+
+    #[test]
+    fn a_drag_moves_the_seam_one_to_one_with_the_cursor() {
+        // A 50/50 top-level split over 800 pt: flex sum 2, so 120 px of cursor is 0.3 of weight, and
+        // the leading child's extent moves 0.3 / 2 * 800 = 120 pt. Drop the flex-sum factor and it
+        // moves 60 — the seam trailing the cursor at half speed, which is what this pins.
+        let top = seam(1.0, 1.0, 800.0);
+        let delta = top.weight_delta(120.0);
+        assert_eq!(delta, 0.3);
+        assert_eq!(delta / top.flex_sum * top.parent_span, 120.0);
+
+        // A NESTED split is narrower with the same flex sum, and tracks 1:1 only because the seam
+        // carries its OWN span: 120 px over 400 pt is twice the weight.
+        assert_eq!(seam(1.0, 1.0, 400.0).weight_delta(120.0), 0.6);
+    }
+
+    #[test]
+    fn a_seam_without_geometry_converts_nothing_rather_than_dividing_by_zero() {
+        assert_eq!(seam(1.0, 1.0, 0.0).weight_delta(120.0), 0.0);
+        assert_eq!(seam(1.0, 1.0, f64::NAN).weight_delta(120.0), 0.0);
+        assert_eq!(seam(0.0, 0.0, 800.0).weight_delta(120.0), 0.0, "a zero flex sum");
+        assert_eq!(seam(1.0, 1.0, 800.0).weight_delta(f64::INFINITY), 0.0);
+    }
+
+    #[test]
+    fn the_readout_pair_always_sums_to_exactly_a_hundred() {
+        assert_eq!(seam(1.0, 1.0, 800.0).split_percents(), Some((50, 50)));
+        // A third rounds to 33; the trailing side is the COMPLEMENT of that, never rounded on its
+        // own — 62.5 · 37.5 would independently round to 63 · 38 and read as 101.
+        assert_eq!(seam(1.0, 2.0, 800.0).split_percents(), Some((33, 67)));
+        assert_eq!(seam(62.5, 37.5, 800.0).split_percents(), Some((63, 37)));
+    }
+
+    #[test]
+    fn a_degenerate_pair_shows_no_ratio_at_all() {
+        // Absent rather than wrong: a `Fixed` side reports weight 0, and float residue never renders.
+        assert_eq!(seam(0.0, 1.0, 800.0).split_percents(), None);
+        assert_eq!(seam(1.0, 0.0, 800.0).split_percents(), None);
+        assert_eq!(seam(f64::NAN, 1.0, 800.0).split_percents(), None);
+        assert_eq!(seam(f64::INFINITY, 1.0, 800.0).split_percents(), None);
     }
 
     #[test]

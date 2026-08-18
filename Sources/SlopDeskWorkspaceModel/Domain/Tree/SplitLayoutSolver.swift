@@ -185,6 +185,24 @@ public struct SplitDividerHandle: Equatable, Sendable {
         slopdesk_ws_divider_clamped_weight(ffi, proposed)
     }
 
+    /// One incremental pixel drag along this seam's axis, as the weight delta to offset from:
+    /// `Δpixel / parentSpan * flexSum`, the inverse of a flex child's `extent = weight/flexSum·span`.
+    /// The seam's own span and flex sum come from the handle, so the seam tracks the cursor 1:1 in a
+    /// nested split as well as a top-level one. A handle without geometry answers 0.
+    public func weightDelta(pixelIncrement: CGFloat) -> Double {
+        slopdesk_ws_divider_weight_delta(ffi, Double(pixelIncrement))
+    }
+
+    /// The live drag's ratio readout (`62 · 38`): the pair as whole percentages summing to exactly
+    /// 100, or `nil` for a degenerate pair (a `.fixed` side reports weight 0) — the cue is then
+    /// absent, never wrong.
+    public var splitPercents: (leading: Int, trailing: Int)? {
+        var leading: UInt32 = 0
+        var trailing: UInt32 = 0
+        guard slopdesk_ws_divider_percents(ffi, &leading, &trailing) else { return nil }
+        return (Int(leading), Int(trailing))
+    }
+
     /// A **stable** SwiftUI identity for the handle — its STRUCTURAL position in the tree,
     /// INDEPENDENT of the live `rect`/`leadingWeight`. A `ForEach` rendering the dividers MUST key
     /// on this, NOT `\.self`: the synthesized `==` includes `rect`+`leadingWeight`, which change on

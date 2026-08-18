@@ -185,13 +185,10 @@ final class SplitTreeRenderModelTests: XCTestCase {
 
     // MARK: - Divider drag → on-screen seam movement (revert-to-confirm-fail for the flexSum fix)
 
-    /// The production pixel→weight conversion (mirrors `PaneMath.weightDelta`, which lives in ClientUI):
-    /// `Δweight = Δpixel / span * flexSum`. Pinning it HERE proves the seam moves 1:1 with the cursor once
-    /// the conversion is span-and-flexSum aware. With the OLD `Δpixel / span` (flexSum == 1 implicit) the
-    /// top-level case moves N/2 and the nested case N/4 — these assertions fail on the un-fixed code.
-    private func weightDelta(pixel: CGFloat, span: CGFloat, flexSum: CGFloat) -> Double {
-        Double(pixel) / Double(span) * Double(flexSum)
-    }
+    // The conversion under test is the SEAM's own (`SplitDividerHandle.weightDelta(pixelIncrement:)`),
+    // never a local copy of it: pinning the seam's answer proves it moves 1:1 with the cursor. With
+    // the OLD `Δpixel / span` (flexSum == 1 implicit) the top-level case moves N/2 and the nested
+    // case N/4 — these assertions fail on the un-fixed code.
 
     /// A top-level 50/50 horizontal split: dragging the divider by N points moves the leading leaf's
     /// trailing edge by ~N points (NOT N/2). Uses the `flexSum` the render model now publishes.
@@ -212,7 +209,7 @@ final class SplitTreeRenderModelTests: XCTestCase {
 
         let x0 = try XCTUnwrap(SplitLayoutSolver.solve(root, in: bounds)[a]?.maxX)
         let n: CGFloat = 120
-        let delta = weightDelta(pixel: n, span: handle.parentSpan, flexSum: handle.flexSum)
+        let delta = handle.weightDelta(pixelIncrement: n)
         let moved = root.resizingDivider(splitID: splitID, leadingIndex: 0, delta: delta)
         let x1 = try XCTUnwrap(SplitLayoutSolver.solve(moved, in: bounds)[a]?.maxX)
 
@@ -242,7 +239,7 @@ final class SplitTreeRenderModelTests: XCTestCase {
 
         let x0 = try XCTUnwrap(SplitLayoutSolver.solve(root, in: bounds)[b]?.maxX)
         let n: CGFloat = 60
-        let delta = weightDelta(pixel: n, span: inner.parentSpan, flexSum: inner.flexSum)
+        let delta = inner.weightDelta(pixelIncrement: n)
         let moved = root.resizingDivider(splitID: innerID, leadingIndex: 0, delta: delta)
         let x1 = try XCTUnwrap(SplitLayoutSolver.solve(moved, in: bounds)[b]?.maxX)
 

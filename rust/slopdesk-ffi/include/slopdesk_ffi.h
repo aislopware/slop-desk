@@ -877,6 +877,16 @@ bool   slopdesk_ws_divider_can_move(SlopDeskWsDivider handle, bool toward_leadin
 // A live drag's proposed leading weight, clamped so BOTH panes keep that floor. Sum-preserving,
 // and a pair too tight for two floors can only be dragged toward balance.
 double slopdesk_ws_divider_clamped_weight(SlopDeskWsDivider handle, double proposed);
+// One incremental pixel drag along the seam's axis, as the weight delta to offset from:
+// `Δpixel / parent_span * flex_sum`, the inverse of a flex child's `extent = weight/flex_sum*span`.
+// The span and the flex sum come out of the HANDLE, so one split's span can never be paired with
+// another's partition — drop the flex-sum factor and a 50/50 seam trails the cursor at half speed.
+// A handle without geometry answers 0, and the drag then sends nothing.
+double slopdesk_ws_divider_weight_delta(SlopDeskWsDivider handle, double pixel_increment);
+// The live drag's ratio readout, as whole percentages that sum to exactly 100. False is a
+// degenerate pair — a fixed side reports weight 0 — and then neither out-param is touched: the cue
+// is ABSENT rather than wrong. Both numbers cross, so no caller rounds the complement itself.
+bool   slopdesk_ws_divider_percents(SlopDeskWsDivider handle, uint32_t *leading, uint32_t *trailing);
 
 // MARK: The split tree's own operations
 //

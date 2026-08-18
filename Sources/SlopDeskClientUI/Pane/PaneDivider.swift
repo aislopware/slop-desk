@@ -99,7 +99,7 @@ struct PaneDivider: View {
     /// elsewhere). `EmptyView` for a degenerate pair. Hit-transparent so the drag beneath is untouched.
     @ViewBuilder
     private var ratioReadout: some View {
-        if let pct = PaneMath.splitPercents(leading: handle.leadingWeight, trailing: handle.trailingWeight) {
+        if let pct = handle.splitPercents {
             HStack(spacing: Slate.Metric.space1) {
                 Text("\(pct.leading)")
                     .foregroundStyle(Slate.Text.primary)
@@ -141,7 +141,8 @@ struct PaneDivider: View {
     #endif
 
     /// The absolute leading weight for a cursor translation of `translation` points along the split axis:
-    /// `startLead +` the translation converted to weight via ``PaneMath/weightDelta(pixelIncrement:axisSpan:flexSum:)``
+    /// `startLead +` the translation converted to weight via
+    /// ``SplitDividerHandle/weightDelta(pixelIncrement:)``
     /// (`Δpx · flexSum / parentSpan` — the inverse of a flex child's `extent = weight/flexSum·span`, and the
     /// same conversion the keyboard resize uses). It returns 0 for a zero/non-finite span, leaving `base`
     /// unchanged. Clamped by the handle so BOTH panes keep the solver's pixel floor
@@ -150,9 +151,7 @@ struct PaneDivider: View {
     /// and resume when the cursor returns, exactly as with the store clamp.
     private func targetLeadingWeight(translation: CGFloat) -> Double {
         let base = startLead ?? handle.leadingWeight
-        return handle.clampedLeadingWeight(base + PaneMath.weightDelta(
-            pixelIncrement: translation, axisSpan: handle.parentSpan, flexSum: handle.flexSum,
-        ))
+        return handle.clampedLeadingWeight(base + handle.weightDelta(pixelIncrement: translation))
     }
 
     @ViewBuilder
