@@ -257,6 +257,10 @@ public struct OpenQuicklySection: Identifiable, Equatable, Sendable {
 /// - Ranking is `slopdesk_workspace::search_rank`, the one every search field in the app asks for —
 ///   the same call as ``JumpToModel/filtered(_:query:)``.
 /// - The **Current** source is the existing ``JumpToModel`` output, wrapped 1:1 via ``currentItems(from:)``.
+/// - What a row is CALLED comes from the rules the rail reads — ``PaneSpec/cwdDisplayName(_:)`` for a
+///   folder's name and ``PaneLabel/railSubtitle(kind:title:video:cwd:liveTitle:projectKey:)`` for a
+///   pane's second line. A switcher and a sidebar naming the same pane two different things reads as
+///   two panes, so the picker asks rather than re-deriving.
 public enum OpenQuicklyModel {
     // MARK: - Sectioning + ranking
 
@@ -409,41 +413,31 @@ public enum OpenQuicklyModel {
     /// `paneKind` differentiates a VIDEO pane (`.desktop`) so the row reads as its
     /// stream target (glyph + badge + host subtitle) while ``Act`` stays the kind-generic
     /// `.focusPane`. Defaults to `.terminal`, so every existing caller and non-video pane keeps "Pane" chrome.
+    ///
+    /// LINE TWO is ``PaneLabel/railSubtitle(kind:title:video:cwd:liveTitle:projectKey:)`` — the rail's
+    /// own rule, not a second one: a terminal says where it is, a video pane says which host APP it
+    /// streams unless line one already said it. The picker draws no section headers, so it passes no
+    /// project key and gets the whole path.
     public static func paneItem(
         paneID: PaneID,
         title: String,
         cwd: String?,
         paneKind: PaneKind = .terminal,
-        appName: String? = nil,
+        video: VideoEndpoint? = nil,
     ) -> OpenQuicklyItem {
         let haystack = [title, cwd ?? ""].filter { !$0.isEmpty }.joined(separator: " ")
         return OpenQuicklyItem(
             id: "pane:\(paneID.raw.uuidString)",
             kind: .pane,
             title: title,
-            subtitle: paneRowSubtitle(cwd: cwd, title: title, paneKind: paneKind, appName: appName),
+            subtitle: PaneLabel.railSubtitle(
+                kind: paneKind, title: title, video: video, cwd: cwd, liveTitle: title, projectKey: nil,
+            ),
             timestamp: nil,
             searchText: haystack,
             act: .focusPane(paneID),
             paneKind: paneKind,
         )
-    }
-
-    /// The subtitle for an Opened pane row. A terminal pane shows its cwd (or nothing when unknown —
-    /// never a blank line). A VIDEO pane (`.desktop`) has no shell cwd, so the host target's
-    /// owning APP name (`appName`) stands in — mirroring the sidebar's ``PaneSpec/railSubtitle`` discipline
-    /// (window title on line 1, host app on line 2) so the row never echoes its title on both lines. It falls
-    /// back to the window ``title`` only when `appName` is empty (a manual-id binding), keeping the row a
-    /// labelled window (glyph + badge + subtitle) not a bare line. A real cwd always wins (never silently
-    /// dropped).
-    private static func paneRowSubtitle(cwd: String?, title: String, paneKind: PaneKind, appName: String?) -> String? {
-        if let cwd = nonEmpty(cwd) { return cwd }
-        guard paneKind.isVideo else { return nil }
-        // EMPTY HOST-TITLE PARITY: surface the host app on line 2 only when it is NOT already line 1. An empty
-        // streamed-window title makes line 1 fall back to the app name, so an app-name subtitle would echo it
-        // on both lines — drop to a single line (the window-title fallback is likewise an echo of line 1).
-        if let app = nonEmpty(appName), app != title { return app }
-        return nil
     }
 
     /// Build one **Recent** row for a recently-closed tab at LIFO `index` (0 = most-recently closed). `↩`
@@ -491,10 +485,9 @@ public enum OpenQuicklyModel {
                         // `.terminal` when the spec side-table is momentarily missing (the gap
                         // ``paneDisplayTitle`` also tolerates) — a spec-less pane stays a generic "Pane".
                         paneKind: spec?.kind ?? .terminal,
-                        // Thread the host-side app name (same `VideoEndpoint.appName` the rail's
-                        // `railSubtitle` reads) so a video row's subtitle is the host app, not an echo
-                        // of the line-1 target title. Falls back to the title when absent.
-                        appName: spec?.video?.appName,
+                        // Thread the streamed window so the row's line two is the rail's own subtitle
+                        // rule: the host app, never an echo of the line-1 target title.
+                        video: spec?.video,
                     ))
                 }
             }
@@ -550,13 +543,11 @@ public enum OpenQuicklyModel {
         return s
     }
 
-    /// The last path component for a folder's display title. Tolerates a trailing slash (`/var/log/` → `log`)
-    /// and the root (`/` → `/`); never blanks. No force-unwrap (CLAUDE.md §3).
+    /// The last path component for a folder's display title — ``PaneSpec/cwdDisplayName(_:)``, the
+    /// same folder name the sidebar row, the tab strip and the project sections derive, so one
+    /// directory is never called two things. A path with no name to show (blank) reads as itself
+    /// rather than blanking the row.
     static func folderDisplayName(_ path: String) -> String {
-        let trimmed = (path.count > 1 && path.hasSuffix("/")) ? String(path.dropLast()) : path
-        if let last = trimmed.split(separator: "/").last, !last.isEmpty {
-            return String(last)
-        }
-        return trimmed
+        PaneSpec.cwdDisplayName(path) ?? path
     }
 }
