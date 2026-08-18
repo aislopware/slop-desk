@@ -94,10 +94,13 @@ final class KeybindingsEditorLogicTests: XCTestCase {
         )
         XCTAssertEqual(outcome, .clear, "Backspace clears the binding (unbind)")
 
-        // The DEL scalar must NEVER be accepted as a base key, even via some other keyCode.
-        XCTAssertNil(
-            KeybindingCapture.baseKey(keyCode: 999, charactersIgnoringModifiers: "\u{7F}"),
-            "DEL is a control scalar — never a recordable base key",
+        // The DEL scalar must NEVER be recorded as a base key, even via some other keyCode.
+        XCTAssertEqual(
+            KeybindingCapture.outcome(
+                keyCode: 999, charactersIgnoringModifiers: "\u{7F}",
+                command: false, shift: false, option: false, control: false,
+            ),
+            .ignore, "DEL is a control scalar — never a recordable base key",
         )
         // Forward-Delete (keyCode 117) also clears.
         XCTAssertEqual(

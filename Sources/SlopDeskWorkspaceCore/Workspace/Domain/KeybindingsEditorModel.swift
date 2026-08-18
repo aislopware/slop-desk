@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 import SlopDeskVideoProtocol
 
@@ -26,9 +27,10 @@ public enum KeybindingCaptureOutcome: Equatable, Sendable {
     case bind(KeybindingPreferences.KeyChord)
 }
 
-/// Pure resolution of a captured keystroke (already decomposed from an `NSEvent` by the view) into a
-/// ``KeybindingCaptureOutcome``. Mirrors `KeyChordNormalizer`'s keyCode handling but emits the persisted
-/// ``KeybindingPreferences/KeyChord`` shape the editor stores.
+/// Resolution of a captured keystroke (already decomposed from an `NSEvent` by the view) into a
+/// ``KeybindingCaptureOutcome``, asked of `slopdesk_video::key_naming` — the SAME table
+/// ``KeyChordNormalizer`` reads, so a rebind captured here matches the chord the dispatcher builds.
+/// What is Swift is the marshalling and the persisted ``KeybindingPreferences/KeyChord`` shape.
 public enum KeybindingCapture {
     /// Resolve a captured keystroke. `keyCode` is the hardware key code; `charactersIgnoringModifiers` is the
     /// base character (shift/option folded out by AppKit); the four `Bool`s are the live modifier flags.
@@ -40,55 +42,34 @@ public enum KeybindingCapture {
         option: Bool,
         control: Bool,
     ) -> KeybindingCaptureOutcome {
-        // Escape (53) cancels with no change.
-        if keyCode == 53 { return .cancel }
-        // Backspace/Delete (51) and Forward-Delete (117) UNBIND ("press Backspace to clear"). This MUST
-        // branch before `baseKey`: otherwise Backspace's `charactersIgnoringModifiers` is the DEL scalar
-        // "\u{7F}", which is ASCII + non-whitespace and would be recorded as a junk override.
-        if keyCode == 51 || keyCode == 117 { return .clear }
-        guard let key = baseKey(keyCode: keyCode, charactersIgnoringModifiers: charactersIgnoringModifiers) else {
-            return .ignore
+        var characters = charactersIgnoringModifiers ?? ""
+        var key = [UInt8](repeating: 0, count: baseKeyCapacity)
+        var needed = 0
+        let verdict = characters.withUTF8 { chars in
+            key.withUnsafeMutableBufferPointer { out in
+                slopdesk_key_capture_outcome(
+                    keyCode, chars.baseAddress, chars.count, out.baseAddress, out.count, &needed,
+                )
+            }
         }
-        return .bind(KeybindingPreferences.KeyChord(
-            key: key, command: command, shift: shift, option: option, control: control,
-        ))
+        switch verdict {
+        case 0: return .cancel
+        case 1: return .clear
+        case 3:
+            guard let base = String(bytes: key.prefix(max(0, needed)), encoding: .utf8), !base.isEmpty else {
+                return .ignore
+            }
+            return .bind(KeybindingPreferences.KeyChord(
+                key: base, command: command, shift: shift, option: option, control: control,
+            ))
+        default: return .ignore
+        }
     }
 
-    /// The normalized base-key token for a captured keystroke: a named key for the special key codes, else a
-    /// lowercased single printable character. `nil` for a pure modifier / control scalar / unmappable key so
-    /// the caller keeps recording. Rejects DEL and the C0 control scalars (the bug source) explicitly.
-    static func baseKey(keyCode: UInt16, charactersIgnoringModifiers: String?) -> String? {
-        switch keyCode {
-        case 36,
-             76: return "return" // Return / keypad Enter
-        case 48: return "tab"
-        case 123: return "left"
-        case 124: return "right"
-        case 126: return "up"
-        case 125: return "down"
-        case 116: return "pageup"
-        case 121: return "pagedown"
-        case 115: return "home"
-        case 119: return "end"
-        default: break
-        }
-        // `charactersIgnoringModifiers` gives the base key independent of shift/option (so ⇧2 is "2").
-        guard let chars = charactersIgnoringModifiers, let first = chars.first else { return nil }
-        // Accept a single printable char only; reject whitespace AND any control scalar (DEL "\u{7F}" /
-        // C0 < 0x20), which would otherwise sneak through (DEL is ASCII + non-whitespace).
-        guard chars.count == 1, !first.isWhitespace, !isControlScalar(first),
-              first.isASCII || first.isLetter
-        else { return nil }
-        return String(first).lowercased()
-    }
-
-    /// Whether `c` is a single control scalar (a C0 control or DEL). Anything that is not exactly one Unicode
-    /// scalar is treated as control-like (it can't be a base key) so we never record it.
-    private static func isControlScalar(_ c: Character) -> Bool {
-        let scalars = c.unicodeScalars
-        guard scalars.count == 1, let scalar = scalars.first else { return true }
-        return scalar.value < 0x20 || scalar.value == 0x7F
-    }
+    /// Every canonical base key is a short ASCII token (`pagedown` is the longest) or one character, so this
+    /// buffer never forces the door's retry — and if a longer name is ever added, the door reports the size
+    /// rather than writing a truncated one.
+    private static let baseKeyCapacity = 16
 }
 
 /// Pure search-filter + reset-gate logic for the editor.

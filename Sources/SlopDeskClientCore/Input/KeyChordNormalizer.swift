@@ -8,9 +8,10 @@
 // the SAME two signals — modifier flags → `KeyChord.Modifiers`, and `charactersIgnoringModifiers` (which
 // ignores ⌘/⌥/⌃ but NOT ⇧, so a shifted key still reports its base via the lowercase normalization in
 // `KeyChord.init(character:)`) → the base key — so the dispatcher and the terminal agree on what a chord is.
-// Named non-printable keys (Return/Tab/arrows) are mapped from `keyCode` exactly as the keybindings editor's
-// `baseKey(for:)` does, so a rebind captured in the editor matches a chord the dispatcher produces.
+// Named non-printable keys (Return/Tab/arrows) come from `slopdesk_video::key_naming` — the ONE table, which
+// the keybindings recorder reads too, so a rebind captured in Settings matches a chord produced here.
 
+import CSlopDeskFFI
 import SlopDeskWorkspaceCore
 
 /// Pure NSEvent→`KeyChord` normalization (no AppKit). The dispatcher passes the destructured event fields;
@@ -51,38 +52,30 @@ package enum KeyChordNormalizer {
         if modifierFlags.option { mods.insert(.option) }
         if modifierFlags.command { mods.insert(.command) }
 
-        // Named keys by keyCode (parity with KeybindingsEditorView.baseKey).
-        switch keyCode {
-        case 36,
-             76: return KeyChord(.return, mods) // Return / keypad Enter
-        case 48: return KeyChord(.tab, mods)
-        case 123: return KeyChord(.leftArrow, mods)
-        case 124: return KeyChord(.rightArrow, mods)
-        case 126: return KeyChord(.upArrow, mods)
-        case 125: return KeyChord(.downArrow, mods)
-        case 116: return KeyChord(.pageUp, mods)
-        case 121: return KeyChord(.pageDown, mods)
-        case 115: return KeyChord(.home, mods)
-        case 119: return KeyChord(.end, mods)
-        // Space (keyCode 49) maps to the NAMED `.space` chord ONLY when a non-shift modifier (⌃/⌥/⌘) is held —
-        // Vi Mode entry is bound to ⌃⇧Space. A BARE or ⇧-only Space is normal typing and must reach the terminal,
-        // so it falls through to the whitespace rejection below → `nil` (preserving the bare-space passthrough
-        // boundary the dispatcher relies on; a shifted-but-modifierless Space still types a space).
-        case 49 where modifierFlags.control || modifierFlags.option || modifierFlags.command:
-            return KeyChord(.space, mods)
-        default: break
+        var characters = charactersIgnoringModifiers ?? ""
+        var printable = [UInt8](repeating: 0, count: 4) // one character's UTF-8, never more
+        let base = characters.withUTF8 { chars in
+            printable.withUnsafeMutableBufferPointer { out in
+                slopdesk_key_chord_base(
+                    keyCode,
+                    chars.baseAddress,
+                    chars.count,
+                    modifierFlags.control || modifierFlags.option || modifierFlags.command,
+                    out.baseAddress,
+                    out.count,
+                )
+            }
         }
-
-        // A single printable character. `charactersIgnoringModifiers` ignores ⌘/⌥/⌃ but still reflects ⇧;
-        // `KeyChord.init(character:)` lowercases it, so ⇧-state lives in `mods`, not the char (a shifted
-        // letter and its lowercase produce the same base key, matching the table's case-insensitive lookup).
-        guard let chars = charactersIgnoringModifiers, let first = chars.first, chars.count == 1 else {
-            return nil
+        switch base.kind {
+        case 1:
+            guard let named = KeyChord.Key(namedIndex: base.named) else { return nil }
+            return KeyChord(named, mods)
+        case 2:
+            guard let text = String(bytes: printable.prefix(max(0, base.length)), encoding: .utf8),
+                  let character = text.first
+            else { return nil }
+            return KeyChord(character: character, mods)
+        default: return nil
         }
-        // Reject whitespace / control scalars: those are never workspace chords and must pass through to the
-        // terminal (a bare key is normal typing). A Ctrl-letter still reports its printable base here (e.g.
-        // ⌃B → "b") so a Ctrl-modified chord is recognised.
-        guard !first.isWhitespace, first.unicodeScalars.allSatisfy({ $0.value >= 0x20 }) else { return nil }
-        return KeyChord(character: first, mods)
     }
 }

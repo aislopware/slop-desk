@@ -45,6 +45,25 @@ public struct KeyChord: Hashable, Sendable {
         case pageDown
         case home
         case end
+
+        /// The named key `slopdesk_video::key_naming` answers with, or `nil` for an index this build does
+        /// not know — a case the crate grew and this enum has not, which must not be guessed at.
+        public init?(namedIndex: UInt8) {
+            switch namedIndex {
+            case 0: self = .return
+            case 1: self = .tab
+            case 2: self = .space
+            case 3: self = .leftArrow
+            case 4: self = .rightArrow
+            case 5: self = .upArrow
+            case 6: self = .downArrow
+            case 7: self = .pageUp
+            case 8: self = .pageDown
+            case 9: self = .home
+            case 10: self = .end
+            default: return nil
+            }
+        }
     }
 
     public let key: Key

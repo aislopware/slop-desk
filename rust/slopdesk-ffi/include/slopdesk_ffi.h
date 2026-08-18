@@ -5608,6 +5608,32 @@ bool    slopdesk_key_capture_is_escape(uint16_t key_code);
 bool    slopdesk_escape_dismisses_window(uint16_t key_code, uint8_t modifiers,
                                          bool chord_capture_armed);
 
+/* ---- What a key event is CALLED, for the two surfaces that key bindings on it ----
+ *
+ * The dispatcher resolves a live keystroke against the binding table and the Settings recorder
+ * captures one to persist; both must land on the same name or a rebind never matches. One table,
+ * therefore, and it answers a SUM: a named key, a printable character, or nothing.
+ *
+ * The named-key indices are 0 return · 1 tab · 2 space · 3 left · 4 right · 5 up · 6 down ·
+ * 7 pageup · 8 pagedown · 9 home · 10 end. Return covers the keypad's Enter — one intent, one name.
+ */
+typedef struct {
+  uint8_t kind;   /* 0 nothing to key on · 1 a named key · 2 a printable character */
+  uint8_t named;  /* the index above, read only when kind == 1 */
+  size_t  length; /* the UTF-8 bytes written to (out, cap), read only when kind == 2 */
+} SlopDeskKeyBase;
+
+// `non_shift_modifier_held` decides the space bar and nothing else: bare and ⇧-only Space is typing
+// the terminal must receive; ⌃/⌥/⌘ Space is the Vi-mode chord.
+SlopDeskKeyBase slopdesk_key_chord_base(uint16_t key_code, const uint8_t *chars, size_t chars_len,
+                                        bool non_shift_modifier_held, uint8_t *out, size_t cap);
+// The recorder's verdict: 0 cancel · 1 clear the binding · 2 keep recording · 3 bind, with the base
+// key's canonical text in (out, cap) and its length in `needed`. Only a bind writes anything. The
+// clear keys are answered BEFORE the characters are read — Backspace reports the DEL scalar, which
+// a base-key-first recorder stored as a junk chord instead of clearing the binding.
+uint8_t slopdesk_key_capture_outcome(uint16_t key_code, const uint8_t *chars, size_t chars_len,
+                                     uint8_t *out, size_t cap, size_t *needed);
+
 /* The cursor-shape self-heal. Two lists of UNBOUNDED length — the ids whose bitmap arrived, and the
  * asks still outstanding — so the tracker rides in and out through lent buffers rather than as a
  * fixed record. `send` is only an answer when both counts fit: a call that could not write is not a

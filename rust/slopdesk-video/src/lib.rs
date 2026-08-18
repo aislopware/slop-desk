@@ -111,6 +111,8 @@
 //!   reachable no matter what the rest of it says.
 //! - [`escape_monitor`] — what a window-scoped local monitor does with an Escape, and which of the
 //!   surfaces claiming that key outranks the others.
+//! - [`key_naming`] — what one key event is CALLED, so the chord the dispatcher builds and the
+//!   chord the recorder persists are the same chord.
 //! - [`input_routing`] — what happens to an input datagram between the socket and the injector: the
 //!   raise rule, the motion coalescer, the button and modifier ledger, and the metered scroll
 //!   accumulator — every one of them there because injection itself is synchronous and expensive.
@@ -174,6 +176,7 @@ pub mod input_routing;
 pub mod interleaver;
 pub mod keepalive;
 pub mod key_capture;
+pub mod key_naming;
 pub mod live_bitrate;
 pub mod ltr;
 pub mod mint_rescue;
