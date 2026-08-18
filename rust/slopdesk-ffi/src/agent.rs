@@ -32,7 +32,7 @@ use core::ffi::c_uchar;
 use slopdesk_agent::{
     AgentDetectionHold, AgentScreenDetection, AgentScreenState, ClaudeHookEvent, ClaudeStatus,
     ClaudeStatusMachine, Emission, ForegroundJob, ForegroundJobProcess, NotificationKind, PaneDetector,
-    badge,
+    badge, sleep,
 };
 
 use crate::{borrow, deliver};
@@ -1477,6 +1477,19 @@ pub unsafe extern "C" fn slopdesk_agent_job_answer(
     }
     // SAFETY: the caller's obligations, restated above; `deliver` states its own.
     unsafe { deliver((*handle).answer.as_bytes(), out, cap) }
+}
+
+/// Whether the host should be holding a system-sleep assertion right now.
+///
+/// The whole state, not an event: the daemon asks on every fold and its create⇄release stays
+/// balanced against the answer.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_agent_should_prevent_sleep(any_agent_working: bool, enabled: bool) -> bool {
+    sleep::should_assert(any_agent_working, enabled)
 }
 
 #[cfg(test)]

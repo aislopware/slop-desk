@@ -109,6 +109,8 @@
 //!   re-encode timer, and the scheduler that puts each finished message on its own channel.
 //! - [`key_capture`] — what the immersive tap does with one key, and the two chords that must stay
 //!   reachable no matter what the rest of it says.
+//! - [`escape_monitor`] — what a window-scoped local monitor does with an Escape, and which of the
+//!   surfaces claiming that key outranks the others.
 //! - [`input_routing`] — what happens to an input datagram between the socket and the injector: the
 //!   raise rule, the motion coalescer, the button and modifier ledger, and the metered scroll
 //!   accumulator — every one of them there because injection itself is synchronous and expensive.
@@ -157,6 +159,7 @@ pub mod cursor;
 pub mod cursor_overlay;
 pub mod decode_admission;
 pub mod error;
+pub mod escape_monitor;
 pub mod fec;
 pub mod fps_governor;
 pub mod fragment;

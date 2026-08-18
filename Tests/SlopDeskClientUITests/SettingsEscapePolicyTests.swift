@@ -1,16 +1,11 @@
-// SettingsEscapePolicyTests — pins Esc-closes-Settings and the two cases that must NOT close it.
+// SettingsEscapePolicyTests — pins the Esc-closes-Settings CROSSING.
 //
-// The macOS Settings surface is a stock `Settings` scene `NSWindow`, which AppKit gives no Esc behaviour — ⌘,
-// opened a window the keyboard could not close. `SettingsEscapeDismisser` fixes that with a window-scoped
-// key monitor whose decision is the pure `SettingsEscapePolicy` pinned here (the AppKit half — first-responder
-// probing, `performClose`, monitor scoping — is code-reviewed, not unit-tested: an `NSWindow` in a unit test is
-// exactly the GUI-in-tests hazard CLAUDE.md bans).
-//
-// The two pass-through cases are the REGRESSION guards, not decoration:
-//   * a MODIFIED Esc is somebody else's chord (⌥Esc is macOS Speak Selection) — never a plain dismiss.
-//   * a Key Bindings row RECORDING a chord already owns Esc as "cancel the capture"
-//     (`KeybindingCapture.cancel`), and two local `.keyDown` monitors racing for it would otherwise resolve in
-//     AppKit's undocumented install order — so the dismiss stands down while the recorder is armed.
+// The rule is `slopdesk_video::escape_monitor`: which key, which modifiers disqualify it, and that a chord
+// recorder outranks the dismiss. What only this side can get wrong is the translation — the AppKit modifier
+// flags folded into the wire's six-bit mask, and the door's `Bool` turned back into the two-case decision the
+// monitor acts on. (The AppKit half — first-responder probing, `performClose`, monitor scoping — is
+// code-reviewed, not unit-tested: an `NSWindow` in a unit test is exactly the GUI-in-tests hazard CLAUDE.md
+// bans.)
 //
 // TEXT FIELDS DELIBERATELY DO NOT VETO, and that is the HW-verified part: two earlier designs let a focused
 // field keep Esc (pass-through, then resign-first-responder-then-close) and BOTH dead-ended on hardware —
@@ -18,21 +13,16 @@
 // window at all. `testEscapeClosesEvenWhileTypingInAField` pins the fix against a well-meaning revert.
 
 #if canImport(SwiftUI)
+import SlopDeskVideoProtocol
 import XCTest
 @testable import SlopDeskClientCore
 @testable import SlopDeskClientUI
 
 final class SettingsEscapePolicyTests: XCTestCase {
-    /// The Esc keyCode is the physical key AppKit reports, independently asserted (not read back off the
-    /// constant) so a typo'd redefinition fails here rather than silently making Esc inert.
-    func testEscapeKeyCodeIs53() {
-        XCTAssertEqual(SettingsEscapePolicy.escapeKeyCode, 53)
-    }
-
-    /// The whole point: a bare Esc closes the Settings window.
+    /// The whole point, and the keycode the monitor reads off an `NSEvent`: a bare Esc closes the window.
     func testBareEscapeClosesTheWindow() {
         XCTAssertEqual(
-            SettingsEscapePolicy.decide(keyCode: 53, hasModifiers: false, isCapturingChord: false),
+            SettingsEscapePolicy.decide(keyCode: 53, modifierMask: 0, isCapturingChord: false),
             .closeWindow,
         )
     }
@@ -44,7 +34,7 @@ final class SettingsEscapePolicyTests: XCTestCase {
     /// side ends field editing before closing. A revert to field-vetoes-Esc fails here.
     func testEscapeClosesEvenWhileTypingInAField() {
         XCTAssertEqual(
-            SettingsEscapePolicy.decide(keyCode: 53, hasModifiers: false, isCapturingChord: false),
+            SettingsEscapePolicy.decide(keyCode: 53, modifierMask: 0, isCapturingChord: false),
             .closeWindow,
             "a focused field must not be able to make Esc inert — that WAS the reported bug",
         )
@@ -55,16 +45,30 @@ final class SettingsEscapePolicyTests: XCTestCase {
     /// first (an order it does not document).
     func testEscapeWhileRecordingAChordPassesThroughToTheRecorder() {
         XCTAssertEqual(
-            SettingsEscapePolicy.decide(keyCode: 53, hasModifiers: false, isCapturingChord: true),
+            SettingsEscapePolicy.decide(keyCode: 53, modifierMask: 0, isCapturingChord: true),
             .passThrough,
         )
     }
 
-    /// A modified Esc (⌥Esc / ⌘Esc / ⌃Esc / ⇧Esc) is another binding's chord, never a dismiss.
-    func testModifiedEscapePassesThrough() {
+    /// The mask crosses in the wire's own bits: each chord modifier disqualifies the dismiss, and caps
+    /// lock — a state the user is in rather than a chord they typed — does not. A mistranslated flag would
+    /// show here as a window that either never closes or closes on somebody else's binding.
+    func testTheModifierMaskCrossesInTheWiresOwnBits() {
+        for modifier: InputModifiers in [.command, .option, .control, .shift] {
+            XCTAssertEqual(
+                SettingsEscapePolicy.decide(keyCode: 53, modifierMask: modifier.rawValue, isCapturingChord: false),
+                .passThrough,
+                "a modified Esc is another binding's chord",
+            )
+        }
         XCTAssertEqual(
-            SettingsEscapePolicy.decide(keyCode: 53, hasModifiers: true, isCapturingChord: false),
-            .passThrough,
+            SettingsEscapePolicy.decide(
+                keyCode: 53,
+                modifierMask: InputModifiers([.capsLock, .function]).rawValue,
+                isCapturingChord: false,
+            ),
+            .closeWindow,
+            "a stuck caps lock must not make the window unclosable",
         )
     }
 
@@ -73,7 +77,7 @@ final class SettingsEscapePolicyTests: XCTestCase {
     func testNonEscapeKeysPassThrough() {
         for keyCode: UInt16 in [0, 12, 36, 48, 49, 51, 123, 125] {
             XCTAssertEqual(
-                SettingsEscapePolicy.decide(keyCode: keyCode, hasModifiers: false, isCapturingChord: false),
+                SettingsEscapePolicy.decide(keyCode: keyCode, modifierMask: 0, isCapturingChord: false),
                 .passThrough,
                 "keyCode \(keyCode) must not close the Settings window",
             )

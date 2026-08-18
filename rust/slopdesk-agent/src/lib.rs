@@ -13,6 +13,7 @@
 //!   commonly WRAPS one?
 //! - [`status`] — the rolled-up status, its urgency order, and the wire qualifier byte.
 //! - [`signal`] — the semantic hook vocabulary and the signal envelope the machine folds.
+//! - [`sleep`] — what a working agent means for the machine's own sleep.
 //! - [`screen`] — the screen engine's verdict, in the terms the machine speaks.
 //! - [`hold`] — the temporal layer over that verdict: the confirmation holds and the publish gate.
 //! - [`input`] — does an input chunk carry a keystroke, or only the emulator's own replies?
@@ -45,6 +46,7 @@ pub mod machine;
 pub mod process;
 pub mod screen;
 pub mod signal;
+pub mod sleep;
 pub mod status;
 pub mod watch;
 

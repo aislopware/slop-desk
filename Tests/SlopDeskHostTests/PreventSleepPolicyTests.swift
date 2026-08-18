@@ -1,10 +1,11 @@
 import XCTest
 @testable import SlopDeskHost
 
-/// The pure prevent-sleep decision. Asserts iff the feature is enabled AND at least one
-/// agent is currently working; releases otherwise. Headless (no `IOPMAssertion` — the glue is code-reviewed).
+/// The prevent-sleep CROSSING. The rule — assert iff enabled AND an agent is working — is
+/// `slopdesk_agent::sleep`; what is pinned here is that the two flags reach it in the order the door
+/// declares, which a swap would hide behind a symmetric-looking truth table.
 final class PreventSleepPolicyTests: XCTestCase {
-    func testAssertsOnlyWhenEnabledAndWorking() {
+    func testTheTwoFlagsCrossInTheOrderTheDoorDeclares() {
         XCTAssertTrue(
             PreventSleepPolicy.shouldAssert(anyAgentWorking: true, enabled: true),
             "enabled + an agent working ⇒ hold the assertion",
@@ -18,11 +19,5 @@ final class PreventSleepPolicyTests: XCTestCase {
             "disabled ⇒ never hold, even while working",
         )
         XCTAssertFalse(PreventSleepPolicy.shouldAssert(anyAgentWorking: false, enabled: false))
-    }
-
-    /// The transition the daemon drives: hold on the first working pane, release when none remain.
-    func testReleaseTransitionFollowsWorkingAggregate() {
-        XCTAssertTrue(PreventSleepPolicy.shouldAssert(anyAgentWorking: true, enabled: true), "assert on first working")
-        XCTAssertFalse(PreventSleepPolicy.shouldAssert(anyAgentWorking: false, enabled: true), "release when idle")
     }
 }

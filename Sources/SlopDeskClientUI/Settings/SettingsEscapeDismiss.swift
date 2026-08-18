@@ -31,14 +31,17 @@
 // cancelling the capture. So the recorder publishes ``SettingsChordCapture/isCapturing`` and this monitor stands
 // down while it is armed, making the outcome independent of monitor ordering.
 //
-// The decision itself is the pure, headless-pinned ``SettingsEscapePolicy`` (`SettingsEscapePolicyTests`); this
-// file's AppKit half only measures the inputs and performs the action.
+// The decision itself is `slopdesk_video::escape_monitor`, asked through ``SettingsEscapePolicy``; this
+// file's AppKit half only measures the inputs — the keycode and the wire's own modifier mask — and
+// performs the action.
 //
 // Colour + type: `SettingsInk` / `SettingsType` (SYSTEM semantics — not the terminal theme); geometry
 // rides `Slate.Metric` (raw font/radius/height literals fail `scripts/check-ds-leaks.sh`).
 
 #if canImport(SwiftUI)
+import CSlopDeskFFI
 import SlopDeskClientCore
+import SlopDeskVideoProtocol
 import SwiftUI
 #if os(macOS)
 import AppKit
@@ -73,28 +76,25 @@ final class SettingsChordCapture {
     private init() {}
 }
 
-/// The pure Esc-in-Settings decision. Kept AppKit-free (plain `UInt16` / `Bool` inputs) so it pins headlessly
-/// on the `swift test` host and compiles on iOS, where the Settings surface is a sheet with its own dismiss.
+/// The Esc-in-Settings decision, asked of `slopdesk_video::escape_monitor`. AppKit-free (a keycode, the
+/// wire's six-bit modifier mask, a flag) so it pins headlessly on the `swift test` host and compiles on
+/// iOS, where the Settings surface is a sheet with its own dismiss.
 enum SettingsEscapePolicy {
-    /// The `keyCode` AppKit reports for Esc. Mirrors `KeybindingsEditorModel`'s `keyCode == 53` cancel check —
-    /// the same physical key, named here so the intent reads at the call site.
-    static let escapeKeyCode: UInt16 = 53
-
     /// What this key-down does to the Settings window.
     ///
     /// - Parameters:
-    ///   - keyCode: the AppKit `NSEvent.keyCode`. Anything but ``escapeKeyCode`` passes through.
-    ///   - hasModifiers: whether any of ⌘ / ⌥ / ⌃ / ⇧ is held. A MODIFIED Esc is somebody else's chord (⌥Esc is
-    ///     macOS's own Speak-Selection binding), so it is never read as a plain dismiss.
+    ///   - keyCode: the AppKit `NSEvent.keyCode`.
+    ///   - modifierMask: the modifiers held, in the wire's own bits — WHICH of them disqualify a dismiss is
+    ///     the crate's decision, not this call site's (⌥Esc is macOS's own Speak-Selection binding; a stuck
+    ///     caps lock is not a chord at all).
     ///   - isCapturingChord: whether a Key Bindings row is recording a replacement chord. There Esc already
     ///     means "cancel the capture", so it passes through — the ONE surface that outranks the dismiss.
     static func decide(
         keyCode: UInt16,
-        hasModifiers: Bool,
+        modifierMask: UInt8,
         isCapturingChord: Bool,
     ) -> SettingsEscapeDecision {
-        guard keyCode == escapeKeyCode, !hasModifiers, !isCapturingChord else { return .passThrough }
-        return .closeWindow
+        slopdesk_escape_dismisses_window(keyCode, modifierMask, isCapturingChord) ? .closeWindow : .passThrough
     }
 }
 
@@ -150,8 +150,7 @@ struct SettingsEscapeDismisser: NSViewRepresentable {
             guard let window = host?.window, event.window === window else { return .passThrough }
             let decision = SettingsEscapePolicy.decide(
                 keyCode: event.keyCode,
-                hasModifiers: !event.modifierFlags
-                    .isDisjoint(with: [.command, .option, .control, .shift]),
+                modifierMask: InputModifiers(event.modifierFlags).rawValue,
                 isCapturingChord: SettingsChordCapture.shared.isCapturing,
             )
             if decision == .closeWindow {

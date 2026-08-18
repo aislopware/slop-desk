@@ -376,6 +376,10 @@ int32_t slopdesk_agent_job_identify(SlopDeskAgentJob *handle,
                                     slopdesk_agent_resolve_fn resolve, void *context);
 size_t  slopdesk_agent_job_answer(SlopDeskAgentJob *handle, uint8_t *out, size_t cap);
 
+// Whether the host should be holding a system-sleep assertion right now — the WHOLE state, asked on
+// every fold, so the daemon's create⇄release stays balanced against the answer rather than an edge.
+bool    slopdesk_agent_should_prevent_sleep(bool any_agent_working, bool enabled);
+
 // MARK: - The workspace document's solvers (`rust/slopdesk-workspace`)
 //
 // The document's VALUE TYPES stay in Swift — 262 files import them, and a `SplitNode` is what
@@ -5598,6 +5602,11 @@ bool    slopdesk_key_capture_is_down(uint16_t key_code, uint8_t modifiers, uint8
 int32_t slopdesk_key_capture_modifier_bit(uint16_t key_code);
 // The cancel key, for the local monitors a transient gesture installs over the whole window.
 bool    slopdesk_key_capture_is_escape(uint16_t key_code);
+// Whether that monitor's window should close: a PLAIN Escape, and no chord recorder holding a claim
+// on it. `modifiers` is the same six-bit mask above — which of them disqualify a dismiss (and which
+// are a state the user is merely in, like a stuck caps lock) is the crate's decision, not the tap's.
+bool    slopdesk_escape_dismisses_window(uint16_t key_code, uint8_t modifiers,
+                                         bool chord_capture_armed);
 
 /* The cursor-shape self-heal. Two lists of UNBOUNDED length — the ids whose bitmap arrived, and the
  * asks still outstanding — so the tracker rides in and out through lent buffers rather than as a

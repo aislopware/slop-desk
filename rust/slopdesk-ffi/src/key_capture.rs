@@ -10,6 +10,7 @@
 //! table answers in it too — the caller turns the bit back into the `CGEventFlags` constant it
 //! needs, and Apple's numbers stay in the one place that has a header for them.
 
+use slopdesk_video::escape_monitor;
 use slopdesk_video::input_event::InputModifiers;
 use slopdesk_video::key_capture::{self, Decision, EventKind};
 
@@ -48,6 +49,27 @@ pub extern "C" fn slopdesk_key_capture_is_down(key_code: u16, modifiers: u8, kin
     key_capture::is_down(key_code, InputModifiers::from_bits(modifiers), kind_of(kind))
 }
 
+/// Whether this key event closes the window its local monitor is scoped to.
+///
+/// `modifiers` is the same six-bit mask every other input door speaks, so the crate — not the
+/// caller — decides which of them disqualify a dismiss and which are a state the user is merely in.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_escape_dismisses_window(
+    key_code: u16,
+    modifiers: u8,
+    chord_capture_armed: bool,
+) -> bool {
+    escape_monitor::dismisses_window(
+        key_code,
+        InputModifiers::from_bits(modifiers),
+        chord_capture_armed,
+    )
+}
+
 /// Whether a keycode is Escape — the cancel key, asked by every local monitor over a transient
 /// gesture so none of them has to restate the number.
 #[unsafe(no_mangle)]
@@ -78,8 +100,8 @@ mod tests {
     use slopdesk_video::input_event::InputModifiers;
 
     use super::{
-        slopdesk_key_capture_decision, slopdesk_key_capture_is_down, slopdesk_key_capture_is_escape,
-        slopdesk_key_capture_modifier_bit,
+        slopdesk_escape_dismisses_window, slopdesk_key_capture_decision, slopdesk_key_capture_is_down,
+        slopdesk_key_capture_is_escape, slopdesk_key_capture_modifier_bit,
     };
 
     #[test]
@@ -123,6 +145,24 @@ mod tests {
     fn the_cancel_key_is_the_one_the_chord_already_names() {
         assert!(slopdesk_key_capture_is_escape(53));
         assert!(!slopdesk_key_capture_is_escape(14));
+    }
+
+    #[test]
+    fn a_dismiss_reads_the_same_mask_the_other_input_doors_speak() {
+        assert!(slopdesk_escape_dismisses_window(53, 0, false));
+        assert!(
+            slopdesk_escape_dismisses_window(53, InputModifiers::CAPS_LOCK.bits(), false),
+            "a stuck caps lock must not make the window unclosable"
+        );
+        assert!(!slopdesk_escape_dismisses_window(
+            53,
+            InputModifiers::COMMAND.bits(),
+            false
+        ));
+        assert!(
+            !slopdesk_escape_dismisses_window(53, 0, true),
+            "the recorder claimed it"
+        );
     }
 
     #[test]
