@@ -325,6 +325,10 @@ pub unsafe extern "C" fn slopdesk_agent_canonical_name(
 /// completion and the progress mirror are `-1` when there is none, which is the same shape the
 /// answer comes back in.
 ///
+/// The five gates are the user's badge toggles, `true` meaning shown. They cross as separate flags
+/// rather than a mask so no bit position has to be spelled on both sides of the boundary; a caller
+/// with no preferences to apply passes `true` five times, which is the ungated ladder exactly.
+///
 /// # Safety
 /// `foreground` must be null or point to `foreground_len` initialised bytes live for the call.
 #[unsafe(no_mangle)]
@@ -341,6 +345,11 @@ pub unsafe extern "C" fn slopdesk_agent_tab_badge(
     fresh: bool,
     progress: i8,
     unseen_agent_done: bool,
+    agent_while_processing: bool,
+    agent_when_complete: bool,
+    agent_when_awaiting_input: bool,
+    command_when_finishes: bool,
+    command_when_fails: bool,
 ) -> i8 {
     // SAFETY: the caller's obligation, restated above; `borrow` states its own.
     let raw = unsafe { borrow(foreground, foreground_len) };
@@ -366,7 +375,14 @@ pub unsafe extern "C" fn slopdesk_agent_tab_badge(
         },
         unseen_agent_done,
     };
-    badge::resolve(signals).map_or(-1, badge_byte)
+    let gates = badge::Gates {
+        agent_while_processing,
+        agent_when_complete,
+        agent_when_awaiting_input,
+        command_when_finishes,
+        command_when_fails,
+    };
+    badge::resolve_gated(signals, gates).map_or(-1, badge_byte)
 }
 
 /// A badge discriminant, or `-1` when it names none.

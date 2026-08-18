@@ -160,6 +160,9 @@ public enum TabBadgeResolver {
     ///     true from an agent `.done` edge the user was not watching until the pane is visited. Keeps the
     ///     finished marker alive across the host's own done→idle decay (the host forgets, the client
     ///     remembers until seen — the t3code/herdr unread-completion model).
+    ///   - agentGates / commandGates: the user's badge toggles, which silence their OWN family's
+    ///     signal and nothing else. Both default to ``AgentBadgeGates/allOn`` / ``CommandBadgeGates/allOn``
+    ///     — the signal-only ladder, for a caller with no preferences to apply.
     /// - Returns: the badge to render, or `nil` when the row is all-clear.
     public static func badge(
         agent: ClaudeStatus,
@@ -169,9 +172,11 @@ public enum TabBadgeResolver {
         completionFreshness: CompletionFreshness = .settled,
         progress: PaneProgress? = nil,
         unseenAgentDone: Bool = false,
+        agentGates: AgentBadgeGates = .allOn,
+        commandGates: CommandBadgeGates = .allOn,
     ) -> TabBadgeKind? {
-        // The ladder itself is `slopdesk-agent::badge` — every optional input crosses as a value
-        // plus its absence sentinel, and the answer comes back the same shape.
+        // The ladder AND the gating are `slopdesk-agent::badge` — every optional input crosses as a
+        // value plus its absence sentinel, and the answer comes back the same shape.
         var foreground = Array((foregroundProcess ?? "").utf8)
         let raw = foreground.withUnsafeMutableBufferPointer { name in
             slopdesk_agent_tab_badge(
@@ -183,6 +188,11 @@ public enum TabBadgeResolver {
                 completionFreshness == .fresh,
                 progress.map { $0.isRunning ? 0 : 1 } ?? -1,
                 unseenAgentDone,
+                agentGates.badgeWhileProcessing,
+                agentGates.badgeWhenComplete,
+                agentGates.badgeWhenAwaitingInput,
+                commandGates.whenCommandFinishes,
+                commandGates.whenCommandFails,
             )
         }
         return TabBadgeKind(ffiByte: raw)

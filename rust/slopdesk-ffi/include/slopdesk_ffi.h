@@ -233,9 +233,16 @@ bool    slopdesk_agent_kind_is_generic(const uint8_t *bytes, size_t len);
 size_t  slopdesk_agent_process_basename(const uint8_t *bytes, size_t len, uint8_t *out, size_t cap);
 size_t  slopdesk_agent_canonical_name(const uint8_t *bytes, size_t len, uint8_t *out, size_t cap);
 bool    slopdesk_agent_is_sensitive(const uint8_t *bytes, size_t len);
+// The five gates are the user's badge toggles, true = shown, and each silences ONLY its own
+// family's signal: an agent's spinner/finish/hand, or a plain command's clean/failed exit. A
+// program's own busy bit and its OSC 9;4 progress have no opt-out and are never masked, so a
+// silenced agent still lets the shell speak. All five true is the ungated ladder exactly.
 int8_t  slopdesk_agent_tab_badge(uint8_t agent, int8_t completion, bool is_busy,
                                  const uint8_t *foreground, size_t foreground_len, bool fresh,
-                                 int8_t progress, bool unseen_agent_done);
+                                 int8_t progress, bool unseen_agent_done,
+                                 bool agent_while_processing, bool agent_when_complete,
+                                 bool agent_when_awaiting_input, bool command_when_finishes,
+                                 bool command_when_fails);
 bool    slopdesk_agent_badge_needs_attention(uint8_t badge);
 bool    slopdesk_agent_badge_is_busy_tier(uint8_t badge);
 uint8_t slopdesk_agent_status_rollup(const uint8_t *statuses, size_t len);

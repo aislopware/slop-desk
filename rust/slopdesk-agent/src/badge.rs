@@ -141,6 +141,78 @@ pub struct Signals<'a> {
     pub unseen_agent_done: bool,
 }
 
+/// Which badges the user has left switched on, by SOURCE.
+///
+/// Two independent families: an agent's own chatter, and what a plain command's exit reports. They
+/// are separate settings because silencing a thinking agent must not also silence the shell — so
+/// the gates mask the INPUTS below and the ladder itself never learns a preference exists.
+///
+/// A sixth toggle exists in Settings — "when command awaits input" — and is absent here on purpose:
+/// nothing yet produces that signal (the host-side quiescence detector is a deferred ceiling), so a
+/// field for it would be a mask over a value that is never set.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "five independent user switches; a bit field would trade five named fields for five bit \
+              positions spelled on both sides of the boundary"
+)]
+pub struct Gates {
+    /// Show the agent's thinking spinner. Ships OFF, unlike every other gate.
+    pub agent_while_processing: bool,
+    /// Show an agent's finished turn, live or latched unread.
+    pub agent_when_complete: bool,
+    /// Show the hand when an agent is blocked on a human.
+    pub agent_when_awaiting_input: bool,
+    /// Show a plain command's clean exit.
+    pub command_when_finishes: bool,
+    /// Show a plain command's non-zero exit.
+    pub command_when_fails: bool,
+}
+
+impl Gates {
+    /// Every badge shown — the shape a caller with no preferences to apply passes.
+    pub const ALL_ON: Self = Self {
+        agent_while_processing: true,
+        agent_when_complete: true,
+        agent_when_awaiting_input: true,
+        command_when_finishes: true,
+        command_when_fails: true,
+    };
+}
+
+/// The one badge for a row once the user's toggles have had their say.
+///
+/// Each gate silences ONLY its own family's signal, by masking it to the value that contributes
+/// nothing, and then the unchanged ladder runs. That is what keeps a silenced agent spinner from
+/// also hiding a program's `OSC 9;4` progress or a busy shell: `is_busy` and `progress` are not
+/// gated at all — they are the program speaking, which the spec gives no opt-out.
+#[must_use]
+pub fn resolve_gated(signals: Signals<'_>, gates: Gates) -> Option<TabBadge> {
+    resolve(masked(signals, gates))
+}
+
+/// `signals` with everything the user switched off reduced to its no-contribution value.
+const fn masked(signals: Signals<'_>, gates: Gates) -> Signals<'_> {
+    let agent = match signals.agent {
+        ClaudeStatus::Working if !gates.agent_while_processing => ClaudeStatus::Idle,
+        ClaudeStatus::Done if !gates.agent_when_complete => ClaudeStatus::Idle,
+        ClaudeStatus::NeedsPermission if !gates.agent_when_awaiting_input => ClaudeStatus::Idle,
+        status => status,
+    };
+    let completion = match signals.completion {
+        Some(Completion::Success) if !gates.command_when_finishes => None,
+        Some(Completion::Failure) if !gates.command_when_fails => None,
+        completion => completion,
+    };
+    Signals {
+        agent,
+        completion,
+        // The unread latch is the SAME agent-finish the live `Done` is, so one toggle owns both.
+        unseen_agent_done: signals.unseen_agent_done && gates.agent_when_complete,
+        ..signals
+    }
+}
+
 /// The one badge for a row, or `None` when it is all-clear.
 #[must_use]
 pub fn resolve(signals: Signals<'_>) -> Option<TabBadge> {
@@ -216,7 +288,7 @@ fn privilege_badge(process: &str) -> Option<TabBadge> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Completion, Freshness, Progress, Signals, TabBadge, resolve};
+    use super::{Completion, Freshness, Gates, Progress, Signals, TabBadge, resolve, resolve_gated};
     use crate::status::ClaudeStatus;
 
     /// A row with nothing happening on it.
@@ -358,6 +430,96 @@ mod tests {
                 "{stranger}"
             );
         }
+    }
+
+    #[test]
+    fn every_gate_off_silences_its_own_family_and_nothing_else() {
+        let all_off = Gates {
+            agent_while_processing: false,
+            agent_when_complete: false,
+            agent_when_awaiting_input: false,
+            command_when_finishes: false,
+            command_when_fails: false,
+        };
+        for (agent, badge) in [
+            (ClaudeStatus::Working, TabBadge::Running),
+            (ClaudeStatus::Done, TabBadge::Finished),
+            (ClaudeStatus::NeedsPermission, TabBadge::AwaitingInput),
+        ] {
+            let row = Signals { agent, ..quiet() };
+            assert_eq!(resolve_gated(row, Gates::ALL_ON), Some(badge));
+            assert_eq!(resolve_gated(row, all_off), None, "{agent:?}");
+        }
+        for (completion, badge) in [
+            (Completion::Success, TabBadge::Finished),
+            (Completion::Failure, TabBadge::Error),
+        ] {
+            let row = Signals {
+                completion: Some(completion),
+                ..quiet()
+            };
+            assert_eq!(resolve_gated(row, Gates::ALL_ON), Some(badge));
+            assert_eq!(resolve_gated(row, all_off), None, "{completion:?}");
+        }
+    }
+
+    #[test]
+    fn a_silenced_agent_still_lets_the_program_speak() {
+        let quiet_agent = Gates {
+            agent_while_processing: false,
+            ..Gates::ALL_ON
+        };
+        let working_and_busy = Signals {
+            agent: ClaudeStatus::Working,
+            is_busy: true,
+            progress: Some(Progress::Running),
+            ..quiet()
+        };
+        assert_eq!(
+            resolve_gated(working_and_busy, quiet_agent),
+            Some(TabBadge::CommandRunning),
+            "the program's own progress has no opt-out"
+        );
+        let error = Signals {
+            progress: Some(Progress::Error),
+            ..quiet()
+        };
+        assert_eq!(
+            resolve_gated(error, Gates {
+                command_when_fails: false,
+                ..Gates::ALL_ON
+            }),
+            Some(TabBadge::Error),
+            "a held-red OSC 9;4;2 is not a command's exit code"
+        );
+    }
+
+    #[test]
+    fn the_unread_finish_latch_answers_to_the_completion_toggle() {
+        let latched = Signals {
+            unseen_agent_done: true,
+            ..quiet()
+        };
+        assert_eq!(resolve_gated(latched, Gates::ALL_ON), Some(TabBadge::Finished));
+        assert_eq!(
+            resolve_gated(latched, Gates {
+                agent_when_complete: false,
+                ..Gates::ALL_ON
+            }),
+            None,
+            "the latch is the same finish the live status is"
+        );
+    }
+
+    #[test]
+    fn all_gates_on_is_the_ungated_ladder() {
+        let busy_row = Signals {
+            agent: ClaudeStatus::Working,
+            completion: Some(Completion::Failure),
+            is_busy: true,
+            ..quiet()
+        };
+        assert_eq!(resolve_gated(busy_row, Gates::ALL_ON), resolve(busy_row));
     }
 
     #[test]

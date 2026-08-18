@@ -2,170 +2,102 @@ import SlopDeskAgentDetect
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// Progress cluster: ``TabBadgeGating/resolve(...)`` — the SOURCE-AWARE tab-badge gating that masks the
-/// resolver inputs by source so the agent (``AgentBadgeGates``) and command (``CommandBadgeGates``) toggles
-/// gate their OWN badge families independently. The crux: turning OFF the agent "while processing" spinner must
-/// NOT silence a program's busy / OSC 9;4 progress marker — which now surfaces as its own `.commandRunning`
-/// (distinct from the agent `.running`), so masking by source keeps it visible.
+/// ``TabBadgeGating/resolve(...)`` — the gating RULE is `slopdesk-agent::badge`; what is tested here is
+/// the crossing. Five adjacent booleans are five chances to transpose two toggles, so each gate is
+/// switched off ALONE against the one signal it owns: if any pair were swapped, the badge that
+/// disappeared would be the wrong one.
 final class TabBadgeGatingTests: XCTestCase {
-    private let agentSpinnerOff = AgentBadgeGates(
-        badgeWhileProcessing: false, badgeWhenComplete: true, badgeWhenAwaitingInput: true,
-    )
-
-    // MARK: - The separation (agent-while-processing conflates the OSC 9;4 spinner)
-
-    /// agent "while processing" OFF drops the AGENT thinking spinner.
-    func testAgentSpinnerGateDropsAgentWorkingSpinner() {
-        let badge = TabBadgeGating.resolve(
-            agent: .working, completion: nil, isBusy: false, foregroundProcess: nil,
-            agentGates: agentSpinnerOff, commandGates: .allOn,
-        )
-        XCTAssertNil(badge, "the agent thinking spinner is gated off")
-    }
-
-    /// …but the SAME gate must NOT hide a PROGRAM's progress marker. Revert-to-confirm-fail: a post-fuse
-    /// gate that drops the agent badge returns nil here — masking by source keeps the program's own
-    /// `.commandRunning`. (A merely-busy shell with no OSC 9;4 report shows nothing at all, so the
-    /// program marker under test is the explicit progress report.)
-    func testAgentSpinnerGateKeepsProgramProgressSpinner() {
-        let badge = TabBadgeGating.resolve(
-            agent: .none, completion: nil, isBusy: true, foregroundProcess: nil,
-            progress: .indeterminate, agentGates: agentSpinnerOff, commandGates: .allOn,
-        )
-        XCTAssertEqual(badge, .commandRunning, "a program progress marker is never silenced by the agent gate")
-    }
-
-    /// …nor a program's OSC 9;4 indeterminate progress (the exact spec'd no-opt-out badge).
-    func testAgentSpinnerGateKeepsOSC94ProgressSpinner() {
-        let badge = TabBadgeGating.resolve(
-            agent: .none, completion: nil, isBusy: false, foregroundProcess: nil,
-            progress: .indeterminate, agentGates: agentSpinnerOff, commandGates: .allOn,
-        )
-        XCTAssertEqual(
-            badge, .commandRunning, "OSC 9;4 program progress survives the agent while-processing gate",
+    private func badge(
+        agent: ClaudeStatus = .none,
+        completion: PaneCompletionBadge? = nil,
+        isBusy: Bool = false,
+        progress: PaneProgress? = nil,
+        unseenAgentDone: Bool = false,
+        agentGates: AgentBadgeGates = .allOn,
+        commandGates: CommandBadgeGates = .allOn,
+    ) -> TabBadgeKind? {
+        TabBadgeGating.resolve(
+            agent: agent, completion: completion, isBusy: isBusy, foregroundProcess: nil,
+            completionFreshness: .settled, progress: progress, unseenAgentDone: unseenAgentDone,
+            agentGates: agentGates, commandGates: commandGates,
         )
     }
 
-    /// An OSC 9;4;2 program progress ERROR has NO opt-out: it survives BOTH the agent gate AND the command
-    /// "when fails" gate (which gates only a command-EXIT `.failure`, a separate signal).
-    func testProgressErrorHasNoOptOut() {
-        let allOff = AgentBadgeGates(
+    /// Each toggle, off by itself, silences its OWN signal and leaves the other four alone.
+    func testEachGateReachesTheSignalItNames() {
+        let cases: [(name: String, shown: TabBadgeKind, gates: AgentBadgeGates)] = [
+            ("while processing", .running, AgentBadgeGates(badgeWhileProcessing: false)),
+            ("when complete", .finished, AgentBadgeGates(badgeWhenComplete: false)),
+            ("when awaiting input", .awaitingInput, AgentBadgeGates(badgeWhenAwaitingInput: false)),
+        ]
+        let signals: [TabBadgeKind: ClaudeStatus] = [
+            .running: .working, .finished: .done, .awaitingInput: .needsPermission,
+        ]
+        for (name, shown, gates) in cases {
+            let agent = signals[shown] ?? .none
+            XCTAssertEqual(badge(agent: agent), shown, "\(name): shown with every gate on")
+            XCTAssertNil(badge(agent: agent, agentGates: gates), "\(name): its own gate silences it")
+            // The OTHER two agent signals are untouched by this gate.
+            for (other, otherAgent) in signals where other != shown {
+                XCTAssertEqual(
+                    badge(agent: otherAgent, agentGates: gates), other,
+                    "\(name) must not silence \(other)",
+                )
+            }
+        }
+    }
+
+    /// The two COMMAND-exit toggles, likewise — and neither touches the agent's family.
+    func testTheCommandExitGatesReachTheirOwnExits() {
+        let finishesOff = CommandBadgeGates(whenCommandFinishes: false)
+        let failsOff = CommandBadgeGates(whenCommandFails: false)
+        XCTAssertEqual(badge(completion: .success), .finished)
+        XCTAssertNil(badge(completion: .success, commandGates: finishesOff))
+        XCTAssertEqual(badge(completion: .success, commandGates: failsOff), .finished)
+        XCTAssertEqual(badge(completion: .failure), .error)
+        XCTAssertNil(badge(completion: .failure, commandGates: failsOff))
+        XCTAssertEqual(badge(completion: .failure, commandGates: finishesOff), .error)
+    }
+
+    /// The program's own signals cross UNGATED: no toggle can silence a busy shell, an OSC 9;4
+    /// spinner, or a held-red 9;4;2 — which is the whole reason the five flags are separate.
+    func testNoGateSilencesTheProgramItself() {
+        let everythingOff = AgentBadgeGates(
             badgeWhileProcessing: false, badgeWhenComplete: false, badgeWhenAwaitingInput: false,
         )
-        let cmdOff = CommandBadgeGates(
+        let commandsOff = CommandBadgeGates(
             whenCommandFinishes: false, whenCommandFails: false, whenCommandAwaitsInput: false,
         )
-        let badge = TabBadgeGating.resolve(
-            agent: .none, completion: nil, isBusy: false, foregroundProcess: nil,
-            progress: .error(percent: 40), agentGates: allOff, commandGates: cmdOff,
-        )
-        XCTAssertEqual(badge, .error, "an OSC 9;4;2 progress error is never an opt-out badge")
-    }
-
-    // MARK: - Command gates (the new TAB BADGE toggles)
-
-    /// "When Command Fails" OFF drops a `.failure`-EXIT error badge (but leaves the progress-error path, tested
-    /// above, untouched).
-    func testCommandFailsGateDropsExitFailureBadge() {
-        let cmdFailOff = CommandBadgeGates(
-            whenCommandFinishes: true, whenCommandFails: false, whenCommandAwaitsInput: true,
-        )
-        let dropped = TabBadgeGating.resolve(
-            agent: .none, completion: .failure, isBusy: false, foregroundProcess: nil,
-            agentGates: .allOn, commandGates: cmdFailOff,
-        )
-        XCTAssertNil(dropped, "an exit-failure badge is gated off by When Command Fails")
-        let shown = TabBadgeGating.resolve(
-            agent: .none, completion: .failure, isBusy: false, foregroundProcess: nil,
-            agentGates: .allOn, commandGates: .allOn,
-        )
-        XCTAssertEqual(shown, .error, "and shows when the gate is on")
-    }
-
-    /// "When Command Finishes" OFF drops a `.success`-EXIT completed badge.
-    func testCommandFinishesGateDropsExitSuccessBadge() {
-        let cmdFinishOff = CommandBadgeGates(
-            whenCommandFinishes: false, whenCommandFails: true, whenCommandAwaitsInput: true,
-        )
-        let dropped = TabBadgeGating.resolve(
-            agent: .none, completion: .success, isBusy: false, foregroundProcess: nil,
-            completionFreshness: .settled, agentGates: .allOn, commandGates: cmdFinishOff,
-        )
-        XCTAssertNil(dropped, "a success-exit badge is gated off by When Command Finishes")
-        let shown = TabBadgeGating.resolve(
-            agent: .none, completion: .success, isBusy: false, foregroundProcess: nil,
-            completionFreshness: .settled, agentGates: .allOn, commandGates: .allOn,
-        )
-        XCTAssertEqual(shown, .finished, "and shows the settled dot when the gate is on")
-    }
-
-    /// The agent + command "complete" gates are INDEPENDENT: with the AGENT "when complete" OFF an agent-done
-    /// badge is dropped, but a COMMAND `.success` (its own gate ON) still surfaces — the conflation the resolver
-    /// would otherwise fold into one `.finished`.
-    func testAgentAndCommandCompleteGatesAreIndependent() {
-        let agentCompleteOff = AgentBadgeGates(
-            badgeWhileProcessing: false, badgeWhenComplete: false, badgeWhenAwaitingInput: true,
-        )
-        // Agent done alone, agent gate OFF → no badge.
-        XCTAssertNil(
-            TabBadgeGating.resolve(
-                agent: .done, completion: nil, isBusy: false, foregroundProcess: nil,
-                agentGates: agentCompleteOff, commandGates: .allOn,
-            ),
-            "an agent-done badge is gated off by the AGENT when-complete gate",
-        )
-        // A command success with its OWN gate ON still surfaces, independent of the agent gate.
         XCTAssertEqual(
-            TabBadgeGating.resolve(
-                agent: .done, completion: .success, isBusy: false, foregroundProcess: nil,
-                completionFreshness: .settled, agentGates: agentCompleteOff, commandGates: .allOn,
+            badge(
+                agent: .working,
+                isBusy: true,
+                progress: .indeterminate,
+                agentGates: everythingOff,
+                commandGates: commandsOff,
             ),
-            .finished,
-            "a command-success badge surfaces independent of the agent when-complete gate",
-        )
-    }
-
-    /// The UNREAD agent-finish latch is the same agent-completion family as `.done`: the agent
-    /// "when complete" gate silences it too, while the gate ON lets it fill a busy row (the
-    /// claude-process-keeps-the-shell-busy case).
-    func testUnseenDoneLatchFollowsAgentCompleteGate() {
-        let agentCompleteOff = AgentBadgeGates(
-            badgeWhileProcessing: false, badgeWhenComplete: false, badgeWhenAwaitingInput: true,
+            .commandRunning,
         )
         XCTAssertEqual(
-            TabBadgeGating.resolve(
-                agent: .idle, completion: nil, isBusy: true, foregroundProcess: nil,
-                unseenAgentDone: true, agentGates: .allOn, commandGates: .allOn,
-            ),
-            .finished,
-            "gate ON: the latch shows the settled dot over the busy shell",
+            badge(progress: .error(percent: 40), agentGates: everythingOff, commandGates: commandsOff),
+            .error,
         )
         XCTAssertEqual(
-            TabBadgeGating.resolve(
-                agent: .idle, completion: nil, isBusy: true, foregroundProcess: nil,
-                unseenAgentDone: true, agentGates: agentCompleteOff, commandGates: .allOn,
+            badge(isBusy: true, agentGates: everythingOff, commandGates: commandsOff), .commandBusy,
+        )
+    }
+
+    /// The unread agent-finish latch rides the "when complete" flag, not a sixth one.
+    func testTheUnreadLatchCrossesUnderTheCompleteGate() {
+        XCTAssertEqual(badge(agent: .idle, isBusy: true, unseenAgentDone: true), .finished)
+        XCTAssertEqual(
+            badge(
+                agent: .idle,
+                isBusy: true,
+                unseenAgentDone: true,
+                agentGates: AgentBadgeGates(badgeWhenComplete: false),
             ),
             .commandBusy,
-            "gate OFF: the latch is masked and the busy dot resumes",
-        )
-    }
-
-    /// All gates ON is an identity pass-through for every signal source (no badge is wrongly dropped).
-    func testAllGatesOnPassThrough() {
-        XCTAssertEqual(
-            TabBadgeGating.resolve(
-                agent: .needsPermission, completion: nil, isBusy: false, foregroundProcess: nil,
-                agentGates: .allOn, commandGates: .allOn,
-            ),
-            .awaitingInput,
-        )
-        XCTAssertEqual(
-            TabBadgeGating.resolve(
-                agent: .working, completion: nil, isBusy: false, foregroundProcess: nil,
-                agentGates: .allOn, commandGates: .allOn,
-            ),
-            .running,
-            "with the agent gate ON the agent spinner shows",
         )
     }
 }
