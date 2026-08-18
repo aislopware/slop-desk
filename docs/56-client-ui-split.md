@@ -951,3 +951,57 @@ while every stepper's value is an integer; font size is a `Double` the flat inde
 set to `13.5`, and a reader handed `readout(13)` prints a number the model does not hold. The UNIT
 crosses now — `" px"` or nothing — and each side composes the readout from the value it actually
 has, which is one door fewer as well as one lie fewer.
+
+### Increment 24 — the Mac's Settings window is AppKit
+
+The four increments above finished the SHAPE port: every page in the navigator now comes back from
+`slopdesk_workspace::settings_layout`, described down to which platform sees which group. That was
+the blocker, because `SlopDeskMacUI` may not carry an `#if os(…)` and Settings was where most of
+them lived. With the shape a value, the Mac can draw its own page.
+
+It does, in six files under `Sources/SlopDeskMacUI/Settings`: a window with a real
+`NSSplitViewController`, a `.sourceList` navigator over `SettingsCatalog.sections`, a key → closure
+binding table, five AppKit controls that carry their own handler, a row builder, and a page that
+walks the groups. None of them spells a section title, a group header, a row label, an option name
+or a range — the same property `check-supervisor` ratchets on the SwiftUI side, holding here by
+construction rather than by a grep.
+
+**A control KIND is not a control.** `Control.cards` is answered by a tile grid on the phone and by
+an `NSSegmentedControl` here: a card grid is how a touch target shows art per option, and a window
+with a mouse has a control for exactly this that carries the system's focus ring and keyboard
+traversal for free. Same schema, different drawing — which is the entire argument for splitting the
+halves, finally paid out rather than asserted.
+
+**A rebuild is the update.** Three rows are conditioned on another setting's VALUE — the window
+steppers on the size mode, the custom link schemes on the detection mode, the line-height multiplier
+on the line-height mode — and those conditions are dynamic rather than layout, so the table lists
+every row and the renderer decides. SwiftUI gets the invalidation from the framework; AppKit has
+nothing to hang it on, so a write rebuilds the section's stack on the next turn of the run loop.
+That is a few dozen views on a click, not a frame loop, and the alternative is a dependency graph
+maintained by hand per row.
+
+**A bespoke surface is drawn ONCE, and hosted.** Every described row is deliberately drawn twice —
+that is the split. A `Control.bespoke` group is not a control kind: it is a card that writes
+someone's `~/.claude/settings.json`, a searchable index of two hundred keys, a free-text override
+box. There is nothing for the halves to differ about, and drawing one twice would be two chances to
+get the same words wrong. So the twelve of them live in `SettingsBespokeSurfaces.swift`, both halves
+resolve an id through `SettingsBespokeSurface`, and the Mac hosts the result in an `NSHostingView`.
+Six had been page-local `private var`s in `SettingsView.swift` and are structs now, each owning the
+display-time state it used to borrow from its page.
+
+Two of those moves fixed something on the way. The raw-override box used to be cleared by a callback
+threaded down from the All-Settings list two groups below — which only worked while one page
+happened to own both — and now re-renders from `store.rawOverrides`, so a reset clears it wherever
+either one is drawn. And the ✎ jump reports a SECTION ID instead of writing a
+`Binding<SettingsSection>`: the two halves navigate differently, and neither owns the other's
+selection type.
+
+**What was deleted.** `SlopDeskSettingsScene`, `SettingsView`, and the `SettingsEscapeDismisser`
+monitor. The scene supplied ⌘, for free, so the Mac app declares it in `CommandGroup(replacing:
+.appSettings)`. Esc is `cancelOperation(_:)` on the window — the responder chain's own path, where
+two hardware rounds of `NSEvent`-monitor workarounds used to stand — and it still asks
+`slopdesk_video::escape_monitor` through `SettingsEscapePolicy` for the modifier rule and the
+chord-recorder veto. Those are decisions; only the thing that asked them was SwiftUI's.
+
+`SettingsView.swift` keeps the per-section structs, because the phone's sheet renders them. What it
+no longer keeps is a window.

@@ -91,6 +91,10 @@ public struct SlopDeskMacApp: App {
     /// live in SEPARATE hosting views, so the free pane drag (move across tabs / break to a new tab / tear
     /// off to a window / merge back) meets here. Its `store` weak ref is bound in a launch `.task`.
     @State private var paneDrag = PaneDragCoordinator()
+    /// The Settings WINDOW (docs/56 stage D). Not a `Settings` scene: that scene is a SwiftUI construct
+    /// that supplies its own ⌘, item, and the page it hosted is now drawn in AppKit from the layout
+    /// table. Built once at launch, opened on demand, and it holds its own window.
+    @State private var settingsWindow: MacSettingsWindowController
     @Environment(\.scenePhase) private var scenePhase
     /// Whether the first-launch sheet is up — set true once at launch when ``FirstLaunchModel/shouldPresent``.
     @State private var presentFirstLaunch = false
@@ -218,6 +222,11 @@ public struct SlopDeskMacApp: App {
         // `WeakWindowBox` the `.introspect(.window)` hook fills.
         let windowBox = WeakWindowBox()
         _windowBox = State(initialValue: windowBox)
+        // The Settings window controller, built with the SAME single live store the workspace binds —
+        // one `PreferencesStore`, one window, raised rather than re-made on the second ⌘,.
+        _settingsWindow = State(initialValue: MacSettingsWindowController(
+            store: app.preferences, agentHooks: app.agentHooks, workspace: store,
+        ))
         _clipboardMonitor = State(initialValue: ClipboardMonitor(store: store))
         // CLIPBOARD SYNC: copy on this Mac → the HOST pasteboard mirrors it within a tick (so Claude
         // Code's Ctrl+V image paste and a plain ⌘V in a remote-desktop pane just work), and a host-side
@@ -609,6 +618,14 @@ public struct SlopDeskMacApp: App {
             // WindowGroup (no document types are declared), so replacing it with nothing removes the
             // affordance without touching the rest of the File menu.
             CommandGroup(replacing: .newItem) {}
+            // ⌘, is the one shortcut declared here rather than routed through the binding registry: it
+            // is the app menu's, not the workspace's, and the `Settings` scene that used to supply it
+            // went with the SwiftUI settings surface. `.appSettings` is the group AppKit reserves for
+            // it, so the item lands where every Mac user looks for it.
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") { settingsWindow.show() }
+                    .keyboardShortcut(",", modifiers: .command)
+            }
             WorkspaceCommands(
                 store: store,
                 togglePalette: { [overlayCoordinator] in overlayCoordinator.togglePalette() },
@@ -648,11 +665,6 @@ public struct SlopDeskMacApp: App {
                 },
             )
         }
-
-        // The GUI Settings surface (⌘,). A STOCK SwiftUI `Settings` scene — the main window is
-        // `.hiddenTitleBar` and the in-app overlay host is not mounted there, so a separate
-        // system-chromed window is the non-clashing home. Binds the SAME single live `PreferencesStore`.
-        SlopDeskSettingsScene(store: preferences, agentHooks: agentHooks, workspace: store)
     }
 
     /// Wraps a satellite window's SwiftUI root with the scene-level environment. An `NSHostingView` root

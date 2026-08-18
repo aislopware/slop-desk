@@ -9,7 +9,7 @@
 //     (`.advancedOnly`, bound to its `Defaults.Key`) OR a value + ✎ jump-to-tab button (`.hasDedicatedTab`).
 //
 // The catalog is the single source of WHAT to show; this view owns the `Defaults.Key` bindings + the
-// cross-tab jump (it sets the shared `selectedSection`). Cross-tab HIGHLIGHT of the target control is
+// cross-tab jump (reported by section id). Cross-tab HIGHLIGHT of the target control is
 // deferred (only the jump itself ships here).
 // Colour + type: `SettingsInk` / `SettingsType` (SYSTEM semantics — not the terminal theme); geometry
 // rides `Slate.Metric` (raw font/radius/height literals fail `scripts/check-ds-leaks.sh`).
@@ -24,13 +24,14 @@ import SlopDeskWorkspaceModel
 import SwiftUI
 
 /// The Advanced → All Settings panel. Returns a `Group` of `Section`s so it composes into the host
-/// `AdvancedSettingsTab` `Form`. `selectedSection` is the shared `TabView` selection a ✎ jump repoints.
+/// host `Form`. A ✎ jump reports the SECTION ID it wants shown; the navigator that owns the selection
+/// decides what to do with it.
 struct AllSettingsListView: View {
     @Bindable var store: PreferencesStore
-    /// The shared `TabView` selection — a ✎ jump on a `.hasDedicatedTab` row sets this to that tab.
-    @Binding var selectedSection: SettingsSection
-    /// Called after either reset so the host can clear UI buffers it owns (e.g. the raw-overrides text box).
-    var onAfterReset: () -> Void = {}
+    /// Where a ✎ jump on a `.hasDedicatedTab` row goes, by SECTION ID — the two halves navigate
+    /// differently (a `List` selection here, an `NSTableView` row there) and neither owns the other's
+    /// selection type, so what crosses is the id the catalog already carries.
+    var onJump: (String) -> Void = { _ in }
 
     @State private var query = ""
     @State private var confirmResetAll = false
@@ -141,7 +142,6 @@ struct AllSettingsListView: View {
                 // The affordance in full: `resetAll()` alone cannot reach `device-prefs.json`, and the
                 // alert below promises "every setting" (`AllSettingsCatalog.deviceLocalKeys`).
                 store.resetEverySetting(deviceLocal: workspaceStore)
-                onAfterReset()
             }
         } message: {
             Text("This restores every setting to its default — font, keybindings, and all expert "
@@ -151,7 +151,6 @@ struct AllSettingsListView: View {
             Button("Cancel", role: .cancel) {}
             Button("Reset Advanced", role: .destructive) {
                 store.resetAdvancedOnly()
-                onAfterReset()
             }
         } message: {
             Text("This restores the advanced keys (video, agent, and raw overrides) to their defaults, "
@@ -188,12 +187,10 @@ struct AllSettingsListView: View {
         }
     }
 
-    /// A button showing the current value + ✎ that repoints `selectedSection` to the owning tab.
+    /// A button showing the current value + ✎ that repoints the navigator at the owning page.
     private func jumpButton(for entry: AllSettingsCatalog.SettingEntry) -> some View {
         Button {
-            if let raw = entry.targetSection, let section = SettingsSection(rawValue: raw) {
-                selectedSection = section
-            }
+            if let raw = entry.targetSection { onJump(raw) }
         } label: {
             HStack(spacing: Slate.Metric.space1) {
                 Text(dedicatedValue(for: entry))

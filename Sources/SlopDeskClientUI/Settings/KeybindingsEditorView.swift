@@ -13,6 +13,7 @@
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
+import SlopDeskClientCore // SettingsChordCapture — the recorder's claim on Esc
 import SlopDeskVideoProtocol
 import SlopDeskWorkspaceCore
 import SwiftUI
@@ -84,8 +85,8 @@ struct KeybindingsEditorView: View {
             // keystroke elsewhere is never silently recorded as the new chord.
             onCancel: { recordingID = nil },
         ))
-        // Publish the armed state so the window's Esc-dismiss monitor stands down while a chord is being
-        // recorded — there Esc means "cancel the capture", not "close Settings" (see `SettingsEscapeDismiss`).
+        // Publish the armed state so the window's Esc dismiss stands down while a chord is being
+        // recorded — there Esc means "cancel the capture", not "close Settings" (`SettingsEscapePolicy`).
         // Cleared on disappear too: navigating away mid-capture must not leave Esc permanently disowned.
         .onChange(of: recordingID) { _, new in SettingsChordCapture.shared.isCapturing = new != nil }
         .onDisappear { SettingsChordCapture.shared.isCapturing = false }

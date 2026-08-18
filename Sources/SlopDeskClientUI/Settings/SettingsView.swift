@@ -1,37 +1,34 @@
-// SettingsView — the SwiftUI Settings surface.
+// SettingsView — the settings PAGES, in SwiftUI.
 //
-// A two-column Settings window; the right column is a THIN `@Bindable` over the one live `@Observable`
-// `PreferencesStore`. Each section edits a slice of the typed prefs models (`TerminalPreferences`,
-// `VideoPreferences`, `AgentPreferences`, `AppearancePreferences`, `KeybindingPreferences`) or the fire-time
-// `SettingsKey` toggles (`@Default(.key)`); the store's `didSet` apply-paths do the rest (terminal
-// live-reload, env overlay + sidecar, theme repoint, keybinding republish).
+// What lives here is one struct per section of the taxonomy, each of which asks
+// `slopdesk_workspace::settings_layout` for its groups and renders them. The two things a page still
+// decides for itself are the two the table cannot carry: a key → BINDING (`@Default` is a property
+// wrapper, so a key can cross a language boundary and a binding cannot), and what a control KIND looks
+// like in this framework. Everything else — which groups, in what order, under which header, with
+// which timing, on which platform — comes back from the table.
 //
-// LAYOUT: left NAVIGATOR (search pill + icon+label section list) + content column
-// (`docs/ui-shell/screenshots/{all-settings,launch-option,editor-settings,cursor-style}.png`). The sidebar
-// search pill (filters SECTION ROWS) is DISTINCT from the Advanced → All-Settings content search (filters
-// config KEYS) — both surfaced at once.
+// WHO RENDERS THIS. The phone: `SettingsSheet` presents ``SettingsSectionContent`` for the section a
+// reader taps. The Mac draws its own page in AppKit (`SlopDeskMacUI/Settings`), from the SAME table,
+// because a settings window with a mouse wants an `NSSwitch` and a source list where a sheet wants a
+// `Toggle` and a pushed list — that difference is the whole reason the halves are separate (docs/56
+// §3). What neither half redraws is a `Control.bespoke` group: those are surfaces rather than control
+// kinds, so both resolve them through ``SettingsBespokeSurface`` and the Mac hosts the result.
 //
-// An 8-section taxonomy (`SettingsSection`): General / Shell / Controls / Editor / Agents / Appearance /
-// Key Bindings / Advanced — finer-grained than a flat tab strip so each group can sit where its screenshot
-// proves it belongs, rather than where it happens to fit. FONT (family + size) + CURSOR (style + blink) →
-// **Appearance** (`font-setting.png` / `cursor-style.png`); SCROLLBACK → **Controls**
-// (`spec/terminal-features__scroll.md`); theme → Appearance; agent host flags → Agents; Close Confirmation
-// (Closing Tab / Closing Window) → **General** (`launch-option.png`). **Editor** is reserved for a built-in
-// FILE-editor (Soft Wrap / Line Numbers / Tab Size — `editor-settings.png`) slopdesk lacks, so it stays
-// RESERVED/empty (kept 1:1 in the navigator, NOT backfilled with terminal-render prefs). The Video HOST flags
+// An 8-section taxonomy (`SettingsSection`): General / Shell / Controls / Editor / Agents / Appearance
+// / Key Bindings / Advanced — finer-grained than a flat tab strip so each group can sit where its
+// screenshot proves it belongs. FONT (family + size) + CURSOR (style + blink) → **Appearance**
+// (`font-setting.png` / `cursor-style.png`); SCROLLBACK → **Controls**
+// (`spec/terminal-features__scroll.md`); theme → Appearance; agent host flags → Agents; Close
+// Confirmation → **General** (`launch-option.png`). **Editor** is reserved for a built-in FILE-editor
+// (Soft Wrap / Line Numbers / Tab Size — `editor-settings.png`) slopdesk lacks, so it states its own
+// emptiness rather than being backfilled with terminal-render prefs. The Video HOST flags
 // (QP/FEC/pacer/sharpen) have no dedicated section, so they fold into Advanced as a "Video (host)"
 // sub-section — real functionality, not dropped.
 //
-// SURFACING: the main window is `.hiddenTitleBar` and `OverlayCoordinator` is NOT yet mounted, so this rides
-// a STOCK SwiftUI `Settings` scene (`SlopDeskSettingsScene`) — ⌘, opens a separate system-chromed window
-// that doesn't clash with the workspace's hover-reveal titlebar. When the coordinator lands the same tree can
-// move into an in-window panel via `settingsVisible`. `SettingsView` stays cross-platform so the iOS settings
-// sheet can host the same section structs.
-//
-// DEFERRED vs LIVE-APPLY: each section carries an `ApplyTiming` chip (`.live` = immediate; `.reconnect` = a
-// HOST-read sidecar flag, effective on the next host connection). Terminal + appearance + keybindings + the
-// fire-time toggles are live; the video/agent HOST flags are reconnect-only; SYMMETRIC keys (FEC) also carry
-// a "set on both ends" warning.
+// DEFERRED vs LIVE-APPLY: each group carries an `ApplyTiming` chip (`.live` = immediate; `.reconnect` =
+// a HOST-read sidecar flag, effective on the next host connection). Terminal + appearance + keybindings
+// + the fire-time toggles are live; the video/agent HOST flags are reconnect-only; SYMMETRIC keys (FEC)
+// also carry a "set on both ends" warning.
 //
 // Colour + type: `SettingsInk` / `SettingsType` (SYSTEM semantics — not the terminal theme); geometry
 // rides `Slate.Metric` (raw font/radius/height literals fail `scripts/check-ds-leaks.sh`).
@@ -47,48 +44,6 @@ import SwiftUI
 import UserNotifications
 #if os(iOS)
 import UIKit // UIApplication.openSettingsURLString — the notification-permission deep link.
-#endif
-
-// MARK: - Settings scene (stock SwiftUI, ⌘,)
-
-/// The stock `Settings` scene wrapper, wired in `SlopDeskClientApp`. Stock (not an in-window panel) because
-/// the main window hides its titlebar and the overlay host isn't mounted yet (see file header). macOS-only:
-/// the `Settings` scene is unavailable on iOS (its settings surface lands as an in-app sheet later);
-/// `SettingsView` stays cross-platform so iOS can host it.
-#if os(macOS)
-public struct SlopDeskSettingsScene: Scene {
-    private let store: PreferencesStore
-    /// The app-owned Agents install-hooks model, injected so the card's Install/Uninstall/Status
-    /// round-trips reach the host. Optional — a preview/future host can omit it (card then renders the
-    /// disabled "Connect a session" state).
-    private let agentHooks: AgentHooksController?
-    /// The app-owned ``WorkspaceStore``, injected so the DEVICE-LOCAL preference rows (docs/45 §7.3 —
-    /// today: follow the shared focus) reach the value they edit. Optional — a preview can omit it, and
-    /// those rows then render the platform default, disabled.
-    private let workspace: WorkspaceStore?
-
-    public init(
-        store: PreferencesStore,
-        agentHooks: AgentHooksController? = nil,
-        workspace: WorkspaceStore? = nil,
-    ) {
-        self.store = store
-        self.agentHooks = agentHooks
-        self.workspace = workspace
-    }
-
-    public var body: some Scene {
-        Settings {
-            SettingsView(store: store)
-                .agentHooksController(agentHooks)
-                .workspaceStore(workspace)
-            // SYSTEM chrome, end to end: no colour scheme is pinned, so the window follows the OS
-            // appearance like System Settings does. Pinning it to the terminal theme used to put a
-            // dark-themed preferences window on a light Mac. Controls take the app's one neutral
-            // accent (the AccentColor asset) with no per-scene override. See `SettingsInk`.
-        }
-    }
-}
 #endif
 
 // MARK: - Settings taxonomy (the 8 sections — one source for the macOS navigator + the iOS list)
@@ -119,20 +74,21 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     /// taxonomy test is what rules out.
     private var row: SettingsCatalog.Section? { SettingsCatalog.section(rawValue) }
 
-    /// The navigator row label (and the phone list's row title).
+    /// The list row's title.
     var title: String { row?.title ?? "" }
 
-    /// The sidebar glyph (SF Symbol name).
+    /// The list row's glyph (SF Symbol name).
     var systemImage: String { row?.systemImage ?? "" }
 
     /// macOS-only sections are dropped from the compact iOS sheet. Only **Keybindings** qualifies: its
     /// chord CAPTURE is a macOS `NSEvent` monitor (`KeyCaptureMonitor` is `#if os(macOS)`), with no iOS
-    /// capture UI. Advanced's macOS-HOST-only *rows* (raw `SLOPDESK_*` editor + Video host flags) are gated
-    /// INSIDE `AdvancedSettingsTab`, not by hiding the section, so the All-Settings list still reaches iOS.
+    /// capture UI. Advanced's macOS-HOST-only *groups* (raw `SLOPDESK_*` editor + Video host flags) are
+    /// gated by the layout table's `Platform`, not by hiding the section, so the All-Settings index
+    /// still reaches iOS.
     var isMacOSOnly: Bool { row?.isMacOSOnly ?? false }
 
-    /// The whole taxonomy IN THE CATALOG'S ORDER — what both lists render. Declaration order here is
-    /// not the contract; the boundary's is.
+    /// The whole taxonomy IN THE CATALOG'S ORDER. Declaration order here is not the contract; the
+    /// boundary's is, and `SettingsSectionTaxonomyTests` is what pins that every case is reachable.
     static let ordered: [Self] = SettingsCatalog.sections.compactMap { Self(rawValue: $0.id) }
 
     /// What a COMPACT list shows.
@@ -167,76 +123,6 @@ struct TimingChip: View {
     }
 }
 
-// MARK: - The two-column Settings view
-
-/// The Settings body: a two-column layout — a left navigator (search pill + icon+label section rows) and the
-/// selected section's content on the right. Section set + order + icons come from `SettingsSection` so the
-/// navigator can't drift from the pinned taxonomy.
-struct SettingsView: View {
-    @Bindable var store: PreferencesStore
-
-    /// The selected section — also bound into ``SettingsSectionContent`` so the Advanced All-Settings list's
-    /// ✎ jump buttons can repoint the navigator to the owning section.
-    @State private var selectedSection: SettingsSection = .general
-
-    /// The SIDEBAR search pill query — narrows which SECTION ROWS show. DISTINCT from the Advanced →
-    /// All-Settings content search (`AllSettingsListView`, which narrows the config-KEY list); both show at
-    /// once. Plain case-insensitive substring match over section titles.
-    @State private var sidebarQuery: String = ""
-
-    var body: some View {
-        // NATIVE macOS settings chrome: a `NavigationSplitView` with a system `List(selection:)` sidebar +
-        // native `.searchable` and the `Form`-based section content as detail — instead of a bespoke
-        // two-column `HStack` + custom `SettingsSidebarRow` buttons. Nothing pins the window's appearance:
-        // it follows the OS, like every other preferences window.
-        NavigationSplitView {
-            List(selection: selectionBinding) {
-                ForEach(filteredSections) { section in
-                    Label(section.title, systemImage: section.systemImage)
-                        .tag(section)
-                }
-            }
-            .navigationSplitViewColumnWidth(
-                min: 200, ideal: Slate.Metric.settingsSidebarWidth, max: 320,
-            )
-            .searchable(text: $sidebarQuery, placement: .sidebar, prompt: "Search")
-            // A Settings window has a FIXED navigator (like macOS System Settings) — drop the sidebar-collapse
-            // toggle macOS auto-adds. Collapsing would leave no way to switch sections.
-            .toolbar(removing: .sidebarToggle)
-        } detail: {
-            content(for: selectedSection)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        }
-        .frame(minWidth: 720, minHeight: 480)
-        #if os(macOS)
-            // Esc closes the window. A stock `Settings` scene has NO Esc behaviour of its own, so ⌘, otherwise
-            // opened a window the keyboard could not dismiss; the monitor is window-scoped and defers to a
-            // field editor (see `SettingsEscapeDismiss`).
-            .background { SettingsEscapeDismisser() }
-        #endif
-    }
-
-    /// Bridges the non-optional ``selectedSection`` to the optional selection a `List` single-selection binding
-    /// needs (a `nil` set — e.g. a sidebar deselect — is ignored, keeping a section always shown in the detail).
-    private var selectionBinding: Binding<SettingsSection?> {
-        Binding(get: { selectedSection }, set: { if let new = $0 { selectedSection = new } })
-    }
-
-    /// The section rows the navigator shows — every section, or the title-substring matches when the pill has
-    /// a query. Empty / whitespace query ⇒ all sections (taxonomy order preserved).
-    private var filteredSections: [SettingsSection] {
-        let needle = sidebarQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !needle.isEmpty else { return SettingsSection.ordered }
-        return SettingsSection.ordered.filter { $0.title.lowercased().contains(needle) }
-    }
-
-    /// The body for a section — a thin dispatch onto the shared ``SettingsSectionContent`` (the SAME switch
-    /// the iOS sheet renders, so the macOS navigator and the iOS list can never show different content).
-    private func content(for section: SettingsSection) -> some View {
-        SettingsSectionContent(section: section, store: store, selectedSection: $selectedSection)
-    }
-}
-
 // MARK: - Shared per-section content (one dispatch for the macOS navigator + the iOS sheet)
 
 /// Resolves a ``SettingsSection`` to its per-section body — the ONE place the section → struct mapping lives,
@@ -251,10 +137,10 @@ struct SettingsSectionContent: View {
 
     var body: some View {
         switch section {
-        case .general: GeneralSettingsTab()
-        case .shell: ShellSettingsTab()
+        case .general: GeneralSettingsTab(store: store)
+        case .shell: ShellSettingsTab(store: store)
         case .controls: ControlsSettingsTab(store: store)
-        case .editor: EditorSettingsTab()
+        case .editor: EditorSettingsTab(store: store)
         case .agents: AgentsSettingsTab(store: store)
         case .appearance: AppearanceSettingsTab(store: store)
         case .keybindings: KeybindingsSettingsTab(store: store)
@@ -276,6 +162,8 @@ struct SettingsSectionContent: View {
 /// quit-policy row has no backing behaviour. Conversely **Privacy & New Panes** (Redact secrets / Default
 /// pane kind) is slopdesk-SPECIFIC — deliberately added, not a stray.
 private struct GeneralSettingsTab: View {
+    /// Held only to hand to a bespoke surface — General edits no typed-model field of its own.
+    let store: PreferencesStore
     /// Fire-time keys aren't in the typed models, so bind the global `Defaults.Keys` directly via `@Default`
     /// (the default lives in the key declaration). General has no typed-model field, so it takes no `store`.
     @Default(.onLaunch) private var onLaunch
@@ -286,11 +174,6 @@ private struct GeneralSettingsTab: View {
     /// persisted in `device-prefs.json` (docs/45 §7.3). Injected at the settings root; nil in a preview,
     /// which greys the row on its platform default (`SharedFocusSetting`).
     @Environment(\.workspaceStore) private var workspaceStore
-    // The OS Integration "Default Terminal" status, refreshed on appear + after Set.
-    // macOS-only — `DefaultTerminalIntegration` is `#if os(macOS)` (no iOS LaunchServices / deep-links).
-    #if os(macOS)
-    @State private var isDefaultTerminal = false
-    #endif
 
     var body: some View {
         Form {
@@ -299,7 +182,6 @@ private struct GeneralSettingsTab: View {
             }
         }
         .formStyle(.grouped)
-        .onAppear { refreshBespokeState() }
     }
 
     /// One row, by the setting it edits.
@@ -354,92 +236,10 @@ private struct GeneralSettingsTab: View {
     /// The groups this page draws itself rather than describing — see `SettingsLayout.Control.bespoke`.
     @ViewBuilder
     private func bespoke(_ row: SettingsLayout.Row) -> some View {
-        if case let .bespoke(id) = row.control, id == "os-integration" {
-            #if os(macOS)
-            osIntegrationRows
-            #endif
+        if case let .bespoke(id) = row.control {
+            SettingsBespokeSurface(id: id, store: store)
         }
     }
-
-    /// State a bespoke group needs read at display time rather than held in a table.
-    private func refreshBespokeState() {
-        #if os(macOS)
-        isDefaultTerminal = DefaultTerminalIntegration.isDefaultTerminal()
-        #endif
-    }
-
-    // MARK: - OS Integration (macOS-only, reachable post-first-launch)
-
-    /// Settings → General → OS Integration (`first-launch-default-terminal.png` /
-    /// `getting-started__first-launch.md §2`). REUSES the first-launch sheet's rows so behaviour lives in one
-    /// place (`DefaultTerminalIntegration`): a Default-Terminal status row (Set / "Default"), the Finder +
-    /// Full-Disk-Access deep-links, and the honestly-DISABLED "Default Terminal for Common Apps" row (a
-    /// remote-host editor's config can't be rewritten from the client — no dead button).
-    /// macOS-only.
-    #if os(macOS)
-    private var osIntegrationRows: some View {
-        Group {
-            osIntegrationRow(
-                "Default Terminal",
-                "Handle `ssh://` links and shell scripts opened from Finder or `open`.",
-            ) {
-                if isDefaultTerminal {
-                    Label("Default", systemImage: "checkmark").foregroundStyle(SettingsInk.ok)
-                } else {
-                    Button("Set as Default Terminal") {
-                        Task {
-                            await DefaultTerminalIntegration.setAsDefaultTerminal()
-                            isDefaultTerminal = DefaultTerminalIntegration.isDefaultTerminal()
-                        }
-                    }
-                    .buttonStyle(.bordered)
-                }
-            }
-            osIntegrationRow(
-                "Default Terminal for Common Apps",
-                "Editors and git GUIs hardcode Terminal.app. Rewriting their config only works for a LOCAL "
-                    + "editor — an editor on the remote host needs a host-side agent, so this is unavailable "
-                    + "in the remote model.",
-            ) {
-                Text("Unavailable").foregroundStyle(SettingsInk.tertiary)
-            }
-            osIntegrationRow(
-                "Finder Integration",
-                "Add \u{201C}Open in SlopDesk\u{201D} to Finder's right-click Services menu for folders.",
-            ) {
-                Button("Open System Settings") { DefaultTerminalIntegration.openFinderServicesSettings() }
-                    .buttonStyle(.bordered)
-            }
-            osIntegrationRow(
-                "Full Disk Access",
-                "Needed when commands run inside SlopDesk must read or write protected files. The app works "
-                    + "without it.",
-            ) {
-                Button("Open System Settings") { DefaultTerminalIntegration.openFullDiskAccessSettings() }
-                    .buttonStyle(.bordered)
-            }
-        }
-    }
-
-    /// The OS-integration row layout: a bold title + gray subtext leading, the action control trailing.
-    private func osIntegrationRow(
-        _ title: String,
-        _ subtitle: String,
-        @ViewBuilder trailing: () -> some View,
-    ) -> some View {
-        LabeledContent {
-            trailing()
-        } label: {
-            VStack(alignment: .leading, spacing: Slate.Metric.space1) {
-                Text(title)
-                Text(subtitle)
-                    .font(SettingsType.subtitle)
-                    .foregroundStyle(SettingsInk.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-    #endif
 }
 
 // MARK: - Shell section
@@ -453,6 +253,8 @@ private struct GeneralSettingsTab: View {
 /// **Appearance** (`tab-setting.png`); close-confirmation → **General** (`launch-option.png`); title + OSC-52
 /// privilege gates → **Advanced**. Each reads a fire-time `Defaults.Key` at the fire-site, so they apply LIVE.
 private struct ShellSettingsTab: View {
+    /// Held only to hand to a bespoke surface — Shell edits no typed-model field of its own.
+    let store: PreferencesStore
     // The NOTIFICATION group's keys, backed by the pure `NotificationPolicy` engine — real behaviour,
     // not deferred stubs.
     @Default(.oscNotifications) private var oscNotifications
@@ -478,9 +280,6 @@ private struct ShellSettingsTab: View {
     @Default(.workingDirectoryNewWindow) private var workingDirNewWindow
     @Default(.workingDirectoryNewTab) private var workingDirNewTab
     @Default(.workingDirectoryNewSplit) private var workingDirNewSplit
-    #if os(macOS)
-    @State private var cliInstaller = CLIInstaller()
-    #endif
 
     /// The two policy choices the picker surfaces. A custom-path policy (set from the config or the
     /// all-settings editor) reads as `home` here; editing the path lands in the raw editor.
@@ -497,9 +296,6 @@ private struct ShellSettingsTab: View {
             }
         }
         .formStyle(.grouped)
-        #if os(macOS)
-            .onAppear { cliInstaller.refreshInstalled() }
-        #endif
     }
 
     /// One row, by the setting it edits — see `GeneralSettingsTab.control(_:)` for why the binding is
@@ -570,14 +366,7 @@ private struct ShellSettingsTab: View {
     @ViewBuilder
     private func bespoke(_ row: SettingsLayout.Row) -> some View {
         if case let .bespoke(id) = row.control {
-            switch id {
-            case "notification-permission": NotificationPermissionRow()
-            case "cli-install":
-                #if os(macOS)
-                CLIInstallCardBody(installer: cliInstaller)
-                #endif
-            default: EmptyView()
-            }
+            SettingsBespokeSurface(id: id, store: store)
         }
     }
 
@@ -604,7 +393,7 @@ private struct ShellSettingsTab: View {
 /// (`x-apple.systempreferences:com.apple.preference.notifications`); iOS CANNOT deep-link to the per-app OS
 /// pane, so the button opens the app's OWN settings via `UIApplication.openSettingsURLString` — macOS
 /// deep-link `#if os(macOS)`, iOS fallback `#if os(iOS)`. See docs/DECISIONS.md.
-private struct NotificationPermissionRow: View {
+struct NotificationPermissionRow: View {
     /// The current dot — starts amber (unknown) until the async query resolves, never a false green.
     @State private var dot: PermissionStatus.Dot = .amber
     /// SwiftUI-native URL opener (replaces `NSWorkspace`/`UIApplication.open` for the deep-link below). The
@@ -881,38 +670,19 @@ private struct ControlsSettingsTab: View {
 /// Appearance; SCROLLBACK → Controls). Kept in the taxonomy (pinned by `SettingsSectionTaxonomyTests`) as a
 /// placeholder so the navigator stays complete; fills in when a file-pane editor lands.
 private struct EditorSettingsTab: View {
+    let store: PreferencesStore
+
     var body: some View {
         Form {
             ForEach(SettingsLayout.groups(SettingsSection.editor.rawValue, for: .current)) { group in
-                settingsGroup(group) { _ in emptyState }
+                settingsGroup(group) { row in
+                    if case let .bespoke(id) = row.control {
+                        SettingsBespokeSurface(id: id, store: store)
+                    }
+                }
             }
         }
         .formStyle(.grouped)
-    }
-
-    /// A RESERVED page states its own emptiness in the empty-state voice (MERIDIAN C3: muted symbol,
-    /// short title, one-line cause) rather than as a "File editor — Not available" row, which read
-    /// like a broken control. Local to this page, NOT a new `SlateEmptyState.Cause`: that enum's
-    /// typed causes are the pane area's connection states, with pinned copy per case.
-    private var emptyState: some View {
-        VStack(spacing: Slate.Metric.space2) {
-            Image(systemSymbol: .textDocument)
-                .font(SettingsType.placeholderGlyph)
-                .foregroundStyle(SettingsInk.tertiary)
-            Text("No File Editor Yet")
-                .font(SettingsType.body.weight(.semibold))
-            Text(
-                "Soft Wrap, Line Numbers, and Tab Size configure a built-in file editor slopdesk "
-                    + "does not have. Terminal font and cursor live under Appearance; scrollback "
-                    + "under Controls.",
-            )
-            .font(SettingsType.subtitle)
-            .foregroundStyle(SettingsInk.secondary)
-            .multilineTextAlignment(.center)
-            .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, Slate.Metric.space4)
     }
 }
 
@@ -1136,19 +906,7 @@ private struct AppearanceSettingsTab: View {
     @ViewBuilder
     private func bespoke(_ row: SettingsLayout.Row) -> some View {
         if case let .bespoke(id) = row.control {
-            switch id {
-            // The Font-Family scope tabs over two different bodies — the primary family with its
-            // three derived faces, or the ordered fallback list — and the "Aa" specimen combobox
-            // (`font-setting.png`). Size, line height, ligatures and style are rows above.
-            case "font-family": FontSettingsView(store: store)
-            // The live caret preview with its colour wells and text-under toggle (`cursor-style.png`)
-            // — AppKit, hence the gate, which dies with the AppKit port.
-            case "cursor-preview":
-                #if os(macOS)
-                CursorPreviewView(store: store)
-                #endif
-            default: EmptyView()
-            }
+            SettingsBespokeSurface(id: id, store: store)
         }
     }
 
@@ -1271,8 +1029,8 @@ private struct AgentsSettingsTab: View {
     /// the user's own `~/.claude/settings.json` plus a live status readout, not a list of settings.
     @ViewBuilder
     private func bespoke(_ row: SettingsLayout.Row) -> some View {
-        if case let .bespoke(id) = row.control, id == "claude-hooks" {
-            claudeCodeRows
+        if case let .bespoke(id) = row.control {
+            SettingsBespokeSurface(id: id, store: store)
         }
     }
 
@@ -1289,100 +1047,6 @@ private struct AgentsSettingsTab: View {
             get: { binding.wrappedValue ?? whenUnset },
             set: { binding.wrappedValue = $0 },
         )
-    }
-
-    // MARK: Claude Code install-hooks card (`install-agent-integeration.png`)
-
-    /// The CLAUDE CODE card: a bold "Install Hooks" title + gray description with trailing pill buttons
-    /// (Install when not installed, "Installed" disabled + Uninstall when installed) and a Status row
-    /// ("✓ Installed" green / "Not Installed" gray). Disabled with a "Connect a session" note while no pane
-    /// backs the card. Claude-only.
-    @ViewBuilder
-    private var claudeCodeRows: some View {
-        let state = AgentSettingsCard.installState(agentHooks)
-        Group {
-            LabeledContent {
-                installButtons(state)
-            } label: {
-                rowLabel(
-                    "Install Hooks",
-                    "Add slopdesk hooks to ~/.claude/settings.json for real-time state updates",
-                )
-            }
-
-            LabeledContent("Status") { statusBadge(state) }
-
-            if state == .disconnected || state == .unknown {
-                Text("Connect a session to manage hooks")
-                    .font(SettingsType.subtitle)
-                    .foregroundStyle(SettingsInk.tertiary)
-            }
-
-            // installed-but-INACTIVE — hooks are in settings.json but the host daemon's hook listener isn't
-            // bound, so every hook exits silently and no live agent states (or prompt-queue turn signals)
-            // arrive. There is no toggle to blame any more (the listener binds unconditionally), so this
-            // now means the bind FAILED or the host predates it. Show the fix, not a green check over a
-            // dead integration.
-            if state == .installedInactive {
-                Text(
-                    "Hooks are installed but the host isn't listening — its socket failed to bind, or "
-                        + "the host daemon is an older build. Restart it, then open new panes.",
-                )
-                .font(SettingsType.subtitle)
-                .foregroundStyle(SettingsInk.warn)
-                .fixedSize(horizontal: false, vertical: true)
-            }
-
-            // Install/uninstall write the host file LIVE, but Claude re-reads settings.json only on next launch
-            // — an agent-restart caveat, not a host-reconnect sidecar flag (hence a plain caption, not the
-            // `.reconnect` chip, which would mislead).
-            Text("Hooks take effect after the agent restarts.")
-                .font(SettingsType.caption)
-                .foregroundStyle(SettingsInk.tertiary)
-        }
-    }
-
-    /// The trailing pill buttons for the Install Hooks row, keyed on the install state. While a write is in
-    /// flight a small spinner replaces the buttons; while disconnected/unknown the Install button shows
-    /// disabled (honest — never a dead-looking enabled button with no backing pane).
-    private func installButtons(_ state: AgentHooksController.InstallState) -> some View {
-        HStack(spacing: Slate.Metric.space2) {
-            switch state {
-            case .installed,
-                 .installedInactive: // the entries are on disk either way — Uninstall stays actionable
-                Button("Installed") {}.disabled(true)
-                Button("Uninstall") { Task { await agentHooks?.uninstall() } }
-            case .notInstalled:
-                Button("Install") { Task { await agentHooks?.install() } }
-            case .working:
-                ProgressView().controlSize(.small)
-            case .disconnected,
-                 .unknown:
-                Button("Install") {}.disabled(true)
-            }
-        }
-        .buttonStyle(.bordered)
-    }
-
-    /// The Status-row trailing badge: a green "✓ Installed" (ONLY when the listener is live) / an amber
-    /// "Installed — inactive" warning / gray "Not Installed" / neutral "Working…" / "—" by state.
-    @ViewBuilder
-    private func statusBadge(_ state: AgentHooksController.InstallState) -> some View {
-        switch state {
-        case .installed:
-            Label("Installed", systemImage: "checkmark")
-                .foregroundStyle(SettingsInk.ok)
-        case .installedInactive:
-            Label("Installed — inactive", systemImage: "exclamationmark.triangle")
-                .foregroundStyle(SettingsInk.warn)
-        case .notInstalled:
-            Text("Not Installed").foregroundStyle(SettingsInk.secondary)
-        case .working:
-            Text("Working…").foregroundStyle(SettingsInk.secondary)
-        case .disconnected,
-             .unknown:
-            Text("—").foregroundStyle(SettingsInk.tertiary)
-        }
     }
 }
 
@@ -1429,7 +1093,11 @@ private struct KeybindingsSettingsTab: View {
     @Bindable var store: PreferencesStore
     var body: some View {
         ForEach(SettingsLayout.groups(SettingsSection.keybindings.rawValue, for: .current)) { group in
-            settingsGroup(group) { _ in KeybindingsEditorView(store: store) }
+            settingsGroup(group) { row in
+                if case let .bespoke(id) = row.control {
+                    SettingsBespokeSurface(id: id, store: store)
+                }
+            }
         }
     }
 }
@@ -1452,10 +1120,6 @@ private struct AdvancedSettingsTab: View {
     @Default(.clipboardRead) private var clipboardRead
     @Default(.clipboardWrite) private var clipboardWrite
 
-    /// Local edit buffer of `key = value` lines; committed into `store.rawOverrides` on change. Only
-    /// the Mac draws the box — the table says so — but a `String` needs no gate to exist.
-    @State private var text: String = ""
-
     var body: some View {
         Form {
             ForEach(SettingsLayout.groups(SettingsSection.advanced.rawValue, for: .current)) { group in
@@ -1463,7 +1127,6 @@ private struct AdvancedSettingsTab: View {
             }
         }
         .formStyle(.grouped)
-        .onAppear { text = Self.render(store.rawOverrides) }
     }
 
     /// One row, by the setting it edits — see `GeneralSettingsTab.control(_:)` for why the binding is
@@ -1485,20 +1148,13 @@ private struct AdvancedSettingsTab: View {
 
     /// The four groups this page draws itself. Three are surfaces rather than lists of settings — a
     /// free-text override box, the video host flags, a file path with two buttons — and the fourth is
-    /// the searchable index of every setting there is.
+    /// the searchable index of every setting there is. A ✎ jump in that index reports the SECTION it
+    /// wants shown, and the navigator this page hangs under is what repoints.
     @ViewBuilder
     private func bespoke(_ row: SettingsLayout.Row) -> some View {
         if case let .bespoke(id) = row.control {
-            switch id {
-            case "raw-overrides": rawOverrideRows
-            case "video-host": VideoHostSettingsView(store: store)
-            case "config-file": configFileRows
-            // `onAfterReset` clears the local raw-overrides buffer so the box reflects the cleared store.
-            case "all-settings":
-                AllSettingsListView(
-                    store: store, selectedSection: $selectedSection, onAfterReset: { text = "" },
-                )
-            default: EmptyView()
+            SettingsBespokeSurface(id: id, store: store) { target in
+                if let section = SettingsSection(rawValue: target) { selectedSection = section }
             }
         }
     }
@@ -1519,95 +1175,6 @@ private struct AdvancedSettingsTab: View {
         )
         .disabled(!clipboardShellControlled)
     }
-
-    // MARK: - Raw overrides
-
-    /// The power-user raw `SLOPDESK_*` box, folded LAST into the env overlay so a typed raw key beats
-    /// the matching typed pref — with the note that a REAL process env var still wins over the lot.
-    private var rawOverrideRows: some View {
-        Group {
-            Text(
-                "One SLOPDESK_KEY=value per line. Folded last, so a key here overrides the matching typed setting.",
-            )
-            .font(SettingsType.subtitle)
-            .foregroundStyle(SettingsInk.secondary)
-            TextEditor(text: $text)
-                .font(SettingsType.monoSubtitle)
-                .frame(minHeight: 120)
-                .onChange(of: text) { _, new in commit(new) }
-            HStack(spacing: Slate.Metric.space1) {
-                Image(systemSymbol: .infoCircle)
-                Text("A real environment variable set on the process still wins over any value here.")
-            }
-            .font(SettingsType.caption)
-            .foregroundStyle(SettingsInk.tertiary)
-        }
-    }
-
-    // MARK: - Config File (settings import/export)
-
-    /// Settings → Advanced → CONFIG FILE group: the resolved config path + "Open Config File" + "Reload
-    /// Config". macOS-only — the config file lives under `~/.config`, inaccessible on iOS. "Open Config File"
-    /// creates the parent dir + the file (if absent) then opens it in the default editor, so a fresh install
-    /// lands usable. "Reload Config" mirrors the CLI `config reload`: `reapplyLiveSettings()` + the
-    /// config-reload broadcast.
-    private var configFileRows: some View {
-        Group {
-            LabeledContent("Config path") {
-                // `resolvePath(override:nil)` respects `SLOPDESK_CONFIG_FILE` env override so the
-                // displayed path always matches the file the app actually honours (not just the XDG default).
-                Text(CLIConfig.resolvePath(override: nil))
-                    .font(SettingsType.monoSubtitle)
-                    .foregroundStyle(SettingsInk.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-            HStack(spacing: Slate.Metric.space3) {
-                Button("Open Config File") {
-                    let path = CLIConfig.resolvePath(override: nil)
-                    let url = URL(fileURLWithPath: path)
-                    // Create the parent directory so a first-time open works without a separate setup step.
-                    try? FileManager.default.createDirectory(
-                        at: url.deletingLastPathComponent(),
-                        withIntermediateDirectories: true,
-                        attributes: nil,
-                    )
-                    // Create an empty file if the config doesn't exist yet so the editor opens something.
-                    if !FileManager.default.fileExists(atPath: path) {
-                        try? "".write(to: url, atomically: true, encoding: .utf8)
-                    }
-                    ExternalOpen.url(url)
-                }
-                .buttonStyle(.bordered)
-                Button("Reload Config") {
-                    // Mirror the CLI `config reload` action exactly (same as WorkspaceControlBackend.configReload).
-                    store.reapplyLiveSettings()
-                    NotificationCenter.default.post(
-                        name: WorkspaceControlBackend.configReloadNotification, object: nil,
-                    )
-                }
-                .buttonStyle(.bordered)
-            }
-        }
-    }
-
-    /// Parse the `key=value` lines and write them into `store.rawOverrides` (empty / malformed lines ignored).
-    private func commit(_ raw: String) {
-        var map: [String: String] = [:]
-        for line in raw.split(whereSeparator: \.isNewline) {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            guard let eq = trimmed.firstIndex(of: "=") else { continue }
-            let key = String(trimmed[..<eq]).trimmingCharacters(in: .whitespaces)
-            let value = String(trimmed[trimmed.index(after: eq)...]).trimmingCharacters(in: .whitespaces)
-            guard !key.isEmpty else { continue }
-            map[key] = value
-        }
-        if map != store.rawOverrides { store.rawOverrides = map }
-    }
-
-    private static func render(_ map: [String: String]) -> String {
-        map.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "\n")
-    }
 }
 
 // MARK: - Video (host) sub-section — folded into Advanced
@@ -1616,7 +1183,7 @@ private struct AdvancedSettingsTab: View {
 /// daemon at launch and shipped via the `video-prefs.json` sidecar, so labelled "applies on reconnect"; the
 /// SYMMETRIC FEC keys add a "set on both ends" warning. Client-side `sharpen` is the one live field. Body
 /// returns a `Group` of `Section`s so the host `Form` (Advanced) renders them inline.
-private struct VideoHostSettingsView: View {
+struct VideoHostSettingsView: View {
     @Bindable var store: PreferencesStore
 
     var body: some View {

@@ -17,7 +17,7 @@
 // `\.preferencesStore`).
 //
 // The app-owned `AgentHooksController` is THREADED in here and injected
-// onto the section content via `.agentHooksController(_:)`, mirroring the macOS `SlopDeskSettingsScene`.
+// onto the section content via `.agentHooksController(_:)`, mirroring the macOS settings window.
 // Without it the Agents card was permanently `.disconnected` and the entire Agent-Behaviour toggle block was
 // greyed out on iOS (the controller's `@Environment` resolved nil). The app-owned `WorkspaceStore` rides the
 // same seam (`.workspaceStore(_:)`) for the DEVICE-LOCAL rows — General → Shared Focus, whose default is OFF
@@ -45,7 +45,7 @@ struct SettingsSheet: View {
 
     /// The app-owned Agents install-hooks controller, threaded from `SlopDeskClientApp` (held as
     /// `@State` on every platform) so the iOS Agents card's Install/Uninstall/Status round-trips AND the
-    /// gated Agent-Behaviour toggles are LIVE — mirrors the macOS `SlopDeskSettingsScene` injection. `nil`
+    /// gated Agent-Behaviour toggles are LIVE — mirrors the macOS settings window's injection. `nil`
     /// (a preview / no scene) → the card renders the disabled "Connect a session" state rather than crashing.
     let agentHooks: AgentHooksController?
 

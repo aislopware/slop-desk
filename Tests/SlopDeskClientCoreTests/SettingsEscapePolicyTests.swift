@@ -3,20 +3,17 @@
 // The rule is `slopdesk_video::escape_monitor`: which key, which modifiers disqualify it, and that a chord
 // recorder outranks the dismiss. What only this side can get wrong is the translation — the AppKit modifier
 // flags folded into the wire's six-bit mask, and the door's `Bool` turned back into the two-case decision the
-// monitor acts on. (The AppKit half — first-responder probing, `performClose`, monitor scoping — is
-// code-reviewed, not unit-tested: an `NSWindow` in a unit test is exactly the GUI-in-tests hazard CLAUDE.md
-// bans.)
+// window acts on. (The AppKit half — `cancelOperation`, `endEditing`, `performClose` — is code-reviewed,
+// not unit-tested: an `NSWindow` in a unit test is exactly the GUI-in-tests hazard CLAUDE.md bans.)
 //
 // TEXT FIELDS DELIBERATELY DO NOT VETO, and that is the HW-verified part: two earlier designs let a focused
 // field keep Esc (pass-through, then resign-first-responder-then-close) and BOTH dead-ended on hardware —
 // SwiftUI's `.searchable` pill neither consumes Esc nor gives up first responder, so Esc never closed the
 // window at all. `testEscapeClosesEvenWhileTypingInAField` pins the fix against a well-meaning revert.
 
-#if canImport(SwiftUI)
 import SlopDeskVideoProtocol
 import XCTest
 @testable import SlopDeskClientCore
-@testable import SlopDeskClientUI
 
 final class SettingsEscapePolicyTests: XCTestCase {
     /// The whole point, and the keycode the monitor reads off an `NSEvent`: a bare Esc closes the window.
@@ -90,4 +87,3 @@ final class SettingsEscapePolicyTests: XCTestCase {
         XCTAssertFalse(SettingsChordCapture.shared.isCapturing)
     }
 }
-#endif

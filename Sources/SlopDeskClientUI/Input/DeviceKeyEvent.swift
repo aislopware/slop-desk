@@ -38,7 +38,7 @@ extension SimulatorKeyMap {
     }
 }
 
-extension InputModifiers {
+package extension InputModifiers {
     /// The held modifiers an AppKit event carries. Caps Lock and function are folded in for
     /// completeness; the Android map reads only ⌥/⌃/⌘, and deliberately not ⇧ (the layout has already
     /// applied it to the characters), while the simulator map reads the four named ones.

@@ -8,8 +8,8 @@
 //
 // The flag belongs to `WorkspaceStore`, not to `PreferencesStore`, so the Settings surface reaches it the
 // way the Agents card reaches `AgentHooksController`: an `@Entry` environment slot injected at the
-// settings ROOT (`SlopDeskSettingsScene` on macOS, `SettingsSheet` on iOS — a sheet does not inherit the
-// presenter's custom environment values).
+// settings ROOT (the AppKit window's hosting root on macOS, `SettingsSheet` on iOS — a sheet does not
+// inherit the presenter's custom environment values).
 //
 // A `nil` store is a preview or an un-injected host. The row then states the PLATFORM DEFAULT and
 // disables itself: never a made-up state, never a write that lands nowhere — the same honest-fallback
@@ -69,8 +69,9 @@ extension EnvironmentValues {
     @Entry var workspaceStore: WorkspaceStore?
 }
 
-extension View {
-    /// Inject the app-owned ``WorkspaceStore`` into the environment (called at the settings root).
+package extension View {
+    /// Inject the app-owned ``WorkspaceStore`` into the environment (called at the settings root —
+    /// the SwiftUI scene's, and the AppKit window's hosting root, which is the same root twice).
     func workspaceStore(_ store: WorkspaceStore?) -> some View {
         environment(\.workspaceStore, store)
     }
