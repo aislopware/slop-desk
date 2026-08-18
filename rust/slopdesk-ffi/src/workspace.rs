@@ -1369,53 +1369,146 @@ const unsafe fn deliver_frames(frames: &[Frame], out: *mut Frame, cap: usize) ->
     frames.len()
 }
 
-/// The point-extent of each child along the split's axis within `total`.
+/// One draggable seam, flat.
 ///
-/// Fixed children are reserved first against a RUNNING budget — so the fixed sum never exceeds the
-/// bound and no two bands overlap — and the flex children divide what is left in proportion. An
-/// all-zero-flex tree falls back to an equal split, so no pane ever vanishes.
-///
-/// Exported separately from the solve because the divider handles are placed on the same seams the
-/// tiles land on, and a second copy of this partition would put the handle a pixel off the edge it
-/// is supposed to drag.
-///
-/// # Safety
-/// `shares` must be null or point to `count` live [`Share`]s; `out` null or writable for `cap`
-/// `double`s.
+/// The rect is where the handle is drawn and hit; everything after it is what a DRAG needs — the
+/// span it converts pixels against, the flex sum it converts them into, and the pair of weights it
+/// moves between. They ride the same struct because the two predicates below are answered from
+/// them alone, so a caller that has a handle never has to reassemble one.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct DividerHandle {
+    /// The split that owns the seam.
+    pub split: Uuid,
+    /// The LEADING child's index: the seam is between it and the next child.
+    pub child_index: u32,
+    /// 0 horizontal (a column seam, dragged left/right) · 1 vertical.
+    pub axis: u8,
+    /// The handle's band.
+    pub rect: CRect,
+    /// The owning split's axis length — a NESTED split's own, not the container's.
+    pub parent_span: f64,
+    /// The owning split's flex-weight sum.
+    pub flex_sum: f64,
+    /// The leading child's flex weight; `0` for a fixed child, which is not draggable.
+    pub leading_weight: f64,
+    /// The trailing child's flex weight; `0` fixed.
+    pub trailing_weight: f64,
+}
+
+impl DividerHandle {
+    const fn of(divider: &split_layout::Divider) -> Self {
+        Self {
+            split: Uuid {
+                bytes: divider.split.bytes(),
+            },
+            #[expect(
+                clippy::cast_possible_truncation,
+                reason = "a child index counts siblings of one split; the decoder caps a tree far below 2^32"
+            )]
+            child_index: divider.child_index as u32,
+            axis: if matches!(divider.axis, SplitAxis::Vertical) {
+                1
+            } else {
+                0
+            },
+            rect: CRect::of(divider.rect),
+            parent_span: divider.parent_span,
+            flex_sum: divider.flex_sum,
+            leading_weight: divider.leading_weight,
+            trailing_weight: divider.trailing_weight,
+        }
+    }
+
+    /// The rule's own shape again, so the two predicates read one implementation.
+    const fn resolve(self) -> split_layout::Divider {
+        split_layout::Divider {
+            split: SplitNodeId::from_bytes(self.split.bytes),
+            child_index: self.child_index as usize,
+            axis: axis_from(self.axis),
+            rect: self.rect.resolve(),
+            parent_span: self.parent_span,
+            flex_sum: self.flex_sum,
+            leading_weight: self.leading_weight,
+            trailing_weight: self.trailing_weight,
+        }
+    }
+}
+
+/// The band thickness a seam is drawn and hit with.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
     reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
 )]
-pub unsafe extern "C" fn slopdesk_ws_extents(
-    shares: *const Share,
+pub const extern "C" fn slopdesk_ws_divider_thickness() -> f64 {
+    split_layout::DIVIDER_THICKNESS
+}
+
+/// Every seam of `nodes` solved into `rect`, in pre-order.
+///
+/// Returns the seam count NEEDED, or 0 for a tree the walk could not rebuild — the same answer a
+/// single leaf gives, and the right one either way: nothing to drag.
+///
+/// # Safety
+/// `nodes` must be null or point to `count` live [`TreeNode`]s; `out` null or writable for `cap`
+/// [`DividerHandle`]s.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_ws_dividers(
+    nodes: *const TreeNode,
     count: usize,
-    total: f64,
-    out: *mut f64,
+    rect: CRect,
+    thickness: f64,
+    out: *mut DividerHandle,
     cap: usize,
 ) -> usize {
-    // SAFETY: the caller's obligations, restated above; `borrow_array` states its own.
-    let children: Vec<WeightedChild> = unsafe { borrow_array(shares, count) }
-        .iter()
-        .map(|share| {
-            let weight = if share.is_fixed {
-                SplitWeight::Fixed(share.value)
-            } else {
-                SplitWeight::Flex(share.value)
-            };
-            // The subtree is never read by the partition — only the shares are — so a placeholder
-            // leaf is the honest stand-in rather than a cost the caller pays to encode.
-            WeightedChild::new(weight, SplitNode::Leaf(PaneId::from_bytes([0; 16])))
-        })
-        .collect();
-    let extents = split_layout::extents(&children, total);
-    if extents.len() > cap || out.is_null() {
-        return extents.len();
+    // SAFETY: the caller's obligations, restated above; the helpers state their own.
+    unsafe {
+        let Some(root) = borrow_tree(nodes, count) else {
+            return 0;
+        };
+        let handles: Vec<DividerHandle> = split_layout::dividers(&root, rect.resolve(), thickness)
+            .iter()
+            .map(DividerHandle::of)
+            .collect();
+        if handles.len() > cap || out.is_null() {
+            return handles.len();
+        }
+        // SAFETY: `handles.len() <= cap`, `out` is writable for `cap` by the caller's obligation,
+        // and `handles` was allocated inside this call so it cannot overlap.
+        core::ptr::copy_nonoverlapping(handles.as_ptr(), out, handles.len());
+        handles.len()
     }
-    // SAFETY: `extents.len() <= cap`, `out` is writable for `cap` by the caller's obligation, and
-    // `extents` was allocated inside this call.
-    unsafe { core::ptr::copy_nonoverlapping(extents.as_ptr(), out, extents.len()) };
-    extents.len()
+}
+
+/// Whether `handle` can still be dragged toward one of its children — the hover cursor's one-way
+/// versus two-way answer, from the same floor the drag clamps at.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_ws_divider_can_move(handle: DividerHandle, toward_leading: bool) -> bool {
+    let divider = handle.resolve();
+    if toward_leading {
+        divider.can_move_toward_leading()
+    } else {
+        divider.can_move_toward_trailing()
+    }
+}
+
+/// A live drag's proposed leading weight, clamped so both panes keep their pixel floor.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_ws_divider_clamped_weight(handle: DividerHandle, proposed: f64) -> f64 {
+    handle.resolve().clamped_leading_weight(proposed)
 }
 
 // MARK: The tree's own operations
@@ -2982,8 +3075,9 @@ mod tests {
     use slopdesk_workspace::{PaneId, SplitAxis, SplitNode, SplitNodeId, SplitWeight, WeightedChild};
 
     use super::{
-        CRect, CVideoTarget, Frame, KeyedTab, Share, Span, TreeNode, Uuid, decode_tree, encode_tree,
-        slopdesk_ws_decode_video_target, slopdesk_ws_encode_video_target, slopdesk_ws_extents,
+        CRect, CVideoTarget, DividerHandle, Frame, KeyedTab, Span, TreeNode, Uuid, decode_tree, encode_tree,
+        slopdesk_ws_decode_video_target, slopdesk_ws_divider_can_move, slopdesk_ws_divider_clamped_weight,
+        slopdesk_ws_divider_thickness, slopdesk_ws_dividers, slopdesk_ws_encode_video_target,
         slopdesk_ws_focus_cycle, slopdesk_ws_focus_neighbor, slopdesk_ws_project_key,
         slopdesk_ws_section_header, slopdesk_ws_section_precedes, slopdesk_ws_send_keys,
         slopdesk_ws_solve_layout, slopdesk_ws_successor_after_close, slopdesk_ws_tree_removing,
@@ -3263,6 +3357,61 @@ mod tests {
     }
 
     #[test]
+    fn the_same_walk_answers_the_seams_between_those_tiles() {
+        let nodes = [
+            TreeNode {
+                kind: 1,
+                id: id(9),
+                axis: 0,
+                weight_is_fixed: false,
+                child_count: 2,
+                weight: 1.0,
+            },
+            leaf(1),
+            leaf(2),
+        ];
+        let bound = rect(0.0, 0.0, 400.0, 200.0);
+        let needed = unsafe {
+            slopdesk_ws_dividers(nodes.as_ptr(), nodes.len(), bound, 16.0, core::ptr::null_mut(), 0)
+        };
+        assert_eq!(needed, 1, "two columns share one seam");
+        let mut out = [DividerHandle {
+            split: id(0),
+            child_index: 0,
+            axis: 0,
+            rect: rect(0.0, 0.0, 0.0, 0.0),
+            parent_span: 0.0,
+            flex_sum: 0.0,
+            leading_weight: 0.0,
+            trailing_weight: 0.0,
+        }; 2];
+        let written = unsafe {
+            slopdesk_ws_dividers(
+                nodes.as_ptr(),
+                nodes.len(),
+                bound,
+                16.0,
+                out.as_mut_ptr(),
+                out.len(),
+            )
+        };
+        assert_eq!(written, 1);
+        let seam = out[0];
+        assert_eq!(seam.split, id(9), "the seam names the split that owns it");
+        assert_eq!(seam.axis, 0);
+        assert_eq!(seam.rect.x, 200.0 - 8.0, "the band is centred on the cut");
+        assert_eq!(seam.rect.width, 16.0);
+        assert_eq!(seam.parent_span, 400.0);
+        assert_eq!((seam.leading_weight, seam.trailing_weight), (1.0, 1.0));
+        assert!(slopdesk_ws_divider_can_move(seam, true));
+        assert!(slopdesk_ws_divider_can_move(seam, false));
+        // Span 400 at a flex sum of 2: the 160 pt column floor is weight 0.8, either side.
+        assert_eq!(slopdesk_ws_divider_clamped_weight(seam, 0.0), 0.8);
+        assert_eq!(slopdesk_ws_divider_clamped_weight(seam, 9.0), 1.2);
+        assert_eq!(slopdesk_ws_divider_thickness(), 16.0);
+    }
+
+    #[test]
     fn a_walk_that_claims_more_children_than_it_carries_is_refused() {
         for hostile in [
             // A split promising three children with none behind it.
@@ -3301,29 +3450,6 @@ mod tests {
             };
             assert_eq!(count, 0, "a tree that cannot be rebuilt draws nothing");
         }
-    }
-
-    #[test]
-    fn fixed_children_are_reserved_before_the_flex_ones_divide_the_rest() {
-        let shares = [
-            Share {
-                is_fixed: true,
-                value: 100.0,
-            },
-            Share {
-                is_fixed: false,
-                value: 1.0,
-            },
-            Share {
-                is_fixed: false,
-                value: 1.0,
-            },
-        ];
-        let mut out = [0.0_f64; 3];
-        let count =
-            unsafe { slopdesk_ws_extents(shares.as_ptr(), shares.len(), 500.0, out.as_mut_ptr(), out.len()) };
-        assert_eq!(count, 3);
-        assert_eq!(out, [100.0, 200.0, 200.0]);
     }
 
     /// The round trip is the whole safety of the tree ops: every one of them reads a walk and

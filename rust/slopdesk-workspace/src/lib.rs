@@ -25,8 +25,8 @@
 //!   that bring a hand-edited one back rather than trapping on it.
 //! - [`split_tree`] — the n-ary tiled tree and every pure operation on it: split, dock, close,
 //!   resize, swap, rebalance.
-//! - [`split_layout`] — the flex partition that turns that tree into rectangles, and the solved
-//!   geometry the renderer and the focus resolver both read.
+//! - [`split_layout`] — the flex partition that turns that tree into rectangles, the solved
+//!   geometry the renderer and the focus resolver both read, and the seams a drag moves.
 //! - [`focus`] — moving focus by what is on screen rather than by tree position.
 //! - [`listen`] — the other end of that: what port the HOST may bind, and how to tell a bind
 //!   collision apart from a network that has not come up yet.
@@ -92,7 +92,7 @@ pub use json::{Json, JsonError};
 pub use jump::JumpResolution;
 pub use persist::{decode_spec, decode_split_node, encode_spec, encode_split_node};
 pub use session::{DetachedPane, NewTabPosition, PaneKind, PaneSpec, Session, Tab, VideoEndpoint};
-pub use split_layout::{SolvedLayout, solve};
+pub use split_layout::{Divider, SolvedLayout, dividers, solve};
 pub use split_tree::{PaneDropEdge, SplitAxis, SplitNode, SplitWeight, WeightedChild};
 pub use tab_ordering::{bucketed_by_project, successor_after_close};
 pub use templates::{LaunchPreset, SessionTemplate, TemplateNode, TemplatePane};

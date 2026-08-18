@@ -784,7 +784,7 @@ typedef struct {
     double         weight;  // this node's share WITHIN its parent; the root's is ignored
 } SlopDeskWsTreeNode;
 
-// One child's share, for the partition that does not need the subtrees under it.
+// One child's share, as the weights codec reads and writes it.
 typedef struct {
     bool   is_fixed;
     double value;
@@ -797,10 +797,32 @@ SlopDeskWsPoint slopdesk_ws_min_leaf(void);
 size_t slopdesk_ws_solve_layout(const SlopDeskWsTreeNode *nodes, size_t count,
                                 SlopDeskWsRect rect, double min_width, double min_height,
                                 SlopDeskWsFrame *out, size_t cap);
-// Exported separately from the solve because the divider handles sit on the seams the tiles land
-// on, and a second copy of this partition would put a handle a pixel off the edge it drags.
-size_t slopdesk_ws_extents(const SlopDeskWsShare *shares, size_t count, double total,
-                           double *out, size_t cap);
+// One draggable seam. The rect is what is drawn and hit; everything after it is what a DRAG needs
+// — the span it converts pixels against, the flex sum it converts them into, and the pair of
+// weights it moves between. A `0` weight is a FIXED child, which is not draggable at all.
+typedef struct {
+    SlopDeskWsUuid split;
+    uint32_t       child_index;  // the LEADING child: the seam is between it and the next
+    uint8_t        axis;         // 0 horizontal (a column seam, dragged left/right) · 1 vertical
+    SlopDeskWsRect rect;
+    double         parent_span;  // a NESTED split's own length, so the drag tracks the cursor 1:1
+    double         flex_sum;
+    double         leading_weight;
+    double         trailing_weight;
+} SlopDeskWsDivider;
+
+// The band a seam is drawn and hit with — wide enough to grab, so the drawn hairline can be thinner.
+double slopdesk_ws_divider_thickness(void);
+// Every seam of the tree, in pre-order. 0 = a tree the walk could not rebuild, which is the same
+// answer a lone leaf gives: nothing to drag.
+size_t slopdesk_ws_dividers(const SlopDeskWsTreeNode *nodes, size_t count, SlopDeskWsRect rect,
+                            double thickness, SlopDeskWsDivider *out, size_t cap);
+// The hover cursor's one-way-vs-two-way answer, from the same pixel floor the drag clamps at — so
+// the arrow the person sees and the seam they get can never disagree.
+bool   slopdesk_ws_divider_can_move(SlopDeskWsDivider handle, bool toward_leading);
+// A live drag's proposed leading weight, clamped so BOTH panes keep that floor. Sum-preserving,
+// and a pair too tight for two floors can only be dragged toward balance.
+double slopdesk_ws_divider_clamped_weight(SlopDeskWsDivider handle, double proposed);
 
 // MARK: The split tree's own operations
 //

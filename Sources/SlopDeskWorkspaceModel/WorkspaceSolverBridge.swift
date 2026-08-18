@@ -51,6 +51,11 @@ extension TabID {
     init(ffi: SlopDeskWsUuid) { self.init(raw: ffi.uuid) }
 }
 
+extension SplitNodeID {
+    var ffi: SlopDeskWsUuid { SlopDeskWsUuid(raw) }
+    init(ffi: SlopDeskWsUuid) { self.init(raw: ffi.uuid) }
+}
+
 package extension PaneKind {
     /// The CASE index — the crate's `PaneKind` order, pinned by `scripts/check-supervisor.sh`.
     ///

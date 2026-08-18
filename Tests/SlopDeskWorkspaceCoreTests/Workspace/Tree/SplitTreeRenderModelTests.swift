@@ -86,104 +86,75 @@ final class SplitTreeRenderModelTests: XCTestCase {
         XCTAssertEqual(layout.dividers.count, 1)
     }
 
-    // MARK: - Dividers lie between siblings
+    // MARK: - The seams cross as the caller's own splits
 
-    func testHorizontalSplitDividerSitsOnTheSeam() {
-        // weights 1:3 over width 800 → seam at x = 200; the divider is a vertical band centered there.
-        let a = PaneID(), b = PaneID()
-        let splitID = SplitNodeID()
-        let root = SplitNode.split(id: splitID, axis: .horizontal, children: [
-            WeightedChild(weight: .flex(1), node: .leaf(a)),
-            WeightedChild(weight: .flex(3), node: .leaf(b)),
-        ])
-        let bounds = CGRect(x: 0, y: 0, width: 800, height: 400)
-        let thickness: CGFloat = 8
-
-        let layout = SplitTreeRenderModel.layout(root: root, zoomedPane: nil, in: bounds, dividerThickness: thickness)
-
-        XCTAssertEqual(layout.dividers.count, 1)
-        let d = layout.dividers[0]
-        XCTAssertEqual(d.splitID, splitID)
-        XCTAssertEqual(d.childIndex, 0, "the divider's leading child is index 0")
-        XCTAssertEqual(d.axis, .horizontal)
-        // The band is centered on the seam x = 200, full parent height.
-        XCTAssertEqual(d.rect.midX, 200, accuracy: eps)
-        XCTAssertEqual(d.rect.width, thickness, accuracy: eps)
-        XCTAssertEqual(d.rect.minY, bounds.minY, accuracy: eps)
-        XCTAssertEqual(d.rect.height, bounds.height, accuracy: eps)
-        // The seam is exactly where leaf a ends and leaf b begins.
-        let solved = SplitLayoutSolver.solve(root, in: bounds)
-        XCTAssertEqual(solved[a]?.maxX ?? .nan, d.rect.midX, accuracy: eps)
-        XCTAssertEqual(solved[b]?.minX ?? .nan, d.rect.midX, accuracy: eps)
-    }
-
-    func testVerticalSplitDividerIsHorizontalBand() {
-        // weights 1:1 over height 600 → seam at y = 300; the divider is a horizontal band centered there.
-        let a = PaneID(), b = PaneID()
-        let splitID = SplitNodeID()
-        let root = SplitNode.split(id: splitID, axis: .vertical, children: [
-            WeightedChild(weight: .flex(1), node: .leaf(a)),
-            WeightedChild(weight: .flex(1), node: .leaf(b)),
-        ])
-        let bounds = CGRect(x: 0, y: 0, width: 500, height: 600)
-
-        let layout = SplitTreeRenderModel.layout(root: root, zoomedPane: nil, in: bounds)
-
-        XCTAssertEqual(layout.dividers.count, 1)
-        let d = layout.dividers[0]
-        XCTAssertEqual(d.axis, .vertical)
-        XCTAssertEqual(d.rect.midY, 300, accuracy: eps)
-        XCTAssertEqual(d.rect.minX, bounds.minX, accuracy: eps)
-        XCTAssertEqual(d.rect.width, bounds.width, accuracy: eps, "a vertical split's divider spans the full width")
-    }
-
-    func testThreeWaySplitYieldsTwoDividersAtSeams() {
-        // weights 1:1:2 over width 800 → seams at x = 200 and x = 400.
-        let a = PaneID(), b = PaneID(), c = PaneID()
-        let splitID = SplitNodeID()
-        let root = SplitNode.split(id: splitID, axis: .horizontal, children: [
-            WeightedChild(weight: .flex(1), node: .leaf(a)),
-            WeightedChild(weight: .flex(1), node: .leaf(b)),
-            WeightedChild(weight: .flex(2), node: .leaf(c)),
-        ])
-        let bounds = CGRect(x: 0, y: 0, width: 800, height: 300)
-
-        let layout = SplitTreeRenderModel.layout(root: root, zoomedPane: nil, in: bounds)
-
-        XCTAssertEqual(layout.dividers.count, 2, "n children → n-1 dividers")
-        let byIndex = layout.dividers.sorted { $0.childIndex < $1.childIndex }
-        XCTAssertEqual(byIndex[0].childIndex, 0)
-        XCTAssertEqual(byIndex[0].rect.midX, 200, accuracy: eps)
-        XCTAssertEqual(byIndex[1].childIndex, 1)
-        XCTAssertEqual(byIndex[1].rect.midX, 400, accuracy: eps)
-        XCTAssertTrue(byIndex.allSatisfy { $0.splitID == splitID })
-    }
-
-    func testNestedSplitsEmitDividersForBothLevels() {
-        // [a | (b / c)] → one outer (horizontal) divider + one inner (vertical) divider, distinct splitIDs.
+    /// Every seam comes back tagged with the SwiftUI-side identities and geometry it was asked
+    /// about: the owning ``SplitNodeID``, the leading child's index, the axis, and a band centred on
+    /// the cut — for a nested split as much as a top-level one, each carrying ITS split's span.
+    func testEverySeamCrossesBackAsTheSplitItBelongsTo() throws {
         let a = PaneID(), b = PaneID(), c = PaneID()
         let outerID = SplitNodeID(), innerID = SplitNodeID()
         let root = SplitNode.split(id: outerID, axis: .horizontal, children: [
             WeightedChild(weight: .flex(1), node: .leaf(a)),
-            WeightedChild(weight: .flex(1), node: .split(id: innerID, axis: .vertical, children: [
+            WeightedChild(weight: .flex(1), node: .split(id: innerID, axis: .horizontal, children: [
                 WeightedChild(weight: .flex(1), node: .leaf(b)),
-                WeightedChild(weight: .flex(1), node: .leaf(c)),
+                WeightedChild(weight: .flex(3), node: .leaf(c)),
             ])),
         ])
         let bounds = CGRect(x: 0, y: 0, width: 1000, height: 600)
 
         let layout = SplitTreeRenderModel.layout(root: root, zoomedPane: nil, in: bounds)
 
-        XCTAssertEqual(layout.dividers.count, 2)
-        let outer = layout.dividers.first { $0.splitID == outerID }
-        let inner = layout.dividers.first { $0.splitID == innerID }
-        XCTAssertNotNil(outer)
-        XCTAssertNotNil(inner)
-        XCTAssertEqual(outer?.axis, .horizontal)
-        XCTAssertEqual(inner?.axis, .vertical)
-        // The inner (vertical) divider lives in the right half (x ≥ 500) and is centered at its mid-height.
-        XCTAssertGreaterThanOrEqual(inner?.rect.minX ?? -1, 500 - eps)
-        XCTAssertEqual(inner?.rect.midY ?? .nan, 300, accuracy: eps)
+        XCTAssertEqual(layout.dividers.count, 2, "one seam per level")
+        let outer = try XCTUnwrap(layout.dividers.first { $0.splitID == outerID })
+        let inner = try XCTUnwrap(layout.dividers.first { $0.splitID == innerID })
+        XCTAssertEqual(outer.axis, .horizontal)
+        XCTAssertEqual(outer.childIndex, 0)
+        XCTAssertEqual(outer.rect.midX, 500, accuracy: eps, "centred on the cut")
+        XCTAssertEqual(outer.rect.width, SplitTreeRenderModel.dividerThickness, accuracy: eps)
+        XCTAssertEqual(outer.rect.height, bounds.height, accuracy: eps, "a column seam spans the height")
+        XCTAssertEqual(outer.parentSpan, bounds.width, accuracy: eps)
+        XCTAssertEqual(
+            inner.parentSpan, bounds.width / 2, accuracy: eps,
+            "a nested seam spans ITS split, not the container — that is what makes a drag track 1:1",
+        )
+        XCTAssertEqual(inner.rect.midX, 625, accuracy: eps, "the 1:3 cut of the right half")
+        XCTAssertEqual(inner.leadingWeight, 1, accuracy: 1e-9)
+        XCTAssertEqual(inner.trailingWeight, 3, accuracy: 1e-9)
+        // The seam is exactly where the two tiles meet.
+        let solved = SplitLayoutSolver.solve(root, in: bounds)
+        XCTAssertEqual(solved[a]?.maxX ?? .nan, outer.rect.midX, accuracy: eps)
+    }
+
+    /// A lone leaf has nothing to drag, and n siblings share n-1 seams.
+    func testSeamCountFollowsTheSiblings() {
+        let a = PaneID(), b = PaneID(), c = PaneID()
+        let bounds = CGRect(x: 0, y: 0, width: 800, height: 300)
+        XCTAssertTrue(
+            SplitTreeRenderModel.layout(root: .leaf(a), zoomedPane: nil, in: bounds).dividers.isEmpty,
+        )
+        let root = SplitNode.split(id: SplitNodeID(), axis: .horizontal, children: [
+            WeightedChild(weight: .flex(1), node: .leaf(a)),
+            WeightedChild(weight: .flex(1), node: .leaf(b)),
+            WeightedChild(weight: .flex(2), node: .leaf(c)),
+        ])
+        XCTAssertEqual(SplitTreeRenderModel.layout(root: root, zoomedPane: nil, in: bounds).dividers.count, 2)
+    }
+
+    /// A `.fixed` side crosses as the unresizable sentinel `0`, which freezes the seam both ways.
+    func testAFixedSideCrossesAsTheUnresizableSentinel() throws {
+        let a = PaneID(), b = PaneID()
+        let root = SplitNode.split(id: SplitNodeID(), axis: .horizontal, children: [
+            WeightedChild(weight: .fixed(200), node: .leaf(a)),
+            WeightedChild(weight: .flex(1), node: .leaf(b)),
+        ])
+        let bounds = CGRect(x: 0, y: 0, width: 800, height: 600)
+        let handle = try XCTUnwrap(
+            SplitTreeRenderModel.layout(root: root, zoomedPane: nil, in: bounds).dividers.first,
+        )
+        XCTAssertEqual(handle.leadingWeight, 0)
+        XCTAssertFalse(handle.canMoveTowardLeading)
+        XCTAssertFalse(handle.canMoveTowardTrailing)
     }
 
     // MARK: - Tab entry point + degenerate cases
@@ -278,158 +249,38 @@ final class SplitTreeRenderModelTests: XCTestCase {
         XCTAssertEqual(x1 - x0, n, accuracy: 0.5, "nested seam tracks 1:1 (N/4 on the un-fixed code)")
     }
 
-    // MARK: - Divider live-drag anchor (leadingWeight)
+    // MARK: - The drag's three answers reach their rule
 
-    /// Each divider handle carries the LEADING child's current `.flex` weight — the anchor a live drag reads
-    /// once at drag start, then offsets by the cursor translation (`leadingWeight + Δpx·flexSum/parentSpan`).
-    /// Pins that it mirrors the tree weight and is per-seam (each seam reports ITS leading child).
-    func testDividerLeadingWeightMirrorsTheChildFlexWeight() {
-        let a = PaneID(), b = PaneID(), c = PaneID()
-        let root = SplitNode.split(id: SplitNodeID(), axis: .horizontal, children: [
-            WeightedChild(weight: .flex(1), node: .leaf(a)),
-            WeightedChild(weight: .flex(3), node: .leaf(b)),
-            WeightedChild(weight: .flex(2), node: .leaf(c)),
-        ])
-        let bounds = CGRect(x: 0, y: 0, width: 800, height: 300)
-        let dividers = SplitTreeRenderModel.layout(root: root, zoomedPane: nil, in: bounds).dividers
-            .sorted { $0.childIndex < $1.childIndex }
+    /// Each entry point on a handle reaches the crate rule of the same name: both directions live
+    /// mid-range, dead once that side sits at the solver's PIXEL floor (not merely the weight one),
+    /// and the clamp lands a proposal on that floor either side while passing an in-range one
+    /// through. The enumeration of the rule itself lives in `split_layout`'s own tests.
+    func testTheDragsAnswersReachTheirRule() {
+        let free = handle(leading: 1, trailing: 1, span: 1000)
+        XCTAssertTrue(free.canMoveTowardLeading)
+        XCTAssertTrue(free.canMoveTowardTrailing)
+        // Span 1000 at a flex sum of 2: the 160 pt column floor is weight 0.32.
+        XCTAssertEqual(free.clampedLeadingWeight(0), 0.32, accuracy: 1e-9, "the leading floor")
+        XCTAssertEqual(free.clampedLeadingWeight(5), 1.68, accuracy: 1e-9, "sum-preserving on the other side")
+        XCTAssertEqual(free.clampedLeadingWeight(0.9), 0.9, accuracy: 1e-9, "in range, untouched")
 
-        XCTAssertEqual(dividers.count, 2)
-        XCTAssertEqual(dividers[0].leadingWeight, 1, accuracy: 1e-9, "seam 0's leading child is weight 1")
-        XCTAssertEqual(dividers[1].leadingWeight, 3, accuracy: 1e-9, "seam 1's leading child is weight 3")
-    }
-
-    /// A `.fixed` leading child makes the seam unresizable, so the handle reports `leadingWeight == 0`.
-    func testDividerLeadingWeightZeroForFixedLeadingChild() throws {
-        let a = PaneID(), b = PaneID()
-        let root = SplitNode.split(id: SplitNodeID(), axis: .horizontal, children: [
-            WeightedChild(weight: .fixed(200), node: .leaf(a)),
-            WeightedChild(weight: .flex(1), node: .leaf(b)),
-        ])
-        let bounds = CGRect(x: 0, y: 0, width: 800, height: 600)
-        let handle = try XCTUnwrap(
-            SplitTreeRenderModel.layout(root: root, zoomedPane: nil, in: bounds).dividers.first,
-        )
-        XCTAssertEqual(handle.leadingWeight, 0, "a fixed leading child reports 0 (unresizable)")
-    }
-
-    /// The handle also carries the TRAILING child's flex weight — the other half of the drag clamp's
-    /// pair, feeding the hover cursor's movability. Per-seam like `leadingWeight`; a layout that dropped
-    /// it (leaving the default 0) would read every seam as one-way-immovable.
-    func testDividerTrailingWeightMirrorsTheNextChildFlexWeight() {
-        let a = PaneID(), b = PaneID(), c = PaneID()
-        let root = SplitNode.split(id: SplitNodeID(), axis: .horizontal, children: [
-            WeightedChild(weight: .flex(1), node: .leaf(a)),
-            WeightedChild(weight: .flex(3), node: .leaf(b)),
-            WeightedChild(weight: .flex(2), node: .leaf(c)),
-        ])
-        let bounds = CGRect(x: 0, y: 0, width: 800, height: 300)
-        let dividers = SplitTreeRenderModel.layout(root: root, zoomedPane: nil, in: bounds).dividers
-            .sorted { $0.childIndex < $1.childIndex }
-
-        XCTAssertEqual(dividers.count, 2)
-        XCTAssertEqual(dividers[0].trailingWeight, 3, accuracy: 1e-9, "seam 0's trailing child is weight 3")
-        XCTAssertEqual(dividers[1].trailingWeight, 2, accuracy: 1e-9, "seam 1's trailing child is weight 2")
-    }
-
-    // MARK: - Divider movability (the hover cursor's one-way vs two-way truth)
-
-    /// Mid-range weights: both directions live — the two-way resize cursor.
-    func testDividerMovabilityBothWaysMidRange() {
-        let handle = movabilityHandle(leading: 1, trailing: 1)
-        XCTAssertTrue(handle.canMoveTowardLeading)
-        XCTAssertTrue(handle.canMoveTowardTrailing)
-    }
-
-    /// The LEADING child parked AT the ``SplitWeight/minWeight`` floor (where the live-drag clamp
-    /// leaves it): the seam can no longer move toward it — the cursor must drop to the one-way arrow.
-    func testDividerMovabilityDeadTowardLeadingAtFloor() {
-        let handle = movabilityHandle(leading: SplitWeight.minWeight, trailing: 1.95)
-        XCTAssertFalse(handle.canMoveTowardLeading, "leading child at the floor — that direction is dead")
-        XCTAssertTrue(handle.canMoveTowardTrailing)
-    }
-
-    /// The TRAILING child at the floor — the mirror case.
-    func testDividerMovabilityDeadTowardTrailingAtFloor() {
-        let handle = movabilityHandle(leading: 1.95, trailing: SplitWeight.minWeight)
-        XCTAssertTrue(handle.canMoveTowardLeading)
-        XCTAssertFalse(handle.canMoveTowardTrailing, "trailing child at the floor — that direction is dead")
-    }
-
-    /// A `.fixed` side (weight sentinel 0) kills BOTH directions — the seam is not resizable at all.
-    func testDividerMovabilityDeadForFixedSide() {
-        let handle = movabilityHandle(leading: 0, trailing: 1)
-        XCTAssertFalse(handle.canMoveTowardLeading)
-        XCTAssertFalse(handle.canMoveTowardTrailing)
-    }
-
-    /// Movability is PIXEL-based, not weight-based: a pane whose weight is comfortably above the
-    /// weight floor but whose on-screen extent sits under ``SplitLayoutSolver/defaultMinLeaf`` reads
-    /// as immovable toward it. Regression guard: the weight-only rule (`> minWeight`) calls this
-    /// movable and fails here.
-    func testDividerMovabilityUsesPixelExtentNotWeight() {
-        // span 400, flexSum 2 → the 0.5-weight child renders 100 pt wide, under the 160 pt floor.
-        let handle = movabilityHandle(leading: 0.5, trailing: 1.5, span: 400)
+        // 0.5 of a flex sum of 2 over 400 pt renders 100 pt: over the weight floor, under the pixel one.
+        let starved = handle(leading: 0.5, trailing: 1.5, span: 400)
         XCTAssertGreaterThan(0.5, SplitWeight.minWeight, "premise: the weight floor alone would allow this")
-        XCTAssertFalse(handle.canMoveTowardLeading, "100 pt < the 160 pt pixel floor — dead despite the weight")
-        XCTAssertTrue(handle.canMoveTowardTrailing)
+        XCTAssertFalse(starved.canMoveTowardLeading, "100 pt is under the 160 pt floor")
+        XCTAssertTrue(starved.canMoveTowardTrailing)
     }
 
-    // MARK: - Divider drag clamp (the pixel floor the store's relative clamp misses)
-
-    /// The live drag clamps the proposed leading weight so BOTH panes keep the solver's
-    /// ``SplitLayoutSolver/defaultMinLeaf`` along the axis: an over-drag lands exactly at the
-    /// pixel-floor weight, either side; in-range proposals pass through untouched.
-    func testClampedLeadingWeightHoldsThePixelFloor() {
-        // span 1000, flexSum 2 → the 160 pt column floor is weight 160/1000·2 = 0.32.
-        let handle = movabilityHandle(leading: 1, trailing: 1, span: 1000)
-        XCTAssertEqual(handle.clampedLeadingWeight(0), 0.32, accuracy: 1e-9, "leading floor")
-        XCTAssertEqual(handle.clampedLeadingWeight(5), 1.68, accuracy: 1e-9, "trailing floor (sum-preserving)")
-        XCTAssertEqual(handle.clampedLeadingWeight(0.9), 0.9, accuracy: 1e-9, "in-range passes through")
-    }
-
-    /// A ROW seam floors at the min-leaf HEIGHT (120 pt), not the width.
-    func testClampedLeadingWeightUsesHeightFloorForRowSeams() {
-        let handle = SplitTreeRenderModel.DividerHandle(
+    /// A ROW seam floors at the min-leaf HEIGHT, so the axis crosses as itself rather than defaulting.
+    func testTheAxisCrossesAsItselfSoARowSeamFloorsAtTheHeight() {
+        let row = SplitTreeRenderModel.DividerHandle(
             splitID: SplitNodeID(), childIndex: 0, axis: .vertical, rect: .zero,
             parentSpan: 1000, flexSum: 2, leadingWeight: 1, trailingWeight: 1,
         )
-        XCTAssertEqual(handle.clampedLeadingWeight(0), 0.24, accuracy: 1e-9, "120/1000·2")
+        XCTAssertEqual(row.clampedLeadingWeight(0), 0.24, accuracy: 1e-9, "120/1000·2, not the width's 0.32")
     }
 
-    /// A pair too tight for two pixel floors (span 300 < 2·160): the side already UNDER the floor
-    /// can only be grown — the drag works toward balance (shrink the 210 pt side down to its 160 pt
-    /// floor, feeding the starved 90 pt side) and never past it. The cursor agrees: one-way toward
-    /// the bigger side only.
-    func testClampedLeadingWeightRescuesOverTightPairTowardBalance() {
-        // lead 1.4 / trail 0.6 of flexSum 2 over span 300 → extents 210 / 90; floor weight 160/300·2.
-        let handle = movabilityHandle(leading: 1.4, trailing: 0.6, span: 300)
-        let floorWeight = 160.0 / 300.0 * 2.0
-        XCTAssertEqual(handle.clampedLeadingWeight(0.2), floorWeight, accuracy: 1e-9, "shrink stops at the floor")
-        XCTAssertEqual(handle.clampedLeadingWeight(1.9), 1.4, accuracy: 1e-9, "growing the 210 pt side is refused")
-        XCTAssertTrue(handle.canMoveTowardLeading, "the over-floor side can still shrink")
-        XCTAssertFalse(handle.canMoveTowardTrailing, "the starved side cannot shrink further")
-    }
-
-    /// BOTH sides under the floor (span too tight for even one): the seam is frozen — clamp returns
-    /// the current weight for any proposal, and the cursor reads dead both ways.
-    func testClampedLeadingWeightFreezesWhenBothSidesUnderFloor() {
-        // extents 60 / 60 over span 120 — nothing can shrink.
-        let handle = movabilityHandle(leading: 0.5, trailing: 0.5, span: 120)
-        XCTAssertEqual(handle.clampedLeadingWeight(0.1), 0.5, accuracy: 1e-9)
-        XCTAssertEqual(handle.clampedLeadingWeight(0.9), 0.5, accuracy: 1e-9)
-        XCTAssertFalse(handle.canMoveTowardLeading)
-        XCTAssertFalse(handle.canMoveTowardTrailing)
-    }
-
-    /// A handle without geometry (span 0 — built outside a layout) passes proposals through: the
-    /// store's weight-domain floor still applies downstream.
-    func testClampedLeadingWeightPassesThroughWithoutGeometry() {
-        let handle = movabilityHandle(leading: 1, trailing: 1, span: 0)
-        XCTAssertEqual(handle.clampedLeadingWeight(0.001), 0.001, accuracy: 1e-12)
-    }
-
-    private func movabilityHandle(
+    private func handle(
         leading: Double, trailing: Double, span: CGFloat = 800,
     ) -> SplitTreeRenderModel.DividerHandle {
         SplitTreeRenderModel.DividerHandle(
