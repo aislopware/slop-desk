@@ -4823,9 +4823,21 @@ fi
 # surface. The WIDTH LADDER lives with them as arithmetic rather than a `ViewThatFits`, so a test can
 # ask it what a width affords without mounting anything.
 for half in Sources/SlopDeskMacUI/Panel/MacPanelStrip.swift \
-  Sources/SlopDeskMacUI/Panel/MacPanelTabGroup.swift; do
+  Sources/SlopDeskMacUI/Panel/MacPanelTabGroup.swift \
+  Sources/SlopDeskClientUI/Panel/PhonePanelSheet.swift; do
   if ! grep -q 'PanelTabs' "${half}"; then
     fail "${half} stopped reading PanelTabs — the panel's four tabs are ClientCore's, cut once"
+  fi
+done
+# THE PHONE'S PANEL IS A LAYOUT, NOT A SECOND PANEL. Its bar is its own (a cover has no split item to
+# hide, so it closes instead), but everything under the bar is the Mac's: the same four surfaces, the
+# same shared `codeSidebarCollapsed` flag driving the presentation — which is what makes
+# `revealCodeSidebar()` reach the phone at all — and the same drawn robot.
+for reading in "Sources/SlopDeskClientUI/Panel/PhonePanelSheet.swift:CodePanelSurfaces(" \
+  "Sources/SlopDeskClientUI/Panel/PhonePanelSheet.swift:AndroidMarkPath" \
+  "Sources/SlopDeskClientUI/WorkspaceRootView.swift:codeSidebarCollapsed"; do
+  if ! grep -qF "${reading#*:}" "${reading%%:*}"; then
+    fail "${reading%%:*} stopped reading ${reading#*:} — the phone's panel is a LAYOUT, not a second panel"
   fi
 done
 if ! grep -q 'AndroidMarkPath' Sources/SlopDeskMacUI/Panel/MacPanelTabPlate.swift; then

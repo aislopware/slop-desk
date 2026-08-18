@@ -100,6 +100,16 @@ package final class WorkspaceChromeState {
         Defaults[.codeSidebarCollapsed] = false
     }
 
+    /// Collapse (never reveal) the RIGHT code panel — the mirror of ``revealCodeSidebar()``, and the
+    /// phone's dismissal: its panel is a full-screen cover driven by this same flag, so a swipe or a
+    /// tap on the close plate must write the workstyle choice back the way the Mac's hide toggle does.
+    /// Idempotent while collapsed.
+    package func collapseCodeSidebar() {
+        guard !codeSidebarCollapsed else { return }
+        codeSidebarCollapsed = true
+        Defaults[.codeSidebarCollapsed] = true
+    }
+
     /// The project roots whose embedded workbench has been EXPLICITLY opened. The code panel used
     /// to boot the workbench for whatever project focus landed on — every project switch paid a
     /// multi-second workbench boot plus a warm per-project webview for a surface the user often
@@ -129,7 +139,9 @@ package final class WorkspaceChromeState {
 /// selects. Two REAL host resources (the project's workbench, the host's simulator and device sets)
 /// and one announced-but-empty one; they share no protocol, which is why they are four surfaces
 /// rather than one with modes.
-package enum PanelSurface: Equatable, Sendable, CaseIterable {
+/// `Hashable` because the phone's tab row is a `ForEach` keyed on the surface — the Mac's strip lays
+/// its four plates out by hand and never needed an identity.
+package enum PanelSurface: Hashable, Sendable, CaseIterable {
     case code
     case simulators
     case android

@@ -41,6 +41,11 @@ public struct WorkspaceRootView: View {
     @Default(.autoHideTabsPanel) private var autoHideTabsPanel
     /// Whether the settings sheet is presented — flipped by the toolbar gear, read by the `.sheet`.
     @State private var showSettings = false
+    /// THE RIGHT PANEL'S THREE MODELS, held here because they must outlive the presentation the way the
+    /// Mac's outlive its surface tree: a panel dismissed and re-opened would otherwise re-list every
+    /// device and re-boot every stream, and the parking rules already assume an owner above the
+    /// surfaces (``PhonePanelModels``).
+    @State private var panelModels = PhonePanelModels()
 
     /// Maps the shared `chrome.sidebarCollapsed` flag (driven by the auto-hide policy, read by the Mac's
     /// split too) onto the `NavigationSplitView`'s `columnVisibility`, so the TABS panel hides/reveals on
@@ -150,6 +155,21 @@ public struct WorkspaceRootView: View {
         .sheet(isPresented: cheatSheetBinding) {
             KeyboardCheatSheetView(coordinator: overlay)
         }
+        // THE RIGHT PANEL, as a phone can have one: the Mac hangs its four surfaces in a third split
+        // column, and a phone has room for exactly one such thing at a time, so they arrive as a
+        // full-screen cover (``PhonePanelSheet`` — docs/56 stage D). Driven by the SAME
+        // `codeSidebarCollapsed` flag the Mac's split item reads, which is what makes
+        // `revealCodeSidebar()` — the open-this-file-in-the-workbench actuation — work here for free.
+        // A cover does not inherit the presenter's custom environment, so the two values the surfaces
+        // read are threaded back in explicitly.
+        .fullScreenCover(isPresented: codePanelBinding) {
+            PhonePanelSheet(
+                store: store, connection: connection, chrome: chrome, models: panelModels,
+                onClose: { chrome.collapseCodeSidebar() },
+            )
+            .preferencesStore(preferencesStore)
+            .overlayCoordinator(overlay)
+        }
         // The toolbar gear presents the in-app settings sheet (iOS has no `Settings` scene). The sheet hosts
         // the same cross-platform section structs as the macOS strip.
         .sheet(isPresented: $showSettings) {
@@ -159,6 +179,18 @@ public struct WorkspaceRootView: View {
                 SettingsSheet(store: preferencesStore, agentHooks: agentHooksController, workspace: store)
             }
         }
+    }
+
+    /// Presentation binding for the right panel. Reads the shared chrome flag inverted — a panel that
+    /// is not collapsed is a panel that is up — and every dismissal (the close plate, a swipe down)
+    /// routes through ``WorkspaceChromeState/collapseCodeSidebar()``, so the workstyle choice persists
+    /// exactly as the Mac's hide toggle writes it. `set(true)` never happens: a cover does not present
+    /// itself, and the toolbar's panel button flips the flag rather than this binding.
+    private var codePanelBinding: Binding<Bool> {
+        Binding(
+            get: { !chrome.codeSidebarCollapsed },
+            set: { if !$0 { chrome.collapseCodeSidebar() } },
+        )
     }
 
     /// Presentation binding for the cheat sheet. `set(false)` — the swipe, a hardware Esc, any system
@@ -242,6 +274,14 @@ public struct WorkspaceRootView: View {
             // touch affordance.
             Button { overlay.togglePalette() } label: { Image(systemSymbol: .command) }
                 .help("Command Palette")
+        }
+        ToolbarItem(placement: .primaryAction) {
+            // THE RIGHT PANEL's entry point. macOS has ⌥⌘B and a rail to click; the phone has neither,
+            // so the four surfaces need a button of their own or they are unreachable. The glyph is the
+            // Mac strip's hide toggle read the other way round — same control, same corner of the same
+            // panel, mirrored because here it opens rather than closes.
+            Button { chrome.toggleCodeSidebar() } label: { Image(systemSymbol: .sidebarRight) }
+                .help("Panel")
         }
         ToolbarItem(placement: .primaryAction) {
             // The `+` mints a focused terminal pane directly (the kind chooser is retired).

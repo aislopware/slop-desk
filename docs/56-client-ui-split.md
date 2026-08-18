@@ -572,6 +572,31 @@ nothing is ever implemented twice. No stage copies a file: a surface either move
   panel's AppKit strip and eat its clicks, whereas `clipsToBounds` already stops UIKit delivering
   touches outside the container. With that, all four panel surfaces draw on both platforms, and the
   phone's own layout is the next increment.
+
+  **Increment 14 — the phone's panel is a layout, and nothing else.** The four surfaces existed on iOS
+  after increment 13 and were unreachable: there is no third split column on a phone, no ⌥⌘B, and no
+  rail to click. `PhonePanelSheet` is the layout that reaches them — a FULL-SCREEN COVER over the
+  workspace, because a workbench or a device mirror is a place you go to rather than a column you
+  glance at, with its own bar carrying the four tabs, the showing surface's reload and a close plate.
+  Under the bar it mounts `CodePanelSurfaces`, unchanged, with the same three models the Mac's column
+  owns and for the same reason: a panel dismissed and re-opened must not re-list every device and
+  re-boot every stream, so `PhonePanelModels` lives on the root view, which lives as long as the app.
+
+  THE PRESENTATION IS THE SHARED FLAG, and that is the part worth copying next time. The cover is bound
+  to `chrome.codeSidebarCollapsed` inverted — a panel that is not collapsed is a panel that is up —
+  rather than to a `@State` of its own. Three things fall out for free: a phone and a Mac driving one
+  session agree about whether the panel is open and which surface it shows; `revealCodeSidebar()`, the
+  open-this-file-in-the-workbench actuation, reaches the phone without a line of new wiring; and the
+  workstyle choice persists on both, because every dismissal routes through the new
+  `collapseCodeSidebar()` — the mirror of the reveal that already existed.
+
+  The bar is the phone's own and the tabs are not. `PanelTabs.all` is the same four readings the Mac's
+  strip and rail draw, and the WIDTH LADDER is the same arithmetic, asked with this renderer's own
+  measurement (`UIFont` — the ladder is arithmetic precisely so nobody has to build three candidate
+  rows to compare them). The android head is `AndroidMarkPath`, stroked and filled in a SwiftUI
+  `Canvas` instead of a `CGContext`, so the two platforms draw one robot. What the phone's bar does NOT
+  carry is a hide toggle: a cover that is not presented is already hidden, so the Mac's hide-inside /
+  reopen-outside split collapses into one close plate here. That is the whole of the difference.
 - **E — the Rust port (§4).**
 
 ## 4. What moves to Rust
