@@ -718,6 +718,31 @@ size_t slopdesk_ws_rail_disambiguated_label(const SlopDeskWsRailLabel *items, si
 // clamps to this number, so a transcribed copy would describe a rule the client does not share.
 double slopdesk_ws_min_weight(void);
 
+// ---- Which projection the app draws, and where a new pane starts ----
+//
+// `window_width` is read only when `window_width_present`: the outer window and the detail column
+// are compared against DIFFERENT thresholds, so an absent window is not a window of the detail's
+// width. Collapse the two and the macOS floor window resolves compact for one frame on every launch.
+bool slopdesk_ws_is_compact(bool size_class_compact, double detail_width,
+                            double window_width, bool window_width_present);
+// 0 phone · 1 pad · 2 mac. A compact size class forces the phone tier even on a pad idiom.
+uint8_t slopdesk_ws_video_device_class(bool is_mac, bool size_class_compact, bool idiom_pad);
+// How many live video panes that class decodes at once. An unrecognised class is the phone floor.
+size_t slopdesk_ws_video_cap(uint8_t device_class);
+
+// The `working-directory` config: 0 inherit · 1 home · 2 a path, with the TRIMMED path written to
+// `(out, cap)` and its length reported in `needed`. The kind is the return because two of the three
+// answers name no path at all, which §4's `0` could not tell apart from a refusal.
+uint8_t slopdesk_ws_workdir_parse(const uint8_t *raw, size_t len,
+                                  uint8_t *out, size_t cap, size_t *needed);
+// The parse door's inverse: the stored config string for kind 0 or 1, `0` for kind 2 — a path's
+// config string is the path the caller already holds. The keywords live on one side only.
+size_t slopdesk_ws_workdir_keyword(uint8_t kind, uint8_t *out, size_t cap);
+// Which string the new pane's cwd comes from: 0 neither · 1 the configured path · 2 the active
+// pane's cwd. `kind` is the parse door's answer; anything else reads as home, which names no
+// directory. Nothing is copied back — every caller already holds both strings.
+uint8_t slopdesk_ws_workdir_source(uint8_t kind, bool active_cwd_known);
+
 // The tiled tree, as its PRE-ORDER walk rather than as its persisted JSON. Both languages already
 // agree on that JSON, and reusing it here would have been two lines — but `solve` runs on every
 // layout pass, and a parse plus an allocation per frame is the kind of regression that vetoes a
@@ -5571,6 +5596,8 @@ uint8_t slopdesk_key_capture_decision(uint16_t key_code, uint8_t modifiers, uint
 bool    slopdesk_key_capture_is_down(uint16_t key_code, uint8_t modifiers, uint8_t kind);
 // The modifier bit a keycode drives, or -1 for a keycode that is not a modifier key.
 int32_t slopdesk_key_capture_modifier_bit(uint16_t key_code);
+// The cancel key, for the local monitors a transient gesture installs over the whole window.
+bool    slopdesk_key_capture_is_escape(uint16_t key_code);
 
 /* The cursor-shape self-heal. Two lists of UNBOUNDED length — the ids whose bitmap arrived, and the
  * asks still outstanding — so the tracker rides in and out through lent buffers rather than as a

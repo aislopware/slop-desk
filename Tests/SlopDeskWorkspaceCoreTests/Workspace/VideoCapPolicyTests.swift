@@ -4,63 +4,31 @@ import XCTest
 
 // MARK: - VideoCapPolicyTests
 
-/// Pins the pure per-device live-video ceiling policy (``VideoCapPolicy`` / ``VideoDeviceClass``,
-/// docs/22 §7, ITEM #5): the number the app injects into ``WorkspaceStore/liveVideoCap`` differs by
-/// device class because the `.desktop` video stack (2 UDP sockets + `VTDecompressionSession` +
-/// `CVDisplayLink`) scales with the host's decode/compositing headroom — a phone can hold the fewest
-/// concurrent windows, a Mac the most.
+/// Pins the ``VideoCapPolicy`` / ``VideoDeviceClass`` CROSSING (docs/22 §7): the tiers and the
+/// resolution matrix are `slopdesk_workspace::responsive`'s, so what is asserted here is that each
+/// case carries the byte the header names and each answering byte comes back as the right case — a
+/// swapped map would hand a phone the Mac's ceiling with every rule test still green.
 ///
-/// These are pure, synchronously-runnable assertions (no SwiftUI, no platform calls): the policy is a
-/// value-typed function so the per-tier numbers and the resolution matrix are pinned in one place. The
-/// store keeps the plain `liveVideoCap: Int` shape — the final test wires a cap-1 store and proves the
-/// store's activation gate honours whatever Int the policy chose.
+/// The store keeps the plain `liveVideoCap: Int` shape — the final test wires a cap-1 store and proves
+/// the store's activation gate honours whatever Int the policy chose.
 @MainActor
 final class VideoCapPolicyTests: XCTestCase {
-    // MARK: - Tier values: distinct + ordered (phone ≤ pad ≤ mac)
+    // MARK: - The case-index crossing, both directions
 
-    /// The three tiers are the documented constants and are strictly ordered phone < pad < mac, so a
-    /// higher-headroom device class always admits at least as many concurrent video panes.
-    func testTierValuesAreDistinctAndOrdered() {
-        XCTAssertEqual(VideoCapPolicy.phoneCap, 1, "phone tier")
-        XCTAssertEqual(VideoCapPolicy.padCap, 2, "pad tier")
-        XCTAssertEqual(VideoCapPolicy.macCap, 3, "mac tier")
-
-        // Distinct.
-        XCTAssertEqual(
-            Set([VideoCapPolicy.phoneCap, VideoCapPolicy.padCap, VideoCapPolicy.macCap]).count,
-            3,
-            "the three tiers are distinct",
-        )
-        // Ordered (the monotone-headroom contract).
-        XCTAssertLessThanOrEqual(VideoCapPolicy.phoneCap, VideoCapPolicy.padCap, "phone ≤ pad")
-        XCTAssertLessThanOrEqual(VideoCapPolicy.padCap, VideoCapPolicy.macCap, "pad ≤ mac")
-        XCTAssertLessThan(VideoCapPolicy.phoneCap, VideoCapPolicy.macCap, "phone < mac (strictly)")
+    /// Each case carries its own byte to the ceiling door: a swap here is invisible to the crate.
+    func testEachDeviceClassCrossesToItsOwnTier() {
+        XCTAssertEqual(VideoCapPolicy.cap(for: .phone), 1, "phone tier")
+        XCTAssertEqual(VideoCapPolicy.cap(for: .pad), 2, "pad tier")
+        XCTAssertEqual(VideoCapPolicy.cap(for: .mac), 3, "mac tier")
     }
 
-    /// `cap(for:)` maps each device class to its documented tier value.
-    func testCapForDeviceClassMapsEachTier() {
-        XCTAssertEqual(VideoCapPolicy.cap(for: .phone), VideoCapPolicy.phoneCap)
-        XCTAssertEqual(VideoCapPolicy.cap(for: .pad), VideoCapPolicy.padCap)
-        XCTAssertEqual(VideoCapPolicy.cap(for: .mac), VideoCapPolicy.macCap)
-    }
-
-    // MARK: - deviceClass resolution matrix
-
-    /// macOS is always the mac tier regardless of the (irrelevant) idiom / size-class inputs.
-    func testDeviceClassMacAlwaysMacRegardlessOfOtherSignals() {
-        XCTAssertEqual(
-            VideoCapPolicy.deviceClass(isMac: true, horizontalSizeClassCompact: false, userInterfaceIdiomPad: false),
-            .mac,
-        )
+    /// And each answering byte comes back as the case it names, across the whole signal matrix — the
+    /// three distinct answers prove the reverse map is not collapsing onto one case.
+    func testEachAnsweringByteComesBackAsItsOwnCase() {
         XCTAssertEqual(
             VideoCapPolicy.deviceClass(isMac: true, horizontalSizeClassCompact: true, userInterfaceIdiomPad: true),
             .mac, "isMac dominates — idiom/size-class are irrelevant",
         )
-    }
-
-    /// A pad idiom resolves `.pad` ONLY when it is NOT compact; a compact pad (slide-over / a
-    /// phone-narrow split) falls to the conservative phone tier.
-    func testDeviceClassPadResolvesPadOnlyWhenRegular() {
         XCTAssertEqual(
             VideoCapPolicy.deviceClass(isMac: false, horizontalSizeClassCompact: false, userInterfaceIdiomPad: true),
             .pad, "regular pad → pad",
@@ -71,23 +39,9 @@ final class VideoCapPolicyTests: XCTestCase {
         )
     }
 
-    /// A non-pad idiom (iPhone) is always the phone tier, compact or not.
-    func testDeviceClassPhoneIdiomAlwaysPhone() {
-        XCTAssertEqual(
-            VideoCapPolicy.deviceClass(isMac: false, horizontalSizeClassCompact: true, userInterfaceIdiomPad: false),
-            .phone, "compact phone → phone",
-        )
-        XCTAssertEqual(
-            VideoCapPolicy.deviceClass(isMac: false, horizontalSizeClassCompact: false, userInterfaceIdiomPad: false),
-            .phone, "a (hypothetical) regular phone is still the phone tier",
-        )
-    }
-
-    // MARK: - composed convenience
-
     /// The composed `cap(isMac:horizontalSizeClassCompact:userInterfaceIdiomPad:)` equals
-    /// `cap(for: deviceClass(...))` across the whole signal matrix — one call resolves the tier AND
-    /// maps it to the ceiling.
+    /// `cap(for: deviceClass(...))` across the whole signal matrix — the round trip through the byte
+    /// and back loses nothing.
     func testComposedConvenienceMatchesResolveThenMap() {
         for isMac in [true, false] {
             for compact in [true, false] {
@@ -106,23 +60,6 @@ final class VideoCapPolicyTests: XCTestCase {
                 }
             }
         }
-        // Spot-check the load-bearing tiers through the composed call.
-        XCTAssertEqual(
-            VideoCapPolicy.cap(isMac: true, horizontalSizeClassCompact: false, userInterfaceIdiomPad: false),
-            3,
-        )
-        XCTAssertEqual(
-            VideoCapPolicy.cap(isMac: false, horizontalSizeClassCompact: false, userInterfaceIdiomPad: true),
-            2,
-        )
-        XCTAssertEqual(
-            VideoCapPolicy.cap(isMac: false, horizontalSizeClassCompact: true, userInterfaceIdiomPad: true),
-            1,
-        )
-        XCTAssertEqual(
-            VideoCapPolicy.cap(isMac: false, horizontalSizeClassCompact: true, userInterfaceIdiomPad: false),
-            1,
-        )
     }
 
     // MARK: - the store honours the policy-chosen Int (cap-1 gates the 2nd desktop pane)

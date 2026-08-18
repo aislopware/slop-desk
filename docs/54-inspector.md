@@ -205,7 +205,7 @@ tailer, 6 subagents, 4 engine, 2 event.
 
 `tests/corpus.rs` folds `tests/fixtures/main-session.jsonl` and its `subagents/` sibling end to end —
 tailer → parser → builder → replay → subscriber — and pins the exact event sequence. That corpus
-moved here from `Tests/SlopDeskInspectorTests/Fixtures/` with the code that reads it; it is a
+moved here from the Swift suite with the code that reads it; it is a
 deliberately awkward session (a thinking placeholder, a result two lines after its call, a
 `TodoWrite`, a failed call, an ignored internal type, a type from a future version, a concurrent
 subagent), and it is the only test that can prove the stages compose.

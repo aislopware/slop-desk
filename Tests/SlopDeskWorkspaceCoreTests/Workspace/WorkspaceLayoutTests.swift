@@ -3,12 +3,12 @@ import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// Pins the pure responsive-breakpoint helpers in ``WorkspaceLayout`` (docs/22 §4, ITEM #6) and the
-/// focus glue they cooperate with (BUG-F geometric-move-while-zoomed, BUG-K focus reclaim on focus
-/// change).
+/// Pins the ``WorkspaceLayout`` breakpoint CROSSING (the rule itself — both thresholds and why each
+/// geometry is read against its own — is `slopdesk_workspace::responsive`) and the focus glue it
+/// cooperates with (BUG-F geometric-move-while-zoomed, BUG-K focus reclaim on focus change).
 ///
 /// All of it is synchronously testable with zero SwiftUI:
-/// - the breakpoint functions are pure;
+/// - the breakpoint is one door call whose only near-side decision is `windowWidth != nil`;
 /// - the geometric-move contract is exercised through the ``WorkspaceStore`` `updateSolvedLayout`
 ///   seam (the only view→store geometry report) with the ``FakePaneSession`` factory — never a real
 ///   client / `HostServer`;
@@ -17,100 +17,29 @@ import XCTest
 ///   tab-switch reclaim logic is unit-reachable here without a device.
 @MainActor
 final class WorkspaceLayoutTests: XCTestCase {
-    // MARK: - ITEM #6: the EXISTING detail-width breakpoint stays byte-for-byte (4 regressions)
+    // MARK: - The breakpoint crossing
 
-    /// The original `isCompact(...:width:)` signature + the 460 detail threshold are load-bearing and
-    /// must not drift (other call sites + the reconcile suite assert against them).
-    func testDetailWidthBreakpointRegressions() {
-        XCTAssertEqual(WorkspaceLayout.compactWidthThreshold, 460, "detail-width threshold pinned")
-        // size-class compact → compact regardless of width.
-        XCTAssertTrue(WorkspaceLayout.isCompact(horizontalSizeClassCompact: true, width: 1200))
-        // wide detail → regular.
-        XCTAssertFalse(WorkspaceLayout.isCompact(horizontalSizeClassCompact: false, width: 1200))
-        // macOS min-window detail (~500pt) → regular (below-ideal-sidebar still resolves the full tree).
-        XCTAssertFalse(WorkspaceLayout.isCompact(horizontalSizeClassCompact: false, width: 500))
-        // genuinely phone-narrow detail → compact via the width fallback.
-        XCTAssertTrue(WorkspaceLayout.isCompact(horizontalSizeClassCompact: false, width: 400))
-    }
-
-    // MARK: - ITEM #6: the OUTER-WINDOW overload
-
-    /// When a window width is supplied it is the geometry the breakpoint resolves against (NOT the
-    /// detail width): a window above the window threshold → regular even if the detail column passed in
-    /// is narrow (the mid-resize hazard the window reader exists to defuse).
-    func testWindowWidthFallbackResolvesAgainstWindowThreshold() {
-        XCTAssertEqual(WorkspaceLayout.compactWindowWidthThreshold, 680, "window threshold pinned (< 720 floor)")
-        // A full-floor window (720) is REGULAR even though the detail GeometryReader momentarily reports
-        // a sub-threshold 300pt mid-resize — the window width wins.
-        XCTAssertFalse(
-            WorkspaceLayout.isCompact(horizontalSizeClassCompact: false, detailWidth: 300, windowWidth: 720),
-            "window 720 (>= 680) resolves regular regardless of a transient narrow detail width",
-        )
-        // The window width, not the detail width, is the one compared: a wide detail can't rescue a
-        // sub-threshold window.
-        XCTAssertTrue(
-            WorkspaceLayout.isCompact(horizontalSizeClassCompact: false, detailWidth: 5000, windowWidth: 600),
-            "window 600 (< 680) resolves compact even with a wide detail width",
-        )
-    }
-
-    /// A window below the window threshold collapses to compact (a future sub-floor platform, or a
-    /// transient pre-constraint frame).
-    func testWindowWidthBelowWindowThresholdCollapses() {
-        XCTAssertTrue(
-            WorkspaceLayout.isCompact(horizontalSizeClassCompact: false, detailWidth: 679, windowWidth: 679),
-            "window just below 680 → compact",
-        )
-        XCTAssertFalse(
-            WorkspaceLayout.isCompact(horizontalSizeClassCompact: false, detailWidth: 680, windowWidth: 680),
-            "window exactly at the threshold → regular (strict <)",
-        )
-    }
-
-    /// F6 — with no window width (always on iOS; on macOS before the `NSWindow` reader fires) the
-    /// breakpoint falls back to the DETAIL width compared against the DETAIL threshold (460), NOT the
-    /// window threshold (680). Collapsing both into `(windowWidth ?? detailWidth) < 680` was the bug: it
-    /// showed a one-frame compact carousel for the macOS floor window's ~500pt detail before the window
-    /// reader fired, and silently moved the iPad-regular detail fallback from 460 to 680.
-    func testWindowWidthNilFallsBackToDetailThreshold() {
-        // The macOS floor window's ~500pt detail (before the NSWindow reader fires) must be REGULAR —
-        // 500 >= 460, so no one-frame compact carousel.
+    /// An ABSENT window is not a window of the detail's width — the one thing this side can get wrong,
+    /// since `nil` crosses as a `(0, false)` pair rather than as a number. A 500pt detail with no window
+    /// yet is REGULAR (the macOS floor before the `NSWindow` reader fires); the same detail inside a
+    /// 600pt window is compact.
+    func testAbsentWindowIsNotAWindowOfTheDetailWidth() {
         XCTAssertFalse(
             WorkspaceLayout.isCompact(horizontalSizeClassCompact: false, detailWidth: 500, windowWidth: nil),
-            "nil window → detail 500 (>= 460) resolves regular (no one-frame compact flash on macOS launch)",
+            "nil window → the detail decides, against the detail threshold (no one-frame compact flash)",
         )
-        // A genuinely phone-narrow detail still collapses via the 460 detail threshold.
         XCTAssertTrue(
-            WorkspaceLayout.isCompact(horizontalSizeClassCompact: false, detailWidth: 400, windowWidth: nil),
-            "nil window → detail 400 (< 460) resolves compact",
+            WorkspaceLayout.isCompact(horizontalSizeClassCompact: false, detailWidth: 500, windowWidth: 600),
+            "a sub-floor window is compact even though the same detail resolved regular without one",
         )
-        // The nil-window fallback uses the DETAIL threshold (460), not the window threshold (680): a
-        // detail between the two thresholds is REGULAR (it would wrongly be compact under the old
-        // collapsed gate).
-        XCTAssertFalse(
-            WorkspaceLayout.isCompact(horizontalSizeClassCompact: false, detailWidth: 600, windowWidth: nil),
-            "nil window → detail 600 resolves against the 460 detail threshold ⇒ regular (not the 680 window one)",
-        )
-    }
-
-    /// F6 — the window path and the detail-fallback path each use their OWN threshold: a known window
-    /// width below 680 is compact; a known window width at/above 680 is regular EVEN with a narrow
-    /// transient detail; and the two thresholds are not conflated.
-    func testWindowAndDetailPathsUseDistinctThresholds() {
-        // windowWidth 600 (< 680) → compact, regardless of detail.
-        XCTAssertTrue(
-            WorkspaceLayout.isCompact(horizontalSizeClassCompact: false, detailWidth: 600, windowWidth: 600),
-            "window 600 (< 680) → compact",
-        )
-        // windowWidth 720 (>= 680) with a transient narrow 300pt detail → regular (the window wins).
         XCTAssertFalse(
             WorkspaceLayout.isCompact(horizontalSizeClassCompact: false, detailWidth: 300, windowWidth: 720),
-            "window 720 (>= 680) → regular even with a transient narrow detail (300)",
+            "the floor window is regular regardless of a transient narrow detail",
         )
     }
 
-    /// The size class stays the PRIMARY signal in the overload too: a compact size class forces compact
-    /// regardless of however wide the window/detail is (the iOS path is unchanged).
+    /// The size class stays the PRIMARY signal across the boundary: it forces compact regardless of
+    /// however wide the window/detail is (the iOS path).
     func testSizeClassStillPrimaryOverWindowWidth() {
         XCTAssertTrue(
             WorkspaceLayout.isCompact(horizontalSizeClassCompact: true, detailWidth: 5000, windowWidth: 5000),

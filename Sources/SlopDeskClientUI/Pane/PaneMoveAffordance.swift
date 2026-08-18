@@ -19,6 +19,7 @@
 // (to reveal the pill) and owns the drag gesture. SYSTEM / design-token colours only.
 
 #if canImport(SwiftUI)
+import CSlopDeskFFI
 import SFSafeSymbols
 import SlopDeskClientCore
 import SlopDeskWorkspaceCore
@@ -503,9 +504,6 @@ struct PaneMoveEscapeMonitor: NSViewRepresentable {
     final class Coordinator {
         var onCancel: () -> Void = {}
         private var monitor: Any?
-        // Hardware-independent virtual key code (Carbon `kVK_Escape`) — literal, matching the same
-        // no-Carbon-import convention `SystemKeyCapturePolicy` uses.
-        private static let keyCodeEscape: UInt16 = 53
 
         var isActive: Bool = false {
             didSet {
@@ -518,7 +516,8 @@ struct PaneMoveEscapeMonitor: NSViewRepresentable {
             guard monitor == nil else { return }
             monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
                 guard let self else { return event }
-                guard event.keyCode == Self.keyCodeEscape else { return event }
+                // The cancel key is named by the crate that already has to know its number.
+                guard slopdesk_key_capture_is_escape(event.keyCode) else { return event }
                 onCancel()
                 return nil // swallow — Escape cancels the drag, never types into the focused pane
             }

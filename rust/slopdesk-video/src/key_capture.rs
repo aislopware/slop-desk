@@ -52,6 +52,15 @@ pub const KEY_CODE_E: u16 = 14;
 /// `kVK_Escape` — the Force Quit chord's key.
 pub const KEY_CODE_ESCAPE: u16 = 53;
 
+/// Whether a keycode is Escape — the one key that CANCELS an affordance rather than typing into it.
+///
+/// Asked by every surface that puts a local key monitor over a transient gesture, so the number
+/// stays in the one module that already has to name it for the Force Quit chord.
+#[must_use]
+pub const fn is_escape(key_code: u16) -> bool {
+    key_code == KEY_CODE_ESCAPE
+}
+
 /// The one decision per tap event.
 ///
 /// A `FlagsChanged` is forwarded only when its keycode is a modifier this crate can name: an
@@ -122,7 +131,9 @@ pub const fn modifier_of(key_code: u16) -> Option<InputModifiers> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Decision, EventKind, KEY_CODE_E, KEY_CODE_ESCAPE, decision, is_down, modifier_of};
+    use super::{
+        Decision, EventKind, KEY_CODE_E, KEY_CODE_ESCAPE, decision, is_down, is_escape, modifier_of,
+    };
     use crate::input_event::{InputModifiers, modifier_keys};
 
     const ESCAPE_CHORD: InputModifiers = InputModifiers::from_bits(
@@ -170,6 +181,12 @@ mod tests {
             decision(KEY_CODE_ESCAPE, chord, EventKind::KeyUp),
             Decision::PassThrough
         );
+    }
+
+    #[test]
+    fn the_cancel_key_is_the_one_the_force_quit_chord_names() {
+        assert!(is_escape(KEY_CODE_ESCAPE));
+        assert!(!is_escape(KEY_CODE_E));
     }
 
     #[test]

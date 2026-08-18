@@ -97,6 +97,7 @@ pub mod rail_list;
 pub mod rate_control;
 pub mod recovery;
 pub mod replay;
+pub mod responsive;
 pub mod sanitize;
 pub mod screen;
 pub mod scroll_reproject;

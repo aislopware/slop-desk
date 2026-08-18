@@ -17,6 +17,8 @@
 //!   shares, and what its second line says once the surface has said the rest.
 //! - [`rail_list`] — what happens to that pane once it is standing next to every other one:
 //!   filtered, sectioned, ordered, and told apart from its namesakes.
+//! - [`responsive`] — the one switch between the two projections, and the live-video ceiling that
+//!   scales with the machine behind it.
 //! - [`search_rank`] — the one ranking behind every search field, and why a title hit outranks a
 //!   subtitle hit that scored higher.
 //! - [`persist`] — the client's workspace file: the trees and their specs on disk, and the repairs
@@ -38,6 +40,7 @@
 //! - [`tab_ordering`] — the sidebar's one bucketing rule, and where focus lands after a close.
 //! - [`templates`] — the two things that spawn panes, and the bytes they type into them.
 //! - [`tree_ops`] — every operation a gesture or an intent performs on the arrangement.
+//! - [`workdir`] — where a freshly-opened pane starts, and why naming no directory is an answer.
 //! - [`workspace`] — the whole arrangement, its one checkable invariant, and the repairs that turn
 //!   a hand-edited file back into a usable one.
 //!
@@ -65,6 +68,7 @@ pub mod notify;
 pub mod persist;
 pub mod rail_list;
 pub mod rail_title;
+pub mod responsive;
 pub mod search_rank;
 pub mod secrets;
 pub mod send_keys;
@@ -77,6 +81,7 @@ pub mod tab_ordering;
 pub mod templates;
 pub mod tree_ops;
 pub mod window_size;
+pub mod workdir;
 pub mod workspace;
 
 pub use focus::{FocusDirection, cycle, neighbor};

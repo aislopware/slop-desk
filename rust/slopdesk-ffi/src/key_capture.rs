@@ -48,6 +48,17 @@ pub extern "C" fn slopdesk_key_capture_is_down(key_code: u16, modifiers: u8, kin
     key_capture::is_down(key_code, InputModifiers::from_bits(modifiers), kind_of(kind))
 }
 
+/// Whether a keycode is Escape — the cancel key, asked by every local monitor over a transient
+/// gesture so none of them has to restate the number.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_key_capture_is_escape(key_code: u16) -> bool {
+    key_capture::is_escape(key_code)
+}
+
 /// The modifier bit a keycode drives, or `-1` for a keycode that is not a modifier key. A real
 /// answer is one of six bits in a byte, so the refusal is outside the range by construction.
 #[unsafe(no_mangle)]
@@ -67,7 +78,8 @@ mod tests {
     use slopdesk_video::input_event::InputModifiers;
 
     use super::{
-        slopdesk_key_capture_decision, slopdesk_key_capture_is_down, slopdesk_key_capture_modifier_bit,
+        slopdesk_key_capture_decision, slopdesk_key_capture_is_down, slopdesk_key_capture_is_escape,
+        slopdesk_key_capture_modifier_bit,
     };
 
     #[test]
@@ -105,6 +117,12 @@ mod tests {
             -1,
             "a letter is not a modifier"
         );
+    }
+
+    #[test]
+    fn the_cancel_key_is_the_one_the_chord_already_names() {
+        assert!(slopdesk_key_capture_is_escape(53));
+        assert!(!slopdesk_key_capture_is_escape(14));
     }
 
     #[test]
