@@ -428,15 +428,13 @@ public final class OverlayCoordinator {
     // MARK: Palette keyboard / accept
 
     /// Move the keyboard selection by `delta`, clamped to the selectable rows (wrapping not done — Warp
-    /// clamps). A no-op when there are no selectable rows. `delta` is ±1 for the arrows and ± one
-    /// viewport's worth for ⇞/⇟ (the view derives the stride from its own row metrics).
+    /// clamps, and so does ``ListNavigation/clampedSelection``, which the picker and the command
+    /// navigator move by too). `delta` is ±1 for the arrows and ± one viewport's worth for ⇞/⇟ (the
+    /// view derives the stride from its own row metrics); an empty list answers `0`.
     public func moveSelection(_ delta: Int) {
-        let n = selectableResults.count
-        guard n > 0 else { paletteSelection = 0
-            return
-        }
-        let next = paletteSelection + delta
-        paletteSelection = max(0, min(n - 1, next))
+        paletteSelection = ListNavigation.clampedSelection(
+            current: paletteSelection, delta: delta, count: selectableResults.count,
+        )
     }
 
     /// Jump the keyboard selection to the FIRST selectable row (⌘↑ — the macOS list idiom).
@@ -444,9 +442,11 @@ public final class OverlayCoordinator {
         paletteSelection = 0
     }
 
-    /// Jump the keyboard selection to the LAST selectable row (⌘↓). A no-op-safe clamp when empty.
+    /// Jump the keyboard selection to the LAST selectable row (⌘↓) — the End key's move, which is
+    /// the same clamp with the whole list as its delta. A no-op-safe `0` when empty.
     public func moveSelectionToLast() {
-        paletteSelection = max(0, selectableResults.count - 1)
+        let count = selectableResults.count
+        paletteSelection = ListNavigation.clampedSelection(current: 0, delta: count, count: count)
     }
 
     /// Accept the currently keyboard-selected row (the ↩ chord): runs it AND closes the palette.

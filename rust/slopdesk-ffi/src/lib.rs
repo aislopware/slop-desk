@@ -81,6 +81,7 @@ pub mod key_naming;
 pub mod keybind;
 pub mod link_action;
 pub mod link_detect;
+pub mod list_nav;
 pub mod metadata;
 pub mod metadata_wire;
 pub mod mint_rescue;

@@ -742,6 +742,28 @@ size_t slopdesk_ws_rail_disambiguated_label(const SlopDeskWsRailLabel *items, si
 // clamps to this number, so a transcribed copy would describe a rule the client does not share.
 double slopdesk_ws_min_weight(void);
 
+// ---- Where the highlight goes — `slopdesk_workspace::list_nav` ----
+//
+// The rows never cross: each rule reads a COUNT and answers an INDEX into the list the caller
+// already holds. Three overlays — the picker, the command navigator and the palette — each carried
+// their own copy of the clamp, which is why it is one door.
+//
+// A LIST clamps and a RING wraps: arrowing past the last row leaves the highlight there, the way
+// every macOS list behaves, while Tab through the filter pills comes back around because a ring has
+// no ends to sit against.
+
+// Moved by `delta`, clamped to [0, count - 1]. Any count <= 0 answers 0 — the index every one of
+// those surfaces stores while it has nothing selected. The add saturates, so a page key over a
+// two-row list, and an i64 extreme from a caller, both stay indices.
+int64_t slopdesk_list_clamped_selection(int64_t current, int64_t delta, int64_t count);
+// The 0-based row a ⌘1–9 chord names. -1 for ⌘0 (a filter chord, never a pick), for a chord above
+// nine, and for a chord past the rows on screen.
+int64_t slopdesk_list_quick_pick(int64_t one_based, size_t row_count);
+// `delta` steps around a ring of `count`, wrapping at both ends. -1 for an empty ring, and for a
+// starting index that is not in it — there is nothing to step from, and inventing a first entry
+// would move a selection nobody asked to move.
+int64_t slopdesk_list_wrapped_index(size_t index, int64_t delta, size_t count);
+
 // ---- Which projection the app draws, and where a new pane starts ----
 //
 // `window_width` is read only when `window_width_present`: the outer window and the detail column

@@ -298,22 +298,12 @@ public enum OpenQuicklyModel {
         sections.flatMap(\.items)
     }
 
-    /// Map a 1-based `⌘1–9` quick-pick chord onto a 0-based index into the visible `rows`. Returns `nil` for
-    /// `⌘0` (the All-pill chord, not a pick), a chord above 9, or an index past the visible rows.
+    /// Map a 1-based `⌘1–9` quick-pick chord onto a 0-based index into the visible `rows` —
+    /// ``ListNavigation/quickPickIndex(_:rowCount:)``, over the rows this picker happens to be
+    /// showing. `nil` for `⌘0` (the All-pill chord, not a pick), a chord above 9, or an index past
+    /// the visible rows.
     public static func quickPickIndex(_ oneBased: Int, in rows: [OpenQuicklyItem]) -> Int? {
-        guard (1...9).contains(oneBased) else { return nil }
-        let index = oneBased - 1
-        guard rows.indices.contains(index) else { return nil }
-        return index
-    }
-
-    /// Move a selection index by `delta`, clamped to `[0, count-1]` — the SHARED contract for the picker's
-    /// arrow (`±1`), page (`±pageStep`) and Home/End (`±count`) navigation. An empty list (`count <= 0`)
-    /// clamps to `0`. Pure so PageUp/PageDown/Home/End paging is headlessly testable (the view passes
-    /// `selectableRows.count` and the page step). The `max`/`min` are ordered integer comparisons (no float).
-    public static func clampedSelection(current: Int, delta: Int, count: Int) -> Int {
-        guard count > 0 else { return 0 }
-        return max(0, min(count - 1, current + delta))
+        ListNavigation.quickPickIndex(oneBased, rowCount: rows.count)
     }
 
     /// Fuzzy-filter + rank a list of titled actions by `query` — the `⌘K` Actions popover search.
@@ -339,12 +329,15 @@ public enum OpenQuicklyModel {
         cycle(from: current, by: -1)
     }
 
+    /// The pills are a RING rather than a list, so the step wraps —
+    /// ``ListNavigation/wrappedIndex(_:delta:count:)``. A pill that is not in the ring has nothing
+    /// to step from and stays where it is.
     private static func cycle(from current: OpenQuicklyFilter, by delta: Int) -> OpenQuicklyFilter {
         let pills = OpenQuicklyFilter.pickerPills
-        guard !pills.isEmpty, let index = pills.firstIndex(of: current) else { return current }
-        let count = pills.count
-        // `((i + delta) % n + n) % n` keeps the index in range for a negative delta (no underflow / trap).
-        let wrapped = ((index + delta) % count + count) % count
+        guard let index = pills.firstIndex(of: current),
+              let wrapped = ListNavigation.wrappedIndex(index, delta: delta, count: pills.count),
+              pills.indices.contains(wrapped)
+        else { return current }
         return pills[wrapped]
     }
 

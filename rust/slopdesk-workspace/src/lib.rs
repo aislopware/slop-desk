@@ -17,6 +17,8 @@
 //!   shares, and what its second line says once the surface has said the rest.
 //! - [`rail_list`] — what happens to that pane once it is standing next to every other one:
 //!   filtered, sectioned, ordered, and told apart from its namesakes.
+//! - [`list_nav`] — where the highlight goes when an arrow, a page key, a Tab or a `⌘1–9` chord
+//!   arrives over any of those lists.
 //! - [`responsive`] — the one switch between the two projections, and the live-video ceiling that
 //!   scales with the machine behind it.
 //! - [`search_rank`] — the one ranking behind every search field, and why a title hit outranks a
@@ -63,6 +65,7 @@ pub mod geometry;
 pub mod identity;
 pub mod json;
 pub mod jump;
+pub mod list_nav;
 pub mod listen;
 pub mod notify;
 pub mod persist;

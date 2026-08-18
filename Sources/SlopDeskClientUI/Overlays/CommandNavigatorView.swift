@@ -25,6 +25,7 @@ import Foundation
 import SFSafeSymbols
 import SlopDeskClientCore
 import SlopDeskWorkspaceCore
+import SlopDeskWorkspaceModel
 import SwiftUI
 
 /// Per-pane chrome holder driving the Command Navigator's visibility — a reference type so the pane model's
@@ -432,13 +433,12 @@ struct CommandNavigatorView: View {
 
     // MARK: - Act
 
+    /// The same clamp the picker and the palette move by — ``ListNavigation/clampedSelection``,
+    /// which also answers `0` for an empty list, so the guard this used to carry is the rule's.
     private func moveSelection(_ delta: Int) {
-        let count = visibleBlocks.count
-        guard count > 0 else {
-            selection = 0
-            return
-        }
-        selection = max(0, min(count - 1, selection + delta))
+        selection = ListNavigation.clampedSelection(
+            current: selection, delta: delta, count: visibleBlocks.count,
+        )
     }
 
     /// Act on the keyboard-selected row (↩), if any.

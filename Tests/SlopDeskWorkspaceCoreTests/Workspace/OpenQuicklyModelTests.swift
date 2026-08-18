@@ -247,46 +247,8 @@ final class OpenQuicklyModelTests: XCTestCase {
         XCTAssertNil(OpenQuicklyModel.quickPickIndex(10, in: rows), "only ⌘1–9 are quick-pick chords")
     }
 
-    // MARK: - clampedSelection: arrow / page / Home / End navigation
-
-    func testClampedSelectionMovesAndClampsToBounds() {
-        // Arrow (±1) within range.
-        XCTAssertEqual(OpenQuicklyModel.clampedSelection(current: 2, delta: 1, count: 10), 3)
-        XCTAssertEqual(OpenQuicklyModel.clampedSelection(current: 2, delta: -1, count: 10), 1)
-        // Clamp at the top/bottom edges (no wrap, no underflow/overflow).
-        XCTAssertEqual(OpenQuicklyModel.clampedSelection(current: 0, delta: -1, count: 10), 0)
-        XCTAssertEqual(OpenQuicklyModel.clampedSelection(current: 9, delta: 1, count: 10), 9)
-    }
-
-    func testClampedSelectionPagesAndHomeEndClampWithinList() {
-        // PageDown by a page (e.g. step 9) from the top lands mid-list; a second page clamps to the last row.
-        XCTAssertEqual(OpenQuicklyModel.clampedSelection(current: 0, delta: 9, count: 30), 9)
-        XCTAssertEqual(OpenQuicklyModel.clampedSelection(current: 9, delta: 9, count: 30), 18)
-        XCTAssertEqual(
-            OpenQuicklyModel.clampedSelection(current: 25, delta: 9, count: 30),
-            29,
-            "PageDown clamps to last",
-        )
-        // PageUp by a page from below the page step clamps to the first row, never negative.
-        XCTAssertEqual(OpenQuicklyModel.clampedSelection(current: 4, delta: -9, count: 30), 0, "PageUp clamps to first")
-        // Home = delta 0 from index 0; End = delta count-1 from index 0 → the last row.
-        XCTAssertEqual(OpenQuicklyModel.clampedSelection(current: 0, delta: 0, count: 30), 0, "Home → first row")
-        XCTAssertEqual(OpenQuicklyModel.clampedSelection(current: 0, delta: 30 - 1, count: 30), 29, "End → last row")
-    }
-
-    func testClampedSelectionEmptyListPinsToZero() {
-        XCTAssertEqual(OpenQuicklyModel.clampedSelection(current: 5, delta: -9, count: 0), 0)
-        XCTAssertEqual(
-            OpenQuicklyModel.clampedSelection(current: 0, delta: 0, count: 0),
-            0,
-            "Home on an empty list is 0",
-        )
-        XCTAssertEqual(
-            OpenQuicklyModel.clampedSelection(current: 0, delta: -1, count: 0),
-            0,
-            "End on an empty list is 0",
-        )
-    }
+    // The arrow / page / Home-End clamp the picker moves by is `ListNavigationTests` — the palette
+    // and the command navigator move by the same one, and this file used to hold its only tests.
 
     // MARK: - rankActions: the ⌘K Actions popover fuzzy filter
 

@@ -493,11 +493,11 @@ struct OpenQuicklyView: View {
     /// by the field's `.onSubmit` (so a single ↩ never double-fires). Everything else falls through.
     private func handleActionsKey(_ press: KeyPress, count: Int) -> KeyPress.Result {
         if press.key == .upArrow {
-            actionsSelection = OpenQuicklyModel.clampedSelection(current: actionsSelection, delta: -1, count: count)
+            actionsSelection = ListNavigation.clampedSelection(current: actionsSelection, delta: -1, count: count)
             return .handled
         }
         if press.key == .downArrow {
-            actionsSelection = OpenQuicklyModel.clampedSelection(current: actionsSelection, delta: 1, count: count)
+            actionsSelection = ListNavigation.clampedSelection(current: actionsSelection, delta: 1, count: count)
             return .handled
         }
         if press.key == .escape {
@@ -831,7 +831,8 @@ struct OpenQuicklyView: View {
             return .handled
         }
         // PageUp/PageDown jump a full viewport of rows; Home/End snap to the first/last row (open-quickly.png
-        // "Jump through list | PageUp / PageDown, Home / End"). All clamp through the shared `clampedSelection`.
+        // "Jump through list | PageUp / PageDown, Home / End"). All clamp through the one
+        // `ListNavigation.clampedSelection` the palette and the command navigator also read.
         if press.key == .pageUp {
             moveSelection(-pageStep)
             return .handled
@@ -841,12 +842,12 @@ struct OpenQuicklyView: View {
             return .handled
         }
         if press.key == .home {
-            selection = OpenQuicklyModel.clampedSelection(current: 0, delta: 0, count: selectableRows.count)
+            selection = ListNavigation.clampedSelection(current: 0, delta: 0, count: selectableRows.count)
             return .handled
         }
         if press.key == .end {
             let n = selectableRows.count
-            selection = OpenQuicklyModel.clampedSelection(current: 0, delta: n - 1, count: n)
+            selection = ListNavigation.clampedSelection(current: 0, delta: n - 1, count: n)
             return .handled
         }
         if press.key == .tab {
@@ -880,7 +881,7 @@ struct OpenQuicklyView: View {
     }
 
     private func moveSelection(_ delta: Int) {
-        selection = OpenQuicklyModel.clampedSelection(current: selection, delta: delta, count: selectableRows.count)
+        selection = ListNavigation.clampedSelection(current: selection, delta: delta, count: selectableRows.count)
     }
 
     // MARK: - Act
