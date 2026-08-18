@@ -64,6 +64,7 @@ package enum SettingsCatalog {
         case autoDetectLinkSchemes = 14
         case autoHideTabsPanel = 15
         case cursorBlink = 16
+        case clipboardAccess = 17
     }
 
     /// A group's choices, in the order they render, rebuilt as `Value`.

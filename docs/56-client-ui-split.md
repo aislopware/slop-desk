@@ -886,3 +886,31 @@ it gives that up and the table supplies it to both.
 Eight more settings became advertised rows here: `shell.autoHideTabsPanel`, the four `window.*`
 numbers, `desktopWindow.presentation` and `satelliteWindow.backgroundPointer` — and none of the seven
 window keys was in any reset set, so Reset All had been silently skipping every one of them.
+
+### Increment 21 — the Agents and Advanced pages
+
+The last two gated pages, which took `SettingsView.swift` to 1613 lines and twelve directives. What
+remains in that file belongs to the pages still to come, not to any page already described.
+
+AGENTS is the page where describing a table caught a DUPLICATE. Its Agent Behaviour group carried
+notify-on-complete and notify-on-input, and so does the Shell page's Code Agent group — the same two
+keys with a live control on each, which one flat table forbids by construction because a row may
+belong to only one page. Notifications belong with notifications, so the Agents copies went. The page
+also brought the first rows whose backing is not a `Defaults.Key`: the two host flags ride the
+`video-prefs.json` sidecar, so they are keyed the way the typed render fields are and restored with
+the model they belong to. A sidecar flag is a `Bool?` whose `nil` means "the daemon decides", and it
+decides differently per flag — prevent-sleep off, resume-on-recovery ON — so the unset default is
+NAMED on `AgentPreferences` rather than spelled at the control, which is what a toggle reading `nil`
+as `false` had got wrong.
+
+ADVANCED is where a group that looked macOS-only turned out not to be. The OSC 52 and OSC 0/2
+privileges gate what a REMOTE escape sequence may do on the CLIENT, and a phone attached to the same
+host sees the same sequences, so Privileges is `Both`; only the three surfaces backed by a Mac — the
+`SLOPDESK_*` override box, the video host sidecar, the `~/.config` file — are `Mac`. Its four rows
+also settled where a CONDITION lives: the two clipboard menus are drawn disabled while the master
+switch above them is off, and that is a condition on another setting's VALUE, so it is the renderer's
+and the row stays in the table. Same rule as the window steppers and the custom link schemes.
+
+Five pages now render from one table. Three surfaces still draw themselves as bespoke groups — the
+font specimen, the video host flags, the flat index — and of those only the video flags name a
+control shape the table cannot yet express: an optional number with an unset state.

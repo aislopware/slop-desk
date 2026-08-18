@@ -1353,120 +1353,96 @@ private struct AdvancedSettingsTab: View {
     @Default(.clipboardRead) private var clipboardRead
     @Default(.clipboardWrite) private var clipboardWrite
 
-    #if os(macOS)
-    /// Local edit buffer of `key = value` lines; committed into `store.rawOverrides` on change. macOS-only:
-    /// the raw `SLOPDESK_*` editor is a HOST-side concern, so the compact iOS sheet omits it.
+    /// Local edit buffer of `key = value` lines; committed into `store.rawOverrides` on change. Only
+    /// the Mac draws the box — the table says so — but a `String` needs no gate to exist.
     @State private var text: String = ""
-    #endif
 
     var body: some View {
         Form {
-            privilegesSection
-
-            // The raw `SLOPDESK_*` editor + Video HOST flags are macOS-host-relevant, so the iOS sheet
-            // omits them; the cross-platform All-Settings list below still reaches iOS.
-            #if os(macOS)
-            slateFormSection("Raw overrides") {
-                Text(
-                    "One SLOPDESK_KEY=value per line. Folded last, so a key here overrides the matching typed setting.",
-                )
-                .font(SettingsType.subtitle)
-                .foregroundStyle(SettingsInk.secondary)
-                TextEditor(text: $text)
-                    .font(SettingsType.monoSubtitle)
-                    .frame(minHeight: 120)
-                    .onChange(of: text) { _, new in commit(new) }
-                HStack(spacing: Slate.Metric.space1) {
-                    Image(systemSymbol: .infoCircle)
-                    Text("A real environment variable set on the process still wins over any value here.")
-                }
-                .font(SettingsType.caption)
-                .foregroundStyle(SettingsInk.tertiary)
+            ForEach(SettingsLayout.groups(SettingsSection.advanced.rawValue, for: .current)) { group in
+                settingsGroup(group) { row in control(row) }
             }
-
-            VideoHostSettingsView(store: store)
-
-            configFileSection
-            #endif
-
-            // The searchable All Settings list + Reset-All / Reset-Advanced. Pure SwiftUI, so the iOS sheet
-            // shows it too. `onAfterReset` clears the local raw-overrides buffer so the box reflects the
-            // cleared store (a no-op on iOS, where the buffer doesn't exist).
-            AllSettingsListView(
-                store: store, selectedSection: $selectedSection, onAfterReset: { clearRawOverridesBuffer() },
-            )
         }
         .formStyle(.grouped)
-        #if os(macOS)
-            .onAppear { text = Self.render(store.rawOverrides) }
-        #endif
+        .onAppear { text = Self.render(store.rawOverrides) }
+    }
+
+    /// One row, by the setting it edits — see `GeneralSettingsTab.control(_:)` for why the binding is
+    /// the half that cannot cross.
+    @ViewBuilder
+    private func control(_ row: SettingsLayout.Row) -> some View {
+        switch row.key {
+        case SettingsKey.titleShellControlled:
+            SettingsGlyphToggleRow(glyph(row), row.label, row.subtitle, isOn: $titleShellControlled)
+        case SettingsKey.clipboardShellControlled:
+            SettingsGlyphToggleRow(
+                glyph(row), row.label, row.subtitle, isOn: store.refreshing($clipboardShellControlled),
+            )
+        case SettingsKey.clipboardReadKey: clipboardPicker(row, $clipboardRead)
+        case SettingsKey.clipboardWriteKey: clipboardPicker(row, $clipboardWrite)
+        default: bespoke(row)
+        }
+    }
+
+    /// The four groups this page draws itself. Three are surfaces rather than lists of settings — a
+    /// free-text override box, the video host flags, a file path with two buttons — and the fourth is
+    /// the searchable index of every setting there is.
+    @ViewBuilder
+    private func bespoke(_ row: SettingsLayout.Row) -> some View {
+        if case let .bespoke(id) = row.control {
+            switch id {
+            case "raw-overrides": rawOverrideRows
+            case "video-host": VideoHostSettingsView(store: store)
+            case "config-file": configFileRows
+            // `onAfterReset` clears the local raw-overrides buffer so the box reflects the cleared store.
+            case "all-settings":
+                AllSettingsListView(
+                    store: store, selectedSection: $selectedSection, onAfterReset: { text = "" },
+                )
+            default: EmptyView()
+            }
+        }
     }
 
     // MARK: - Privileges (title gates + OSC-52 master + read/write tri-state)
 
-    /// The privilege surface (Settings → Advanced, `terminal-features__notifications.md`): the title gate +
-    /// the OSC-52 master switch + read/write tri-state pickers. The pickers are DISABLED while the master is
-    /// off (the whole OSC-52 path resolves to Deny).
-    private var privilegesSection: some View {
-        slateFormSection("Privileges") {
-            Toggle(isOn: $titleShellControlled) {
-                privilegeLabel(
-                    settingLabel(SettingsKey.titleShellControlled),
-                    "Allow programs to set the tab and window title via OSC 0 / OSC 2.",
-                )
-            }
-            Toggle(isOn: store.refreshing($clipboardShellControlled)) {
-                privilegeLabel(
-                    settingLabel(SettingsKey.clipboardShellControlled),
-                    "Master switch for OSC 52 clipboard access. When off, clipboard read and write are denied.",
-                )
-            }
-            clipboardPicker(
-                "Clipboard Read", "Whether a program may READ the clipboard via OSC 52.", $clipboardRead,
-            )
-            clipboardPicker(
-                "Clipboard Write", "Whether a program may WRITE the clipboard via OSC 52.", $clipboardWrite,
-            )
-            timingFooter(.live)
-        }
-    }
-
-    /// A tri-state OSC-52 access picker (Ask / Allow / Deny), disabled while the master switch is off. The
-    /// change re-applies the live libghostty config (the clipboard tokens feed `clipboard-read/write`).
+    /// A tri-state OSC-52 access picker, disabled while the master switch is off — a condition on
+    /// another setting's VALUE, so it is the renderer's rather than the table's. The change re-applies
+    /// the live libghostty config (the clipboard tokens feed `clipboard-read/write`).
     private func clipboardPicker(
-        _ title: String, _ subtitle: String, _ selection: Binding<ClipboardAccess>,
+        _ row: SettingsLayout.Row, _ selection: Binding<ClipboardAccess>,
     ) -> some View {
-        LabeledContent {
-            Picker("", selection: store.refreshing(selection)) {
-                Text("Ask").tag(ClipboardAccess.ask)
-                Text("Allow").tag(ClipboardAccess.allow)
-                Text("Deny").tag(ClipboardAccess.deny)
-            }
-            .labelsHidden()
-            .pickerStyle(.menu)
-            .fixedSize()
-        } label: {
-            privilegeLabel(title, subtitle)
-        }
+        SettingsOptionMenuRow(
+            row.label,
+            subtitle: row.subtitle,
+            options: SettingsCatalog.options(.clipboardAccess),
+            selection: store.refreshing(selection),
+        )
         .disabled(!clipboardShellControlled)
     }
 
-    /// The row label layout: a bold title with a gray subtext beneath.
-    private func privilegeLabel(_ title: String, _ subtitle: String) -> some View {
-        VStack(alignment: .leading, spacing: Slate.Metric.space1) {
-            Text(title)
-            Text(subtitle)
-                .font(SettingsType.subtitle)
-                .foregroundStyle(SettingsInk.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
+    // MARK: - Raw overrides
 
-    /// Clear the local raw-overrides edit buffer after a reset. macOS-only buffer → a no-op on iOS.
-    private func clearRawOverridesBuffer() {
-        #if os(macOS)
-        text = ""
-        #endif
+    /// The power-user raw `SLOPDESK_*` box, folded LAST into the env overlay so a typed raw key beats
+    /// the matching typed pref — with the note that a REAL process env var still wins over the lot.
+    private var rawOverrideRows: some View {
+        Group {
+            Text(
+                "One SLOPDESK_KEY=value per line. Folded last, so a key here overrides the matching typed setting.",
+            )
+            .font(SettingsType.subtitle)
+            .foregroundStyle(SettingsInk.secondary)
+            TextEditor(text: $text)
+                .font(SettingsType.monoSubtitle)
+                .frame(minHeight: 120)
+                .onChange(of: text) { _, new in commit(new) }
+            HStack(spacing: Slate.Metric.space1) {
+                Image(systemSymbol: .infoCircle)
+                Text("A real environment variable set on the process still wins over any value here.")
+            }
+            .font(SettingsType.caption)
+            .foregroundStyle(SettingsInk.tertiary)
+        }
     }
 
     // MARK: - Config File (settings import/export)
@@ -1476,9 +1452,8 @@ private struct AdvancedSettingsTab: View {
     /// creates the parent dir + the file (if absent) then opens it in the default editor, so a fresh install
     /// lands usable. "Reload Config" mirrors the CLI `config reload`: `reapplyLiveSettings()` + the
     /// config-reload broadcast.
-    #if os(macOS)
-    private var configFileSection: some View {
-        slateFormSection("Config File") {
+    private var configFileRows: some View {
+        Group {
             LabeledContent("Config path") {
                 // `resolvePath(override:nil)` respects `SLOPDESK_CONFIG_FILE` env override so the
                 // displayed path always matches the file the app actually honours (not just the XDG default).
@@ -1514,12 +1489,9 @@ private struct AdvancedSettingsTab: View {
                 }
                 .buttonStyle(.bordered)
             }
-            timingFooter(.live)
         }
     }
-    #endif
 
-    #if os(macOS)
     /// Parse the `key=value` lines and write them into `store.rawOverrides` (empty / malformed lines ignored).
     private func commit(_ raw: String) {
         var map: [String: String] = [:]
@@ -1537,7 +1509,6 @@ private struct AdvancedSettingsTab: View {
     private static func render(_ map: [String: String]) -> String {
         map.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "\n")
     }
-    #endif
 }
 
 // MARK: - Video (host) sub-section — folded into Advanced

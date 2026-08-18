@@ -1143,6 +1143,108 @@ pub const GROUPS: &[LayoutGroup] = &[
             },
         ],
     },
+    // ── Advanced ───────────────────────────────────────────────────────────────────────────────
+    // The privilege surface is CROSS-PLATFORM on purpose: these gate what a REMOTE escape sequence
+    // may do on the client, and a phone attached to the same host is exposed to the same sequences.
+    LayoutGroup {
+        section: Section::Advanced,
+        title: "Privileges",
+        timing: ApplyTiming::Live,
+        platform: Platform::Both,
+        rows: &[
+            LayoutRow {
+                key: "controls.titleShellControlled",
+                subtitle: "Allow programs to set the tab and window title via OSC 0 / OSC 2.",
+                control: Control::Toggle { glyph: "textformat" },
+                platform: Platform::Both,
+            },
+            LayoutRow {
+                key: "controls.clipboardShellControlled",
+                subtitle: "Master switch for OSC 52 clipboard access. When off, clipboard read and write \
+                           are denied.",
+                control: Control::Toggle {
+                    glyph: "doc.on.clipboard",
+                },
+                platform: Platform::Both,
+            },
+            // Both are drawn disabled while the master above is off — a condition on another
+            // setting's VALUE, so it is dynamic rather than layout.
+            LayoutRow {
+                key: "controls.clipboardRead",
+                subtitle: "Whether a program may READ the clipboard via OSC 52.",
+                control: Control::Menu {
+                    group: Group::ClipboardAccess,
+                    glyph: None,
+                },
+                platform: Platform::Both,
+            },
+            LayoutRow {
+                key: "controls.clipboardWrite",
+                subtitle: "Whether a program may WRITE the clipboard via OSC 52.",
+                control: Control::Menu {
+                    group: Group::ClipboardAccess,
+                    glyph: None,
+                },
+                platform: Platform::Both,
+            },
+        ],
+    },
+    // The raw `SLOPDESK_*` box is a HOST-side concern, so the phone omits it rather than offering an
+    // editor over flags the device it runs on never reads.
+    LayoutGroup {
+        section: Section::Advanced,
+        title: "Raw overrides",
+        timing: ApplyTiming::Live,
+        platform: Platform::Mac,
+        rows: &[LayoutRow {
+            key: "",
+            subtitle: "",
+            control: Control::Bespoke { id: "raw-overrides" },
+            platform: Platform::Mac,
+        }],
+    },
+    // The video host flags draw four sections of their own — quality, FEC, pacer, client render —
+    // so the table claims no header for them. Their fields are `VideoPreferences` sidecar values
+    // with an UNSET state, which is a control shape no row here describes yet.
+    LayoutGroup {
+        section: Section::Advanced,
+        title: "",
+        timing: ApplyTiming::Reconnect,
+        platform: Platform::Mac,
+        rows: &[LayoutRow {
+            key: "",
+            subtitle: "",
+            control: Control::Bespoke { id: "video-host" },
+            platform: Platform::Mac,
+        }],
+    },
+    // The config file lives under `~/.config`, which iOS has no path to.
+    LayoutGroup {
+        section: Section::Advanced,
+        title: "Config File",
+        timing: ApplyTiming::Live,
+        platform: Platform::Mac,
+        rows: &[LayoutRow {
+            key: "",
+            subtitle: "",
+            control: Control::Bespoke { id: "config-file" },
+            platform: Platform::Mac,
+        }],
+    },
+    // The searchable list of every setting, plus the two resets. It draws its own header and its own
+    // search field, and it is the one surface on this page both halves need.
+    LayoutGroup {
+        section: Section::Advanced,
+        title: "",
+        timing: ApplyTiming::Live,
+        platform: Platform::Both,
+        rows: &[LayoutRow {
+            key: "",
+            subtitle: "",
+            control: Control::Bespoke { id: "all-settings" },
+            platform: Platform::Both,
+        }],
+    },
 ];
 
 /// The groups one page shows on one half, in render order.

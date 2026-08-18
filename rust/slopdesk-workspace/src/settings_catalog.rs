@@ -127,11 +127,13 @@ pub enum Group {
     AutoHideTabsPanel,
     /// Appearance → Cursor → Blink.
     CursorBlink,
+    /// Advanced → Privileges → what OSC 52 may do, per direction.
+    ClipboardAccess,
 }
 
 impl Group {
     /// Every group, in case-index order — the numbering the boundary carries.
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 18] = [
         Self::CursorStyle,
         Self::NewTabPosition,
         Self::Density,
@@ -149,6 +151,7 @@ impl Group {
         Self::AutoDetectLinkSchemes,
         Self::AutoHideTabsPanel,
         Self::CursorBlink,
+        Self::ClipboardAccess,
     ];
 
     /// The case index a group crosses as.
@@ -172,6 +175,7 @@ impl Group {
             Self::AutoDetectLinkSchemes => 14,
             Self::AutoHideTabsPanel => 15,
             Self::CursorBlink => 16,
+            Self::ClipboardAccess => 17,
         }
     }
 
@@ -316,6 +320,15 @@ const CURSOR_BLINKS: &[OptionRow] = &[
     OptionRow::plain("off", "Off"),
 ];
 
+/// Advanced → Privileges → what a program may do to the clipboard through OSC 52, per direction.
+/// `ask` leads because it is the default and the conservative one — an unrecognised persisted value
+/// repairs to it rather than trapping.
+const CLIPBOARD_ACCESS: &[OptionRow] = &[
+    OptionRow::plain("ask", "Ask"),
+    OptionRow::plain("allow", "Allow"),
+    OptionRow::plain("deny", "Deny"),
+];
+
 /// The choices in a group, in the order they render.
 ///
 /// The tab close-confirmation row is the window row MINUS `multiple_tabs`, taken as a PREFIX rather
@@ -342,6 +355,7 @@ pub const fn group(group: Group) -> &'static [OptionRow] {
         Group::AutoDetectLinkSchemes => AUTO_DETECT_LINK_SCHEMES,
         Group::AutoHideTabsPanel => AUTO_HIDE_TABS_PANEL,
         Group::CursorBlink => CURSOR_BLINKS,
+        Group::ClipboardAccess => CLIPBOARD_ACCESS,
     }
 }
 
