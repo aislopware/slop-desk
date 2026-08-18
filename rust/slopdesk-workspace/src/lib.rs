@@ -37,6 +37,8 @@
 //! - [`chrome`] — what the window shows AROUND the panes: the tabs panel that must not fight a
 //!   manual collapse, the close prompt, and the Dock tile.
 //! - [`send_keys`] — text with control tokens in it, turned into the bytes a PTY receives.
+//! - [`phone_key`] — the other end of the same PTY: a live phone key press, split between the two
+//!   input paths a touch device is forced to have, and encoded under the mode the far side set.
 //! - [`shell_quoting`] — any text as one shell word, for everything that types a path into a shell.
 //! - [`session`] — what a pane IS, and the session → tab → pane values that hold them.
 //! - [`tab_ordering`] — the sidebar's one bucketing rule, and where focus lands after a close.
@@ -71,6 +73,7 @@ pub mod list_nav;
 pub mod listen;
 pub mod notify;
 pub mod persist;
+pub mod phone_key;
 pub mod rail_list;
 pub mod rail_title;
 pub mod responsive;

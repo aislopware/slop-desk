@@ -623,3 +623,46 @@ that is neither AppKit nor SwiftUI is pure logic, and this repo's standing rule 
 Rust (`CLAUDE.md`: "Rust is the default; perf parity is enough to move existing Swift. Only
 SwiftUI/AppKit justifies staying in Swift"). The port list and its order live in §5 of this doc as
 each stage lands.
+
+### Increment 15 — the phone's key path
+
+`Sources/SlopDeskWorkspaceCore/iOS/` held four files that were rules about bytes with no view in
+them: `KeyEncoding` (the C0 fold, the arrows' CSI-vs-SS3 introducer, the xterm meta prefix),
+`InputRouting` (which of the phone's two input paths a press takes, and the chord it makes for the
+binding table), `KeyboardAccessoryDecision` (one threshold), and `FloatingCursorMapping` (a travel
+accumulator and its arrow bytes). All four are `slopdesk_workspace::phone_key` now, reached through
+`slopdesk_phone_*` in `slopdesk-ffi`, and the four Swift files are one — `PhoneKey.swift`, which
+holds the vocabulary a responder builds a press in and nothing else.
+
+Three things are worth recording beyond the move itself.
+
+THE CRATE IS `slopdesk-workspace`, NOT `slopdesk-terminal`. The terminal crate reads the host→client
+byte stream and says so in its own charter; this writes the client→host one. Its real sibling is
+`send_keys`, which is already there — both turn a key into PTY bytes, and they must never disagree
+about what a key MEANS. They stay separate functions because they are asked by different things: one
+reads a NAME a human wrote in a preset (`<C-c>`), the other reads a live `UIKey` whose vocabulary is
+four private-use scalars and a flag word, and whose answer depends on a mode the far side set.
+
+THE MODE IS THREADED, NEVER REMEMBERED. Nothing in the crate holds DECCKM: the caller reads it off
+the live terminal model per press and passes it in. A remembered copy would be one parse behind the
+screen the user is looking at, which is exactly how arrows go dead in vim.
+
+TWO THINGS CHANGED IN THE MOVE, both deliberately. The `arrowFallback` closure is gone — it existed
+for arrows before the pure table modelled them, the table models them now, and it had no production
+caller. And the floating cursor's emit loop is a division rather than a chain of subtractions: the
+Swift `while accumulated >= threshold` was unbounded below a finite delta, so a degenerate
+`UITextInput` coordinate would have spun it for the rest of the process's life. The count is the
+same and the remainder is one rounding instead of many.
+
+What did NOT move: `KeyRepeater` and `ManualRepeatScheduler` (a `DispatchSourceTimer` machine and
+its virtual-time double — a scheduler, not a rule), `FocusGenerationGuard` and `PaneFocusCoordinator`
+(a `becomeFirstResponder` race, which only exists where UIKit does).
+
+And the finding this increment surfaced, which is the largest outstanding parity gap in the app:
+THE PHONE'S TERMINAL CANNOT RECEIVE A KEYSTROKE. `TerminalInputHost` is named by
+`GhosttyLayerBackedView`, by doc 17 §2.5 and by half the headers in that directory as the owner of
+iOS physical-key and IME forwarding, and it does not exist anywhere in the repo — it appears only in
+comments. That is why every file above had tests and no production caller: they are the prepared
+pieces of a responder nobody built. The rules are now in Rust and compile-tested on macOS, so what
+is left is the UIKit half — a responder that reads a `UIKey` into a `PhoneKey.Press`, an accessory
+row above the software keyboard, and a text proxy for composition. It is the next increment.

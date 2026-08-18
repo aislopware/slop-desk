@@ -4966,6 +4966,54 @@ if [[ -n "${focus_rules}" ]]; then
 fi
 printf 'check-supervisor: the code panel crosses; only its keyboard stayed behind.\n'
 
+# ---------------------------------------------------------------------------
+# THE PHONE'S KEY PATH IS RUST, AND ITS SWIFT IS A MARSHALLER.
+#
+# Four Swift files used to hold it — a C0 fold, an arrow table, a routing switch, a threshold and a
+# travel accumulator — and every one of them was a rule about bytes with no view in it. They are
+# `slopdesk_workspace::phone_key` now, reached through `slopdesk_phone_*`, and `PhoneKey.swift` is
+# what is left: the vocabulary the responder builds a press in, and the crossing.
+#
+# The four names below must stay gone. A file that spells one again is the second implementation
+# the one-implementation rule exists to refuse — and this particular second implementation is the
+# one that would drift silently, because both halves would keep passing their own tests.
+for gone in KeyEncoding InputRouting FloatingCursorMapping KeyboardAccessoryDecision; do
+  if [[ -e "Sources/SlopDeskWorkspaceCore/iOS/${gone}.swift" ]]; then
+    fail "Sources/SlopDeskWorkspaceCore/iOS/${gone}.swift is back — the phone's key rules are Rust (docs/55)"
+  fi
+done
+# The rules themselves, by the shapes they take in Swift. A C0 fold is `& 0x1F` or `- 0x60`; an
+# arrow table is the four private-use scalars; the accumulator is a threshold loop. None of them may
+# appear in the module that used to own them — the marshaller passes bytes through, it makes none.
+# shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
+key_rules=$(spells '0x4F : 0x5B|0x5B : 0x4F|& 0x1F|u\{F70[0-3]\}' \
+  $(repo_files 'Sources/SlopDeskWorkspaceCore/**/*.swift') 2> /dev/null || true)
+if [[ -n "${key_rules}" ]]; then
+  printf '%s\n' "${key_rules}" >&2
+  fail "a phone key RULE grew back in Swift — the fold, the introducer and the arrows are Rust"
+fi
+# And the marshaller must actually call the doors it claims to. A `PhoneKey` that quietly answered
+# from Swift again would pass every test above.
+for door in slopdesk_phone_key_routes_to_encoding slopdesk_phone_key_encode slopdesk_phone_key_chord \
+  slopdesk_phone_key_fold_control slopdesk_phone_shows_accessory_bar slopdesk_phone_floating_cursor_feed; do
+  if ! grep -qF "${door}" Sources/SlopDeskWorkspaceCore/iOS/PhoneKey.swift; then
+    fail "PhoneKey.swift stopped calling ${door} — a rule it answers itself is a rule written twice"
+  fi
+  if ! grep -qF "${door}" rust/slopdesk-ffi/include/slopdesk_ffi.h; then
+    fail "${door} is missing from slopdesk_ffi.h — Swift cannot reach a door the header does not name"
+  fi
+done
+# The chord's modifier word crosses UNTRANSLATED, so the two numberings must be the same four bits.
+# The Rust side pins its own half against `KeyChord.Modifiers` in `slopdesk-ffi`; this pins the Swift
+# half, which is the one a future OptionSet reorder would break without a compile error anywhere.
+for bit in "shift = Self(rawValue: 1 << 0)" "control = Self(rawValue: 1 << 1)" \
+  "option = Self(rawValue: 1 << 2)" "command = Self(rawValue: 1 << 3)"; do
+  if ! grep -qF "${bit}" Sources/SlopDeskWorkspaceCore/Workspace/Domain/KeyChord.swift; then
+    fail "KeyChord.Modifiers renumbered (${bit}) — the phone's flag word crosses as those exact bits"
+  fi
+done
+printf 'check-supervisor: the phone key path is Rust; PhoneKey.swift only carries it across.\n'
+
 # ── One device-panel law, two device protocols ────────────────────────────────────────────────
 # The simulator panel and the Android panel differ in almost everything and should — one rotates on
 # the client and the other on the device, one sends touches in the fitted rect's space and the other

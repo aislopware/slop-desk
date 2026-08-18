@@ -833,6 +833,67 @@ size_t slopdesk_ws_workdir_keyword(uint8_t kind, uint8_t *out, size_t cap);
 // directory. Nothing is copied back — every caller already holds both strings.
 uint8_t slopdesk_ws_workdir_source(uint8_t kind, bool active_cwd_known);
 
+// ---- What the phone's keyboard sends ----
+//
+// A touch device is forced to split physical input in two: `pressesBegan` for the keys a terminal
+// needs raw, a hidden text proxy for anything a multi-stage composition could be part of. Putting
+// both on one view makes the responder order undefined, which breaks CJK. Every door below is one
+// side or the other of that split, and none of them holds the terminal's mode — the caller reads
+// that off the live model per press, because the program that set it is on the far side of the PTY.
+//
+// The flag word is `KeyChord.Modifiers`' own bits 0-3 plus one: a chord's modifiers cross back out
+// untranslated, and bit 4 carries the one thing the responder knows that the table does not.
+#define SLOPDESK_PHONE_KEY_SHIFT   (1u << 0)
+#define SLOPDESK_PHONE_KEY_CONTROL (1u << 1)
+#define SLOPDESK_PHONE_KEY_OPTION  (1u << 2)
+#define SLOPDESK_PHONE_KEY_COMMAND (1u << 3)
+#define SLOPDESK_PHONE_KEY_SPECIAL (1u << 4)
+// The `named` a chord writes when its key is the printable scalar in `character` instead.
+#define SLOPDESK_PHONE_KEY_NAMED_NONE ((uint8_t)0xFF)
+
+// One `UIKey`. Two strings because the two questions want different ones: what the key SENDS is
+// `characters` (where the arrows' private-use scalars live), what it IS is `base`.
+typedef struct {
+    const uint8_t *characters;
+    size_t         characters_len;
+    const uint8_t *base;
+    size_t         base_len;
+    uint32_t       flags;  // SLOPDESK_PHONE_KEY_*
+} SlopDeskPhoneKeyPress;
+
+// Whether this press is encoded here rather than left to the text proxy. A special key or any of
+// ⌃⌥⌘ is encoded; everything else is typing, ⇧ included.
+bool slopdesk_phone_key_routes_to_encoding(const SlopDeskPhoneKeyPress *press);
+// The bytes this press sends, through `(out, cap)`. `0` means it sends nothing — a bare modifier or
+// a ⌘ combination, which is an app shortcut. No key this encoder resolves sends zero bytes, so the
+// length is unambiguous. `application_cursor_keys` is the live DECCKM bit, which picks SS3 over CSI.
+size_t slopdesk_phone_key_encode(const SlopDeskPhoneKeyPress *press, bool application_cursor_keys,
+                                 uint8_t *out, size_t cap);
+// The chord this press makes, for the SAME user-overridable binding table the Mac's dispatcher
+// reads. `named` is a `KeyChord.Key` case index or SLOPDESK_PHONE_KEY_NAMED_NONE, `character` the
+// printable scalar in that case, `modifiers` bits 0-3. `false` leaves all three untouched: every
+// field of a chord is a legitimate zero, so a length could not have said "not a chord".
+bool slopdesk_phone_key_chord(const SlopDeskPhoneKeyPress *press, uint8_t *named,
+                              uint32_t *character, uint8_t *modifiers);
+// The accessory bar's armed ⌃ folding a soft-keyboard commit: the first scalar's control byte
+// through `code`, the byte offset its remainder starts at through `rest`. `false` for empty text.
+bool slopdesk_phone_key_fold_control(const uint8_t *text, size_t len, uint8_t *code, size_t *rest);
+
+// The keyboard height at which the on-screen keyboard is the SOFTWARE one — a hardware keyboard
+// leaves only a thin shortcut bar, and the ⌃/Esc/Tab/arrow row is only worth its space above this.
+double slopdesk_phone_accessory_threshold(void);
+bool slopdesk_phone_shows_accessory_bar(double keyboard_height, double threshold);
+
+// The floating cursor: long-pressing the space bar and dragging, which on a phone with no hardware
+// keyboard is the ONLY way to move the terminal cursor. `accumulated` is read AND written — the
+// sub-threshold remainder is what makes a slow drag of many small deltas total correctly.
+double slopdesk_phone_floating_cursor_threshold(void);
+size_t slopdesk_phone_floating_cursor_feed(double *accumulated, double threshold, double delta_x,
+                                           bool application_cursor_keys, uint8_t *out, size_t cap);
+// One arrow's bytes with no accumulator behind it — the accessory bar's own ← / → plates.
+size_t slopdesk_phone_arrow_bytes(bool rightward, bool application_cursor_keys,
+                                  uint8_t *out, size_t cap);
+
 // The tiled tree, as its PRE-ORDER walk rather than as its persisted JSON. Both languages already
 // agree on that JSON, and reusing it here would have been two lines — but `solve` runs on every
 // layout pass, and a parse plus an allocation per frame is the kind of regression that vetoes a

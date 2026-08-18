@@ -2865,10 +2865,12 @@ struct GhosttyMetalLayerView: UIViewRepresentable {
 
 /// A `UIView` whose `layerClass` is `CAMetalLayer`, owning the `GhosttySurface`.
 ///
-/// Physical-key + IME text forwarding on iOS is handled by the existing UIKit
-/// table-stakes host (`SlopDeskClientUI.TerminalInputHost` — doc 17 §2.5), which already
-/// routes presses/IME to `SlopDeskClient.sendInput`. This view focuses on hosting the
-/// Metal layer + surface; the input-host integration is the documented follow-up seam.
+/// Physical-key + IME text forwarding on iOS is NOT here and does not exist yet. The RULES for it
+/// do: `SlopDeskWorkspaceCore.PhoneKey` is the whole path — which of the two input paths a press
+/// takes, the bytes it sends under the live cursor-key mode, the chord it makes for the shared
+/// binding table — marshalled over `slopdesk_workspace::phone_key`. What is still missing is the
+/// UIKit responder that reads a `UIKey` into a `PhoneKey.Press` and writes the answer to the pane.
+/// This view hosts the Metal layer and the surface; that responder is the open seam beside it.
 final class GhosttyLayerBackedView: UIView {
     override class var layerClass: AnyClass { CAMetalLayer.self }
     var metalLayer: CAMetalLayer { layer as! CAMetalLayer }

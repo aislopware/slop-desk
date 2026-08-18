@@ -97,6 +97,7 @@ pub mod mux_host;
 pub mod notify;
 pub mod pacer_depth;
 pub mod paste_safety;
+pub mod phone_key;
 pub mod present_queue;
 pub mod rail_list;
 pub mod rate_control;
