@@ -1033,3 +1033,40 @@ platform that HAS it, and the phone has neither.
 `FirstLaunchView.swift` went from five platform gates to one — the on-launch picker, where
 `.radioGroup` is a macOS-only style. `SettingsBespokeSurfaces.swift` went from seven to one. The
 shared target is down to 96.
+
+### Increment 26 — the two surfaces that were never cards
+
+The overlay layer is finished. Six of the eight tenants were PICKERS — you summon one, skim it and
+dismiss it in a second — and each became a borderless `NSPanel` over the workspace window
+(increments before this one). The last two were never pickers: Connect-to-Host is a FORM you fill in
+and commit, and the pane/tab close confirmation is a QUESTION. Both are what the platform's own modal
+exists for, so neither is owed a card and neither rides `MacOverlayPanel`. They are
+`MacConnectSheet` — a real `beginSheet` over the workspace window, the same presentation the
+first-launch checklist uses — and `MacCloseConfirmation`, an `NSAlert` sheet.
+
+**What that removes is the last SwiftUI mount over the Mac's split**, which is the thing §3.5 was
+counting to. `MacWorkspaceRootView` no longer attaches `OverlayHostView` at all, and
+`check-supervisor.sh` fails the build if it comes back. The measurement behind the rule has not
+changed: an `NSHostingView` claims every hit inside its own bounds, so an always-mounted SwiftUI
+layer over the split makes the window click-dead everywhere its ink is not.
+
+Two things moved BELOW the view layer on the way, because both halves ask them now:
+
+- `ConnectPresentation.shouldCloseAfterConnect(status:)` — a failed connect leaves the form UP with
+  the reason inline; every other terminal status dismisses it. One line, and the only rule the two
+  drawings of the form share.
+- `CloseConfirmationCopy` — which line a parked close deserves. It is not a constant: it depends on
+  which of the two parks is armed, on whether a configured policy ACTUALLY gated the park (one raised
+  purely for the project-loss warning must not claim "a process is still running" over an idle
+  shell), and on whether the close takes a project's last pane with it. Both can apply at once.
+  Three branches and a join is exactly the amount of logic that drifts when two halves each carry it,
+  so the Mac's `NSAlert` and the phone's `.alert` read the same `request(store:)` → `title` /
+  `message`. `check-supervisor.sh` fails either half that respells a line of it.
+
+With the host now the phone's alone, the four summoned cards inside it dropped their dead macOS arms
+— a fixed dialog width the phone never wanted, and an `.onExitCommand` twin for an `.onKeyPress`
+that already works on both. The palette's opt-in snapshot probe retired for the reason the cheat
+sheet's did one increment earlier: the Mac's palette is an `NSPanel` that `ImageRenderer` cannot
+render, so the probe was photographing the phone's card on a Mac and telling a reviewer nothing.
+
+The shared target is down to 81, and the biggest remaining block is the pane canvas.

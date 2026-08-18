@@ -19,8 +19,8 @@
 // check-ds-leaks).
 //
 // ⚠️ THE PHONE's, since docs/56 stage D: the Mac draws this picker in AppKit
-// (``SlopDeskMacUI/MacOpenQuicklyView``), it was the LAST card to move, and ``OverlayHostView``'s
-// whole card machinery went `#if os(iOS)` behind it. Nothing here may re-derive what the picker IS:
+// (``SlopDeskMacUI/MacOpenQuicklyView``), it was the last CARD to move, and nothing on this floor is
+// drawn on the Mac any more. Nothing here may re-derive what the picker IS:
 // the card's measurements, the flattening of sections into draw order (and with it the selectable
 // index the keyboard counts by), the honest zero-state line, the ↩ verb, the footer's hints, the ⌘
 // chord table and — the largest piece — the per-row ⌘K ACTION TABLE and the default action ↩ runs
@@ -91,11 +91,8 @@ struct OpenQuicklyView: View {
             divider
             footerBar
         }
-        // Native `.sheet` via `OverlayHostView` — the system provides window chrome (bg / corners / shadow),
-        // so this view carries only content + a fixed macOS dialog width.
-        #if os(macOS)
-        .frame(width: OpenQuicklyMetrics.panelWidth)
-        #endif
+        // The paper card is applied by `OverlayHostView`; this view carries only its content, and takes
+        // the width the phone's card gives it.
         .onAppear {
             snapshotCurrent()
         }
@@ -132,14 +129,12 @@ struct OpenQuicklyView: View {
             guard OverlayKeyRepeat.admits(press) else { return .handled }
             return handleKey(press)
         }
-        #if os(macOS)
-        .onExitCommand { close() }
-        #else
+        // Esc for the iPad's hardware keyboard. `.onExitCommand` is macOS-only and this card is the
+        // phone's, so the key press IS the handler.
         .onKeyPress(.escape, phases: .down) { _ in
             close()
             return .handled
         }
-        #endif
     }
 
     /// The card's internal hairline — earned where content MOVES past content (the results scroll
@@ -275,11 +270,9 @@ struct OpenQuicklyView: View {
                     .monospacedDigit()
             }
             badge(item.badge)
-            #if os(iOS)
-            // iOS touch fallback for ⌘K (the chord needs a hardware keyboard, so every chord-only affordance
-            // gets a tap fallback): a trailing ellipsis selects this row then opens its Actions popover
-            // (anchored on the now-selected row). macOS keeps the ⌘K chord, no button (hidden behind
-            // `#if os(iOS)`).
+            // The touch fallback for ⌘K — the chord needs a hardware keyboard, so every chord-only
+            // affordance gets a tap fallback: a trailing ellipsis selects this row then opens its Actions
+            // popover, anchored on the now-selected row.
             Button {
                 selection = selectableIndex
                 actionsVisible = true
@@ -291,7 +284,6 @@ struct OpenQuicklyView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Actions")
-            #endif
         }
         .padding(.horizontal, Slate.Metric.space3)
         .frame(height: Slate.Metric.heightRowTall)

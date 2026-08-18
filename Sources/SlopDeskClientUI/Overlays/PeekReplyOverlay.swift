@@ -82,9 +82,6 @@ struct PeekReplyOverlay: View {
             }
         }
         .animation(Slate.Anim.smallFade, value: coordinator.peekReplyTarget())
-        #if os(macOS)
-            .frame(width: Slate.Metric.cardFormWidth)
-        #endif
     }
 
     // MARK: - Panel

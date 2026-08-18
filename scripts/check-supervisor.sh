@@ -4694,13 +4694,37 @@ if sed -E 's#^[[:space:]]*//.*##' Sources/SlopDeskClientUI/Overlays/OverlayHostV
   grep -q 'draws'; then
   fail "the transitional \`draws\` ledger is back in OverlayHostView — every card has left the Mac"
 fi
-if ! grep -q '#if os(iOS)' Sources/SlopDeskClientUI/Overlays/OverlayHostView.swift; then
-  fail "OverlayHostView's summoned cards stopped being the phone's — the Mac would draw two of each"
+# NOTHING SWIFTUI FLOATS OVER THE MAC's SPLIT. The shared host is the PHONE's whole overlay layer
+# now — the Mac's last two tenants, the Connect FORM and the close-confirmation ALERT, are AppKit
+# sheets driven from the scene. Re-mounting the host here is not a cosmetic regression: an
+# `NSHostingView` claims every hit inside its own bounds, so an always-mounted SwiftUI layer over the
+# split makes the window click-dead everywhere its ink is not (docs/56 §3.5, measured 2026-08-17).
+if grep -q 'OverlayHostView' Sources/SlopDeskMacUI/App/MacWorkspaceRootView.swift; then
+  fail "MacWorkspaceRootView mounts the shared host again — an NSHostingView over the split eats the clicks"
 fi
-if grep -q 'OverlayHostView' Sources/SlopDeskMacUI/App/MacWorkspaceRootView.swift &&
-  ! grep -q 'Connect' Sources/SlopDeskMacUI/App/MacWorkspaceRootView.swift; then
-  fail "MacWorkspaceRootView mounts the shared host without saying why — it is the two native modals now"
-fi
+# The two surfaces that were never cards exist on the Mac and are DRIVEN. Each defaults to doing
+# nothing when nobody reconciles it, which is exactly the failure that reads as "the flag never
+# flipped": a Connect chord that opens no window, a parked close that never asks.
+for pair in \
+  "MacConnectSheet:the Connect form" \
+  "MacCloseConfirmation:the close confirmation"; do
+  if ! grep -q "${pair%%:*}" Sources/SlopDeskMacUI/Overlays/MacOverlayPanels.swift; then
+    fail "${pair#*:} is not reconciled by MacOverlayPanels — the Mac would never raise it"
+  fi
+done
+# ONE WORDING for the confirmation, and it is `CloseConfirmationCopy`. Which line a park deserves is
+# three branches and a join; a half that respells any of them drifts silently, because a dialog that
+# says the wrong true-sounding thing looks exactly like one that says the right thing.
+for half in Sources/SlopDeskMacUI/Overlays/MacCloseConfirmation.swift \
+  Sources/SlopDeskClientUI/Overlays/OverlayHostView.swift; do
+  if ! grep -q 'CloseConfirmationCopy' "${half}"; then
+    fail "${half} stopped reading CloseConfirmationCopy — two dialogs, and the drift would be silent"
+  fi
+  if sed -E 's#^[[:space:]]*//.*##' "${half}" |
+    grep -qE '"A process is still running|"This window has multiple tabs|Closing it will close the project'; then
+    fail "${half} respells the close-confirmation copy — every line of it is CloseConfirmationCopy's"
+  fi
+done
 printf 'check-supervisor: one picker, drawn twice, and the stage-D ledger is empty.\n'
 
 # ── One navigator, one row reading, one git dialect (docs/56 stage D) ───────────────────────────

@@ -147,23 +147,15 @@ struct MacWorkspaceRootView: View {
         // backstops any transient gap (a mid-animation collapse) so no bare window colour ever
         // shows. It is also what the window's own 16pt corners bite into.
         .background(Slate.Surface.field.ignoresSafeArea())
-        // CONNECT-TO-HOST and the pane/tab CLOSE CONFIRMATION, and by docs/56 stage D nothing else:
-        // every summoned card is an `NSPanel` of the Mac's own now (``MacOverlayPanels``), and the
-        // host's card machinery went `#if os(iOS)` with the last of them. What stays is the two
-        // surfaces that were never cards — a form you fill in and commit, and an alert — because
-        // both are the PLATFORM's own modal on both platforms and neither is owed a rewrite.
+        // ⚠️ NOTHING FLOATS OVER THE SPLIT FROM HERE ANY MORE (docs/56 stage D). Every summoned card
+        // is an `NSPanel` of the Mac's own (``MacOverlayPanels``), and the last two surfaces — the
+        // Connect-to-Host FORM and the close-confirmation ALERT, which were never cards — are the
+        // platform's own sheets now (``MacConnectSheet``, ``MacCloseConfirmation``), presented from
+        // the scene against the workspace window. That is what the whole ordering argument in docs/56
+        // was for: an `NSHostingView` claims every hit inside its own bounds, so any always-mounted
+        // SwiftUI layer over the split makes the window click-dead everywhere its ink is not. There
+        // is no such layer left, and `connection` is threaded to this root only for the split beneath.
         //
-        // `toggledState` is still built from the LIVE chrome and threaded through: the phone's
-        // palette reads it, and the parameter is the seam that keeps the pure coordinator from ever
-        // learning what a sidebar is.
-        .overlay {
-            OverlayHostView(
-                store: store,
-                connection: connection,
-                coordinator: overlay,
-                toggledState: PalettePresentation.toggledState(chrome: chrome, store: store),
-            )
-        }
         // Wire ⌘⇧L (Toggle Tabs Panel) to the live chrome once it exists. The dispatcher is built at app
         // `init` (before `chrome`), so we hand it the toggles here — `[chrome]` captures the same
         // @Observable the representable + titlebar read, so the NSEvent chord and titlebar button drive ONE flag.

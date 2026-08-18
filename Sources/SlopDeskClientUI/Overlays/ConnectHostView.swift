@@ -1,4 +1,7 @@
-// ConnectHostView — the Connect-to-Host editor, presented in a NATIVE SHEET (user-directed 2026-08-08).
+// ConnectHostView — THE PHONE's Connect-to-Host editor, presented in a NATIVE SHEET (user-directed
+// 2026-08-08). The Mac draws the same form in AppKit over the same ``AppConnection``
+// (``SlopDeskMacUI/MacConnectFormController``), and the one thing the two agree on below the view layer is
+// ``ConnectPresentation/shouldCloseAfterConnect(status:)``.
 //
 // It is the only overlay in the set that is a FORM to fill in and commit rather than a picker to skim, so
 // it is the one that takes the platform's own modal: the sheet owns the window (no stray click into the
@@ -120,9 +123,6 @@ struct ConnectHostView: View {
                 onConfirm: { connectAndClose() },
             )
         }
-        #if os(macOS)
-        .frame(width: Slate.Metric.cardFormWidth) // a fixed-width macOS card; iOS presents full-width
-        #endif
         // The sheet wears the FAMILY's corner, not the system's — see ``SlateSheetSurface``. Without
         // this the one native surface in the set rounds differently from the seven in-window cards.
         .slateSheetSurface()
@@ -157,18 +157,11 @@ struct ConnectHostView: View {
         connectTask = Task {
             await connection.connect()
             guard !Task.isCancelled else { return }
-            guard Self.shouldCloseAfterConnect(status: connection.status) else { return }
+            // The one rule this form shares with the Mac's, so it is asked of the shared answer:
+            // a failed connect leaves the card UP with the reason inline (``ConnectPresentation``).
+            guard ConnectPresentation.shouldCloseAfterConnect(status: connection.status) else { return }
             coordinator.closeConnect(ifCurrent: generation)
         }
-    }
-
-    /// Whether a `connect()` completion should dismiss the sheet — every terminal status except
-    /// `.failed` does (a live `.connecting`/`.reconnecting` in between never reaches here; `connect()`
-    /// has already resolved by the time this is checked). Pure + `static` so it's pinned headlessly
-    /// without driving the view or a real socket.
-    static func shouldCloseAfterConnect(status: ConnectionStatus) -> Bool {
-        if case .failed = status { return false }
-        return true
     }
 
     /// Cancel: kill the in-flight connect Task (its completion must never fire) and close the sheet.

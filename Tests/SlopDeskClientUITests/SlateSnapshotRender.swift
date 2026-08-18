@@ -46,46 +46,6 @@ final class SlateSnapshotRender: XCTestCase {
         print("SLOPDESK_SNAPSHOT_WRITTEN \(out)")
     }
 
-    // MARK: - Opt-in render of the overlay panels (palette)
-
-    /// Renders the live ``PaletteView`` (typed query, fzf-highlighted rows, a ✓ toggled gutter) on a dimmed
-    /// scrim so the overlay can be eyeballed headlessly — the SAME `ImageRenderer` opt-in idiom as
-    /// `testRenderSlateShowcase`, NO CI gate.
-    /// Opt-in via a directory (not the showcase's single-file `SLOPDESK_SNAPSHOT_OUT`, which it would otherwise
-    /// clobber): `SLOPDESK_OVERLAY_SNAPSHOT_DIR=<dir>` writes `palette.png` into it. Inert
-    /// (skipped) otherwise. Built over a headless tree-model store (reusing this target's `MountTestPaneSession`
-    /// session double) so it never opens a socket or touches video/Metal (the hang-safety rule).
-    ///
-    /// The CHEAT SHEET left this probe with docs/56 stage D: the Mac's is an `NSPanel`
-    /// (``SlopDeskMacUI/MacCheatSheetView``), which `ImageRenderer` cannot render at all, and the phone's
-    /// is a native sheet whose look is the platform's rather than this card family's.
-    @MainActor
-    func testRenderOverlayPanels() throws {
-        guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_OVERLAY_SNAPSHOT_DIR"] else {
-            throw XCTSkip("set SLOPDESK_OVERLAY_SNAPSHOT_DIR=<dir> to render the overlay panels")
-        }
-
-        let store = WorkspaceStore(makeSession: { seed in MountTestPaneSession(seed.spec) })
-        store.attachLoopbackWorkspaceDocument()
-        let overlay = OverlayCoordinator(store: store)
-        overlay.openPalette()
-        overlay.paletteQuery = "split" // a typed query so the fzf highlight runs render
-
-        // The sidebar row shows its ✓ — exercise the toggled-state gutter the host wires from chrome.
-        let palette = PaletteView(
-            coordinator: overlay,
-            store: store,
-            toggledState: { $0.id == "action.toggleSidebar" },
-        )
-        // ⚠️ `renderHosted`, NOT `render`: the palette's query line is a ``SlateSearchField``, an
-        // `NSViewRepresentable`, and `ImageRenderer` CANNOT build an AppKit-backed view — it
-        // silently substitutes a saturated YELLOW placeholder box and drops everything below it.
-        // This render had been a yellow bar and a divider (fixed 2026-08-11).
-        try renderHosted(
-            scrimmed(palette), size: CGSize(width: 920, height: 620), to: dir, named: "palette.png",
-        )
-    }
-
     // MARK: - Opt-in render of the status marks
 
     /// Renders the WHOLE mark vocabulary at true size and magnified (`status-marks.png`) — the only
@@ -686,28 +646,6 @@ final class SlateSnapshotRender: XCTestCase {
             Spacer(minLength: 0)
         }
         .frame(height: 17)
-    }
-
-    /// Center an overlay panel on the dimmed scrim + window background, the way `OverlayHostView` composes it.
-    ///
-    /// ⚠️ THAT INCLUDES THE CARD. `OverlayHostView.modalOverlay` wraps every sheet in
-    /// ``SlatePaperCard`` + a `space4` margin; without them this render showed the panel's CONTENTS
-    /// floating naked on the scrim (fixed 2026-08-11) — no corner, no rim, no shadow. Those three
-    /// are exactly what the TWO TONES round settled by rendering options at true size, so a fixture
-    /// that drops them cannot be used for the decision it exists to serve: cream paper on a cream
-    /// ground separates AT ITS EDGE, and the edge was the missing part.
-    @MainActor
-    private func scrimmed(_ panel: some View) -> some View {
-        ZStack {
-            // The window background the card actually floats over: `FlatDividerSplitView` paints
-            // `window.backgroundColor` with THE GROUND, so a paper card's edge is judged here
-            // against cream-under-scrim — the pairing that made `SlatePaperCard` replace the glass.
-            Slate.Surface.field
-            Slate.State.shadow // the host's dim scrim role
-            panel
-                .slatePaperCard()
-                .padding(Slate.Metric.space4)
-        }
     }
 
     /// Rasterize through a real (offscreen) window instead of `ImageRenderer`.

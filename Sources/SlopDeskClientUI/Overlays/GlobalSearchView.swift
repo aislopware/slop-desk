@@ -61,14 +61,10 @@ struct GlobalSearchView: View {
     /// Pre-focuses the query field on appear so typing reaches it immediately.
     @FocusState private var queryFocused: Bool
 
-    // Platform mode-pill plate size — MUST match ``TerminalFindBar``'s `plate` exactly (34 on iOS for the touch
-    // target, `Slate.Metric.plate` on macOS) so the locked invariant "the find bar and the global-search query
-    // bar render the pills IDENTICALLY" holds. Threaded into each ``FindTogglePill`` below.
-    #if os(iOS)
+    // The mode-pill plate — MUST match ``TerminalFindBar``'s exactly, so the locked invariant "the find
+    // bar and the global-search query bar render the pills IDENTICALLY" holds. 34, because a pill on a
+    // touch surface is a TARGET before it is a plate. Threaded into each ``FindTogglePill`` below.
     private let plate: CGFloat = 34
-    #else
-    private let plate: CGFloat = Slate.Metric.plate
-    #endif
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -78,26 +74,15 @@ struct GlobalSearchView: View {
             summaryLine
             resultsList
         }
-        // Presented as a native `.sheet` by `OverlayHostView` — a large results window on macOS (the system
-        // provides the window chrome), full-sheet on iOS.
-        #if os(macOS)
-        .frame(
-            width: GlobalSearchMetrics.panelWidth,
-            height: GlobalSearchMetrics.panelHeight,
-            alignment: .topLeading,
-        )
-        #else
+        // Full-sheet: a phone has one width and the results want all of it.
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        #endif
         .onAppear { restoreFromStore() }
-        #if os(macOS)
-            .onExitCommand { coordinator.closeGlobalSearch() }
-        #else
-            .onKeyPress(.escape, phases: .down) { _ in
-                coordinator.closeGlobalSearch()
-                return .handled
-            }
-        #endif
+        // Esc for the iPad's hardware keyboard. `.onExitCommand` is macOS-only and this card is the
+        // phone's, so the key press IS the handler.
+        .onKeyPress(.escape, phases: .down) { _ in
+            coordinator.closeGlobalSearch()
+            return .handled
+        }
     }
 
     // MARK: - Query bar

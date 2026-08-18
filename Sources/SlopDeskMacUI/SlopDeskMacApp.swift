@@ -559,6 +559,26 @@ public struct SlopDeskMacApp: App {
                         visible, host: windowBox.window, store: store, coordinator: overlayCoordinator,
                     )
                 }
+                // CONNECT-TO-HOST is the Mac's own AppKit SHEET (docs/56 stage D) — the last surface
+                // over the workspace to leave the shared SwiftUI floor, and the one that was never a
+                // card: a form you fill in and commit is what the platform's own modal is for, so it
+                // is a real `beginSheet` rather than a borderless panel. Same discipline as the cards
+                // regardless — Cancel, Esc and a successful connect flip the coordinator's flag, and
+                // this edge is what opens and closes the window.
+                .onChange(of: overlayCoordinator.connectVisible) { _, visible in
+                    overlayPanels.setConnect(
+                        visible, host: windowBox.window, connection: connection,
+                        coordinator: overlayCoordinator,
+                    )
+                }
+                // THE CLOSE CONFIRMATION is the Mac's own `NSAlert` sheet (docs/56 stage D), and with
+                // it the window root mounts no SwiftUI above the split at all. Driven off the store's
+                // two parks rather than a flag — a park IS the state — and both buttons resolve the
+                // park, so the store and the sheet cannot disagree. `initial: true` covers a launch
+                // that restores straight into a parked close.
+                .onChange(of: CloseConfirmationCopy.request(store: store), initial: true) { _, _ in
+                    overlayPanels.syncCloseConfirmation(store: store, host: windowBox.window)
+                }
                 // THE NOTIFICATION CORNER is the Mac's own AppKit panel too (docs/56 stage D), and it
                 // is what took the last ALWAYS-MOUNTED `NSHostingView` off the window root: the toast
                 // host used to be a full-bleed SwiftUI layer over the whole workspace, toggling

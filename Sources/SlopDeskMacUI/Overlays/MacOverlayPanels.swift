@@ -10,12 +10,20 @@
 //
 // docs/56 stage D drains the macOS surfaces out of `SlopDeskClientUI` one at a time, and this file
 // is where each overlay lands as it goes. All of them now: the cheat sheet, the notification corner,
-// the ⌃⇥ readout, the palette, the peek card, the cross-tab search and the picker.
+// the ⌃⇥ readout, the palette, the peek card, the cross-tab search, the picker — and finally the two
+// that were never cards, the Connect-to-Host form and the close confirmation. With those two the
+// window root mounts no SwiftUI at all above the split.
 //
-// The two are shaped differently on purpose. A SUMMONED card is a boolean: it is up or it is not, and
-// the flag is the whole state. The notification corner is AMBIENT: it has no flag at all, its content
-// IS the state, and the same edge that opens it also reorders it, re-fits it and finally empties it.
-// So the cheat sheet takes a `set` and the corner takes a `sync`.
+// The three are shaped differently on purpose. A SUMMONED card is a boolean: it is up or it is not,
+// and the flag is the whole state. The notification corner is AMBIENT: it has no flag at all, its
+// content IS the state, and the same edge that opens it also reorders it, re-fits it and finally
+// empties it. The close confirmation is ambient in the same sense, off the store's parks rather than
+// the coordinator's. So the cheat sheet takes a `set` and the corner takes a `sync`.
+//
+// A PANEL IS NOT THE ONLY ANSWER HERE. Six of these are pickers you summon, skim and dismiss, and a
+// borderless child window is what those wanted. The Connect form is a form you fill in and commit and
+// the confirmation is a question — both are what the platform's own modal exists for, so both are real
+// sheets and neither rides ``MacOverlayPanel``.
 
 import AppKit
 import SlopDeskClientCore
@@ -49,6 +57,14 @@ final class MacOverlayPanels {
     /// reason and one more: the card holds the reply field's text and the pending-tool disclosure,
     /// and both are per-OPENING state that a kept card would have to clear by hand on the way in.
     private var peekReply: MacOverlayPanelController?
+    /// The Connect-to-Host form. NOT a panel: it is the one surface here that is a FORM rather than a
+    /// picker, so it takes the platform's own modal — see ``MacConnectSheet``. Kept for its lifetime the
+    /// way the panels are, and built per presentation for their reason (the fields are seeded from the
+    /// committed target on the way in).
+    private let connect = MacConnectSheet()
+    /// The pane/tab close confirmation. Not a flag either: the store's two parks ARE its state, so this
+    /// takes the store and diffs, the way the notification corner takes the live stack.
+    private let closeConfirmation = MacCloseConfirmation()
 
     /// Reconciles the ⌘/ cheat sheet against `visible`.
     ///
@@ -220,6 +236,27 @@ final class MacOverlayPanels {
         controller.present()
         // After `present()`: a field cannot take first responder in a window that is not yet key.
         card.begin()
+    }
+
+    /// Reconciles the Connect-to-Host sheet against `visible`.
+    ///
+    /// The keyboard is NOT handed back to the pane here, and that is the difference a real sheet makes:
+    /// AppKit restores the parent window's own first responder when a sheet ends, which every card in
+    /// this file has to ask the store for by hand because a panel's dismissal is not that edge.
+    func setConnect(
+        _ visible: Bool, host: NSWindow?, connection: AppConnection, coordinator: OverlayCoordinator,
+    ) {
+        guard visible else {
+            connect.dismiss()
+            return
+        }
+        guard let host else { return }
+        connect.present(over: host, connection: connection, coordinator: coordinator)
+    }
+
+    /// Reconciles the pane/tab close confirmation against the store's live parks.
+    func syncCloseConfirmation(store: WorkspaceStore, host: NSWindow?) {
+        closeConfirmation.sync(store: store, host: host)
     }
 
     /// Reconciles the notification corner against the coordinator's live stack.

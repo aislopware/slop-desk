@@ -38,7 +38,7 @@ public extension WorkspaceStore {
     }
 
     /// The close-confirmation policy that GATED the currently-parked close — drives the in-app
-    /// ``CloseConfirmationPanel`` subtitle so it reads accurately (a `.process` park says "a
+    /// close-confirmation dialog's subtitle so it reads accurately (a `.process` park says "a
     /// process is still running", an `.always` park does not). A parked PANE close reports
     /// ``CloseConfirmationPolicy/process`` — ⌘W's only policy gate is the busy-shell guard (see
     /// ``WorkspaceStore/closeConfirmationNeeded(scope:pane:)``), so the subtitle names the running command

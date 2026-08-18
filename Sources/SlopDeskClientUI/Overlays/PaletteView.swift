@@ -65,11 +65,8 @@ struct PaletteView: View {
             SlateCardSeparator()
             resultsList
         }
-        // The paper card is applied by `OverlayHostView`; this view carries only its content + a fixed
-        // macOS dialog width.
-        #if os(macOS)
-        .frame(width: PaletteMetrics.panelWidth)
-        #endif
+        // The paper card is applied by `OverlayHostView`; this view carries only its content, and takes
+        // the width the phone's card gives it.
         // Keyboard: the app NSEvent monitor passes bare arrows/Return through (it only swallows the prefix +
         // bound chords), so they reach this focused overlay. Plain ↩ is handled by the field's `.onSubmit`
         // (TextField-native, reliable); ⌘↩ is NOT a TextField submit, so it reaches THIS container handler —
@@ -111,14 +108,12 @@ struct PaletteView: View {
             coordinator.acceptSelectedKeepingOpen()
             return .handled
         }
-        #if os(macOS)
-        .onExitCommand { coordinator.closePalette() }
-        #else
+        // Esc for the iPad's hardware keyboard. `.onExitCommand` is macOS-only and this card is the
+        // phone's, so the key press IS the handler.
         .onKeyPress(.escape, phases: .down) { _ in
             coordinator.closePalette()
             return .handled
         }
-        #endif
     }
 
     // MARK: - Search bar
