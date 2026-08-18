@@ -883,32 +883,36 @@ private struct ControlsSettingsTab: View {
 private struct EditorSettingsTab: View {
     var body: some View {
         Form {
-            slateFormSection("Editor") {
-                // A RESERVED page states its own emptiness in the empty-state voice (MERIDIAN C3: muted
-                // symbol, short title, one-line cause) rather than as a "File editor — Not available" row,
-                // which read like a broken control. Local to this page, NOT a new `SlateEmptyState.Cause`:
-                // that enum's typed causes are the pane area's connection states, with pinned copy per case.
-                VStack(spacing: Slate.Metric.space2) {
-                    Image(systemSymbol: .textDocument)
-                        .font(SettingsType.placeholderGlyph)
-                        .foregroundStyle(SettingsInk.tertiary)
-                    Text("No File Editor Yet")
-                        .font(SettingsType.body.weight(.semibold))
-                    Text(
-                        "Soft Wrap, Line Numbers, and Tab Size configure a built-in file editor slopdesk "
-                            + "does not have. Terminal font and cursor live under Appearance; scrollback "
-                            + "under Controls.",
-                    )
-                    .font(SettingsType.subtitle)
-                    .foregroundStyle(SettingsInk.secondary)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, Slate.Metric.space4)
+            ForEach(SettingsLayout.groups(SettingsSection.editor.rawValue, for: .current)) { group in
+                settingsGroup(group) { _ in emptyState }
             }
         }
         .formStyle(.grouped)
+    }
+
+    /// A RESERVED page states its own emptiness in the empty-state voice (MERIDIAN C3: muted symbol,
+    /// short title, one-line cause) rather than as a "File editor — Not available" row, which read
+    /// like a broken control. Local to this page, NOT a new `SlateEmptyState.Cause`: that enum's
+    /// typed causes are the pane area's connection states, with pinned copy per case.
+    private var emptyState: some View {
+        VStack(spacing: Slate.Metric.space2) {
+            Image(systemSymbol: .textDocument)
+                .font(SettingsType.placeholderGlyph)
+                .foregroundStyle(SettingsInk.tertiary)
+            Text("No File Editor Yet")
+                .font(SettingsType.body.weight(.semibold))
+            Text(
+                "Soft Wrap, Line Numbers, and Tab Size configure a built-in file editor slopdesk "
+                    + "does not have. Terminal font and cursor live under Appearance; scrollback "
+                    + "under Controls.",
+            )
+            .font(SettingsType.subtitle)
+            .foregroundStyle(SettingsInk.secondary)
+            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, Slate.Metric.space4)
     }
 }
 
@@ -1331,7 +1335,9 @@ package extension View {
 private struct KeybindingsSettingsTab: View {
     @Bindable var store: PreferencesStore
     var body: some View {
-        KeybindingsEditorView(store: store)
+        ForEach(SettingsLayout.groups(SettingsSection.keybindings.rawValue, for: .current)) { group in
+            settingsGroup(group) { _ in KeybindingsEditorView(store: store) }
+        }
     }
 }
 

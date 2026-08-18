@@ -105,6 +105,11 @@ func timingFooter(_ timing: ApplyTiming) -> some View {
 /// A group that ``SettingsLayout/Group/drawsItsOwnHeader`` is placed BARE — it is a whole surface
 /// (the font specimen, the live cursor preview) rather than a list of rows, so wrapping it would nest
 /// a section inside a section and print a header it already drew.
+///
+/// The chip appears only where some row EDITS a setting. "Applies immediately" answers a question a
+/// list of controls raises; under a surface that draws itself — the chord editor, the flat index, the
+/// reserved Editor page's empty state — it either states nothing or contradicts what that surface says
+/// about itself, which is why `VideoHostSettingsView` places its own four.
 @ViewBuilder
 func settingsGroup(
     _ group: SettingsLayout.Group,
@@ -115,7 +120,7 @@ func settingsGroup(
     } else {
         slateFormSection(group.title) {
             ForEach(group.rows) { row($0) }
-            timingFooter(group.timing)
+            if group.editsASetting { timingFooter(group.timing) }
         }
     }
 }

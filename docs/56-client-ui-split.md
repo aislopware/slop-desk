@@ -914,3 +914,19 @@ and the row stays in the table. Same rule as the window steppers and the custom 
 Five pages now render from one table. Three surfaces still draw themselves as bespoke groups — the
 font specimen, the video host flags, the flat index — and of those only the video flags name a
 control shape the table cannot yet express: an optional number with an unset state.
+
+### Increment 22 — the last two pages, and where a timing chip belongs
+
+Editor and Key Bindings finish the set. Neither has rows to describe — the chord editor is one
+surface with sections of its own, and the Editor page is RESERVED and says so in the empty-state
+voice — so both are single bespoke groups. Describing them anyway is the point: a page that resolves
+to NO groups is indistinguishable, to a renderer, from a page whose groups this build predates, so
+"nothing to show here" has to be a statement rather than an absence. `every_page_the_navigator_lists_is_described_for_both_halves` pins it.
+
+Placing them found a rule the port had been getting wrong since the first page. `settingsGroup` put
+a timing chip under every headed group, which is right for a list of controls and wrong for a
+surface: "Applies immediately" under "No File Editor Yet" answers a question nothing on the page
+asked, and the four Advanced and Agents surfaces had quietly acquired chips they never had before
+the port. The chip belongs where an EDIT does, so it is now drawn only where some row names a
+setting — which is also why `VideoHostSettingsView`, whose four sections each land on reconnect,
+places its own.

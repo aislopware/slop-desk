@@ -831,6 +831,23 @@ pub const GROUPS: &[LayoutGroup] = &[
             },
         ],
     },
+    // ── Editor ─────────────────────────────────────────────────────────────────────────────────
+    // RESERVED. slopdesk has no file editor, so this page has no settings and says so — an empty
+    // state, not a list of dead rows. That it is empty is still a fact about the page, so it is
+    // described rather than left for each renderer to discover by finding no groups: a page with no
+    // groups at all is indistinguishable from a page this build predates.
+    LayoutGroup {
+        section: Section::Editor,
+        title: "Editor",
+        timing: ApplyTiming::Live,
+        platform: Platform::Both,
+        rows: &[LayoutRow {
+            key: "",
+            subtitle: "",
+            control: Control::Bespoke { id: "editor-empty" },
+            platform: Platform::Both,
+        }],
+    },
     // ── Agents ─────────────────────────────────────────────────────────────────────────────────
     // CLAUDE CODE ONLY. `MetadataCodec::AgentKind::Codex` is documented-dead and never rendered, so
     // there is no second card to describe.
@@ -1143,6 +1160,22 @@ pub const GROUPS: &[LayoutGroup] = &[
             },
         ],
     },
+    // ── Key Bindings ───────────────────────────────────────────────────────────────────────────
+    // The chord editor is one surface with sections of its own — the search field, the action list,
+    // the recorder — so the table claims no header for it. Cross-platform: a phone with a hardware
+    // keyboard attached runs the same bindings, and the LIST is readable with none.
+    LayoutGroup {
+        section: Section::Keybindings,
+        title: "",
+        timing: ApplyTiming::Live,
+        platform: Platform::Both,
+        rows: &[LayoutRow {
+            key: "",
+            subtitle: "",
+            control: Control::Bespoke { id: "keybindings" },
+            platform: Platform::Both,
+        }],
+    },
     // ── Advanced ───────────────────────────────────────────────────────────────────────────────
     // The privilege surface is CROSS-PLATFORM on purpose: these gate what a REMOTE escape sequence
     // may do on the client, and a phone attached to the same host is exposed to the same sequences.
@@ -1345,6 +1378,24 @@ mod tests {
                         if mac { "macOS" } else { "iOS" },
                     );
                 }
+            }
+        }
+    }
+
+    /// Every section the navigator lists is described here for both halves. A page that resolves to
+    /// no groups reads to a renderer exactly like a page whose groups this build predates, so
+    /// "nothing to show" is stated — the reserved Editor page says its own emptiness — rather than
+    /// left as an absence.
+    #[test]
+    fn every_page_the_navigator_lists_is_described_for_both_halves() {
+        for mac in [true, false] {
+            for section in Section::ALL {
+                assert!(
+                    !groups(section, mac).is_empty(),
+                    "{} describes nothing on {}",
+                    section.id(),
+                    if mac { "macOS" } else { "iOS" },
+                );
             }
         }
     }

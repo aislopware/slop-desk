@@ -104,6 +104,11 @@ package enum SettingsLayout {
         /// Whether the group draws its own header, and therefore its own section.
         public var drawsItsOwnHeader: Bool { title.isEmpty }
 
+        /// Whether any row here edits a setting, which is what makes ``timing`` worth stating. A group
+        /// of nothing but bespoke surfaces has no edit for a timing to describe — the surface inside
+        /// says when its own changes land, if it has any.
+        public var editsASetting: Bool { rows.contains { !$0.key.isEmpty } }
+
         public var id: String { title.isEmpty ? rows.first?.id ?? "" : title }
     }
 
