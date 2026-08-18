@@ -758,3 +758,46 @@ group the store persists as a bare string, with no enum to round-trip through �
 side would spell `"compact"` itself, in the card art's test and in two `?? "comfortable"` fallbacks.
 `check-supervisor` ratchets both, that the two deleted files stay deleted, and that no settings view
 spells a choice's own words.
+
+### Increment 18 — a setting is named once
+
+Increment 17 moved what Settings OFFERS (the choices behind each control). This one moves what
+Settings CONTAINS: the 57-row table behind the All Settings list — each key with its label, its
+one-line description, its default, whether it is edited inline or jumps to a section, and the
+keyword blob the search field also matches. It is `rust/slopdesk-workspace/src/settings_rows.rs`,
+crossed by eleven doors in `rust/slopdesk-ffi/src/settings_rows.rs`.
+`Sources/SlopDeskWorkspaceCore/Workspace/Store/AllSettingsCatalog.swift` keeps its name and its whole
+public API — every caller compiles untouched, and all eighteen of its existing tests pass unchanged —
+but it went from ~700 lines of table to ~175 of marshalling.
+
+WHY A HEADLESS FILE STILL HAD TO MOVE. This one was already the right shape: a searchable list cannot
+be assembled out of view bodies, so the catalog existed for a good reason and had no UI in it. But it
+had only moved half of what was duplicated. The catalog held `"Copy on Select"` and its sentence for
+the searchable list; the Controls page's own toggle row held the same words again, in a different
+target, for the same key. Thirty-one labels were like that, and two had already drifted — the same row
+was `"Hide Mouse While Typing"` in one place and `"Hide Mouse When Typing"` in the other,
+`"Long-Command Notification"` against `"Long-Command Completion"`. Nothing was broken by either; the
+list and the page simply called the same knob different things, and nobody was in a position to
+notice. `settingLabel(key)` is the near side of the fix and `check-supervisor` is the ratchet: it
+parses the labels straight out of the Rust table and fails on any settings view that types one.
+
+THE DESCRIPTION DELIBERATELY DOES NOT CROSS. Measured before deciding: of the thirty-one shared rows,
+twenty-two have descriptions that differ, and most differ on purpose. A flat index of 57 keys read by
+someone hunting a name needs a different sentence than a subtitle under a section header that has
+already said what the section is about. Two registers, two sentences — one name. Forcing twenty-two
+copy decisions to make a number look tidier would have been the port serving itself.
+
+THE KEYS STAY SWIFT, because they are `Defaults.Key` names and a `UserDefaults` binding cannot leave
+Swift. The boundary quotes them exactly as it quotes any value already on disk, and
+`AllSettingsCatalogTests` — which needs the Swift namespace to say it — remains the pin that every
+advertised key is a real `SettingsKey` and every surfaced key has a row. The five typed render fields
+(`font-family`, `cursor-style`, …) are not `SettingsKey`s at all, so `AllSettingsCatalog.RenderKey`
+names them; without it a view asking for one of those rows' words would have retyped the key to avoid
+retyping the label.
+
+ONE ROW'S DEFAULT IS DECIDED TWICE ON PURPOSE. `follow-session-focus` defaults On for a Mac and Off
+for a phone (docs/45 §8.2), and each side decides it independently — Swift on `#if os(iOS)`, Rust on
+`cfg!(target_os = "ios")`. That is honest rather than duplicated, because the xcframework is built
+per SLICE, so the Rust constant is a property of the artifact and the Swift one a property of the
+compile. They can only disagree if those two come apart, which no compile-time check on either side
+can see, so `testTheSharedFocusRowPrintsTheDefaultTheResetRestores` asserts it at runtime.

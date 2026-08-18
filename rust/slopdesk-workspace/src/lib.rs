@@ -43,6 +43,8 @@
 //! - [`session`] — what a pane IS, and the session → tab → pane values that hold them.
 //! - [`settings_catalog`] — what Settings OFFERS: the sections, the choices in every group, and the
 //!   scalar ladders' stops and readouts.
+//! - [`settings_rows`] — the other half of the same page: every setting as a ROW, with the one
+//!   label and the one description it carries wherever it appears.
 //! - [`tab_ordering`] — the sidebar's one bucketing rule, and where focus lands after a close.
 //! - [`templates`] — the two things that spawn panes, and the bytes they type into them.
 //! - [`tree_ops`] — every operation a gesture or an intent performs on the arrangement.
@@ -84,6 +86,7 @@ pub mod secrets;
 pub mod send_keys;
 pub mod session;
 pub mod settings_catalog;
+pub mod settings_rows;
 pub mod shell_quoting;
 pub mod split_layout;
 pub mod split_tree;

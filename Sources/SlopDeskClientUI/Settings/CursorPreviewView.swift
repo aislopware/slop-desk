@@ -125,7 +125,7 @@ struct CursorPreviewView: View {
             // Style CARDS, each drawing the caret it selects with the SAME `CursorCaret` the preview above
             // uses — so a card and the live prompt can never disagree about what "Hollow" looks like.
             SettingsOptionCards(
-                "Cursor Style",
+                settingLabel(AllSettingsCatalog.RenderKey.cursorStyle),
                 options: SettingsCatalog.options(.cursorStyle),
                 selection: $store.terminal.cursorStyle,
             ) { option in

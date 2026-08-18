@@ -112,6 +112,7 @@ pub mod search_rank;
 pub mod send_pacing;
 pub mod session_state;
 pub mod settings_catalog;
+pub mod settings_rows;
 pub mod sidecars;
 pub mod supervisor_frame;
 pub mod surface_gesture;

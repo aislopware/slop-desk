@@ -409,6 +409,23 @@ final class AllSettingsCatalogTests: XCTestCase {
         )
     }
 
+    /// The `· Default: …` the shared-focus row PRINTS is the default the reset actually RESTORES.
+    ///
+    /// This one row's default is the only one that differs per platform — a Mac follows the session,
+    /// a phone does not (docs/45 §8.2) — and the two sides decide it separately: Swift on `#if
+    /// os(iOS)`, `slopdesk_workspace::settings_rows` on `cfg!(target_os = "ios")`. They agree only
+    /// because the xcframework is built per SLICE, so this is the assertion that the slice Swift
+    /// linked is the slice Swift was compiled for. A mismatch is invisible to every compile-time
+    /// check on either side and prints a row whose stated default is the other platform's.
+    func testTheSharedFocusRowPrintsTheDefaultTheResetRestores() {
+        let row = AllSettingsCatalog.entries.first { $0.key == AllSettingsCatalog.followSessionFocusKey }
+        XCTAssertEqual(
+            row?.defaultText,
+            DevicePreferences.platformDefaultFollowSessionFocus ? "On" : "Off",
+            "the FFI slice's default disagrees with this platform's — the linked artifact is another platform's",
+        )
+    }
+
     /// Every key ``AllSettingsCatalog/deviceLocalKeys`` claims is actually advertised, so the escape
     /// hatch cannot be used to excuse a key the list does not even show.
     func testTheDeviceLocalKeysAreAdvertisedRows() {

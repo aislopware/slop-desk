@@ -43,7 +43,31 @@
 #if canImport(SwiftUI)
 import SFSafeSymbols
 import SlopDeskClientCore
+import SlopDeskWorkspaceCore
 import SwiftUI
+
+// MARK: - What a row is CALLED
+
+/// The label the setting `key` carries — read from the one row table
+/// (`slopdesk_workspace::settings_rows`) rather than typed at the control.
+///
+/// A setting is named in two places: on the section page where it is set, and in the searchable
+/// all-settings list. Those are the same words doing the same job, so they are one string. They were
+/// two, and two was already visibly one too many — the same row was spelled "Hide Mouse While Typing"
+/// in one place and "Hide Mouse When Typing" in the other, and "Long-Command Notification" against
+/// "Long-Command Completion", with nothing anywhere that would notice.
+///
+/// The DESCRIPTION deliberately does NOT come from here, and that is not an oversight. A row in a flat
+/// index of fifty-seven keys has to stand alone ("The UI density tier."); the same row under a THEME
+/// header on the Appearance page has the header's context already and can say the useful thing instead
+/// ("How much air each sidebar row gets."). Twenty-two of the thirty-one shared rows differ that way.
+/// Two registers, two sentences, one name.
+///
+/// An unknown key answers with the key itself, which is visible on screen rather than silent — a
+/// blank row label would look like a layout bug instead of a missing table entry.
+func settingLabel(_ key: String) -> String {
+    AllSettingsCatalog.entries.first { $0.key == key }?.label ?? key
+}
 
 // MARK: - SettingsOptionMenuRow (the same list, as a native dropdown)
 

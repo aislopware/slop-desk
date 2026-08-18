@@ -323,7 +323,7 @@ private struct GeneralSettingsTab: View {
         Form {
             slateFormSection(GeneralSettingsLayout.general) {
                 SettingsOptionMenuRow(
-                    "On Launch",
+                    settingLabel(SettingsKey.onLaunchKey),
                     subtitle: "What a cold start opens.",
                     options: SettingsCatalog.options(.onLaunch),
                     selection: $onLaunch,
@@ -570,19 +570,19 @@ private struct ShellSettingsTab: View {
             )
             glyphToggle(
                 .checkmarkCircle,
-                "Notify on Command Finish",
+                settingLabel(SettingsKey.notifyOnFinish),
                 "Notify when a background command finishes (exit 0).",
                 isOn: $notifyOnFinish,
             )
             glyphToggle(
                 .xmarkOctagon,
-                "Notify on Error Exit",
+                settingLabel(SettingsKey.notifyOnError),
                 "Notify when a command fails (exits non-zero).",
                 isOn: $notifyOnError,
             )
             glyphToggle(
                 .eye,
-                "Notify on Watch Finish",
+                settingLabel(SettingsKey.notifyOnWatchFinish),
                 "Notify when an `slopdesk watch`-wrapped command finishes.",
                 isOn: $notifyOnWatchFinish,
             )
@@ -599,20 +599,20 @@ private struct ShellSettingsTab: View {
                 .fixedSize()
             } label: {
                 glyphLabel(
-                    .appBadge, "Notify While Foreground",
+                    .appBadge, settingLabel(SettingsKey.notifyWhileForegroundKey),
                     "Banner behavior while slopdesk is the foreground app.",
                 )
             }
             glyphToggle(
                 .hourglass,
-                "Long-Command Completion",
+                settingLabel(SettingsKey.longCommandNotifications),
                 "Also notify when a slow command finishes in an unfocused pane.",
                 isOn: $longCommandNotifications,
             )
             #if os(macOS)
             glyphToggle(
                 .arrowUpDocument,
-                "Bounce Dock Icon",
+                settingLabel(SettingsKey.bounceDockIcon),
                 "Bounce the Dock icon when a notification arrives and slopdesk isn't focused.",
                 isOn: $bounceDockIcon,
             )
@@ -668,13 +668,13 @@ private struct ShellSettingsTab: View {
         slateFormSection("Sound") {
             glyphToggle(
                 .speakerWave2,
-                "Sound — Shell Controlled",
+                settingLabel(SettingsKey.soundShellControlled),
                 "Let shell apps ring the terminal bell (BEL) as the system alert sound.",
                 isOn: $soundShellControlled,
             )
             glyphToggle(
                 .speakerWave3,
-                "Sound on Error Exit",
+                settingLabel(SettingsKey.soundOnErrorExit),
                 "Beep when a command exits non-zero (requires shell integration).",
                 isOn: $soundOnErrorExit,
             )
@@ -900,17 +900,17 @@ private struct ControlsSettingsTab: View {
         Form {
             slateFormSection("Selection") {
                 toggleRow(
-                    "Shift+Arrow Select",
+                    settingLabel(SettingsKey.shiftArrowSelect),
                     "Use Shift+arrows to drive a native selection instead of forwarding the arrow escapes.",
                     symbol: .characterCursorIbeam, isOn: $shiftArrowSelect,
                 )
                 toggleRow(
-                    "Clear Selection on Typing",
+                    settingLabel(SettingsKey.clearSelectionOnTyping),
                     "Drop the selection the moment any key is sent to the program.",
                     symbol: .keyboard, isOn: $clearSelectionOnTyping,
                 )
                 toggleRow(
-                    "Clear Selection on Copy",
+                    settingLabel(SettingsKey.clearSelectionOnCopy),
                     "Drop the highlight after an explicit copy (does not apply when Copy on Select fires).",
                     symbol: .documentOnDocument, isOn: $clearSelectionOnCopy,
                 )
@@ -919,22 +919,22 @@ private struct ControlsSettingsTab: View {
 
             slateFormSection("Copy & Paste") {
                 toggleRow(
-                    "Copy on Select",
+                    settingLabel(SettingsKey.copyOnSelect),
                     "Copy the selection to the pasteboard as soon as it is made.",
                     symbol: .documentOnDocument, isOn: $copyOnSelect,
                 )
                 toggleRow(
-                    "Trim Trailing Spaces on Copy",
+                    settingLabel(SettingsKey.trimTrailingSpacesOnCopy),
                     "Strip trailing whitespace from each copied line.",
                     symbol: .scissors, isOn: $trimTrailingSpacesOnCopy,
                 )
                 toggleRow(
-                    "Paste Protection",
+                    settingLabel(SettingsKey.pasteProtection),
                     "Warn before pasting multi-line, trailing-newline, sudo/su, or control-character text.",
                     symbol: .shield, isOn: $pasteProtection,
                 )
                 toggleRow(
-                    "Paste Bracketed Safe",
+                    settingLabel(SettingsKey.pasteBracketedSafe),
                     "Skip the paste warning when the receiving program advertises bracketed-paste support.",
                     symbol: .shieldLefthalfFilled, isOn: $pasteBracketedSafe,
                 )
@@ -951,14 +951,14 @@ private struct ControlsSettingsTab: View {
 
             slateFormSection("Keyboard") {
                 toggleRow(
-                    "Undo at Prompt",
+                    settingLabel(SettingsKey.undoAtPrompt),
                     "Press Cmd-Z at the shell prompt to emit the readline undo sequence.",
                     symbol: .arrowUturnBackward, isOn: $undoAtPrompt,
                 )
                 // Four labels that read almost identically as prose become four distinct key-row
                 // silhouettes — the lit ⌥ caps ARE the setting.
                 SettingsOptionCards(
-                    "Option as Alt",
+                    settingLabel(SettingsKey.optionAsAltKey),
                     subtitle: "Treat the macOS Option key as Alt/Meta so terminal apps see Esc-prefixed "
                         + "sequences (Emacs, Vim word-jumps, readline). Off keeps Option free for accented "
                         + "characters.",
@@ -1033,14 +1033,14 @@ private struct ControlsSettingsTab: View {
             // ("Copy" vs "Paste" vs "Ignore"), and a glyph standing in for a verb adds a picture frame, not
             // information.
             SettingsOptionMenuRow(
-                "Right-Click Action",
+                settingLabel(SettingsKey.rightClickActionKey),
                 subtitle: "What right-click does in the terminal viewport (Ctrl+right-click always opens the "
                     + "menu).",
                 options: SettingsCatalog.options(.rightClickAction),
                 selection: store.refreshing($rightClickAction),
             )
             toggleRow(
-                "Hide Mouse When Typing",
+                settingLabel(SettingsKey.mouseHideWhileTyping),
                 "Hide the mouse cursor while the keyboard is in use.",
                 symbol: .pointerArrowSlash, isOn: $mouseHideWhileTyping,
             )
@@ -1050,7 +1050,7 @@ private struct ControlsSettingsTab: View {
             // getter projects through `extendsSelection` (NOT a bare `== .enabled`) so a value from the removed
             // 4-way picker reads sanely: `.always` → ON, `.never` → OFF.
             toggleRow(
-                "Allow Shift with Mouse Click",
+                settingLabel(SettingsKey.allowShiftClickKey),
                 "Hold Shift to select text even when the running app captures the mouse.",
                 symbol: .pointerArrowClick, isOn: Binding(
                     get: { allowShiftClick.extendsSelection },
@@ -1058,12 +1058,12 @@ private struct ControlsSettingsTab: View {
                 ),
             )
             toggleRow(
-                "Cursor Click-to-Move",
+                settingLabel(SettingsKey.clickToMove),
                 "Click in the prompt to move the shell cursor — sends arrow keys across soft-wrapped rows.",
                 symbol: .pointerArrowMotionlines, isOn: $clickToMove,
             )
             toggleRow(
-                "Allow Mouse Capture",
+                settingLabel(SettingsKey.allowMouseCapture),
                 "Allow shell apps to capture mouse events (e.g. vim, tmux).",
                 symbol: .rectangleAndHandPointUpLeft, isOn: $allowMouseCapture,
             )
@@ -1084,12 +1084,12 @@ private struct ControlsSettingsTab: View {
         slateFormSection("Open With") {
             Toggle(isOn: $linkDetection) {
                 rowLabel(
-                    "Detect Links & Paths",
+                    settingLabel(SettingsKey.linkDetection),
                     "Underline paths and URLs in terminal output on Cmd-hover so they are clickable.",
                 )
             }
             linkPickerRow(
-                "Cmd-Click on Link",
+                settingLabel(SettingsKey.linkCmdClickKey),
                 "Open in the best handler (files / folders open on the host, URLs in your browser), copy the "
                     + "path / URL, or do nothing.",
                 selection: $linkCmdClick,
@@ -1099,7 +1099,7 @@ private struct ControlsSettingsTab: View {
                 Text("Do Nothing").tag(LinkCmdClick.nothing)
             }
             linkPickerRow(
-                "Cmd-Shift-Click on Link",
+                settingLabel(SettingsKey.linkCmdShiftClickKey),
                 "Reveal the path in the host Finder, or open it with the host's system-default app.",
                 selection: $linkCmdShiftClick,
             ) {
@@ -1122,7 +1122,7 @@ private struct ControlsSettingsTab: View {
     private var linkSchemesSection: some View {
         slateFormSection("Link Schemes") {
             linkPickerRow(
-                "Auto-Detect Link Schemes",
+                settingLabel(SettingsKey.autoDetectLinkSchemesKey),
                 "Which URL schemes get underlined on Cmd-hover and made clickable. All detects any "
                     + "scheme://; Custom restricts to the schemes you list. http(s), file, and mailto are "
                     + "always detected.",
@@ -1134,7 +1134,7 @@ private struct ControlsSettingsTab: View {
             if autoDetectLinkSchemes == .custom {
                 VStack(alignment: .leading, spacing: Slate.Metric.space1) {
                     rowLabel(
-                        "Custom Link Schemes",
+                        settingLabel(SettingsKey.customLinkSchemes),
                         "Comma-separated extra schemes to additionally detect (e.g. codex, ssh, vscode).",
                     )
                     TextField("codex, ssh, vscode", text: customSchemesText)
@@ -1313,7 +1313,7 @@ private struct AppearanceSettingsTab: View {
                 // the WORKSPACE does while a chord is held, not what the chord is.
                 SettingsGlyphToggleRow(
                     .rectangleOnRectangle,
-                    "Preview While Switching Panes",
+                    settingLabel(SettingsKey.paneSwitcherPreview),
                     "As ⌃⇥ walks the pane list, show each pane underneath the switcher.",
                     isOn: $paneSwitcherPreview,
                 )
@@ -1340,7 +1340,7 @@ private struct AppearanceSettingsTab: View {
             // between and a one-card gallery would be a control that cannot be actuated.
             slateFormSection("Appearance") {
                 SettingsOptionCards(
-                    "Density",
+                    settingLabel(SettingsKey.density),
                     subtitle: "How much air each sidebar row gets.",
                     options: SettingsCatalog.stringOptions(.density),
                     selection: densityBinding,
@@ -1394,7 +1394,7 @@ private struct AppearanceSettingsTab: View {
                 )
                 SettingsGlyphToggleRow(
                     .exclamationmarkOctagon,
-                    "Red Icon on Error",
+                    settingLabel(SettingsKey.dockIconErrorBadge),
                     "Tint the Dock tile when a command exits non-zero.",
                     isOn: $dockIconErrorBadge,
                 )
@@ -1861,13 +1861,13 @@ private struct AdvancedSettingsTab: View {
         slateFormSection("Privileges") {
             Toggle(isOn: $titleShellControlled) {
                 privilegeLabel(
-                    "Title — Shell Controlled",
+                    settingLabel(SettingsKey.titleShellControlled),
                     "Allow programs to set the tab and window title via OSC 0 / OSC 2.",
                 )
             }
             Toggle(isOn: store.refreshing($clipboardShellControlled)) {
                 privilegeLabel(
-                    "Clipboard — Shell Controlled",
+                    settingLabel(SettingsKey.clipboardShellControlled),
                     "Master switch for OSC 52 clipboard access. When off, clipboard read and write are denied.",
                 )
             }

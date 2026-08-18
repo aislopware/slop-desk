@@ -5078,6 +5078,53 @@ if [[ -n "${settings_words}" ]]; then
 fi
 printf 'check-supervisor: what Settings offers is one Rust table; SettingsCatalog.swift only reads it.\n'
 
+# ── A setting is NAMED once ───────────────────────────────────────────────────────────────────
+# The row table — every key with its label, its one-line description, its default and where it is
+# edited — is `slopdesk_workspace::settings_rows`. `AllSettingsCatalog.swift` is the near side, and it
+# must stay a marshaller: a Swift array of rows would pass every test that reads it.
+rows_swift=Sources/SlopDeskWorkspaceCore/Workspace/Store/AllSettingsCatalog.swift
+if [[ ! -e "${rows_swift}" ]]; then
+  fail "${rows_swift} is gone — nothing would advertise a setting to the all-settings list (docs/56)"
+fi
+for door in slopdesk_settings_row_count slopdesk_settings_row_key slopdesk_settings_row_label \
+  slopdesk_settings_row_description slopdesk_settings_row_default_text slopdesk_settings_row_keywords \
+  slopdesk_settings_row_target_section slopdesk_settings_row_bucket slopdesk_settings_row_is_inline_editable \
+  slopdesk_settings_row_index slopdesk_settings_row_matches; do
+  if ! grep -qF "${door}" "${rows_swift}"; then
+    fail "${rows_swift} stopped calling ${door} — a row it describes itself is a table written twice"
+  fi
+  if ! grep -qF "${door}" rust/slopdesk-ffi/include/slopdesk_ffi.h; then
+    fail "${door} is missing from slopdesk_ffi.h — Swift cannot reach a door the header does not name"
+  fi
+done
+# And no view may TYPE a row's label. A setting is named on the page where it is set and again in the
+# searchable list, and those are the same words for the same job — they were two strings, and two was
+# already one too many ("Hide Mouse While Typing" vs "…When Typing", "Long-Command Notification" vs
+# "…Completion"). The labels are read out of the Rust table here and grepped for verbatim, so a
+# re-typed one fails by its own text. The DESCRIPTION is deliberately not covered: an index blurb and
+# an in-context subtitle are two registers, and docs/56 §18 says so.
+row_labels=$(sed -n 's/^        label: "\(.*\)",$/\1/p' rust/slopdesk-workspace/src/settings_rows.rs)
+if [[ -z "${row_labels}" ]]; then
+  fail "no row labels parsed out of settings_rows.rs — the ratchet below would pass by reading nothing"
+fi
+# Comments are STRIPPED first, exactly as `spells()` does it: the note above `settingLabel` cites the
+# two spellings that drifted, and a gate that cannot quote the bug it prevents is a gate nobody may
+# document.
+# shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
+settings_view_code=$(awk '{ line = $0; sub(/\/\/.*/, "", line); printf "%s:%d:%s\n", FILENAME, FNR, line }' \
+  $(repo_files 'Sources/SlopDeskClientUI/Settings/*.swift') \
+  $(repo_files 'Sources/SlopDeskMacUI/**/*.swift') 2> /dev/null || true)
+typed_labels=$(printf '%s\n' "${row_labels}" | while IFS= read -r label; do
+  [[ -z "${label}" ]] && continue
+  grep -F "\"${label}\"" <<< "${settings_view_code}" || true
+done)
+if [[ -n "${typed_labels}" ]]; then
+  printf '%s\n' "${typed_labels}" >&2
+  fail "a settings view TYPED a row's label — ask settingLabel(key); the words are settings_rows'"
+fi
+printf 'check-supervisor: a setting is named once — %s rows, and no view spells one.\n' \
+  "$(printf '%s\n' "${row_labels}" | grep -c .)"
+
 # ── One device-panel law, two device protocols ────────────────────────────────────────────────
 # The simulator panel and the Android panel differ in almost everything and should — one rotates on
 # the client and the other on the device, one sends touches in the fitted rect's space and the other

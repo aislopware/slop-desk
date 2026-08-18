@@ -917,6 +917,36 @@ size_t slopdesk_settings_ladder_preset_label(uint8_t ladder, size_t index, uint8
 // the BEHAVIOUR changing rather than a delay that happens to be short.
 size_t slopdesk_settings_ladder_readout(uint8_t ladder, double value, uint8_t *out, size_t cap);
 
+// ---- Every setting as a ROW ----
+//
+// The other half of the same page: one entry per configuration key, carrying the one label and the
+// one description that key uses wherever it appears — in the searchable all-settings list AND in the
+// section control that edits it. Those were two byte-identical copies in two targets before this.
+//
+// The KEY is what the near side holds (they are `Defaults.Key` names), so a row is reached by key as
+// often as by position — `slopdesk_settings_row_index` turns one into the other.
+
+#define SLOPDESK_SETTINGS_ROW_BUCKET_ADVANCED_ONLY 0
+#define SLOPDESK_SETTINGS_ROW_BUCKET_HAS_DEDICATED_TAB 1
+// What `slopdesk_settings_row_index` answers for a key no row has. A sentinel rather than a zero,
+// because zero is a real row.
+#define SLOPDESK_SETTINGS_ROW_NONE SIZE_MAX
+
+size_t slopdesk_settings_row_count(void);
+size_t slopdesk_settings_row_key(size_t index, uint8_t *out, size_t cap);
+size_t slopdesk_settings_row_label(size_t index, uint8_t *out, size_t cap);
+size_t slopdesk_settings_row_description(size_t index, uint8_t *out, size_t cap);
+size_t slopdesk_settings_row_default_text(size_t index, uint8_t *out, size_t cap);
+size_t slopdesk_settings_row_keywords(size_t index, uint8_t *out, size_t cap);
+// The section a row jumps to, or `0` for one edited in place.
+size_t slopdesk_settings_row_target_section(size_t index, uint8_t *out, size_t cap);
+uint8_t slopdesk_settings_row_bucket(size_t index);
+bool slopdesk_settings_row_is_inline_editable(size_t index);
+size_t slopdesk_settings_row_index(const uint8_t *key, size_t key_len);
+// The positions a query matched, under the same retry protocol as the string doors: a return larger
+// than `cap` means nothing was written — ask again at that size.
+size_t slopdesk_settings_row_matches(const uint8_t *query, size_t query_len, size_t *out, size_t cap);
+
 // ---- What the phone's keyboard sends ----
 //
 // A touch device is forced to split physical input in two: the keys a terminal needs raw, and

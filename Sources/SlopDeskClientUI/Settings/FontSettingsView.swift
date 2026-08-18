@@ -72,7 +72,7 @@ struct FontSettingsView: View {
     // MARK: - Font Family section (scope tabs + combobox)
 
     private var fontFamilySection: some View {
-        slateFormSection("Font Family") {
+        slateFormSection(settingLabel(AllSettingsCatalog.RenderKey.fontFamily)) {
             scopeTabs
             scopeNote
             scopeBody
@@ -141,7 +141,7 @@ struct FontSettingsView: View {
     }
 
     private func primaryFamilyRow(_ binding: Binding<String>, placeholder: String) -> some View {
-        LabeledContent("Font Family") {
+        LabeledContent(settingLabel(AllSettingsCatalog.RenderKey.fontFamily)) {
             FontFamilyComboBox(selection: binding, placeholder: placeholder)
         }
     }
