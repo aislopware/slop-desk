@@ -1,24 +1,26 @@
-// CodeSidebarColumn — the RIGHT sidebar: the project-scoped embedded VS Code (code-server in a
-// pooled WKWebView). Project-scoped means the ACTIVE pane picks the project (its host-pushed
-// `projectKey` — the same key the left panel's sections group by), and every pane of that project
-// shares the ONE workbench opened at the project root; focusing a pane of another project swaps the
-// warm webview for THAT project back in (see `CodeSidebarWebViewPool`). A project's FIRST-EVER
-// workbench is gated behind an explicit open (``CodeOpenGate`` — user-directed 2026-08-07): focus
-// changes are free, and the boot is paid only when asked for. The admission persists
-// (`Defaults[.openedCodeProjects]`), so a relaunch boots straight back into known projects.
+// CodePanelSurfaces — the RIGHT panel's four surfaces: the project-scoped embedded VS Code
+// (code-server in a pooled WKWebView), the host's iOS Simulators, its Android devices, and the
+// announced-but-empty Desktop.
+//
+// Project-scoped means the ACTIVE pane picks the project (its host-pushed `projectKey` — the same key
+// the left panel's sections group by), and every pane of that project shares the ONE workbench opened
+// at the project root; focusing a pane of another project swaps the warm webview for THAT project back
+// in (see `CodeSidebarWebViewPool`). A project's FIRST-EVER workbench is gated behind an explicit open
+// (``CodeOpenGate`` — user-directed 2026-08-07): focus changes are free, and the boot is paid only when
+// asked for. The admission persists (`Defaults[.openedCodeProjects]`), so a relaunch boots straight
+// back into known projects.
+//
+// THE PANEL'S CHROME IS NO LONGER HERE. The strip of tabs over these surfaces, the width ladder that
+// decides how many of them say their name, and the rail the collapsed panel leaves behind are AppKit
+// now (`SlopDeskMacUI`: `MacPanelStrip`, `MacPanelTabGroup`, `MacPanelRail`), mounted as this view's
+// SIBLING under `MacCodePanelColumn` — docs/56 stage D. What is left here is the four surfaces and the
+// host conversations that keep them alive, which is why the three MODELS are handed in rather than
+// held: the strip's reload plate drives them from outside this tree.
 //
 // The column is macOS-only chrome hosted in its own plain `NSSplitViewItem` (a THIRD column beside
 // navigator | content — never `.inspector`, whose collapse unmounts the content and would kill the
-// webview's layout). While collapsed the split item unparents this view, SwiftUI cancels the
-// `.task`, and the poll loop stops — the code-server is only ever ensured when the panel is open.
-//
-// The panel carries its OWN top strip (the otty right-panel pattern): a REAL tab row — "Files"
-// (the embedded workbench; renamed from "Code" with the `folder` glyph, user-directed
-// 2026-08-03) and "Desktop" (the window-OS surface; its content is still a
-// placeholder) — plus the trailing actions: the reload plate (Files only) and the panel's HIDE
-// toggle at the far trailing corner (user-directed 2026-08-03 — the same split the left sidebar
-// has: hide inside the surface, reopen in the titlebar). The selected tab expands to icon +
-// label, the other collapses to its icon; clicking crossfades the surface below.
+// webview's layout). While collapsed the split item unparents this view, SwiftUI cancels the `.task`,
+// and the poll loop stops — the code-server is only ever ensured when the panel is open.
 
 #if os(macOS)
 import SFSafeSymbols
@@ -29,7 +31,7 @@ import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 import SwiftUI
 
-struct CodeSidebarColumn: View {
+package struct CodePanelSurfaces: View {
     let store: WorkspaceStore
     /// The app-global connection — the workbench URL speaks to the SAME host every pane dials
     /// (`target.host`), on the shared code-server port the ensure RPC reports.
@@ -42,25 +44,32 @@ struct CodeSidebarColumn: View {
     /// Passed explicitly: this column lives in its own `NSHostingController`, which does NOT
     /// inherit the WindowGroup's `\.preferencesStore` environment.
     let preferences: PreferencesStore?
+    /// The three surface models, OWNED BY THE COLUMN rather than held here as `@State`. The strip's
+    /// reload plate is AppKit and stands outside this tree, so the thing it reloads cannot live inside
+    /// it — and the parking rules below (`resume`/`park`) already depended on these outliving the
+    /// unmount, which `@State` gave for the wrong reason.
+    let model: CodeSidebarModel
+    let simulatorModel: SimulatorSidebarModel
+    let androidModel: AndroidSidebarModel
 
-    @State private var model = CodeSidebarModel()
+    package init(
+        store: WorkspaceStore, connection: AppConnection, chrome: WorkspaceChromeState,
+        preferences: PreferencesStore?, model: CodeSidebarModel,
+        simulatorModel: SimulatorSidebarModel, androidModel: AndroidSidebarModel,
+    ) {
+        self.store = store
+        self.connection = connection
+        self.chrome = chrome
+        self.preferences = preferences
+        self.model = model
+        self.simulatorModel = simulatorModel
+        self.androidModel = androidModel
+    }
 
     /// The panel surface the strip's tab row selects — read from the shared chrome model
     /// (``PanelSurface``), not from local state: the collapsed panel's RAIL renders the same four
     /// tabs and must select the same thing.
     private var surfaceTab: PanelSurface { chrome.panelSurface }
-    /// The selection plate's morph namespaces — ONE PER RUNG of the strip's width ladder, because
-    /// `ViewThatFits` builds every candidate to measure it. See `tabs(labelling:)`.
-    @Namespace private var morphAllNamed
-    @Namespace private var morphSelectedNamed
-    @Namespace private var morphUnnamed
-    @State private var simulatorModel = SimulatorSidebarModel()
-    /// The Android surface's own model. A FOURTH tab rather than a second half of Simulators: the two
-    /// share not one byte of protocol — `baguette`'s websocket against `scrcpy` over `adb`, AVC
-    /// against Annex-B, JSON envelopes against packed control messages — and folding them into one
-    /// surface would mean a list whose rows dispatch on platform and a stage whose every control has
-    /// two implementations. They are two device sets that happen to look alike in a sidebar.
-    @State private var androidModel = AndroidSidebarModel()
     /// Where the Simulators surface's reports go — the window's own notification stack, so this panel
     /// speaks in the same card as everything else that has something to say. See ``announce(_:isFailure:)``.
     @Environment(\.overlayCoordinator) private var overlayCoordinator
@@ -93,19 +102,18 @@ struct CodeSidebarColumn: View {
         preferences.map { CodeFontSync.spec(terminal: $0.terminal) }
     }
 
-    var body: some View {
-        VStack(spacing: 0) {
-            strip
-            // NO rule under the strip (user-directed 2026-08-09, reversing 2026-08-04). It was here
-            // because the ground band used to end in an abrupt tone change against the workbench's
-            // own tab strip — two mismatched grays stacked with nothing between them. That reason
-            // has since gone: the panel is one cream from the strip through the canvas, so the two
-            // sides of this seam are the same colour and there is nothing left to separate. What
-            // the rule did instead was land a second horizontal line a few pixels off the edge the
-            // embedded workbench draws for itself, and a doubled seam is what you saw.
-            // A bare switch: the surfaces carry no animation of their own — whatever motion the
-            // swap has rides the `selectSurface` transaction, exactly like the pre-removal
-            // inspector's content switch under its `withAnimation` tab write.
+    package var body: some View {
+        // NO rule under the strip above (user-directed 2026-08-09, reversing 2026-08-04). It was there
+        // because the ground band used to end in an abrupt tone change against the workbench's own tab
+        // strip — two mismatched grays stacked with nothing between them. That reason has since gone:
+        // the panel is one cream from the strip through the canvas, so the two sides of that seam are
+        // the same colour and there is nothing left to separate. What the rule did instead was land a
+        // second horizontal line a few pixels off the edge the embedded workbench draws for itself,
+        // and a doubled seam is what you saw.
+        //
+        // A bare switch: the surfaces carry no animation of their own — whatever motion the swap has
+        // rides the transaction the strip's tab click opens, one framework over.
+        Group {
             switch surfaceTab {
             case .code:
                 surface
@@ -124,6 +132,7 @@ struct CodeSidebarColumn: View {
                 )
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Slate.Surface.field)
         // THE COLUMN'S CONTENT LEAVES BEFORE ITS WIDTH DOES (user-reported 2026-08-09: the collapse
         // read as rough). A panel closing is a width animation, and everything standing in it —
@@ -147,143 +156,6 @@ struct CodeSidebarColumn: View {
             // Records the push too, so the next ensure round does not re-send what just landed.
             Self.lastPushedFontSpec = spec
             Task { await client.syncCodeFont(spec) }
-        }
-    }
-
-    /// The panel's OWN top strip (user-directed: the tabs belong to the panel, over the panel,
-    /// never over the terminal). Tab plates lead, actions trail (the otty strip layout); the row
-    /// is CENTERED in the strip band (user-directed 2026-08-03, overriding the earlier
-    /// titlebar-row top-anchor). Every tab shows its MARK AND ITS NAME while the panel is wide
-    /// enough for that, and gives up the names a rung at a time when it is not — see `tabs(labelling:)`
-    /// and ``PanelTabPlate``. The reload plate rides only the Code surface (Desktop has nothing to
-    /// reload); the far trailing corner is the panel's HIDE toggle (user-directed 2026-08-03 —
-    /// moved here from the terminal's titlebar, which now carries only the collapsed-state reopen).
-    /// A tab click animates through ONE transaction around the state write — the pre-removal
-    /// inspector's choreography (`InspectorColumn.tabButton`, resurrected user-directed 2026-08-03).
-    /// The transaction carries the plate's TRAVEL, the reload plate's arrival, and the surface swap
-    /// together; there are still NO per-view `.animation` modifiers on this path (two redesigns that
-    /// added them were both rejected). It spends `selectionMorph` rather than `standard` because the
-    /// plate now crosses the strip instead of changing in place — the same swap the sidebar rows and
-    /// the horizontal tab strip made.
-    private func selectSurface(_ tab: PanelSurface) {
-        withAnimation(Slate.Anim.selectionMorph) { chrome.panelSurface = tab }
-    }
-
-    private var strip: some View {
-        HStack(spacing: 2) {
-            // THE WIDTH LADDER. Four tabs carrying a mark and a word want ~330pt, and the panel's
-            // minimum (`codeSidebarMinWidth`, 380) leaves the tabs about 310 once the action plates
-            // are paid for — so a panel dragged narrow has to give something up. `ViewThatFits` picks
-            // the first rung that fits: every tab named, then only the selected one, then none. It
-            // degrades a rung at a time rather than truncating, because a tab reading "Simulat…" has
-            // stopped saying what it switches to, while a mark alone still does.
-            ViewThatFits(in: .horizontal) {
-                tabs(labelling: .all)
-                tabs(labelling: .selectedOnly)
-                tabs(labelling: .none)
-            }
-            Spacer(minLength: 0)
-            switch surfaceTab {
-            case .code:
-                // The reload plate rides only a MOUNTED workbench — behind the open gate there is
-                // nothing to reload, and a bump of the poll generation would boot the very thing
-                // the gate exists to defer.
-                if let root = activeProjectRoot, chrome.openedCodeProjects.contains(root) {
-                    PlateIconButton(symbol: .arrowClockwise) {
-                        CodeSidebarWebViewPool.shared.reload(projectRoot: root)
-                        model.requestReload()
-                    }
-                    .help("Reload the workbench")
-                }
-            case .simulators:
-                // No back control here: leaving a device is navigation within the surface, and it
-                // now sits beside the device's own name in `SimulatorDeviceHeader` — where every
-                // other split view in the app puts it. This strip stays surface-level verbs only.
-                PlateIconButton(symbol: .arrowClockwise) { simulatorModel.requestReload() }
-                    .help("Reload the simulator list")
-            case .android:
-                PlateIconButton(symbol: .arrowClockwise) { androidModel.requestReload() }
-                    .help("Reload the device list")
-            case .desktop:
-                EmptyView()
-            }
-            PlateIconButton(symbol: .sidebarRight) {
-                chrome.toggleCodeSidebar()
-            }
-            .help("Hide the right panel")
-        }
-        .padding(.horizontal, Slate.Metric.space2)
-        // Hung from the band's control line, like every other control in the band — the tabs share
-        // one row of centres with the traffic lights three columns over (user-directed 2026-08-09).
-        .padding(.top, Slate.Metric.bandControlInset)
-        .frame(height: Slate.Metric.titlebarHeight, alignment: .top)
-    }
-
-    /// One rung of the strip's width ladder — how many tabs get to say their name.
-    private enum TabLabelling {
-        case all
-        case selectedOnly
-        case none
-    }
-
-    /// The four surface tabs, as their own GROUP on a wider gap than the action plates trailing
-    /// them: two lit plates side by side (the selected tab and the one under the pointer) touched at
-    /// the strip's 2pt spacing and read as one long fill, where `space1` opens a channel between them
-    /// while still holding the tabs closer to each other than to anything else.
-    ///
-    /// The marks are the app's ordinary vocabulary except for Android's, which is a drawn path
-    /// because no icon set ships one (``AndroidRobotMark``). Since the two platform tabs are now
-    /// named "Simulators" and "Emulators" — one letter apart, and both true of the other platform —
-    /// the logo is the only thing in the tab that says WHICH platform, so it is load-bearing rather
-    /// than decorative. Desktop's glyph is `display`, the app's existing GUI-surface vocabulary
-    /// (`macwindow` read as a blob at strip size — user-rejected).
-    private func tabs(labelling: TabLabelling) -> some View {
-        func names(_ tab: PanelSurface) -> Bool {
-            switch labelling {
-            case .all: true
-            case .selectedOnly: surfaceTab == tab
-            case .none: false
-            }
-        }
-        // ⚠️ ONE NAMESPACE PER RUNG, not one for the strip. `ViewThatFits` BUILDS all three
-        // candidates to measure them and renders one, so a single namespace would put three copies
-        // of the same geometry id on screen at once and SwiftUI would pick whichever it liked. Each
-        // rung is its own morph group; only one is ever rendered, so the plate still has exactly one
-        // travelling instance.
-        let morph =
-            switch labelling {
-            case .all: morphAllNamed
-            case .selectedOnly: morphSelectedNamed
-            case .none: morphUnnamed
-            }
-        return HStack(spacing: Slate.Metric.space1) {
-            PanelTabPlate(
-                // The folder register (user-directed 2026-08-03), not a lone document — the tab
-                // opens the whole project tree. `folder` also sidesteps the deprecated `doc`
-                // family (SF6 renamed it wholesale; the new constants outrun the package floor).
-                symbol: .folder, label: "Files", selected: surfaceTab == .code,
-                showsLabel: names(.code), morph: morph,
-            ) { selectSurface(.code) }
-                .help("Files — the project's embedded editor")
-            // Simulators sits beside Files because it is the other REAL surface — a live host
-            // resource, not the announced-but-empty Desktop.
-            PanelTabPlate(
-                symbol: .appleLogo, label: "Simulators", selected: surfaceTab == .simulators,
-                showsLabel: names(.simulators), morph: morph,
-            ) { selectSurface(.simulators) }
-                .help("Simulators — the host's iOS Simulator devices")
-            // "Emulators" names the tab (user-directed 2026-08-05) and the help text carries the
-            // rest: the surface also lists attached hardware, which no emulator is.
-            PanelTabPlate(
-                mark: .android, label: "Emulators", selected: surfaceTab == .android,
-                showsLabel: names(.android), morph: morph,
-            ) { selectSurface(.android) }
-                .help("Emulators — the host's Android emulators and attached devices")
-            PanelTabPlate(
-                symbol: .display, label: "Desktop", selected: surfaceTab == .desktop,
-                showsLabel: names(.desktop), morph: morph,
-            ) { selectSurface(.desktop) }
-                .help("Desktop — the host's window surface")
         }
     }
 

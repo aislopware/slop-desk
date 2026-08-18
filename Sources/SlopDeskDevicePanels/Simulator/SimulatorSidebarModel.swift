@@ -20,7 +20,7 @@
 // `DevicePanelRules` (`slopdesk_devicepanel`).
 
 // `os(macOS)` joins the guard: every type this file names is `#if os(macOS)` in the other
-// twenty-six files of this directory, and the mount, `CodeSidebarColumn`, is macOS-only too.
+// twenty-six files of this directory, and the mount, `MacCodePanelColumn`, is macOS-only too.
 // This was the one file in the cluster without it, so it still compiled for the iOS triple
 // and reached for symbols that are not there. Its twin, `AndroidSidebarModel`, had the same
 // gap, and both were invisible because `swift build` compiles the macOS slice only.

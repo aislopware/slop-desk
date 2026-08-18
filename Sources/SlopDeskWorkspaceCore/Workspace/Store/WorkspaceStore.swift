@@ -3584,7 +3584,7 @@ public extension WorkspaceStore {
 
     /// Pane `id`'s HOST-pushed key alone (guarded like ``paneProjectKey(_:)``'s first leg), `nil`
     /// while the pane is still on its cwd fallback — the alias-booking eligibility test above, and
-    /// the code panel's ensure gate (`CodeSidebarColumn`): ensuring on the transient pre-push cwd
+    /// the code panel's ensure gate (`MacCodePanelColumn`): ensuring on the transient pre-push cwd
     /// would spawn a stranded code-server for a root the project does not actually have.
     func hostPushedProjectKey(_ id: PaneID) -> String? {
         guard let key = projectKey(for: id), !key.isEmpty,

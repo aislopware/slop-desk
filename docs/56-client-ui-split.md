@@ -449,6 +449,42 @@ nothing is ever implemented twice. No stage copies a file: a surface either move
   snapshot rig mount a DETACHED island and photograph `.critical` memory pressure without arranging
   for a host to be in it. `MacChromeSnapshotRender` gained both probes; the island's renders BOTH
   layouts side by side, which the SwiftUI probe it replaces could not.
+
+  **The tenth is the RIGHT PANEL'S CHROME — its strip, its rail, and the four tabs both of them
+  draw.** `MacPanelStrip` carries the tabs, the showing surface's reload plate and the hide toggle;
+  `MacPanelRail` is what the collapsed panel narrows to, one plate wide, carrying the reopen toggle
+  and the same four tabs turned a quarter turn. `MacCodePanelColumn` is the column that holds them.
+  `PanelRail.swift`, `PanelTabPlate` and `AndroidRobotMark.swift` are DELETED.
+
+  The SURFACES did NOT cross, and that is a scope line rather than an exception. Three of the four
+  are already AppKit under a thin SwiftUI wrapper — a `WKWebView` for the workbench, an
+  `AVSampleBufferDisplayLayer` for each device stage — so a port would remove the wrapper, not a
+  framework choice; and the phone will want the same four surfaces on its own layout, which is what
+  makes them surfaces rather than chrome (§3.5: a surface crosses whole). `CodeSidebarColumn` was
+  renamed to `CodePanelSurfaces` to say exactly that, and the three panel models moved UP to the
+  column controller: the strip's reload plate now stands outside the SwiftUI tree, so the thing it
+  reloads has to outlive the view that draws it. That also states plainly what the `park()`/`resume()`
+  rules already relied on.
+
+  The four TABS went down to `SlopDeskClientCore` as `PanelTabs` — mark, word and help each — because
+  they were written twice, once across the strip and once down the rail, and the two lists had to
+  agree. Its WIDTH LADDER went with them, and stopped being a `ViewThatFits`: SwiftUI could only ask
+  "which rung fits" by building all three candidates, which cost a NAMESPACE PER RUNG (every
+  candidate is built, so one namespace would put three copies of the travelling plate's geometry on
+  screen at once). Said as arithmetic — `PanelTabs.labelling(available:cell:gap:named:selected:)` —
+  it is one answer, both frameworks can ask it, and `PanelTabsTests` pins the rung BOUNDARIES without
+  mounting anything. The Android head went down the same way, as `AndroidMarkPath`.
+
+  Three AppKit traps, all measured here. `frameCenterRotation` does NOT turn a layer-backed view
+  about its frame's centre — it pivots on the layer's anchor point, which is the frame's corner — and
+  a quarter turn threw every rail tab a whole tab-length out of the rail; the tab now stands in its
+  own footprint and turns its CONTENT, which is also what keeps its hit area from lying across both
+  neighbours. A mark's counter-turn cannot be a layer transform either: every layout pass re-syncs
+  the layer's geometry from the solved frame and resets `transform`, so each mark bakes its turn into
+  `draw(_:)`. And a hand-framed subview must be taken OUT of the engine
+  (`translatesAutoresizingMaskIntoConstraints = false`, no constraints of its own), or Auto Layout
+  re-imposes the `width == 0` autoresizing constraint it minted when the view was still `.zero` — the
+  Android mark carried that pair for its whole life and photographed as nothing at all.
 - **E — the Rust port (§4).**
 
 ## 4. What moves to Rust

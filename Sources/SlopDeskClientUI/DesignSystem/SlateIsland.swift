@@ -46,7 +46,7 @@ extension View {
     /// holds the window's left edge, and the band above it fills with the lights, the toggle and the
     /// horizontal tab strip — cream chips and tinted project beds that cannot stand on the glass.
     /// There the top side opens to the full ``Slate/Metric/bandHeight`` so the band keeps its ground.
-    /// The collapsed PANEL needs no such exception: it leaves a ``PanelRail`` of ground beside the
+    /// The collapsed PANEL needs no such exception: it leaves a rail of ground beside the
     /// island instead of parking a plate on the glass.
     ///
     /// That widening is a step of most of the band, and it must never be INSTANT: collapsing the

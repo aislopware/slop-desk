@@ -1299,7 +1299,7 @@ package enum Slate {
         /// case (92) and an iPad the wide one (150); both centre in this, so the two shapes read true
         /// against each other, and the caption under them still fits a name and its verb.
         package static let deviceCardWidth: CGFloat = 180
-        /// ``AndroidRobotMark``'s box in a tab plate — the ONE mark in the app that is a drawn path
+        /// ``AndroidMarkPath``'s box in a tab plate — the ONE mark in the app that is a drawn path
         /// rather than an SF Symbol, and therefore the one that needs a number of its own.
         ///
         /// The number came from measuring ink rather than ems. A tab's mark is drawn at a point size

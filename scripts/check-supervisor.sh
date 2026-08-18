@@ -4799,6 +4799,49 @@ if ! grep -q 'override func hitTest' Sources/SlopDeskMacUI/Chrome/MacTitlebarBan
 fi
 printf 'check-supervisor: one titlebar band, one connection reading.\n'
 
+# ── One panel chrome, one tab reading (docs/56 stage D) ─────────────────────────────────────────
+# The right panel's CHROME crossed whole: the strip over the surfaces, the rail the collapsed panel
+# leaves behind, and the four tabs both of them draw. The SURFACES stayed SwiftUI on purpose (three
+# of the four are already AppKit under a thin wrapper, and the phone will want them on its own
+# layout) — which is exactly why the chrome had to move: a strip that reloads a surface must outlive
+# the view that draws it.
+#
+# The two SwiftUI originals must stay DELETED. `PanelRail` was the collapsed panel's stand-in and
+# `AndroidRobotMark` the one mark no icon set ships; the mark is a `CGPath` in ClientCore now, so a
+# SwiftUI copy would be a second drawing of the same head.
+for gone in Sources/SlopDeskClientUI/Chrome/PanelRail.swift \
+  Sources/SlopDeskClientUI/DesignSystem/AndroidRobotMark.swift; do
+  if [[ -e "${gone}" ]]; then
+    fail "${gone} is back — the panel's chrome is MacPanelStrip + MacPanelRail (AppKit)"
+  fi
+done
+if grep -rqE '(struct|final class) (PanelRail|PanelTabPlate|AndroidRobotMark)\b' Sources/ 2> /dev/null; then
+  fail "a SwiftUI panel-chrome type is back — the tabs are MacPanelTabPlate, the mark AndroidMarkPath"
+fi
+# The four TABS are one list, in ClientCore, because they were written twice — once across the strip
+# and once down the rail — and the two had to agree on the mark, the word AND the help of every
+# surface. The WIDTH LADDER lives with them as arithmetic rather than a `ViewThatFits`, so a test can
+# ask it what a width affords without mounting anything.
+for half in Sources/SlopDeskMacUI/Panel/MacPanelStrip.swift \
+  Sources/SlopDeskMacUI/Panel/MacPanelTabGroup.swift; do
+  if ! grep -q 'PanelTabs' "${half}"; then
+    fail "${half} stopped reading PanelTabs — the panel's four tabs are ClientCore's, cut once"
+  fi
+done
+if ! grep -q 'AndroidMarkPath' Sources/SlopDeskMacUI/Panel/MacPanelTabPlate.swift; then
+  fail "MacPanelTabPlate stopped drawing AndroidMarkPath — the head's proportions are cut once"
+fi
+# NOTHING IN THE RAIL IS A TURNED VIEW. `frameCenterRotation` pivots a layer-backed view about its
+# layer's ANCHOR POINT — the frame's corner — which threw every rail tab out of the rail; and a
+# turned view's frame is still its unturned box, so its hit area would lie across both neighbours.
+# The tab stands in its footprint and turns its CONTENT.
+# Comments stripped first — the headers NAME the API they exist to warn about.
+if sed -E 's#^[[:space:]]*//.*##;s#^[[:space:]]*///.*##' Sources/SlopDeskMacUI/Panel/*.swift |
+  grep -q 'frameCenterRotation'; then
+  fail "a panel tab turns its VIEW again — turn the content, or the rail's hit areas overlap"
+fi
+printf 'check-supervisor: one panel chrome, one tab reading.\n'
+
 # ── One device-panel law, two device protocols ────────────────────────────────────────────────
 # The simulator panel and the Android panel differ in almost everything and should — one rotates on
 # the client and the other on the device, one sends touches in the fitted rect's space and the other

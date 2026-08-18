@@ -1,11 +1,12 @@
-// MacContentColumn — the centre column: the pane canvas with the titlebar band standing over it.
+// MacContentColumn — the centre column: the pane canvas, with the titlebar band standing over it and
+// the collapsed panel's rail standing at its trailing corner.
 //
-// The band is AppKit (``MacTitlebarBand``, docs/56 stage D); the CANVAS under it is still the hosted
-// SwiftUI ``ContentColumn``, and that split is the point of this controller. The two used to be one
-// SwiftUI view with the band as a full-bleed `.overlay(alignment: .top)`, which cost the band a
-// `ZStack` it had to be given hit-testing back through, one modifier at a time. As siblings the band
-// simply refuses every point it does not occupy (``MacTitlebarBand/hitTest(_:)``) and the canvas gets
-// the rest for free.
+// The band and the rail are AppKit (``MacTitlebarBand``, ``MacPanelRail``, docs/56 stage D); the
+// CANVAS between them is still the hosted SwiftUI ``ContentColumn``, and that split is the point of
+// this controller. The band used to be a full-bleed `.overlay(alignment: .top)` inside that one
+// SwiftUI view, which cost it a `ZStack` it had to be given hit-testing back through, one modifier at
+// a time. As siblings each simply refuses every point it does not occupy
+// (``MacTitlebarBand/hitTest(_:)``, ``MacPanelRail/hitTest(_:)``) and the canvas gets the rest free.
 //
 // THE CANVAS STAYS SWIFTUI ON PURPOSE, and it is the next surface to cross rather than an exception:
 // it is `SplitContainer` and the twenty-odd files under it — a whole pane subtree, and docs/56 §3.5's
@@ -55,8 +56,9 @@ final class MacContentColumn: NSViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        // The canvas: the pane grid, its island geometry and the collapsed panel's rail — everything
-        // that is drawn INSIDE the column's ground.
+        // The canvas: the pane grid and its island geometry — everything that is drawn INSIDE the
+        // column's ground. It keeps the rail's WIDTH reserved (its own trailing padding) even though
+        // the rail itself is no longer its child, because the moat is measured inside what is left.
         let canvas = WorkspaceColumnHosts.content(
             store: store, connection: connection, chrome: chrome, onConnect: onConnect,
             paneDrag: paneDrag, overlay: overlay,
@@ -69,6 +71,7 @@ final class MacContentColumn: NSViewController {
             store: store, connection: connection, chrome: chrome, onConnect: onConnect,
         )
         view.addSubview(band)
+        view.addSubview(rail)
 
         NSLayoutConstraint.activate([
             canvas.view.topAnchor.constraint(equalTo: view.topAnchor),
@@ -78,9 +81,37 @@ final class MacContentColumn: NSViewController {
             band.topAnchor.constraint(equalTo: view.topAnchor),
             band.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             band.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            // The rail hangs from the column's TOP TRAILING corner and is as tall as what it carries
+            // — no bottom anchor, so the canvas keeps every point below it.
+            rail.topAnchor.constraint(equalTo: view.topAnchor),
+            rail.trailingAnchor.constraint(equalTo: view.trailingAnchor),
         ])
+        followRail()
         paint()
     }
+
+    /// What the collapsed panel leaves behind. Mounted at ALL times and travelling in and out, because
+    /// mounting it on the flag put a turned rail on top of a terminal that had not yet made room for
+    /// it (user-reported 2026-08-09) — see ``MacPanelRail/travel(railed:animated:)``.
+    private lazy var rail = MacPanelRail(chrome: chrome)
+
+    /// The rail arrives when the panel collapses. `animated` is false only for the first read, which
+    /// is the launch state rather than a gesture: a window that opens with the panel already collapsed
+    /// should not play the arrival.
+    private func followRail() {
+        var railed = false
+        withObservationTracking {
+            railed = chrome.codeSidebarCollapsed
+        } onChange: { [weak self] in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self?.followRail() }
+            }
+        }
+        rail.travel(railed: railed, animated: settled)
+        settled = true
+    }
+
+    private var settled = false
 
     /// ONE ISLAND: this column paints GROUND end-to-end and the pane canvas is lifted off it as the
     /// window's single island. The band beside that island is the same ground — the tone the navigator

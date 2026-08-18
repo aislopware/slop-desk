@@ -395,7 +395,7 @@ info status. Everything else interactive is the system's.
   STRIP band standing on the ground, closed by a `Line.divider` hairline. Its chips are ghost at rest, the hover wash under the
   pointer, and the SELECTED chip is a COMPACT ISLAND (island fill + hairline, ink on the glass) —
   the SAME chip the sidebar tab rows wear, because both are tabs answering the same question.
-  **Collapsing it does not delete it — it narrows it to a RAIL** (`PanelRail`, user-directed
+  **Collapsing it does not delete it — it narrows it to a RAIL** (`MacPanelRail`, user-directed
   2026-08-09): one plate wide, carrying the toggle at the band's control line (at exactly the x the
   open panel's own hide toggle stands at, so the target never moves) and the four surface tabs under
   it, turned a quarter turn to run down the rail. Same tabs, same selection, same plate — only the

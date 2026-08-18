@@ -243,6 +243,58 @@ final class MacChromeSnapshotRender: XCTestCase {
         )
     }
 
+    // MARK: - The right panel's strip, at every rung of its width ladder
+
+    /// Renders the REAL ``MacPanelStrip`` at a sweep of panel widths, so the ladder is visible AS a
+    /// ladder: every tab named, then only the selected one, then none — with the travelling selection
+    /// plate under Simulators and the two trailing action plates (reload, hide) paid for at every rung.
+    ///
+    /// The sweep straddles the two rung boundaries rather than sampling three tidy widths, because the
+    /// thing being judged is where a word is GIVEN UP: a strip that drops every label one rung early
+    /// reads as a bug, and only the pair of widths either side of a boundary shows it. Writes
+    /// `panel-strip.png`.
+    func testRenderPanelStrip() throws {
+        let dir = try outputDirectory()
+        let column = stack()
+        // ⚠️ The last two are BELOW the panel's shipping minimum (``Slate/Metric/codeSidebarMinWidth``)
+        // and are in the sheet anyway: the bottom rung is unreachable by dragging, and a rung nobody
+        // can photograph is a rung nobody notices has rotted. Narrower still and the tabs would run
+        // under the trailing plates — which is a width the split view does not hand out.
+        for width in [520, 440, 432, 420, 300, 240] as [CGFloat] {
+            let chrome = WorkspaceChromeState()
+            // Simulators, not the default Files: the selected tab is the one the middle rung keeps,
+            // and keeping the SHORTEST word would photograph the easy case.
+            chrome.panelSurface = .simulators
+            let strip = MacPanelStrip(chrome: chrome)
+            // The workbench counts as mounted, so the reload plate is in frame at every rung — it is
+            // the fixed cost the ladder measures against.
+            strip.codeReloadable = true
+            column.addArrangedSubview(strip)
+            strip.widthAnchor.constraint(equalToConstant: width).isActive = true
+        }
+        try render(column, width: 560, to: dir, named: "panel-strip.png")
+    }
+
+    // MARK: - The rail the collapsed panel leaves behind
+
+    /// Renders the REAL ``MacPanelRail`` in its arrived state — the toggle on the band's control line
+    /// and the four surface tabs under it, each turned a quarter turn with its MARK turned back out.
+    ///
+    /// That counter-turn is the whole reason this image exists: a rotated `folder` reads as a shape
+    /// rather than as a folder, and whether the marks came back upright is not a thing arithmetic can
+    /// answer. Writes `panel-rail.png`.
+    func testRenderPanelRail() throws {
+        let dir = try outputDirectory()
+        let chrome = WorkspaceChromeState()
+        chrome.panelSurface = .android
+        chrome.codeSidebarCollapsed = true
+        let rail = MacPanelRail(chrome: chrome)
+        // Arrived, WITHOUT the arrival: the travel is a delayed layer animation and the shutter would
+        // otherwise catch the rail mid-slide at whatever opacity the pump happened to leave it at.
+        rail.travel(railed: true, animated: false)
+        try render(rail, width: Slate.Metric.panelRailWidth, to: dir, named: "panel-rail.png")
+    }
+
     // MARK: - The fixtures
 
     /// One row of the island's ink sheet: who is on the other end, how the link reads, and what the

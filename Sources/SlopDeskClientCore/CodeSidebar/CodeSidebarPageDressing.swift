@@ -13,7 +13,7 @@
 //     — but the surfaces the user actually lives on never adopted them: editor TABS are square
 //     full-bleed rectangles, list selections and scrollbar sliders are hard rectangles. The sheet
 //     re-cuts exactly those in the app's geometry (tabs = floating rounded plates, the
-//     `PanelTabPlate` vocabulary), touching GEOMETRY only — every colour stays the theme's.
+//     `MacPanelTabPlate` vocabulary), touching GEOMETRY only — every colour stays the theme's.
 //   • The empty-editor letterpress. code-server's stock watermark is ITS logo; the panel is
 //     SlopDesk's surface, so the slopcat (docs/brand/logo-slopcat.svg, recoloured to the theme's
 //     tertiary ink at the stock watermark's subtlety) replaces it via a background-image override.
@@ -146,7 +146,7 @@ package enum CodeSidebarPageDressing {
        `editorGroup.border` var (the host seed sets it): this sheet stays free of colour literals,
        which is what keeps it from drifting when the theme moves.
        ⚠️ The doubled seam reported here on 2026-08-09 was NOT this line. It was the client's own
-       rule under the panel tab row, a few pixels above it (`CodeSidebarColumn`); that one is the
+       rule under the panel tab row, a few pixels above it (`CodePanelSurfaces`); that one is the
        one that went. */
     .monaco-workbench .part.editor > .content .editor-group-container > .title .tabs-container,
     .monaco-workbench .part.editor > .content .editor-group-container > .title .editor-actions {

@@ -331,7 +331,7 @@ struct SimulatorDeviceList: View {
 
     /// The selection write rides ONE `withAnimation` transaction, which is what carries the drill —
     /// the panel's transition vocabulary lives on the surface that owns both depths
-    /// (``CodeSidebarColumn``), and the views themselves declare no animation for it. Same shape as
+    /// (``CodePanelSurfaces``), and the views themselves declare no animation for it. Same shape as
     /// the tab strip's `selectSurface`: the caller opens the beat, the transitions ride it.
     private func enter(_ udid: String) {
         withAnimation(Slate.Anim.standard) { model.select(udid) }

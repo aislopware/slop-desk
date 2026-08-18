@@ -19,6 +19,7 @@
 #if os(macOS)
 import AppKit
 import SlopDeskClientCore
+import SlopDeskDevicePanels
 import SlopDeskWorkspaceCore
 import SwiftUI
 
@@ -44,17 +45,24 @@ package enum WorkspaceColumnHosts {
         )
     }
 
-    /// The RIGHT column: the project-scoped embedded workbench + the device panels beside it.
-    package static func codeSidebar(
+    /// The RIGHT column's four SURFACES: the project-scoped embedded workbench, the two device sets and
+    /// the announced Desktop. The strip of tabs over them is AppKit and is mounted as this view's
+    /// SIBLING — see ``SlopDeskMacUI/MacCodePanelColumn``, which also owns the three models, because
+    /// the strip's reload plate drives them from outside this tree.
+    package static func codePanelSurfaces(
         store: WorkspaceStore,
         connection: AppConnection,
         chrome: WorkspaceChromeState,
         preferences: PreferencesStore?,
+        model: CodeSidebarModel,
+        simulatorModel: SimulatorSidebarModel,
+        androidModel: AndroidSidebarModel,
         overlay: OverlayCoordinator?,
     ) -> NSViewController {
         hosted(
-            CodeSidebarColumn(
+            CodePanelSurfaces(
                 store: store, connection: connection, chrome: chrome, preferences: preferences,
+                model: model, simulatorModel: simulatorModel, androidModel: androidModel,
             ),
             overlay: overlay,
         )

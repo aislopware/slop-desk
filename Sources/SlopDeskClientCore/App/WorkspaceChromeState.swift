@@ -45,7 +45,7 @@ package final class WorkspaceChromeState {
     package var codeSidebarCollapsed = Defaults[.codeSidebarCollapsed]
     /// Which surface the RIGHT panel is showing. It lives here rather than in the panel's own view
     /// state because the panel is no longer the only thing that renders its tabs: collapsing leaves
-    /// a RAIL carrying the same four tabs turned on their side (``PanelRail``), and two surfaces
+    /// a RAIL carrying the same four tabs turned on their side (`SlopDeskMacUI/MacPanelRail`), and two surfaces
     /// showing one selection cannot each own it. Per-window, not persisted — the panel always comes
     /// back on Files, its primary surface.
     package var panelSurface: PanelSurface = .code
@@ -129,7 +129,7 @@ package final class WorkspaceChromeState {
 /// selects. Two REAL host resources (the project's workbench, the host's simulator and device sets)
 /// and one announced-but-empty one; they share no protocol, which is why they are four surfaces
 /// rather than one with modes.
-package enum PanelSurface {
+package enum PanelSurface: Equatable, Sendable, CaseIterable {
     case code
     case simulators
     case android

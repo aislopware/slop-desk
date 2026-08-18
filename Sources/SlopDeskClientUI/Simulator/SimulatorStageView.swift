@@ -1,7 +1,7 @@
 // SimulatorStageView — the whole streaming surface: what device this is, the device itself, what you
 // can do to it, and what it is saying.
 //
-// Split out of `CodeSidebarColumn` when the panel grew past a screen and two buttons. The column now
+// Split out of `CodePanelSurfaces` when the panel grew past a screen and two buttons. The column now
 // picks a surface; this file owns everything inside the Simulators one, which is what keeps the
 // column readable as a switch rather than as a device panel with a code panel attached.
 //
@@ -342,7 +342,7 @@ struct SimulatorStageView: View {
     // has exactly one thing for reporting an event, and one that read as an alert from some other
     // application. Every report now leaves through the app's notification card; the announcement lives
     // on the surface that outlives both the stage and the list (see
-    // ``CodeSidebarColumn/announce(_:isFailure:)``).
+    // ``CodePanelSurfaces/announce(_:isFailure:)``).
     //
     // What stays here is the STATE, which a notification cannot carry: a stream with no video is
     // drawn on the stage itself, where the ambiguous empty rectangle is, with the retry beside it.

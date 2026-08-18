@@ -1,10 +1,14 @@
 // ContentColumn — the centre content area's CANVAS: the active tab's pane tree via the
-// identity-preserving `SplitContainer` (a Slate empty-state when there is no session/tab), the island
-// geometry that lifts it off the ground, and the rail the collapsed code panel leaves behind.
+// identity-preserving `SplitContainer` (a Slate empty-state when there is no session/tab) and the
+// island geometry that lifts it off the ground.
 //
-// The TITLEBAR BAND is no longer here. It is AppKit now (``SlopDeskMacUI/MacTitlebarBand``), mounted
-// as this column's SIBLING by ``SlopDeskMacUI/MacContentColumn`` rather than as an overlay on top of
-// it — which is why nothing in this file reserves the band's height or hands hit-testing back to it.
+// The TITLEBAR BAND and the collapsed panel's RAIL are no longer here. Both are AppKit now
+// (``SlopDeskMacUI/MacTitlebarBand``, ``SlopDeskMacUI/MacPanelRail``), mounted as this column's
+// SIBLINGS by ``SlopDeskMacUI/MacContentColumn`` rather than as overlays on top of it — which is why
+// nothing in this file reserves the band's height or hands hit-testing back to either.
+//
+// What DOES stay is the rail's WIDTH. The moat is measured inside what the rail leaves, so the column
+// that draws the island is the one that has to give the width back.
 
 #if canImport(SwiftUI)
 import SlopDeskClientCore
@@ -70,12 +74,11 @@ struct ContentColumn: View {
         paneArea
             .slateIsland(clearingBand: chrome.sidebarCollapsed)
             // The collapsed panel leaves a RAIL on the window's trailing edge rather than vanishing
-            // (``PanelRail``, user-directed 2026-08-09), so this column gives back its width. The
-            // island's own moat is measured inside what is left, which keeps the rail standing on
-            // ground with the usual channel between it and the glass.
+            // (``SlopDeskMacUI/MacPanelRail``, user-directed 2026-08-09), so this column gives back
+            // its width. The island's own moat is measured inside what is left, which keeps the rail
+            // standing on ground with the usual channel between it and the glass.
             .padding(.trailing, railed ? Slate.Metric.panelRailWidth : 0)
             .animation(Slate.Anim.columnSlide, value: railed)
-            .overlay(alignment: .topTrailing) { rail }
         #else
         paneArea
         #endif
@@ -84,36 +87,6 @@ struct ContentColumn: View {
     #if os(macOS)
     /// True while the panel is standing in as its rail.
     private var railed: Bool { chrome.codeSidebarCollapsed }
-
-    /// The rail ARRIVES AND LEAVES; it does not appear (user-reported 2026-08-09 — mounted on the
-    /// flag it stood, already turned on its side, on top of a terminal that had not yet made room
-    /// for it).
-    ///
-    /// It is mounted at all times and travels instead, which is the only way to time both halves of
-    /// the gesture independently:
-    ///   • COLLAPSING — the rail waits out most of the column's exit and then slides in from the
-    ///     window's trailing edge, so it lands in ground the panel has already vacated. Same
-    ///     arrive-on-land contract the horizontal tab strip keeps with the navigator, off the same
-    ///     token, so the window only ever has ONE column gesture running.
-    ///   • EXPANDING — no delay and a quick out: the rail clears the corner before the panel's own
-    ///     edge reaches it. A late exit is what makes a sliding panel look like it is shoving
-    ///     furniture.
-    /// Slide AND fade, because the distance is one plate: an object crossing 40pt on the emphasized
-    /// curve arrives before the eye has caught it, and the opacity is what makes the arrival read.
-    private var rail: some View {
-        PanelRail(chrome: chrome)
-            .offset(x: railed ? 0 : Slate.Metric.panelRailWidth)
-            .opacity(railed ? 1 : 0)
-            // A rail at zero opacity is still a rail: it sits over the island's trailing moat while
-            // the panel is open, and would eat clicks meant for the glass.
-            .allowsHitTesting(railed)
-            .animation(
-                railed
-                    ? Slate.Anim.columnSlide.delay(Slate.Anim.columnSlideDuration * 0.55)
-                    : Slate.Anim.fadeOut,
-                value: railed,
-            )
-    }
     #endif
 
     private var paneArea: some View {

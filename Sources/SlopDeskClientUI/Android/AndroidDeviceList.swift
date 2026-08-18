@@ -262,7 +262,7 @@ struct AndroidDeviceList: View {
 
     /// The selection write rides ONE `withAnimation` transaction, which is what carries the drill —
     /// the panel's transition vocabulary lives on the surface that owns both depths
-    /// (``CodeSidebarColumn``), and the views themselves declare no animation for it.
+    /// (``CodePanelSurfaces``), and the views themselves declare no animation for it.
     private func enter(_ device: AndroidDevice) {
         // A booting emulator may be entered — the stage waits for it. See ``AndroidRunningCard``'s
         // tap for why a physical device must actually be running.

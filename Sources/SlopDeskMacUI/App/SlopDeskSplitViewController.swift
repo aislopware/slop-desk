@@ -131,12 +131,12 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         contentItem.minimumThickness = Self.contentMinWidth
 
         // 3) Code panel — the RIGHT sidebar: the project-scoped embedded VS Code (code-server in a
-        //    pooled WKWebView, `CodeSidebarColumn`). A PLAIN trailing split item, deliberately NOT
+        //    pooled WKWebView, `MacCodePanelColumn`). A PLAIN trailing split item, deliberately NOT
         //    `NSSplitViewItem(inspectorWithViewController:)` — the inspector style's collapse tears the
         //    hosted view down, which would kill the webview; a plain item just unparents it while the
         //    pooled WKWebView (and its web-content process) survives for a warm re-expand. Same holding
         //    priority as the left sidebar so a window resize grows the CONTENT column.
-        let codeColumn = WorkspaceColumnHosts.codeSidebar(
+        let codeColumn = MacCodePanelColumn(
             store: store, connection: connection, chrome: chrome, preferences: preferences,
             overlay: overlay,
         )

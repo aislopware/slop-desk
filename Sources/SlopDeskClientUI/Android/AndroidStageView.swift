@@ -263,7 +263,7 @@ struct AndroidStageView: View {
 
     // THIS PANEL DRAWS NO BANNER. Every report leaves through the app's notification card; the
     // announcement lives on the surface that outlives both the stage and the list (see
-    // ``CodeSidebarColumn``). What stays here is the STATE, which a notification cannot carry: a
+    // ``CodePanelSurfaces``). What stays here is the STATE, which a notification cannot carry: a
     // mirror with no video is drawn on the stage itself, where the ambiguous empty rectangle is.
 }
 #endif

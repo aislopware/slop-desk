@@ -722,9 +722,10 @@ package final class CodeSidebarWebViewPool {
         recency.removeAll { $0 == projectRoot }
     }
 
-    /// Hard-reload the project's webview (the header's reload button) — a no-op if none exists yet
-    /// (the accompanying generation bump re-ensures and mints one).
-    func reload(projectRoot: String) {
+    /// Hard-reload the project's webview (the strip's reload plate) — a no-op if none exists yet
+    /// (the accompanying generation bump re-ensures and mints one). `package` because the plate that
+    /// calls it is AppKit, one target up: the panel's strip crossed with docs/56 stage D.
+    package func reload(projectRoot: String) {
         webViews[projectRoot]?.reload()
     }
 
