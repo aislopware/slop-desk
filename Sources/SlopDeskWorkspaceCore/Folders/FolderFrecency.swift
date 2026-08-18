@@ -55,6 +55,46 @@ public enum FolderFrecency {
     /// Older than a month — the lowest, "stale" weight (still > 0 so a frequent old folder is not erased).
     public static let weightStale = Int(slopdesk_folder_weight(SLOPDESK_FOLDER_WEIGHT_STALE))
 
+    // MARK: The store's limits (the crate's, so neither language writes the numbers down twice)
+
+    /// The default ceiling on stored entries — past it the least-frecent are evicted.
+    public static let defaultMaxEntries = Int(slopdesk_folder_limit(SLOPDESK_FOLDER_LIMIT_MAX_ENTRIES))
+    /// The longest storable path, in Unicode scalars. A longer cwd is refused rather than stored.
+    public static let maxPathScalars = Int(slopdesk_folder_limit(SLOPDESK_FOLDER_LIMIT_PATH_SCALARS))
+
+    // MARK: Validity + repair
+
+    /// Whether a path may be STORED: non-blank once surrounding whitespace is discounted, and within the
+    /// scalar cap. The path is kept verbatim — the store keys on what the shell reported.
+    public static func isValidPath(_ path: String) -> Bool {
+        let utf8 = Array(path.utf8)
+        return utf8.withUnsafeBufferPointer { slopdesk_folder_path_is_valid($0.baseAddress, $0.count) }
+    }
+
+    /// The entries of a LOADED database worth keeping, in the order they should be stored.
+    ///
+    /// A file a person can open in an editor is repaired rather than trusted: an entry that could not have
+    /// been written is dropped, and an over-cap file is trimmed to the `maxEntries` most recently accessed.
+    /// The trim reads no clock, so the same file always repairs into the same database.
+    public static func sanitized(entries: [FolderEntry], maxEntries: Int) -> [FolderEntry] {
+        let cap = Swift.max(0, maxEntries)
+        let order: [UInt32] = lent(entries) { records, arena in
+            let needed = slopdesk_folder_sanitized(
+                records.baseAddress, records.count, arena.baseAddress, arena.count, cap, nil, 0,
+            )
+            guard needed > 0 else { return [] }
+            var indices = [UInt32](repeating: 0, count: needed)
+            let written = indices.withUnsafeMutableBufferPointer { out in
+                slopdesk_folder_sanitized(
+                    records.baseAddress, records.count, arena.baseAddress, arena.count, cap,
+                    out.baseAddress, out.count,
+                )
+            }
+            return written == needed ? indices : []
+        }
+        return order.compactMap { index in entries.indices.contains(Int(index)) ? entries[Int(index)] : nil }
+    }
+
     // MARK: Scoring
 
     /// The recency weight for an entry whose `lastAccess` is `now - lastAccess` old.

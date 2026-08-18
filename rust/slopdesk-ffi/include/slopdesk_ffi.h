@@ -1850,6 +1850,11 @@ size_t slopdesk_cli_version_summary(const uint8_t *version, size_t version_len,
 #define SLOPDESK_FOLDER_WEIGHT_MONTH 3u
 #define SLOPDESK_FOLDER_WEIGHT_STALE 4u
 
+/* The store's limits, for `slopdesk_folder_limit`: the ceiling on stored entries, and the longest
+ * storable path in Unicode scalars. An unknown code answers 0. */
+#define SLOPDESK_FOLDER_LIMIT_MAX_ENTRIES 0u
+#define SLOPDESK_FOLDER_LIMIT_PATH_SCALARS 1u
+
 /* One folder record: a path naming bytes in the arena lent alongside, plus the two scored terms. */
 typedef struct {
   SlopDeskByteSpan path;
@@ -1871,6 +1876,11 @@ int64_t slopdesk_folder_score(int64_t access_count, double last_access, double n
 size_t slopdesk_folder_ranked(const SlopDeskFolderEntry *entries, size_t count,
                               const uint8_t *arena, size_t arena_len, double now, int64_t limit,
                               uint32_t *order, size_t order_cap);
+size_t slopdesk_folder_limit(uint32_t limit);
+bool slopdesk_folder_path_is_valid(const uint8_t *path, size_t len);
+size_t slopdesk_folder_sanitized(const SlopDeskFolderEntry *entries, size_t count,
+                                 const uint8_t *arena, size_t arena_len, size_t max_entries,
+                                 uint32_t *order, size_t order_cap);
 size_t slopdesk_jump_resolve(const uint8_t *query, size_t query_len,
                              const SlopDeskFolderEntry *entries, size_t count,
                              const uint8_t *entry_arena, size_t entry_arena_len, double now,

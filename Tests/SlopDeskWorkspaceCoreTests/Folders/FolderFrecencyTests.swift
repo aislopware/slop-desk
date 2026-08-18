@@ -171,7 +171,7 @@ final class FolderFrecencyTests: XCTestCase {
 
         store.record(cwd: "")
         store.record(cwd: "    \n\t ")
-        store.record(cwd: String(repeating: "x", count: FolderFrecencyStore.maxPathLength + 1))
+        store.record(cwd: String(repeating: "x", count: FolderFrecency.maxPathScalars + 1))
         XCTAssertTrue(store.entries.isEmpty, "validate-then-store rejects empty/whitespace/over-long paths")
 
         store.record(cwd: "/ok")
@@ -271,7 +271,7 @@ final class FolderFrecencyTests: XCTestCase {
         let url = tempURL()
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let longPath = String(repeating: "x", count: FolderFrecencyStore.maxPathLength + 1)
+        let longPath = String(repeating: "x", count: FolderFrecency.maxPathScalars + 1)
         let payload = """
         { "schemaVersion": \(FolderFrecencyStore.currentSchemaVersion), "entries": [
           { "path": "/keep", "accessCount": 2, "lastAccess": 0 },
@@ -282,5 +282,23 @@ final class FolderFrecencyTests: XCTestCase {
         try? Data(payload.utf8).write(to: url)
         let store = FolderFrecencyStore(fileURL: url, now: { self.base })
         XCTAssertEqual(store.entries.map(\.path), ["/keep"], "validate-on-load drops empty/over-long paths")
+    }
+
+    func testLoadTrimsAnOverCapFileToTheFreshest() {
+        let url = tempURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let payload = """
+        { "schemaVersion": \(FolderFrecencyStore.currentSchemaVersion), "entries": [
+          { "path": "/oldest", "accessCount": 99, "lastAccess": 0 },
+          { "path": "/newest", "accessCount": 1, "lastAccess": 200 },
+          { "path": "/middle", "accessCount": 50, "lastAccess": 100 }
+        ] }
+        """
+        try? Data(payload.utf8).write(to: url)
+        let store = FolderFrecencyStore(fileURL: url, now: { self.base }, maxEntries: 2)
+        // Frequency is what RANKS; what a hand-edited over-cap file loses is the least RECENT, and
+        // the trim reads no clock — the same file always loads into the same store.
+        XCTAssertEqual(store.entries.map(\.path), ["/newest", "/middle"])
     }
 }
