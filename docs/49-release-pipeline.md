@@ -117,10 +117,11 @@ better-update env set APPLE_CERTIFICATE_PASSWORD='<the passphrase>' \
 rm ~/Desktop/developer-id.p12          # the vault is now the only copy outside the keychain
 ```
 
-The CLI must be newer than `0.72.0` — older builds are refused by the server. **Pin the version
-explicitly** (`bun add -g @better-update/cli@0.73.1`): bun's `minimumReleaseAge` holds back
-packages published in the last 24 h, so `@latest` can quietly resolve to a build the server then
-rejects.
+The CLI must be newer than `0.72.0` — older builds are refused by the server. CI installs
+`@latest` **with `--minimum-release-age=0`**, and that flag is load-bearing: bun holds back
+packages published in the last 24 h by default, so a bare `@latest` can quietly resolve to a
+build the server then rejects. That hazard is why this used to be pinned to an exact version;
+disabling the hold-back removes it without freezing CI on a build that ages out.
 
 Every `credentials` and `env set` command needs the org vault **unlocked** on this device
 (`better-update credentials unlock`, which prompts for the device passphrase and caches the key in

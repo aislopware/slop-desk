@@ -182,9 +182,11 @@ jobs:
           set -euo pipefail
           umask 077
 
-          # Pinned, not @latest: bun's minimumReleaseAge holds back same-day publishes, so
-          # @latest can quietly resolve to a build older than the server's >0.72.0 floor.
-          bun add -g @better-update/cli@0.73.1
+          # @latest, with --minimum-release-age=0 as a required companion rather than decoration:
+          # bun holds back same-day publishes by default, so @latest can quietly resolve to a
+          # build older than the server's >0.72.0 floor — the very reason this used to be pinned.
+          # Disabling the hold-back is what makes @latest actually mean latest.
+          bun add -g @better-update/cli@latest --minimum-release-age=0
           vault="${RUNNER_TEMP}/vault.sh"
           better-update env pull --environment production --stdout > "${vault}"
 
@@ -332,9 +334,11 @@ jobs:
           set -euo pipefail
           umask 077
 
-          # Pinned, not @latest: bun's minimumReleaseAge holds back same-day publishes, so
-          # @latest can quietly resolve to a build older than the server's >0.72.0 floor.
-          bun add -g @better-update/cli@0.73.1
+          # @latest, with --minimum-release-age=0 as a required companion rather than decoration:
+          # bun holds back same-day publishes by default, so @latest can quietly resolve to a
+          # build older than the server's >0.72.0 floor — the very reason this used to be pinned.
+          # Disabling the hold-back is what makes @latest actually mean latest.
+          bun add -g @better-update/cli@latest --minimum-release-age=0
 
           # Same pull-mask-source shape as the package job. `env get` renders a table for a
           # human; only `env pull --stdout` emits machine-readable `export KEY='value'` lines.
