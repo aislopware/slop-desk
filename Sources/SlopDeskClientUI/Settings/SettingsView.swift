@@ -1117,33 +1117,24 @@ private struct AgentsSettingsTab: View {
 
     @Default(.recordClipboardHistory) private var recordClipboardHistory
 
-    // The "Agent Behaviour" toggles. badge×3 + notify×2 are fire-time `Defaults.Keys` (apply
-    // live); prevent-sleep / resume-on-recovery ride the `AgentPreferences` sidecar (`$store.agent`, reconnect).
+    // The badge toggles are fire-time `Defaults.Keys` and drive the GLOBAL `AgentBadgeGates` the
+    // sidebar applies (a per-pane override lives on the tab context-menu). Prevent Sleep and Resume
+    // on Recovery ride the `AgentPreferences` sidecar instead, which is why they are a group with a
+    // `.reconnect` footer rather than three more rows above.
     @Default(.agentBadgeWhileProcessing) private var agentBadgeWhileProcessing
     @Default(.agentBadgeWhenComplete) private var agentBadgeWhenComplete
     @Default(.agentBadgeWhenAwaitingInput) private var agentBadgeWhenAwaitingInput
-    @Default(.agentNotifyTaskComplete) private var agentNotifyTaskComplete
-    @Default(.agentNotifyAwaitInput) private var agentNotifyAwaitInput
 
-    /// The Agent-Behaviour section is greyed out until at least one integration is installed —
+    /// The Agent-Behaviour groups are greyed out until at least one integration is installed —
     /// read off the install-card controller's state. `nil`/disconnected ⇒ not installed ⇒ greyed.
+    /// A condition on the CONTROLLER's live state, not on another setting, so it stays here.
     private var behaviorEnabled: Bool { AgentSettingsCard.behaviourEnabled(agentHooks) }
 
     var body: some View {
         Form {
-            claudeCodeSection
-
-            // "Agent detection (host)" is gone. It held two switches — the foreground-process watch
-            // and the Claude hooks — over the machinery that tells you what the agent in a pane is
-            // doing, which is what this product is for. Neither had an OFF worth offering; both are
-            // now unconditional. What remains a choice is INSTALLING the hooks into the user's own
-            // `~/.claude/settings.json`, which the Claude Code card above owns.
-            agentBehaviorSection
-            agentBehaviorHostSection
-
-            slateFormSection("Behaviour") {
-                Toggle("Record clipboard history", isOn: $recordClipboardHistory)
-                timingFooter(.live)
+            ForEach(SettingsLayout.groups(SettingsSection.agents.rawValue, for: .current)) { group in
+                settingsGroup(group) { row in control(row) }
+                    .disabled(group.title.hasPrefix("Agent Behaviour") && !behaviorEnabled)
             }
         }
         .formStyle(.grouped)
@@ -1152,50 +1143,55 @@ private struct AgentsSettingsTab: View {
         .task { await agentHooks?.refresh() }
     }
 
-    // MARK: Agent Behaviour (badge×3 + notify×2, greyed until an integration is installed)
-
-    /// The "Agent Behaviour" badge/notify toggles (apply LIVE). Greyed out until at least one
-    /// integration is installed (``behaviorEnabled``); Claude-only. The badge toggles drive the GLOBAL
-    /// ``AgentBadgeGates`` default the sidebar applies (a per-pane override lives on the tab context-menu).
-    private var agentBehaviorSection: some View {
-        slateFormSection("Agent Behaviour") {
-            SettingsGlyphToggleRow(
-                .circleDashed, "Badge While Processing",
-                "Ring the tab while the agent is working.", isOn: $agentBadgeWhileProcessing,
-            )
-            SettingsGlyphToggleRow(
-                .checkmarkCircle, "Badge When Task Completes",
-                "Mark the tab when the agent goes idle.", isOn: $agentBadgeWhenComplete,
-            )
-            SettingsGlyphToggleRow(
-                .handRaised, "Badge When Awaiting Input",
-                "Mark the tab when the agent needs approval.", isOn: $agentBadgeWhenAwaitingInput,
-            )
-            SettingsGlyphToggleRow(
-                .bell, "Notify When Task Completes", isOn: $agentNotifyTaskComplete,
-            )
-            SettingsGlyphToggleRow(
-                .bellBadge, "Notify When Awaiting Input", isOn: $agentNotifyAwaitInput,
-            )
-            if !behaviorEnabled {
-                Text("Install an integration above to configure agent behaviour.")
-                    .font(SettingsType.subtitle)
-                    .foregroundStyle(SettingsInk.tertiary)
+    /// One row, by the setting it edits — see `GeneralSettingsTab.control(_:)` for why the binding is
+    /// the half that cannot cross.
+    @ViewBuilder
+    private func control(_ row: SettingsLayout.Row) -> some View {
+        switch row.key {
+        case SettingsKey.agentBadgeWhileProcessing: toggle(row, $agentBadgeWhileProcessing)
+        case SettingsKey.agentBadgeWhenComplete: toggle(row, $agentBadgeWhenComplete)
+        case SettingsKey.agentBadgeWhenAwaitingInput: toggle(row, $agentBadgeWhenAwaitingInput)
+        case SettingsKey.recordClipboardHistory: toggle(row, $recordClipboardHistory)
+        case AllSettingsCatalog.RenderKey.agentPreventSleep:
+            toggle(row, hostFlag($store.agent.preventSleep, AgentPreferences.preventSleepDefault))
+        case AllSettingsCatalog.RenderKey.agentResumeOnRecovery:
+            toggle(row, hostFlag($store.agent.resumeOnRecovery, AgentPreferences.resumeOnRecoveryDefault))
+        default:
+            if case .note = row.control {
+                // The note explains the greying, so it appears only while the group is grey.
+                if !behaviorEnabled {
+                    Text(row.subtitle)
+                        .font(SettingsType.subtitle)
+                        .foregroundStyle(SettingsInk.tertiary)
+                }
+            } else {
+                bespoke(row)
             }
-            timingFooter(.live)
         }
-        .disabled(!behaviorEnabled)
     }
 
-    /// The host-side Agent-Behaviour flags (apply on RECONNECT) — Prevent Sleep + Resume on Recovery, riding
-    /// the ``AgentPreferences`` sidecar (`$store.agent`). Greyed alongside the live section; Claude-only.
-    private var agentBehaviorHostSection: some View {
-        slateFormSection("Agent Behaviour (host)") {
-            optionalBoolToggle("Prevent Sleep While Processing", $store.agent.preventSleep)
-            optionalBoolToggle("Resume on Recovery", $store.agent.resumeOnRecovery)
-            timingFooter(.reconnect)
+    /// The one group this page draws itself: the install-hooks card, which is a privileged write to
+    /// the user's own `~/.claude/settings.json` plus a live status readout, not a list of settings.
+    @ViewBuilder
+    private func bespoke(_ row: SettingsLayout.Row) -> some View {
+        if case let .bespoke(id) = row.control, id == "claude-hooks" {
+            claudeCodeRows
         }
-        .disabled(!behaviorEnabled)
+    }
+
+    private func toggle(_ row: SettingsLayout.Row, _ binding: Binding<Bool>) -> some View {
+        SettingsGlyphToggleRow(glyph(row), row.label, row.subtitle, isOn: binding)
+    }
+
+    /// A sidecar flag as a plain switch. `nil` means "unset", and what the daemon then does differs
+    /// per flag, so the row shows the DAEMON's answer rather than reading absence as off — and a
+    /// deliberate flip writes an explicit value, so turning Resume on Recovery off can actually turn
+    /// it off. It could not before: the old setter wrote `nil` for false, which is that flag's ON.
+    private func hostFlag(_ binding: Binding<Bool?>, _ whenUnset: Bool) -> Binding<Bool> {
+        Binding(
+            get: { binding.wrappedValue ?? whenUnset },
+            set: { binding.wrappedValue = $0 },
+        )
     }
 
     // MARK: Claude Code install-hooks card (`install-agent-integeration.png`)
@@ -1205,9 +1201,9 @@ private struct AgentsSettingsTab: View {
     /// ("✓ Installed" green / "Not Installed" gray). Disabled with a "Connect a session" note while no pane
     /// backs the card. Claude-only.
     @ViewBuilder
-    private var claudeCodeSection: some View {
+    private var claudeCodeRows: some View {
         let state = AgentSettingsCard.installState(agentHooks)
-        slateFormSection("Claude Code") {
+        Group {
             LabeledContent {
                 installButtons(state)
             } label: {
@@ -1290,16 +1286,6 @@ private struct AgentsSettingsTab: View {
              .unknown:
             Text("—").foregroundStyle(SettingsInk.tertiary)
         }
-    }
-
-    /// The row label layout: a bold title with an optional gray subtext beneath (mirrors the Appearance tab's
-    /// `rowLabel`, kept local so the Agents card composes without widening that struct's visibility).
-
-    private func optionalBoolToggle(_ title: String, _ binding: Binding<Bool?>) -> some View {
-        Toggle(isOn: Binding(
-            get: { binding.wrappedValue ?? false },
-            set: { binding.wrappedValue = $0 ? true : nil },
-        )) { Text(title) }
     }
 }
 

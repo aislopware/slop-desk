@@ -831,6 +831,104 @@ pub const GROUPS: &[LayoutGroup] = &[
             },
         ],
     },
+    // ── Agents ─────────────────────────────────────────────────────────────────────────────────
+    // CLAUDE CODE ONLY. `MetadataCodec::AgentKind::Codex` is documented-dead and never rendered, so
+    // there is no second card to describe.
+    //
+    // The two NOTIFY toggles that used to sit under Agent Behaviour are gone from this page. They
+    // edit `notifications.agentTaskComplete` and `notifications.agentAwaitInput`, which the Shell
+    // page's Code Agent group already edits — two live controls over one value, which the table
+    // forbids and which is exactly the kind of thing describing a page finds.
+    LayoutGroup {
+        section: Section::Agents,
+        title: "Claude Code",
+        timing: ApplyTiming::Live,
+        platform: Platform::Both,
+        rows: &[LayoutRow {
+            key: "",
+            subtitle: "",
+            control: Control::Bespoke { id: "claude-hooks" },
+            platform: Platform::Both,
+        }],
+    },
+    // Greyed until an integration is installed — a condition on the CONTROLLER's live state, not on
+    // another setting, so it is the renderer's to apply.
+    LayoutGroup {
+        section: Section::Agents,
+        title: "Agent Behaviour",
+        timing: ApplyTiming::Live,
+        platform: Platform::Both,
+        rows: &[
+            LayoutRow {
+                key: "agents.badgeWhileProcessing",
+                subtitle: "Ring the tab while the agent is working.",
+                control: Control::Toggle {
+                    glyph: "circle.dashed",
+                },
+                platform: Platform::Both,
+            },
+            LayoutRow {
+                key: "agents.badgeWhenComplete",
+                subtitle: "Mark the tab when the agent goes idle.",
+                control: Control::Toggle {
+                    glyph: "checkmark.circle",
+                },
+                platform: Platform::Both,
+            },
+            LayoutRow {
+                key: "agents.badgeWhenAwaitingInput",
+                subtitle: "Mark the tab when the agent needs approval.",
+                control: Control::Toggle { glyph: "hand.raised" },
+                platform: Platform::Both,
+            },
+            // Drawn only while the group is greyed, which is the renderer's to decide — but the
+            // WORDS are the group's, so they are here with the rest of the page's.
+            LayoutRow {
+                key: "",
+                subtitle: "Install an integration above to configure agent behaviour.",
+                control: Control::Note,
+                platform: Platform::Both,
+            },
+        ],
+    },
+    // The HOST half of the same idea, and the reason it is a group of its own rather than two more
+    // rows above: these ride the sidecar, so they apply on reconnect and the footer has to say so.
+    LayoutGroup {
+        section: Section::Agents,
+        title: "Agent Behaviour (host)",
+        timing: ApplyTiming::Reconnect,
+        platform: Platform::Both,
+        rows: &[
+            LayoutRow {
+                key: "agent-prevent-sleep",
+                subtitle: "Keep the host awake while an agent is working.",
+                control: Control::Toggle { glyph: "zzz" },
+                platform: Platform::Both,
+            },
+            LayoutRow {
+                key: "agent-resume-on-recovery",
+                subtitle: "Re-arm a detached agent session when the connection comes back.",
+                control: Control::Toggle {
+                    glyph: "arrow.clockwise",
+                },
+                platform: Platform::Both,
+            },
+        ],
+    },
+    LayoutGroup {
+        section: Section::Agents,
+        title: "Behaviour",
+        timing: ApplyTiming::Live,
+        platform: Platform::Both,
+        rows: &[LayoutRow {
+            key: "features.recordClipboardHistory",
+            subtitle: "Archive copied text into the clipboard-history ring.",
+            control: Control::Toggle {
+                glyph: "doc.on.clipboard",
+            },
+            platform: Platform::Both,
+        }],
+    },
     // ── Appearance ─────────────────────────────────────────────────────────────────────────────
     // There is no LAYOUT selector (Vertical Tabs / Tabs Top / Tabs Bottom) and no THEME gallery, and
     // neither absence is a gap to backfill: slopdesk is vertical-tabs-only and ships ONE appearance

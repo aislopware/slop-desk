@@ -97,6 +97,8 @@ public enum AllSettingsCatalog {
         public static let scrollbackLimit = "scrollback-limit"
         public static let cursorStyle = "cursor-style"
         public static let cursorStyleBlink = "cursor-style-blink"
+        public static let agentPreventSleep = "agent-prevent-sleep"
+        public static let agentResumeOnRecovery = "agent-resume-on-recovery"
     }
 
     /// The advertised rows ``PreferencesStore/resetAll()`` restores WITHOUT a global `Defaults.Key`:
@@ -107,6 +109,7 @@ public enum AllSettingsCatalog {
     public static let modelBackedKeys: Set<String> = [
         RenderKey.fontFamily, RenderKey.fontSize, RenderKey.scrollbackLimit,
         RenderKey.cursorStyle, RenderKey.cursorStyleBlink,
+        RenderKey.agentPreventSleep, RenderKey.agentResumeOnRecovery,
         SettingsKey.density,
     ]
 

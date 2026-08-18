@@ -137,6 +137,8 @@ pub const DEVICE_LOCAL_KEYS: &[&str] = &[FOLLOW_SESSION_FOCUS_KEY];
 /// cleared by name from the store's own injected suite. Neither can appear in a reset key set, and
 /// a row in neither those sets nor this one is a row nothing restores.
 pub const MODEL_BACKED_KEYS: &[&str] = &[
+    "agent-prevent-sleep",
+    "agent-resume-on-recovery",
     "font-family",
     "font-size",
     "scrollback-limit",
@@ -872,6 +874,64 @@ pub const ROWS: &[SettingRow] = &[
         bucket: Bucket::HasDedicatedTab,
         target_section: "appearance",
         keywords: "dock icon red error badge tint exit failing tab macos appearance",
+        inline_editable: false,
+    },
+    SettingRow {
+        key: "agents.badgeWhileProcessing",
+        label: "Badge While Processing",
+        page_label: "",
+        description: "Ring the tab while a coding agent is working.",
+        default_text: "Off",
+        bucket: Bucket::HasDedicatedTab,
+        target_section: "agents",
+        keywords: "agent claude badge processing working ring tab spinner",
+        inline_editable: false,
+    },
+    SettingRow {
+        key: "agents.badgeWhenComplete",
+        label: "Badge When Task Completes",
+        page_label: "",
+        description: "Mark the tab when a coding agent goes idle.",
+        default_text: "On",
+        bucket: Bucket::HasDedicatedTab,
+        target_section: "agents",
+        keywords: "agent claude badge complete done idle mark tab",
+        inline_editable: false,
+    },
+    SettingRow {
+        key: "agents.badgeWhenAwaitingInput",
+        label: "Badge When Awaiting Input",
+        page_label: "",
+        description: "Mark the tab when a coding agent needs approval.",
+        default_text: "On",
+        bucket: Bucket::HasDedicatedTab,
+        target_section: "agents",
+        keywords: "agent claude badge awaiting input approval permission mark tab",
+        inline_editable: false,
+    },
+    // The two HOST-read agent flags. They ride the `video-prefs.json` sidecar rather than
+    // `UserDefaults`, so they are keyed the way the typed render fields are and restored with the
+    // model they belong to.
+    SettingRow {
+        key: "agent-prevent-sleep",
+        label: "Prevent Sleep While Processing",
+        page_label: "",
+        description: "Hold a system-sleep assertion on the host while any agent is working.",
+        default_text: "Off",
+        bucket: Bucket::HasDedicatedTab,
+        target_section: "agents",
+        keywords: "agent claude prevent sleep assertion host processing caffeinate power",
+        inline_editable: false,
+    },
+    SettingRow {
+        key: "agent-resume-on-recovery",
+        label: "Resume on Recovery",
+        page_label: "",
+        description: "Re-arm a detached agent session when the connection recovers.",
+        default_text: "On",
+        bucket: Bucket::HasDedicatedTab,
+        target_section: "agents",
+        keywords: "agent claude resume recovery reconnect detached re-arm session host",
         inline_editable: false,
     },
     SettingRow {

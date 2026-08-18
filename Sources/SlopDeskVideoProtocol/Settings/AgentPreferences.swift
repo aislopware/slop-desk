@@ -22,6 +22,13 @@ public struct AgentPreferences: Codable, Sendable, Equatable {
     /// ``preventSleep``. `nil` ⇒ unset (the daemon default-ON).
     public var resumeOnRecovery: Bool?
 
+    /// What the daemon does with ``preventSleep`` unset, and what a control over it must therefore
+    /// SHOW while it is unset. Named rather than spelled at the control: a toggle that read `nil` as
+    /// `false` would misreport ``resumeOnRecovery``, whose absent state is ON.
+    public static let preventSleepDefault = false
+    /// What the daemon does with ``resumeOnRecovery`` unset — see ``preventSleepDefault``.
+    public static let resumeOnRecoveryDefault = true
+
     public init(
         preventSleep: Bool? = nil,
         resumeOnRecovery: Bool? = nil,
