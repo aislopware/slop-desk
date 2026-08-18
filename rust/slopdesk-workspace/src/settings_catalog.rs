@@ -129,11 +129,19 @@ pub enum Group {
     CursorBlink,
     /// Advanced → Privileges → what OSC 52 may do, per direction.
     ClipboardAccess,
+    /// Appearance → Font → Text → Line height.
+    LineHeight,
+    /// Appearance → Font → Ligatures.
+    FontLigatures,
+    /// Appearance → Font → Style & Rendering, shared by the Bold and Italic rows.
+    FontStyleMode,
+    /// Appearance → Font → Style & Rendering → Blending.
+    FontBlending,
 }
 
 impl Group {
     /// Every group, in case-index order — the numbering the boundary carries.
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 22] = [
         Self::CursorStyle,
         Self::NewTabPosition,
         Self::Density,
@@ -152,6 +160,10 @@ impl Group {
         Self::AutoHideTabsPanel,
         Self::CursorBlink,
         Self::ClipboardAccess,
+        Self::LineHeight,
+        Self::FontLigatures,
+        Self::FontStyleMode,
+        Self::FontBlending,
     ];
 
     /// The case index a group crosses as.
@@ -176,6 +188,10 @@ impl Group {
             Self::AutoHideTabsPanel => 15,
             Self::CursorBlink => 16,
             Self::ClipboardAccess => 17,
+            Self::LineHeight => 18,
+            Self::FontLigatures => 19,
+            Self::FontStyleMode => 20,
+            Self::FontBlending => 21,
         }
     }
 
@@ -329,6 +345,37 @@ const CLIPBOARD_ACCESS: &[OptionRow] = &[
     OptionRow::plain("deny", "Deny"),
 ];
 
+/// Appearance → Font → Text → Line height. The multipliers ride the labels because a reader picking
+/// between "Compact" and "Loose" is picking a NUMBER; `custom` opens the slider that names its own.
+const LINE_HEIGHTS: &[OptionRow] = &[
+    OptionRow::plain("default", "Default"),
+    OptionRow::plain("compact", "Compact (1.0×)"),
+    OptionRow::plain("loose", "Loose (1.2×)"),
+    OptionRow::plain("custom", "Custom"),
+];
+
+/// Appearance → Font → Ligatures. `off` is not the absence of a setting — a font that ships `calt`
+/// enables it itself, so turning ligatures off means emitting the DISABLING features.
+const FONT_LIGATURES: &[OptionRow] = &[
+    OptionRow::plain("off", "Off"),
+    OptionRow::noted("calt", "Standard", "calt"),
+    OptionRow::noted("dlig", "Discretionary", "dlig"),
+];
+
+/// Appearance → Font → Style & Rendering → Bold and Italic, which offer the same four modes.
+const FONT_STYLE_MODES: &[OptionRow] = &[
+    OptionRow::plain("auto", "Auto"),
+    OptionRow::plain("off", "Off"),
+    OptionRow::noted("primary-only", "Primary Only", "never borrows a face"),
+    OptionRow::noted("synthetic", "Synthetic", "thickened or slanted"),
+];
+
+/// Appearance → Font → Style & Rendering → Blending.
+const FONT_BLENDINGS: &[OptionRow] = &[
+    OptionRow::plain("default", "Default"),
+    OptionRow::noted("macos-like", "macOS-like", "thickens the stroke"),
+];
+
 /// The choices in a group, in the order they render.
 ///
 /// The tab close-confirmation row is the window row MINUS `multiple_tabs`, taken as a PREFIX rather
@@ -356,6 +403,10 @@ pub const fn group(group: Group) -> &'static [OptionRow] {
         Group::AutoHideTabsPanel => AUTO_HIDE_TABS_PANEL,
         Group::CursorBlink => CURSOR_BLINKS,
         Group::ClipboardAccess => CLIPBOARD_ACCESS,
+        Group::LineHeight => LINE_HEIGHTS,
+        Group::FontLigatures => FONT_LIGATURES,
+        Group::FontStyleMode => FONT_STYLE_MODES,
+        Group::FontBlending => FONT_BLENDINGS,
     }
 }
 
@@ -668,11 +719,13 @@ pub enum Stepper {
     WindowCells,
     /// Appearance → Window → the frame mode's width and height, in pixels.
     WindowPixels,
+    /// Appearance → Font → Text → the terminal font size, in points.
+    FontPoints,
 }
 
 impl Stepper {
     /// Every range, in case-index order.
-    pub const ALL: [Self; 2] = [Self::WindowCells, Self::WindowPixels];
+    pub const ALL: [Self; 3] = [Self::WindowCells, Self::WindowPixels, Self::FontPoints];
 
     /// The case index a range crosses as.
     #[must_use]
@@ -680,6 +733,7 @@ impl Stepper {
         match self {
             Self::WindowCells => 0,
             Self::WindowPixels => 1,
+            Self::FontPoints => 2,
         }
     }
 
@@ -689,6 +743,7 @@ impl Stepper {
         match index {
             0 => Some(Self::WindowCells),
             1 => Some(Self::WindowPixels),
+            2 => Some(Self::FontPoints),
             _ => None,
         }
     }
@@ -715,16 +770,36 @@ impl Stepper {
                     step: 50,
                 }
             },
+            // The ends are `PreferencesStore.fontSizeRange`, which is what ⌘± already clamps to, so
+            // the field and the shortcut cannot disagree about how small a terminal may get.
+            Self::FontPoints => {
+                StepperBounds {
+                    min: 8,
+                    max: 32,
+                    step: 1,
+                }
+            },
+        }
+    }
+
+    /// What follows the number in the readout — `" px"` for pixels, nothing for a bare count.
+    ///
+    /// The unit is DATA rather than a formatted string because not every stepper's value is an
+    /// integer: font size is a `Double` a raw edit may set to `13.5`, and a reader handed only
+    /// `readout(13)` would have to print a number the model does not hold. Given the unit, either
+    /// side composes the readout from the value it actually has.
+    #[must_use]
+    pub const fn unit(self) -> &'static str {
+        match self {
+            Self::WindowCells | Self::FontPoints => "",
+            Self::WindowPixels => " px",
         }
     }
 
     /// What the value reads as after the row's label — `80` for cells, `1000 px` for pixels.
     #[must_use]
     pub fn readout(self, value: i64) -> String {
-        match self {
-            Self::WindowCells => value.to_string(),
-            Self::WindowPixels => format!("{value} px"),
-        }
+        format!("{value}{}", self.unit())
     }
 }
 

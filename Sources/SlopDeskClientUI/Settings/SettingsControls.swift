@@ -125,6 +125,62 @@ func settingsGroup(
     }
 }
 
+// MARK: - LineHeightChoice (a menu tag for the associated-value LineHeightMode)
+
+/// A flat mirror of ``LineHeightMode``'s four cases, for a control that has to TAG its choices: the
+/// model enum carries a `Double` on `.custom`, so it cannot be a tag itself.
+///
+/// The raw values are the catalog's tokens, which is what makes this readable from
+/// `SettingsCatalog.options(.lineHeight, as:)` rather than from four inline `Text(…).tag(…)` children
+/// — the shape that had let the four choices drift out of reach of any test.
+enum LineHeightChoice: String, Hashable, Sendable {
+    case `default`
+    case compact
+    case loose
+    case custom
+}
+
+/// A ``SettingsLayout/Control/note`` row: prose belonging to the GROUP rather than to any setting,
+/// set in the same gray as a row's subtitle so it reads as a footnote and not as a control that lost
+/// its widget. The words are the row's subtitle, because a note has nothing else to say.
+func settingsNote(_ row: SettingsLayout.Row) -> some View {
+    Text(row.subtitle)
+        .font(SettingsType.subtitle)
+        .foregroundStyle(SettingsInk.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+}
+
+// MARK: - The stepper, over an integer or a double
+
+/// A schema stepper row: the row's own label, the value in the range's readout, and the range's ends
+/// and granularity — none of the four typed here.
+@ViewBuilder
+func settingsStepper(_ row: SettingsLayout.Row, _ value: Binding<Int>) -> some View {
+    if case let .stepper(range) = row.control {
+        Stepper(
+            "\(row.label): \(range.readout(value.wrappedValue))",
+            value: value,
+            in: range.range,
+            step: range.step,
+        )
+    }
+}
+
+/// The same row over a field the model holds as a `Double` — the terminal font size, which the flat
+/// index's raw editor may set to a fractional point value the clicks then move a whole point at a
+/// time. Reading the `Double` back is what keeps a `13.5` from displaying as a number nothing holds.
+@ViewBuilder
+func settingsStepper(_ row: SettingsLayout.Row, _ value: Binding<Double>) -> some View {
+    if case let .stepper(range) = row.control {
+        Stepper(
+            "\(row.label): \(range.readout(value.wrappedValue))",
+            value: value,
+            in: range.doubleRange,
+            step: Double(range.step),
+        )
+    }
+}
+
 /// The bold-label / gray-subtext stack every settings row leads with.
 ///
 /// Was `private` on three separate settings pages, byte for byte, which is exactly the duplication a

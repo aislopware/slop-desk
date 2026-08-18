@@ -930,3 +930,24 @@ asked, and the four Advanced and Agents surfaces had quietly acquired chips they
 the port. The chip belongs where an EDIT does, so it is now drawn only where some row names a
 setting — which is also why `VideoHostSettingsView`, whose four sections each land on reconnect,
 places its own.
+
+### Increment 23 — the font surface stops being one bespoke block
+
+`FontSettingsView` was a single headerless bespoke group drawing four sections of its own, and three
+of those four were ordinary lists of rows wearing a surface's clothes. They are groups now — Text,
+Ligatures, Style & Rendering — and only Font Family stays bespoke, for a reason worth naming: it is
+a pair of SCOPE TABS, and a tab whose choice picks which other controls exist is not a row. That is
+the line between a control and a surface, and it is sharper than "this looks complicated".
+
+Four option lists came with them, and all four had been inline `Text(…).tag(…)` children — the exact
+shape the option catalog exists to remove, still standing because nothing walked into this file
+after the first lift. Eleven settings became advertised rows: the three derived face families, the
+fallback list, auto-match, line height, the two ligature settings, bold, italic and blending. None
+had been searchable, and all eleven had always been restored by `resetAll()` — the model they are
+fields of comes back whole — so this is a gap in what the index KNEW, not in what a reset reached.
+
+The stepper changed shape to take font size. Its readout used to cross finished, which works only
+while every stepper's value is an integer; font size is a `Double` the flat index's raw editor may
+set to `13.5`, and a reader handed `readout(13)` prints a number the model does not hold. The UNIT
+crosses now — `" px"` or nothing — and each side composes the readout from the value it actually
+has, which is one door fewer as well as one lie fewer.

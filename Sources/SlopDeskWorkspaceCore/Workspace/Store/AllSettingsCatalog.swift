@@ -93,7 +93,18 @@ public enum AllSettingsCatalog {
     /// for it by constant rather than retyping the name and the label both.
     public enum RenderKey {
         public static let fontFamily = "font-family"
+        public static let fontFamilyBold = "font-family-bold"
+        public static let fontFamilyItalic = "font-family-italic"
+        public static let fontFamilyBoldItalic = "font-family-bold-italic"
+        public static let fontFamilyFallback = "font-family-fallback"
+        public static let fontAutoMatchWeightStyle = "font-auto-match-weight-style"
         public static let fontSize = "font-size"
+        public static let fontLineHeight = "font-line-height"
+        public static let fontLigatures = "font-ligatures"
+        public static let fontLigaturesAlphabet = "font-ligatures-alphabet"
+        public static let fontBold = "font-bold"
+        public static let fontItalic = "font-italic"
+        public static let fontBlending = "font-blending"
         public static let scrollbackLimit = "scrollback-limit"
         public static let cursorStyle = "cursor-style"
         public static let cursorStyleBlink = "cursor-style-blink"
@@ -109,6 +120,10 @@ public enum AllSettingsCatalog {
     public static let modelBackedKeys: Set<String> = [
         RenderKey.fontFamily, RenderKey.fontSize, RenderKey.scrollbackLimit,
         RenderKey.cursorStyle, RenderKey.cursorStyleBlink,
+        RenderKey.fontFamilyBold, RenderKey.fontFamilyItalic, RenderKey.fontFamilyBoldItalic,
+        RenderKey.fontFamilyFallback, RenderKey.fontAutoMatchWeightStyle, RenderKey.fontLineHeight,
+        RenderKey.fontLigatures, RenderKey.fontLigaturesAlphabet,
+        RenderKey.fontBold, RenderKey.fontItalic, RenderKey.fontBlending,
         RenderKey.agentPreventSleep, RenderKey.agentResumeOnRecovery,
         SettingsKey.density,
     ]

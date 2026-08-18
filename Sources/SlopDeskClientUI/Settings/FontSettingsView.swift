@@ -53,26 +53,11 @@ struct FontSettingsView: View {
 
     /// The active Font-Family SCOPE tab. Defaults to **Global** — the primary, always-rendered family field.
     @State private var scope: FontScope = .global
-    /// The custom line-height multiplier (Custom mode), seeded from the model on appear so the slider opens at
-    /// the persisted value rather than snapping.
-    @State private var customMultiplier: Double = 1.2
 
+    /// The section's HEADER comes from the layout table, which places this surface, so this draws only
+    /// what a row cannot: a pair of tabs whose choice picks which other controls exist.
     var body: some View {
         Group {
-            fontFamilySection
-            textSection
-            ligaturesSection
-            styleSection
-        }
-        .onAppear {
-            if case let .custom(value) = store.terminal.lineHeight { customMultiplier = value }
-        }
-    }
-
-    // MARK: - Font Family section (scope tabs + combobox)
-
-    private var fontFamilySection: some View {
-        slateFormSection(settingLabel(AllSettingsCatalog.RenderKey.fontFamily)) {
             scopeTabs
             scopeNote
             scopeBody
@@ -132,12 +117,19 @@ struct FontSettingsView: View {
     /// Bold-Italic face pickers (shown always but DISABLED + dimmed while auto-match is on, per
     /// `font-setting.png`). The per-face families are global ``TerminalPreferences`` fields.
     @ViewBuilder private var globalFamilyEditors: some View {
-        Toggle("Auto-match weight & style", isOn: $store.terminal.autoMatchWeightStyle)
+        Toggle(
+            settingLabel(AllSettingsCatalog.RenderKey.fontAutoMatchWeightStyle),
+            isOn: $store.terminal.autoMatchWeightStyle,
+        )
         primaryFamilyRow($store.terminal.fontFamily, placeholder: "Default")
         let locked = store.terminal.autoMatchWeightStyle
-        faceRow("Font Family (Bold)", $store.terminal.fontFamilyBold, locked: locked)
-        faceRow("Font Family (Italic)", $store.terminal.fontFamilyItalic, locked: locked)
-        faceRow("Font Family (Bold Italic)", $store.terminal.fontFamilyBoldItalic, locked: locked)
+        faceRow(AllSettingsCatalog.RenderKey.fontFamilyBold, $store.terminal.fontFamilyBold, locked: locked)
+        faceRow(AllSettingsCatalog.RenderKey.fontFamilyItalic, $store.terminal.fontFamilyItalic, locked: locked)
+        faceRow(
+            AllSettingsCatalog.RenderKey.fontFamilyBoldItalic,
+            $store.terminal.fontFamilyBoldItalic,
+            locked: locked,
+        )
     }
 
     private func primaryFamilyRow(_ binding: Binding<String>, placeholder: String) -> some View {
@@ -146,8 +138,8 @@ struct FontSettingsView: View {
         }
     }
 
-    private func faceRow(_ label: String, _ binding: Binding<String>, locked: Bool) -> some View {
-        LabeledContent(label) {
+    private func faceRow(_ key: String, _ binding: Binding<String>, locked: Bool) -> some View {
+        LabeledContent(settingLabel(key)) {
             FontFamilyComboBox(selection: binding, placeholder: locked ? "Auto" : "Unset")
         }
         .disabled(locked)
@@ -158,111 +150,6 @@ struct FontSettingsView: View {
     private var hostFontNote: some View {
         note("Fonts are installed and rendered on the host. Type any family the host has; the picker lists "
             + "this device's monospaced faces for convenience.")
-    }
-
-    // MARK: - Text section (size + line height)
-
-    private var textSection: some View {
-        slateFormSection("Text") {
-            Stepper(
-                "Size: \(Int(store.terminal.fontSize))",
-                value: $store.terminal.fontSize, in: 8...32, step: 1,
-            )
-            LabeledContent("Line height") {
-                Picker("", selection: lineHeightChoiceBinding) {
-                    Text("Default").tag(LineHeightChoice.default)
-                    Text("Compact (1.0×)").tag(LineHeightChoice.compact)
-                    Text("Loose (1.2×)").tag(LineHeightChoice.loose)
-                    Text("Custom").tag(LineHeightChoice.custom)
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .fixedSize()
-            }
-            if lineHeightChoiceBinding.wrappedValue == .custom {
-                LabeledContent("Multiplier") {
-                    HStack(spacing: Slate.Metric.space2) {
-                        Slider(value: customMultiplierBinding, in: 0.8...2.0, step: 0.05)
-                        Text(String(format: "%.2f×", customMultiplier))
-                            .foregroundStyle(SettingsInk.secondary)
-                            .monospacedDigit()
-                    }
-                }
-                note("Changing line height re-measures the cell and reflows the terminal (a resize).")
-            }
-        }
-    }
-
-    // MARK: - Ligatures section
-
-    private var ligaturesSection: some View {
-        slateFormSection("Ligatures") {
-            Picker("Ligatures", selection: $store.terminal.fontLigatures) {
-                Text("Off").tag(FontLigatures.off)
-                Text("Standard (calt)").tag(FontLigatures.calt)
-                Text("Discretionary (dlig)").tag(FontLigatures.dlig)
-            }
-            Toggle("Extend ligation to alphabetic sequences", isOn: $store.terminal.fontLigaturesAlphabet)
-                .disabled(store.terminal.fontLigatures == .off)
-            note("Requires a font with ligatures (e.g. Fira Code, JetBrains Mono); the default SF Mono has none.")
-        }
-    }
-
-    // MARK: - Style & Rendering section (bold / italic / blending)
-
-    private var styleSection: some View {
-        slateFormSection("Style & Rendering") {
-            Picker("Bold", selection: $store.terminal.fontBold) { styleModeOptions }
-            Picker("Italic", selection: $store.terminal.fontItalic) { styleModeOptions }
-
-            Picker("Blending", selection: $store.terminal.fontBlending) { blendingOptions }
-        }
-    }
-
-    @ViewBuilder private var styleModeOptions: some View {
-        Text("Auto").tag(FontStyleMode.auto)
-        Text("Off").tag(FontStyleMode.off)
-        Text("Primary Only").tag(FontStyleMode.primaryOnly)
-        Text("Synthetic").tag(FontStyleMode.synthetic)
-    }
-
-    @ViewBuilder private var blendingOptions: some View {
-        Text("Default").tag(FontBlending.default)
-        Text("macOS-like").tag(FontBlending.macosLike)
-    }
-
-    /// Bridge ``LineHeightMode`` (an associated-value enum) to the four-case picker. A `.custom` pick seeds
-    /// from the live `customMultiplier`; switching back preserves the model.
-    private var lineHeightChoiceBinding: Binding<LineHeightChoice> {
-        Binding(
-            get: {
-                switch store.terminal.lineHeight {
-                case .default: .default
-                case .compact: .compact
-                case .loose: .loose
-                case .custom: .custom
-                }
-            },
-            set: { choice in
-                switch choice {
-                case .default: store.terminal.lineHeight = .default
-                case .compact: store.terminal.lineHeight = .compact
-                case .loose: store.terminal.lineHeight = .loose
-                case .custom: store.terminal.lineHeight = .custom(customMultiplier)
-                }
-            },
-        )
-    }
-
-    /// The custom line-height multiplier slider binding — updates the local seed AND the model (`.custom(m)`).
-    private var customMultiplierBinding: Binding<Double> {
-        Binding(
-            get: { customMultiplier },
-            set: { value in
-                customMultiplier = value
-                store.terminal.lineHeight = .custom(value)
-            },
-        )
     }
 
     // MARK: - Note helpers
@@ -292,18 +179,6 @@ private enum FontScope: String, CaseIterable, Identifiable {
         case .fallback: "Fallback"
         }
     }
-}
-
-// MARK: - LineHeightChoice (picker tag for the associated-value LineHeightMode)
-
-/// A flat, `Hashable` mirror of ``LineHeightMode``'s four cases for the SwiftUI `Picker` tag (the model enum
-/// carries an associated `Double` on `.custom`, so it can't be a tag directly). The custom multiplier lives in
-/// `FontSettingsView.customMultiplier`.
-private enum LineHeightChoice: Hashable {
-    case `default`
-    case compact
-    case loose
-    case custom
 }
 
 // MARK: - FontFamilyComboBox (free-text entry + "Aa" specimen dropdown)

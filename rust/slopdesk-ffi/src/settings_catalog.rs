@@ -444,7 +444,11 @@ pub extern "C" fn slopdesk_settings_stepper(stepper: u8) -> SlopDeskSettingsStep
     }
 }
 
-/// What a stepper's current value reads as.
+/// What follows the number in a stepper's readout — `" px"`, or nothing for a bare count.
+///
+/// The UNIT crosses rather than the finished readout because the near side does not always hold an
+/// integer: font size is a `Double`, and a reader given only `readout(13)` would print a number the
+/// model does not hold. Given the unit, either side composes the readout from its own value.
 ///
 /// # Safety
 /// `(out, cap)` must be writable for `cap` bytes.
@@ -453,17 +457,12 @@ pub extern "C" fn slopdesk_settings_stepper(stepper: u8) -> SlopDeskSettingsStep
     unsafe_code,
     reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
 )]
-pub unsafe extern "C" fn slopdesk_settings_stepper_readout(
-    stepper: u8,
-    value: i64,
-    out: *mut c_uchar,
-    cap: usize,
-) -> usize {
-    let Some(text) = Stepper::from_index(stepper).map(|id| id.readout(value)) else {
+pub unsafe extern "C" fn slopdesk_settings_stepper_unit(stepper: u8, out: *mut c_uchar, cap: usize) -> usize {
+    let Some(unit) = Stepper::from_index(stepper).map(Stepper::unit) else {
         return 0;
     };
     // SAFETY: the caller's obligation, restated above.
-    unsafe { deliver(text.as_bytes(), out, cap) }
+    unsafe { deliver(unit.as_bytes(), out, cap) }
 }
 
 #[cfg(test)]

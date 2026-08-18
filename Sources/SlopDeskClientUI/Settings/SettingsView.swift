@@ -952,6 +952,10 @@ private struct AppearanceSettingsTab: View {
     @Default(.dockIconAnimateProgress) private var dockIconAnimateProgress
     @Default(.dockIconErrorBadge) private var dockIconErrorBadge
 
+    /// The custom line-height multiplier, seeded from the model on appear so the slider opens at the
+    /// persisted value rather than snapping to its own default.
+    @State private var customMultiplier: Double = 1.2
+
     var body: some View {
         Form {
             ForEach(SettingsLayout.groups(SettingsSection.appearance.rawValue, for: .current)) { group in
@@ -959,6 +963,9 @@ private struct AppearanceSettingsTab: View {
             }
         }
         .formStyle(.grouped)
+        .onAppear {
+            if case let .custom(value) = store.terminal.lineHeight { customMultiplier = value }
+        }
     }
 
     /// One row, by the setting it edits — see `GeneralSettingsTab.control(_:)` for why the binding is
@@ -983,10 +990,10 @@ private struct AppearanceSettingsTab: View {
             )
         case SettingsKey.windowSizeKey:
             cards(row, .windowSize, $windowSize) { windowSizeArt($0) }
-        case SettingsKey.windowColsKey: if windowSize == .grid { stepper(row, $windowCols) }
-        case SettingsKey.windowRowsKey: if windowSize == .grid { stepper(row, $windowRows) }
-        case SettingsKey.windowWidthPxKey: if windowSize == .frame { stepper(row, $windowWidthPx) }
-        case SettingsKey.windowHeightPxKey: if windowSize == .frame { stepper(row, $windowHeightPx) }
+        case SettingsKey.windowColsKey: if windowSize == .grid { settingsStepper(row, $windowCols) }
+        case SettingsKey.windowRowsKey: if windowSize == .grid { settingsStepper(row, $windowRows) }
+        case SettingsKey.windowWidthPxKey: if windowSize == .frame { settingsStepper(row, $windowWidthPx) }
+        case SettingsKey.windowHeightPxKey: if windowSize == .frame { settingsStepper(row, $windowHeightPx) }
         case SettingsKey.desktopWindowPresentationKey:
             cards(row, .desktopPresentation, $desktopWindowPresentation) { desktopPresentationArt($0) }
         case SettingsKey.satelliteBackgroundPointerKey:
@@ -1021,8 +1028,107 @@ private struct AppearanceSettingsTab: View {
                 options: SettingsCatalog.options(.cursorBlink),
                 selection: $store.terminal.cursorBlink,
             )
-        default: bespoke(row)
+        case AllSettingsCatalog.RenderKey.fontSize:
+            settingsStepper(row, $store.terminal.fontSize)
+        case AllSettingsCatalog.RenderKey.fontLineHeight:
+            SettingsOptionMenuRow(
+                row.label,
+                subtitle: row.subtitle,
+                options: SettingsCatalog.options(.lineHeight, as: LineHeightChoice.self),
+                selection: lineHeightChoice,
+            )
+            // Both rows below are conditioned on the VALUE above — dynamic, not layout — so the
+            // table lists the choice and the page draws what picking `custom` opens.
+            if lineHeightChoice.wrappedValue == .custom {
+                LabeledContent("Multiplier") {
+                    HStack(spacing: Slate.Metric.space2) {
+                        Slider(value: lineHeightMultiplier, in: 0.8...2.0, step: 0.05)
+                        Text(String(format: "%.2f×", customMultiplier))
+                            .foregroundStyle(SettingsInk.secondary)
+                            .monospacedDigit()
+                    }
+                }
+                Text("Changing line height re-measures the cell and reflows the terminal (a resize).")
+                    .font(SettingsType.subtitle)
+                    .foregroundStyle(SettingsInk.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        case AllSettingsCatalog.RenderKey.fontLigatures:
+            SettingsOptionMenuRow(
+                row.label,
+                subtitle: row.subtitle,
+                options: SettingsCatalog.options(.fontLigatures),
+                selection: $store.terminal.fontLigatures,
+            )
+        case AllSettingsCatalog.RenderKey.fontLigaturesAlphabet:
+            SettingsGlyphToggleRow(
+                glyph(row), row.label, row.subtitle,
+                isOn: $store.terminal.fontLigaturesAlphabet,
+            )
+            .disabled(store.terminal.fontLigatures == .off)
+        case AllSettingsCatalog.RenderKey.fontBold:
+            SettingsOptionMenuRow(
+                row.label,
+                subtitle: row.subtitle,
+                options: SettingsCatalog.options(.fontStyleMode),
+                selection: $store.terminal.fontBold,
+            )
+        case AllSettingsCatalog.RenderKey.fontItalic:
+            SettingsOptionMenuRow(
+                row.label,
+                subtitle: row.subtitle,
+                options: SettingsCatalog.options(.fontStyleMode),
+                selection: $store.terminal.fontItalic,
+            )
+        case AllSettingsCatalog.RenderKey.fontBlending:
+            SettingsOptionMenuRow(
+                row.label,
+                subtitle: row.subtitle,
+                options: SettingsCatalog.options(.fontBlending),
+                selection: $store.terminal.fontBlending,
+            )
+        default:
+            if case .note = row.control {
+                settingsNote(row)
+            } else {
+                bespoke(row)
+            }
         }
+    }
+
+    /// ``LineHeightMode`` carries a `Double` on `.custom`, so it cannot be a menu tag; the flat mirror
+    /// is what the catalog's tokens rebuild. Picking `.custom` seeds from the live multiplier, and
+    /// picking away from it leaves that seed alone so switching back restores what was set.
+    private var lineHeightChoice: Binding<LineHeightChoice> {
+        Binding(
+            get: {
+                switch store.terminal.lineHeight {
+                case .default: .default
+                case .compact: .compact
+                case .loose: .loose
+                case .custom: .custom
+                }
+            },
+            set: { choice in
+                switch choice {
+                case .default: store.terminal.lineHeight = .default
+                case .compact: store.terminal.lineHeight = .compact
+                case .loose: store.terminal.lineHeight = .loose
+                case .custom: store.terminal.lineHeight = .custom(customMultiplier)
+                }
+            },
+        )
+    }
+
+    /// The custom multiplier slider — writes the local seed AND the model.
+    private var lineHeightMultiplier: Binding<Double> {
+        Binding(
+            get: { customMultiplier },
+            set: { value in
+                customMultiplier = value
+                store.terminal.lineHeight = .custom(value)
+            },
+        )
     }
 
     /// The groups this page draws itself rather than describing — see `SettingsLayout.Control.bespoke`.
@@ -1031,9 +1137,10 @@ private struct AppearanceSettingsTab: View {
     private func bespoke(_ row: SettingsLayout.Row) -> some View {
         if case let .bespoke(id) = row.control {
             switch id {
-            // The Font-Family scope tabs, "Aa" specimen combobox, per-face families, size,
-            // line-height, ligatures and the bold/italic/underline controls (`font-setting.png`).
-            case "font": FontSettingsView(store: store)
+            // The Font-Family scope tabs over two different bodies — the primary family with its
+            // three derived faces, or the ordered fallback list — and the "Aa" specimen combobox
+            // (`font-setting.png`). Size, line height, ligatures and style are rows above.
+            case "font-family": FontSettingsView(store: store)
             // The live caret preview with its colour wells and text-under toggle (`cursor-style.png`)
             // — AppKit, hence the gate, which dies with the AppKit port.
             case "cursor-preview":
@@ -1061,20 +1168,6 @@ private struct AppearanceSettingsTab: View {
             selection: selection,
         ) { option in
             art(option.value)
-        }
-    }
-
-    /// A plus/minus numeric field over the row's own range. The value's UNIT rides the range's
-    /// readout (`1000 px`), so "Width" and "Columns" are told apart by their label alone.
-    @ViewBuilder
-    private func stepper(_ row: SettingsLayout.Row, _ value: Binding<Int>) -> some View {
-        if case let .stepper(range) = row.control {
-            Stepper(
-                "\(row.label): \(range.readout(value.wrappedValue))",
-                value: value,
-                in: range.range,
-                step: range.step,
-            )
         }
     }
 

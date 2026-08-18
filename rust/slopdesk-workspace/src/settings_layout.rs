@@ -1078,20 +1078,117 @@ pub const GROUPS: &[LayoutGroup] = &[
             platform: Platform::Both,
         }],
     },
-    // The font surface is scope tabs, an "Aa" specimen field and per-face families, and it draws its
-    // own headers — hence the empty title. Its four SETTINGS still have rows in the row table, so the
-    // all-settings list reaches them; what has not been described here is the SHAPE.
+    // The FAMILY group stays bespoke: it is a pair of scope tabs over two different bodies — the
+    // primary family with its three derived faces, or the ordered fallback list — plus an "Aa"
+    // specimen field. A scope tab is a control whose choice picks which OTHER controls exist, which
+    // no row here describes. The three sections after it are ordinary lists and are described as
+    // such, which is what took their four option lists out of inline `Text(…).tag(…)` children.
     LayoutGroup {
         section: Section::Appearance,
-        title: "",
+        title: "Font Family",
         timing: ApplyTiming::Live,
         platform: Platform::Both,
         rows: &[LayoutRow {
             key: "",
             subtitle: "",
-            control: Control::Bespoke { id: "font" },
+            control: Control::Bespoke { id: "font-family" },
             platform: Platform::Both,
         }],
+    },
+    LayoutGroup {
+        section: Section::Appearance,
+        title: "Text",
+        timing: ApplyTiming::Live,
+        platform: Platform::Both,
+        rows: &[
+            LayoutRow {
+                key: "font-size",
+                subtitle: "",
+                control: Control::Stepper {
+                    range: Stepper::FontPoints,
+                },
+                platform: Platform::Both,
+            },
+            // Picking `custom` opens a multiplier slider and a note about the reflow it causes. Both
+            // are conditioned on this row's VALUE, so they belong to the renderer the same way the
+            // window steppers and the custom link schemes do.
+            LayoutRow {
+                key: "font-line-height",
+                subtitle: "",
+                control: Control::Menu {
+                    group: Group::LineHeight,
+                    glyph: None,
+                },
+                platform: Platform::Both,
+            },
+        ],
+    },
+    LayoutGroup {
+        section: Section::Appearance,
+        title: "Ligatures",
+        timing: ApplyTiming::Live,
+        platform: Platform::Both,
+        rows: &[
+            LayoutRow {
+                key: "font-ligatures",
+                subtitle: "",
+                control: Control::Menu {
+                    group: Group::FontLigatures,
+                    glyph: None,
+                },
+                platform: Platform::Both,
+            },
+            LayoutRow {
+                key: "font-ligatures-alphabet",
+                subtitle: "Ligate letter runs too, not only punctuation.",
+                control: Control::Toggle {
+                    glyph: "textformat.abc",
+                },
+                platform: Platform::Both,
+            },
+            LayoutRow {
+                key: "",
+                subtitle: "Requires a font with ligatures (e.g. Fira Code, JetBrains Mono); the default SF \
+                           Mono has none.",
+                control: Control::Note,
+                platform: Platform::Both,
+            },
+        ],
+    },
+    LayoutGroup {
+        section: Section::Appearance,
+        title: "Style & Rendering",
+        timing: ApplyTiming::Live,
+        platform: Platform::Both,
+        rows: &[
+            LayoutRow {
+                key: "font-bold",
+                subtitle: "",
+                control: Control::Menu {
+                    group: Group::FontStyleMode,
+                    glyph: None,
+                },
+                platform: Platform::Both,
+            },
+            LayoutRow {
+                key: "font-italic",
+                subtitle: "",
+                control: Control::Menu {
+                    group: Group::FontStyleMode,
+                    glyph: None,
+                },
+                platform: Platform::Both,
+            },
+            LayoutRow {
+                key: "font-blending",
+                subtitle: "",
+                control: Control::Menu {
+                    group: Group::FontBlending,
+                    glyph: None,
+                },
+                platform: Platform::Both,
+            },
+        ],
     },
     // The one page position where the two halves differ in CONTENT rather than in presence, and the
     // only place two groups share a title: macOS draws the live caret preview with its colour wells,
@@ -1506,10 +1603,22 @@ mod tests {
             "Tabs",
             "Window",
             "Appearance",
+            "Font Family",
+            "Text",
+            "Ligatures",
+            "Style & Rendering",
             "Cursor",
             "Dock Icon"
         ]);
-        assert_eq!(titled(false), ["Tabs", "Appearance", "Cursor"]);
+        assert_eq!(titled(false), [
+            "Tabs",
+            "Appearance",
+            "Font Family",
+            "Text",
+            "Ligatures",
+            "Style & Rendering",
+            "Cursor"
+        ]);
 
         // The cursor settings are reachable on BOTH, which is the property the omitted groups above
         // are allowed to break and this one is not: the phone draws them as rows, the Mac inside the

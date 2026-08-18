@@ -928,8 +928,11 @@ typedef struct {
     bool    known;
 } SlopDeskSettingsStepper;
 SlopDeskSettingsStepper slopdesk_settings_stepper(uint8_t stepper);
-// What the value reads as after the row's own label — bare for cells, ` px` for pixels.
-size_t slopdesk_settings_stepper_readout(uint8_t stepper, int64_t value, uint8_t *out, size_t cap);
+// What FOLLOWS the number in the readout — empty for cells and points, ` px` for pixels. The unit
+// crosses rather than the finished readout because the near side does not always hold an integer:
+// font size is a double a raw edit may set to 13.5, and a reader handed only the readout of 13 would
+// print a number the model does not hold.
+size_t slopdesk_settings_stepper_unit(uint8_t stepper, uint8_t *out, size_t cap);
 
 // ---- Every setting as a ROW ----
 //

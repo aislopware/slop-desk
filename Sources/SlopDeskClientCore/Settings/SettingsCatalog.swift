@@ -65,6 +65,10 @@ package enum SettingsCatalog {
         case autoHideTabsPanel = 15
         case cursorBlink = 16
         case clipboardAccess = 17
+        case lineHeight = 18
+        case fontLigatures = 19
+        case fontStyleMode = 20
+        case fontBlending = 21
     }
 
     /// A group's choices, in the order they render, rebuilt as `Value`.
@@ -213,6 +217,7 @@ package enum SettingsCatalog {
     package enum Stepper: UInt8, Sendable, CaseIterable {
         case windowCells = 0
         case windowPixels = 1
+        case fontPoints = 2
 
         /// The settable range. Empty for a range the boundary does not know, which no case is.
         package var range: ClosedRange<Int> {
@@ -221,12 +226,31 @@ package enum SettingsCatalog {
             return Int(bounds.min)...Int(bounds.max)
         }
 
+        /// The same range for a field the model holds as a `Double`.
+        package var doubleRange: ClosedRange<Double> {
+            let whole = range
+            return Double(whole.lowerBound)...Double(whole.upperBound)
+        }
+
         /// How far one click moves it.
         package var step: Int { Int(slopdesk_settings_stepper(rawValue).step) }
 
+        /// What follows the number — `" px"`, or nothing for a bare count.
+        package var unit: String {
+            SettingsCatalog.string { slopdesk_settings_stepper_unit(rawValue, $0, $1) } ?? ""
+        }
+
         /// What the value reads as after the row's own label.
-        package func readout(_ value: Int) -> String {
-            SettingsCatalog.string { slopdesk_settings_stepper_readout(rawValue, Int64(value), $0, $1) } ?? ""
+        package func readout(_ value: Int) -> String { "\(value)\(unit)" }
+
+        /// The same, for a field the model holds as a `Double`. A whole value prints as a whole
+        /// number, so `13.0` reads `13`; a fractional one prints as it is rather than rounding, so a
+        /// size typed as `13.5` in the flat index does not read back here as a value nothing holds.
+        /// Spelled without a formatter on purpose — this is a number, not a localised quantity, and
+        /// it has to match the token the config bridge parses.
+        package func readout(_ value: Double) -> String {
+            let whole = value.rounded(.towardZero)
+            return value == whole ? readout(Int(whole)) : "\(value)\(unit)"
         }
     }
 
