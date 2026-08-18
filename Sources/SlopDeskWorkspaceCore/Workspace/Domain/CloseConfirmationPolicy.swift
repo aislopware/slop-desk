@@ -1,3 +1,5 @@
+import CSlopDeskFFI
+
 // MARK: - CloseConfirmationPolicy (close-confirmation policy)
 
 /// When a tab / pane / window close must be GATED behind a confirmation prompt
@@ -35,21 +37,22 @@ public enum CloseConfirmationPolicy: String, Codable, Sendable, CaseIterable {
         }
     }
 
-    /// Whether a close governed by `policy` must park behind a confirmation prompt, given whether the closing
-    /// unit is BUSY (a child process is running) and how many TABS it holds:
-    ///
-    /// - ``process`` → `isBusy` (confirm only when a command is mid-flight).
-    /// - ``always`` → `true` (confirm every time).
-    /// - ``multipleTabs`` → `tabCount > 1` (confirm only when closing would drop more than one tab).
-    ///
-    /// PURE — the whole policy decision in one place, so the store wiring (and the macOS window-close gate)
-    /// share one source of truth that ``CloseConfirmationPolicyTests`` pins as a truth table.
-    public static func shouldConfirm(_ policy: Self, isBusy: Bool, tabCount: Int) -> Bool {
-        switch policy {
-        case .process: isBusy
-        case .always: true
-        case .multipleTabs: tabCount > 1
+    /// The case index the door reads.
+    var ffiByte: UInt8 {
+        switch self {
+        case .process: 0
+        case .always: 1
+        case .multipleTabs: 2
         }
+    }
+
+    /// Whether a close governed by `policy` must park behind a confirmation prompt, given whether the closing
+    /// unit is BUSY (a child process is running) and how many TABS it holds.
+    ///
+    /// The rule is `slopdesk_workspace::chrome::should_confirm`; the store wiring and the macOS window-close
+    /// gate both come through here, so there is one answer for both.
+    public static func shouldConfirm(_ policy: Self, isBusy: Bool, tabCount: Int) -> Bool {
+        slopdesk_ws_close_should_confirm(policy.ffiByte, isBusy, max(0, tabCount))
     }
 }
 

@@ -30,6 +30,8 @@
 //!   collision apart from a network that has not come up yet.
 //! - [`notify`] — when the app is allowed to speak: the banner's two gates, the badge a background
 //!   pane keeps, the two cues, and the bound on what a remote shell can ask for.
+//! - [`chrome`] — what the window shows AROUND the panes: the tabs panel that must not fight a
+//!   manual collapse, the close prompt, and the Dock tile.
 //! - [`send_keys`] — text with control tokens in it, turned into the bytes a PTY receives.
 //! - [`shell_quoting`] — any text as one shell word, for everything that types a path into a shell.
 //! - [`session`] — what a pane IS, and the session → tab → pane values that hold them.
@@ -50,6 +52,7 @@
 //!   with trusted local input; through the workspace channel they now run against a network peer.
 //!   Nothing here indexes, unwraps or panics — the lint table denies all three.
 
+pub mod chrome;
 pub mod drop_action;
 pub mod focus;
 pub mod frecency;

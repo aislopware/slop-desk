@@ -1,3 +1,5 @@
+import CSlopDeskFFI
+
 // MARK: - macOS Dock tile decision (aggregate progress + red-on-error tint)
 
 /// Whether the macOS Dock tile shows the red error tint. A tiny pure value (`Equatable`/`Sendable`) so the
@@ -44,46 +46,48 @@ public struct DockTileModel: Equatable, Sendable {
 /// `DockProgressController` owns ONLY the `NSDockTile` drawing + `requestUserAttention` bounce; every decision
 /// it makes is one of these pure functions.
 public enum DockTintPolicy {
-    /// The red error-tint decision from the cross-session OSC 9;4 progress rollup: an `.error` rollup tints
-    /// red; an in-progress / indeterminate / cleared rollup leaves it untinted. Pure + AppKit-free. The
-    /// `dock-icon-error-badge` toggle + the non-zero-exit signal are folded
-    /// in by ``resolve(progressRollup:anyFailure:animateProgressEnabled:errorBadgeEnabled:)``.
-    public static func tint(forRollup rollup: PaneProgress?) -> DockTint {
-        if case .error = rollup { return .error }
-        return .none
-    }
-
     /// The COMPLETE Dock-tile decision combining the cross-session progress rollup, whether any session
-    /// carries a `.failure` (non-zero exit) completion badge, and the two macOS-only toggles:
-    ///  - **tint**: red iff `dock-icon-error-badge` is on AND (the progress rollup is `.error` OR a session
-    ///    exited non-zero) — the spec "tints red when any session reports a non-zero exit or OSC 9;4;2".
-    ///  - **animation**: runs iff `dock-icon-animate-progress` is on AND the aggregate is a RUNNING state
-    ///    (in-progress / indeterminate); a held error or a clear never animates.
-    ///  - **determinateFraction**: the clamped `percent/100` when the aggregate is a determinate percent and
-    ///    animation is on, else `nil` (the indeterminate spinner). Ordered min/max clamp (NaN-safe — the
-    ///    house style, never a bare `<`/`>` ternary), no fused multiply.
+    /// carries a `.failure` (non-zero exit) completion badge, and the two macOS-only toggles.
+    ///
+    /// The rule is `slopdesk_workspace::chrome::dock_tile` — which of the three rollups tints, which
+    /// animate, and the fraction the determinate one draws with. The rollup crosses as the WIRE's own
+    /// `OSC 9;4` discriminant rather than as this enum's case index, so the byte means the same thing on
+    /// both sides of the client as it does on the wire that produced it.
     public static func resolve(
         progressRollup: PaneProgress?,
         anyFailure: Bool,
         animateProgressEnabled: Bool,
         errorBadgeEnabled: Bool,
     ) -> DockTileModel {
-        let isError = tint(forRollup: progressRollup) == .error || anyFailure
-        let tintDecision: DockTint = errorBadgeEnabled && isError ? .error : .none
-        var animates = false
-        var fraction: Double?
-        if animateProgressEnabled {
-            switch progressRollup {
-            case .indeterminate:
-                animates = true
-            case let .determinate(percent):
-                animates = true
-                fraction = Double.minimum(1, Double.maximum(0, Double(percent) / 100))
-            case .error,
-                 nil:
-                break
-            }
+        let tile = slopdesk_ws_dock_tile(
+            progressRollup?.ffiRollup ?? 0, progressRollup?.ffiPercent ?? 0,
+            anyFailure, animateProgressEnabled, errorBadgeEnabled,
+        )
+        return DockTileModel(
+            tint: tile.tinted ? .error : DockTint.none,
+            animatesProgress: tile.animates,
+            determinateFraction: tile.fraction_present ? tile.fraction : nil,
+        )
+    }
+}
+
+extension PaneProgress {
+    /// The `OSC 9;4` discriminant this rollup came from — `1` in progress, `2` error, `3` indeterminate.
+    /// `0`, the clear, has no case here: it is the ABSENCE of a rollup.
+    var ffiRollup: UInt8 {
+        switch self {
+        case .determinate: 1
+        case .error: 2
+        case .indeterminate: 3
         }
-        return DockTileModel(tint: tintDecision, animatesProgress: animates, determinateFraction: fraction)
+    }
+
+    /// The percent the two value-carrying cases hold; the spinner has none.
+    var ffiPercent: UInt8 {
+        switch self {
+        case let .determinate(percent),
+             let .error(percent): percent
+        case .indeterminate: 0
+        }
     }
 }

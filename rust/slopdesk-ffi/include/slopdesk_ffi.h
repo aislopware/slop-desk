@@ -634,6 +634,40 @@ size_t   slopdesk_ws_notify_explicit_content(const uint8_t *pane_title, size_t p
 // Spends a token if there is one, writing the refilled bucket back through `limiter`.
 bool     slopdesk_ws_notify_rate_limit_allow(SlopDeskWsNotifyRateLimiter *limiter, double now);
 
+// ---- What the window's CHROME shows around the panes ----
+//
+// Two of these have a rung that means NO OPINION, and each says so in the way its own answer allows:
+// the sidebar's is -1 beside the booleans 0 and 1, the Dock's is a `present` flag beside its
+// fraction. A refusal has to sit outside the range of every real answer, or it is read as one.
+// Every enum here crosses as a case index, and an unrecognised byte reads as the quiet case.
+
+typedef struct {
+    bool collapsed;
+    bool manual_override;    // the user's own ⌘⇧L or swipe put it where it is
+    bool last_auto;          // read only when `last_auto_present`
+    bool last_auto_present;  // false is the first application — which counts as a regime edge
+} SlopDeskWsSidebarState;
+
+typedef struct {
+    bool   tinted;
+    bool   animates;
+    double fraction;         // read only when `fraction_present`
+    bool   fraction_present; // false is the indeterminate spinner
+} SlopDeskWsDockTile;
+
+// `mode` is 0 never auto-hide · 1 always shown · 2 auto. 1 collapse · 0 reveal · -1 no opinion.
+int32_t slopdesk_ws_sidebar_desired_collapsed(uint8_t mode, size_t tab_count);
+// The flags the chrome should hold afterwards. Actuation is gated on the 1↔>1 tab-count EDGE, so a
+// manual collapse survives an unrelated tab opening within the same regime.
+SlopDeskWsSidebarState slopdesk_ws_sidebar_apply_auto_hide(uint8_t mode, size_t tab_count,
+                                                           SlopDeskWsSidebarState state);
+// `policy` is 0 while a process runs · 1 always · 2 more than one tab.
+bool slopdesk_ws_close_should_confirm(uint8_t policy, bool is_busy, size_t tab_count);
+// `rollup` is the WIRE's own OSC 9;4 discriminant — 1 in progress · 2 error · 3 indeterminate;
+// 0 (clear) and anything else is the absence of a rollup.
+SlopDeskWsDockTile slopdesk_ws_dock_tile(uint8_t rollup, uint8_t percent, bool any_failure,
+                                         bool animate_enabled, bool error_badge_enabled);
+
 // ---- What the sidebar SHOWS, in what order, under which labels ----
 //
 // Both list doors answer in the CALLER's indices: a rail row is an id, a kind, a badge, a selection

@@ -49,6 +49,7 @@ pub mod annexb;
 pub mod audio_jitter;
 pub mod blob;
 pub mod blocks;
+pub mod chrome;
 pub mod cli;
 pub mod client_gestures;
 pub mod client_input;

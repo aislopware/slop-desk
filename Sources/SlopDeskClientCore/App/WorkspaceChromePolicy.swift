@@ -9,6 +9,7 @@
 //
 // Each is `@MainActor` and each is unit-pinned without a live view, a split or an `NSWindow`.
 
+import CSlopDeskFFI
 import SlopDeskWorkspaceCore
 
 @MainActor
@@ -16,34 +17,29 @@ package enum WorkspaceChromePolicy {
     /// The window-title fallback (empty workspace / no active pane) — the product name.
     package static let productName = "SlopDesk"
 
-    /// The single place the `auto-hide-tabs-panel` policy ACTUATES. Apply the pure
-    /// ``SidebarAutoHidePolicy/desiredCollapsed(mode:tabCount:)`` decision to the live
-    /// `chrome.sidebarCollapsed`, but ONLY when the policy has an opinion (mode `.auto`); a `nil`
-    /// opinion (`.default`/`.always`) is left untouched.
-    ///
-    /// The `.auto` decision flips ONLY across the 1↔>1 tab-count regime (`desired == tabCount <= 1`),
-    /// so actuation is gated on a regime EDGE — the first application (`lastAutoHideCollapsed == nil`)
-    /// or a `desired` differing from the last value the policy drove. ON that edge the default-state
-    /// opinion ("hidden when only one tab") re-asserts: clear any manual override and actuate. WITHIN
-    /// a regime (an UNRELATED tab open/close — e.g. 2→3 tabs — that does not flip `desired`) a manual
-    /// ⌘⇧L is honored and NEVER fought. The `!= desired` write guard avoids a redundant `@Observable`
-    /// invalidation.
+    /// The single place the `auto-hide-tabs-panel` policy ACTUATES. The arbitration — which mode has
+    /// an opinion at all, the 1↔>1 regime edge that lets it re-assert, and the manual ⌘⇧L it must not
+    /// fight within a regime — is `slopdesk_workspace::chrome::apply_auto_hide`. What is left here is
+    /// the `@Observable` write, guarded per field so a decision that changed nothing does not
+    /// invalidate the whole root view.
     package static func applyAutoHide(
         mode: AutoHideTabsPanelMode, tabCount: Int, chrome: WorkspaceChromeState,
     ) {
-        guard let desired = SidebarAutoHidePolicy.desiredCollapsed(mode: mode, tabCount: tabCount) else { return }
-        let isRegimeEdge = chrome.lastAutoHideCollapsed != desired
-        chrome.lastAutoHideCollapsed = desired
-        if isRegimeEdge {
-            // 1↔>1 transition (or first apply): the auto default-state opinion wins, manual override cleared.
-            chrome.manualSidebarOverride = false
-        } else if chrome.manualSidebarOverride {
-            // Same regime + a live manual override: leave the user's ⌘⇧L choice in place.
-            return
+        let next = slopdesk_ws_sidebar_apply_auto_hide(
+            mode.ffiByte, max(0, tabCount),
+            SlopDeskWsSidebarState(
+                collapsed: chrome.sidebarCollapsed,
+                manual_override: chrome.manualSidebarOverride,
+                last_auto: chrome.lastAutoHideCollapsed ?? false,
+                last_auto_present: chrome.lastAutoHideCollapsed != nil,
+            ),
+        )
+        let lastAuto = next.last_auto_present ? next.last_auto : nil
+        if chrome.lastAutoHideCollapsed != lastAuto { chrome.lastAutoHideCollapsed = lastAuto }
+        if chrome.manualSidebarOverride != next.manual_override {
+            chrome.manualSidebarOverride = next.manual_override
         }
-        if chrome.sidebarCollapsed != desired {
-            chrome.sidebarCollapsed = desired
-        }
+        if chrome.sidebarCollapsed != next.collapsed { chrome.sidebarCollapsed = next.collapsed }
     }
 
     /// A user swipe of the iPad's leading TABS column — the SECOND manual entry point besides
