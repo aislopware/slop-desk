@@ -4441,6 +4441,24 @@ if [[ -n "${reads}" ]]; then
 fi
 printf 'check-supervisor: one write(2) and one read-exactly, and drop-or-report stays with the caller.\n'
 
+# ── One drop-zone shape, drawn and hit-tested ─────────────────────────────────────────────────
+# The overlay DRAWS the five blobs and the receiver HIT-TESTS against them. A second copy of the
+# proportions anywhere lets the hit region slide off the blob, and the drop lands in a zone the user
+# was not pointing at — silently, because both halves still look right on screen. So `PaneDropZone-
+# Layout` may only forward, and the fractions live once in `slopdesk_workspace::drop_zone`.
+for door in slopdesk_drop_zone_shape slopdesk_drop_zone_at; do
+  if ! grep -q "${door}" Sources/SlopDeskWorkspaceCore/Workspace/Domain/Drop/PaneDropZoneLayout.swift; then
+    fail "PaneDropZoneLayout stopped calling ${door} — a drop lands where it is not drawn"
+  fi
+done
+# shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
+drop_dupes=$(spells '0\.46|0\.72|0\.26' $(repo_files 'Sources/SlopDeskClientUI/Pane/PaneDrop*.swift') 2> /dev/null || true)
+if [[ -n "${drop_dupes}" ]]; then
+  printf '%s\n' "${drop_dupes}" >&2
+  fail "a drop-zone proportion grew back in the overlay — rust/slopdesk-workspace/src/drop_zone.rs owns them"
+fi
+printf 'check-supervisor: the drop overlay draws and hit-tests one shape.\n'
+
 # ── One device-panel law, two device protocols ────────────────────────────────────────────────
 # The simulator panel and the Android panel differ in almost everything and should — one rotates on
 # the client and the other on the device, one sends touches in the fitted rect's space and the other

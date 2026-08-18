@@ -2352,6 +2352,19 @@ size_t slopdesk_link_cd_command_line(const uint8_t *text, size_t len, uint8_t *o
 uint8_t slopdesk_drop_action(uint8_t zone, uint8_t content_kind, const uint8_t *value,
                              size_t value_len, uint8_t *out, size_t cap, size_t *needed);
 
+/* WHERE the five zones are, on the same codes. The overlay asks for a zone's ellipse to draw it and
+ * the receiver asks which zone a point is in, so the drawn blob and the hit region are one function
+ * and a `.contentShape`-after-`.position` mistake cannot move one without the other.
+ *
+ * Every number inside is a fraction of the pane box, so a sidebar-sized pane and a full-screen one
+ * get the same layout. `slopdesk_drop_zone_at` answers a code plus a presence flag rather than a
+ * sentinel code: `0` is a real zone (New Tab), and a point in the gap between the blobs is a real
+ * answer. A miss leaves `*out` untouched.                                                        */
+typedef struct { SlopDeskWsPoint center; double radius_x, radius_y; } SlopDeskDropZoneShape;
+
+SlopDeskDropZoneShape slopdesk_drop_zone_shape(uint8_t zone, double width, double height);
+bool slopdesk_drop_zone_at(SlopDeskWsPoint point, double width, double height, uint8_t *out);
+
 /* ---- Hint Mode: every span in the viewport a two-letter label can pin to -----------------
  * The same handle-over-arena shape as the link scan above, because the answer is the same shape:
  * a variable list of records each carrying up to three strings. A LINK target carries the whole

@@ -59,6 +59,7 @@
 
 pub mod chrome;
 pub mod drop_action;
+pub mod drop_zone;
 pub mod focus;
 pub mod frecency;
 pub mod geometry;

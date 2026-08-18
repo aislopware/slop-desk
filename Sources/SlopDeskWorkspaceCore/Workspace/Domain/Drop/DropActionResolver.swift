@@ -104,17 +104,8 @@ public enum DropActionResolver {
 
 // Named rather than numbered, so no code is spelled twice and the two languages cannot drift over one.
 
-private extension DropZone {
-    var ffiCode: UInt8 {
-        switch self {
-        case .newTab: UInt8(SLOPDESK_DROP_ZONE_NEW_TAB)
-        case .insertPath: UInt8(SLOPDESK_DROP_ZONE_INSERT_PATH)
-        case .openInPlace: UInt8(SLOPDESK_DROP_ZONE_OPEN_IN_PLACE)
-        case .splitLeft: UInt8(SLOPDESK_DROP_ZONE_SPLIT_LEFT)
-        case .splitRight: UInt8(SLOPDESK_DROP_ZONE_SPLIT_RIGHT)
-        }
-    }
-}
+// `DropZone.ffiCode` is beside the enum in `PaneDropZoneLayout.swift`: the hit test asks for a zone in the
+// same numbers this asks what one does.
 
 private extension DroppedContent {
     var ffiKind: UInt8 {
