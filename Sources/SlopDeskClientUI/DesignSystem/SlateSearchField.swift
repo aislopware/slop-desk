@@ -18,31 +18,31 @@ import SwiftUI
 
 /// A plain, chrome-styled single-line search input. The caller owns the plate (fill, radius,
 /// leading icon, trailing clear affordance) — this is only the text line, jump-free on focus.
-struct SlateSearchField: NSViewRepresentable {
+package struct SlateSearchField: NSViewRepresentable {
     let placeholder: String
     @Binding var text: String
 
     @MainActor
-    final class Coordinator: NSObject, NSTextFieldDelegate {
+    package final class Coordinator: NSObject, NSTextFieldDelegate {
         var text: Binding<String>
-        init(text: Binding<String>) { self.text = text }
+        package init(text: Binding<String>) { self.text = text }
 
-        func controlTextDidChange(_ notification: Notification) {
+        package func controlTextDidChange(_ notification: Notification) {
             guard let field = notification.object as? NSTextField else { return }
             text.wrappedValue = field.stringValue
         }
 
         /// The field editor exists only once editing begins — the caret can't be inked earlier.
-        func controlTextDidBeginEditing(_ notification: Notification) {
+        package func controlTextDidBeginEditing(_ notification: Notification) {
             guard let field = notification.object as? NSTextField,
                   let editor = field.currentEditor() as? NSTextView else { return }
             editor.insertionPointColor = NSColor(Slate.Text.primary)
         }
     }
 
-    func makeCoordinator() -> Coordinator { Coordinator(text: $text) }
+    package func makeCoordinator() -> Coordinator { Coordinator(text: $text) }
 
-    func makeNSView(context: Context) -> NSTextField {
+    package func makeNSView(context: Context) -> NSTextField {
         let field = Self.makeConfiguredField(text: text, delegate: context.coordinator)
         applyInk(field)
         return field
@@ -50,7 +50,9 @@ struct SlateSearchField: NSViewRepresentable {
 
     /// The jump-critical configuration, factored out so a headless test can pin it (a `Context`
     /// cannot be constructed outside SwiftUI).
-    static func makeConfiguredField(text: String, delegate: NSTextFieldDelegate?) -> NSTextField {
+    package static func makeConfiguredField(
+        text: String, delegate: NSTextFieldDelegate?,
+    ) -> NSTextField {
         let field = NSTextField(string: text)
         field.isBezeled = false
         field.isBordered = false
@@ -67,7 +69,7 @@ struct SlateSearchField: NSViewRepresentable {
         return field
     }
 
-    func updateNSView(_ field: NSTextField, context: Context) {
+    package func updateNSView(_ field: NSTextField, context: Context) {
         context.coordinator.text = $text
         // External writes only (the clear button) — echoing every keystroke back would fight the
         // field editor's caret.

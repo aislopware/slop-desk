@@ -427,7 +427,7 @@ struct ConnectionCluster: View {
 /// pane sessions, so resolving it in the navigator's or the titlebar's own body would make that body
 /// a dependent of every pane's ~1 Hz latency tick — re-running the sidebar's sectioning pass, or the
 /// tab strip's whole `Deal`, once a second for a number neither of them draws. Reading it HERE is the
-/// same contract ``SidebarLiveRow`` and ``TabStripChip`` keep with their volatile chrome.
+/// same contract the navigator's rows and ``TabStripChip`` keep with their volatile chrome.
 struct ConnectionStatusMount: View {
     let store: WorkspaceStore
     let connection: AppConnection

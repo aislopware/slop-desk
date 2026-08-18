@@ -54,14 +54,14 @@ package enum StatusDot {
     /// The agent-presence ring's diameter. Matched by eye at true size to the outer circle of the
     /// finish mark — ⚠️ which now sits a point ABOVE it (``finishSymbolSize``, user-directed), so a
     /// row that finishes gains a hair of size where it used to gain none.
-    static let ringDiameter: CGFloat = 10
+    package static let ringDiameter: CGFloat = 10
     /// How many dots ride the ring. Eight keeps the four-fold symmetry that lets a small circle of
     /// marks read as a CIRCLE — the dots at 12, 3, 6 and 9 o'clock do that work on their own.
-    static let ringDotCount = 8
+    package static let ringDotCount = 8
     /// One dot's diameter. Fatter than the 1.5 hairline the ring used to be stroked at, so a dot
     /// reads as a dot rather than as a nick in a thin line, and still under the working cell's Ø2.6:
     /// a PRESENT agent must stay quieter than a thinking one, and size is half of how it does that.
-    static let ringDotDiameter: CGFloat = 1.8
+    package static let ringDotDiameter: CGFloat = 1.8
 
     /// The air between two neighbouring dots, measured edge to edge along the circumference. ⚠️ This
     /// is what the round is FOR — user-directed 2026-08-10: the ring is dots now, not dashes, and the
@@ -81,11 +81,15 @@ package enum StatusDot {
     /// disc is only as big as itself. So the correction is to what it READS as, not to a measured
     /// defect: 13 puts ≈13.1pt across the column, a point clear of the ring, still inside the 14pt
     /// box. Its one cost is that a row now grows very slightly when it finishes.
-    static let finishSymbolSize: CGFloat = 13
+    package static let finishSymbolSize: CGFloat = 13
     /// The size otty gives its other badge symbols — a point smaller than the finish, because a
     /// filled straight-edged glyph out-weighs a circle at equal point size. The privilege shield
     /// (``TabBadgeView``) is the one left that uses it.
-    static let badgeSymbolSize: CGFloat = 11
+    package static let badgeSymbolSize: CGFloat = 11
+    /// The close `×`'s HIT target — otty's 18, kept after the plate shrank to the mark's column box.
+    /// The extra reach over ``footprint`` is spent leading and vertically, never trailing: growing it
+    /// trailing would push the × past the column every other row's mark ends on.
+    package static let closeTargetSide: CGFloat = 18
     /// The point size of the RECEIPT's completion check — the bare `checkmark` a cleanly-exited
     /// command takes in the trailing slot (``StatusPresentation/outcomeSymbol(_:)``).
     ///
@@ -98,17 +102,17 @@ package enum StatusDot {
     /// punctuation sized a point under the 10pt NAME it followed; that name is gone, the tick is the
     /// whole receipt now, and a mark standing where a word stood takes the word's rung — otherwise
     /// dropping the name would have quietly made the finished row harder to see rather than calmer.
-    static let receiptCheckSize: CGFloat = Slate.Typeface.small
+    package static let receiptCheckSize: CGFloat = Slate.Typeface.small
     /// The weight that check is stroked at. `.semibold`: a 10pt tick goes to smudge at `.regular`
     /// (the same floor ``symbolWeight`` exists for), and it stands in for a BOLD word — a hairline
     /// mark where the rail printed a bold name reads as a rendering artefact rather than a verdict.
     static let receiptCheckWeight: Font.Weight = .semibold
     /// otty renders every badge at `NSFontWeightMedium`. Not `.regular`: at 11pt a regular-weight
     /// symbol goes thin enough on a muted ink to read as smudge rather than mark.
-    static let symbolWeight: Font.Weight = .medium
+    package static let symbolWeight: Font.Weight = .medium
     /// The side lucide `hand` is drawn into — otty's badge box, undivided (an outlined glyph needs
     /// the whole box; a system symbol already carries its own margin inside one).
-    static let handSide: CGFloat = 14
+    package static let handSide: CGFloat = 14
     /// The side otty gives the spinner. Same box as everything else in this column.
     static let spinnerSide: CGFloat = 14
     /// The platform's own `.small` control side — what ``spinnerSide`` is scaled DOWN from.
@@ -270,7 +274,7 @@ package enum StatusDot {
 /// WHICH mark a row draws — otty's `TabBadge` set, plus the resting-agent ring otty has no need
 /// for. See this file's header for what each one is allowed to say. Every case here is an AGENT's:
 /// a command's outcome speaks in the trailing slot (``CommandReceipt``), not in this column.
-enum StatusMark: Equatable {
+package enum StatusMark: Equatable {
     /// The agent is generating RIGHT NOW — otty's spinner. The only thing on this rail that moves.
     case working
     /// The agent is present in this pane but idle — a muted ring of dots (``DottedRing``).
@@ -283,7 +287,7 @@ enum StatusMark: Equatable {
     /// The system symbol this mark draws and the point size otty configures for it — `nil` for the
     /// marks that are not system symbols (the ring, the hand, the spinner). ONE source, so a
     /// magnified render cannot show a different symbol from the one the rail mounts.
-    var systemSymbol: (symbol: SFSymbol, size: CGFloat)? {
+    package var systemSymbol: (symbol: SFSymbol, size: CGFloat)? {
         switch self {
         case .agentFinish: (.checkmarkCircleFill, StatusDot.finishSymbolSize)
         case .agentRing,
@@ -296,16 +300,22 @@ enum StatusMark: Equatable {
 /// One resolved mark: the ink that names the state, plus WHICH mark carries it. A pure value (no
 /// view), so the resolver (``StatusPresentation/statusDot(working:badge:agentIdle:agentFinish:)``)
 /// unit-tests without rendering.
-struct StatusDotStyle: Equatable {
-    let ink: Color
+package struct StatusDotStyle: Equatable {
+    package let ink: Color
     /// The silhouette. Defaults to the agent ring, the shape the resting-agent branch wants.
-    var mark: StatusMark = .agentRing
+    package var mark: StatusMark = .agentRing
     /// Hold the ONE mark that moves at a fixed frame instead of running it. `false` everywhere a row
     /// resolves a mark — a row's spinner spins — and `true` only where the mark is being shown as a
     /// SLOT rather than as news: the band rollup's absent states (``RailStatusRollup``), which draw
     /// all three readings always and animate only the ones that are happening. A silhouette that
     /// moves is a claim that something is moving.
-    var frozen: Bool = false
+    package var frozen: Bool = false
+
+    package init(ink: Color, mark: StatusMark = .agentRing, frozen: Bool = false) {
+        self.ink = ink
+        self.mark = mark
+        self.frozen = frozen
+    }
 }
 
 /// The mark itself. Only the spinner carries a timeline; every other state is drawn once and holds

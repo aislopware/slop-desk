@@ -4703,6 +4703,59 @@ if grep -q 'OverlayHostView' Sources/SlopDeskMacUI/App/MacWorkspaceRootView.swif
 fi
 printf 'check-supervisor: one picker, drawn twice, and the stage-D ledger is empty.\n'
 
+# ── One navigator, one row reading, one git dialect (docs/56 stage D) ───────────────────────────
+# The NAVIGATOR is the column stage D names as Mac-shaped, and the one whose halves could disagree
+# in the most ways: forty rows, each with a hover swap, a drop ring, a context menu, an inline field
+# and a mark that ticks at display rate. Everything the two frameworks could argue about was lifted
+# to `SlopDeskClientCore` FIRST — the row's whole appearance (`SidebarRowReading`), the git dialect
+# (`SidebarGitLine`), the sectioning (`SidebarSections`), the menu's verb table (`SidebarRowMenu`)
+# and the select path (`SidebarSelection`) — so what is left in either column is drawing and events.
+# This gate is what keeps that true.
+#
+# `SlateTabRow.swift` must stay DELETED. It was the shared SwiftUI row both platforms drew; the Mac's
+# row is `MacSidebarRowView` and the phone's is `IOSSidebarLiveRow`, and a third would be the
+# cross-language mirror CLAUDE.md's one-implementation rule bans.
+if [[ -e Sources/SlopDeskClientUI/Chrome/SlateTabRow.swift ]]; then
+  fail "SlateTabRow.swift is back — the navigator row is MacSidebarRowView (AppKit) or IOSSidebarLiveRow (phone)"
+fi
+if grep -rqE '(struct|final class) SlateTabRow\b' Sources/ 2> /dev/null; then
+  fail "SlateTabRow is back under another path — one row per platform, both reading SidebarRowReading"
+fi
+# The SwiftUI navigator is the PHONE's now. Without the platform gate the Mac would build two.
+if ! grep -q '#if os(iOS)' Sources/SlopDeskClientUI/Columns/NavigatorColumn.swift; then
+  fail "NavigatorColumn stopped being iOS-only — the Mac's navigator is MacNavigatorColumn"
+fi
+for spelling in SidebarRowPresentation SidebarRowMenu; do
+  if ! grep -q "${spelling}" Sources/SlopDeskClientUI/Columns/NavigatorColumn.swift; then
+    fail "the phone's navigator stopped reading ${spelling} — two rows, and the drift would be silent"
+  fi
+done
+for spelling in SidebarRowPresentation SidebarRowMenu SidebarSections; do
+  if ! grep -rq "${spelling}" Sources/SlopDeskMacUI/Columns/; then
+    fail "the Mac's navigator stopped reading ${spelling} — two rows, and the drift would be silent"
+  fi
+done
+# The GIT DIALECT is cut once. A half that spells a sigil itself is a second dialect: the sigils are
+# a language a git prompt already taught the eye, and two spellings of it read as two repos.
+if ! grep -rq 'SidebarGitLine' Sources/SlopDeskMacUI/Columns/MacSidebarHeader.swift; then
+  fail "MacSidebarHeader stopped reading SidebarGitLine — the git dialect is ClientCore's, cut once"
+fi
+for half in Sources/SlopDeskMacUI/Columns/MacSidebarHeader.swift \
+  Sources/SlopDeskMacUI/Columns/MacSidebarRow.swift \
+  Sources/SlopDeskClientUI/Columns/NavigatorColumn.swift; do
+  # Comments stripped first — the headers NAME the sigils they no longer spell.
+  if sed -E 's#^[[:space:]]*//.*##;s#^[[:space:]]*///.*##' "${half}" |
+    grep -qE '"↑\\\(|"↓\\\(|"\+\\\(|"!\\\(|"\?\\\(|"~\\\(|"\$\\\('; then
+    fail "${half} spells a git sigil — every one of them is SidebarGitLine.segments's"
+  fi
+done
+# The ATTENTION ROLES are ranked once (`TabBadgeReading.rollup`), because a collapsed group's count
+# has to pick a loudest hidden state and both halves must pick the same one.
+if ! grep -rq 'TabBadgeReading' Sources/SlopDeskClientUI/App/StatusPresentation.swift; then
+  fail "StatusPresentation stopped delegating to TabBadgeReading — the attention ranking is cut once"
+fi
+printf 'check-supervisor: one navigator per platform, one row reading, one git dialect.\n'
+
 # ── One device-panel law, two device protocols ────────────────────────────────────────────────
 # The simulator panel and the Android panel differ in almost everything and should — one rotates on
 # the client and the other on the device, one sends touches in the fitted rect's space and the other

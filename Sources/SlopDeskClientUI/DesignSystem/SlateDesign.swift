@@ -261,7 +261,7 @@ package enum Slate {
     /// resolves DARK, against the terminal, instead of following the app's light chrome pin. This is
     /// the native dark-content-well idiom (a video player's letterbox, a dark artboard) applied to
     /// the terminal, and it is the ONE place in the app that opts out of the light pin.
-    @MainActor static var glassColorScheme: ColorScheme { .dark }
+    @MainActor package static var glassColorScheme: ColorScheme { .dark }
 
     /// The colour scheme of the CHROME — the app's one polarity (`SlateAppearancePin` pins `NSApp` to
     /// `.aqua`), named here so a subtree that has to climb BACK out of the glass can say so in tokens
@@ -461,6 +461,52 @@ package enum Slate {
             package static let aside = SlateNativeColor.slateDynamic(light: 0x9400BD, dark: 0xDB65FF)
         }
 
+        /// One run of the project header's GIT LINE, as ink. Native only: the line is drawn by the
+        /// Mac's navigator header (``SlopDeskMacUI/MacSidebarHeaderView``) and nowhere else — the
+        /// phone's grouped list has no room for it — so there is no SwiftUI twin to keep in step.
+        ///
+        /// The four WORKTREE states are a RAMP, not a set of labels: `+staged` → `!modified` →
+        /// `?untracked` → `~conflicted` is "how far this work is from being committed" (in the index
+        /// → in the worktree → git has never seen it → it is broken), and the chromatics sweep that
+        /// distance exactly: green → yellow → orange → red, monotone, in the SAME left-to-right order
+        /// the sigils already appear. The ramp is the reason `?` is orange rather than one more grey
+        /// — it is the rung between "you changed it" and "it is broken".
+        ///
+        /// Off the ramp: `↑↓` divergence is where the branch sits against its upstream and `$` stash
+        /// is work parked to one side. Neither is a worktree state, so both take a cool hue and stay
+        /// out of the warm sweep. The BRANCH keeps the supporting ink — it is the line's identity,
+        /// not a count.
+        ///
+        /// ⚠️ ``StatusInk``, never the system `Status` palette this first came back in: as ink on the
+        /// cream the system hues measured 2.05 (green) and 2.12 (orange) — the loudest words in the
+        /// rail drawn two and a half times fainter than the grey whose job is to be ignored
+        /// (user-reported 2026-08-10). Two roles were also literally the same colour, so the
+        /// four-rung ramp rendered in three. These are solved iso-lightness on the deepest bed, which
+        /// is what lets the ramp read AS a ramp: four hues at ONE contrast, so the order comes from
+        /// chromatics and never from one run happening to shout. The hues also cannot collide with
+        /// the bed they stand on — a project island's is solved to the 195°–340° arc precisely so
+        /// red / amber / green stay the status vocabulary's alone (``Slate/ProjectTint``).
+        package static func gitInk(_ role: GitInk) -> SlateNativeColor {
+            switch role {
+            case .branch: Text.secondary
+            case .divergence: StatusInk.info
+            case .staged: StatusInk.ok
+            case .modified: StatusInk.warn
+            case .untracked: StatusInk.notice
+            case .conflicted: StatusInk.err
+            case .stash: StatusInk.aside
+            }
+        }
+
+        /// One ATTENTION role, as ink — the native view of ``Slate/attentionInk(_:)``.
+        package static func attentionInk(_ role: AttentionRole) -> SlateNativeColor {
+            switch role {
+            case .awaiting: StatusInk.warn
+            case .failed: StatusInk.err
+            case .finished: StatusInk.ok
+            }
+        }
+
         /// One AGENT's state, as ink — the native view of ``Slate/agentInk(_:)``, and the reason
         /// ``AgentInk`` exists as a value at all.
         package static func agentInk(_ ink: AgentInk) -> SlateNativeColor {
@@ -469,6 +515,33 @@ package enum Slate {
             case .awaiting,
                  .thinking: StatusInk.warn
             case .done: StatusInk.ok
+            }
+        }
+
+        /// The project BEDS, natively — the same five sources at the same alpha the SwiftUI side
+        /// composites, reached by the index a ``Slate/ProjectTint/Deal`` dealt.
+        ///
+        /// The DEAL itself is not duplicated here: it is index arithmetic over a whole ordered run
+        /// (a group whose hash collides with the island above it re-probes), and the Mac's navigator
+        /// runs the same `Deal` the phone does and only asks this for the colour at a position.
+        @MainActor
+        package enum ProjectTint {
+            /// The bed for a dealt index, or the NEUTRAL bed for the keyless bucket (`nil`) and for
+            /// an index that has out-run the register — a bed is decoration, and a view past the end
+            /// of its deal must still draw.
+            package static func bed(at index: Int?) -> SlateNativeColor {
+                guard let index, Slate.ProjectTint.registerHexes.indices.contains(index) else {
+                    return neutralBed
+                }
+                return SlateNativeColor(slateHex: Slate.ProjectTint.registerHexes[index])
+                    .slateScalingAlpha(Opacity.bed)
+            }
+
+            /// The keyless bucket's bed — the host island wears it too (see ``ConnectionStatusIsland``):
+            /// a machine is not a project, so it must not wear a project's identity hue.
+            package static var neutralBed: SlateNativeColor {
+                SlateNativeColor(slateHex: UInt32(Slate.ProjectTint.neutralSource))
+                    .slateScalingAlpha(Opacity.bed)
             }
         }
     }
@@ -739,7 +812,7 @@ package enum Slate {
     /// already guarantees the case the eye actually meets (two ADJACENT islands never share a hue).
     ///
     /// Never spend an entry of this register as an ink, a stroke or a mark. Use ``Slate/StatusInk``.
-    enum ProjectTint {
+    package enum ProjectTint {
         /// The five identity BED SOURCES — teal, blue, indigo, magenta, rose. Read the type note
         /// before touching a hex: these are solved values, not picked ones, and each is meaningful
         /// only after compositing at ``Slate/Opacity/bed`` over the cream ground.
@@ -751,11 +824,13 @@ package enum Slate {
         /// status vocabulary keeps red / amber / green), every source stays a real colour (no
         /// channel above 248), and the minimum pairwise ΔE2000 across all six beds — the five here
         /// plus ``neutralSource`` — is maximised.
+        /// The five sources as HEXES — spelled ONCE, because two frameworks read them: the phone's
+        /// beds resolve through ``register`` and the Mac's through ``Slate/Native/ProjectTint/bed(at:)``,
+        /// and a bed dealt to one project may not be a different colour on the two devices.
+        static let registerHexes: [UInt32] = [0x00A68F, 0x0075F7, 0x514AF8, 0xF414F7, 0xF854A4]
+
         @MainActor
-        static let register: [Color] = [
-            Color(slateHex: 0x00A68F), Color(slateHex: 0x0075F7), Color(slateHex: 0x514AF8),
-            Color(slateHex: 0xF414F7), Color(slateHex: 0xF854A4),
-        ]
+        static let register: [Color] = registerHexes.map { Color(slateHex: $0) }
 
         /// The keyless "Other" bucket's bed source. It is ``Slate/Text/secondary``'s light pin
         /// rather than a sixth identity, because the bucket has no identity to spend — but it IS
@@ -817,14 +892,14 @@ package enum Slate {
         /// your neighbour" cannot both hold unconditionally — and it is spent in the direction that
         /// keeps the column readable. The common case is untouched: with no collision, every group
         /// keeps exactly the colour its own basename hashes to.
-        struct Deal {
+        package struct Deal {
             /// Per-island register index in the run's order; `nil` is the keyless bucket.
-            let indices: [Int?]
+            package let indices: [Int?]
 
             /// Deal `keys` in render order. A `nil` key takes the neutral bed and constrains
             /// nothing after it — the neutral is ΔE2000 ≥ 7.21 from every register entry, so a
             /// keyed group below the "Other" bucket can never be mistaken for it.
-            init(keys: [String?]) {
+            package init(keys: [String?]) {
                 let count = Slate.ProjectTint.registerCount
                 var dealt: [Int?] = []
                 dealt.reserveCapacity(keys.count)
@@ -952,6 +1027,23 @@ package enum Slate {
         /// Parked on purpose — `$stash` (h 320°). Cool, off the warm ramp, and far enough from
         /// ``info`` to be told apart at a glance.
         static let aside = Color(slateNative: Native.StatusInk.aside)
+    }
+
+    /// One ATTENTION role, as ink — the three states that WAIT ON YOU, on the hue budget's own rungs.
+    ///
+    /// The role is ``TabBadgeReading``'s (which badge means what, and which of them outranks which);
+    /// the hue is this ladder's, and ``Slate/Native/attentionInk(_:)`` is the same lookup in
+    /// `NSColor`. Two spellings, one decision — the split the whole ``Native`` block exists for,
+    /// because the Mac's navigator rows are `NSView`s (docs/56 stage D) and the phone's are `View`s.
+    ///
+    /// ⚠️ A ring 10 pt across is the thinnest thing in the rail that carries state, so it is exactly
+    /// where a hue tuned for filled controls fails worst (systemGreen measures 2.05 on this cream) —
+    /// hence ``StatusInk``'s solved angles rather than ``Status``'s system fills. The system palette
+    /// was tried for the MARK COLUMN ALONE on 2026-08-11 (user-directed) and REVERTED the same day
+    /// on hardware; see `docs/DECISIONS.md`. Do not re-propose it without a different ground.
+    @MainActor
+    package static func attentionInk(_ role: AttentionRole) -> Color {
+        Color(slateNative: Native.attentionInk(role))
     }
 
     /// One AGENT's state, as ink.
@@ -1408,7 +1500,7 @@ package enum Slate {
         package static let pulse = SlateCurve(0.42, 0, 0.58, 1, duration: 0.55)
     }
 
-    enum Anim {
+    package enum Anim {
         /// Relayout / panel / tab-select / indicator slide — EaseInEaseOut 0.20s.
         static let standard = Motion.standard.animation
         /// animateIn / row reflow / toggle thumb — EaseOut 0.18s.
@@ -1450,7 +1542,7 @@ package enum Slate {
         /// transparent — so the opening finished before there was anything to watch and the change
         /// read as the plain cross-fade it was supposed to replace. Opening from 0.80 at full ink
         /// (see ``SwiftUI/AnyTransition/plateIgnite``) puts the motion where the eye already is.
-        static let plateIgniteScale: CGFloat = 0.80
+        package static let plateIgniteScale: CGFloat = 0.80
         /// A SPLIT COLUMN opening or closing — the sidebar and the code panel (user-directed
         /// 2026-08-09). The longest move in the app: an entire column's width travels, so it takes
         /// the emphasized curve and a beat more than `stackReflow` to keep the terminal's re-wrap

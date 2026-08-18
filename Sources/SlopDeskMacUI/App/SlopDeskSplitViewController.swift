@@ -109,7 +109,7 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         // (``WindowSidebarToggle``), so this column no longer owns a chrome control. It DOES own the
         // connection island at its foot again (user-directed 2026-08-09), hence `connection` +
         // `onConnect`.
-        let navigator = WorkspaceColumnHosts.navigator(
+        let navigator = MacNavigatorColumn(
             store: store, connection: connection, onConnect: onConnect,
             preferences: preferences, paneDrag: paneDrag, overlay: overlay,
         )

@@ -41,7 +41,7 @@ enum PaneDragOrigin: Equatable {
 
 /// The action releasing the drag at the current cursor would commit — the cross-container superset of
 /// the in-canvas ``PaneDropZone``.
-enum PaneDragDestination: Equatable {
+package enum PaneDragDestination: Equatable {
     case canvas(PaneDropZone)
     case sidebarRow(PaneID)
     case newTab
@@ -51,7 +51,7 @@ enum PaneDragDestination: Equatable {
 
 /// The keys drop-target frame providers register under. Sidebar rows key per-pane (a row is a pane,
 /// not a tab — dropping on it lands BESIDE that pane).
-enum PaneDropTargetKey: Hashable {
+package enum PaneDropTargetKey: Hashable {
     case canvas
     case sidebarList
     case sidebarRow(PaneID)
@@ -176,14 +176,14 @@ package final class PaneDragCoordinator {
     /// The published shape of a live drag. Mutated only when a field CHANGES (destination
     /// transitions), never per cursor frame — observers (row highlights, canvas previews, the New-Tab
     /// slot) re-render on transitions only.
-    struct Drag: Equatable {
+    package struct Drag: Equatable {
         var source: PaneID
         var origin: PaneDragOrigin
-        var destination: PaneDragDestination
+        package var destination: PaneDragDestination
     }
 
     /// The live drag, `nil` at rest.
-    private(set) var drag: Drag?
+    package private(set) var drag: Drag?
 
     /// The live cursor (screen coords, AppKit bottom-left origin) — deliberately un-observed: it moves
     /// every frame and only the AppKit chip panel consumes it directly.
@@ -195,7 +195,7 @@ package final class PaneDragCoordinator {
 
     /// The main workspace window's frame — the `.tearOff` boundary. Registered by the canvas reader
     /// (the one drop target guaranteed to live in the main window).
-    @ObservationIgnored var mainWindowFrame: () -> CGRect? = { nil }
+    @ObservationIgnored package var mainWindowFrame: () -> CGRect? = { nil }
 
     /// The ACTIVE tab's solved leaf rects + container bounds (canvas-local, top-left) — pushed by
     /// `SplitContainer.reportSolvedLayout` so a satellite-origin drag resolves canvas zones without a
@@ -227,7 +227,7 @@ package final class PaneDragCoordinator {
     /// The sidebar list's enclosing `NSScrollView` — resolved lazily (registered by a reader INSIDE the
     /// scroll content; the viewport reader outside it cannot reach the scroller). Drives the drag
     /// edge-band auto-scroll.
-    @ObservationIgnored var sidebarScrollProvider: () -> NSScrollView? = { nil }
+    @ObservationIgnored package var sidebarScrollProvider: () -> NSScrollView? = { nil }
 
     /// The auto-scroll heartbeat — runs only while the drag cursor sits in the list's edge band, so a
     /// STATIONARY cursor keeps scrolling (per-pointer-frame stepping alone would stall the moment the
@@ -241,11 +241,11 @@ package final class PaneDragCoordinator {
 
     // MARK: Target registry
 
-    func register(_ key: PaneDropTargetKey, provider: @escaping () -> CGRect?) {
+    package func register(_ key: PaneDropTargetKey, provider: @escaping () -> CGRect?) {
         providers[key] = provider
     }
 
-    func unregister(_ key: PaneDropTargetKey) {
+    package func unregister(_ key: PaneDropTargetKey) {
         providers[key] = nil
     }
 

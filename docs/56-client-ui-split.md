@@ -363,6 +363,52 @@ nothing is ever implemented twice. No stage copies a file: a surface either move
   into it, including overlays attached further down, so a modal hung off the same chain took no
   clicks at all — and the modal as its sibling. `check-supervisor.sh` gates the regression directly:
   neither `PaneSwitcherOverlay` nor an `allowsHitTesting` may reappear in that file.
+  **The eighth is the NAVIGATOR COLUMN — the first COLUMN, and the first surface whose case rests on
+  a cost that recurs rather than on a framework's shape.** A card is drawn once and dismissed; the
+  sidebar is forty rows under a mouse, each carrying a hover swap, a drop ring, a context menu, an
+  inline rename field and a status mark that ticks at display rate. That is precisely where "the body
+  is a function of state" costs a whole-list diff per pane heartbeat and AppKit costs one leaf's
+  `needsDisplay`. So `MacNavigatorColumn` + `MacSidebarIslandView` + `MacSidebarHeaderView` +
+  `MacSidebarRowView` are `NSView`s, `NavigatorColumn` became `#if os(iOS)`, and the shared
+  `SlateTabRow` was DELETED rather than kept for either — the Mac's row is `MacSidebarRowView`, the
+  phone's is `IOSSidebarLiveRow`, and a third would be the mirror the one-implementation rule bans.
+
+  Everything the two frameworks could disagree about was lifted to `SlopDeskClientCore` FIRST, and it
+  is more than any card moved: `SidebarRowReading` — the row's ENTIRE appearance as one value (title
+  and its ink rung and its weight rung, the agent marker, the mark, the slot's process label or a
+  finished command's receipt, the lock, the sync arming, the rename flag, the ⌘ hint, the tooltip and
+  the spoken state) — plus `SidebarGitLine` (the dialect), `SidebarSections` (the By-Project
+  grouping and its collapse keys), `SidebarRowMenu` (the verb and switch table) and `SidebarSelection`
+  (the click path with its badge auto-clear). What is left in either column is drawing and events.
+
+  Three things the AppKit half owns that nothing below could. **The travelling plate**: selection is
+  ONE `CALayer` that moves between the rows of a project island and IGNITES in place when it arrives
+  from another — the same rule SwiftUI stated as a per-island `matchedGeometryEffect` namespace, said
+  directly. **The bed deal**: a group whose basename hashes onto the island above it is re-dealt, so
+  only something holding the whole ordered run can decide it (`Slate.ProjectTint.Deal`), and a
+  headerless section deals as KEYLESS — it draws no bed, so it must neither consume an identity nor
+  constrain the group under it. **The modal pointer shield**: AppKit tracking areas are rect-based and
+  keep firing under a floating card, so the rows lit their hover plates while the pointer was on the
+  palette; the column goes hit-test deaf while a modal is up, which is the same occlusion the card's
+  dismiss floor already imposes on clicks.
+
+  The GIT DIALECT is the one piece with no SwiftUI twin at all — the phone's grouped list has no git
+  line — so only `Slate.Native.gitInk` was added and nothing was drawn twice. The STATUS MARK is the
+  opposite: it is drawn by AppKit rows and by SwiftUI's `StatusDotView` for the strip and the band
+  rollup, on the `FindModePill` terms — one shared value, one shared geometry, one shared spinner
+  phase (`AgentSpinner`, `StatusDot`), two renderers — and the SwiftUI half dies with the strip.
+
+  What moved with the column is its PIXEL VERIFICATION. Four probes in `SlateSnapshotRender` mounted
+  the deleted views; they are now `MacNavigatorSnapshotRender` in `SlopDeskMacUITests`, mounting the
+  real `NSView`s through an offscreen borderless window and `CALayer.render(in:)`. Two things the
+  AppKit rig gets wrong if copied carelessly, both now spelled in that file's header: the window must
+  be pinned `.aqua` (the app pins LIGHT app-wide — `Slate.glassColorScheme` names the terminal
+  GLASS's dark opt-out, and following it resolves every dynamic ink near-white on the cream), and the
+  bitmap context from `NSGraphicsContext(bitmapImageRep:)` is ALREADY top-left-down, so the usual
+  y-flip photographs the sheet upside down. The port paid for itself immediately: the first grouped
+  render showed the selection plate hugging the row's title instead of spanning the island, because
+  a row is the stack's child rather than the island's and its frame at the island's `layout()` time is
+  the previous pass's. Nothing about that was visible in any value.
 - **E — the Rust port (§4).**
 
 ## 4. What moves to Rust

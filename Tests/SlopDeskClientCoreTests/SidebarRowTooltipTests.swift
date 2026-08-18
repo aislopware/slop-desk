@@ -1,12 +1,12 @@
 // SidebarRowTooltipTests — pins `SidebarRowTooltip.text(cwd:detail:lastCommand:)`, the sidebar row
-// `.help()` text builder (full cwd + untruncated prose readout + last-command line, empty parts
+// tooltip builder (full cwd + untruncated prose readout + last-command line, empty parts
 // omitted), and `commandLine(_:)`, the `command · duration · exit N` assembly. A raw `\(cwd)`
 // interpolation of a `String?` renders the literal `Optional(...)` wrapper — this pins the unwrapped
 // form instead.
 
 import SlopDeskWorkspaceCore
 import XCTest
-@testable import SlopDeskClientUI
+@testable import SlopDeskClientCore
 
 final class SidebarRowTooltipTests: XCTestCase {
     /// All three parts present: three lines, cwd first, NEVER `Optional(...)`.

@@ -1,13 +1,15 @@
 // WorkspaceColumnHosts — the three hosted columns, handed to the AppKit shell as view controllers.
 //
 // The macOS split shell (`SlopDeskSplitViewController`, `SlopDeskMacUI`) sits ABOVE this target, so
-// it cannot name a SwiftUI column that has not moved yet — and widening three whole view structs
-// (and every stored property of each) to `package` just to let it call their initializers would
-// publish an API that exists only until each column is rewritten in AppKit.
+// it cannot name a SwiftUI column that has not moved yet — and widening whole view structs (and every
+// stored property of each) to `package` just to let it call their initializers would publish an API
+// that exists only until each column is rewritten in AppKit.
 //
-// So the seam is three factories instead: the shell asks for a column, the draining floor hands back
-// an `NSViewController`. Each factory dies with the column it wraps — when `ContentColumn` becomes
-// AppKit, `content(...)` goes with it and the shell instantiates the real thing.
+// So the seam is factories instead: the shell asks for a column, the draining floor hands back an
+// `NSViewController`. Each factory dies with the column it wraps — the NAVIGATOR's already has (that
+// column is ``SlopDeskMacUI/MacNavigatorColumn`` now, and all that is left of it here is the one
+// SwiftUI island at its foot); when `ContentColumn` becomes AppKit, `content(...)` goes with it and
+// the shell instantiates the real thing.
 //
 // The hosting details that belong to NO column live here too: the overlay-coordinator injection each
 // hosted column needs (an `NSHostingController` inherits no WindowGroup environment) and the dropped
@@ -22,22 +24,27 @@ import SwiftUI
 
 @MainActor
 package enum WorkspaceColumnHosts {
-    /// The LEFT column: the navigator (sessions / panes / the connection island at its foot).
-    package static func navigator(
-        store: WorkspaceStore,
-        connection: AppConnection,
-        onConnect: @escaping () -> Void,
-        preferences: PreferencesStore?,
-        paneDrag: PaneDragCoordinator?,
-        overlay: OverlayCoordinator?,
-    ) -> NSViewController {
-        hosted(
-            NavigatorColumn(
-                store: store, connection: connection, onConnect: onConnect,
-                preferences: preferences, paneDrag: paneDrag,
-            ),
-            overlay: overlay,
+    /// The navigator's FOOT — the connection island, hosted for the AppKit column above it.
+    ///
+    /// The column itself is AppKit now (``SlopDeskMacUI/MacNavigatorColumn``); this one island is not,
+    /// and deliberately so: it is drawn in TWO layouts — the column's `stacked` and the titlebar
+    /// band's `inline` — and porting one of the two while the strip that mounts the other is still
+    /// SwiftUI would create exactly the duplicate implementation `CLAUDE.md` bans. It crosses when the
+    /// strip does, and this factory dies with it.
+    package static func connectionIsland(
+        store: WorkspaceStore, connection: AppConnection, onConnect: @escaping () -> Void,
+    ) -> NSView {
+        let host = NSHostingView(
+            rootView: ConnectionStatusMount(
+                store: store, connection: connection, onConnect: onConnect, layout: .stacked,
+            )
+            // The air the island needs is ABOVE it, not inside it: `space3` separates it from the last
+            // project bed by more than the `space2` that separates two projects, so it reads as the
+            // column's foot rather than as one more group.
+            .padding(.top, Slate.Metric.space3),
         )
+        host.safeAreaRegions = []
+        return host
     }
 
     /// The CENTRE column: the pane grid plus the hover-reveal titlebar that overlays it.

@@ -16,7 +16,7 @@ package struct RailRow: Identifiable, Equatable {
     package let tabID: TabID
     package let kind: PaneKind
     package let title: String
-    /// The row's muted second line (``SlateTabRow`` subtitle). A terminal shows its cwd RELATIVE to
+    /// The row's muted second line (the navigator row's subtitle). A terminal shows its cwd RELATIVE to
     /// its section's project key — and ONLY when it strayed from the project root (the git line moved
     /// up to the section header, and repeating the section's own path on every row is noise); a video
     /// pane keeps its kind-generic
@@ -37,7 +37,7 @@ package struct RailRow: Identifiable, Equatable {
     package let processLabel: String?
     /// Whether this pane's input gate is READ-ONLY — read from the store's convergent
     /// ``WorkspaceStore/paneReadOnly`` set so the sidebar lock indicator and the pane's `🔒 READ ONLY ×` pill
-    /// share one source of truth. Drives ``SlateTabRow``'s trailing lock glyph.
+    /// share one source of truth. Drives the navigator row's trailing lock glyph.
     package let readOnly: Bool
     /// The pane's raw working directory (`pane/cwd`) — `nil` for a video pane. NOT rendered as chrome: it is the row's TOOLTIP (`.help`) text AND a hidden search key so
     /// an at-root row (whose visible subtitle is absent) stays searchable BY PATH and two same-named
@@ -45,7 +45,7 @@ package struct RailRow: Identifiable, Equatable {
     package let cwd: String?
     /// Whether this row is in inline-RENAME mode: the store's ``WorkspaceStore/pendingTabRename``
     /// names this row's tab AND this pane is that tab's representative (active) pane — so exactly one row per
-    /// pending tab opens its rename field. Consumed by ``SlateTabRow`` to swap the title for a `TextField`.
+    /// pending tab opens its rename field. Consumed by the navigator row to swap the title for a field.
     package let isEditing: Bool
     /// Selected = the row's tab is active AND this pane is the tab's active pane.
     package let isSelected: Bool

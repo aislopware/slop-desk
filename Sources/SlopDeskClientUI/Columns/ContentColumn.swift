@@ -65,7 +65,7 @@ struct ContentColumn: View {
                     rows: chrome.sidebarCollapsed ? rowsMemo.rows(for: store) : [],
                     // ONE select path with the sidebar's rows: switch to the owning tab, focus the
                     // pane, clear the tab's agent badges.
-                    onSelectPane: { NavigatorColumn.selectRow($0, in: store) },
+                    onSelectPane: { SidebarSelection.select($0, in: store) },
                     // The connection island rides the strip's trailing corner while the tabs are
                     // horizontal — the same island the navigator's foot carries otherwise.
                     connection: connection, onConnect: onConnect,

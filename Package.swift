@@ -345,6 +345,8 @@ let package = Package(
                 "SlopDeskProtocol",
                 // The rail's rows and the palette's agent entries are keyed by agent state.
                 "SlopDeskAgentDetect",
+                // `PendingToolSummary` — the todo SCENT a working row's tooltip carries.
+                "SlopDeskInspector",
                 // `SessionResumeOutcome` — the fresh-vs-resumed reconnect verdict a toast reports.
                 "SlopDeskClient",
                 // `JumpResolver` — the PURE frecency/$HOME-toggle/`--no-cd` resolution the CLI pins.
@@ -468,6 +470,10 @@ let package = Package(
                 .product(name: "SwiftUIIntrospect", package: "swiftui-introspect"),
                 // Fire-time reads of the Code Agent sound toggles in the attention sink.
                 .product(name: "Defaults", package: "Defaults"),
+                // The status marks and slot glyphs the navigator's rows draw are named as
+                // `SFSymbol`s by `StatusPresentation`, and an `NSImage(systemSymbolName:)` needs the
+                // name, not a stringly-typed guess at it.
+                .product(name: "SFSafeSymbols", package: "SFSafeSymbols"),
             ],
         ),
 
@@ -883,6 +889,10 @@ let package = Package(
             dependencies: [
                 "SlopDeskMacUI", "SlopDeskClientUI", "SlopDeskClientCore", "SlopDeskWorkspaceCore",
                 "SlopDeskWorkspaceModel", "SlopDeskVideoProtocol",
+                // `SlopDeskTransport` is named for ONE thing: the navigator snapshot mounts the real
+                // column, which takes an `AppConnection`, which takes a `ConnectionRegistry`. The
+                // fixture hands it one that always refuses, so no socket is ever opened.
+                "SlopDeskTransport",
             ],
         ),
 

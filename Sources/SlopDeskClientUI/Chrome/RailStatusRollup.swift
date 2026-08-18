@@ -172,7 +172,7 @@ struct RailStatusRollup: View {
     static let trailingInset = Slate.Metric.space2
 
     var body: some View {
-        // The flash-decay tick, observed at CLUSTER scope exactly as ``SidebarLiveRow`` observes it:
+        // The flash-decay tick, observed at CLUSTER scope exactly as a navigator row observes it:
         // a clean completion's badge decays off the wall clock, not off an `@Observable` dependency,
         // so without this the done mark would outlive the row's own.
         // swiftlint:disable:next redundant_discardable_let
@@ -320,6 +320,14 @@ package struct RailStatusRollupMount: View {
         self.store = store
         self.chrome = chrome
     }
+
+    /// THE COLUMN'S GUTTER, forwarded for the AppKit navigator (``SlopDeskMacUI/MacNavigatorColumn``).
+    ///
+    /// The number is ``RailStatusRollup/trailingInset``'s and stays there — this is one name, not one
+    /// more value. The navigator spends the same inset on its search plate and its island list, which
+    /// is exactly why the band's marks, the field and the beds all close on one line; a column that
+    /// picked its own would break that alignment silently.
+    package static var columnGutter: CGFloat { RailStatusRollup.trailingInset }
 
     /// ITS OWN memo, not the navigator's. The two views are siblings under the window root now, and
     /// a memo threaded down from there would put the structural row build in the ROOT's body — the

@@ -91,7 +91,7 @@ struct WorkspaceTabStrip: View {
     }
 }
 
-/// One LIVE chip. Same contract as ``SidebarLiveRow``: the STRUCTURAL identity rides the memoized
+/// One LIVE chip. Same contract as a navigator row: the STRUCTURAL identity rides the memoized
 /// ``RailRow`` while selection, the fused badge and the shown title are read fresh HERE — so a
 /// status tick or a focus change repaints this leaf and never the strip above it. Reading selection
 /// in the leaf is not an optimisation: an init-param `active` inside a lazy container leaves the

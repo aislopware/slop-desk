@@ -13,7 +13,7 @@ import SwiftUI
 // `@MainActor` because the colour mappers read the runtime ``Slate/theme`` (D3) — every call site is a
 // SwiftUI view body, all MainActor.
 @MainActor
-enum StatusPresentation {
+package enum StatusPresentation {
     // MARK: Connection
 
     /// The compact pill label (e.g. "connected", "reconnecting 3/20", "failed").
@@ -88,25 +88,8 @@ enum StatusPresentation {
     /// one written above, and the loudest case was the thinking cell: systemYellow lands at **1.46**
     /// on the cream, quieter than the DISABLED slot beside it. Do not re-propose it without a
     /// different ground under the marks.
-    static func attentionInk(_ kind: TabBadgeKind) -> Color? {
-        switch kind {
-        // Awaiting input — act-now amber; red stays reserved for broken.
-        case .awaitingInput: Slate.StatusInk.warn
-        // Error — the red every terminal already means by red text.
-        case .error: Slate.StatusInk.err
-        // The clean finish — fresh flash and settled unread alike hold the green until the pane is
-        // visited. The completed/finished split stays semantic (freshness machinery, control-backend
-        // badge tokens).
-        case .completed,
-             .finished: Slate.StatusInk.ok
-        // Running and privilege never recolour the title: busy is the trailing ring's job
-        // (``statusDot(working:badge:)``), and the privilege markers are slot text (``tabBadge(_:)``).
-        case .caffeinate,
-             .commandBusy,
-             .commandRunning,
-             .running,
-             .sudo: nil
-        }
+    package static func attentionInk(_ kind: TabBadgeKind) -> Color? {
+        TabBadgeReading.attention(kind).map(Slate.attentionInk)
     }
 
     /// The TITLE's ink for an URGENT row — the subset of ``attentionInk(_:)`` that means *something is
@@ -125,38 +108,22 @@ enum StatusPresentation {
     ///
     /// Derived from ``attentionInk(_:)`` rather than respelling the hues, so the title and the mark on
     /// one row can never disagree about which amber or which red.
-    static func urgentInk(_ kind: TabBadgeKind) -> Color? {
-        switch kind {
-        case .awaitingInput,
-             .error: attentionInk(kind)
-        case .caffeinate,
-             .commandBusy,
-             .commandRunning,
-             .completed,
-             .finished,
-             .running,
-             .sudo: nil
-        }
+    package static func urgentInk(_ kind: TabBadgeKind) -> Color? {
+        TabBadgeReading.urgent(kind).map(Slate.attentionInk)
     }
 
     /// The WEIGHT a row's title reads at — the ATTENTION step. A state that waits on you (a question,
     /// a failure, an unread finish) reads bolder than the ACTIVE row's own `.medium`, so "needs you"
     /// outranks "you are here" on the one scale both spend. Everything else stays regular.
-    static let attentionWeight: Font.Weight = .semibold
+    package static let attentionWeight: Font.Weight = .semibold
 
     /// The COLLAPSED group's roll-up ink: the strongest attention ink among the hidden rows' fused
     /// badges, in the resolver's own urgency order — a waiting question outranks an error outranks
     /// an unread finish — so the header count wears exactly the ink the loudest hidden row would.
     /// `nil` when nothing inside waits (the count keeps the muted metadata ink). Folding a group
     /// shut therefore never hides an agent that needs the eye.
-    static func attentionRollupInk(_ badges: [TabBadgeKind?]) -> Color? {
-        let present = Set(badges.compactMap(\.self))
-        for kind in [TabBadgeKind.awaitingInput, .error, .completed, .finished]
-            where present.contains(kind)
-        {
-            return attentionInk(kind)
-        }
-        return nil
+    package static func attentionRollupInk(_ badges: [TabBadgeKind?]) -> Color? {
+        TabBadgeReading.rollup(badges).map(Slate.attentionInk)
     }
 
     /// The row's trailing STATUS MARK — one column, one hue budget, and otty's own silhouettes
@@ -188,7 +155,7 @@ enum StatusPresentation {
     ///   alone cannot say which. Resolved by ``RailRowsBuilder/finishIsAgents(badge:status:unseenDone:)``,
     ///   the SAME predicate that gates showing the agent's final line, so the closed ring and that
     ///   line can never disagree about whose finish it is.
-    static func statusDot(
+    package static func statusDot(
         working: Bool, badge: TabBadgeKind?, agentIdle: Bool = false, agentFinish: Bool = false,
     ) -> StatusDotStyle? {
         if working { return thinkingMark }
@@ -240,7 +207,7 @@ enum StatusPresentation {
     /// this app the accent means SELECTION — the reason ``Slate/StatusInk/info`` exists as a separate
     /// blue at all — so a purple mark on an unselected row reads as a row half-selecting itself.
     @MainActor
-    static var thinkingMark: StatusDotStyle {
+    package static var thinkingMark: StatusDotStyle {
         StatusDotStyle(ink: Slate.StatusInk.warn, mark: .working)
     }
 
@@ -279,7 +246,7 @@ enum StatusPresentation {
 
     // MARK: Command outcome
 
-    typealias CommandOutcome = RailRowsBuilder.CommandOutcome
+    package typealias CommandOutcome = RailRowsBuilder.CommandOutcome
 
     /// Whether this badge is a COMMAND's outcome, and which one — the trailing slot's reading.
     ///
@@ -311,7 +278,7 @@ enum StatusPresentation {
     /// ⚠️ Round 26 (user-directed) changed WHAT this inks for a clean exit: the succeeded receipt no
     /// longer prints a name, so this is the TICK's ink now — the primary, inherited whole from the
     /// word it replaced. The failed answer is unchanged, because a failure still prints its name.
-    static func outcomeInk(_ outcome: CommandOutcome) -> Color {
+    package static func outcomeInk(_ outcome: CommandOutcome) -> Color {
         switch outcome {
         case .succeeded: Slate.Text.primary
         case .failed: Slate.StatusInk.err
@@ -342,7 +309,7 @@ enum StatusPresentation {
     /// disc its place. The asymmetry is now the round's point rather than a detail of it: a clean
     /// exit is a fact you only have to acknowledge, a broken one is a fact you have to ACT on, and
     /// the one you have to act on is the one that keeps its name.
-    static func outcomeSymbol(_ outcome: CommandOutcome) -> SFSymbol? {
+    package static func outcomeSymbol(_ outcome: CommandOutcome) -> SFSymbol? {
         switch outcome {
         case .succeeded: .checkmark
         case .failed: nil
@@ -368,7 +335,7 @@ enum StatusPresentation {
     /// pane that is running nothing, and bolding every idle `zsh` on the rail would spend the whole
     /// step this round is trying to reserve for work. The split is
     /// ``RailRowsBuilder/slotLabelIsCommand(_:)``'s.
-    static func slotNameInk(isCommand: Bool) -> Color {
+    package static func slotNameInk(isCommand: Bool) -> Color {
         isCommand ? Slate.Text.primary : Slate.Text.tertiary
     }
 
@@ -377,7 +344,7 @@ enum StatusPresentation {
     /// mono characters `#` and `∞`, which asked the reader to know a legend; a shield and a cup ask
     /// nothing (docs/DECISIONS.md round 23). Every lifecycle state returns `nil`: those live in the
     /// trailing status mark (``statusDot(working:badge:)``), so their rows keep the shell label.
-    static func tabBadge(_ kind: TabBadgeKind) -> TabBadgeStyle? {
+    package static func tabBadge(_ kind: TabBadgeKind) -> TabBadgeStyle? {
         switch kind {
         // otty's own: a Material duotone cup, its exact path data (``OttyIcon/coffee``).
         case .caffeinate: TabBadgeStyle(art: .vector(OttyIcon.coffee), tint: Slate.Text.secondary)
@@ -395,33 +362,23 @@ enum StatusPresentation {
 
     /// The accessibility / tooltip label for a tab badge, so the otherwise icon-only glyph is VoiceOver-
     /// legible and testable. Pure text — mirrors the `progress-state.md` badge vocabulary.
-    static func tabBadgeLabel(_ kind: TabBadgeKind) -> String {
-        switch kind {
-        case .running: "Agent working"
-        case .commandRunning: "Loading"
-        case .commandBusy: "Running"
-        case .completed: "Completed"
-        case .finished: "Finished"
-        case .error: "Error"
-        case .awaitingInput: "Awaiting input"
-        case .caffeinate: "Caffeinated"
-        case .sudo: "Privileged"
-        }
+    package static func tabBadgeLabel(_ kind: TabBadgeKind) -> String {
+        TabBadgeReading.label(kind)
     }
 }
 
 /// The trailing-slot marker for one tab badge (see ``StatusPresentation/tabBadge(_:)``) — a small
 /// static privilege glyph. A pure value (no view), so the badge map can be unit-tested without
 /// rendering.
-struct TabBadgeStyle: Equatable {
+package struct TabBadgeStyle: Equatable {
     /// Where the drawing comes from. Both cases are otty's artwork exactly: a system symbol it asks
     /// for by name, or path data it embeds — never a redraw of either.
-    enum Art: Equatable {
+    package enum Art: Equatable {
         case symbol(SFSymbol)
         case vector(VectorIcon)
     }
 
-    let art: Art
-    let tint: Color
+    package let art: Art
+    package let tint: Color
 }
 #endif

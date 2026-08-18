@@ -17,7 +17,7 @@ import SwiftUI
 
 /// A reader for SVG path data (`d`). Pure geometry — no view, no state — so a glyph's shape is
 /// unit-testable by its bounding box and segment count without rendering anything.
-enum SVGPath {
+package enum SVGPath {
     /// The path `data` describes, in the icon's own viewBox coordinates (y DOWN, matching SwiftUI).
     static func path(_ data: String) -> Path {
         var path = Path()
@@ -152,7 +152,7 @@ enum SVGPath {
 
     /// `data` scaled to fill `rect`'s shorter side from a `viewBox`-square canvas, centred. Uniform
     /// so a glyph never stretches, and centred so every icon in the rail shares one optical centre.
-    static func path(_ data: String, viewBox: CGFloat, in rect: CGRect) -> Path {
+    package static func path(_ data: String, viewBox: CGFloat, in rect: CGRect) -> Path {
         let scale = CGFloat.minimum(rect.width, rect.height) / viewBox
         let side = viewBox * scale
         let transform = CGAffineTransform(
@@ -376,20 +376,20 @@ private struct PathScanner {
 
 /// One icon: its outlines (stroked) or its fills (with the duotone's per-layer opacity), in a square
 /// viewBox. A value, so the artwork is data and the drawing is one shared view.
-struct VectorIcon: Equatable {
+package struct VectorIcon: Equatable {
     /// The square the path data is authored in — 24 for both of otty's, as for lucide and Material.
-    var viewBox: CGFloat = 24
+    package var viewBox: CGFloat = 24
     /// Stroked outlines, in viewBox units. Empty for a filled icon.
-    var outlines: [String] = []
+    package var outlines: [String] = []
     /// The stroke's width IN VIEWBOX UNITS, so it scales with the glyph exactly as the source does.
-    var strokeWidth: CGFloat = 2
+    package var strokeWidth: CGFloat = 2
     /// Filled layers, painted in order. The `opacity` is the duotone's own — a Material icon says
     /// its secondary surface with `.3`, not with a second colour.
-    var fills: [Layer] = []
+    package var fills: [Layer] = []
 
-    struct Layer: Equatable {
-        let data: String
-        var opacity: Double = 1
+    package struct Layer: Equatable {
+        package let data: String
+        package var opacity: Double = 1
     }
 }
 
@@ -398,11 +398,11 @@ struct VectorIcon: Equatable {
 /// Both are rendered by otty into a 14×14 image and tinted with a semantic theme colour — the same
 /// shape and the same size we mount them at, so a rail row here and a rail row there draw the same
 /// artwork rather than a family resemblance.
-enum OttyIcon {
+package enum OttyIcon {
     /// The awaiting-input badge: lucide `hand` — an open palm, outlined, 2-unit stroke with round
     /// caps and joins. otty tints it with its warning colour, which is the amber our own hue budget
     /// already spends on "a question is waiting".
-    static let hand = VectorIcon(
+    package static let hand = VectorIcon(
         outlines: [
             "M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2",
             "M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2",
@@ -415,7 +415,7 @@ enum OttyIcon {
 
     /// The caffeinate badge: a Material duotone cup — the mug's body at 30% behind the outline and
     /// saucer at full weight. Replaces the `∞` this slot used to spell out.
-    static let coffee = VectorIcon(
+    package static let coffee = VectorIcon(
         fills: [
             VectorIcon.Layer(
                 data: "M8 15h6c1.1 0 2-.9 2-2V5H6v8c0 1.1.9 2 2 2", opacity: 0.3,

@@ -257,7 +257,8 @@ final class RailRowsMemoTests: XCTestCase {
     // MARK: - Search path (perf audit follow-up: an active query must NOT bypass the memo)
 
     /// The sidebar's search path composes `filtered`/`sectionedByProject(query:)` over the MEMOIZED rows
-    /// (`NavigatorColumn.renderedRows` no longer falls back to a direct `RailRowsBuilder.rows(for:)` while
+    /// (neither navigator — AppKit's `MacNavigatorColumn` nor the phone's `NavigatorColumn` — falls back to
+    /// a direct `RailRowsBuilder.rows(for:)` while
     /// a query is active — that re-registered every volatile dict on the body and re-ran the full O(panes)
     /// build per tick). Two pins: (1) a volatile tick while a query is up stays a cache HIT (`buildCount`
     /// frozen, same array snapshot), and (2) a structural change while searching still rebuilds and the

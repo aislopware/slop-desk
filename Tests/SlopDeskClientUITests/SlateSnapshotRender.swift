@@ -86,74 +86,6 @@ final class SlateSnapshotRender: XCTestCase {
         )
     }
 
-    // MARK: - Opt-in render of the sidebar tab-row badge states
-
-    /// Renders `SlateTabRow` in each fused badge state — the neutral title beside the trailing
-    /// STATUS MARK column (one dashed ring: accent for the agent tier, muted for a busy command,
-    /// green/amber/red for the attention states, nothing at rest) plus the resting shell-label slot
-    /// and the active white card — the visual lock for the sidebar row. SAME `ImageRenderer` opt-in idiom
-    /// as the showcase; inert (skipped) unless `SLOPDESK_TABROW_SNAPSHOT_DIR=<dir>` is set, where
-    /// it writes `tab-row-badges.png`. NO video/Metal — a badge is pure SwiftUI.
-    @MainActor
-    func testRenderTabRowBadges() throws {
-        guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_TABROW_SNAPSHOT_DIR"] else {
-            throw XCTSkip("set SLOPDESK_TABROW_SNAPSHOT_DIR=<dir> to render the tab-row badge states")
-        }
-        let panel = VStack(alignment: .leading, spacing: 2) {
-            // The AGENT's alphabet — the ring. Dashed while the work is open, CLOSED once the turn
-            // ended; the hue names which open state it is.
-            badgeRow("full-release.sh", badge: .running, agent: true)
-            badgeRow("plan next move", badge: .awaitingInput, agent: true)
-            badgeRow("OpenCode", badge: .completed, agentFinish: true, agent: true)
-            badgeRow("refactor the reassembler", badge: .finished, agentFinish: true, agent: true)
-            // A COMMAND's alphabet — nothing in the MARK column, and ONE item in the slot: a clean
-            // exit is the bare tick alone (round 26 — the name came off), a failure is its name in
-            // red. ⚠️ Read the two check marks in this image against each other — the agent's green
-            // filled circle above and the receipt's plain tick below are the round-25/26 gap, and
-            // the render is the only place it can be judged.
-            badgeRow(
-                "running build task", badge: .error, process: "make",
-                receipt: .init(name: "make", outcome: .failed),
-            )
-            badgeRow(
-                "swift test", badge: .finished, process: "swift",
-                receipt: .init(name: "swift", outcome: .succeeded),
-            )
-            // …and the states that mark nothing at all: a running command and a resting shell.
-            badgeRow("swift build", badge: .commandBusy, process: "swift")
-            SlateTabRow(
-                title: "abner@MacBook-AB:…",
-                active: true,
-                processLabel: "zsh",
-                onSelect: {},
-                onClose: {},
-            )
-        }
-        .padding(8)
-        .frame(width: Slate.Metric.sidebarWidth)
-        .background(Slate.Surface.field)
-        try renderHosted(
-            panel, size: CGSize(width: Slate.Metric.sidebarWidth, height: 260),
-            to: dir, named: "tab-row-badges.png",
-        )
-    }
-
-    /// A resting (non-active) tab row carrying one fused badge, for the badge-state showcase. `agent`
-    /// wears the `✳` title marker (and leaves the slot bare, as the real rail does); `agentFinish`
-    /// says a finish badge is the AGENT's turn ending, which is what closes its ring; `receipt` is a
-    /// finished COMMAND's outcome, which takes the SLOT (a tick, or a red name) instead of a mark.
-    @MainActor
-    private func badgeRow(
-        _ title: String, badge: TabBadgeKind, agentFinish: Bool = false, agent: Bool = false,
-        process: String? = nil, receipt: RailRowsBuilder.CommandReceipt? = nil,
-    ) -> some View {
-        SlateTabRow(
-            title: title, active: false, agentMarker: agent, badge: badge,
-            agentFinish: agentFinish, processLabel: process, commandReceipt: receipt,
-            onSelect: {}, onClose: {},
-        )
-    }
-
     // MARK: - Opt-in render of the status marks
 
     /// Renders the WHOLE mark vocabulary at true size and magnified (`status-marks.png`) — the only
@@ -341,7 +273,7 @@ final class SlateSnapshotRender: XCTestCase {
     // MARK: - Opt-in render of the band's status rollup (the ONE claim only pixels can settle)
 
     /// Renders the sidebar's TOP — the traffic-light band carrying ``RailStatusMarks``, the search
-    /// plate, and a real project island of ``SlateTabRow``s — twice, once with all three states lit
+    /// plate, and a project island of drawn row stand-ins — twice, once with all three states lit
     /// and once with only the waiting one. Everything this round changed is a claim about PIXELS that
     /// `RailStatusRollupTests` can only pin the arithmetic behind:
     ///
@@ -421,26 +353,46 @@ final class SlateSnapshotRender: XCTestCase {
             searchPlateStandIn
             SlateProjectIsland(tint: Slate.ProjectTint.register[0].opacity(Slate.Opacity.bed)) {
                 VStack(alignment: .leading, spacing: 2) {
-                    SlateTabRow(
-                        title: "Claude Code", active: false, agentMarker: true,
-                        badge: .awaitingInput, onSelect: {}, onClose: {},
+                    self.rowStandIn(
+                        "Claude Code",
+                        mark: StatusPresentation.statusDot(working: false, badge: .awaitingInput),
                     )
-                    SlateTabRow(
-                        title: "api", active: false, agentMarker: true,
-                        workingLabel: "Agent working", onSelect: {}, onClose: {},
+                    self.rowStandIn("api", mark: StatusPresentation.statusDot(working: true, badge: nil))
+                    self.rowStandIn(
+                        "web",
+                        mark: StatusPresentation.statusDot(
+                            working: false, badge: .finished, agentFinish: true,
+                        ),
                     )
-                    SlateTabRow(
-                        title: "web", active: false, agentMarker: true, badge: .finished,
-                        agentFinish: true, onSelect: {}, onClose: {},
-                    )
-                    SlateTabRow(
-                        title: "docs", active: false, processLabel: "zsh", onSelect: {}, onClose: {},
-                    )
+                    self.rowStandIn("docs", mark: nil)
                 }
             }
             .padding(.horizontal, Slate.Metric.space2) // the list's LazyVStack gutter
         }
         .frame(width: Slate.Metric.sidebarWidth)
+    }
+
+    /// One navigator ROW's footprint, drawn — the real one is `MacSidebarRowView` (AppKit), which
+    /// cannot mount inside a SwiftUI `ImageRenderer` frame, and photographing it is
+    /// `MacNavigatorSnapshotRender`'s job. What this panel needs from a row is only its GEOMETRY: the
+    /// island's rail inset, the control height, and the trailing MARK column the band's cluster above
+    /// has to line up with. Same reason `searchPlateStandIn` exists.
+    @MainActor
+    private func rowStandIn(_ title: String, mark: StatusDotStyle?) -> some View {
+        HStack(spacing: Slate.Metric.space1) {
+            Text(title)
+                .font(.system(size: Slate.Typeface.footnote))
+                .foregroundStyle(Slate.Text.primary)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+            if let mark {
+                StatusDotView(style: mark)
+            } else {
+                Color.clear.frame(width: StatusDot.footprint, height: StatusDot.footprint)
+            }
+        }
+        .padding(.horizontal, Slate.Metric.islandRail)
+        .frame(height: Slate.Metric.heightTabRow)
     }
 
     /// Wide enough to show the toggle's slot, the parked cluster, and the start of the tab run that
@@ -516,91 +468,6 @@ final class SlateSnapshotRender: XCTestCase {
         .padding(.bottom, Slate.Metric.space3)
     }
 
-    // MARK: - Opt-in render of one By-Project sidebar section (header + single-line rows)
-
-    /// Renders the REAL ``SidebarSectionHeaderRow`` (the gutter-chevron + NAME header on the rows'
-    /// shared left rail — one git-lined group, one bare-named group, one collapsed showing its
-    /// hidden-row count in the attention roll-up ink) over a seeded headless store, above
-    /// representative ``SlateTabRow`` states at the true sidebar width: title (with the `✳` agent
-    /// marker where due) + one trailing slot (shell label / badge). SAME opt-in idiom; writes
-    /// `sidebar-section.png` into `SLOPDESK_TABROW_SNAPSHOT_DIR`.
-    @MainActor
-    func testRenderSidebarSection() throws {
-        guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_TABROW_SNAPSHOT_DIR"] else {
-            throw XCTSkip("set SLOPDESK_TABROW_SNAPSHOT_DIR=<dir> to render the sidebar section")
-        }
-        let key = "/Volumes/Lacie/Workspace/oss/slop-desk"
-        let store = makeSectionStore(key: key)
-        let panel = VStack(alignment: .leading, spacing: 2) {
-            SidebarSectionHeaderRow(store: store, title: "slop-desk", projectKey: key, count: 3)
-            // A WORKING agent row: the trailing slot carries the lit cell with its travelling hole.
-            SlateTabRow(
-                title: "Claude Code", active: false, agentMarker: true,
-                workingLabel: "Agent working",
-                onSelect: {}, onClose: {},
-            )
-            // The SAME state on the SELECTED row — the cell on the compact island's dark glass,
-            // which is the one place a light/dark pair can resolve on the wrong side (the trap that
-            // made the island chips invisible). The mark must read here or it reads nowhere.
-            SlateTabRow(
-                title: "Claude Code", active: true, agentMarker: true,
-                workingLabel: "Agent working",
-                onSelect: {}, onClose: {},
-            )
-            SlateTabRow(
-                title: "Claude Code", active: false, agentMarker: true, badge: .awaitingInput,
-                onSelect: {}, onClose: {},
-            )
-            SlateTabRow(
-                title: "api", active: false, badge: .error,
-                onSelect: {}, onClose: {},
-            )
-            SidebarSectionHeaderRow(
-                store: store, title: "Workspace", projectKey: "/Users/abner/Workspace", count: 2,
-            )
-            // Settled rows: the trailing slot carries the shell label — the otty resting look —
-            // and only the states that say something mount the mark beside it.
-            SlateTabRow(
-                title: "Terminal", active: false, badge: .finished,
-                onSelect: {}, onClose: {},
-            )
-            // A busy SHELL row: the command title stands still beside the muted dashed ring.
-            SlateTabRow(
-                title: "swift build", active: false, badge: .commandBusy, processLabel: "swift",
-                onSelect: {}, onClose: {},
-            )
-            SlateTabRow(title: "Terminal", active: false, processLabel: "zsh", onSelect: {}, onClose: {})
-            // The ⌘-HELD state: the digit takes the whole trailing cluster. Rendered here because it
-            // is the one row state that never appears at rest — and the digit shares the TITLE's rung,
-            // which only a render will catch drifting.
-            SlateTabRow(
-                title: "web", active: false, shortcutHint: 4, processLabel: "node",
-                onSelect: {}, onClose: {},
-            )
-            // Collapsed with the store's rows threaded in: one hides a needs-permission pane, so
-            // the count wears the amber roll-up ink.
-            SidebarSectionHeaderRow(
-                store: store, title: "api", projectKey: "/Users/abner/w/api", collapsed: true, count: 2,
-                rows: RailRowsBuilder.rows(for: store),
-            )
-            // The two squeeze cases: a long branch WITH a readout (name truncates, sigils fold and pin
-            // right) and the same branch with nothing to report (name truncates alone).
-            SidebarSectionHeaderRow(
-                store: store, title: "long-branch", projectKey: "/Users/abner/w/long", count: 1,
-            )
-            SidebarSectionHeaderRow(
-                store: store, title: "clean-long-branch", projectKey: "/Users/abner/w/clean", count: 1,
-            )
-        }
-        .padding(8) // the sidebar list's LazyVStack inset
-        .frame(width: Slate.Metric.sidebarWidth)
-        .background(Slate.Surface.field)
-        try render(
-            panel, size: CGSize(width: Slate.Metric.sidebarWidth, height: 440),
-            to: dir, named: "sidebar-section.png",
-        )
-    }
-
     // MARK: - Opt-in render of the identity BEDS (the one surface no other render covers)
 
     /// Renders every bed in ``Slate/ProjectTint`` — the five identity sources plus the keyless
@@ -631,10 +498,12 @@ final class SlateSnapshotRender: XCTestCase {
                         Text(name)
                             .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
                             .foregroundStyle(Slate.Text.secondary)
-                        SidebarSectionHeaderRow.gitDetailLine(
-                            SidebarSectionHeaderRow.gitSegments(dirt),
-                        )
-                        .font(Slate.Typeface.instrument(Slate.Typeface.small))
+                        // The dialect itself lives in ``SidebarGitLine`` (ClientCore) and its shipping
+                        // renderer is AppKit's `MacGitLineView`; what this bed panel needs is the
+                        // status runs' INK standing on the tint, so the segments are spelled straight
+                        // into `Text` here rather than mirroring the header's layout.
+                        self.gitDetailLine(SidebarGitLine.segments(dirt))
+                            .font(Slate.Typeface.instrument(Slate.Typeface.small))
                         // The quiet rung is the one this alpha is priced in — see `Text.tertiary`.
                         Text("zsh · the quiet rung on this bed")
                             .font(Slate.Typeface.instrument(Slate.Typeface.small))
@@ -650,6 +519,16 @@ final class SlateSnapshotRender: XCTestCase {
             panel, size: CGSize(width: Slate.Metric.sidebarWidth, height: 400),
             to: dir, named: "project-beds.png",
         )
+    }
+
+    /// The git runs, each in its own role's ink, joined by a space — see the call site.
+    @MainActor
+    private func gitDetailLine(_ segments: [GitSegment]) -> Text {
+        segments.enumerated().reduce(Text("")) { line, pair in
+            let run = Text(pair.element.text)
+                .foregroundColor(Color(slateNative: Slate.Native.gitInk(pair.element.ink)))
+            return pair.offset == 0 ? run : line + Text(" ") + run
+        }
     }
 
     // MARK: - Opt-in render of the status INK set on all three grounds
@@ -781,158 +660,6 @@ final class SlateSnapshotRender: XCTestCase {
             .padding(.horizontal, Slate.Metric.space2)
             .padding(.top, Slate.Metric.space3)
             .padding(.bottom, Slate.Metric.space2)
-    }
-
-    /// A headless `.tree` store whose panes all live AT `key` (the project root), one blocked and one
-    /// failed. The project's git summary is seeded directly (`internal(set)` via `@testable`) so the
-    /// header's hover tooltip carries a real git line.
-    @MainActor
-    private func makeSectionStore(key: String) -> WorkspaceStore {
-        var tabs: [SlopDeskWorkspaceModel.Tab] = []
-        var specs: [PaneID: PaneSpec] = [:]
-        var paneCwds: [PaneID: String] = [:]
-        for _ in 0..<3 {
-            let pane = PaneID()
-            specs[pane] = PaneSpec(kind: .terminal, title: "")
-            paneCwds[pane] = key
-            tabs.append(SlopDeskWorkspaceModel.Tab(title: "", root: .leaf(pane), activePane: pane))
-        }
-        let session = Session(name: "Local", tabs: tabs, activeTabIndex: 0, specs: specs)
-        let tree = TreeWorkspace(sessions: [session], activeSessionID: session.id)
-        let store = WorkspaceStore(
-            restoringTree: tree,
-            makeSession: { seed in MountTestPaneSession(seed.spec) },
-            liveVideoCap: 2,
-            persistence: nil,
-        )
-        store.attachLoopbackWorkspaceDocument()
-        for (pane, cwd) in paneCwds { store.setLastKnownCwd(cwd, for: pane) }
-        store.projectGitSummary[key] = PaneGitSummary(
-            hasRepo: true, branch: "main", ahead: 2, behind: 1, changedCount: 4, staged: 1, modified: 3,
-            untracked: 5, conflicted: 2, stash: 1,
-        )
-        // The squeeze case: a branch name far wider than the sidebar, with a full readout behind it —
-        // the header has to truncate the NAME and fold the counts to their sigils, flush right.
-        store.projectGitSummary["/Users/abner/w/long"] = PaneGitSummary(
-            hasRepo: true, branch: "feature/rail-git-line-truncation-behaviour", ahead: 12, behind: 3,
-            changedCount: 9, staged: 30, modified: 4, untracked: 5, conflicted: 6, stash: 7,
-        )
-        // Same long branch, NOTHING to report — the line is the branch alone, truncating with no
-        // readout pinned beside it.
-        store.projectGitSummary["/Users/abner/w/clean"] = PaneGitSummary(
-            hasRepo: true, branch: "feature/rail-git-line-truncation-behaviour", ahead: 0, behind: 0,
-            changedCount: 0,
-        )
-        let panes = tabs.compactMap(\.activePane)
-        store.setForegroundProcess("claude", for: panes[0])
-        store.setAgentStatus(.needsPermission, for: panes[1])
-        store.setCompletionBadge(.failure, for: panes[2])
-        return store
-    }
-
-    // MARK: - Opt-in render of the git line's squeeze ladder (one repo, narrowing widths)
-
-    /// Renders ONE busy repo's header at a sweep of sidebar widths, so the shed ladder is visible as a
-    /// ladder: the numbers go first (sigils fold, pinned right), then the readout gives up `$` stash, then
-    /// `↑↓` divergence, then `?` untracked — the branch name keeping its characters the whole way — and
-    /// only at the end does the name itself truncate beside the surviving worktree core. Opt-in like the
-    /// rest; writes `git-line-squeeze.png` into `SLOPDESK_TABROW_SNAPSHOT_DIR`.
-    @MainActor
-    func testRenderGitLineSqueezeLadder() throws {
-        guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_TABROW_SNAPSHOT_DIR"] else {
-            throw XCTSkip("set SLOPDESK_TABROW_SNAPSHOT_DIR=<dir> to render the git squeeze ladder")
-        }
-        let key = "/Volumes/Lacie/Workspace/oss/slop-desk"
-        let store = makeSectionStore(key: key)
-        store.projectGitSummary[key] = PaneGitSummary(
-            hasRepo: true, branch: "feature/shed-ladder", ahead: 12, behind: 3, changedCount: 9,
-            staged: 30, modified: 4, untracked: 5, conflicted: 6, stash: 7,
-        )
-        // Descending, and FINE around the shed rungs: one sigil is ~8 pt wide, so each rung of the ladder
-        // owns a band about that narrow — a coarse sweep steps straight over it and reads as "the ladder
-        // does not fire".
-        let widths: [CGFloat] = [Slate.Metric.sidebarWidth, 214, 206, 198, 190, 168, 148, 128]
-        let panel = VStack(alignment: .leading, spacing: 10) {
-            ForEach(widths, id: \.self) { width in
-                self.captioned("\(Int(width)) pt") {
-                    SidebarSectionHeaderRow(store: store, title: "slop-desk", projectKey: key, count: 3)
-                        .frame(width: width)
-                        .background(Slate.Surface.field)
-                }
-            }
-        }
-        .padding(8)
-        .frame(width: Slate.Metric.sidebarWidth + 16, alignment: .leading)
-        .background(Slate.Surface.field)
-        try render(
-            panel, size: CGSize(width: Slate.Metric.sidebarWidth + 16, height: 460),
-            to: dir, named: "git-line-squeeze.png",
-        )
-    }
-
-    // MARK: - Opt-in render of the grouped NavigatorColumn (search + By-Project sections)
-
-    /// Renders the live ``NavigatorColumn`` over a headless store grouped By-Project — the visual lock for the
-    /// sidebar: the "TABS" header + sort hamburger, the flat search field, and the tabs bucketed into
-    /// `SlateSectionHeader` sections (project basenames) with the per-row `#N` / badge chrome. SAME
-    /// `ImageRenderer` opt-in idiom as the badge render; writes `navigator-grouped.png` into
-    /// `SLOPDESK_TABROW_SNAPSHOT_DIR`. Headless: a `.tree` store over `MountTestPaneSession` (no socket / video /
-    /// Metal — the hang-safety rule); the project keys come from each pane's `pane/cwd`.
-    @MainActor
-    func testRenderNavigatorGrouped() throws {
-        guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_TABROW_SNAPSHOT_DIR"] else {
-            throw XCTSkip("set SLOPDESK_TABROW_SNAPSHOT_DIR=<dir> to render the grouped navigator")
-        }
-        let nav = NavigatorColumn(store: makeGroupedNavigatorStore())
-        // ⚠️ `renderHosted`, NOT `render` — the column's header row IS a ``SlateSearchField``
-        // (`NSViewRepresentable`), which `ImageRenderer` replaces with a yellow placeholder box,
-        // taking the whole list under it with it. This is the ONE render that mounts the real
-        // `NavigatorColumn`, so it had been the one telling us least (fixed 2026-08-11).
-        try renderHosted(nav, size: CGSize(width: 240, height: 470), to: dir, named: "navigator-grouped.png")
-    }
-
-    /// A headless `.tree` store with five single-pane tabs across three project cwds (so By-Project yields
-    /// three sections) plus a few seeded badges/process labels for visual variety. Sets the grouping directly
-    /// on the store (the `internal(set)` setter via `@testable`) so the render does NOT persist to `Defaults`.
-    @MainActor
-    private func makeGroupedNavigatorStore() -> WorkspaceStore {
-        let rows: [(title: String, cwd: String)] = [
-            ("full-release.sh", "/Users/abner/Workplace/herdr"),
-            ("running build task", "/Users/abner/Workplace/herdr"),
-            ("plan next move", "/Users/abner/Workplace/slopdesk"),
-            ("OpenCode", "/Users/abner/Workplace/slopdesk"),
-            ("abner@MacBook-AB", "/Users/abner/scratch"),
-        ]
-        // `Tab` is ambiguous here: SwiftUI (macOS 15+) ships its own `Tab`, and this file `@testable
-        // import`s `SlopDeskWorkspaceCore`. Qualify to the workspace domain type (same idiom as
-        // `SplitContainer.swift`) so the fixture resolves to the tree model.
-        var tabs: [SlopDeskWorkspaceModel.Tab] = []
-        var specs: [PaneID: PaneSpec] = [:]
-        var paneCwds: [PaneID: String] = [:]
-        for row in rows {
-            let pane = PaneID()
-            specs[pane] = PaneSpec(kind: .terminal, title: row.title)
-            paneCwds[pane] = row.cwd
-            tabs.append(SlopDeskWorkspaceModel.Tab(title: row.title, root: .leaf(pane), activePane: pane))
-        }
-        let session = Session(name: "Local", tabs: tabs, activeTabIndex: 0, specs: specs)
-        let tree = TreeWorkspace(sessions: [session], activeSessionID: session.id)
-        let store = WorkspaceStore(
-            restoringTree: tree,
-            makeSession: { seed in MountTestPaneSession(seed.spec) },
-            liveVideoCap: 2,
-            persistence: nil,
-        )
-        store.attachLoopbackWorkspaceDocument()
-        for (pane, cwd) in paneCwds { store.setLastKnownCwd(cwd, for: pane) }
-        let panes = tabs.compactMap(\.activePane)
-        if panes.count >= 5 {
-            store.setForegroundProcess("zsh", for: panes[0])
-            store.setAgentStatus(.working, for: panes[1])
-            store.setAgentStatus(.needsPermission, for: panes[2])
-            store.setCompletionBadge(.success, for: panes[3])
-        }
-        return store
     }
 
     // MARK: - Opt-in render of the vi copy-mode surfaces (block cursor + responsive hint bar)
@@ -1160,14 +887,40 @@ private struct SlateShowcase: View {
                 .foregroundStyle(Slate.State.header)
                 .padding(.horizontal, Slate.Metric.space2)
                 .padding(.bottom, Slate.Metric.space1)
-            SlateTabRow(title: "~/slopdesk", active: true, processLabel: "zsh", onSelect: {}, onClose: {})
-            SlateTabRow(title: "build", active: false, processLabel: "zsh", onSelect: {}, onClose: {})
-            SlateTabRow(title: "Remote window", active: false, onSelect: {}, onClose: {})
+            // The rows are DRAWN, not mounted: the shipping navigator row is AppKit
+            // (`MacSidebarRowView`), and this showcase is a token/geometry mock rather than a mount of
+            // the real column — `MacNavigatorSnapshotRender` photographs that.
+            showcaseRow("~/slopdesk", active: true, slot: "zsh")
+            showcaseRow("build", active: false, slot: "zsh")
+            showcaseRow("Remote window", active: false, slot: nil)
             Spacer()
         }
         .padding(Slate.Metric.space2)
         .frame(width: Slate.Metric.sidebarWidth)
         .background(Slate.Surface.field)
+    }
+
+    /// One navigator row's chrome at showcase fidelity — the title, the trailing metadata slot, and
+    /// the selected row's card.
+    private func showcaseRow(_ title: String, active: Bool, slot: String?) -> some View {
+        HStack(spacing: Slate.Metric.space1) {
+            Text(title)
+                .font(.system(size: Slate.Typeface.footnote, weight: active ? .semibold : .regular))
+                .foregroundStyle(active ? Slate.Text.primary : Slate.Text.secondary)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+            if let slot {
+                Text(slot)
+                    .font(Slate.Typeface.instrument(Slate.Typeface.small))
+                    .foregroundStyle(Slate.Text.tertiary)
+            }
+        }
+        .padding(.horizontal, Slate.Metric.islandRail)
+        .frame(height: Slate.Metric.heightTabRow)
+        .background(
+            RoundedRectangle(cornerRadius: Slate.Metric.islandRadiusCompact)
+                .fill(active ? Slate.Surface.island : .clear),
+        )
     }
 
     private var content: some View {

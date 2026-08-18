@@ -131,7 +131,7 @@ enum PaneDropGeometry {
 
 /// The action a release at the current cursor location would commit (resolved every drag frame, committed
 /// once on `.onEnded`). `.none` is a cancel (release commits nothing).
-enum PaneDropZone: Equatable {
+package enum PaneDropZone: Equatable {
     case none
     /// Drop in the centre of `target` → exchange the two panes' positions.
     case swap(target: PaneID)

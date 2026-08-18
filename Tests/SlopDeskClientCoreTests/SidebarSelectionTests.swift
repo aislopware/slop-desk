@@ -1,20 +1,22 @@
-// NavigatorColumnSelectTests — pins the pane→tab resolution the sidebar rail uses when a row is
-// clicked (`NavigatorColumn.owningTabIndex(of:in:)`, the seam `NavigatorColumn.select` calls) and the
-// badge auto-clear that rides the row-click path.
+// SidebarSelectionTests — pins the pane→tab resolution every rail surface uses when a row is clicked
+// (`SidebarSelection.owningTabIndex(of:in:)`, the seam `SidebarSelection.select` calls) and the badge
+// auto-clear that rides the row-click path. FOUR surfaces take this path — the Mac's AppKit navigator,
+// the phone's list, the collapsed-sidebar strip and the pane switcher — which is why it is one
+// function below both UIs rather than a method on whichever column happened to need it first.
 //
-// Headless: a tree-model `WorkspaceStore` over the `MountTestPaneSession` fake (no socket / video / Metal —
+// Headless: a tree-model `WorkspaceStore` over the `RecordingPaneSession` double (no socket / video / Metal —
 // hang-safety).
 
 import SlopDeskWorkspaceModel
 import XCTest
-@testable import SlopDeskClientUI
+@testable import SlopDeskClientCore
 @testable import SlopDeskWorkspaceCore
 
 @MainActor
-final class NavigatorColumnSelectTests: XCTestCase {
+final class SidebarSelectionTests: XCTestCase {
     /// A headless tree-model store over the fake session (mirrors `RailRowBuilderTests`).
     private func makeStore() -> WorkspaceStore {
-        let store = WorkspaceStore(makeSession: { seed in MountTestPaneSession(seed.spec) })
+        let store = WorkspaceStore(makeSession: { seed in RecordingPaneSession(seed.spec) })
         store.attachLoopbackWorkspaceDocument()
         return store
     }
@@ -42,12 +44,12 @@ final class NavigatorColumnSelectTests: XCTestCase {
         let session = try XCTUnwrap(store.tree.activeSession)
 
         XCTAssertEqual(
-            NavigatorColumn.owningTabIndex(of: bgPane, in: session), 1,
+            SidebarSelection.owningTabIndex(of: bgPane, in: session), 1,
             "a pane in a background tab must resolve to its owning tab (index 1), not nil",
         )
     }
 
-    /// The user-visible consequence: driving exactly what `NavigatorColumn.select` does on a row click —
+    /// The user-visible consequence: driving exactly what `SidebarSelection.select` does on a row click —
     /// resolve the owning tab then `selectTab` it — makes the background tab ACTIVE.
     func testSelectingBackgroundRowActivatesOwningTab() throws {
         let (store, bgPane, _) = try makeBackgroundPaneScenario()
@@ -55,7 +57,7 @@ final class NavigatorColumnSelectTests: XCTestCase {
 
         // The select(_:) sequence (the row-click path) against the resolution seam.
         let resolved = try XCTUnwrap(
-            NavigatorColumn.owningTabIndex(of: bgPane, in: session),
+            SidebarSelection.owningTabIndex(of: bgPane, in: session),
             "the background pane must resolve an owning tab (a nil here is the dropped-select regression)",
         )
         store.selectTab(resolved)
@@ -65,7 +67,7 @@ final class NavigatorColumnSelectTests: XCTestCase {
 
     // MARK: - Badge auto-clear on tab-row select
 
-    /// REVERT-TO-CONFIRM-FAIL: without the ``NavigatorColumn/selectRow(_:in:)`` badge-clearing loop the agent
+    /// REVERT-TO-CONFIRM-FAIL: without the ``SidebarSelection/select(_:in:)`` badge-clearing loop the agent
     /// status for the pane remains `.done` after a row click, so the badge persists — failing the `.idle`
     /// assertion below. With the fix the loop clears every pane in the focused tab.
     func testSelectingTabRowWithDoneBadgeClearsBadge() throws {
@@ -77,7 +79,7 @@ final class NavigatorColumnSelectTests: XCTestCase {
         XCTAssertEqual(store.agentStatus(for: pane), .done, "precondition: badge is set")
 
         // Drive the same static select path the rail row's onSelect fires.
-        NavigatorColumn.selectRow(pane, in: store)
+        SidebarSelection.select(pane, in: store)
 
         // The badge must be gone — `clearAgentBadge` settles `.done` → `.idle`.
         XCTAssertEqual(
@@ -90,7 +92,7 @@ final class NavigatorColumnSelectTests: XCTestCase {
 
     /// REVERT-TO-CONFIRM-FAIL: before `WorkspaceStore.selectTab` gained its badge-clearing loop, switching
     /// tabs via ⌘1–⌘9 (which routes `selectPaneNumber → revealPaneTree → selectTab` WITHOUT going through
-    /// `NavigatorColumn.selectRow`) left the `.done` badge intact — failing the `.idle` assertion below.
+    /// `SidebarSelection.select`) left the `.done` badge intact — failing the `.idle` assertion below.
     /// With the fix `selectTab` itself clears badges so keyboard-driven tab switches are equivalent to
     /// sidebar-click tab switches: the badge auto-clears whenever the tab gains focus.
     func testKeyboardTabSwitchClearsBadge() throws {
