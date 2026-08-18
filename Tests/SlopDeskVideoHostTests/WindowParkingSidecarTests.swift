@@ -46,60 +46,32 @@ final class WindowParkingSidecarTests: XCTestCase {
 
     // MARK: restore predicate
 
+    // The rule is `slopdesk_video::window_restore`; what is tested here is that a `[CGRect]` reaches
+    // it as the display list it means.
     private let mainDisplay = CGRect(x: 0, y: 0, width: 2560, height: 1440)
     private let sideDisplay = CGRect(x: 2560, y: 0, width: 1920, height: 1080)
 
-    // The canonical stranded case: the window still sits where the (now-gone) VD used to be —
-    // past the rightmost real display, intersecting nothing → restore.
-    func testStrandedOffAllDisplaysRestores() {
+    func testTheDisplayListCrossesAsTheOneTheWindowIsJudgedAgainst() {
         let strandedOnDeadVD = CGRect(x: 4480, y: 0, width: 1440, height: 900)
+        // Past the rightmost real display, so no display reaches it.
         XCTAssertTrue(StrandedWindowRestorePolicy.shouldRestore(
             currentFrame: strandedOnDeadVD,
             originalFrame: original,
             displayBounds: [mainDisplay, sideDisplay],
         ))
-    }
-
-    // Already (near) its recorded original frame → nothing to fix, do not touch it.
-    func testAlreadyAtOriginalDoesNotRestore() {
+        // The SAME window, once a display covers where it sits — the second rect has to cross for
+        // this to flip, which is what pins the four-doubles-per-display packing.
         XCTAssertFalse(StrandedWindowRestorePolicy.shouldRestore(
-            currentFrame: original,
+            currentFrame: strandedOnDeadVD,
             originalFrame: original,
-            displayBounds: [mainDisplay],
-        ))
-        // Within the tolerance (sub-pixel/AX rounding drift) counts as "at original" too.
-        let nudged = original.offsetBy(dx: 1, dy: -1)
-        XCTAssertFalse(StrandedWindowRestorePolicy.shouldRestore(
-            currentFrame: nudged,
-            originalFrame: original,
-            displayBounds: [mainDisplay],
+            displayBounds: [mainDisplay, sideDisplay, CGRect(x: 4480, y: 0, width: 1920, height: 1080)],
         ))
     }
 
-    // The window is visible on a REAL display (WindowServer already re-homed it after the VD
-    // vanished, or the user moved it since the crash) → its position is plausible; moving it now
-    // would yank a window out from under the user. Validate-then-drop.
-    func testVisibleOnARealDisplayDoesNotRestore() {
-        let reHomed = CGRect(x: 300, y: 200, width: 1024, height: 768)
+    // An empty list has no base address to pass; the door must still be asked and still answer no.
+    func testAnEmptyDisplayListStillCrosses() {
         XCTAssertFalse(StrandedWindowRestorePolicy.shouldRestore(
-            currentFrame: reHomed,
-            originalFrame: original,
-            displayBounds: [mainDisplay, sideDisplay],
-        ))
-        // Even a partial overlap with a display edge counts as reachable — do not move.
-        let halfOff = CGRect(x: 2500, y: 100, width: 800, height: 600)
-        XCTAssertFalse(StrandedWindowRestorePolicy.shouldRestore(
-            currentFrame: halfOff,
-            originalFrame: original,
-            displayBounds: [mainDisplay],
-        ))
-    }
-
-    // No display info (a CG enumeration failure) → fail SOFT: never move a window on uncertainty.
-    func testEmptyDisplayListNeverRestores() {
-        let stranded = CGRect(x: 9000, y: 0, width: 800, height: 600)
-        XCTAssertFalse(StrandedWindowRestorePolicy.shouldRestore(
-            currentFrame: stranded,
+            currentFrame: CGRect(x: 9000, y: 0, width: 800, height: 600),
             originalFrame: original,
             displayBounds: [],
         ))

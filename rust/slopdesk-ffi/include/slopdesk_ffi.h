@@ -3850,6 +3850,21 @@ SlopDeskWindowPlacement slopdesk_window_placement(double window_width, double wi
                                                   double display_width, double display_height);
 bool slopdesk_window_fits(double width, double height, double bounds_width, double bounds_height);
 
+/* Whether launch hygiene should move a window a CRASHED daemon left parked back to the frame that
+ * run recorded for it. A clean shutdown un-parks everything, so this only ever reads a sidecar a
+ * SIGKILL left behind — and the sidecar naming a window is not evidence it is still lost. Two
+ * things say nothing is wrong, and either one alone stops the move: the window already sits at the
+ * recorded origin (within two points of AX drift), or it overlaps a display that exists, so somebody
+ * can see it. An EMPTY list is the CG enumeration having FAILED, not "on no display", and answers
+ * false — every uncertainty resolves to leaving the window alone.
+ *
+ * `displays` is 4 * display_count doubles: x, y, width, height per display, in the same global
+ * top-left space as the window frame (`CGDisplayBounds` / `CGWindowBounds`, both standardised). */
+bool slopdesk_window_should_restore(double current_x, double current_y,
+                                    double current_width, double current_height,
+                                    double original_x, double original_y,
+                                    const double *displays, size_t display_count);
+
 /* ---- What content size a window OPENS at, and where it lands ----------------------------
  * The sibling of the placement above, for the client's own window rather than a remoted one.
  * Numbers in, numbers out — the only pointer is the saved descriptor's text.

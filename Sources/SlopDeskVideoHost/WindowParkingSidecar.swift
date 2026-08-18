@@ -1,5 +1,6 @@
 #if os(macOS)
 import CoreGraphics
+import CSlopDeskFFI
 import Foundation
 import SlopDeskVideoProtocol
 
@@ -86,30 +87,32 @@ public struct WindowParkingSnapshot: Codable, Equatable, Sendable {
     }
 }
 
-/// The PURE "should launch hygiene move this window" predicate. Restore ONLY a window that is
-/// still demonstrably stranded: not already (near) its recorded original frame, AND intersecting
-/// NO current display (it still sits in the dead VD's off-screen region). A window visible on any
-/// real display was re-homed by WindowServer or moved by the user since the crash — moving it now
-/// would yank it out from under them. An EMPTY display list (CG enumeration failure) fails SOFT:
-/// never move a window on uncertainty.
+/// The "should launch hygiene move this window" predicate, asked of `slopdesk_video::window_restore`
+/// — which window a crashed daemon left stranded, and every reason not to touch one, live there.
+/// What is here is the marshalling: a `[CGRect]` of display bounds becomes the flat run of doubles
+/// the door reads.
 public enum StrandedWindowRestorePolicy {
-    /// `tolerance` absorbs sub-point AX/rounding drift when comparing against the original origin.
     public static func shouldRestore(
         currentFrame: CGRect,
         originalFrame: CGRect,
         displayBounds: [CGRect],
-        tolerance: CGFloat = 2.0,
     ) -> Bool {
-        // Already home (within drift) — nothing to fix.
-        if abs(currentFrame.minX - originalFrame.minX) <= tolerance,
-           abs(currentFrame.minY - originalFrame.minY) <= tolerance
-        {
-            return false
+        // The door reads extents as given, so standardize here — the negative-size form is a
+        // near-side representation, never a rule.
+        var scalars = [Double]()
+        scalars.reserveCapacity(displayBounds.count * 4)
+        for bounds in displayBounds.map(\.standardized) {
+            scalars.append(contentsOf: [bounds.origin.x, bounds.origin.y, bounds.width, bounds.height])
         }
-        // No display info → fail soft.
-        guard !displayBounds.isEmpty else { return false }
-        // Stranded ⇔ reachable on no current display.
-        return !displayBounds.contains { $0.intersects(currentFrame) }
+        let current = currentFrame.standardized
+        let original = originalFrame.standardized
+        return scalars.withUnsafeBufferPointer { displays in
+            slopdesk_window_should_restore(
+                current.origin.x, current.origin.y, current.width, current.height,
+                original.origin.x, original.origin.y,
+                displays.baseAddress, displayBounds.count,
+            )
+        }
     }
 }
 #endif

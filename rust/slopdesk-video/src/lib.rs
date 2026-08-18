@@ -113,6 +113,8 @@
 //!   surfaces claiming that key outranks the others.
 //! - [`key_naming`] — what one key event is CALLED, so the chord the dispatcher builds and the
 //!   chord the recorder persists are the same chord.
+//! - [`window_restore`] — which window a crashed daemon left stranded, and may therefore be moved
+//!   back on the next launch; every uncertainty resolves to leaving it where it is.
 //! - [`input_routing`] — what happens to an input datagram between the socket and the injector: the
 //!   raise rule, the motion coalescer, the button and modifier ledger, and the metered scroll
 //!   accumulator — every one of them there because injection itself is synchronous and expensive.
@@ -214,6 +216,7 @@ pub mod window_feed;
 pub mod window_feed_host;
 pub mod window_geometry;
 pub mod window_placement;
+pub mod window_restore;
 pub mod ycbcr;
 
 pub use adaptive_fec::TierState;
