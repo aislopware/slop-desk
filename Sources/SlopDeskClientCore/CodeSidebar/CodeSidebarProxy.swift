@@ -17,8 +17,10 @@
 //
 // Hang-safety: listeners/connections are real network objects — nothing here may be constructed in
 // unit tests. The pure port-derivation lives in `CodeSidebarProxyPorts` and is the only tested part.
+//
+// Loopback is loopback on both platforms — the relay is Foundation and Network, and both reasons it
+// exists (a secure context, an origin that survives a respawn) are the phone's problems too.
 
-#if os(macOS)
 import Foundation
 import Network
 import SlopDeskTransport
@@ -230,4 +232,3 @@ package final class CodeSidebarProxyPool {
         return nil
     }
 }
-#endif

@@ -4895,6 +4895,65 @@ if sed -E 's#^[[:space:]]*//.*##;s#^[[:space:]]*///.*##' Sources/SlopDeskDeviceP
 fi
 printf 'check-supervisor: both device panels draw on both platforms.\n'
 
+# ---------------------------------------------------------------------------
+# THE CODE PANEL CROSSES, AND ONLY ITS KEYBOARD STAYS BEHIND.
+#
+# `CodeSidebarWebView.swift` was a thousand lines of which the larger half was a first-responder
+# duel — a focused embedded VS Code and a focused terminal fighting over one AppKit window. That duel
+# has no iOS analogue at all (no app-level event monitor, no menu bar, no shared field editor), and
+# for as long as it sat in the same file as the pool, the whole code surface was Mac-only.
+#
+# Three files now, and the split is the rule: the DECISIONS in `CodeSidebarFocusPolicy` (pure, and
+# the only place a focus rule may be written), the POOL in `CodeSidebarWebViewPool` (projects and
+# their warm pages — one law, with the Mac's keyboard machine walled off at the bottom), and the
+# MOUNT in `CodeSidebarWebView` (a clipping container and a representable per platform).
+for piece in \
+  "Sources/SlopDeskClientUI/CodeSidebar/CodeSidebarWebView.swift:UIViewRepresentable" \
+  "Sources/SlopDeskClientUI/CodeSidebar/CodeSidebarWebView.swift:NSViewRepresentable" \
+  "Sources/SlopDeskClientUI/CodeSidebar/CodeSidebarWebViewPool.swift:func noteRemount"; do
+  if ! grep -qF "${piece#*:}" "${piece%%:*}"; then
+    fail "${piece%%:*} lost ${piece#*:} — the code panel mounts on both platforms (docs/56)"
+  fi
+done
+# The webview SUBCLASS is the responder seam and nothing else, so it exists only where a responder
+# duel does. The phone mints a plain `WKWebView`; a `CodeSidebarWKWebView` named anywhere outside the
+# two files that own it — or reached from the phone's half — is that seam leaking back out.
+# Comments stripped first: the seam is DOC-linked from the policy and the pure state it drives, and a
+# doc link is exactly the reference that is allowed to cross.
+while IFS= read -r file; do
+  [[ -z "${file}" ]] && continue
+  [[ "${file}" =~ CodeSidebar/CodeSidebarWebView(Pool)?\.swift$ ]] && continue
+  if sed -E 's#^[[:space:]]*//.*##' "${file}" | grep -q 'CodeSidebarWKWebView'; then
+    fail "${file} names CodeSidebarWKWebView — it is the Mac's responder seam, not an API"
+  fi
+done < <(grep -rl 'CodeSidebarWKWebView' Sources/ || true)
+# The four code-panel files below carry NO WHOLE-FILE gate. `CodeSidebarProxy` and
+# `CodeSidebarFontSchemeHandler` were gated for no reason at all — Network is Network and WebKit is
+# WebKit — and `CodePanelSurfaces` was gated because of what it mounted, which has since crossed.
+# A gate INSIDE one of them is fine and the pool has two (the AppKit/UIKit import, the keyboard
+# machine); what is banned is the wrapper that makes the file compile to nothing on the phone, and
+# that shape is exactly "the first line of code is `#if os(macOS)`".
+for crossed in Sources/SlopDeskClientUI/CodeSidebar/CodePanelSurfaces.swift \
+  Sources/SlopDeskClientUI/CodeSidebar/CodeSidebarWebViewPool.swift \
+  Sources/SlopDeskClientCore/CodeSidebar/CodeSidebarProxy.swift \
+  Sources/SlopDeskClientCore/CodeSidebar/CodeSidebarFontSchemeHandler.swift; do
+  first=$(grep -vE '^[[:space:]]*(//.*)?$' "${crossed}" | head -n 1 || true)
+  if [[ "${first}" == '#if os(macOS)' ]]; then
+    fail "${crossed} is wrapped in a macOS gate again — the code panel is the phone's too"
+  fi
+done
+# A focus RULE lives in the policy, which is pure and testable; the seam only calls it. The three
+# spellings below are the ones that were inline before the split and would be inline again first.
+# shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
+focus_rules=$(spells 'func shouldAcceptFocus|func isReservedAppChord|func evictionVictim' \
+  $(repo_files 'Sources/SlopDeskClientUI/**/*.swift' | grep -v 'CodeSidebarFocusPolicy.swift') \
+  2> /dev/null || true)
+if [[ -n "${focus_rules}" ]]; then
+  printf '%s\n' "${focus_rules}" >&2
+  fail "a code-panel focus rule grew back outside CodeSidebarFocusPolicy — it is pure on purpose"
+fi
+printf 'check-supervisor: the code panel crosses; only its keyboard stayed behind.\n'
+
 # ── One device-panel law, two device protocols ────────────────────────────────────────────────
 # The simulator panel and the Android panel differ in almost everything and should — one rotates on
 # the client and the other on the device, one sends touches in the fitted rect's space and the other

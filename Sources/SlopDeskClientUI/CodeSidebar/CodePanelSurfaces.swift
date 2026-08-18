@@ -10,19 +10,20 @@
 // asked for. The admission persists (`Defaults[.openedCodeProjects]`), so a relaunch boots straight
 // back into known projects.
 //
-// THE PANEL'S CHROME IS NO LONGER HERE. The strip of tabs over these surfaces, the width ladder that
-// decides how many of them say their name, and the rail the collapsed panel leaves behind are AppKit
-// now (`SlopDeskMacUI`: `MacPanelStrip`, `MacPanelTabGroup`, `MacPanelRail`), mounted as this view's
-// SIBLING under `MacCodePanelColumn` — docs/56 stage D. What is left here is the four surfaces and the
-// host conversations that keep them alive, which is why the three MODELS are handed in rather than
-// held: the strip's reload plate drives them from outside this tree.
+// THE PANEL'S CHROME IS NOT HERE, AND THAT IS WHY THE SURFACES CROSS. The strip of tabs over these
+// surfaces, the width ladder that decides how many of them say their name, and the rail the collapsed
+// panel leaves behind are AppKit now (`SlopDeskMacUI`: `MacPanelStrip`, `MacPanelTabGroup`,
+// `MacPanelRail`), mounted as this view's SIBLING under `MacCodePanelColumn` — docs/56 stage D. What
+// is left here is the four surfaces and the host conversations that keep them alive, which is why the
+// three MODELS are handed in rather than held: the strip's reload plate drives them from outside this
+// tree. The phone will hang its own chrome — a tab bar, not a strip — off the same three models.
 //
-// The column is macOS-only chrome hosted in its own plain `NSSplitViewItem` (a THIRD column beside
-// navigator | content — never `.inspector`, whose collapse unmounts the content and would kill the
-// webview's layout). While collapsed the split item unparents this view, SwiftUI cancels the `.task`,
-// and the poll loop stops — the code-server is only ever ensured when the panel is open.
+// How the surfaces are HOUSED stays each platform's own business. On the Mac the column is a plain
+// `NSSplitViewItem` (a THIRD column beside navigator | content — never `.inspector`, whose collapse
+// unmounts the content and would kill the webview's layout). While collapsed the split item unparents
+// this view, SwiftUI cancels the `.task`, and the poll loop stops — the code-server is only ever
+// ensured when the panel is open, on either platform, because the ensure rides the mount.
 
-#if os(macOS)
 import SFSafeSymbols
 import SlopDeskClientCore
 import SlopDeskDevicePanels
@@ -628,4 +629,3 @@ private struct CodeOpenGate: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
-#endif

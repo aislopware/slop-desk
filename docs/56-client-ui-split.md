@@ -536,6 +536,42 @@ nothing is ever implemented twice. No stage copies a file: a surface either move
   focus region, the orphan repair). The pool, the dressing and the mount underneath it are already
   platform-neutral. Splitting those apart is the next increment, and it is what unblocks the phone's
   own layout for all four surfaces.
+
+  **Increment 13 — the code surface crosses, and only its keyboard stays behind.** The thousand-line
+  file is three files now, and the cut is the one the previous increment predicted. `CodeSidebarFocusPolicy`
+  holds the DECISIONS — click-to-focus, the reserved-chord refusal, the per-tab focus region, the
+  eviction victim — and is pure, so it was already testable and is now also platform-neutral, with only
+  the three rules that take an `NSEvent` left under a `#if canImport(AppKit)` at its foot.
+  `CodeSidebarWebViewPool` holds the PROJECTS and their warm pages: the mint, the five user scripts,
+  the LRU and its cap, the veil state and the reload are one law for both platforms, and the Mac's
+  keyboard machine — the key-window observers, the focus memory, the claim/resign seam, the ⌥⌘R toggle
+  and the orphan repair — is walled off at the bottom of the class behind the only `#if` that survives.
+  `CodeSidebarWebView` holds the MOUNT: a clipping container and a representable per platform, and the
+  `CodeSidebarWKWebView` subclass under a macOS gate, because that subclass IS the responder seam. The
+  phone mints a plain `WKWebView`, and check-supervisor keeps the subclass's name out of every file but
+  those two.
+
+  A REMOUNT IS TWO THINGS AND THEY CAME APART HERE. It is a USE — what keeps a project ahead of the
+  ones the user stopped visiting in the eviction queue — and on the Mac it may also owe the keyboard
+  back. The old `noteRemount` did both in one body, which is precisely why the pool could not cross;
+  the new one touches the recency list on both platforms and calls `restoreKeyboardOnRemount` only
+  where a keyboard can be owed.
+
+  Two files under it turned out to be gated for no reason whatsoever. `CodeSidebarProxy` is Foundation
+  and Network, and both reasons it exists — loopback is a secure context, and a fixed FNV-1a port keeps
+  the workbench's per-origin storage across respawns — are the phone's problems too.
+  `CodeSidebarFontSchemeHandler` is a `WKURLSchemeHandler`, and WebKit is WebKit. Neither gate was ever
+  a dependency; both were inherited from the days the surface above them was Mac-only, and that is the
+  same accident increment 11 found forty-one times in `SlopDeskDevicePanels`.
+
+  What genuinely differs is four lines, and each is a SPELLING rather than a decision. The theme
+  backdrop is `SlateNativeColor` on both. The chrome polarity is `NSAppearance(named: .aqua)` against
+  `overrideUserInterfaceStyle = .light`. WebKit's white base canvas is killed by the long-standing KVC
+  `drawsBackground` key on the Mac and honestly, through the view's own opacity, on the phone. And the
+  clipping container overrides `hitTest` on the Mac only — the overhang would otherwise sit under the
+  panel's AppKit strip and eat its clicks, whereas `clipsToBounds` already stops UIKit delivering
+  touches outside the container. With that, all four panel surfaces draw on both platforms, and the
+  phone's own layout is the next increment.
 - **E — the Rust port (§4).**
 
 ## 4. What moves to Rust

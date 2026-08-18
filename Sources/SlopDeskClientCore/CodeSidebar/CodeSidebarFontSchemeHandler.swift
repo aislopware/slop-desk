@@ -1,9 +1,9 @@
 // CodeSidebarFontSchemeHandler — the WebKit half of `CodeSidebarFontScheme`. Kept apart from the
-// pure half so the scheme's shape (URLs, headers, face table) stays reachable from tests and from
-// the iOS slice, while this file — which imports WebKit and is unreachable from any unit test —
-// carries only the WKURLSchemeHandler conformance.
+// pure half so the scheme's shape (URLs, headers, face table) stays reachable from tests, while this
+// file — which imports WebKit and is unreachable from any unit test — carries only the
+// WKURLSchemeHandler conformance. Both halves serve both platforms: WebKit is WebKit, and the phone's
+// workbench wants the client's own faces for the same reason the Mac's does.
 
-#if os(macOS)
 import Foundation
 import WebKit
 
@@ -55,4 +55,3 @@ package final class CodeSidebarFontSchemeHandler: NSObject, WKURLSchemeHandler {
     /// `start`, so by the time a stop could arrive the task has already finished.
     package func webView(_: WKWebView, stop _: any WKURLSchemeTask) {}
 }
-#endif
