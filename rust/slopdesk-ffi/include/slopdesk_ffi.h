@@ -100,6 +100,32 @@ bool slopdesk_paste_should_warn(const uint8_t *text, size_t len, bool protection
                                 bool bracketed_safe, bool program_advertised_bracketed,
                                 bool is_alternate_screen);
 
+/* ---- what a gesture at the terminal surface MEANS, before anything is sent ----------------
+ * Every answer is a boolean, a case index or a count, so none of these takes the (out, cap)
+ * shape and none can come up short. Two facts run through all of them: a mouse-reporting
+ * program owns the pointer, and a full-screen program owns the screen — where either holds,
+ * the local rule steps aside.                                                                */
+
+// 0 write it now · 1 confirm first (`clipboard-write = ask`) · 2 nothing to write.
+uint8_t slopdesk_term_clipboard_write(bool confirm_requested, const uint8_t *payload,
+                                      size_t payload_len);
+// 0 nothing selected · 1 copy only · 2 copy and delete.
+uint8_t slopdesk_term_cut_action(bool has_selection, bool alternate_screen, bool prompt_zone);
+// How many DEL bytes the delete half sends; 0 degrades the cut to a copy.
+size_t slopdesk_term_cut_delete_count(const uint8_t *selection, size_t selection_len,
+                                      bool selection_ends_at_cursor);
+bool slopdesk_term_focus_follows_mouse(bool setting, bool already_focused);
+// Whether a key event's characters may be handed to the encoder as text. The text itself is
+// never written back: it is the caller's own input, byte for byte.
+bool slopdesk_term_forwards_encoder_text(const uint8_t *characters, size_t characters_len);
+// The byte an undo/redo gesture sends, or -1 for none. A one-byte answer is 0..=255, so the
+// sentinel is outside the range by construction.
+int32_t slopdesk_term_prompt_edit_byte(bool undo, bool redo, bool in_prompt_zone);
+// `action` is the CONFIG TOKEN ("paste", "copy-or-paste", …), the spelling the config file
+// carries, so there is no second vocabulary. An unrecognised token does not intercept.
+bool slopdesk_term_right_click_intercepts_as_paste(const uint8_t *action, size_t action_len,
+                                                   bool has_selection, bool mouse_captured);
+
 typedef struct SlopDeskReplay SlopDeskReplay;
 
 // Lifecycle. Returns NULL only if allocation failed.

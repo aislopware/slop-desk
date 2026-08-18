@@ -1,51 +1,36 @@
+import CSlopDeskFFI
+
 // MARK: - Right-click paste-protection interception
 
-/// The PURE decision behind closing the right-click paste-protection hole: whether the embedder must
-/// INTERCEPT a bare (non-⌃) right-click as a PASTE — routing it through the broad paste-protection
-/// pre-check (``PastePrecheck``) — rather than letting libghostty perform the configured `right-click-action`
-/// directly.
+/// Whether the embedder must INTERCEPT a bare (non-⌃) right-click as a PASTE — routing it through the broad
+/// paste-protection pre-check (``PastePrecheck``) — rather than letting libghostty perform the configured
+/// `right-click-action` directly.
 ///
-/// ## Why this exists
-/// The bare-right-click dispatch is owned END-TO-END by libghostty via the `right-click-action` config,
-/// so a `Paste` / `Copy or Paste` action pastes through libghostty's OWN gate, which only flags a
-/// `\n` / bracketed-end payload (`isSafe`). This codebase's four-danger analyzer (single-line `sudo`/`su`, control
-/// chars, trailing newline, multi-line) is therefore UNREACHABLE for a right-click paste — a single-line
-/// `sudo rm -rf …` reaches the shell with no protection sheet. When this returns `true` the embedder
-/// intercepts the click BEFORE forwarding and runs the same ``PastePrecheck`` ⌘V uses.
+/// The hole this closes, and the gates that close it, are `slopdesk_terminal::surface`'s
+/// `right_click_intercepts_as_paste`: libghostty owns the bare-right-click dispatch end to end and its own
+/// paste gate only flags a newline or a bracketed-paste end, so the four-danger analysis ⌘V runs is
+/// unreachable from a right-click unless the embedder takes the click first.
 ///
-/// ## The gates
-/// - **A mouse-reporting program owns the click** (`mouseCaptured`) → never intercept: the click is the
-///   program's input (it would otherwise steal a TUI's right-click).
-/// - **``RightClickAction/paste``** → intercept (always a paste).
-/// - **``RightClickAction/copyOrPaste``** → intercept ONLY when there is NO selection (with a selection it
-///   copies, which needs no protection; with none it pastes). The selection is read at click time, BEFORE
-///   forwarding, so it is the genuine pre-click selection — not a word-select libghostty injected.
-/// - **``RightClickAction/contextMenu`` / ``copy`` / ``ignore``** → do not intercept (no paste happens; the
-///   click is handed to libghostty as before).
+/// The action crosses as its ``RightClickAction/rawValue`` — the same kebab-case token the config file
+/// carries — so there is no second vocabulary to keep in step.
 public enum RightClickPasteInterceptPolicy {
     /// Whether a bare (non-⌃) right-click should be intercepted as a paste and routed through the pre-check.
     ///
     /// - Parameters:
     ///   - action: the live ``RightClickAction`` (``SettingsKey/rightClickAction``).
     ///   - hasSelection: whether the surface holds a selection at click time (`GhosttySurface.hasSelection()`).
+    ///     Read BEFORE the click is forwarded, so it is the genuine pre-click selection.
     ///   - mouseCaptured: whether a mouse-reporting program owns the pointer (`GhosttySurface.mouseCaptured`).
     public static func interceptsAsPaste(
         action: RightClickAction,
         hasSelection: Bool,
         mouseCaptured: Bool,
     ) -> Bool {
-        // A mouse-reporting program owns the click — never steal it for a local paste.
-        guard !mouseCaptured else { return false }
-        switch action {
-        case .paste:
-            return true
-        case .copyOrPaste:
-            // Copy-or-Paste pastes only when there is nothing selected to copy.
-            return !hasSelection
-        case .contextMenu,
-             .copy,
-             .ignore:
-            return false
+        var token = action.rawValue
+        return token.withUTF8 {
+            slopdesk_term_right_click_intercepts_as_paste(
+                $0.baseAddress, $0.count, hasSelection, mouseCaptured,
+            )
         }
     }
 }

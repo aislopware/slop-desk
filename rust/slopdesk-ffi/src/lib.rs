@@ -104,6 +104,7 @@ pub mod send_pacing;
 pub mod session_state;
 pub mod sidecars;
 pub mod supervisor_frame;
+pub mod surface_gesture;
 pub mod swipe_nav_config;
 pub mod swipe_recognizer;
 pub mod terminal_config;

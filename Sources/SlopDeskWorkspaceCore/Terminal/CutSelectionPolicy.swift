@@ -1,11 +1,8 @@
-import Foundation
+import CSlopDeskFFI
 
 // MARK: - Cut (⌘X / Edit ▸ Cut) decision — terminal copy/cut/paste parity (audit fix)
 
 /// What ⌘X / Edit ▸ Cut should do on the terminal surface, decided from the live selection + screen state.
-///
-/// The Cut behavior (tracked in `docs/ui-shell/spec/terminal-features__input.md`): Cut (⌘X) always copies the
-/// selection to the clipboard; if editable prompt text, also deletes it; on read-only, falls back to a plain copy.
 ///
 /// - ``none``: nothing is selected — ⌘X is a no-op (there is nothing to cut).
 /// - ``copyOnly``: copy the selection but NEVER delete — read-only scrollback, or a full-screen / foreground
@@ -18,17 +15,14 @@ public enum CutAction: Equatable, Sendable {
     case copyAndDelete
 }
 
-/// The PURE, headless decision behind the terminal **Cut** (⌘X). The GUI surface (`GhosttyTerminalView`,
-/// compile-only behind `#if canImport(CGhostty)`) is a thin actuator: it always performs the
-/// `copy_to_clipboard` binding action for a non-``CutAction/none`` decision, and on ``CutAction/copyAndDelete``
-/// sends ``deleteCount(selection:selectionEndsAtCursor:)`` DEL (`0x7F`) bytes.
+/// The embedder half of the terminal **Cut** (⌘X). The GUI surface (`GhosttyTerminalView`, compile-only
+/// behind `#if canImport(CGhostty)`) is the thin actuator: it performs the `copy_to_clipboard` binding
+/// action for a non-``CutAction/none`` decision, and on ``CutAction/copyAndDelete`` sends
+/// ``deleteCount(selection:selectionEndsAtCursor:)`` DEL (`0x7F`) bytes.
 ///
-/// ## The gates (the safe defaults)
-/// 1. **No selection** → ``CutAction/none``: nothing to copy or cut.
-/// 2. **A full-screen / foreground program owns the screen** (`isAlternateScreen`) → ``CutAction/copyOnly``:
-///    copy the native selection, but NEVER inject deletes (the key/bytes belong to the program).
-/// 3. **At an editable prompt** (`isPromptZone`) → ``CutAction/copyAndDelete`` (the feature).
-/// 4. **Off the prompt (read-only scrollback)** → ``CutAction/copyOnly`` (the spec's read-only fallback).
+/// The ladder and its safe defaults are `slopdesk_terminal::surface::cut_action` /
+/// `cut_delete_count` — including why the alternate screen is checked before the prompt zone, and why an
+/// unprovable geometry deletes nothing rather than the wrong characters.
 public enum CutSelectionPolicy {
     /// Decide what a Cut (⌘X / Edit ▸ Cut) should do.
     ///
@@ -39,32 +33,22 @@ public enum CutSelectionPolicy {
     ///   - isPromptZone: whether the terminal is at an EDITABLE shell prompt (OSC-133 idle + connected) — the
     ///     only place DEL bytes can faithfully erase the selected run.
     public static func action(hasSelection: Bool, isAlternateScreen: Bool, isPromptZone: Bool) -> CutAction {
-        guard hasSelection else { return .none }
-        // A full-screen / foreground program owns the screen → copy the selection, but never inject deletes.
-        guard !isAlternateScreen else { return .copyOnly }
-        // Editable prompt → copy + delete; read-only scrollback → copy only (the spec's read-only fallback).
-        return isPromptZone ? .copyAndDelete : .copyOnly
+        switch slopdesk_term_cut_action(hasSelection, isAlternateScreen, isPromptZone) {
+        case 1: .copyOnly
+        case 2: .copyAndDelete
+        default: .none
+        }
     }
 
     /// The number of DEL (`0x7F`) bytes the GUI actuator sends for the delete half of a
-    /// ``CutAction/copyAndDelete``.
+    /// ``CutAction/copyAndDelete``; `0` degrades the cut to a copy.
     ///
-    /// Subject to the geometry ceiling every pre-sent-DEL path carries: DEL bytes ALWAYS erase the
-    /// characters immediately BEFORE the host cursor, so they only erase
-    /// the SELECTED run when that run ENDS AT THE CURSOR. The pinned libghostty fork exposes no
-    /// set-selection / cursor-geometry API, so the embedder cannot prove that — and an optimistic pre-send of
-    /// a mid-line selection would delete the WRONG characters (silent data loss). Therefore this returns a
-    /// non-zero count ONLY when the caller can PROVE the selection ends at the cursor AND it is a single line;
-    /// otherwise 0, so the cut degrades to copy-only (the documented ceiling).
-    ///
-    /// Unlike a Backspace keystroke there is NO fall-through key for ⌘X, so the FULL selection length is returned (not
-    /// `count - 1`). `selectionEndsAtCursor` is the documented seam for a FUTURE libghostty geometry API; until
-    /// then the GUI passes `false` and the delete half is dormant.
+    /// `selectionEndsAtCursor` is the documented seam for a FUTURE libghostty geometry API; until then the
+    /// GUI passes `false` and the delete half is dormant.
     public static func deleteCount(selection: String, selectionEndsAtCursor: Bool) -> Int {
-        // Cannot prove the run ends at the cursor → never pre-send (degrade to copy-only).
-        guard selectionEndsAtCursor else { return 0 }
-        // Multi-line / empty selections can't be mapped to a contiguous DEL run → degrade likewise.
-        guard !selection.isEmpty, !selection.contains("\n"), !selection.contains("\r") else { return 0 }
-        return selection.count
+        var selection = selection
+        return selection.withUTF8 {
+            Int(slopdesk_term_cut_delete_count($0.baseAddress, $0.count, selectionEndsAtCursor))
+        }
     }
 }
