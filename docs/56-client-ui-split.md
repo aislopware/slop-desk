@@ -485,6 +485,27 @@ nothing is ever implemented twice. No stage copies a file: a surface either move
   (`translatesAutoresizingMaskIntoConstraints = false`, no constraints of its own), or Auto Layout
   re-imposes the `width == 0` autoresizing constraint it minted when the view was still `.zero` — the
   Android mark carried that pair for its whole life and photographed as nothing at all.
+
+  **The eleventh is not a port at all — it is the DEVICE-PANEL FLOOR becoming the phone's too.** Every
+  one of the forty-one files in `SlopDeskDevicePanels` was wrapped whole in `#if os(macOS)`. None of
+  them needed to be: the module imports Foundation, CoreGraphics, CoreMedia and Network, and the phone
+  has all four. The gates were inherited from the days the panels were a Mac-only surface, and they
+  were invisible because a build of forty-one EMPTY files is a green build — `make check-ios` was
+  compiling nothing and reporting success. Removing them is the whole change; the module built for the
+  iOS triple on the first try, which is the measurement that says the gap was never technical.
+
+  One file had a real dependency, and its fix is the pattern for anything else in that position.
+  `SimulatorKeyMap` imported `Carbon.HIToolbox` for its `kVK_` constants, and `Carbon` does not exist
+  on iOS. Its own sibling already had the answer: `AndroidKeyMap.functionalKeys` spells the same
+  virtual key codes as literals. So `SimulatorKeyMap` does now too, and the constants it gave up are
+  PINNED by `SimulatorKeyMapTests` — a `#if canImport(Carbon)` suite that asserts every row against
+  the SDK's own value. The table stays one implementation, buildable everywhere, and a typo in it
+  fails a build rather than swallowing an arrow key on a device someone is typing into.
+
+  What this does NOT yet give the phone is the panels themselves: the four surfaces under
+  `SlopDeskClientUI/{CodeSidebar,Simulator,Android}` are still `#if os(macOS)`, and the two that hold
+  a video stage are `NSViewRepresentable`. That is the next increment, and it is the shape §3.5
+  describes — the surfaces cross whole, onto the phone's own layout.
 - **E — the Rust port (§4).**
 
 ## 4. What moves to Rust

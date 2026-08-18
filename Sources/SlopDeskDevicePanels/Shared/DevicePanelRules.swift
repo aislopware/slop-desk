@@ -14,7 +14,6 @@
 // an ENSURE verb's answer means. That part is one implementation now, and `DevicePanelPhase` is
 // one type, with each panel's old name kept as an alias so each surface still reads in its own words.
 
-#if canImport(SwiftUI) && os(macOS)
 import CSlopDeskFFI
 import SlopDeskProtocol
 
@@ -121,4 +120,3 @@ package enum DevicePanelRules {
         slopdesk_device_panel_video_is_news(hasVideo, isAwaitingStream)
     }
 }
-#endif

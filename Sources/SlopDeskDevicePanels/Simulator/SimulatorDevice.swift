@@ -10,7 +10,6 @@
 // are `Booted` and `Shutdown`, but simctl has more (`Booting`, `Shutting Down`, `Creating`) and a
 // closed enum here would turn a transient state into a decode failure for the whole list.
 
-#if os(macOS)
 import Foundation
 
 package struct SimulatorDevice: Equatable, Identifiable {
@@ -57,4 +56,3 @@ package struct SimulatorDevice: Equatable, Identifiable {
         )
     }
 }
-#endif

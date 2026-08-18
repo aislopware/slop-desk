@@ -12,7 +12,6 @@
 // wire carries `width`/`height` with every positional envelope, so the host does the scaling to the
 // real framebuffer. That is why nothing here needs the device's pixel dimensions: only the ratio.
 
-#if os(macOS)
 import CoreGraphics
 
 package enum SimulatorScreenLayout {
@@ -95,4 +94,3 @@ package enum SimulatorScreenLayout {
         DevicePanelGeometry.pinchFingers(centre: centre, spread: spread, fitted: fitted)
     }
 }
-#endif

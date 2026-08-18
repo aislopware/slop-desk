@@ -9,7 +9,6 @@
 // where anyone plots a route. A single pinned position is the case a coding tool actually has —
 // "run the app as if it were in Tokyo" — and it is the whole of what this file models.
 
-#if os(macOS)
 import Foundation
 
 /// A pinned position. Degrees, in the server's own field names.
@@ -77,4 +76,3 @@ package struct SimulatorPlace: Identifiable, Equatable {
         Self(name: name, coordinate: SimulatorCoordinate(latitude: latitude, longitude: longitude))
     }
 }
-#endif

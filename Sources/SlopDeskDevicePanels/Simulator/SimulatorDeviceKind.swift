@@ -15,7 +15,6 @@
 // Anything unrecognised falls back to the phone glyph rather than a question mark: a wrong-but-plausible
 // silhouette beats a row that looks broken, and the name is right there beside it.
 
-#if os(macOS)
 import Foundation
 import SFSafeSymbols
 
@@ -86,4 +85,3 @@ package enum SimulatorDeviceKind: String, CaseIterable, Sendable {
         return .phone
     }
 }
-#endif

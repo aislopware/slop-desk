@@ -10,7 +10,6 @@
 // round-trips per poll on a link that is already fast, with no latency-critical write pattern for
 // `TCP_NODELAY` to protect. Reaching for the lower-level API here would be cost with no return.
 
-#if os(macOS)
 import Foundation
 
 /// What the panel can ask of the host's simulator server. Throwing rather than optional-returning:
@@ -247,4 +246,3 @@ package struct SimulatorControlClient: SimulatorControlling {
         }
     }
 }
-#endif

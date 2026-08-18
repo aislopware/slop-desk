@@ -14,7 +14,6 @@
 // Hang-safety: this constructs a real network object. Everything it decides is delegated to pure code
 // (``AndroidStreamParser``, ``AndroidAnnexB``); this file is the plumbing between them.
 
-#if os(macOS)
 import Foundation
 
 /// What the panel learns from the stream. Delivered on the main actor — the consumer is a view
@@ -120,4 +119,3 @@ package final class AndroidStreamConnection: AndroidStreaming {
         }
     }
 }
-#endif

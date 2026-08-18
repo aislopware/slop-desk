@@ -294,6 +294,13 @@ let package = Package(
         // Declarations are `package`, not `public`: every caller is inside this package (the two UI
         // targets and the test target), and the Xcode app targets are outside it, so the app-facing
         // surface does not grow by a symbol.
+        //
+        // NO PLATFORM GATE ANYWHERE INSIDE. Every one of these files used to be wrapped whole in
+        // `#if os(macOS)` — inherited from the days the panels were a Mac-only surface, never from a
+        // Mac-only dependency: the module imports Foundation, CoreGraphics, CoreMedia and Network,
+        // all four of which the phone has. The gates made the iOS build compile forty-one EMPTY
+        // files, which is why the parity gap was invisible. They are gone, `scripts/check-supervisor.sh`
+        // keeps them gone, and what is left is the floor both UI halves stand on.
         .target(
             name: "SlopDeskDevicePanels",
             dependencies: [

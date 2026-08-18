@@ -13,7 +13,6 @@
 // The parsing it delegates to (``DeviceLogLine``, ``SimulatorLogMessage``) is pure and is where
 // the tests are.
 
-#if os(macOS)
 import Foundation
 import Network
 
@@ -108,4 +107,3 @@ package extension SimulatorLogConnection {
     /// The socket is over; `nil` is a clean close.
     func noteEnded(reason: String?) { sink(.ended(reason: reason)) }
 }
-#endif

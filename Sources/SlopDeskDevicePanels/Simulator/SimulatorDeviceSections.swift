@@ -6,7 +6,6 @@
 // products. The twin of ``AndroidDeviceSections``, which lifts the platform version the way this one
 // lifts the runtime.
 
-#if os(macOS)
 import Foundation
 
 /// One group of the list: a heading and its devices.
@@ -85,4 +84,3 @@ package enum SimulatorDeviceSections {
         return first
     }
 }
-#endif

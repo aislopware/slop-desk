@@ -17,7 +17,6 @@
 // CoreMedia expects. That is why the URL asks for `format=avcc`: the Annex-B alternative would cost a
 // start-code rewrite of every access unit on the hot path, for nothing.
 
-#if os(macOS)
 import CoreMedia
 import Foundation
 
@@ -82,4 +81,3 @@ package enum SimulatorVideoFormat {
         DevicePanelSampleBuffer.dimensions(of: formatDescription)
     }
 }
-#endif

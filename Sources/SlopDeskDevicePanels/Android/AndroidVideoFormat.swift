@@ -13,7 +13,6 @@
 // paid on the frames instead, where every access unit is rewritten with 4-byte lengths
 // (``AndroidAnnexB/avccAccessUnit(from:)``).
 
-#if os(macOS)
 import CoreMedia
 import Foundation
 
@@ -96,4 +95,3 @@ package enum AndroidVideoFormat {
         DevicePanelSampleBuffer.dimensions(of: formatDescription)
     }
 }
-#endif

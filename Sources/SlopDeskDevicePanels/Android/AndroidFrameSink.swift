@@ -21,7 +21,6 @@
 //
 // Hang-safety: this file touches no network and builds no decoder.
 
-#if os(macOS)
 import Foundation
 
 /// What a mounted screen view can do with a frame.
@@ -77,4 +76,3 @@ package final class AndroidFrameSink {
         keyframe = nil
     }
 }
-#endif

@@ -18,7 +18,6 @@
 // check moves with the decoding: a body whose bytes are not an image now produces a bundle the UI
 // declines to draw, and the panel falls back to the bare screen — the same screen the old nil did.
 
-#if os(macOS)
 import Foundation
 
 package struct SimulatorChromeBundle: Sendable, Equatable {
@@ -75,4 +74,3 @@ package struct SimulatorChromeBundle: Sendable, Equatable {
         return Self(udid: udid, chrome: chrome, body: body, buttons: buttons)
     }
 }
-#endif

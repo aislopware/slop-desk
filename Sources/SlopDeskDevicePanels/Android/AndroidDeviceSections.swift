@@ -5,7 +5,6 @@
 // a grouping rule and a fact-lifting rule, and the same three answers have to hold on a phone as on
 // a Mac or the two panels are different products.
 
-#if os(macOS)
 import Foundation
 
 /// One group of the list: a heading and its devices.
@@ -98,4 +97,3 @@ package extension AndroidDevice {
         return nil
     }
 }
-#endif

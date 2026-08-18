@@ -32,7 +32,6 @@
 // acknowledged. Measured 2026-08-04, 202 touch messages left the client in 1.0 ms total. The lesson
 // survives as a rule — nothing upstream may ever be written as a request that expects a reply.
 
-#if os(macOS)
 import CSlopDeskFFI
 import Foundation
 
@@ -234,4 +233,3 @@ package enum AndroidControlMessage {
         }
     }
 }
-#endif

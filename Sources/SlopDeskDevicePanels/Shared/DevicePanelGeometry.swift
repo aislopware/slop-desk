@@ -19,7 +19,6 @@
 // rect's space because the host rescales. Those are different protocols, and they read as different
 // files calling different doors.
 
-#if os(macOS)
 import CoreGraphics
 import CSlopDeskFFI
 
@@ -205,4 +204,3 @@ package enum DevicePanelGeometry {
         CGRect(x: record.x, y: record.y, width: record.width, height: record.height)
     }
 }
-#endif

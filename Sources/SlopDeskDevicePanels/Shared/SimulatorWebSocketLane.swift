@@ -1,4 +1,3 @@
-#if os(macOS)
 import Foundation
 import Network
 
@@ -84,4 +83,3 @@ package extension SimulatorWebSocketLane {
         connection.send(content: payload, contentContext: context, completion: .idempotent)
     }
 }
-#endif

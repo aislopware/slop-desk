@@ -27,7 +27,6 @@
 // is not restated here, because a second copy of a foreign wire's layout is the thing this change
 // removed.
 
-#if os(macOS)
 import CSlopDeskFFI
 import Foundation
 
@@ -226,4 +225,3 @@ package enum AndroidVideoCodec: String, Equatable {
         self = codec
     }
 }
-#endif

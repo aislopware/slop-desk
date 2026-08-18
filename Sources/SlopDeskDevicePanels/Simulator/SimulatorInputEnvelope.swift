@@ -16,7 +16,6 @@
 // `JSONSerialization` with `.sortedKeys` — not for the wire (the server does not care about key
 // order) but so the encoder is a pure function of its input and the tests can pin whole strings.
 
-#if os(macOS)
 import Foundation
 
 /// One outbound message. Construct through the factories; the raw initializer stays private so a
@@ -140,4 +139,3 @@ package struct SimulatorInputEnvelope: Equatable {
         return String(data: data, encoding: .utf8)
     }
 }
-#endif

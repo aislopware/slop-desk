@@ -9,8 +9,6 @@
 // guessed from what the status bar shows. It rejects the whole body on one bad field, so a plausible
 // synonym costs the entire preset — `batteryState` is `discharging`, never "unplugged".
 
-#if os(macOS)
-
 package enum SimulatorOrientation: String, CaseIterable, Sendable {
     case portrait
     case landscapeLeft
@@ -76,4 +74,3 @@ package enum SimulatorStatusBar {
         "batteryLevel": "100",
     ]
 }
-#endif

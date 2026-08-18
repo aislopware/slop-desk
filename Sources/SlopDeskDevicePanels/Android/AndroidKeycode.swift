@@ -21,7 +21,6 @@
 // string to the device's input method in ONE message with no acknowledgement, so a paste is a single
 // write rather than a per-character round trip.
 
-#if os(macOS)
 import Foundation
 import SlopDeskVideoProtocol
 
@@ -154,4 +153,3 @@ package enum AndroidKeyMap {
         return state
     }
 }
-#endif

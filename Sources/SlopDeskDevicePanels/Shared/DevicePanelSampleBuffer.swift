@@ -1,4 +1,3 @@
-#if os(macOS)
 import CoreMedia
 import Foundation
 
@@ -105,4 +104,3 @@ package enum DevicePanelSampleBuffer {
         }
     }
 }
-#endif

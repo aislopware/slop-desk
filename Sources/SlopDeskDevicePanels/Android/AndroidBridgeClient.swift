@@ -11,7 +11,6 @@
 // can drive the whole panel — list, select, boot, failure — without a socket. Constructing an
 // `NWConnection` in a unit test is exactly the hang-safety rule this project keeps.
 
-#if os(macOS)
 import Foundation
 
 /// Why a bridge request did not produce an answer, in the words the panel shows.
@@ -175,4 +174,3 @@ package final class AndroidBridgeClient: AndroidBridging {
         }
     }
 }
-#endif

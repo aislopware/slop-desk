@@ -19,7 +19,6 @@
 // on an un-booted row are exact. The list is designed around this — an Android row can carry figures
 // where the iOS row could carry only a name.
 
-#if os(macOS)
 import Foundation
 
 package struct AndroidDevice: Equatable, Identifiable {
@@ -112,4 +111,3 @@ package struct AndroidDevice: Equatable, Identifiable {
         )
     }
 }
-#endif

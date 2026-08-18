@@ -24,7 +24,6 @@
 // Everything here is a pure function over bytes. Nothing constructs a socket, a decompression
 // session or a display layer — those live in the runtime types alongside, under the hang-safety rule.
 
-#if os(macOS)
 import Foundation
 
 /// One decoded downstream message. `unknown` is a first-class case on purpose: a newer server that
@@ -150,4 +149,3 @@ package enum SimulatorWireProtocol {
         }
     }
 }
-#endif

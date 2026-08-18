@@ -20,7 +20,6 @@
 // Hang-safety: this constructs a real network object, so nothing here may be built in a unit test.
 // The framing it performs is delegated to ``consume(_:)``, which is pure and directly testable.
 
-#if os(macOS)
 import Foundation
 import Network
 import SlopDeskTransport
@@ -216,4 +215,3 @@ package final class AndroidBridgeSocket {
         end?(reason)
     }
 }
-#endif

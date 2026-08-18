@@ -20,7 +20,6 @@
 // because the consumer is one console renderer with one set of inks — the grammars are what stay
 // apart, and they do, on the far side of two separate doors.
 
-#if os(macOS)
 import CSlopDeskFFI
 import Foundation
 
@@ -115,4 +114,3 @@ package struct DeviceLogLine: Identifiable, Equatable {
         return String(decoding: bytes[start..<end], as: UTF8.self)
     }
 }
-#endif

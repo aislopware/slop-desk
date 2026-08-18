@@ -18,7 +18,6 @@
 // Untrusted input by the project's rule — validate then drop. A degenerate viewport or screen rect
 // fails the whole decode (there is nothing to draw); one unusable button is dropped alone.
 
-#if os(macOS)
 import CoreGraphics
 import Foundation
 
@@ -134,4 +133,3 @@ package struct SimulatorChrome: Equatable, Sendable {
         return 0
     }
 }
-#endif

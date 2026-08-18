@@ -14,7 +14,6 @@
 // So the hint is checked for the DISTINCTIVE tokens and everything else falls through to the size
 // test below — that is why this cannot be a plain dictionary.
 
-#if os(macOS)
 import Foundation
 import SFSafeSymbols
 
@@ -123,4 +122,3 @@ package enum AndroidDeviceKind: String, CaseIterable, Sendable {
         )
     }
 }
-#endif

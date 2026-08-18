@@ -10,7 +10,6 @@
 // envelope per ~50 ms rather than sending a message per line, so the socket's message rate is
 // bounded whatever the device is doing.
 
-#if os(macOS)
 import Foundation
 
 /// What arrives on the log socket. Two shapes and a catch-all, decoded the same validate-then-drop
@@ -53,4 +52,3 @@ package enum SimulatorLogLevel: String, CaseIterable, Identifiable {
     /// Title case for the menu. The wire value stays lowercase — this is display only.
     package var title: String { rawValue.capitalized }
 }
-#endif

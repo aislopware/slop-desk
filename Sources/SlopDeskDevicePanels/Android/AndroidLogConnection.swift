@@ -11,7 +11,6 @@
 // on a busy device, and a naive per-chunk split turns one line into two half-rows several times a
 // second.
 
-#if os(macOS)
 import Foundation
 
 package enum AndroidLogEvent {
@@ -97,4 +96,3 @@ package final class AndroidLogConnection: AndroidLogStreaming {
         if !lines.isEmpty { sink(.lines(lines)) }
     }
 }
-#endif

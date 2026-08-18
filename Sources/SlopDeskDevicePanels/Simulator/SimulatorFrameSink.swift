@@ -28,7 +28,6 @@
 // Hang-safety: this file touches no network and builds no decoder. It is the seam BETWEEN the model
 // and the display layer, which is what lets a test drive frame delivery without either.
 
-#if os(macOS)
 import Foundation
 
 /// What a mounted screen view can do with a frame. A protocol rather than the concrete view so the
@@ -97,4 +96,3 @@ package final class SimulatorFrameSink {
         seed = nil
     }
 }
-#endif

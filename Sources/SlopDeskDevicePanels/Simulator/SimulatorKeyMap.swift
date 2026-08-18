@@ -10,30 +10,35 @@
 // text — return, delete, tab, escape, arrows — and stops. Adding printable keys here would be a
 // silent regression for every non-US layout.
 
-#if os(macOS)
-import Carbon.HIToolbox
 import SlopDeskVideoProtocol
 
 package enum SimulatorKeyMap {
     /// The `KeyboardEvent.code` for a macOS virtual key code, or `nil` when the key produces text and
     /// belongs on the `type` path instead.
+    ///
+    /// The codes are LITERALS, not `kVK_` constants, for the same reason ``AndroidKeyMap/functionalKeys``
+    /// spells its own out: `kVK_` lives in `Carbon.HIToolbox`, which does not exist on the iOS triple,
+    /// and this table is the panel's shared floor — one implementation for every UI half (docs/56), not
+    /// a macOS-only one. The numbering itself is the one thing about a Mac keyboard that has never
+    /// moved; ``SimulatorKeyMapTests`` pins every row against the SDK's constant on macOS so a typo
+    /// here cannot survive a build.
     package static func code(for keyCode: UInt16) -> String? {
-        switch Int(keyCode) {
-        case kVK_Return,
-             kVK_ANSI_KeypadEnter: "Enter"
-        case kVK_Delete: "Backspace"
-        case kVK_ForwardDelete: "Delete"
-        case kVK_Tab: "Tab"
-        case kVK_Escape: "Escape"
-        case kVK_LeftArrow: "ArrowLeft"
-        case kVK_RightArrow: "ArrowRight"
-        case kVK_UpArrow: "ArrowUp"
-        case kVK_DownArrow: "ArrowDown"
-        case kVK_Home: "Home"
-        case kVK_End: "End"
-        case kVK_PageUp: "PageUp"
-        case kVK_PageDown: "PageDown"
-        case kVK_Space: "Space"
+        switch keyCode {
+        case 36, // Return
+             76: "Enter" // Enter (keypad)
+        case 51: "Backspace" // Delete
+        case 117: "Delete" // Forward delete
+        case 48: "Tab"
+        case 53: "Escape"
+        case 123: "ArrowLeft"
+        case 124: "ArrowRight"
+        case 126: "ArrowUp"
+        case 125: "ArrowDown"
+        case 115: "Home"
+        case 119: "End"
+        case 116: "PageUp"
+        case 121: "PageDown"
+        case 49: "Space"
         default: nil
         }
     }
@@ -55,4 +60,3 @@ package enum SimulatorKeyMap {
         return modifiers
     }
 }
-#endif

@@ -4842,6 +4842,25 @@ if sed -E 's#^[[:space:]]*//.*##;s#^[[:space:]]*///.*##' Sources/SlopDeskMacUI/P
 fi
 printf 'check-supervisor: one panel chrome, one tab reading.\n'
 
+# ---------------------------------------------------------------------------
+# THE DEVICE-PANEL FLOOR IS PLATFORM-NEUTRAL.
+#
+# Every file in `SlopDeskDevicePanels` was once wrapped whole in `#if os(macOS)` — inherited from the
+# days the panels were a Mac-only surface, never from a Mac-only dependency. The module imports
+# Foundation, CoreGraphics, CoreMedia and Network; the phone has all four. The gates cost nothing to
+# add and hid the whole parity gap behind a green build, because forty-one EMPTY files compile fine.
+#
+# So no platform gate goes back in. `SimulatorKeyMap` is the one that will tempt someone — its table
+# is keyed on macOS virtual key codes — and its answer is `AndroidKeyMap`'s: spell the numbers, pin
+# them against the SDK in a macOS-only TEST, and leave the shared floor buildable everywhere.
+if grep -rn '^#if.*os(macOS)' Sources/SlopDeskDevicePanels/ 2> /dev/null; then
+  fail "a platform gate is back in SlopDeskDevicePanels — the panel floor is the phone's too"
+fi
+if grep -rq 'import Carbon' Sources/SlopDeskDevicePanels/ 2> /dev/null; then
+  fail "SlopDeskDevicePanels imports Carbon — that module does not exist on the iOS triple"
+fi
+printf 'check-supervisor: the device-panel floor builds for the phone.\n'
+
 # ── One device-panel law, two device protocols ────────────────────────────────────────────────
 # The simulator panel and the Android panel differ in almost everything and should — one rotates on
 # the client and the other on the device, one sends touches in the fitted rect's space and the other

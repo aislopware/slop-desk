@@ -17,13 +17,6 @@
 // This matters more than it did for simulators: `scrcpy`'s encoder runs ON the device, so a
 // forgotten stream is a real battery drain on someone's phone.
 
-// `os(macOS)` joins the guard because every type this file names — the bridge, the stream,
-// the device list — is declared `#if os(macOS)` in its eighteen siblings in this directory,
-// and the only mount, `MacCodePanelColumn`, is macOS-only too. Without it the type still
-// COMPILED for the iOS triple and reached for symbols that are not there. It has been a hard
-// error on iOS for as long as the Android panel has existed; `swift build` compiles the macOS
-// slice only, so nothing said so until `make check-ios` started running.
-#if canImport(SwiftUI) && os(macOS)
 import CoreGraphics
 import Foundation
 import SlopDeskProtocol
@@ -774,4 +767,3 @@ package final class AndroidSidebarModel {
         }
     }
 }
-#endif

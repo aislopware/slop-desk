@@ -14,7 +14,6 @@
 // Everything it decides is delegated to pure code that is (``SimulatorWireProtocol``,
 // ``SimulatorInputEnvelope``, ``SimulatorEndpoints``); this file is the plumbing between them.
 
-#if os(macOS)
 import Foundation
 import Network
 import SlopDeskTransport
@@ -155,4 +154,3 @@ package extension SimulatorStreamConnection {
     /// The socket is over; `nil` is a clean close.
     func noteEnded(reason: String?) { sink(.ended(reason: reason)) }
 }
-#endif

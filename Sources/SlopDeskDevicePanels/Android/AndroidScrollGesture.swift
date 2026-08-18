@@ -27,7 +27,6 @@
 // deltas and phases, it answers with encoded control messages, and it holds no view, no socket and no
 // timer.
 
-#if os(macOS)
 import Foundation
 
 package struct AndroidScrollGesture {
@@ -136,4 +135,3 @@ package struct AndroidScrollGesture {
         DevicePanelGeometry.regrip(travel: travel, in: fitted)
     }
 }
-#endif

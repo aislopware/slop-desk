@@ -31,7 +31,6 @@
 // Pure and struct-shaped so the whole machine is testable without an `NSEvent`: the view feeds it
 // deltas and phases, it answers with envelopes, and it holds no view, no socket and no timer.
 
-#if os(macOS)
 import CoreGraphics
 
 package struct SimulatorScrollGesture {
@@ -126,4 +125,3 @@ package struct SimulatorScrollGesture {
         DevicePanelGeometry.regrip(travel: travel, in: fitted)
     }
 }
-#endif

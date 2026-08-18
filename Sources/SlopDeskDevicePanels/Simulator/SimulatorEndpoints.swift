@@ -10,7 +10,6 @@
 // stable origin for its per-origin storage, and a native panel has neither concern — it has no
 // origin, no storage keyed by one, and no secure-context gate on the sockets it opens.
 
-#if os(macOS)
 import Foundation
 
 package enum SimulatorEndpoints {
@@ -177,4 +176,3 @@ package enum SimulatorEndpoints {
         component.addingPercentEncoding(withAllowedCharacters: pathComponentAllowed) ?? component
     }
 }
-#endif

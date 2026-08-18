@@ -31,7 +31,6 @@
 // the device's screen either — `max_size` scales the encode down. ``Surface`` carries the pair, and
 // nothing may send a positional message without one.
 
-#if os(macOS)
 import CoreGraphics
 
 package enum AndroidScreenLayout {
@@ -120,4 +119,3 @@ package enum AndroidScreenLayout {
         DevicePanelGeometry.pinchFingers(centre: centre, spread: spread, fitted: fitted)
     }
 }
-#endif

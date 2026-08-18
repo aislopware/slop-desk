@@ -9,8 +9,6 @@
 // device wrote, thousands of lines a minute, on the socket read path, asking `Character.isNumber`
 // per grapheme cluster and building four `String`s a row.
 
-#if os(macOS)
-
 /// The priorities `logcat`'s own filter spec accepts, in ascending severity.
 ///
 /// This stays Swift because it is a MENU, not a grammar: five cases, a title each, and nothing to
@@ -37,4 +35,3 @@ package enum AndroidLogLevel: String, CaseIterable, Identifiable {
         }
     }
 }
-#endif
