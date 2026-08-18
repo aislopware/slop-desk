@@ -8,7 +8,6 @@
 // honest answer to that is a short list of somewhere-elses. The field exists because the other real
 // use is a coordinate pasted out of a map, and no list can anticipate that one.
 
-#if os(macOS)
 import SlopDeskDevicePanels
 import SwiftUI
 
@@ -112,4 +111,3 @@ struct SimulatorLocationPopover: View {
         dismiss()
     }
 }
-#endif

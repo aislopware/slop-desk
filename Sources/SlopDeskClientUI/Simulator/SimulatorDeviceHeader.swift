@@ -46,7 +46,6 @@
 // end: it was drawn from "no frames yet", a condition that never expires, so a stream that would
 // never start left the word up forever. Both are fixed at the source; this header is facts again.
 
-#if os(macOS)
 import SFSafeSymbols
 import SlopDeskDevicePanels
 import SwiftUI
@@ -172,4 +171,3 @@ struct SimulatorDeviceHeader<Actions: View>: View {
         }
     }
 }
-#endif

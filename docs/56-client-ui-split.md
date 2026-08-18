@@ -502,10 +502,40 @@ nothing is ever implemented twice. No stage copies a file: a surface either move
   the SDK's own value. The table stays one implementation, buildable everywhere, and a typo in it
   fails a build rather than swallowing an arrow key on a device someone is typing into.
 
-  What this does NOT yet give the phone is the panels themselves: the four surfaces under
-  `SlopDeskClientUI/{CodeSidebar,Simulator,Android}` are still `#if os(macOS)`, and the two that hold
-  a video stage are `NSViewRepresentable`. That is the next increment, and it is the shape §3.5
-  describes — the surfaces cross whole, onto the phone's own layout.
+  **The twelfth crosses two of the four SURFACES: Simulators and Emulators.** Both are the phone's
+  now. Fifteen of their seventeen files turned out to need nothing but the gate removed — a device
+  list, a console, a header, a bezel and two stages are plain SwiftUI, and they were Mac-only for the
+  same inherited reason the floor was. The two that hold a video stage carry both halves in one file
+  (`#if os(macOS)` … `#elseif os(iOS)`), which is the shape `VideoWindowView` already used.
+
+  THE PHONE'S INPUT HALF IS SHORTER, not a port of the Mac's. A finger on the mirror IS the finger,
+  so the three machines the Mac needs to SYNTHESIZE one — `SimulatorScrollGesture`/`AndroidScrollGesture`,
+  the classic wheel's idle timer, and the magnify-gesture-to-two-contacts translation — have nothing
+  to do on iOS and are absent rather than reimplemented. What survives is everything that is about the
+  DEVICE rather than about the pointer: the clamped drag (a drag that leaves the frame is still a
+  drag), the edge bands, the pinch's rate limit (25 ms of server time a `touch2-move` on the simulator
+  side, one pair per display refresh on the Android side), and Android's pointer-index discipline —
+  the second finger takes `POINTER_DOWN`/`POINTER_UP` while the first takes plain `DOWN`/`UP`. A
+  CANCELLED touch is LIFTED rather than forgotten, which the Mac never had to think about: iOS takes
+  touches away for its own gestures, and a forgotten one strands a finger on the device.
+
+  Three small seams came out of it, each cut once. `Image.decoded(_:)` is the client's only mention of
+  `NSImage` or `UIImage` — the bezel artwork and the running card's screenshot both decode through it,
+  and the decoded value is a SwiftUI `Image`, so no consumer is platform-shaped. `SlateSearchField`
+  gained a real second implementation, and that one IS justified: the AppKit original exists to dodge
+  a macOS-only 11pt rendering split between the field cell and the window's shared field editor, and
+  UIKit has neither, so the phone's half is the plain SwiftUI field the Mac cannot use. And the key
+  maps became TWO NUMBERINGS OVER ONE VOCABULARY: a Mac reports a virtual key code, an iPad a USB HID
+  usage, so `SimulatorKeyMap.FunctionalKey` and `AndroidKeyMap.resolve(functional:…)` hold the names
+  and the rule while each platform supplies only its own table. `SimulatorKeyMapTests` and
+  `AndroidKeycodeTests` assert the two tables cover the same SET, which is the thing that could drift.
+
+  The CODE surface did not cross with them, and that is a size call rather than a design one:
+  `CodeSidebarWebView.swift` is a thousand lines of which the larger half is a first-responder duel
+  that has no iOS analogue at all (the click-to-focus rule, the reserved-chord refusal, the per-tab
+  focus region, the orphan repair). The pool, the dressing and the mount underneath it are already
+  platform-neutral. Splitting those apart is the next increment, and it is what unblocks the phone's
+  own layout for all four surfaces.
 - **E — the Rust port (§4).**
 
 ## 4. What moves to Rust

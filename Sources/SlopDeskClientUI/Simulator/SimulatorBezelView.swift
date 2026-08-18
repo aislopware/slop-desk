@@ -16,7 +16,6 @@
 // touch-down. The envelope goes on RELEASE, matching the hardware — a volume key that fired on the
 // way down would repeat on every accidental brush of the trackpad.
 
-#if os(macOS)
 import SlopDeskDevicePanels
 import SwiftUI
 
@@ -41,7 +40,7 @@ struct SimulatorBezelView: View {
                 ForEach(assets.chrome.buttons) { button in
                     self.button(button, viewport: viewport, scale: scale, origin: bleed.origin)
                 }
-                Image(nsImage: assets.body)
+                assets.body
                     .resizable()
                     .frame(width: viewport.width * scale, height: viewport.height * scale)
                     .offset(x: -bleed.minX * scale, y: -bleed.minY * scale)
@@ -89,7 +88,7 @@ struct SimulatorBezelView: View {
         let art = assets.buttons[button.id]
         return Group {
             if let art {
-                Image(nsImage: isDown ? art.pressed : art.rest)
+                (isDown ? art.pressed : art.rest)
                     .resizable()
             } else {
                 // No artwork for this one: stay clickable but draw nothing. A coloured placeholder
@@ -160,4 +159,3 @@ struct SimulatorBareScreen: View {
         }
     }
 }
-#endif

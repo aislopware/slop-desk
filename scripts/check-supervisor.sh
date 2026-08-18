@@ -4861,6 +4861,40 @@ if grep -rq 'import Carbon' Sources/SlopDeskDevicePanels/ 2> /dev/null; then
 fi
 printf 'check-supervisor: the device-panel floor builds for the phone.\n'
 
+# ---------------------------------------------------------------------------
+# BOTH DEVICE PANELS DRAW ON BOTH PLATFORMS.
+#
+# The simulator and Android surfaces are the phone's too (docs/56 stage D). Fifteen of their
+# seventeen files are plain SwiftUI and carry NO gate at all; the two that host a video stage carry
+# both halves in one file, `#if os(macOS)` … `#elseif os(iOS)`. A bare `#if os(macOS)` anywhere in
+# those directories is the old Mac-only shape coming back — it compiles to an empty file on the
+# phone, which is a green build over a missing feature.
+for surface in Sources/SlopDeskClientUI/Simulator/*.swift Sources/SlopDeskClientUI/Android/*.swift; do
+  if grep -q '^#if os(macOS)' "${surface}" && ! grep -q '^#elseif os(iOS)' "${surface}"; then
+    fail "${surface} is macOS-only again — both device panels draw on the phone too"
+  fi
+done
+for stage in Sources/SlopDeskClientUI/Simulator/SimulatorScreenView.swift \
+  Sources/SlopDeskClientUI/Android/AndroidScreenView.swift; do
+  if ! grep -q 'UIViewRepresentable' "${stage}"; then
+    fail "${stage} lost its UIKit half — the phone's device stage is a UIViewRepresentable"
+  fi
+done
+# ONE VOCABULARY, TWO NUMBERINGS. A Mac reports a virtual key code and an iPad a USB HID usage; the
+# NAMES they resolve to, and every rule about what to do with them, are cut once in the shared floor.
+# A UI half that grew its own name table would be the same product implemented twice.
+for domain in byHIDUsage hidFunctionalKeys; do
+  if ! grep -rq "${domain}" Sources/SlopDeskDevicePanels/; then
+    fail "the ${domain} table is gone — an iPad keyboard numbers its keys as HID usages"
+  fi
+done
+# Comments stripped first — the tables' docs NAME the UIKit type they exist to stay away from.
+if sed -E 's#^[[:space:]]*//.*##;s#^[[:space:]]*///.*##' Sources/SlopDeskDevicePanels/*/*.swift |
+  grep -q 'UIKeyboardHIDUsage'; then
+  fail "SlopDeskDevicePanels names UIKeyboardHIDUsage — that is UIKit, and the floor is not"
+fi
+printf 'check-supervisor: both device panels draw on both platforms.\n'
+
 # ── One device-panel law, two device protocols ────────────────────────────────────────────────
 # The simulator panel and the Android panel differ in almost everything and should — one rotates on
 # the client and the other on the device, one sends touches in the fitted rect's space and the other

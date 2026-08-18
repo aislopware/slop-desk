@@ -15,7 +15,6 @@
 // searches it — "hide everything that is not mine" is the first thing anyone does with an Android
 // log.
 
-#if os(macOS)
 import SFSafeSymbols
 import SlopDeskDevicePanels
 import SlopDeskWorkspaceCore
@@ -227,4 +226,3 @@ struct AndroidConsoleView: View {
 
     private static let bottomAnchor = "android.console.bottom"
 }
-#endif

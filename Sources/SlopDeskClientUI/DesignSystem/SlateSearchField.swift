@@ -1,5 +1,12 @@
-// SlateSearchField — the AppKit-backed plain text field for FOOTNOTE-sized chrome inputs
-// (the navigator's search bar). SwiftUI `TextField` is the wrong tool at this one size: at
+// SlateSearchField — the plain text field for FOOTNOTE-sized chrome inputs (the navigator's search
+// bar, both device panels' filter rows).
+//
+// The two platforms render it DIFFERENTLY, and that is the whole content of this file: the macOS
+// half is AppKit because SwiftUI's field has an 11pt rendering bug there, and the iOS half is
+// SwiftUI because it does not. Same tokens, same placeholder, same intrinsic-height rule — one
+// value, two views, and neither is a fallback for the other.
+//
+// The macOS reason, in full. SwiftUI `TextField` is the wrong tool at this one size: at
 // `Slate.Typeface.footnote` (11pt) its text renders 1pt LOWER unfocused than focused, so
 // click-to-focus visibly bumps the line up. Root cause is AppKit's dual text path — the
 // unfocused `NSTextFieldCell` draws the string itself while focus swaps in the window's shared
@@ -87,6 +94,45 @@ package struct SlateSearchField: NSViewRepresentable {
                 .font: NSFont.systemFont(ofSize: Slate.Typeface.footnote),
             ],
         )
+    }
+}
+
+#else
+import SwiftUI
+
+/// The same field on the phone, as a plain SwiftUI `TextField`.
+///
+/// The AppKit half exists to dodge a macOS-only rendering split (the cell draws the string unfocused
+/// and the window's shared field editor draws it focused, and at 11pt the two round the vertical
+/// centre differently). UIKit has no shared field editor and no such split — a `UITextField` draws
+/// its own text in both states — so wrapping one here would be a `UIViewRepresentable` written to
+/// avoid a bug that is not on this platform.
+///
+/// What it DOES keep is the intrinsic-height rule the header calls load-bearing: no vertical frame,
+/// no stretch. The caller owns the plate, exactly as on the Mac.
+package struct SlateSearchField: View {
+    let placeholder: String
+    @Binding var text: String
+
+    package init(placeholder: String, text: Binding<String>) {
+        self.placeholder = placeholder
+        _text = text
+    }
+
+    package var body: some View {
+        TextField(
+            "",
+            text: $text,
+            prompt: Text(placeholder).foregroundStyle(Slate.Text.tertiary),
+        )
+        .textFieldStyle(.plain)
+        .font(.system(size: Slate.Typeface.footnote))
+        .foregroundStyle(Slate.Text.primary)
+        // The chrome's own affordances only. iOS would otherwise capitalise the first letter of a
+        // filter query and autocorrect a device name into an English word.
+        .textInputAutocapitalization(.never)
+        .autocorrectionDisabled()
+        .tint(Slate.Text.primary)
     }
 }
 #endif

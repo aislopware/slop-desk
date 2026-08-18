@@ -21,7 +21,6 @@
 // and it is the one condition where the panel can do nothing at all and the user can fix it in two
 // seconds — provided they are told.
 
-#if os(macOS)
 import SFSafeSymbols
 import SlopDeskDevicePanels
 import SwiftUI
@@ -171,4 +170,3 @@ struct AndroidRunningCard: View {
         }
     }
 }
-#endif

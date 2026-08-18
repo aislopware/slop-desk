@@ -45,7 +45,6 @@
 //
 // The CONTEXT MENU carries what a sidebar row has no width for — the UDID, and the destructive verb.
 
-#if os(macOS)
 import SFSafeSymbols
 import SlopDeskDevicePanels
 import SlopDeskWorkspaceCore
@@ -369,4 +368,3 @@ struct SimulatorDeviceList: View {
         DevicePanelChrome.notice(text)
     }
 }
-#endif

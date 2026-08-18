@@ -22,8 +22,6 @@
 // outlive their view and needed an explicit `park()` (see ``SimulatorSidebarModel/park()``). A card
 // exists only while the list is on screen, so the view's own lifetime is exactly the right one.
 
-#if os(macOS)
-import AppKit
 import SFSafeSymbols
 import SlopDeskDevicePanels
 import SwiftUI
@@ -36,7 +34,7 @@ struct SimulatorRunningCard: View {
     /// The last picture that arrived. Kept across a failed poll rather than blanked: the server
     /// answers 500 for a device that has just gone away, and a card that flickered to grey for one
     /// round would be reporting a stumble the reader cannot act on.
-    @State private var screen: NSImage?
+    @State private var screen: Image?
     @State private var hovering = false
 
     var body: some View {
@@ -73,7 +71,7 @@ struct SimulatorRunningCard: View {
     private var art: some View {
         ZStack {
             if let screen {
-                Image(nsImage: screen)
+                screen
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     // The framebuffer is a rectangle; every device that can run this is not. Clipping
@@ -140,7 +138,7 @@ struct SimulatorRunningCard: View {
     private func poll() async {
         while !Task.isCancelled {
             if let data = await model.thumbnail(for: device.udid),
-               let image = NSImage(data: data)
+               let image = Image.decoded(data)
             {
                 screen = image
             }
@@ -148,4 +146,3 @@ struct SimulatorRunningCard: View {
         }
     }
 }
-#endif

@@ -15,7 +15,6 @@
 // An explicit latch is what Console.app and Xcode both offer, it is legible at rest, and it cannot
 // disagree with reality.
 
-#if os(macOS)
 import SFSafeSymbols
 import SlopDeskDevicePanels
 import SlopDeskWorkspaceCore
@@ -245,4 +244,3 @@ struct SimulatorConsoleView: View {
 
     private static let bottomAnchor = "console.bottom"
 }
-#endif

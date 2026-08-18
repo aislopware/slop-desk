@@ -105,6 +105,27 @@ package enum AndroidKeyMap {
         121: .pageDown,
     ]
 
+    /// The same keys, numbered the way an iPad numbers them: USB HID keyboard usages, which is what a
+    /// `UIKey` reports. Only the NUMBERING differs — the keycodes it maps to, and every rule below,
+    /// are the ones above (``resolve(functional:characters:charactersIgnoringModifiers:modifiers:)``
+    /// is where both domains meet). `AndroidKeycodeTests` asserts the two tables name the same set.
+    package static let hidFunctionalKeys: [UInt16: AndroidKeycode] = [
+        40: .enter, // Return / Enter
+        88: .enter, // Keypad Enter
+        43: .tab,
+        42: .del, // Delete or Backspace
+        76: .forwardDel, // Delete Forward
+        41: .escape,
+        82: .dpadUp,
+        81: .dpadDown,
+        80: .dpadLeft,
+        79: .dpadRight,
+        74: .moveHome,
+        77: .moveEnd,
+        75: .pageUp,
+        78: .pageDown,
+    ]
+
     /// Resolves one key-down event, described without naming a platform's event type.
     ///
     /// `characters` is what the client's own layout produced (option-composed output, dead-key
@@ -123,7 +144,34 @@ package enum AndroidKeyMap {
         charactersIgnoringModifiers: String?,
         modifiers: InputModifiers,
     ) -> Resolution {
-        if let keycode = functionalKeys[keyCode] {
+        resolve(
+            functional: functionalKeys[keyCode], characters: characters,
+            charactersIgnoringModifiers: charactersIgnoringModifiers, modifiers: modifiers,
+        )
+    }
+
+    /// The same round for a key numbered as a USB HID usage — an iPad's `UIKey`.
+    package static func resolve(
+        hidUsage: UInt16,
+        characters: String?,
+        charactersIgnoringModifiers: String?,
+        modifiers: InputModifiers,
+    ) -> Resolution {
+        resolve(
+            functional: hidFunctionalKeys[hidUsage], characters: characters,
+            charactersIgnoringModifiers: charactersIgnoringModifiers, modifiers: modifiers,
+        )
+    }
+
+    /// The rule itself, once, after the platform's numbering has been resolved away. `functional` is
+    /// non-nil for a key that has no character of its own.
+    package static func resolve(
+        functional: AndroidKeycode?,
+        characters: String?,
+        charactersIgnoringModifiers: String?,
+        modifiers: InputModifiers,
+    ) -> Resolution {
+        if let keycode = functional {
             return .keycode(keycode, metaState(from: modifiers))
         }
         // A chord with a real modifier has to reach the device AS a chord, so it goes as a keycode;

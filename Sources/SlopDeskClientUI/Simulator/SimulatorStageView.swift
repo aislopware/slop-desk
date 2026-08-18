@@ -39,7 +39,6 @@
 // image or video lands in Photos — so this side deliberately accepts any file and lets the server
 // classify it. Getting that taxonomy wrong locally would reject the one build someone wanted.
 
-#if os(macOS)
 import SFSafeSymbols
 import SlopDeskDevicePanels
 import SwiftUI
@@ -389,4 +388,3 @@ struct SimulatorStageView: View {
         return true
     }
 }
-#endif

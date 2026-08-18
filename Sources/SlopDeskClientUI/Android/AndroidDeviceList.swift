@@ -26,7 +26,6 @@
 // running device is still the thing you are most likely to want and the shape of the screen is worth
 // the width.
 
-#if os(macOS)
 import SFSafeSymbols
 import SlopDeskDevicePanels
 import SlopDeskWorkspaceCore
@@ -306,4 +305,3 @@ struct AndroidDeviceList: View {
         DevicePanelChrome.notice(text)
     }
 }
-#endif

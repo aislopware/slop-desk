@@ -1,4 +1,3 @@
-#if os(macOS)
 import SwiftUI
 
 /// The drawing both device panels do around the picture: the empty stage, the caption under it, the
@@ -67,4 +66,3 @@ enum DevicePanelChrome {
         return true
     }
 }
-#endif

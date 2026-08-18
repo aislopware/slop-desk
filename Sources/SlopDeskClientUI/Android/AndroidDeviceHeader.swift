@@ -14,7 +14,6 @@
 // and not about the device; printing both would be two resolutions in one line, one of them wrong for
 // every purpose anyone would use it for.
 
-#if os(macOS)
 import SFSafeSymbols
 import SlopDeskDevicePanels
 import SwiftUI
@@ -102,4 +101,3 @@ struct AndroidDeviceHeader<Actions: View>: View {
         return facts
     }
 }
-#endif

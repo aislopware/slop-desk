@@ -28,7 +28,6 @@
 // failure mode (a signature mismatch, a downgrade, an ABI the device cannot run) and deserves its own
 // reporting rather than being smuggled in as a drop.
 
-#if os(macOS)
 import SFSafeSymbols
 import SlopDeskDevicePanels
 import SlopDeskWorkspaceCore
@@ -266,4 +265,3 @@ struct AndroidStageView: View {
     // ``CodePanelSurfaces``). What stays here is the STATE, which a notification cannot carry: a
     // mirror with no video is drawn on the stage itself, where the ambiguous empty rectangle is.
 }
-#endif
