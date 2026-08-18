@@ -64,6 +64,27 @@ public struct KeyChord: Hashable, Sendable {
             default: return nil
             }
         }
+
+        /// The case index this key crosses as, or `nil` for a printable character — which has no
+        /// index because it carries its own text. The inverse of ``init(namedIndex:)``; the two
+        /// spell the eleven positions because they ARE this enum's own case order, and everything
+        /// downstream of the index (the spelling, the glyph) is asked for rather than restated.
+        public var namedIndex: UInt8? {
+            switch self {
+            case .character: nil
+            case .return: 0
+            case .tab: 1
+            case .space: 2
+            case .leftArrow: 3
+            case .rightArrow: 4
+            case .upArrow: 5
+            case .downArrow: 6
+            case .pageUp: 7
+            case .pageDown: 8
+            case .home: 9
+            case .end: 10
+            }
+        }
     }
 
     public let key: Key

@@ -12,7 +12,9 @@
 
 use core::ffi::c_uchar;
 
-use slopdesk_terminal::keybind::{Action, Chord, canonical_base_key, canonical_chord, parse_line};
+use slopdesk_terminal::keybind::{
+    Action, Chord, canonical_base_key, canonical_chord, glyph_chord, parse_line,
+};
 
 use crate::{TextArena, borrow, deliver};
 
@@ -197,6 +199,41 @@ pub unsafe extern "C" fn slopdesk_keybind_canonical_chord(
     // SAFETY: the caller's obligation on the input pair.
     let text = String::from_utf8_lossy(unsafe { borrow(key, key_len) }).into_owned();
     let written = canonical_chord(&Chord {
+        key: text,
+        command,
+        shift,
+        option,
+        control,
+    });
+    // SAFETY: the caller's obligation on the output buffer.
+    unsafe { deliver(written.as_bytes(), out, cap) }
+}
+
+/// The chord as a human reads it — the modifier glyphs in the platform's order, then the key.
+///
+/// The same key text [`slopdesk_keybind_canonical_chord`] takes, because it is the same chord
+/// written for a different reader: one goes in a config file, this one in a menu row.
+///
+/// # Safety
+/// The input pair must be live for the call, and `out` must be null or writable for `cap` bytes.
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn slopdesk_keybind_glyph(
+    key: *const c_uchar,
+    key_len: usize,
+    command: bool,
+    shift: bool,
+    option: bool,
+    control: bool,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligation on the input pair.
+    let text = String::from_utf8_lossy(unsafe { borrow(key, key_len) }).into_owned();
+    let written = glyph_chord(&Chord {
         key: text,
         command,
         shift,

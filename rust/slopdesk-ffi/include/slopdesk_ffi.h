@@ -1642,6 +1642,11 @@ bool slopdesk_keybind_is_valid(const uint8_t *line, size_t line_len);
 size_t slopdesk_keybind_canonical_key(const uint8_t *key, size_t key_len, uint8_t *out, size_t cap);
 size_t slopdesk_keybind_canonical_chord(const uint8_t *key, size_t key_len, bool command, bool shift,
                                         bool option, bool control, uint8_t *out, size_t cap);
+/* The same chord written for a HUMAN: the modifier glyphs in the platform's own order (⌃⌥⇧⌘) then
+ * the key — a named key's printed symbol, or the key itself upper-cased, because a chord is stored
+ * lower-cased with the shift in the modifiers and a menu prints ⌘D. */
+size_t slopdesk_keybind_glyph(const uint8_t *key, size_t key_len, bool command, bool shift,
+                              bool option, bool control, uint8_t *out, size_t cap);
 
 /* The libghostty config text one set of terminal preferences spells. Two dozen strings and a dozen
  * switches, so rather than two dozen (ptr, len) pairs they cross as ONE record of named
@@ -5655,6 +5660,12 @@ SlopDeskKeyBase slopdesk_key_chord_base(uint16_t key_code, const uint8_t *chars,
 // a base-key-first recorder stored as a junk chord instead of clearing the binding.
 uint8_t slopdesk_key_capture_outcome(uint16_t key_code, const uint8_t *chars, size_t chars_len,
                                      uint8_t *out, size_t cap, size_t *needed);
+// The two token doors: a named key's canonical SPELLING by case index, and the index a spelling
+// names (-1 for a single character, an alias the grammar folds, or a token nothing produces). A
+// caller with the same eleven cases needs the text to key a stored binding by, and asking for it is
+// what keeps a rebind from being persisted under a spelling the grammar reads back as another key.
+size_t  slopdesk_key_named_canonical(uint8_t index, uint8_t *out, size_t cap);  // 0 = no such case
+int32_t slopdesk_key_named_index(const uint8_t *text, size_t len);
 
 /* The cursor-shape self-heal. Two lists of UNBOUNDED length — the ids whose bitmap arrived, and the
  * asks still outstanding — so the tracker rides in and out through lent buffers rather than as a

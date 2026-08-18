@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import SlopDeskWorkspaceModel
 
 // MARK: - WorkspaceAction (the tree-native command intent)
@@ -998,18 +999,33 @@ public enum WorkspaceBindingRegistry {
 
     // MARK: - Glyph rendering (chord → human string) — the cheat sheet / palette display
 
-    /// Renders a ``KeyChord`` in native modifier-glyph order (⌃⌥⇧⌘ + key) — the same form the canvas
-    /// palette uses, kept here as the registry's own pure renderer so the menu/palette/cheat sheet read
-    /// ONE place. `nonisolated` (no view / actor) so it composes from any context.
+    /// Renders a ``KeyChord`` as a human reads it, asked of `slopdesk_terminal::keybind` — the same
+    /// module that writes the chord's canonical config text, so the menu, the palette and the cheat
+    /// sheet all print what one rule says a chord is called. `nonisolated` (no view / actor) so it
+    /// composes from any context.
     public nonisolated static func glyph(_ chord: KeyChord) -> String {
-        var out = ""
-        if chord.modifiers.contains(.control) { out += "⌃" }
-        if chord.modifiers.contains(.option) { out += "⌥" }
-        if chord.modifiers.contains(.shift) { out += "⇧" }
-        if chord.modifiers.contains(.command) { out += "⌘" }
-        out += keyGlyph(chord.key)
-        return out
+        var token = chord.key.canonicalToken
+        var out = [UInt8](repeating: 0, count: glyphCapacity)
+        let written = token.withUTF8 { key in
+            out.withUnsafeMutableBufferPointer { rendered in
+                slopdesk_keybind_glyph(
+                    key.baseAddress,
+                    key.count,
+                    chord.modifiers.contains(.command),
+                    chord.modifiers.contains(.shift),
+                    chord.modifiers.contains(.option),
+                    chord.modifiers.contains(.control),
+                    rendered.baseAddress,
+                    rendered.count,
+                )
+            }
+        }
+        return String(bytes: out.prefix(max(0, written)), encoding: .utf8) ?? ""
     }
+
+    /// Four modifier glyphs at three bytes each plus a key: a token that needed more than this is
+    /// not a chord anyone typed, and the door reports the size rather than writing a torn one.
+    private nonisolated static let glyphCapacity = 32
 
     /// The display glyph for `action`'s default binding, or `nil` when it has none. `public` so the
     /// rebuilt ClientUI palette derives its row hints from the SAME registry the keyboard bank registers
@@ -1017,24 +1033,6 @@ public enum WorkspaceBindingRegistry {
     public nonisolated static func glyph(for action: WorkspaceAction) -> String? {
         guard let binding = binding(for: action) else { return nil }
         return binding.chord.map(glyph)
-    }
-
-    private nonisolated static func keyGlyph(_ key: KeyChord.Key) -> String {
-        switch key {
-        case let .character(c): c.uppercased()
-        case .tab: "⇥"
-        case .return: "↩"
-        case .space: "␣"
-        case .leftArrow: "←"
-        case .rightArrow: "→"
-        case .upArrow: "↑"
-        case .downArrow: "↓"
-        // Named navigation keys — the macOS-native menu glyphs (⇞ PageUp, ⇟ PageDown, ↖ Home, ↘ End).
-        case .pageUp: "⇞"
-        case .pageDown: "⇟"
-        case .home: "↖"
-        case .end: "↘"
-        }
     }
 
     // MARK: - Grouped display (the cheat sheet sections + palette catalog order)

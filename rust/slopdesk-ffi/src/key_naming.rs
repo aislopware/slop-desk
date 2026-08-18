@@ -126,6 +126,46 @@ pub unsafe extern "C" fn slopdesk_key_capture_outcome(
     }
 }
 
+/// The canonical spelling of a named key, by case index — the token a chord is persisted and
+/// looked up under.
+///
+/// The near side has the same eleven cases and needs their TEXT to key a stored binding by; asking
+/// for it keeps the spellings in one place, so a rebind cannot be written under a token the
+/// grammar reads back as something else. An index this crate has no case for writes nothing.
+///
+/// # Safety
+/// `(out, cap)` must be null or writable for `cap` bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_key_named_canonical(
+    index: c_uchar,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    let name = NamedKey::from_index(index).map_or("", NamedKey::canonical);
+    // SAFETY: the caller's obligation; `deliver` writes at most `cap`.
+    unsafe { deliver(name.as_bytes(), out, cap) }
+}
+
+/// The case index a canonical spelling names, or `-1` for anything that is not a named key — a
+/// single printable character, an alias the grammar folds, or a token nothing produces.
+///
+/// # Safety
+/// `(text, len)` must be null or describe that many live bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_key_named_index(text: *const c_uchar, len: usize) -> i32 {
+    // SAFETY: the caller's obligation, restated above; `borrow` states its own.
+    let spelling = String::from_utf8_lossy(unsafe { borrow(text, len) }).into_owned();
+    NamedKey::from_canonical(&spelling).map_or(-1, |key| i32::from(key.index()))
+}
+
 #[cfg(test)]
 mod tests {
     #![expect(unsafe_code, reason = "calling the door is the only way to test the door")]
@@ -133,25 +173,14 @@ mod tests {
     use slopdesk_terminal::keybind::canonical_base_key;
     use slopdesk_video::key_naming::NamedKey;
 
-    use super::{slopdesk_key_capture_outcome, slopdesk_key_chord_base};
-
-    const ALL_NAMED: [NamedKey; 11] = [
-        NamedKey::Return,
-        NamedKey::Tab,
-        NamedKey::Space,
-        NamedKey::Left,
-        NamedKey::Right,
-        NamedKey::Up,
-        NamedKey::Down,
-        NamedKey::PageUp,
-        NamedKey::PageDown,
-        NamedKey::Home,
-        NamedKey::End,
-    ];
+    use super::{
+        slopdesk_key_capture_outcome, slopdesk_key_chord_base, slopdesk_key_named_canonical,
+        slopdesk_key_named_index,
+    };
 
     #[test]
     fn every_name_the_recorder_stores_is_one_the_config_grammar_keeps() {
-        for key in ALL_NAMED {
+        for key in NamedKey::ALL {
             assert_eq!(
                 canonical_base_key(key.canonical()),
                 key.canonical(),
@@ -220,5 +249,35 @@ mod tests {
         assert_eq!(outcome(123, "", &mut out, &mut needed), 3, "bind");
         assert_eq!(needed, "left".len());
         assert_eq!(out.get(..needed), Some(b"left".as_slice()));
+    }
+
+    #[test]
+    fn the_token_doors_are_inverses_across_the_boundary() {
+        for key in NamedKey::ALL {
+            let mut out = [0_u8; 16];
+            // SAFETY: one live buffer, borrowed for the call.
+            let written = unsafe { slopdesk_key_named_canonical(key.index(), out.as_mut_ptr(), out.len()) };
+            assert_eq!(
+                out.get(..written).map(String::from_utf8_lossy).as_deref(),
+                Some(key.canonical())
+            );
+            // SAFETY: the same buffer, borrowed as the input of the inverse.
+            let index = unsafe { slopdesk_key_named_index(out.as_ptr(), written) };
+            assert_eq!(index, i32::from(key.index()));
+        }
+    }
+
+    #[test]
+    fn a_key_that_is_not_a_named_one_writes_nothing_and_indexes_to_minus_one() {
+        let mut out = [b'x'; 8];
+        // SAFETY: one live buffer, borrowed for the call.
+        let written = unsafe { slopdesk_key_named_canonical(200, out.as_mut_ptr(), out.len()) };
+        assert_eq!(written, 0, "an index this build has no case for");
+        assert_eq!(out, [b'x'; 8]);
+        let character = "d";
+        // SAFETY: one live string, borrowed for the call.
+        assert_eq!(unsafe { slopdesk_key_named_index(character.as_ptr(), 1) }, -1);
+        // SAFETY: a null input is the documented empty case.
+        assert_eq!(unsafe { slopdesk_key_named_index(core::ptr::null(), 0) }, -1);
     }
 }

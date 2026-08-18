@@ -55,6 +55,21 @@ pub enum NamedKey {
 }
 
 impl NamedKey {
+    /// Every named key, in case-index order.
+    pub const ALL: [Self; 11] = [
+        Self::Return,
+        Self::Tab,
+        Self::Space,
+        Self::Left,
+        Self::Right,
+        Self::Up,
+        Self::Down,
+        Self::PageUp,
+        Self::PageDown,
+        Self::Home,
+        Self::End,
+    ];
+
     /// The ONE spelling this key is stored under — `slopdesk_terminal::keybind`'s canonical form.
     #[must_use]
     pub const fn canonical(self) -> &'static str {
@@ -90,6 +105,20 @@ impl NamedKey {
             Self::Home => 9,
             Self::End => 10,
         }
+    }
+
+    /// The key a case index names, or `None` for an index no case has — a caller whose own enum has
+    /// fewer cases than this one, which must not be guessed at.
+    #[must_use]
+    pub fn from_index(index: u8) -> Option<Self> {
+        Self::ALL.iter().copied().find(|key| key.index() == index)
+    }
+
+    /// The key a canonical spelling names, or `None` for anything else — a single character, an
+    /// alias the config grammar folds, or a token nothing produces.
+    #[must_use]
+    pub fn from_canonical(text: &str) -> Option<Self> {
+        Self::ALL.iter().copied().find(|key| key.canonical() == text)
     }
 }
 
@@ -244,23 +273,29 @@ mod tests {
 
     #[test]
     fn the_case_indexes_are_dense_and_distinct() {
-        let all = [
-            NamedKey::Return,
-            NamedKey::Tab,
-            NamedKey::Space,
-            NamedKey::Left,
-            NamedKey::Right,
-            NamedKey::Up,
-            NamedKey::Down,
-            NamedKey::PageUp,
-            NamedKey::PageDown,
-            NamedKey::Home,
-            NamedKey::End,
-        ];
-        for (position, key) in all.iter().enumerate() {
+        for (position, key) in NamedKey::ALL.iter().enumerate() {
             assert_eq!(usize::from(key.index()), position);
             assert!(!key.canonical().is_empty());
         }
+    }
+
+    #[test]
+    fn both_lookups_are_the_inverses_they_claim_to_be() {
+        for key in NamedKey::ALL {
+            assert_eq!(NamedKey::from_index(key.index()), Some(key));
+            assert_eq!(NamedKey::from_canonical(key.canonical()), Some(key));
+        }
+        assert_eq!(
+            NamedKey::from_index(11),
+            None,
+            "an index this build has no case for"
+        );
+        assert_eq!(
+            NamedKey::from_canonical("pgup"),
+            None,
+            "an alias is not a spelling"
+        );
+        assert_eq!(NamedKey::from_canonical("d"), None);
     }
 
     #[test]
