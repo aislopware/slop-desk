@@ -835,38 +835,41 @@ uint8_t slopdesk_ws_workdir_source(uint8_t kind, bool active_cwd_known);
 
 // ---- What the phone's keyboard sends ----
 //
-// A touch device is forced to split physical input in two: `pressesBegan` for the keys a terminal
-// needs raw, a hidden text proxy for anything a multi-stage composition could be part of. Putting
-// both on one view makes the responder order undefined, which breaks CJK. Every door below is one
-// side or the other of that split, and none of them holds the terminal's mode — the caller reads
-// that off the live model per press, because the program that set it is on the far side of the PTY.
+// A touch device is forced to split physical input in two: the keys a terminal needs raw, and
+// anything a multi-stage composition could be part of. Every door below is one side or the other of
+// that split, and none of them holds the terminal's mode — the caller reads that off the live model
+// per press, because the program that set it is on the far side of the PTY.
 //
-// The flag word is `KeyChord.Modifiers`' own bits 0-3 plus one: a chord's modifiers cross back out
-// untranslated, and bit 4 carries the one thing the responder knows that the table does not.
+// The flag word IS `KeyChord.Modifiers`' own bits 0-3, so a chord's modifiers cross back out
+// untranslated. There is no fifth bit: which keys are special is a rule, and it is answered on the
+// far side from `hid_usage`.
 #define SLOPDESK_PHONE_KEY_SHIFT   (1u << 0)
 #define SLOPDESK_PHONE_KEY_CONTROL (1u << 1)
 #define SLOPDESK_PHONE_KEY_OPTION  (1u << 2)
 #define SLOPDESK_PHONE_KEY_COMMAND (1u << 3)
-#define SLOPDESK_PHONE_KEY_SPECIAL (1u << 4)
 // The `named` a chord writes when its key is the printable scalar in `character` instead.
 #define SLOPDESK_PHONE_KEY_NAMED_NONE ((uint8_t)0xFF)
 
-// One `UIKey`. Two strings because the two questions want different ones: what the key SENDS is
-// `characters` (where the arrows' private-use scalars live), what it IS is `base`.
+// One `UIKey`: which key (`UIKey.keyCode`, a USB HID keyboard usage — the only signal that means the
+// same thing under every layout and input method) and what that key produces under this layout
+// (`base` = `charactersIgnoringModifiers`, which is what a ⌃ fold and a binding lookup are about).
+// What the key COMMITTED is deliberately absent — for a special key it is noise, and for a printable
+// one the proxy inserts it.
 typedef struct {
-    const uint8_t *characters;
-    size_t         characters_len;
     const uint8_t *base;
     size_t         base_len;
-    uint32_t       flags;  // SLOPDESK_PHONE_KEY_*
+    uint16_t       hid_usage;  // 0 = none
+    uint32_t       flags;      // SLOPDESK_PHONE_KEY_*
 } SlopDeskPhoneKeyPress;
 
-// Whether this press is encoded here rather than left to the text proxy. A special key or any of
-// ⌃⌥⌘ is encoded; everything else is typing, ⇧ included.
+// Whether this press is encoded here rather than passed on to the text input path. A special key — every key
+// with no printable output, Esc/Tab/Return/Delete and the whole nav and function block — or any of
+// ⌃⌥⌘ is encoded; everything else is typing, ⇧ and a bare space included.
 bool slopdesk_phone_key_routes_to_encoding(const SlopDeskPhoneKeyPress *press);
-// The bytes this press sends, through `(out, cap)`. `0` means it sends nothing — a bare modifier or
-// a ⌘ combination, which is an app shortcut. No key this encoder resolves sends zero bytes, so the
-// length is unambiguous. `application_cursor_keys` is the live DECCKM bit, which picks SS3 over CSI.
+// The bytes this press sends, through `(out, cap)`. `0` means it sends nothing — bare typing, which
+// is the proxy's, or a ⌘ combination, which is an app shortcut. No key this encoder resolves sends
+// zero bytes, so the length is unambiguous. `application_cursor_keys` is the live DECCKM bit, which
+// picks SS3 over CSI for the cursor block (the four arrows, Home and End) and nothing else.
 size_t slopdesk_phone_key_encode(const SlopDeskPhoneKeyPress *press, bool application_cursor_keys,
                                  uint8_t *out, size_t cap);
 // The chord this press makes, for the SAME user-overridable binding table the Mac's dispatcher
@@ -890,9 +893,6 @@ bool slopdesk_phone_shows_accessory_bar(double keyboard_height, double threshold
 double slopdesk_phone_floating_cursor_threshold(void);
 size_t slopdesk_phone_floating_cursor_feed(double *accumulated, double threshold, double delta_x,
                                            bool application_cursor_keys, uint8_t *out, size_t cap);
-// One arrow's bytes with no accumulator behind it — the accessory bar's own ← / → plates.
-size_t slopdesk_phone_arrow_bytes(bool rightward, bool application_cursor_keys,
-                                  uint8_t *out, size_t cap);
 
 // The tiled tree, as its PRE-ORDER walk rather than as its persisted JSON. Both languages already
 // agree on that JSON, and reusing it here would have been two lines — but `solve` runs on every

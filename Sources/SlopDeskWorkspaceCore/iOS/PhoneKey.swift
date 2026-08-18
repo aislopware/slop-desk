@@ -3,16 +3,21 @@ import Foundation
 
 // PhoneKey — the near side of the phone's key path.
 //
-// A touch device cannot have the Mac's single input path. UIKit delivers a hardware key through
-// `pressesBegan` and a composed commit through a hidden text proxy, and hanging both off one view
-// leaves the responder order between them undefined, which breaks multi-stage CJK. So every press
-// is asked one question first — proxy or encoder — and the ones that answer "encoder" are turned
-// into bytes without the proxy ever seeing them.
+// A touch device cannot have the Mac's single input path. Some presses a terminal needs raw — ⌃C is
+// 0x03, not the letter c — and some are the visible half of a composition that has not finished yet.
+// So every press is asked one question first, proxy or encoder, and the ones that answer "encoder"
+// are turned into bytes and written straight to the pane; the rest are passed on down the responder
+// chain for UIKit's own text input to compose. `SlopDeskClientUI.TerminalInputHost` is the caller.
 //
 // The rules are `slopdesk_workspace::phone_key`. What is here is the vocabulary the responder builds
-// a press in, and the marshalling. Nothing decides anything: the C0 fold, the arrows' introducer,
-// the meta prefix, which presses are chords and what a floating-cursor drag is worth all live on the
-// other side of the door, tested there.
+// a press in, and the marshalling. Nothing decides anything: which keys are special at all, the C0
+// fold, the cursor block's introducer, the meta prefix, which presses are chords and what a
+// floating-cursor drag is worth all live on the other side of the door, tested there.
+//
+// A press is a HID usage plus one string, because `UIKey.keyCode` is the only signal that names the
+// same key under every layout and input method. Keying a key's identity off what it COMMITTED — the
+// deleted Swift original's approach — is what cost the phone its whole nav block (`docs/29` #7):
+// Home, End, the page keys, Insert, forward Delete and F1-F12 commit nothing a table can match.
 //
 // DELIBERATELY NOT `#if os(iOS)`. Every one of these is a rule about bytes, and gating them behind
 // the iOS triple would mean the macOS test runner never touches the marshalling — which is exactly
@@ -22,50 +27,47 @@ import Foundation
 public enum PhoneKey {
     /// One physical key press, as the responder reads it off a `UIKey`.
     ///
-    /// Two strings because the two questions want different ones. What the key SENDS is
-    /// ``characters`` — the layout's committed output, where the arrows' private-use scalars and
-    /// the `\r` / `\t` / `\u{7F}` of the named keys show up. What the key IS, for a binding lookup
-    /// or a control fold, is ``charactersIgnoringModifiers``.
+    /// A usage and one string. ``hidUsage`` says WHICH key, under every layout and input method;
+    /// ``charactersIgnoringModifiers`` says what that key produces under this one, which is what a
+    /// ⌃ fold and a binding lookup are about. What the key COMMITTED (`UIKey.characters`) is
+    /// deliberately absent — for a special key it is noise, and for a printable one UIKit's text input,
+    /// not this, is what inserts it.
     public struct Press: Sendable, Equatable, Hashable {
-        /// `UIKey.characters`.
-        public var characters: String
         /// `UIKey.charactersIgnoringModifiers`.
         public var charactersIgnoringModifiers: String
+        /// `UIKey.keyCode.rawValue` — a USB HID keyboard usage. `0` for a press with none, which is
+        /// the HID keyboard page's own "no event".
+        public var hidUsage: UInt16
         public var control: Bool
         public var option: Bool
         public var command: Bool
         /// ⇧. Not read by ``PhoneKey/route(_:)`` — a shifted letter is still typing — only by the
-        /// encoder, because UIKit reports the same `characters` for Tab with and without it.
+        /// encoder, where it is what tells a back-tab from a forward one.
         public var shift: Bool
-        /// A non-printable key: an arrow, Esc, Tab, Return, Delete, a function key.
-        public var isSpecial: Bool
 
         public init(
-            characters: String,
-            charactersIgnoringModifiers: String? = nil,
+            charactersIgnoringModifiers: String = "",
+            hidUsage: UInt16 = 0,
             control: Bool = false,
             option: Bool = false,
             command: Bool = false,
             shift: Bool = false,
-            isSpecial: Bool = false,
         ) {
-            self.characters = characters
-            self.charactersIgnoringModifiers = charactersIgnoringModifiers ?? characters
+            self.charactersIgnoringModifiers = charactersIgnoringModifiers
+            self.hidUsage = hidUsage
             self.control = control
             self.option = option
             self.command = command
             self.shift = shift
-            self.isSpecial = isSpecial
         }
 
-        /// The flag word the doors read — `KeyChord.Modifiers`' own bits, plus the special bit.
+        /// The flag word the doors read — `KeyChord.Modifiers`' own bits, and only those.
         var ffiFlags: UInt32 {
             var flags: UInt32 = 0
             if shift { flags |= UInt32(SLOPDESK_PHONE_KEY_SHIFT) }
             if control { flags |= UInt32(SLOPDESK_PHONE_KEY_CONTROL) }
             if option { flags |= UInt32(SLOPDESK_PHONE_KEY_OPTION) }
             if command { flags |= UInt32(SLOPDESK_PHONE_KEY_COMMAND) }
-            if isSpecial { flags |= UInt32(SLOPDESK_PHONE_KEY_SPECIAL) }
             return flags
         }
     }
@@ -74,7 +76,7 @@ public enum PhoneKey {
     public enum Route: Sendable, Equatable {
         /// Encode it here and write the bytes to the pane, bypassing the proxy.
         case keyEncoding
-        /// Leave it to the hidden text proxy, so a marked-text composition can run to its commit.
+        /// Pass it on, so UIKit's own text input can compose it and commit through `insertText`.
         case imeProxy
     }
 
@@ -91,8 +93,8 @@ public enum PhoneKey {
         }
     }
 
-    /// The raw bytes this press sends, or `nil` for one that sends nothing — a bare modifier, or a
-    /// ⌘ combination, which is an app shortcut rather than terminal input.
+    /// The raw bytes this press sends, or `nil` for one that sends nothing — bare typing, which is
+    /// the proxy's, or a ⌘ combination, which is an app shortcut rather than terminal input.
     ///
     /// `applicationCursorKeys` is the live DECCKM state, read off the pane's terminal model per
     /// press. A remembered copy would be one parse behind the screen the user is looking at, which
@@ -170,37 +172,23 @@ public enum PhoneKey {
         slopdesk_phone_shows_accessory_bar(keyboardHeight, threshold ?? softwareKeyboardThreshold)
     }
 
-    /// One arrow's bytes with no drag behind it — what the accessory bar's own ← / → plates send.
-    public static func arrowBytes(rightward: Bool, applicationCursorKeys: Bool = false) -> [UInt8] {
-        var out = [UInt8](repeating: 0, count: arrowCapacity)
-        let written = out.withUnsafeMutableBufferPointer { buffer in
-            slopdesk_phone_arrow_bytes(rightward, applicationCursorKeys, buffer.baseAddress, buffer.count)
-        }
-        return Array(out.prefix(min(written, out.count)))
-    }
-
     /// Long enough for every press the tables resolve; a longer base makes the door report its size
     /// and the encoder ask again.
     private static let encodeCapacity = 16
-    /// `ESC` + introducer + final.
-    private static let arrowCapacity = 3
 
-    /// Lends the press to `body` as the flat record the doors take. Both spans are alive for
-    /// exactly the call, which is the obligation every door's `# Safety` names.
+    /// Lends the press to `body` as the flat record the doors take. The span is alive for exactly
+    /// the call, which is the obligation every door's `# Safety` names.
     private static func withRecord<T>(_ press: Press, _ body: (SlopDeskPhoneKeyPress) -> T) -> T {
-        var characters = press.characters
         var base = press.charactersIgnoringModifiers
+        let usage = press.hidUsage
         let flags = press.ffiFlags
-        return characters.withUTF8 { chars in
-            base.withUTF8 { baseBytes in
-                body(SlopDeskPhoneKeyPress(
-                    characters: chars.baseAddress,
-                    characters_len: chars.count,
-                    base: baseBytes.baseAddress,
-                    base_len: baseBytes.count,
-                    flags: flags,
-                ))
-            }
+        return base.withUTF8 { baseBytes in
+            body(SlopDeskPhoneKeyPress(
+                base: baseBytes.baseAddress,
+                base_len: baseBytes.count,
+                hid_usage: usage,
+                flags: flags,
+            ))
         }
     }
 }

@@ -1,44 +1,51 @@
 //! What the phone's keyboard SENDS, and which of the two paths a press takes to send it.
 //!
 //! A Mac terminal has one input path: the view is the first responder, `keyDown` arrives, and the
-//! surface encodes it. A phone cannot have that. `UIKit` will deliver a hardware key press through
-//! `pressesBegan` and a composed text commit through a `UITextInput` proxy, and putting both on the
-//! same view breaks multi-stage CJK — the responder order between them is undefined. So the phone
-//! splits: control-ish presses are ENCODED here and written to the pane, everything else is left to
-//! the proxy so a composition can run to its commit. [`route`] is that split, and it is the first
-//! question the responder asks about every press.
+//! surface encodes it. A phone cannot have that. Some presses a terminal needs RAW — `⌃C` is 0x03,
+//! not the letter c — and some are the visible half of a composition that has not finished yet, a
+//! Pinyin candidate being three keystrokes before it is one character. So the phone splits:
+//! control-ish presses are ENCODED here and written to the pane, everything else is left to
+//! `UIKit`'s own text input so a composition can run to its commit. [`route`] is that split, and it
+//! is the first question `SlopDeskClientUI.TerminalInputHost` asks about every press — before it
+//! decides whether to pass the press on down the responder chain, which is what makes the order
+//! ours rather than the platform's.
+//!
+//! ## A key is identified by its HID usage, never by what it committed
+//!
+//! `UIKey.keyCode` is a USB HID keyboard usage, and it is the only signal on a press that means the
+//! same thing under every layout, every input method and every modifier. Reading the key's IDENTITY
+//! out of `UIKey.characters` instead — the way this module first did, and the way the deleted Swift
+//! original did before it — costs the nav block outright: Home, End, Page Up/Down, Insert, forward
+//! Delete and F1–F12 commit either nothing or a private-use scalar nobody can name, so a
+//! characters-keyed table silently drops all nineteen of them (`docs/29` #7). Off the usage they
+//! are one table row each. The only string this reads is `base`, and only for the two questions
+//! that are genuinely about the layout: which C0 byte a ⌃-chord folds to, and which character a
+//! binding is keyed by.
 //!
 //! ## Why this is not [`crate::send_keys`]
 //!
 //! Both turn a key into PTY bytes and they must never disagree about what a key MEANS, but they are
 //! asked by different things. `send_keys` reads a NAME a human wrote — `<C-c>`, `Enter` — out of a
 //! preset, a template or a CLI flag, where the vocabulary is the config file's. This reads a live
-//! `UIKit` press, whose vocabulary is the four private-use arrow scalars and a modifier flag word,
-//! and whose answer has to account for the mode the far-side program put the terminal in. A press
-//! has no spelling and a token has no `DECCKM` state; folding them into one table would mean
-//! inventing both.
+//! `UIKit` press, whose vocabulary is a HID usage and a modifier flag word, and whose answer has to
+//! account for the mode the far-side program put the terminal in. A press has no spelling and a
+//! token has no `DECCKM` state; folding them into one table would mean inventing both. What keeps
+//! them honest is a test rather than a call: `send_keys_agrees_on_every_special` asserts every key
+//! here encodes byte-for-byte what `send_keys::key_token` gives its name, in the mode-reset form.
 //!
 //! ## The mode is threaded, never remembered
 //!
-//! Cursor-key mode (`DECCKM`, `ESC [ ? 1 h`) changes the introducer of every arrow from CSI to SS3,
-//! and the program that set it is on the far side of the PTY. Nothing here holds that bit: the
-//! caller reads it off the live terminal model and passes it in. A remembered copy would be one
-//! parse behind the screen the user is looking at, which is exactly how arrows go dead in vim.
+//! Cursor-key mode (`DECCKM`, `ESC [ ? 1 h`) changes the introducer of the arrows and of Home/End
+//! from CSI to SS3, and the program that set it is on the far side of the PTY. Nothing here holds
+//! that bit: the caller reads it off the live terminal model and passes it in. A remembered copy
+//! would be one parse behind the screen the user is looking at, which is exactly how arrows go dead
+//! in vim.
 //!
 //! ## What crosses out
 //!
 //! Bytes and a chord. The chord is the same [`crate`]-neutral shape the binding table is keyed by,
 //! so the phone's ⌘⇧P resolves against the SAME user-overridable table the Mac's dispatcher reads
 //! rather than against a second list that would drift the first time someone rebinds anything.
-
-/// `UIKeyCommand.inputUpArrow` — the private-use scalar `UIKit` reports for ↑.
-pub const ARROW_UP: char = '\u{F700}';
-/// `UIKeyCommand.inputDownArrow` — ↓.
-pub const ARROW_DOWN: char = '\u{F701}';
-/// `UIKeyCommand.inputLeftArrow` — ←.
-pub const ARROW_LEFT: char = '\u{F702}';
-/// `UIKeyCommand.inputRightArrow` — →.
-pub const ARROW_RIGHT: char = '\u{F703}';
 
 /// The escape byte every control sequence here opens with.
 const ESC: u8 = 0x1B;
@@ -56,23 +63,28 @@ pub const MOD_OPTION: u8 = 1 << 2;
 /// ⌘.
 pub const MOD_COMMAND: u8 = 1 << 3;
 
+/// The HID usage of a press that has none — a synthesized commit, or a key `UIKit` did not code.
+/// Usage 0 is the HID keyboard page's own "no event", so it is the sentinel the page already has.
+pub const HID_NONE: u16 = 0;
+
 /// One physical key press, as the responder reads it off a `UIKey`.
 ///
-/// Two strings rather than one because the two questions want different ones. What the key SENDS is
-/// `characters` — the layout's committed output, which is where the arrows' private-use scalars and
-/// the `\r` / `\t` / `\u{7F}` of the named keys show up. What the key IS, for a binding lookup or a
-/// control fold, is `base` (`charactersIgnoringModifiers`) — the same physical key with ⌘⌥⌃ folded
-/// out, so `⌃C` still reads as `c`.
+/// A usage and one string. The usage says WHICH key, under every layout; `base`
+/// (`charactersIgnoringModifiers`) says what that key produces under this one, which is what a ⌃
+/// fold and a binding lookup are about. What the key COMMITTED (`UIKey.characters`) is deliberately
+/// absent: for a special key it is noise, and for a printable one the proxy — not this — is what
+/// inserts it.
 #[expect(
     clippy::struct_excessive_bools,
     reason = "four of them are the platform's four modifiers, which combine rather than exclude"
 )]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct KeyPress<'a> {
-    /// `UIKey.characters` — what the layout committed for this press.
-    pub characters: &'a str,
-    /// `UIKey.charactersIgnoringModifiers` — the same key with ⌘⌥⌃ folded out.
+    /// `UIKey.charactersIgnoringModifiers` — this key under this layout, with ⌘⌥⌃ folded out, so
+    /// `⌃C` still reads as `c` and `⌥b` still reads as `b` rather than as `∫`.
     pub base: &'a str,
+    /// `UIKey.keyCode` — the USB HID keyboard usage, or [`HID_NONE`].
+    pub hid_usage: u16,
     /// Whether ⌃ is held.
     pub control: bool,
     /// Whether ⌥ (Alt) is held.
@@ -80,19 +92,240 @@ pub struct KeyPress<'a> {
     /// Whether ⌘ is held.
     pub command: bool,
     /// Whether ⇧ is held. Deliberately NOT read by [`route`] — a shifted letter is still typing —
-    /// only by the encoder, because `UIKit` reports the same `characters` for Tab with and without
-    /// it, so this flag is the only thing that tells a back-tab from a forward one.
+    /// only by the encoder, where it is the one thing that tells a back-tab from a forward one.
     pub shift: bool,
-    /// Whether this is a non-printable key: an arrow, Esc, Tab, Return, Delete, a function key.
-    pub is_special: bool,
 }
+
+/// A key with no printable output, named by its HID usage.
+///
+/// Every one of these is a key the text path cannot represent: it either commits nothing at all or
+/// commits a scalar that is not what the terminal wants. That is the same set [`route`] sends to
+/// the encoder, which is why one table answers both questions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpecialKey {
+    /// Esc.
+    Escape,
+    /// Tab, and with ⇧ the back-tab.
+    Tab,
+    /// Return, and the keypad's Enter with it.
+    Return,
+    /// Backspace — the key labelled Delete on an Apple keyboard.
+    Backspace,
+    /// Forward Delete.
+    ForwardDelete,
+    /// Insert.
+    Insert,
+    /// ↑.
+    Up,
+    /// ↓.
+    Down,
+    /// ←.
+    Left,
+    /// →.
+    Right,
+    /// Home.
+    Home,
+    /// End.
+    End,
+    /// Page Up.
+    PageUp,
+    /// Page Down.
+    PageDown,
+    /// F1.
+    F1,
+    /// F2.
+    F2,
+    /// F3.
+    F3,
+    /// F4.
+    F4,
+    /// F5.
+    F5,
+    /// F6.
+    F6,
+    /// F7.
+    F7,
+    /// F8.
+    F8,
+    /// F9.
+    F9,
+    /// F10.
+    F10,
+    /// F11.
+    F11,
+    /// F12.
+    F12,
+}
+
+impl SpecialKey {
+    /// Every special key, for the tests that must cover all of them.
+    pub const ALL: [Self; 26] = [
+        Self::Escape,
+        Self::Tab,
+        Self::Return,
+        Self::Backspace,
+        Self::ForwardDelete,
+        Self::Insert,
+        Self::Up,
+        Self::Down,
+        Self::Left,
+        Self::Right,
+        Self::Home,
+        Self::End,
+        Self::PageUp,
+        Self::PageDown,
+        Self::F1,
+        Self::F2,
+        Self::F3,
+        Self::F4,
+        Self::F5,
+        Self::F6,
+        Self::F7,
+        Self::F8,
+        Self::F9,
+        Self::F10,
+        Self::F11,
+        Self::F12,
+    ];
+
+    /// The [`crate::send_keys`] token name for this key — the spelling a preset or `--key` would
+    /// use. Only the agreement test reads it, and that is the point: it is the join column between
+    /// the two tables.
+    #[must_use]
+    pub const fn token_name(self) -> &'static str {
+        match self {
+            Self::Escape => "escape",
+            Self::Tab => "tab",
+            Self::Return => "enter",
+            Self::Backspace => "bspace",
+            Self::ForwardDelete => "delete",
+            Self::Insert => "insert",
+            Self::Up => "up",
+            Self::Down => "down",
+            Self::Left => "left",
+            Self::Right => "right",
+            Self::Home => "home",
+            Self::End => "end",
+            Self::PageUp => "pageup",
+            Self::PageDown => "pagedown",
+            Self::F1 => "f1",
+            Self::F2 => "f2",
+            Self::F3 => "f3",
+            Self::F4 => "f4",
+            Self::F5 => "f5",
+            Self::F6 => "f6",
+            Self::F7 => "f7",
+            Self::F8 => "f8",
+            Self::F9 => "f9",
+            Self::F10 => "f10",
+            Self::F11 => "f11",
+            Self::F12 => "f12",
+        }
+    }
+}
+
+/// The special key a HID usage names, or `None` for a key that types.
+///
+/// Return and the keypad's Enter fold onto one case: they are the same intent, and the PTY has one
+/// byte for it. The function block is contiguous in the HID page, so it is one range rather than
+/// twelve rows.
+#[must_use]
+pub const fn special_key(hid_usage: u16) -> Option<SpecialKey> {
+    let key = match hid_usage {
+        HID_ESCAPE => SpecialKey::Escape,
+        HID_TAB => SpecialKey::Tab,
+        HID_RETURN | HID_KEYPAD_ENTER => SpecialKey::Return,
+        HID_BACKSPACE => SpecialKey::Backspace,
+        HID_FORWARD_DELETE => SpecialKey::ForwardDelete,
+        HID_INSERT => SpecialKey::Insert,
+        HID_UP => SpecialKey::Up,
+        HID_DOWN => SpecialKey::Down,
+        HID_LEFT => SpecialKey::Left,
+        HID_RIGHT => SpecialKey::Right,
+        HID_HOME => SpecialKey::Home,
+        HID_END => SpecialKey::End,
+        HID_PAGE_UP => SpecialKey::PageUp,
+        HID_PAGE_DOWN => SpecialKey::PageDown,
+        HID_F1 => SpecialKey::F1,
+        HID_F2 => SpecialKey::F2,
+        HID_F3 => SpecialKey::F3,
+        HID_F4 => SpecialKey::F4,
+        HID_F5 => SpecialKey::F5,
+        HID_F6 => SpecialKey::F6,
+        HID_F7 => SpecialKey::F7,
+        HID_F8 => SpecialKey::F8,
+        HID_F9 => SpecialKey::F9,
+        HID_F10 => SpecialKey::F10,
+        HID_F11 => SpecialKey::F11,
+        HID_F12 => SpecialKey::F12,
+        _ => return None,
+    };
+    Some(key)
+}
+
+/// `UIKeyboardHIDUsage.keyboardReturnOrEnter`.
+pub const HID_RETURN: u16 = 40;
+/// `UIKeyboardHIDUsage.keyboardEscape`.
+pub const HID_ESCAPE: u16 = 41;
+/// `UIKeyboardHIDUsage.keyboardDeleteOrBackspace`.
+pub const HID_BACKSPACE: u16 = 42;
+/// `UIKeyboardHIDUsage.keyboardTab`.
+pub const HID_TAB: u16 = 43;
+/// `UIKeyboardHIDUsage.keyboardSpacebar`.
+pub const HID_SPACE: u16 = 44;
+/// `UIKeyboardHIDUsage.keyboardF1`. F1 to F12 are contiguous from here.
+pub const HID_F1: u16 = 58;
+/// `UIKeyboardHIDUsage.keyboardF2`.
+pub const HID_F2: u16 = 59;
+/// `UIKeyboardHIDUsage.keyboardF3`.
+pub const HID_F3: u16 = 60;
+/// `UIKeyboardHIDUsage.keyboardF4`.
+pub const HID_F4: u16 = 61;
+/// `UIKeyboardHIDUsage.keyboardF5`.
+pub const HID_F5: u16 = 62;
+/// `UIKeyboardHIDUsage.keyboardF6`.
+pub const HID_F6: u16 = 63;
+/// `UIKeyboardHIDUsage.keyboardF7`.
+pub const HID_F7: u16 = 64;
+/// `UIKeyboardHIDUsage.keyboardF8`.
+pub const HID_F8: u16 = 65;
+/// `UIKeyboardHIDUsage.keyboardF9`.
+pub const HID_F9: u16 = 66;
+/// `UIKeyboardHIDUsage.keyboardF10`.
+pub const HID_F10: u16 = 67;
+/// `UIKeyboardHIDUsage.keyboardF11`.
+pub const HID_F11: u16 = 68;
+/// `UIKeyboardHIDUsage.keyboardF12`.
+pub const HID_F12: u16 = 69;
+/// `UIKeyboardHIDUsage.keyboardInsert`.
+pub const HID_INSERT: u16 = 73;
+/// `UIKeyboardHIDUsage.keyboardHome`.
+pub const HID_HOME: u16 = 74;
+/// `UIKeyboardHIDUsage.keyboardPageUp`.
+pub const HID_PAGE_UP: u16 = 75;
+/// `UIKeyboardHIDUsage.keyboardDeleteForward`.
+pub const HID_FORWARD_DELETE: u16 = 76;
+/// `UIKeyboardHIDUsage.keyboardEnd`.
+pub const HID_END: u16 = 77;
+/// `UIKeyboardHIDUsage.keyboardPageDown`.
+pub const HID_PAGE_DOWN: u16 = 78;
+/// `UIKeyboardHIDUsage.keyboardRightArrow`.
+pub const HID_RIGHT: u16 = 79;
+/// `UIKeyboardHIDUsage.keyboardLeftArrow`.
+pub const HID_LEFT: u16 = 80;
+/// `UIKeyboardHIDUsage.keyboardDownArrow`.
+pub const HID_DOWN: u16 = 81;
+/// `UIKeyboardHIDUsage.keyboardUpArrow`.
+pub const HID_UP: u16 = 82;
+/// `UIKeyboardHIDUsage.keypadEnter`.
+pub const HID_KEYPAD_ENTER: u16 = 88;
 
 /// Which of the phone's two input paths a press takes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Route {
-    /// Encode it here and write the bytes to the pane, bypassing the text proxy.
+    /// Encode it here and write the bytes to the pane, never passing it on down the chain.
     KeyEncoding,
-    /// Leave it to the hidden `UITextInput` proxy, so a marked-text composition can run to commit.
+    /// Pass it on, so `UIKit`'s own text input can compose it and commit through `insertText`.
     ImeProxy,
 }
 
@@ -102,7 +335,7 @@ pub enum Route {
 /// of them. Everything else is typing, and typing is the proxy's, ⇧ included.
 #[must_use]
 pub const fn route(press: &KeyPress<'_>) -> Route {
-    if press.is_special || press.control || press.option || press.command {
+    if special_key(press.hid_usage).is_some() || press.control || press.option || press.command {
         Route::KeyEncoding
     } else {
         Route::ImeProxy
@@ -142,23 +375,6 @@ pub fn fold_armed_control(text: &str) -> Option<(u8, usize)> {
     Some((control_code(first), first.len_utf8()))
 }
 
-/// The three bytes an arrow sends, or `None` for a press that is not one.
-///
-/// `application_cursor_keys` is the live `DECCKM` bit: reset gives the CSI form every line editor
-/// reads as a cursor move, set gives the SS3 form vim, less and htop ask for. The final letter is
-/// the same either way.
-#[must_use]
-pub fn arrow_bytes(press: &KeyPress<'_>, application_cursor_keys: bool) -> Option<[u8; 3]> {
-    let final_byte = match single_char(press.characters)? {
-        ARROW_UP => b'A',
-        ARROW_DOWN => b'B',
-        ARROW_RIGHT => b'C',
-        ARROW_LEFT => b'D',
-        _ => return None,
-    };
-    Some([ESC, introducer(application_cursor_keys), final_byte])
-}
-
 /// The one character a string holds, or `None` when it holds none or more than one.
 fn single_char(text: &str) -> Option<char> {
     let mut scalars = text.chars();
@@ -171,39 +387,76 @@ const fn introducer(application_cursor_keys: bool) -> u8 {
     if application_cursor_keys { SS3 } else { CSI }
 }
 
-/// The bytes for a special key that needs no mode to resolve — Esc, Tab, back-tab, Return, Delete.
-/// Arrows are mode-dependent and answered by [`arrow_bytes`].
+/// The bytes a special key sends.
+///
+/// Three families. The cursor block — the four arrows and Home/End — takes the live introducer,
+/// because `DECCKM` is exactly the mode that moves them between CSI and SS3. The editing block
+/// (Insert, forward Delete, the page keys) and F5 upward are `CSI n ~`, which no mode rewrites. F1
+/// to F4 are SS3 unconditionally: their SS3 forms are what every terminfo entry carries, so there
+/// is no CSI spelling to prefer.
+///
+/// `shift` is read by exactly one key. `UIKit` reports Tab's usage with and without it, so the flag
+/// is the only thing that separates a back-tab (`CBT`) from a forward one.
 #[must_use]
-pub fn character_special_bytes(press: &KeyPress<'_>) -> Option<&'static [u8]> {
-    match press.characters {
-        "\u{1B}" => Some(&[ESC]),
-        // `UIKit` reports the same "\t" with and without ⇧, so the flag is the only discriminator:
-        // ⇧Tab is back-tab (CBT, `ESC [ Z`), plain Tab stays forward TAB.
-        "\t" => Some(if press.shift { &[ESC, CSI, b'Z'] } else { &[0x09] }),
-        "\r" | "\n" => Some(&[0x0D]),
-        "\u{7F}" | "\u{08}" => Some(&[0x7F]),
-        _ => None,
+pub fn special_bytes(key: SpecialKey, shift: bool, application_cursor_keys: bool) -> Vec<u8> {
+    let cursor = |final_byte: u8| vec![ESC, introducer(application_cursor_keys), final_byte];
+    let tilde = |digits: &str| {
+        let mut bytes = vec![ESC, CSI];
+        bytes.extend_from_slice(digits.as_bytes());
+        bytes.push(b'~');
+        bytes
+    };
+    match key {
+        SpecialKey::Escape => vec![ESC],
+        SpecialKey::Tab if shift => vec![ESC, CSI, b'Z'],
+        SpecialKey::Tab => vec![0x09],
+        SpecialKey::Return => vec![0x0D],
+        SpecialKey::Backspace => vec![0x7F],
+        SpecialKey::Up => cursor(b'A'),
+        SpecialKey::Down => cursor(b'B'),
+        SpecialKey::Right => cursor(b'C'),
+        SpecialKey::Left => cursor(b'D'),
+        SpecialKey::Home => cursor(b'H'),
+        SpecialKey::End => cursor(b'F'),
+        SpecialKey::Insert => tilde("2"),
+        SpecialKey::ForwardDelete => tilde("3"),
+        SpecialKey::PageUp => tilde("5"),
+        SpecialKey::PageDown => tilde("6"),
+        SpecialKey::F1 => vec![ESC, SS3, b'P'],
+        SpecialKey::F2 => vec![ESC, SS3, b'Q'],
+        SpecialKey::F3 => vec![ESC, SS3, b'R'],
+        SpecialKey::F4 => vec![ESC, SS3, b'S'],
+        SpecialKey::F5 => tilde("15"),
+        SpecialKey::F6 => tilde("17"),
+        SpecialKey::F7 => tilde("18"),
+        SpecialKey::F8 => tilde("19"),
+        SpecialKey::F9 => tilde("20"),
+        SpecialKey::F10 => tilde("21"),
+        SpecialKey::F11 => tilde("23"),
+        SpecialKey::F12 => tilde("24"),
     }
 }
 
-/// The raw bytes a press sends, or `None` for a press that sends nothing — a bare modifier, or a ⌘
-/// combination, which is an app shortcut rather than terminal input.
+/// The raw bytes a press sends, or `None` for a press that sends nothing.
 ///
-/// ⌥ on ANY of these takes the xterm meta prefix: `ESC` then the bytes the key would have sent
-/// alone. That is one rule covering `⌥Backspace` (delete-previous-word), `⌥Return`, `⌥←` and `⌥b`
-/// alike, and it is what makes word-wise shell editing work from a phone at all. ⌃ on a special key
-/// deliberately does NOT take it — that form needs a parameterised CSI (`ESC [ 1 ; 5 D`), which is
-/// a different sequence, not a prefix.
+/// A ⌘ combination is `None` before anything else is asked: on both platforms ⌘ is the
+/// application's modifier, so ⌘K is the palette and ⌘← is a shortcut that missed, never terminal
+/// input. Bare typing is `None` too — that press belongs to the proxy, and the responder never
+/// asks.
+///
+/// ⌥ on anything that does encode takes the xterm meta prefix: `ESC` then the bytes the key would
+/// have sent alone. That is one rule covering `⌥Backspace` (delete-previous-word), `⌥Return`, `⌥←`
+/// and `⌥b` alike, and it is what makes word-wise shell editing work from a phone at all. ⌃ on a
+/// special key deliberately does NOT take it — that form needs a parameterised CSI
+/// (`ESC [ 1 ; 5 D`), which is a different sequence, not a prefix.
 #[must_use]
 pub fn encode(press: &KeyPress<'_>, application_cursor_keys: bool) -> Option<Vec<u8>> {
-    if press.is_special {
-        let bytes = character_special_bytes(press).map_or_else(
-            || arrow_bytes(press, application_cursor_keys).map(|arrow| arrow.to_vec()),
-            |special| Some(special.to_vec()),
-        );
-        if let Some(bytes) = bytes {
-            return Some(meta_prefixed(press.option, bytes));
-        }
+    if press.command {
+        return None;
+    }
+    if let Some(key) = special_key(press.hid_usage) {
+        let bytes = special_bytes(key, press.shift, application_cursor_keys);
+        return Some(meta_prefixed(press.option, bytes));
     }
     let scalar = press.base.chars().next()?;
     if press.control {
@@ -226,14 +479,16 @@ fn meta_prefixed(option: bool, bytes: Vec<u8>) -> Vec<u8> {
     prefixed
 }
 
-/// A non-printable key the binding table names. The six a phone's keyboard can report — the table
-/// has more, but no `UIKey` this responder sees carries them.
+/// A non-printable key the binding table names — the eleven `slopdesk_video::key_naming::NamedKey`
+/// cases, in that order, so the boundary can rebuild one from a case index without the text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NamedChordKey {
     /// Return, and the keypad's Enter with it.
     Return,
     /// Tab.
     Tab,
+    /// The space bar, which is a chord only with a non-⇧ modifier held.
+    Space,
     /// ←.
     Left,
     /// →.
@@ -242,6 +497,14 @@ pub enum NamedChordKey {
     Up,
     /// ↓.
     Down,
+    /// Page Up.
+    PageUp,
+    /// Page Down.
+    PageDown,
+    /// Home.
+    Home,
+    /// End.
+    End,
 }
 
 /// The base key of a chord: one of the named keys, or a printable character.
@@ -277,9 +540,9 @@ pub struct Chord {
 /// The chord a press makes, or `None` for a press the table could not be keyed by — which the
 /// responder then routes normally rather than swallowing.
 ///
-/// Named keys first, by the characters `UIKit` commits for them. Otherwise a SINGLE printable base
-/// character: whitespace and control scalars are refused, so ordinary typing falls through to the
-/// proxy while a `⌃`-letter — which still reports its printable base — stays classifiable.
+/// Named keys first, off the HID usage. Otherwise a SINGLE printable base character: whitespace and
+/// control scalars are refused, so ordinary typing falls through to the proxy while a `⌃`-letter —
+/// which still reports its printable base — stays classifiable.
 #[must_use]
 pub fn key_chord(press: &KeyPress<'_>) -> Option<Chord> {
     let mut modifiers = 0_u8;
@@ -296,7 +559,7 @@ pub fn key_chord(press: &KeyPress<'_>) -> Option<Chord> {
         modifiers |= MOD_COMMAND;
     }
 
-    if let Some(named) = named_chord_key(press.characters) {
+    if let Some(named) = named_chord_key(press.hid_usage, modifiers) {
         return Some(Chord {
             key: ChordKey::Named(named),
             modifiers,
@@ -313,17 +576,29 @@ pub fn key_chord(press: &KeyPress<'_>) -> Option<Chord> {
     })
 }
 
-/// The named key a committed string spells, if it spells one.
-fn named_chord_key(characters: &str) -> Option<NamedChordKey> {
-    match characters {
-        "\r" | "\n" => Some(NamedChordKey::Return),
-        "\t" => Some(NamedChordKey::Tab),
-        "\u{F702}" => Some(NamedChordKey::Left),
-        "\u{F703}" => Some(NamedChordKey::Right),
-        "\u{F700}" => Some(NamedChordKey::Up),
-        "\u{F701}" => Some(NamedChordKey::Down),
-        _ => None,
-    }
+/// The named key a HID usage is, for the dispatcher.
+///
+/// Space is the one conditional row, and it is the same rule
+/// `slopdesk_video::key_naming::dispatch_named_key` applies to the Mac's key code: a bare or ⇧-only
+/// Space is typing that must reach the terminal, while with ⌃, ⌥ or ⌘ held it is the Vi-mode chord.
+/// Anything else about the space bar would either steal the space character or make ⌃⇧Space
+/// unbindable.
+const fn named_chord_key(hid_usage: u16, modifiers: u8) -> Option<NamedChordKey> {
+    let key = match hid_usage {
+        HID_RETURN | HID_KEYPAD_ENTER => NamedChordKey::Return,
+        HID_TAB => NamedChordKey::Tab,
+        HID_SPACE if modifiers & !MOD_SHIFT != 0 => NamedChordKey::Space,
+        HID_LEFT => NamedChordKey::Left,
+        HID_RIGHT => NamedChordKey::Right,
+        HID_UP => NamedChordKey::Up,
+        HID_DOWN => NamedChordKey::Down,
+        HID_PAGE_UP => NamedChordKey::PageUp,
+        HID_PAGE_DOWN => NamedChordKey::PageDown,
+        HID_HOME => NamedChordKey::Home,
+        HID_END => NamedChordKey::End,
+        _ => return None,
+    };
+    Some(key)
 }
 
 /// The keyboard-frame height (points) at or above which the on-screen keyboard is the SOFTWARE one.
@@ -471,23 +746,23 @@ pub fn floating_cursor_run(arrows: &[Arrow], application_cursor_keys: bool) -> V
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::send_keys::key_token;
 
-    fn press(characters: &str) -> KeyPress<'_> {
+    fn press(base: &str) -> KeyPress<'_> {
         KeyPress {
-            characters,
-            base: characters,
+            base,
+            hid_usage: HID_NONE,
             control: false,
             option: false,
             command: false,
             shift: false,
-            is_special: false,
         }
     }
 
-    fn special(characters: &str) -> KeyPress<'_> {
+    fn special(hid_usage: u16) -> KeyPress<'static> {
         KeyPress {
-            is_special: true,
-            ..press(characters)
+            hid_usage,
+            ..press("")
         }
     }
 
@@ -498,6 +773,14 @@ mod tests {
             route(&KeyPress {
                 shift: true,
                 ..press("A")
+            }),
+            Route::ImeProxy
+        );
+        // The space bar types; the encoder must never see a bare one.
+        assert_eq!(
+            route(&KeyPress {
+                hid_usage: HID_SPACE,
+                ..press(" ")
             }),
             Route::ImeProxy
         );
@@ -522,7 +805,47 @@ mod tests {
             }),
             Route::KeyEncoding
         );
-        assert_eq!(route(&special("\u{1B}")), Route::KeyEncoding);
+        assert_eq!(route(&special(HID_ESCAPE)), Route::KeyEncoding);
+        // The nav block a characters-keyed table used to drop whole (`docs/29` #7).
+        for usage in [
+            HID_HOME,
+            HID_END,
+            HID_PAGE_UP,
+            HID_PAGE_DOWN,
+            HID_INSERT,
+            HID_FORWARD_DELETE,
+            HID_F5,
+        ] {
+            assert_eq!(route(&special(usage)), Route::KeyEncoding, "usage {usage}");
+        }
+    }
+
+    /// The join between the two tables. Every special key must encode exactly what its
+    /// `send_keys` token name does, in the cursor-key-RESET form — that is the mode `send_keys`
+    /// itself documents emitting, and the only one it has.
+    #[test]
+    fn send_keys_agrees_on_every_special() {
+        for key in SpecialKey::ALL {
+            assert_eq!(
+                Some(special_bytes(key, false, false)),
+                key_token(key.token_name()),
+                "{} disagrees with <{}>",
+                key.token_name(),
+                key.token_name(),
+            );
+        }
+    }
+
+    #[test]
+    fn every_special_usage_maps_and_nothing_else_does() {
+        for key in SpecialKey::ALL {
+            assert!(!special_bytes(key, false, false).is_empty());
+        }
+        assert_eq!(special_key(HID_NONE), None);
+        assert_eq!(special_key(HID_SPACE), None, "the space bar types");
+        assert_eq!(special_key(4), None, "the letter a");
+        assert_eq!(special_key(HID_KEYPAD_ENTER), Some(SpecialKey::Return));
+        assert_eq!(special_key(HID_F12), Some(SpecialKey::F12));
     }
 
     #[test]
@@ -549,59 +872,58 @@ mod tests {
         assert_eq!(fold_armed_control("走c"), Some((control_code('走'), 3)));
     }
 
+    /// `DECCKM` moves the cursor block and nothing else.
     #[test]
     fn the_cursor_mode_picks_the_introducer() {
-        let up = special("\u{F700}");
-        assert_eq!(arrow_bytes(&up, false), Some([0x1B, 0x5B, b'A']));
-        assert_eq!(arrow_bytes(&up, true), Some([0x1B, 0x4F, b'A']));
-        assert_eq!(arrow_bytes(&special("\u{F702}"), false), Some([0x1B, 0x5B, b'D']));
-        assert_eq!(arrow_bytes(&special("q"), false), None);
+        assert_eq!(special_bytes(SpecialKey::Up, false, false), vec![
+            0x1B, 0x5B, b'A'
+        ]);
+        assert_eq!(special_bytes(SpecialKey::Up, false, true), vec![0x1B, 0x4F, b'A']);
+        assert_eq!(special_bytes(SpecialKey::Home, false, true), vec![
+            0x1B, 0x4F, b'H'
+        ]);
+        assert_eq!(special_bytes(SpecialKey::End, false, true), vec![
+            0x1B, 0x4F, b'F'
+        ]);
+        for key in [
+            SpecialKey::Escape,
+            SpecialKey::PageUp,
+            SpecialKey::F5,
+            SpecialKey::ForwardDelete,
+        ] {
+            assert_eq!(
+                special_bytes(key, false, true),
+                special_bytes(key, false, false),
+                "{} is not a cursor key",
+                key.token_name(),
+            );
+        }
     }
 
     #[test]
     fn shift_is_the_only_thing_that_tells_back_tab_from_tab() {
-        assert_eq!(character_special_bytes(&special("\t")), Some(&[0x09][..]));
-        assert_eq!(
-            character_special_bytes(&KeyPress {
-                shift: true,
-                ..special("\t")
-            }),
-            Some(&[0x1B, 0x5B, b'Z'][..]),
-        );
+        assert_eq!(special_bytes(SpecialKey::Tab, false, false), vec![0x09]);
+        assert_eq!(special_bytes(SpecialKey::Tab, true, false), vec![
+            0x1B, 0x5B, b'Z'
+        ]);
+        // And ⇧ changes nothing anywhere else.
+        assert_eq!(special_bytes(SpecialKey::Up, true, false), vec![0x1B, 0x5B, b'A']);
     }
 
     #[test]
     fn option_prefixes_every_key_it_is_held_with() {
-        assert_eq!(
+        let meta = |usage: u16| {
             encode(
                 &KeyPress {
                     option: true,
-                    ..special("\u{7F}")
+                    ..special(usage)
                 },
-                false
-            ),
-            Some(vec![0x1B, 0x7F])
-        );
-        assert_eq!(
-            encode(
-                &KeyPress {
-                    option: true,
-                    ..special("\r")
-                },
-                false
-            ),
-            Some(vec![0x1B, 0x0D])
-        );
-        assert_eq!(
-            encode(
-                &KeyPress {
-                    option: true,
-                    ..special("\u{F702}")
-                },
-                false
-            ),
-            Some(vec![0x1B, 0x1B, 0x5B, b'D']),
-        );
+                false,
+            )
+        };
+        assert_eq!(meta(HID_BACKSPACE), Some(vec![0x1B, 0x7F]));
+        assert_eq!(meta(HID_RETURN), Some(vec![0x1B, 0x0D]));
+        assert_eq!(meta(HID_LEFT), Some(vec![0x1B, 0x1B, 0x5B, b'D']));
         assert_eq!(
             encode(
                 &KeyPress {
@@ -625,6 +947,8 @@ mod tests {
         );
     }
 
+    /// ⌘ is the application's modifier on both platforms, so it never reaches the PTY — not even on
+    /// a special key, where the identity table would otherwise happily answer.
     #[test]
     fn a_command_combination_sends_nothing() {
         assert_eq!(
@@ -637,7 +961,18 @@ mod tests {
             ),
             None
         );
+        assert_eq!(
+            encode(
+                &KeyPress {
+                    command: true,
+                    ..special(HID_LEFT)
+                },
+                false
+            ),
+            None
+        );
         assert_eq!(encode(&press(""), false), None);
+        assert_eq!(encode(&press("a"), false), None, "typing is the proxy's");
     }
 
     #[test]
@@ -652,15 +987,31 @@ mod tests {
             ),
             Some(vec![0x03])
         );
-        assert_eq!(encode(&special("\u{1B}"), false), Some(vec![0x1B]));
-        assert_eq!(encode(&special("\r"), false), Some(vec![0x0D]));
-        assert_eq!(encode(&special("\u{F701}"), true), Some(vec![0x1B, 0x4F, b'B']));
+        assert_eq!(encode(&special(HID_ESCAPE), false), Some(vec![0x1B]));
+        assert_eq!(encode(&special(HID_RETURN), false), Some(vec![0x0D]));
+        assert_eq!(encode(&special(HID_DOWN), true), Some(vec![0x1B, 0x4F, b'B']));
+        assert_eq!(
+            encode(&special(HID_PAGE_DOWN), false),
+            Some(vec![0x1B, 0x5B, b'6', b'~'])
+        );
+        // ⌃Space is NUL, which is the one press whose base is whitespace and still encodes.
+        assert_eq!(
+            encode(
+                &KeyPress {
+                    control: true,
+                    hid_usage: HID_SPACE,
+                    ..press(" ")
+                },
+                false
+            ),
+            Some(vec![0x00]),
+        );
     }
 
     #[test]
     fn named_keys_beat_the_printable_path() {
         assert_eq!(
-            key_chord(&special("\r")),
+            key_chord(&special(HID_RETURN)),
             Some(Chord {
                 key: ChordKey::Named(NamedChordKey::Return),
                 modifiers: 0
@@ -670,11 +1021,45 @@ mod tests {
             key_chord(&KeyPress {
                 shift: true,
                 command: true,
-                ..special("\u{F700}")
+                ..special(HID_UP)
             }),
             Some(Chord {
                 key: ChordKey::Named(NamedChordKey::Up),
                 modifiers: MOD_SHIFT | MOD_COMMAND,
+            }),
+        );
+        assert_eq!(
+            key_chord(&special(HID_PAGE_UP)),
+            Some(Chord {
+                key: ChordKey::Named(NamedChordKey::PageUp),
+                modifiers: 0
+            }),
+        );
+    }
+
+    /// The space bar is a chord only once a non-⇧ modifier is held — the Vi-mode rule the Mac's
+    /// dispatcher applies to its own key code.
+    #[test]
+    fn space_is_a_chord_only_with_a_real_modifier() {
+        let bare = KeyPress {
+            hid_usage: HID_SPACE,
+            ..press(" ")
+        };
+        assert_eq!(key_chord(&bare), None);
+        assert_eq!(
+            key_chord(&KeyPress { shift: true, ..bare }),
+            None,
+            "⇧Space is still a space",
+        );
+        assert_eq!(
+            key_chord(&KeyPress {
+                control: true,
+                shift: true,
+                ..bare
+            }),
+            Some(Chord {
+                key: ChordKey::Named(NamedChordKey::Space),
+                modifiers: MOD_SHIFT | MOD_CONTROL,
             }),
         );
     }

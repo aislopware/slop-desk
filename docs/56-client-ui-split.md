@@ -641,7 +641,9 @@ byte stream and says so in its own charter; this writes the client→host one. I
 `send_keys`, which is already there — both turn a key into PTY bytes, and they must never disagree
 about what a key MEANS. They stay separate functions because they are asked by different things: one
 reads a NAME a human wrote in a preset (`<C-c>`), the other reads a live `UIKey` whose vocabulary is
-four private-use scalars and a flag word, and whose answer depends on a mode the far side set.
+a HID usage and a flag word, and whose answer depends on a mode the far side set. A test rather than
+a call keeps them honest: `send_keys_agrees_on_every_special` asserts all twenty-six special keys
+encode byte-for-byte what `send_keys::key_token` gives their names, in the mode-reset form.
 
 THE MODE IS THREADED, NEVER REMEMBERED. Nothing in the crate holds DECCKM: the caller reads it off
 the live terminal model per press and passes it in. A remembered copy would be one parse behind the
@@ -658,11 +660,51 @@ What did NOT move: `KeyRepeater` and `ManualRepeatScheduler` (a `DispatchSourceT
 its virtual-time double — a scheduler, not a rule), `FocusGenerationGuard` and `PaneFocusCoordinator`
 (a `becomeFirstResponder` race, which only exists where UIKit does).
 
-And the finding this increment surfaced, which is the largest outstanding parity gap in the app:
-THE PHONE'S TERMINAL CANNOT RECEIVE A KEYSTROKE. `TerminalInputHost` is named by
+And the finding this increment surfaced, which was the largest outstanding parity gap in the app:
+THE PHONE'S TERMINAL COULD NOT RECEIVE A KEYSTROKE. `TerminalInputHost` was named by
 `GhosttyLayerBackedView`, by doc 17 §2.5 and by half the headers in that directory as the owner of
-iOS physical-key and IME forwarding, and it does not exist anywhere in the repo — it appears only in
-comments. That is why every file above had tests and no production caller: they are the prepared
-pieces of a responder nobody built. The rules are now in Rust and compile-tested on macOS, so what
-is left is the UIKit half — a responder that reads a `UIKey` into a `PhoneKey.Press`, an accessory
-row above the software keyboard, and a text proxy for composition. It is the next increment.
+iOS physical-key and IME forwarding, and it existed nowhere in the repo — only in comments. That is
+why every file above had tests and no production caller: they were the prepared pieces of a responder
+nobody built. Increment 16 builds it.
+
+### Increment 16 — the responder, and the identity the rules were keyed by
+
+`Sources/SlopDeskClientUI/Pane/TerminalInputHost.swift` is the UIKit half: a `UIViewRepresentable`
+over a zero-sized, touch-transparent `TerminalInputHostView` that holds first responder for the pane,
+overrides `pressesBegan`/`pressesEnded`, conforms to `UIKeyInput` for the software keyboard's commits,
+and owns the `⌃ esc ⇥ ← ↓ ↑ →` accessory row. It mounts from `TerminalLeafView` under the renderer
+and registers with `WorkspaceStore.focusCoordinator`, which closes the `PaneFocusCoordinator` header's
+own ⚠️ — that seam had no producer until now. The phone can type.
+
+ONE VIEW, TWO PATHS — the earlier increment's header claimed a press responder and a text proxy had to
+be separate views because "the responder order between them is undefined". That is a claim about two
+FIRST RESPONDERS, and it is not the design that was needed. `pressesBegan` runs `PhoneKey.route`
+first and only then decides whether to call `super`: a press routed to the encoder never reaches
+UIKit's text system, and one routed to the proxy is a press this view never touches. The order is
+ours, explicitly, rather than UIKit's. One responder, and the header was corrected.
+
+THE BIGGER FINDING, WHICH SENT INCREMENT 15 BACK FOR A REWRITE: a key's IDENTITY cannot be read off
+what it COMMITTED. Both the deleted Swift original and this port's first cut keyed the special-key
+table by `UIKey.characters` — `"\r"`, `"\t"`, the four private-use arrow scalars. Nineteen keys commit
+nothing a table can match, so all nineteen were silently dropped: Home, End, Page Up/Down, Insert,
+forward Delete and F1–F12. That is `docs/29`'s deferred item #7, which had been sitting open since
+2026-07-07 as "add to the `isSpecial` whitelist". It is not a whitelist bug. `UIKey.keyCode` — a USB
+HID keyboard usage — is the only signal on a press that means the same key under every layout, every
+input method and every modifier, so `KeyPress` now carries the usage and ONE string (`base`, for the
+two questions that are genuinely about the layout: which C0 byte a ⌃ fold lands on, and which
+character a binding is keyed by). `UIKey.characters` crosses nowhere. Off the usage the whole nav and
+function block is one table row each, `SpecialKey` has twenty-six cases, and the accessory row's
+plates are synthesized presses through the same encoder rather than a byte table of their own.
+
+Three smaller things fell out of the same change. ⌘ on a special key now sends NOTHING — the old
+identity branch answered before the ⌘ check, so ⌘Esc wrote an ESC to the PTY. `Home`/`End` join the
+arrows in taking the live DECCKM introducer, which is the cursor block xterm actually defines. And
+`NamedChordKey` widened from six cases to all eleven of `key_naming::NamedKey`, so Home, End, the page
+keys and ⌃⇧Space (the Vi-mode chord, under the same non-⇧-modifier rule the Mac's dispatcher applies
+to its own key code) are bindable from a phone for the first time.
+
+STILL NOT HERE: `UITextInput`. iOS shows CJK candidates in the keyboard's own bar and commits through
+`insertText`, so typing Chinese works today; what the conformance would add is INLINE composition
+display and the space-bar-drag floating cursor. `PhoneKey`'s `FloatingCursor` is the prepared, tested
+half of the second and stays caller-less until then — the one remaining seam of that shape in this
+directory, and it is named here so it does not become another `TerminalInputHost`.

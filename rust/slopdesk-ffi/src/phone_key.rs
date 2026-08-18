@@ -1,14 +1,16 @@
 //! The phone's key path, in C.
 //!
 //! The rules are `slopdesk_workspace::phone_key`; what is here is the marshalling. A press crosses
-//! as its two strings plus one flag word, because that is exactly what a `UIKey` carries and
-//! rebuilding it on this side would mean the responder deciding, per field, what `UIKit` meant.
+//! as its HID usage, its base string and one flag word, because that is exactly what a `UIKey`
+//! carries and rebuilding it on this side would mean the responder deciding, per field, what
+//! `UIKit` meant.
 //!
-//! ## The flag word is the binding table's, plus one bit
+//! ## The flag word IS the binding table's
 //!
 //! Bits 0–3 are `MOD_SHIFT`/`CONTROL`/`OPTION`/`COMMAND`, the same values `KeyChord.Modifiers`
-//! carries, so a chord's modifiers cross back out UNTRANSLATED. Bit 4 says the key is special,
-//! which is not a modifier and is the one thing the responder knows that the table does not.
+//! carries, so a chord's modifiers cross back out UNTRANSLATED. There is no fifth bit: which keys
+//! are special is a rule, not a fact the responder is allowed to assert, and it is answered on the
+//! far side from `hid_usage`.
 //!
 //! ## Two answers that are legitimately empty, and how each says so
 //!
@@ -26,7 +28,7 @@
 use core::ffi::c_uchar;
 
 use slopdesk_video::key_naming::NamedKey;
-use slopdesk_workspace::phone_key::{self, Arrow, ChordKey, FloatingCursor, KeyPress, NamedChordKey, Route};
+use slopdesk_workspace::phone_key::{self, ChordKey, FloatingCursor, KeyPress, NamedChordKey, Route};
 
 use crate::{borrow, deliver};
 
@@ -38,9 +40,6 @@ pub const PHONE_KEY_CONTROL: u32 = 1 << 1;
 pub const PHONE_KEY_OPTION: u32 = 1 << 2;
 /// ⌘.
 pub const PHONE_KEY_COMMAND: u32 = 1 << 3;
-/// The key is non-printable — an arrow, Esc, Tab, Return, Delete, a function key.
-pub const PHONE_KEY_SPECIAL: u32 = 1 << 4;
-
 /// The `named` value for a chord whose key is a printable character rather than a named one.
 pub const PHONE_KEY_NAMED_NONE: u8 = 0xFF;
 
@@ -48,14 +47,12 @@ pub const PHONE_KEY_NAMED_NONE: u8 = 0xFF;
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct SlopDeskPhoneKeyPress {
-    /// `UIKey.characters` as UTF-8.
-    pub characters: *const c_uchar,
-    /// Its length in bytes.
-    pub characters_len: usize,
     /// `UIKey.charactersIgnoringModifiers` as UTF-8.
     pub base: *const c_uchar,
     /// Its length in bytes.
     pub base_len: usize,
+    /// `UIKey.keyCode` — a USB HID keyboard usage, or `0` for a press that has none.
+    pub hid_usage: u16,
     /// `PHONE_KEY_*` bits.
     pub flags: u32,
 }
@@ -63,34 +60,30 @@ pub struct SlopDeskPhoneKeyPress {
 /// Rebuilds the borrowed press.
 ///
 /// # Safety
-/// Both `(ptr, len)` pairs must be null or describe that many live bytes for the call.
+/// `(base, base_len)` must be null or describe that many live bytes for the call.
 #[expect(
     unsafe_code,
-    reason = "rebuilding the borrowed press from its two `(ptr, len)` pairs is the marshalling itself"
+    reason = "rebuilding the borrowed press from its `(ptr, len)` pair is the marshalling itself"
 )]
 unsafe fn press_of(raw: &SlopDeskPhoneKeyPress) -> KeyPress<'_> {
     // SAFETY: the caller's obligation, restated above; `borrow` states its own. Text that is not
     // UTF-8 cannot have come from a `UIKey`, and reads as no characters rather than as a refusal —
     // the press then falls through to the proxy, which is the harmless half of the split.
-    let characters =
-        core::str::from_utf8(unsafe { borrow(raw.characters, raw.characters_len) }).unwrap_or("");
-    // SAFETY: as above.
     let base = core::str::from_utf8(unsafe { borrow(raw.base, raw.base_len) }).unwrap_or("");
     KeyPress {
-        characters,
         base,
+        hid_usage: raw.hid_usage,
         control: raw.flags & PHONE_KEY_CONTROL != 0,
         option: raw.flags & PHONE_KEY_OPTION != 0,
         command: raw.flags & PHONE_KEY_COMMAND != 0,
         shift: raw.flags & PHONE_KEY_SHIFT != 0,
-        is_special: raw.flags & PHONE_KEY_SPECIAL != 0,
     }
 }
 
-/// Whether this press is ENCODED rather than left to the text proxy.
+/// Whether this press is ENCODED rather than passed on to `UIKit`'s text input.
 ///
 /// # Safety
-/// `press` must point to a live record whose two `(ptr, len)` pairs are live for the call.
+/// `press` must point to a live record whose `(ptr, len)` pair is live for the call.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -111,7 +104,7 @@ pub unsafe extern "C" fn slopdesk_phone_key_routes_to_encoding(press: *const Slo
 /// shortcut. A `needed` above `cap` writes nothing and is the caller's cue to retry bigger.
 ///
 /// # Safety
-/// `press` must point to a live record whose two `(ptr, len)` pairs are live for the call, and
+/// `press` must point to a live record whose `(ptr, len)` pair is live for the call, and
 /// `(out, cap)` must be writable for `cap` bytes.
 #[unsafe(no_mangle)]
 #[expect(
@@ -143,7 +136,7 @@ pub unsafe extern "C" fn slopdesk_phone_key_encode(
 /// press is not a chord and the three out-parameters are untouched.
 ///
 /// # Safety
-/// `press` must point to a live record whose two `(ptr, len)` pairs are live for the call, and each
+/// `press` must point to a live record whose `(ptr, len)` pair is live for the call, and each
 /// non-null out-parameter must be writable.
 #[unsafe(no_mangle)]
 #[expect(
@@ -192,10 +185,15 @@ const fn named_index(key: NamedChordKey) -> u8 {
     match key {
         NamedChordKey::Return => NamedKey::Return.index(),
         NamedChordKey::Tab => NamedKey::Tab.index(),
+        NamedChordKey::Space => NamedKey::Space.index(),
         NamedChordKey::Left => NamedKey::Left.index(),
         NamedChordKey::Right => NamedKey::Right.index(),
         NamedChordKey::Up => NamedKey::Up.index(),
         NamedChordKey::Down => NamedKey::Down.index(),
+        NamedChordKey::PageUp => NamedKey::PageUp.index(),
+        NamedChordKey::PageDown => NamedKey::PageDown.index(),
+        NamedChordKey::Home => NamedKey::Home.index(),
+        NamedChordKey::End => NamedKey::End.index(),
     }
 }
 
@@ -299,39 +297,16 @@ pub unsafe extern "C" fn slopdesk_phone_floating_cursor_feed(
     unsafe { deliver(&bytes, out, cap) }
 }
 
-/// The arrow a signed run of floating-cursor bytes names, for a caller that wants the direction
-/// rather than the bytes — the accessory bar's own ← / → plates take the same path.
-///
-/// # Safety
-/// `(out, cap)` must be writable for `cap` bytes.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub const unsafe extern "C" fn slopdesk_phone_arrow_bytes(
-    rightward: bool,
-    application_cursor_keys: bool,
-    out: *mut c_uchar,
-    cap: usize,
-) -> usize {
-    let arrow = if rightward { Arrow::Right } else { Arrow::Left };
-    let bytes = phone_key::floating_cursor_bytes(arrow, application_cursor_keys);
-    // SAFETY: the caller's obligation; `deliver` writes at most `cap`.
-    unsafe { deliver(&bytes, out, cap) }
-}
-
 #[cfg(test)]
 #[expect(unsafe_code, reason = "calling the boundary IS what these tests are for")]
 mod tests {
     use super::*;
 
-    fn raw(characters: &str, base: &str, flags: u32) -> SlopDeskPhoneKeyPress {
+    fn raw(base: &str, hid_usage: u16, flags: u32) -> SlopDeskPhoneKeyPress {
         SlopDeskPhoneKeyPress {
-            characters: characters.as_ptr(),
-            characters_len: characters.len(),
             base: base.as_ptr(),
             base_len: base.len(),
+            hid_usage,
             flags,
         }
     }
@@ -342,8 +317,6 @@ mod tests {
         assert_eq!(u32::from(phone_key::MOD_CONTROL), PHONE_KEY_CONTROL);
         assert_eq!(u32::from(phone_key::MOD_OPTION), PHONE_KEY_OPTION);
         assert_eq!(u32::from(phone_key::MOD_COMMAND), PHONE_KEY_COMMAND);
-        // The special bit sits above all four, so it can never collide with a modifier.
-        const { assert!(PHONE_KEY_SPECIAL > PHONE_KEY_COMMAND) };
     }
 
     #[test]
@@ -351,10 +324,15 @@ mod tests {
         for (key, expected) in [
             (NamedChordKey::Return, NamedKey::Return),
             (NamedChordKey::Tab, NamedKey::Tab),
+            (NamedChordKey::Space, NamedKey::Space),
             (NamedChordKey::Left, NamedKey::Left),
             (NamedChordKey::Right, NamedKey::Right),
             (NamedChordKey::Up, NamedKey::Up),
             (NamedChordKey::Down, NamedKey::Down),
+            (NamedChordKey::PageUp, NamedKey::PageUp),
+            (NamedChordKey::PageDown, NamedKey::PageDown),
+            (NamedChordKey::Home, NamedKey::Home),
+            (NamedChordKey::End, NamedKey::End),
         ] {
             assert_eq!(named_index(key), expected.index());
             assert_eq!(NamedKey::from_index(named_index(key)), Some(expected));
@@ -366,14 +344,14 @@ mod tests {
     #[test]
     fn a_control_letter_encodes_and_a_command_one_does_not() {
         let mut out = [0_u8; 8];
-        let press = raw("c", "c", PHONE_KEY_CONTROL);
-        // SAFETY: both strings and the buffer are live locals.
+        let press = raw("c", phone_key::HID_NONE, PHONE_KEY_CONTROL);
+        // SAFETY: the string and the buffer are live locals.
         let written =
             unsafe { slopdesk_phone_key_encode(&raw const press, false, out.as_mut_ptr(), out.len()) };
         assert_eq!(written, 1);
         assert_eq!(out.first(), Some(&0x03));
 
-        let press = raw("k", "k", PHONE_KEY_COMMAND);
+        let press = raw("k", phone_key::HID_NONE, PHONE_KEY_COMMAND);
         // SAFETY: as above.
         let written =
             unsafe { slopdesk_phone_key_encode(&raw const press, false, out.as_mut_ptr(), out.len()) };
@@ -381,19 +359,27 @@ mod tests {
     }
 
     #[test]
-    fn the_cursor_mode_reaches_the_door() {
+    fn the_usage_and_the_cursor_mode_reach_the_door() {
         let mut out = [0_u8; 8];
-        let press = raw("\u{F700}", "\u{F700}", PHONE_KEY_SPECIAL);
-        // SAFETY: both strings and the buffer are live locals.
+        // No characters at all — the key is named by its usage, which is the whole point.
+        let press = raw("", phone_key::HID_UP, 0);
+        // SAFETY: the string and the buffer are live locals.
         let written =
             unsafe { slopdesk_phone_key_encode(&raw const press, true, out.as_mut_ptr(), out.len()) };
         assert_eq!(out.get(..written), Some([0x1B, 0x4F, b'A'].as_slice()));
+
+        // And the nav block a characters-keyed record could not carry (`docs/29` #7).
+        let press = raw("", phone_key::HID_PAGE_UP, 0);
+        // SAFETY: as above.
+        let written =
+            unsafe { slopdesk_phone_key_encode(&raw const press, false, out.as_mut_ptr(), out.len()) };
+        assert_eq!(out.get(..written), Some([0x1B, 0x5B, b'5', b'~'].as_slice()));
     }
 
     #[test]
     fn a_chord_crosses_as_an_index_or_a_scalar() {
         let (mut named, mut character, mut modifiers) = (0_u8, 0_u32, 0_u8);
-        let press = raw("\r", "\r", PHONE_KEY_SPECIAL | PHONE_KEY_COMMAND);
+        let press = raw("", phone_key::HID_RETURN, PHONE_KEY_COMMAND);
         // SAFETY: the record and all three out-parameters are live locals.
         let found = unsafe {
             slopdesk_phone_key_chord(
@@ -407,7 +393,7 @@ mod tests {
         assert_eq!(named, NamedKey::Return.index());
         assert_eq!(modifiers, phone_key::MOD_COMMAND);
 
-        let press = raw("P", "P", PHONE_KEY_COMMAND | PHONE_KEY_SHIFT);
+        let press = raw("P", phone_key::HID_NONE, PHONE_KEY_COMMAND | PHONE_KEY_SHIFT);
         // SAFETY: as above.
         let found = unsafe {
             slopdesk_phone_key_chord(
@@ -471,14 +457,6 @@ mod tests {
         let threshold = slopdesk_phone_accessory_threshold();
         assert!(!slopdesk_phone_shows_accessory_bar(threshold - 1.0, threshold));
         assert!(slopdesk_phone_shows_accessory_bar(threshold, threshold));
-    }
-
-    #[test]
-    fn a_bare_arrow_crosses_without_an_accumulator() {
-        let mut out = [0_u8; 4];
-        // SAFETY: the buffer is a live local.
-        let written = unsafe { slopdesk_phone_arrow_bytes(false, true, out.as_mut_ptr(), out.len()) };
-        assert_eq!(out.get(..written), Some([0x1B, 0x4F, b'D'].as_slice()));
     }
 
     #[test]

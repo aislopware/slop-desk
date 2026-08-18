@@ -4992,6 +4992,25 @@ if [[ -n "${key_rules}" ]]; then
   printf '%s\n' "${key_rules}" >&2
   fail "a phone key RULE grew back in Swift — the fold, the introducer and the arrows are Rust"
 fi
+# The RESPONDER is the other place a rule would grow, and the likelier one: it is the file holding a
+# live `UIKey`, so a table there would look local rather than duplicated. It must spell no escape
+# sequence and no HID number — `UIKeyboardHIDUsage`'s own cases are the only spelling of a usage
+# allowed, and what each one MEANS is `slopdesk_workspace::phone_key`'s alone.
+host_swift=Sources/SlopDeskClientUI/Pane/TerminalInputHost.swift
+if [[ ! -e "${host_swift}" ]]; then
+  fail "${host_swift} is gone — without it the phone's terminal cannot receive a keystroke (docs/56 §16)"
+fi
+host_rules=$(spells '0x1B|0x5B|0x4F|u\{1B\}|\\u\{F70|& 0x1F|hidUsage: [0-9]' "${host_swift}" 2> /dev/null || true)
+if [[ -n "${host_rules}" ]]; then
+  printf '%s\n' "${host_rules}" >&2
+  fail "the phone's responder spelled a key RULE — it reads a UIKey and asks PhoneKey, it decides nothing"
+fi
+for call in PhoneKey.routesToKeyEncoding PhoneKey.encode PhoneKey.keyChord PhoneKey.foldArmedControl \
+  PhoneKey.showsAccessoryBar; do
+  if ! grep -qF "${call}" "${host_swift}"; then
+    fail "${host_swift} stopped asking ${call} — a question it answers itself is a rule written twice"
+  fi
+done
 # And the marshaller must actually call the doors it claims to. A `PhoneKey` that quietly answered
 # from Swift again would pass every test above.
 for door in slopdesk_phone_key_routes_to_encoding slopdesk_phone_key_encode slopdesk_phone_key_chord \

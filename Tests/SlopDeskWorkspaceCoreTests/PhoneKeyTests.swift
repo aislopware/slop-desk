@@ -11,59 +11,104 @@ import XCTest
 /// a round trip through the boundary — which is the one piece of state on the near side and
 /// therefore the one thing a marshalling bug could silently drop.
 final class PhoneKeyTests: XCTestCase {
+    // Usages spelled as numbers rather than through `UIKeyboardHIDUsage`, because this suite runs on
+    // the macOS test runner where UIKit does not exist. They are the USB HID keyboard page's, and
+    // `slopdesk_workspace::phone_key` pins each one against the key it names.
+    private enum HID {
+        static let escape: UInt16 = 41
+        static let tab: UInt16 = 43
+        static let space: UInt16 = 44
+        static let up: UInt16 = 82
+        static let left: UInt16 = 80
+        static let home: UInt16 = 74
+        static let pageUp: UInt16 = 75
+        static let f5: UInt16 = 62
+        static let backspace: UInt16 = 42
+        static let returnKey: UInt16 = 40
+    }
+
     // MARK: The two paths
 
     func testTypingGoesToTheProxyAndModifiersToTheEncoder() {
-        XCTAssertEqual(PhoneKey.route(PhoneKey.Press(characters: "a")), .imeProxy)
+        XCTAssertEqual(PhoneKey.route(PhoneKey.Press(charactersIgnoringModifiers: "a")), .imeProxy)
         // A CJK commit is the reason the split exists at all.
-        XCTAssertEqual(PhoneKey.route(PhoneKey.Press(characters: "日")), .imeProxy)
+        XCTAssertEqual(PhoneKey.route(PhoneKey.Press(charactersIgnoringModifiers: "日")), .imeProxy)
         XCTAssertEqual(
-            PhoneKey.route(PhoneKey.Press(characters: "\u{03}", charactersIgnoringModifiers: "c", control: true)),
+            PhoneKey.route(PhoneKey.Press(charactersIgnoringModifiers: " ", hidUsage: HID.space)),
+            .imeProxy,
+            "the space bar types",
+        )
+        XCTAssertEqual(
+            PhoneKey.route(PhoneKey.Press(charactersIgnoringModifiers: "c", control: true)),
             .keyEncoding,
         )
         XCTAssertEqual(
-            PhoneKey.route(PhoneKey.Press(characters: "∫", charactersIgnoringModifiers: "b", option: true)),
+            PhoneKey.route(PhoneKey.Press(charactersIgnoringModifiers: "b", option: true)),
             .keyEncoding,
         )
-        XCTAssertEqual(PhoneKey.route(PhoneKey.Press(characters: "c", command: true)), .keyEncoding)
-        let esc = PhoneKey.Press(characters: "", isSpecial: true)
+        XCTAssertEqual(
+            PhoneKey.route(PhoneKey.Press(charactersIgnoringModifiers: "c", command: true)),
+            .keyEncoding,
+        )
+        let esc = PhoneKey.Press(hidUsage: HID.escape)
         XCTAssertEqual(PhoneKey.route(esc), .keyEncoding)
         XCTAssertTrue(PhoneKey.routesToKeyEncoding(esc))
     }
 
     // MARK: The bytes
 
-    /// Both strings reach the door: the fold reads `charactersIgnoringModifiers` while the special
-    /// tables read `characters`, so a marshaller that sent one string twice would fail exactly here.
-    func testBothStringsReachTheDoor() {
-        let altB = PhoneKey.Press(characters: "∫", charactersIgnoringModifiers: "b", option: true)
+    /// The usage and the base string both reach the door, and each answers its own question: the
+    /// usage names the key, the string is only ever the layout's base for a fold or a meta prefix.
+    func testTheUsageAndTheBaseBothReachTheDoor() {
+        let altB = PhoneKey.Press(charactersIgnoringModifiers: "b", option: true)
         XCTAssertEqual(PhoneKey.encode(altB), [0x1B, 0x62], "⌥b takes the base letter, not the layout's ∫")
-        let ctrlBracket = PhoneKey.Press(characters: "[", charactersIgnoringModifiers: "[", control: true)
+        let ctrlBracket = PhoneKey.Press(charactersIgnoringModifiers: "[", control: true)
         XCTAssertEqual(PhoneKey.encode(ctrlBracket), [0x1B], "⌃[ is ESC")
-        let shiftTab = PhoneKey.Press(characters: "\t", shift: true, isSpecial: true)
+        let shiftTab = PhoneKey.Press(hidUsage: HID.tab, shift: true)
         XCTAssertEqual(PhoneKey.encode(shiftTab), [0x1B, 0x5B, 0x5A], "⇧ is the only back-tab discriminator")
     }
 
-    /// The live cursor-key mode is threaded per call, not remembered.
+    /// The nav block, which a press keyed by its committed characters could not carry at all
+    /// (`docs/29` #7) — these keys commit nothing a table can match.
+    func testTheNavBlockCrossesOnItsUsageAlone() {
+        XCTAssertEqual(PhoneKey.encode(PhoneKey.Press(hidUsage: HID.home)), [0x1B, 0x5B, 0x48])
+        XCTAssertEqual(PhoneKey.encode(PhoneKey.Press(hidUsage: HID.pageUp)), [0x1B, 0x5B, 0x35, 0x7E])
+        XCTAssertEqual(
+            PhoneKey.encode(PhoneKey.Press(hidUsage: HID.f5)),
+            [0x1B, 0x5B, 0x31, 0x35, 0x7E],
+        )
+    }
+
+    /// The live cursor-key mode is threaded per call, not remembered, and it steers the cursor block
+    /// only.
     func testTheCursorModeIsThreadedThrough() {
-        let up = PhoneKey.Press(characters: "\u{F700}", isSpecial: true)
+        let up = PhoneKey.Press(hidUsage: HID.up)
         XCTAssertEqual(PhoneKey.encode(up), [0x1B, 0x5B, 0x41])
         XCTAssertEqual(PhoneKey.encode(up, applicationCursorKeys: true), [0x1B, 0x4F, 0x41])
-        let esc = PhoneKey.Press(characters: "\u{1B}", isSpecial: true)
-        XCTAssertEqual(PhoneKey.encode(esc, applicationCursorKeys: true), [0x1B], "DECCKM steers only arrows")
+        XCTAssertEqual(
+            PhoneKey.encode(PhoneKey.Press(hidUsage: HID.home), applicationCursorKeys: true),
+            [0x1B, 0x4F, 0x48],
+        )
+        let esc = PhoneKey.Press(hidUsage: HID.escape)
+        XCTAssertEqual(PhoneKey.encode(esc, applicationCursorKeys: true), [0x1B], "DECCKM steers only the cursor block")
     }
 
     /// A press that sends nothing is `nil`, not an empty array — the door's zero length says so, and
     /// a caller writing `[]` to a pane would be writing a keystroke the user never made.
     func testAPressThatSendsNothingIsNil() {
-        XCTAssertNil(PhoneKey.encode(PhoneKey.Press(characters: "c", command: true)))
-        XCTAssertNil(PhoneKey.encode(PhoneKey.Press(characters: "")))
+        XCTAssertNil(PhoneKey.encode(PhoneKey.Press(charactersIgnoringModifiers: "c", command: true)))
+        XCTAssertNil(
+            PhoneKey.encode(PhoneKey.Press(hidUsage: HID.left, command: true)),
+            "⌘← is a shortcut that missed, not terminal input",
+        )
+        XCTAssertNil(PhoneKey.encode(PhoneKey.Press(charactersIgnoringModifiers: "a")), "typing is the proxy's")
+        XCTAssertNil(PhoneKey.encode(PhoneKey.Press()))
     }
 
     /// A base longer than the inline buffer takes the door's retry protocol rather than truncating.
     func testALongBaseRetriesRatherThanTruncating() {
         let long = String(repeating: "é", count: 40) // 80 UTF-8 bytes, well past the inline buffer
-        let press = PhoneKey.Press(characters: long, charactersIgnoringModifiers: long, option: true)
+        let press = PhoneKey.Press(charactersIgnoringModifiers: long, option: true)
         XCTAssertEqual(PhoneKey.encode(press), [0x1B] + Array(long.utf8))
     }
 
@@ -89,10 +134,13 @@ final class PhoneKeyTests: XCTestCase {
         XCTAssertTrue(PhoneKey.showsAccessoryBar(keyboardHeight: 336))
     }
 
-    func testABarePlateArrowFollowsTheMode() {
-        XCTAssertEqual(PhoneKey.arrowBytes(rightward: true), [0x1B, 0x5B, 0x43])
-        XCTAssertEqual(PhoneKey.arrowBytes(rightward: false), [0x1B, 0x5B, 0x44])
-        XCTAssertEqual(PhoneKey.arrowBytes(rightward: false, applicationCursorKeys: true), [0x1B, 0x4F, 0x44])
+    /// The bar's plates are synthesized presses, so the same encoder answers them.
+    func testTheBarsPlatesAreOrdinaryPresses() {
+        XCTAssertEqual(PhoneKey.encode(PhoneKey.Press(hidUsage: HID.escape)), [0x1B])
+        XCTAssertEqual(PhoneKey.encode(PhoneKey.Press(hidUsage: HID.tab)), [0x09])
+        XCTAssertEqual(PhoneKey.encode(PhoneKey.Press(hidUsage: HID.left)), [0x1B, 0x5B, 0x44])
+        XCTAssertEqual(PhoneKey.encode(PhoneKey.Press(hidUsage: HID.backspace)), [0x7F])
+        XCTAssertEqual(PhoneKey.encode(PhoneKey.Press(hidUsage: HID.returnKey)), [0x0D])
     }
 
     // MARK: The floating cursor

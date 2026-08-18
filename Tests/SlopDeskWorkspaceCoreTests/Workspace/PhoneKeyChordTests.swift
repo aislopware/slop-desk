@@ -12,19 +12,33 @@ import XCTest
 @MainActor
 final class PhoneKeyChordTests: XCTestCase {
     private func press(
-        _ chars: String,
-        ignoring: String? = nil,
+        _ base: String = "",
+        usage: UInt16 = 0,
         control: Bool = false,
         option: Bool = false,
         command: Bool = false,
         shift: Bool = false,
-        special: Bool = false,
     ) -> PhoneKey.Press {
         PhoneKey.Press(
-            characters: chars,
-            charactersIgnoringModifiers: ignoring ?? chars,
-            control: control, option: option, command: command, shift: shift, isSpecial: special,
+            charactersIgnoringModifiers: base, hidUsage: usage,
+            control: control, option: option, command: command, shift: shift,
         )
+    }
+
+    /// The USB HID keyboard usages `UIKey.keyCode` reports, spelled as numbers because this suite
+    /// runs on the macOS runner. `slopdesk_workspace::phone_key` pins each against the key it names.
+    private enum HID {
+        static let returnKey: UInt16 = 40
+        static let tab: UInt16 = 43
+        static let space: UInt16 = 44
+        static let home: UInt16 = 74
+        static let pageUp: UInt16 = 75
+        static let pageDown: UInt16 = 78
+        static let end: UInt16 = 77
+        static let right: UInt16 = 79
+        static let left: UInt16 = 80
+        static let down: UInt16 = 81
+        static let up: UInt16 = 82
     }
 
     /// A printable letter carries its base from `charactersIgnoringModifiers` and its modifiers beside it.
@@ -37,7 +51,7 @@ final class PhoneKeyChordTests: XCTestCase {
     /// All four modifier bits survive at once, in the table's own numbering.
     func testEveryModifierBitSurvivesTheCrossing() {
         XCTAssertEqual(
-            PhoneKey.keyChord(for: press("P", ignoring: "P", control: true, option: true, command: true, shift: true)),
+            PhoneKey.keyChord(for: press("P", control: true, option: true, command: true, shift: true)),
             KeyChord(character: "p", [.shift, .control, .option, .command]),
         )
     }
@@ -52,12 +66,35 @@ final class PhoneKeyChordTests: XCTestCase {
     /// through `KeyChord.Key(namedIndex:)`, so a case this build does not know is a `nil` rather
     /// than a guess.
     func testSpecialKeysMapToNamedChords() {
-        XCTAssertEqual(PhoneKey.keyChord(for: press("\r", special: true)), KeyChord(.return))
-        XCTAssertEqual(PhoneKey.keyChord(for: press("\t", special: true)), KeyChord(.tab))
-        XCTAssertEqual(PhoneKey.keyChord(for: press("\u{F702}", special: true)), KeyChord(.leftArrow))
-        XCTAssertEqual(PhoneKey.keyChord(for: press("\u{F703}", special: true)), KeyChord(.rightArrow))
-        XCTAssertEqual(PhoneKey.keyChord(for: press("\u{F700}", special: true)), KeyChord(.upArrow))
-        XCTAssertEqual(PhoneKey.keyChord(for: press("\u{F701}", special: true)), KeyChord(.downArrow))
+        XCTAssertEqual(PhoneKey.keyChord(for: press(usage: HID.returnKey)), KeyChord(.return))
+        XCTAssertEqual(PhoneKey.keyChord(for: press(usage: HID.tab)), KeyChord(.tab))
+        XCTAssertEqual(PhoneKey.keyChord(for: press(usage: HID.left)), KeyChord(.leftArrow))
+        XCTAssertEqual(PhoneKey.keyChord(for: press(usage: HID.right)), KeyChord(.rightArrow))
+        XCTAssertEqual(PhoneKey.keyChord(for: press(usage: HID.up)), KeyChord(.upArrow))
+        XCTAssertEqual(PhoneKey.keyChord(for: press(usage: HID.down)), KeyChord(.downArrow))
+    }
+
+    /// The four the phone could not name while a chord was keyed by what a key committed — Home,
+    /// End and the page keys commit nothing at all, so they were unbindable here (`docs/29` #7).
+    func testTheNavBlockIsBindableToo() {
+        XCTAssertEqual(PhoneKey.keyChord(for: press(usage: HID.home)), KeyChord(.home))
+        XCTAssertEqual(PhoneKey.keyChord(for: press(usage: HID.end)), KeyChord(.end))
+        XCTAssertEqual(PhoneKey.keyChord(for: press(usage: HID.pageUp)), KeyChord(.pageUp))
+        XCTAssertEqual(
+            PhoneKey.keyChord(for: press(usage: HID.pageDown, command: true)),
+            KeyChord(.pageDown, [.command]),
+        )
+    }
+
+    /// Space is a chord only once a non-⇧ modifier is held — the same Vi-mode rule the Mac's
+    /// dispatcher applies to its own key code, so ⌃⇧Space is bindable and a space is still a space.
+    func testSpaceIsAChordOnlyWithARealModifier() {
+        XCTAssertNil(PhoneKey.keyChord(for: press(" ", usage: HID.space)))
+        XCTAssertNil(PhoneKey.keyChord(for: press(" ", usage: HID.space, shift: true)))
+        XCTAssertEqual(
+            PhoneKey.keyChord(for: press(" ", usage: HID.space, control: true, shift: true)),
+            KeyChord(.space, [.shift, .control]),
+        )
     }
 
     /// End to end: a phone press → `keyChord` → the SAME ``TerminalKeyInterceptor`` the Mac drives.

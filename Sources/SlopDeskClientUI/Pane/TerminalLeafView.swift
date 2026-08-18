@@ -144,6 +144,18 @@ struct TerminalLeafView: View {
     private var terminalSurface: some View {
         ZStack(alignment: .topLeading) {
             if let model = live?.terminalModel {
+                // The phone's KEY responder, under the pixels and behind every overlay. On macOS
+                // the renderer is the first responder and this does not exist; on iOS the renderer
+                // is a Metal layer that answers no key event, so without this mount the pane cannot
+                // receive a keystroke at all. Zero-sized and touch-transparent — it holds first
+                // responder, the accessory row and the press handlers, nothing visual.
+                #if os(iOS)
+                if !staticMirror, let live {
+                    TerminalInputHost(live: live, focusCoordinator: store.focusCoordinator)
+                        .frame(width: 0, height: 0)
+                        .allowsHitTesting(false)
+                }
+                #endif
                 letterboxed(model: model) {
                     if TerminalRendererFactory.shared != nil {
                         TerminalRendererFactory.make(model: model, isFocused: isFocused)
