@@ -12,6 +12,7 @@
 // tokens in the first place.
 
 import AppKit
+import SlopDeskClientUI // Slate — the ONE token ladder, in its native (NSColor/NSFont) view
 
 /// A checkbox that reports its new state.
 final class MacActionSwitch: NSSwitch {
@@ -29,6 +30,69 @@ final class MacActionSwitch: NSSwitch {
 
     @objc
     private func fire() { handler(state == .on) }
+}
+
+/// A push button that runs its own closure.
+final class MacActionButton: NSButton {
+    private let handler: () -> Void
+
+    init(title: String, _ handler: @escaping () -> Void) {
+        self.handler = handler
+        super.init(frame: .zero)
+        self.title = title
+        bezelStyle = .rounded
+        target = self
+        action = #selector(fire)
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) { nil }
+
+    @objc
+    private func fire() { handler() }
+}
+
+/// A vertical radio group whose buttons stand for TOKENS.
+///
+/// A settings page answers "pick one of a few" with a pop-up, because a page of twenty rows cannot
+/// spend four lines on each. A first-launch STEP is the opposite shape — one question, a whole card to
+/// ask it in — so the choices are laid out where a reader can see both at once without a click. Same
+/// option catalog, same tokens; the widget is what the surface decides.
+final class MacActionRadios: NSStackView {
+    private let tokens: [String]
+    private let handler: (String) -> Void
+    private var buttons: [NSButton] = []
+
+    init(tokens: [String], titles: [String], _ handler: @escaping (String) -> Void) {
+        self.tokens = tokens
+        self.handler = handler
+        super.init(frame: .zero)
+        orientation = .vertical
+        alignment = .leading
+        spacing = Slate.Metric.space1
+        translatesAutoresizingMaskIntoConstraints = false
+        for title in titles {
+            let button = NSButton(radioButtonWithTitle: title, target: self, action: #selector(fire))
+            buttons.append(button)
+            addArrangedSubview(button)
+        }
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) { nil }
+
+    /// Show the button standing for `token`. A token no button stands for selects NOTHING rather than
+    /// falling to the first, which would show the reader a value they do not have.
+    func selectToken(_ token: String) {
+        guard let index = tokens.firstIndex(of: token) else { return }
+        for (position, button) in buttons.enumerated() { button.state = position == index ? .on : .off }
+    }
+
+    @objc
+    private func fire(_ sender: NSButton) {
+        guard let index = buttons.firstIndex(of: sender), tokens.indices.contains(index) else { return }
+        handler(tokens[index])
+    }
 }
 
 /// A pop-up whose items stand for TOKENS, reported by token rather than by index.

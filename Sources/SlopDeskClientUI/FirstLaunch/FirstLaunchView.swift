@@ -1,15 +1,19 @@
-// The guided first-launch sheet.
+// The guided first-launch checklist, in SwiftUI.
 //
-// A non-blocking, one-time setup flow composing already-built settings into a first-launch checklist
-// (`spec/getting-started__first-launch.md`, governed by the 6 screenshots): On-Launch, Set-as-Default-
-// Terminal (LOCAL handler; the remote "Common Apps" case honestly-DISABLED with a note), Install-CLI (the
-// macOS `CLIInstaller` symlink + Omit-Prefix + Allow-Overwrite) and Install-Claude-hooks
-// (the `AgentHooksController` card). The gating + step order live in the PURE `FirstLaunchModel`
-// (`SlopDeskWorkspaceCore`); this is the view layer only — compiled + HW-verified, never unit-tested.
+// A non-blocking, one-time setup flow composing already-built settings into a checklist
+// (`spec/getting-started__first-launch.md`, governed by the 6 screenshots). The gating + step order live
+// in the PURE `FirstLaunchModel` (`SlopDeskWorkspaceCore`); this is the view layer only — compiled +
+// HW-verified, never unit-tested.
 //
-// iOS keeps the cross-platform steps (On-Launch, Claude-hooks); `FirstLaunchModel.steps(for: .iOS)`
-// drops the two macOS-only OS-integration steps, so the macOS-only step bodies (`#if os(macOS)`) are never
-// reached on iOS.
+// WHO RENDERS THIS. `FirstLaunchView` is the PHONE's shell: `FirstLaunchModel.steps(for: .iOS)` drops the
+// two macOS-only OS-integration steps, so the phone's checklist is On-Launch and Claude-hooks. The Mac
+// draws its own shell in AppKit (`SlopDeskMacUI/FirstLaunch`) from the SAME model, and draws those two
+// macOS-only steps itself — registering as the default terminal is LaunchServices and installing the CLI
+// is `/usr/local/bin`, neither of which the phone has a version of.
+//
+// The two CROSS-PLATFORM step bodies are drawn once, here, and reached through ``FirstLaunchStepSurface``
+// — the Mac hosts it. The same division the settings page makes: a control KIND each half draws its own
+// way, a SURFACE there is nothing to differ about.
 
 #if canImport(SwiftUI)
 import Defaults
@@ -72,28 +76,8 @@ public struct FirstLaunchView: View {
         .padding(Slate.Metric.space4)
     }
 
-    // MARK: - Step body (exhaustive switch; macOS-only cases never reached on iOS)
-
-    @ViewBuilder
     private var stepBody: some View {
-        switch model.currentStep {
-        case .onLaunch:
-            FirstLaunchOnLaunchStep()
-        case .installClaudeHooks:
-            FirstLaunchClaudeHooksStep(model: model)
-        case .defaultTerminal:
-            #if os(macOS)
-            FirstLaunchDefaultTerminalStep(model: model)
-            #else
-            EmptyView()
-            #endif
-        case .installCLI:
-            #if os(macOS)
-            FirstLaunchInstallCLIStep(model: model)
-            #else
-            EmptyView()
-            #endif
-        }
+        FirstLaunchStepSurface(step: model.currentStep, model: model)
     }
 
     // MARK: - Footer
@@ -134,6 +118,33 @@ public struct FirstLaunchView: View {
     private func finishAndDismiss() {
         model.finish()
         dismiss()
+    }
+}
+
+// MARK: - The step bodies both platforms show
+
+/// One step's body, by the step.
+///
+/// The two CROSS-PLATFORM steps have a body here; the two macOS-only ones do not, and draw nothing —
+/// the honest answer, since the phone never reaches them and the Mac draws its own. That is the same
+/// contract `SettingsBespokeSurface` holds for an id it has no surface for.
+package struct FirstLaunchStepSurface: View {
+    private let step: FirstLaunchStep
+    private let model: FirstLaunchModel
+
+    package init(step: FirstLaunchStep, model: FirstLaunchModel) {
+        self.step = step
+        self.model = model
+    }
+
+    package var body: some View {
+        switch step {
+        case .onLaunch: FirstLaunchOnLaunchStep()
+        case .installClaudeHooks: FirstLaunchClaudeHooksStep(model: model)
+        case .defaultTerminal,
+             .installCLI:
+            EmptyView()
+        }
     }
 }
 
@@ -271,178 +282,4 @@ struct FirstLaunchNote: View {
     }
 }
 
-#if os(macOS)
-
-// MARK: - Step 2 · Set as Default Terminal (macOS-only — LOCAL handler)
-
-/// Step 2 — register the app as the LOCAL OS handler for terminal URL schemes / shell scripts, plus the
-/// Finder-Integration and Full-Disk-Access deep-links. The "Set as Default Terminal for Common Apps" remote
-/// case is honestly-DISABLED with a note (no dead button: a remote-host editor's config
-/// can't be rewritten from the client).
-private struct FirstLaunchDefaultTerminalStep: View {
-    let model: FirstLaunchModel
-    @State private var isDefault = false
-
-    var body: some View {
-        FirstLaunchCard {
-            actionRow(
-                "Default Terminal",
-                "Handle `ssh://` links and shell scripts opened from Finder or `open`.",
-            ) {
-                if isDefault {
-                    Label("Default", systemImage: "checkmark").foregroundStyle(Slate.StatusInk.ok)
-                } else {
-                    Button("Set as Default Terminal") {
-                        Task {
-                            await DefaultTerminalIntegration.setAsDefaultTerminal()
-                            isDefault = DefaultTerminalIntegration.isDefaultTerminal()
-                            if isDefault { model.markComplete(.defaultTerminal) }
-                        }
-                    }
-                    .buttonStyle(.bordered)
-                }
-            }
-            // Honestly-disabled remote case (no dead button) — a documented note, not a Configure… button.
-            actionRow(
-                "Default Terminal for Common Apps",
-                "Editors and git GUIs hardcode Terminal.app. Rewriting their config only works for a LOCAL "
-                    + "editor — an editor on the remote host needs a host-side agent, so this is unavailable "
-                    + "in the remote model.",
-            ) {
-                Text("Unavailable").foregroundStyle(Slate.Text.tertiary)
-            }
-            actionRow(
-                "Finder Integration",
-                "Add \u{201C}Open in SlopDesk\u{201D} to Finder's right-click Services menu for folders.",
-            ) {
-                Button("Open System Settings") { DefaultTerminalIntegration.openFinderServicesSettings() }
-                    .buttonStyle(.bordered)
-            }
-            actionRow(
-                "Full Disk Access",
-                "Needed when commands run inside SlopDesk must read or write protected files. The app works "
-                    + "without it.",
-            ) {
-                Button("Open System Settings") { DefaultTerminalIntegration.openFullDiskAccessSettings() }
-                    .buttonStyle(.bordered)
-            }
-        }
-        .onAppear { isDefault = DefaultTerminalIntegration.isDefaultTerminal() }
-    }
-
-    private func actionRow(
-        _ title: String,
-        _ subtitle: String,
-        @ViewBuilder trailing: () -> some View,
-    ) -> some View {
-        HStack(alignment: .top, spacing: Slate.Metric.space3) {
-            VStack(alignment: .leading, spacing: Slate.Metric.space1) {
-                Text(title)
-                    .font(.system(size: Slate.Typeface.base, weight: .semibold))
-                    .foregroundStyle(Slate.Text.primary)
-                Text(subtitle)
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: Slate.Metric.space2)
-            trailing()
-        }
-    }
-}
-
-// MARK: - Step 3 · Install the SlopDesk CLI (macOS-only)
-
-/// Step 3 — install the `/usr/local/bin/slopdesk` symlink (admin-once via `CLIInstaller`), the
-/// Omit-Prefix shell-function toggle, and the Allow-Overwrite toggle. The toggles drive `CLIInstaller`'s
-/// shim-file write (the SAME card lives in Settings → Shell).
-private struct FirstLaunchInstallCLIStep: View {
-    let model: FirstLaunchModel
-    @State private var installer = CLIInstaller()
-
-    var body: some View {
-        FirstLaunchCard {
-            CLIInstallCardBody(installer: installer, onInstalled: { model.markComplete(.installCLI) })
-        }
-        .onAppear { installer.refreshInstalled() }
-    }
-}
-
-// MARK: - Shared CLI-install card body (first-launch step 3 + Settings → Shell)
-
-/// The "SlopDesk CLI" card body — Install/Uninstall (admin-once via ``CLIInstaller``), the Omit-Prefix
-/// toggle, and the Allow-Overwrite toggle — shared by the first-launch step and the Settings → Shell card so
-/// the two are byte-identical (one source). The toggles drive ``CLIInstaller/applyOmitPrefix(enabled:allowOverwrite:)``
-/// (writes the shim file). macOS-only.
-struct CLIInstallCardBody: View {
-    /// The shared install controller (owned by the presenting view's `@State`; read here via Observation).
-    let installer: CLIInstaller
-    /// Called when an install SUCCEEDS (the first-launch step marks itself complete; Settings passes nil).
-    let onInstalled: (() -> Void)?
-    @Default(.cliInstalled) private var cliInstalled
-    @Default(.omitCLIPrefix) private var omitPrefix
-    @Default(.allowPrefixOverwrite) private var allowOverwrite
-
-    init(installer: CLIInstaller, onInstalled: (() -> Void)? = nil) {
-        self.installer = installer
-        self.onInstalled = onInstalled
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Slate.Metric.space3) {
-            installRow
-            Divider().overlay(Slate.Line.divider)
-            Toggle("Omit `slopdesk` Prefix", isOn: $omitPrefix)
-                .onChange(of: omitPrefix) { _, on in
-                    installer.applyOmitPrefix(enabled: on, allowOverwrite: allowOverwrite)
-                }
-            FirstLaunchNote("Expose `edit`, `view`, `watch`, `jump`, and `learn` as bare commands in shells "
-                + "launched by SlopDesk.")
-            Toggle("Allow Overwrite", isOn: $allowOverwrite)
-                .onChange(of: allowOverwrite) { _, _ in
-                    if omitPrefix { installer.applyOmitPrefix(enabled: true, allowOverwrite: allowOverwrite) }
-                }
-            FirstLaunchNote("Leave OFF unless you already have your own `edit`/`view`/… functions you want "
-                + "SlopDesk to replace.")
-            if installer.phase == .failed, let message = installer.errorMessage {
-                FirstLaunchNote(message)
-            }
-        }
-    }
-
-    private var installRow: some View {
-        HStack(alignment: .top, spacing: Slate.Metric.space3) {
-            VStack(alignment: .leading, spacing: Slate.Metric.space1) {
-                Text("Install CLI")
-                    .font(.system(size: Slate.Typeface.base, weight: .semibold))
-                    .foregroundStyle(Slate.Text.primary)
-                Text("Adds `/usr/local/bin/slopdesk` (requests admin once).")
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: Slate.Metric.space2)
-            installControl
-        }
-    }
-
-    @ViewBuilder
-    private var installControl: some View {
-        if installer.phase == .working {
-            ProgressView().controlSize(.small)
-        } else if cliInstalled {
-            HStack(spacing: Slate.Metric.space2) {
-                Label("Installed", systemImage: "checkmark").foregroundStyle(Slate.StatusInk.ok)
-                Button("Uninstall") { Task { await installer.uninstall() } }
-                    .buttonStyle(.bordered)
-            }
-        } else {
-            Button("Install") {
-                Task { if await installer.install() { onInstalled?() } }
-            }
-            .buttonStyle(.bordered)
-        }
-    }
-}
-#endif
 #endif

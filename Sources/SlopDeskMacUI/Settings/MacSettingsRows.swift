@@ -106,7 +106,7 @@ struct MacSettingsRowBuilder {
         }
     }
 
-    /// A bespoke group, hosted rather than redrawn.
+    /// A bespoke group: the Mac's own where it is the Mac's alone, hosted where it is not.
     ///
     /// Every DESCRIBED row above is drawn twice on purpose: a switch wants to be an `NSSwitch` here and
     /// a `Toggle` there, and that difference is the whole reason the two halves exist. A bespoke
@@ -114,9 +114,18 @@ struct MacSettingsRowBuilder {
     /// a searchable index of two hundred keys, a free-text override box — so there is nothing for the
     /// halves to differ ABOUT, and drawing it twice would be two chances to get the same words wrong.
     ///
-    /// `.intrinsicContentSize` is what makes a SwiftUI subtree behave as a stack view arrangement:
-    /// the host reports the size SwiftUI measured, and the column lays it out like any other row.
+    /// The two below are the reverse case: the layout table gates them to `Platform::Mac` and their
+    /// content is LaunchServices and `/usr/local/bin`, so there is no other half. They are AppKit, and
+    /// the SAME views the first-launch checklist shows — which is what stopped them being two copies of
+    /// four rows of prose that had already begun to drift.
     private func bespoke(_ id: String) -> NSView {
+        switch id {
+        case "os-integration": return MacOSIntegrationRows()
+        case "cli-install": return MacCLIInstallCard()
+        default: break
+        }
+        // `.intrinsicContentSize` is what makes a SwiftUI subtree behave as a stack view arrangement:
+        // the host reports the size SwiftUI measured, and the column lays it out like any other row.
         let host = NSHostingView(
             rootView: VStack(alignment: .leading, spacing: Slate.Metric.space2) {
                 SettingsBespokeSurface(id: id, store: bindings.store, onJump: onJump)

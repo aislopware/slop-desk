@@ -9,13 +9,18 @@
 // file. The AppKit page draws every DESCRIBED row itself — a switch is an `NSSwitch`, a menu is an
 // `NSPopUpButton` — because that is where a mouse-driven settings window differs from a touch sheet.
 // A bespoke surface is not a control kind, so there is nothing for the two halves to differ ABOUT:
-// re-drawing a four-button OS-integration card twice would be two chances to get the same words wrong.
-// So the Mac hosts these in an `NSHostingView` and the phone renders them inline, and neither can show
-// a surface the other does not have.
+// re-drawing a two-hundred-key searchable index twice would be two chances to get the same words wrong.
+// So the Mac hosts these in an `NSHostingView` and the phone renders them inline.
 //
-// Each surface owns whatever display-time state it needs (is this the default terminal, is the CLI
-// installed, what is in the override buffer) rather than taking it from a host page, which is what
-// lets one be dropped into either half with nothing but a store.
+// THE TWO EXCEPTIONS ARE NOT EXCEPTIONS. `os-integration` and `cli-install` are gated to
+// `Platform::Mac` by the layout table and their whole content is LaunchServices and `/usr/local/bin` —
+// there is no phone version of either to keep in step with, so the Mac draws them in AppKit
+// (`SlopDeskMacUI/FirstLaunch`) and reuses them for the first-launch checklist, which is where they had
+// been written a SECOND time until that move.
+//
+// Each surface owns whatever display-time state it needs (what is in the override buffer, which font
+// scope is showing) rather than taking it from a host page, which is what lets one be dropped into
+// either half with nothing but a store.
 
 #if canImport(SwiftUI)
 import Defaults
@@ -30,9 +35,14 @@ import SwiftUI
 /// A bespoke group, by the id the layout table carries.
 ///
 /// An id with no arm renders NOTHING — the honest answer for a surface a build does not have, and the
-/// same contract a key with no arm holds on the described side. `onJump` is how the All-Settings
-/// index repoints the navigator: a SECTION ID, because the two halves navigate differently (a
-/// `List` selection here, an `NSTableView` row there) and neither owns the other's selection type.
+/// same contract a key with no arm holds on the described side. Two ids have no arm ON PURPOSE:
+/// `os-integration` and `cli-install` are groups the layout table gates to `Platform::Mac`, and what
+/// they do is LaunchServices and `/usr/local/bin`, so the Mac draws them in AppKit and the phone never
+/// asks. A surface is drawn once — but "once" means once per platform that HAS it.
+///
+/// `onJump` is how the All-Settings index repoints the navigator: a SECTION ID, because the two halves
+/// navigate differently (a `List` selection here, an `NSTableView` row there) and neither owns the
+/// other's selection type.
 package struct SettingsBespokeSurface: View {
     private let id: String
     private let store: PreferencesStore
@@ -46,9 +56,7 @@ package struct SettingsBespokeSurface: View {
 
     package var body: some View {
         switch id {
-        case "os-integration": OSIntegrationSurface()
         case "notification-permission": NotificationPermissionRow()
-        case "cli-install": CLIInstallSurface()
         case "editor-empty": EditorEmptySurface()
         case "claude-hooks": ClaudeHooksSurface()
         // The Font-Family scope tabs over two different bodies — the primary family with its three
@@ -63,117 +71,6 @@ package struct SettingsBespokeSurface: View {
         case "all-settings": AllSettingsListView(store: store, onJump: onJump)
         default: EmptyView()
         }
-    }
-}
-
-// MARK: - General → OS Integration
-
-/// Settings → General → OS Integration (`first-launch-default-terminal.png` /
-/// `getting-started__first-launch.md §2`). REUSES the first-launch sheet's behaviour
-/// (`DefaultTerminalIntegration`): a Default-Terminal status row (Set / "Default"), the Finder +
-/// Full-Disk-Access deep-links, and the honestly-DISABLED "Default Terminal for Common Apps" row (a
-/// remote-host editor's config cannot be rewritten from the client — no dead button).
-///
-/// The table gates the group to macOS, so iOS never asks for it; the gate below is what lets the file
-/// still COMPILE for the phone, where `DefaultTerminalIntegration` (LaunchServices) does not exist.
-struct OSIntegrationSurface: View {
-    /// The Default-Terminal status, read on appear and again after a Set — the one thing here that is
-    /// a live fact about the machine rather than a preference.
-    @State private var isDefaultTerminal = false
-
-    var body: some View {
-        Group {
-            #if os(macOS)
-            rows
-            #endif
-        }
-        #if os(macOS)
-        .onAppear { isDefaultTerminal = DefaultTerminalIntegration.isDefaultTerminal() }
-        #endif
-    }
-
-    #if os(macOS)
-    private var rows: some View {
-        Group {
-            row("Default Terminal", "Handle `ssh://` links and shell scripts opened from Finder or `open`.") {
-                if isDefaultTerminal {
-                    Label("Default", systemImage: "checkmark").foregroundStyle(SettingsInk.ok)
-                } else {
-                    Button("Set as Default Terminal") {
-                        Task {
-                            await DefaultTerminalIntegration.setAsDefaultTerminal()
-                            isDefaultTerminal = DefaultTerminalIntegration.isDefaultTerminal()
-                        }
-                    }
-                    .buttonStyle(.bordered)
-                }
-            }
-            row(
-                "Default Terminal for Common Apps",
-                "Editors and git GUIs hardcode Terminal.app. Rewriting their config only works for a LOCAL "
-                    + "editor — an editor on the remote host needs a host-side agent, so this is unavailable "
-                    + "in the remote model.",
-            ) {
-                Text("Unavailable").foregroundStyle(SettingsInk.tertiary)
-            }
-            row(
-                "Finder Integration",
-                "Add \u{201C}Open in SlopDesk\u{201D} to Finder's right-click Services menu for folders.",
-            ) {
-                Button("Open System Settings") { DefaultTerminalIntegration.openFinderServicesSettings() }
-                    .buttonStyle(.bordered)
-            }
-            row(
-                "Full Disk Access",
-                "Needed when commands run inside SlopDesk must read or write protected files. The app works "
-                    + "without it.",
-            ) {
-                Button("Open System Settings") { DefaultTerminalIntegration.openFullDiskAccessSettings() }
-                    .buttonStyle(.bordered)
-            }
-        }
-    }
-
-    /// The row layout: a bold title + gray subtext leading, the action control trailing.
-    private func row(
-        _ title: String,
-        _ subtitle: String,
-        @ViewBuilder trailing: () -> some View,
-    ) -> some View {
-        LabeledContent {
-            trailing()
-        } label: {
-            VStack(alignment: .leading, spacing: Slate.Metric.space1) {
-                Text(title)
-                Text(subtitle)
-                    .font(SettingsType.subtitle)
-                    .foregroundStyle(SettingsInk.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-    #endif
-}
-
-// MARK: - Shell → Command-Line Tool
-
-/// The `slopdesk` CLI install card. macOS-only for the reason the table already states — the symlink
-/// lands in a `PATH` directory of a Mac's filesystem — and the state it shows (is it installed, at
-/// which path) is read on appear rather than held anywhere.
-struct CLIInstallSurface: View {
-    #if os(macOS)
-    @State private var installer = CLIInstaller()
-    #endif
-
-    var body: some View {
-        Group {
-            #if os(macOS)
-            CLIInstallCardBody(installer: installer)
-            #endif
-        }
-        #if os(macOS)
-        .onAppear { installer.refreshInstalled() }
-        #endif
     }
 }
 

@@ -96,8 +96,10 @@ public struct SlopDeskMacApp: App {
     /// table. Built once at launch, opened on demand, and it holds its own window.
     @State private var settingsWindow: MacSettingsWindowController
     @Environment(\.scenePhase) private var scenePhase
-    /// Whether the first-launch sheet is up — set true once at launch when ``FirstLaunchModel/shouldPresent``.
-    @State private var presentFirstLaunch = false
+    /// The guided first-launch checklist, as a real sheet on the workspace window. Held here rather
+    /// than presented by a `.sheet` modifier so the checklist is an AppKit sheet like every other
+    /// summoned surface the Mac shell has taken (docs/56 stage D).
+    @State private var firstLaunchSheet: MacFirstLaunchSheet
 
     // MARK: The composition's parts, read straight through
 
@@ -222,6 +224,9 @@ public struct SlopDeskMacApp: App {
         // `WeakWindowBox` the `.introspect(.window)` hook fills.
         let windowBox = WeakWindowBox()
         _windowBox = State(initialValue: windowBox)
+        _firstLaunchSheet = State(initialValue: MacFirstLaunchSheet(
+            model: app.firstLaunch, agentHooks: app.agentHooks,
+        ))
         // The Settings window controller, built with the SAME single live store the workspace binds —
         // one `PreferencesStore`, one window, raised rather than re-made on the second ⌘,.
         _settingsWindow = State(initialValue: MacSettingsWindowController(
@@ -332,19 +337,24 @@ public struct SlopDeskMacApp: App {
                 .agentHooksController(agentHooks)
                 // The single overlay coordinator, so deep views reach it via `\.overlayCoordinator`.
                 .overlayCoordinator(overlayCoordinator)
-                // The guided first-launch sheet — On-Launch / Default-Terminal / Install-CLI / Theme /
+                // The guided first-launch checklist — On-Launch / Default-Terminal / Install-CLI /
                 // Install-Claude-hooks. Presents once on a fresh install (the `hasCompletedFirstLaunch`
                 // Defaults flag) and never under automation (it would steal the autoconnect focus).
-                // Dismissing by ANY path persists the flag (`FirstLaunchView.onDisappear → finish()`).
-                .sheet(isPresented: $presentFirstLaunch) {
-                    FirstLaunchView(model: app.firstLaunch, store: preferences)
-                        .agentHooksController(agentHooks)
-                }
+                // Dismissing by ANY path persists the flag (the sheet's completion handler).
                 .task {
-                    presentFirstLaunch = FirstLaunchModel.shouldPresent(
+                    guard FirstLaunchModel.shouldPresent(
                         hasCompleted: SettingsKey.hasCompletedFirstLaunchEnabled,
                         automationActive: app.isAutomation,
-                    )
+                    ) else { return }
+                    // A sheet needs the window it hangs from, and the window arrives when the
+                    // `.introspect(.window)` hook fires — which is after this task starts. Yield until
+                    // it lands, bounded, so a build where the hook never fires shows no checklist
+                    // rather than spinning: the flag stays unset, so the next launch offers it again.
+                    for _ in 0..<100 where windowBox.window == nil {
+                        try? await Task.sleep(for: .milliseconds(20))
+                    }
+                    guard let window = windowBox.window else { return }
+                    firstLaunchSheet.present(over: window)
                 }
                 // The chrome follows the OS appearance (semantic tokens resolve per-appearance at draw
                 // time — user-directed 2026-08-07), so NO colour scheme is forced anywhere.

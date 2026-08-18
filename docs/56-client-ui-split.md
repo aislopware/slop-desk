@@ -1005,3 +1005,31 @@ chord-recorder veto. Those are decisions; only the thing that asked them was Swi
 
 `SettingsView.swift` keeps the per-section structs, because the phone's sheet renders them. What it
 no longer keeps is a window.
+
+### Increment 25 — the first-launch checklist, and a card that was written twice
+
+The guided checklist is an AppKit sheet on the workspace window now
+(`SlopDeskMacUI/FirstLaunch`), presented with `beginSheet` rather than a SwiftUI `.sheet` modifier.
+Everything it draws is `FirstLaunchModel`'s — the step set, the order, "Step N of M", each step's
+title, subtitle and glyph, which step is first and which is last — so the file names no step and no
+wording, and the phone's `FirstLaunchView` renders the same model into a sheet of its own.
+
+**Two of the four steps are the Mac's alone**, and they are drawn here in AppKit: registering as the
+default terminal is LaunchServices and installing the CLI is `/usr/local/bin`, neither of which the
+phone has a version of. The other two exist on both platforms, so they are drawn ONCE in SwiftUI and
+reached through `FirstLaunchStepSurface`, which the Mac hosts — the same division increment 24 made
+between a control KIND, which each half draws its own way, and a SURFACE, which there is nothing to
+differ about.
+
+That division cuts the other way too, and it is what this increment was actually worth. The
+OS-integration rows and the CLI-install card each existed TWICE: once as a first-launch step and once
+as a Settings group, in two SwiftUI structs, with four titles and four subtitles typed on both sides.
+They had already begun to drift — only one of the two marked its first-launch step complete. They are
+`MacOSIntegrationRows` and `MacCLIInstallCard` now, one view each, and the Mac's settings page reaches
+for the same two rather than hosting a SwiftUI copy. So `SettingsBespokeSurface` has no arm for
+`os-integration` or `cli-install`, and says why: a surface is drawn once, but "once" means once per
+platform that HAS it, and the phone has neither.
+
+`FirstLaunchView.swift` went from five platform gates to one — the on-launch picker, where
+`.radioGroup` is a macOS-only style. `SettingsBespokeSurfaces.swift` went from seven to one. The
+shared target is down to 96.
