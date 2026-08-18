@@ -4459,6 +4459,19 @@ if [[ -n "${drop_dupes}" ]]; then
 fi
 printf 'check-supervisor: the drop overlay draws and hit-tests one shape.\n'
 
+# ── One dwell, and the top edge stays the remote's ────────────────────────────────────────────
+# The dwell that decides who owns the top edge in borderless fullscreen lives in
+# `slopdesk_workspace::chrome`. A Swift copy of the phase machine would be a second answer to "may
+# the local menu bar take this click", and the wrong one steals a click from the remote menu bar —
+# which reads as a dropped click, not as a policy bug.
+if ! grep -q 'slopdesk_ws_dwell_update' Sources/SlopDeskClientCore/App/BorderlessDwellGate.swift; then
+  fail "BorderlessDwellGate stopped calling slopdesk_ws_dwell_update — the top edge has two owners"
+fi
+if spells 'dwellSeconds *[:=] *0\.5|revealZonePoints *[:=] *2\b' Sources/SlopDeskClientCore/App/BorderlessDwellGate.swift > /dev/null 2>&1; then
+  fail "a dwell distance grew back in Swift — rust/slopdesk-workspace/src/chrome.rs owns them"
+fi
+printf 'check-supervisor: one dwell decides who owns the top edge.\n'
+
 # ── One device-panel law, two device protocols ────────────────────────────────────────────────
 # The simulator panel and the Android panel differ in almost everything and should — one rotates on
 # the client and the other on the device, one sends touches in the fitted rect's space and the other

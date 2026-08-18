@@ -1,11 +1,11 @@
 //! What the window's CHROME shows around the panes — the tabs panel, the close prompt, the Dock
-//! tile.
+//! tile, and who owns the top edge in borderless fullscreen.
 //!
-//! Three decisions that share a shape: each reads a setting the user picked plus a fact about the
-//! live workspace, and each has a rung that means "say nothing". Saying nothing matters more here
-//! than the positive answers do — a chrome rule that speaks when it should not is one that fights
-//! the user (a revealed panel they just swiped away, a prompt on every close, a Dock tile stuck
-//! red).
+//! Decisions that share a shape: each reads a setting the user picked plus a fact about the live
+//! workspace, and each has a rung that means "say nothing". Saying nothing matters more here than
+//! the positive answers do — a chrome rule that speaks when it should not is one that fights the
+//! user (a revealed panel they just swiped away, a prompt on every close, a Dock tile stuck red, a
+//! local menu bar that steals a click meant for the remote one).
 
 /// When the vertical TABS panel is shown — the `auto-hide-tabs-panel` config.
 ///
@@ -155,11 +155,126 @@ pub fn dock_tile(
     tile
 }
 
+/// How long the pointer must hold the top edge before the local menu bar reveals.
+pub const DWELL_SECONDS: f64 = 0.5;
+/// The arming zone: distance from the top edge, in points, that counts as "pressed against it".
+/// Tight on purpose — remote work near the top of the screen must not arm the gate.
+pub const REVEAL_ZONE_POINTS: f64 = 2.0;
+/// The conceal threshold: how far DOWN a revealed gate's pointer must travel to re-hide.
+///
+/// Wider than the arming zone — hysteresis — so using the revealed menu bar, whose items sit
+/// ~12–24 pt down, does not flicker the gate shut.
+pub const CONCEAL_ZONE_POINTS: f64 = 36.0;
+
+/// Who owns the top edge of a borderless-fullscreen window.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum DwellPhase {
+    /// The local menu bar is hidden — the resting state; top-edge input is the remote's.
+    #[default]
+    Hidden,
+    /// The pointer is pressed against the top edge and the dwell clock is running.
+    Arming {
+        /// When the pointer first reached the edge.
+        since: f64,
+    },
+    /// The dwell is satisfied: the local menu bar may auto-reveal.
+    Revealed,
+}
+
+/// The dwell that decides it — the Parallels model, recorded in `docs/DECISIONS.md` 2026-07-22.
+///
+/// The conflict it settles: in a fullscreen remote desktop the pointer at the very top must reach
+/// the REMOTE menu bar first, but macOS's own auto-hide reveals the LOCAL one on a bare touch and
+/// steals the click. So a passing touch stays remote, and holding the edge for half a second is the
+/// deliberate "I want my Mac's menu bar" gesture.
+///
+/// Positions are DISTANCE FROM THE TOP EDGE in points — `0` is pressed against it — which is
+/// orientation-free, so the one coordinate flip stays with the window layer that owns the screen.
+/// The clock arrives as an argument for the same reason: nothing here reads a clock, so the whole
+/// gesture is testable without one.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DwellGate {
+    /// Where the gesture is right now.
+    pub phase: DwellPhase,
+    /// The hold this gate demands.
+    pub dwell_seconds: f64,
+    /// Its arming zone.
+    pub reveal_zone_points: f64,
+    /// Its conceal zone.
+    pub conceal_zone_points: f64,
+}
+
+impl Default for DwellGate {
+    fn default() -> Self {
+        Self {
+            phase: DwellPhase::Hidden,
+            dwell_seconds: DWELL_SECONDS,
+            reveal_zone_points: REVEAL_ZONE_POINTS,
+            conceal_zone_points: CONCEAL_ZONE_POINTS,
+        }
+    }
+}
+
+impl DwellGate {
+    /// Folds one pointer observation and answers the phase it leaves the gate in.
+    ///
+    /// The caller feeds this on every pointer move AND once at
+    /// [`arming_deadline`](Self::arming_deadline): a motionless pointer produces no more move
+    /// events, so the dwell can only complete on a timer re-feeding the last position.
+    ///
+    /// A gate with no dwell at all reveals on contact rather than arming forever — a zero hold is a
+    /// caller asking for the plain macOS behaviour, not for a gesture that can never finish.
+    pub fn update(&mut self, pointer_y_from_top: f64, now: f64) -> DwellPhase {
+        match self.phase {
+            DwellPhase::Hidden => {
+                if pointer_y_from_top <= self.reveal_zone_points {
+                    self.phase = if self.dwell_seconds <= 0.0 {
+                        DwellPhase::Revealed
+                    } else {
+                        DwellPhase::Arming { since: now }
+                    };
+                }
+            },
+            DwellPhase::Arming { since } => {
+                if pointer_y_from_top > self.reveal_zone_points {
+                    // Left the edge before the dwell was up — a passing touch stays remote.
+                    self.phase = DwellPhase::Hidden;
+                } else if now - since >= self.dwell_seconds {
+                    self.phase = DwellPhase::Revealed;
+                }
+            },
+            DwellPhase::Revealed => {
+                if pointer_y_from_top >= self.conceal_zone_points {
+                    // Back in the stream: re-hide, and make the next reveal dwell again.
+                    self.phase = DwellPhase::Hidden;
+                }
+            },
+        }
+        self.phase
+    }
+
+    /// When a running dwell completes, in the caller's own clock, or `None` when nothing is arming
+    /// — the caller schedules its one-shot timer here.
+    #[must_use]
+    pub const fn arming_deadline(&self) -> Option<f64> {
+        match self.phase {
+            DwellPhase::Arming { since } => Some(since + self.dwell_seconds),
+            DwellPhase::Hidden | DwellPhase::Revealed => None,
+        }
+    }
+
+    /// Whether the local menu bar may show.
+    #[must_use]
+    pub const fn is_revealed(&self) -> bool {
+        matches!(self.phase, DwellPhase::Revealed)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        AutoHideMode, CloseConfirm, DockTile, Rollup, SidebarState, apply_auto_hide, desired_collapsed,
-        dock_tile, should_confirm,
+        AutoHideMode, CloseConfirm, DockTile, DwellGate, DwellPhase, Rollup, SidebarState, apply_auto_hide,
+        desired_collapsed, dock_tile, should_confirm,
     };
 
     #[test]
@@ -286,5 +401,82 @@ mod tests {
             animates: true,
             fraction: None
         });
+    }
+
+    #[test]
+    fn a_bare_touch_at_the_top_edge_arms_but_does_not_reveal() {
+        // The whole point: that first touch belongs to the REMOTE menu bar.
+        let mut gate = DwellGate::default();
+        assert_eq!(gate.update(0.0, 100.0), DwellPhase::Arming { since: 100.0 });
+        assert!(!gate.is_revealed());
+        assert_eq!(
+            gate.arming_deadline(),
+            Some(100.5),
+            "the AppKit layer schedules its dwell timer here"
+        );
+    }
+
+    #[test]
+    fn a_held_pointer_reveals_once_the_dwell_is_up() {
+        let mut gate = DwellGate::default();
+        gate.update(0.0, 100.0);
+        assert_eq!(
+            gate.update(1.0, 100.4),
+            DwellPhase::Arming { since: 100.0 },
+            "still inside the dwell"
+        );
+        assert_eq!(gate.update(1.0, 100.5), DwellPhase::Revealed);
+        assert_eq!(gate.arming_deadline(), None, "no timer once revealed");
+    }
+
+    #[test]
+    fn a_passing_touch_never_reveals_even_if_the_timer_fires_late() {
+        let mut gate = DwellGate::default();
+        gate.update(0.0, 100.0);
+        assert_eq!(
+            gate.update(10.0, 100.2),
+            DwellPhase::Hidden,
+            "left the edge inside the dwell"
+        );
+        // A stale deadline cannot reveal: the phase is already hidden, and hidden only arms.
+        assert_eq!(gate.update(10.0, 100.6), DwellPhase::Hidden);
+    }
+
+    #[test]
+    fn working_the_revealed_menu_bar_does_not_flicker_it_shut() {
+        let mut gate = DwellGate::default();
+        gate.update(0.0, 100.0);
+        gate.update(0.0, 100.6);
+        assert!(gate.is_revealed());
+        assert_eq!(
+            gate.update(20.0, 101.0),
+            DwellPhase::Revealed,
+            "menu-bar depth stays revealed"
+        );
+        assert_eq!(
+            gate.update(36.0, 101.2),
+            DwellPhase::Hidden,
+            "past the threshold re-hides"
+        );
+        // And the next reveal dwells again — a conceal is a full re-arm, never a sticky reveal.
+        assert_eq!(gate.update(0.0, 102.0), DwellPhase::Arming { since: 102.0 });
+    }
+
+    #[test]
+    fn a_pointer_anywhere_else_is_inert() {
+        // The overwhelmingly common fold: every move that is not near the edge changes nothing.
+        let mut gate = DwellGate::default();
+        for y in [50.0, 500.0, 1400.0] {
+            assert_eq!(gate.update(y, 100.0), DwellPhase::Hidden);
+        }
+    }
+
+    #[test]
+    fn a_zero_dwell_reveals_on_contact_rather_than_arming_forever() {
+        let mut gate = DwellGate {
+            dwell_seconds: 0.0,
+            ..DwellGate::default()
+        };
+        assert_eq!(gate.update(0.0, 100.0), DwellPhase::Revealed);
     }
 }

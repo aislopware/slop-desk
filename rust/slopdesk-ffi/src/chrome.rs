@@ -11,7 +11,9 @@
 //! `present` flag beside its fraction. Both are §4's rule read at the scale of one value: the
 //! refusal must be outside the range of every real answer, or a caller will one day read it as one.
 
-use slopdesk_workspace::chrome::{self, AutoHideMode, CloseConfirm, DockTile, Rollup, SidebarState};
+use slopdesk_workspace::chrome::{
+    self, AutoHideMode, CloseConfirm, DockTile, DwellGate, DwellPhase, Rollup, SidebarState,
+};
 
 /// The chrome's sidebar flags, as the shell holds them between two applications of the policy.
 #[repr(C)]
@@ -168,11 +170,128 @@ pub extern "C" fn slopdesk_ws_dock_tile(
     .into()
 }
 
+/// The local menu bar is hidden — the resting state; top-edge input is the remote's.
+pub const SLOPDESK_WS_DWELL_HIDDEN: u8 = 0;
+/// The pointer is pressed against the top edge and the dwell clock is running.
+pub const SLOPDESK_WS_DWELL_ARMING: u8 = 1;
+/// The dwell is satisfied: the local menu bar may auto-reveal.
+pub const SLOPDESK_WS_DWELL_REVEALED: u8 = 2;
+
+/// The borderless-fullscreen dwell, whole: its phase and the three points it was built with.
+///
+/// The gate crosses BY VALUE in both directions rather than living behind a handle. It is five
+/// numbers with no interior, the caller already owns the window it belongs to, and a fold that
+/// returns the next gate cannot leave a stale one behind for a later pointer move to read.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct CDwellGate {
+    /// One of the `SLOPDESK_WS_DWELL_*` codes.
+    pub phase: u8,
+    /// When the running dwell started — meaningful only while arming, and `0` otherwise.
+    pub since: f64,
+    /// The hold this gate demands, in seconds.
+    pub dwell_seconds: f64,
+    /// Its arming zone, in points from the top edge.
+    pub reveal_zone_points: f64,
+    /// Its conceal zone, on the same scale.
+    pub conceal_zone_points: f64,
+}
+
+impl From<CDwellGate> for DwellGate {
+    fn from(gate: CDwellGate) -> Self {
+        Self {
+            phase: match gate.phase {
+                SLOPDESK_WS_DWELL_ARMING => DwellPhase::Arming { since: gate.since },
+                SLOPDESK_WS_DWELL_REVEALED => DwellPhase::Revealed,
+                // An unknown code rests HIDDEN, which is the phase that gives the top edge to the
+                // remote — the side a disagreement between the two languages must fall on.
+                _ => DwellPhase::Hidden,
+            },
+            dwell_seconds: gate.dwell_seconds,
+            reveal_zone_points: gate.reveal_zone_points,
+            conceal_zone_points: gate.conceal_zone_points,
+        }
+    }
+}
+
+impl From<DwellGate> for CDwellGate {
+    fn from(gate: DwellGate) -> Self {
+        let (phase, since) = match gate.phase {
+            DwellPhase::Hidden => (SLOPDESK_WS_DWELL_HIDDEN, 0.0),
+            DwellPhase::Arming { since } => (SLOPDESK_WS_DWELL_ARMING, since),
+            DwellPhase::Revealed => (SLOPDESK_WS_DWELL_REVEALED, 0.0),
+        };
+        Self {
+            phase,
+            since,
+            dwell_seconds: gate.dwell_seconds,
+            reveal_zone_points: gate.reveal_zone_points,
+            conceal_zone_points: gate.conceal_zone_points,
+        }
+    }
+}
+
+/// A resting gate built with the dwell, the arming zone and the conceal zone the decision named —
+/// so neither language spells the three numbers.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_ws_dwell_gate() -> CDwellGate {
+    DwellGate::default().into()
+}
+
+/// One pointer observation folded into `gate`, answering the gate it leaves behind.
+///
+/// `pointer_y_from_top` is DISTANCE FROM THE SCREEN'S TOP EDGE in points, so the one coordinate
+/// flip stays with the window layer. Feed this on every pointer move, and once more at
+/// [`slopdesk_ws_dwell_deadline`] — a motionless pointer emits no further moves.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_ws_dwell_update(
+    gate: CDwellGate,
+    pointer_y_from_top: f64,
+    now: f64,
+) -> CDwellGate {
+    let mut folded = DwellGate::from(gate);
+    folded.update(pointer_y_from_top, now);
+    folded.into()
+}
+
+/// When a running dwell completes, written to `out`. `false` means nothing is arming, and then
+/// `out` is untouched — a caller with no timer to schedule.
+///
+/// # Safety
+/// `out` must be null or point to one writable `double`, live for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_ws_dwell_deadline(gate: CDwellGate, out: *mut f64) -> bool {
+    let Some(deadline) = DwellGate::from(gate).arming_deadline() else {
+        return false;
+    };
+    if !out.is_null() {
+        // SAFETY: the caller's obligation, restated above.
+        unsafe { out.write(deadline) };
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
+    #![expect(unsafe_code, reason = "calling the door is the only way to test the door")]
+
     use super::{
-        CSidebarState, slopdesk_ws_close_should_confirm, slopdesk_ws_dock_tile,
-        slopdesk_ws_sidebar_apply_auto_hide, slopdesk_ws_sidebar_desired_collapsed,
+        CSidebarState, SLOPDESK_WS_DWELL_ARMING, SLOPDESK_WS_DWELL_HIDDEN, SLOPDESK_WS_DWELL_REVEALED,
+        slopdesk_ws_close_should_confirm, slopdesk_ws_dock_tile, slopdesk_ws_dwell_deadline,
+        slopdesk_ws_dwell_gate, slopdesk_ws_dwell_update, slopdesk_ws_sidebar_apply_auto_hide,
+        slopdesk_ws_sidebar_desired_collapsed,
     };
 
     #[test]
@@ -231,5 +350,46 @@ mod tests {
         let cleared = slopdesk_ws_dock_tile(0, 0, false, true, true);
         assert!(!cleared.tinted);
         assert!(!cleared.animates);
+    }
+
+    fn deadline(gate: super::CDwellGate) -> Option<f64> {
+        let mut answer = 0.0;
+        // SAFETY: one live local double, borrowed for the duration of the call.
+        let arming = unsafe { slopdesk_ws_dwell_deadline(gate, &raw mut answer) };
+        arming.then_some(answer)
+    }
+
+    #[test]
+    fn the_gate_survives_the_round_trip_it_makes_on_every_pointer_move() {
+        // The phase and the clock BOTH have to come back, or a dwell restarts on each move and can
+        // never finish. This is the crossing the gesture is made of.
+        let armed = slopdesk_ws_dwell_update(slopdesk_ws_dwell_gate(), 0.0, 100.0);
+        assert_eq!(armed.phase, SLOPDESK_WS_DWELL_ARMING);
+        assert_eq!(deadline(armed), Some(100.5));
+
+        let still_arming = slopdesk_ws_dwell_update(armed, 1.0, 100.4);
+        assert_eq!(still_arming.phase, SLOPDESK_WS_DWELL_ARMING);
+        assert_eq!(deadline(still_arming), Some(100.5), "the clock did not restart");
+
+        let revealed = slopdesk_ws_dwell_update(still_arming, 1.0, 100.5);
+        assert_eq!(revealed.phase, SLOPDESK_WS_DWELL_REVEALED);
+        assert_eq!(deadline(revealed), None, "nothing to schedule once revealed");
+    }
+
+    #[test]
+    fn an_unknown_phase_code_rests_hidden_and_gives_the_edge_to_the_remote() {
+        let confused = super::CDwellGate {
+            phase: 99,
+            ..slopdesk_ws_dwell_gate()
+        };
+        // Hidden only ARMS on contact — it can never reveal in one fold, which is the safe side.
+        assert_eq!(
+            slopdesk_ws_dwell_update(confused, 0.0, 100.0).phase,
+            SLOPDESK_WS_DWELL_ARMING
+        );
+        assert_eq!(
+            slopdesk_ws_dwell_update(confused, 500.0, 100.0).phase,
+            SLOPDESK_WS_DWELL_HIDDEN
+        );
     }
 }

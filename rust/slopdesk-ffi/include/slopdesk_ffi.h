@@ -692,6 +692,38 @@ bool slopdesk_ws_close_should_confirm(uint8_t policy, bool is_busy, size_t tab_c
 SlopDeskWsDockTile slopdesk_ws_dock_tile(uint8_t rollup, uint8_t percent, bool any_failure,
                                          bool animate_enabled, bool error_badge_enabled);
 
+/* Who owns the TOP EDGE in borderless fullscreen — the dwell-gated Parallels model, recorded in
+ * docs/DECISIONS.md 2026-07-22. In a fullscreen remote desktop the pointer at the very top must
+ * reach the REMOTE menu bar first, but macOS's own auto-hide reveals the LOCAL one on a bare touch
+ * and steals the click. So a passing touch stays remote; holding the edge for the dwell is the
+ * deliberate "I want my Mac's menu bar" gesture.
+ *
+ * The gate crosses BY VALUE both ways: it is five numbers with no interior, and a fold that returns
+ * the next gate cannot leave a stale one behind for a later pointer move to read. `pointer_y_from_
+ * top` is DISTANCE FROM THE SCREEN'S TOP EDGE in points (0 = pressed against it), so the one
+ * coordinate flip stays with the window layer that owns the screen; the clock is an argument, so
+ * nothing behind the door reads one.
+ *
+ * Fold on every pointer move AND once at `slopdesk_ws_dwell_deadline` — a motionless pointer emits
+ * no further moves, so the dwell can only complete on a timer re-feeding the last position.        */
+#define SLOPDESK_WS_DWELL_HIDDEN   0u
+#define SLOPDESK_WS_DWELL_ARMING   1u
+#define SLOPDESK_WS_DWELL_REVEALED 2u
+
+typedef struct {
+    uint8_t phase;                // one of SLOPDESK_WS_DWELL_*
+    double  since;                // when the running dwell started — read only while ARMING
+    double  dwell_seconds;        // the hold this gate demands
+    double  reveal_zone_points;   // the arming zone, from the top edge
+    double  conceal_zone_points;  // the conceal zone — wider, so the revealed bar does not flicker
+} SlopDeskWsDwellGate;
+
+SlopDeskWsDwellGate slopdesk_ws_dwell_gate(void);
+SlopDeskWsDwellGate slopdesk_ws_dwell_update(SlopDeskWsDwellGate gate, double pointer_y_from_top,
+                                             double now);
+// False means nothing is arming — no timer to schedule — and then `*out` is untouched.
+bool slopdesk_ws_dwell_deadline(SlopDeskWsDwellGate gate, double *out);
+
 // ---- What the sidebar SHOWS, in what order, under which labels ----
 //
 // Both list doors answer in the CALLER's indices: a rail row is an id, a kind, a badge, a selection
