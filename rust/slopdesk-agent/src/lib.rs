@@ -12,6 +12,8 @@
 //! - [`process`] — the narrower question the presence poll asks: is it `claude`, or something that
 //!   commonly WRAPS one?
 //! - [`status`] — the rolled-up status, its urgency order, and the wire qualifier byte.
+//! - [`attention`] — which pane is asking for the human: the notification EDGE, the oldest waiting
+//!   pane, and where one press of the jump chord goes.
 //! - [`signal`] — the semantic hook vocabulary and the signal envelope the machine folds.
 //! - [`sleep`] — what a working agent means for the machine's own sleep.
 //! - [`screen`] — the screen engine's verdict, in the terms the machine speaks.
@@ -36,6 +38,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod attention;
 pub mod badge;
 pub mod detector;
 pub mod hold;

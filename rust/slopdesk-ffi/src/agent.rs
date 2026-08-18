@@ -32,7 +32,7 @@ use core::ffi::c_uchar;
 use slopdesk_agent::{
     AgentDetectionHold, AgentScreenDetection, AgentScreenState, ClaudeHookEvent, ClaudeStatus,
     ClaudeStatusMachine, Emission, ForegroundJob, ForegroundJobProcess, NotificationKind, PaneDetector,
-    badge, sleep,
+    attention, badge, sleep,
 };
 
 use crate::{borrow, deliver};
@@ -421,6 +421,86 @@ pub extern "C" fn slopdesk_agent_badge_needs_attention(badge: c_uchar) -> bool {
 )]
 pub extern "C" fn slopdesk_agent_badge_is_busy_tier(badge: c_uchar) -> bool {
     badge_from(badge).is_some_and(badge::TabBadge::is_busy_tier)
+}
+
+/// Whether a status is waiting on a human or finished unseen — the level the ring reads.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_agent_is_attention(status: c_uchar) -> bool {
+    attention::is_attention(status_from(status))
+}
+
+/// Whether `previous → current` is an attention EDGE worth interrupting someone for. `previous` is
+/// the state the caller last NOTIFIED for, not the last one it saw.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_agent_attention_edge(previous: c_uchar, current: c_uchar) -> bool {
+    attention::is_edge(status_from(previous), status_from(current))
+}
+
+/// Whether `previous → current` is a hook-less finish: an active state settling to plain idle.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_agent_attention_completion(previous: c_uchar, current: c_uchar) -> bool {
+    attention::is_completion(status_from(previous), status_from(current))
+}
+
+/// The POSITION of the oldest pane needing attention in a run of statuses, or `-1` for none.
+///
+/// A position, not an identity: the caller holds the panes, and this rule only ranks them.
+///
+/// # Safety
+/// `statuses` must be null or point to `len` initialised bytes live for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_agent_attention_oldest(statuses: *const c_uchar, len: usize) -> isize {
+    // SAFETY: the caller's obligation, restated above; `borrow` states its own.
+    let raw = unsafe { borrow(statuses, len) };
+    let statuses: Vec<ClaudeStatus> = raw.iter().copied().map(status_from).collect();
+    attention::oldest_needing_attention(&statuses)
+        .map_or(-1, |position| isize::try_from(position).unwrap_or(-1))
+}
+
+/// One press of the jump-to-attention walk: the position of the next unvisited queue entry, or
+/// `-1` to pop back to the origin, or `-2` when there is nowhere to pop to.
+///
+/// `visited` is one flag per queue entry, in the caller's queue order.
+///
+/// # Safety
+/// `visited` must be null or point to `len` initialised bools live for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_agent_attention_walk(
+    visited: *const bool,
+    len: usize,
+    origin_is_live: bool,
+) -> isize {
+    let flags = if visited.is_null() || len == 0 {
+        &[][..]
+    } else {
+        // SAFETY: the caller's obligation, restated above.
+        unsafe { core::slice::from_raw_parts(visited, len) }
+    };
+    match attention::walk_step(flags, origin_is_live) {
+        attention::Step::Advance(position) => isize::try_from(position).unwrap_or(-2),
+        attention::Step::PopHome => -1,
+        attention::Step::PopNowhere => -2,
+    }
 }
 
 /// The rolled-up status of a run of statuses, given as discriminants.

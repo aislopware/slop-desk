@@ -246,6 +246,19 @@ int8_t  slopdesk_agent_tab_badge(uint8_t agent, int8_t completion, bool is_busy,
 bool    slopdesk_agent_badge_needs_attention(uint8_t badge);
 bool    slopdesk_agent_badge_is_busy_tier(uint8_t badge);
 uint8_t slopdesk_agent_status_rollup(const uint8_t *statuses, size_t len);
+// Which pane is asking for the human. The two EDGE rules take the state last NOTIFIED for, not the
+// last state seen, so re-entering a state already announced is not news; `completion` is the
+// hook-less finish (an active state settling to plain idle), which `Done -> Idle` is NOT.
+bool    slopdesk_agent_is_attention(uint8_t status);
+bool    slopdesk_agent_attention_edge(uint8_t previous, uint8_t current);
+bool    slopdesk_agent_attention_completion(uint8_t previous, uint8_t current);
+// The POSITION of the oldest pane needing attention in the caller's own order, or -1 for none:
+// blocked outranks finished wherever it sits, and within a bucket the earliest pane has waited
+// longest. A position, not an identity — the caller holds the panes.
+ptrdiff_t slopdesk_agent_attention_oldest(const uint8_t *statuses, size_t len);
+// One press of the jump walk over a queue of `len` entries, `visited` flagging the ones already
+// stepped onto: >= 0 advance to that position, -1 pop back to the origin, -2 nowhere to pop to.
+ptrdiff_t slopdesk_agent_attention_walk(const bool *visited, size_t len, bool origin_is_live);
 // The rollup RANK — the wire's type-27 state byte — which is deliberately not the case order:
 // none(0) < idle(1) < done(2) < working(3) < needsPermission(4). from_urgency degrades unknown to
 // none, so a newer host's datagram cannot trap an older client.
