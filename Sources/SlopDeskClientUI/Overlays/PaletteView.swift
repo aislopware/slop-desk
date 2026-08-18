@@ -1,7 +1,14 @@
-// PaletteView — the floating command palette overlay. Renders the live state of the injected
+// PaletteView — the PHONE's command palette. Renders the live state of the injected
 // ``OverlayCoordinator`` as a VERBS-ONLY command palette: a pre-focused search field and a
 // sectioned, fzf-highlighted result list with keycap chips, a ✓ toggled-state gutter, and a keyboard-selected
 // fill row. (The per-domain filter chips live in the Open-Quickly picker — ⌘⇧P shows no chips here.)
+//
+// THE MAC DRAWS ITS OWN (docs/56 stage D): ``SlopDeskMacUI/MacPaletteView`` is an `NSPanel` over the
+// workspace window, and `MacWorkspaceRootView` drops `.palette` from this host's `draws` set so only
+// one of the two is ever up. What the halves share is ``PalettePresentation`` and ``PaletteMetrics``
+// — the card's measurements, the ranked rows paired with the keyboard's index, the ✓ predicate and
+// the WORKING DIRECTORY badge — so neither half re-derives a decision, and each keeps only its
+// arrangement.
 //
 // Faithful to `spec/user-interface__command-palette.md` (the centered floating panel, the magnifier +
 // accent caret, ALL-CAPS section headers with the WORKING-DIRECTORY badge, keycaps, the subtle
@@ -46,14 +53,9 @@ struct PaletteView: View {
     /// and a list scrolling under a PARKED pointer must not steal the selection. One per presentation.
     @State private var hoverGate = HoverSelectionGate()
 
-    // The fixed panel width (spec: a centered floating panel, ~720pt) + the results viewport cap (~7 rows).
-    private let panelWidth: CGFloat = 720
-    private let resultsMaxHeight: CGFloat = 336
-
-    /// One ⇞/⇟ stride = the rows one results viewport shows (derived from the SAME two metrics that
-    /// size it, so a viewport retune re-tunes the page).
+    /// One ⇞/⇟ stride = the rows one results viewport shows.
     private var pageStride: Int {
-        max(1, Int(resultsMaxHeight / Slate.Metric.heightRowTall))
+        PaletteMetrics.pageStride(rowHeight: Slate.Metric.heightRowTall)
     }
 
     var body: some View {
@@ -66,7 +68,7 @@ struct PaletteView: View {
         // The paper card is applied by `OverlayHostView`; this view carries only its content + a fixed
         // macOS dialog width.
         #if os(macOS)
-        .frame(width: panelWidth)
+        .frame(width: PaletteMetrics.panelWidth)
         #endif
         // Keyboard: the app NSEvent monitor passes bare arrows/Return through (it only swallows the prefix +
         // bound chords), so they reach this focused overlay. Plain ↩ is handled by the field's `.onSubmit`
@@ -145,7 +147,7 @@ struct PaletteView: View {
                 // a rendering fault rather than as "there is more below".
                 .padding(.vertical, Slate.Metric.space2)
             }
-            .frame(maxHeight: resultsMaxHeight)
+            .frame(maxHeight: PaletteMetrics.resultsMaxHeight)
             .onChange(of: coordinator.paletteSelection) { _, _ in
                 // Keyboard nav / query-reset only — a HOVER-driven change must not scroll, or the list
                 // "follows the mouse" (hover selects → scrollTo slides a new row under the pointer → …).
@@ -184,12 +186,10 @@ struct PaletteView: View {
             // The contextual cwd badge sits flush-right on the WORKING DIRECTORY header it OWNS — matched by
             // the category label, NOT "whichever separator sorts first" (which mislabelled a Recents/Actions
             // header before this section existed).
-            if item.title == PaletteCategory.workingDirectory.label, let cwd = workingDirectory {
-                // Home-abbreviate for display (`/Users/abner/Workplace/myproject` → `~/Workplace/myproject/`) to match
-                // command-palette.png's `~/Workplace/myproject/` pill. `cwd` is the RAW remote-host path from the
-                // `cwd()` RPC, so the abbreviation matches the home SHAPE (`/Users/<name>` · `/home/<name>`),
-                // never the client's local home (see ``CwdDisplay``).
-                cwdBadge(CwdDisplay.abbreviate(cwd))
+            if PalettePresentation.headerOwnsWorkingDirectoryBadge(item.title),
+               let cwd = PalettePresentation.workingDirectoryBadge(store: store)
+            {
+                cwdBadge(cwd)
             }
         }
         // `.padding(.horizontal, space3)` is the action-row's INNER padding; `.padding(.leading, space2)` adds
@@ -333,94 +333,15 @@ struct PaletteView: View {
 
     // MARK: - Derived data
 
-    /// One result row paired with its selectable index (nil for separators). The keyboard selection indexes
-    /// into the non-separator rows, so each action row knows whether it is the selected one. `Identifiable`
-    /// (by the underlying row id) so `ForEach` diffs cleanly without a tuple key path.
-    private struct DisplayRow: Identifiable {
-        let ranked: RankedRow
-        let selectableIndex: Int?
-        var id: String { ranked.id }
-    }
-
     /// The result rows paired with their selectable index — separators carry `nil`.
-    private var displayRows: [DisplayRow] {
-        var index = 0
-        var out: [DisplayRow] = []
-        for ranked in coordinator.rankedResults {
-            if ranked.item.isSeparator {
-                out.append(DisplayRow(ranked: ranked, selectableIndex: nil))
-            } else {
-                out.append(DisplayRow(ranked: ranked, selectableIndex: index))
-                index += 1
-            }
-        }
-        return out
+    private var displayRows: [PaletteDisplayRow] {
+        PalettePresentation.displayRows(coordinator.rankedResults)
     }
 
     /// The id of the currently keyboard-selected row (for `scrollTo`), or nil if nothing is selectable.
     private var selectedRowID: String? {
-        var index = 0
-        for ranked in coordinator.rankedResults where !ranked.item.isSeparator {
-            if index == coordinator.paletteSelection { return ranked.id }
-            index += 1
-        }
-        return nil
-    }
-
-    /// The focused pane's working directory (cwd over the wire; stale-by-RTT is acceptable for
-    /// display). nil ⇒ no badge. Reads the same active-pane chain the rest of the chrome uses.
-    private var workingDirectory: String? {
-        guard let session = store.tree.activeSession,
-              let paneID = session.activeTab?.activePane else { return nil }
-        let cwd = store.paneCwd(for: paneID)
-        guard let cwd, !cwd.isEmpty else { return nil }
-        return cwd
+        PalettePresentation.selectedRowID(coordinator.rankedResults, selection: coordinator.paletteSelection)
     }
 }
 
-// MARK: - CwdDisplay (pure home-abbreviation for the cwd pill — no SwiftUI, so it is unit-pinned)
-
-/// The pure display bridge that turns a RAW remote-host working directory into the abbreviated form the
-/// command-palette WORKING DIRECTORY pill shows (`command-palette.png`: `~/Workplace/myproject/`).
-///
-/// Two transforms: a leading home prefix collapses to `~`, and a trailing `/` marks the directory. The cwd is
-/// a **remote-host** path (from the `cwd()` metadata RPC), so the home is detected by SHAPE — `/Users/<name>`
-/// (macOS) or `/home/<name>` (Linux) — NEVER `NSHomeDirectory()`, which is the CLIENT's own home and would be
-/// wrong for a remote host. Pure + total + deterministic (no `FileManager`/`Date`, never traps); 100%
-/// client-side display, so nothing here touches the wire / golden corpus. `CwdDisplayTests` pins the mapping
-/// headlessly.
-enum CwdDisplay {
-    /// Home-style roots a remote cwd can carry, matched generically (the user name is the next path segment).
-    private static let homeRoots = ["/Users/", "/home/"]
-
-    /// Abbreviate a host cwd for the pill: `/Users/abner/Workplace/myproject` → `~/Workplace/myproject/`. An empty
-    /// string stays empty; the filesystem root `/` stays `/`; an already-`~`-rooted path keeps its `~` and
-    /// only gains the trailing slash; a non-home path (`/etc`) keeps its path and gains the trailing slash.
-    static func abbreviate(_ raw: String) -> String {
-        guard !raw.isEmpty else { return "" }
-        return withTrailingSlash(tildeCollapsed(raw))
-    }
-
-    /// Replace a leading `/Users/<name>` or `/home/<name>` home prefix with `~`. A path already rooted at `~`,
-    /// a path with no home prefix, or a bare home root WITHOUT a `<name>` segment is returned unchanged.
-    private static func tildeCollapsed(_ path: String) -> String {
-        if path == "~" || path.hasPrefix("~/") { return path }
-        for root in homeRoots where path.hasPrefix(root) {
-            // The first path segment after the root is the user name; the home boundary is the END of that
-            // segment (the next `/`, or the string end). A root with no name segment is NOT a home dir.
-            let afterRoot = path.dropFirst(root.count)
-            guard let first = afterRoot.first, first != "/" else { return path }
-            if let slash = afterRoot.firstIndex(of: "/") {
-                return "~" + afterRoot[slash...] // "~" + "/Workplace/myproject"
-            }
-            return "~" // the path IS exactly the home dir
-        }
-        return path
-    }
-
-    /// Append a single trailing `/` (the directory marker) unless one is already present.
-    private static func withTrailingSlash(_ path: String) -> String {
-        path.hasSuffix("/") ? path : path + "/"
-    }
-}
 #endif

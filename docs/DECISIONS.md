@@ -631,7 +631,7 @@
 - ✅ **One continuous margin surface** — the macOS detail `HStack` itself backs `Surface.margin`, so the GUI-panel divider band no longer exposes the system window background between the two themed columns. Gutter rhythm: cards within a region sit `paneGap` (8pt) apart; the two REGIONS sit a double gap (16pt = 4+8+4) apart across the divider band — hierarchy by spacing, not by lines.
 - ✅ **`GuiPanelDivider` goes invisible-at-rest** (the `PaneDivider` language): no hairline; the gutter IS the seam; a 2pt accent line appears only while dragging. Band width 9→`paneGap`; hit band + column-resize pointer + commit-on-release discipline unchanged.
 - ✅ **Connection cluster moves to the titlebar CENTRE** (`.principal` — the Xcode activity-pill seat) with a resting bezel fill; trailing keeps the actions (pane menu, windows-panel toggle). Ambient state reads from the middle; actions live at the edge.
-- ✅ **`.navigationSubtitle` = the focused pane's cwd**, home-abbreviated via the palette's `CwdDisplay` (the document-proxy idiom); empty until known.
+- ✅ **`.navigationSubtitle` = the focused pane's cwd**, home-abbreviated via `PaneSpec::cwd_badge_path` (the document-proxy idiom); empty until known.
 - ✅ **The window dock floats on the margin** — the hard `Divider()` under it is gone; the strip gets breathing room instead (the space to the video card below is the seam). Tiles grow to 32pt icons.
 - ✅ **Sidebar footer New-Tab affordance** (`safeAreaInset(edge: .bottom)`, the Things/Reminders idiom) — before this, macOS had NO mouse-visible tab mint (⌘T / palette / menu only). Mints a terminal tab; remote windows keep minting from the dock's `+`.
 

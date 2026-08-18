@@ -216,6 +216,56 @@ impl PaneSpec {
         Some(leaf.map_or_else(|| trimmed.to_owned(), str::to_owned))
     }
 
+    /// The same directory as a BADGE reads it — the command palette's WORKING DIRECTORY pill and
+    /// every other place that prints a whole path rather than its leaf:
+    /// `/Users/abner/Workplace/myproject` → `~/Workplace/myproject/`.
+    ///
+    /// Two display-only transforms. A leading home prefix collapses to `~`, and a trailing `/` says
+    /// the value is a DIRECTORY — the one thing a bare path does not say about itself.
+    ///
+    /// ⚠️ The home is matched by SHAPE — `/Users/<name>` or `/home/<name>` — and never by asking
+    /// this machine where its own home is. The path arrives from the REMOTE host over the `cwd()`
+    /// metadata RPC, so the client's `$HOME` is an answer to a different question. A root with no
+    /// name segment after it (`/Users`, `/Users/`) is a directory that happens to be called Users,
+    /// not somebody's home.
+    ///
+    /// Total: an empty path stays empty rather than becoming a bare `/`, the filesystem root stays
+    /// `/`, and a path already rooted at `~` keeps it.
+    #[must_use]
+    pub fn cwd_badge_path(cwd: &str) -> String {
+        if cwd.is_empty() {
+            return String::new();
+        }
+        let collapsed = Self::tilde_collapsed(cwd);
+        if collapsed.ends_with('/') {
+            collapsed
+        } else {
+            collapsed + "/"
+        }
+    }
+
+    /// Replaces a leading home prefix with `~`, or returns the path as written.
+    fn tilde_collapsed(path: &str) -> String {
+        if path == "~" || path.starts_with("~/") {
+            return path.to_owned();
+        }
+        for root in ["/Users/", "/home/"] {
+            let Some(after_root) = path.strip_prefix(root) else {
+                continue;
+            };
+            // The first segment after the root is the user NAME, and the home boundary is the end
+            // of it. Nothing there, or another slash, means the root itself was the whole path.
+            if after_root.is_empty() || after_root.starts_with('/') {
+                return path.to_owned();
+            }
+            return match after_root.split_once('/') {
+                Some((_, below)) => format!("~/{below}"),
+                None => "~".to_owned(),
+            };
+        }
+        path.to_owned()
+    }
+
     /// Whether a path is almost certainly a plugin manager's TRANSIENT cache directory rather than
     /// somewhere a person navigated to.
     ///
@@ -602,6 +652,52 @@ mod tests {
     fn a_blank_directory_has_no_display_name_rather_than_an_empty_one() {
         assert!(PaneSpec::cwd_display_name(None).is_none());
         assert!(PaneSpec::cwd_display_name(Some("   ")).is_none());
+    }
+
+    #[test]
+    fn a_badge_collapses_either_platforms_home_and_marks_the_directory() {
+        assert_eq!(
+            PaneSpec::cwd_badge_path("/Users/abner/Workplace/myproject"),
+            "~/Workplace/myproject/"
+        );
+        assert_eq!(PaneSpec::cwd_badge_path("/home/abner/src/proj"), "~/src/proj/");
+    }
+
+    #[test]
+    fn the_home_directory_itself_is_the_whole_badge() {
+        assert_eq!(PaneSpec::cwd_badge_path("/Users/abner"), "~/");
+        assert_eq!(PaneSpec::cwd_badge_path("/home/abner"), "~/");
+        assert_eq!(PaneSpec::cwd_badge_path("/Users/abner/"), "~/");
+    }
+
+    #[test]
+    fn a_home_root_without_a_name_under_it_is_an_ordinary_directory() {
+        assert_eq!(PaneSpec::cwd_badge_path("/Users"), "/Users/");
+        assert_eq!(PaneSpec::cwd_badge_path("/home"), "/home/");
+        assert_eq!(PaneSpec::cwd_badge_path("/Users/"), "/Users/");
+    }
+
+    #[test]
+    fn a_name_that_merely_starts_with_the_users_name_is_not_that_user() {
+        assert_eq!(PaneSpec::cwd_badge_path("/Users/abnerson/code"), "~/code/");
+    }
+
+    #[test]
+    fn a_path_outside_any_home_keeps_itself_and_gains_the_marker() {
+        assert_eq!(PaneSpec::cwd_badge_path("/etc"), "/etc/");
+        assert_eq!(PaneSpec::cwd_badge_path("/var/log/system"), "/var/log/system/");
+        assert_eq!(PaneSpec::cwd_badge_path("/etc/"), "/etc/");
+    }
+
+    #[test]
+    fn the_two_paths_that_are_already_their_own_badge() {
+        assert_eq!(PaneSpec::cwd_badge_path(""), "", "nothing stays nothing");
+        assert_eq!(PaneSpec::cwd_badge_path("/"), "/", "the root is its own leaf");
+        assert_eq!(PaneSpec::cwd_badge_path("~"), "~/");
+        assert_eq!(
+            PaneSpec::cwd_badge_path("~/Workplace/myproject"),
+            "~/Workplace/myproject/"
+        );
     }
 
     #[test]

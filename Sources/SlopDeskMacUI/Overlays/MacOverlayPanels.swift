@@ -18,6 +18,7 @@
 
 import AppKit
 import SlopDeskClientCore
+import SlopDeskClientUI // Slate — the ONE token ladder, for the palette card's first measurement
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel // PaneID — a toast's jump target
 
@@ -31,6 +32,10 @@ final class MacOverlayPanels {
     /// The ⌃⇥ readout. Kept for the same reason as the corner: the gesture is often under 200ms, and
     /// building a window inside it would spend the whole interaction on setup.
     private var switcher: MacPaneSwitcherController?
+    /// The ⌘⇧P palette, or `nil` when it is not up. Built per presentation rather than kept: the
+    /// query, the selection and the hover arbiter are all per-OPENING state, and a kept card would
+    /// have to reset each of them by hand on the way in.
+    private var palette: MacOverlayPanelController?
 
     /// Reconciles the ⌘/ cheat sheet against `visible`.
     ///
@@ -61,6 +66,46 @@ final class MacOverlayPanels {
         )
         cheatSheet = controller
         controller.present()
+    }
+
+    /// Reconciles the ⌘⇧P command palette against `visible`.
+    ///
+    /// `toggledState` is the chrome's answer to "does this row show its ✓ right now", built by the
+    /// window root from the LIVE chrome — the coordinator never learns what a sidebar is, and the
+    /// card asks the question again on every render, so a verb run with ⌘↩ flips its own gutter.
+    ///
+    /// The card is measured by its RESULTS, so the controller is handed a first size and then told
+    /// each new one as the query narrows the list.
+    func setPalette(
+        _ visible: Bool, host: NSWindow?, store: WorkspaceStore, coordinator: OverlayCoordinator,
+        toggledState: @escaping @MainActor (PaletteItem) -> Bool,
+    ) {
+        guard visible else {
+            palette?.dismiss()
+            palette = nil
+            // The keyboard goes back to the PANE — same call, same reason, as the cheat sheet's.
+            store.reclaimKeyboardFocusInActivePane()
+            return
+        }
+        guard palette == nil, let host else { return }
+        let card = MacPaletteView(
+            coordinator: coordinator, store: store, toggledState: toggledState,
+        )
+        let controller = MacOverlayPanelController(
+            host: host,
+            content: card,
+            size: NSSize(
+                width: PaletteMetrics.panelWidth,
+                height: Slate.Metric.heightInput + PaletteMetrics.resultsMaxHeight,
+            ),
+            onDismiss: { [coordinator] in coordinator.closePalette() },
+        )
+        card.onResize = { [weak controller] size in controller?.resize(to: size) }
+        palette = controller
+        controller.present()
+        // After `present()`, and it has to be: a field cannot take first responder in a window that
+        // is not yet key, so a card that focused itself at build time would come up unfocused.
+        card.begin()
     }
 
     /// Reconciles the notification corner against the coordinator's live stack.

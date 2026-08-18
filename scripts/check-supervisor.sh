@@ -4567,6 +4567,33 @@ for shared in PaneSwitcherRowsBuilder PaneSwitcherMetrics; do
 done
 printf 'check-supervisor: the overlay host presents modals and nothing else.\n'
 
+# ── One palette, two frameworks ───────────────────────────────────────────────────────────────
+# docs/56 stage D's first MODAL surface: the Mac's ⌘⇧P is an `NSPanel` and the phone's is a paper
+# card, and what a palette IS belongs to neither. `PalettePresentation`/`PaletteMetrics` carry the
+# card's measurements, the pairing of ranked rows with the keyboard's index, the ✓ predicate and the
+# WORKING DIRECTORY badge — the last over `slopdesk_ws_cwd_badge_path`, so a home is collapsed by ONE
+# rule and never against the client's own `$HOME` (the path came off the remote host).
+if ! grep -q 'slopdesk_ws_cwd_badge_path' Sources/SlopDeskWorkspaceModel/Domain/PaneSpec.swift; then
+  fail "PaneSpec stopped calling slopdesk_ws_cwd_badge_path — the badge's home collapse has two answers"
+fi
+for half in Sources/SlopDeskMacUI/Overlays/MacPalette.swift \
+  Sources/SlopDeskClientUI/Overlays/PaletteView.swift; do
+  if ! grep -q 'PalettePresentation' "${half}"; then
+    fail "${half} stopped reading PalettePresentation — the two palettes would drift on the first section header"
+  fi
+  # The pairing is the one every half gets one off by hand: a separator takes a LINE but not a
+  # selection, so a view that counted rows itself would highlight the wrong one under any header.
+  if grep -q 'isSeparator ? nil' "${half}"; then
+    fail "${half} re-pairs the ranked rows with the keyboard's index — that pairing is spelled ONCE"
+  fi
+done
+# The Mac must DROP each ported card from the shared host's `draws` set, or it draws the card twice —
+# once in SwiftUI over the workspace and once in its own panel.
+if grep -A4 'draws:' Sources/SlopDeskMacUI/App/MacWorkspaceRootView.swift | grep -q '\.palette'; then
+  fail "MacWorkspaceRootView still lets the shared host draw the palette — the Mac would show two"
+fi
+printf 'check-supervisor: one palette, drawn twice and spelled once.\n'
+
 # ── One device-panel law, two device protocols ────────────────────────────────────────────────
 # The simulator panel and the Android panel differ in almost everything and should — one rotates on
 # the client and the other on the device, one sends touches in the fitted rect's space and the other

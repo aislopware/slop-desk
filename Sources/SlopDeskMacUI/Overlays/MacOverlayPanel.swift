@@ -153,6 +153,9 @@ final class MacOverlayPanelController {
     private let card: MacOverlayCardView
     private weak var host: NSWindow?
     private var frameObservers: [NSObjectProtocol] = []
+    /// The card's own two dimensions, kept so a card whose content is a live list can re-size in
+    /// place (see ``resize(to:)``).
+    private var cardSize: (width: NSLayoutConstraint, height: NSLayoutConstraint)?
 
     /// Builds a card of `size` around `content`, over `host`.
     ///
@@ -185,6 +188,9 @@ final class MacOverlayPanelController {
         content.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(content)
         backdrop.addSubview(card)
+        let width = card.widthAnchor.constraint(equalToConstant: size.width)
+        let height = card.heightAnchor.constraint(equalToConstant: size.height)
+        cardSize = (width, height)
         NSLayoutConstraint.activate([
             content.leadingAnchor.constraint(equalTo: card.leadingAnchor),
             content.trailingAnchor.constraint(equalTo: card.trailingAnchor),
@@ -192,8 +198,8 @@ final class MacOverlayPanelController {
             content.bottomAnchor.constraint(equalTo: card.bottomAnchor),
             card.centerXAnchor.constraint(equalTo: backdrop.centerXAnchor),
             card.centerYAnchor.constraint(equalTo: backdrop.centerYAnchor),
-            card.widthAnchor.constraint(equalToConstant: size.width),
-            card.heightAnchor.constraint(equalToConstant: size.height),
+            width,
+            height,
             // The card must never run out of a small window; this is the margin it keeps.
             card.leadingAnchor.constraint(
                 greaterThanOrEqualTo: backdrop.leadingAnchor, constant: Slate.Metric.space4,
@@ -222,6 +228,25 @@ final class MacOverlayPanelController {
         panel.makeKeyAndOrderFront(nil)
         panel.makeFirstResponder(backdrop)
         observeHostFrame()
+    }
+
+    /// Re-cuts the card to `size`.
+    ///
+    /// A card whose content is a fixed sheet is measured once at `init`; one whose content is a LIVE
+    /// LIST is not, because a query that narrows to two rows should get a two-row card rather than a
+    /// full-height one padded out with nothing. Animated, because the height moves on every
+    /// keystroke and a card that jumps between two sizes reads as a flicker rather than as a card
+    /// following the list — the family's own short curve, so it settles inside the next keystroke.
+    func resize(to size: NSSize) {
+        guard let cardSize else { return }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Slate.Motion.smallFade.duration
+            context.timingFunction = Slate.Motion.smallFade.timingFunction
+            context.allowsImplicitAnimation = true
+            cardSize.width.animator().constant = size.width
+            cardSize.height.animator().constant = size.height
+            backdrop.layoutSubtreeIfNeeded()
+        }
     }
 
     /// Orders the card out. Idempotent — a second call on an already-dismissed card is a no-op, so

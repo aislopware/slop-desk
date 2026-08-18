@@ -961,13 +961,13 @@ final class OverlayCoordinatorMountTests: XCTestCase {
     // MARK: - The host's toggled-state predicate reflects live chrome
 
     #if canImport(SwiftUI)
-    /// `OverlayHostView.toggledState(for:)` is the pure predicate the host hands the palette so the ✓ gutter
+    /// `PalettePresentation.toggledState(chrome:store:)` is the pure predicate the host hands the palette so the ✓ gutter
     /// tracks the real panel visibility. Pin that the Toggle-Tabs-Panel row shows ✓ exactly when the sidebar is
     /// visible (`!sidebarCollapsed`), and a non-toggle row never does — test the predicate, not the view.
     func testToggledStateTracksSidebarVisibility() throws {
         let (_, store) = makeCoordinator()
         let chrome = WorkspaceChromeState()
-        let predicate = OverlayHostView.toggledState(for: chrome, store: store)
+        let predicate = PalettePresentation.toggledState(chrome: chrome, store: store)
         let sidebarRow = try XCTUnwrap(
             ActionsPaletteSource.catalog.first { $0.id == "action.toggleSidebar" },
             "the catalog has the Toggle Tabs Panel row",
@@ -995,7 +995,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         let chrome = WorkspaceChromeState()
         // Bound the way the root view binds it (`overlay.toggleSidebar = { chrome.toggleSidebar() }`).
         overlay.toggleSidebar = { [chrome] in chrome.toggleSidebar() }
-        let predicate = OverlayHostView.toggledState(for: chrome, store: store)
+        let predicate = PalettePresentation.toggledState(chrome: chrome, store: store)
         let sidebarRow = try XCTUnwrap(
             ActionsPaletteSource.catalog.first { $0.id == "action.toggleSidebar" },
             "the catalog has the Toggle Tabs Panel row",

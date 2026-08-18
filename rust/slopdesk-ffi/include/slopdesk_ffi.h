@@ -448,6 +448,10 @@ bool   slopdesk_ws_looks_secret(const uint8_t *bytes, size_t len);
 // for "no name to show" — an absent, blank or all-slashes path — which a real name can never be.
 bool   slopdesk_ws_transient_plugin_cwd(const uint8_t *bytes, size_t len);
 size_t slopdesk_ws_cwd_display_name(const uint8_t *bytes, size_t len, uint8_t *out, size_t cap);
+// The WHOLE directory, as a badge prints it: a `/Users/<name>` or `/home/<name>` prefix collapsed to
+// `~`, and a trailing `/` marking it a directory. Matched by SHAPE, never against this machine's own
+// home — the path came off the remote host. `0` here means the path was empty.
+size_t slopdesk_ws_cwd_badge_path(const uint8_t *bytes, size_t len, uint8_t *out, size_t cap);
 uint8_t slopdesk_ws_paste_risk(const uint8_t *bytes, size_t len, bool target_is_secure,
                                size_t max_length);
 

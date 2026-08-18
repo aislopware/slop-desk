@@ -112,7 +112,7 @@ final class WorkspaceChromePinTests: XCTestCase {
         overlay.togglePinWindow() // no binding ⇒ the default `{}` runs, no crash
     }
 
-    /// The palette ✓ gutter tracks the pinned state. `OverlayHostView.toggledState(for:)`
+    /// The palette ✓ gutter tracks the pinned state. `PalettePresentation.toggledState(chrome:store:)`
     /// resolves the "action.pinWindow" row to `chrome.pinned`, so the palette lights the checkmark while
     /// pinned and clears it when unpinned — the checkable Pin Window row. REVERT-TO-CONFIRM-FAIL:
     /// drop the `case "action.pinWindow": chrome.pinned` arm and the resolver falls to the `default: false`,
@@ -126,11 +126,11 @@ final class WorkspaceChromePinTests: XCTestCase {
             subtitle: nil, shortcut: nil, filter: .actions, category: .window, action: .togglePinWindow,
         )
 
-        let unpinnedResolver = OverlayHostView.toggledState(for: chrome, store: store)
+        let unpinnedResolver = PalettePresentation.toggledState(chrome: chrome, store: store)
         XCTAssertFalse(unpinnedResolver(pinItem), "an unpinned window shows no ✓ on the Pin Window row")
 
         chrome.togglePin() // pin it
-        let pinnedResolver = OverlayHostView.toggledState(for: chrome, store: store)
+        let pinnedResolver = PalettePresentation.toggledState(chrome: chrome, store: store)
         XCTAssertTrue(pinnedResolver(pinItem), "a pinned window lights the ✓ on the Pin Window row")
     }
 }

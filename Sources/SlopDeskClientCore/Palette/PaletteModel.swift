@@ -108,7 +108,7 @@ public enum PaletteAction: Sendable {
     /// Toggle "Pin Window" (keep the window floating above all other apps).
     /// Routed by the overlay coordinator to the injected ``OverlayCoordinator/togglePinWindow`` closure (bound
     /// to the SAME live ``WorkspaceChromeState`` `pinned` flag the menu Button + the `NSWindow.level` glue
-    /// read), so the palette row's ✓ gutter (resolved in ``OverlayHostView/toggledState(for:)``) tracks the
+    /// read), so the palette row's ✓ gutter (resolved in ``PalettePresentation/toggledState(chrome:store:)``) tracks the
     /// real pinned state. A checkable toggle; a documented no-op on iOS (no window level).
     case togglePinWindow
     /// Close the active window. Routed by the overlay coordinator to the injected

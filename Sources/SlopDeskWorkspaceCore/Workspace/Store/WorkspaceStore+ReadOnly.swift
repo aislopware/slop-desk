@@ -36,7 +36,7 @@ public extension WorkspaceStore {
     }
 
     /// Whether the ACTIVE pane is currently READ-ONLY — the read the command-palette "Read Only" ✓ gutter
-    /// (``OverlayHostView/toggledState(for:store:)``) consults so the checkmark tracks the live input gate.
+    /// (``PalettePresentation/toggledState(chrome:store:)``) consults so the checkmark tracks the live input gate.
     /// Resolves the active pane id in whichever live model is active, then reads the convergent ``paneReadOnly``
     /// set (so it reflects a flip from ANY entry point). `false` for an empty shell (no active pane).
     func isActivePaneReadOnly() -> Bool {

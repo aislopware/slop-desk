@@ -271,6 +271,27 @@ public struct PaneSpec: Sendable, Equatable {
         }
     }
 
+    /// The same directory as a BADGE prints it — the whole path rather than its leaf, with a
+    /// `/Users/<name>` or `/home/<name>` prefix collapsed to `~` and a trailing `/` marking it a
+    /// directory (`/Users/abner/Workplace/myproject` → `~/Workplace/myproject/`).
+    ///
+    /// The command palette's WORKING DIRECTORY pill is what asks. An empty path answers empty — a
+    /// badge that prints the whole path has nothing to fall back to, unlike ``cwdDisplayName(_:)``.
+    ///
+    /// ⚠️ The home is matched by SHAPE, never against this client's own `$HOME`: the path arrives
+    /// from the REMOTE host over the `cwd()` metadata RPC, so the local home is an answer to a
+    /// different question. `slopdesk-workspace`'s `PaneSpec::cwd_badge_path` holds the rule.
+    public static func cwdBadgePath(_ cwd: String) -> String {
+        var cwd = cwd
+        let answer = wsAnswerBytes { out, cap in
+            cwd.withUTF8 { input in
+                slopdesk_ws_cwd_badge_path(input.baseAddress, input.count, out, cap)
+            }
+        }
+        // swiftlint:disable:next optional_data_string_conversion
+        return String(decoding: answer, as: UTF8.self)
+    }
+
     /// True when `path` is almost certainly a plugin-manager's TRANSIENT cache dir — not a directory the
     /// user navigated to — so it must never become a pane's `pane/cwd` (the inherit source for new
     /// panes + the sidebar/title label).

@@ -414,6 +414,35 @@ pub unsafe extern "C" fn slopdesk_ws_cwd_display_name(
     unsafe { deliver(name.as_bytes(), out, cap) }
 }
 
+/// The same directory as a BADGE prints it — home collapsed to `~`, a trailing `/` marking it a
+/// directory — for the command palette's WORKING DIRECTORY pill.
+///
+/// `0` means the path was empty, and an empty badge is the honest answer to an empty path: unlike
+/// the leaf above, this one prints the WHOLE path, so there is no such thing as a path with nothing
+/// to show.
+///
+/// # Safety
+/// `bytes` must be null or point to `len` live bytes; `out` null or writable for `cap` bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_ws_cwd_badge_path(
+    bytes: *const c_uchar,
+    len: usize,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligations, restated above; `borrow` and `deliver` state their own.
+    let raw = unsafe { borrow(bytes, len) };
+    let badge = core::str::from_utf8(raw)
+        .map(PaneSpec::cwd_badge_path)
+        .unwrap_or_default();
+    // SAFETY: the caller's obligation, restated above.
+    unsafe { deliver(badge.as_bytes(), out, cap) }
+}
+
 /// The risk of typing `bytes` into a field, as a `PasteRisk` discriminant.
 ///
 /// # Safety
@@ -3122,12 +3151,13 @@ mod tests {
 
     use super::{
         CRect, CVideoTarget, DividerHandle, Frame, KeyedTab, Span, TreeNode, Uuid, decode_tree, encode_tree,
-        slopdesk_ws_decode_video_target, slopdesk_ws_divider_can_move, slopdesk_ws_divider_clamped_weight,
-        slopdesk_ws_divider_percents, slopdesk_ws_divider_thickness, slopdesk_ws_divider_weight_delta,
-        slopdesk_ws_dividers, slopdesk_ws_encode_video_target, slopdesk_ws_focus_cycle,
-        slopdesk_ws_focus_neighbor, slopdesk_ws_project_key, slopdesk_ws_section_header,
-        slopdesk_ws_section_precedes, slopdesk_ws_send_keys, slopdesk_ws_solve_layout,
-        slopdesk_ws_successor_after_close, slopdesk_ws_tree_removing, slopdesk_ws_tree_splitting,
+        slopdesk_ws_cwd_badge_path, slopdesk_ws_decode_video_target, slopdesk_ws_divider_can_move,
+        slopdesk_ws_divider_clamped_weight, slopdesk_ws_divider_percents, slopdesk_ws_divider_thickness,
+        slopdesk_ws_divider_weight_delta, slopdesk_ws_dividers, slopdesk_ws_encode_video_target,
+        slopdesk_ws_focus_cycle, slopdesk_ws_focus_neighbor, slopdesk_ws_project_key,
+        slopdesk_ws_section_header, slopdesk_ws_section_precedes, slopdesk_ws_send_keys,
+        slopdesk_ws_solve_layout, slopdesk_ws_successor_after_close, slopdesk_ws_tree_removing,
+        slopdesk_ws_tree_splitting,
     };
 
     const fn id(byte: u8) -> Uuid {
@@ -3245,6 +3275,39 @@ mod tests {
             unsafe { slopdesk_ws_project_key(core::ptr::null(), 0, false, core::ptr::null_mut(), 0) },
             0
         );
+    }
+
+    #[test]
+    fn the_badge_door_carries_the_collapse_and_the_directory_marker_across() {
+        let badge = |text| {
+            transform(
+                |bytes, len, out, cap| unsafe { slopdesk_ws_cwd_badge_path(bytes, len, out, cap) },
+                text,
+            )
+        };
+        assert_eq!(badge("/Users/me/slop-desk"), "~/slop-desk/");
+        assert_eq!(badge("/etc"), "/etc/");
+        assert!(
+            badge("").is_empty(),
+            "an empty path has an empty badge, not a slash"
+        );
+    }
+
+    #[test]
+    fn a_short_badge_buffer_is_told_the_length_it_should_have_lent() {
+        let path = b"/Users/me/slop-desk";
+        let needed =
+            unsafe { slopdesk_ws_cwd_badge_path(path.as_ptr(), path.len(), core::ptr::null_mut(), 0) };
+        assert_eq!(needed, "~/slop-desk/".len());
+        let mut cramped = [0_u8; 4];
+        assert_eq!(
+            unsafe {
+                slopdesk_ws_cwd_badge_path(path.as_ptr(), path.len(), cramped.as_mut_ptr(), cramped.len())
+            },
+            needed,
+            "the answer is the length NEEDED, and nothing is written",
+        );
+        assert_eq!(cramped, [0; 4]);
     }
 
     #[test]

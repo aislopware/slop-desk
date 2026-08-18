@@ -54,20 +54,31 @@ package struct OverlayHostView: View {
     /// The single overlay reducer — every overlay's visibility + close routes through it.
     @Bindable package var coordinator: OverlayCoordinator
     /// Whether a palette row currently shows its ✓ (toggled-on) gutter. Built by the root from the live chrome
-    /// (see ``OverlayHostView/toggledState(for:store:)``) so the pure coordinator stays chrome-agnostic.
+    /// (see ``PalettePresentation/toggledState(chrome:store:)``) so the pure coordinator stays chrome-agnostic.
     /// Defaults to "nothing toggled" (iOS / previews).
     package var toggledState: @MainActor (PaletteItem) -> Bool = { _ in false }
+    /// Which summoned cards this host still DRAWS.
+    ///
+    /// ⚠️ TRANSITIONAL, and it only ever shrinks. docs/56 stage D rewrites the macOS overlays as
+    /// `NSPanel`s one surface at a time, and the Mac shell drops each card from this set as it lands —
+    /// so a card that has moved is drawn by AppKit and one that has not is still drawn here, with no
+    /// `#if` choosing between them and never two live implementations of the same card. The phone
+    /// passes nothing and draws all four. When the macOS set empties, this parameter and this file's
+    /// macOS half go together and `SlopDeskClientUI` becomes `SlopDeskPhoneUI`.
+    package var draws: Set<ActiveSheet> = Set(ActiveSheet.allCases)
 
     package init(
         store: WorkspaceStore,
         connection: AppConnection,
         coordinator: OverlayCoordinator,
         toggledState: @escaping @MainActor (PaletteItem) -> Bool = { _ in false },
+        draws: Set<ActiveSheet> = Set(ActiveSheet.allCases),
     ) {
         self.store = store
         self.connection = connection
         self.coordinator = coordinator
         self.toggledState = toggledState
+        self.draws = draws
     }
 
     package var body: some View {
@@ -150,19 +161,19 @@ package struct OverlayHostView: View {
     /// Which overlay (if any) should be presented, resolved from the coordinator flags in a fixed priority
     /// order. The coordinator drives one flag at a time, so this is unambiguous: exactly one card is
     /// mounted, and one overlay replacing another (palette → connect) is a single swap.
-    private enum ActiveSheet: Identifiable {
+    package enum ActiveSheet: Identifiable, CaseIterable {
         case palette
         case openQuickly
         case peekReply
         case globalSearch
-        var id: Self { self }
+        package var id: Self { self }
     }
 
     private var activeSheet: ActiveSheet? {
-        if coordinator.paletteVisible { return .palette }
-        if coordinator.openQuicklyVisible { return .openQuickly }
-        if coordinator.peekReplyVisible { return .peekReply }
-        if coordinator.globalSearchVisible { return .globalSearch }
+        if coordinator.paletteVisible, draws.contains(.palette) { return .palette }
+        if coordinator.openQuicklyVisible, draws.contains(.openQuickly) { return .openQuickly }
+        if coordinator.peekReplyVisible, draws.contains(.peekReply) { return .peekReply }
+        if coordinator.globalSearchVisible, draws.contains(.globalSearch) { return .globalSearch }
         return nil
     }
 
@@ -283,35 +294,6 @@ package struct OverlayHostView: View {
             lines.append(CloseConfirmationPanel.reason(for: store.pendingCloseReasonPolicy ?? .process, scope: scope))
         }
         return lines.joined(separator: "\n\n")
-    }
-
-    /// The toggled-state predicate the root hands to ``PaletteView`` — built from the live chrome so the
-    /// palette's ✓ gutter reflects the real sidebar visibility (a visible panel ⇒ ✓ on its toggle
-    /// row). Pure + `static` so it is unit-pinnable without instantiating the view. `@MainActor`
-    /// because it reads the `@MainActor` ``WorkspaceChromeState``. Resolves the checkable View toggles — Toggle
-    /// Tabs Panel, Pin Window — PLUS the two Shell toggles whose live state lives on
-    /// the active pane (Read Only / Secure Keyboard Entry), read off the `store` so the ✓ tracks the real pane
-    /// input gate / secure-entry state rather than staying perpetually dark.
-    @MainActor
-    package static func toggledState(
-        for chrome: WorkspaceChromeState, store: WorkspaceStore,
-    ) -> @MainActor (PaletteItem) -> Bool {
-        { item in
-            switch item.id {
-            case "action.toggleSidebar": !chrome.sidebarCollapsed
-            case "action.toggleCodeSidebar": !chrome.codeSidebarCollapsed
-            // Pin Window is a CHECKABLE toggle — light the ✓ gutter while the window is pinned, so the
-            // palette (and the View menu) tell the user the current pinned state. Mirrors the sidebar
-            // treatment, reading the SAME live `chrome.pinned` the menu Button + the `NSWindow.level` glue flip.
-            case "action.pinWindow": chrome.pinned
-            // Read Only / Secure Keyboard Entry are CHECKABLE toggles whose live state lives on
-            // the ACTIVE pane (the convergent `paneReadOnly` set / the model's `secureInputActive` mirror), NOT
-            // on `chrome` — so the ✓ tracks the real input gate / secure-entry state instead of never lighting.
-            case "action.toggleReadOnly": store.isActivePaneReadOnly()
-            case "action.secureKeyboardEntry": store.isActivePaneSecureInputActive()
-            default: false
-            }
-        }
     }
 }
 

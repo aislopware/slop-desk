@@ -236,6 +236,34 @@ nothing is ever implemented twice. No stage copies a file: a surface either move
   ONE half rather than two: the phone has no modifier stream to open ⌃⇥ with, the SwiftUI overlay
   could never render there, and it was deleted rather than kept as a cross-language mirror.
 
+  **The fourth is the ⌘⇧P palette, and it is the first MODAL surface across.** The three before it
+  were a reference card and two readouts; none had a text field or a list you steer, and this one has
+  both — so what it settles it settles for Open Quickly, the global search and the peek reply behind
+  it. Three things it answers that a readout never had to. THE KEYBOARD BELONGS TO THE FIELD, and the
+  list is steered *through* it: the field editor is first responder for the card's whole life (it has
+  to be, or typing would stop reaching the query), so ↑/↓/⇞/⇟/↩ arrive as editing COMMANDS and
+  `control(_:textView:doCommandBy:)` is where the list reads them — which is also why ⌃P/⌃N cost
+  nothing, the text system already binds them to `moveUp:`/`moveDown:`. The two chords that are not
+  editing commands, ⌘↑/⌘↓ and ⌘↩, come through `performKeyEquivalent(with:)` instead. IT REDRAWS OFF
+  OBSERVATION rather than off its own edits, because ⌘↩ runs a verb and keeps the card up, so the ✓
+  gutter of the row just toggled has to flip under the pointer: `withObservationTracking` re-arms on
+  every render. AND IT SIZES ITSELF TO ITS RESULTS — the card is fixed-width and variable-height, so
+  `MacOverlayPanelController` grew a `resize(to:)` and a query that narrows to two rows gets a two-row
+  card. What the halves share is `PalettePresentation` + `PaletteMetrics` (`SlopDeskClientCore`): the
+  measurements, the pairing of ranked rows with the keyboard's index (a separator takes a LINE but not
+  a selection — the one thing every half gets one off by hand), the ✓ predicate, and the WORKING
+  DIRECTORY badge over `slopdesk_ws_cwd_badge_path`. That last is a stage-E move riding along: the
+  home collapse was a Swift `CwdDisplay` sitting inside the view target, and it is now
+  `PaneSpec::cwd_badge_path` in Rust — matched by SHAPE (`/Users/<name>`, `/home/<name>`) and never
+  against the client's own `$HOME`, because the path came off the remote host.
+
+  A modal card leaving raises a question an ambient one did not: the shared host still presents three
+  more, and it may not present a fourth the Mac has already taken. The answer is a `draws` set on
+  `OverlayHostView` — TRANSITIONAL and shrink-only, the Mac's ledger of what stage D has lifted — so a
+  card that has moved is drawn by AppKit and one that has not is still drawn there, with no `#if`
+  choosing between them and never two live implementations of one card. When the macOS set empties,
+  the parameter goes with the file's macOS half.
+
   With both ambient tenants in their own windows, `OverlayHostView` is a modal presenter and nothing
   else, and the hazard it was written around is gone with them: the host used to be a ZStack of an
   ambient chain carrying `allowsHitTesting(false)` — which suppresses hits for *everything* composed

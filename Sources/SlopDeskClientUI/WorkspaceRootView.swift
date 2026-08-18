@@ -114,7 +114,7 @@ public struct WorkspaceRootView: View {
                 store: store,
                 connection: connection,
                 coordinator: overlay,
-                toggledState: OverlayHostView.toggledState(for: chrome, store: store),
+                toggledState: PalettePresentation.toggledState(chrome: chrome, store: store),
             )
         }
         // THE NOTIFICATION CORNER is the phone's own presentation (docs/56 stage D): an overlay on

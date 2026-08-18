@@ -502,6 +502,18 @@ public struct SlopDeskMacApp: App {
                         visible, host: windowBox.window, store: store, coordinator: overlayCoordinator,
                     )
                 }
+                // THE ⌘⇧P PALETTE is the Mac's own AppKit panel (docs/56 stage D) — the first MODAL
+                // surface across, and the one that settles the palette family's shape: a pre-focused
+                // field, a ranked list steered THROUGH that field's editing commands, and a card that
+                // measures itself against its own results. `toggledState` is built from the LIVE
+                // chrome, so the ✓ gutter tracks real visibility and a ⌘↩ that keeps the card up flips
+                // its own row.
+                .onChange(of: overlayCoordinator.paletteVisible) { _, visible in
+                    overlayPanels.setPalette(
+                        visible, host: windowBox.window, store: store, coordinator: overlayCoordinator,
+                        toggledState: PalettePresentation.toggledState(chrome: chrome, store: store),
+                    )
+                }
                 // THE NOTIFICATION CORNER is the Mac's own AppKit panel too (docs/56 stage D), and it
                 // is what took the last ALWAYS-MOUNTED `NSHostingView` off the window root: the toast
                 // host used to be a full-bleed SwiftUI layer over the whole workspace, toggling

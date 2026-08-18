@@ -306,7 +306,7 @@ public struct ActionsPaletteSource: PaletteDataSource {
             subtitle: nil, shortcut: nil, filter: .actions, category: .window, action: .openConnect,
         ),
         // Pin Window (float the window above all other apps). A CHECKABLE
-        // toggle: `OverlayHostView.toggledState(for:)` lights the ✓ gutter when `chrome.pinned`.
+        // toggle: `PalettePresentation.toggledState(chrome:store:)` lights the ✓ gutter when `chrome.pinned`.
         // CHORD-LESS (no registry chord is registered) ⇒ `shortcut: nil` ⇒ no hint chip; routed by the coordinator to the
         // injected `togglePinWindow` closure (the SAME live `chrome.pinned` the View menu + the `NSWindow.level`
         // glue read). macOS-meaningful (iOS has no window level — a documented no-op).
