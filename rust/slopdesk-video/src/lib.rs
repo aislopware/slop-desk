@@ -107,6 +107,8 @@
 //!   to list through to who gets pushed to and how often.
 //! - [`recovery_routing`] — the host's side of the DEDICATED recovery channel, the still-screen
 //!   re-encode timer, and the scheduler that puts each finished message on its own channel.
+//! - [`key_capture`] — what the immersive tap does with one key, and the two chords that must stay
+//!   reachable no matter what the rest of it says.
 //! - [`input_routing`] — what happens to an input datagram between the socket and the injector: the
 //!   raise rule, the motion coalescer, the button and modifier ledger, and the metered scroll
 //!   accumulator — every one of them there because injection itself is synchronous and expensive.
@@ -168,6 +170,7 @@ pub mod input_event;
 pub mod input_routing;
 pub mod interleaver;
 pub mod keepalive;
+pub mod key_capture;
 pub mod live_bitrate;
 pub mod ltr;
 pub mod mint_rescue;

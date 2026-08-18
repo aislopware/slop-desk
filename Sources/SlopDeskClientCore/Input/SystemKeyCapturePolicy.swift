@@ -1,22 +1,17 @@
-// SystemKeyCapturePolicy — the PURE per-event decision for immersive-mode system-key capture
-// (`SystemKeyCaptureController`), CoreGraphics-value-types-only (CGEventType/CGEventFlags — no AppKit, no live
-// CGEvent) so every rule is unit-pinned headlessly (`SystemKeyCapturePolicyTests`) without ever creating an
-// event tap. The controller destructures the tap's CGEvent into (keyCode, flags, type) and actuates whatever
-// this returns; all POLICY lives here, all MECHANISM lives in the controller.
+// SystemKeyCapturePolicy — the near side of the immersive-mode system-key capture decision.
 //
-// SAFETY INVARIANT — never trap the user: while capture is engaged every key is swallowed locally, so the two
-// local bail-outs must stay reachable no matter what: ⌘⌥Esc (Force Quit) ALWAYS passes through, and the escape
-// chord ⌃⌥⌘E ALWAYS disengages (checked with `contains`, not equality, so a stuck caps-lock/fn/shift bit can
-// never dead-lock the escape hatch). Weakening either turns an engaged pane into a keyboard trap whose only
-// exit is another machine. ⌘Q deliberately FORWARDS — quitting the remote frontmost app is a first-class
-// immersive verb, and the two bail-outs above keep the local exit reachable without it.
+// The rules are `slopdesk_video::key_capture`: which chords must stay reachable while every key is
+// being swallowed, which modifier edges may be forwarded at all, and how a modifier edge's direction
+// is derived. What is here is the marshalling, and the one thing that cannot cross — `CGEventFlags`.
+// Apple's flag constants stay on this side, where there is a header for them; the crate speaks the
+// wire's own six-bit mask, which is what every other input door already carries.
 
 #if os(macOS)
 import CoreGraphics
+import CSlopDeskFFI
 
-/// Pure decision table for the immersive-mode event tap: given the destructured key event, says whether the
-/// controller forwards-and-swallows, passes through to macOS, or tears capture down. Stateless — modifier
-/// tracking (for the stuck-key flush) is the controller's job.
+/// The immersive-mode event tap's per-event decision. Stateless — modifier tracking (for the
+/// stuck-key flush) is the controller's job, and the controller is the only actuator.
 package enum SystemKeyCapturePolicy {
     /// What the tap callback does with one event. `Equatable` for the headless test pins.
     package enum Decision: Equatable {
@@ -29,86 +24,70 @@ package enum SystemKeyCapturePolicy {
         case disengage
     }
 
-    // Hardware-independent virtual key codes (Carbon `kVK_ANSI_E` / `kVK_Escape`) — literal so this file
-    // needs no Carbon import and stays a pure-value dependency.
-    private static let keyCodeE: UInt16 = 14
-    private static let keyCodeEscape: UInt16 = 53
-
     /// The one decision per tap event. `keyCode` = `.keyboardEventKeycode`, `flags` = the event's modifier
-    /// flags, `type` = keyDown / keyUp / flagsChanged (anything else falls out `.passThrough` — never swallow
-    /// what the policy does not understand).
+    /// flags, `type` = keyDown / keyUp / flagsChanged; anything else is an event the policy has no rule for.
     package static func decision(keyCode: UInt16, flags: CGEventFlags, type: CGEventType) -> Decision {
-        switch type {
-        case .flagsChanged:
-            // A modifier key edge. Forward only the keys whose flag bit is known (the `modifierMask` table) —
-            // an unmapped flagsChanged keyCode has no derivable isDown, and forwarding a guess would desync
-            // the remote modifier state; let macOS keep it instead.
-            return modifierMask(for: keyCode) != nil ? .forwardAndSwallow : .passThrough
-
-        case .keyDown,
-             .keyUp:
-            // Escape chord ⌃⌥⌘E, keyDown only (the keyUp never reaches the tap — it is already gone).
-            // `contains`, not `== [.maskControl, …]`: extra bits (caps lock, fn, shift, the device-specific
-            // left/right bits CGEventFlags carries) must never make the escape hatch unreachable.
-            if type == .keyDown, keyCode == keyCodeE,
-               flags.contains(.maskControl), flags.contains(.maskAlternate), flags.contains(.maskCommand)
-            {
-                return .disengage
-            }
-            // ⌘⌥Esc (and ⌘⌥⇧Esc — force-quit-frontmost): the Force Quit dialog is the user's recovery path
-            // when the app itself wedges, so it must survive capture. (⌘Q forwards on purpose — quitting the
-            // remote app is a first-class immersive verb; this chord + ⌃⌥⌘E stay the local bail-outs.)
-            if keyCode == keyCodeEscape, flags.contains(.maskCommand), flags.contains(.maskAlternate) {
-                return .passThrough
-            }
-            // Everything else — including the chords immersive mode exists for (⌘Tab, ⌘Space, ⌘`, F-keys, and
-            // media keys arriving as plain F-key events under "Use F1, F2… as standard function keys" / Fn) —
-            // goes to the remote host. Local chord passthrough above still works even though flagsChanged is
-            // swallowed: a keyDown's flags are synthesized from hardware modifier state, not from the
-            // (deleted) flagsChanged deliveries.
-            return .forwardAndSwallow
-
-        default:
-            return .passThrough
+        switch slopdesk_key_capture_decision(keyCode, flags.wireMask, type.ffiByte) {
+        case 0: .forwardAndSwallow
+        case 2: .disengage
+        default: .passThrough
         }
     }
 
-    /// Whether the event is a press (`true`) or release (`false`) for the forward closure. For flagsChanged
-    /// the edge direction is derived the way remote-desktop tools track modifiers: isDown = the changed key's
-    /// flag bit is NOW SET in the event's flags (a set bit means the key just went down; cleared means up).
+    /// Whether the event is a press (`true`) or release (`false`) for the forward closure.
     package static func isDown(keyCode: UInt16, flags: CGEventFlags, type: CGEventType) -> Bool {
-        switch type {
-        case .keyDown: true
-        case .keyUp: false
-        case .flagsChanged: modifierMask(for: keyCode).map { flags.contains($0) } ?? false
-        default: false
-        }
+        slopdesk_key_capture_is_down(keyCode, flags.wireMask, type.ffiByte)
     }
 
-    /// The coarse CGEventFlags bit a modifier keyCode drives, or `nil` for a keyCode that is not a known
-    /// modifier key. Left/right variants collapse onto the same mask on purpose — the forward closure carries
-    /// the keyCode itself, so the remote host still knows WHICH physical key moved; only the isDown derivation
-    /// needs the bit.
+    /// The coarse `CGEventFlags` bit a modifier keyCode drives, or `nil` for a keyCode that is not a known
+    /// modifier key. The table is the crate's; this turns its answer back into Apple's constant.
     package static func modifierMask(for keyCode: UInt16) -> CGEventFlags? {
-        switch keyCode {
-        case 54, // kVK_RightCommand
-             55: // kVK_Command
-            .maskCommand
-        case 56, // kVK_Shift
-             60: // kVK_RightShift
-            .maskShift
-        case 58, // kVK_Option
-             61: // kVK_RightOption
-            .maskAlternate
-        case 59, // kVK_Control
-             62: // kVK_RightControl
-            .maskControl
-        case 57: // kVK_CapsLock
-            .maskAlphaShift
-        case 63: // kVK_Function
-            .maskSecondaryFn
-        default:
-            nil
+        let bit = slopdesk_key_capture_modifier_bit(keyCode)
+        guard let bit = UInt8(exactly: bit) else { return nil }
+        return CGEventFlags(wireMask: bit)
+    }
+}
+
+// MARK: - CGEventFlags ⇄ the wire's six-bit mask
+
+private extension CGEventFlags {
+    /// Shift 1, control 2, option 4, command 8, caps lock 16, fn 32 — the mask
+    /// `slopdesk_video::input_event::InputModifiers` carries. Every other bit `CGEventFlags` sets
+    /// (the device-specific left/right ones, the numeric-pad and help bits) is dropped: the rules
+    /// read only these six, and a chord is matched by containment so an extra bit could never
+    /// change an answer anyway.
+    var wireMask: UInt8 {
+        var mask: UInt8 = 0
+        if contains(.maskShift) { mask |= 1 << 0 }
+        if contains(.maskControl) { mask |= 1 << 1 }
+        if contains(.maskAlternate) { mask |= 1 << 2 }
+        if contains(.maskCommand) { mask |= 1 << 3 }
+        if contains(.maskAlphaShift) { mask |= 1 << 4 }
+        if contains(.maskSecondaryFn) { mask |= 1 << 5 }
+        return mask
+    }
+
+    /// The inverse, for the single-bit answer the modifier table gives.
+    init(wireMask: UInt8) {
+        var flags = CGEventFlags()
+        if wireMask & (1 << 0) != 0 { flags.insert(.maskShift) }
+        if wireMask & (1 << 1) != 0 { flags.insert(.maskControl) }
+        if wireMask & (1 << 2) != 0 { flags.insert(.maskAlternate) }
+        if wireMask & (1 << 3) != 0 { flags.insert(.maskCommand) }
+        if wireMask & (1 << 4) != 0 { flags.insert(.maskAlphaShift) }
+        if wireMask & (1 << 5) != 0 { flags.insert(.maskSecondaryFn) }
+        self = flags
+    }
+}
+
+private extension CGEventType {
+    /// `0` key down · `1` key up · `2` flags changed · anything else the tap can deliver.
+    var ffiByte: UInt8 {
+        switch self {
+        case .keyDown: 0
+        case .keyUp: 1
+        case .flagsChanged: 2
+        default: 255
         }
     }
 }

@@ -75,6 +75,7 @@ pub mod input_box;
 pub mod input_event;
 pub mod input_routing;
 pub mod inspector;
+pub mod key_capture;
 pub mod keybind;
 pub mod link_action;
 pub mod link_detect;

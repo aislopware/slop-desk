@@ -5559,6 +5559,19 @@ uint64_t slopdesk_modifier_latch_note(uint64_t latched, uint16_t key_code, bool 
 size_t slopdesk_modifier_latch_capacity(void);
 size_t slopdesk_modifier_latch_drain(uint64_t *latched, uint16_t *out, size_t capacity);
 
+/* ---- what the immersive tap does with one key ------------------------------------------------
+ * `CGEventFlags` stops at this boundary: `modifiers` is the WIRE's own six-bit mask — shift 1,
+ * control 2, option 4, command 8, caps lock 16, fn 32 — the same one every other input door
+ * speaks, so Apple's numbers stay on the side with a header for them.
+ * `kind` is 0 key down · 1 key up · 2 flags changed; anything else is an event with no rule, and
+ * passes through. Swallowing the unknown is what turns an engaged pane into a keyboard trap.     */
+
+// 0 forward and swallow · 1 pass through · 2 disengage.
+uint8_t slopdesk_key_capture_decision(uint16_t key_code, uint8_t modifiers, uint8_t kind);
+bool    slopdesk_key_capture_is_down(uint16_t key_code, uint8_t modifiers, uint8_t kind);
+// The modifier bit a keycode drives, or -1 for a keycode that is not a modifier key.
+int32_t slopdesk_key_capture_modifier_bit(uint16_t key_code);
+
 /* The cursor-shape self-heal. Two lists of UNBOUNDED length — the ids whose bitmap arrived, and the
  * asks still outstanding — so the tracker rides in and out through lent buffers rather than as a
  * fixed record. `send` is only an answer when both counts fit: a call that could not write is not a
