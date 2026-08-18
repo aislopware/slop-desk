@@ -14,50 +14,9 @@ import XCTest
 
 @MainActor
 final class AndroidSidebarPhaseTests: XCTestCase {
-    private func endpoint(_ state: MetadataCodec.ServiceState, port: UInt16) -> MetadataCodec
-        .ServiceEndpoint
-    {
-        MetadataCodec.ServiceEndpoint(state: state, port: port)
-    }
-
-    func testAReadyEndpointBecomesAnAddress() {
-        XCTAssertEqual(
-            AndroidSidebarModel.phase(for: endpoint(.ready, port: 7421), host: "10.0.0.2"),
-            .ready(host: "10.0.0.2", port: 7421),
-        )
-    }
-
-    func testNoAnswerAtAllIsOfflineAndKeepsPolling() {
-        // No connected pane channel, or a host too old to know the verb. The connection may come up.
-        XCTAssertEqual(AndroidSidebarModel.phase(for: nil, host: "h"), .offline)
-    }
-
-    func testAStartingHostIsNotAnErrorSurface() {
-        XCTAssertEqual(AndroidSidebarModel.phase(for: endpoint(.starting, port: 0), host: "h"), .starting)
-    }
-
-    func testOnlyAMissingAdbRendersTheInstallHint() {
-        XCTAssertEqual(
-            AndroidSidebarModel.phase(for: endpoint(.unavailable, port: 0), host: "h"), .unavailable,
-        )
-    }
-
-    func testAReadyEndpointWithNoUsableAddressDegradesRatherThanTraps() {
-        // Both halves of an address are needed and neither is guaranteed: a ready state with port
-        // zero is a host that answered before it bound, and a nil host is a client between
-        // connections.
-        XCTAssertEqual(AndroidSidebarModel.phase(for: endpoint(.ready, port: 0), host: "h"), .offline)
-        XCTAssertEqual(AndroidSidebarModel.phase(for: endpoint(.ready, port: 7421), host: nil), .offline)
-        XCTAssertEqual(AndroidSidebarModel.phase(for: endpoint(.ready, port: 7421), host: ""), .offline)
-    }
-
-    func testAnUnknownFutureStateKeepsPollingRatherThanClaimingAdbIsMissing() {
-        // The forward-tolerant carry: a state byte this build cannot interpret must never render the
-        // install hint it cannot justify.
-        let future = MetadataCodec.ServiceEndpoint(stateByte: 99, port: 0)
-        XCTAssertEqual(AndroidSidebarModel.phase(for: future, host: "h"), .starting)
-    }
-
+    /// Only a reached bridge has somewhere to dial, and the socket reads that address from the phase
+    /// rather than from a second field that could disagree with it. The phase machine itself is
+    /// `DevicePanelRulesTests` — it is the simulator panel's too.
     func testOnlyAReadyPhaseYieldsAnAddress() {
         XCTAssertNil(AndroidSidebarModel.address(of: .starting))
         XCTAssertNil(AndroidSidebarModel.address(of: .unavailable))
@@ -66,79 +25,14 @@ final class AndroidSidebarPhaseTests: XCTestCase {
         XCTAssertEqual(address?.port, 1)
     }
 
-    /// Only the FIRST frame is news, and this is the whole reason it is a function.
-    ///
-    /// `@Observable` notifies on assignment rather than on change, so a handler that writes
-    /// `hasVideo = true` per access unit invalidates every view reading it at the frame rate — the
-    /// stage rebuilding header, toolbar, device body and drawer on the main actor between the pointer
-    /// events the user is making. It is the cost `AndroidFrameSink` exists to keep out of the video
-    /// path, leaking back in through one assignment.
-    func testOnlyTheFirstFrameOfAStreamIsWorthTelling() {
-        XCTAssertTrue(
-            AndroidSidebarModel.videoArrivalIsNews(hasVideo: false, isAwaitingStream: true),
-        )
-        XCTAssertFalse(
-            AndroidSidebarModel.videoArrivalIsNews(hasVideo: true, isAwaitingStream: false),
-        )
-    }
-
-    func testARetryMakesTheNextFrameNewsAgain() {
-        // `retry()` re-arms the wait, and the veil it raises has to come back down.
-        XCTAssertTrue(
-            AndroidSidebarModel.videoArrivalIsNews(hasVideo: true, isAwaitingStream: true),
-        )
-        // A stream that has neither video nor a wait outstanding is one the panel gave up on; its
-        // late frame still ends the failure state.
-        XCTAssertTrue(
-            AndroidSidebarModel.videoArrivalIsNews(hasVideo: false, isAwaitingStream: false),
-        )
-    }
-
-    // MARK: The wait's verdict
-
-    /// The decision that turned a boot from a dead end into a wait. Measured 2026-08-07 against a
-    /// cold boot: `open` is refused for the first ~21 s, can stall ~15 s more the moment `adb` says
-    /// `device`, and succeeds cleanly after that — so silence while the device is not (yet) running
-    /// means "again shortly", not "broken".
+    /// A row the way `adb devices -l` leaves one. `isRunning` — the flag the shared wait verdict
+    /// reads, pinned by `AndroidDeviceTests` — is `serial != nil && state == "device"`, so `offline`
+    /// is a boot in progress rather than a failure.
     private func device(state: String, serial: String? = "emulator-5554") -> AndroidDevice {
         AndroidDevice(
             key: "avd:Pixel_API36", name: "Pixel API36", serial: serial, avdName: "Pixel_API36",
             state: state, isEmulator: true,
         )
-    }
-
-    func testABootingDeviceIsWaitedOnNotFailed() {
-        XCTAssertEqual(
-            AndroidSidebarModel.verdict(for: device(state: "offline"), withinGrace: true), .wait,
-        )
-        // Freshly booted, no serial yet — same wait.
-        XCTAssertEqual(
-            AndroidSidebarModel.verdict(for: device(state: "offline", serial: nil), withinGrace: true),
-            .wait,
-        )
-    }
-
-    func testAReadyDeviceIsConnectedTheMomentItTurnsUp() {
-        XCTAssertEqual(
-            AndroidSidebarModel.verdict(for: device(state: "device"), withinGrace: true), .connect,
-        )
-    }
-
-    func testPatienceRunsOutInTheRightWords() {
-        // A running device with no video is the stall message with the retry button; a device that
-        // never came up is its own sentence. Both only AFTER the grace window.
-        XCTAssertEqual(
-            AndroidSidebarModel.verdict(for: device(state: "device"), withinGrace: false), .stalled,
-        )
-        XCTAssertEqual(
-            AndroidSidebarModel.verdict(for: device(state: "offline"), withinGrace: false),
-            .neverReady,
-        )
-    }
-
-    func testADeviceThatLeftTheListIsGoneWhateverThePatience() {
-        XCTAssertEqual(AndroidSidebarModel.verdict(for: nil, withinGrace: true), .gone)
-        XCTAssertEqual(AndroidSidebarModel.verdict(for: nil, withinGrace: false), .gone)
     }
 
     // MARK: The lifecycle spinner's hold

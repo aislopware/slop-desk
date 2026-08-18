@@ -14,8 +14,10 @@
 // two decoders and two 350 kbit/s streams for one visible rectangle is cost with no return, and the
 // server would be encoding two devices to serve one panel.
 //
-// The connection and the phase machine are separable on purpose: `poll` and `phase(for:)` are pure
-// enough to test without a socket, and everything that is not is behind ``SimulatorControlling``.
+// The connection and the phase machine are separable on purpose: `poll` is pure enough to test
+// without a socket, and everything that is not is behind ``SimulatorControlling``. The phase machine
+// itself is no longer here at all — it was byte-identical to the Android panel's, and both now read
+// `DevicePanelRules` (`slopdesk_devicepanel`).
 
 // `os(macOS)` joins the guard: every type this file names is `#if os(macOS)` in the other
 // twenty-six files of this directory, and the mount, `CodeSidebarColumn`, is macOS-only too.
@@ -28,20 +30,15 @@ import Foundation
 import SlopDeskProtocol
 import SlopDeskWorkspaceCore
 
-/// The readiness phases the Simulators surface renders. One value per distinct surface — the
-/// column's body switches over this and nothing else.
-package enum SimulatorSidebarPhase: Equatable {
-    /// The ensure RPC got no answer — no connected pane channel (app offline) or a host too old to
-    /// know verb 21. Keep polling: the connection may come up.
-    case offline
-    /// The host is booting (or probing) the simulator server — spinner, keep polling.
-    case starting
-    /// No `baguette` binary on the host — render the install hint. Still polled (slowly): a
-    /// `ThirdParty/tools/provision.sh` run mid-session is picked up without a restart.
-    case unavailable
-    /// The server is reachable at this address. Everything else the panel does hangs off it.
-    case ready(host: String, port: UInt16)
-}
+/// The readiness phases the Simulators surface renders — ``DevicePanelPhase``, under this surface's
+/// own name. One value per distinct surface: the column's body switches over this and nothing else.
+///
+/// The cases matched the Android panel's case for case, over a `phase(for:host:)` that was
+/// byte-identical in both files, so both read one type and one rule now. What is the simulator's
+/// here is the WORDS: `.unavailable` is "no `baguette` binary on the host" (a
+/// `ThirdParty/tools/provision.sh` run fixes it mid-session), `.starting` is a server the host is
+/// booting or probing, and verb 21 is the round that answers.
+package typealias SimulatorSidebarPhase = DevicePanelPhase
 
 @MainActor
 @Observable
@@ -195,29 +192,13 @@ package final class SimulatorSidebarModel {
         while !Task.isCancelled {
             let endpoint = await ensure()
             guard !Task.isCancelled else { return }
-            phase = Self.phase(for: endpoint, host: host())
-            switch phase {
-            case .ready: return
-            case .starting: try? await Task.sleep(for: interval)
-            case .offline,
-                 .unavailable: try? await Task.sleep(for: interval * 4)
-            }
-        }
-    }
-
-    /// One ensure round's endpoint → the phase to render. Pure — pinned by
-    /// `SimulatorSidebarModelTests`. A `ready` endpoint with no usable address degrades to
-    /// `.offline`, never a trap.
-    package static func phase(
-        for endpoint: MetadataCodec.ServiceEndpoint?, host: String?,
-    ) -> SimulatorSidebarPhase {
-        guard let endpoint else { return .offline }
-        switch endpoint.state {
-        case .unavailable: return .unavailable
-        case .starting: return .starting
-        case .ready:
-            guard let host, !host.isEmpty, endpoint.port != 0 else { return .offline }
-            return .ready(host: host, port: endpoint.port)
+            phase = DevicePanelRules.phase(for: endpoint, host: host())
+            // The backoff is the rule's too (``DevicePanelRules/pollBackoff(_:)``): a reached server
+            // stops the loop the search was for, and the two phases that only change on an
+            // operator's action wait four intervals rather than one.
+            let backoff = DevicePanelRules.pollBackoff(phase)
+            guard backoff > 0 else { return }
+            try? await Task.sleep(for: interval * backoff)
         }
     }
 
@@ -358,6 +339,22 @@ package final class SimulatorSidebarModel {
         frames.reset()
         hasVideo = false
         openStream(udid, host: host, port: port)
+    }
+
+    /// Decodable video arrived. Called on EVERY access unit, so it must be free once the first has
+    /// landed: `@Observable` notifies on assignment rather than on change, and writing `hasVideo`
+    /// per frame invalidates every view reading it at the frame rate. The test for whether an
+    /// arrival is NEWS is ``DevicePanelRules/videoArrivalIsNews(hasVideo:isAwaitingStream:)``, the
+    /// same one the Android panel's arrival reads — a retry re-arms the wait, which is what makes an
+    /// already-playing stream news again.
+    private func noteVideoArrived() {
+        guard DevicePanelRules.videoArrivalIsNews(
+            hasVideo: hasVideo, isAwaitingStream: isAwaitingStream,
+        ) else {
+            return
+        }
+        settleStream()
+        hasVideo = true
     }
 
     /// The stream has answered — with video, with an error, or by ending. Stops the loading state and
@@ -701,16 +698,14 @@ package final class SimulatorSidebarModel {
         switch message {
         case let .configuration(record):
             guard let configuration = SimulatorWireProtocol.parseAVCConfiguration(record) else { return }
-            settleStream()
-            hasVideo = true
+            noteVideoArrived()
             frames.deliver(configuration: configuration)
         case let .accessUnit(data, isKeyframe):
             // DECODABLE VIDEO ends the loading state; the JPEG seed below does NOT. The seed is a
             // still the server sends while its encoder starts, so treating it as arrival would drop
             // the indicator over a picture that is already stale and may never move — which is the
             // hang this deadline exists to catch, wearing a screenshot as a disguise.
-            settleStream()
-            hasVideo = true
+            noteVideoArrived()
             frames.deliver(accessUnit: data, isKeyframe: isKeyframe)
         case let .jpeg(data):
             frames.deliver(seed: data)

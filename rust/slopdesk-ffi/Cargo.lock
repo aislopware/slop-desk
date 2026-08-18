@@ -150,6 +150,13 @@ name = "slopdesk-devicelog"
 version = "0.1.0"
 
 [[package]]
+name = "slopdesk-devicepanel"
+version = "0.1.0"
+dependencies = [
+ "slopdesk-wire",
+]
+
+[[package]]
 name = "slopdesk-dropd"
 version = "0.1.0"
 
@@ -162,6 +169,7 @@ dependencies = [
  "slopdesk-androidd",
  "slopdesk-cli",
  "slopdesk-devicelog",
+ "slopdesk-devicepanel",
  "slopdesk-dropd",
  "slopdesk-fuzzy",
  "slopdesk-hookevent",

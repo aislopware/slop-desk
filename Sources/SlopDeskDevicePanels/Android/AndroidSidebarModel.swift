@@ -29,20 +29,14 @@ import Foundation
 import SlopDeskProtocol
 import SlopDeskWorkspaceCore
 
-/// The readiness phases the Android surface renders. One value per distinct surface — the column's
-/// body switches over this and nothing else.
-package enum AndroidSidebarPhase: Equatable {
-    /// The ensure RPC got no answer — no connected pane channel (app offline) or a host too old to
-    /// know verb 22. Keep polling: the connection may come up.
-    case offline
-    /// The host is still trying to open the bridge — spinner, keep polling.
-    case starting
-    /// No `adb` on the host — render the install hint. Still polled (slowly): installing the platform
-    /// tools mid-session is picked up without a restart.
-    case unavailable
-    /// The bridge is reachable at this address. Everything else the panel does hangs off it.
-    case ready(host: String, port: UInt16)
-}
+/// The readiness phases the Android surface renders — ``DevicePanelPhase``, under this surface's
+/// own name. One value per distinct surface: the column's body switches over this and nothing else.
+///
+/// The cases matched the simulator panel's case for case, over a `phase(for:host:)` that was
+/// byte-identical in both files, so both read one type and one rule now. What is Android's here is
+/// the WORDS the surface puts on them: `.unavailable` is "no `adb` on the host", `.starting` is a
+/// bridge that has not opened yet, and verb 22 is the round that answers.
+package typealias AndroidSidebarPhase = DevicePanelPhase
 
 @MainActor
 @Observable
@@ -208,29 +202,14 @@ package final class AndroidSidebarModel {
         while !Task.isCancelled {
             let endpoint = await ensure()
             guard !Task.isCancelled else { return }
-            phase = Self.phase(for: endpoint, host: host())
+            phase = DevicePanelRules.phase(for: endpoint, host: host())
             bridge.endpoint = Self.address(of: phase)
-            switch phase {
-            case .ready: return
-            case .starting: try? await Task.sleep(for: interval)
-            case .offline,
-                 .unavailable: try? await Task.sleep(for: interval * 4)
-            }
-        }
-    }
-
-    /// One ensure round's endpoint → the phase to render. Pure. A `ready` endpoint with no usable
-    /// address degrades to `.offline`, never a trap.
-    package static func phase(
-        for endpoint: MetadataCodec.ServiceEndpoint?, host: String?,
-    ) -> AndroidSidebarPhase {
-        guard let endpoint else { return .offline }
-        switch endpoint.state {
-        case .unavailable: return .unavailable
-        case .starting: return .starting
-        case .ready:
-            guard let host, !host.isEmpty, endpoint.port != 0 else { return .offline }
-            return .ready(host: host, port: endpoint.port)
+            // Both panels back off on one rule (``DevicePanelRules/pollBackoff(_:)``): a reached
+            // bridge stops the loop, a starting one re-asks at the base cadence, and the two that
+            // only change on an operator's action wait four times as long.
+            let backoff = DevicePanelRules.pollBackoff(phase)
+            guard backoff > 0 else { return }
+            try? await Task.sleep(for: interval * backoff)
         }
     }
 
@@ -473,22 +452,14 @@ package final class AndroidSidebarModel {
     /// A frame arrived. Called on EVERY one, so it must be free once the first has landed — see the
     /// warning on ``hasVideo``.
     private func noteVideoArrived() {
-        guard Self.videoArrivalIsNews(hasVideo: hasVideo, isAwaitingStream: isAwaitingStream) else {
+        guard DevicePanelRules.videoArrivalIsNews(
+            hasVideo: hasVideo, isAwaitingStream: isAwaitingStream,
+        ) else {
             return
         }
         settleStream()
         lastEndReason = nil
         hasVideo = true
-    }
-
-    /// Whether an arriving frame has anything to tell the observable layer.
-    ///
-    /// The FIRST one does — it ends the wait and turns the stage from a veil into a screen. Every one
-    /// after it says only what the layer already knows, and saying it anyway is a full SwiftUI
-    /// invalidation per frame (``hasVideo``). Both flags are read because they can disagree: a retry
-    /// re-arms the wait, so a stream that is awaited again is news again.
-    package static func videoArrivalIsNews(hasVideo: Bool, isAwaitingStream: Bool) -> Bool {
-        !hasVideo || isAwaitingStream
     }
 
     /// The stream has answered — with video, with an error, or by the panel giving up. Ends the
@@ -507,36 +478,6 @@ package final class AndroidSidebarModel {
         }
     }
 
-    /// What to do about a selection with no video yet, given what the device list just said. Pure —
-    /// the timing around it stays untested, the decision does not.
-    ///
-    /// This is the piece that turns a boot from a dead end into a wait. Measured 2026-08-07 against
-    /// a cold boot: `open` is REFUSED for the first ~21 s (`offline`), can stall for ~15 s more the
-    /// moment the state turns `device`, and succeeds cleanly after that — so a refused or silent
-    /// attempt while the device is not (yet) running means "again shortly", not "broken".
-    package enum StreamVerdict: Equatable {
-        /// The device is ready — open (or re-open) the mirror now.
-        case connect
-        /// Not ready yet, patience left — keep the veil up and look again shortly.
-        case wait
-        /// The device left the list entirely. Say so and go back; there is nothing to look at.
-        case gone
-        /// Patience ran out on a RUNNING device — the stall message, with the retry button.
-        case stalled
-        /// Patience ran out on a device that never reached `device` state.
-        case neverReady
-    }
-
-    package static func verdict(for device: AndroidDevice?, withinGrace: Bool) -> StreamVerdict {
-        guard let device else { return .gone }
-        switch (device.isRunning, withinGrace) {
-        case (true, true): return .connect
-        case (true, false): return .stalled
-        case (false, true): return .wait
-        case (false, false): return .neverReady
-        }
-    }
-
     /// The wait's one revisit point: the per-attempt watchdog and the reattempt pause both land
     /// here, ask the bridge what the device is NOW, and act on the verdict. The read-back is what
     /// turns a hang into a sentence — the panel's own list is up to four seconds stale, and the
@@ -550,7 +491,10 @@ package final class AndroidSidebarModel {
         guard selection == key, isAwaitingStream else { return }
         if let live { devices = live }
         let device = devices.first { $0.key == key }
-        switch Self.verdict(for: device, withinGrace: withinGrace) {
+        // The rule that turns a boot from a dead end into a wait — ``DevicePanelRules``, shared with
+        // the simulator panel. `nil` for a device the fresh list no longer carries, which is the one
+        // answer that does not consult the clock.
+        switch DevicePanelRules.streamVerdict(isRunning: device?.isRunning, withinGrace: withinGrace) {
         case .connect:
             guard let serial = device?.serial else { return }
             // A fresh socket rather than more patience with the silent one: the measured mid-boot

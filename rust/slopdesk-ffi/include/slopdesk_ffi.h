@@ -5897,6 +5897,59 @@ bool slopdesk_unified_log_parse(const unsigned char *line, size_t len,
                                 SlopDeskDeviceLogLine *out);
 
 // ---------------------------------------------------------------------------
+// The two device panels' shared decisions — `slopdesk_devicepanel`.
+//
+// The Android panel and the simulator panel poll the same kind of host ENSURE
+// verb, turn its answer into the same four phases, and back off on the same
+// rule. Both Swift models held a byte-identical copy of that ladder; this is
+// the one it collapsed onto.
+//
+// Every answer is a KIND. The host string and the device row it is about stay
+// on the caller's side — the panel already holds both, and handing one back
+// would be a copy made only to be compared with the one it came from.
+
+// No answer at all (no pane channel, or a host too old for the verb), or a
+// service that says ready with nothing dialable. Keep polling.
+#define SLOPDESK_DEVICE_PANEL_OFFLINE 0
+// The host is bringing the service up — spinner, keep polling.
+#define SLOPDESK_DEVICE_PANEL_STARTING 1
+// The tool is not installed on the host — the install hint. Polled slowly.
+#define SLOPDESK_DEVICE_PANEL_UNAVAILABLE 2
+// Reachable. Everything else the panel does hangs off this.
+#define SLOPDESK_DEVICE_PANEL_READY 3
+
+// `has_endpoint` is false for a round that got no answer. `host`/`host_len` is
+// the address the panel would dial; null or empty is the same non-answer as a
+// port of 0, which is why the emptiness test is inside rather than at the call
+// site. `state_byte` is the RAW wire byte — an unknown one reads as STARTING,
+// the wire's own forward-tolerant rule, not a second copy of it.
+uint8_t slopdesk_device_panel_phase(bool has_endpoint, uint8_t state_byte,
+                                    uint16_t port, const unsigned char *host,
+                                    size_t host_len);
+
+// How many poll intervals that phase waits before asking again — 0 stops the
+// loop. An unknown byte takes the slow tier.
+uint32_t slopdesk_device_panel_poll_backoff(uint8_t phase_byte);
+
+// A selection with no video yet, given what the device list just said.
+#define SLOPDESK_DEVICE_PANEL_CONNECT 0
+#define SLOPDESK_DEVICE_PANEL_WAIT 1
+#define SLOPDESK_DEVICE_PANEL_GONE 2
+#define SLOPDESK_DEVICE_PANEL_STALLED 3
+#define SLOPDESK_DEVICE_PANEL_NEVER_READY 4
+
+// `is_listed` false — the device left the list — is GONE whatever the clock
+// says, and is the one answer that reads neither other argument.
+uint8_t slopdesk_device_panel_stream_verdict(bool is_listed, bool is_running,
+                                             bool within_grace);
+
+// Whether an arriving frame has anything to tell the observable layer. Called
+// on EVERY frame, so it is what keeps a per-frame assignment — and the whole
+// invalidation behind it — off the video path.
+bool slopdesk_device_panel_video_is_news(bool has_video,
+                                         bool is_awaiting_stream);
+
+// ---------------------------------------------------------------------------
 // The superd control socket's framing — `slopdesk_superwire`.
 //
 //     <1 byte tag> <4 bytes big-endian length> <length bytes body>

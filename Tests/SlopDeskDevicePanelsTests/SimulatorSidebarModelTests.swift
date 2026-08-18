@@ -225,41 +225,13 @@ final class SimulatorSidebarModelTests: XCTestCase {
         return (model, { built })
     }
 
-    // MARK: The phase machine
+    // MARK: The ensure loop
 
-    func testNoEndpointIsOfflineNotUnavailable() {
-        // A host too old for verb 21, or no connected pane channel, answers nothing. That is "come
-        // back later", NOT "baguette is missing" — the install hint would name a problem the user
-        // does not have.
-        XCTAssertEqual(SimulatorSidebarModel.phase(for: nil, host: "h"), .offline)
-    }
-
-    func testTheThreeServerStatesMapStraightThrough() {
-        XCTAssertEqual(
-            SimulatorSidebarModel.phase(for: .init(state: .starting, port: 0), host: "h"), .starting,
-        )
-        XCTAssertEqual(
-            SimulatorSidebarModel.phase(for: .init(state: .unavailable, port: 0), host: "h"), .unavailable,
-        )
-        XCTAssertEqual(
-            SimulatorSidebarModel.phase(for: .init(state: .ready, port: 7), host: "h"),
-            .ready(host: "h", port: 7),
-        )
-    }
-
-    func testAReadyEndpointWithNothingToDialDegradesToOffline() {
-        // Degrading rather than trapping: the ensure loop keeps running, and the panel recovers on
-        // its own once the connection names a host.
-        XCTAssertEqual(
-            SimulatorSidebarModel.phase(for: .init(state: .ready, port: 8080), host: nil), .offline,
-        )
-        XCTAssertEqual(
-            SimulatorSidebarModel.phase(for: .init(state: .ready, port: 8080), host: ""), .offline,
-        )
-        XCTAssertEqual(
-            SimulatorSidebarModel.phase(for: .init(state: .ready, port: 0), host: "h"), .offline,
-        )
-    }
+    //
+    // The phase machine it drives is `DevicePanelRulesTests` — one ensure round's endpoint means the
+    // same thing here as it does on the Android panel, and this file used to hold a second copy of
+    // those assertions. What is still pinned here is the LOOP: what it reads per round, and when it
+    // stops.
 
     func testPollReturnsOnReadyAndReadsTheHostPerRound() async {
         // The host is read per round on purpose: a reconnect can retarget the connection mid-loop,
