@@ -87,6 +87,7 @@ pub mod mux_envelope;
 pub mod mux_flow;
 pub mod mux_header;
 pub mod mux_host;
+pub mod notify;
 pub mod pacer_depth;
 pub mod paste_safety;
 pub mod present_queue;

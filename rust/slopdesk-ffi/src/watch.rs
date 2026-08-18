@@ -24,8 +24,8 @@ use std::ffi::c_uchar;
 
 use slopdesk_agent::watch::{WatchObservation, WatchStep, block_deadline_nanos, decide, is_at_rest};
 use slopdesk_wire::osc::{
-    self, ProgressState, WATCH_NOTIFICATION_MARKER, finish_bytes, notification_bytes, parse_progress,
-    spinner_bytes, watch_finish_message, watch_finish_notification_bytes,
+    self, ProgressState, WATCH_NOTIFICATION_MARKER, finish_bytes, is_watch_notification, notification_bytes,
+    parse_progress, spinner_bytes, watch_finish_message, watch_finish_notification_bytes,
 };
 
 use crate::agent::{status_byte, status_from};
@@ -301,6 +301,28 @@ pub unsafe extern "C" fn slopdesk_watch_finish_notification_bytes(
 pub const unsafe extern "C" fn slopdesk_watch_notification_marker(out: *mut c_uchar, cap: usize) -> usize {
     // SAFETY: the caller's obligation on the output buffer.
     unsafe { deliver(WATCH_NOTIFICATION_MARKER.as_bytes(), out, cap) }
+}
+
+/// Whether a notification's TITLE is the watch sentinel — which routes the banner to the dedicated
+/// "Notify on Watch Finish" toggle instead of the generic master switch.
+///
+/// The reading of the marker sits beside the builder that writes it, so the client recognises
+/// exactly what the wrapper emitted rather than a second spelling of it.
+///
+/// # Safety
+/// `title` must be null, or point to `title_len` initialised bytes live for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_watch_notification_is_marked(
+    title: *const c_uchar,
+    title_len: usize,
+) -> bool {
+    // SAFETY: the caller's obligation on the input pair.
+    let text = unsafe { borrow(title, title_len) };
+    core::str::from_utf8(text).is_ok_and(is_watch_notification)
 }
 
 /// The human-readable "Notify on Watch Finish" message for a finished command.

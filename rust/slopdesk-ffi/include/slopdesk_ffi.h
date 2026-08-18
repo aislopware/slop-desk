@@ -552,6 +552,62 @@ size_t slopdesk_ws_search_rank(SlopDeskWsSearchRankInputs inputs, const SlopDesk
 // capped away.
 size_t slopdesk_ws_max_search_results(void);
 
+// ---- When the app is allowed to SPEAK ----
+//
+// Both enums cross as their CASE INDEX. A byte neither map below names reads as the quiet case —
+// the system's own foreground behaviour, no cue — so a disagreement costs a notification rather
+// than producing one nobody asked for.
+
+typedef struct {
+    uint8_t kind;         // 0 explicit OSC · 1 command finish · 2 watch finish
+                          // · 3 agent task complete · 4 agent await input
+    int32_t exit;         // the code, when `kind` is a command finish
+    bool    exit_present; // false reads as a clean exit, whatever `exit` holds
+} SlopDeskWsNotifyEvent;
+
+typedef struct {
+    bool    app_notifications_enabled;
+    bool    notify_on_finish;
+    bool    notify_on_error;
+    bool    notify_on_watch_finish;
+    uint8_t foreground;   // 0 off · 1 always · 2 only while the source tab is unfocused
+    bool    agent_notify_task_complete;
+    bool    agent_notify_await_input;
+} SlopDeskWsNotifySettings;
+
+// A token bucket, crossing by value in both directions.
+typedef struct {
+    double capacity;
+    double refill_per_second;
+    double tokens;
+    double last_refill;
+} SlopDeskWsNotifyRateLimiter;
+
+bool     slopdesk_ws_notify_should_deliver(SlopDeskWsNotifyEvent event, bool app_active,
+                                           bool source_pane_visible,
+                                           SlopDeskWsNotifySettings settings);
+uint32_t slopdesk_ws_notify_long_threshold_ms(void);
+bool     slopdesk_ws_notify_is_long_running(uint32_t duration_ms);
+// 0 no badge · 1 success · 2 failure
+uint8_t  slopdesk_ws_notify_badge(int32_t exit, bool exit_present, uint32_t duration_ms,
+                                  bool pane_focused, uint32_t long_threshold_ms);
+bool     slopdesk_ws_notify_should_notify_completion(uint32_t duration_ms, bool pane_focused,
+                                                     bool enabled, uint32_t long_threshold_ms);
+// 0 silence · 1 task complete · 2 awaiting input
+uint8_t  slopdesk_ws_notify_agent_sound(bool needs_input, bool sound_task_complete,
+                                        bool sound_await_input);
+bool     slopdesk_ws_notify_should_ring_bell(bool sound_shell_controlled);
+bool     slopdesk_ws_notify_should_beep_on_error(int32_t exit, bool exit_present,
+                                                 bool sound_on_error);
+// The banner's title and body, written back to back; `title_len` says where the split is, so a
+// title that contains any byte a separator could use is still read back whole.
+size_t   slopdesk_ws_notify_explicit_content(const uint8_t *pane_title, size_t pane_title_len,
+                                             const uint8_t *explicit_title, size_t explicit_title_len,
+                                             const uint8_t *body, size_t body_len,
+                                             uint8_t *out, size_t cap, size_t *title_len);
+// Spends a token if there is one, writing the refilled bucket back through `limiter`.
+bool     slopdesk_ws_notify_rate_limit_allow(SlopDeskWsNotifyRateLimiter *limiter, double now);
+
 // ---- What the sidebar SHOWS, in what order, under which labels ----
 //
 // Both list doors answer in the CALLER's indices: a rail row is an id, a kind, a badge, a selection
@@ -1708,6 +1764,9 @@ size_t slopdesk_osc_notification_bytes(const uint8_t *message, size_t message_le
 size_t slopdesk_watch_finish_notification_bytes(const uint8_t *message, size_t message_len,
                                                 uint8_t *out, size_t cap);
 size_t slopdesk_watch_notification_marker(uint8_t *out, size_t cap);
+// The parse-back of the builder above: whether a notification's title IS that sentinel, which is
+// what routes the banner to the watch toggle rather than the master switch.
+bool   slopdesk_watch_notification_is_marked(const uint8_t *title, size_t title_len);
 size_t slopdesk_watch_finish_message(const SlopDeskByteSpan *command, size_t count,
                                      const uint8_t *arena, size_t arena_len, int32_t exit_code,
                                      uint8_t *out, size_t cap);

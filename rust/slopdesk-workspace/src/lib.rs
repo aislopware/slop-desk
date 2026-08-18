@@ -28,6 +28,8 @@
 //! - [`focus`] — moving focus by what is on screen rather than by tree position.
 //! - [`listen`] — the other end of that: what port the HOST may bind, and how to tell a bind
 //!   collision apart from a network that has not come up yet.
+//! - [`notify`] — when the app is allowed to speak: the banner's two gates, the badge a background
+//!   pane keeps, the two cues, and the bound on what a remote shell can ask for.
 //! - [`send_keys`] — text with control tokens in it, turned into the bytes a PTY receives.
 //! - [`shell_quoting`] — any text as one shell word, for everything that types a path into a shell.
 //! - [`session`] — what a pane IS, and the session → tab → pane values that hold them.
@@ -56,6 +58,7 @@ pub mod identity;
 pub mod json;
 pub mod jump;
 pub mod listen;
+pub mod notify;
 pub mod persist;
 pub mod rail_list;
 pub mod rail_title;

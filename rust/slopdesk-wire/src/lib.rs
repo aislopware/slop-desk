@@ -60,7 +60,7 @@ pub use mux::{
     BoundedQueuePolicy, ChannelState, ChannelTable, ConsumeResult, FlowCreditPolicy, MuxChannelClass,
     MuxCloseReason, MuxFlowControl, MuxFrame, MuxFrameDecoder, MuxFrameType, ReceiveWindowAccountant,
 };
-pub use osc::{ProgressState, ProgressUpdate, WATCH_NOTIFICATION_MARKER};
+pub use osc::{ProgressState, ProgressUpdate, WATCH_NOTIFICATION_MARKER, is_watch_notification};
 pub use replay::{DrainState, ReplayBuffer, RingFoldSource, ScrollbackDistiller, SnapshotSource};
 pub use workspace::{
     ROSTER_ATTACHMENT_BYTES, ROSTER_CLIENT_MIN_BYTES, ROSTER_PANE_MIN_BYTES, WorkspaceClientKind,

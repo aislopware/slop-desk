@@ -148,14 +148,24 @@ package struct WsStrings {
 /// was blank. A door whose empty answer is REAL — the at-root idle shell's yielded title — says so
 /// where it is declared, and its caller maps `nil` to `""` there rather than here.
 package func wsAnswer(_ call: (UnsafeMutablePointer<UInt8>?, Int) -> Int) -> String? {
+    let bytes = wsAnswerBytes(call)
+    guard !bytes.isEmpty else { return nil }
+    return String(bytes: bytes, encoding: .utf8)
+}
+
+/// The same read for an answer that is not ONE string — two run together, or bytes with a shape.
+///
+/// Empty is the no-answer, which every door reading this way already spells `0`; a caller that
+/// needs to tell a blank answer from an absent one takes the second size the door hands back.
+package func wsAnswerBytes(_ call: (UnsafeMutablePointer<UInt8>?, Int) -> Int) -> [UInt8] {
     var out = [UInt8](repeating: 0, count: 256)
     var needed = out.withUnsafeMutableBufferPointer { call($0.baseAddress, $0.count) }
     if needed > out.count {
         out = [UInt8](repeating: 0, count: needed)
         needed = out.withUnsafeMutableBufferPointer { call($0.baseAddress, $0.count) }
     }
-    guard needed > 0, needed <= out.count else { return nil }
-    return String(bytes: out[0..<needed], encoding: .utf8)
+    guard needed > 0, needed <= out.count else { return [] }
+    return Array(out[0..<needed])
 }
 
 /// The sidebar's draw order for a list of things that each belong to a project — where each one
