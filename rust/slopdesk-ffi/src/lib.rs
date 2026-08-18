@@ -59,6 +59,7 @@ pub mod client_view;
 pub mod cursor_overlay;
 pub mod cursor_wire;
 pub mod decode_admission;
+pub mod device_geometry;
 pub mod device_log;
 pub mod device_panel;
 pub mod drop_action;

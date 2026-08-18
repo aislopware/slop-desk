@@ -39,6 +39,11 @@ path = "src/lib.rs"
 # the header: taking the type is what keeps this from being a second copy of the mapping.
 slopdesk-wire = { path = "../slopdesk-wire" }
 
+# The aspect-fit law, and the point/size/rect vocabulary it is written in. A panel that fitted its
+# own frame would be a third answer to a question the renderer, the input encoder and the cursor
+# overlay already agree on — which is how a click ends up beside the pixel it was drawn for.
+slopdesk-video = { path = "../slopdesk-video" }
+
 # Linked into the app; every rule here is a `match` on a handful of scalars.
 [profile.release]
 opt-level = 3

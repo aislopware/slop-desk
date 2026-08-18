@@ -63,6 +63,7 @@ dependencies = [
 name = "slopdesk-devicepanel"
 version = "0.1.0"
 dependencies = [
+ "slopdesk-video",
  "slopdesk-wire",
 ]
 
@@ -71,8 +72,19 @@ name = "slopdesk-fuzzy"
 version = "0.1.0"
 
 [[package]]
+name = "slopdesk-gfsimd"
+version = "0.1.0"
+
+[[package]]
 name = "slopdesk-sanitize"
 version = "0.1.0"
+
+[[package]]
+name = "slopdesk-video"
+version = "0.1.0"
+dependencies = [
+ "slopdesk-gfsimd",
+]
 
 [[package]]
 name = "slopdesk-wire"

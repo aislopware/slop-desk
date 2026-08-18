@@ -20,6 +20,13 @@
 //! Every rule here takes scalars and answers a KIND. A phase's host string and a device's serial
 //! stay on the caller's side of the boundary: the panel already holds both, and handing one back
 //! across a C ABI would be a copy made only to be compared with the one it came from.
+//!
+//! ## And where the frame is
+//!
+//! [`geometry`] is the other half that was written twice: where a device's frame sits in a sidebar,
+//! what a point in that sidebar means, and where a synthetic finger may be planted.
+
+pub mod geometry;
 
 use slopdesk_wire::metadata::{ServiceEndpoint, ServiceState};
 

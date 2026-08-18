@@ -5982,6 +5982,90 @@ bool slopdesk_device_panel_video_is_news(bool has_video,
                                          bool is_awaiting_stream);
 
 // ---------------------------------------------------------------------------
+// Where a device panel's frame sits, and what a point in it means —
+// `slopdesk_devicepanel::geometry`.
+//
+// The other half that was written twice, and the half that fails QUIETLY: both
+// Swift files said "this is the part that can be wrong in a way nobody notices
+// until a tap lands two rows off", in the two places where it could be wrong
+// two different ways.
+//
+// The vocabulary is `SlopDeskVideoPoint`/`Size`/`Rect` above, because the fit
+// here IS `slopdesk_geometry_displayed_video_rect` — a panel with its own
+// aspect fit is how a click ends up beside the pixel it was drawn for.
+
+// The numbers both panels are written against, for `slopdesk_panel_metric`. An
+// unknown code answers 0, which is not one of them.
+#define SLOPDESK_PANEL_METRIC_EDGE_MARGIN 0u
+#define SLOPDESK_PANEL_METRIC_POINTS_PER_LINE 1u
+#define SLOPDESK_PANEL_METRIC_BOTTOM_BAND 2u
+#define SLOPDESK_PANEL_METRIC_TOP_BAND 3u
+
+// Which system-gesture band a contact starts in, for `slopdesk_panel_system_edge`.
+#define SLOPDESK_PANEL_EDGE_NONE 0u
+#define SLOPDESK_PANEL_EDGE_BOTTOM 1u
+#define SLOPDESK_PANEL_EDGE_TOP 2u
+
+// A pinch's two contacts, which are only ever produced together.
+typedef struct {
+  SlopDeskVideoPoint first;
+  SlopDeskVideoPoint second;
+} SlopDeskPinchPair;
+
+double slopdesk_panel_metric(uint32_t metric);
+
+// Aspect-fit, centred, on whole points; the ZERO rect for a degenerate input,
+// which the view reads as "nothing to draw yet".
+SlopDeskVideoRect slopdesk_panel_fitted_rect(SlopDeskVideoSize content,
+                                             SlopDeskVideoSize bounds);
+
+// A panel-space point in the frame's own space. False — and `out` untouched —
+// for a click on the bars beside the frame, which is not a tap on its edge.
+bool slopdesk_panel_device_point(SlopDeskVideoPoint point,
+                                 SlopDeskVideoRect fitted,
+                                 SlopDeskVideoPoint *out);
+
+// The same for a point that left the frame MID-DRAG: clamped to the last
+// addressable point rather than dropped, so a shade-pull still finishes.
+SlopDeskVideoPoint slopdesk_panel_clamped_device_point(SlopDeskVideoPoint point,
+                                                       SlopDeskVideoRect fitted);
+
+// A point in the fitted rect's space, in the grid the stream says it is
+// encoding — the only grid scrcpy's PositionMapper will accept.
+SlopDeskVideoPoint slopdesk_panel_video_pixels(SlopDeskVideoPoint point,
+                                               SlopDeskVideoRect fitted,
+                                               SlopDeskVideoSize video);
+bool slopdesk_panel_surface_is_usable(SlopDeskVideoRect fitted,
+                                      SlopDeskVideoSize video);
+
+// A scroll delta as finger travel: scaled for a wheel, pass-through for a
+// trackpad, and never re-signed. `unrotated` is the quarter turn the
+// simulator's never-rotating framebuffer needs undone; the Android lane rotates
+// on the device and does not call it.
+SlopDeskVideoSize slopdesk_panel_scroll_vector(SlopDeskVideoSize delta,
+                                               bool is_precise);
+SlopDeskVideoSize slopdesk_panel_unrotated(SlopDeskVideoSize vector, double angle);
+
+SlopDeskPinchPair slopdesk_panel_pinch_fingers(SlopDeskVideoPoint centre, double spread,
+                                               SlopDeskVideoRect fitted);
+
+// Where a synthetic finger may be planted, and where it replants after running
+// out of screen — what makes a long scroll one gesture rather than a series of
+// unrelated flicks.
+SlopDeskVideoPoint slopdesk_panel_planted(SlopDeskVideoPoint point,
+                                          SlopDeskVideoRect fitted);
+SlopDeskVideoPoint slopdesk_panel_regrip(SlopDeskVideoSize travel,
+                                         SlopDeskVideoRect fitted);
+
+uint32_t slopdesk_panel_system_edge(SlopDeskVideoPoint point, SlopDeskVideoRect fitted,
+                                    bool is_upside_down);
+
+// The wire's geometry fields, saturating rather than wrapping: 16 bits, and a
+// size past 65535 would wrap and place every touch at the origin.
+uint16_t slopdesk_panel_clamp_u16(double value);
+int32_t slopdesk_panel_clamp_i32(double value);
+
+// ---------------------------------------------------------------------------
 // The superd control socket's framing — `slopdesk_superwire`.
 //
 //     <1 byte tag> <4 bytes big-endian length> <length bytes body>

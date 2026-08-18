@@ -4456,9 +4456,13 @@ if [[ -n "${panel_dupes}" ]]; then
   printf '%s\n' "${panel_dupes}" >&2
   fail "a device-panel law grew back outside Sources/SlopDeskDevicePanels/Shared — it is shared"
 fi
-# The panels' aspect fit is the video client's, through the door — not a fourth spelling of it.
-if ! grep -q 'AspectFit.displayedVideoRect' Sources/SlopDeskDevicePanels/Shared/DevicePanelGeometry.swift; then
-  fail "the device panels stopped using geometry::displayed_video_rect — a click lands where it is drawn"
+# The panels' aspect fit is the video client's, and the law itself is Rust now: the Swift side calls
+# one door, and that door's crate reaches `displayed_video_rect` rather than fitting a frame again.
+if ! grep -q 'slopdesk_panel_fitted_rect' Sources/SlopDeskDevicePanels/Shared/DevicePanelGeometry.swift; then
+  fail "the device panels stopped calling slopdesk_panel_fitted_rect — a click lands where it is drawn"
+fi
+if ! grep -q 'displayed_video_rect' rust/slopdesk-devicepanel/src/geometry.rs; then
+  fail "slopdesk-devicepanel stopped using geometry::displayed_video_rect — a click lands where it is drawn"
 fi
 # The same holds for what the panels DRAW. The empty stage, its caption, the empty-list notice and
 # the loading-veil asymmetry are one design decision each, recorded in the singular in

@@ -83,10 +83,33 @@ pub struct SlopDeskVideoSize {
     pub height: f64,
 }
 
+impl SlopDeskVideoPoint {
+    /// The crate's point.
+    pub(crate) const fn of(self) -> VideoPoint {
+        VideoPoint::new(self.x, self.y)
+    }
+
+    /// The record a point reports as.
+    pub(crate) const fn from(point: VideoPoint) -> Self {
+        Self {
+            x: point.x,
+            y: point.y,
+        }
+    }
+}
+
 impl SlopDeskVideoSize {
     /// The crate's size.
     pub(crate) const fn of(self) -> VideoSize {
         VideoSize::new(self.width, self.height)
+    }
+
+    /// The record a size reports as.
+    pub(crate) const fn from(size: VideoSize) -> Self {
+        Self {
+            width: size.width,
+            height: size.height,
+        }
     }
 }
 

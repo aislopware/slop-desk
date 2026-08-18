@@ -48,17 +48,10 @@ package enum AndroidScreenLayout {
         DevicePanelGeometry.devicePoint(from: point, fitted: fitted)
     }
 
-    /// The same mapping for a point that may have left the frame mid-drag, CLAMPED instead of dropped.
-    ///
-    /// A drag legitimately runs off the edge — that is how a shade is pulled down and how a swipe-back
-    /// finishes — and dropping those moves would freeze the gesture at the boundary while the button
-    /// is still held. Only the DOWN that starts a gesture uses the strict form above.
+    /// The same mapping for a point that may have left the frame mid-drag, CLAMPED instead of
+    /// dropped — shared, see ``DevicePanelGeometry/clampedDevicePoint(from:fitted:)``.
     package static func clampedDevicePoint(from point: CGPoint, fitted: CGRect) -> CGPoint {
-        guard fitted.width > 0, fitted.height > 0 else { return .zero }
-        return CGPoint(
-            x: min(max(point.x - fitted.minX, 0), fitted.width - 1),
-            y: min(max(point.y - fitted.minY, 0), fitted.height - 1),
-        )
+        DevicePanelGeometry.clampedDevicePoint(from: point, fitted: fitted)
     }
 
     /// The two geometries a positional message needs at once: where the frame is drawn, and what the
@@ -78,7 +71,7 @@ package enum AndroidScreenLayout {
         /// False while the stream has not yet named a size, or the panel is too small to draw in. A
         /// message built from an unusable surface would be discarded by the device anyway.
         package var isUsable: Bool {
-            fitted.width > 0 && fitted.height > 0 && video.width > 0 && video.height > 0
+            DevicePanelGeometry.surfaceIsUsable(fitted: fitted, video: video)
         }
 
         /// The pair that rides on the wire, as the protocol's `u16`. Clamped rather than truncated:
@@ -91,49 +84,33 @@ package enum AndroidScreenLayout {
         package var width: UInt16 { clampToUInt16(video.width) }
         package var height: UInt16 { clampToUInt16(video.height) }
 
-        /// A point in the fitted rect's own space → the video's pixel grid.
-        ///
-        /// Clamped to the last addressable pixel rather than the size itself: a touch at exactly
-        /// `video.height` is off the bottom edge of a frame whose rows are `0..<height`.
+        /// A point in the fitted rect's own space → the video's pixel grid — shared, see
+        /// ``DevicePanelGeometry/videoPixels(_:fitted:video:)``.
         package func pixels(_ point: CGPoint) -> CGPoint {
-            guard isUsable else { return .zero }
-            return CGPoint(
-                x: min(max(point.x * video.width / fitted.width, 0), video.width - 1),
-                y: min(max(point.y * video.height / fitted.height, 0), video.height - 1),
-            )
+            DevicePanelGeometry.videoPixels(point, fitted: fitted, video: video)
         }
     }
 
     package static func clampToUInt16(_ value: CGFloat) -> UInt16 {
-        guard value.isFinite, value > 0 else { return 0 }
-        return value >= CGFloat(UInt16.max) ? UInt16.max : UInt16(value)
+        DevicePanelGeometry.clampToUInt16(value)
     }
 
     package static func clampToInt32(_ value: CGFloat) -> Int32 {
-        guard value.isFinite else { return 0 }
-        if value >= CGFloat(Int32.max) { return .max }
-        if value <= CGFloat(Int32.min) { return .min }
-        return Int32(value)
+        DevicePanelGeometry.clampToInt32(value)
     }
 
-    /// What a classic wheel NOTCH is worth in points. AppKit reports a trackpad's delta already in
-    /// points and a wheel's in LINES, and a line taken as a point is a finger movement of one or two
-    /// pixels — under Android's own `touchSlop`, so the device discards it and the panel looks like it
-    /// eats scrolls.
-    package static let pointsPerLine: CGFloat = 32
+    /// What a classic wheel NOTCH is worth in points — shared, see
+    /// ``DevicePanelGeometry/pointsPerLine``.
+    package static var pointsPerLine: CGFloat { DevicePanelGeometry.pointsPerLine }
 
-    /// One scroll event's delta as FINGER TRAVEL, in points.
+    /// One scroll event's delta as FINGER TRAVEL, in points — shared, see
+    /// ``DevicePanelGeometry/scrollVector(delta:isPrecise:)``, which carries the note about why the
+    /// SIGN is pass-through.
     ///
-    /// SIGN — pass-through, and deliberately so. AppKit has ALREADY applied the user's scroll-direction
-    /// preference to `scrollingDeltaY`. `NSEvent.isDirectionInvertedFromDevice` reports the RAW device
-    /// direction; folding it in double-applies the preference, and synthesized events report it
-    /// `false` regardless of the setting. That trap cost the simulator panel a round and is recorded
-    /// in `docs/47`; it is the same event here.
-    ///
-    /// No un-rotation, for the reason in the file comment: the frame is never drawn turned.
+    /// No un-rotation, for the reason in the file comment: the frame is never drawn turned. That is
+    /// the whole difference between this call and the simulator panel's.
     package static func scrollVector(delta: CGSize, isPrecise: Bool) -> CGSize {
-        let scale = isPrecise ? 1 : pointsPerLine
-        return CGSize(width: delta.width * scale, height: delta.height * scale)
+        DevicePanelGeometry.scrollVector(delta: delta, isPrecise: isPrecise)
     }
 
     /// A pinch's two contacts — shared, see ``DevicePanelGeometry/pinchFingers(centre:spread:fitted:)``.
