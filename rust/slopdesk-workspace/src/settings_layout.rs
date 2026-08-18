@@ -292,6 +292,235 @@ pub const GROUPS: &[LayoutGroup] = &[
             platform: Platform::Mac,
         }],
     },
+    // ── Shell ──────────────────────────────────────────────────────────────────────────────────
+    // The notification groups live on Shell, not General (`notification-setting.png`), and each is
+    // backed by the pure `NotificationPolicy` engine rather than by a deferred stub.
+    LayoutGroup {
+        section: Section::Shell,
+        title: "Notification",
+        timing: ApplyTiming::Live,
+        platform: Platform::Both,
+        rows: &[
+            LayoutRow {
+                key: "",
+                subtitle: "",
+                control: Control::Bespoke {
+                    id: "notification-permission",
+                },
+                platform: Platform::Both,
+            },
+            LayoutRow {
+                key: "notifications.osc",
+                subtitle: "Allow shell apps to send system notifications (OSC 9 / 777 / 99).",
+                control: Control::Toggle { glyph: "bell" },
+                platform: Platform::Both,
+            },
+            LayoutRow {
+                key: "notifications.onFinish",
+                subtitle: "Notify when a background command finishes (exit 0).",
+                control: Control::Toggle {
+                    glyph: "checkmark.circle",
+                },
+                platform: Platform::Both,
+            },
+            LayoutRow {
+                key: "notifications.onError",
+                subtitle: "Notify when a command fails (exits non-zero).",
+                control: Control::Toggle {
+                    glyph: "xmark.octagon",
+                },
+                platform: Platform::Both,
+            },
+            LayoutRow {
+                key: "notifications.onWatchFinish",
+                subtitle: "Notify when an `slopdesk watch`-wrapped command finishes.",
+                control: Control::Toggle { glyph: "eye" },
+                platform: Platform::Both,
+            },
+            // A menu, not cards: its longest option is a whole sentence, which no fixed-width tile
+            // carries. It still takes the group's leading glyph so the icon rail runs unbroken.
+            LayoutRow {
+                key: "notifications.whileForeground",
+                subtitle: "Banner behavior while slopdesk is the foreground app.",
+                control: Control::Menu {
+                    group: Group::NotifyWhileForeground,
+                    glyph: Some("app.badge"),
+                },
+                platform: Platform::Both,
+            },
+            LayoutRow {
+                key: "notifications.longCommand",
+                subtitle: "Also notify when a slow command finishes in an unfocused pane.",
+                control: Control::Toggle { glyph: "hourglass" },
+                platform: Platform::Both,
+            },
+            LayoutRow {
+                key: "notifications.bounceDock",
+                subtitle: "Bounce the Dock icon when a notification arrives and slopdesk isn't focused.",
+                control: Control::Toggle {
+                    glyph: "arrow.up.doc",
+                },
+                platform: Platform::Mac,
+            },
+        ],
+    },
+    // The three COMMAND-driven badges, distinct from the Agents page's agent badges so the two kinds
+    // stay independent. "When Command Awaits Input" ships ahead of its signal — the host detector
+    // behind it is a deferred ceiling (docs/DECISIONS.md).
+    LayoutGroup {
+        section: Section::Shell,
+        title: "Tab Badge",
+        timing: ApplyTiming::Live,
+        platform: Platform::Both,
+        rows: &[
+            LayoutRow {
+                key: "tabBadge.onCommandFinish",
+                subtitle: "Badge the tab when a command exits successfully.",
+                control: Control::Toggle {
+                    glyph: "checkmark.circle",
+                },
+                platform: Platform::Both,
+            },
+            LayoutRow {
+                key: "tabBadge.onCommandFail",
+                subtitle: "Badge the tab when a command exits non-zero.",
+                control: Control::Toggle {
+                    glyph: "xmark.octagon",
+                },
+                platform: Platform::Both,
+            },
+            LayoutRow {
+                key: "tabBadge.onCommandAwaitInput",
+                subtitle: "Badge the tab when a command stops at an interactive prompt.",
+                control: Control::Toggle {
+                    glyph: "questionmark.circle",
+                },
+                platform: Platform::Both,
+            },
+            LayoutRow {
+                key: "tabBadge.busyDelaySeconds",
+                subtitle: "How long a command must run before its row shows as busy — a fast `ls` never \
+                           flashes the rail.",
+                control: Control::Slider {
+                    ladder: Ladder::BusyDelay,
+                },
+                platform: Platform::Both,
+            },
+        ],
+    },
+    LayoutGroup {
+        section: Section::Shell,
+        title: "Sound",
+        timing: ApplyTiming::Live,
+        platform: Platform::Both,
+        rows: &[
+            LayoutRow {
+                key: "notifications.soundShellControlled",
+                subtitle: "Let shell apps ring the terminal bell (BEL) as the system alert sound.",
+                control: Control::Toggle {
+                    glyph: "speaker.wave.2",
+                },
+                platform: Platform::Both,
+            },
+            LayoutRow {
+                key: "notifications.soundOnErrorExit",
+                subtitle: "Beep when a command exits non-zero (requires shell integration).",
+                control: Control::Toggle {
+                    glyph: "speaker.wave.3",
+                },
+                platform: Platform::Both,
+            },
+        ],
+    },
+    // Claude-only, and IPC-driven, so it needs no shell integration. The SOUND halves are macOS-only
+    // (`NSSound` plus the system-sound library); iOS omits them rather than showing dead toggles.
+    LayoutGroup {
+        section: Section::Shell,
+        title: "Code Agent",
+        timing: ApplyTiming::Live,
+        platform: Platform::Both,
+        rows: &[
+            LayoutRow {
+                key: "notifications.agentTaskComplete",
+                subtitle: "Notify when a coding agent finishes a task and goes idle.",
+                control: Control::Toggle { glyph: "sparkles" },
+                platform: Platform::Both,
+            },
+            LayoutRow {
+                key: "notifications.agentAwaitInput",
+                subtitle: "Notify when a coding agent needs approval or input.",
+                control: Control::Toggle { glyph: "hand.raised" },
+                platform: Platform::Both,
+            },
+            LayoutRow {
+                key: "notifications.agentSoundTaskComplete",
+                subtitle: "Play a sound when a coding agent finishes a turn.",
+                control: Control::Toggle {
+                    glyph: "speaker.wave.2",
+                },
+                platform: Platform::Mac,
+            },
+            LayoutRow {
+                key: "notifications.agentSoundAwaitInput",
+                subtitle: "Play a sound when a coding agent needs approval or input.",
+                control: Control::Toggle {
+                    glyph: "speaker.wave.3",
+                },
+                platform: Platform::Mac,
+            },
+        ],
+    },
+    // Working Directory's home is Shell, per `spec/user-interface__window-tab-split.md` and
+    // `open-option.png`.
+    LayoutGroup {
+        section: Section::Shell,
+        title: "Working Directory",
+        timing: ApplyTiming::Live,
+        platform: Platform::Both,
+        rows: &[
+            LayoutRow {
+                key: "shell.workingDirectory.newWindow",
+                subtitle: "",
+                control: Control::Menu {
+                    group: Group::WorkingDirectory,
+                    glyph: None,
+                },
+                platform: Platform::Both,
+            },
+            LayoutRow {
+                key: "shell.workingDirectory.newTab",
+                subtitle: "",
+                control: Control::Menu {
+                    group: Group::WorkingDirectory,
+                    glyph: None,
+                },
+                platform: Platform::Both,
+            },
+            LayoutRow {
+                key: "shell.workingDirectory.newSplit",
+                subtitle: "",
+                control: Control::Menu {
+                    group: Group::WorkingDirectory,
+                    glyph: None,
+                },
+                platform: Platform::Both,
+            },
+        ],
+    },
+    // macOS-only: the `/usr/local/bin` symlink and its admin escalation have no iOS form, so the
+    // phone omits the card rather than offering an install that cannot happen.
+    LayoutGroup {
+        section: Section::Shell,
+        title: "SlopDesk CLI",
+        timing: ApplyTiming::Live,
+        platform: Platform::Mac,
+        rows: &[LayoutRow {
+            key: "",
+            subtitle: "",
+            control: Control::Bespoke { id: "cli-install" },
+            platform: Platform::Mac,
+        }],
+    },
 ];
 
 /// The groups one page shows on one half, in render order.

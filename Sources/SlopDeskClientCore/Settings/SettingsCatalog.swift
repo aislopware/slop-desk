@@ -57,6 +57,8 @@ package enum SettingsCatalog {
         case onLaunch = 7
         case closeConfirmation = 8
         case closeConfirmationTab = 9
+        case notifyWhileForeground = 10
+        case workingDirectory = 11
     }
 
     /// A group's choices, in the order they render, rebuilt as `Value`.

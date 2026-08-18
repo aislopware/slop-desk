@@ -111,6 +111,34 @@ extension SettingsLayout.Control {
     }
 }
 
+/// The bold-label / gray-subtext stack every settings row leads with.
+///
+/// Was `private` on three separate settings pages, byte for byte, which is exactly the duplication a
+/// row's WORDS have now stopped being — the shape they are set in had no reason to stay behind.
+func rowLabel(_ title: String, _ subtitle: String?) -> some View {
+    VStack(alignment: .leading, spacing: Slate.Metric.space1) {
+        Text(title)
+        if let subtitle, !subtitle.isEmpty {
+            Text(subtitle)
+                .font(SettingsType.subtitle)
+                .foregroundStyle(SettingsInk.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+/// ``rowLabel(_:_:)`` with the leading glyph that runs a group's icon rail through the row.
+func glyphLabel(_ symbol: SFSymbol, _ title: String, _ subtitle: String?) -> some View {
+    HStack(alignment: .top, spacing: Slate.Metric.space2) {
+        Image(systemSymbol: symbol)
+            .font(SettingsType.label)
+            .foregroundStyle(SettingsInk.icon)
+            .frame(width: Slate.Metric.iconSize)
+            .padding(.top, Slate.Metric.space1 / 2)
+        rowLabel(title, subtitle)
+    }
+}
+
 func settingLabel(_ key: String) -> String {
     AllSettingsCatalog.entries.first { $0.key == key }?.pageLabel ?? key
 }

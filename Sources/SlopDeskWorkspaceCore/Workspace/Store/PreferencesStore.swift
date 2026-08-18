@@ -398,6 +398,7 @@ public final class PreferencesStore {
         .agentSoundTaskComplete, .agentSoundAwaitInput,
         // Shell — TAB BADGE command-badge toggles (progress-state.md)
         .tabBadgeOnCommandFinish, .tabBadgeOnCommandFail, .tabBadgeOnCommandAwaitInput,
+        .tabBadgeBusyDelaySeconds,
         // Shell — working directory + CLI prefix toggles
         .workingDirectoryNewWindow, .workingDirectoryNewTab, .workingDirectoryNewSplit,
         .omitCLIPrefix, .allowPrefixOverwrite,

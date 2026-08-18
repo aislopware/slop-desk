@@ -282,9 +282,56 @@ pub const ROWS: &[SettingRow] = &[
         keywords: "notification dock bounce attention macos icon request",
         inline_editable: true,
     },
+    // The three COMMAND-driven tab badges and the delay before a running command counts as busy.
+    // Advertised here because they are settings a user goes looking for by name; the CONTROL is on
+    // Shell, so the list shows the value and a jump rather than a second editor.
+    SettingRow {
+        key: "tabBadge.onCommandFinish",
+        label: "Tab Badge · Command Finishes",
+        page_label: "When Command Finishes",
+        description: "Badge the tab when a command exits successfully.",
+        default_text: "On",
+        bucket: Bucket::HasDedicatedTab,
+        target_section: "shell",
+        keywords: "tab badge command finish success exit zero sidebar mark",
+        inline_editable: false,
+    },
+    SettingRow {
+        key: "tabBadge.onCommandFail",
+        label: "Tab Badge · Command Fails",
+        page_label: "When Command Fails",
+        description: "Badge the tab when a command exits non-zero.",
+        default_text: "On",
+        bucket: Bucket::HasDedicatedTab,
+        target_section: "shell",
+        keywords: "tab badge command fail error exit non-zero sidebar mark",
+        inline_editable: false,
+    },
+    SettingRow {
+        key: "tabBadge.onCommandAwaitInput",
+        label: "Tab Badge · Command Awaits Input",
+        page_label: "When Command Awaits Input",
+        description: "Badge the tab when a command stops at an interactive prompt.",
+        default_text: "On",
+        bucket: Bucket::HasDedicatedTab,
+        target_section: "shell",
+        keywords: "tab badge command await input prompt interactive sidebar mark",
+        inline_editable: false,
+    },
+    SettingRow {
+        key: "tabBadge.busyDelaySeconds",
+        label: "Tab Badge · Busy Reveal Delay",
+        page_label: "Busy reveal delay",
+        description: "How long a command must run before its row shows as busy.",
+        default_text: "1s",
+        bucket: Bucket::HasDedicatedTab,
+        target_section: "shell",
+        keywords: "tab badge busy delay reveal running spinner ring seconds instant",
+        inline_editable: false,
+    },
     SettingRow {
         key: "notifications.soundShellControlled",
-        label: "Sound — Shell Controlled",
+        label: "Sound · Shell Controlled",
         page_label: "",
         description: "Let shell apps ring the terminal bell (BEL) as the system alert sound.",
         default_text: "On",
@@ -306,7 +353,7 @@ pub const ROWS: &[SettingRow] = &[
     },
     SettingRow {
         key: "notifications.agentTaskComplete",
-        label: "Code Agent — Notify When Task Completes",
+        label: "Code Agent · Notify When Task Completes",
         page_label: "",
         description: "Notify when a coding agent finishes a task and goes idle.",
         default_text: "On",
@@ -317,7 +364,7 @@ pub const ROWS: &[SettingRow] = &[
     },
     SettingRow {
         key: "notifications.agentAwaitInput",
-        label: "Code Agent — Notify When Awaiting Input",
+        label: "Code Agent · Notify When Awaiting Input",
         page_label: "",
         description: "Notify when a coding agent needs approval or input.",
         default_text: "On",
@@ -328,7 +375,7 @@ pub const ROWS: &[SettingRow] = &[
     },
     SettingRow {
         key: "notifications.agentSoundTaskComplete",
-        label: "Code Agent — Sound When Task Completes",
+        label: "Code Agent · Sound When Task Completes",
         page_label: "",
         description: "Play a sound when a coding agent finishes in an unfocused pane.",
         default_text: "On",
@@ -339,7 +386,7 @@ pub const ROWS: &[SettingRow] = &[
     },
     SettingRow {
         key: "notifications.agentSoundAwaitInput",
-        label: "Code Agent — Sound When Awaiting Input",
+        label: "Code Agent · Sound When Awaiting Input",
         page_label: "",
         description: "Play a sound when a coding agent needs approval or input.",
         default_text: "On",
@@ -651,7 +698,7 @@ pub const ROWS: &[SettingRow] = &[
     },
     SettingRow {
         key: "controls.titleShellControlled",
-        label: "Title — Shell Controlled",
+        label: "Title · Shell Controlled",
         page_label: "",
         description: "Allow programs to set the tab and window title via OSC 0 / OSC 2.",
         default_text: "On",
@@ -662,7 +709,7 @@ pub const ROWS: &[SettingRow] = &[
     },
     SettingRow {
         key: "controls.clipboardShellControlled",
-        label: "Clipboard — Shell Controlled",
+        label: "Clipboard · Shell Controlled",
         page_label: "",
         description: "Master switch for OSC 52 clipboard access. When off, both clipboard read and write \
                       are denied regardless of the per-direction setting.",
@@ -834,26 +881,53 @@ impl SettingRow {
 mod tests {
     use super::*;
 
-    /// A page label that repeats the index label is noise: `page_label()` already falls back, so
-    /// the only reason to set the field is that the two registers really differ. This keeps the
-    /// exceptions countable — and countable is the whole point, since every one of them is a place
-    /// two strings can drift.
+    /// What an index label puts between a group's name and a row's own.
+    const QUALIFIER: &str = " · ";
+
+    /// A page label exists exactly where the index label is QUALIFIED, and never anywhere else.
+    ///
+    /// That is the whole rule, and it is worth stating as a rule rather than as a count. The index
+    /// has no header above it, so a row that shares its name with siblings has to carry the group's
+    /// name too: `Tab Badge · Command Fails`. A page has already printed `Tab Badge` as a header,
+    /// so the same row is `When Command Fails` there. Every override is therefore a qualified
+    /// label with its qualifier removed — a row needing a second string for any OTHER reason
+    /// means the two registers have started DRIFTING rather than diverging, which is what this
+    /// catches.
     #[test]
-    fn a_page_label_exists_only_where_it_differs() {
-        let overrides: Vec<_> = ROWS.iter().filter(|row| !row.page_label.is_empty()).collect();
-        for row in &overrides {
+    fn a_page_label_exists_only_where_the_index_label_is_qualified() {
+        for row in ROWS {
+            if row.page_label.is_empty() {
+                continue;
+            }
             assert_ne!(
                 row.page_label, row.label,
-                "{} sets a page label identical to its index label — drop the field and let it fall back",
+                "{} sets a page label identical to its index label — drop it and let it fall back",
+                row.key,
+            );
+            assert!(
+                row.label.contains(QUALIFIER),
+                "{} overrides an UNQUALIFIED label — the page and the index have started drifting",
+                row.key,
+            );
+            assert!(
+                !row.page_label.contains(QUALIFIER),
+                "{} keeps the qualifier on the page, where the header already prints it",
                 row.key,
             );
         }
-        assert_eq!(
-            overrides.len(),
-            2,
-            "the rows whose page register differs from their index register: {:?}",
-            overrides.iter().map(|row| row.key).collect::<Vec<_>>(),
-        );
+    }
+
+    /// One separator for the one job, so the rule above can be checked at all. The table carried
+    /// both ` · ` and an em dash for the same thing until the layout port made the two meet.
+    #[test]
+    fn a_qualifier_is_written_one_way() {
+        for row in ROWS {
+            assert!(
+                !row.label.contains(" — "),
+                "{} qualifies with an em dash; the separator is {QUALIFIER:?}",
+                row.key,
+            );
+        }
     }
 
     /// The fallback is the whole contract: every row has a page label, whether or not it set one.

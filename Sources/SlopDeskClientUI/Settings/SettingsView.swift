@@ -456,27 +456,24 @@ private struct GeneralSettingsTab: View {
 /// **Appearance** (`tab-setting.png`); close-confirmation → **General** (`launch-option.png`); title + OSC-52
 /// privilege gates → **Advanced**. Each reads a fire-time `Defaults.Key` at the fire-site, so they apply LIVE.
 private struct ShellSettingsTab: View {
-    // NOTIFICATION group (notification-setting.png). Backed by the pure `NotificationPolicy` engine —
-    // real behaviour, not deferred stubs.
+    // The NOTIFICATION group's keys, backed by the pure `NotificationPolicy` engine — real behaviour,
+    // not deferred stubs.
     @Default(.oscNotifications) private var oscNotifications
     @Default(.longCommandNotifications) private var longCommandNotifications
     @Default(.notifyOnFinish) private var notifyOnFinish
     @Default(.notifyOnError) private var notifyOnError
     @Default(.notifyOnWatchFinish) private var notifyOnWatchFinish
     @Default(.notifyWhileForeground) private var notifyWhileForeground
-    #if os(macOS)
     @Default(.bounceDockIcon) private var bounceDockIcon
-    #endif
-    // TAB BADGE group (Shell — progress-state.md "TAB BADGE" section, notification-setting.png). The three
-    // COMMAND-driven badge toggles, DISTINCT from the Agents-tab "Agent Behaviour" badge gates.
+    // TAB BADGE — the three COMMAND-driven badges, distinct from the Agents page's agent badges.
     @Default(.tabBadgeOnCommandFinish) private var tabBadgeOnCommandFinish
     @Default(.tabBadgeOnCommandFail) private var tabBadgeOnCommandFail
     @Default(.tabBadgeOnCommandAwaitInput) private var tabBadgeOnCommandAwaitInput
     @Default(.tabBadgeBusyDelaySeconds) private var tabBadgeBusyDelaySeconds
-    // SOUND group (Shell). BEL → NSSound.beep() gate + error-exit beep.
+    // SOUND — the BEL gate and the error-exit beep.
     @Default(.soundShellControlled) private var soundShellControlled
     @Default(.soundOnErrorExit) private var soundOnErrorExit
-    // CODE AGENT group (Claude-only). IPC-driven, no shell integration needed.
+    // CODE AGENT (Claude-only). IPC-driven, so no shell integration is needed.
     @Default(.agentNotifyTaskComplete) private var agentNotifyTaskComplete
     @Default(.agentNotifyAwaitInput) private var agentNotifyAwaitInput
     @Default(.agentSoundTaskComplete) private var agentSoundTaskComplete
@@ -484,14 +481,12 @@ private struct ShellSettingsTab: View {
     @Default(.workingDirectoryNewWindow) private var workingDirNewWindow
     @Default(.workingDirectoryNewTab) private var workingDirNewTab
     @Default(.workingDirectoryNewSplit) private var workingDirNewSplit
-    // The "SlopDesk CLI" card (Install CLI / Omit Prefix / Allow Overwrite). macOS-only — the
-    // `/usr/local/bin` symlink + admin escalation are `#if os(macOS)`; iOS omits the section (no dead toggle).
     #if os(macOS)
     @State private var cliInstaller = CLIInstaller()
     #endif
 
-    /// The two policy choices the picker surfaces. A custom-path policy (set from the config / Advanced
-    /// editor) is shown as `home` here; editing the path lands in the All-Settings raw editor.
+    /// The two policy choices the picker surfaces. A custom-path policy (set from the config or the
+    /// all-settings editor) reads as `home` here; editing the path lands in the raw editor.
     private enum WorkingDirChoice: String, CaseIterable, Identifiable {
         case inherit
         case home
@@ -500,29 +495,12 @@ private struct ShellSettingsTab: View {
 
     var body: some View {
         Form {
-            notificationSection
-            tabBadgeSection
-            soundSection
-            codeAgentSection
-
-            // Working Directory's Shell home is spec-confirmed: `spec/user-interface__window-tab-split.md`
-            // ("Settings → Shell → Working Directory" + `open-option.png`) places it on the Shell page.
-            slateFormSection("Working Directory") {
-                Picker("New window", selection: workingDirBinding($workingDirNewWindow)) { workingDirOptions }
-                Picker("New tab", selection: workingDirBinding($workingDirNewTab)) { workingDirOptions }
-                Picker("New split", selection: workingDirBinding($workingDirNewSplit)) { workingDirOptions }
-                timingFooter(.live)
+            ForEach(SettingsLayout.groups(SettingsSection.shell.rawValue, for: .current)) { group in
+                slateFormSection(group.title) {
+                    ForEach(group.rows) { row in control(row) }
+                    timingFooter(group.timing)
+                }
             }
-
-            // SLOPDESK CLI (Settings → Shell → CLI card). macOS-only: the `/usr/local/bin` symlink
-            // + admin escalation are `#if os(macOS)`, so iOS omits it. Shares `CLIInstallCardBody` with the
-            // first-launch Install-CLI step (one source).
-            #if os(macOS)
-            slateFormSection("SlopDesk CLI") {
-                CLIInstallCardBody(installer: cliInstaller)
-                timingFooter(.live)
-            }
-            #endif
         }
         .formStyle(.grouped)
         #if os(macOS)
@@ -530,208 +508,88 @@ private struct ShellSettingsTab: View {
         #endif
     }
 
-    /// The NOTIFICATION group (notification-setting.png): System Permission status row, master "Allow App
-    /// Notifications", per-event toggles, the Notify-While-Foreground tri-state picker, Bounce Dock Icon
-    /// (macOS-only — no Dock on iOS). Extracted to keep the `Form` closure under `closure_body_length`.
-    private var notificationSection: some View {
-        slateFormSection("Notification") {
-            NotificationPermissionRow()
-            glyphToggle(
-                .bell,
-                "Allow App Notifications",
-                "Allow shell apps to send system notifications (OSC 9 / 777 / 99).",
-                isOn: $oscNotifications,
-            )
-            glyphToggle(
-                .checkmarkCircle,
-                settingLabel(SettingsKey.notifyOnFinish),
-                "Notify when a background command finishes (exit 0).",
-                isOn: $notifyOnFinish,
-            )
-            glyphToggle(
-                .xmarkOctagon,
-                settingLabel(SettingsKey.notifyOnError),
-                "Notify when a command fails (exits non-zero).",
-                isOn: $notifyOnError,
-            )
-            glyphToggle(
-                .eye,
-                settingLabel(SettingsKey.notifyOnWatchFinish),
-                "Notify when an `slopdesk watch`-wrapped command finishes.",
-                isOn: $notifyOnWatchFinish,
-            )
-            // Stays a menu (its longest label is a whole sentence — "Only when source tab is unfocused" — which
-            // no card can carry), but takes the group's leading glyph so the icon rail runs unbroken through it.
+    /// One row, by the setting it edits — see `GeneralSettingsTab.control(_:)` for why the binding is
+    /// the half that cannot cross.
+    @ViewBuilder
+    private func control(_ row: SettingsLayout.Row) -> some View {
+        switch row.key {
+        case SettingsKey.oscNotifications: toggle(row, $oscNotifications)
+        case SettingsKey.notifyOnFinish: toggle(row, $notifyOnFinish)
+        case SettingsKey.notifyOnError: toggle(row, $notifyOnError)
+        case SettingsKey.notifyOnWatchFinish: toggle(row, $notifyOnWatchFinish)
+        case SettingsKey.longCommandNotifications: toggle(row, $longCommandNotifications)
+        case SettingsKey.bounceDockIcon: toggle(row, $bounceDockIcon)
+        case SettingsKey.tabBadgeOnCommandFinish: toggle(row, $tabBadgeOnCommandFinish)
+        case SettingsKey.tabBadgeOnCommandFail: toggle(row, $tabBadgeOnCommandFail)
+        case SettingsKey.tabBadgeOnCommandAwaitInput: toggle(row, $tabBadgeOnCommandAwaitInput)
+        case SettingsKey.soundShellControlled: toggle(row, $soundShellControlled)
+        case SettingsKey.soundOnErrorExit: toggle(row, $soundOnErrorExit)
+        case SettingsKey.agentNotifyTaskComplete: toggle(row, $agentNotifyTaskComplete)
+        case SettingsKey.agentNotifyAwaitInput: toggle(row, $agentNotifyAwaitInput)
+        case SettingsKey.agentSoundTaskComplete: toggle(row, $agentSoundTaskComplete)
+        case SettingsKey.agentSoundAwaitInput: toggle(row, $agentSoundAwaitInput)
+        case SettingsKey.notifyWhileForegroundKey:
             LabeledContent {
                 Picker("", selection: $notifyWhileForeground) {
-                    ForEach(NotifyWhileForeground.allCases, id: \.self) { policy in
-                        Text(policy.displayLabel).tag(policy)
+                    ForEach(SettingsCatalog.options(.notifyWhileForeground, as: NotifyWhileForeground.self)) {
+                        Text($0.label).tag($0.value)
                     }
                 }
                 .labelsHidden()
                 .pickerStyle(.menu)
                 .fixedSize()
             } label: {
-                glyphLabel(
-                    .appBadge, settingLabel(SettingsKey.notifyWhileForegroundKey),
-                    "Banner behavior while slopdesk is the foreground app.",
-                )
+                glyphLabel(glyph(row), row.label, row.subtitle)
             }
-            glyphToggle(
-                .hourglass,
-                settingLabel(SettingsKey.longCommandNotifications),
-                "Also notify when a slow command finishes in an unfocused pane.",
-                isOn: $longCommandNotifications,
-            )
-            #if os(macOS)
-            glyphToggle(
-                .arrowUpDocument,
-                settingLabel(SettingsKey.bounceDockIcon),
-                "Bounce the Dock icon when a notification arrives and slopdesk isn't focused.",
-                isOn: $bounceDockIcon,
-            )
-            #endif
-            timingFooter(.live)
-        }
-    }
-
-    /// The TAB BADGE group (Shell — progress-state.md 32-35, under NOTIFICATION in notification-setting.png):
-    /// three COMMAND-driven sidebar-badge toggles. DISTINCT from the Agents-tab "Agent Behaviour" badge gates,
-    /// so command vs agent badges are independent. "When Command Awaits Input" ships ahead of its signal — the
-    /// host detector that drives it is a deferred ceiling (DECISIONS.md).
-    private var tabBadgeSection: some View {
-        slateFormSection("Tab Badge") {
-            glyphToggle(
-                .checkmarkCircle,
-                "When Command Finishes",
-                "Badge the tab when a command exits successfully.",
-                isOn: $tabBadgeOnCommandFinish,
-            )
-            glyphToggle(
-                .xmarkOctagon,
-                "When Command Fails",
-                "Badge the tab when a command exits non-zero.",
-                isOn: $tabBadgeOnCommandFail,
-            )
-            glyphToggle(
-                .questionmarkCircle,
-                "When Command Awaits Input",
-                "Badge the tab when a command stops at an interactive prompt.",
-                isOn: $tabBadgeOnCommandAwaitInput,
-            )
-            // The busy reveal delay (`WorkspaceStore.paneShowsBusyDot`): how long a command must run
-            // before the row shows it as busy (the trailing ring + running-command title) —
-            // a fast `ls` never flashes the rail. The stops are the three real intentions; `Instant`
-            // (0s) names the behaviour rather than showing a delay that happens to be short.
+        case SettingsKey.tabBadgeBusyDelaySeconds:
             SettingsSliderRow(
-                "Busy reveal delay",
-                subtitle: "How long a command must run before its row shows as busy — a fast `ls` never "
-                    + "flashes the rail.",
+                row.label,
+                subtitle: row.subtitle,
                 value: $tabBadgeBusyDelaySeconds,
                 range: SettingsCatalog.Ladder.busyDelay.range,
                 step: SettingsCatalog.Ladder.busyDelay.step,
                 presets: SettingsCatalog.Ladder.busyDelay.presets,
                 readout: SettingsCatalog.Ladder.busyDelay.readout,
             )
-            timingFooter(.live)
+        case SettingsKey.workingDirectoryNewWindowKey: workingDirRow(row, $workingDirNewWindow)
+        case SettingsKey.workingDirectoryNewTabKey: workingDirRow(row, $workingDirNewTab)
+        case SettingsKey.workingDirectoryNewSplitKey: workingDirRow(row, $workingDirNewSplit)
+        default: bespoke(row)
         }
     }
 
-    /// The SOUND group (Shell): the BEL → system-beep gate + the error-exit beep.
-    private var soundSection: some View {
-        slateFormSection("Sound") {
-            glyphToggle(
-                .speakerWave2,
-                settingLabel(SettingsKey.soundShellControlled),
-                "Let shell apps ring the terminal bell (BEL) as the system alert sound.",
-                isOn: $soundShellControlled,
-            )
-            glyphToggle(
-                .speakerWave3,
-                settingLabel(SettingsKey.soundOnErrorExit),
-                "Beep when a command exits non-zero (requires shell integration).",
-                isOn: $soundOnErrorExit,
-            )
-            timingFooter(.live)
-        }
+    /// The glyph-toggle shape every boolean row on this page takes.
+    private func toggle(_ row: SettingsLayout.Row, _ binding: Binding<Bool>) -> some View {
+        SettingsGlyphToggleRow(glyph(row), row.label, row.subtitle, isOn: binding)
     }
 
-    /// The CODE AGENT group (Claude-only). IPC-driven, no shell integration needed.
-    private var codeAgentSection: some View {
-        slateFormSection("Code Agent") {
-            glyphToggle(
-                .sparkles,
-                "Notify When Task Completes",
-                "Notify when a coding agent finishes a task and goes idle.",
-                isOn: $agentNotifyTaskComplete,
-            )
-            glyphToggle(
-                .handRaised,
-                "Notify When Awaiting Input",
-                "Notify when a coding agent needs approval or input.",
-                isOn: $agentNotifyAwaitInput,
-            )
-            #if os(macOS)
-            // The sound cues are macOS-only (`NSSound` + the system-sound library) — iOS omits the
-            // toggles rather than showing dead controls.
-            glyphToggle(
-                .speakerWave2,
-                "Sound When Task Completes",
-                "Play a sound when a coding agent finishes a turn.",
-                isOn: $agentSoundTaskComplete,
-            )
-            glyphToggle(
-                .speakerWave3,
-                "Sound When Awaiting Input",
-                "Play a sound when a coding agent needs approval or input.",
-                isOn: $agentSoundAwaitInput,
-            )
-            #endif
-            timingFooter(.live)
-        }
-    }
-
-    /// A toggle row with a leading glyph over the bold-label / gray-subtext layout. The Shell page is ~15
-    /// consecutive switches with sentence subtitles; the icon column is what makes it scannable.
-    private func glyphToggle(
-        _ symbol: SFSymbol, _ title: String, _ subtitle: String? = nil, isOn binding: Binding<Bool>,
-    ) -> some View {
-        SettingsGlyphToggleRow(symbol, title, subtitle, isOn: binding)
-    }
-
-    /// The row label layout: a bold title with an optional gray subtext beneath.
-    private func rowLabel(_ title: String, _ subtitle: String?) -> some View {
-        VStack(alignment: .leading, spacing: Slate.Metric.space1) {
-            Text(title)
-            if let subtitle, !subtitle.isEmpty {
-                Text(subtitle)
-                    .font(SettingsType.subtitle)
-                    .foregroundStyle(SettingsInk.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+    /// A working-directory row: the shared two-choice picker over one of the three policy keys.
+    private func workingDirRow(_ row: SettingsLayout.Row, _ raw: Binding<String>) -> some View {
+        Picker(row.label, selection: workingDirBinding(raw)) {
+            ForEach(SettingsCatalog.options(.workingDirectory, as: WorkingDirChoice.self)) {
+                Text($0.label).tag($0.value)
             }
         }
     }
 
-    /// ``rowLabel`` with the group's leading glyph — for a NON-toggle row sitting inside a glyph-rail group, so
-    /// the icon column runs unbroken past it. Always inert ink (a picker row has no on/off to tint).
-    private func glyphLabel(_ symbol: SFSymbol, _ title: String, _ subtitle: String?) -> some View {
-        HStack(alignment: .top, spacing: Slate.Metric.space2) {
-            Image(systemSymbol: symbol)
-                .font(SettingsType.label)
-                .foregroundStyle(SettingsInk.icon)
-                .frame(width: Slate.Metric.iconSize)
-                .padding(.top, Slate.Metric.space1 / 2)
-            rowLabel(title, subtitle)
+    /// The groups this page draws itself rather than describing.
+    @ViewBuilder
+    private func bespoke(_ row: SettingsLayout.Row) -> some View {
+        if case let .bespoke(id) = row.control {
+            switch id {
+            case "notification-permission": NotificationPermissionRow()
+            case "cli-install":
+                #if os(macOS)
+                CLIInstallCardBody(installer: cliInstaller)
+                #endif
+            default: EmptyView()
+            }
         }
     }
 
-    @ViewBuilder private var workingDirOptions: some View {
-        Text("Same as Current").tag(WorkingDirChoice.inherit)
-        Text("Home Directory").tag(WorkingDirChoice.home)
-    }
-
-    /// Bridge the `WorkingDirectoryPolicy.rawConfig` String key to the 2-way picker: `inherit` ↔ `inherit`,
-    /// everything else (`home` / empty / a custom path) reads as `home` and writes the canonical rawConfig.
+    /// Bridge the `WorkingDirectoryPolicy.rawConfig` String key to the two-way picker: `inherit` ↔
+    /// `inherit`, everything else (`home` / empty / a custom path) reads as `home` and writes the
+    /// canonical rawConfig.
     private func workingDirBinding(_ raw: Binding<String>) -> Binding<WorkingDirChoice> {
         Binding(
             get: { WorkingDirectoryPolicy(rawConfig: raw.wrappedValue) == .inherit ? .inherit : .home },
@@ -1174,17 +1032,6 @@ private struct ControlsSettingsTab: View {
     }
 
     /// The row label layout: a bold title with an optional gray subtext beneath.
-    private func rowLabel(_ title: String, _ subtitle: String?) -> some View {
-        VStack(alignment: .leading, spacing: Slate.Metric.space1) {
-            Text(title)
-            if let subtitle, !subtitle.isEmpty {
-                Text(subtitle)
-                    .font(SettingsType.subtitle)
-                    .foregroundStyle(SettingsInk.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
 }
 
 // MARK: - Editor section (RESERVED — deferred)
@@ -1487,17 +1334,6 @@ private struct AppearanceSettingsTab: View {
     }
 
     /// The row label layout: a bold title with an optional gray subtext beneath.
-    private func rowLabel(_ title: String, _ subtitle: String?) -> some View {
-        VStack(alignment: .leading, spacing: Slate.Metric.space1) {
-            Text(title)
-            if let subtitle, !subtitle.isEmpty {
-                Text(subtitle)
-                    .font(SettingsType.subtitle)
-                    .foregroundStyle(SettingsInk.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
 }
 
 // MARK: - Agents section
@@ -1693,17 +1529,6 @@ private struct AgentsSettingsTab: View {
 
     /// The row label layout: a bold title with an optional gray subtext beneath (mirrors the Appearance tab's
     /// `rowLabel`, kept local so the Agents card composes without widening that struct's visibility).
-    private func rowLabel(_ title: String, _ subtitle: String?) -> some View {
-        VStack(alignment: .leading, spacing: Slate.Metric.space1) {
-            Text(title)
-            if let subtitle, !subtitle.isEmpty {
-                Text(subtitle)
-                    .font(SettingsType.subtitle)
-                    .foregroundStyle(SettingsInk.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
 
     private func optionalBoolToggle(_ title: String, _ binding: Binding<Bool?>) -> some View {
         Toggle(isOn: Binding(

@@ -113,11 +113,15 @@ pub enum Group {
     CloseConfirmation,
     /// General → Close confirmation, the TAB row.
     CloseConfirmationTab,
+    /// Shell → Notification → Banner behaviour while slopdesk is frontmost.
+    NotifyWhileForeground,
+    /// Shell → Working Directory, shared by the window / tab / split rows.
+    WorkingDirectory,
 }
 
 impl Group {
     /// Every group, in case-index order — the numbering the boundary carries.
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 12] = [
         Self::CursorStyle,
         Self::NewTabPosition,
         Self::Density,
@@ -128,6 +132,8 @@ impl Group {
         Self::OnLaunch,
         Self::CloseConfirmation,
         Self::CloseConfirmationTab,
+        Self::NotifyWhileForeground,
+        Self::WorkingDirectory,
     ];
 
     /// The case index a group crosses as.
@@ -144,6 +150,8 @@ impl Group {
             Self::OnLaunch => 7,
             Self::CloseConfirmation => 8,
             Self::CloseConfirmationTab => 9,
+            Self::NotifyWhileForeground => 10,
+            Self::WorkingDirectory => 11,
         }
     }
 
@@ -229,6 +237,27 @@ const CLOSE_CONFIRMATION: &[OptionRow] = &[
     OptionRow::plain("multiple_tabs", "Multiple tabs"),
 ];
 
+/// Shell → Notification → banner behaviour while slopdesk is the foreground app.
+///
+/// Stays a MENU rather than cards: its longest label is a whole sentence, and a card is a
+/// fixed-width tile.
+const NOTIFY_WHILE_FOREGROUND: &[OptionRow] = &[
+    OptionRow::plain("off", "Off"),
+    OptionRow::plain("always", "Always"),
+    OptionRow::plain("tab-unfocused", "Only when source tab is unfocused"),
+];
+
+/// Shell → Working Directory, for a new window, a new tab and a new split alike.
+///
+/// TWO choices for a setting that persists MORE: a custom path is a real value of
+/// `WorkingDirectoryPolicy`, set from the config file or the all-settings editor, and it reads as
+/// `home` here. The picker is deliberately not a third, path-shaped control — the row says which of
+/// the two policies is in force and the raw editor is where a path is typed.
+const WORKING_DIRECTORY: &[OptionRow] = &[
+    OptionRow::plain("inherit", "Same as Current"),
+    OptionRow::plain("home", "Home Directory"),
+];
+
 /// The choices in a group, in the order they render.
 ///
 /// The tab close-confirmation row is the window row MINUS `multiple_tabs`, taken as a PREFIX rather
@@ -248,6 +277,8 @@ pub const fn group(group: Group) -> &'static [OptionRow] {
         Group::OnLaunch => ON_LAUNCH,
         Group::CloseConfirmation => CLOSE_CONFIRMATION,
         Group::CloseConfirmationTab => CLOSE_CONFIRMATION.split_at(2).0,
+        Group::NotifyWhileForeground => NOTIFY_WHILE_FOREGROUND,
+        Group::WorkingDirectory => WORKING_DIRECTORY,
     }
 }
 
