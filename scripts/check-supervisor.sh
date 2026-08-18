@@ -4517,6 +4517,33 @@ if grep -q 'KeyboardCheatSheetView' Sources/SlopDeskClientUI/Overlays/OverlayHos
 fi
 printf 'check-supervisor: one cheat sheet, drawn twice and spelled once.\n'
 
+# ── One notification card, two corners ────────────────────────────────────────────────────────
+# docs/56 stage D's second surface, and the one that took the last ALWAYS-MOUNTED SwiftUI layer off
+# the macOS window root. The Mac's corner is an `NSPanel` sized to the column, the phone's is an
+# overlay on its own root, and what a card SAYS belongs to neither: the headline (over
+# `slopdesk_ws_notify_toast_headline`), the spine budget, the mark's rung/glyph and the dwell are
+# `ToastPresentation`. Three ways this decays, and the gate catches all three.
+if ! grep -q 'slopdesk_ws_notify_toast_headline' Sources/SlopDeskClientCore/Overlays/ToastPresentation.swift; then
+  fail "ToastPresentation stopped calling slopdesk_ws_notify_toast_headline — the headline has two answers"
+fi
+for half in Sources/SlopDeskMacUI/Overlays/MacToastStack.swift \
+  Sources/SlopDeskClientUI/Overlays/ToastStackView.swift; do
+  if ! grep -q 'ToastPresentation' "${half}"; then
+    fail "${half} stopped reading ToastPresentation — a notification says two different things"
+  fi
+  # The fusion bug `TabBadgeResolver` had: a half that re-derives the phrase from the pair keys on
+  # flavour alone sooner or later, and announces a finished `make` as an agent turn.
+  if grep -q 'toast.source, toast.flavor' "${half}"; then
+    fail "${half} re-derives the headline from (source, flavour) — that pair is resolved ONCE, in Rust"
+  fi
+done
+# The shared host must not mount the column again: the Mac would draw a SwiftUI stack over its own
+# panel, and the full-bleed host is exactly the hit-claiming mount stage D removed.
+if grep -q 'ToastStackView(' Sources/SlopDeskClientUI/Overlays/OverlayHostView.swift; then
+  fail "the shared overlay host mounts the toast column again — that mount claims every hit over the split"
+fi
+printf 'check-supervisor: one notification card, drawn twice and spelled once.\n'
+
 # ── One device-panel law, two device protocols ────────────────────────────────────────────────
 # The simulator panel and the Android panel differ in almost everything and should — one rotates on
 # the client and the other on the device, one sends touches in the fitted rect's space and the other

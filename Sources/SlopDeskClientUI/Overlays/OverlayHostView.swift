@@ -3,16 +3,26 @@
 // state. The summoned PICKERS are IN-WINDOW paper cards (``SlateOverlayCard``) driven by the injected
 // ``OverlayCoordinator`` flags; the two surfaces that are DECISIONS rather than pickers use the platform's
 // own modals — Connect-to-Host is a native `.sheet` (user-directed 2026-08-08) and the pane/tab close
-// confirmation a native `.alert` off the store's `pendingClose*` parks. The always-mounted
-// ``ToastStackView`` (which renders nothing when empty) is the
-// host's only other in-tree content — transient notifications float over the workspace without a modal.
+// confirmation a native `.alert` off the store's `pendingClose*` parks. The ⌃⇥ switcher readout is the
+// host's only other in-tree content — a centred readout that never takes a click.
 //
-// NOT EVERY OVERLAY IS HERE ANY MORE. The ⌘/ cheat sheet is a real `NSPanel` on the Mac
-// (``SlopDeskMacUI/MacCheatSheetView``) and a native `.sheet` on the phone, driven from each shell's own
-// root off the SAME `coordinator.cheatSheetVisible` flag — docs/56 stage D, where a surface leaves this
-// floor by being rewritten in each platform's own framework rather than by being gated inside one view.
-// What the two halves share they share BELOW the view layer: ``CheatSheetContent`` carries the rows, the
-// glyphs and the column deal, so neither half spells the table out.
+// NOT EVERY OVERLAY IS HERE ANY MORE, and two have left for the same reason (docs/56 stage D): a
+// surface leaves this floor by being REWRITTEN in each platform's own framework, not by being gated
+// inside one view. What the halves share they share BELOW the view layer, so neither spells the rule out.
+//
+//   * The ⌘/ CHEAT SHEET is a real `NSPanel` on the Mac (``SlopDeskMacUI/MacCheatSheetView``) and a
+//     native `.sheet` on the phone, driven from each shell's own root off the SAME
+//     `coordinator.cheatSheetVisible` flag. They meet at ``CheatSheetContent`` — the rows, the glyphs
+//     and the column deal.
+//   * The TOASTS are an `NSPanel` parked in the workspace's corner on the Mac
+//     (``SlopDeskMacUI/MacToastStack``) and a `ToastStackView` overlay on the phone. They meet at
+//     ``ToastPresentation`` — the headline, the spine budget, the mark and the dwell.
+//
+// ⚠️ THE TOASTS LEAVING IS WHAT MADE THIS LAYER HONEST. The ambient layer used to carry
+// `.allowsHitTesting(!coordinator.toasts.isEmpty)`, because an always-mounted full-bleed host over
+// the AppKit split claims every hit inside its bounds — that flag was the only thing keeping the
+// terminal clickable. With the cards in a window sized to the column, the layer beneath is a readout
+// that takes no hits at all, and there is no flag left to keep honest.
 //
 // One host so every overlay still here shares one presentation point: because the coordinator only ever drives one
 // overlay flag at a time (its `run()` closes-then-opens; the open* methods are the only writers), a single
@@ -69,19 +79,20 @@ package struct OverlayHostView: View {
         // palette row click ran nothing). So the modal is a SIBLING in a ZStack, owning its own hit
         // testing.
         ZStack {
-            ToastStackView(coordinator: coordinator, onJump: jumpToNotifiedPane)
+            // The ⌃⇥ switcher readout, centred like the macOS app switcher it echoes. Deliberately NOT a
+            // `.sheet` (see `PaneSwitcherOverlay`): a sheet would take key focus and break the `flagsChanged`
+            // ⌃-release that commits the gesture, and its present animation outlasts the whole interaction.
+            //
+            // The transient chip stack (copy receipt · notice · connection indicator) is NOT here: it
+            // stands at the foot of the ISLAND (``IslandChipStack``, mounted by ``ContentColumn``).
+            // Centred on the window it drifted off the canvas it described, and its window-measured
+            // inset parked it on the island's bottom edge over the prompt line (user-directed
+            // 2026-08-09). Nor are the TOASTS — see the file header.
+            PaneSwitcherOverlay(store: store)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .allowsHitTesting(!coordinator.toasts.isEmpty)
-                // The transient chip stack (copy receipt · notice · connection indicator) is NOT here: it
-                // stands at the foot of the ISLAND (``IslandChipStack``, mounted by ``ContentColumn``).
-                // Centred on the window it drifted off the canvas it described, and its window-measured
-                // inset parked it on the island's bottom edge over the prompt line (user-directed
-                // 2026-08-09).
-                //
-                // The ⌃⇥ switcher readout, centred like the macOS app switcher it echoes. Deliberately NOT a
-                // `.sheet` (see `PaneSwitcherOverlay`): a sheet would take key focus and break the `flagsChanged`
-                // ⌃-release that commits the gesture, and its present animation outlasts the whole interaction.
-                .overlay(alignment: .center) { PaneSwitcherOverlay(store: store) }
+                // The readout is a readout: it never takes a click, and the workspace beneath this
+                // layer must stay clickable at all times.
+                .allowsHitTesting(false)
                 .animation(Slate.Anim.smallFade, value: activeSheet)
 
             // ⚠️ The card is presented IN THIS WINDOW, not in a sheet, and that is the only way it can look
@@ -141,17 +152,6 @@ package struct OverlayHostView: View {
         // No tint override anywhere on this layer: the app's ONE neutral accent (the AccentColor
         // asset) already makes stock controls, focus rings and selection read graphite — here and in
         // the workspace beneath alike (see ``SlateOverlayInk``).
-    }
-
-    /// Lands on the pane a notification came from. This is what makes a toast a DOOR rather than a dead
-    /// end: every push site is gated on the source pane NOT being focused, so the card always names
-    /// somewhere else. Routed through `jumpToPaneTree` (not `focusPaneTree`) for the same reason
-    /// ``ConnectionAlertChip`` is — an undirected landing that CROSSES a tab swaps the whole viewport, and
-    /// that seam fires the "JUMPED · session ▸ tab" orientation breadcrumb. An unparseable key (a toast
-    /// whose pane is long gone) is a silent no-op, never a crash on attacker/host-shaped text.
-    private func jumpToNotifiedPane(_ paneKey: String) {
-        guard let raw = UUID(uuidString: paneKey) else { return }
-        store.jumpToPaneTree(PaneID(raw: raw))
     }
 
     // MARK: - Active overlay (single presentation seam)

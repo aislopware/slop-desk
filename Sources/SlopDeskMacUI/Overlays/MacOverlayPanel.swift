@@ -85,7 +85,12 @@ final class MacOverlayBackdropView: NSView {
 /// The colours are re-resolved in `updateLayer()` rather than assigned once, because a `CALayer`
 /// holds a `CGColor` — a flat, already-resolved value — so a dynamic `NSColor` written into one
 /// stops following the appearance the moment it is stored.
-final class MacOverlayCardView: NSView {
+class MacOverlayCardView: NSView {
+    /// What a click on the card's own body does. `nil` — the summoned cards — SWALLOWS it, which is
+    /// the correctness fix below. The notification card sets it, because that card IS a door: its
+    /// whole body is the jump to the pane it names.
+    var onClick: (() -> Void)?
+
     override var wantsUpdateLayer: Bool { true }
 
     override init(frame frameRect: NSRect) {
@@ -123,8 +128,15 @@ final class MacOverlayCardView: NSView {
 
     /// The card is SOLID TO CLICKS. A click that lands on its own body — a label, the padding
     /// between two rows, the gap beside a heading — is not a click on the floor, and without this it
-    /// would fall through and dismiss the card the user was reaching into.
-    override func mouseDown(with _: NSEvent) {}
+    /// would fall through and dismiss the card the user was reaching into. A card that has somewhere
+    /// to go answers instead of swallowing.
+    override func mouseDown(with _: NSEvent) {
+        onClick?()
+    }
+
+    /// A card takes the FIRST click even when its panel was not key. The notification corner never
+    /// becomes key at all, so without this its jump would silently cost two clicks.
+    override func acceptsFirstMouse(for _: NSEvent?) -> Bool { true }
 }
 
 // MARK: - The controller

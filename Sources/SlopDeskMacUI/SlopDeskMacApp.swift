@@ -502,6 +502,18 @@ public struct SlopDeskMacApp: App {
                         visible, host: windowBox.window, store: store, coordinator: overlayCoordinator,
                     )
                 }
+                // THE NOTIFICATION CORNER is the Mac's own AppKit panel too (docs/56 stage D), and it
+                // is what took the last ALWAYS-MOUNTED `NSHostingView` off the window root: the toast
+                // host used to be a full-bleed SwiftUI layer over the whole workspace, toggling
+                // `allowsHitTesting` so the split beneath stayed clickable. The panel is sized to the
+                // column instead, so the only region that takes hits is the cards themselves. Driven
+                // off the list rather than off a flag, because an ambient surface has no flag — its
+                // content IS its state.
+                .onChange(of: overlayCoordinator.toasts) { _, stack in
+                    overlayPanels.syncToasts(
+                        stack, host: windowBox.window, store: store, coordinator: overlayCoordinator,
+                    )
+                }
                 .task {
                     // Late-bind the drag coordinator's weak store (chip labels + destination gating) —
                     // `@State` objects cannot reference each other at property-init time.

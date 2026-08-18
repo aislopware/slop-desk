@@ -655,6 +655,14 @@ size_t   slopdesk_ws_notify_explicit_content(const uint8_t *pane_title, size_t p
                                              const uint8_t *explicit_title, size_t explicit_title_len,
                                              const uint8_t *body, size_t body_len,
                                              uint8_t *out, size_t cap, size_t *title_len);
+// The phrase an in-app card leads with, resolved from WHO spoke and WHAT happened together — the
+// same flavour is "is done" for an agent and "finished" for a command.
+// speaker: 0 agent · 1 command      flavour: 0 notice · 1 success · 2 failure · 3 attention
+// A command's notice and its attention are returned VERBATIM: those two already carry their own
+// wording, and an unrecognised byte on either axis lands on that pair.
+size_t   slopdesk_ws_notify_toast_headline(uint8_t speaker, uint8_t flavour,
+                                           const uint8_t *subject, size_t subject_len,
+                                           uint8_t *out, size_t cap);
 // Spends a token if there is one, writing the refilled bucket back through `limiter`.
 bool     slopdesk_ws_notify_rate_limit_allow(SlopDeskWsNotifyRateLimiter *limiter, double now);
 

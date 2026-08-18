@@ -13,7 +13,9 @@
 
 use core::ffi::c_uchar;
 
-use slopdesk_workspace::notify::{self, AgentSound, Badge, Event, ForegroundPolicy, RateLimiter, Settings};
+use slopdesk_workspace::notify::{
+    self, AgentSound, Badge, Event, Flavour, ForegroundPolicy, RateLimiter, Settings, Speaker,
+};
 
 use crate::{borrow, deliver};
 
@@ -268,6 +270,52 @@ pub unsafe extern "C" fn slopdesk_ws_notify_explicit_content(
     }
 }
 
+/// The phrase an in-app notification card leads with.
+///
+/// `speaker` is `0` agent · `1` command, and `flavour` is `0` notice · `1` success · `2` failure ·
+/// `3` attention. An unrecognised byte reads as the plainest case on each axis — a command, and a
+/// notice — which is the pair that says the subject back verbatim rather than inventing a verb for
+/// an event the two sides disagree about.
+///
+/// Returns the phrase's byte length; the bytes are written when `cap` allows.
+///
+/// # Safety
+/// `subject` must be null or point to `subject_len` initialised bytes, and `out` null or writable
+/// for `cap` bytes, both for the whole call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_ws_notify_toast_headline(
+    speaker: u8,
+    flavour: u8,
+    subject: *const c_uchar,
+    subject_len: usize,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    let speaker = match speaker {
+        0 => Speaker::Agent,
+        _ => Speaker::Command,
+    };
+    let flavour = match flavour {
+        1 => Flavour::Success,
+        2 => Flavour::Failure,
+        3 => Flavour::Attention,
+        _ => Flavour::Notice,
+    };
+    // SAFETY: the caller's obligations, restated above; the helpers state their own.
+    unsafe {
+        let subject = core::str::from_utf8(borrow(subject, subject_len)).unwrap_or_default();
+        deliver(
+            notify::toast_headline(speaker, flavour, subject).as_bytes(),
+            out,
+            cap,
+        )
+    }
+}
+
 /// Spends a token if the bucket has one, writing the refilled bucket back through `limiter`.
 ///
 /// # Safety
@@ -306,6 +354,7 @@ mod tests {
         CNotifyEvent, CNotifyRateLimiter, CNotifySettings, slopdesk_ws_notify_agent_sound,
         slopdesk_ws_notify_badge, slopdesk_ws_notify_explicit_content, slopdesk_ws_notify_long_threshold_ms,
         slopdesk_ws_notify_rate_limit_allow, slopdesk_ws_notify_should_deliver,
+        slopdesk_ws_notify_toast_headline,
     };
 
     const SHIPPED: CNotifySettings = CNotifySettings {
@@ -401,6 +450,52 @@ mod tests {
             Some(b"build done".as_slice()),
             "the body picks up exactly where the title stopped"
         );
+    }
+
+    #[test]
+    fn the_headline_reads_its_two_axes_as_case_bytes() {
+        let phrase = |speaker: u8, flavour: u8, subject: &str| {
+            let mut out = [0_u8; 64];
+            // SAFETY: one live literal and one live local buffer, borrowed for the call.
+            let needed = unsafe {
+                slopdesk_ws_notify_toast_headline(
+                    speaker,
+                    flavour,
+                    subject.as_ptr(),
+                    subject.len(),
+                    out.as_mut_ptr(),
+                    out.len(),
+                )
+            };
+            String::from_utf8_lossy(out.get(..needed).unwrap_or_default()).into_owned()
+        };
+        assert_eq!(phrase(0, 1, "claude"), "claude is done");
+        assert_eq!(phrase(1, 1, "make check"), "make check finished");
+        assert_eq!(phrase(0, 3, "codex"), "codex needs input");
+        assert_eq!(
+            phrase(1, 0, "Build succeeded"),
+            "Build succeeded",
+            "a command's notice is its own words"
+        );
+    }
+
+    #[test]
+    fn an_unknown_axis_byte_lands_on_the_verbatim_pair() {
+        let mut out = [0_u8; 32];
+        // SAFETY: one live literal and one live local buffer, borrowed for the call.
+        let needed = unsafe {
+            slopdesk_ws_notify_toast_headline(200, 200, b"raw".as_ptr(), 3, out.as_mut_ptr(), out.len())
+        };
+        assert_eq!(out.get(..needed), Some(b"raw".as_slice()));
+    }
+
+    #[test]
+    fn a_short_buffer_is_told_the_length_it_should_have_lent() {
+        // SAFETY: one live literal; the answer is deliberately not written anywhere.
+        let needed = unsafe {
+            slopdesk_ws_notify_toast_headline(0, 1, b"claude".as_ptr(), 6, core::ptr::null_mut(), 0)
+        };
+        assert_eq!(needed, "claude is done".len());
     }
 
     #[test]

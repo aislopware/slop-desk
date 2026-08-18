@@ -9,16 +9,25 @@
 // the window can never disagree about whether the card is up.
 //
 // docs/56 stage D drains the macOS surfaces out of `SlopDeskClientUI` one at a time, and this file
-// is where each overlay lands as it goes. One so far — the cheat sheet.
+// is where each overlay lands as it goes. Two so far — the cheat sheet and the notification corner.
+//
+// The two are shaped differently on purpose. A SUMMONED card is a boolean: it is up or it is not, and
+// the flag is the whole state. The notification corner is AMBIENT: it has no flag at all, its content
+// IS the state, and the same edge that opens it also reorders it, re-fits it and finally empties it.
+// So the cheat sheet takes a `set` and the corner takes a `sync`.
 
 import AppKit
 import SlopDeskClientCore
 import SlopDeskWorkspaceCore
+import SlopDeskWorkspaceModel // PaneID — a toast's jump target
 
 @MainActor
 final class MacOverlayPanels {
     /// The live cheat-sheet card, or `nil` when it is not up.
     private var cheatSheet: MacOverlayPanelController?
+    /// The notification corner. Built once per workspace window and kept — it orders itself out when
+    /// the stack empties, so there is nothing to tear down between bursts.
+    private var toasts: MacToastStackController?
 
     /// Reconciles the ⌘/ cheat sheet against `visible`.
     ///
@@ -49,5 +58,24 @@ final class MacOverlayPanels {
         )
         cheatSheet = controller
         controller.present()
+    }
+
+    /// Reconciles the notification corner against the coordinator's live stack.
+    ///
+    /// A card is a DOOR: clicking it jumps to the pane it names, which is what keeps a notification
+    /// about somewhere else from being a dead end. The jump is routed through `jumpToPaneTree` (not
+    /// `focusPaneTree`) because an undirected landing that CROSSES a tab swaps the whole viewport, and
+    /// that seam is what fires the "JUMPED · session ▸ tab" orientation breadcrumb.
+    func syncToasts(
+        _ stack: [Toast], host: NSWindow?, store: WorkspaceStore, coordinator: OverlayCoordinator,
+    ) {
+        guard let host else { return }
+        let controller = toasts ?? MacToastStackController(host: host)
+        toasts = controller
+        controller.sync(
+            stack,
+            onDismiss: { [coordinator] id in coordinator.dismissToast(id) },
+            onJump: { [store] key in store.jumpToPaneNamedByNotification(key) },
+        )
     }
 }

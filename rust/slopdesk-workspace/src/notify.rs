@@ -232,6 +232,71 @@ pub fn explicit_content(pane_title: &str, explicit_title: &str, body: &str) -> (
     (body.to_owned(), String::new())
 }
 
+// MARK: The in-app card's headline
+
+/// Which of the workspace's two status speakers raised a notification.
+///
+/// Not a style knob: it picks the headline's VERB, so it names a real distinction. An agent has a
+/// LIFECYCLE — its clean outcome is "finished a turn" — while a command has an OUTCOME, and its
+/// clean one is "exited zero". Fusing the two and letting the surface guess is how a card comes to
+/// say "make check is done" about a build.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Speaker {
+    /// A living agent session.
+    Agent,
+    /// A command's outcome, or any other one-off event at a pane.
+    Command,
+}
+
+/// What KIND of thing happened — the same four rungs the card's status mark is drawn from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Flavour {
+    /// A routine notice: an OSC 9/777 line, an advisory. It speaks its own words.
+    Notice,
+    /// It ended well.
+    Success,
+    /// It ended badly.
+    Failure,
+    /// It is waiting on a human.
+    Attention,
+}
+
+/// The sentence-case phrase that leads an in-app notification card.
+///
+/// Resolved from the speaker and the flavour TOGETHER, never from either alone — `Success` is "the
+/// agent finished its turn" for an agent and "the command exited 0" for a command, which are two
+/// different speakers saying two different words.
+///
+/// A NOTICE from a command is the one case that takes the subject verbatim: an OSC line or a cwd
+/// advisory is already a sentence someone else wrote, and prefixing an event verb onto it garbles
+/// it. Attention from a command is the same — nothing generic can be added to a message that came
+/// with its own wording.
+///
+/// The subject is trimmed and, when it is empty, the phrase falls back to a bare speaker noun
+/// rather than opening with a space — a card whose pane never set a title still has to read as a
+/// sentence.
+#[must_use]
+pub fn toast_headline(speaker: Speaker, flavour: Flavour, subject: &str) -> String {
+    let subject = subject.trim();
+    let suffix = match (speaker, flavour) {
+        (Speaker::Agent, Flavour::Attention) => "needs input",
+        (Speaker::Agent, Flavour::Success) => "is done",
+        (Speaker::Agent | Speaker::Command, Flavour::Failure) => "failed",
+        (Speaker::Agent, Flavour::Notice) => "is working",
+        (Speaker::Command, Flavour::Success) => "finished",
+        // The subject IS the message. Nothing is appended, and an empty one is honestly empty.
+        (Speaker::Command, Flavour::Notice | Flavour::Attention) => return subject.to_owned(),
+    };
+    if subject.is_empty() {
+        let noun = match speaker {
+            Speaker::Agent => "The agent",
+            Speaker::Command => "The command",
+        };
+        return format!("{noun} {suffix}");
+    }
+    format!("{subject} {suffix}")
+}
+
 // MARK: Sounds
 
 /// Which system sound announces an agent attention edge.
@@ -333,9 +398,9 @@ impl RateLimiter {
 #[cfg(test)]
 mod tests {
     use super::{
-        AgentSound, Badge, Event, ForegroundPolicy, LONG_RUNNING_THRESHOLD_MS, RateLimiter, Settings,
-        agent_sound, badge, explicit_content, is_long_running, should_beep_on_error, should_deliver,
-        should_notify_completion, should_ring_bell,
+        AgentSound, Badge, Event, Flavour, ForegroundPolicy, LONG_RUNNING_THRESHOLD_MS, RateLimiter,
+        Settings, Speaker, agent_sound, badge, explicit_content, is_long_running, should_beep_on_error,
+        should_deliver, should_notify_completion, should_ring_bell, toast_headline,
     };
 
     #[test]
@@ -524,6 +589,76 @@ mod tests {
         assert!(
             (limiter.tokens - 4.0).abs() < f64::EPSILON,
             "elapsed floors at zero rather than removing tokens"
+        );
+    }
+
+    #[test]
+    fn an_agent_and_a_command_say_different_words_about_the_same_flavour() {
+        assert_eq!(
+            toast_headline(Speaker::Agent, Flavour::Success, "claude"),
+            "claude is done"
+        );
+        assert_eq!(
+            toast_headline(Speaker::Command, Flavour::Success, "make check"),
+            "make check finished"
+        );
+    }
+
+    #[test]
+    fn every_agent_rung_gets_its_own_verb() {
+        assert_eq!(
+            toast_headline(Speaker::Agent, Flavour::Attention, "codex"),
+            "codex needs input"
+        );
+        assert_eq!(
+            toast_headline(Speaker::Agent, Flavour::Failure, "codex"),
+            "codex failed"
+        );
+        assert_eq!(
+            toast_headline(Speaker::Agent, Flavour::Notice, "codex"),
+            "codex is working"
+        );
+    }
+
+    #[test]
+    fn a_commands_own_words_are_left_alone() {
+        // An OSC line and a waiting prompt both arrive already phrased.
+        assert_eq!(
+            toast_headline(Speaker::Command, Flavour::Notice, "Build succeeded in 4s"),
+            "Build succeeded in 4s"
+        );
+        assert_eq!(
+            toast_headline(Speaker::Command, Flavour::Attention, "Overwrite file?"),
+            "Overwrite file?"
+        );
+    }
+
+    #[test]
+    fn a_subject_is_trimmed_before_the_verb_is_hung_on_it() {
+        assert_eq!(
+            toast_headline(Speaker::Agent, Flavour::Success, "  claude \n"),
+            "claude is done",
+            "a pane title carrying whitespace must not open a gap before the verb"
+        );
+    }
+
+    #[test]
+    fn a_nameless_pane_still_reads_as_a_sentence() {
+        assert_eq!(
+            toast_headline(Speaker::Agent, Flavour::Success, "   "),
+            "The agent is done"
+        );
+        assert_eq!(
+            toast_headline(Speaker::Command, Flavour::Failure, ""),
+            "The command failed"
+        );
+    }
+
+    #[test]
+    fn a_verbatim_flavour_with_nothing_to_say_says_nothing() {
+        assert!(
+            toast_headline(Speaker::Command, Flavour::Notice, "  ").is_empty(),
+            "no noun can be invented for a message that was supposed to carry its own"
         );
     }
 }

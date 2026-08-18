@@ -117,6 +117,15 @@ public struct WorkspaceRootView: View {
                 toggledState: OverlayHostView.toggledState(for: chrome, store: store),
             )
         }
+        // THE NOTIFICATION CORNER is the phone's own presentation (docs/56 stage D): an overlay on
+        // this root, where the Mac's is an `NSPanel` sized to the column. ALWAYS MOUNTED — it renders
+        // nothing when the stack is empty — so an arriving card animates in without a re-mount, and
+        // it takes hits only while there is a card to take them. The two halves meet at
+        // ``ToastPresentation``: the headline, the spine budget, the mark and the dwell.
+        .overlay {
+            ToastStackView(coordinator: overlay, onJump: store.jumpToPaneNamedByNotification)
+                .allowsHitTesting(!overlay.toasts.isEmpty)
+        }
         // Wire the palette's cwd resolver + the per-pane hardware-keyboard interceptor's overlay toggles
         // (iPad has no app-level NSEvent monitor, so a focused terminal's ⌘⇧P / ⇧⌘F / ⌘⇧O / ⌘J / ⌘⌥J would
         // otherwise die at a nil toggle).
