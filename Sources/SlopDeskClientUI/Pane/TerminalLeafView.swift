@@ -101,7 +101,8 @@ struct TerminalLeafView: View {
                 .padding(Slate.Metric.space2)
             // NO per-pane status strip on a TERMINAL pane (issue: the user judged the terminal pane footer
             // low-value and asked to drop it). The cwd / exit / progress cues are low-value; host + connection status now
-            // live ONCE in the sidebar footer (`NavigatorColumn` → `ConnectionCluster`; titlebar trailing when collapsed), not per pane. The
+            // live ONCE in the connection island (the sidebar's foot, or the titlebar band while the
+            // column is collapsed), not per pane. The
             // GUI/window pane keeps a bottom bar, but as a CONTROL bar (resize / lock / zoom), not a status strip.
         }
         .background(NativePaneColor.terminalBackground)

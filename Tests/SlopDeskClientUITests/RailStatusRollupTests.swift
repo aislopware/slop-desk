@@ -132,8 +132,9 @@ final class RailStatusRollupTests: XCTestCase {
 
     /// ⚠️ Nothing else on that band may start under the parked cluster (user-reported 2026-08-11:
     /// the marks sat ON the first horizontal tab). The strip's inset and the cluster's parking spot
-    /// are ONE sum — this pins that the sum actually clears the marks, and that ``SlateTitlebar``
-    /// spends it rather than re-deriving the toggle's slot on its own.
+    /// are ONE sum — this pins that the sum actually clears the marks, and that the band
+    /// (`SlopDeskMacUI/MacTitlebarBand`) spends it rather than re-deriving the toggle's slot on its
+    /// own.
     @MainActor
     func testTheCollapsedBandLeavesRoomBeforeTheTabsBegin() {
         XCTAssertEqual(

@@ -537,7 +537,8 @@ package enum Slate {
                     .slateScalingAlpha(Opacity.bed)
             }
 
-            /// The keyless bucket's bed — the host island wears it too (see ``ConnectionStatusIsland``):
+            /// The keyless bucket's bed — the host island wears it too (`SlopDeskMacUI`'s
+            /// `MacConnectionIsland`):
             /// a machine is not a project, so it must not wear a project's identity hue.
             package static var neutralBed: SlateNativeColor {
                 SlateNativeColor(slateHex: UInt32(Slate.ProjectTint.neutralSource))

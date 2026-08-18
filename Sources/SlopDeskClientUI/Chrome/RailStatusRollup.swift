@@ -36,8 +36,9 @@
 //
 // ⚠️ IT MUST STAY A LEAF. Resolving each row's chrome touches the store's volatile per-pane dicts;
 // doing that inside a container's body would register every one of them as a dependency of that
-// body and bring back the re-render storm ``RailRowsMemo`` exists to kill (the same rule
-// ``ConnectionStatusMount`` carries). The rows arrive as a STRUCTURAL parameter (the memo's array);
+// body and bring back the re-render storm ``RailRowsMemo`` exists to kill (the same rule the
+// connection island carries, which is why its telemetry is read at ITS leaf and not in whatever
+// mounts it). The rows arrive as a STRUCTURAL parameter (the memo's array);
 // only the volatile reads happen in here. Its mount is a leaf for the same reason against a
 // DIFFERENT volatile source — the split's live column width.
 
@@ -344,12 +345,12 @@ package struct RailStatusRollupMount: View {
         + Slate.Metric.space2
 
     /// ⚠️ Where anything ELSE on that band may begin once the navigator is collapsed — the cluster's
-    /// trailing edge plus one gap. ``SlateTitlebar`` reads this for the horizontal tab strip's
-    /// leading inset, because the strip used to start at exactly ``collapsedLead`` (it was reserving
-    /// the toggle's slot and nothing more) and the marks landed ON TOP of the first tab
+    /// trailing edge plus one gap. ``SlopDeskMacUI/MacTitlebarBand`` reads this for the horizontal tab
+    /// strip's leading inset, because the strip used to start at exactly ``collapsedLead`` (it was
+    /// reserving the toggle's slot and nothing more) and the marks landed ON TOP of the first tab
     /// (user-reported 2026-08-11). The two constants have to be one sum, or the next control added
     /// to that band re-collides.
-    static let collapsedTrailingEdge = collapsedLead + RailStatusMarks.width + Slate.Metric.space2
+    package static let collapsedTrailingEdge = collapsedLead + RailStatusMarks.width + Slate.Metric.space2
 
     /// The cluster's leading x for a given navigator width.
     ///

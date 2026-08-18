@@ -1,8 +1,10 @@
-// ContentColumn — the centre content area. Renders the active tab's pane tree via the
-// identity-preserving `SplitContainer` (a native `ContentUnavailableView` empty-state when no session/tab),
-// with a hover-reveal titlebar floating as a TOP overlay. The titlebar lives here (not at window level)
-// so its centred title menu centres over the content area for free, and the terminal extends under it
-// for a clean resting silhouette. The shared `WorkspaceChromeState` drives the sidebar/Details toggles.
+// ContentColumn — the centre content area's CANVAS: the active tab's pane tree via the
+// identity-preserving `SplitContainer` (a Slate empty-state when there is no session/tab), the island
+// geometry that lifts it off the ground, and the rail the collapsed code panel leaves behind.
+//
+// The TITLEBAR BAND is no longer here. It is AppKit now (``SlopDeskMacUI/MacTitlebarBand``), mounted
+// as this column's SIBLING by ``SlopDeskMacUI/MacContentColumn`` rather than as an overlay on top of
+// it — which is why nothing in this file reserves the band's height or hands hit-testing back to it.
 
 #if canImport(SwiftUI)
 import SlopDeskClientCore
@@ -13,8 +15,8 @@ struct ContentColumn: View {
     let store: WorkspaceStore
     let connection: AppConnection
     let chrome: WorkspaceChromeState
-    /// Opens the Connect-to-Host editor — wired into the titlebar's connection-status cluster. The no-op
-    /// default keeps the column standalone-mountable in previews.
+    /// Opens the Connect-to-Host editor — the empty state's one next action. The no-op default keeps
+    /// the column standalone-mountable in previews.
     var onConnect: () -> Void = {}
     /// The cross-container pane-drag rendezvous, threaded down to ``SplitContainer`` (the canvas is both
     /// a drag SOURCE and — for satellite-origin drags — a drop target). `nil` (previews / iOS) keeps the
@@ -25,12 +27,6 @@ struct ContentColumn: View {
     /// the WindowGroup environment). Read for the modal pointer shield below; `nil` (previews /
     /// tests) reads as "no modal up".
     @Environment(\.overlayCoordinator) private var overlayCoordinator
-
-    /// The row model for the collapsed-state tab strip — the SAME memo class the navigator uses, so
-    /// the strip pays the structural build only when something structural actually moved. Plain
-    /// class in `@State` (NOT `@Observable`): its mutation during a body eval must not re-invalidate
-    /// anything.
-    @State private var rowsMemo = RailRowsMemo()
 
     private var hasActiveTab: Bool { store.tree.activeSession?.activeTab != nil }
 
@@ -48,39 +44,17 @@ struct ContentColumn: View {
             // pane tone or it reads as a mispainted header") belonged to a world where the panes
             // were flush under it; with a moat and a corner between them the band is plainly ground.
             .background(Slate.Surface.field)
-        #if os(macOS)
-            // The hover-reveal titlebar floats as a TOP overlay. New-pane gestures (`+` / title-menu split)
-            // mint a terminal pane directly (the kind chooser is retired — non-terminal kinds have their
-            // own explicit shortcuts).
-            .overlay(alignment: .top) {
-                // The titlebar carries the collapsed-state tab strip, so it needs the same rows the
-                // navigator renders. They are built HERE rather than inside the titlebar because
-                // this column is not lazy: a rows build in the overlay would re-register every
-                // volatile per-pane dict as a dependency of the titlebar body and re-run on each
-                // status tick. `RailRowsMemo` returns the cached array when nothing structural
-                // moved (the root view's own memo contract), and the strip's chips read their
-                // volatile chrome in their own leaves.
-                SlateTitlebar(
-                    store: store, chrome: chrome,
-                    rows: chrome.sidebarCollapsed ? rowsMemo.rows(for: store) : [],
-                    // ONE select path with the sidebar's rows: switch to the owning tab, focus the
-                    // pane, clear the tab's agent badges.
-                    onSelectPane: { SidebarSelection.select($0, in: store) },
-                    // The connection island rides the strip's trailing corner while the tabs are
-                    // horizontal — the same island the navigator's foot carries otherwise.
-                    connection: connection, onConnect: onConnect,
-                )
-            }
-        #endif
-            // ⚠️ THE MODAL POINTER SHIELD — LAST in the chain, so it covers the titlebar overlay
-            // too. This column lives in its OWN NSHostingView inside the AppKit split, and the
-            // floating overlay layer lives in the window root's — so a card floating over this
-            // column does NOT occlude its hover tracking: AppKit tracking areas are rect-based and
-            // keep firing under the card, and the hover-reveal titlebar (and any row hover) lit up
-            // while the pointer was on the palette. While a modal card is up the column goes
-            // hit-test-deaf, which silences its hover the way the card's dismiss floor already
-            // silences its clicks. Global Search (non-modal by design) leaves this open; the
-            // terminal's own AppKit tracking is shielded by `TerminalPointerShield` off the same flag.
+            // ⚠️ THE MODAL POINTER SHIELD. A hosted column lives in its OWN NSHostingView inside the
+            // AppKit split while the floating overlay layer lives in the window root's — so a card
+            // floating over this column does NOT occlude its hover tracking: AppKit tracking areas
+            // are rect-based and keep firing under the card, and every hover inside lit up while the
+            // pointer was on the palette. While a modal card is up the column goes hit-test-deaf,
+            // which silences its hover the way the card's dismiss floor already silences its clicks.
+            // Global Search (non-modal by design) leaves this open; the terminal's own AppKit
+            // tracking is shielded by `TerminalPointerShield` off the same flag.
+            //
+            // On the Mac the AppKit root above this one shields the BAND off the same flag
+            // (``SlopDeskMacUI/MacModalShield``); this modifier is what the phone has instead.
             .allowsHitTesting(!(overlayCoordinator?.anyModalVisible ?? false))
     }
 

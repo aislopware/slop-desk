@@ -1,10 +1,12 @@
-// MacNavigatorSnapshotRender — the navigator's visual-verification harness, in AppKit.
+// MacChromeSnapshotRender — the Mac chrome's visual-verification harness, in AppKit: the navigator
+// column, and the titlebar band that carries the tabs when the column is gone.
 //
-// The four probes here moved out of `SlateSnapshotRender` with the column itself (docs/56 stage D):
-// the row's badge alphabet, one By-Project section, the git line's squeeze ladder, and the whole
-// grouped column. They mount the REAL `NSView`s — `MacSidebarRowView`, `MacSidebarHeaderView`,
-// `MacSidebarIslandView`, `MacNavigatorColumn` — so what is photographed is what ships, not a
-// hand-built mock of it.
+// The probes here moved out of `SlateSnapshotRender` with the surfaces themselves (docs/56 stage D):
+// the row's badge alphabet, one By-Project section, the git line's squeeze ladder, the whole grouped
+// column, the connection island's ink states, and the band. They mount the REAL `NSView`s —
+// `MacSidebarRowView`, `MacSidebarHeaderView`, `MacSidebarIslandView`, `MacNavigatorColumn`,
+// `MacConnectionIsland`, `MacTitlebarBand` — so what is photographed is what ships, not a hand-built
+// mock of it.
 //
 // EVERY STATE IS SEEDED THROUGH THE STORE, never poked into a row view. The AppKit row reads its
 // whole appearance from ``SidebarRowPresentation/reading(for:store:fallbackTitle:)``, so a fixture
@@ -14,7 +16,7 @@
 //
 // Opt-in and INERT under `swift test` / `make check`: every probe skips unless
 // `SLOPDESK_TABROW_SNAPSHOT_DIR=<dir>` is set. Run on demand:
-//   SLOPDESK_TABROW_SNAPSHOT_DIR="$PWD/.build/shots" swift test --filter MacNavigatorSnapshotRender
+//   SLOPDESK_TABROW_SNAPSHOT_DIR="$PWD/.build/shots" swift test --filter MacChromeSnapshotRender
 // It is NOT a pixel-diff CI gate — it is the recipe for judging a design claim arithmetic cannot
 // settle.
 //
@@ -28,6 +30,10 @@
 // ⚠️ The capture pins the layer tree to @2x and turns the run loop before photographing. `CALayer
 // .render(in:)` REPLAYS CACHED CONTENTS, so a sublayer left at 1× stays 1× however far the context
 // is scaled — and the spinner's first frame does not exist until a display link has ticked.
+//
+// ⚠️ A view that SCHEDULES its arrival is pumped on a CONDITION, never on a sleep — see ``pump(
+// seconds:until:)``. Timed delivery is not bounded here the way it is under a running app, and the
+// band's probe photographed an empty strip of cream because of it.
 
 import AppKit
 import SlopDeskTransport
@@ -39,7 +45,7 @@ import XCTest
 @testable import SlopDeskWorkspaceCore
 
 @MainActor
-final class MacNavigatorSnapshotRender: XCTestCase {
+final class MacChromeSnapshotRender: XCTestCase {
     // MARK: - The row's badge alphabet
 
     /// Renders a real ``MacSidebarRowView`` in each fused state — the title beside its trailing status
@@ -155,7 +161,141 @@ final class MacNavigatorSnapshotRender: XCTestCase {
         try render(column.view, width: 240, height: 470, to: dir, named: "navigator-grouped.png")
     }
 
+    // MARK: - The connection island, every ink state, in BOTH mounts
+
+    /// Renders the REAL ``MacConnectionIsland`` — the link line (hostname leading, metric trailing)
+    /// plus the host-pulse line once the machine has reported — in every ink state: healthy, busy,
+    /// disk filling, memory squeezed, thrashing, a volume that could not be read, a long hostname
+    /// proving the HOST is the island's truncator, then the three no-pulse rungs (bad, dialing, dimmed
+    /// offline). The ink steps and both rail alignments can then be eyeballed headlessly.
+    ///
+    /// BOTH layouts, side by side — the `stacked` footer at the true sidebar width and the `inline`
+    /// band form hugging its own — which the SwiftUI probe this replaces could not show: it predated
+    /// the band mount. The pair is the point, because the two share one alarm ladder and a rung that
+    /// reads on one axis and not the other is a bug only this image can catch.
+    ///
+    /// DETACHED: each island is handed a `Reading` rather than a live store, so a state like
+    /// `.critical` memory pressure is photographable without arranging for a host to actually be in
+    /// it. Writes `connection-island.png`.
+    func testRenderConnectionIsland() throws {
+        let dir = try outputDirectory()
+        let columns = NSStackView()
+        columns.orientation = .horizontal
+        columns.alignment = .top
+        columns.spacing = Slate.Metric.space3
+        columns.edgeInsets = NSEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
+        for layout in [MacConnectionIsland.Layout.stacked, .inline] {
+            let column = NSStackView()
+            column.orientation = .vertical
+            column.alignment = .leading
+            column.spacing = Slate.Metric.space3
+            for state in Self.linkStates {
+                let island = MacConnectionIsland(
+                    reading: Self.reading(state), layout: layout,
+                )
+                column.addArrangedSubview(island)
+                // The footer holds the sidebar's measure; the band form hugs, so it is left to size
+                // itself — that difference in width IS one of the things the image is for.
+                if layout == .stacked {
+                    island.widthAnchor.constraint(
+                        equalToConstant: Slate.Metric.sidebarWidth - Slate.Metric.space2 * 2,
+                    ).isActive = true
+                }
+            }
+            columns.addArrangedSubview(column)
+        }
+        // ⚠️ WIDE ENOUGH FOR THE BAND FORM TO BREATHE. The `inline` island hugs, and the hostname is
+        // its designated truncator — so a sheet cut to the two columns' sum squeezes the host to `…`
+        // in every row and photographs the truncation rule instead of the ink ladder. That IS the
+        // rule, and it has its own row here (the long hostname); it must not be every row.
+        try render(
+            columns, width: Slate.Metric.sidebarWidth + 480, to: dir, named: "connection-island.png",
+        )
+    }
+
+    // MARK: - The whole titlebar band
+
+    /// Renders the live ``MacTitlebarBand`` over a headless store grouped By-Project, with the
+    /// navigator COLLAPSED — the only state the band has content in: the horizontal tab strip on its
+    /// project beds with the travelling selection plate under the active chip, and the inline
+    /// connection island anchored to the trailing corner.
+    ///
+    /// ⚠️ The band ARRIVES on a delay — its two halves wait one control out on their own edges and
+    /// land only after most of the column slide is over — so it is pumped to its resting state BEFORE
+    /// the shutter. Writes `titlebar-band.png`.
+    func testRenderTitlebarBand() throws {
+        let dir = try outputDirectory()
+        let store = makeStore(seeds: Self.groupedSeeds, activeIndex: 1)
+        let chrome = WorkspaceChromeState()
+        chrome.sidebarCollapsed = true
+        let band = MacTitlebarBand(
+            store: store, connection: Self.headlessConnection, chrome: chrome, onConnect: {},
+        )
+        // The row is opaque once the arrival has landed — the ONE observable that says "settled"
+        // without reaching into the band for a flag it does not otherwise need.
+        pump { band.subviews.first?.alphaValue == 1 }
+        // Wide enough for all five chips AND the island: the strip is a scroller and a long run
+        // slides UNDER the island rather than shoving it off the band, so a narrow sheet silently
+        // drops the last group and reads as "the sectioning lost a tab".
+        try render(
+            band, width: 1200, height: Slate.Metric.titlebarHeight, to: dir,
+            named: "titlebar-band.png",
+        )
+    }
+
     // MARK: - The fixtures
+
+    /// One row of the island's ink sheet: who is on the other end, how the link reads, and what the
+    /// machine last said about itself. Everything else in the drawn `Reading` is derived by
+    /// ``ConnectionReading`` exactly as the live island derives it — the fixture names the INPUTS, not
+    /// the picture.
+    private typealias LinkState = (host: String, led: ConnectionLed, detail: (String, Bool)?, pulse: HostPulse?)
+
+    private static let linkStates: [LinkState] = [
+        // Connected, healthy link — the pulse line rides beneath on the same two rails.
+        ("mac-studio", .good, ("12 ms", true), HostPulse(
+            cpuPercent: 6, memoryPercent: 43, memoryPressure: .normal, diskFreeMiB: 245_760,
+        )),
+        ("mac-studio", .good, ("12 ms", true), HostPulse(
+            cpuPercent: 97, memoryPercent: 74, memoryPressure: .normal, diskFreeMiB: 43008,
+        )),
+        // Disk running out: the middle run alone climbs, with the two rails still calm.
+        ("mac-studio", .good, ("12 ms", true), HostPulse(
+            cpuPercent: 21, memoryPercent: 51, memoryPressure: .normal, diskFreeMiB: 9012,
+        )),
+        // The host's memory is under pressure: the MEM run takes the step — cpu never does.
+        ("mac-studio", .good, ("12 ms", true), HostPulse(
+            cpuPercent: 64, memoryPercent: 92, memoryPressure: .warn, diskFreeMiB: 2048,
+        )),
+        ("mac-studio", .slow, ("141 ms", true), HostPulse(
+            cpuPercent: 100, memoryPercent: 98, memoryPressure: .critical, diskFreeMiB: 820,
+        )),
+        // The volume could not be read: the middle run is absent, the line still reports.
+        ("mac-studio", .good, ("12 ms", true), HostPulse(
+            cpuPercent: 12, memoryPercent: 49, memoryPressure: .normal,
+        )),
+        // A long hostname still truncates before the ping does.
+        ("congs-macbook-pro-16-inch", .good, ("12 ms", true), HostPulse(
+            cpuPercent: 6, memoryPercent: 43, memoryPressure: .normal, diskFreeMiB: 245_760,
+        )),
+        // Connected but the host has not reported yet → ONE line, no dashes.
+        ("mac-studio", .bad, ("312 ms", true), nil),
+        ("mac-studio", .dialing, ("reconnecting 3/20", false), nil),
+        ("mac-studio", .dim, ("disconnected", false), nil),
+    ]
+
+    private static func reading(_ state: LinkState) -> MacConnectionIsland.Reading {
+        MacConnectionIsland.Reading(
+            host: state.host, led: state.led, detail: state.detail?.0,
+            detailIsMetric: state.detail?.1 ?? false,
+            metrics: ConnectionReading.metricRuns(state.pulse),
+            spoken: ConnectionReading.pulseSpoken(state.pulse),
+            retry: state.led == .dim,
+            // The tooltip is not photographable, so the fixture does not stage one —
+            // `ConnectionReadingTests` pins its text instead.
+            help: state.host,
+        )
+    }
 
     /// A connection whose registry always refuses — the column's foot island then draws its DISCONNECTED
     /// ink, which is the resting state the sidebar ships in. No socket is ever opened (the hang-safety
@@ -273,6 +413,23 @@ final class MacNavigatorSnapshotRender: XCTestCase {
             throw XCTSkip("set SLOPDESK_TABROW_SNAPSHOT_DIR=<dir> to render the navigator surfaces")
         }
         return dir
+    }
+
+    /// Turn the run loop until `ready()` holds, or FAIL at the cap.
+    ///
+    /// ⚠️ A fixed sleep is NOT interchangeable with this, and the way it fails is silent. Under a
+    /// manually pumped loop — no `NSApplication`, no event stream — a `DispatchQueue.main.asyncAfter`
+    /// block's delivery is not bounded by its own deadline the way it is in the running app: measured
+    /// here, a block due in 0.18s had still not landed after 0.69s of pumping, and the band
+    /// photographed as an empty strip of cream. Worse, it landed inside 0.3s whenever an EARLIER
+    /// probe in the same process had warmed the loop, so the probe passed in a full run and produced
+    /// a blank image when run alone. Pump on the CONDITION; the cap is only a hang guard.
+    private func pump(seconds: TimeInterval = 5, until ready: () -> Bool) {
+        let cap = Date().addingTimeInterval(seconds)
+        while !ready(), Date() < cap {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
+        }
+        XCTAssertTrue(ready(), "the view under test never settled in \(seconds)s")
     }
 
     private func stack() -> NSStackView {

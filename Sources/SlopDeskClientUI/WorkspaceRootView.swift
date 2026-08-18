@@ -217,12 +217,11 @@ public struct WorkspaceRootView: View {
 
     @ToolbarContentBuilder
     private var iosToolbar: some ToolbarContent {
-        // The column-visibility chrome is `NavigationSplitView`'s own; surface the connection cluster (the
-        // SAME `ConnectionCluster` as the macOS sidebar/titlebar — one connection surface per app; the old
-        // iOS-only `ConnectionStatusPill` had drifted into its own voice) + the agent indicator + a New-Tab
-        // affordance.
+        // The column-visibility chrome is `NavigationSplitView`'s own; surface the connection pill (the
+        // phone's cut of the Mac's island — one connection READING per app, two layouts; see
+        // ``ConnectionPill``) + the agent indicator + a New-Tab affordance.
         ToolbarItem(placement: .principal) {
-            ConnectionCluster(
+            ConnectionPill(
                 connection: connection,
                 pingMS: ConnectionTelemetry.pingMS(store),
                 fps: ConnectionTelemetry.fps(store),

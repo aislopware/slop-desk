@@ -7,9 +7,9 @@
 //
 // So the seam is factories instead: the shell asks for a column, the draining floor hands back an
 // `NSViewController`. Each factory dies with the column it wraps — the NAVIGATOR's already has (that
-// column is ``SlopDeskMacUI/MacNavigatorColumn`` now, and all that is left of it here is the one
-// SwiftUI island at its foot); when `ContentColumn` becomes AppKit, `content(...)` goes with it and
-// the shell instantiates the real thing.
+// column is ``SlopDeskMacUI/MacNavigatorColumn`` now, foot and all), and `content(...)` is down to the
+// pane CANVAS: the titlebar band over it is AppKit (``SlopDeskMacUI/MacTitlebarBand``) and the two are
+// siblings under ``SlopDeskMacUI/MacContentColumn``. This factory dies when `SplitContainer` crosses.
 //
 // The hosting details that belong to NO column live here too: the overlay-coordinator injection each
 // hosted column needs (an `NSHostingController` inherits no WindowGroup environment) and the dropped
@@ -24,30 +24,9 @@ import SwiftUI
 
 @MainActor
 package enum WorkspaceColumnHosts {
-    /// The navigator's FOOT — the connection island, hosted for the AppKit column above it.
-    ///
-    /// The column itself is AppKit now (``SlopDeskMacUI/MacNavigatorColumn``); this one island is not,
-    /// and deliberately so: it is drawn in TWO layouts — the column's `stacked` and the titlebar
-    /// band's `inline` — and porting one of the two while the strip that mounts the other is still
-    /// SwiftUI would create exactly the duplicate implementation `CLAUDE.md` bans. It crosses when the
-    /// strip does, and this factory dies with it.
-    package static func connectionIsland(
-        store: WorkspaceStore, connection: AppConnection, onConnect: @escaping () -> Void,
-    ) -> NSView {
-        let host = NSHostingView(
-            rootView: ConnectionStatusMount(
-                store: store, connection: connection, onConnect: onConnect, layout: .stacked,
-            )
-            // The air the island needs is ABOVE it, not inside it: `space3` separates it from the last
-            // project bed by more than the `space2` that separates two projects, so it reads as the
-            // column's foot rather than as one more group.
-            .padding(.top, Slate.Metric.space3),
-        )
-        host.safeAreaRegions = []
-        return host
-    }
-
-    /// The CENTRE column: the pane grid plus the hover-reveal titlebar that overlays it.
+    /// The CENTRE column's CANVAS: the pane grid, its island geometry and the collapsed panel's rail.
+    /// The titlebar band that stands over it is AppKit and is mounted as this view's SIBLING — see
+    /// ``SlopDeskMacUI/MacContentColumn``.
     package static func content(
         store: WorkspaceStore,
         connection: AppConnection,

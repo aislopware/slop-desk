@@ -24,12 +24,10 @@
 //      above it is re-dealt, and only something holding the whole ordered run can know that
 //      (``Slate/ProjectTint/Deal``). A headerless section deals as KEYLESS: it draws no bed, so it
 //      must neither consume an identity nor constrain the group under it.
-//   3. THE MODAL POINTER SHIELD. This column lives in its own view inside the AppKit split, so a
-//      modal card floating over it does NOT occlude its hover tracking — AppKit tracking areas are
-//      rect-based and keep firing under the card, and the rows lit their hover plates while the
-//      pointer was on the palette. While a modal is up the column goes hit-test deaf, so hover obeys
-//      the same occlusion the card's dismiss floor already imposes on clicks. Global Search
-//      (non-modal by design) leaves it open.
+//   3. THE MODAL POINTER SHIELD (``MacModalShield``, shared with the content column). A card floating
+//      over this column does NOT occlude its hover tracking, so the rows lit their hover plates while
+//      the pointer was on the palette. Going hit-test deaf makes hover obey the same occlusion the
+//      card's dismiss floor already imposes on clicks.
 
 import AppKit
 import SlopDeskClientCore
@@ -92,7 +90,7 @@ final class MacNavigatorColumn: NSViewController, NSTextFieldDelegate {
     required init?(coder _: NSCoder) { fatalError("not from a nib") }
 
     override func loadView() {
-        let root = ShieldedView(overlay: overlay)
+        let root = MacModalShield(overlay: overlay)
         // A theme flip does not follow a `CGColor` — every layer ink this controller stamps has to be
         // re-resolved when the effective appearance changes, and the VIEW is what hears about it.
         root.onAppearanceChange = { [weak self] in self?.paint() }
@@ -213,21 +211,22 @@ final class MacNavigatorColumn: NSViewController, NSTextFieldDelegate {
     /// a status widget bolted under a list, it is the list's final member, and the one whose subject is
     /// the machine the rest of them run on.
     ///
-    /// ⚠️ Still SwiftUI, hosted. The island is drawn in TWO layouts — this stacked one and the band's
-    /// inline one, which is mounted inside the titlebar strip that has not moved yet — and porting one
-    /// of two layouts of one component is exactly the duplicate implementation `CLAUDE.md` bans. It
-    /// crosses when the strip does.
+    /// The air the island needs is ABOVE it, not inside it: `space3` separates it from the last
+    /// project bed by more than the `space2` that separates two projects, so it reads as the column's
+    /// foot rather than as one more group.
     private func buildFoot() {
         foot.orientation = .vertical
         foot.alignment = .leading
         foot.spacing = 0
+        foot.edgeInsets = NSEdgeInsets(
+            top: Slate.Metric.space3, left: 0, bottom: 0, right: 0,
+        )
         foot.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(foot)
 
-        let island = WorkspaceColumnHosts.connectionIsland(
-            store: store, connection: connection, onConnect: onConnect,
+        let island = MacConnectionIsland(
+            store: store, connection: connection, onConnect: onConnect, layout: .stacked,
         )
-        island.translatesAutoresizingMaskIntoConstraints = false
         foot.addArrangedSubview(island)
         island.widthAnchor.constraint(equalTo: foot.widthAnchor).isActive = true
     }
@@ -422,34 +421,6 @@ final class MacNavigatorColumn: NSViewController, NSTextFieldDelegate {
         query = ""
         clear.isHidden = true
         refresh()
-    }
-}
-
-// MARK: - The modal pointer shield
-
-/// The column's root — hit-test DEAF while a modal card floats over it. See this file's header for
-/// why a rect-based tracking area needs telling.
-@MainActor
-private final class ShieldedView: NSView {
-    private let overlay: OverlayCoordinator?
-    var onAppearanceChange: () -> Void = {}
-
-    init(overlay: OverlayCoordinator?) {
-        self.overlay = overlay
-        super.init(frame: .zero)
-    }
-
-    @available(*, unavailable)
-    required init?(coder _: NSCoder) { fatalError("not from a nib") }
-
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        guard overlay?.anyModalVisible != true else { return nil }
-        return super.hitTest(point)
-    }
-
-    override func viewDidChangeEffectiveAppearance() {
-        super.viewDidChangeEffectiveAppearance()
-        onAppearanceChange()
     }
 }
 
@@ -669,7 +640,7 @@ final class MacSidebarIslandView: NSView {
     /// grandchild — the stack positions it, not this view — so at `layout()` time the row's frame is
     /// whatever the PREVIOUS pass left, and reading it straight gave the plate the row's INTRINSIC
     /// width: a chip hugging the title with the active row's white-on-glass ink running off it onto
-    /// the cream. Caught by `MacNavigatorSnapshotRender.testRenderNavigatorGrouped`.
+    /// the cream. Caught by `MacChromeSnapshotRender.testRenderNavigatorGrouped`.
     private func plateFrame(for row: MacSidebarRowView) -> CGRect {
         stack.layoutSubtreeIfNeeded()
         let band = convert(row.bounds, from: row)

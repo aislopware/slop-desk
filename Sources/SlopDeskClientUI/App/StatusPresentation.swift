@@ -1,7 +1,13 @@
-// StatusPresentation — pure view-side mapping of connection + agent state to native SwiftUI presentation.
-// Shared by the connection cluster (`ConnectionCluster`, both platforms) and the Peek & Reply header so
-// the copy + retry policy can't drift. The label copy itself comes from `ConnectionPresenter` (the one
-// source of truth) — this adds only the view-layer help text, retry gating, and agent glyph/tint.
+// StatusPresentation — pure view-side mapping of agent + tab-badge state to SwiftUI presentation.
+//
+// Everything here is a PALETTE answer: which hue a badge wears, which weight a title takes, which
+// silhouette a mark draws. The decisions themselves live one floor down (`TabBadgeReading`,
+// `AgentReadout`, `RailRowsBuilder`) so the Mac's `NSView`s — which cannot see a SwiftUI type — reach
+// the same verdicts through `Slate.Native`.
+//
+// The CONNECTION's copy is not here any more: `ConnectionReading` (SlopDeskClientCore) owns the label,
+// the help text and the retry gate now that the Mac's island is AppKit and only the phone's
+// `ConnectionPill` is SwiftUI.
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
@@ -14,27 +20,6 @@ import SwiftUI
 // SwiftUI view body, all MainActor.
 @MainActor
 package enum StatusPresentation {
-    // MARK: Connection
-
-    /// The compact pill label (e.g. "connected", "reconnecting 3/20", "failed").
-    static func connectionLabel(_ status: ConnectionStatus) -> String {
-        ConnectionPresenter.shortLabel(for: status)
-    }
-
-    /// Whether a manual Retry affordance applies (only the give-up states).
-    static func showsRetry(_ status: ConnectionStatus) -> Bool {
-        switch status {
-        case .failed,
-             .unreachable: true
-        default: false
-        }
-    }
-
-    /// The hover/accessibility help: host + the actionable headline.
-    static func connectionHelp(host: String, status: ConnectionStatus) -> String {
-        "Connection: \(host) — \(ConnectionPresenter.headline(for: status))"
-    }
-
     // MARK: Agent (Claude Code)
 
     /// The ``StatusGlyph`` reading for an agent status. `nil` ⇒ render nothing (no active agent).

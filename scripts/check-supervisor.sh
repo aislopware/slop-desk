@@ -4756,6 +4756,49 @@ if ! grep -rq 'TabBadgeReading' Sources/SlopDeskClientUI/App/StatusPresentation.
 fi
 printf 'check-supervisor: one navigator per platform, one row reading, one git dialect.\n'
 
+# ── One titlebar band, one connection reading (docs/56 stage D) ─────────────────────────────────
+# The window runs `.hiddenTitleBar`, so the BAND is the chrome — and being the chrome, it is always
+# mounted, which is the same recurring cost that moved the navigator. Both its halves crossed:
+# `MacTabStrip` for the tabs and `MacConnectionIsland` for the status.
+#
+# The two SwiftUI originals must stay DELETED. `SlateTitlebar` was a full-bleed overlay that had to
+# be handed `allowsHitTesting` back a layer at a time to stop claiming the terminal's clicks — the
+# exact hazard an `NSView` sibling does not have — and `WorkspaceTabStrip` was the tab list it
+# carried. Neither has a phone mount to come back for: the phone has no titlebar at all.
+for gone in Sources/SlopDeskClientUI/Chrome/SlateTitlebar.swift \
+  Sources/SlopDeskClientUI/Chrome/WorkspaceTabStrip.swift; do
+  if [[ -e "${gone}" ]]; then
+    fail "${gone} is back — the Mac's titlebar chrome is MacTitlebarBand + MacTabStrip (AppKit)"
+  fi
+done
+if grep -rqE '(struct|final class) (SlateTitlebar|WorkspaceTabStrip|TabStripChip)\b' Sources/ 2> /dev/null; then
+  fail "a SwiftUI titlebar/tab-strip type is back — the band is MacTitlebarBand, the strip MacTabStrip"
+fi
+# The CONNECTION READING is cut once, in ClientCore, and BOTH surfaces must read it: the Mac's island
+# in its two layouts, and the phone's one-line pill. What the halves could disagree about is not the
+# palette — it is which readings may CLIMB at all (the link on its round trip, memory on the kernel's
+# pressure verdict, disk on an absolute byte floor; CPU never), and a second answer to that is an
+# instrument that cries wolf on one platform and stays silent on the other.
+for half in Sources/SlopDeskMacUI/Chrome/MacConnectionIsland.swift \
+  Sources/SlopDeskClientUI/Chrome/ConnectionPill.swift; do
+  if ! grep -q 'ConnectionReading' "${half}"; then
+    fail "${half} stopped reading ConnectionReading — the alarm ladder is ClientCore's, cut once"
+  fi
+done
+# The strip's chip is the navigator row's reading, NOT a second one. Its inputs are a strict subset,
+# and only one of the strip and the column is ever mounted, so there is nothing to buy by cutting a
+# `TabChipReading` and one more place for "what is this pane called" to drift.
+if ! grep -q 'SidebarRowPresentation' Sources/SlopDeskMacUI/Chrome/MacTabStrip.swift; then
+  fail "MacTabStrip stopped reading SidebarRowPresentation — the chip is the row's reading, cut once"
+fi
+# The band is a PASS-THROUGH: it spans the column so its ends can anchor to the window's, and every
+# click in its empty middle belongs to the terminal under it. Without the refusal it is the
+# full-bleed hit-claimer the port removed.
+if ! grep -q 'override func hitTest' Sources/SlopDeskMacUI/Chrome/MacTitlebarBand.swift; then
+  fail "MacTitlebarBand stopped refusing hits — its empty centre is the terminal island's moat"
+fi
+printf 'check-supervisor: one titlebar band, one connection reading.\n'
+
 # ── One device-panel law, two device protocols ────────────────────────────────────────────────
 # The simulator panel and the Android panel differ in almost everything and should — one rotates on
 # the client and the other on the device, one sends touches in the fitted rect's space and the other

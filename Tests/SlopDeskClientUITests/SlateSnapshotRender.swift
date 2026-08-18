@@ -374,7 +374,7 @@ final class SlateSnapshotRender: XCTestCase {
 
     /// One navigator ROW's footprint, drawn — the real one is `MacSidebarRowView` (AppKit), which
     /// cannot mount inside a SwiftUI `ImageRenderer` frame, and photographing it is
-    /// `MacNavigatorSnapshotRender`'s job. What this panel needs from a row is only its GEOMETRY: the
+    /// `MacChromeSnapshotRender`'s job. What this panel needs from a row is only its GEOMETRY: the
     /// island's rail inset, the control height, and the trailing MARK column the band's cluster above
     /// has to line up with. Same reason `searchPlateStandIn` exists.
     @MainActor
@@ -426,8 +426,8 @@ final class SlateSnapshotRender: XCTestCase {
                 .padding(.top, Slate.Metric.bandControlInset)
             RailStatusMarks(active: [.waiting, .working])
                 .padding(.leading, RailStatusRollupMount.collapsedLead)
-            // ⚠️ The first horizontal tab, stood in for at the inset ``SlateTitlebar`` actually
-            // spends. This is the collision the round fixed (user-reported 2026-08-11: the strip
+            // ⚠️ The first horizontal tab, stood in for at the inset the band
+            // (`SlopDeskMacUI/MacTitlebarBand`) actually spends. This is the collision the round fixed (user-reported 2026-08-11: the strip
             // reserved the TOGGLE's slot only, so the marks were drawn over the first tab's title)
             // — and a collision between two positions is only ever settled by looking.
             Text("Kiểm tra và lên kế h…")
@@ -475,8 +475,8 @@ final class SlateSnapshotRender: XCTestCase {
     /// so the two things that have to stay in balance are in one frame: how much colour the bed
     /// spends, and how far the status runs standing on it rise off it.
     ///
-    /// It exists because the bed is mounted only by `NavigatorColumn` / `WorkspaceTabStrip` /
-    /// `ConnectionCluster`, so every other render in this file draws the rail with NO bed under it —
+    /// It exists because the bed is mounted only by the Mac's `MacSidebarIslandView` / `MacTabStrip`
+    /// / `MacConnectionIsland`, so every render in this file draws the rail with NO bed under it —
     /// `Opacity.bed` could move and nothing here would show it. SAME opt-in idiom; writes
     /// `project-beds.png` into `SLOPDESK_TABROW_SNAPSHOT_DIR`.
     @MainActor
@@ -603,63 +603,6 @@ final class SlateSnapshotRender: XCTestCase {
             panel, size: CGSize(width: Slate.Metric.sidebarWidth, height: 420),
             to: dir, named: "status-ink.png",
         )
-    }
-
-    // MARK: - Opt-in render of the sidebar connection footer (every ink state)
-
-    /// Renders the REAL ``ConnectionStatusIsland`` (link line: hostname leading, metric trailing —
-    /// plus the host-pulse line when the machine has reported) in every ink state — healthy,
-    /// degraded, bad, dialing, dimmed offline, memory pressure, plus a long hostname proving the host
-    /// is the row's truncator — at the true sidebar width, so the ink steps and BOTH rail alignments
-    /// can be eyeballed headlessly. SAME opt-in idiom; writes `sidebar-footer.png` into
-    /// `SLOPDESK_TABROW_SNAPSHOT_DIR`.
-    @MainActor
-    func testRenderSidebarFooter() throws {
-        guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_TABROW_SNAPSHOT_DIR"] else {
-            throw XCTSkip("set SLOPDESK_TABROW_SNAPSHOT_DIR=<dir> to render the sidebar footer")
-        }
-        let idle = HostPulse(cpuPercent: 6, memoryPercent: 43, memoryPressure: .normal, diskFreeMiB: 245_760)
-        let busy = HostPulse(cpuPercent: 97, memoryPercent: 74, memoryPressure: .normal, diskFreeMiB: 43008)
-        // Disk running out: an amber middle run, with the two rails still calm.
-        let filling = HostPulse(cpuPercent: 21, memoryPercent: 51, memoryPressure: .normal, diskFreeMiB: 9012)
-        let squeezed = HostPulse(cpuPercent: 64, memoryPercent: 92, memoryPressure: .warn, diskFreeMiB: 2048)
-        let thrashing = HostPulse(cpuPercent: 100, memoryPercent: 98, memoryPressure: .critical, diskFreeMiB: 820)
-        // The volume could not be read: the middle run is absent, the line still reports.
-        let blindDisk = HostPulse(cpuPercent: 12, memoryPercent: 49, memoryPressure: .normal)
-        let panel = VStack(alignment: .leading, spacing: 0) {
-            // Connected, healthy link — the pulse line rides beneath on the same two rails.
-            footerRow(host: "mac-studio", led: .good, detail: ("12 ms", true), pulse: idle)
-            footerRow(host: "mac-studio", led: .good, detail: ("12 ms", true), pulse: busy)
-            footerRow(host: "mac-studio", led: .good, detail: ("12 ms", true), pulse: filling)
-            // The host's memory is under pressure: the MEM run alone takes the hue — cpu never does.
-            footerRow(host: "mac-studio", led: .good, detail: ("12 ms", true), pulse: squeezed)
-            footerRow(host: "mac-studio", led: .slow, detail: ("141 ms", true), pulse: thrashing)
-            footerRow(host: "mac-studio", led: .good, detail: ("12 ms", true), pulse: blindDisk)
-            // A long hostname still truncates before the ping does.
-            footerRow(host: "congs-macbook-pro-16-inch", led: .good, detail: ("12 ms", true), pulse: idle)
-            // Connected but the host has not reported yet → ONE line, no dashes.
-            footerRow(host: "mac-studio", led: .bad, detail: ("312 ms", true), pulse: nil)
-            footerRow(host: "mac-studio", led: .dialing, detail: ("reconnecting 3/20", false), pulse: nil)
-            footerRow(host: "mac-studio", led: .dim, detail: ("disconnected", false), pulse: nil)
-        }
-        .frame(width: Slate.Metric.sidebarWidth)
-        .background(Slate.Surface.field)
-        try render(
-            panel, size: CGSize(width: Slate.Metric.sidebarWidth, height: 650),
-            to: dir, named: "sidebar-footer.png",
-        )
-    }
-
-    /// One footer mount, composed the way the sidebar does it (no rule above it — the sidebar
-    /// separates its bands by air).
-    @MainActor
-    private func footerRow(
-        host: String, led: ConnectionCluster.LedState, detail: (String, Bool), pulse: HostPulse?,
-    ) -> some View {
-        ConnectionStatusIsland(displayHost: host, led: led, detail: detail, pulse: pulse)
-            .padding(.horizontal, Slate.Metric.space2)
-            .padding(.top, Slate.Metric.space3)
-            .padding(.bottom, Slate.Metric.space2)
     }
 
     // MARK: - Opt-in render of the vi copy-mode surfaces (block cursor + responsive hint bar)
@@ -889,7 +832,7 @@ private struct SlateShowcase: View {
                 .padding(.bottom, Slate.Metric.space1)
             // The rows are DRAWN, not mounted: the shipping navigator row is AppKit
             // (`MacSidebarRowView`), and this showcase is a token/geometry mock rather than a mount of
-            // the real column — `MacNavigatorSnapshotRender` photographs that.
+            // the real column — `MacChromeSnapshotRender` photographs that.
             showcaseRow("~/slopdesk", active: true, slot: "zsh")
             showcaseRow("build", active: false, slot: "zsh")
             showcaseRow("Remote window", active: false, slot: nil)

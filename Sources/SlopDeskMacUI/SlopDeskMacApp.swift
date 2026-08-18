@@ -572,7 +572,7 @@ public struct SlopDeskMacApp: App {
                 }
         }
         // The app has NO system unified toolbar: hide the titlebar (the window keeps traffic lights + a
-        // full-size content view) so its own hover-reveal titlebar (`SlateTitlebar`) is the only chrome.
+        // full-size content view) so its own titlebar band (`MacTitlebarBand`) is the only chrome.
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.automatic)
         // `.remember` seeds the CREATION geometry from the saved frame so the window never paints a

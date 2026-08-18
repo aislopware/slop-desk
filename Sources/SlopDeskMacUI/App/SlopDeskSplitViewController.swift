@@ -119,10 +119,11 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         sidebarItem.canCollapse = true
         sidebarItem.holdingPriority = NSLayoutConstraint.Priority(260)
 
-        // 2) Content — the pane grid (terminal / desktop / remote window) + the hover-reveal titlebar
-        //    overlay. The non-collapsible centre. `chrome` drives the titlebar's sidebar toggle; `onConnect`
-        //    wires the titlebar's connection-status cluster to the Connect-to-Host editor.
-        let content = WorkspaceColumnHosts.content(
+        // 2) Content — the pane grid (terminal / desktop / remote window) with the titlebar BAND
+        //    standing over it as a sibling. The non-collapsible centre. `chrome` drives what the band
+        //    shows (both halves are collapsed-only); `onConnect` wires the band's connection island —
+        //    and the empty canvas's one next action — to the Connect-to-Host editor.
+        let content = MacContentColumn(
             store: store, connection: connection, chrome: chrome, onConnect: onConnect,
             paneDrag: paneDrag, overlay: overlay,
         )

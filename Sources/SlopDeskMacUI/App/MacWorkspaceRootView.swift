@@ -1,8 +1,8 @@
 // MacWorkspaceRootView — the macOS WINDOW ROOT: the AppKit split shell, plus the four things that
 // hang off the WINDOW rather than off either column.
 //
-// The window runs `.hiddenTitleBar` — there is NO system toolbar. The workspace's own hover-reveal
-// titlebar (`SlateTitlebar`, a top overlay inside `ContentColumn`) IS the chrome, and what this root
+// The window runs `.hiddenTitleBar` — there is NO system toolbar. The workspace's own titlebar band
+// (`MacTitlebarBand`, a sibling of the hosted canvas inside `MacContentColumn`) IS the chrome, and what this root
 // adds around the split is: the sidebar toggle pinned to the window's top-left corner, the band's
 // aggregate agent reading beside it, the floating-overlay layer above both, and the window title.
 //
@@ -113,8 +113,8 @@ struct MacWorkspaceRootView: View {
     }
 
     var body: some View {
-        // No system toolbar — the window runs `.hiddenTitleBar`; its own hover-reveal titlebar
-        // (`SlateTitlebar`, inside `ContentColumn`) IS the chrome.
+        // No system toolbar — the window runs `.hiddenTitleBar`; its own titlebar band
+        // (`MacTitlebarBand`, inside `MacContentColumn`) IS the chrome.
         WorkspaceSplitRepresentable(
             store: store, connection: connection, chrome: chrome, overlay: overlay,
             preferences: preferencesStore, paneDrag: paneDrag,

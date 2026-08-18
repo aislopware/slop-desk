@@ -399,7 +399,7 @@ nothing is ever implemented twice. No stage copies a file: a surface either move
   phase (`AgentSpinner`, `StatusDot`), two renderers — and the SwiftUI half dies with the strip.
 
   What moved with the column is its PIXEL VERIFICATION. Four probes in `SlateSnapshotRender` mounted
-  the deleted views; they are now `MacNavigatorSnapshotRender` in `SlopDeskMacUITests`, mounting the
+  the deleted views; they are now `MacChromeSnapshotRender` in `SlopDeskMacUITests`, mounting the
   real `NSView`s through an offscreen borderless window and `CALayer.render(in:)`. Two things the
   AppKit rig gets wrong if copied carelessly, both now spelled in that file's header: the window must
   be pinned `.aqua` (the app pins LIGHT app-wide — `Slate.glassColorScheme` names the terminal
@@ -409,6 +409,46 @@ nothing is ever implemented twice. No stage copies a file: a surface either move
   render showed the selection plate hugging the row's title instead of spanning the island, because
   a row is the stack's child rather than the island's and its frame at the island's `layout()` time is
   the previous pass's. Nothing about that was visible in any value.
+
+  **The ninth is the TITLEBAR BAND — the chrome the window has instead of a toolbar.** The window runs
+  `.hiddenTitleBar`, so there is no system unified toolbar and this band IS the chrome: the horizontal
+  tab strip (`MacTabStrip`) on the leading side, the connection island (`MacConnectionIsland`) on the
+  trailing one, and a deliberately empty centre — with the terminal lifted as an island, the band above
+  it is that island's top moat. `SlateTitlebar.swift` and `WorkspaceTabStrip.swift` are DELETED.
+
+  The band is a SIBLING of the hosted canvas inside the new `MacContentColumn`, not an overlay on it,
+  and that is the whole reason it moved. As a SwiftUI overlay it had to be full-bleed to reach both
+  window edges, so it claimed the entire top strip and had to be handed `allowsHitTesting` back a
+  layer at a time. An `NSView` refuses a point it does not occupy for free: `hitTest(_:)` returns
+  `nil` for the band itself and for its row, and everything else falls through to the terminal.
+
+  The CONNECTION ISLAND crossed in BOTH of its Mac mounts in one change, deliberately. It is one
+  component seen on two axes — `stacked` at the navigator's foot while the tabs are vertical,
+  `inline` across the band while they are horizontal — and porting one would have left the other's
+  identical ink ladder spelled a second time in SwiftUI, which is the duplicate the one-implementation
+  rule bans. Everything the island SAYS went down to `SlopDeskClientCore` as `ConnectionReading`: the
+  labels, the health thresholds, the LED, the retry rule, and the alarm ladder with the rule about
+  which readings may climb at all (the link on its round trip, memory on the kernel's pressure
+  verdict, disk on an absolute byte floor; CPU never). What is left in either renderer is the palette
+  the rungs resolve to. The phone keeps `ConnectionPill` — the link line alone, bedless, in a
+  navigation toolbar — which is the other platform's surface rather than a twin, and reads the same
+  values.
+
+  The tab CHIP got no reading of its own. Its inputs are a strict subset of the navigator row's, so
+  `MacTabChipView` calls `SidebarRowPresentation.reading(...)` directly — one answer to "what is this
+  pane called", and only one of the strip and the column is ever mounted, so the shared call costs
+  nothing. What the chip deliberately does NOT take from the row is the urgent HUE: a band control is
+  ink and weight only.
+
+  Two AppKit traps, both now spelled where they bit. The band's two halves TRAVEL in from their own
+  edges when the column collapses, and an animated `frame` on an Auto-Layout-managed view snaps back
+  the moment anything relays out — the travel is a `CATransform3DMakeTranslation` inside a
+  `CATransaction`, which composes on top of whatever layout resolved. And the island's live read is
+  split from its drawing (`refresh()` resolves a `Reading`, `paintInks()` resolves the `CGColor`s),
+  because `updateLayer()` calling back into `apply` recursed forever — the same seam that lets the
+  snapshot rig mount a DETACHED island and photograph `.critical` memory pressure without arranging
+  for a host to be in it. `MacChromeSnapshotRender` gained both probes; the island's renders BOTH
+  layouts side by side, which the SwiftUI probe it replaces could not.
 - **E — the Rust port (§4).**
 
 ## 4. What moves to Rust

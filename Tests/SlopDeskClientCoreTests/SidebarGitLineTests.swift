@@ -3,7 +3,7 @@
 // The dialect moved to ClientCore with docs/56 stage D: one spelling of the line, read by the Mac's
 // `MacGitLineView` and by the tooltip and by every accessibility label. It had NO suite before that
 // — it was private to a SwiftUI view — which is exactly why the squeeze ladder could only ever be
-// judged by looking at `MacNavigatorSnapshotRender`'s render. These pins are the arithmetic half;
+// judged by looking at `MacChromeSnapshotRender`'s render. These pins are the arithmetic half;
 // the render stays the visual half.
 
 import XCTest
