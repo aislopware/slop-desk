@@ -514,6 +514,16 @@ public struct SlopDeskMacApp: App {
                         toggledState: PalettePresentation.toggledState(chrome: chrome, store: store),
                     )
                 }
+                // THE ⌘⌥J PEEK CARD is the Mac's own AppKit panel (docs/56 stage D) — the second
+                // MODAL surface across, and the first whose CONTENT moves under it: a reply advances
+                // the queue, and the card is re-cut for the next blocked pane without the panel ever
+                // going away. It takes no `toggledState`-style injection because everything it shows
+                // is the store's and the coordinator's already.
+                .onChange(of: overlayCoordinator.peekReplyVisible) { _, visible in
+                    overlayPanels.setPeekReply(
+                        visible, host: windowBox.window, store: store, coordinator: overlayCoordinator,
+                    )
+                }
                 // THE NOTIFICATION CORNER is the Mac's own AppKit panel too (docs/56 stage D), and it
                 // is what took the last ALWAYS-MOUNTED `NSHostingView` off the window root: the toast
                 // host used to be a full-bleed SwiftUI layer over the whole workspace, toggling

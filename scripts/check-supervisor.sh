@@ -4594,6 +4594,38 @@ if grep -A4 'draws:' Sources/SlopDeskMacUI/App/MacWorkspaceRootView.swift | grep
 fi
 printf 'check-supervisor: one palette, drawn twice and spelled once.\n'
 
+# ── One peek card, two frameworks ─────────────────────────────────────────────────────────────
+# docs/56 stage D's second MODAL surface, and the first whose CONTENT moves under it: a reply
+# advances the queue and the card is re-cut for the next blocked pane. The two halves may arrange it
+# differently and must not word it differently — `PeekReplyPresentation` owns the header caption, the
+# "N of M" counter, the stand-in note for a pane with no reported question and the zero-state line,
+# and `AgentReadout` owns the status→glyph→ink reading both halves draw.
+for half in Sources/SlopDeskMacUI/Overlays/MacPeekReply.swift \
+  Sources/SlopDeskClientUI/Overlays/PeekReplyOverlay.swift; do
+  if ! grep -q 'PeekReplyPresentation' "${half}"; then
+    fail "${half} stopped reading PeekReplyPresentation — the two peek cards would drift on the first copy change"
+  fi
+  # The caption's join is the piece that looks too small to share and is not: the scent goes LAST so
+  # a tail truncation eats the prose first and the status word never.
+  #
+  # Comments are stripped first: both halves' headers NAME the copy they no longer spell, and a gate
+  # that read its own rationale as a regression would make the departure undocumentable.
+  if sed -E 's#^[[:space:]]*//.*##' "${half}" |
+    grep -qE '\\\(label\) · |"Peek & Reply"|The agent is waiting for your input'; then
+    fail "${half} respells a peek-card string — every one of them is PeekReplyPresentation's"
+  fi
+done
+# The status glyph crossed as a design-system LEAF (`MacAgentGlyphView`), which is only allowed
+# because the decision under it did not: a status becomes a reading and an ink in `AgentReadout`, and
+# each framework does the ladder lookup alone (`Slate.agentInk` / `Slate.Native.agentInk`).
+if ! grep -q 'AgentReadout' Sources/SlopDeskMacUI/Overlays/MacPeekReply.swift; then
+  fail "the Mac's peek header stopped reading AgentReadout — two spellings of one pane's state"
+fi
+if grep -A4 'draws:' Sources/SlopDeskMacUI/App/MacWorkspaceRootView.swift | grep -q '\.peekReply'; then
+  fail "MacWorkspaceRootView still lets the shared host draw the peek card — the Mac would show two"
+fi
+printf 'check-supervisor: one peek card, drawn twice and spelled once.\n'
+
 # ── One device-panel law, two device protocols ────────────────────────────────────────────────
 # The simulator panel and the Android panel differ in almost everything and should — one rotates on
 # the client and the other on the device, one sends touches in the fitted rect's space and the other

@@ -45,12 +45,12 @@ import SlopDeskClientCore
 import SwiftUI
 
 /// The status mark's geometry — pure constants, unit-testable.
-enum StatusDot {
+package enum StatusDot {
     /// The mark's fixed footprint — one column width, so the right edge never wavers between rows.
     /// 14 is otty's own badge box (it lays the spinner out at exactly `14 × 14`, 8pt in from the
     /// row's trailing edge), and every mark here is drawn to fit it: the reason the previous port
     /// read as fussy detail was that it squeezed the same silhouettes into 8.
-    static let footprint: CGFloat = 14
+    package static let footprint: CGFloat = 14
     /// The agent-presence ring's diameter. Matched by eye at true size to the outer circle of the
     /// finish mark — ⚠️ which now sits a point ABOVE it (``finishSymbolSize``, user-directed), so a
     /// row that finishes gains a hair of size where it used to gain none.
@@ -122,7 +122,7 @@ enum StatusDot {
     static let cellColumns = 2
     static let cellRows = 4
     /// One dot. A braille dot, at a size that survives the rail's true scale.
-    static let dotDiameter: CGFloat = 2.6
+    package static let dotDiameter: CGFloat = 2.6
     /// Centre-to-centre spacing. Wider across than down, as a real cell is — the two columns have to
     /// stay legible as columns while the four rows read as one run.
     static let dotPitchX: CGFloat = 4.4
@@ -264,7 +264,7 @@ enum StatusDot {
     /// tempo law; each rolls its own offset INTO it, so two panes thinking at once are never at the
     /// same point of the same swell. Without this the whole rail would speed up and slow down in
     /// lockstep, which reads as the application hitching rather than as agents thinking.
-    static let tempoSeedSpan: Double = 600
+    package static let tempoSeedSpan: Double = 600
 }
 
 /// WHICH mark a row draws — otty's `TabBadge` set, plus the resting-agent ring otty has no need
@@ -438,7 +438,7 @@ struct DottedRing: Shape {
 ///  * **Reduce Motion freezes it** — the platform used to own that call; drawing it makes it ours. A
 ///    frozen cell is still a distinct silhouette (a lit block with one corner missing, which no other
 ///    mark in this column resembles), so the state is never lost, only the movement.
-struct AgentSpinner: View {
+package struct AgentSpinner: View {
     /// The lit dots' ink. The hole is this same ink taken down to ``StatusDot/holeFloor``.
     let ink: Color
     /// Multiplies the whole mark — the render rig's way of magnifying it without resampling.
@@ -458,7 +458,7 @@ struct AgentSpinner: View {
     /// is the exact defect the wall-clock phase exists to prevent.
     @State private var seed = Double.random(in: 0..<StatusDot.tempoSeedSpan)
 
-    var body: some View {
+    package var body: some View {
         cell
             .frame(width: StatusDot.footprint * zoom, height: StatusDot.footprint * zoom)
     }
@@ -501,7 +501,7 @@ struct AgentSpinner: View {
     /// means the darkness SLIDES — parked ON a dot it is that dot alone, fully out, everything else
     /// at full ink; rolled to the seam between two, each of the pair is half dark. The total ink
     /// removed is the same at every instant, which is what stops the walk pulsing as it goes.
-    static func lit(_ index: Int, hole: Double) -> Double {
+    package static func lit(_ index: Int, hole: Double) -> Double {
         let count = Double(BrailleCell.dotCount)
         var gap = abs(Double(index) - hole).truncatingRemainder(dividingBy: count)
         if gap > count / 2 { gap = count - gap }
@@ -537,7 +537,7 @@ struct AgentSpinner: View {
     /// load-bearing — a spinner that added `rate × Δt` every frame would depend on WHEN it started
     /// and on which frames it happened to be drawn on, and two panes showing the same agent would
     /// drift apart while a scrolled-away row would come back holding a stale position.
-    static func phase(at date: Date, seed: Double = 0) -> Double {
+    package static func phase(at date: Date, seed: Double = 0) -> Double {
         let time = date.timeIntervalSinceReferenceDate + seed
         // Reduced to its own lap FIRST: the fraction has to keep its precision a couple of decades
         // out from the reference epoch, which the raw interval (~10⁹ s) would spend on the integer
@@ -571,8 +571,8 @@ struct AgentSpinner: View {
 /// A pure function rather than a laid-out stack, because the positions ARE the mark: as values they
 /// are unit-pinnable — the walk really does go down one side and up the other, and the block really
 /// is centred in the column it has to share with a Ø10 ring.
-enum BrailleCell {
-    static let dotCount = StatusDot.cellColumns * StatusDot.cellRows
+package enum BrailleCell {
+    package static let dotCount = StatusDot.cellColumns * StatusDot.cellRows
 
     /// `(column, row)` for each step of the lap. Right column top-to-bottom, left column
     /// bottom-to-top.
@@ -583,7 +583,7 @@ enum BrailleCell {
     }()
 
     /// Where the `index`-th step of the lap sits, centred in a box of `size`.
-    static func position(of index: Int, in size: CGSize, zoom: CGFloat) -> CGPoint {
+    package static func position(of index: Int, in size: CGSize, zoom: CGFloat) -> CGPoint {
         guard walk.indices.contains(index) else { return CGPoint(x: size.width / 2, y: size.height / 2) }
         let dot = walk[index]
         let pitchX = StatusDot.dotPitchX * zoom

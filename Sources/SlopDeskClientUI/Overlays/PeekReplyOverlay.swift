@@ -1,4 +1,4 @@
-// PeekReplyOverlay — the "Peek & Reply" card (⌘⌥J), NATIVE SwiftUI. Everything outside the
+// PeekReplyOverlay — the PHONE's "Peek & Reply" card (⌘⌥J), NATIVE SwiftUI. Everything outside the
 // workspace + panes is native chrome, so this is a native `.sheet` body (native title / status / `Divider` /
 // `TextField` / prominent send button). It targets the
 // OLDEST pane needing attention (`WorkspaceStore.peekReplyTargetPane`), shows that pane's cheap headless
@@ -20,6 +20,14 @@
 // SEAM discipline: every stateful decision (target resolution, advance, close) lives on the
 // `OverlayCoordinator` (the single `@Observable` reducer, headlessly tested); this view is a thin renderer +
 // the field's local text. Presented as a real sheet by ``OverlayHostView``.
+//
+// ⚠️ THE PHONE's, since docs/56 stage D: the Mac draws this card as an `NSPanel`
+// (``SlopDeskMacUI/MacPeekReplyView``) and has dropped `.peekReply` from ``OverlayHostView``'s
+// `draws` set, so on macOS this body is never mounted. Nothing here may spell a string the card
+// SAYS — the caption's join, the "N of M" counter, the note for a pane with no reported question,
+// the zero-state line — because the other half would then have to agree with it rather than read
+// it. All four are ``PeekReplyPresentation``'s, and the header's glyph reading is
+// ``AgentReadout``'s, and `check-supervisor.sh` fails the build if either comes back.
 
 #if canImport(SwiftUI)
 import SlopDeskClientCore
@@ -48,7 +56,10 @@ struct PeekReplyOverlay: View {
     /// path) — a fresh target's card starts collapsed, never inheriting the previous pane's disclosure.
     @State private var pendingToolExpanded = false
 
-    private let recentMaxHeight: CGFloat = 132
+    /// The cap both scrolling blocks share, from ``PeekReplyMetrics`` — the Mac's `NSView` card
+    /// (``SlopDeskMacUI/MacPeekReplyView``) reads the same number, so neither half can re-tune it
+    /// alone.
+    private let recentMaxHeight = CGFloat(PeekReplyMetrics.scrollMaxHeight)
 
     var body: some View {
         Group {
@@ -94,13 +105,12 @@ struct PeekReplyOverlay: View {
 
     private func header(target: PaneID, content: PeekContent) -> some View {
         let status = store.agentStatus(for: target)
-        let label = StatusPresentation.agentLabel(status)
         // The todo-scent suffix: only while a `.live` inspector reports an `.inProgress`
         // todo, so an idle / non-Claude / dead-feed pane's caption is byte-identical to today.
         let scent = liveInspector(for: target).flatMap { vm in
             vm.feedState == .live ? PendingToolSummary.scent(todos: vm.todos) : nil
         }
-        let caption = scent.map { "\(label) · \($0)" } ?? label
+        let caption = PeekReplyPresentation.caption(status: status, scent: scent)
         return HStack(spacing: Slate.Metric.space2) {
             if let reading = StatusPresentation.agentReading(status) {
                 StatusGlyph(reading: reading, tint: StatusPresentation.agentTint(status))
@@ -121,14 +131,14 @@ struct PeekReplyOverlay: View {
             Spacer(minLength: Slate.Metric.space2)
             // The queue position REPLACES the static caption once a real queue (total >= 2)
             // exists — a hard cut on the queue edge, never both at once.
-            if let position = queuePosition {
-                Text("\(position.position) of \(position.total)")
+            if let counter = PeekReplyPresentation.counter(queuePosition) {
+                Text(counter)
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.tertiary)
                     .layoutPriority(1)
                     .lineLimit(1)
             } else {
-                Text("Peek & Reply")
+                Text(PeekReplyPresentation.title)
                     .font(.caption.weight(.medium))
                     .foregroundStyle(.secondary)
             }
@@ -153,9 +163,10 @@ struct PeekReplyOverlay: View {
     // MARK: - Question (the host type-27 blocking prompt, or a generic note)
 
     private func questionBlock(_ content: PeekContent) -> some View {
-        Text(content.question ?? "The agent is waiting for your input.")
+        let question = PeekReplyPresentation.question(content.question)
+        return Text(question.text)
             .font(.body)
-            .foregroundStyle(content.question == nil ? .secondary : .primary)
+            .foregroundStyle(question.isPlaceholder ? .secondary : .primary)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, Slate.Metric.space4)
@@ -298,7 +309,7 @@ struct PeekReplyOverlay: View {
             Image(systemName: "checkmark.circle")
                 .font(.title2)
                 .foregroundStyle(.green)
-            Text("Nothing needs your reply.")
+            Text(PeekReplyPresentation.allCaughtUp)
                 .foregroundStyle(.secondary)
             Button("Done") { coordinator.closePeekReply() }
                 .keyboardShortcut(.cancelAction)

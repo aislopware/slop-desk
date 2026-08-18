@@ -36,6 +36,10 @@ final class MacOverlayPanels {
     /// query, the selection and the hover arbiter are all per-OPENING state, and a kept card would
     /// have to reset each of them by hand on the way in.
     private var palette: MacOverlayPanelController?
+    /// The ⌘⌥J peek card, or `nil` when it is not up. Built per presentation for the palette's
+    /// reason and one more: the card holds the reply field's text and the pending-tool disclosure,
+    /// and both are per-OPENING state that a kept card would have to clear by hand on the way in.
+    private var peekReply: MacOverlayPanelController?
 
     /// Reconciles the ⌘/ cheat sheet against `visible`.
     ///
@@ -105,6 +109,40 @@ final class MacOverlayPanels {
         controller.present()
         // After `present()`, and it has to be: a field cannot take first responder in a window that
         // is not yet key, so a card that focused itself at build time would come up unfocused.
+        card.begin()
+    }
+
+    /// Reconciles the ⌘⌥J Peek & Reply card against `visible`.
+    ///
+    /// The card is measured by its CONTENT — a pane with no pending call and no recent output makes
+    /// a genuinely shorter one — so the controller is handed a first size and told each new one as
+    /// the queue advances.
+    func setPeekReply(
+        _ visible: Bool, host: NSWindow?, store: WorkspaceStore, coordinator: OverlayCoordinator,
+    ) {
+        guard visible else {
+            peekReply?.dismiss()
+            peekReply = nil
+            // The keyboard goes back to the PANE — same call, same reason, as the cheat sheet's.
+            store.reclaimKeyboardFocusInActivePane()
+            return
+        }
+        guard peekReply == nil, let host else { return }
+        let card = MacPeekReplyView(store: store, coordinator: coordinator)
+        let controller = MacOverlayPanelController(
+            host: host,
+            content: card,
+            // A first guess only, and immediately corrected: the card reports its real height on its
+            // first draw, before the panel is ever seen at this one.
+            size: NSSize(
+                width: Slate.Metric.cardFormWidth, height: Slate.Metric.cardFormWidth,
+            ),
+            onDismiss: { [coordinator] in coordinator.closePeekReply() },
+        )
+        card.onResize = { [weak controller] size in controller?.resize(to: size) }
+        peekReply = controller
+        controller.present()
+        // After `present()`: a field cannot take first responder in a window that is not yet key.
         card.begin()
     }
 

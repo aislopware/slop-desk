@@ -257,8 +257,40 @@ nothing is ever implemented twice. No stage copies a file: a surface either move
   `PaneSpec::cwd_badge_path` in Rust — matched by SHAPE (`/Users/<name>`, `/home/<name>`) and never
   against the client's own `$HOME`, because the path came off the remote host.
 
-  A modal card leaving raises a question an ambient one did not: the shared host still presents three
-  more, and it may not present a fourth the Mac has already taken. The answer is a `draws` set on
+  **The fifth is the ⌘⌥J peek card, and it is the first surface whose CONTENT moves under it.** The
+  palette settled the shape of a card you type into and steer; what this one adds is that a reply
+  ADVANCES the queue — the pane is answered, the target changes, and the card is re-cut for the next
+  blocked pane without the panel ever going away. Three consequences. It redraws off observation for
+  a stronger reason than the palette's: the advance is the *coordinator's*, so a card that only
+  redrew on its own keystrokes would keep showing the pane it just answered. A new target CROSSFADES
+  — without the beat, question / recent / pending-tool all mutate in one frame and it reads as the
+  same pane changing rather than as the next one arriving; the phone gets that from `.id(target)` +
+  a transition, the Mac from the family's short curve on the card's alpha, fired on the target edge
+  and nowhere else. And one key is taken OFF the field: a bare 1–9 while the field is empty is the
+  quick-answer shortcut, which has to be read before the field inserts the character, so it is
+  answered in `performKeyEquivalent(with:)` — the door every key-down passes through, which is why a
+  plain Return can drive a default button. Everything else stays the field's.
+
+  What the halves share is `PeekReplyPresentation` (`SlopDeskClientCore`): the header caption and the
+  order its parts truncate in, the "N of M" counter's hard cut, the note a pane with no reported
+  question gets, the zero-state line. Behaviour was already below the view before this port existed
+  — `PeekReplyTarget`, `PeekReplyFormatter`, `PendingToolSummary` — which is most of why the card is
+  a renderer on both sides.
+
+  This is also the first DESIGN-SYSTEM LEAF to cross rather than a whole surface, and the terms are
+  worth stating because the rule is "a surface is ported whole, never one shared leaf at a time".
+  What crossed is a RENDERER, not a decision: `AgentReadout` (`SlopDeskClientCore`) maps a
+  `ClaudeStatus` to a reading and an ink, `Slate.agentInk` / `Slate.Native.agentInk` are the two
+  spellings of one ladder lookup, and the braille spinner's whole cadence — the wandering tempo, its
+  closed-form integral, the walk's clockwise order — is *called* out of the shared design system by
+  `MacAgentSpinnerView` rather than rewritten in it. Two renderers, one mark: a pane thinking in the
+  sidebar and the same pane thinking in a peek card are the same hole at the same point of the same
+  lap, because both read the same wall clock through the same integral. The only genuinely new line
+  is that the AppKit view is FLIPPED — `BrailleCell.position` numbers rows top-down because SwiftUI's
+  coordinate space does, and an unflipped `NSView` would turn the mark anticlockwise.
+
+  A modal card leaving raises a question an ambient one did not: the shared host still presents the
+  ones behind it, and it may not present one the Mac has already taken. The answer is a `draws` set on
   `OverlayHostView` — TRANSITIONAL and shrink-only, the Mac's ledger of what stage D has lifted — so a
   card that has moved is drawn by AppKit and one that has not is still drawn there, with no `#if`
   choosing between them and never two live implementations of one card. When the macOS set empties,

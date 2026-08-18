@@ -47,6 +47,7 @@
 //     instrument voice (`check-ds-leaks.sh` still enforces the closed scales).
 
 #if canImport(SwiftUI)
+import SlopDeskClientCore // AgentInk — the status vocabulary this ladder resolves for both platforms
 import SwiftUI
 #if canImport(AppKit)
 import AppKit
@@ -458,6 +459,17 @@ package enum Slate {
             package static let err = SlateNativeColor.slateDynamic(light: 0xB40034, dark: 0xFF6471)
             package static let info = SlateNativeColor.slateDynamic(light: 0x005D91, dark: 0x00A0F4)
             package static let aside = SlateNativeColor.slateDynamic(light: 0x9400BD, dark: 0xDB65FF)
+        }
+
+        /// One AGENT's state, as ink — the native view of ``Slate/agentInk(_:)``, and the reason
+        /// ``AgentInk`` exists as a value at all.
+        package static func agentInk(_ ink: AgentInk) -> SlateNativeColor {
+            switch ink {
+            case .muted: Text.secondary
+            case .awaiting,
+                 .thinking: StatusInk.warn
+            case .done: StatusInk.ok
+            }
         }
     }
 
@@ -940,6 +952,22 @@ package enum Slate {
         /// Parked on purpose — `$stash` (h 320°). Cool, off the warm ramp, and far enough from
         /// ``info`` to be told apart at a glance.
         static let aside = Color(slateNative: Native.StatusInk.aside)
+    }
+
+    /// One AGENT's state, as ink.
+    ///
+    /// The mapping from a `ClaudeStatus` to a MEANING is ``AgentReadout/ink(_:)``, one floor down and
+    /// framework-free; this is the rung that meaning lands on, and ``Slate/Native/agentInk(_:)`` is
+    /// the same lookup in `NSColor`. Two spellings, one decision — the split the whole ``Native``
+    /// block exists for, because the Mac's peek card is an `NSView` and the phone's is a `View`.
+    ///
+    /// ⚠️ `thinking` and `awaiting` land on the SAME warm rung deliberately (see
+    /// ``StatusPresentation/thinkingMark`` for the measurement that put them there). What separates
+    /// them is the silhouette and the motion — a still hand against a block of dots with a hole
+    /// running round it — never the hue.
+    @MainActor
+    package static func agentInk(_ ink: AgentInk) -> Color {
+        Color(slateNative: Native.agentInk(ink))
     }
 
     /// Geometry — theme-independent. Radii + the 8pt grid + chrome dimensions.

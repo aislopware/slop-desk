@@ -139,6 +139,37 @@ class MacOverlayCardView: NSView {
     override func acceptsFirstMouse(for _: NSEvent?) -> Bool { true }
 }
 
+// MARK: - The card's internal line
+
+/// A rule INSIDE a card — the palette's between its query and its results, the peek card's above and
+/// below its reply bar.
+///
+/// Every one of them is EARNED, which is why there is a shared object for it and no `Divider()`
+/// habit: a line is drawn where content SCROLLS PAST an edge and the eye needs to know where the
+/// scrolling region begins. Anywhere else the card's own spacing is the separation.
+final class MacCardRuleView: NSView {
+    override var wantsUpdateLayer: Bool { true }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) { fatalError("not from a nib") }
+
+    override func updateLayer() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = Slate.Native.Overlay.hairline.cgColor
+        }
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+}
+
 // MARK: - The controller
 
 /// One summoned card: builds the panel, pins it over its host window, and tears it down.

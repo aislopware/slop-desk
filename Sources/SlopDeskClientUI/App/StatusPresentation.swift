@@ -40,14 +40,11 @@ enum StatusPresentation {
     /// The ``StatusGlyph`` reading for an agent status. `nil` ⇒ render nothing (no active agent).
     /// The agent surfaces (iOS toolbar glyph, Peek & Reply header) speak the SAME terminal dialect as
     /// the tab badges — a state edge is one character trading for another in the same mono slot.
+    ///
+    /// The mapping itself is ``AgentReadout/reading(_:)``, one floor down: the Mac's peek card draws
+    /// these four states as an `NSView` (docs/56 stage D) and cannot see this file.
     static func agentReading(_ status: ClaudeStatus) -> StatusGlyph.Reading? {
-        switch status {
-        case .none: nil
-        case .idle: .resting
-        case .working: .working
-        case .done: .done
-        case .needsPermission: .awaiting
-        }
+        AgentReadout.reading(status)
     }
 
     /// Tint for an agent status — the SAME hue budget the tab rows speak (``attentionInk(_:)``), so
@@ -55,22 +52,19 @@ enum StatusPresentation {
     /// needs-permission = amber (act-now; red is reserved for broken), done = green (unread finish),
     /// idle/none = muted (the resting state spends no colour).
     ///
-    /// `.working` takes ``thinkingMark``'s ink BY REFERENCE, not by agreement: the compact surfaces
-    /// now mount the rail's own spinner for that reading, so a second spelling of the ink here would
-    /// be a second chance to disagree about one pane.
+    /// Neither half of the answer is spelled here any more: ``AgentReadout/ink(_:)`` decides which
+    /// RUNG a state lands on and ``Slate/agentInk(_:)`` resolves it, with ``Slate/Native/agentInk(_:)``
+    /// the same lookup for the Mac's `NSView` peek card (docs/56 stage D). `.working` reaches
+    /// ``thinkingMark``'s warm rung through that shared decision rather than by a second spelling
+    /// agreeing with it — the compact surfaces mount the rail's OWN spinner for that reading, and the
+    /// mark and its ink must not be able to come apart.
     static func agentTint(_ status: ClaudeStatus) -> Color {
-        switch status {
-        case .none,
-             .idle: Slate.Text.secondary
-        case .working: thinkingMark.ink
-        case .done: Slate.StatusInk.ok
-        case .needsPermission: Slate.StatusInk.warn
-        }
+        Slate.agentInk(AgentReadout.ink(status))
     }
 
     /// The short agent label (the one source — `ClaudeStatus.displayLabel`).
     static func agentLabel(_ status: ClaudeStatus) -> String {
-        status.displayLabel
+        AgentReadout.label(status)
     }
 
     // MARK: Tab badge

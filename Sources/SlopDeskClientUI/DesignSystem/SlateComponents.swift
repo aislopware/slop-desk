@@ -7,6 +7,7 @@
 // (`SlateListRow` / `SlateSectionHeader`).
 
 #if canImport(SwiftUI)
+import SlopDeskClientCore // AgentReading — the readout both platforms' glyphs draw
 import SwiftUI
 
 /// The AGENT status instrument, spoken as TEXT in the terminal's own dialect: each reading is a
@@ -26,19 +27,17 @@ import SwiftUI
 /// and every mount of it turns in unison off the same wall clock.
 /// Pure SwiftUI — no video/capture (hang-safety #6).
 struct StatusGlyph: View {
-    enum Reading: Equatable {
-        case resting
-        case working
-        case awaiting
-        case done
-    }
+    /// The reading is ``AgentReading``, one floor down: the Mac draws the same four states as an
+    /// `NSView` (``SlopDeskMacUI/MacAgentGlyphView``, docs/56 stage D), so the alphabet has to be one
+    /// value with two views of it rather than two enums that agree today.
+    typealias Reading = AgentReading
 
     let reading: Reading
     let tint: Color
 
     /// The fixed glyph box — star / dot advance widths differ, so the frame pins layout while
-    /// frames (or states) swap.
-    static let box: CGFloat = 16
+    /// frames (or states) swap. Shared with the Mac's `NSView` glyph (``AgentReadout/glyphBox``).
+    static let box = CGFloat(AgentReadout.glyphBox)
 
     var body: some View {
         content

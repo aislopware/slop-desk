@@ -457,6 +457,10 @@ let package = Package(
                 "SlopDeskWorkspaceModel",
                 // Live cell metrics for the `grid` window-size mode.
                 "SlopDeskTerminal",
+                // The peek card names the pending tool call the blocked agent is asking about, and
+                // reads that agent's own status for the header's glyph.
+                "SlopDeskInspector",
+                "SlopDeskAgentDetect",
                 // Reach THIS scene's `NSWindow` from the SwiftUI `WindowGroup` (never an
                 // `NSApplication.windows` scan).
                 .product(name: "SwiftUIIntrospect", package: "swiftui-introspect"),

@@ -49,7 +49,7 @@ final class MacPaletteView: NSView, NSTextFieldDelegate {
 
     private let field = NSTextField()
     private let magnifier = NSImageView()
-    private let rule = MacPaletteRuleView()
+    private let rule = MacCardRuleView()
     private let scroll = NSScrollView()
     private let column = NSStackView()
     /// The row views currently in the column, in draw order — kept so a selection step can move the
@@ -293,33 +293,6 @@ final class MacPaletteView: NSView, NSTextFieldDelegate {
     /// One ⇞/⇟ stride, from the same two numbers that size the viewport.
     private var pageStride: Int {
         PaletteMetrics.pageStride(rowHeight: Slate.Metric.heightRowTall)
-    }
-}
-
-// MARK: - The card's one internal line
-
-/// The rule between the query and the results. It is EARNED: the list scrolls under the field, and
-/// without a line the first row would slide into the query text.
-final class MacPaletteRuleView: NSView {
-    override var wantsUpdateLayer: Bool { true }
-
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        wantsLayer = true
-    }
-
-    @available(*, unavailable)
-    required init?(coder _: NSCoder) { fatalError("not from a nib") }
-
-    override func updateLayer() {
-        effectiveAppearance.performAsCurrentDrawingAppearance {
-            layer?.backgroundColor = Slate.Native.Overlay.hairline.cgColor
-        }
-    }
-
-    override func viewDidChangeEffectiveAppearance() {
-        super.viewDidChangeEffectiveAppearance()
-        needsDisplay = true
     }
 }
 
