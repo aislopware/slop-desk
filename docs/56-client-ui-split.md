@@ -289,6 +289,34 @@ nothing is ever implemented twice. No stage copies a file: a surface either move
   is that the AppKit view is FLIPPED — `BrailleCell.position` numbers rows top-down because SwiftUI's
   coordinate space does, and an unflipped `NSView` would turn the mark anticlockwise.
 
+  **The sixth is the ⇧⌘F cross-tab results panel, and it is the first whose shared piece is a READING
+  rather than a wording.** The surface itself is the palette's shape with one thing taken away and one
+  added: there is no keyboard cursor down the list — the POINTER is the selection, which is why hover
+  lifts a row onto the same plate a palette's keyboard selection takes — and the list is two levels
+  deep, a collapsible group per tab over its own hit rows, flattened into one column because that is
+  what it is (headings over a continuous run, not nested containers) and because a folded group then
+  costs exactly the rows it hides. It is also the first FIXED-SIZE card. The palette and the peek card
+  are measured by their content; this one may not be, because the query re-runs on every keystroke and
+  a panel that grew and shrank with the match count would move under the pointer that is doing the
+  selecting.
+
+  What the halves share is `GlobalSearchPresentation` + `GlobalSearchMetrics` + `FindModePill`
+  (`SlopDeskClientCore`): the two zero-state lines (a hint before anything is typed, a verdict once
+  something was — "no results" under an empty field reports a failure nobody asked for), the summary
+  line's gate on the QUERY rather than on the results, the panel's dimensions, and the mode pills as
+  VALUES. The pills had to move: "the find bar and the global-search query bar render the pills
+  identically" is a locked invariant, and it could not survive one of the two becoming an `NSView`
+  while the labels, the help strings and the whole-word underline were spelled at three call sites.
+
+  The piece that matters most is the one that looks like layout and is not. `excerptSlices` cuts a
+  hit's excerpt into before / match / after, and the highlight arrives as a UTF-16 range over a Swift
+  `String` — a mapping that can FAIL, because a boundary inside a surrogate pair has no
+  `String.Index`. The rule is to degrade to a flat excerpt, never to trap and never to guess a run,
+  and unlike a copy string it drifts SILENTLY: a half that re-derived it would look right until the
+  one line in a scrollback that contains an emoji. So the cut is one function with the emoji cases
+  pinned in full, and each framework is left only the INK — SwiftUI's `AttributedString`, AppKit's
+  `NSAttributedString`, three strings apiece.
+
   A modal card leaving raises a question an ambient one did not: the shared host still presents the
   ones behind it, and it may not present one the Mac has already taken. The answer is a `draws` set on
   `OverlayHostView` — TRANSITIONAL and shrink-only, the Mac's ledger of what stage D has lifted — so a

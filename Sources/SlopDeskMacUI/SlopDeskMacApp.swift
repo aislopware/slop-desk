@@ -524,6 +524,15 @@ public struct SlopDeskMacApp: App {
                         visible, host: windowBox.window, store: store, coordinator: overlayCoordinator,
                     )
                 }
+                // THE ⇧⌘F RESULTS PANEL is the Mac's own AppKit panel (docs/56 stage D). It is the
+                // one of the three that is FIXED-SIZE: the query re-runs on every keystroke, and a
+                // panel that resized with the match count would move under the pointer — which on
+                // that surface is the selection itself.
+                .onChange(of: overlayCoordinator.globalSearchVisible) { _, visible in
+                    overlayPanels.setGlobalSearch(
+                        visible, host: windowBox.window, store: store, coordinator: overlayCoordinator,
+                    )
+                }
                 // THE NOTIFICATION CORNER is the Mac's own AppKit panel too (docs/56 stage D), and it
                 // is what took the last ALWAYS-MOUNTED `NSHostingView` off the window root: the toast
                 // host used to be a full-bleed SwiftUI layer over the whole workspace, toggling

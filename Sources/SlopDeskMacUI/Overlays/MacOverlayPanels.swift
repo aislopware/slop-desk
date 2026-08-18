@@ -36,6 +36,9 @@ final class MacOverlayPanels {
     /// query, the selection and the hover arbiter are all per-OPENING state, and a kept card would
     /// have to reset each of them by hand on the way in.
     private var palette: MacOverlayPanelController?
+    /// The ⇧⌘F results panel, or `nil` when it is not up. Built per presentation like the two above:
+    /// the query mirror, the flag mirrors and the per-group disclosure are all per-OPENING state.
+    private var globalSearch: MacOverlayPanelController?
     /// The ⌘⌥J peek card, or `nil` when it is not up. Built per presentation for the palette's
     /// reason and one more: the card holds the reply field's text and the pending-tool disclosure,
     /// and both are per-OPENING state that a kept card would have to clear by hand on the way in.
@@ -143,6 +146,35 @@ final class MacOverlayPanels {
         peekReply = controller
         controller.present()
         // After `present()`: a field cannot take first responder in a window that is not yet key.
+        card.begin()
+    }
+
+    /// Reconciles the ⇧⌘F cross-tab results panel against `visible`.
+    ///
+    /// FIXED-SIZE, unlike the palette and the peek card: the query re-runs on every keystroke here,
+    /// and a panel that grew and shrank with the match count would move under the pointer — which on
+    /// this surface IS the selection.
+    func setGlobalSearch(
+        _ visible: Bool, host: NSWindow?, store: WorkspaceStore, coordinator: OverlayCoordinator,
+    ) {
+        guard visible else {
+            globalSearch?.dismiss()
+            globalSearch = nil
+            store.reclaimKeyboardFocusInActivePane()
+            return
+        }
+        guard globalSearch == nil, let host else { return }
+        let card = MacGlobalSearchView(store: store, coordinator: coordinator)
+        let controller = MacOverlayPanelController(
+            host: host,
+            content: card,
+            size: NSSize(
+                width: GlobalSearchMetrics.panelWidth, height: GlobalSearchMetrics.panelHeight,
+            ),
+            onDismiss: { [coordinator] in coordinator.closeGlobalSearch() },
+        )
+        globalSearch = controller
+        controller.present()
         card.begin()
     }
 

@@ -1,4 +1,4 @@
-// GlobalSearchView — the cross-tab Global Search results surface, opened by ⇧⌘F. A LARGE,
+// GlobalSearchView — the PHONE's cross-tab Global Search results surface, opened by ⇧⌘F. A LARGE,
 // content-area-filling, NON-scrimmed card (a dedicated results *overlay* rather than a
 // results *tab*, which we do not add to avoid blast-radius across every `switch PaneKind` site).
 // Presented as a NATIVE `.sheet` by ``OverlayHostView`` — a large results window on macOS (system chrome).
@@ -21,6 +21,16 @@
 // ``WorkspaceStore/jumpToGlobalSearchResult(_:)`` then closes through the coordinator. The amber highlight is
 // the in-buffer `GlobalSearchHit.highlight` UTF-16 range tinted on the excerpt (the counter /
 // excerpt come from the scrollback mirror; the live in-pane highlight is libghostty's on jump).
+//
+// ⚠️ THE PHONE's, since docs/56 stage D: the Mac draws this panel in AppKit
+// (``SlopDeskMacUI/MacGlobalSearchView``) and has dropped `.globalSearch` from ``OverlayHostView``'s
+// `draws` set, so on macOS this body is never mounted. Nothing here may spell what the surface SAYS
+// or how it CUTS a hit apart — the two zero-state lines, the mode pills' glyphs and help, the
+// panel's own dimensions, and the before/match/after slicing of an excerpt are all
+// ``GlobalSearchPresentation``'s / ``FindModePill``'s / ``GlobalSearchMetrics``'s, and
+// `check-supervisor.sh` fails the build if either half re-derives one. The excerpt slicing matters
+// most: a UTF-16 range that lands inside a surrogate pair has no `String.Index`, and a half that
+// re-wrote that guard would eventually trap on the one scrollback line containing an emoji.
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
@@ -53,7 +63,7 @@ struct GlobalSearchView: View {
 
     // Platform mode-pill plate size — MUST match ``TerminalFindBar``'s `plate` exactly (34 on iOS for the touch
     // target, `Slate.Metric.plate` on macOS) so the locked invariant "the find bar and the global-search query
-    // bar render the pills IDENTICALLY" holds on BOTH platforms. Threaded into each ``FindTogglePill`` below.
+    // bar render the pills IDENTICALLY" holds. Threaded into each ``FindTogglePill`` below.
     #if os(iOS)
     private let plate: CGFloat = 34
     #else
@@ -71,7 +81,11 @@ struct GlobalSearchView: View {
         // Presented as a native `.sheet` by `OverlayHostView` — a large results window on macOS (the system
         // provides the window chrome), full-sheet on iOS.
         #if os(macOS)
-        .frame(width: 720, height: 560, alignment: .topLeading)
+        .frame(
+            width: GlobalSearchMetrics.panelWidth,
+            height: GlobalSearchMetrics.panelHeight,
+            alignment: .topLeading,
+        )
         #else
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         #endif
@@ -109,14 +123,12 @@ struct GlobalSearchView: View {
             // The mode pills render as INDIVIDUALLY-OUTLINED chips (each its own resting plate + hairline,
             // gaps between — NO shared backing tray) per global-search.png. ``FindTogglePillTray`` is the EXACT
             // layout container the find bar reuses, so the two surfaces render the pills identically.
+            // WHICH pills, and in what order, is ``FindModePill/globalSearch``'s — the cross-tab
+            // search offers two of the find bar's three (no whole-word: it runs over the scrollback
+            // mirror, which does not agree with libghostty's buffer about a word boundary).
             FindTogglePillTray {
-                FindTogglePill(label: "Aa", isOn: caseSensitive, help: "Case sensitive", plate: plate) {
-                    caseSensitive.toggle()
-                    rerun()
-                }
-                FindTogglePill(label: ".*", isOn: isRegex, help: "Regex (ICU)", plate: plate) {
-                    isRegex.toggle()
-                    rerun()
+                ForEach(FindModePill.globalSearch, id: \.self) { mode in
+                    FindTogglePill(mode: mode, isOn: isOn(mode), plate: plate) { toggle(mode) }
                 }
             }
         }
@@ -127,8 +139,8 @@ struct GlobalSearchView: View {
     // MARK: - Summary line (`N results — M tabs`)
 
     @ViewBuilder private var summaryLine: some View {
-        if let results = store.globalSearch, !query.trimmingCharacters(in: .whitespaces).isEmpty {
-            Text(results.summary)
+        if let summary = GlobalSearchPresentation.summary(store.globalSearch, query: query) {
+            Text(summary)
                 .font(.system(size: Slate.Typeface.footnote))
                 .monospacedDigit()
                 .foregroundStyle(SlateOverlayInk.secondary)
@@ -137,7 +149,7 @@ struct GlobalSearchView: View {
                 // Same numeric roll as the in-pane find counter: live re-runs tick the counts to their new
                 // values rather than teleporting the line (the two search counters must read identically).
                 .contentTransition(.numericText())
-                .animation(Slate.Anim.smallFade, value: results.summary)
+                .animation(Slate.Anim.smallFade, value: summary)
         }
     }
 
@@ -168,9 +180,7 @@ struct GlobalSearchView: View {
     /// The blank / no-match state: a hint when the query is empty, a "no results" line when it matched nothing.
     private var emptyState: some View {
         SlateNoResultsLine(
-            message: query.trimmingCharacters(in: .whitespaces).isEmpty
-                ? "Search every tab’s scrollback."
-                : "No results.",
+            message: GlobalSearchPresentation.emptyStateLine(query: query),
             ink: SlateOverlayInk.tertiary,
         )
     }
@@ -220,35 +230,22 @@ struct GlobalSearchView: View {
 
     // MARK: - Hit row (extracted so each row owns its own hover @State for the hover-reveal jump glyph)
 
-    /// The excerpt (the full matched line) as an `AttributedString` with the matched run tinted amber + primary
-    /// (the find highlight) and the rest muted. The hit's `highlight` is a UTF-16 column range pre-clamped
-    /// into the excerpt by ``GlobalSearchController``; map it back onto the string and SLICE the excerpt into
-    /// before / match / after so a surrogate-straddling range degrades to a flat excerpt rather than indexing
-    /// out of bounds. Built by substring concatenation (no AttributedString index conversion) so it can't trap.
+    /// The excerpt (the full matched line) as an `AttributedString`: the matched run tinted amber +
+    /// primary (the find highlight), the rest muted.
+    ///
+    /// WHERE the cut falls is ``GlobalSearchPresentation/excerptSlices(_:)``'s — including the case where
+    /// it cannot fall anywhere, which comes back as the whole line in `before` and needs no flag here: the
+    /// two outer runs take the supporting ink and the middle one is marked, so an empty middle simply marks
+    /// nothing. What is left here is only the INK, which is a SwiftUI answer the AppKit half spells in
+    /// `NSAttributedString` from the same three strings.
     private func highlightedExcerpt(_ hit: GlobalSearchHit) -> AttributedString {
-        let excerpt = hit.excerpt
-        let utf16 = excerpt.utf16
-        guard let lowUTF16 = utf16
-            .index(utf16.startIndex, offsetBy: hit.highlight.lowerBound, limitedBy: utf16.endIndex),
-            let highUTF16 = utf16.index(
-                utf16.startIndex,
-                offsetBy: hit.highlight.upperBound,
-                limitedBy: utf16.endIndex,
-            ),
-            let low = lowUTF16.samePosition(in: excerpt),
-            let high = highUTF16.samePosition(in: excerpt),
-            low <= high
-        else {
-            var flat = AttributedString(excerpt)
-            flat.foregroundColor = SlateOverlayInk.secondary
-            return flat
-        }
-        var before = AttributedString(String(excerpt[excerpt.startIndex..<low]))
+        let slices = GlobalSearchPresentation.excerptSlices(hit)
+        var before = AttributedString(slices.before)
         before.foregroundColor = SlateOverlayInk.secondary
-        var match = AttributedString(String(excerpt[low..<high]))
+        var match = AttributedString(slices.match)
         match.foregroundColor = SlateOverlayInk.primary
         match.backgroundColor = Slate.Status.warn.opacity(0.35)
-        var after = AttributedString(String(excerpt[high...]))
+        var after = AttributedString(slices.after)
         after.foregroundColor = SlateOverlayInk.secondary
         return before + match + after
     }
@@ -265,6 +262,25 @@ struct GlobalSearchView: View {
 
     private func rerun() {
         store.runGlobalSearch(query: query, caseSensitive: caseSensitive, isRegex: isRegex)
+    }
+
+    /// Whether `mode`'s chip is lit. `.wholeWord` can never reach here — it is not in
+    /// ``FindModePill/globalSearch`` — and reads `false` rather than crashing if it ever does.
+    private func isOn(_ mode: FindModePill) -> Bool {
+        switch mode {
+        case .caseSensitive: caseSensitive
+        case .regex: isRegex
+        case .wholeWord: false
+        }
+    }
+
+    private func toggle(_ mode: FindModePill) {
+        switch mode {
+        case .caseSensitive: caseSensitive.toggle()
+        case .regex: isRegex.toggle()
+        case .wholeWord: return
+        }
+        rerun()
     }
 
     /// Restore the field + pills from the store's retained query/flags so a ⇧⌘F re-open shows the last search.

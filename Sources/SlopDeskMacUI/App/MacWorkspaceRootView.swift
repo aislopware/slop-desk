@@ -156,10 +156,11 @@ struct MacWorkspaceRootView: View {
                 connection: connection,
                 coordinator: overlay,
                 toggledState: PalettePresentation.toggledState(chrome: chrome, store: store),
-                // ⌘⇧P (``MacPalette``) and ⌘⌥J (``MacPeekReply``) are `NSPanel`s now, so this host
-                // must not draw them too — the set is the Mac's ledger of what stage D has taken out
-                // of the shared floor, and it only ever shrinks from here.
-                draws: [.openQuickly, .globalSearch],
+                // ⌘⇧P (``MacPalette``), ⌘⌥J (``MacPeekReply``) and ⇧⌘F (``MacGlobalSearch``) are
+                // `NSPanel`s now, so this host must not draw them too — the set is the Mac's ledger
+                // of what stage D has taken out of the shared floor, and it only ever shrinks from
+                // here. Open Quickly is the last one in it.
+                draws: [.openQuickly],
             )
         }
         // Wire ⌘⇧L (Toggle Tabs Panel) to the live chrome once it exists. The dispatcher is built at app

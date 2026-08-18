@@ -4626,6 +4626,39 @@ if grep -A4 'draws:' Sources/SlopDeskMacUI/App/MacWorkspaceRootView.swift | grep
 fi
 printf 'check-supervisor: one peek card, drawn twice and spelled once.\n'
 
+# ── One global search, two frameworks ─────────────────────────────────────────────────────────
+# docs/56 stage D's third MODAL surface. What the two halves must not re-derive is not copy this
+# time so much as READING: `GlobalSearchPresentation.excerptSlices` cuts a hit's excerpt around a
+# UTF-16 highlight range that can land inside a surrogate pair, and the rule for that case — degrade
+# to a flat excerpt, never trap, never guess a run — has to be one rule or the half that re-wrote it
+# indexes out of bounds on the first scrollback line containing an emoji.
+for half in Sources/SlopDeskMacUI/Overlays/MacGlobalSearch.swift \
+  Sources/SlopDeskClientUI/Overlays/GlobalSearchView.swift; do
+  if ! grep -q 'GlobalSearchPresentation' "${half}"; then
+    fail "${half} stopped reading GlobalSearchPresentation — two cuts of one excerpt, one of them wrong"
+  fi
+  # Comments are stripped first, for the peek gate's reason: both headers NAME what they no longer
+  # spell. The two zero-state lines and a hand-rolled UTF-16 walk are the regressions.
+  if sed -E 's#^[[:space:]]*//.*##' "${half}" |
+    grep -qE 'No results\.|scrollback\.”|samePosition\(in:'; then
+    fail "${half} respells a global-search string or re-derives the excerpt cut — both are GlobalSearchPresentation's"
+  fi
+  # The mode pills are a VALUE both surfaces read, which is the only way the locked "the find bar and
+  # the global-search query bar render the pills IDENTICALLY" invariant survives one of them
+  # becoming an NSView.
+  if ! grep -q 'FindModePill' "${half}"; then
+    fail "${half} stopped reading FindModePill — the find bar's chips and this bar's would drift"
+  fi
+done
+if sed -E 's#^[[:space:]]*//.*##' Sources/SlopDeskClientUI/Pane/TerminalFindBar.swift |
+  grep -qE '"Case sensitive"|"Whole word"|"Regex \(ICU\)"'; then
+  fail "TerminalFindBar respells a mode pill — the labels and help are FindModePill's, for all three surfaces"
+fi
+if grep -A4 'draws:' Sources/SlopDeskMacUI/App/MacWorkspaceRootView.swift | grep -q '\.globalSearch'; then
+  fail "MacWorkspaceRootView still lets the shared host draw global search — the Mac would show two"
+fi
+printf 'check-supervisor: one global search, drawn twice and read once.\n'
+
 # ── One device-panel law, two device protocols ────────────────────────────────────────────────
 # The simulator panel and the Android panel differ in almost everything and should — one rotates on
 # the client and the other on the device, one sends touches in the fitted rect's space and the other
