@@ -4659,6 +4659,50 @@ if grep -A4 'draws:' Sources/SlopDeskMacUI/App/MacWorkspaceRootView.swift | grep
 fi
 printf 'check-supervisor: one global search, drawn twice and read once.\n'
 
+# ── One picker, two frameworks, and an empty ledger ───────────────────────────────────────────
+# docs/56 stage D's LAST modal surface. The verb table is the piece that must not be written twice:
+# unlike a copy string it does not fail loudly when it drifts — one half quietly grows an action the
+# other has not got, and nothing is red until a user notices their phone's picker is different.
+for half in Sources/SlopDeskMacUI/Overlays/MacOpenQuickly.swift \
+  Sources/SlopDeskClientUI/Overlays/OpenQuicklyView.swift; do
+  for spelling in OpenQuicklyPresentation OpenQuicklyActions OpenQuicklyMetrics; do
+    if ! grep -q "${spelling}" "${half}"; then
+      fail "${half} stopped reading ${spelling} — two pickers, and the drift would be silent"
+    fi
+  done
+  # Comments are stripped first, for the peek gate's reason: both headers NAME what they no longer
+  # spell. A verb title, a footer hint or a zero-state line in code is the regression.
+  if sed -E 's#^[[:space:]]*//.*##' "${half}" |
+    grep -qE '"Split Right"|"Reopen Tab"|"Copy Session ID"|"No matches"|"Quick Select"|"Change Directory"'; then
+    fail "${half} respells a picker verb or hint — every one of them is OpenQuicklyPresentation's or OpenQuicklyActions's"
+  fi
+done
+# The fzf mark is cut in ONE place for all four surfaces that draw one (the palette and the picker,
+# each drawn twice). A half walking `titleRanges` itself is a fifth cut waiting to disagree.
+for half in Sources/SlopDeskMacUI/Overlays/MacPalette.swift \
+  Sources/SlopDeskMacUI/Overlays/MacOpenQuickly.swift \
+  Sources/SlopDeskClientUI/Overlays/PaletteView.swift \
+  Sources/SlopDeskClientUI/Overlays/OpenQuicklyView.swift; do
+  if ! grep -q 'FuzzyMatcher.runs(' "${half}"; then
+    fail "${half} stopped reading FuzzyMatcher.runs — a fifth spelling of one fzf mark"
+  fi
+done
+# THE LEDGER IS GONE, which is what stage D was counting to. `draws` let the Mac drop the shared
+# host's cards one at a time; with the last one moved it must not come back, and the host's card
+# machinery is the phone's alone.
+if sed -E 's#^[[:space:]]*//.*##' Sources/SlopDeskClientUI/Overlays/OverlayHostView.swift |
+  grep -q 'draws'; then
+  fail "the transitional \`draws\` ledger is back in OverlayHostView — every card has left the Mac"
+fi
+if ! grep -q '#if os(iOS)' Sources/SlopDeskClientUI/Overlays/OverlayHostView.swift; then
+  fail "OverlayHostView's summoned cards stopped being the phone's — the Mac would draw two of each"
+fi
+if grep -q 'OverlayHostView' Sources/SlopDeskMacUI/App/MacWorkspaceRootView.swift &&
+  ! grep -q 'Connect' Sources/SlopDeskMacUI/App/MacWorkspaceRootView.swift; then
+  fail "MacWorkspaceRootView mounts the shared host without saying why — it is the two native modals now"
+fi
+printf 'check-supervisor: one picker, drawn twice, and the stage-D ledger is empty.\n'
+
 # ── One device-panel law, two device protocols ────────────────────────────────────────────────
 # The simulator panel and the Android panel differ in almost everything and should — one rotates on
 # the client and the other on the device, one sends touches in the fitted rect's space and the other

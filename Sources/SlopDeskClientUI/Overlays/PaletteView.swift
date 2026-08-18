@@ -302,33 +302,19 @@ struct PaletteView: View {
         let title = ranked.item.title
         // Every run goes through `nerdAware` so a PANES row's private-use glyph (an agent/program
         // title's nerd-font mark) draws from the bundled symbols face inside the highlight run too.
-        guard !ranked.titleRanges.isEmpty else {
+        // WHERE the cuts fall is ``FuzzyMatcher/runs(of:ranges:)``'s, shared with the Mac's palette row
+        // and with both halves of Open Quickly; the ink is this half's.
+        let runs = FuzzyMatcher.runs(of: title, ranges: ranked.titleRanges)
+        guard runs.count > 1 else {
             return Text.nerdAware(title, size: Slate.Typeface.body).foregroundStyle(SlateOverlayInk.primary)
         }
-        // Accumulate `Text` segments then splice them into one run (`Text.spliced` — the interpolation
-        // fold that replaced the deprecated `Text + Text`).
-        var segments: [Text] = []
-        var cursor = title.startIndex
-        for range in ranked.titleRanges where range.lowerBound >= cursor {
-            if cursor < range.lowerBound {
-                segments.append(
-                    Text.nerdAware(title[cursor..<range.lowerBound], size: Slate.Typeface.body)
-                        .foregroundStyle(SlateOverlayInk.secondary),
-                )
-            }
-            segments.append(
-                Text.nerdAware(title[range], size: Slate.Typeface.body)
-                    .foregroundStyle(SlateOverlayInk.primary).fontWeight(.semibold),
-            )
-            cursor = range.upperBound
-        }
-        if cursor < title.endIndex {
-            segments.append(
-                Text.nerdAware(title[cursor...], size: Slate.Typeface.body)
-                    .foregroundStyle(SlateOverlayInk.secondary),
-            )
-        }
-        return .spliced(segments)
+        // The segments are spliced into one run (`Text.spliced` — the interpolation fold that replaced
+        // the deprecated `Text + Text`).
+        return .spliced(runs.map { run in
+            Text.nerdAware(run.text, size: Slate.Typeface.body)
+                .foregroundStyle(run.matched ? SlateOverlayInk.primary : SlateOverlayInk.secondary)
+                .fontWeight(run.matched ? .semibold : .regular)
+        })
     }
 
     // MARK: - Derived data

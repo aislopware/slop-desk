@@ -461,6 +461,8 @@ let package = Package(
                 // reads that agent's own status for the header's glyph.
                 "SlopDeskInspector",
                 "SlopDeskAgentDetect",
+                // `MetadataClient` — the host RPC behind Open Quickly's Agents source.
+                "SlopDeskProtocol",
                 // Reach THIS scene's `NSWindow` from the SwiftUI `WindowGroup` (never an
                 // `NSApplication.windows` scan).
                 .product(name: "SwiftUIIntrospect", package: "swiftui-introspect"),

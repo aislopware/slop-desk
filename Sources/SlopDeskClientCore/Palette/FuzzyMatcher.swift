@@ -194,3 +194,50 @@ public enum FuzzyMatcher {
         return out
     }
 }
+
+// MARK: - The marked title, cut into runs
+
+/// One stretch of a title, and whether the query hit it.
+///
+/// A title with no match is ONE run with `matched == false` rather than an empty list — so a caller
+/// draws runs unconditionally and never needs a zero-state branch of its own.
+public struct FuzzyRun: Equatable, Sendable {
+    public let text: String
+    public let matched: Bool
+
+    public init(text: String, matched: Bool) {
+        self.text = text
+        self.matched = matched
+    }
+}
+
+public extension FuzzyMatcher {
+    /// Cuts `title` at `ranges` into alternating unmatched / matched runs.
+    ///
+    /// ⚠️ Four surfaces mark an fzf hit — the palette and Open Quickly, each drawn twice since
+    /// docs/56 stage D — and every one of them wants the same cut and a different INK. So the cut is
+    /// here and the ink is theirs: `Text` + `foregroundStyle` on the phone, `NSAttributedString` +
+    /// a heavier face on the Mac. The mark itself is CONTRAST rather than colour at all four (the
+    /// hit keeps the reading ink and goes a weight up, the letters around it step back), which is
+    /// the house rule a single accent-blue row on a monochrome card was written against.
+    ///
+    /// Ranges that OVERLAP a run already emitted are skipped rather than trusted — the matcher
+    /// merges its runs, so an overlap would mean the answer disagreed with itself, and re-slicing on
+    /// it would trap on a `String.Index` behind the cursor.
+    static func runs(of title: String, ranges: [Range<String.Index>]) -> [FuzzyRun] {
+        guard !ranges.isEmpty else { return [FuzzyRun(text: title, matched: false)] }
+        var out: [FuzzyRun] = []
+        var cursor = title.startIndex
+        for range in ranges where range.lowerBound >= cursor {
+            if cursor < range.lowerBound {
+                out.append(FuzzyRun(text: String(title[cursor..<range.lowerBound]), matched: false))
+            }
+            out.append(FuzzyRun(text: String(title[range]), matched: true))
+            cursor = range.upperBound
+        }
+        if cursor < title.endIndex {
+            out.append(FuzzyRun(text: String(title[cursor...]), matched: false))
+        }
+        return out
+    }
+}

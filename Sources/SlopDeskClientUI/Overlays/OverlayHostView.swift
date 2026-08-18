@@ -6,17 +6,20 @@
 // confirmation a native `.alert` off the store's `pendingClose*` parks. The ⌃⇥ switcher readout is the
 // host's only other in-tree content — a centred readout that never takes a click.
 //
-// NOT EVERY OVERLAY IS HERE ANY MORE, and two have left for the same reason (docs/56 stage D): a
-// surface leaves this floor by being REWRITTEN in each platform's own framework, not by being gated
-// inside one view. What the halves share they share BELOW the view layer, so neither spells the rule out.
+// ⚠️ EVERY CARD HAS LEFT THE MAC, and each of them left the same way (docs/56 stage D): a surface
+// leaves this floor by being REWRITTEN in each platform's own framework, never by being gated inside
+// one view. What the halves share they share BELOW the view layer, so neither spells the rule out.
+// The Mac's `NSPanel`s are ``SlopDeskMacUI/MacCheatSheetView``, ``SlopDeskMacUI/MacToastStack``,
+// ``SlopDeskMacUI/MacPaneSwitcher``, ``SlopDeskMacUI/MacPaletteView``,
+// ``SlopDeskMacUI/MacPeekReplyView``, ``SlopDeskMacUI/MacGlobalSearchView`` and
+// ``SlopDeskMacUI/MacOpenQuicklyView``; they meet the phone's cards at ``CheatSheetContent``,
+// ``ToastPresentation``, ``PaneSwitcherRowsBuilder``, ``PalettePresentation``,
+// ``PeekReplyPresentation``, ``GlobalSearchPresentation`` and ``OpenQuicklyPresentation``.
 //
-//   * The ⌘/ CHEAT SHEET is a real `NSPanel` on the Mac (``SlopDeskMacUI/MacCheatSheetView``) and a
-//     native `.sheet` on the phone, driven from each shell's own root off the SAME
-//     `coordinator.cheatSheetVisible` flag. They meet at ``CheatSheetContent`` — the rows, the glyphs
-//     and the column deal.
-//   * The TOASTS are an `NSPanel` parked in the workspace's corner on the Mac
-//     (``SlopDeskMacUI/MacToastStack``) and a `ToastStackView` overlay on the phone. They meet at
-//     ``ToastPresentation`` — the headline, the spine budget, the mark and the dwell.
+// So the SUMMONED CARDS below are `#if os(iOS)` now, and the TRANSITIONAL `draws` ledger that let the
+// Mac drop them one at a time is gone with the last one. What is left unconditional is the two
+// surfaces that were never cards: Connect-to-Host and the close confirmation are the PLATFORM's own
+// modals on both platforms, so there is no AppKit rewrite owed for either and nothing to gate.
 //
 // ⚠️ THE TOASTS LEAVING IS WHAT MADE THIS LAYER HONEST. The ambient layer used to carry
 // `.allowsHitTesting(!coordinator.toasts.isEmpty)`, because an always-mounted full-bleed host over
@@ -57,28 +60,16 @@ package struct OverlayHostView: View {
     /// (see ``PalettePresentation/toggledState(chrome:store:)``) so the pure coordinator stays chrome-agnostic.
     /// Defaults to "nothing toggled" (iOS / previews).
     package var toggledState: @MainActor (PaletteItem) -> Bool = { _ in false }
-    /// Which summoned cards this host still DRAWS.
-    ///
-    /// ⚠️ TRANSITIONAL, and it only ever shrinks. docs/56 stage D rewrites the macOS overlays as
-    /// `NSPanel`s one surface at a time, and the Mac shell drops each card from this set as it lands —
-    /// so a card that has moved is drawn by AppKit and one that has not is still drawn here, with no
-    /// `#if` choosing between them and never two live implementations of the same card. The phone
-    /// passes nothing and draws all four. When the macOS set empties, this parameter and this file's
-    /// macOS half go together and `SlopDeskClientUI` becomes `SlopDeskPhoneUI`.
-    package var draws: Set<ActiveSheet> = Set(ActiveSheet.allCases)
-
     package init(
         store: WorkspaceStore,
         connection: AppConnection,
         coordinator: OverlayCoordinator,
         toggledState: @escaping @MainActor (PaletteItem) -> Bool = { _ in false },
-        draws: Set<ActiveSheet> = Set(ActiveSheet.allCases),
     ) {
         self.store = store
         self.connection = connection
         self.coordinator = coordinator
         self.toggledState = toggledState
-        self.draws = draws
     }
 
     package var body: some View {
@@ -116,11 +107,7 @@ package struct OverlayHostView: View {
         // (`capturesKeyboardWhileVisible` → the app's `isOverlayCapturingKeys` → the dispatcher's
         // NSEvent monitor hands the event back to the responder chain), which is how a focused card
         // here receives typing and its own ⌘-chords. Esc and click-away are the backdrop's job below.
-        modalOverlay
-            // The card's `.transition(.opacity)` needs a transaction to ride, and the flags are
-            // mutated outside a `withAnimation` — so the value-keyed animation is what drives the
-            // diff. It sat on the ambient sibling while there was one; it belongs to the card.
-            .animation(Slate.Anim.smallFade, value: activeSheet)
+        cards
             // CONNECT-TO-HOST is the ONE overlay presented as a real system sheet (user-directed
             // 2026-08-08). It is the only surface in the set that is a FORM the user fills in and
             // commits — every other card is a picker you summon, skim and dismiss in a second — and a
@@ -156,7 +143,24 @@ package struct OverlayHostView: View {
         // the workspace beneath alike (see ``SlateOverlayInk``).
     }
 
-    // MARK: - Active overlay (single presentation seam)
+    /// The summoned cards — THE PHONE's, since docs/56 stage D moved the last of them into an
+    /// `NSPanel`. On macOS this host is the two native modals below and nothing else, so there is no
+    /// full-bleed body here to claim a click meant for the AppKit split underneath.
+    @ViewBuilder private var cards: some View {
+        #if os(iOS)
+        modalOverlay
+            // The card's `.transition(.opacity)` needs a transaction to ride, and the flags are
+            // mutated outside a `withAnimation` — so the value-keyed animation is what drives the
+            // diff. It sat on the ambient sibling while there was one; it belongs to the card.
+            .animation(Slate.Anim.smallFade, value: activeSheet)
+        #else
+        EmptyView()
+        #endif
+    }
+
+    // MARK: - Active overlay (single presentation seam) — THE PHONE's
+
+    #if os(iOS)
 
     /// Which overlay (if any) should be presented, resolved from the coordinator flags in a fixed priority
     /// order. The coordinator drives one flag at a time, so this is unambiguous: exactly one card is
@@ -170,10 +174,10 @@ package struct OverlayHostView: View {
     }
 
     private var activeSheet: ActiveSheet? {
-        if coordinator.paletteVisible, draws.contains(.palette) { return .palette }
-        if coordinator.openQuicklyVisible, draws.contains(.openQuickly) { return .openQuickly }
-        if coordinator.peekReplyVisible, draws.contains(.peekReply) { return .peekReply }
-        if coordinator.globalSearchVisible, draws.contains(.globalSearch) { return .globalSearch }
+        if coordinator.paletteVisible { return .palette }
+        if coordinator.openQuicklyVisible { return .openQuickly }
+        if coordinator.peekReplyVisible { return .peekReply }
+        if coordinator.globalSearchVisible { return .globalSearch }
         return nil
     }
 
@@ -213,12 +217,9 @@ package struct OverlayHostView: View {
             // need this (AppKit restored the parent window's responder on dismissal); an in-window card
             // does. Same call the find bar makes when it closes.
             .onDisappear { store.reclaimKeyboardFocusInActivePane() }
-            // Esc reaches the focused card's own handler, but a card can be up with nothing in it
-            // focused — so the backdrop carries the same escape as a floor. macOS spells it
-            // `onExitCommand` (unavailable on iOS, where the cards are reached by tap anyway).
-            #if os(macOS)
-                .onExitCommand { closeActiveSheet() }
-            #endif
+            // Esc used to be answered here as well, for a card that was up with nothing inside it
+            // focused. That was `onExitCommand`, which iOS does not have — and on the phone a card
+            // is reached by tap and dismissed by tap, so there is nothing left to carry.
         }
     }
 
@@ -242,6 +243,7 @@ package struct OverlayHostView: View {
             GlobalSearchView(store: store, coordinator: coordinator)
         }
     }
+    #endif
 
     // MARK: - Connect-to-Host (native .sheet)
 

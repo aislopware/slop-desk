@@ -524,6 +524,13 @@ public struct SlopDeskMacApp: App {
                         visible, host: windowBox.window, store: store, coordinator: overlayCoordinator,
                     )
                 }
+                // THE ⌘⇧O / ⌘J PICKER is the Mac's own AppKit panel (docs/56 stage D), and the LAST
+                // card to move: with it gone, `OverlayHostView` draws no card on macOS at all.
+                .onChange(of: overlayCoordinator.openQuicklyVisible) { _, visible in
+                    overlayPanels.setOpenQuickly(
+                        visible, host: windowBox.window, store: store, coordinator: overlayCoordinator,
+                    )
+                }
                 // THE ⇧⌘F RESULTS PANEL is the Mac's own AppKit panel (docs/56 stage D). It is the
                 // one of the three that is FIXED-SIZE: the query re-runs on every keystroke, and a
                 // panel that resized with the match count would move under the pointer — which on

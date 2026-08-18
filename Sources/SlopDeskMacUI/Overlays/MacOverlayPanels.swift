@@ -9,7 +9,8 @@
 // the window can never disagree about whether the card is up.
 //
 // docs/56 stage D drains the macOS surfaces out of `SlopDeskClientUI` one at a time, and this file
-// is where each overlay lands as it goes. Two so far — the cheat sheet and the notification corner.
+// is where each overlay lands as it goes. All of them now: the cheat sheet, the notification corner,
+// the ⌃⇥ readout, the palette, the peek card, the cross-tab search and the picker.
 //
 // The two are shaped differently on purpose. A SUMMONED card is a boolean: it is up or it is not, and
 // the flag is the whole state. The notification corner is AMBIENT: it has no flag at all, its content
@@ -39,6 +40,11 @@ final class MacOverlayPanels {
     /// The ⇧⌘F results panel, or `nil` when it is not up. Built per presentation like the two above:
     /// the query mirror, the flag mirrors and the per-group disclosure are all per-OPENING state.
     private var globalSearch: MacOverlayPanelController?
+    /// The ⌘⇧O / ⌘J picker, or `nil` when it is not up. Built per presentation like the rest, and
+    /// with the most per-OPENING state of any of them: the query, the selection, the hover arbiter,
+    /// the ⌘K sheet's own filter, and a SNAPSHOT of the focused pane's scrollback taken on the way
+    /// in — a kept card would be showing the pane the user last opened it over.
+    private var openQuickly: MacOverlayPanelController?
     /// The ⌘⌥J peek card, or `nil` when it is not up. Built per presentation for the palette's
     /// reason and one more: the card holds the reply field's text and the pending-tool disclosure,
     /// and both are per-OPENING state that a kept card would have to clear by hand on the way in.
@@ -175,6 +181,44 @@ final class MacOverlayPanels {
         )
         globalSearch = controller
         controller.present()
+        card.begin()
+    }
+
+    /// Reconciles the ⌘⇧O / ⌘J picker against `visible`.
+    ///
+    /// The pill the picker opens ON is the coordinator's — ⌘⇧O opens on ALL and ⌘J on CURRENT, and
+    /// that is a decision about what the user asked for rather than about this card — so it is set
+    /// before the flag flips and simply read here.
+    ///
+    /// Measured by its RESULTS like the palette: a query narrowed to two rows gets a two-row card.
+    func setOpenQuickly(
+        _ visible: Bool, host: NSWindow?, store: WorkspaceStore, coordinator: OverlayCoordinator,
+    ) {
+        guard visible else {
+            openQuickly?.dismiss()
+            openQuickly = nil
+            // The keyboard goes back to the PANE — same call, same reason, as the cheat sheet's.
+            store.reclaimKeyboardFocusInActivePane()
+            return
+        }
+        guard openQuickly == nil, let host else { return }
+        let card = MacOpenQuicklyView(
+            store: store, coordinator: coordinator, folders: coordinator.folders,
+        )
+        let controller = MacOverlayPanelController(
+            host: host,
+            content: card,
+            // A first guess, corrected on the card's first draw before the panel is ever seen at it.
+            size: NSSize(
+                width: OpenQuicklyMetrics.panelWidth,
+                height: Slate.Metric.heightInput + OpenQuicklyMetrics.resultsMaxHeight,
+            ),
+            onDismiss: { [coordinator] in coordinator.closeOpenQuickly() },
+        )
+        card.onResize = { [weak controller] size in controller?.resize(to: size) }
+        openQuickly = controller
+        controller.present()
+        // After `present()`: a field cannot take first responder in a window that is not yet key.
         card.begin()
     }
 

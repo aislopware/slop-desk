@@ -317,12 +317,45 @@ nothing is ever implemented twice. No stage copies a file: a surface either move
   pinned in full, and each framework is left only the INK — SwiftUI's `AttributedString`, AppKit's
   `NSAttributedString`, three strings apiece.
 
-  A modal card leaving raises a question an ambient one did not: the shared host still presents the
-  ones behind it, and it may not present one the Mac has already taken. The answer is a `draws` set on
-  `OverlayHostView` — TRANSITIONAL and shrink-only, the Mac's ledger of what stage D has lifted — so a
-  card that has moved is drawn by AppKit and one that has not is still drawn there, with no `#if`
-  choosing between them and never two live implementations of one card. When the macOS set empties,
-  the parameter goes with the file's macOS half.
+  **The seventh is the ⌘⇧O / ⌘J picker, and it is the LAST card off the floor.** It is the palette's
+  shape with three things added — a pill ring between the query and the list, a two-level list under
+  the ALL pill (a caps header per non-empty source over its rows, flattened into one column because
+  the headers are headings rather than containers), and a searchable ⌘K action sheet on the selected
+  row. That last one is where the two frameworks genuinely part, and the reason is mechanical: the
+  phone draws it as a `.popover`, and a popover is its own WINDOW whose filter field has to be first
+  responder to be typed into — which a popover hung off a `.nonactivatingPanel` does not reliably
+  become. The Mac draws the same thing as a plate INSIDE the card, anchored at its row by a
+  constraint instead of a beak, in a window that is already key.
+
+  What the halves share is the largest shared piece of the whole stage: `OpenQuicklyPresentation` +
+  `OpenQuicklyMetrics` (measurements, the ⇞/⇟ stride, the flattening of sections into draw order and
+  with it the selectable index the keyboard counts by, the honest zero state, the ↩ verb, the footer
+  hints, the ⌘ chord table) and `OpenQuicklyActions` — the whole VERB TABLE, both the one ↩ runs and
+  the one ⌘K opens. The verb table is why the file exists. A copy string drifts loudly; a verb table
+  does not. One half quietly grows an action the other has not got, and nothing is red until a user
+  notices their phone's picker is different from their Mac's. Only the ⌘ table of the keyboard is
+  shared, not the arrows: those arrive as a `KeyPress` on the phone and as a field editor's editing
+  command (`moveUp:`, `scrollPageDown:`, `insertNewline:`) on the Mac, and one enum over two event
+  shapes that different would be a translation layer pretending to be a decision.
+
+  Riding along: the fzf mark is now cut in ONE place for all four surfaces that draw one — the
+  palette and the picker, each drawn twice. `FuzzyMatcher.runs(of:ranges:)` returns alternating
+  unmatched/matched runs and each renderer supplies its own ink, which is the same "one value, two
+  views" split `Slate.Native` and `AgentReadout` already are.
+
+  A modal card leaving raised a question an ambient one did not: the shared host still presented the
+  ones behind it, and it could not present one the Mac had already taken. The answer was a `draws`
+  set on `OverlayHostView` — TRANSITIONAL and shrink-only, the Mac's ledger of what stage D had
+  lifted — so a card that had moved was drawn by AppKit and one that had not was still drawn there,
+  with no `#if` choosing between them and never two live implementations of one card. **The ledger is
+  now empty and gone**: the host's whole card machinery is `#if os(iOS)`, and `check-supervisor.sh`
+  fails the build if `draws` comes back.
+
+  What did NOT leave, and never will, is the two surfaces that were never cards. Connect-to-Host is a
+  native `.sheet` and the pane/tab close confirmation a native `.alert`, on both platforms — a form
+  you fill in and commit, and an alert — so `MacWorkspaceRootView` still mounts `OverlayHostView` for
+  exactly those two and nothing else. With no card in it the host has no full-bleed body, so the
+  hit-claim hazard that shaped the whole file is gone as well as the cards.
 
   With both ambient tenants in their own windows, `OverlayHostView` is a modal presenter and nothing
   else, and the hazard it was written around is gone with them: the host used to be a ZStack of an

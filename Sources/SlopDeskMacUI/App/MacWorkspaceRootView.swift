@@ -147,20 +147,21 @@ struct MacWorkspaceRootView: View {
         // backstops any transient gap (a mid-animation collapse) so no bare window colour ever
         // shows. It is also what the window's own 16pt corners bite into.
         .background(Slate.Surface.field.ignoresSafeArea())
-        // The floating-overlay layer (palette / cheat sheet / connect / remote-window picker / toasts)
-        // composes above the AppKit split (SwiftUI overlays compose over an `NSViewControllerRepresentable`).
-        // `toggledState` is built from the LIVE chrome so the palette's ✓ gutter tracks real visibility.
+        // CONNECT-TO-HOST and the pane/tab CLOSE CONFIRMATION, and by docs/56 stage D nothing else:
+        // every summoned card is an `NSPanel` of the Mac's own now (``MacOverlayPanels``), and the
+        // host's card machinery went `#if os(iOS)` with the last of them. What stays is the two
+        // surfaces that were never cards — a form you fill in and commit, and an alert — because
+        // both are the PLATFORM's own modal on both platforms and neither is owed a rewrite.
+        //
+        // `toggledState` is still built from the LIVE chrome and threaded through: the phone's
+        // palette reads it, and the parameter is the seam that keeps the pure coordinator from ever
+        // learning what a sidebar is.
         .overlay {
             OverlayHostView(
                 store: store,
                 connection: connection,
                 coordinator: overlay,
                 toggledState: PalettePresentation.toggledState(chrome: chrome, store: store),
-                // ⌘⇧P (``MacPalette``), ⌘⌥J (``MacPeekReply``) and ⇧⌘F (``MacGlobalSearch``) are
-                // `NSPanel`s now, so this host must not draw them too — the set is the Mac's ledger
-                // of what stage D has taken out of the shared floor, and it only ever shrinks from
-                // here. Open Quickly is the last one in it.
-                draws: [.openQuickly],
             )
         }
         // Wire ⌘⇧L (Toggle Tabs Panel) to the live chrome once it exists. The dispatcher is built at app

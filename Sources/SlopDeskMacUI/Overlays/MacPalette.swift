@@ -593,26 +593,18 @@ enum MacPaletteTitle {
             ofSize: Slate.Typeface.body, weight: selected ? .medium : .regular,
         )
         let hit = NSFont.systemFont(ofSize: Slate.Typeface.body, weight: .semibold)
-        guard !ranked.titleRanges.isEmpty else {
+        // WHERE the cuts fall is ``FuzzyMatcher/runs(of:ranges:)``'s — four surfaces mark an fzf hit
+        // and all four want the same cut and their own ink.
+        let runs = FuzzyMatcher.runs(of: title, ranges: ranked.titleRanges)
+        guard runs.count > 1 else {
             return .slateNerdAware(title, font: base, color: Slate.Native.Overlay.primary)
         }
         let spliced = NSMutableAttributedString()
-        var cursor = title.startIndex
-        for range in ranked.titleRanges where range.lowerBound >= cursor {
-            if cursor < range.lowerBound {
-                spliced.append(.slateNerdAware(
-                    title[cursor..<range.lowerBound], font: base,
-                    color: Slate.Native.Overlay.secondary,
-                ))
-            }
+        for run in runs {
             spliced.append(.slateNerdAware(
-                title[range], font: hit, color: Slate.Native.Overlay.primary,
-            ))
-            cursor = range.upperBound
-        }
-        if cursor < title.endIndex {
-            spliced.append(.slateNerdAware(
-                title[cursor...], font: base, color: Slate.Native.Overlay.secondary,
+                run.text,
+                font: run.matched ? hit : base,
+                color: run.matched ? Slate.Native.Overlay.primary : Slate.Native.Overlay.secondary,
             ))
         }
         return spliced
