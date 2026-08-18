@@ -17,6 +17,16 @@ public struct WorkspaceOverlayKeyToggles {
     public var jumpTo: (() -> Void)?
     public var openQuickly: (() -> Void)?
     public var peekReply: (() -> Void)?
+    /// The two CHROME toggles. Not overlays at all — they flip the live ``WorkspaceChromeState`` — but they
+    /// arrive by exactly the same road on iOS, and for the same reason: with no app-level monitor a chord
+    /// reaches the focused terminal surface first, so ⌘⇧L and ⌘⇧R would otherwise die at a nil closure while
+    /// the panels they name sit right there.
+    public var sidebar: (() -> Void)?
+    public var codeSidebar: (() -> Void)?
+    /// ⌥⌘R. On the Mac this hands the keyboard to the embedded workbench and takes it back; the phone has
+    /// no such duel, so it reveals the panel and stops there — which is what "focus the code panel" means
+    /// on a device that shows one surface at a time.
+    public var focusCodePanel: (() -> Void)?
 
     public init(
         palette: (() -> Void)? = nil,
@@ -25,6 +35,9 @@ public struct WorkspaceOverlayKeyToggles {
         jumpTo: (() -> Void)? = nil,
         openQuickly: (() -> Void)? = nil,
         peekReply: (() -> Void)? = nil,
+        sidebar: (() -> Void)? = nil,
+        codeSidebar: (() -> Void)? = nil,
+        focusCodePanel: (() -> Void)? = nil,
     ) {
         self.palette = palette
         self.cheatSheet = cheatSheet
@@ -32,6 +45,9 @@ public struct WorkspaceOverlayKeyToggles {
         self.jumpTo = jumpTo
         self.openQuickly = openQuickly
         self.peekReply = peekReply
+        self.sidebar = sidebar
+        self.codeSidebar = codeSidebar
+        self.focusCodePanel = focusCodePanel
     }
 }
 
@@ -47,9 +63,12 @@ extension WorkspaceStore {
             togglePalette: overlayKeyToggles.palette,
             toggleCheatSheet: overlayKeyToggles.cheatSheet,
             togglePeekReply: overlayKeyToggles.peekReply,
+            toggleSidebar: overlayKeyToggles.sidebar,
+            toggleCodeSidebar: overlayKeyToggles.codeSidebar,
             toggleGlobalSearch: overlayKeyToggles.globalSearch,
             toggleJumpTo: overlayKeyToggles.jumpTo,
             openQuickly: overlayKeyToggles.openQuickly,
+            focusCodePanel: overlayKeyToggles.focusCodePanel,
         )
     }
 

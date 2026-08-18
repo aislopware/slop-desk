@@ -597,6 +597,23 @@ nothing is ever implemented twice. No stage copies a file: a surface either move
   `Canvas` instead of a `CGContext`, so the two platforms draw one robot. What the phone's bar does NOT
   carry is a hide toggle: a cover that is not presented is already hidden, so the Mac's hide-inside /
   reopen-outside split collapses into one close plate here. That is the whole of the difference.
+
+  Mounting the panel turned up a class of gap worth naming, because it dies quietly: A COORDINATOR HOOK
+  BOUND ON ONE PLATFORM IS A DEAD ROW ON THE OTHER. Every actuator on `OverlayCoordinator` defaults to
+  an empty closure, and only the Mac's root ever bound `toggleSidebar`, `toggleCodeSidebar` and
+  `focusCodePanel` — so the phone's command palette listed three View actions that ran and did nothing,
+  which is indistinguishable from an action that ran and had nothing to do. The same held for the
+  Settings row (`openSettingsAction`, bound on the Mac to the `Settings` scene) and for the hardware
+  chords: ⌘⇧L and ⌘⇧R reach the focused terminal surface first on iOS, so both died at a `nil` toggle
+  in `WorkspaceOverlayKeyToggles`, which carried overlays only. All of it is bound now, check-supervisor
+  pairs the three hooks across the two roots, and `togglePinWindow` stays deliberately absent — a phone
+  has one window and no window level. An action that is ABSENT on a platform is fine; an action that is
+  listed and inert is not.
+
+  The cover carries a second `ToastStackView` for the same reason: the surfaces under it SPEAK, and the
+  workspace's stack is mounted on the root the cover sits on top of, so every report the panel made
+  while it was up would have been filed behind the thing that filed it. The palette deliberately does
+  not follow — a phone shows one place at a time, and the panel's own bar is its command surface.
 - **E — the Rust port (§4).**
 
 ## 4. What moves to Rust

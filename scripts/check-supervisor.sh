@@ -5143,7 +5143,24 @@ for edge in "${ui_edges[@]}"; do
     fail "${edge%%:*} reached for ${edge#*import }: the two halves share no view ancestor (docs/56 §3)"
   fi
 done
-printf 'check-supervisor: the UI split holds — views only, no dead gates, no ancestor between the halves.\n'
+# A COORDINATOR HOOK BOUND ON ONE PLATFORM IS A DEAD ROW ON THE OTHER, and it dies quietly: every
+# actuator on `OverlayCoordinator` defaults to an empty closure, so a palette row whose hook nobody
+# bound looks exactly like a row that ran and had nothing to do. Three of them were bound only by the
+# Mac's root — the two panel toggles and the code-panel focus — which meant the phone's palette
+# listed View actions that did nothing at all. Both roots bind all three now.
+#
+# `togglePinWindow` is deliberately NOT here: a phone has one window and no window level, which the
+# palette row itself records. An action that is absent on a platform is fine; an action that is
+# listed and inert is not.
+for hook in toggleSidebar toggleCodeSidebar focusCodePanel; do
+  for root in Sources/SlopDeskMacUI/App/MacWorkspaceRootView.swift \
+    Sources/SlopDeskClientUI/WorkspaceRootView.swift; do
+    if ! grep -qF "overlay.${hook} =" "${root}"; then
+      fail "${root} stopped binding overlay.${hook} — an unbound hook is a palette row that lies"
+    fi
+  done
+done
+printf 'check-supervisor: the UI split holds — views only, no dead gates, no ancestor between the halves, no palette row that lies.\n'
 
 # ── A pane's master is decided once, and it is OWNED ────────────────────────────────────────────
 # superd used to answer `spawn` by inserting the pane and then asking the map for its master fd by

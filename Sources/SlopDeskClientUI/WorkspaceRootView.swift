@@ -137,6 +137,7 @@ public struct WorkspaceRootView: View {
         .onAppear {
             wireOverlayCwdResolver()
             wireOverlayKeyToggles()
+            wireChromeActions()
         }
         // Drive the TABS panel auto-hide — the SAME shared policy macOS runs. On a tab-count TRANSITION or a
         // Settings mode flip, apply `SidebarAutoHidePolicy` to `chrome.sidebarCollapsed` (mapped to the
@@ -165,10 +166,9 @@ public struct WorkspaceRootView: View {
         .fullScreenCover(isPresented: codePanelBinding) {
             PhonePanelSheet(
                 store: store, connection: connection, chrome: chrome, models: panelModels,
-                onClose: { chrome.collapseCodeSidebar() },
+                overlay: overlay, onClose: { chrome.collapseCodeSidebar() },
             )
             .preferencesStore(preferencesStore)
-            .overlayCoordinator(overlay)
         }
         // The toolbar gear presents the in-app settings sheet (iOS has no `Settings` scene). The sheet hosts
         // the same cross-platform section structs as the macOS strip.
@@ -235,7 +235,33 @@ public struct WorkspaceRootView: View {
             jumpTo: { [overlay] in overlay.toggleOpenQuickly(filter: .current) },
             openQuickly: { [overlay] in overlay.toggleOpenQuickly(filter: .all) },
             peekReply: { [overlay] in overlay.togglePeekReply() },
+            // The two PANELS, on the same road for the same reason: ⌘⇧L and ⌘⇧R reach the focused
+            // terminal surface first here, and both name a panel that exists on this platform.
+            sidebar: { [chrome] in chrome.toggleSidebar() },
+            codeSidebar: { [chrome] in chrome.toggleCodeSidebar() },
+            focusCodePanel: { [chrome] in chrome.revealCodeSidebar() },
         )
+    }
+
+    /// Point the coordinator's chrome actuators at the LIVE ``WorkspaceChromeState`` — the phone's half of
+    /// what `MacWorkspaceRootView.wireChromeToggles()` does, and what makes the command palette's View and
+    /// Settings rows do something here rather than nothing.
+    ///
+    /// Three of the four rows were dead on this platform because the coordinator's closures default to
+    /// empty and only the Mac's root ever bound them: "Toggle Tabs Panel", "Toggle Code Panel" and "Focus
+    /// Code Panel" all resolved to `{}`. Pin Window stays unbound on purpose — a phone has one window and
+    /// no window level, which the palette row itself records.
+    ///
+    /// FOCUS CODE PANEL IS A REVEAL HERE, not a toggle of the keyboard's owner. The Mac's version asks the
+    /// webview pool which way to move first responder; there is no responder duel on iOS, so the honest
+    /// reading of "focus the code panel" on a device that shows one surface at a time is "put it up".
+    private func wireChromeActions() {
+        overlay.toggleSidebar = { [chrome] in chrome.toggleSidebar() }
+        overlay.toggleCodeSidebar = { [chrome] in chrome.toggleCodeSidebar() }
+        overlay.focusCodePanel = { [chrome] in chrome.revealCodeSidebar() }
+        // The palette's Settings row. macOS opens its `Settings` scene through the SwiftUI environment
+        // action; the phone has no such scene, so the row raises the same sheet the toolbar gear does.
+        overlay.openSettingsAction = { showSettings = true }
     }
 
     /// Thin view-side glue over ``WorkspaceChromePolicy/applyAutoHide(mode:tabCount:chrome:)`` — read the

@@ -44,6 +44,10 @@ package struct PhonePanelSheet: View {
     let connection: AppConnection
     let chrome: WorkspaceChromeState
     let models: PhonePanelModels
+    /// The single overlay coordinator. Handed in rather than read from the environment because a cover
+    /// does not inherit the presenter's, and the surfaces under this bar need it twice over: to file a
+    /// report, and to have that report drawn (see the stack below).
+    let overlay: OverlayCoordinator
     /// Dismisses the cover. Passed in rather than taken from `\.dismiss` so the presenter can also
     /// re-collapse the shared chrome flag in the same gesture.
     let onClose: () -> Void
@@ -52,12 +56,13 @@ package struct PhonePanelSheet: View {
 
     package init(
         store: WorkspaceStore, connection: AppConnection, chrome: WorkspaceChromeState,
-        models: PhonePanelModels, onClose: @escaping () -> Void,
+        models: PhonePanelModels, overlay: OverlayCoordinator, onClose: @escaping () -> Void,
     ) {
         self.store = store
         self.connection = connection
         self.chrome = chrome
         self.models = models
+        self.overlay = overlay
         self.onClose = onClose
     }
 
@@ -79,6 +84,17 @@ package struct PhonePanelSheet: View {
         // The cover owns the whole screen INCLUDING the home indicator's band: a device stage fitted
         // to a safe area draws a cream stripe under the mirror. The bar keeps its own top inset.
         .ignoresSafeArea(edges: .bottom)
+        // THE NOTIFICATION CORNER COMES WITH IT. The surfaces under this bar SPEAK — a simulator boot
+        // that failed, a capture that landed on the clipboard — through the same coordinator the
+        // workspace's stack reads, and that stack is mounted on the root, which this cover is on top
+        // of. Without a second stack here every report the panel makes while it is up would be filed
+        // behind the thing that filed it. The palette deliberately does NOT follow: a phone shows one
+        // place at a time, and the panel's own bar is its command surface.
+        .overlay {
+            ToastStackView(coordinator: overlay, onJump: store.jumpToPaneNamedByNotification)
+                .allowsHitTesting(!overlay.toasts.isEmpty)
+        }
+        .overlayCoordinator(overlay)
     }
 
     /// The active pane's project root — the HOST-pushed `projectKey` only, never the cwd fallback.
