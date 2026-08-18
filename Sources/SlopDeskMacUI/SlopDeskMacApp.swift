@@ -84,6 +84,9 @@ public struct SlopDeskMacApp: App {
     /// ``WorkspaceStore/detachedPanes`` entry) — never a second `WindowGroup`, so the single-window
     /// machinery (`windowBox` / chord dispatcher / close gate) is untouched.
     @State private var satelliteWindows = SatelliteWindowsCoordinator()
+    /// The summoned cards that are WINDOWS of their own (docs/56 stage D) — one `NSPanel` over the
+    /// workspace window per overlay the Mac has taken out of the shared SwiftUI host.
+    @State private var overlayPanels = MacOverlayPanels()
     /// The cross-container pane-drag rendezvous: the sidebar rows, the canvas, and every satellite window
     /// live in SEPARATE hosting views, so the free pane drag (move across tabs / break to a new tab / tear
     /// off to a window / merge back) meets here. Its `store` weak ref is bound in a launch `.task`.
@@ -487,6 +490,17 @@ public struct SlopDeskMacApp: App {
                 // automation/replay paths that could restore a mid-detach state.
                 .onChange(of: store.detachedPanes) { _, panes in
                     satelliteWindows.sync(panes, store: store, paneDrag: paneDrag, decorate: decorateSatelliteRoot)
+                }
+                // THE ⌘/ CHEAT SHEET is the Mac's own AppKit panel (docs/56 stage D) — driven from
+                // HERE for the same reason the satellites are: `windowBox` holds the one workspace
+                // window, captured in the blessed `.introspect(.window)` closure, and a card is a
+                // child window of it. The coordinator's flag stays the single truth; the panel
+                // follows this edge, and every dismissal inside it flips the flag back rather than
+                // tearing itself down.
+                .onChange(of: overlayCoordinator.cheatSheetVisible) { _, visible in
+                    overlayPanels.setCheatSheet(
+                        visible, host: windowBox.window, store: store, coordinator: overlayCoordinator,
+                    )
                 }
                 .task {
                     // Late-bind the drag coordinator's weak store (chip labels + destination gating) —

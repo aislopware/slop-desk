@@ -384,6 +384,35 @@ package enum Slate {
             )
         }
 
+        /// The FLOATING FAMILY's ink — see ``SlateOverlayInk`` for why a summoned card wears the
+        /// system's neutral semantics rather than the terminal's tinted greys.
+        ///
+        /// Its four derived rungs are alphas over the platform LABEL colour, so they resolve against
+        /// whichever polarity the card stands in without a call site changing. They live here, in
+        /// the native layer, for the reason the whole ``Native`` block exists: the Mac's cheat sheet
+        /// is an `NSView` (docs/56 stage D) and the phone's is a `View`, and the ladder they read
+        /// has to be ONE value with two views of it.
+        @MainActor
+        package enum Overlay {
+            /// The thing being read.
+            package static var primary: SlateNativeColor { Text.primary }
+            /// A supporting label. The SYSTEM's secondary, not ``Text/secondary`` — that rung is
+            /// pinned to an authored hex for the chrome's cream, and this family is neutral.
+            #if canImport(AppKit)
+            package static let secondary = SlateNativeColor.secondaryLabelColor
+            #else
+            package static let secondary = SlateNativeColor.secondaryLabel
+            #endif
+            /// A caption, a section header, a resting keycap.
+            package static var tertiary: SlateNativeColor { Text.primary.withAlphaComponent(0.45) }
+            /// The plate a selected row rises onto, and the keycap's face.
+            package static var plate: SlateNativeColor { Text.primary.withAlphaComponent(0.08) }
+            /// A hairline: a plate's edge, the card's one internal rule.
+            package static var hairline: SlateNativeColor { Text.primary.withAlphaComponent(0.12) }
+            /// The ground an editable field sinks into — the opposite direction from ``plate``.
+            package static var well: SlateNativeColor { Text.primary.withAlphaComponent(0.04) }
+        }
+
         /// The interaction fills and casts — see ``Slate/State``.
         @MainActor
         package enum State {

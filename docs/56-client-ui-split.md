@@ -187,6 +187,25 @@ nothing is ever implemented twice. No stage copies a file: a surface either move
     the toasts) rather than a transparent layer over everything, which is what removes the last
     SwiftUI mount from the window root;
   - until then the root stays a SwiftUI composition over the AppKit shell, which is what it is today.
+
+  **The first surface across is the ⌘/ cheat sheet, and the panel it rides on is the point.**
+  `MacOverlayPanel` is the reusable half — a `.borderless` `NSPanel` added as a CHILD window of the
+  workspace window, so it travels with a move, a Space change and a close for free; `MacCheatSheetView`
+  is the cheat sheet drawn into it. The panel buys back three things the in-window `ZStack` was
+  hand-rolling: the dismiss floor is the panel (opaque to hits by construction, so no `SlateClickTarget`
+  standing in for a clear rectangle and no hit barrier on the card to stop the floor being reachable
+  through it), Esc is the responder chain's `cancelOperation(_:)` rather than a backdrop modifier, and
+  ordering the panel out restores the parent window's first responder by itself. It is driven from the
+  scene by `MacOverlayPanels`, which diffs `coordinator.cheatSheetVisible` into a panel exactly the way
+  `SatelliteWindowsCoordinator` diffs `detachedPanes` into windows — the flag stays the single truth, and
+  a dismissal inside the panel flips the flag rather than tearing itself down, so the two cannot disagree.
+  The cheat sheet left `OverlayHostView` in the same change; the phone presents it as a native `.sheet`
+  from its own root. What the two halves share they share BELOW the view layer — `CheatSheetContent`
+  (`SlopDeskClientCore`) carries the rows, the glyph gating and the column deal, the last over
+  `slopdesk_cheat_sheet_columns` — and the LAYOUT is the only divergence: two columns on the Mac's 640pt
+  of paper, one on a hand-held sheet, from the same `dealt(_:into:)`. `check-supervisor.sh` gates both
+  failure modes: either half reaching past `CheatSheetContent` to the registry, and the shared host
+  mounting the card again.
 - **E — the Rust port (§4).**
 
 ## 4. What moves to Rust

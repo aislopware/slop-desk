@@ -7,7 +7,14 @@
 // ``ToastStackView`` (which renders nothing when empty) is the
 // host's only other in-tree content — transient notifications float over the workspace without a modal.
 //
-// One host so every overlay shares one presentation point: because the coordinator only ever drives one
+// NOT EVERY OVERLAY IS HERE ANY MORE. The ⌘/ cheat sheet is a real `NSPanel` on the Mac
+// (``SlopDeskMacUI/MacCheatSheetView``) and a native `.sheet` on the phone, driven from each shell's own
+// root off the SAME `coordinator.cheatSheetVisible` flag — docs/56 stage D, where a surface leaves this
+// floor by being rewritten in each platform's own framework rather than by being gated inside one view.
+// What the two halves share they share BELOW the view layer: ``CheatSheetContent`` carries the rows, the
+// glyphs and the column deal, so neither half spells the table out.
+//
+// One host so every overlay still here shares one presentation point: because the coordinator only ever drives one
 // overlay flag at a time (its `run()` closes-then-opens; the open* methods are the only writers), a single
 // computed ``ActiveSheet`` is robust — it can never race two chained presentations, and a dismissal (Esc /
 // click-away) routes through `closeActiveSheet()` to the matching `close*()`.
@@ -154,7 +161,6 @@ package struct OverlayHostView: View {
     /// mounted, and one overlay replacing another (palette → connect) is a single swap.
     private enum ActiveSheet: Identifiable {
         case palette
-        case cheatSheet
         case openQuickly
         case peekReply
         case globalSearch
@@ -163,7 +169,6 @@ package struct OverlayHostView: View {
 
     private var activeSheet: ActiveSheet? {
         if coordinator.paletteVisible { return .palette }
-        if coordinator.cheatSheetVisible { return .cheatSheet }
         if coordinator.openQuicklyVisible { return .openQuickly }
         if coordinator.peekReplyVisible { return .peekReply }
         if coordinator.globalSearchVisible { return .globalSearch }
@@ -205,8 +210,8 @@ package struct OverlayHostView: View {
             // need this (AppKit restored the parent window's responder on dismissal); an in-window card
             // does. Same call the find bar makes when it closes.
             .onDisappear { store.reclaimKeyboardFocusInActivePane() }
-            // Esc reaches the focused card's own handler in every case but one — the cheat sheet has no
-            // field to focus — so the backdrop carries the same escape as a floor. macOS spells it
+            // Esc reaches the focused card's own handler, but a card can be up with nothing in it
+            // focused — so the backdrop carries the same escape as a floor. macOS spells it
             // `onExitCommand` (unavailable on iOS, where the cards are reached by tap anyway).
             #if os(macOS)
                 .onExitCommand { closeActiveSheet() }
@@ -216,7 +221,6 @@ package struct OverlayHostView: View {
 
     private func closeActiveSheet() {
         if coordinator.paletteVisible { coordinator.closePalette() }
-        else if coordinator.cheatSheetVisible { coordinator.closeCheatSheet() }
         else if coordinator.openQuicklyVisible { coordinator.closeOpenQuickly() }
         else if coordinator.peekReplyVisible { coordinator.closePeekReply() }
         else if coordinator.globalSearchVisible { coordinator.closeGlobalSearch() }
@@ -227,8 +231,6 @@ package struct OverlayHostView: View {
         switch sheet {
         case .palette:
             PaletteView(coordinator: coordinator, store: store, toggledState: toggledState)
-        case .cheatSheet:
-            KeyboardCheatSheetView(coordinator: coordinator)
         case .openQuickly:
             OpenQuicklyView(store: store, coordinator: coordinator, folders: coordinator.folders)
         case .peekReply:

@@ -2407,6 +2407,19 @@ typedef struct { SlopDeskWsPoint center; double radius_x, radius_y; } SlopDeskDr
 SlopDeskDropZoneShape slopdesk_drop_zone_shape(uint8_t zone, double width, double height);
 bool slopdesk_drop_zone_at(SlopDeskWsPoint point, double width, double height, uint8_t *out);
 
+/* ---- The keyboard reference sheet: which column each run of shortcuts belongs in ----------
+ * Balanced by RENDERED HEIGHT (a section costs its rows plus its own header line), not by section
+ * count — three short categories beside one long one is the case that makes a halve-the-list split
+ * look broken. Greedy: each section joins whichever column is currently shortest, so the registry's
+ * declared order still reads down the page.
+ *
+ * Row COUNTS in, column INDICES out, against the caller's own section order — nothing about a
+ * binding or a glyph crosses, which is why the Mac's two-column panel and the phone's single column
+ * are the same rule asked twice. §4's plain shape at the width of a `uint32_t`: the return is how
+ * many indices the answer NEEDS (always `count`), and nothing is written unless they all fit.     */
+size_t slopdesk_cheat_sheet_columns(const uint32_t *row_counts, size_t count, uint32_t columns,
+                                    uint32_t *out, size_t cap);
+
 /* ---- Hint Mode: every span in the viewport a two-letter label can pin to -----------------
  * The same handle-over-arena shape as the link scan above, because the answer is the same shape:
  * a variable list of records each carrying up to three strings. A LINK target carries the whole

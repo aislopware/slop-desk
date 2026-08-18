@@ -4493,6 +4493,30 @@ if [[ -n "${drag_dupes}" ]]; then
 fi
 printf 'check-supervisor: one pixel-to-weight conversion, and the seam owns it.\n'
 
+# ── One cheat sheet, two layouts ──────────────────────────────────────────────────────────────
+# docs/56 stage D's first surface: the Mac's ⌘/ sheet is an `NSPanel` and the phone's is a native
+# `.sheet`, and neither is allowed to know the other exists. What they may not do is each spell out
+# the table — so the rows, the glyph gating and the column deal are `CheatSheetContent`, over
+# `slopdesk_cheat_sheet_columns`. Two ways this decays, and the gate catches both: a half that stops
+# reading the shared source (a second table, drifting from the dispatcher's chords), and the shared
+# SwiftUI host mounting the card again (the Mac would then show it twice, over its own panel).
+if ! grep -q 'slopdesk_cheat_sheet_columns' Sources/SlopDeskClientCore/Overlays/CheatSheetContent.swift; then
+  fail "CheatSheetContent stopped calling slopdesk_cheat_sheet_columns — the column deal has two answers"
+fi
+for half in Sources/SlopDeskMacUI/Overlays/MacCheatSheetPanel.swift \
+  Sources/SlopDeskClientUI/Overlays/KeyboardCheatSheetView.swift; do
+  if ! grep -q 'CheatSheetContent' "${half}"; then
+    fail "${half} stopped rendering CheatSheetContent — the cheat sheet has two tables"
+  fi
+  if grep -q 'WorkspaceBindingRegistry' "${half}"; then
+    fail "${half} reached past CheatSheetContent to the registry — the glyph gating lives in ONE place"
+  fi
+done
+if grep -q 'KeyboardCheatSheetView' Sources/SlopDeskClientUI/Overlays/OverlayHostView.swift; then
+  fail "the shared overlay host mounts the cheat sheet again — the Mac would draw it over its own panel"
+fi
+printf 'check-supervisor: one cheat sheet, drawn twice and spelled once.\n'
+
 # ── One device-panel law, two device protocols ────────────────────────────────────────────────
 # The simulator panel and the Android panel differ in almost everything and should — one rotates on
 # the client and the other on the device, one sends touches in the fitted rect's space and the other

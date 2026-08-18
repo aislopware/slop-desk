@@ -46,15 +46,19 @@ final class SlateSnapshotRender: XCTestCase {
         print("SLOPDESK_SNAPSHOT_WRITTEN \(out)")
     }
 
-    // MARK: - Opt-in render of the overlay panels (palette + cheat sheet)
+    // MARK: - Opt-in render of the overlay panels (palette)
 
-    /// Renders the live ``PaletteView`` (typed query, fzf-highlighted rows, a ✓ toggled gutter) and the
-    /// ``KeyboardCheatSheetView`` (the full grouped binding table) on a dimmed scrim so the overlays can be
-    /// eyeballed headlessly — the SAME `ImageRenderer` opt-in idiom as `testRenderSlateShowcase`, NO CI gate.
+    /// Renders the live ``PaletteView`` (typed query, fzf-highlighted rows, a ✓ toggled gutter) on a dimmed
+    /// scrim so the overlay can be eyeballed headlessly — the SAME `ImageRenderer` opt-in idiom as
+    /// `testRenderSlateShowcase`, NO CI gate.
     /// Opt-in via a directory (not the showcase's single-file `SLOPDESK_SNAPSHOT_OUT`, which it would otherwise
-    /// clobber): `SLOPDESK_OVERLAY_SNAPSHOT_DIR=<dir>` writes `palette.png` + `cheatsheet.png` into it. Inert
+    /// clobber): `SLOPDESK_OVERLAY_SNAPSHOT_DIR=<dir>` writes `palette.png` into it. Inert
     /// (skipped) otherwise. Built over a headless tree-model store (reusing this target's `MountTestPaneSession`
     /// session double) so it never opens a socket or touches video/Metal (the hang-safety rule).
+    ///
+    /// The CHEAT SHEET left this probe with docs/56 stage D: the Mac's is an `NSPanel`
+    /// (``SlopDeskMacUI/MacCheatSheetView``), which `ImageRenderer` cannot render at all, and the phone's
+    /// is a native sheet whose look is the platform's rather than this card family's.
     @MainActor
     func testRenderOverlayPanels() throws {
         guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_OVERLAY_SNAPSHOT_DIR"] else {
@@ -76,15 +80,9 @@ final class SlateSnapshotRender: XCTestCase {
         // ⚠️ `renderHosted`, NOT `render`: the palette's query line is a ``SlateSearchField``, an
         // `NSViewRepresentable`, and `ImageRenderer` CANNOT build an AppKit-backed view — it
         // silently substitutes a saturated YELLOW placeholder box and drops everything below it.
-        // This render had been a yellow bar and a divider (fixed 2026-08-11); the cheat sheet goes
-        // through the same path so the pair stays comparable.
+        // This render had been a yellow bar and a divider (fixed 2026-08-11).
         try renderHosted(
             scrimmed(palette), size: CGSize(width: 920, height: 620), to: dir, named: "palette.png",
-        )
-
-        let cheat = KeyboardCheatSheetView(coordinator: overlay)
-        try renderHosted(
-            scrimmed(cheat), size: CGSize(width: 920, height: 700), to: dir, named: "cheatsheet.png",
         )
     }
 

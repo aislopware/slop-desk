@@ -132,6 +132,15 @@ public struct WorkspaceRootView: View {
         // appearance), so a single-tab `.auto` session opens with the TABS panel already hidden.
         .onChange(of: activeTabCount, initial: true) { applyAutoHidePolicy() }
         .onChange(of: autoHideTabsPanel) { applyAutoHidePolicy() }
+        // THE ⌘/ CHEAT SHEET is the phone's own presentation (docs/56 stage D): a native sheet, not the
+        // in-window paper card the other overlays take. It left the shared ``OverlayHostView`` when the
+        // Mac's half became an `NSPanel`, and the two now meet only at ``CheatSheetContent`` — the rows,
+        // the glyphs and the column deal — which is the layer docs/56 says a divergent surface shares.
+        // `cheatSheetVisible` is `private(set)`, so the binding is one-way by construction: any system
+        // dismissal (the swipe, Esc on a hardware keyboard) routes back through `closeCheatSheet()`.
+        .sheet(isPresented: cheatSheetBinding) {
+            KeyboardCheatSheetView(coordinator: overlay)
+        }
         // The toolbar gear presents the in-app settings sheet (iOS has no `Settings` scene). The sheet hosts
         // the same cross-platform section structs as the macOS strip.
         .sheet(isPresented: $showSettings) {
@@ -141,6 +150,16 @@ public struct WorkspaceRootView: View {
                 SettingsSheet(store: preferencesStore, agentHooks: agentHooksController, workspace: store)
             }
         }
+    }
+
+    /// Presentation binding for the cheat sheet. `set(false)` — the swipe, a hardware Esc, any system
+    /// dismissal — routes to `closeCheatSheet()` so the coordinator stays the single owner of the flag;
+    /// `set(true)` never happens (a sheet does not present itself) and is deliberately not modelled.
+    private var cheatSheetBinding: Binding<Bool> {
+        Binding(
+            get: { overlay.cheatSheetVisible },
+            set: { if !$0 { overlay.closeCheatSheet() } },
+        )
     }
 
     /// Bind the overlay coordinator's `resolveActiveCwd` to the focused pane's live ``MetadataClient`` so
