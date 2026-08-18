@@ -75,7 +75,7 @@ struct SettingsSheet: View {
     var body: some View {
         NavigationStack {
             List {
-                ForEach(SettingsSection.allCases.filter { !$0.isMacOSOnly }) { section in
+                ForEach(SettingsSection.compact) { section in
                     NavigationLink {
                         SettingsSectionContent(
                             section: section, store: store, selectedSection: $selectedSection,

@@ -93,11 +93,16 @@ public struct SlopDeskSettingsScene: Scene {
 
 // MARK: - Settings taxonomy (the 8 sections — one source for the macOS navigator + the iOS list)
 
-/// The settings taxonomy — 8 sections, each an icon+label row in the macOS navigator (and, once the iOS sheet
-/// lands, an iOS-sheet row). Title + `systemImage` live here as the ONE source so the macOS and (future) iOS lists
-/// never drift; `SettingsSectionTaxonomyTests` pins the set + order against a drop/reorder/icon-swap. Order +
-/// glyphs mirror `docs/ui-shell/screenshots/all-settings.png`: General, Shell, Controls, Editor, Agents,
-/// Appearance, Key Bindings, Advanced.
+/// The settings taxonomy as a DISPATCH key: which section's body to build. It is an enum because that
+/// is what ``SettingsSectionContent``'s exhaustive `switch` needs — a section maps to a `some View`,
+/// which is the one part of a section that cannot leave Swift.
+///
+/// Everything a section IS — its title, its glyph, its place in the order, whether the compact list
+/// drops it — comes from `slopdesk_workspace::settings_catalog` through ``SettingsCatalog/sections``,
+/// so the Mac's navigator and the phone's list read one table rather than two. The cases here carry
+/// no data of their own; ``ordered`` is the list to render, and `SettingsSectionTaxonomyTests` pins
+/// that it covers every case, which is what stops a case added here from being unreachable in both
+/// lists (the same exhaustiveness contract every option group holds).
 enum SettingsSection: String, CaseIterable, Identifiable {
     case general
     case shell
@@ -110,70 +115,36 @@ enum SettingsSection: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    /// The navigator row label (and iOS row title).
-    var title: String {
-        switch self {
-        case .general: "General"
-        case .shell: "Shell"
-        case .controls: "Controls"
-        case .editor: "Editor"
-        case .agents: "Agents"
-        case .appearance: "Appearance"
-        case .keybindings: "Key Bindings"
-        case .advanced: "Advanced"
-        }
-    }
+    /// The catalog row behind this case, or `nil` for a case the boundary does not name — which the
+    /// taxonomy test is what rules out.
+    private var row: SettingsCatalog.Section? { SettingsCatalog.section(rawValue) }
 
-    /// The sidebar glyph (SF Symbol name). Controls = `cursorarrow` mirrors the pointer glyph beside
-    /// "Controls" in `all-settings.png` (input/scroll/pointer settings).
-    var systemImage: String {
-        switch self {
-        case .general: "exclamationmark.circle"
-        case .shell: "terminal"
-        case .controls: "cursorarrow"
-        case .editor: "doc.text"
-        case .agents: "powerplug"
-        case .appearance: "paintpalette"
-        case .keybindings: "bolt"
-        case .advanced: "wrench"
-        }
-    }
+    /// The navigator row label (and the phone list's row title).
+    var title: String { row?.title ?? "" }
+
+    /// The sidebar glyph (SF Symbol name).
+    var systemImage: String { row?.systemImage ?? "" }
 
     /// macOS-only sections are dropped from the compact iOS sheet. Only **Keybindings** qualifies: its
     /// chord CAPTURE is a macOS `NSEvent` monitor (`KeyCaptureMonitor` is `#if os(macOS)`), with no iOS
     /// capture UI. Advanced's macOS-HOST-only *rows* (raw `SLOPDESK_*` editor + Video host flags) are gated
     /// INSIDE `AdvancedSettingsTab`, not by hiding the section, so the All-Settings list still reaches iOS.
-    /// `SettingsSheet` filters `allCases` on this; `SettingsSectionTaxonomyTests` pins Keybindings as the only one.
-    var isMacOSOnly: Bool {
-        switch self {
-        case .keybindings: true
-        default: false
-        }
-    }
+    var isMacOSOnly: Bool { row?.isMacOSOnly ?? false }
+
+    /// The whole taxonomy IN THE CATALOG'S ORDER — what both lists render. Declaration order here is
+    /// not the contract; the boundary's is.
+    static let ordered: [Self] = SettingsCatalog.sections.compactMap { Self(rawValue: $0.id) }
+
+    /// What a COMPACT list shows.
+    static var compact: [Self] { ordered.filter { !$0.isMacOSOnly } }
 }
 
 // MARK: - Apply-timing tag (deferred vs live, surfaced as a chip not prose)
 
-/// When a setting takes effect — surfaced as a chip so the deferred/live distinction is a DATA attribute,
-/// not prose.
-enum ApplyTiming {
-    case live // applies immediately (terminal reload / theme / keybinding republish / fire-time key)
-    case reconnect // a HOST-read flag shipped via the sidecar — applies on the next host connection
-
-    var label: String {
-        switch self {
-        case .live: "Applies now"
-        case .reconnect: "Applies on reconnect"
-        }
-    }
-
-    var symbol: String {
-        switch self {
-        case .live: "bolt.fill"
-        case .reconnect: "arrow.triangle.2.circlepath"
-        }
-    }
-}
+/// When a setting takes effect — surfaced as a chip so the deferred/live distinction is a DATA
+/// attribute, not prose. The two cases and their words are ``SettingsCatalog/ApplyTiming``; only the
+/// tint below is a view decision.
+typealias ApplyTiming = SettingsCatalog.ApplyTiming
 
 /// A small inline timing chip (symbol + label). The tint is resolved in the view body rather than on the
 /// nonisolated `ApplyTiming` enum.
@@ -255,8 +226,8 @@ struct SettingsView: View {
     /// a query. Empty / whitespace query ⇒ all sections (taxonomy order preserved).
     private var filteredSections: [SettingsSection] {
         let needle = sidebarQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !needle.isEmpty else { return SettingsSection.allCases }
-        return SettingsSection.allCases.filter { $0.title.lowercased().contains(needle) }
+        guard !needle.isEmpty else { return SettingsSection.ordered }
+        return SettingsSection.ordered.filter { $0.title.lowercased().contains(needle) }
     }
 
     /// The body for a section — a thin dispatch onto the shared ``SettingsSectionContent`` (the SAME switch
@@ -354,7 +325,7 @@ private struct GeneralSettingsTab: View {
                 SettingsOptionMenuRow(
                     "On Launch",
                     subtitle: "What a cold start opens.",
-                    options: SettingsOptionCatalog.onLaunch,
+                    options: SettingsCatalog.options(.onLaunch),
                     selection: $onLaunch,
                 )
                 timingFooter(.live)
@@ -367,13 +338,13 @@ private struct GeneralSettingsTab: View {
                 SettingsOptionMenuRow(
                     "Closing a tab",
                     subtitle: "When to ask before a tab goes away. ⌘W closes a pane and only ever asks mid-command.",
-                    options: SettingsOptionCatalog.closeConfirmationTab,
+                    options: SettingsCatalog.options(.closeConfirmationTab),
                     selection: $closeConfirmTab,
                 )
                 SettingsOptionMenuRow(
                     "Closing a window",
                     subtitle: "When to ask before a window goes away.",
-                    options: SettingsOptionCatalog.closeConfirmation,
+                    options: SettingsCatalog.options(.closeConfirmation),
                     selection: $closeConfirmWindow,
                 )
                 timingFooter(.live)
@@ -683,10 +654,10 @@ private struct ShellSettingsTab: View {
                 subtitle: "How long a command must run before its row shows as busy — a fast `ls` never "
                     + "flashes the rail.",
                 value: $tabBadgeBusyDelaySeconds,
-                range: SettingsBusyDelayLadder.range,
-                step: SettingsBusyDelayLadder.step,
-                presets: SettingsBusyDelayLadder.presets,
-                readout: SettingsBusyDelayLadder.readout,
+                range: SettingsCatalog.Ladder.busyDelay.range,
+                step: SettingsCatalog.Ladder.busyDelay.step,
+                presets: SettingsCatalog.Ladder.busyDelay.presets,
+                readout: SettingsCatalog.Ladder.busyDelay.readout,
             )
             timingFooter(.live)
         }
@@ -991,7 +962,7 @@ private struct ControlsSettingsTab: View {
                     subtitle: "Treat the macOS Option key as Alt/Meta so terminal apps see Esc-prefixed "
                         + "sequences (Emacs, Vim word-jumps, readline). Off keeps Option free for accented "
                         + "characters.",
-                    options: SettingsOptionCatalog.optionAsAlt,
+                    options: SettingsCatalog.options(.optionAsAlt),
                     selection: store.refreshing($optionAsAlt),
                 ) { option in
                     SettingsOptionKeyArt(mode: option.value)
@@ -1030,10 +1001,10 @@ private struct ControlsSettingsTab: View {
                 "Scroll multiplier",
                 subtitle: "Scales every scroll gesture's distance.",
                 value: store.refreshing($scrollMultiplier),
-                range: SettingsScrollMultiplierLadder.range,
-                step: SettingsScrollMultiplierLadder.step,
-                presets: SettingsScrollMultiplierLadder.presets,
-                readout: SettingsScrollMultiplierLadder.readout,
+                range: SettingsCatalog.Ladder.scrollMultiplier.range,
+                step: SettingsCatalog.Ladder.scrollMultiplier.step,
+                presets: SettingsCatalog.Ladder.scrollMultiplier.presets,
+                readout: SettingsCatalog.Ladder.scrollMultiplier.readout,
             )
             // Was a `Stepper` at 1 000 lines a click: crossing its own 1 000…100 000 range took 99 clicks, so
             // the deep end was effectively unreachable. The magnitude stops make every useful depth one tap.
@@ -1041,10 +1012,10 @@ private struct ControlsSettingsTab: View {
                 "Scrollback",
                 subtitle: "How much history each pane keeps. Deeper buffers cost host memory per pane.",
                 value: scrollbackBinding,
-                range: SettingsScrollbackLadder.range,
-                step: SettingsScrollbackLadder.step,
-                presets: SettingsScrollbackLadder.presets,
-                readout: SettingsScrollbackLadder.readout,
+                range: SettingsCatalog.Ladder.scrollback.range,
+                step: SettingsCatalog.Ladder.scrollback.step,
+                presets: SettingsCatalog.Ladder.scrollback.presets,
+                readout: SettingsCatalog.Ladder.scrollback.readout,
             )
             timingFooter(.live)
         }
@@ -1065,7 +1036,7 @@ private struct ControlsSettingsTab: View {
                 "Right-Click Action",
                 subtitle: "What right-click does in the terminal viewport (Ctrl+right-click always opens the "
                     + "menu).",
-                options: SettingsOptionCatalog.rightClickActions,
+                options: SettingsCatalog.options(.rightClickAction),
                 selection: store.refreshing($rightClickAction),
             )
             toggleRow(
@@ -1330,7 +1301,7 @@ private struct AppearanceSettingsTab: View {
                 SettingsOptionCards(
                     "New tab position",
                     subtitle: "Where a new tab lands in the sidebar.",
-                    options: SettingsOptionCatalog.newTabPositions,
+                    options: SettingsCatalog.options(.newTabPosition),
                     selection: $newTabPosition,
                 ) { option in
                     SettingsTabPositionArt(position: option.value)
@@ -1371,10 +1342,10 @@ private struct AppearanceSettingsTab: View {
                 SettingsOptionCards(
                     "Density",
                     subtitle: "How much air each sidebar row gets.",
-                    options: SettingsOptionCatalog.densities,
+                    options: SettingsCatalog.stringOptions(.density),
                     selection: densityBinding,
                 ) { option in
-                    SettingsDensityArt(compact: option.value == SettingsOptionCatalog.densityCompact)
+                    SettingsDensityArt(compact: option.value == SettingsCatalog.densityCompact)
                 }
             }
 
@@ -1396,7 +1367,7 @@ private struct AppearanceSettingsTab: View {
                 // wells + live prompt preview are macOS-only.
                 SettingsOptionCards(
                     "Style",
-                    options: SettingsOptionCatalog.cursorStyles,
+                    options: SettingsCatalog.options(.cursorStyle),
                     selection: $store.terminal.cursorStyle,
                 ) { option in
                     SettingsCaretArt(style: option.value, color: SettingsInk.primary)
@@ -1437,7 +1408,7 @@ private struct AppearanceSettingsTab: View {
 
     private var densityBinding: Binding<String> {
         Binding(
-            get: { store.appearance.density ?? "comfortable" },
+            get: { store.appearance.density ?? SettingsCatalog.densityComfortable },
             set: { store.appearance.density = $0 },
         )
     }
@@ -1456,7 +1427,7 @@ private struct AppearanceSettingsTab: View {
             SettingsOptionCards(
                 "Window Size",
                 subtitle: "How new windows decide their initial dimensions.",
-                options: SettingsOptionCatalog.windowSizes,
+                options: SettingsCatalog.options(.windowSize),
                 selection: $windowSize,
             ) { option in
                 windowSizeArt(option.value)
@@ -1484,7 +1455,7 @@ private struct AppearanceSettingsTab: View {
                 "Remote Desktop Opens",
                 subtitle: "Fullscreen captures system shortcuts (⌘Tab) for the host while it lasts. "
                     + "Borderless keeps the local menu bar away until the pointer dwells at the top edge.",
-                options: SettingsOptionCatalog.desktopPresentations,
+                options: SettingsCatalog.options(.desktopPresentation),
                 selection: $desktopWindowPresentation,
             ) { option in
                 desktopPresentationArt(option.value)

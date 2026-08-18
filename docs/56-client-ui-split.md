@@ -708,3 +708,53 @@ STILL NOT HERE: `UITextInput`. iOS shows CJK candidates in the keyboard's own ba
 display and the space-bar-drag floating cursor. `PhoneKey`'s `FloatingCursor` is the prepared, tested
 half of the second and stays caller-less until then — the one remaining seam of that shape in this
 directory, and it is named here so it does not become another `TerminalInputHost`.
+
+### Increment 17 — what Settings offers, once
+
+`rust/slopdesk-workspace/src/settings_catalog.rs` now holds what a settings page can be set TO: the
+eight-section taxonomy with its titles, glyphs, order and the one row that needs a Mac; ten option
+groups with their labels and their honesty captions; and the three scalar ladders with their bounds,
+their magnitude stops and their readouts. `rust/slopdesk-ffi/src/settings_catalog.rs` marshals it as
+this boundary's list idiom — a count plus indexed accessors — and
+`Sources/SlopDeskClientCore/Settings/SettingsCatalog.swift` is the one reader.
+`SettingsOption.swift` and `SettingsOptionCatalog.swift` are deleted; the `SettingsSection` and
+`ApplyTiming` enums inside `SettingsView.swift` are gone as data.
+
+WHY IT MOVED, given it had already moved once. The Swift catalog existed because a `Picker`'s choices
+written as inline `Text("…").tag(…)` children are unreachable to a test and drift from the enum they
+tag. Nothing in that argument is about the view boundary — the table is strings and numbers with no
+framework in it, which by the repo's own rule means nothing kept it in Swift. What made it urgent is
+the split itself: two halves of the UI were about to render the same choices from two frameworks, and
+a card grid has no `…`, so a group that drifted would offer a DIFFERENT set of options per platform
+with nothing on screen saying so.
+
+`SettingsSection` STAYS an enum, and that is the interesting part. `SettingsSectionContent` maps a
+section to a `some View` through an exhaustive `switch`, which is the one thing about a section that
+cannot leave Swift. So the enum survives as a DISPATCH key with no data on it: `title`,
+`systemImage` and `isMacOSOnly` read the catalog row keyed by `rawValue`, and `SettingsSection.ordered`
+— a `compactMap` over the catalog, not `allCases` — is what both lists render. Declaration order here
+is no longer the contract; the boundary's is.
+
+THE PIN THAT COULD NOT CROSS, and the drift it caught immediately. Exhaustiveness needs a Swift
+enum's `allCases`, which the boundary cannot see, so `SettingsOptionCatalogTests` keeps it and drops
+everything else it used to assert (the labels, the captions, the order and the readouts are pinned in
+Rust now; restating them here would be the mirror fixture the port removed). It earned its keep on the
+first run: five tokens had been written in the port's own idiom — `after_current`, `context_menu`,
+`copy_or_paste`, `restore_last_session`, `new_window` — where what is on disk is hyphenated. A token
+is not a name this table chooses; it is already in a user's `UserDefaults`, so it is quoted, which is
+why `multiple_tabs` and `block_hollow` stay underscored next to five hyphenated neighbours.
+
+That failure is also why the test asserts NO DUPLICATES as loudly as no gaps. Four of these enums have
+a non-failable `init(rawValue:)` that repairs to a default rather than returning `nil`, so a
+misspelled token does not vanish into the `compactMap` where a missing card would be visible — it
+becomes a second card writing the default, identical on screen to the real one. The duplicate is the
+only trace it leaves.
+
+Two doors exist for reasons worth naming. `slopdesk_settings_option_menu_label` crosses the folded
+`label — caption` form rather than letting the near side concatenate it: where the en dash goes and
+what a captionless row reads as are rules, and a rule spelled in two languages is two rules.
+`slopdesk_settings_density_token` names the density group's two tokens because density is the one
+group the store persists as a bare string, with no enum to round-trip through — without it the near
+side would spell `"compact"` itself, in the card art's test and in two `?? "comfortable"` fallbacks.
+`check-supervisor` ratchets both, that the two deleted files stay deleted, and that no settings view
+spells a choice's own words.

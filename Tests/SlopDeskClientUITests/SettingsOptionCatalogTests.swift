@@ -1,19 +1,20 @@
-// SettingsOptionCatalogTests — the anti-drift pin for the illustrated card groups.
+// SettingsOptionCatalogTests — the one pin that could not cross to Rust.
 //
-// The card groups replaced `.menu` `Picker`s whose choices lived as inline `Text("…").tag(…)` children. That
-// move buys a real invariant a dropdown never had, and this file enforces it:
+// The lists themselves are `slopdesk_workspace::settings_catalog`: the labels, the captions, the order, the
+// ladders' stops and their readouts are all pinned there, in the language they live in. None of that is
+// restated here — a mirror fixture in a second language is two sources, which is the thing the port removed.
 //
-//   EXHAUSTIVE COVERAGE. A card grid has no "…" — an option missing from a `SettingsOptionCatalog` list is
-//   simply INVISIBLE and unreachable, with nothing on screen hinting that a choice exists. So every list is
-//   asserted to cover its enum's `allCases` exactly. Adding a `RightClickAction` / `CursorStyle` /
-//   `WindowSizeMode` case without adding its card fails here rather than shipping a setting no user can pick.
+// EXHAUSTIVE COVERAGE stays. A card grid has no "…": an option missing from a group is simply INVISIBLE and
+// unreachable, with nothing on screen hinting a choice exists. Rust cannot check that, because the set a group
+// must cover is a SWIFT enum's `allCases` — the boundary sees only tokens, and a token no case parses is
+// dropped by `SettingsCatalog.options(_:)`'s `compactMap` exactly as silently as a missing row. So every group
+// is asserted here to round-trip to its enum, both ways:
 //
-// Labels are pinned against an INDEPENDENT hand-written table (not the catalog's own derivation), the same
-// contract `SettingsSectionTaxonomyTests` holds for the section list.
+//   * every case of the enum appears as a card (nothing unreachable), and
+//   * every token the boundary sent parsed (nothing silently dropped — the count survives the `compactMap`).
 //
-// The scalar ladders are pinned for the properties that would break the control silently: preset stops must
-// lie INSIDE the slider's range (an out-of-range stop is a chip that can never light), and each readout is
-// checked at its edges — `Instant` at zero is a behaviour word, not a rounded `0.0s`.
+// That second half is what catches a token renamed on one side only, which is the failure the port introduced
+// and the only one it did.
 
 #if canImport(SwiftUI)
 import SlopDeskVideoProtocol
@@ -27,94 +28,74 @@ final class SettingsOptionCatalogTests: XCTestCase {
     // MARK: - Exhaustiveness (the regression that a card grid cannot show)
 
     func testCursorStyleCardsCoverEveryStyle() {
-        assertCoversAllCases(
-            SettingsOptionCatalog.cursorStyles.map(\.value),
-            TerminalPreferences.CursorStyle.allCases,
-            "cursor style",
-        )
+        assertRoundTrips(.cursorStyle, TerminalPreferences.CursorStyle.allCases, "cursor style")
     }
 
     func testNewTabPositionCardsCoverEveryPosition() {
-        assertCoversAllCases(
-            SettingsOptionCatalog.newTabPositions.map(\.value),
-            NewTabPosition.allCases,
-            "new tab position",
-        )
+        assertRoundTrips(.newTabPosition, NewTabPosition.allCases, "new tab position")
     }
 
     func testOptionAsAltCardsCoverEveryMode() {
-        assertCoversAllCases(
-            SettingsOptionCatalog.optionAsAlt.map(\.value),
-            OptionAsAlt.allCases,
-            "option-as-alt",
-        )
+        assertRoundTrips(.optionAsAlt, OptionAsAlt.allCases, "option-as-alt")
     }
 
     func testRightClickCardsCoverEveryAction() {
-        assertCoversAllCases(
-            SettingsOptionCatalog.rightClickActions.map(\.value),
-            RightClickAction.allCases,
-            "right-click action",
-        )
+        assertRoundTrips(.rightClickAction, RightClickAction.allCases, "right-click action")
     }
 
     func testOnLaunchCardsCoverEveryBehavior() {
-        assertCoversAllCases(
-            SettingsOptionCatalog.onLaunch.map(\.value),
-            OnLaunchBehavior.allCases,
-            "on-launch behaviour",
-        )
+        assertRoundTrips(.onLaunch, OnLaunchBehavior.allCases, "on-launch behaviour")
     }
 
     func testCloseConfirmationCardsCoverEveryPolicy() {
-        assertCoversAllCases(
-            SettingsOptionCatalog.closeConfirmation.map(\.value),
-            CloseConfirmationPolicy.allCases,
-            "close-confirmation policy",
+        assertRoundTrips(.closeConfirmation, CloseConfirmationPolicy.allCases, "close-confirmation policy")
+    }
+
+    /// The TAB row is the window row's shared PREFIX, not a second list: closing one tab loses exactly one
+    /// tab, so `multipleTabs` can never fire there and offering it would be a control that does nothing.
+    /// A prefix rather than a copy is what keeps the two rows' wording identical, so this pins the SUBSET
+    /// relation instead of a coverage one — the only group that is deliberately not exhaustive.
+    func testCloseConfirmationTabRowIsThePrefixWithoutMultipleTabs() {
+        let tab = SettingsCatalog.options(.closeConfirmationTab, as: CloseConfirmationPolicy.self)
+        let window = SettingsCatalog.options(.closeConfirmation, as: CloseConfirmationPolicy.self)
+        XCTAssertFalse(tab.map(\.value).contains(.multipleTabs), "one tab can never be more than one tab")
+        XCTAssertEqual(
+            tab.map(\.value), Array(window.map(\.value).prefix(tab.count)),
+            "the tab row must be the window row's prefix, so the shared choices read identically",
         )
+        XCTAssertEqual(tab.map(\.label), Array(window.map(\.label).prefix(tab.count)))
     }
 
     #if os(macOS)
     func testWindowSizeCardsCoverEveryMode() {
-        assertCoversAllCases(
-            SettingsOptionCatalog.windowSizes.map(\.value),
-            WindowSizeMode.allCases,
-            "window size mode",
-        )
+        assertRoundTrips(.windowSize, WindowSizeMode.allCases, "window size mode")
     }
 
     func testDesktopPresentationCardsCoverEveryKind() {
-        assertCoversAllCases(
-            SettingsOptionCatalog.desktopPresentations.map(\.value),
-            DesktopWindowPresentation.allCases,
-            "desktop presentation",
-        )
+        assertRoundTrips(.desktopPresentation, DesktopWindowPresentation.allCases, "desktop presentation")
     }
     #endif
 
-    // MARK: - Labels (independent table)
-
-    /// Card labels are SHORT — a card is ~96pt wide, so "Left Option Only" becomes "Left only" with the full
-    /// sentence living in the group subtitle. Pinned so a re-word can't quietly overflow the cards.
-    func testCardLabelsArePinned() {
-        XCTAssertEqual(SettingsOptionCatalog.cursorStyles.map(\.label), ["Block", "Hollow", "Bar", "Underline"])
-        XCTAssertEqual(SettingsOptionCatalog.optionAsAlt.map(\.label), ["Off", "Both", "Left only", "Right only"])
+    /// Density is the one group with no enum behind it — the store persists the raw string — so it has no
+    /// `allCases` to cover. What it has instead is two NAMED tokens, and the group must be exactly them:
+    /// a picker writing a token the appearance applier does not know leaves the tier silently unapplied.
+    func testDensityGroupIsExactlyItsTwoNamedTokens() {
         XCTAssertEqual(
-            SettingsOptionCatalog.rightClickActions.map(\.label),
-            ["Context menu", "Copy", "Paste", "Copy or paste", "Ignore"],
+            SettingsCatalog.stringOptions(.density).map(\.value),
+            [SettingsCatalog.densityComfortable, SettingsCatalog.densityCompact],
         )
-        XCTAssertEqual(
-            SettingsOptionCatalog.newTabPositions.map(\.label),
-            ["Automatic", "End", "After current"],
-        )
+        XCTAssertFalse(SettingsCatalog.densityCompact.isEmpty, "the token crossed empty")
+        XCTAssertNotEqual(SettingsCatalog.densityComfortable, SettingsCatalog.densityCompact)
     }
 
+    // MARK: - The crossing
+
     /// `auto` and `end` produce the SAME insertion index today (`NewTabPosition.insertionIndex` returns
-    /// `tabCount` for both), so the Automatic card must SAY so rather than implying a distinct behaviour its
-    /// diagram can't show. This asserts the alias both ways: the caption exists, and the two really do agree.
+    /// `tabCount` for both), which is what the Automatic card's caption claims. The caption lives in Rust;
+    /// the BEHAVIOUR it describes lives here, so this is the assertion that the claim is still true.
     func testAutomaticTabPositionDeclaresItsAlias() {
-        let automatic = SettingsOptionCatalog.newTabPositions.first { $0.value == .auto }
-        XCTAssertEqual(automatic?.caption, "Appends, like End")
+        let automatic = SettingsCatalog.options(.newTabPosition, as: NewTabPosition.self).first { $0.value == .auto }
+        XCTAssertNotNil(automatic?.caption, "the alias caption must reach the card")
         XCTAssertEqual(
             NewTabPosition.auto.insertionIndex(activeTabIndex: 0, tabCount: 3),
             NewTabPosition.end.insertionIndex(activeTabIndex: 0, tabCount: 3),
@@ -122,103 +103,83 @@ final class SettingsOptionCatalogTests: XCTestCase {
         )
     }
 
-    /// The density values are the raw strings the store persists. A typo here writes a token the appearance
-    /// applier doesn't know, so the tier silently never applies.
-    func testDensityValuesAreThePersistedTokens() {
-        XCTAssertEqual(SettingsOptionCatalog.densities.map(\.value), ["comfortable", "compact"])
-        XCTAssertEqual(SettingsOptionCatalog.densityComfortable, "comfortable")
-        XCTAssertEqual(SettingsOptionCatalog.densityCompact, "compact")
+    /// A menu row draws ``SettingsOption/menuLabel``, which is a CROSSED field. A door that answered zero
+    /// bytes would silently blank every item in every dropdown, so the near side checks it arrived and that
+    /// it is the label once a caveat is folded in.
+    func testMenuLabelsCrossRatherThanBlanking() {
+        for option in SettingsCatalog.options(.closeConfirmation, as: CloseConfirmationPolicy.self) {
+            XCTAssertFalse(option.menuLabel.isEmpty, "a blank menu item for \(option.value)")
+            XCTAssertTrue(
+                option.menuLabel.hasPrefix(option.label),
+                "the folded form starts with the label it folds into",
+            )
+            if option.caption == nil {
+                XCTAssertEqual(option.menuLabel, option.label, "no caveat, no dangling dash")
+            } else {
+                XCTAssertNotEqual(option.menuLabel, option.label, "a caveat must survive into the dropdown")
+            }
+        }
     }
 
-    /// A menu item has no second line, so ``SettingsOption/menuLabel`` folds the caption in after an en dash
-    /// — otherwise the honesty a caption carries (`auto` IS `end`; "Running process" means "only if busy")
-    /// would simply vanish when a group renders as a dropdown instead of as cards.
-    func testMenuLabelFoldsTheCaptionIn() {
-        let auto = SettingsOptionCatalog.newTabPositions.first { $0.value == .auto }
-        XCTAssertEqual(auto?.menuLabel, "Automatic — Appends, like End")
-        let process = SettingsOptionCatalog.closeConfirmation.first { $0.value == .process }
-        XCTAssertEqual(process?.menuLabel, "Running process — only if busy")
-        // No caption ⇒ the label alone, with no dangling dash.
-        let always = SettingsOptionCatalog.closeConfirmation.first { $0.value == .always }
-        XCTAssertEqual(always?.menuLabel, "Always")
+    /// A ladder's stops and its readout cross as a count plus indexed accessors, where an unknown index is a
+    /// `NaN` the near side drops. That makes a slider with no chips, or a blank readout, a silent outcome —
+    /// so the near side asserts the ladder arrived whole and that its stops can actually be reached.
+    func testEveryLadderCrossesWithStopsInsideItsRange() {
+        for ladder in SettingsCatalog.Ladder.allCases {
+            let range = ladder.range
+            XCTAssertLessThan(range.lowerBound, range.upperBound, "\(ladder) crossed with an empty range")
+            XCTAssertGreaterThan(ladder.step, 0, "\(ladder) crossed with no granularity")
+            XCTAssertFalse(ladder.presets.isEmpty, "\(ladder) crossed with no stops")
+            for preset in ladder.presets {
+                XCTAssertTrue(
+                    range.contains(preset.value),
+                    "\(ladder) preset \(preset.label) (\(preset.value)) is outside \(range)",
+                )
+                XCTAssertFalse(preset.label.isEmpty, "\(ladder) stop \(preset.value) crossed unlabelled")
+            }
+            XCTAssertFalse(ladder.readout(range.lowerBound).isEmpty, "\(ladder) reads as nothing at its floor")
+            XCTAssertFalse(ladder.readout(range.upperBound).isEmpty, "\(ladder) reads as nothing at its ceiling")
+        }
     }
 
-    // MARK: - Scalar ladders
-
-    /// A preset outside the slider's own range is a chip that can never light (and, when tapped, writes a
-    /// value the slider immediately clamps away).
-    func testEveryPresetStopLiesInsideItsRange() {
-        assertPresetsInRange(SettingsScrollbackLadder.presets, SettingsScrollbackLadder.range, "scrollback")
-        assertPresetsInRange(
-            SettingsScrollMultiplierLadder.presets, SettingsScrollMultiplierLadder.range, "scroll multiplier",
-        )
-        assertPresetsInRange(SettingsBusyDelayLadder.presets, SettingsBusyDelayLadder.range, "busy delay")
-    }
-
-    /// The scrollback range + step are the values the old `Stepper` carried, so the ladder is a control swap,
-    /// not a silent policy change to how deep a buffer may be.
-    func testScrollbackLadderKeepsTheStepperRange() {
-        XCTAssertEqual(SettingsScrollbackLadder.range.lowerBound, 1000)
-        XCTAssertEqual(SettingsScrollbackLadder.range.upperBound, 100_000)
-        XCTAssertEqual(SettingsScrollbackLadder.step, 1000)
-    }
-
-    /// Thousands are grouped with a NARROW NO-BREAK SPACE (U+202F), not a comma — the readout sits in
-    /// monospaced digits, where a comma reads as a decimal separator in half the world.
-    func testScrollbackReadoutGroupsThousands() {
-        XCTAssertEqual(SettingsScrollbackLadder.grouped(1000), "1\u{202F}000")
-        XCTAssertEqual(SettingsScrollbackLadder.grouped(100_000), "100\u{202F}000")
-        XCTAssertEqual(SettingsScrollbackLadder.grouped(999), "999")
-        XCTAssertEqual(SettingsScrollbackLadder.readout(50000), "50\u{202F}000 lines")
-    }
-
-    /// Zero delay reads as the BEHAVIOUR ("Instant"), not as a delay that happens to round to nothing.
-    func testBusyDelayReadoutNamesInstantAtZero() {
-        XCTAssertEqual(SettingsBusyDelayLadder.readout(0), "Instant")
-        XCTAssertEqual(SettingsBusyDelayLadder.readout(0.5), "0.5s")
-        XCTAssertEqual(SettingsBusyDelayLadder.readout(10), "10.0s")
-    }
-
-    /// The multiplier readout keeps two decimals so a quarter-step is visible — matching the slider's own
-    /// granularity (a `%.1f` would render 1.25 and 1.30 identically).
-    func testScrollMultiplierReadoutShowsQuarterSteps() {
-        XCTAssertEqual(SettingsScrollMultiplierLadder.readout(1), "1.00×")
-        XCTAssertEqual(SettingsScrollMultiplierLadder.readout(1.25), "1.25×")
+    /// The apply-timing chip's two words are the boundary's; that they arrive, differ, and carry a glyph is
+    /// the near side's concern — a blank chip is invisible rather than wrong-looking.
+    func testTimingChipsCrossDistinctly() {
+        let labels = SettingsCatalog.ApplyTiming.allCases.map(\.label)
+        let symbols = SettingsCatalog.ApplyTiming.allCases.map(\.symbol)
+        XCTAssertEqual(Set(labels).count, labels.count, "the two timings must read differently")
+        XCTAssertEqual(Set(symbols).count, symbols.count, "the two timings must look different")
+        XCTAssertFalse(labels.contains(where: \.isEmpty))
+        XCTAssertFalse(symbols.contains(where: \.isEmpty))
     }
 
     // MARK: - Helpers
 
-    /// Assert an option list covers its enum exactly: same set, no duplicates, no strays.
-    private func assertCoversAllCases<Value: Hashable>(
-        _ listed: [Value],
+    /// Assert a group round-trips to its enum: every case is offered, and every token the boundary sent
+    /// parsed. The second half is the one the `compactMap` would otherwise swallow.
+    private func assertRoundTrips<Value: RawRepresentable & Hashable & Sendable>(
+        _ group: SettingsCatalog.Group,
         _ allCases: [Value],
         _ what: String,
         file: StaticString = #filePath,
         line: UInt = #line,
-    ) {
+    ) where Value.RawValue == String {
+        let parsed = SettingsCatalog.options(group, as: Value.self)
         XCTAssertEqual(
-            Set(listed), Set(allCases),
+            Set(parsed.map(\.value)), Set(allCases),
             "every \(what) needs a card — an unlisted case is unreachable in a card grid",
             file: file, line: line,
         )
         XCTAssertEqual(
-            listed.count, Set(listed).count, "duplicate \(what) card", file: file, line: line,
+            parsed.count, SettingsCatalog.tokens(group).count,
+            "a \(what) token the boundary sent did not parse — renamed on one side only",
+            file: file, line: line,
         )
-    }
-
-    private func assertPresetsInRange(
-        _ presets: [(label: String, value: Double)],
-        _ range: ClosedRange<Double>,
-        _ what: String,
-        file: StaticString = #filePath,
-        line: UInt = #line,
-    ) {
-        for preset in presets {
-            XCTAssertTrue(
-                range.contains(preset.value),
-                "\(what) preset \(preset.label) (\(preset.value)) is outside \(range)",
-                file: file, line: line,
-            )
+        XCTAssertEqual(
+            parsed.count, Set(parsed.map(\.value)).count, "duplicate \(what) card", file: file, line: line,
+        )
+        for option in parsed {
+            XCTAssertFalse(option.label.isEmpty, "\(what) \(option.value) crossed unlabelled", file: file, line: line)
         }
     }
 }

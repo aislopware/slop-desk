@@ -833,6 +833,90 @@ size_t slopdesk_ws_workdir_keyword(uint8_t kind, uint8_t *out, size_t cap);
 // directory. Nothing is copied back — every caller already holds both strings.
 uint8_t slopdesk_ws_workdir_source(uint8_t kind, bool active_cwd_known);
 
+// ---- What Settings offers ----
+//
+// A settings page is two things stacked: a control, which is a view and belongs to whichever
+// framework is drawing, and the ANSWER to "what can this be set to, what is each choice called,
+// what does the number read as" — which is the same on a phone as on a Mac and is not a view at
+// all. Every door here is the second thing.
+//
+// The list idiom is a COUNT plus indexed accessors. A page renders once per open, so the call count
+// is not what to optimise; being able to add an option without touching a struct layout is.
+//
+// EVERY OPTION CROSSES AS THE VALUE THE STORE PERSISTS, never as a case index. The near side
+// rebuilds its own enum from the token with the `RawRepresentable` init it already has, so
+// inserting a case in either language cannot silently re-point a row at a different value.
+
+// The GROUPS, in case-index order. One control's worth of choices each.
+#define SLOPDESK_SETTINGS_GROUP_CURSOR_STYLE           ((uint8_t)0)
+#define SLOPDESK_SETTINGS_GROUP_NEW_TAB_POSITION       ((uint8_t)1)
+#define SLOPDESK_SETTINGS_GROUP_DENSITY                ((uint8_t)2)
+#define SLOPDESK_SETTINGS_GROUP_WINDOW_SIZE            ((uint8_t)3)
+#define SLOPDESK_SETTINGS_GROUP_DESKTOP_PRESENTATION   ((uint8_t)4)
+#define SLOPDESK_SETTINGS_GROUP_OPTION_AS_ALT          ((uint8_t)5)
+#define SLOPDESK_SETTINGS_GROUP_RIGHT_CLICK_ACTION     ((uint8_t)6)
+#define SLOPDESK_SETTINGS_GROUP_ON_LAUNCH              ((uint8_t)7)
+#define SLOPDESK_SETTINGS_GROUP_CLOSE_CONFIRMATION     ((uint8_t)8)
+#define SLOPDESK_SETTINGS_GROUP_CLOSE_CONFIRMATION_TAB ((uint8_t)9)
+
+// The LADDERS — sliders with magnitude stops on them.
+#define SLOPDESK_SETTINGS_LADDER_SCROLLBACK        ((uint8_t)0)
+#define SLOPDESK_SETTINGS_LADDER_SCROLL_MULTIPLIER ((uint8_t)1)
+#define SLOPDESK_SETTINGS_LADDER_BUSY_DELAY        ((uint8_t)2)
+
+// When a setting takes effect, as a DATA attribute so the distinction can be a chip not prose.
+#define SLOPDESK_SETTINGS_TIMING_LIVE      ((uint8_t)0)
+#define SLOPDESK_SETTINGS_TIMING_RECONNECT ((uint8_t)1)
+
+// How many choices a group offers; `0` for a group index no group has.
+size_t slopdesk_settings_option_count(uint8_t group);
+// One choice's three strings. The token is what the store PERSISTS; the caption is the honesty
+// channel and is `0` for a choice that needs no caveat — which reads the same as a missing row,
+// deliberately, since a caller that got here already learned the row exists from the count.
+size_t slopdesk_settings_option_token(uint8_t group, size_t index, uint8_t *out, size_t cap);
+size_t slopdesk_settings_option_label(uint8_t group, size_t index, uint8_t *out, size_t cap);
+size_t slopdesk_settings_option_caption(uint8_t group, size_t index, uint8_t *out, size_t cap);
+// The one-line form a MENU shows: the label with the caveat folded in after an en dash. Its own door
+// because the fold is a rule, and a rule re-concatenated on the near side is two rules.
+size_t slopdesk_settings_option_menu_label(uint8_t group, size_t index, uint8_t *out, size_t cap);
+// The DENSITY group's two tokens, by name. It is the one group the store persists as a bare string
+// rather than through an enum, so without this the near side would spell `"compact"` itself.
+size_t slopdesk_settings_density_token(bool compact, uint8_t *out, size_t cap);
+
+// The 8-section taxonomy — one row in the Mac's navigator, one row in the phone's list, one order.
+size_t slopdesk_settings_section_count(void);
+size_t slopdesk_settings_section_id(size_t index, uint8_t *out, size_t cap);
+size_t slopdesk_settings_section_title(size_t index, uint8_t *out, size_t cap);
+size_t slopdesk_settings_section_symbol(size_t index, uint8_t *out, size_t cap);
+// Whether the compact list drops this section entirely. Only Key Bindings does, and for a reason
+// about CAPTURE rather than screen size: recording a chord is an NSEvent monitor with no touch
+// equivalent, so the page would offer a field nothing can fill.
+bool slopdesk_settings_section_is_mac_only(size_t index);
+
+// The apply-timing chip.
+size_t slopdesk_settings_timing_label(uint8_t timing, uint8_t *out, size_t cap);
+size_t slopdesk_settings_timing_symbol(uint8_t timing, uint8_t *out, size_t cap);
+
+// A ladder's range and granularity. `known` false leaves the three numbers at zero.
+typedef struct {
+    double min;
+    double max;
+    double step;
+    bool   known;
+} SlopDeskSettingsLadder;
+SlopDeskSettingsLadder slopdesk_settings_ladder(uint8_t ladder);
+// Its magnitude stops — the values a user actually picks, not an even subdivision of the range. A
+// stop that does not exist reports NaN rather than zero, because zero IS a legitimate stop.
+size_t slopdesk_settings_ladder_preset_count(uint8_t ladder);
+double slopdesk_settings_ladder_preset_value(uint8_t ladder, size_t index);
+size_t slopdesk_settings_ladder_preset_label(uint8_t ladder, size_t index, uint8_t *out, size_t cap);
+// What the slider's current value reads as. Each ladder's readout is about its own unit: scrollback
+// is thousands-grouped with a NARROW NO-BREAK SPACE (never a locale comma — the readout is
+// monospaced digits, where a comma reads as a decimal point in half the world), the multiplier
+// carries two decimals to match its own step, and the delay says `Instant` at zero because that is
+// the BEHAVIOUR changing rather than a delay that happens to be short.
+size_t slopdesk_settings_ladder_readout(uint8_t ladder, double value, uint8_t *out, size_t cap);
+
 // ---- What the phone's keyboard sends ----
 //
 // A touch device is forced to split physical input in two: the keys a terminal needs raw, and

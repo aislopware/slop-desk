@@ -111,6 +111,7 @@ pub mod scroll_resample;
 pub mod search_rank;
 pub mod send_pacing;
 pub mod session_state;
+pub mod settings_catalog;
 pub mod sidecars;
 pub mod supervisor_frame;
 pub mod surface_gesture;

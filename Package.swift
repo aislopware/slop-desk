@@ -366,7 +366,8 @@ let package = Package(
                 // Settings options name video-path knobs.
                 "SlopDeskVideoProtocol",
                 // `FuzzyMatcher` marshals `slopdesk_fuzzy_score` — fzf's `FuzzyMatchV2` is Rust, and
-                // every search field in the app ranks through it.
+                // every search field in the app ranks through it. `SettingsCatalog` marshals the
+                // rest: what Settings OFFERS is one table of strings both UI splits read.
                 "CSlopDeskFFI",
                 // The `SettingsKey` app-flag namespace and the persisted chrome flags.
                 .product(name: "Defaults", package: "Defaults"),

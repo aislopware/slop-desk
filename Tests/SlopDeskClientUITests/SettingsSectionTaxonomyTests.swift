@@ -1,10 +1,15 @@
-// SettingsSectionTaxonomyTests — the anti-drift pin for the 8-section Settings taxonomy.
+// SettingsSectionTaxonomyTests — the pin the boundary CANNOT hold: that every dispatch case is reachable.
 //
-// The macOS tab strip and the (future) iOS settings sheet both drive their sections from `SettingsSection`
-// (`Settings/SettingsView.swift`), so a single source can't render an out-of-order / missing / re-iconed
-// section. This pins the set + order + titles + sidebar glyphs against an INDEPENDENT expectation
-// table (not the enum's own derivation), so dropping, reordering, renaming, or re-iconing a section fails
-// the build — exactly as `SettingsKeyTests.testSettingsKeyStringsAreStable` pins the key strings.
+// The taxonomy itself — which sections exist, what they are called, their glyphs, their order, and the one
+// that needs a Mac — is `slopdesk_workspace::settings_catalog::Section`, pinned there against its own
+// independent table. Restating that table here would be a cross-language mirror, so it is gone.
+//
+// What is left is the half of the contract Rust cannot see. `SettingsSection` is a Swift enum because
+// `SettingsSectionContent`'s exhaustive `switch` needs one; the catalog's rows are keyed by STRING. So a case
+// added to the enum with no row behind it, or a row whose id no case parses, produces a section that either
+// renders with no title or never renders at all — and both are silent. `SettingsSection.ordered` is a
+// `compactMap`, which means a dropped row is INVISIBLE exactly the way a dropped card is. This asserts the
+// two lists are the same set, in the boundary's order.
 //
 // SECTION-CONTENT GAPS ARE INTENTIONAL (the per-section bodies are `private` to `SettingsView.swift`, so the
 // gaps are pinned by the doc-comment notes on each tab struct rather than by an assertion here — recorded for
@@ -18,44 +23,33 @@
 
 #if canImport(SwiftUI)
 import XCTest
+@testable import SlopDeskClientCore
 @testable import SlopDeskClientUI
 
 final class SettingsSectionTaxonomyTests: XCTestCase {
-    /// The Settings taxonomy, frozen: ordered (rawValue, title, systemImage). Edited only with an intentional
-    /// taxonomy change (and a matching screenshot/spec update).
-    ///
-    /// 5th-ROW LABEL NOTE: the reference screenshots disagree on this row's label across revisions —
-    /// `all-settings.png` and `notification-setting.png` label it **Agents**, while `tab-setting.png` /
-    /// `launch-option.png` label it **Integrations**. slopdesk pins to all-settings.png's **"Agents"**; a
-    /// future reviewer comparing against a build that shows "Integrations" should NOT treat that as a
-    /// regression (the label is the only thing that differs — same row, same `powerplug` glyph, same slot).
-    private static let expected: [(raw: String, title: String, icon: String)] = [
-        ("general", "General", "exclamationmark.circle"),
-        ("shell", "Shell", "terminal"),
-        ("controls", "Controls", "cursorarrow"),
-        ("editor", "Editor", "doc.text"),
-        ("agents", "Agents", "powerplug"),
-        ("appearance", "Appearance", "paintpalette"),
-        ("keybindings", "Key Bindings", "bolt"),
-        ("advanced", "Advanced", "wrench"),
-    ]
-
-    func testSectionTaxonomyIsPinned() {
-        let cases = SettingsSection.allCases
-        XCTAssertEqual(cases.count, Self.expected.count, "the taxonomy must have exactly 8 sections")
-        XCTAssertEqual(cases.count, 8)
-        for (section, want) in zip(cases, Self.expected) {
-            XCTAssertEqual(section.rawValue, want.raw, "section order / rawValue drifted")
-            XCTAssertEqual(section.title, want.title, "title drifted for \(want.raw)")
-            XCTAssertEqual(section.systemImage, want.icon, "systemImage drifted for \(want.raw)")
-            XCTAssertEqual(section.id, want.raw, "id must be the rawValue")
-        }
+    /// Every dispatch case has a catalog row, and every catalog row a dispatch case — the same set, in the
+    /// BOUNDARY's order. A case with no row would render titleless; a row with no case would vanish out of
+    /// `ordered`'s `compactMap` with nothing on screen hinting it existed.
+    func testEveryDispatchCaseIsReachableFromTheCatalog() {
+        let ordered = SettingsSection.ordered
+        XCTAssertEqual(
+            Set(ordered), Set(SettingsSection.allCases),
+            "a case with no catalog row, or a row no case parses — either way a section no one can open",
+        )
+        XCTAssertEqual(ordered.map(\.rawValue), SettingsCatalog.sections.map(\.id), "order is the catalog's")
+        XCTAssertEqual(ordered.count, Set(ordered).count, "a case listed twice")
     }
 
-    /// Titles + icons are unique (no two tabs collide in the strip).
-    func testTitlesAndIconsAreUnique() {
-        let titles = SettingsSection.allCases.map(\.title)
-        let icons = SettingsSection.allCases.map(\.systemImage)
+    /// The crossing actually delivers. A door that answered zero bytes would leave every row blank rather
+    /// than failing, so the near side asserts it got words — and that no two sections collide in the strip.
+    func testEverySectionCrossesWithAWordAndAGlyph() {
+        for section in SettingsSection.ordered {
+            XCTAssertFalse(section.title.isEmpty, "\(section.rawValue) crossed with no title")
+            XCTAssertFalse(section.systemImage.isEmpty, "\(section.rawValue) crossed with no glyph")
+            XCTAssertEqual(section.id, section.rawValue, "id must be the rawValue — it is the catalog's key")
+        }
+        let titles = SettingsSection.ordered.map(\.title)
+        let icons = SettingsSection.ordered.map(\.systemImage)
         XCTAssertEqual(Set(titles).count, titles.count, "duplicate section titles")
         XCTAssertEqual(Set(icons).count, icons.count, "duplicate section icons")
     }
@@ -97,21 +91,16 @@ final class SettingsSectionTaxonomyTests: XCTestCase {
         )
     }
 
-    /// The compact iOS settings sheet (`SettingsSheet`) drops the macOS-only sections via the
-    /// `isMacOSOnly` filter. Pins — against an INDEPENDENT expectation, not the property's own derivation —
-    /// that **Keybindings** is the sole macOS-only section (its chord capture is a macOS `NSEvent` monitor)
-    /// and that the iOS list is exactly the cross-platform sections in taxonomy order. Showing
-    /// Keybindings on iOS (or dropping another section) fails this. `isMacOSOnly` is cross-platform, so this
-    /// runs headlessly on the macOS `swift test` host.
-    func testMacOSOnlySectionsAreKeybindingsOnly() {
-        let macOnly = SettingsSection.allCases.filter(\.isMacOSOnly).map(\.rawValue)
-        XCTAssertEqual(macOnly, ["keybindings"], "Keybindings is the only macOS-only section")
-
-        let iosVisible = SettingsSection.allCases.filter { !$0.isMacOSOnly }.map(\.rawValue)
+    /// The compact sheet's list is the taxonomy MINUS what needs a Mac, and the `isMacOSOnly` flag has to
+    /// survive the crossing for that subtraction to happen at all — a door that answered `false` for every
+    /// row would put the macOS `NSEvent` chord capture on a phone with no capture UI behind it. Pins that
+    /// the filter removes exactly Keybindings and leaves the rest in order.
+    func testTheCompactListDropsWhatNeedsAMac() {
+        XCTAssertFalse(SettingsSection.compact.contains(.keybindings), "chord capture is a macOS NSEvent monitor")
         XCTAssertEqual(
-            iosVisible,
-            ["general", "shell", "controls", "editor", "agents", "appearance", "advanced"],
-            "the iOS sheet shows the seven cross-platform sections in taxonomy order",
+            SettingsSection.compact,
+            SettingsSection.ordered.filter { $0 != .keybindings },
+            "Keybindings is the only section the compact list drops",
         )
     }
 }

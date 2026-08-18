@@ -126,7 +126,7 @@ struct CursorPreviewView: View {
             // uses — so a card and the live prompt can never disagree about what "Hollow" looks like.
             SettingsOptionCards(
                 "Cursor Style",
-                options: SettingsOptionCatalog.cursorStyles,
+                options: SettingsCatalog.options(.cursorStyle),
                 selection: $store.terminal.cursorStyle,
             ) { option in
                 SettingsCaretArt(style: option.value, color: cursorPreviewColor)

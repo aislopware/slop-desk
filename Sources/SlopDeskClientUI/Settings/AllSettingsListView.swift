@@ -17,6 +17,7 @@
 #if canImport(SwiftUI)
 import Defaults
 import SFSafeSymbols
+import SlopDeskClientCore
 import SlopDeskVideoProtocol
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
@@ -213,7 +214,7 @@ struct AllSettingsListView: View {
         case "scrollback-limit": "\(store.terminal.scrollbackLines)"
         case "cursor-style": store.terminal.cursorStyle.displayName
         case "cursor-style-blink": store.terminal.cursorBlink.rawValue.capitalized
-        case SettingsKey.density: (store.appearance.density ?? "comfortable").capitalized
+        case SettingsKey.density: (store.appearance.density ?? SettingsCatalog.densityComfortable).capitalized
         // Device-local, so it is read from the `WorkspaceStore` rather than a typed prefs model.
         case SharedFocusSetting.catalogKey: SharedFocusSetting.valueText(workspaceStore)
         default: entry.defaultText

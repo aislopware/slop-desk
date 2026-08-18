@@ -41,6 +41,8 @@
 //!   input paths a touch device is forced to have, and encoded under the mode the far side set.
 //! - [`shell_quoting`] — any text as one shell word, for everything that types a path into a shell.
 //! - [`session`] — what a pane IS, and the session → tab → pane values that hold them.
+//! - [`settings_catalog`] — what Settings OFFERS: the sections, the choices in every group, and the
+//!   scalar ladders' stops and readouts.
 //! - [`tab_ordering`] — the sidebar's one bucketing rule, and where focus lands after a close.
 //! - [`templates`] — the two things that spawn panes, and the bytes they type into them.
 //! - [`tree_ops`] — every operation a gesture or an intent performs on the arrangement.
@@ -81,6 +83,7 @@ pub mod search_rank;
 pub mod secrets;
 pub mod send_keys;
 pub mod session;
+pub mod settings_catalog;
 pub mod shell_quoting;
 pub mod split_layout;
 pub mod split_tree;

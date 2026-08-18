@@ -5033,6 +5033,51 @@ for bit in "shift = Self(rawValue: 1 << 0)" "control = Self(rawValue: 1 << 1)" \
 done
 printf 'check-supervisor: the phone key path is Rust; PhoneKey.swift only carries it across.\n'
 
+# ── What Settings OFFERS is one table, not one per framework ──────────────────────────────────
+# The choices, their labels, their honest captions, the taxonomy and the ladders' stops and readouts
+# are `slopdesk_workspace::settings_catalog`. They were already lifted once, out of view bodies into
+# a Swift catalog, and the argument for lifting them did not stop at the view boundary: the table has
+# no framework in it, and the two halves of the UI split were about to read it from two.
+#
+# The two Swift files that held it must stay gone. A card grid has no "…", so a group that drifted
+# between the two languages would render a DIFFERENT set of choices per platform with nothing on
+# screen saying so, and both halves would keep passing their own tests.
+for gone in SettingsOption SettingsOptionCatalog; do
+  if [[ -e "Sources/SlopDeskClientCore/Settings/${gone}.swift" ]]; then
+    fail "Sources/SlopDeskClientCore/Settings/${gone}.swift is back — the settings catalog is Rust (docs/56)"
+  fi
+done
+catalog_swift=Sources/SlopDeskClientCore/Settings/SettingsCatalog.swift
+if [[ ! -e "${catalog_swift}" ]]; then
+  fail "${catalog_swift} is gone — without it no settings control has any choices to offer (docs/56)"
+fi
+# The marshaller must actually call the doors. A `SettingsCatalog` that answered from a Swift array
+# again would pass every test above, because the tests read it rather than the boundary.
+for door in slopdesk_settings_option_count slopdesk_settings_option_token slopdesk_settings_option_label \
+  slopdesk_settings_option_caption slopdesk_settings_option_menu_label slopdesk_settings_density_token \
+  slopdesk_settings_section_count slopdesk_settings_section_id slopdesk_settings_section_title \
+  slopdesk_settings_section_symbol slopdesk_settings_section_is_mac_only slopdesk_settings_timing_label \
+  slopdesk_settings_timing_symbol slopdesk_settings_ladder slopdesk_settings_ladder_preset_count \
+  slopdesk_settings_ladder_preset_value slopdesk_settings_ladder_preset_label slopdesk_settings_ladder_readout; do
+  if ! grep -qF "${door}" "${catalog_swift}"; then
+    fail "${catalog_swift} stopped calling ${door} — an answer it holds itself is a table written twice"
+  fi
+  if ! grep -qF "${door}" rust/slopdesk-ffi/include/slopdesk_ffi.h; then
+    fail "${door} is missing from slopdesk_ffi.h — Swift cannot reach a door the header does not name"
+  fi
+done
+# And no settings VIEW may spell a choice's own words. A label typed into a card is the second table:
+# it renders, it looks right, and it is unreachable from the pin that would have caught it.
+# shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
+settings_words=$(spells 'SettingsOption\(\.|"Applies (now|on reconnect)"|"(Copy or paste|Left only|Right only)"' \
+  $(repo_files 'Sources/SlopDeskClientUI/Settings/*.swift') $(repo_files 'Sources/SlopDeskMacUI/**/*.swift') \
+  2> /dev/null || true)
+if [[ -n "${settings_words}" ]]; then
+  printf '%s\n' "${settings_words}" >&2
+  fail "a settings view spelled a CHOICE — the words are settings_catalog's, the view only draws them"
+fi
+printf 'check-supervisor: what Settings offers is one Rust table; SettingsCatalog.swift only reads it.\n'
+
 # ── One device-panel law, two device protocols ────────────────────────────────────────────────
 # The simulator panel and the Android panel differ in almost everything and should — one rotates on
 # the client and the other on the device, one sends touches in the fitted rect's space and the other
