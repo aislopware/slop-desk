@@ -2443,6 +2443,51 @@ the debt passes. Where a shared pixel-verify harness should live is a design cal
 `SlateProjectIsland` note already flagged this exact pair as "an edge the rename still has to answer
 for", and this is what makes that debt fail loudly instead of sitting in a doc.
 
+### Increment 57c — wave P's first three, and an amendment 56c owes itself
+
+**P1, P2 and P3 landed together; what they have in common is the point.** Each moved something that is
+not a drawing out of a view that is about to be written twice, and in each case the thing that moved was
+an ORDERING or a BALANCE — the two shapes a hand-translation into a second language loses first, because
+neither one has a type.
+
+- **P1 — `TerminalPaneWiring`.** Five wire/clear pairs out of a 555-line `View` body. The load-bearing
+  part is not the closures, it is that `clearSecureInput` releases the process-global
+  `EnableSecureEventInput` *above* its `guard let model`. Behind the guard, the release is skipped for
+  exactly the pane that most needs it — one whose model has already gone — and the lock outlives the
+  app's own window, taking the keyboard out of every other app. No crash, no log; the user reports that
+  typing stopped working everywhere.
+- **P2 — `PaneCanvasDragController`.** The tear-off's two steps are ordered: the drop placement is
+  recorded BEFORE `store.detachPaneToWindow`, because `detachedPanes` mutates synchronously inside that
+  call and the satellite coordinator reads the placement as it opens the window. Reversed, the window
+  still opens — at the centre-cascade instead of under the cursor, and only when the reader wins the
+  race. An occasionally-wrong-place window is the worst failure shape there is, and until this descended
+  it was pinned by a comment.
+- **P3 — `PaneMoveEscapeMonitorController`.** An `NSEvent` monitor and an FFI call behind an
+  `NSViewRepresentable` whose `makeNSView` returned a bare `NSView()` — SwiftUI's only way to hang a
+  LIFETIME on something that is not a drawing, which is the whole tell. Increment 54 ruled on this exact
+  shape for `SystemKeyCaptureController`; a monitor draws nothing either.
+
+**Running them found what writing them could not.** The three ports were written by agents that cannot
+build, and two shipped defects no compiler or lint could see. The monitor cancelled nothing once
+disarmed — correct — and still returned "swallow", so a keyDown already in flight when the drag
+committed ended the drag AND made the user's Escape vanish: no sheet closed, no overlay dismissed, once,
+under a race. And a test asserted `move?.zone == .none` where `.none` on a `PaneDropZone?` is
+`Optional.none` — it reads as "no landing" and means "no drag", type-checks either way, so the case
+meant to pin a masked preview was asserting its opposite. **Both are arguments for the same rule: a
+batch is not done when it is written, it is done when its suite has run.**
+
+**P7 is already paid.** The three ungated pair-tables this page lists — `FindTogglePillAppearance`,
+`PaneStatusPillFill`, `DropZoneLabelInk` — are rows in `named_ink_tables` now, so all six tables that
+resolve to a `Color` are pinned as pairs. The first of them was not a future risk but 56c's stated
+failure already realised: both halves shipping, its own header naming the invariant, nothing checking it.
+
+**The amendment 56c owes itself.** 56c's title claims the canvas's *last* kind 2 was closed before a
+line of AppKit was written. `TerminalLeafView` was standing there the whole time — 555 lines holding
+five callback pairs, a connect decision, an autotype decision and a process-global lock. The claim was
+not wrong about the file it examined; it was wrong to generalise from one file to "the canvas". Wave P's
+second sweep found ~445 more lines of not-a-drawing after the first found ~2,900. **A sweep that finds a
+tail is not a failed sweep — but a sweep that reports "last" is a claim about files it never opened.**
+
 ## Stage D ledger — what the rename actually costs
 
 `SlopDeskClientUI` cannot fold into `SlopDeskPhoneUI` while `SlopDeskMacUI` still imports it. That is
@@ -2706,6 +2751,11 @@ claims not to do that.
 | **P7** | Three missing pair-ratchets | Below |
 
 P1–P4 are fully parallel. P5 follows P2 (both edit `SplitContainer`), P6 follows P3, P7 follows P6.
+
+**Landed 2026-08-20: P1, P2, P3 (increment 57c) and P7.** P7 came early rather than last — its three
+rows are ratchets, not code, and the table above had already identified all three, so there was nothing
+for P6 to hand it. Its stated dependency was an artefact of listing it last, which is the same
+scheduling accident this page flags for P5 one paragraph down.
 
 **P5 is the highest-leverage item on this page and the ledger schedules it last by accident.** Kind 3
 — *"the compositor rect differs from the hosting view's frame by the island moat"* — is a statement
