@@ -954,6 +954,11 @@ let package = Package(
                 // column, which takes an `AppConnection`, which takes a `ConnectionRegistry`. The
                 // fixture hands it one that always refuses, so no socket is ever opened.
                 "SlopDeskTransport",
+                // The band rollup's pixel probe draws the sidebar toggle and the search plate as
+                // FOOTPRINTS (mounting the real ones would drag a store into a geometry fixture),
+                // and both are named glyphs. Already transitive through `SlopDeskMacUI`; named here
+                // for the same reason `SlopDeskClientUITests` names `SlopDeskTerminal`.
+                .product(name: "SFSafeSymbols", package: "SFSafeSymbols"),
             ],
         ),
 

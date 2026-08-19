@@ -41,16 +41,23 @@
 // mounts it). The rows arrive as a STRUCTURAL parameter (the memo's array);
 // only the volatile reads happen in here. Its mount is a leaf for the same reason against a
 // DIFFERENT volatile source — the split's live column width.
+//
+// WHY IT LIVES IN `SlopDeskMacUI` (docs/56 increment 36). It hangs off the TITLEBAR — beside the
+// traffic lights, on the sidebar toggle's own band, parked against the navigator column's gutter.
+// Every one of those is a macOS window's furniture, and there is nothing under this file the phone
+// is missing: the capability it wraps is ``WorkspaceStore/jumpToOldestAttentionPane()``, which both
+// shells reach through the `.jumpToAttention` binding. This is the SAME feature laid out for a
+// window, which is exactly the split the two shells are for. It arrived here as SwiftUI hosted by
+// ``MacTitlebarBand``; when that mount becomes AppKit this file goes with it.
 
-#if canImport(SwiftUI)
 import SlopDeskAgentDetect // ClaudeStatus — the raw agent status the working reading keys on
 import SlopDeskClientCore
+import SlopDeskClientUI // StatusDotView — the SwiftUI mark renderer this hosted band still draws
 import SlopDeskSlate
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 import SwiftUI
 
-#if os(macOS)
 struct RailStatusRollup: View {
     let store: WorkspaceStore
     /// The memoized structural rows — the SAME array the sidebar renders, so the cluster and the
@@ -314,22 +321,22 @@ struct RailStatusMarks: View {
 /// drag — so this view is a LEAF and must stay one. `RailStatusRollup` is a leaf for the store's
 /// per-pane dicts; this is a leaf for the split's geometry. Two different volatile sources, the same
 /// rule.
-package struct RailStatusRollupMount: View {
-    package let store: WorkspaceStore
-    package let chrome: WorkspaceChromeState
+struct RailStatusRollupMount: View {
+    let store: WorkspaceStore
+    let chrome: WorkspaceChromeState
 
-    package init(store: WorkspaceStore, chrome: WorkspaceChromeState) {
+    init(store: WorkspaceStore, chrome: WorkspaceChromeState) {
         self.store = store
         self.chrome = chrome
     }
 
-    /// THE COLUMN'S GUTTER, forwarded for the AppKit navigator (``SlopDeskMacUI/MacNavigatorColumn``).
+    /// THE COLUMN'S GUTTER, forwarded for the AppKit navigator (``MacNavigatorColumn``).
     ///
     /// The number is ``RailStatusRollup/trailingInset``'s and stays there — this is one name, not one
     /// more value. The navigator spends the same inset on its search plate and its island list, which
     /// is exactly why the band's marks, the field and the beds all close on one line; a column that
     /// picked its own would break that alignment silently.
-    package static var columnGutter: CGFloat { RailStatusRollup.trailingInset }
+    static var columnGutter: CGFloat { RailStatusRollup.trailingInset }
 
     /// ITS OWN memo, not the navigator's. The two views are siblings under the window root now, and
     /// a memo threaded down from there would put the structural row build in the ROOT's body — the
@@ -346,12 +353,12 @@ package struct RailStatusRollupMount: View {
         + Slate.Metric.space2
 
     /// ⚠️ Where anything ELSE on that band may begin once the navigator is collapsed — the cluster's
-    /// trailing edge plus one gap. ``SlopDeskMacUI/MacTitlebarBand`` reads this for the horizontal tab
+    /// trailing edge plus one gap. ``MacTitlebarBand`` reads this for the horizontal tab
     /// strip's leading inset, because the strip used to start at exactly ``collapsedLead`` (it was
     /// reserving the toggle's slot and nothing more) and the marks landed ON TOP of the first tab
     /// (user-reported 2026-08-11). The two constants have to be one sum, or the next control added
     /// to that band re-collides.
-    package static let collapsedTrailingEdge = collapsedLead + RailStatusMarks.width + Slate.Metric.space2
+    static let collapsedTrailingEdge = collapsedLead + RailStatusMarks.width + Slate.Metric.space2
 
     /// The cluster's leading x for a given navigator width.
     ///
@@ -364,7 +371,7 @@ package struct RailStatusRollupMount: View {
         return Swift.max(collapsedLead, parked)
     }
 
-    package var body: some View {
+    var body: some View {
         let lead = Self.lead(
             collapsed: chrome.sidebarCollapsed,
             // Before the split view has reported a width there is nothing to park against, so the
@@ -382,6 +389,3 @@ package struct RailStatusRollupMount: View {
             .animation(Slate.Anim.columnSlide, value: chrome.sidebarCollapsed)
     }
 }
-#endif
-
-#endif

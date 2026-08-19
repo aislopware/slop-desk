@@ -27,7 +27,6 @@
 
 import AppKit
 import SlopDeskClientCore
-import SlopDeskClientUI // RailStatusRollupMount — the rollup's hosted band, until it is AppKit
 import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
 import SlopDeskWorkspaceCore
 

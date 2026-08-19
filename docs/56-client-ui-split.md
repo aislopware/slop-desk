@@ -1414,3 +1414,39 @@ destination never lights there; an iPad has, and now uploads. `GuiLeafView` is d
 10, and the three that went were the only ones in it that were a MISSING FEATURE rather than a thing
 the platform cannot do. The remaining ten are immersive system-key capture (nine — a `CGEventTap`,
 which iOS has no equivalent of and no way to intercept the Home gesture with) and detach-into-window.
+
+
+### Increment 36 — a whole-file `#if os(macOS)`, taken at its word
+
+§3 calls a whole-file `#if os(macOS)` in `SlopDeskClientUI` the tell that the file is in the wrong
+target. `Chrome/RailStatusRollup.swift` was one: 387 lines under a single gate, and the only callers
+were `MacWorkspaceRootView`, `MacTitlebarBand` and `MacNavigatorColumn`.
+
+The question worth asking before moving it was the increment-35 question — is this a MISSING FEATURE
+on the phone or a genuine platform difference? Here it is neither, and that third answer is the one
+that decides the destination. The cluster hangs off the TITLEBAR: beside the traffic lights, on the
+sidebar toggle's band, parked against the navigator column's gutter, sliding to the toggle when the
+column collapses. Every one of those is a window's furniture. What it WRAPS — walk to whatever agent
+is waiting — is `WorkspaceStore.jumpToOldestAttentionPane()`, which both shells already reach through
+the `.jumpToAttention` binding. Same capability, laid out for a window, which is exactly the split
+the two shells exist for. So it moved to `SlopDeskMacUI` rather than being copied to the phone.
+
+Three things moved with it, and one had to widen:
+
+  * `RailStatusRollupTests` → `SlopDeskMacUITests`. It lost its own `#if os(macOS)` in the process —
+    the gate was only there because the target it sat in also compiles for a phone.
+  * The pixel probe → `Tests/SlopDeskMacUITests/MacRailStatusRollupRender.swift`, a rig of its own
+    rather than a section of `MacChromeSnapshotRender`. That one photographs real `NSView`s through
+    `CALayer.render(in:)`; every part of this frame is pure SwiftUI, and the hosted path composites
+    through a window whose backing greys the authored cream — which would make the one thing the
+    image exists to judge, the ground the marks stand on, a lie.
+  * `StatusDotView` went `internal` → `package`. It is the SwiftUI half of the shared mark and the
+    band is still hosted SwiftUI, so the alternative was a second drawing of the same
+    `StatusDotStyle` — the one-implementation rule, at the level of a mark. The widening carries its
+    own expiry in its doc comment: when the cluster becomes `MacStatusMarkView`s it goes back to
+    `internal`. A widened access level that outlives its caller reads exactly like one that still
+    has it, which is the same failure mode as a stale platform gate.
+
+`MacTitlebarBand` dropped `import SlopDeskClientUI` entirely — the rollup mount was the only thing it
+took from there. `SlopDeskMacUITests` gained `SFSafeSymbols`: the probe
+draws the toggle and the search plate as footprints, and both are named glyphs.

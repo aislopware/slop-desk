@@ -13,9 +13,8 @@ import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskClientCore
-@testable import SlopDeskClientUI
+@testable import SlopDeskMacUI
 
-#if os(macOS)
 final class RailStatusRollupTests: XCTestCase {
     private typealias Rollup = RailStatusRollup
 
@@ -298,4 +297,3 @@ final class RailStatusRollupTests: XCTestCase {
         )
     }
 }
-#endif

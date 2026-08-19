@@ -15,10 +15,19 @@ import SwiftUI
 /// The mark itself. Only the spinner carries a timeline; every other state is drawn once and holds
 /// still. AX-hidden: the row title's accessibility value already speaks the same state, so the mark
 /// never double-announces.
-struct StatusDotView: View {
-    let style: StatusDotStyle
+///
+/// ⚠️ `package` for ONE caller and one reason: ``SlopDeskMacUI/RailStatusMarks``, the titlebar band's
+/// cluster, which is still hosted SwiftUI (docs/56 increment 36). It draws the SAME resolved
+/// ``StatusDotStyle`` the AppKit renderer beside it draws, so hosting this is what keeps the band and
+/// the rows one vocabulary rather than two. The moment that cluster becomes `MacStatusMarkView`s this
+/// goes back to `internal` — a widened access level that outlives its caller reads exactly like one
+/// that still has it.
+package struct StatusDotView: View {
+    package let style: StatusDotStyle
 
-    var body: some View {
+    package init(style: StatusDotStyle) { self.style = style }
+
+    package var body: some View {
         mark
             // ONE footprint for every mark, so ring rows, spinning rows and symbol rows share the
             // column's centre line.
