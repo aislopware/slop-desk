@@ -1,9 +1,12 @@
-// StatusPresentation — pure view-side mapping of agent + tab-badge state to SwiftUI presentation.
+// StatusPresentation — the PALETTE answer for agent + tab-badge state: which hue a badge wears, which
+// weight a title takes, which silhouette a mark draws.
 //
-// Everything here is a PALETTE answer: which hue a badge wears, which weight a title takes, which
-// silhouette a mark draws. The decisions themselves live one floor down (`TabBadgeReading`,
-// `AgentReadout`, `RailRowsBuilder`) so the Mac's `NSView`s — which cannot see a SwiftUI type — reach
-// the same verdicts through `Slate.Native`.
+// It reads as a view file and is not one, which is why it sits on the design floor rather than in
+// either UI target: nothing here draws, and the Mac's `NSView` rows have called it through
+// `NSColor(...)` since the navigator crossed. The DECISIONS themselves live one floor further down
+// (`TabBadgeReading`, `AgentReadout`, `RailRowsBuilder`); what is added here is only the rung each one
+// lands on, resolved through ``Slate`` — and `Slate.Native` is the same lookup for a renderer that
+// cannot see a SwiftUI type.
 //
 // The CONNECTION's copy is not here any more: `ConnectionReading` (SlopDeskClientCore) owns the label,
 // the help text and the retry gate now that the Mac's island is AppKit and only the phone's
@@ -22,13 +25,13 @@ import SwiftUI
 package enum StatusPresentation {
     // MARK: Agent (Claude Code)
 
-    /// The ``StatusGlyph`` reading for an agent status. `nil` ⇒ render nothing (no active agent).
+    /// The ``AgentReading`` for an agent status. `nil` ⇒ render nothing (no active agent).
     /// The agent surfaces (iOS toolbar glyph, Peek & Reply header) speak the SAME terminal dialect as
     /// the tab badges — a state edge is one character trading for another in the same mono slot.
     ///
     /// The mapping itself is ``AgentReadout/reading(_:)``, one floor down: the Mac's peek card draws
     /// these four states as an `NSView` (docs/56 stage D) and cannot see this file.
-    static func agentReading(_ status: ClaudeStatus) -> StatusGlyph.Reading? {
+    package static func agentReading(_ status: ClaudeStatus) -> AgentReading? {
         AgentReadout.reading(status)
     }
 
@@ -43,12 +46,12 @@ package enum StatusPresentation {
     /// ``thinkingMark``'s warm rung through that shared decision rather than by a second spelling
     /// agreeing with it — the compact surfaces mount the rail's OWN spinner for that reading, and the
     /// mark and its ink must not be able to come apart.
-    static func agentTint(_ status: ClaudeStatus) -> Color {
+    package static func agentTint(_ status: ClaudeStatus) -> Color {
         Slate.agentInk(AgentReadout.ink(status))
     }
 
     /// The short agent label (the one source — `ClaudeStatus.displayLabel`).
-    static func agentLabel(_ status: ClaudeStatus) -> String {
+    package static func agentLabel(_ status: ClaudeStatus) -> String {
         AgentReadout.label(status)
     }
 
@@ -215,7 +218,7 @@ package enum StatusPresentation {
     /// rounds 19–21) — the fix was the size and the fidelity, not the idea (round 23). Round 24
     /// then took the command tiers OUT of the set: a disc and a triangle were spending the reader's
     /// glyph budget to say what a bold or a red word says better.
-    static func mark(for kind: TabBadgeKind, agentFinish: Bool) -> StatusMark? {
+    package static func mark(for kind: TabBadgeKind, agentFinish: Bool) -> StatusMark? {
         switch kind {
         case .error: nil
         case .completed,
@@ -244,7 +247,7 @@ package enum StatusPresentation {
     /// badge that resolves to an outcome here mounts no mark, and vice versa. The rule itself lives
     /// with the receipt (``RailRowsBuilder/commandOutcome(badge:agentFinish:)``), so the mark
     /// resolver and the slot's text can never disagree about who is speaking.
-    static func commandOutcome(badge: TabBadgeKind?, agentFinish: Bool) -> CommandOutcome? {
+    package static func commandOutcome(badge: TabBadgeKind?, agentFinish: Bool) -> CommandOutcome? {
         RailRowsBuilder.commandOutcome(badge: badge, agentFinish: agentFinish)
     }
 
@@ -309,7 +312,7 @@ package enum StatusPresentation {
     /// that is what forced ``outcomeSymbol(_:)`` into existence: while the weight stepped up only at
     /// the end, WEIGHT WAS the completion signal, and a command that is bold the whole way through
     /// has to be given the news back some other way.
-    static let slotNameWeight: Font.Weight = .bold
+    package static let slotNameWeight: Font.Weight = .bold
 
     /// The INK the trailing slot's resting label reads in, for a real program (`make`, `vim`) versus
     /// a bare login shell (`zsh`).

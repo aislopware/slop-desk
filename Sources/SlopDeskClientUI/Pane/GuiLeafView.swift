@@ -25,6 +25,7 @@
 import Defaults
 import SFSafeSymbols
 import SlopDeskClientCore
+import SlopDeskSlate
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 import SwiftUI

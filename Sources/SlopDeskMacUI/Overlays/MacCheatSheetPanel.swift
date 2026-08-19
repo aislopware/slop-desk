@@ -17,7 +17,7 @@
 
 import AppKit
 import SlopDeskClientCore
-import SlopDeskClientUI // Slate — the ONE token ladder, in its native (NSColor/NSFont) view
+import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
 
 /// The cheat sheet's card content. A view rather than a builder namespace, because AppKit's
 /// target/action wants an object to send the Done button's click to and the card is the natural one.

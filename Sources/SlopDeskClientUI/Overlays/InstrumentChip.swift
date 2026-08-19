@@ -18,6 +18,7 @@
 
 #if canImport(SwiftUI)
 import SlopDeskClientCore
+import SlopDeskSlate
 import SwiftUI
 
 // MARK: - NoticeKeycap (a chord INSIDE a running sentence)

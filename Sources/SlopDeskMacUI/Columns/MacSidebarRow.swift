@@ -25,7 +25,8 @@
 
 import AppKit
 import SlopDeskClientCore
-import SlopDeskClientUI // Slate, StatusDot geometry, the nerd-font splice — the ONE ladder, natively
+import SlopDeskClientUI // PaneDragCoordinator — the rail's drop target, shared with the canvas
+import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 

@@ -36,6 +36,7 @@
 // band's probe photographed an empty strip of cream because of it.
 
 import AppKit
+import SlopDeskSlate
 import SlopDeskTransport
 import SlopDeskWorkspaceModel
 import XCTest

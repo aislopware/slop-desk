@@ -14,6 +14,7 @@
 // height/inset/shadow.
 
 #if canImport(SwiftUI)
+import SlopDeskSlate
 import SwiftUI
 
 /// One list row: `leading` accessory + `title` slot + trailing accessories, on one fixed-height line.

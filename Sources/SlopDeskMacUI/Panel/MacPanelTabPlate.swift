@@ -31,7 +31,7 @@
 
 import AppKit
 import SlopDeskClientCore
-import SlopDeskClientUI // Slate + Slate.Native — the ONE ladder, natively
+import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
 
 @MainActor
 final class MacPanelTabPlate: NSView {

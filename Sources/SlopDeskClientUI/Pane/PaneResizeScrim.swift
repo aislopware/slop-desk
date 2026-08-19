@@ -11,6 +11,7 @@
 // keeps it non-hit-testing. Just a translucent paper veil — NO glyph, NO label. SYSTEM/DS colours only.
 
 #if canImport(SwiftUI)
+import SlopDeskSlate
 import SwiftUI
 
 struct PaneResizeScrim: View {

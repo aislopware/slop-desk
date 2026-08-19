@@ -45,6 +45,7 @@
 #if canImport(SwiftUI)
 import SlopDeskAgentDetect // ClaudeStatus — the raw agent status the working reading keys on
 import SlopDeskClientCore
+import SlopDeskSlate
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 import SwiftUI

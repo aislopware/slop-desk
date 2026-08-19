@@ -1,4 +1,9 @@
-// VectorIcon — icon artwork carried as its own PATH DATA rather than redrawn by eye.
+// SlateVectorArt — icon artwork carried as its own PATH DATA rather than redrawn by eye, and the
+// reader that turns a `d` string into a `Path`.
+//
+// The artwork is a VALUE, so it sits on the design floor and each framework supplies its own
+// renderer over it — `VectorIconView` (a SwiftUI `Canvas`) and `MacVectorIconView` (a `CGContext`).
+// Both stroke and fill the same paths at the same widths; neither owns the drawing.
 //
 // Two of the rail's marks are not SF Symbols: otty's awaiting-input badge is lucide `hand`, and its
 // caffeinate badge is a Material duotone cup, both shipped inside otty as literal `<svg>` strings.
@@ -19,7 +24,7 @@ import SwiftUI
 /// unit-testable by its bounding box and segment count without rendering anything.
 package enum SVGPath {
     /// The path `data` describes, in the icon's own viewBox coordinates (y DOWN, matching SwiftUI).
-    static func path(_ data: String) -> Path {
+    package static func path(_ data: String) -> Path {
         var path = Path()
         var scanner = PathScanner(data)
         var current = CGPoint.zero
@@ -300,7 +305,7 @@ private struct PathScanner {
     init(_ text: String) { bytes = Array(text.utf8) }
 
     /// The next command letter, or `nil` when a coordinate (or the end of the data) comes next.
-    mutating func command() -> UInt8? {
+    package mutating func command() -> UInt8? {
         skipSeparators()
         guard index < bytes.count else { return nil }
         let byte = bytes[index]
@@ -312,7 +317,7 @@ private struct PathScanner {
     }
 
     /// Whether a number starts here — the test for "this command repeats".
-    mutating func hasNumber() -> Bool {
+    package mutating func hasNumber() -> Bool {
         skipSeparators()
         guard index < bytes.count else { return false }
         let byte = bytes[index]
@@ -321,7 +326,7 @@ private struct PathScanner {
 
     /// The next number. Malformed data yields `0` rather than trapping: this reads artwork compiled
     /// into the binary, so a bad glyph must degrade to a shape, never to a crash.
-    mutating func number() -> CGFloat {
+    package mutating func number() -> CGFloat {
         skipSeparators()
         let start = index
         if index < bytes.count, bytes[index] == 0x2B || bytes[index] == 0x2D { index += 1 }
@@ -352,7 +357,7 @@ private struct PathScanner {
     }
 
     /// One arc flag — a single `0`/`1` character, which is NOT a number scan (see the call site).
-    mutating func flag() -> Bool {
+    package mutating func flag() -> Bool {
         skipSeparators()
         guard index < bytes.count else { return false }
         let byte = bytes[index]
@@ -427,37 +432,5 @@ package enum OttyIcon {
             ),
         ],
     )
-}
-
-/// One ``VectorIcon`` drawn at a given side length in one ink. Stroke width scales with the glyph
-/// (it is authored in viewBox units), so the drawing stays the source's drawing at any size.
-struct VectorIconView: View {
-    let icon: VectorIcon
-    let side: CGFloat
-    let ink: Color
-
-    var body: some View {
-        Canvas { context, size in
-            let rect = CGRect(origin: .zero, size: size)
-            let scale = CGFloat.minimum(size.width, size.height) / icon.viewBox
-            for layer in icon.fills {
-                let path = SVGPath.path(layer.data, viewBox: icon.viewBox, in: rect)
-                // ⚠️ EVEN-ODD, not the default winding: a Material duotone punches its holes with a
-                // second subpath wound the SAME way as the outer one (the cup's inner wall), which
-                // non-zero would fill in solid.
-                context.fill(path, with: .color(ink.opacity(layer.opacity)), style: FillStyle(eoFill: true))
-            }
-            for outline in icon.outlines {
-                let path = SVGPath.path(outline, viewBox: icon.viewBox, in: rect)
-                context.stroke(
-                    path, with: .color(ink),
-                    style: StrokeStyle(
-                        lineWidth: icon.strokeWidth * scale, lineCap: .round, lineJoin: .round,
-                    ),
-                )
-            }
-        }
-        .frame(width: side, height: side)
-    }
 }
 #endif

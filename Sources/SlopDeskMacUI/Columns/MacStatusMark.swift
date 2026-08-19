@@ -17,7 +17,7 @@
 import AppKit
 import QuartzCore // the spinner's display link
 import SlopDeskClientCore
-import SlopDeskClientUI // Slate + StatusDot geometry + the spinner's maths, in their native view
+import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
 import SwiftUI // `SVGPath` returns a `Path`; its `cgPath` is what the hand is stroked from
 
 /// One resolved mark in the rail's fixed 14pt column. `style == nil` draws nothing and the column

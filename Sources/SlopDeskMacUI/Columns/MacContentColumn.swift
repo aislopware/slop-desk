@@ -17,7 +17,8 @@
 
 import AppKit
 import SlopDeskClientCore
-import SlopDeskClientUI // Slate + the hosted canvas factory
+import SlopDeskClientUI // the hosted canvas factory + the pane drag coordinator
+import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
 import SlopDeskWorkspaceCore
 
 @MainActor

@@ -18,6 +18,7 @@
 #if canImport(SwiftUI)
 import Defaults
 import SlopDeskClientCore
+import SlopDeskSlate
 import SlopDeskWorkspaceCore // FirstLaunchModel, PreferencesStore
 import SwiftUI
 

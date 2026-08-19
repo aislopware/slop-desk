@@ -1,7 +1,10 @@
-// SlateDesign — the minimalist design-token layer.
+// SlateDesign — the minimalist design-token layer, and the floor of `SlopDeskSlate`.
 //
-// A THIN, headless token layer: no separate SPM target (`SlopDeskDesignSystem` stays deleted) — just
-// `Color`/`CGFloat`/`Animation` constants compiled into `SlopDeskClientUI`.
+// A THIN, headless token layer — `SlateNativeColor`/`Color`/`CGFloat`/`Animation` constants and
+// nothing that draws. It compiled into `SlopDeskClientUI` for as long as there was ONE UI target to
+// compile it into; it is its own target since docs/56 increment 28, because there are two now and the
+// AppKit half reads ~200 of these. `check-supervisor.sh` fails the build if a `some View` lands here:
+// a token is a value both frameworks read, and every mark with two renderers keeps them one floor up.
 //
 // Design DNA — ONE ISLAND (user-directed 2026-08-08, twice: first "re-implement the floating-island
 // chrome, the Rio-Canario / JetBrains-Islands read", then — on seeing a window where every column and
@@ -85,11 +88,11 @@ package struct SlateTheme: Equatable, Sendable {
 
     // The glass surfaces
     /// The terminal cell surface — the island's ground.
-    var terminal: Color { Color(slateHex: glass.face) }
+    package var terminal: Color { Color(slateHex: glass.face) }
     /// The divider / seam line ON the glass (the profile's selection tone: one step off the face).
-    var terminalEdge: Color { Color(slateHex: glass.edge) }
+    package var terminalEdge: Color { Color(slateHex: glass.edge) }
     /// A lifted plate ON the glass (chips, handles) — the selection fill.
-    var terminalRaised: Color { Color(slateHex: glass.edge) }
+    package var terminalRaised: Color { Color(slateHex: glass.edge) }
     /// The RIM around a lifted plate ON the glass — one step BRIGHTER than the plate, never equal to
     /// it. Its own token because ``terminalEdge`` is a SEAM (a line drawn between two things that
     /// already differ — the pane divider, the island's own edge) and a rim is the only mark saying
@@ -100,7 +103,7 @@ package struct SlateTheme: Equatable, Sendable {
     /// be LIGHTER than it — the inverse of the light side's rule (``Slate/Line/overlayRim``), which is
     /// darker than its cream — so this is derived by lifting the plate toward the profile's own
     /// comment ink rather than by inventing a hex.
-    var terminalRim: Color { Color(slateHex: terminalRimHex) }
+    package var terminalRim: Color { Color(slateHex: terminalRimHex) }
     /// ``terminalRim``'s value: the plate lifted HALFWAY to the profile's comment ink.
     package var terminalRimHex: UInt32 { Self.mix(glass.edge, glass.ink2) }
 
@@ -115,26 +118,26 @@ package struct SlateTheme: Equatable, Sendable {
     /// hex for the AppKit side.
     package var chromeHexValue: UInt32 { glass.face }
     /// ``groundHexValue`` as the SwiftUI colour the band, the side panels and the moat read.
-    var ground: Color { Color(slateHex: groundHexValue) }
+    package var ground: Color { Color(slateHex: groundHexValue) }
     /// ``chromeHexValue`` as the SwiftUI colour the island reads.
-    var chrome: Color { Color(slateHex: chromeHexValue) }
+    package var chrome: Color { Color(slateHex: chromeHexValue) }
 
     // The on-glass ink
     /// Primary on-glass ink — the profile foreground.
-    var terminalInk: Color { Color(slateHex: glass.ink) }
+    package var terminalInk: Color { Color(slateHex: glass.ink) }
     /// Secondary on-glass ink (status line, captions on the glass).
-    var terminalInk2: Color { Color(slateHex: glass.ink2) }
+    package var terminalInk2: Color { Color(slateHex: glass.ink2) }
     /// The on-glass ACCENT (focus corner, divider drag line, drop washes) — profile-tuned because the
     /// window accent is appearance-tuned and the glass ignores the appearance.
-    var terminalAccent: Color { Color(slateHex: glass.accent) }
+    package var terminalAccent: Color { Color(slateHex: glass.accent) }
     /// The on-glass OK ink — the profile's OWN green (its ANSI slot 2), not the system status green.
     /// A status mark drawn ON the glass has to answer to the glass: the system palette is tuned for
     /// the OS appearance and lands a saturated signal green beside a set of lightness-normalized
     /// pastels, which is exactly how the command ladder came to wear a colour the terminal under it
     /// never speaks (user-reported 2026-08-09).
-    var terminalOk: Color { Color(slateHex: terminalOkHex) }
+    package var terminalOk: Color { Color(slateHex: terminalOkHex) }
     /// The on-glass ERROR ink — the profile's own red (ANSI slot 1). Same rationale as ``terminalOk``.
-    var terminalErr: Color { Color(slateHex: terminalErrHex) }
+    package var terminalErr: Color { Color(slateHex: terminalErrHex) }
 
     /// The status inks are READ OUT of the profile's own ANSI set rather than named a second time,
     /// so a profile cannot ship a green for its cells and a different green for the chrome standing
@@ -157,9 +160,9 @@ package struct SlateTheme: Equatable, Sendable {
     /// cell-foreground` so glyph colours stay under the fill (not an invert). `nil` ⇒ no line.
     package let selectionBackgroundHex: String?
     /// Cursor block colour; `nil` ⇒ follow the foreground.
-    let cursorHex: String?
+    package let cursorHex: String?
     /// Glyph-under-cursor colour; `nil` ⇒ follow the background.
-    let cursorTextHex: String?
+    package let cursorTextHex: String?
 
     /// The published GLASS palette a profile ships — the terminal's own five (face/ink/comment/
     /// selection-edge/accent), verbatim from the theme's spec.
@@ -202,7 +205,7 @@ package struct SlateTheme: Equatable, Sendable {
     /// The per-channel MIDPOINT of two 24-bit RGB literals — integer arithmetic, so the derived
     /// tone is exact and reproducible (no float rounding to argue about). The one derivation the
     /// profile does: ``terminalRim`` is the plate lifted halfway toward the on-glass comment ink.
-    static func mix(_ a: UInt32, _ b: UInt32) -> UInt32 {
+    package static func mix(_ a: UInt32, _ b: UInt32) -> UInt32 {
         func channel(_ shift: UInt32) -> UInt32 {
             (((a >> shift) & 0xFF) + ((b >> shift) & 0xFF)) / 2
         }
@@ -279,7 +282,7 @@ package enum Slate {
     /// it stands on" (`DESIGN.md`). One rule, both directions: the scheme follows the PLATE, not the
     /// ancestor. It is not a new appearance (the app still has exactly two polarities and one `NSApp`
     /// pin) — it is the pin, restored for an object that stepped out of the glass.
-    @MainActor static var chromeColorScheme: ColorScheme { .light }
+    @MainActor package static var chromeColorScheme: ColorScheme { .light }
 
     /// The FIXED brand accent (Dracula purple) as an appearance-dynamic pair: Alucard's `#644AC9`
     /// on light appearances, the Pro `#9580FF` on dark. The ONLY chrome colour that is not the
@@ -564,9 +567,9 @@ package enum Slate {
     package enum Surface {
         static let void = Color(slateNative: Native.Surface.void)
         /// ⚠️ NOT the app's ground — see the ladder's note above; you almost certainly want ``field``.
-        static let ground = Color(slateNative: Native.Surface.ground)
-        static let face = Color(slateNative: Native.Surface.face)
-        static let raised = Color(slateNative: Native.Surface.raised)
+        package static let ground = Color(slateNative: Native.Surface.ground)
+        package static let face = Color(slateNative: Native.Surface.face)
+        package static let raised = Color(slateNative: Native.Surface.raised)
         static let lift = Color(slateNative: Native.Surface.lift)
         /// The SOLID mini-island fill — the active sidebar row's chip (Canario's white active tab).
         /// Against ``field`` it carries the JetBrains Islands island↔field relationship in both
@@ -574,7 +577,7 @@ package enum Slate {
         /// DARKER than the dark field (island darker than field) — the same deliberate ~1.2:1
         /// whisper their theme ships, from a semantic colour instead of invented hex. On iOS the
         /// nearest grouped rung stands in.
-        static let chip = Color(slateNative: Native.Surface.chip)
+        package static let chip = Color(slateNative: Native.Surface.chip)
         /// THE GROUND — the one sunken tone every column paints: the navigator, the code panel, the
         /// top band and the island's moat (law 1: they SINK, they are not islands). Kept under its
         /// old name because the eight column call sites mean exactly this; ``island`` is its
@@ -582,32 +585,32 @@ package enum Slate {
         /// aux-window backdrop.
         package static var field: Color { Slate.theme.ground }
         /// The terminal glass — the island's fixed profile surface (NOT appearance-following).
-        static var terminal: Color { Slate.theme.terminal }
+        package static var terminal: Color { Slate.theme.terminal }
         /// THE ISLAND — the terminal canvas, the one lifted surface (law 1). Equal to ``terminal`` by
         /// construction; spelled separately so the island's own geometry reads by intent.
-        static var island: Color { Slate.theme.chrome }
+        package static var island: Color { Slate.theme.chrome }
     }
 
     /// ON-GLASS vocabulary — everything drawn INSIDE the terminal island reads these, never the
     /// semantic `Text`/`State` tiers: the glass keeps its profile palette under either OS
     /// appearance, so appearance-tuned ink would invert against it (dark label on dark glass).
     @MainActor
-    enum Terminal {
-        static var ink: Color { Slate.theme.terminalInk }
-        static var ink2: Color { Slate.theme.terminalInk2 }
-        static var edge: Color { Slate.theme.terminalEdge }
-        static var raised: Color { Slate.theme.terminalRaised }
+    package enum Terminal {
+        package static var ink: Color { Slate.theme.terminalInk }
+        package static var ink2: Color { Slate.theme.terminalInk2 }
+        package static var edge: Color { Slate.theme.terminalEdge }
+        package static var raised: Color { Slate.theme.terminalRaised }
         /// The RIM of a floating plate ON the glass (``InstrumentChipShell``, the connection chip) —
         /// LIGHTER than the plate, unlike ``edge``, which is the same tone as it. See
         /// ``SlateTheme/terminalRim``: a border that matches its own fill is not a border.
-        static var rim: Color { Slate.theme.terminalRim }
-        static var accent: Color { Slate.theme.terminalAccent }
+        package static var rim: Color { Slate.theme.terminalRim }
+        package static var accent: Color { Slate.theme.terminalAccent }
         /// The status pair ON the glass — the profile's own green / red (``SlateTheme/terminalOk``,
         /// ``SlateTheme/terminalErr``). Anything drawn inside the island that has to say "clean" or
         /// "failed" reads THESE, never ``Slate/Status`` — that set is the system's, tuned for the OS
         /// appearance and out of family beside the glass.
-        static var ok: Color { Slate.theme.terminalOk }
-        static var err: Color { Slate.theme.terminalErr }
+        package static var ok: Color { Slate.theme.terminalOk }
+        package static var err: Color { Slate.theme.terminalErr }
     }
 
     /// The text tiers — a ladder MEASURED against this app's own ground rather than inherited whole
@@ -652,32 +655,32 @@ package enum Slate {
     /// the face) — in-family on each side rather than one foreign neutral spanning both. Re-solve
     /// the dark rung if the profile's face or ink ever moves.
     @MainActor
-    enum Text {
-        static let primary = Color(slateNative: Native.Text.primary)
-        static let secondary = Color(slateNative: Native.Text.secondary)
-        static let tertiary = Color(slateNative: Native.Text.tertiary)
-        static let icon = secondary
+    package enum Text {
+        package static let primary = Color(slateNative: Native.Text.primary)
+        package static let secondary = Color(slateNative: Native.Text.secondary)
+        package static let tertiary = Color(slateNative: Native.Text.tertiary)
+        package static let icon = secondary
 
         /// Ink ON a saturated fill band — the fixed pills (secure blue / sync amber) and the
         /// accent's deep band. Appearance-INDEPENDENT white on purpose: those fills are pinned,
         /// so their ink must be too (a semantic label would flip against an unmoving plate).
-        static let onAccent = Color.white
+        package static let onAccent = Color.white
         /// Ink ON the warn/hazard plate (hint badges) — black stays legible on amber in both
         /// appearances, the same pinned-fill rationale as ``onAccent``.
-        static let onWarn = Color.black
+        package static let onWarn = Color.black
     }
 
     @MainActor
-    enum Line {
-        static let divider = Color(slateNative: Native.Line.divider)
-        static let card = Color(slateNative: Native.Line.card)
-        static let subtle = Color(slateNative: Native.Line.subtle)
+    package enum Line {
+        package static let divider = Color(slateNative: Native.Line.divider)
+        package static let card = Color(slateNative: Native.Line.card)
+        package static let subtle = Color(slateNative: Native.Line.subtle)
         static let active = Color(slateNative: Native.Line.active)
 
         /// The INPUT plate's boundary — see ``slateFieldPlate()``. Its own token, and NOT
         /// ``divider``: measured on the cream ground the separator lands at 1.25:1, which is a rule
         /// between two visible things, not an edge that can say where a field starts.
-        static let field = Color(slateNative: Native.Line.field)
+        package static let field = Color(slateNative: Native.Line.field)
 
         /// A FLOATING SURFACE's rim — the toast card, every summoned paper card, the sheet. Its own
         /// token, and NOT ``divider``: the system separator measures ~1.25 : 1 on this cream, which
@@ -689,7 +692,7 @@ package enum Slate {
         /// the surface it bounds — black on the light card here, and on the glass the mirror image
         /// (``Slate/Terminal/rim`` lifts the dark plate toward its ink). One idea, spelled once per
         /// ground, because each ground is the only thing its own rim can be solved against.
-        static let overlayRim = Color(slateNative: Native.Line.overlayRim)
+        package static let overlayRim = Color(slateNative: Native.Line.overlayRim)
     }
 
     /// The ALPHA ladder — a closed scale for translucency, the one dimension the closed colour
@@ -740,21 +743,21 @@ package enum Slate {
     }
 
     @MainActor
-    enum State {
+    package enum State {
         /// Row hover — the system's faintest fill (the same plate `List` hover uses).
-        static let hover = Color(slateNative: Native.State.hover)
+        package static let hover = Color(slateNative: Native.State.hover)
         /// Selected row — the brand accent at a wash, so selection carries the one non-system colour.
-        static let selected = Color(slateNative: Native.State.selected)
-        static let accent = Slate.accentPurple
-        static let accentMuted = Color(slateNative: Native.State.accentMuted)
-        static let header = Text.secondary
+        package static let selected = Color(slateNative: Native.State.selected)
+        package static let accent = Slate.accentPurple
+        package static let accentMuted = Color(slateNative: Native.State.accentMuted)
+        package static let header = Text.secondary
         /// Floating-panel drop shadow — soft black, heavier on dark appearances.
-        static let shadow = Color(slateNative: Native.State.shadow)
+        package static let shadow = Color(slateNative: Native.State.shadow)
         /// The SUMMONED card's cast shadow — twice ``shadow``, and its own rung because it does twice the
         /// work. A panel that floats over the dark island is separated by tone alone; a paper card is the
         /// ground's own cream lifted off the ground, so nothing but the cast tells the two apart at the
         /// card's edges. Compared side by side at true size, `shadow` read as a halo and this reads as lift.
-        static let overlayShadow = Color(slateNative: Native.State.overlayShadow)
+        package static let overlayShadow = Color(slateNative: Native.State.overlayShadow)
         // NO `cardShadow` rung (user-directed 2026-08-09). The 4% whisper the selected tab chip
         // used to cast existed for a cream plate on a cream ground; the single profile made that
         // chip the island's dark glass, and a fill that far from the ground needs no cast to be
@@ -828,16 +831,16 @@ package enum Slate {
         /// The five sources as HEXES — spelled ONCE, because two frameworks read them: the phone's
         /// beds resolve through ``register`` and the Mac's through ``Slate/Native/ProjectTint/bed(at:)``,
         /// and a bed dealt to one project may not be a different colour on the two devices.
-        static let registerHexes: [UInt32] = [0x00A68F, 0x0075F7, 0x514AF8, 0xF414F7, 0xF854A4]
+        package static let registerHexes: [UInt32] = [0x00A68F, 0x0075F7, 0x514AF8, 0xF414F7, 0xF854A4]
 
         @MainActor
-        static let register: [Color] = registerHexes.map { Color(slateHex: $0) }
+        package static let register: [Color] = registerHexes.map { Color(slateHex: $0) }
 
         /// The keyless "Other" bucket's bed source. It is ``Slate/Text/secondary``'s light pin
         /// rather than a sixth identity, because the bucket has no identity to spend — but it IS
         /// part of the separation solve above (it measures ΔE2000 7.21 from its nearest neighbour),
         /// since on screen it is just another bed the eye has to tell from the ones around it.
-        static let neutralSource = 0x585751
+        package static let neutralSource = 0x585751
 
         /// The SEED a project key is dealt from: the key's last path component, case-folded and
         /// NFC-normalised.
@@ -852,7 +855,7 @@ package enum Slate {
         /// use. NFC likewise — an accented basename reaches us decomposed from one filesystem and
         /// composed from another, and unnormalised those are different bytes and so different
         /// colours for one project.
-        static func seed(for key: String) -> String {
+        package static func seed(for key: String) -> String {
             var path = Substring(key)
             while path.hasSuffix("/") { path = path.dropLast() }
             let base = path.split(separator: "/").last.map(String.init) ?? String(path)
@@ -860,7 +863,7 @@ package enum Slate {
         }
 
         /// FNV-1a-64 over UTF-8. Wrapping multiply is the algorithm, not an overflow.
-        static func hash(_ text: String) -> UInt64 {
+        package static func hash(_ text: String) -> UInt64 {
             var value: UInt64 = 0xCBF2_9CE4_8422_2325
             for byte in text.utf8 {
                 value ^= UInt64(byte)
@@ -870,7 +873,7 @@ package enum Slate {
         }
 
         /// FNV-1a-64 over a key's ``seed(for:)``, reduced mod the register size.
-        static func index(of key: String, count: Int) -> Int {
+        package static func index(of key: String, count: Int) -> Int {
             Int(hash(seed(for: key)) % UInt64(count))
         }
 
@@ -930,7 +933,7 @@ package enum Slate {
             /// neutral bed for the keyless bucket. Out of range yields the neutral bed rather than
             /// trapping: a bed is decoration, and a view that has out-run its deal must still draw.
             @MainActor
-            subscript(position: Int) -> Color {
+            package subscript(position: Int) -> Color {
                 guard indices.indices.contains(position), let index = indices[position] else {
                     return Slate.ProjectTint.neutralBed
                 }
@@ -940,31 +943,31 @@ package enum Slate {
 
         /// The keyless bucket's bed — ``neutralSource`` at ``Slate/Opacity/bed``.
         @MainActor
-        static var neutralBed: Color { Color(slateHex: UInt32(neutralSource)).opacity(Opacity.bed) }
+        package static var neutralBed: Color { Color(slateHex: UInt32(neutralSource)).opacity(Opacity.bed) }
 
         /// The register size, readable without `@MainActor` (``Deal`` runs the arithmetic off the
         /// colour values). Pinned by `SlateProjectTintTests` to match ``register``'s own count.
-        static let registerCount = 5
+        package static let registerCount = 5
     }
 
     @MainActor
-    enum Status {
-        static let ok = Color(slateNative: Native.Status.ok)
-        static let warn = Color(slateNative: Native.Status.warn)
-        static let err = Color(slateNative: Native.Status.err)
+    package enum Status {
+        package static let ok = Color(slateNative: Native.Status.ok)
+        package static let warn = Color(slateNative: Native.Status.warn)
+        package static let err = Color(slateNative: Native.Status.err)
         /// Info rides the brand accent (the one non-system chrome colour).
-        static let info = Slate.accentPurple
+        package static let info = Slate.accentPurple
 
         /// FIXED security-blue — appearance-INDEPENDENT: the secure-input pill must read as the SAME
         /// vivid royal-blue everywhere so it can never be confused with the accent. Pinned to
         /// `secure-input.png`'s royal-blue; white pill text stays legible on light and dark alike.
         /// Never re-route this through a theme or the system palette.
-        static let secureInput = Color(slateNative: Native.Status.secureInput)
+        package static let secureInput = Color(slateNative: Native.Status.secureInput)
 
         /// FIXED sync-amber — same rationale as ``secureInput``: the `⚠ SYNC INPUT` pill flags a MODE
         /// where every keystroke fans into multiple shells, so it must read as the same unmistakable
         /// amber everywhere. Never re-route this through a theme or the system palette.
-        static let syncInput = Color(slateNative: Native.Status.syncInput)
+        package static let syncInput = Color(slateNative: Native.Status.syncInput)
     }
 
     /// The status vocabulary as INK, because a colour tuned for a FILL is the wrong colour for a
@@ -1012,22 +1015,22 @@ package enum Slate {
     /// Re-solve BOTH sides if the cream, the deepest bed (so: ``Opacity/bed``) or the glass face
     /// moves — each side is pinned to its own ground, and neither is a free system fallback.
     @MainActor
-    enum StatusInk {
+    package enum StatusInk {
         /// Clean / done / `+staged` — the ramp's far end (h 140°).
-        static let ok = Color(slateNative: Native.StatusInk.ok)
+        package static let ok = Color(slateNative: Native.StatusInk.ok)
         /// Wants a human / awaiting input / `!modified` (h 85°).
-        static let warn = Color(slateNative: Native.StatusInk.warn)
+        package static let warn = Color(slateNative: Native.StatusInk.warn)
         /// `?untracked` — the rung between "you changed it" and "it is broken" (h 50°). Its own
         /// entry, not a second spelling of ``warn``: that collision is what flattened the ramp.
-        static let notice = Color(slateNative: Native.StatusInk.notice)
+        package static let notice = Color(slateNative: Native.StatusInk.notice)
         /// Broken — error / `~conflicted` (h 22°).
-        static let err = Color(slateNative: Native.StatusInk.err)
+        package static let err = Color(slateNative: Native.StatusInk.err)
         /// Bookkeeping against elsewhere — `↑↓` divergence (h 265°). BLUE now, not the accent: the
         /// accent means selection, and a run that borrowed it read as one.
-        static let info = Color(slateNative: Native.StatusInk.info)
+        package static let info = Color(slateNative: Native.StatusInk.info)
         /// Parked on purpose — `$stash` (h 320°). Cool, off the warm ramp, and far enough from
         /// ``info`` to be told apart at a glance.
-        static let aside = Color(slateNative: Native.StatusInk.aside)
+        package static let aside = Color(slateNative: Native.StatusInk.aside)
     }
 
     /// One ATTENTION role, as ink — the three states that WAIT ON YOU, on the hue budget's own rungs.
@@ -1503,34 +1506,34 @@ package enum Slate {
 
     package enum Anim {
         /// Relayout / panel / tab-select / indicator slide — EaseInEaseOut 0.20s.
-        static let standard = Motion.standard.animation
+        package static let standard = Motion.standard.animation
         /// animateIn / row reflow / toggle thumb — EaseOut 0.18s.
-        static let fadeSlideIn = Motion.fadeSlideIn.animation
+        package static let fadeSlideIn = Motion.fadeSlideIn.animation
         /// Hover reveal / panel-toggle show — EaseOut 0.15s.
-        static let reveal = Motion.reveal.animation
+        package static let reveal = Motion.reveal.animation
         /// animateOut — EaseIn 0.14s.
-        static let fadeOut = Motion.fadeOut.animation
+        package static let fadeOut = Motion.fadeOut.animation
         /// Scroll fade / link pill / hover plate — EaseOut 0.12s.
-        static let smallFade = Motion.smallFade.animation
+        package static let smallFade = Motion.smallFade.animation
         /// How fast THE acknowledgement plays (`View.slateGlyphAck`) — a symbol bounce runs long by
         /// default and a click has to feel answered, not performed. Lives here rather than at the one
         /// call site because the effect is the app's, not any one button's.
-        static let ackSpeed: Double = 1.4
+        package static let ackSpeed: Double = 1.4
         /// Divider / plate hover — EaseInEaseOut 0.16s.
-        static let dividerHover = Motion.dividerHover.animation
+        package static let dividerHover = Motion.dividerHover.animation
         /// MERIDIAN L4 "needle" — the mechanical settle used for the ONE orchestrated moment (the connect
         /// handshake's colour-in). Fast attack, long decel, no overshoot (no springs anywhere).
-        static let needle = Motion.needle.animation
+        package static let needle = Motion.needle.animation
         /// A whole COLUMN reflowing (toast spine expand/collapse shifts every sibling card, not just the
         /// hovered one) — a shade longer than `standard`, gentle symmetric ease so the reverse (mouse-out)
         /// reads as calm as the forward. EaseInEaseOut 0.28s.
-        static let stackReflow = Motion.stackReflow.animation
+        package static let stackReflow = Motion.stackReflow.animation
         /// The SELECTION PLATE travelling between two chips (`SlateCompactIsland`'s morph). Longer
         /// than `standard` and on the emphasized curve on purpose: `standard` is sized for a state
         /// that CHANGES IN PLACE, and spent on a plate crossing the whole panel it read as a skip
         /// rather than a move (measured: the plate cleared 128pt in ~120ms). This is still well
         /// under the column slide — the plate is the smaller object and must not feel heavier.
-        static let selectionMorph = Motion.selectionMorph.animation
+        package static let selectionMorph = Motion.selectionMorph.animation
         /// How far the selection plate is CLOSED at the start of an ignite — the height it opens
         /// FROM when it arrives in an island the previous selection was not in (user-directed
         /// 2026-08-10). Not a `Metric`: it is a ratio the motion spends, not a dimension the layout
@@ -1549,26 +1552,16 @@ package enum Slate {
         /// the emphasized curve and a beat more than `stackReflow` to keep the terminal's re-wrap
         /// from reading as a snap. Anything that has to LAND with the column (the titlebar strip
         /// arriving as the sidebar leaves) delays by this much.
-        static let columnSlideDuration = Motion.columnSlide.duration
-        static let columnSlide = Motion.columnSlide.animation
+        package static let columnSlideDuration = Motion.columnSlide.duration
+        package static let columnSlide = Motion.columnSlide.animation
         /// The ONE repeating shape in the vocabulary — a slow symmetric breathe for a preview that
         /// demonstrates blinking (the cursor preview). EaseInEaseOut 0.55s, autoreversing forever;
         /// never used on live chrome (the at-rest-motion purge stands).
-        static let pulse = Motion.pulse.animation.repeatForever(autoreverses: true)
+        package static let pulse = Motion.pulse.animation.repeatForever(autoreverses: true)
     }
 }
 
-extension View {
-    /// Cast the shadow of a named ``Slate/Elevation`` rung. The colour defaults to the floating
-    /// object's soft black (``Slate/State/shadow``); a summoned card passes the heavier
-    /// ``Slate/State/overlayShadow``. Radius/y never appear at a call site — the rung is the API.
-    @MainActor
-    func slateShadow(_ elevation: Slate.Elevation, color: Color? = nil) -> some View {
-        shadow(color: color ?? Slate.State.shadow, radius: elevation.radius, y: elevation.y)
-    }
-}
-
-extension Color {
+package extension Color {
     /// The SwiftUI view of a token — the one bridge between the value (a ``SlateNativeColor``) and
     /// the framework that draws it. Every rung in ``Slate`` comes through here.
     init(slateNative color: SlateNativeColor) {
@@ -1619,7 +1612,7 @@ package extension NSColor {
     }
 }
 #elseif canImport(UIKit)
-extension UIColor {
+package extension UIColor {
     /// 24-bit sRGB hex + alpha (the dynamic-pair helper's leaf).
     convenience init(slateHex hex: UInt32, alpha: Double = 1) {
         self.init(
@@ -1668,7 +1661,7 @@ package struct SlateCurve: Equatable, Sendable {
 
 // MARK: - The value side of both bridges
 
-extension SlateNativeColor {
+package extension SlateNativeColor {
     /// An APPEARANCE-DYNAMIC pair — the mechanism every semantic system colour uses, spelled once
     /// here so the AppKit rung and the SwiftUI rung are the same object rather than two builds of
     /// the same two hexes.

@@ -1,5 +1,5 @@
 import XCTest
-@testable import SlopDeskClientUI
+@testable import SlopDeskSlate
 
 /// `Slate.ProjectTint` — the per-project identity bed. Pins the three properties the feature exists
 /// for and had no test for at all before this suite: the seed is the project's NAME (not its

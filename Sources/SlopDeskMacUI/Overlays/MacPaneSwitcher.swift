@@ -31,7 +31,7 @@
 
 import AppKit
 import SlopDeskClientCore
-import SlopDeskClientUI // Slate + the nerd-font splice — the ONE ladder, in its native view
+import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
 import SlopDeskWorkspaceCore
 
 // MARK: - The panel

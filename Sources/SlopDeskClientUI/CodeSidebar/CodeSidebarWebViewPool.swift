@@ -20,6 +20,7 @@
 // `CodeSidebarModel` (both pure).
 
 import SlopDeskClientCore
+import SlopDeskSlate
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 import SwiftUI

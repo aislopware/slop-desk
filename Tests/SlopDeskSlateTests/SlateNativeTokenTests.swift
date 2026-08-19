@@ -12,7 +12,7 @@
 import AppKit
 import SwiftUI
 import XCTest
-@testable import SlopDeskClientUI
+@testable import SlopDeskSlate
 
 @MainActor
 final class SlateNativeTokenTests: XCTestCase {

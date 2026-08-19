@@ -4775,7 +4775,7 @@ for half in Sources/SlopDeskMacUI/Columns/MacSidebarHeader.swift \
 done
 # The ATTENTION ROLES are ranked once (`TabBadgeReading.rollup`), because a collapsed group's count
 # has to pick a loudest hidden state and both halves must pick the same one.
-if ! grep -rq 'TabBadgeReading' Sources/SlopDeskClientUI/App/StatusPresentation.swift; then
+if ! grep -rq 'TabBadgeReading' Sources/SlopDeskSlate/StatusPresentation.swift; then
   fail "StatusPresentation stopped delegating to TabBadgeReading — the attention ranking is cut once"
 fi
 printf 'check-supervisor: one navigator per platform, one row reading, one git dialect.\n'
@@ -5232,6 +5232,53 @@ if spells 'KeybindingPreferences\(overrides:' Sources/SlopDeskMacUI/Settings/Mac
   fail "a chord editor rebuilt KeybindingPreferences — that wipes the config.toml literal-byte bindings"
 fi
 printf 'check-supervisor: one chord editor, drawn twice, and only one half records.\n'
+
+# ── One design floor, two renderers ───────────────────────────────────────────────────────────
+# `SlopDeskSlate` is the layer BOTH halves stand on: the token ladder in its `NSColor`/`UIColor`
+# spelling and its `Color` one, the status mark's geometry and its wandering tempo, the vector
+# artwork, the nerd splice and the chrome field's configuration. It exists because the draining
+# target is the PHONE's at the end of stage D, and an AppKit target importing the phone's would be
+# the common view ancestor docs/56 §3 forbids.
+#
+# The line it holds is "a value, never a drawing". Let one `some View` in and the next mark to be
+# ported has somewhere to be written that both halves can see, which is how two renderers become one
+# renderer plus a fallback — and nothing goes red: a hosted SwiftUI view compiles perfectly well
+# inside an AppKit window.
+# Comments are STRIPPED first: the floor's own headers NAME the boundary they hold, and a gate that
+# cannot quote the rule it guards is a gate nobody may document.
+# shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
+slate_code=$(awk '{ line = $0; sub(/\/\/.*/, "", line); printf "%s:%d:%s\n", FILENAME, FNR, line }' \
+  $(repo_files 'Sources/SlopDeskSlate/*.swift'))
+slate_views=$(grep -n ': View\|some View\|NSViewRepresentable\|UIViewRepresentable\|: Shape' \
+  <<< "${slate_code}" || true)
+if [[ -n "${slate_views}" ]]; then
+  printf '%s
+' "${slate_views}" >&2
+  fail "the design floor grew a VIEW — it holds values both renderers read, never a drawing either owns"
+fi
+# Every mark with two renderers keeps them one floor up, one per framework, off the shared value.
+for pair in 'Sources/SlopDeskClientUI/DesignSystem/StatusDotView.swift:AgentSpinner' 'Sources/SlopDeskMacUI/Overlays/MacAgentGlyph.swift:AgentSpinner' 'Sources/SlopDeskClientUI/DesignSystem/VectorIconView.swift:SVGPath' 'Sources/SlopDeskMacUI/Columns/MacSidebarRow.swift:SVGPath'; do
+  half="${pair%%:*}"
+  spelling="${pair##*:}"
+  if ! grep -q "${spelling}" "${half}"; then
+    fail "${half} stopped reading ${spelling} — a renderer that re-derives the mark drifts silently"
+  fi
+done
+# The floor may not climb: it is below both UI halves, so importing either would make a cycle of the
+# layering and hand the phone's views to the Mac through the back door.
+slate_climb=$(grep -rn '^import SlopDeskClientUI\|^import SlopDeskMacUI\|^import SlopDeskPhoneUI' Sources/SlopDeskSlate || true)
+if [[ -n "${slate_climb}" ]]; then
+  printf '%s
+' "${slate_climb}" >&2
+  fail "the design floor imported a UI target — it is BELOW both halves, and the layering says so"
+fi
+# The Mac reads the ladder from the floor, not from the draining target. This is the whole point of
+# the move: `SlopDeskClientUI` is renamed `SlopDeskPhoneUI` when stage D lands, and every token read
+# that still went through it would have to move on that day instead of on this one.
+if ! grep -rq '^import SlopDeskSlate' Sources/SlopDeskMacUI; then
+  fail "SlopDeskMacUI stopped naming SlopDeskSlate — the Mac reads the ladder from the floor"
+fi
+printf 'check-supervisor: one design floor, two renderers, and the floor never draws.\n'
 
 # ── One device-panel law, two device protocols ────────────────────────────────────────────────
 # The simulator panel and the Android panel differ in almost everything and should — one rotates on

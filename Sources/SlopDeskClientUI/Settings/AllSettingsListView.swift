@@ -18,6 +18,7 @@
 import Defaults
 import SFSafeSymbols
 import SlopDeskClientCore
+import SlopDeskSlate
 import SlopDeskVideoProtocol
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel

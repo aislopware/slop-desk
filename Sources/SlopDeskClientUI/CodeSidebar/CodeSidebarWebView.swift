@@ -14,6 +14,7 @@
 // mounts a plain `WKWebView` and there is nothing to guard.
 
 import SlopDeskClientCore
+import SlopDeskSlate
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 import SwiftUI

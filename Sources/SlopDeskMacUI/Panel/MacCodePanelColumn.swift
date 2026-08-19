@@ -20,8 +20,9 @@
 
 import AppKit
 import SlopDeskClientCore
-import SlopDeskClientUI
+import SlopDeskClientUI // CodePanelSurfaces + the shared webview pool, until the surfaces cross
 import SlopDeskDevicePanels
+import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
 import SlopDeskWorkspaceCore
 import SwiftUI
 

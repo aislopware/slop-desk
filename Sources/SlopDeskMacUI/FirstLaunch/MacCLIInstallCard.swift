@@ -16,7 +16,7 @@
 import AppKit
 import Defaults
 import SlopDeskClientCore
-import SlopDeskClientUI // Slate — the ONE token ladder, in its native (NSColor/NSFont) view
+import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
 
 /// The "SlopDesk CLI" card.
 ///

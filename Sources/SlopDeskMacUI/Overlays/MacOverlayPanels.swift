@@ -27,7 +27,7 @@
 
 import AppKit
 import SlopDeskClientCore
-import SlopDeskClientUI // Slate — the ONE token ladder, for the palette card's first measurement
+import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel // PaneID — a toast's jump target
 

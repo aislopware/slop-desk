@@ -8,6 +8,7 @@
 
 #if canImport(SwiftUI)
 import SlopDeskClientCore // AgentReading — the readout both platforms' glyphs draw
+import SlopDeskSlate
 import SwiftUI
 
 /// The AGENT status instrument, spoken as TEXT in the terminal's own dialect: each reading is a
@@ -50,7 +51,7 @@ struct StatusGlyph: View {
         // The rail's own cell, at the rail's own size: a 16pt text box carries a 14pt mark the same
         // way the rail column does, and using the identical view is what keeps the two surfaces from
         // ever drifting apart on the state a user watches longest.
-        case .working: AgentSpinner(ink: tint)
+        case .working: AgentSpinnerView(ink: tint)
         case .awaiting: glyph("?", weight: .bold)
         case .done: glyph("●", weight: .regular)
         }

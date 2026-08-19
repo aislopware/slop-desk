@@ -2,6 +2,7 @@
 // the ContentColumn's status → cause resolution, so the pane area's "nothing here" wording can't
 // drift per call site and a give-up state never renders the self-healing "Reconnecting…" caption.
 
+import SlopDeskSlate
 import XCTest
 @testable import SlopDeskClientUI
 @testable import SlopDeskWorkspaceCore

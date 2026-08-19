@@ -18,7 +18,7 @@
 import AppKit
 import QuartzCore
 import SlopDeskClientCore
-import SlopDeskClientUI // Slate + the shared spinner cadence — the ONE ladder, in its native view
+import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
 
 // MARK: - The glyph
 

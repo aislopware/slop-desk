@@ -16,6 +16,7 @@
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
+import SlopDeskSlate
 import SwiftUI
 
 // MARK: - The caps micro-label

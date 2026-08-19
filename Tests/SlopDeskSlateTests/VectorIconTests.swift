@@ -6,7 +6,7 @@
 
 import SwiftUI
 import XCTest
-@testable import SlopDeskClientUI
+@testable import SlopDeskSlate
 
 final class VectorIconTests: XCTestCase {
     // MARK: - The grammar

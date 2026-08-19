@@ -19,7 +19,8 @@
 
 import Defaults // @Default(.autoHideTabsPanel) — re-fires the auto-hide observer on a Settings flip
 import SlopDeskClientCore
-import SlopDeskClientUI
+import SlopDeskClientUI // the SwiftUI mounts stage D has not lifted yet
+import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 import SwiftUI

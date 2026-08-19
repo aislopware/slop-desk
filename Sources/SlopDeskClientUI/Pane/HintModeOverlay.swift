@@ -26,6 +26,7 @@
 // rationale). check-ds-leaks forbids only raw font-size / radius literals, not these colours.
 
 #if canImport(SwiftUI)
+import SlopDeskSlate
 import SlopDeskTerminal
 import SlopDeskWorkspaceCore
 import SwiftUI

@@ -9,6 +9,7 @@
 // use is a coordinate pasted out of a map, and no list can anticipate that one.
 
 import SlopDeskDevicePanels
+import SlopDeskSlate
 import SwiftUI
 
 struct SimulatorLocationPopover: View {

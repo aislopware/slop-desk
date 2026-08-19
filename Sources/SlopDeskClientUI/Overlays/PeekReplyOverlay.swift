@@ -32,6 +32,7 @@
 #if canImport(SwiftUI)
 import SlopDeskClientCore
 import SlopDeskInspector
+import SlopDeskSlate
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 import SwiftUI

@@ -20,6 +20,7 @@
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
+import SlopDeskSlate
 import SlopDeskVideoProtocol
 import SlopDeskWorkspaceCore
 import SwiftUI

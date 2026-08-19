@@ -8,6 +8,7 @@
 // contract `StatusDotTests` keeps.
 
 import SlopDeskAgentDetect
+import SlopDeskSlate
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 import XCTest

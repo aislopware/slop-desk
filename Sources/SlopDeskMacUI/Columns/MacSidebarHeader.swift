@@ -17,7 +17,7 @@
 
 import AppKit
 import SlopDeskClientCore
-import SlopDeskClientUI
+import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 

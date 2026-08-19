@@ -25,7 +25,8 @@ import Combine // AnyCancellable — the `.remember` frame-save observers, retai
 import Defaults // fire-time reads of the Code Agent sound toggles in the attention sink
 import ObjectiveC // objc_setAssociatedObject — retain the window-close delegate for the window's life
 import SlopDeskClientCore
-import SlopDeskClientUI
+import SlopDeskClientUI // the SwiftUI mounts stage D has not lifted yet + the shared webview pool
+import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
 import SlopDeskTerminal // TerminalCellMetrics + TerminalViewportSnapshotting (live cell advance)
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel

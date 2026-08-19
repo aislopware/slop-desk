@@ -26,6 +26,7 @@
 
 #if canImport(SwiftUI)
 import SlopDeskClientCore
+import SlopDeskSlate
 import SwiftUI
 
 struct KeyboardCheatSheetView: View {

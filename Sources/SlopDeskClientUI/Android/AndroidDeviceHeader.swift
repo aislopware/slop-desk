@@ -16,6 +16,7 @@
 
 import SFSafeSymbols
 import SlopDeskDevicePanels
+import SlopDeskSlate
 import SwiftUI
 
 struct AndroidDeviceHeader<Actions: View>: View {

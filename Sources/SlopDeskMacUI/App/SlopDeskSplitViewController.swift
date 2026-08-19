@@ -11,6 +11,7 @@ import Defaults
 import ObjectiveC
 import SlopDeskClientCore
 import SlopDeskClientUI // the three hosted columns, until each is rewritten in AppKit
+import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
 import SlopDeskWorkspaceCore
 import SwiftUI
 

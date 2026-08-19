@@ -19,6 +19,7 @@
 // Cross-platform (pure SwiftUI shapes — no AppKit), so the iOS settings sheet draws the same cards.
 
 #if canImport(SwiftUI)
+import SlopDeskSlate
 import SlopDeskVideoProtocol
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel

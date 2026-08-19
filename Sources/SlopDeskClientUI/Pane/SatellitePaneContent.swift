@@ -13,6 +13,7 @@
 #if os(macOS) && canImport(SwiftUI)
 import AppKit
 import SlopDeskClientCore
+import SlopDeskSlate
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 import SwiftUI

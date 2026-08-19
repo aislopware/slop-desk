@@ -12,7 +12,7 @@
 // tokens in the first place.
 
 import AppKit
-import SlopDeskClientUI // Slate — the ONE token ladder, in its native (NSColor/NSFont) view
+import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
 
 /// A checkbox that reports its new state.
 final class MacActionSwitch: NSSwitch {

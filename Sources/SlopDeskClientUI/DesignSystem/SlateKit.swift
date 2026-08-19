@@ -2,9 +2,13 @@
 //   • `PlateIconButton` — the hover-plate icon button: a borderless SF-Symbol button that grows a faint
 //     rounded hover plate, 0.12s small-fade. Used by the titlebar + sidebar chrome.
 //   • `slateGlyphAck(_:)` — THE acknowledgement every chrome button gives a click. One definition.
+//   • `slateShadow(_:)` — the `Elevation` rung, cast. The RUNGS are `SlopDeskSlate`; casting one is a
+//     view modifier, so it lives up here with the framework that draws it (the Mac's shadows are a
+//     `CALayer`'s `shadowRadius`/`shadowOffset`, read off the same rung).
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
+import SlopDeskSlate
 import SwiftUI
 
 /// A hover-plate icon button — a borderless SF-Symbol with a faint rounded hover plate (radius 6).
@@ -144,4 +148,14 @@ struct SlatePlateStyle: ButtonStyle {
 //
 // `PanelTabPlate` left with them — the right panel's four tabs are AppKit now
 // (`SlopDeskMacUI/MacPanelTabPlate`), off the one reading in `SlopDeskClientCore/PanelTabs`.
+
+package extension View {
+    /// Cast the shadow of a named ``Slate/Elevation`` rung. The colour defaults to the floating
+    /// object's soft black (``Slate/State/shadow``); a summoned card passes the heavier
+    /// ``Slate/State/overlayShadow``. Radius/y never appear at a call site — the rung is the API.
+    @MainActor
+    func slateShadow(_ elevation: Slate.Elevation, color: Color? = nil) -> some View {
+        shadow(color: color ?? Slate.State.shadow, radius: elevation.radius, y: elevation.y)
+    }
+}
 #endif

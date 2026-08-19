@@ -48,6 +48,7 @@
 // No AppKit, so this compiles for iOS with the rest of `SlopDeskClientUI`.
 
 #if canImport(SwiftUI)
+import SlopDeskSlate
 import SwiftUI
 
 // MARK: - The neutral ink

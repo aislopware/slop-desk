@@ -23,6 +23,7 @@
 
 import SFSafeSymbols
 import SlopDeskDevicePanels
+import SlopDeskSlate
 import SwiftUI
 
 struct AndroidRunningCard: View {

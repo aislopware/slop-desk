@@ -31,8 +31,11 @@ let package = Package(
         // models. No view framework, so both UI halves reach the one implementation (docs 47, 48).
         .library(name: "SlopDeskDevicePanels", targets: ["SlopDeskDevicePanels"]),
         .library(name: "SlopDeskClientCore", targets: ["SlopDeskClientCore"]),
-        // REBUILD-V2: thin SwiftUI layer over SlopDeskWorkspaceCore, STOCK SwiftUI + system semantic
-        // colours/fonts — no custom token target (the Warp-clone `SlopDeskDesignSystem` is deleted).
+        // docs/56: the DESIGN FLOOR — the token ladder in BOTH of its spellings, the status mark's
+        // geometry and cadence, the vector artwork. Values, never views, so the AppKit half and the
+        // SwiftUI half render one design instead of two.
+        .library(name: "SlopDeskSlate", targets: ["SlopDeskSlate"]),
+        // REBUILD-V2: thin SwiftUI layer over SlopDeskWorkspaceCore, over the `SlopDeskSlate` tokens.
         .library(name: "SlopDeskClientUI", targets: ["SlopDeskClientUI"]),
         // docs/56 stage C: the two APP SHELLS. Each Xcode app target links exactly one of them, and
         // neither imports the other — the products exist so the two `@main`s can be linked apart.
@@ -381,6 +384,36 @@ let package = Package(
             resources: [.copy("Resources/Fonts")],
         ),
 
+        // docs/56: the DESIGN FLOOR. `SlopDeskClientUI` is the DRAINING target — when the last macOS
+        // surface leaves it, what is left is the phone's and it is renamed `SlopDeskPhoneUI`. The
+        // token ladder cannot ride that rename: `SlopDeskMacUI` reads ~200 of these constants, and an
+        // AppKit target importing the phone's would be exactly the common view ancestor docs/56 §3
+        // forbids. So the floor is its own target, BELOW both halves.
+        //
+        // The line it holds is "a value, never a `some View`": `Slate` (the ladder, in `NSColor`/
+        // `UIColor` AND in `Color`), `StatusDot`/`StatusMark`/`StatusDotStyle`, `AgentSpinner`'s
+        // wandering tempo and `BrailleCell`'s walk, `SVGPath`/`VectorIcon`/`OttyIcon`, the nerd-font
+        // splice's AppKit half, the search field's jump-free configuration, and `StatusPresentation`
+        // — which is a palette ANSWER, not a drawing. Every mark that has two renderers keeps them
+        // one floor up, one per framework, and `check-supervisor.sh` fails the build if a `some View`
+        // appears here.
+        //
+        // It reverses the 2026-06-24 "no separate SPM target — `SlopDeskDesignSystem` stays deleted"
+        // ruling on new grounds: that decision was taken when there was exactly ONE UI target to
+        // compile the constants into, and there are two now.
+        .target(
+            name: "SlopDeskSlate",
+            dependencies: [
+                // `AgentReading` / `NerdSymbolFont` / `TabBadgeReading` — the readings this ladder
+                // resolves an ink and a silhouette for, decided one floor further down.
+                "SlopDeskClientCore",
+                "SlopDeskAgentDetect",
+                "SlopDeskWorkspaceCore",
+                // The marks are named as `SFSymbol`s, so both renderers ask for the same artwork.
+                .product(name: "SFSafeSymbols", package: "SFSafeSymbols"),
+            ],
+        ),
+
         // REBUILD-V2: `SlopDeskClientUI` — pure SwiftUI views over `SlopDeskWorkspaceCore`, STOCK
         // SwiftUI + SYSTEM semantic colours/fonts (no custom token target — the old
         // `SlopDeskDesignSystem` was deleted in L0). The app SCENE + native IDE shell land here; the
@@ -391,6 +424,8 @@ let package = Package(
             name: "SlopDeskClientUI",
             dependencies: [
                 "SlopDeskWorkspaceCore",
+                // docs/56: the design floor both halves render.
+                "SlopDeskSlate",
                 // docs/56: the simulator + Android panel domain, which this target now only RENDERS.
                 "SlopDeskDevicePanels",
                 // docs/56: the presentation logic this target now only DRAWS.
@@ -461,6 +496,8 @@ let package = Package(
             dependencies: [
                 // The SwiftUI view layer both shells still stand on (Stage D drains it upward).
                 "SlopDeskClientUI",
+                // The design floor — the ONE ladder, in its native (NSColor/NSFont) spelling.
+                "SlopDeskSlate",
                 // `ClientComposition` — what the app IS, built once for both shells.
                 "SlopDeskClientCore",
                 "SlopDeskWorkspaceCore",
@@ -498,6 +535,7 @@ let package = Package(
             name: "SlopDeskPhoneUI",
             dependencies: [
                 "SlopDeskClientUI",
+                "SlopDeskSlate",
                 "SlopDeskClientCore",
                 "SlopDeskWorkspaceCore",
                 "SlopDeskWorkspaceModel",
@@ -874,6 +912,17 @@ let package = Package(
                 "SlopDeskBenchClock",
             ],
         ),
+        // docs/56: the DESIGN FLOOR's own suite, moved out of `SlopDeskClientUITests` with the code.
+        // Everything here is a VALUE the two renderers share — that the two spellings of a rung are
+        // the same colour, that a project bed deals the same way twice, that the spinner's closed-form
+        // integral really is its rate integrated, that a transcribed `d` string parses to the drawing
+        // it was copied from. None of it mounts a view, which is exactly the line the target holds.
+        .testTarget(
+            name: "SlopDeskSlateTests",
+            dependencies: [
+                "SlopDeskSlate", "SlopDeskClientCore", "SlopDeskAgentDetect", "SlopDeskWorkspaceCore",
+            ],
+        ),
         // Client UI: view-logic tests for the rebuilt native-SwiftUI chrome. VIEW-MODEL level only —
         // never instantiates Ghostty/VT/Metal/SCStream (the hang-safety rule); the renderer/video views
         // stay behind the factory seams. L0 carries only a placeholder test (the old Warp-clone view +
@@ -883,7 +932,10 @@ let package = Package(
             // E5/WI-3: `TerminalFindBarModelTests` conforms an in-memory fake to `SlopDeskTerminal`'s
             // `TerminalSurface`/`TerminalSurfaceActions` (the scrollback-mirror + bind-action seam) to drive
             // the find bar's view-model headlessly — declare the (already-transitive) module explicitly.
-            dependencies: ["SlopDeskClientUI", "SlopDeskWorkspaceCore", "SlopDeskProtocol", "SlopDeskTerminal"],
+            dependencies: [
+                "SlopDeskClientUI", "SlopDeskSlate", "SlopDeskWorkspaceCore", "SlopDeskProtocol",
+                "SlopDeskTerminal",
+            ],
         ),
         // docs/56 stage C: the macOS SHELL's own suite, moved out of `SlopDeskClientUITests` with the
         // code. All four are pure decisions the AppKit shims delegate to — should ⌘Q ask before
@@ -895,7 +947,8 @@ let package = Package(
             // `SlopDeskClientUI` is named because the chord suites drive the real `WorkspaceKeyDispatcher`
             // against seams the shared view target still owns (the code panel's first-responder hold).
             dependencies: [
-                "SlopDeskMacUI", "SlopDeskClientUI", "SlopDeskClientCore", "SlopDeskWorkspaceCore",
+                "SlopDeskMacUI", "SlopDeskClientUI", "SlopDeskSlate", "SlopDeskClientCore",
+                "SlopDeskWorkspaceCore",
                 "SlopDeskWorkspaceModel", "SlopDeskVideoProtocol",
                 // `SlopDeskTransport` is named for ONE thing: the navigator snapshot mounts the real
                 // column, which takes an `AppConnection`, which takes a `ConnectionRegistry`. The

@@ -7,6 +7,7 @@
 
 #if os(macOS)
 import SlopDeskDevicePanels
+import SlopDeskSlate
 import XCTest
 @testable import SlopDeskClientUI
 

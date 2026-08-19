@@ -18,7 +18,7 @@
 // "a click arrived", the rung answers "and here is where it lands").
 
 import AppKit
-import SlopDeskClientUI // Slate + Slate.Native — the ONE ladder, natively
+import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
 
 @MainActor
 final class MacPlateIconButton: NSView {

@@ -14,7 +14,8 @@
 
 import AppKit
 import SlopDeskClientCore
-import SlopDeskClientUI // Slate + the bespoke surfaces neither half redraws
+import SlopDeskClientUI // SettingsBespokeSurface — the bespoke pages neither half redraws
+import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
 import SlopDeskWorkspaceCore
 import SwiftUI
 

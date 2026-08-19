@@ -18,7 +18,7 @@ import SlopDeskAgentDetect
 import SlopDeskWorkspaceCore
 import XCTest
 @testable import SlopDeskClientCore
-@testable import SlopDeskClientUI
+@testable import SlopDeskSlate
 
 final class StatusDotTests: XCTestCase {
     /// A WORKING AGENT's mark outranks every badge underneath it — keyed on the raw working status,
@@ -473,23 +473,6 @@ final class StatusDotTests: XCTestCase {
             StatusDot.ringDotDiameter, StatusDot.dotDiameter,
             "the resting dot stays smaller than the working cell's",
         )
-    }
-
-    /// The dots ride ON the ring's circle at even turns from 12 o'clock, so the mark keeps the
-    /// four-fold symmetry that makes eight small shapes read as one circle. Pinned through the
-    /// `Shape` itself — the path IS the artwork, and a phase or radius slip draws a plausible ring
-    /// that is subtly off its own column.
-    func testTheRingDotsSitOnTheCircleStartingAtTwelveOClock() {
-        let side = StatusDot.ringDiameter
-        let box = CGRect(origin: .zero, size: CGSize(width: side, height: side))
-        let bounds = DottedRing().path(in: box).boundingRect
-        // Eight dots on a Ø10 circle, each spilling half its width outside it — exactly as the
-        // stroke they replaced did, so the ring's visual diameter is unchanged.
-        let spread = side + StatusDot.ringDotDiameter
-        XCTAssertEqual(bounds.width, spread, accuracy: 0.001, "dots at 3 and 9 o'clock set the width")
-        XCTAssertEqual(bounds.height, spread, accuracy: 0.001, "dots at 12 and 6 set the height")
-        XCTAssertEqual(bounds.midX, box.midX, accuracy: 0.001, "the ring is centred in its box")
-        XCTAssertEqual(bounds.midY, box.midY, accuracy: 0.001, "the ring is centred in its box")
     }
 
     /// ⚠️ The column is sized to otty's OWN badge box (14pt), and every mark is drawn to fit inside

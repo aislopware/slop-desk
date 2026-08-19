@@ -33,6 +33,7 @@ import Foundation
 import SFSafeSymbols
 import SlopDeskClientCore
 import SlopDeskProtocol
+import SlopDeskSlate
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 import SwiftUI

@@ -24,6 +24,7 @@
 
 import SFSafeSymbols
 import SlopDeskDevicePanels
+import SlopDeskSlate
 import SwiftUI
 
 struct SimulatorRunningCard: View {

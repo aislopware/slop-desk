@@ -24,6 +24,7 @@
 // settings keep the semantic raised card (``SlateListRow``).
 
 #if canImport(SwiftUI)
+import SlopDeskSlate
 import SwiftUI
 
 extension View {

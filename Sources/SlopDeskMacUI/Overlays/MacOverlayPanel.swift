@@ -28,7 +28,7 @@
 // derives its `Color`s from, which is the whole reason that layer exists.
 
 import AppKit
-import SlopDeskClientUI // Slate — the ONE token ladder, in its native (NSColor/NSFont) view
+import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
 
 // MARK: - The panel
 

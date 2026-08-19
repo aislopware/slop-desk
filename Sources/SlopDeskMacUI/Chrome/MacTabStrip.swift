@@ -20,7 +20,7 @@
 
 import AppKit
 import SlopDeskClientCore
-import SlopDeskClientUI // Slate + the nerd-font splice, natively
+import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 

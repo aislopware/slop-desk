@@ -14,6 +14,7 @@
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
+import SlopDeskSlate
 import SwiftUI
 
 /// The `🔒 READ ONLY ×` pill — shown in the pane's top-trailing overlay while the pane's

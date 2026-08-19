@@ -16,6 +16,7 @@
 // only (raw colour / size literals fail `scripts/check-ds-leaks.sh`).
 
 #if canImport(SwiftUI)
+import SlopDeskSlate
 import SlopDeskWorkspaceCore
 import SwiftUI
 

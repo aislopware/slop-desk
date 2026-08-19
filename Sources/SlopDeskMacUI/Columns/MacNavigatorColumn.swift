@@ -31,7 +31,8 @@
 
 import AppKit
 import SlopDeskClientCore
-import SlopDeskClientUI
+import SlopDeskClientUI // PaneDragCoordinator + the rollup mount, until both are AppKit
+import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
 import SlopDeskVideoProtocol // AgentPreferences — the `preventSleep` flag the row menu toggles
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
@@ -59,7 +60,7 @@ final class MacNavigatorColumn: NSViewController, NSTextFieldDelegate {
     /// presentation state — a fresh launch opens every group.
     private var collapsed: Set<String> = []
 
-    private let search = SlateSearchField.makeConfiguredField(text: "", delegate: nil)
+    private let search = SlateNativeSearchField.makeConfiguredField(text: "", delegate: nil)
     private let magnifier = NSImageView()
     private let clear = NSButton()
     private let plate = NSView()

@@ -56,6 +56,9 @@ Sources/SlopDeskDevicePanels     the simulator + Android panels'    — BOTH
 Sources/SlopDeskClientCore       PRESENTATION LOGIC: palette, rail, — BOTH
                                  overlays, settings catalog, chrome
                                  + the COMPOSITION ROOT
+Sources/SlopDeskSlate            the DESIGN FLOOR: the token ladder — BOTH
+                                 in both spellings, the status mark's
+                                 geometry + cadence, the artwork
 Sources/SlopDeskClientUI         the DRAINING FLOOR (transitional)  — BOTH
 Sources/SlopDeskMacUI            AppKit + Metal + CoreAnimation     — macOS only
 Sources/SlopDeskPhoneUI          SwiftUI                            — iOS only
@@ -65,6 +68,17 @@ The `SlopDeskClientUI` row is scaffolding with an end date, not a layer: it is w
 target became once the two shells were lifted off it, and stage D drains it upward one surface at a
 time (§3.5). When the last macOS surface leaves it, what remains is the phone's, and the target is
 renamed rather than emptied.
+
+`SlopDeskSlate` is what that rename cannot take with it. The tokens lived inside the draining target
+for as long as there was one UI target to compile them into; the Mac reads ~200 of them, so on the day
+`SlopDeskClientUI` becomes `SlopDeskPhoneUI` an AppKit target would be importing the phone's — exactly
+the common view ancestor §3 forbids. The line the floor holds is **a value, never a drawing**: `Slate`
+in both its `NSColor`/`UIColor` and its `Color` spelling, `StatusDot`/`StatusMark`/`StatusDotStyle`,
+`AgentSpinner`'s wandering tempo and `BrailleCell`'s walk, `SVGPath`/`VectorIcon`/`OttyIcon`, the
+nerd-font splice's AppKit half, the chrome field's jump-free configuration, and `StatusPresentation`
+— which is a palette ANSWER rather than a drawing. Every mark that has two renderers keeps them one
+floor up, one per framework (`StatusDotView` / `MacStatusMarkView`, `VectorIconView` /
+`MacVectorIconView`), and `check-supervisor.sh` fails the build if a `some View` appears in the floor.
 
 The cut between the third row and the fourth is the one worth stating, because it is the one that
 would otherwise blur: **`SlopDeskWorkspaceCore` is the domain, `SlopDeskClientCore` is what a UI asks
@@ -1097,3 +1111,50 @@ because the AppKit page rebuilds its sections whenever a value gates another row
 page mid-capture must not leave a monitor behind or leave Esc permanently disowned.
 
 `KeybindingsEditorView.swift` went from four platform gates to none. The shared target is at 77.
+
+### Increment 28 — the design floor stops riding the draining target
+
+Stage D ends with a rename: `SlopDeskClientUI` holds only what the phone renders and becomes
+`SlopDeskPhoneUI`. That promise could not be kept as written, and the reason had been sitting in plain
+sight since the AppKit half started drawing: **the token layer is not the phone's**. `SlopDeskMacUI`
+reads about two hundred of those constants — 254 `Slate.Metric.space` alone — so renaming the target
+around them would have left an AppKit-only module importing the phone's, which is precisely the common
+view ancestor §3 forbids. `SlopDeskSlate` is that floor lifted out from under the drain, and it lands
+now rather than on rename day because every port from here on reads it instead of adding to the debt.
+
+**The line is a VALUE, never a drawing**, and it is ratcheted rather than described: `SlopDeskSlate`
+may not declare a `some View`, a `: View`, a `: Shape` or a representable, and it may not import
+either UI target. Let one view in and the next mark to be ported has somewhere to be written that both
+halves can see — which is how two renderers quietly become one renderer plus a fallback, with nothing
+red to show for it, because a hosted SwiftUI view compiles perfectly well inside an AppKit window.
+
+What crossed is the whole token ladder (`SlateDesign.swift` — `Slate.Native` and every `Color` rung
+over it, the terminal profile, the metric/type/motion ladders, `ProjectTint`'s deal), the status
+mark's geometry and its wandering tempo, the vector artwork and its `d`-string reader, the appearance
+pin, the nerd splice's AppKit half, the chrome field's jump-free configuration, and
+`StatusPresentation` — which reads as a view file and is not: it maps a state to a hue and a
+silhouette, and the Mac has been calling it through `NSColor(...)` since the navigator crossed.
+
+Four things came apart on the way, each along the same seam. `AgentSpinner` was a SwiftUI `View` with
+the cadence hanging off it as statics — the maths is the floor's (`AgentSpinner.phase`/`.lit`, which
+the Mac already called), the drawing is `AgentSpinnerView`. `VectorIconView` left `SVGPath`.
+`DottedRing` left `StatusDot`. And `slateShadow` — an `Elevation` rung CAST — left the rungs behind,
+because casting a shadow is a view modifier while the radius and the offset are values the Mac reads
+into a `CALayer`. The ratchet found the last one; it was not on the list.
+
+The measurement that says it was worth doing: **28 of the 41 `SlopDeskMacUI` files that imported the
+draining target no longer do.** The twelve that remain each name a specific SwiftUI mount stage D has
+not lifted yet — `CodePanelSurfaces`, `SatellitePaneHost`, `RailStatusRollupMount`,
+`WorkspaceColumnHosts`, `PaneDragCoordinator`, `FirstLaunchStepSurface`, `SettingsBespokeSurface`,
+`OverlayHostView`, `CodeSidebarWebViewPool` — which is now a list of what stage D has left to do
+rather than an ambient dependency on the phone.
+
+The tests followed their code: `SlopDeskSlateTests` holds the seven suites that assert VALUES (the
+two spellings of a rung are one colour, a bed deals the same way twice, the spinner's closed-form
+integral really is its rate integrated, a transcribed `d` string parses to the drawing it was copied
+from). The two assertions in them that needed a renderer — the ring's `Shape` path and the search
+field's coordinator — moved the other way, into `SlopDeskClientUITests`.
+
+This reverses the 2026-06-24 ruling that the token layer stays inside the view target with no separate
+SPM product. That decision was correct on its own terms and is void on ours: it was taken when there
+was exactly ONE UI target to compile the constants into, and there are two.

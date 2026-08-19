@@ -23,7 +23,7 @@
 
 import AppKit
 import SlopDeskClientCore
-import SlopDeskClientUI // Slate — the ONE token ladder, in its native (NSColor/NSFont) view
+import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
 import SlopDeskWorkspaceCore
 
 /// Presents the Connect-to-Host form over the workspace window.

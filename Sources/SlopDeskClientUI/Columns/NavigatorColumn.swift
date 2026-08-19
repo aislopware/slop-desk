@@ -15,6 +15,7 @@
 #if os(iOS)
 import SFSafeSymbols
 import SlopDeskClientCore
+import SlopDeskSlate
 import SlopDeskVideoProtocol // AgentPreferences — the `preventSleep` flag the tab context menu toggles
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel

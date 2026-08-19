@@ -24,7 +24,6 @@
 
 import AppKit
 import SlopDeskClientCore
-import SlopDeskClientUI // Slate — the ONE token ladder, in its native (NSColor/NSFont) view
 import SlopDeskVideoProtocol // InputModifiers — the wire's own modifier bits, which the policy reads
 import SlopDeskWorkspaceCore
 

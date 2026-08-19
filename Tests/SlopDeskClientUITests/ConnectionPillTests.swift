@@ -6,6 +6,7 @@
 // framework's: which `Color` and which `Font.Weight` an alarm rung resolves to.
 
 import SlopDeskClientCore
+import SlopDeskSlate
 import XCTest
 @testable import SlopDeskClientUI
 @testable import SlopDeskWorkspaceCore

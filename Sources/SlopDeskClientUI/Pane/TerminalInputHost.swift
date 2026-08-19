@@ -1,4 +1,5 @@
 #if os(iOS)
+import SlopDeskSlate
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 import SwiftUI

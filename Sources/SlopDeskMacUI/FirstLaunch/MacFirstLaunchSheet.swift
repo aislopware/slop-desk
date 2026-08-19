@@ -20,7 +20,8 @@
 
 import AppKit
 import SlopDeskClientCore
-import SlopDeskClientUI
+import SlopDeskClientUI // FirstLaunchStepSurface — the checklist steps, drawn once
+import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
 import SlopDeskWorkspaceCore
 import SwiftUI
 

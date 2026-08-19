@@ -20,7 +20,7 @@ import AppKit
 import SlopDeskClientCore
 
 // For the code panel's first-responder hold — the one seam this reads out of the shared view target.
-import SlopDeskClientUI
+import SlopDeskClientUI // CodeSidebarWebViewPool — whose responder the keys are going to
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 

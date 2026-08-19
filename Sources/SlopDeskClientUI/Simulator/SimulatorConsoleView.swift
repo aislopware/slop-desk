@@ -17,6 +17,7 @@
 
 import SFSafeSymbols
 import SlopDeskDevicePanels
+import SlopDeskSlate
 import SlopDeskWorkspaceCore
 import SwiftUI
 

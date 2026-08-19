@@ -6,21 +6,13 @@
 // SwiftUI because it does not. Same tokens, same placeholder, same intrinsic-height rule — one
 // value, two views, and neither is a fallback for the other.
 //
-// The macOS reason, in full. SwiftUI `TextField` is the wrong tool at this one size: at
-// `Slate.Typeface.footnote` (11pt) its text renders 1pt LOWER unfocused than focused, so
-// click-to-focus visibly bumps the line up. Root cause is AppKit's dual text path — the
-// unfocused `NSTextFieldCell` draws the string itself while focus swaps in the window's shared
-// field editor (an `NSTextView`), and the two round vertical centering independently; at 11pt
-// they disagree by exactly 1pt (12pt+ happens to agree, which is why the overlay fields at
-// `Typeface.body` keep the SwiftUI idiom). A bezel-less `NSTextField` left at its INTRINSIC
-// height is stable: the cell's bounds are its own preferred metrics, so both paths resolve the
-// same origin — measured jump 0.0 vs SwiftUI's 1.0 at the same size, and the line sits
-// optically centered in the plate. The intrinsic height is the load-bearing part: the field
-// must never be stretched vertically (the container plate centers it), or the cell/field-editor
-// rounding split reopens.
+// The jump-free AppKit configuration itself is ``SlopDeskSlate/SlateNativeSearchField`` — the Mac's
+// own navigator column mints the same field without a SwiftUI wrapper around it, so the plate is
+// described once and this file is the phone-shaped MOUNT of it.
 
 #if canImport(AppKit)
 import AppKit
+import SlopDeskSlate
 import SwiftUI
 
 /// A plain, chrome-styled single-line search input. The caller owns the plate (fill, radius,
@@ -50,29 +42,10 @@ package struct SlateSearchField: NSViewRepresentable {
     package func makeCoordinator() -> Coordinator { Coordinator(text: $text) }
 
     package func makeNSView(context: Context) -> NSTextField {
-        let field = Self.makeConfiguredField(text: text, delegate: context.coordinator)
+        let field = SlateNativeSearchField.makeConfiguredField(
+            text: text, delegate: context.coordinator,
+        )
         applyInk(field)
-        return field
-    }
-
-    /// The jump-critical configuration, factored out so a headless test can pin it (a `Context`
-    /// cannot be constructed outside SwiftUI).
-    package static func makeConfiguredField(
-        text: String, delegate: NSTextFieldDelegate?,
-    ) -> NSTextField {
-        let field = NSTextField(string: text)
-        field.isBezeled = false
-        field.isBordered = false
-        field.drawsBackground = false
-        field.focusRingType = .none // the plate is the affordance; no system halo
-        field.usesSingleLineMode = true
-        field.cell?.isScrollable = true // long queries scroll horizontally, never wrap/clip
-        field.font = .systemFont(ofSize: Slate.Typeface.footnote)
-        field.delegate = delegate
-        // Intrinsic height is the jump-free invariant (see header) — refuse vertical stretch.
-        field.setContentHuggingPriority(.required, for: .vertical)
-        field.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         return field
     }
 
@@ -98,6 +71,7 @@ package struct SlateSearchField: NSViewRepresentable {
 }
 
 #else
+import SlopDeskSlate
 import SwiftUI
 
 /// The same field on the phone, as a plain SwiftUI `TextField`.

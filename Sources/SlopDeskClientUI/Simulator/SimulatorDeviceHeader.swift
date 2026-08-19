@@ -48,6 +48,7 @@
 
 import SFSafeSymbols
 import SlopDeskDevicePanels
+import SlopDeskSlate
 import SwiftUI
 
 struct SimulatorDeviceHeader<Actions: View>: View {

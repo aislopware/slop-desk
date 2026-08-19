@@ -7,6 +7,7 @@
 // refactor can't silently regress the header back to the raw Title-Case title.
 
 #if canImport(SwiftUI)
+import SlopDeskSlate
 import XCTest
 @testable import SlopDeskClientUI
 

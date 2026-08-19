@@ -17,6 +17,7 @@
 #if canImport(SwiftUI) && canImport(AppKit)
 import AppKit
 import SFSafeSymbols
+import SlopDeskSlate
 import SlopDeskTerminal
 import SlopDeskWorkspaceModel
 import SwiftUI
@@ -157,7 +158,7 @@ final class SlateSnapshotRender: XCTestCase {
     /// 14pt bitmap and reads as a smudge that is nothing like what the rail draws.
     @MainActor
     private func cell(ink: Color, phase: Double, zoom: CGFloat) -> some View {
-        AgentSpinner(ink: ink, zoom: zoom, pinnedPhase: phase)
+        AgentSpinnerView(ink: ink, zoom: zoom, pinnedPhase: phase)
     }
 
     // MARK: - Opt-in render of the island chip stack

@@ -24,7 +24,7 @@
 
 import AppKit
 import SlopDeskClientCore // SettingsChordCapture — the recorder's claim on Esc
-import SlopDeskClientUI // Slate — the ONE token ladder, in its native (NSColor/NSFont) view
+import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
 import SlopDeskVideoProtocol
 import SlopDeskWorkspaceCore
 

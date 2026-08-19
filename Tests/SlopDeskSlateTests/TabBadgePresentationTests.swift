@@ -9,7 +9,7 @@
 
 import SlopDeskWorkspaceCore
 import XCTest
-@testable import SlopDeskClientUI
+@testable import SlopDeskSlate
 
 @MainActor
 final class TabBadgePresentationTests: XCTestCase {

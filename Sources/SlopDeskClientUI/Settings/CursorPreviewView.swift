@@ -18,6 +18,7 @@
 
 #if canImport(SwiftUI)
 import SlopDeskClientCore
+import SlopDeskSlate
 import SlopDeskVideoProtocol
 import SlopDeskWorkspaceCore
 import SwiftUI

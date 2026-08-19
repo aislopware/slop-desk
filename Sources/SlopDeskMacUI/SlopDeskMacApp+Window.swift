@@ -14,7 +14,6 @@ import AppKit
 import Combine
 import ObjectiveC
 import SlopDeskClientCore
-import SlopDeskClientUI
 import SlopDeskTerminal
 import SlopDeskWorkspaceCore
 import SwiftUI

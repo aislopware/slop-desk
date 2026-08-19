@@ -8,7 +8,7 @@
 
 import AppKit
 import SlopDeskClientCore
-import SlopDeskClientUI
+import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
 
 /// The left column: a search field and the section rows it narrows.
 @MainActor

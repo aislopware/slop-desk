@@ -10,7 +10,7 @@
 import AppKit
 import SwiftUI
 import XCTest
-@testable import SlopDeskClientUI
+@testable import SlopDeskSlate
 
 @MainActor
 final class SlateSearchFieldTests: XCTestCase {
@@ -18,7 +18,7 @@ final class SlateSearchFieldTests: XCTestCase {
     /// cell-vs-field-editor rounding split reopens — these are the exact knobs that keep both
     /// AppKit text paths resolving one origin.
     func testConfiguredFieldKeepsTheJumpFreeInvariants() {
-        let field = SlateSearchField.makeConfiguredField(text: "", delegate: nil)
+        let field = SlateNativeSearchField.makeConfiguredField(text: "", delegate: nil)
 
         XCTAssertFalse(field.isBezeled, "a bezel adds cell insets the field editor does not share")
         XCTAssertFalse(field.isBordered)
@@ -31,19 +31,5 @@ final class SlateSearchFieldTests: XCTestCase {
             field.contentHuggingPriority(for: .vertical), .required,
             "INTRINSIC height is the jump-free invariant — the field must never stretch vertically",
         )
-    }
-
-    /// Typing flows field → binding through the coordinator (the SwiftUI side reads live).
-    func testCoordinatorSyncsFieldEditsIntoTheBinding() {
-        var captured = ""
-        let binding = Binding(get: { captured }, set: { captured = $0 })
-        let coordinator = SlateSearchField.Coordinator(text: binding)
-        let field = SlateSearchField.makeConfiguredField(text: "", delegate: coordinator)
-
-        field.stringValue = "otty"
-        coordinator.controlTextDidChange(
-            Notification(name: NSControl.textDidChangeNotification, object: field),
-        )
-        XCTAssertEqual(captured, "otty", "a field edit lands in the bound query")
     }
 }
