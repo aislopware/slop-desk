@@ -517,6 +517,30 @@ FINISHED TURN, the idle nudge is not a raised hand) lived nowhere near the case 
 crate holds both halves now, and `scripts/check-supervisor.sh` fails if a second reading appears —
 including a Swift file that reaches for a standalone parse door again.
 
+### The door only one platform has
+
+Every other entry point is on every slice. `slopdesk_git_status` is not: it is declared inside a
+`TARGET_OS_OSX` region of `slopdesk_ffi.h`, compiled behind `cfg(target_os = "macos")`, and its
+crate is a target-gated dependency. Behind it is a vendored `libgit2` — a C library the size of the
+rest of the archive — and the only caller is hostd, because a client on either platform RECEIVES
+the git status as a metadata reply and never computes one. Building that library into the two iOS
+slices would cost every phone build the compile and every phone archive the bytes for a door
+nothing on that platform can reach.
+
+The hazard a platform gate introduces is that it is spelled THREE times — the header's `#if`, the
+module's `cfg`, and the manifest's `[target.'cfg(…)'.dependencies]` — and two of the three can stop
+agreeing without any compiler noticing. `build-ffi.sh` closes that: it reads the symbols out of the
+region's `MACOS-ONLY BEGIN`/`END` markers and requires them PRESENT on the macOS slice and ABSENT
+from the other two. A `cfg` that stops matching the header fails whichever direction it drifted —
+a phone archive that quietly grew a C library, or a macOS door Swift can no longer link.
+
+What a platform-gated door does NOT buy is isolation from its C library's linker needs. A Rust
+staticlib is one object per crate, so the object holding this door also holds every other
+`slopdesk_*` entry point: any executable calling any of them pulls libgit2's members in and needs
+`iconv`, `Security` and `CoreFoundation` at link time. `Package.swift` says that once as
+`ffiCLibraries` and every `CSlopDeskFFI` dependent carries it. Weigh that before linking the next C
+library through this boundary — the gate keeps the BYTES off the phone, not the flags off the graph.
+
 ### The answer that is a NESTED shape, walked once
 
 `slopdesk_styled_lines` renders a finished command's captured bytes as the styled lines a person
