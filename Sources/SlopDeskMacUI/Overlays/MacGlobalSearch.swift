@@ -405,7 +405,10 @@ final class MacFindTogglePillView: NSView {
                 glyph.textColor = Slate.Native.Text.secondary
             case .on:
                 layer?.backgroundColor = Slate.Native.State.accentMuted.cgColor
-                layer?.borderColor = Slate.Native.accent.withAlphaComponent(0.5).cgColor
+                // ``Slate/Opacity/accentRing``, not a `0.5` of this renderer's own: the alpha ladder
+                // is frameworkless, so the ONE thing the two halves of this chip could still spell
+                // apart across the framework boundary is now spelled once (stage F batch P6).
+                layer?.borderColor = Slate.Native.accent.withAlphaComponent(Slate.Opacity.accentRing).cgColor
                 glyph.textColor = Slate.Native.accent
             }
         }

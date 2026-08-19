@@ -736,6 +736,21 @@ package enum Slate {
         package static let rim = 0.20
         /// De-emphasised ink ON a plate — a ruled-out hint letter, the dock badge's track.
         package static let dim = 0.35
+        /// The accent spent as an OUTLINE rather than as a fill — a LIT chip's ring.
+        ///
+        /// Its own rung because a ring answers a question no fill does. The plate under it is already
+        /// the accent at ``faint`` (``State/accentMuted``), so a full-strength border reads as a
+        /// second, louder object drawn on top of that wash; anything at ``dim`` or below stops
+        /// separating the lit chip from the idle one beside it, which is the only thing the ring is
+        /// for. Half is where the outline still reads as the SAME accent the wash is.
+        ///
+        /// Three surfaces spend it and they say one thing — "this mode is on": the find bar's lit
+        /// mode chip, the global-search bar's (the AppKit half of the same chip, whose header pins
+        /// *"the find bar and the global-search query bar render the pills identically"*), and the vi
+        /// pill in a visual selection. All three were a raw `0.5` until docs/56 stage F batch P6, one
+        /// of them across the framework boundary — which is 56c's finding one dimension over: a
+        /// number two renderers both need is a pair the day it is written.
+        package static let accentRing = 0.5
         /// Muted presence: soft hairlines (``Line/subtle``), secondary badge ink on a plate.
         package static let muted = 0.6
         /// The near-opaque backdrop a readout stands on over live content (video HUD chips).
@@ -1275,6 +1290,16 @@ package enum Slate {
         // Control plate (PlateIconButton) — rides the ladder's control rung.
         package static let plate: CGFloat = heightControl
         package static let iconSize: CGFloat = 13
+        /// A GLYPH's own plate: the square a bare mark takes when it stands INSIDE another control
+        /// rather than as one. Every `×` on a pane chip is this size — the status pills', the vi
+        /// pill's, the hint badge's — and it is the hit area as much as the drawing.
+        ///
+        /// NOT ``plate``, and the gap between them is what the rung is for: a control plate is the
+        /// smallest thing a pointer aims at on its own, while this one lives inside a chip that is
+        /// itself only ``heightControl`` tall, so taking the control rung would leave the chip no
+        /// room for the word beside the mark. It equals ``space4`` by arithmetic and NOT by
+        /// derivation — this is a target, and it must not move the day the spacing grid does.
+        package static let glyphPlate: CGFloat = 16
         // Settings option CARDS (`SettingsOptionCards`) — the illustrated radio group used where the choice
         // has a SHAPE (cursor caret, tab position, key layout, window geometry, theme). ONE size for all of
         // them: a card that is bigger in one group than another reads as a different control.

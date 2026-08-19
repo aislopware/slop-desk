@@ -270,10 +270,11 @@ struct FindTogglePill: View {
         switch appearance {
         case .idle,
              .hovering: Slate.Line.subtle
-        // ⚠️ 0.5 is UNNAMED and spelled twice — here and on the vi pill's visual-mode ring
-        // (`ViModeOverlay`). It is a proposed `Slate.Opacity.accentRing` rung; until that lands it stays
-        // a literal rather than borrowing a rung solved for something else.
-        case .on: Slate.State.accent.opacity(0.5)
+        // ``Slate/Opacity/accentRing`` (stage F batch P6). It matters MORE here than at the vi pill:
+        // this chip's other renderer is `MacFindTogglePillView`'s neighbour in `MacGlobalSearch`,
+        // which spelled the same `0.5` across the framework boundary where nothing could compare
+        // them — and this file's own header pins the two bars as rendering the pills identically.
+        case .on: Slate.State.accent.opacity(Slate.Opacity.accentRing)
         }
     }
 

@@ -47,7 +47,10 @@ struct PaneStatusPillView: View {
 
     var body: some View {
         HStack(spacing: Slate.Metric.space1) {
-            Image(systemSymbol: glyph)
+            // The MARK is ``Slate/PaneStatusPillArt``'s (stage F batch P6), not this view's: a fourth
+            // pill added below must reach the AppKit half too, and a table on this side of the
+            // framework boundary is one the AppKit half cannot see at all.
+            Image(systemSymbol: pill.symbol)
                 .font(.system(size: Slate.Typeface.small, weight: glyphWeight))
                 .foregroundStyle(ink)
             Text(pill.label)
@@ -128,19 +131,6 @@ struct PaneStatusPillView: View {
         }
     }
 
-    /// The mark. A solid padlock for the lock (a theme-tinted SF Symbol, NOT the gold 🔒 emoji:
-    /// `readonly-mode.png` shows a monochrome dark padlock matching the label weight, which the emoji
-    /// can't honour); the lock-SHIELD for secure input, the macOS secure-input idiom; and the
-    /// grouped-panes glyph for sync input — the same symbol the palette entry that armed it uses, so the
-    /// chip and the command read as one feature.
-    private var glyph: SFSymbol {
-        switch pill {
-        case .readOnly: .lockFill
-        case .secureInput: .lockShieldFill
-        case .syncInput: .rectangle3Group
-        }
-    }
-
     /// A vivid chip carries more weight than a chrome one — it is louder on purpose.
     private var glyphWeight: Font.Weight {
         switch pill.fill {
@@ -173,9 +163,9 @@ struct PaneStatusPillView: View {
             Image(systemSymbol: .xmark)
                 .font(.system(size: Slate.Typeface.small, weight: .medium))
                 .foregroundStyle(closeInk)
-                // ⚠️ 16×16 is UNNAMED and spelled four times across this directory (here, the vi pill's
-                // `×`, the hint badge's `×`). It is a proposed `Slate.Metric.glyphPlate` rung.
-                .frame(width: 16, height: 16)
+                // The `×`'s plate is a RUNG now (``Slate/Metric/glyphPlate``, stage F batch P6), not
+                // the literal this line carried while three chips in this directory each spelled it.
+                .frame(width: Slate.Metric.glyphPlate, height: Slate.Metric.glyphPlate)
                 .background(
                     closeHover ? Slate.State.selected : .clear,
                     in: .rect(cornerRadius: Slate.Metric.radiusSmall),

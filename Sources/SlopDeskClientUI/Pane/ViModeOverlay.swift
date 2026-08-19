@@ -103,11 +103,10 @@ struct ViModePill: View {
 
     /// The pill's outline — this renderer's two-line ink ladder over ``TerminalViewModel/VisualMode/isVisual``.
     private var ring: Color {
-        // ⚠️ 0.5 is UNNAMED and spelled twice (here and the lit find-bar mode chip). It is a proposed
-        // `Slate.Opacity.accentRing` rung; until it lands it stays a literal rather than borrowing a rung
-        // solved for something else.
+        // The lit ring is ``Slate/Opacity/accentRing`` (stage F batch P6) — the rung the find bar's
+        // ON chip and its AppKit twin also spend, all three having been a raw `0.5` until then.
         model.viVisualMode.isVisual
-            ? Slate.State.accent.opacity(0.5)
+            ? Slate.State.accent.opacity(Slate.Opacity.accentRing)
             : Slate.Line.subtle
     }
 
@@ -118,9 +117,8 @@ struct ViModePill: View {
             Image(systemSymbol: .xmark)
                 .font(.system(size: Slate.Typeface.small, weight: .medium))
                 .foregroundStyle(Slate.Text.secondary)
-                // ⚠️ 16×16 is UNNAMED and spelled four times across this directory. Proposed
-                // `Slate.Metric.glyphPlate`.
-                .frame(width: 16, height: 16)
+                // ``Slate/Metric/glyphPlate`` — the one square every `×` on a pane chip takes.
+                .frame(width: Slate.Metric.glyphPlate, height: Slate.Metric.glyphPlate)
                 .background(
                     closeHover ? Slate.State.selected : .clear,
                     in: .rect(cornerRadius: Slate.Metric.radiusSmall),

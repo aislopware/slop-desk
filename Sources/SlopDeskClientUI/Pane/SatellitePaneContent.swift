@@ -74,6 +74,10 @@ private struct SatelliteDragStrip: View {
 
     private var revealed: Bool { hovering || dragging }
 
+    /// Every number below is ``Slate/GrabPill``'s, the same rungs ``PaneMoveHandle`` reads, and this
+    /// is the pair that file's move was made for: the drag that starts on THIS pill ends on one of
+    /// those, so a user merging a satellite back into the canvas sees both inside one gesture. A pill
+    /// that changed size on the way across would read as the thing they are holding changing shape.
     var body: some View {
         VStack(spacing: 0) {
             ZStack {
@@ -86,18 +90,22 @@ private struct SatelliteDragStrip: View {
                             Capsule(style: .continuous)
                                 .strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline),
                         )
-                        .frame(width: 44, height: 10)
+                        .frame(width: Slate.GrabPill.plateWidth, height: Slate.GrabPill.plateHeight)
                         .slateShadow(.chip)
                         .opacity(revealed ? 1 : 0)
-                        .scaleEffect(hovering && !dragging ? 1.15 : 1)
+                        .scaleEffect(hovering && !dragging ? Slate.GrabPill.hoverScale : 1)
                 }
                 Capsule()
                     .fill(dragging ? Slate.State.accent : Slate.Text.tertiary)
-                    .frame(width: 30, height: 4)
+                    .frame(width: Slate.GrabPill.barWidth, height: Slate.GrabPill.barHeight)
                     .opacity(revealed ? 1 : 0)
-                    .scaleEffect(hovering && !dragging ? 1.15 : 1)
+                    .scaleEffect(hovering && !dragging ? Slate.GrabPill.hoverScale : 1)
             }
-            .frame(width: 160, height: 14)
+            // The CEILING rung outright, not the canvas handle's clamp: a detached window is wide
+            // enough that the leaf-share resolves here for any window worth detaching into, and a
+            // strip measured off the WINDOW would grow with a resize while the pane inside it does
+            // not. Named rather than repeated, so it cannot fall out of step with the clamp's top.
+            .frame(width: Slate.GrabPill.stripWidthMax, height: Slate.GrabPill.stripHeight)
             .contentShape(Rectangle())
             .onHover { hovering = $0 }
             // Through ``PanePointer`` like every other piece of pane chrome, not `pointerStyle`

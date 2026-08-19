@@ -31,6 +31,7 @@
 // placement — which is the whole of what an AppKit half would differ in.
 
 #if canImport(SwiftUI)
+import SFSafeSymbols
 import SlopDeskClientCore
 import SlopDeskSlate
 import SlopDeskTerminal
@@ -182,12 +183,14 @@ private struct HintModeBadge: View {
     /// The `×` exit glyph — leaves hint mode (the same seam Esc / the dim-plate tap fire).
     private var closeButton: some View {
         Button(action: onExit) {
-            Image(systemName: "xmark")
+            // ``SFSymbol/xmark`` rather than the raw `"xmark"` this line carried: its two siblings in
+            // this directory both name the mark type-safely, and a stringly-typed glyph is the one
+            // spelling of it that fails at RUN time on a machine whose SF Symbols set is older.
+            Image(systemSymbol: .xmark)
                 .font(.system(size: Slate.Typeface.small, weight: .bold))
                 .foregroundStyle(Slate.Text.onWarn.opacity(closeHover ? 1 : Slate.Opacity.muted))
-                // ⚠️ 16×16 is UNNAMED and spelled four times across this directory. Proposed
-                // `Slate.Metric.glyphPlate`.
-                .frame(width: 16, height: 16)
+                // ``Slate/Metric/glyphPlate`` — the one square every `×` on a pane chip takes.
+                .frame(width: Slate.Metric.glyphPlate, height: Slate.Metric.glyphPlate)
                 .contentShape(.rect)
         }
         .buttonStyle(.plain)

@@ -25,8 +25,13 @@
 // canvas drag needs a platform for — `panePointer(_:)` (there is no `PointerStyle` on iOS at all) and
 // `PaneMoveEscapeMonitor` (a drag holds no first responder, so reading its cancel key is a local
 // `NSEvent` monitor on the Mac and a first responder over the canvas on the phone — one behaviour,
-// two mechanisms) — and the ONE place a `PaneDropRegister.Mark` becomes artwork, which both of this
-// module's drop chips read so neither can grow a glyph table of its own.
+// two mechanisms) — and the DRAWINGS themselves, which is all a view is owed.
+//
+// The drawings do not own their numbers either. The ghost chip's capsule is ``Slate/DropChip``'s
+// (increment 56e) and the grab pill's geometry is ``Slate/GrabPill``'s (stage F batch P6), because
+// each of the two is drawn a second time somewhere this file cannot reach — the chip by the
+// cross-window `NSPanel`, the pill by the satellite window's own strip — and in both cases the two
+// drawings are compared by a user inside a SINGLE drag. What is left here is which shape goes where.
 //
 // `PaneMoveEscapeMonitor` is a MOUNT now and nothing else. The Mac's monitor itself — an
 // `NSEvent.addLocalMonitorForEvents` install/remove pair and the FFI call that names the cancel key —
@@ -88,7 +93,7 @@ extension View {
     }
 }
 
-// The `PaneDropRegister.Mark` → `SFSymbol` table used to sit here. It is `Slate/PaneDropMarkArt.swift`
+// The `PaneDropRegister.Mark` → `SFSymbol` table used to sit here. It is `Slate/PaneDropChipArt.swift`
 // now (increment 56e): the cross-window capsule it also fed became AppKit, so a table that could stay in
 // one renderer while both chips were SwiftUI would have had to be spelled twice the moment one of them
 // was not. See that file for why the floor is the right home rather than either half.
@@ -124,14 +129,6 @@ struct PaneMoveHandle: View {
     /// skipped the way a bare `.onEnded` closure can (see `PaneDivider`'s identical safety net).
     @GestureState private var dragActive = false
 
-    /// The grab strip is centred + width-limited so it covers minimal terminal real estate and never
-    /// overlaps the side dividers. Short panes get a proportionally smaller strip.
-    private var stripWidth: CGFloat { Double.minimum(160, Double.maximum(56, Double(leafSize.width) * 0.4)) }
-    /// 14pt strip flush to the leaf's top edge → the pill's centre sits 7pt in, INSIDE the pane's
-    /// top padding band. A 3pt inset + 22pt strip would put the pill at ~14pt — over the first line
-    /// of terminal text, where it overlaps the pane's content.
-    private let stripHeight: CGFloat = 14
-
     private var revealed: Bool { hovering || isDragging }
 
     var body: some View {
@@ -142,6 +139,9 @@ struct PaneMoveHandle: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
+    /// Every number below is ``Slate/GrabPill``'s, and for the reason that file's header states: the
+    /// satellite window's strip draws the SAME pill, and the drag that starts on it ends on this one.
+    /// A user crossing back from a detached window compares the two inside one gesture.
     private var strip: some View {
         ZStack {
             // Over a video stream the pill sits on a small opaque plate — tertiary-on-anything is
@@ -154,18 +154,21 @@ struct PaneMoveHandle: View {
                         Capsule(style: .continuous)
                             .strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline),
                     )
-                    .frame(width: 44, height: 10)
+                    .frame(width: Slate.GrabPill.plateWidth, height: Slate.GrabPill.plateHeight)
                     .slateShadow(.chip)
                     .opacity(revealed ? 1 : 0)
-                    .scaleEffect(hovering && !isDragging ? 1.15 : 1)
+                    .scaleEffect(hovering && !isDragging ? Slate.GrabPill.hoverScale : 1)
             }
             Capsule()
                 .fill(isDragging ? Slate.State.accent : Slate.Text.tertiary)
-                .frame(width: 30, height: 4)
+                .frame(width: Slate.GrabPill.barWidth, height: Slate.GrabPill.barHeight)
                 .opacity(revealed ? 1 : 0)
-                .scaleEffect(hovering && !isDragging ? 1.15 : 1)
+                .scaleEffect(hovering && !isDragging ? Slate.GrabPill.hoverScale : 1)
         }
-        .frame(width: stripWidth, height: stripHeight)
+        .frame(
+            width: Slate.GrabPill.stripWidth(forLeafWidth: leafSize.width),
+            height: Slate.GrabPill.stripHeight,
+        )
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .panePointer(isDragging ? .grabActive : .grabIdle)
