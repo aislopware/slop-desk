@@ -89,6 +89,29 @@ final class PaneDropPresentationTests: XCTestCase {
         )
     }
 
+    /// The claim the inset has to make is not "half an x-radius" — it is "the label is ON the pane". So this
+    /// sweeps EVERY zone against the real ``PaneDropZoneLayout`` (the same Rust shapes the overlay draws,
+    /// not hand-written ones) at three pane sizes and asserts the point lands inside the box. A sixth zone
+    /// hugging an edge is now caught twice over: `labelCenter` is exhaustive, so the compiler demands an
+    /// answer for it, and this demands that the answer be somewhere the clip rectangle will not eat.
+    func testEveryZoneLabelLandsInsideThePaneBox() {
+        let sizes = [
+            CGSize(width: 400, height: 300),
+            CGSize(width: 1600, height: 900),
+            CGSize(width: 220, height: 180),
+        ]
+        for size in sizes {
+            let layout = PaneDropZoneLayout(size: size)
+            for zone in DropZone.allCases {
+                let point = DropZonePresentation.labelCenter(zone, shape: layout.shape(for: zone), in: size)
+                XCTAssertTrue(
+                    (0...size.width).contains(point.x) && (0...size.height).contains(point.y),
+                    "\(zone)'s label at \(point) falls outside the \(size) pane — the clip rectangle eats it",
+                )
+            }
+        }
+    }
+
     /// A pane mid-layout answers with a degenerate box; a NEGATIVE dimension must never reach a framework
     /// (SwiftUI logs it, AppKit draws garbage). The clamp is the overlay's, so it is pinned here.
     func testBlobSizeClampsAwayFromNegativeDimensions() {

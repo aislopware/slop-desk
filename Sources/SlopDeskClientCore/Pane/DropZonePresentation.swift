@@ -101,11 +101,25 @@ package enum DropZonePresentation {
     /// This is the one bit of drop geometry that never made it into `PaneDropZoneLayout`, and it is
     /// here rather than beside `shape(for:)` only because the shapes are answered by Rust and a label
     /// offset is not a law of the layout — it is a reading decision about text.
+    ///
+    /// EVERY ZONE IS SPELLED AND THERE IS NO `default:`. The three central circles share one arm
+    /// because they share one ANSWER — an unclipped blob wants its label at its own centre — not
+    /// because the arm is a place to put the cases nobody has thought about yet. A `default:` here
+    /// would hand a sixth zone the centred label silently, and "centred" is correct only for a blob
+    /// the pane box does not cut in half: add a `.splitTop` that hugs the top edge the way Split Left
+    /// hugs the left, and its label draws half outside the pane with nothing to notice. The failure
+    /// is invisible to every other gate too — the point is still a well-formed `CGPoint`, both
+    /// overlays still render, and the clip rectangle just eats the top half of the word. The ink
+    /// verdicts below are ratcheted by `scripts/check-supervisor.sh` so that a new zone cannot reach
+    /// a renderer unanswered; exhaustiveness is that same obligation collected by the compiler
+    /// instead of by a script, and it holds only while no arm absorbs the unwritten cases.
     package static func labelCenter(_ zone: DropZone, shape: DropZoneShape, in size: CGSize) -> CGPoint {
         switch zone {
+        case .newTab,
+             .insertPath,
+             .openInPlace: shape.center
         case .splitLeft: CGPoint(x: shape.radiusX * 0.5, y: shape.center.y)
         case .splitRight: CGPoint(x: size.width - shape.radiusX * 0.5, y: shape.center.y)
-        default: shape.center
         }
     }
 
