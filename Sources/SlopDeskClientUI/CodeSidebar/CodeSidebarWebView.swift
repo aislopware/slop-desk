@@ -12,6 +12,12 @@
 // every claim goes through ``CodeSidebarFocusPolicy`` at the responder seam and every reserved chord
 // is refused there. iOS has no such duel — no app-level event monitor, no menu bar — so the phone
 // mounts a plain `WKWebView` and there is nothing to guard.
+//
+// WHAT THE SUBCLASS OWNS IS THE SEAM, NEVER THE BOOKKEEPING. The three moments the responder chain
+// hands it — a claim, a resign, a refusal that strands the keyboard — are reported to
+// ``CodeSidebarKeyboard``, which is `MacCodeSidebarKeyboard` one target up (docs/56 §3: the duel is
+// AppKit window machinery and belongs in the Mac's own target). It is reached through the pool
+// because the pool is what both of them can see; this file names no target above it.
 
 import SlopDeskClientCore
 import SlopDeskSlate
@@ -26,7 +32,7 @@ import AppKit
 /// The pooled webview class: applies ``CodeSidebarFocusPolicy`` at the responder seam, so the
 /// embedded VS Code can never STEAL the keyboard — it can only be handed it by a click (or the
 /// pool's own remount RESTORE, which is app-directed, never page-directed).
-final class CodeSidebarWKWebView: WKWebView {
+final class CodeSidebarWKWebView: WKWebView, CodeSidebarKeyboardPage {
     /// The pool key this webview serves — the focus-restore bookkeeping is keyed by it.
     let projectRoot: String
 
@@ -72,22 +78,17 @@ final class CodeSidebarWKWebView: WKWebView {
             // strands first responder on the window — every key dead until the next click
             // (user-reported 2026-08-04: opening the app with the panel expanded showed cursors
             // blinking in both the terminal and the editor, with the keyboard in neither). Hand
-            // the keyboard straight back to the responder it was lifted from; one hop later so
-            // the surrounding `makeFirstResponder` finishes first. The `firstResponder == window`
-            // guard keeps the repair out of every legitimate move (a real taker means no orphan).
-            DispatchQueue.main.async { [weak self] in
-                guard let window = self?.window, window.firstResponder === window,
-                      let owner = CodeSidebarWebViewPool.shared.lastKeyboardOwner,
-                      owner.window === window
-                else { return }
-                window.makeFirstResponder(owner)
-            }
+            // the keyboard straight back to the responder it was lifted from. The duel owns both
+            // halves of that repair — the remembered owner and the one-hop defer that lets the
+            // surrounding `makeFirstResponder` finish first — because both are about the WINDOW,
+            // which is the Mac's subject and not this file's.
+            CodeSidebarWebViewPool.shared.keyboard?.repairOrphanedFocus(after: self)
             return false
         }
         let became = super.becomeFirstResponder()
         if became {
             CodeSidebarKeyboardState.shared.set(true)
-            CodeSidebarWebViewPool.shared.noteKeyboardClaimed(projectRoot: projectRoot)
+            CodeSidebarWebViewPool.shared.keyboard?.noteKeyboardClaimed(projectRoot: projectRoot)
         }
         return became
     }
@@ -109,21 +110,14 @@ final class CodeSidebarWKWebView: WKWebView {
     /// ``CodeSidebarFocusPolicy/memoryAfterResign(_:resigningTab:stillInWindow:)``).
     ///
     /// The tab is read NOW, not in the deferred hop: a click on another tab's row moves the keyboard
-    /// on mouse-down and switches the tab after, so the hop would name the wrong tab.
+    /// on mouse-down and switches the tab after, so the hop would name the wrong tab. That is why
+    /// ``CodeSidebarKeyboard/noteResign(of:)`` is called synchronously and defers on its own side —
+    /// the deadline belongs to whoever reads the tab, and this file no longer knows what a tab is.
     override func resignFirstResponder() -> Bool {
         let resigned = super.resignFirstResponder()
         if resigned {
             CodeSidebarKeyboardState.shared.set(false)
-            let resigningTab = CodeSidebarWebViewPool.activeTabID()
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                CodeSidebarWebViewPool.shared.classifyResign(
-                    tab: resigningTab, stillInWindow: window != nil,
-                )
-                // The page keeps rendering a caret unless it is TOLD the keyboard left (see
-                // `syncFocusTruth()`).
-                syncFocusTruth()
-            }
+            CodeSidebarWebViewPool.shared.keyboard?.noteResign(of: self)
         }
         return resigned
     }

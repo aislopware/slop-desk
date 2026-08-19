@@ -1521,3 +1521,157 @@ drives the cheat sheet and the keybindings editor, and `WorkspaceBindingRouting`
 still carries its own `#if`. That is 78 rows in a different id space (`pane.detach`, `view.pinWindow`)
 and it gets its own table and its own increment; the routing gate stays until then, because until the
 registry declares platforms it is the only thing stopping a rebound chord from stranding a pane.
+
+### Increment 39 — the other half of it: a keybinding names its platform too
+
+The other half of increment 38, and the half that mattered more. The registry the palette mirrors is
+not one surface: it is the cheat sheet, the keybindings editor, the `ctl` verb list, and — the part
+that made this more than a list that lies — `chordTable`, which the keyboard dispatcher resolves
+against. **A bound chord does not reach the terminal.** So on the phone ⌥⌘P was taken away from the
+PTY in order to run `case .detachPane: #if os(macOS) … #endif`, an arm with nothing in its else, and
+the keybindings editor offered to rebind a chord onto an action that half cannot perform. Dropping
+the row drops the chord, and the key falls through to the pane the way an unbound chord should.
+
+`rust/slopdesk-workspace/src/binding_rows.rs` is the same shape as `palette_rows.rs` — 77 rows over
+`settings_layout::Platform`, three of them `Mac` — and `WorkspaceBindingRegistry.bindings` is now
+`declared.filter { BindingRowPlatform.lists($0.id) }`, with the raw array private for the same reason
+the palette's is: a caller who wanted it would be asking for the rows this half cannot run.
+
+**A SECOND table, not one shared with the palette.** They are two id spaces over two vocabularies
+with partial overlap in both directions: this verb is `pane.detach` here and `action.detachPane`
+there, ~45 rows here have no palette entry at all (every focus move, every resize nudge, every scroll
+jump), and the palette has rows the registry does not (`action.connect`, `action.copyPath`). One
+table keyed by either spelling could not answer for the other's rows; one keyed by both would be a
+join maintained by hand. Two complete tables, each pinned to its own Swift list, is what makes "a new
+verb declares a platform" true on both sides rather than on whichever side someone remembered — and
+`binding_rows::tests::the_two_tables_withhold_the_same_feature` is the one place both are in scope,
+so the two spellings of one feature cannot drift apart.
+
+The filter is on the REGISTRY, not on each display surface, precisely because `chordTable` is one of
+the readers. `BindingRowPlatformTests` pins that consequence directly: on a phone build there is no
+`pane.detach` row and no chord anywhere in the table resolving to `.detachPane`.
+
+The nine generated `pane.select.N` slots are minted by a loop and are deliberately **undeclared** —
+they are `Both`, and the table declares the one collapsed representative (`pane.selectN`) the cheat
+sheet shows in their place. The supervisor's id-set pin excludes that family by name rather than by
+a grep that quietly fails to match it, and the routing gate is gone: `check-supervisor.sh` now fails
+on any `#if os(` in either the registry or its routing.
+
+### Increment 40 — one CGEventTap gate instead of seven, and the pane's last gate is data
+
+`GuiLeafView` carried **ten** `#if os(macOS)` blocks, and nine of them were one feature: immersive
+system-key capture. The tap itself is a genuine platform impossibility — `CGEvent.tapCreate` has no
+iOS counterpart and will not get one — so §3 says keep the gate. What §3 also says is that such a
+gate must be spelled **exactly once**, the way `Image.decoded(_:)` names `NSImage`/`UIImage` once for
+the whole client and `View.slateCancelKey(perform:)` names the two cancel keys once for every
+overlay. Immersive capture is a LIFECYCLE rather than a call — engage on mount, suspend on focus and
+injectability edges, re-engage from the model's remembered wish, tear down on unmount, plus a toggle
+with four outcomes — so left at the call site it was a stored property, three view modifiers, a
+computed read, a toggle body and two private helpers, each an invisible empty `#else`.
+
+`Sources/SlopDeskClientUI/Pane/PaneImmersiveCapture.swift` is that one place: a macOS half that is a
+thin policy layer over `SystemKeyCaptureController`, and a phone half where every method is a no-op.
+The pane holds one and branches on nothing.
+
+**A no-op twin is only safe when the affordance disappears with it.** A toggle drawn where the tap
+does nothing is exactly the listed-and-inert defect increments 38 and 39 closed, so the footer reads
+`PaneImmersiveCapture.isSupported` — capability as data — rather than carrying its own gate for the
+chip and again for the mode-group's "does this group have anything to show".
+
+The tenth gate was the detach ⇄ reattach button, and it is now `BindingRowPlatform.lists("pane.detach")`.
+That button is the FOURTH surface for one verb, after the palette row, the chord and the keybindings
+editor; reading the same declaration the other three read is what stops a fourth answer from drifting.
+`BindingRowPlatform` went `public` for exactly that caller, and says so.
+
+`GuiLeafView`: **10 gates → 0.** `SystemKeyCaptureController` keeps its whole-file `#if os(macOS)` and
+stays in the draining floor on purpose — it is now reached from exactly one place, and it cannot
+ascend to `SlopDeskMacUI` before its only caller does, since `SlopDeskClientUI` cannot import the
+target that depends on it.
+
+### Increment 41 — the drag block: fourteen spellings of two facts
+
+The canvas drag block (`PaneDragCoordinator`, `SplitContainer`, `PaneMoveAffordance`, `PaneDivider`)
+carried **14** platform gates. Censused against §3's three buckets, every one of them was (b) — a
+genuine impossibility — and the defect was not that they existed but that two facts were spelled
+fourteen times.
+
+**The classification that had to be checked rather than assumed.** `.pointerStyle` looked like an
+iPad gap worth closing: iOS 18 added pointer APIs and this project targets iOS 26. The SDK says
+otherwise — `iPhoneOS26.5.sdk/…/SwiftUI.swiftinterface:20442` marks `struct PointerStyle`
+`@available(iOS, unavailable)`, every member likewise, and no `pointerStyle(_:)` modifier exists on
+the iOS triple at all. A gate that survives a real check is worth more than one nobody questioned.
+
+Two facts, now spelled once each:
+
+  * **`PanePointer` + `View.panePointer(_:)`** — the cursor. In the `SlateCancelKey` register: a plain
+    enum both halves can name, one `#if` inside one function. It took the *decision* out of the gate
+    with it — "a seam at its min-weight floor shows the one-way arrow, a dead seam keeps the two-way
+    glyph" was compiled on macOS only, i.e. a rule half the readers never saw. `PaneDivider` is now at
+    **zero** gates: only the drawing is platform-shaped, and the rule is plain Swift.
+  * **One region in `PaneDragCoordinator`** with three seams — `platformCursorLocation()`,
+    `platformDragFrame(at:drag:)`, `platformDragEnded()`. `update`, `end` and `updateDetachedDrag`
+    now read identically on both halves; the macOS stored properties moved down beside the seams they
+    serve. The file header states the gate budget so a fourth reads as a regression.
+
+`PaneMoveEscapeMonitor` became a two-half type whose phone side mounts and does nothing — a SINK
+(§3.5), not a second implementation. **This is a real capability gap and is recorded as one:** the
+Mac's half is a local `NSEvent` monitor precisely *because* the drag holds no first responder, so
+`.onKeyPress(.escape)` cannot substitute. Escape-to-cancel on iPad needs a `UIPress` responder over
+the canvas — a feature, not a gate fix.
+
+**14 gates → 6.** `PaneDragCoordinator` 7→3, `SplitContainer` 3→1, `PaneDivider` 2→0,
+`PaneMoveAffordance` 2→2 while absorbing three from the other two files.
+
+#### Why the coordinator still cannot ascend
+
+`DropTargetFrameReader` has exactly **one** consumer left (`SplitContainer.swift:96`) — the other
+three drop targets already register from AppKit (`MacNavigatorColumn` for `.sidebarList` and
+`.newTabZone`, `MacSidebarRow` for `.sidebarRow`), so the representable is a leftover from before the
+navigator crossed. But it cannot simply move: it is mounted as the background of `SplitContainer`'s
+`GeometryReader`, i.e. the COMPOSITOR rect, and the hosting view's frame is not that rect —
+`ContentColumn` applies `slateIsland(clearingBand:)`'s moat and then the panel-rail padding. An
+AppKit-side registration would be off by the island moat, and off by a *different, animating* amount
+during a collapse. Either `SplitContainer` is ported whole, or the moat moves out of SwiftUI into the
+AppKit column so the hosting view's frame IS the canvas.
+
+One of the three type anchors was free and is gone: `NavigatorColumn.swift` declared
+`var paneDrag: PaneDragCoordinator?` that nothing in the file ever read, and no call site ever passed
+— a property whose doc comment promised sidebar rows as drop targets on a half that never made them
+one. Same class as increment 14. Two anchors remain (`ContentColumn`, `SplitContainer`), and both are
+live.
+
+### Increment 42 — the code sidebar's keyboard duel goes up where it belongs
+
+Increment 13 left the pool's Mac keyboard machine "walled off at the bottom of the class behind the
+only `#if` that survives", and called that good enough. It was not: §3 says a platform gate inside a
+shared file means the FILE is in the wrong target, and this was two hundred lines of it. The pool's
+subject is projects and their warm pages — one law on both halves. Key windows, responder chains and
+`makeFirstResponder` are one platform's window machinery and no law at all on the other.
+
+`Sources/SlopDeskMacUI/CodeSidebar/MacCodeSidebarKeyboard.swift` now holds the duel: the key-window
+observers, `sidebarFocusMemory`, `lastKeyboardOwner`, the resign classification, the remount hand-back,
+the ⌥⌘R toggle, the orphan repair, `holdsFirstResponder`. The pool keeps a `keyboard` seam that is
+simply **nil on the phone** rather than an empty branch, and `CodeSidebarWKWebView` reports its three
+responder moments through it.
+
+**Installation, without editing a wiring file.** `SlopDeskMacUI` sits above `SlopDeskClientUI`, so
+nothing in the pool can construct the duel — it has to be installed from above. Rather than add a
+line to `SlopDeskMacApp`, `activeTabID` moved into the MacUI extension as a computed property
+forwarding to `MacCodeSidebarKeyboard.shared`, so the composition line that was already there
+(`SlopDeskMacApp.swift:296`) is verbatim what brings the duel up. Every other Mac entry point touches
+`shared` too, so no single call site is load-bearing.
+
+**One deliberate behaviour delta, strictly safer:** the window observers used to arm on the first
+`CodeSidebarWebViewPool.shared` access and now arm at app composition, which is earlier — an observer
+armed before there is a window has nothing to do. The side benefit is that headless ClientUI tests
+touching the pool register no AppKit notification observers at all.
+
+**8 gates → 2.** The survivors are the import (a pooled page is an `NSView` here and a `UIView`
+there; `NSAppearance` and `UIColor.clear` have no neutral spelling) and the MINT — subclass-vs-plain,
+chrome polarity, base-canvas kill, which were three gates for three decisions and are now one `#if`
+for all three. That last one could reach zero by moving mint-and-dress into `CodeSidebarWebView.swift`,
+which is already two per-platform halves; it was left alone because it changes the pool's documented
+subject, and this increment's subject was the duel.
+
+Eight `internal` → `package` widenings in `CodeSidebarFocusPolicy` pay for the move, each for the one
+caller that crossed. `CodeSidebarFocusPolicyTests` is unchanged — `@testable` never cared.

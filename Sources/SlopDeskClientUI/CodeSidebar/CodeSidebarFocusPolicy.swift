@@ -14,6 +14,14 @@
 // the bottom, three functions long. The phone reaches none of them: iOS has no app-level event
 // monitor to lose a chord to, no menu bar to keep ⌘Q out of, and no shared field editor to duel with.
 //
+// WHY SO MUCH OF IT IS `package`. The ACTUATOR that asks these questions is `MacCodeSidebarKeyboard`
+// (`SlopDeskMacUI`), one target up — the duel is `NSWindow`/responder-chain machinery and docs/56 §3
+// puts that in the Mac's own target rather than behind a gate in this one. Unlike the transitional
+// widenings elsewhere in this target (see `StatusDotView`'s ⚠️) these do NOT expire: the reader is
+// permanent and correct, and the same rule reached from two targets is still ONE rule. What stays
+// `internal` is what only this target asks — the eviction victim (the pool) and the three `NSEvent`
+// rules at the foot (the responder seam), both of which live beside this file.
+//
 // Pinned by `CodeSidebarFocusPolicyTests`.
 
 #if canImport(AppKit)
@@ -30,7 +38,7 @@ package enum CodeSidebarFocusPolicy {
     /// from the editor while the app sat in the background, so ⌘⇥-ing back landed the keyboard in
     /// the terminal the user had left the editor from (user-reported 2026-08-03). Pure — pinned by
     /// `CodeSidebarFocusPolicyTests`.
-    static func keyboardOwnership(
+    package static func keyboardOwnership(
         previous: Bool, hasKeyWindow: Bool, webViewHoldsFirstResponder: Bool,
     ) -> Bool {
         hasKeyWindow ? webViewHoldsFirstResponder : previous
@@ -56,7 +64,7 @@ package enum CodeSidebarFocusPolicy {
     /// (user-reported 2026-08-03: ⌘⇧P after a tab round-trip opened the APP's palette, not VS
     /// Code's). The project must match too: a remount of ANOTHER project's workbench in this tab is
     /// not the workbench this tab was reading. Pure — pinned by `CodeSidebarFocusPolicyTests`.
-    static func shouldRestoreOnRemount<Tab: Hashable>(
+    package static func shouldRestoreOnRemount<Tab: Hashable>(
         memory: [Tab: String], activeTab: Tab?, projectRoot: String,
     ) -> Bool {
         guard let activeTab else { return false }
@@ -75,7 +83,7 @@ package enum CodeSidebarFocusPolicy {
     /// that moved the keyboard has already switched the active tab, and this would forget the tab
     /// the user was ARRIVING at instead of the one they left. Pure — pinned by
     /// `CodeSidebarFocusPolicyTests`.
-    static func memoryAfterResign<Tab: Hashable>(
+    package static func memoryAfterResign<Tab: Hashable>(
         _ memory: [Tab: String], resigningTab: Tab?, stillInWindow: Bool,
     ) -> [Tab: String] {
         guard stillInWindow, let resigningTab else { return memory }
@@ -94,7 +102,7 @@ package enum CodeSidebarFocusPolicy {
     /// tab reads ANOTHER project the column's own swap unmounts and remounts the workbench, and the
     /// remount restore (``shouldRestoreOnRemount(memory:activeTab:projectRoot:)``) is what moves the
     /// keyboard to the right workbench. Pure — pinned by `CodeSidebarFocusPolicyTests`.
-    enum TabSwitchFocus: Equatable {
+    package enum TabSwitchFocus: Equatable {
         /// The arriving tab is a panel tab — claim this project's mounted workbench.
         case claimEditor(projectRoot: String)
         /// The arriving tab reads its terminal — let the workspace's focused pane take the keyboard.
@@ -103,7 +111,7 @@ package enum CodeSidebarFocusPolicy {
         case leaveAlone
     }
 
-    static func tabSwitchFocus<Tab: Hashable>(
+    package static func tabSwitchFocus<Tab: Hashable>(
         incoming: Tab?, memory: [Tab: String], editorHoldsKeyboard: Bool,
     ) -> TabSwitchFocus {
         guard let incoming, let projectRoot = memory[incoming] else {
@@ -146,7 +154,7 @@ package enum CodeSidebarFocusPolicy {
     /// clicking it, because every other focus claim is refused by design (see
     /// ``shouldAcceptFocus(eventType:clickWasInsideWebView:)``). Pure — pinned by
     /// `CodeSidebarFocusPolicyTests`.
-    enum FocusToggleOutcome: Equatable {
+    package enum FocusToggleOutcome: Equatable {
         /// The editor has the keyboard — give it back to the view it was taken from.
         case handBack
         /// The panel is up and mounted; claim the keyboard for the workbench.
@@ -158,7 +166,7 @@ package enum CodeSidebarFocusPolicy {
         case none
     }
 
-    static func focusToggle(
+    package static func focusToggle(
         webViewHoldsKeyboard: Bool, hasMountedWebView: Bool, panelCollapsed: Bool,
     ) -> FocusToggleOutcome {
         if webViewHoldsKeyboard { return .handBack }
@@ -193,7 +201,7 @@ package enum CodeSidebarFocusPolicy {
     /// Only a real VIEW that is neither the window's stand-in (`firstResponder == window` IS the
     /// orphaned state) nor part of any pooled webview qualifies: remembering a webview would make
     /// the repair hand the keyboard to the thief. Pure — pinned by `CodeSidebarFocusPolicyTests`.
-    static func isTrackableKeyboardOwner(
+    package static func isTrackableKeyboardOwner(
         responderIsView: Bool, responderIsWindow: Bool, responderInsidePooledWebView: Bool,
     ) -> Bool {
         responderIsView && !responderIsWindow && !responderInsidePooledWebView

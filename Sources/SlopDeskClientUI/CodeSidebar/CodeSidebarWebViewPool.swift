@@ -7,13 +7,22 @@
 // renderer (multi-second, editor state lost). A detached webview keeps its web-content process
 // alive; the idle throttling that comes with being unparented is fine for an editor.
 //
-// WHAT IS PLATFORM-SHAPED IS THE KEYBOARD, and nothing else. The mint, the five user scripts, the
-// LRU and its eviction, the veil state and the reload are the same on both platforms — the pool's
-// whole subject is projects and their pages. The second half of the class is the Mac's alone: the
-// per-tab focus region, the resign classification, the ⌥⌘R toggle and the orphan repair all exist
-// because a focused embedded VS Code and a focused terminal are two AppKit first responders duelling
-// over one window. iOS has no such duel — no app-level event monitor, no menu bar, no shared field
-// editor — so none of it is ported, and none of it is missed.
+// THE POOL'S WHOLE SUBJECT IS PROJECTS AND THEIR PAGES, on both platforms. The mint, the five user
+// scripts, the LRU and its eviction, the veil state and the reload are one law with no platform in
+// it. What used to sit under all of that — the per-tab focus region, the resign classification, the
+// ⌥⌘R toggle and the orphan repair — was never about projects at all: it exists because a focused
+// embedded VS Code and a focused terminal are two AppKit first responders duelling over one window.
+// That is `MacCodeSidebarKeyboard` (`SlopDeskMacUI`) now, and it left because a platform gate inside
+// a shared file is a file wearing two coats (docs/56 §3). iOS has no such duel — no app-level event
+// monitor, no menu bar, no shared field editor — so the phone installs nothing and every keyboard
+// line below costs one nil-check.
+//
+// THE SEAM IS TWO NARROW PROTOCOLS AND NEITHER NAMES A FRAMEWORK. ``CodeSidebarKeyboard`` is the duel
+// as the pool sees it (a project root, a page — the pool's own vocabulary, so the AppKit stays on the
+// far side of it), and ``CodeSidebarKeyboardPage`` is a pooled page as the duel sees it. The second
+// one has to exist: the Mac's `WKWebView` subclass IS the responder seam, `check-supervisor.sh` keeps
+// its name inside the two files that own it, and the duel one target up therefore has to ask a page
+// for what it can do rather than for what it is.
 //
 // HANG-SAFETY: nothing in the unit-test dependency closure may construct a WKWebView — the pool is
 // only reached from a mounted panel column; all decision logic lives in `CodeSidebarFocusPolicy` and
@@ -22,15 +31,64 @@
 import SlopDeskClientCore
 import SlopDeskSlate
 import SlopDeskWorkspaceCore
-import SlopDeskWorkspaceModel
 import SwiftUI
 import WebKit
 
+// The FIRST of the two gates this file keeps, and both are genuine impossibilities rather than
+// choices. This one: a pooled page is an `NSView` here and a `UIView` there, so the lines that pin
+// its appearance and kill WebKit's white base canvas need the platform's own framework in scope. The
+// second is the mint itself, spelled once, down in ``webView(for:url:)``. Everything else the pool
+// does is `WKWebView` and `String`.
 #if os(macOS)
 import AppKit
 #else
 import UIKit
 #endif
+
+/// The platform's keyboard duel, as the pool and its pages see it — installed by the shell that has
+/// one. macOS installs ``SlopDeskMacUI/MacCodeSidebarKeyboard`` at app composition; the phone leaves
+/// it nil, because nothing there claims the keyboard for a project in the first place.
+///
+/// Every member is stated in projects and pages, never in views, which is what lets the pool hold one
+/// of these without a gate.
+@MainActor
+package protocol CodeSidebarKeyboard: AnyObject {
+    /// The project roots OWED a keyboard hand-back on their next remount. Eviction must leave them
+    /// alone — the debt dies with the page, and the user would land in a terminal they never aimed at.
+    var projectRootsOwedKeyboard: Set<String> { get }
+
+    /// A pooled page re-entered the view hierarchy and may be owed the keyboard back.
+    func noteRemount(projectRoot: String)
+
+    /// A page took the keyboard — by a click, or by the duel's own app-directed restore.
+    func noteKeyboardClaimed(projectRoot: String)
+
+    /// A page gave the keyboard up. Called SYNCHRONOUSLY from the resign so the duel can read the tab
+    /// it happened in; the cause is classified a runloop later, once any swap has finished unparenting.
+    func noteResign(of page: CodeSidebarPooledPage)
+
+    /// A page REFUSED a focus pull mid-`makeFirstResponder`, which strands first responder on the
+    /// window — every key dead until the next click. Hand the keyboard back to whoever held it.
+    func repairOrphanedFocus(after page: CodeSidebarPooledPage)
+}
+
+/// What a duel needs of a pooled page: which project it serves, and the two moves only the page
+/// itself can make. Nothing here is a decision — every one of those is in ``CodeSidebarFocusPolicy``.
+@MainActor
+package protocol CodeSidebarKeyboardPage: AnyObject {
+    /// The pool key this page serves — the focus-region bookkeeping is keyed by it.
+    var projectRoot: String { get }
+    /// Take the keyboard because the APP said so. The one non-click path a page may become first
+    /// responder through; a page-level `focus()` can never reach it.
+    func claimKeyboardForRestore()
+    /// Make the PAGE agree about whether it has the keyboard, so only the real owner draws a caret.
+    func syncFocusTruth()
+}
+
+/// A pooled page as the duel handles it — the webview AND the seam it carries. A composition rather
+/// than a `window` member on the protocol, because `WKWebView` already IS the platform's view type on
+/// both platforms: the duel reads `page.window` directly and this line still needs no gate.
+package typealias CodeSidebarPooledPage = CodeSidebarKeyboardPage & WKWebView
 
 /// Per-project veil state for the workbench's main-frame navigation. The webview stays COVERED by
 /// the column's dark waiting surface from load-start until the navigation settles — WebKit paints
@@ -81,10 +139,10 @@ private final class CodeSidebarNavigationObserver: NSObject, WKNavigationDelegat
 package final class CodeSidebarWebViewPool {
     package static let shared = CodeSidebarWebViewPool()
 
-    /// The workspace's active tab — wired once by the app layer (the pool cannot see the store).
-    /// Drives the focus-restore tab match; the `nil` default (headless tests, pre-wiring renders)
-    /// simply never restores.
-    package static var activeTabID: @MainActor () -> TabID? = { nil }
+    /// The platform's keyboard duel, or `nil` where there is none to fight. Installed by the shell
+    /// that has one — never built here, because the target that owns the duel sits ABOVE this one
+    /// (docs/56 §2) and a floor cannot name its own ceiling.
+    package var keyboard: (any CodeSidebarKeyboard)?
 
     /// How many project workbenches stay warm at once. Three covers the rotation a person actually
     /// keeps in their head (the repo, its dependency, the thing they are comparing against) while
@@ -97,67 +155,6 @@ package final class CodeSidebarWebViewPool {
     private var recency: [String] = []
     private var loadStates: [String: CodeSidebarWebLoadState] = [:]
     private var navigationObservers: [String: CodeSidebarNavigationObserver] = [:]
-    #if os(macOS)
-    private var keyWindowObservers: [NSObjectProtocol] = []
-    /// THE PER-TAB FOCUS REGION — every workspace tab whose keyboard belongs to the code panel,
-    /// mapped to the project workbench it belongs to. A tab absent from here reads its terminal.
-    /// Written at the responder seam (claim / resign) and honoured on every tab switch and remount;
-    /// see ``CodeSidebarFocusPolicy/shouldRestoreOnRemount(memory:activeTab:projectRoot:)``.
-    private var sidebarFocusMemory: [TabID: String] = [:]
-    /// The last first responder that was a real view OUTSIDE every pooled webview — the repair
-    /// target when a refused page focus pull strands the keyboard on the window (see
-    /// ``CodeSidebarWKWebView/becomeFirstResponder()``). Tracked from `NSWindow.didUpdate`
-    /// (AppKit offers no first-responder-change notification); weak, and re-validated against
-    /// the live window at repair time, so a torn-down view can never be revived by the repair.
-    private(set) weak var lastKeyboardOwner: NSView?
-
-    init() {
-        // The responder overrides keep `CodeSidebarKeyboardState` honest WITHIN one window, but a
-        // key-window change moves the keyboard without any responder transition (the webview stays
-        // its window's first responder while a satellite pane window is key). Re-derive on both
-        // edges so the flag always answers for the window that actually receives keys — but only
-        // while SOME window of ours is key: app deactivation is not an intra-app keyboard move
-        // (`CodeSidebarFocusPolicy.keyboardOwnership` — the ⌘⇥ round-trip fix).
-        for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
-            keyWindowObservers.append(NotificationCenter.default.addObserver(
-                forName: name, object: nil, queue: .main,
-            ) { _ in
-                MainActor.assumeIsolated {
-                    CodeSidebarKeyboardState.shared.set(CodeSidebarFocusPolicy.keyboardOwnership(
-                        previous: CodeSidebarKeyboardState.shared.ownsKeyboard,
-                        hasKeyWindow: (NSApp as NSApplication?)?.keyWindow != nil,
-                        webViewHoldsFirstResponder: Self.shared.holdsFirstResponder(),
-                    ))
-                }
-            })
-        }
-        // The rightful-owner tracker behind the orphan repair. `didUpdate` fires on every window
-        // update pass — the guards are cheap and the write is a weak-pointer store.
-        keyWindowObservers.append(NotificationCenter.default.addObserver(
-            forName: NSWindow.didUpdateNotification, object: nil, queue: .main,
-        ) { note in
-            let window = note.object as? NSWindow
-            MainActor.assumeIsolated {
-                Self.shared.noteWindowUpdate(window)
-            }
-        })
-    }
-
-    /// Remember the current first responder as the keyboard's rightful owner when
-    /// ``CodeSidebarFocusPolicy/isTrackableKeyboardOwner(responderIsView:responderIsWindow:responderInsidePooledWebView:)``
-    /// says it qualifies (a real view, not the window's orphan stand-in, not a pooled webview).
-    private func noteWindowUpdate(_ window: NSWindow?) {
-        guard let window, window.isKeyWindow else { return }
-        let responder = window.firstResponder
-        let view = responder as? NSView
-        guard CodeSidebarFocusPolicy.isTrackableKeyboardOwner(
-            responderIsView: view != nil,
-            responderIsWindow: responder === window,
-            responderInsidePooledWebView: view.map(isInsidePooledWebView) ?? false,
-        ), let view else { return }
-        lastKeyboardOwner = view
-    }
-    #endif
 
     /// The project's veil state — the column reads `veiled` to hold its dark waiting surface over
     /// the webview until the workbench paints. Created on demand so the read can precede the
@@ -191,43 +188,43 @@ package final class CodeSidebarWebViewPool {
             Self.fontSchemeHandler, forURLScheme: CodeSidebarFontScheme.scheme,
         )
         installWorkbenchDressing(on: configuration.userContentController)
-        // The Mac's webview is a SUBCLASS because it has a responder seam to guard; the phone's is a
-        // plain `WKWebView` because there is no second first responder to duel with.
+        // MINTING A PAGE IS WHERE THE TWO PLATFORMS GENUINELY PART, and it is three spellings of the
+        // same three decisions rather than three different decisions — so it is ONE gate, said once,
+        // and every other line in this file is platform-blind.
+        //
+        // THE CLASS. The Mac's webview is a SUBCLASS because it has a responder seam to guard; the
+        // phone's is a plain `WKWebView` because there is no second first responder to duel with.
+        //
+        // CHROME POLARITY. The workbench is a sunken panel on the ground, not an island (ONE ISLAND
+        // law 1): it stands on the same cream ground as the navigator, so it follows the chrome's
+        // LIGHT appearance and the seeded colour customizations paint it in the ground tone. Pinned
+        // HERE, at creation, and nowhere else — a re-pin pass over the pool existed and was never
+        // called, which was correct: `Slate.theme` does not change while the app runs.
+        //
+        // THE BASE CANVAS. WebKit's own is WHITE until the page's first paint — with a multi-second
+        // workbench boot that is a visible flash between the dark chrome and the dark editor. On the
+        // Mac there is no public API for it and the long-standing KVC key makes the canvas
+        // transparent; UIKit exposes the same thing honestly, through the view's own opacity.
         #if os(macOS)
         let webView: WKWebView = CodeSidebarWKWebView(
             projectRoot: projectRoot, frame: .zero, configuration: configuration,
         )
+        webView.appearance = NSAppearance(named: .aqua)
+        webView.setValue(false, forKey: "drawsBackground")
         #else
         let webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.overrideUserInterfaceStyle = .light
+        webView.isOpaque = false
+        webView.backgroundColor = .clear
+        webView.scrollView.backgroundColor = .clear
         #endif
         // Right-click → Inspect Element on the embedded workbench (Safari Web Inspector) — the only
         // window into a misbehaving code-server page.
         webView.isInspectable = true
         // Paint the GROUND behind the page so the first load / a bounce never flashes a tone the
-        // column does not wear (the cmux `underPageBackgroundColor` trick).
+        // column does not wear (the cmux `underPageBackgroundColor` trick). After the gate rather
+        // than inside it: it is one line in one spelling, and nothing above it reads it back.
         webView.underPageBackgroundColor = SlateNativeColor(slateHex: Slate.theme.groundHexValue)
-        // CHROME polarity — the workbench is a sunken panel on the ground, not an island (ONE ISLAND
-        // law 1): it stands on the same cream ground as the navigator, so it follows the chrome's
-        // LIGHT appearance and the seeded colour customizations paint it in the ground tone. Pinned
-        // HERE, at creation, and nowhere else — a re-pin pass over the pool existed and was never
-        // called, which was correct: `Slate.theme` does not change while the app runs. The two
-        // platforms spell the same pin differently, and only that spelling differs.
-        #if os(macOS)
-        webView.appearance = NSAppearance(named: .aqua)
-        #else
-        webView.overrideUserInterfaceStyle = .light
-        #endif
-        // WebKit's own base canvas is WHITE until the page's first paint — with a multi-second
-        // workbench boot that is a visible flash between the dark chrome and the dark editor. On the
-        // Mac there is no public API for it and the long-standing KVC key makes the canvas
-        // transparent; UIKit exposes the same thing honestly, through the view's own opacity.
-        #if os(macOS)
-        webView.setValue(false, forKey: "drawsBackground")
-        #else
-        webView.isOpaque = false
-        webView.backgroundColor = .clear
-        webView.scrollView.backgroundColor = .clear
-        #endif
         let observer = CodeSidebarNavigationObserver(state: loadState(for: projectRoot))
         navigationObservers[projectRoot] = observer
         webView.navigationDelegate = observer
@@ -309,17 +306,13 @@ package final class CodeSidebarWebViewPool {
         }
     }
 
-    /// The roots eviction must leave alone: whatever is on screen, and whatever is owed a keyboard
-    /// The roots eviction must leave alone: whatever is on screen…
+    /// The roots eviction must leave alone: whatever is on screen, and whatever the platform's duel
+    /// says is owed a keyboard hand-back on remount. The phone has no such debt and no duel, so the
+    /// second half of that union is empty there rather than absent — which is what turns a gate into
+    /// one `??`.
     private func protectedProjectRoots() -> Set<String> {
         let mounted = Set(webViews.filter { $0.value.window != nil }.keys)
-        #if os(macOS)
-        // …and whatever is owed a keyboard hand-back on remount. There is no such debt on
-        // the phone: nothing there claims the keyboard for a project in the first place.
-        return mounted.union(sidebarFocusMemory.values)
-        #else
-        return mounted
-        #endif
+        return mounted.union(keyboard?.projectRootsOwedKeyboard ?? [])
     }
 
     /// Tear one project's workbench down completely. The webview is unparented by construction (a
@@ -343,13 +336,12 @@ package final class CodeSidebarWebViewPool {
     }
 
     /// A pooled webview re-entered the hierarchy. A mount is a USE — it is what keeps the project in
-    /// rotation ahead of the ones the user has stopped visiting — and on the Mac it may also owe the
-    /// keyboard back (``restoreKeyboardOnRemount(projectRoot:)``).
+    /// rotation ahead of the ones the user has stopped visiting — and where a duel exists it may also
+    /// owe the keyboard back. Two things in one word, which is precisely why the pool could not cross
+    /// until they came apart: the recency touch is every platform's, the hand-back is the duel's.
     func noteRemount(projectRoot: String) {
         touch(projectRoot)
-        #if os(macOS)
-        restoreKeyboardOnRemount(projectRoot: projectRoot)
-        #endif
+        keyboard?.noteRemount(projectRoot: projectRoot)
     }
 
     /// The dressing user-script source, built ONCE per process and shared by every pooled webview.
@@ -378,179 +370,29 @@ package final class CodeSidebarWebViewPool {
     /// controller; writes each posted copy straight to the general pasteboard.
     private static let clipboardBridge = CodeSidebarClipboardBridge()
 
-    #if os(macOS)
+    // MARK: The duel's window onto the pool
 
-    // MARK: Keyboard restore across warm swaps
-
-    /// A webview took the keyboard (click or restore) — the tab it happened in is a PANEL tab from
-    /// now on, reading this project's workbench.
-    func noteKeyboardClaimed(projectRoot: String) {
-        guard let tab = Self.activeTabID() else { return }
-        sidebarFocusMemory[tab] = projectRoot
+    /// The pooled page currently IN the view hierarchy, if it carries a responder seam. At most one
+    /// is mounted at a time (the column shows the active project's workbench and unmounts the rest —
+    /// that is what makes a project switch a warm swap), so this is the duel's unambiguous target.
+    /// Always `nil` on the phone, where no page conforms and there is nothing asking.
+    package func mountedPage() -> CodeSidebarPooledPage? {
+        webViews.values.lazy.compactMap { $0 as? CodeSidebarPooledPage }.first { $0.window != nil }
     }
 
-    /// The one-hop-deferred verdict on a webview resign (see
-    /// ``CodeSidebarWKWebView/resignFirstResponder()``) —
-    /// ``CodeSidebarFocusPolicy/memoryAfterResign(_:resigningTab:stillInWindow:)`` decides whether
-    /// the tab stops being a panel tab.
-    func classifyResign(tab: TabID?, stillInWindow: Bool) {
-        sidebarFocusMemory = CodeSidebarFocusPolicy.memoryAfterResign(
-            sidebarFocusMemory, resigningTab: tab, stillInWindow: stillInWindow,
-        )
+    /// This project's warm page, mounted or not — the duel tells a page it does NOT have the keyboard
+    /// on a remount it is not owed, and that page may be off-window at the time.
+    package func page(for projectRoot: String) -> CodeSidebarPooledPage? {
+        webViews[projectRoot] as? CodeSidebarPooledPage
     }
 
-    /// The Mac's half of a remount. When the tab being remounted into is a PANEL tab
-    /// reading THIS project (``CodeSidebarFocusPolicy/shouldRestoreOnRemount(memory:activeTab:projectRoot:)``),
-    /// the keyboard is handed back; otherwise the page is told it does not have the keyboard, because
-    /// the workbench autofocuses its editor on the remount and would blink a caret beside the
-    /// terminal's (see ``CodeSidebarWKWebView/syncFocusTruth()``).
-    func restoreKeyboardOnRemount(projectRoot: String) {
-        guard CodeSidebarFocusPolicy.shouldRestoreOnRemount(
-            memory: sidebarFocusMemory, activeTab: Self.activeTabID(), projectRoot: projectRoot,
-        ) else {
-            (webViews[projectRoot] as? CodeSidebarWKWebView)?.syncFocusTruth()
-            return
-        }
-        claimWhenMounted(projectRoot: projectRoot)
+    /// Every warm page. The duel walks them to answer whether the key window's first responder sits
+    /// inside the embedded workbench — WebKit's actual first responder is an internal content
+    /// subview, so that question is a DESCENDANT walk rather than an identity check, and it needs the
+    /// whole set rather than the mounted one (a satellite window can be key over an unmounted page).
+    package func pooledWebViews() -> [WKWebView] {
+        Array(webViews.values)
     }
-
-    /// The workspace switched tabs — honour the arriving tab's focus region
-    /// (``CodeSidebarFocusPolicy/tabSwitchFocus(incoming:memory:editorHoldsKeyboard:)``).
-    ///
-    /// `liveTabs` prunes the memory of tabs that have since closed: the pool cannot see the store,
-    /// and a `TabID` nobody can reach again would otherwise sit in the map for the session's life.
-    package func noteActiveTabChanged(to tab: TabID?, liveTabs: Set<TabID>) {
-        sidebarFocusMemory = sidebarFocusMemory.filter { liveTabs.contains($0.key) }
-        switch CodeSidebarFocusPolicy.tabSwitchFocus(
-            incoming: tab, memory: sidebarFocusMemory, editorHoldsKeyboard: holdsFirstResponder(),
-        ) {
-        case let .claimEditor(projectRoot):
-            claimWhenMounted(projectRoot: projectRoot)
-        case .yieldToWorkspace:
-            yieldKeyboardToWorkspace()
-        case .leaveAlone:
-            break
-        }
-    }
-
-    /// The workspace moved its focus to a PANE inside the tab already on screen (a split's new leaf,
-    /// ⌘-arrow, a rail row, a palette landing) — the tab reads its terminal again, and the keyboard
-    /// has to follow.
-    ///
-    /// Without this the move was silently swallowed whenever the panel held the keyboard: the pane
-    /// tree gates every pane's rendered focus on ``CodeSidebarKeyboardState/ownsKeyboard`` (so the
-    /// terminal never re-lights and never claims first responder), and no workspace path asks the
-    /// webview to resign. A fresh split then arrived with no keyboard, no focus corner and a hollow
-    /// cursor, and only a CLICK into it — which forces first responder the hard way — put things
-    /// right, which is what made it read as intermittent (user-reported 2026-08-10).
-    package func noteWorkspacePaneFocused(tab: TabID?) {
-        if let tab { sidebarFocusMemory.removeValue(forKey: tab) }
-        guard holdsFirstResponder() else { return }
-        yieldKeyboardToWorkspace()
-    }
-
-    /// Hand the keyboard to `projectRoot`'s workbench once the pass that asked for it has mounted it
-    /// — deferred TWO runloop hops so it lands after the focused terminal's own deferred one-hop
-    /// claim (the transition claim scheduled by the same render), settling the race in the editor's
-    /// favour exactly once. Re-checked on arrival against BOTH the live memory and what is actually
-    /// on screen, so a tab switch the user has already moved on from claims nothing.
-    private func claimWhenMounted(projectRoot: String) {
-        DispatchQueue.main.async {
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    let pool = Self.shared
-                    guard let webView = pool.mountedWebView(),
-                          webView.projectRoot == projectRoot,
-                          CodeSidebarFocusPolicy.shouldRestoreOnRemount(
-                              memory: pool.sidebarFocusMemory,
-                              activeTab: Self.activeTabID(),
-                              projectRoot: projectRoot,
-                          )
-                    else { return }
-                    webView.claimKeyboardForRestore()
-                }
-            }
-        }
-    }
-
-    /// Give the keyboard back to the workspace: drop the ownership flag, which re-lights the active
-    /// tab's focused pane and — through the terminal's focus-gated responder claim — has it take
-    /// first responder, which is what actually resigns the webview.
-    ///
-    /// The flag leads the responder move by a hop on purpose (the pool cannot reach into the pane
-    /// tree to name a view), so it is re-checked afterwards: when nothing claimed — the tab's
-    /// focused pane is a video surface, or there is no pane at all — the editor really does still
-    /// have the keyboard and the flag must say so, or the workspace would draw a live cursor for a
-    /// pane the keys are not going to.
-    private func yieldKeyboardToWorkspace() {
-        CodeSidebarKeyboardState.shared.set(false)
-        // Long enough for the SwiftUI pass and the pane's own deferred `makeFirstResponder` — this
-        // is a repair, and being late costs nothing while being early would undo the hand-back.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            MainActor.assumeIsolated {
-                guard Self.shared.holdsFirstResponder() else { return }
-                CodeSidebarKeyboardState.shared.set(true)
-            }
-        }
-    }
-
-    // MARK: Keyboard focus by chord (⌥⌘R)
-
-    /// Actuates ``CodeSidebarFocusPolicy/focusToggle(webViewHoldsKeyboard:hasMountedWebView:panelCollapsed:)``.
-    /// `reveal` shows the panel when it is collapsed; the claim is then deferred until the webview
-    /// has actually been mounted by the resulting SwiftUI pass (two hops, the same settling the
-    /// warm-swap restore uses). Returns nothing — every outcome is best-effort chrome.
-    package func toggleKeyboardFocus(panelCollapsed: Bool, reveal: @MainActor () -> Void) {
-        switch CodeSidebarFocusPolicy.focusToggle(
-            webViewHoldsKeyboard: holdsFirstResponder(),
-            hasMountedWebView: mountedWebView() != nil,
-            panelCollapsed: panelCollapsed,
-        ) {
-        case .handBack:
-            guard let owner = lastKeyboardOwner, let window = owner.window else { return }
-            window.makeFirstResponder(owner)
-        case .claimEditor:
-            mountedWebView()?.claimKeyboardForRestore()
-        case .revealThenClaim:
-            reveal()
-            DispatchQueue.main.async {
-                DispatchQueue.main.async {
-                    MainActor.assumeIsolated {
-                        Self.shared.mountedWebView()?.claimKeyboardForRestore()
-                    }
-                }
-            }
-        case .none:
-            break
-        }
-    }
-
-    /// The pooled webview currently IN the view hierarchy. At most one is mounted at a time (the
-    /// column shows the active project's workbench and unmounts the rest — that is what makes a
-    /// project switch a warm swap), so this is the chord's unambiguous target.
-    private func mountedWebView() -> CodeSidebarWKWebView? {
-        webViews.values.lazy.compactMap { $0 as? CodeSidebarWKWebView }.first { $0.window != nil }
-    }
-
-    /// Whether the key window's first responder sits inside ANY pooled webview — the
-    /// `WorkspaceKeyDispatcher`'s webview-yield predicate (while true, the embedded VS Code owns the
-    /// keyboard). Checked per keystroke against the live responder; WebKit's actual first responder is
-    /// an internal content subview, hence the descendant walk rather than an identity check.
-    package func holdsFirstResponder() -> Bool {
-        // `NSApp` is an IMPLICITLY-unwrapped global that is genuinely nil in a headless test process —
-        // touch it optionally or the default dispatcher predicate traps every dispatcher unit test.
-        guard let app = NSApp as NSApplication?,
-              let responder = app.keyWindow?.firstResponder as? NSView
-        else { return false }
-        return isInsidePooledWebView(responder)
-    }
-
-    /// Whether `view` is (inside) any pooled webview — WebKit's actual first responder is an
-    /// internal content subview, hence the descendant walk rather than an identity check.
-    private func isInsidePooledWebView(_ view: NSView) -> Bool {
-        webViews.values.contains { view === $0 || view.isDescendant(of: $0) }
-    }
-    #endif
 }
 
 /// The native side of the clipboard bridge (`CodeSidebarPageDressing.clipboardBridgeScript()`):
