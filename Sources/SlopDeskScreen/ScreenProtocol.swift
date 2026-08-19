@@ -213,9 +213,18 @@ public enum ScreenWire {
 
 /// One rendered grid, as screend serialises it (`camelCase`, by `serde` rename).
 ///
-/// The DERIVED text — `detectionText`, the trimmed `text` the `screen` verb answers — is computed
-/// from `lines` at the point of use rather than carried on the wire: it is a `join`, not a fact
-/// about the terminal, and putting it in the payload would be a second place for it to be wrong.
+/// The DERIVED text — the trimmed `text` the `screen` verb answers — is computed from `lines` at the
+/// point of use rather than carried on the wire: it is a `join`, not a fact about the terminal, and
+/// putting it in the payload would be a second place for it to be wrong.
+///
+/// That sentence used to name a `detectionText` property here as the thing the verb answers, and it
+/// conflated two joins that were never the same one. **Detection text** anchors pattern matches, so
+/// it carries a trailing `\n` and lives in `rust/slopdesk-screend/src/detect.rs`'s `detection_text` —
+/// the only implementation, since the detection tier is screend's. The `screen` verb's **`text`** is a
+/// convenience beside the authoritative `lines`, joined without a trailing newline
+/// (`AgentControlListener.swift`). The Swift `detectionText` was the pre-port spelling of the first
+/// one; it outlived the port with no caller but its own four tests, which is how a second
+/// implementation survives a sweep that greps for callers of live code.
 public struct ScreenSnapshot: Decodable, Sendable, Equatable {
     public var rows: Int
     public var cols: Int
@@ -241,14 +250,6 @@ public struct ScreenSnapshot: Decodable, Sendable, Equatable {
         self.cursorVisible = cursorVisible
         self.altScreen = altScreen
         self.lines = lines
-    }
-
-    /// herdr's `detection_text`, exact: every visible row, trailing blank rows dropped, `\n`-joined
-    /// with one trailing `\n` — or `""` for an all-blank screen.
-    public var detectionText: String {
-        let trimmed = linesWithoutTrailingBlanks
-        guard !trimmed.isEmpty else { return "" }
-        return trimmed.joined(separator: "\n") + "\n"
     }
 
     /// `lines` with the trailing empty rows dropped.

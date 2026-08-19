@@ -85,13 +85,22 @@ final class ScreenProtocolTests: XCTestCase {
         XCTAssertEqual(snapshot.lines, ["ab", "", "cd"])
     }
 
-    /// herdr's `detection_text`: trailing blank rows dropped, one trailing newline, `""` when the
-    /// screen is blank. An interior blank line is CONTENT and stays.
-    func testDetectionTextDropsTrailingBlanksAndKeepsInteriorOnes() {
-        XCTAssertEqual(snapshot(["ab", "", "cd", "", ""]).detectionText, "ab\n\ncd\n")
-        XCTAssertEqual(snapshot(["only"]).detectionText, "only\n")
-        XCTAssertEqual(snapshot(["", "", ""]).detectionText, "")
-        XCTAssertEqual(snapshot([]).detectionText, "")
+    /// Trailing blank rows are dropped; an interior blank line is CONTENT and stays. That asymmetry
+    /// is the whole rule — a terminal pads its grid to `rows` with empty lines, so the tail is
+    /// padding and the middle is output.
+    ///
+    /// This used to assert against a `detectionText` property that joined with one trailing `\n`.
+    /// It was the pre-port spelling of `slopdesk-screend`'s `detect::detection_text`, it had no
+    /// caller but this test, and **the test was the only thing keeping it alive** — the exact way a
+    /// second implementation survives a sweep that looks for callers of live code. Deleted; the
+    /// trimming rule it also covered is kept here, on the property that does have a caller
+    /// (`AgentControlListener` builds the `screen` verb's `text` from it, joined with no trailing
+    /// newline — a convenience beside the authoritative `lines`, and never the detection anchor).
+    func testTrailingBlankRowsAreDroppedAndInteriorOnesAreKept() {
+        XCTAssertEqual(snapshot(["ab", "", "cd", "", ""]).linesWithoutTrailingBlanks, ["ab", "", "cd"])
+        XCTAssertEqual(snapshot(["only"]).linesWithoutTrailingBlanks, ["only"])
+        XCTAssertEqual(snapshot(["", "", ""]).linesWithoutTrailingBlanks, [])
+        XCTAssertEqual(snapshot([]).linesWithoutTrailingBlanks, [])
     }
 
     // MARK: - The hello reply's two numbers
