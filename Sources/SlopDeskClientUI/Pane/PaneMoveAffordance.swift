@@ -28,6 +28,14 @@
 // two mechanisms) — and the ONE place a `PaneDropRegister.Mark` becomes artwork, which both of this
 // module's drop chips read so neither can grow a glyph table of its own.
 //
+// `PaneMoveEscapeMonitor` is a MOUNT now and nothing else. The Mac's monitor itself — an
+// `NSEvent.addLocalMonitorForEvents` install/remove pair and the FFI call that names the cancel key —
+// was a `Coordinator` on a representable whose `makeNSView` returned a bare `NSView()`, i.e. a
+// lifetime SwiftUI had no other place to hang. It is `SlopDeskClientCore`'s
+// ``PaneMoveEscapeMonitorController`` now, by increment 54's ruling on this file's twin: a `CGEvent`
+// tap draws nothing, so the direction was never up — and neither does an `NSEvent` monitor. What is
+// left here is the arm/disarm the AppKit canvas will do with no view at all.
+//
 // That list used to be the whole of it and was not: four `static func`s of rect math stayed behind
 // on `PaneMoveOverlay` for another increment, because they were members of a `View` and the census
 // that emptied this file counted files and import edges. They are `PaneDropGeometry`'s preview half
@@ -35,7 +43,6 @@
 // DECLARATION. A `some View` is a view; a `CGRect` returned by a method on one is not.
 
 #if canImport(SwiftUI)
-import CSlopDeskFFI
 import SFSafeSymbols
 import SlopDeskClientCore
 import SlopDeskSlate
@@ -360,65 +367,53 @@ struct PaneMoveOverlay: View {
 // not"), since an iPad with a hardware keyboard could not bail out of a drag it had started. What
 // makes the two halves one implementation rather than two is the closure: neither knows what
 // cancelling means, and the single mount in `SplitContainer` supplies it.
+//
+// THE MAC'S HALF IS NO LONGER THE MECHANISM, only its mount. The monitor descended to
+// ``PaneMoveEscapeMonitorController`` — an `NSEvent` monitor draws nothing, and a representable whose
+// `makeNSView` returns a bare `NSView()` is SwiftUI owning a LIFETIME, not a drawing (docs/56
+// increment 54's ruling on `SystemKeyCaptureController`, applied to its twin). The phone's half stays
+// a real view because ITS mechanism genuinely is one: a `UIView` that becomes first responder.
 
 #if os(macOS)
 import AppKit
 
-/// Escape-to-cancel for an in-flight pane-move drag. The drag is a plain `DragGesture` — it never takes
+/// The Mac's half, and it is a MOUNT rather than a mechanism: `SlopDeskClientCore`'s
+/// ``PaneMoveEscapeMonitorController`` owns the local `.keyDown` monitor, the cancel key's number and the
+/// install/remove balance, and this type exists only because SwiftUI has no way to give a non-drawing a
+/// lifetime except by hanging it on a view. The `NSView` is empty on purpose — nothing here draws, and the
+/// AppKit canvas will arm the same controller with no view at all.
+///
+/// Why a monitor is the mechanism in the first place: the drag is a plain `DragGesture` and never takes
 /// keyboard focus (the terminal surface underneath usually still holds it), so `.onExitCommand` /
-/// `.onKeyPress(.escape)` (the idiom `ViModeOverlay`/`HintModeOverlay` use for THEIR cancel key) can
-/// never reach it. Mirrors `KeybindingsEditorView`'s recorder monitor instead: a scoped `.keyDown` local
-/// monitor installed only while the drag is live, so Escape cancels regardless of first-responder state
-/// and the monitor never lingers to swallow a key once the drag ends.
+/// `.onKeyPress(.escape)` — the idiom `ViModeOverlay`/`HintModeOverlay` use for THEIR cancel key — can never
+/// be delivered it. The controller's header carries the rest.
 struct PaneMoveEscapeMonitor: NSViewRepresentable {
     var isActive: Bool
     var onCancel: () -> Void
 
+    func makeCoordinator() -> PaneMoveEscapeMonitorController { PaneMoveEscapeMonitorController() }
+
     func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        context.coordinator.onCancel = onCancel
-        context.coordinator.isActive = isActive
-        return view
+        sync(context.coordinator)
+        return NSView()
     }
 
     func updateNSView(_: NSView, context: Context) {
-        context.coordinator.onCancel = onCancel
-        context.coordinator.isActive = isActive
+        sync(context.coordinator)
     }
 
-    func makeCoordinator() -> Coordinator { Coordinator() }
-
-    static func dismantleNSView(_: NSView, coordinator: Coordinator) {
-        coordinator.teardown()
+    static func dismantleNSView(_: NSView, coordinator: PaneMoveEscapeMonitorController) {
+        // The move layer is conditional in `SplitContainer`, so this can run WHILE the monitor is armed —
+        // the drag closed its own pane. Disarming here is the half of the balance SwiftUI owns, and a
+        // monitor that outlived it would swallow Escape for the whole app with nothing left to remove it.
+        coordinator.disarm()
     }
 
-    @MainActor
-    final class Coordinator {
-        var onCancel: () -> Void = {}
-        private var monitor: Any?
-
-        var isActive: Bool = false {
-            didSet {
-                guard isActive != oldValue else { return }
-                if isActive { install() } else { teardown() }
-            }
-        }
-
-        private func install() {
-            guard monitor == nil else { return }
-            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-                guard let self else { return event }
-                // The cancel key is named by the crate that already has to know its number.
-                guard slopdesk_key_capture_is_escape(event.keyCode) else { return event }
-                onCancel()
-                return nil // swallow — Escape cancels the drag, never types into the focused pane
-            }
-        }
-
-        func teardown() {
-            if let monitor { NSEvent.removeMonitor(monitor) }
-            monitor = nil
-        }
+    /// The whole body of this type: armed while a drag is in flight, disarmed the moment it is not. Runs on
+    /// every drag FRAME, which is why the controller's `arm` is idempotent on the monitor and rebinding on
+    /// the closure rather than the other way round.
+    private func sync(_ monitor: PaneMoveEscapeMonitorController) {
+        if isActive { monitor.arm(onCancel: onCancel) } else { monitor.disarm() }
     }
 }
 
