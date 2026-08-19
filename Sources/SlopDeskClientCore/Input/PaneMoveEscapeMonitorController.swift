@@ -126,8 +126,14 @@ package final class PaneMoveEscapeMonitorController {
     /// The one decision, per key. The cancel key is named by the crate that already has to know its number
     /// (`slopdesk_key_capture_is_escape`), and modifiers are deliberately not consulted — ⌘Esc and ⌥Esc bail
     /// out of a drag, which is the phone's rule too.
+    ///
+    /// The armed check is FIRST, and it is not redundant with the removal. `remove` takes the monitor out of
+    /// the stream, but AppKit may already have an event in flight for a handler it is about to drop, so a
+    /// disarmed controller can still be asked. Deciding on the cleared `onCancel` alone would cancel nothing
+    /// — correct — and still return `true`, which SWALLOWS the key: the drag ends and the user's Escape
+    /// vanishes, closing no sheet and dismissing no overlay. Once, invisibly, and only under a race.
     private func readKey(_ keyCode: UInt16) -> Bool {
-        guard slopdesk_key_capture_is_escape(keyCode) else { return false }
+        guard monitor != nil, slopdesk_key_capture_is_escape(keyCode) else { return false }
         onCancel()
         return true
     }

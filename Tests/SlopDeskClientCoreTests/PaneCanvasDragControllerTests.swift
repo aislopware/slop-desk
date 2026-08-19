@@ -340,7 +340,10 @@ final class PaneCanvasDragControllerTests: XCTestCase {
 
         controller.changed(leaf: leaf, among: [leaf], container: container, at: CGPoint(x: 500, y: 400))
 
-        XCTAssertEqual(controller.move?.zone, .none, "this layer's frames belong to the tab that left")
+        // `PaneDropZone.none` SPELLED OUT, because `controller.move?.zone` is a `PaneDropZone?` and a bare
+        // `.none` there resolves to `Optional.none` — i.e. `nil`, "there is no drag at all", the opposite of
+        // what this case asserts. It type-checks either way and reads identically.
+        XCTAssertEqual(controller.move?.zone, PaneDropZone.none, "this layer's frames belong to the tab that left")
         guard case .canvas(.resplit) = try XCTUnwrap(coordinator.drag?.destination) else {
             XCTFail("the coordinator must still carry the real landing")
             return

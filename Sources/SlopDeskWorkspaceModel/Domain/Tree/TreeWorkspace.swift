@@ -282,7 +282,13 @@ public extension TreeWorkspace {
 /// `scripts/check-supervisor.sh` compares the two maps case-name against case-name, because a
 /// reorder here would silently ask for a different repair: "specs only" and "the whole launch
 /// restore" differ by whether a detached pane comes back, and both answer a perfectly valid tree.
-private enum RepairPass {
+///
+/// It is `internal` and `CaseIterable` so the differential suite can WALK it against
+/// ``slopdesk_ws_normalize_pass_count()`` rather than naming four cases. The gate above compares the
+/// two byte MAPS, which catches a reorder or a renumber; it cannot see a pass the crate ADDS, since
+/// a map Swift never grew still agrees with itself. The count is that missing half, and it is the
+/// same argument the `PaneKind` walk makes one file over.
+enum RepairPass: CaseIterable {
     case specs
     case active
     case normalized

@@ -331,4 +331,30 @@ final class TreeWorkspaceRepairDifferentialTests: XCTestCase {
         XCTAssertEqual(fresh.sessions.first?.name, TreeWorkspaceDefaults.sessionName)
         XCTAssertEqual(fresh.sessions.first?.specs.values.first?.title, TreeWorkspaceDefaults.paneTitle)
     }
+
+    // MARK: - The pass vocabulary, walked rather than named
+
+    /// The half `check-supervisor.sh` structurally cannot check.
+    ///
+    /// Its `compare_abi_enum "RepairPass"` holds the two byte MAPS against each other, which catches
+    /// a reorder and a renumber. It cannot catch a pass the crate ADDS, because a map this side never
+    /// grew still agrees with itself perfectly — the gate reads four rows on both sides and passes.
+    /// The failure that hides behind it is not a crash: `repaired(_:)` would keep asking for the four
+    /// it knows, and whichever document-shaping rule the fifth pass carries would simply never run on
+    /// a load, exactly the launch-vs-gesture split this whole port closed.
+    func testSwiftKnowsEveryRepairPassTheCrateCanRun() {
+        let crate = slopdesk_ws_normalize_pass_count()
+        XCTAssertEqual(
+            RepairPass.allCases.count, crate,
+            "the crate runs \(crate) repair passes and this side spells \(RepairPass.allCases.count)",
+        )
+        // And the bytes are the vocabulary itself: contiguous from zero, one case each. A gap or a
+        // duplicate would let two passes share a byte, which the name-to-name map cannot see either.
+        XCTAssertEqual(
+            Set(RepairPass.allCases.map(\.ffiByte)), Set(
+                (0..<crate).map { UInt8($0) },
+            ),
+            "the pass bytes are not exactly 0..<\(crate)",
+        )
+    }
 }
