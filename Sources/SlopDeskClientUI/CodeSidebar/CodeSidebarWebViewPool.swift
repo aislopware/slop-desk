@@ -1,5 +1,5 @@
-// CodeSidebarWebViewPool — one warm WKWebView per project root, and the dressing every one of them
-// wears.
+// CodeSidebarWebViewPool — one warm WKWebView per project root, and the user scripts every one of
+// them wears.
 //
 // The pool is the load-bearing piece (the cmux lesson): ONE webview per project root, created on
 // first expand and kept for as long as the cap allows, so switching the focused pane between
@@ -7,15 +7,18 @@
 // renderer (multi-second, editor state lost). A detached webview keeps its web-content process
 // alive; the idle throttling that comes with being unparented is fine for an editor.
 //
-// THE POOL'S WHOLE SUBJECT IS PROJECTS AND THEIR PAGES, on both platforms. The mint, the five user
-// scripts, the LRU and its eviction, the veil state and the reload are one law with no platform in
-// it. What used to sit under all of that — the per-tab focus region, the resign classification, the
-// ⌥⌘R toggle and the orphan repair — was never about projects at all: it exists because a focused
-// embedded VS Code and a focused terminal are two AppKit first responders duelling over one window.
-// That is `MacCodeSidebarKeyboard` (`SlopDeskMacUI`) now, and it left because a platform gate inside
-// a shared file is a file wearing two coats (docs/56 §3). iOS has no such duel — no app-level event
-// monitor, no menu bar, no shared field editor — so the phone installs nothing and every keyboard
-// line below costs one nil-check.
+// THE POOL'S WHOLE SUBJECT IS PROJECTS AND THEIR PAGES, on both platforms, AND SAYING SO NOW COSTS
+// NOT ONE `#if` — nor an import that needs one. The five user scripts, the LRU and its eviction, the
+// veil state and the reload are one law with no platform in it, and the file is to be kept that way:
+// a gate appearing here again is the signal that whatever it guards belongs in a file that already
+// has halves, not that this file needs coats. What used to sit under all of that — the per-tab focus
+// region, the resign classification, the ⌥⌘R toggle and the orphan repair — was never about projects
+// at all: it exists because a focused embedded VS Code and a focused terminal are two AppKit first
+// responders duelling over one window. That is `MacCodeSidebarKeyboard` (`SlopDeskMacUI`) now, and it
+// left because a platform gate inside a shared file is a file wearing two coats (docs/56 §3). iOS has
+// no such duel — no app-level event monitor, no menu bar, no shared field editor — so the phone
+// installs nothing and every keyboard line below costs one nil-check. The last gate, the MINT, went
+// to `CodeSidebarWebView.swift` for the same reason and by the same argument (docs/56 increment 43).
 //
 // THE SEAM IS TWO NARROW PROTOCOLS AND NEITHER NAMES A FRAMEWORK. ``CodeSidebarKeyboard`` is the duel
 // as the pool sees it (a project root, a page — the pool's own vocabulary, so the AppKit stays on the
@@ -27,23 +30,18 @@
 // HANG-SAFETY: nothing in the unit-test dependency closure may construct a WKWebView — the pool is
 // only reached from a mounted panel column; all decision logic lives in `CodeSidebarFocusPolicy` and
 // `CodeSidebarModel` (both pure).
+//
+// NO APPKIT/UIKIT IMPORT, AND THE ONE PLATFORM MEMBER LEFT DOES NOT NEED ONE. `window` — the mounted
+// test in ``protectedProjectRoots()`` and ``mountedPage()`` — is inherited from `NSView` here and
+// `UIView` there, and WebKit already brings its own superclass's framework into scope, so the member
+// resolves without this file naming either. That is not a trick: it is the same fact the pool's whole
+// design rests on, that `WKWebView` IS the platform's view type on both. Everything else the pool
+// touches is `WKWebView`, `URL` and `String`.
 
 import SlopDeskClientCore
-import SlopDeskSlate
 import SlopDeskWorkspaceCore
 import SwiftUI
 import WebKit
-
-// The FIRST of the two gates this file keeps, and both are genuine impossibilities rather than
-// choices. This one: a pooled page is an `NSView` here and a `UIView` there, so the lines that pin
-// its appearance and kill WebKit's white base canvas need the platform's own framework in scope. The
-// second is the mint itself, spelled once, down in ``webView(for:url:)``. Everything else the pool
-// does is `WKWebView` and `String`.
-#if os(macOS)
-import AppKit
-#else
-import UIKit
-#endif
 
 /// The platform's keyboard duel, as the pool and its pages see it — installed by the shell that has
 /// one. macOS installs ``SlopDeskMacUI/MacCodeSidebarKeyboard`` at app composition; the phone leaves
@@ -188,43 +186,12 @@ package final class CodeSidebarWebViewPool {
             Self.fontSchemeHandler, forURLScheme: CodeSidebarFontScheme.scheme,
         )
         installWorkbenchDressing(on: configuration.userContentController)
-        // MINTING A PAGE IS WHERE THE TWO PLATFORMS GENUINELY PART, and it is three spellings of the
-        // same three decisions rather than three different decisions — so it is ONE gate, said once,
-        // and every other line in this file is platform-blind.
-        //
-        // THE CLASS. The Mac's webview is a SUBCLASS because it has a responder seam to guard; the
-        // phone's is a plain `WKWebView` because there is no second first responder to duel with.
-        //
-        // CHROME POLARITY. The workbench is a sunken panel on the ground, not an island (ONE ISLAND
-        // law 1): it stands on the same cream ground as the navigator, so it follows the chrome's
-        // LIGHT appearance and the seeded colour customizations paint it in the ground tone. Pinned
-        // HERE, at creation, and nowhere else — a re-pin pass over the pool existed and was never
-        // called, which was correct: `Slate.theme` does not change while the app runs.
-        //
-        // THE BASE CANVAS. WebKit's own is WHITE until the page's first paint — with a multi-second
-        // workbench boot that is a visible flash between the dark chrome and the dark editor. On the
-        // Mac there is no public API for it and the long-standing KVC key makes the canvas
-        // transparent; UIKit exposes the same thing honestly, through the view's own opacity.
-        #if os(macOS)
-        let webView: WKWebView = CodeSidebarWKWebView(
-            projectRoot: projectRoot, frame: .zero, configuration: configuration,
-        )
-        webView.appearance = NSAppearance(named: .aqua)
-        webView.setValue(false, forKey: "drawsBackground")
-        #else
-        let webView = WKWebView(frame: .zero, configuration: configuration)
-        webView.overrideUserInterfaceStyle = .light
-        webView.isOpaque = false
-        webView.backgroundColor = .clear
-        webView.scrollView.backgroundColor = .clear
-        #endif
-        // Right-click → Inspect Element on the embedded workbench (Safari Web Inspector) — the only
-        // window into a misbehaving code-server page.
-        webView.isInspectable = true
-        // Paint the GROUND behind the page so the first load / a bounce never flashes a tone the
-        // column does not wear (the cmux `underPageBackgroundColor` trick). After the gate rather
-        // than inside it: it is one line in one spelling, and nothing above it reads it back.
-        webView.underPageBackgroundColor = SlateNativeColor(slateHex: Slate.theme.groundHexValue)
+        // Minting the page is the ONE thing about a warm page that is not one law — subclass-vs-plain,
+        // chrome polarity, base-canvas kill: three decisions, three spellings, one meaning. It lives
+        // in `CodeSidebarWebView.swift`, which is already two per-platform halves, so the pool builds
+        // the configuration (which has no platform in it) and takes back a dressed page whose class
+        // it never learns. That is the whole reason this file has no `#if` in it.
+        let webView = CodeSidebarPageMint.page(projectRoot: projectRoot, configuration: configuration)
         let observer = CodeSidebarNavigationObserver(state: loadState(for: projectRoot))
         navigationObservers[projectRoot] = observer
         webView.navigationDelegate = observer

@@ -1,5 +1,5 @@
-// CodeSidebarWebView — mounting the pooled workbench, and (on the Mac) the webview subclass that
-// holds the responder seam.
+// CodeSidebarWebView — minting and mounting the pooled workbench, and (on the Mac) the webview
+// subclass that holds the responder seam.
 //
 // The MOUNT is a clipping container rather than the webview itself, on both platforms, and for a
 // reason that has nothing to do with either: SwiftUI destroys a representable's product on
@@ -18,6 +18,28 @@
 // ``CodeSidebarKeyboard``, which is `MacCodeSidebarKeyboard` one target up (docs/56 §3: the duel is
 // AppKit window machinery and belongs in the Mac's own target). It is reached through the pool
 // because the pool is what both of them can see; this file names no target above it.
+//
+// THE MINT LIVES HERE BECAUSE THIS FILE ALREADY HAS HALVES. Building a pooled page is three decisions
+// — subclass-vs-plain, chrome polarity, base-canvas kill — with three spellings and one meaning,
+// while ``CodeSidebarWebViewPool``'s subject is projects and their warm pages, a law with no platform
+// in it at all. A `#if` in the middle of that law is a file wearing two coats (docs/56 §3), so the
+// pool builds the CONFIGURATION (the faces, the five user scripts, the clipboard bridge — every one
+// of them platform-blind) and asks ``CodeSidebarPageMint`` for a dressed page it never learns the
+// class of. The pool carries no gate at all after that, not even an import; this file was already
+// two halves and gained no seam it did not have (docs/56 increment 43).
+//
+// The three decisions are stated ONCE, here, because each half below only spells them:
+//   • THE CLASS. The Mac's page is a SUBCLASS because it has the responder seam above to guard; the
+//     phone's is a plain `WKWebView` because there is no second first responder to duel with.
+//   • CHROME POLARITY. The workbench is a sunken panel on the ground, not an island (ONE ISLAND law
+//     1): it stands on the same cream ground as the navigator, so it follows the chrome's LIGHT
+//     appearance and the seeded colour customizations paint it in the ground tone. Pinned at
+//     CREATION and nowhere else — a re-pin pass over the pool existed and was never called, which
+//     was correct: `Slate.theme` does not change while the app runs.
+//   • THE BASE CANVAS. WebKit's own is WHITE until the page's first paint — with a multi-second
+//     workbench boot that is a visible flash between the dark chrome and the dark editor. On the Mac
+//     there is no public API for it and the long-standing KVC key makes the canvas transparent;
+//     UIKit exposes the same thing honestly, through the view's own opacity.
 
 import SlopDeskClientCore
 import SlopDeskSlate
@@ -25,6 +47,26 @@ import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 import SwiftUI
 import WebKit
+
+/// Builds one project's pooled page from the configuration ``CodeSidebarWebViewPool`` assembled —
+/// the only part of a warm page that is not one law on both platforms. Each half below declares its
+/// own `page(projectRoot:configuration:)`; what the two of them share is stated here, once.
+@MainActor
+enum CodeSidebarPageMint {
+    /// The tail of every mint, OUTSIDE the file's gate because it is one spelling for both platforms
+    /// and a decision written twice is a decision that drifts. Nothing above it reads either line
+    /// back, so it runs after the per-platform dressing rather than inside it.
+    private static func finish(_ page: WKWebView) -> WKWebView {
+        // Right-click → Inspect Element on the embedded workbench (Safari Web Inspector) — the only
+        // window into a misbehaving code-server page.
+        page.isInspectable = true
+        // Paint the GROUND behind the page so the first load / a bounce never flashes a tone the
+        // column does not wear (the cmux `underPageBackgroundColor` trick). The mount re-applies it
+        // on every update, because a pooled page outlives a theme switch.
+        page.underPageBackgroundColor = SlateNativeColor(slateHex: Slate.theme.groundHexValue)
+        return page
+    }
+}
 
 #if os(macOS)
 import AppKit
@@ -183,6 +225,21 @@ final class CodeSidebarWKWebView: WKWebView, CodeSidebarKeyboardPage {
     }
 }
 
+extension CodeSidebarPageMint {
+    /// The Mac's spelling of the header's three decisions: the responder-seam subclass above, the
+    /// chrome's light appearance, and the KVC key that is the only reach WebKit gives an embedder
+    /// for its white base canvas. `configuration` arrives FINISHED — a configuration is copied at
+    /// construction, so a handler or user script added after this call reaches no page at all.
+    static func page(projectRoot: String, configuration: WKWebViewConfiguration) -> WKWebView {
+        let webView: WKWebView = CodeSidebarWKWebView(
+            projectRoot: projectRoot, frame: .zero, configuration: configuration,
+        )
+        webView.appearance = NSAppearance(named: .aqua)
+        webView.setValue(false, forKey: "drawsBackground")
+        return finish(webView)
+    }
+}
+
 /// The webview's mount that DECAPITATES the web title bar. The workbench force-shows its title
 /// bar while the activity bar sits at "top" (seed v12 — the band must host the relocated
 /// accounts/manage actions), and the grid positions every part with inline absolute geometry, so
@@ -251,6 +308,25 @@ struct CodeSidebarWebView: NSViewRepresentable {
 
 #elseif os(iOS)
 import UIKit
+
+extension CodeSidebarPageMint {
+    /// The phone's spelling of the header's three decisions. A PLAIN `WKWebView` — there is no
+    /// responder duel here to need a seam — and the base canvas is killed through the view's own
+    /// opacity, which is the honest API the Mac has to reach for a KVC key to get. Both the view AND
+    /// its scroll view: UIKit hosts the page inside the scroll view, so its own background would
+    /// paint straight back through the transparency `isOpaque` just made. The project root is
+    /// DROPPED here — only
+    /// the Mac's subclass carries one, and the label stays so the pool's call site has no gate in
+    /// it either. `configuration` arrives FINISHED, for the reason the Mac's half records.
+    static func page(projectRoot _: String, configuration: WKWebViewConfiguration) -> WKWebView {
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.overrideUserInterfaceStyle = .light
+        webView.isOpaque = false
+        webView.backgroundColor = .clear
+        webView.scrollView.backgroundColor = .clear
+        return finish(webView)
+    }
+}
 
 /// The webview's mount that DECAPITATES the web title bar — the phone's half of
 /// ``CodeSidebarClippedContainer``. Same clip, same reason: the workbench force-shows its title bar
