@@ -3256,6 +3256,20 @@ repo_files() { git ls-files --cached --others --exclude-standard "$@"; }
 spells() {
   local pattern="$1"
   shift
+  # NO FILES IS "NOTHING SPELLS IT", NOT "READ STDIN". Forty call sites below hand this a
+  # `$(repo_files 'Sources/SomeTarget/**/*.swift')` splat, and a splat that matches nothing expands
+  # to NOTHING — at which point the `grep -lE` at the bottom has no file operands, falls back to its
+  # stdin, and blocks forever on a terminal that will never close. That is not a theoretical shape:
+  # it wedged three of these for the better part of three hours, and it fails in the worst available
+  # direction, because a hung lint reports neither pass nor fail. It is also SCHEDULED — the whole
+  # point of the docs/56 fold is to drain `SlopDeskClientUI` to empty, and several bans below glob
+  # exactly that directory, so the day the fold succeeds is the day `make lint` stops returning.
+  #
+  # Returning 1 rather than shouting, deliberately. An empty corpus is the CORRECT and expected state
+  # for a draining target, where the ban really is trivially satisfied; only the caller knows whether
+  # its own corpus was supposed to be non-empty, so that judgement stays where the knowledge is — in
+  # the per-gate vacuity floors, which count their file list before they get here.
+  (($# > 0)) || return 1
   local file stripped
   # ONE `grep` over the whole list to find candidates, and the per-file comment strip only for those.
   # Semantics are unchanged — stripping comments can only ever REMOVE a match, so a file the first
@@ -6894,6 +6908,8 @@ done
 # The candidate list IS the `outputFormatting` grep that used to be the loop's first line, hoisted
 # out of it: one process over the tree instead of one per file, and a deleted-but-still-indexed file
 # simply does not come back from `grep -l`.
+# `< /dev/null` for the reason written at `spells` — this is the ONE ban that greps a splat directly
+# instead of going through it, so it needs the guard spelled out rather than inherited.
 # shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
 while IFS= read -r file; do
   [[ -f "${file}" ]] || continue
@@ -6901,7 +6917,7 @@ while IFS= read -r file; do
     printf '%s\n' "${file}" >&2
     fail "a sidecar encoder set outputFormatting without .sortedKeys — docs/22 §8 compares bytes"
   }
-done <<< "$(grep -lF 'outputFormatting' $(repo_files 'Sources/**/*.swift') 2> /dev/null || true)"
+done <<< "$(grep -lF 'outputFormatting' $(repo_files 'Sources/**/*.swift') < /dev/null 2> /dev/null || true)"
 # …and inside WorkspaceCore, where four stores wrote sidecars, there is one encoder for all of them.
 # shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
 core_encoders=$(spells 'outputFormatting' \
