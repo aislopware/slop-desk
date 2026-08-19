@@ -6310,6 +6310,122 @@ if [[ -n "${moat_respelled}" ]]; then
   fail "the island's measurements are spelled in the draining target again — the moat is ${MAC_CONTENT_COLUMN}'s (docs/56 stage F, P5)"
 fi
 printf 'check-supervisor: the canvas registers itself in AppKit — one provider, the model frame, no SwiftUI reader.\n'
+
+# ── ONE SEAM, TWO SHAPES, AND NEITHER HALF REGISTERED ALONE (docs/56 stage F, P4) ────────────────
+# Each leaf seam offers `shared` (SwiftUI, and iOS's ONLY shape — the phone has no `NSView`) and
+# `nativeShared` (AppKit, the view the Mac canvas adds as a subview instead of burying under an
+# `NSHostingView` that claims the hit-test over the one surface taking every keystroke). The failure
+# this gate exists for is REGISTERING HALF: a build that sets only `shared` ships a terminal the Mac
+# canvas cannot mount natively, and one that sets only `nativeShared` ships iOS the BUILD-STATUS
+# placeholder. Neither is a compile error and neither has a test — the registration happens in an app
+# target no `Package.swift` builds.
+#
+# ⚠️ `spells`, NOT `grep`, and that is not a preference here: the embedder's doc comments name
+# `TerminalRendererFactory.nativeShared` five times to explain the seam, so a raw grep census reports
+# the prose as a registrar and this gate could never be written.
+GHOSTTY_SEAM=ThirdParty/ghostty/integration/GhosttySurface/GhosttyTerminalView.swift
+TERMINAL_SEAM=Sources/SlopDeskWorkspaceCore/Terminal/TerminalRenderingView.swift
+VIDEO_SEAM=Sources/SlopDeskWorkspaceCore/Video/VideoWindowSeam.swift
+# The embedder is compiled by NO `Package.swift` target (it joins the Xcode app through
+# `enable-macos-renderer.sh`), so a rename that leaves this path dangling would silently empty the
+# census below rather than fail it. Ask for the file first.
+if [[ ! -f "${GHOSTTY_SEAM}" ]]; then
+  fail "${GHOSTTY_SEAM} is gone — it is the only registrar of the terminal seam and no compiler in \`make check\` opens it (docs/56 stage F, P4)"
+fi
+# BOTH SHAPES SURVIVE ON BOTH SEAMS. `shared` is not deprecated by `nativeShared` and must never be:
+# deleting it does not break the Mac, which is exactly why it would get deleted.
+for seam in "${TERMINAL_SEAM}" "${VIDEO_SEAM}"; do
+  for half in 'static var shared' 'static var nativeShared' 'static func makeNative'; do
+    if ! grep -qF "${half}" "${seam}"; then
+      fail "${seam} stopped declaring \`${half}\` — one seam has two shapes, picked by which framework is drawing (docs/56 stage F, P4)"
+    fi
+  done
+done
+# AND ONE INSTALLER SETS BOTH. The app target used to spell `TerminalRendererFactory.shared = …`
+# itself, which is a shape it can only ever set one of; the pair moved behind `install()` so the two
+# assignments cannot be separated by an edit that only knows about one of them.
+for half in 'TerminalRendererFactory.shared =' 'TerminalRendererFactory.nativeShared ='; do
+  if ! spells "$(printf '%s' "${half}" | sed 's/[.[]/\\&/g')" "${GHOSTTY_SEAM}" > /dev/null; then
+    fail "\`GhosttyRendererSeam.install()\` no longer sets \`${half}\` — half a seam registered is a placeholder terminal on one platform (docs/56 stage F, P4)"
+  fi
+done
+# shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
+seam_registrars=$(spells 'TerminalRendererFactory\.(shared|nativeShared) *=' \
+  $(repo_files 'Sources/**/*.swift' 'Apps/**/*.swift' 'ThirdParty/ghostty/integration/**/*.swift') 2> /dev/null |
+  cut -d: -f1 | sort -u || true)
+if [[ "${seam_registrars}" != "${GHOSTTY_SEAM}" ]]; then
+  printf '%s\n' "${seam_registrars:-<none>}" >&2
+  fail "the terminal seam is registered outside \`GhosttyRendererSeam.install()\` — that is how one half gets set and the other forgotten (docs/56 stage F, P4)"
+fi
+# THE VIDEO PAIR COMES FROM ONE BUILDER. Its two registrations DO live in the app target (the video
+# module never imports `SlopDeskWorkspaceCore`, so the app is the only place both halves can be
+# named), and they are fed by one `-> VideoWindowView` function on purpose: the pane threads twelve
+# injector callbacks, and two closures built side by side is how eleven of them end up on one path.
+# `AnyView(VideoWindowView(` is the shape of that re-inlining, so it is the thing banned.
+MAC_APP_MAIN=Apps/ClientApp-macOS/AppMain.swift
+for half in '-> VideoWindowView' 'VideoWindowFactory.shared =' 'VideoWindowFactory.nativeShared ='; do
+  # `-e`, because the first needle STARTS WITH `-` and grep reads it as a flag bundle otherwise —
+  # which fails open in the worst way here: the gate goes red while the code is right.
+  if ! grep -qF -e "${half}" "${MAC_APP_MAIN}"; then
+    fail "${MAC_APP_MAIN} stopped spelling \`${half}\` — the video seam's two mounts must be one builder's value (docs/56 stage F, P4)"
+  fi
+done
+video_reinlined=$(spells 'AnyView\(VideoWindowView\(' "${MAC_APP_MAIN}" 2> /dev/null || true)
+if [[ -n "${video_reinlined}" ]]; then
+  printf '%s\n' "${video_reinlined}" >&2
+  fail "the video pane is built inside the \`shared\` closure again — the AppKit mount then carries whatever callbacks that copy happens to thread (docs/56 stage F, P4)"
+fi
+# AND BOTH APPS INSTALL THE TERMINAL SEAM THE ONE WAY. iOS registers only the SwiftUI half — that is
+# `install()`'s own `#if os(macOS)` and not the app's business — but it must still go through it.
+for app in Apps/ClientApp-macOS/AppMain.swift Apps/ClientApp-iOS/AppMain.swift; do
+  if ! spells 'GhosttyRendererSeam\.install\(\)' "${app}" > /dev/null; then
+    fail "${app} does not call \`GhosttyRendererSeam.install()\` — the renderer build shows the BUILD-STATUS placeholder and every test still passes (docs/56 stage F, P4)"
+  fi
+done
+printf 'check-supervisor: the leaf seam has two shapes and one installer — no half-registered renderer.\n'
+
+# ── A FRAMEWORKLESS VALUE GOES TO THE FLOOR, NOT INTO A PAIR (docs/56 stage F, P6) ───────────────
+# The ACCENT RING's alpha is spelled three times across TWO renderers: `ViModeOverlay` and
+# `TerminalFindBar` in SwiftUI, and `MacGlobalSearch` in AppKit — the last drawing the ON chip of the
+# very pill whose header pins that the find bar and the global-search bar render identically. The ink
+# of that pair needs a gate because a `Color` table cannot descend below `SlopDeskSlate`. An ALPHA
+# can: it is a `Double` with no framework in it, so it went to the floor and all three read one token.
+# That is the general finding — before pinning a pair, ask whether the value has a colour in it.
+SLATE_DESIGN=Sources/SlopDeskSlate/SlateDesign.swift
+for token in 'accentRing' 'glyphPlate'; do
+  if ! grep -qE "static let ${token}\b" "${SLATE_DESIGN}"; then
+    fail "\`Slate\` stopped minting \`${token}\` — its readers span two renderers and the literal cannot be compared across them (docs/56 stage F, P6)"
+  fi
+done
+for site in Sources/SlopDeskClientUI/Pane/ViModeOverlay.swift \
+  Sources/SlopDeskClientUI/Pane/TerminalFindBar.swift \
+  Sources/SlopDeskMacUI/Overlays/MacGlobalSearch.swift; do
+  if ! grep -qF 'Slate.Opacity.accentRing' "${site}"; then
+    fail "${site} stopped reading \`Slate.Opacity.accentRing\` — the third spelling is the one that shipped drifted (docs/56 stage F, P6)"
+  fi
+done
+# The literal, banned only where the ring is drawn. NOT repo-wide: a SECOND `0.5` family — the
+# locked/disabled dim in `FontSettingsView`, `GuiLeafView` and `MacFontFamilySurface.lockedAlpha` —
+# is deliberately un-minted, and a blanket ban would be red for values that are right.
+ring_respelled=$(spells '\.opacity\(0\.5\)|withAlphaComponent\(0\.5\)' \
+  Sources/SlopDeskClientUI/Pane/ViModeOverlay.swift \
+  Sources/SlopDeskClientUI/Pane/TerminalFindBar.swift \
+  Sources/SlopDeskMacUI/Overlays/MacGlobalSearch.swift 2> /dev/null || true)
+if [[ -n "${ring_respelled}" ]]; then
+  printf '%s\n' "${ring_respelled}" >&2
+  fail "the accent ring's alpha is a literal again in a file that reads the token beside it (docs/56 stage F, P6)"
+fi
+# THE GRAB PILL, WHOSE TWO DRAWINGS ARE COMPARED INSIDE ONE GESTURE — merging a satellite home means
+# grabbing the pill in the detached window, crossing, and releasing on the leaf whose own pill is the
+# target. A 44 that became a 42 does not read as two files disagreeing; it reads as the thing in the
+# user's hand changing size. Wave R adds a third drawing, which is why this is pinned before it.
+for drawing in Sources/SlopDeskClientUI/Pane/PaneMoveAffordance.swift \
+  Sources/SlopDeskClientUI/Pane/SatellitePaneContent.swift; do
+  if ! grep -qF 'Slate.GrabPill' "${drawing}"; then
+    fail "${drawing} draws the grab pill from its own numbers again — the two pills are compared across a SINGLE drag (docs/56 stage F, P6)"
+  fi
+done
+printf 'check-supervisor: the pill and the ring are the floor'"'"'s — a frameworkless value descends, it does not pair.\n'
 # AND THE MAC INJECTS NO ENVIRONMENT IT DOES NOT READ (docs/56 §3.5, increment 56f). `SlopDeskMacApp`
 # handed its scene root three of the draining target's environment keys — `\.preferencesStore`,
 # `\.agentHooksController`, `\.overlayCoordinator` — and re-applied all three to every satellite root
