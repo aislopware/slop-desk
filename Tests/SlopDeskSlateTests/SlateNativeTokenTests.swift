@@ -48,6 +48,21 @@ final class SlateNativeTokenTests: XCTestCase {
             assertSame(NSColor(Slate.Text.tertiary), Slate.Native.Text.tertiary, dark: dark, "text/tertiary")
             assertSame(NSColor(Slate.StatusInk.err), Slate.Native.StatusInk.err, dark: dark, "statusInk/err")
             assertSame(NSColor(Slate.Line.overlayRim), Slate.Native.Line.overlayRim, dark: dark, "line/overlayRim")
+            // The two PANE STATUS PILL fills, here because they are the colour half of a cross-renderer
+            // invariant that nothing else can state. `PaneStatusPillInk` is ratcheted as a pair — both
+            // renderers must ANSWER every case — but a ratchet reading two files structurally cannot see
+            // whether they answer the SAME, and the obvious test for that (compare the SwiftUI table's
+            // `Color` against the AppKit table's `NSColor`) has to name both UI halves at once, which is
+            // the one thing a UI half's tests may not do. Split in two instead: the supervisor pins that
+            // the two tables name CORRESPONDING RUNGS, and this pins that a corresponding rung IS the
+            // same colour. Together they say what the cross-half test wanted to, from inside the floor.
+            assertSame(
+                NSColor(Slate.Status.secureInput),
+                Slate.Native.Status.secureInput,
+                dark: dark,
+                "status/secureInput",
+            )
+            assertSame(NSColor(Slate.Status.syncInput), Slate.Native.Status.syncInput, dark: dark, "status/syncInput")
         }
     }
 

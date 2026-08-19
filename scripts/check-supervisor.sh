@@ -6539,7 +6539,35 @@ for half in Sources/SlopDeskClientUI/Pane/PaneStatusPills.swift \
     fi
   done
 done
-printf 'check-supervisor: one drop chip drawn twice off one art file, and %s pill inks resolved by every renderer present.\n' \
+# AND THEY RESOLVE TO THE SAME RUNG, which is the half of this the loop above structurally CANNOT see.
+# "Both renderers answer every case" is satisfied by two tables that answer every case DIFFERENTLY —
+# `.security` to `Slate.Status.secureInput` on one side and to `Slate.Native.Status.syncInput` on the
+# other passes every check written before this one, and ships two colours for one role. The obvious
+# test for it — compare the `Color` against the `NSColor` — has to name both UI halves in one file,
+# which is exactly what a UI half's tests may not do (that ban has two tracked exceptions and did not
+# want a third). So it splits: this pins that the two tables name CORRESPONDING RUNGS, and
+# `SlateNativeTokenTests` pins that a corresponding rung is the same colour. Neither half alone says
+# it; together they say all of it, and neither reaches across the split to do so.
+#
+# The correspondence is textual and exact — `Slate.<tail>` here, `Slate.Native.<tail>` there — because
+# that IS the naming convention the whole `Native` mirror is built on.
+PILL_SWIFTUI=Sources/SlopDeskClientUI/Pane/PaneStatusPills.swift
+PILL_APPKIT=Sources/SlopDeskMacUI/Pane/MacPaneStatusPills.swift
+if [[ -e "${PILL_SWIFTUI}" && -e "${PILL_APPKIT}" ]]; then
+  for ink in ${pill_inks}; do
+    # `|| true` on both: a case the grep cannot find is reported below as an empty tail, not by
+    # killing the run under `set -e`.
+    swiftui_rung=$(grep -E "case \.${ink}:" "${PILL_SWIFTUI}" | grep -oE 'Slate\.[A-Za-z.]+' | head -1 | sed 's/^Slate\.//' || true)
+    appkit_rung=$(grep -E "case \.${ink}:" "${PILL_APPKIT}" | grep -oE 'Slate\.Native\.[A-Za-z.]+' | head -1 | sed 's/^Slate\.Native\.//' || true)
+    if [[ -z "${swiftui_rung}" || -z "${appkit_rung}" ]]; then
+      fail "could not read the rung both halves give .${ink} — one of them stopped naming a \`Slate.\` token and this gate went blind (docs/56 stage F, R2)"
+    fi
+    if [[ "${swiftui_rung}" != "${appkit_rung}" ]]; then
+      fail "the .${ink} pill ink resolves to Slate.${swiftui_rung} in SwiftUI and Slate.Native.${appkit_rung} in AppKit — one role, two colours (docs/56 stage F, R2)"
+    fi
+  done
+fi
+printf 'check-supervisor: one drop chip drawn twice off one art file, and %s pill inks resolved to the SAME rung by every renderer present.\n' \
   "$(printf '%s\n' "${pill_inks}" | wc -l | tr -d ' ')"
 
 # AND THE PILL INKS WERE NOT THE ONLY PAIR OF THAT SHAPE — increment 56c ratcheted one of three and
