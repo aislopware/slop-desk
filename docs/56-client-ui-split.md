@@ -1439,13 +1439,17 @@ Three things moved with it, and one had to widen:
     rather than a section of `MacChromeSnapshotRender`. That one photographs real `NSView`s through
     `CALayer.render(in:)`; every part of this frame is pure SwiftUI, and the hosted path composites
     through a window whose backing greys the authored cream — which would make the one thing the
-    image exists to judge, the ground the marks stand on, a lie.
+    image exists to judge, the ground the marks stand on, a lie. *(Both halves of that reasoning
+    expired in increment 46: the marks became `NSView`s, which `ImageRenderer` cannot draw at all,
+    and the cream is authored on the recipe's ground view rather than taken from the backing. The rig
+    is a `MacChromeSnapshotRender` now.)*
   * `StatusDotView` went `internal` → `package`. It is the SwiftUI half of the shared mark and the
     band is still hosted SwiftUI, so the alternative was a second drawing of the same
     `StatusDotStyle` — the one-implementation rule, at the level of a mark. The widening carries its
     own expiry in its doc comment: when the cluster becomes `MacStatusMarkView`s it goes back to
     `internal`. A widened access level that outlives its caller reads exactly like one that still
-    has it, which is the same failure mode as a stale platform gate.
+    has it, which is the same failure mode as a stale platform gate. *(Collected in increment 46, on
+    time.)*
 
 `MacTitlebarBand` dropped `import SlopDeskClientUI` entirely — the rollup mount was the only thing it
 took from there. `SlopDeskMacUITests` gained `SFSafeSymbols`: the probe
@@ -1812,12 +1816,56 @@ recording.** `PasteTransform` and `TerminalContextMenu.Item` both look unreferen
 Swift lives in `ThirdParty/`, not `Sources/`, so a `Sources/`-only grep reports the entire live
 paste/clipboard cluster as dead. Any dead-code claim in this repo has to grep `ThirdParty/` too.
 
+### Increment 46 — the band's marks cross, and the Mac stops drawing anything in SwiftUI
+
+The first of the ledger's kind-1 surfaces, and the cheapest by design. `RailStatusRollup`'s three
+status marks were hosted `StatusDotView`s — the last reason any `SlopDeskMacUI` file imported
+`SlopDeskClientUI` for a *drawing*. They are `MacStatusMarkView`s now, in a `MacRailStatusMarksView`
+cluster, and the import is gone. **11 → 10.**
+
+`RailStatusMarks` stays a SwiftUI `View`, deliberately: its `markGap`, `width` and band-rung padding
+are read from the SwiftUI side by `RailStatusRollupMount` and by `RailStatusRollupTests`. What
+crossed is the cluster's *body*, as one `NSViewRepresentable`. The place stayed; the painting moved.
+`style(for:active:)` and `label(for:)` remain the only source of both answers.
+
+Everything the slot promised is preserved, and one thing is spelled better than it was. The hit box
+is one `StatusDot.footprint` wide and the full rung tall; an unlit slot refuses `hitTest` outright,
+which kills press, hover **and** its own tooltip in a single refusal, so the pointer falls through to
+the cluster's summary tooltip — exactly what `.allowsHitTesting(false)` under an outer `.help` used
+to achieve by stacking two rules.
+
+**Two things were given up, and both are recorded rather than hidden:**
+
+  * **The lit/unlit hue cross-fade** (`Slate.Anim.smallFade`). A SwiftUI animation cannot reach
+    inside a representable, and the AppKit equivalent — a `CATransition` over the mark's layer —
+    would ride every display-link tick of the working slot and smear it. The rows and the tab chips
+    have always taken the straight step for these same marks, so the band now matches them. Getting
+    it back needs an ink-interpolating property on `MacStatusMarkView`, not a layer transition.
+  * **`ImageRenderer` in the pixel rig.** It draws nothing for an `NSViewRepresentable`, so the marks
+    would have photographed as holes in a PNG that still got written — a snapshot that lies is worse
+    than no snapshot. The rig moved to the `MacChromeSnapshotRender` recipe (an `NSHostingView` in a
+    borderless `.aqua` window over a ground view painted `Slate.Native.Surface.field`, captured
+    through `CALayer.render(in:)`), and its row stand-ins now use the shipping `MacStatusMarkView`.
+    The old header's objection to hosting — that it greys the cream — was a property of that
+    harness, not of hosting: the cream is authored on the ground view here.
+
+**A stale comment, caught in passing.** `MacStatusMark`'s header named the collapsed-sidebar tab
+strip as a remaining SwiftUI mark. It is not: `MacTabStrip.swift:326` had already crossed. After this
+increment **no `SlopDeskMacUI` file uses `StatusDotView` at all.**
+
+**And two widenings collected on time.** `StatusDotView` and `AgentSpinnerView` were `package` for
+exactly one cross-target caller each, under comments promising `internal` again the moment that
+caller crossed. It has, so they are — a widened access level that outlives its caller reads exactly
+like one that still has it. Both are `internal` now, with one in-target caller apiece, and neither
+expires: after the rename this target is the phone's, and a SwiftUI mark is what the phone should
+have.
+
 ## Stage D ledger — what the rename actually costs
 
 `SlopDeskClientUI` cannot become `SlopDeskPhoneUI` while `SlopDeskMacUI` still imports it. That is
-the whole test, and it is countable: **13 files in `SlopDeskMacUI` carry `import SlopDeskClientUI`**,
-and each one names what it takes in the comment on the import line. Grouped, they are three kinds of
-debt, not one — and only the first kind needs an AppKit rewrite.
+the whole test, and it is countable. It was **13 files** when this ledger was written; it is **10**
+after increments 45 and 46, and each one names what it takes in the comment on the import line.
+Grouped, they are three kinds of debt, not one — and only the first kind needs an AppKit rewrite.
 
 ### The ruling first
 
@@ -1840,13 +1888,13 @@ The expensive kind, and the only one that is.
 | `CodePanelSurfaces` | 632 | `MacCodePanelColumn` |
 | `SettingsBespokeSurface` | 325 | `MacSettingsRows` |
 | `FirstLaunchStepSurface` | 286 | `MacFirstLaunchSheet` |
-| `StatusDotView` | 225 | `RailStatusRollup` (already carries its expiry note) |
+| ~~`StatusDotView`~~ | ~~225~~ | ✅ increment 46 — `RailStatusRollup` draws `MacStatusMarkView`s |
 | `SatellitePaneHost` | 170 | `SatellitePaneWindows` |
 | `WorkspaceColumnHosts` (the factory seam) | 79 | `SlopDeskSplitViewController` |
 
 The canvas dominates by an order of magnitude, and everything else in this table is small enough to
-cross one at a time. `StatusDotView` is the cheapest and already flagged; the bespoke settings pages
-and the first-launch checklist are next.
+cross one at a time. `StatusDotView` was the cheapest and went first; the bespoke settings pages and
+the first-launch checklist are next.
 
 ### Kind 2 — not views at all, and in a UI target by accident — ✅ DONE (increment 45)
 
@@ -1859,8 +1907,8 @@ files that reach the pool, only `WorkspaceKeyDispatcher` and `MacCodeSidebarKeyb
 alone. `MacCodePanelColumn` also takes `CodePanelSurfaces`, `SlopDeskMacApp` also takes the SwiftUI
 mounts, and both are kind 1.
 
-**This was the whole of kind 2.** Eleven imports remain and every one is kind 1 or kind 3 — from here
-on, Stage D is AppKit rewrites and the canvas.
+**This was the whole of kind 2.** Eleven imports remained after it — ten after increment 46 — and
+every one is kind 1 or kind 3, so from here on Stage D is AppKit rewrites and the canvas.
 
 ### Kind 3 — blocked on a geometry fact, not on effort
 
@@ -1873,6 +1921,6 @@ moat moves out of SwiftUI into the AppKit column. It is not independently schedu
 ### So the order is
 
 1. ~~Kind 2 — the pool goes down.~~ ✅ increment 45. Two imports, no rewrite.
-2. Kind 1's small surfaces — `StatusDotView`, then the first-launch checklist, then the bespoke
-   settings pages. Four more imports, each a contained AppKit rewrite.
+2. Kind 1's small surfaces — ~~`StatusDotView`~~ (✅ increment 46, one import), then the first-launch
+   checklist, then the bespoke settings pages. Each a contained AppKit rewrite.
 3. The canvas, which takes kind 3 with it and is the remaining bulk.

@@ -16,18 +16,21 @@ import SwiftUI
 /// still. AX-hidden: the row title's accessibility value already speaks the same state, so the mark
 /// never double-announces.
 ///
-/// ⚠️ `package` for ONE caller and one reason: ``SlopDeskMacUI/RailStatusMarks``, the titlebar band's
-/// cluster, which is still hosted SwiftUI (docs/56 increment 36). It draws the SAME resolved
-/// ``StatusDotStyle`` the AppKit renderer beside it draws, so hosting this is what keeps the band and
-/// the rows one vocabulary rather than two. The moment that cluster becomes `MacStatusMarkView`s this
-/// goes back to `internal` — a widened access level that outlives its caller reads exactly like one
-/// that still has it.
-package struct StatusDotView: View {
-    package let style: StatusDotStyle
+/// `internal` again, and back on time. It was `package` for ONE caller —
+/// `SlopDeskMacUI/RailStatusMarks`, the titlebar band's cluster, which was still hosted SwiftUI —
+/// under a comment promising the widening would be collected the moment that cluster became
+/// `MacStatusMarkView`s. It did (docs/56 increment 46), so this did too: a widened access level that
+/// outlives its caller reads exactly like one that still has it.
+///
+/// The Mac now draws every one of its marks in AppKit. This is the PHONE's renderer, with one caller
+/// (``NavigatorColumn``), and it does not expire — after the Stage D rename this target is the
+/// phone's and a SwiftUI mark is what it should have.
+struct StatusDotView: View {
+    let style: StatusDotStyle
 
-    package init(style: StatusDotStyle) { self.style = style }
+    init(style: StatusDotStyle) { self.style = style }
 
-    package var body: some View {
+    var body: some View {
         mark
             // ONE footprint for every mark, so ring rows, spinning rows and symbol rows share the
             // column's centre line.
@@ -106,7 +109,11 @@ struct DottedRing: Shape {
 /// rendered at all, which meant the one mark that moved was also the one mark no test could look at.
 /// ⚠️ Reduce Motion freezes it — a frozen cell is still a distinct silhouette, so the state is never
 /// lost, only the movement.
-package struct AgentSpinnerView: View {
+///
+/// `internal` for the same reason ``StatusDotView`` is: the Mac draws its own spinner
+/// (`MacAgentSpinnerView`, an `NSView`), so this one's only caller is in this target and its
+/// `package` had outlived the cross-target reader it was widened for (docs/56 increment 46).
+struct AgentSpinnerView: View {
     /// The lit dots' ink. The hole is this same ink taken down to ``StatusDot/holeFloor``.
     let ink: Color
     /// Multiplies the whole mark — the render rig's way of magnifying it without resampling.
@@ -126,7 +133,7 @@ package struct AgentSpinnerView: View {
     /// is the exact defect the wall-clock phase exists to prevent.
     @State private var seed = Double.random(in: 0..<StatusDot.tempoSeedSpan)
 
-    package var body: some View {
+    var body: some View {
         cell
             .frame(width: StatusDot.footprint * zoom, height: StatusDot.footprint * zoom)
     }

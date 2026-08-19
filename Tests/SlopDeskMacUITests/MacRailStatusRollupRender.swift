@@ -1,15 +1,22 @@
 // MacRailStatusRollupRender — the pixel probe for the titlebar band's aggregate cluster
 // (``RailStatusRollup``), which moved into `SlopDeskMacUI` with the surface itself (docs/56
-// increment 36). It stayed a SEPARATE rig from ``MacChromeSnapshotRender`` for one reason: that one
-// photographs REAL `NSView`s through `CALayer.render(in:)`, and every part of this frame is pure
-// SwiftUI. `ImageRenderer` is what can capture it, and the hosted path composites through a window
-// whose backing greys the authored cream — which would make the one thing this image exists to
-// judge, the GROUND the marks stand on, a lie.
+// increment 36). It is still a SEPARATE rig from ``MacChromeSnapshotRender`` because the frame it
+// photographs is a hand-built SIDEBAR TOP — a drawn search plate, drawn row stand-ins, drawn window
+// controls — rather than a shipping view mounted whole.
+//
+// ⚠️ IT IS A HOSTED CAPTURE, NOT `ImageRenderer` (docs/56 stage D). `ImageRenderer` rasterizes the
+// SwiftUI display list and draws NOTHING for a representable, and the cluster's three marks are
+// `NSView`s now (``MacRailStatusMarksView``) — so the one thing this image exists to judge would
+// have come out as three empty 14pt holes, in a sheet that still got written and still looked like a
+// render. The frame is therefore mounted in an `NSHostingView` and photographed off the layer, which
+// is ``MacChromeSnapshotRender``'s recipe.
 //
 // ⚠️ THE GROUND is ``Slate/Surface/field`` — the authored cream `#FFFBEB` (ONE ISLAND law 4), never
 // `Surface.ground`, which on macOS is the semantic aux-window backdrop (`underPageBackgroundColor`,
 // measured `#A1A09F`): a mid grey that appears NOWHERE in the shipping chrome and is the EASIER
-// ground. An ink judged against a grey it will never be drawn on is not judged at all.
+// ground. An ink judged against a grey it will never be drawn on is not judged at all. It is PAINTED
+// ON THE WINDOW'S OWN CONTENT VIEW here, not left to the window backing — that omission is what made
+// the old hosted path grey the cream, and it was a property of the harness rather than of hosting.
 //
 // Opt-in and INERT under `swift test` / `make check` — it skips unless `SLOPDESK_TABROW_SNAPSHOT_DIR`
 // is set, the same env var the Mac chrome rig reads. Run on demand:
@@ -72,12 +79,10 @@ final class MacRailStatusRollupRender: XCTestCase {
         }
         .frame(width: size.width, height: size.height, alignment: .topLeading)
         // ⚠️ The ground goes on OUTSIDE the render frame's own size, or the strip `render`'s
-        // `.frame` adds beyond the content stays UNPAINTED and photographs black.
+        // `.frame` adds beyond the content stays unpainted by the SHEET. It is the same cream the
+        // rig paints on the ground view beneath — belt and braces, and the two must never diverge:
+        // a seam between them would read as a panel edge that no surface actually draws.
         .background(Slate.Surface.field) // THE GROUND — see the file header's ⚠️
-        // `render`, not `renderHosted`: every part of this frame is pure SwiftUI (the marks, the
-        // spinner, the rows, the drawn search plate), and the hosted path composites through a window
-        // whose backing greys the authored cream — which would make the one thing this image exists
-        // to judge, the GROUND the marks stand on, a lie.
         try render(sheet, size: size, to: dir, named: "rail-status-rollup.png")
     }
 
@@ -128,11 +133,17 @@ final class MacRailStatusRollupRender: XCTestCase {
         .frame(width: Slate.Metric.sidebarWidth)
     }
 
-    /// One navigator ROW's footprint, drawn — the real one is `MacSidebarRowView` (AppKit), which
-    /// cannot mount inside a SwiftUI `ImageRenderer` frame, and photographing it is
-    /// `MacChromeSnapshotRender`'s job. What this panel needs from a row is only its GEOMETRY: the
-    /// island's rail inset, the control height, and the trailing MARK column the band's cluster above
-    /// has to line up with. Same reason `searchPlateStandIn` exists.
+    /// One navigator ROW's footprint, drawn — the real one is `MacSidebarRowView`, which needs a
+    /// store behind it and whose own photograph is `MacChromeSnapshotRender`'s job. What this panel
+    /// needs from a row is only its GEOMETRY: the island's rail inset, the control height, and the
+    /// trailing MARK column the band's cluster above has to line up with. Same reason
+    /// `searchPlateStandIn` exists.
+    ///
+    /// ⚠️ The MARK is the shipping ``MacStatusMarkView``, never the SwiftUI `StatusDotView` that
+    /// stood here while the rig was an `ImageRenderer` frame. This sheet's whole job is to judge the
+    /// band's marks AGAINST the rows' marks beneath them, and a stand-in drawn by the other half's
+    /// renderer would compare the two halves instead of the two surfaces — hiding exactly the drift
+    /// it is in frame to expose.
     @MainActor
     private func rowStandIn(_ title: String, mark: StatusDotStyle?) -> some View {
         HStack(spacing: Slate.Metric.space1) {
@@ -142,7 +153,8 @@ final class MacRailStatusRollupRender: XCTestCase {
                 .lineLimit(1)
             Spacer(minLength: 0)
             if let mark {
-                StatusDotView(style: mark)
+                NativeMark(style: mark)
+                    .frame(width: StatusDot.footprint, height: StatusDot.footprint)
             } else {
                 Color.clear.frame(width: StatusDot.footprint, height: StatusDot.footprint)
             }
@@ -236,23 +248,84 @@ final class MacRailStatusRollupRender: XCTestCase {
         }
     }
 
-    /// Rasterize `content` at @2x and write a PNG into `dir`. Fails (not skips) if the renderer yields
-    /// nothing — reaching here means the env opt-in was set, so a nil image is a real regression in
-    /// the panel's layout.
+    /// Rasterize `content` at @2x and write a PNG into `dir`. FAILS (does not skip) when no bitmap can
+    /// be made — reaching here means the env opt-in was set, so nothing rendered is a real regression
+    /// in the panel's layout.
+    ///
+    /// HOSTED and photographed off the LAYER — see the file header's first ⚠️ for why this is not
+    /// `ImageRenderer` any more. The cream is painted on the ground view the hosting view sits in,
+    /// so the authored colour is what the marks are judged against rather than the window's backing.
     @MainActor
     private func render(_ content: some View, size: CGSize, to dir: String, named name: String) throws {
-        let renderer = ImageRenderer(content: content.frame(width: size.width, height: size.height))
-        renderer.scale = 2
-        guard let image = renderer.nsImage,
-              let tiff = image.tiffRepresentation,
-              let rep = NSBitmapImageRep(data: tiff),
-              let png = rep.representation(using: .png, properties: [:])
-        else {
-            XCTFail("ImageRenderer produced no image for \(name)")
+        let scale: CGFloat = 2
+        let host = NSHostingView(rootView: content.frame(width: size.width, height: size.height))
+        host.frame = NSRect(origin: .zero, size: size)
+        let ground = NSView(frame: host.frame)
+        ground.wantsLayer = true
+        ground.addSubview(host)
+
+        let window = NSWindow(
+            contentRect: ground.frame, styleMask: [.borderless], backing: .buffered, defer: false,
+        )
+        // ⚠️ `.aqua`, and NOT `Slate.glassColorScheme` — the app pins LIGHT app-wide
+        // (``SlateAppearancePin``) because the ground is the cream; `glassColorScheme` is the
+        // TERMINAL GLASS's local opt-out. A harness that followed it resolves every dynamic
+        // `Slate.Text.*` near-white on that cream, which is the failure the app-level pin prevents.
+        window.appearance = NSAppearance(named: .aqua)
+        window.contentView = ground
+        window.orderFront(nil)
+        ground.layoutSubtreeIfNeeded()
+        ground.layer?.backgroundColor = Slate.Native.Surface.field.cgColor
+        if let layer = ground.layer { Self.pinContentsScale(layer, scale) }
+        // One turn of the run loop so the spinner's first display-link frame exists and every layer
+        // has redrawn at the scale just asked for, before anything is photographed.
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: Int(size.width * scale), pixelsHigh: Int(size.height * scale),
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0,
+        ), let context = NSGraphicsContext(bitmapImageRep: rep) else {
+            XCTFail("no bitmap context for \(name)")
+            return
+        }
+        rep.size = size
+        // ⚠️ NO y-flip. `NSGraphicsContext(bitmapImageRep:)` already hands back a context whose CTM
+        // is top-left-down, which is the space `CALayer.render(in:)` draws in — the usual
+        // `translate + scale(1, -1)` on top of it photographs the sheet upside down.
+        context.cgContext.scaleBy(x: scale, y: scale)
+        ground.layer?.render(in: context.cgContext)
+        window.orderOut(nil)
+
+        guard let png = rep.representation(using: .png, properties: [:]) else {
+            XCTFail("no PNG for \(name)")
             return
         }
         let out = URL(fileURLWithPath: dir).appendingPathComponent(name)
         try png.write(to: out)
         print("SLOPDESK_SNAPSHOT_WRITTEN \(out.path)")
     }
+
+    /// Raise the whole layer tree's backing resolution before the shutter. ⚠️ `CALayer.render(in:)`
+    /// REPLAYS CACHED CONTENTS, so a sublayer left at 1× stays 1× however far the context is scaled —
+    /// the sheet then comes out sharp in its SwiftUI half and soft in every `NSView` in it.
+    private static func pinContentsScale(_ layer: CALayer, _ scale: CGFloat) {
+        layer.contentsScale = scale
+        layer.rasterizationScale = scale
+        layer.setNeedsDisplay()
+        layer.sublayers?.forEach { pinContentsScale($0, scale) }
+    }
+}
+
+/// One shipping ``MacStatusMarkView``, mounted in the SwiftUI sheet — the rig's only way to draw a
+/// ROW's mark with the renderer the rows actually use. It exists here and not in the shipping target
+/// because nothing in the app hosts a bare mark: the band's cluster carries its own three
+/// (``MacRailStatusMarksView``) and every other mark is a subview of an AppKit row or chip.
+private struct NativeMark: NSViewRepresentable {
+    let style: StatusDotStyle
+
+    func makeNSView(context _: Context) -> MacStatusMarkView { MacStatusMarkView() }
+
+    func updateNSView(_ view: MacStatusMarkView, context _: Context) { view.style = style }
 }

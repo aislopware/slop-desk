@@ -7,10 +7,18 @@
 // (``StatusPresentation/statusDot(working:badge:agentIdle:agentFinish:)`` → a ``StatusDotStyle``) and
 // for every geometry number (``StatusDot``): one 14pt column, one ring diameter, one dot pitch.
 //
-// ⚠️ It is drawn TWICE while stage D runs — here in AppKit for the navigator's rows, and in SwiftUI
-// (``StatusDotView``) for the collapsed-sidebar tab strip and the band's rollup, which are still
-// hosted. That is the ``FindModePill`` arrangement and it is allowed on exactly the same terms: ONE
-// value decides the mark and its ink, two frameworks paint it. The SwiftUI half dies with the strip.
+// ⚠️ EVERY MAC SURFACE THAT WEARS A MARK NOW DRAWS IT HERE. The navigator's rows
+// (``MacSidebarRowView``) and the collapsed band's tab chips (`MacTabChipView`) crossed first; the
+// titlebar band's aggregate rollup (``MacRailStatusMarksView``) was the last holdout and crossed
+// with docs/56 stage D's cheapest kind-1 surface, which is what deleted `RailStatusRollup`'s
+// `SlopDeskClientUI` import.
+//
+// The mark is still drawn twice — but the second renderer is the PHONE's. ``StatusDotView`` lives in
+// `SlopDeskClientUI`, whose navigator is the iOS half, and it STAYS there: that is the
+// ``FindModePill`` arrangement on exactly the terms it is allowed on, ONE value deciding the mark and
+// its ink and two frameworks painting it. What is no longer true is the thing that made it debt — no
+// surface is painted by both halves any more, so a hue or a silhouette can no longer be corrected in
+// one renderer and left stale in the other on the same screen.
 //
 // The display link runs only while a spinner is actually on screen — a resting rail costs no frames.
 

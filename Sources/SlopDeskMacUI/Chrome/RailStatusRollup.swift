@@ -49,10 +49,21 @@
 // shells reach through the `.jumpToAttention` binding. This is the SAME feature laid out for a
 // window, which is exactly the split the two shells are for. It arrived here as SwiftUI hosted by
 // ``MacTitlebarBand``; when that mount becomes AppKit this file goes with it.
+//
+// ⚠️ THE MARKS ARE ALREADY APPKIT (docs/56 stage D, kind 1's cheapest surface). What is still SwiftUI
+// in this file is the derivation above and the cluster's PLACE on the band — the rung it hangs from
+// and the width the mount positions by — because the mount itself is still SwiftUI, and geometry that
+// has to agree across a hosting boundary belongs on the boundary's own side. Nothing under
+// ``RailStatusMarks`` is painted by SwiftUI any more: the three marks are ``MacStatusMarkView``s
+// inside ``MacRailStatusMarksView``, the SAME renderer the navigator's rows and the band's tab chips
+// mount. That is what deleted this file's `SlopDeskClientUI` import — it existed for `StatusDotView`
+// and for nothing else, and it was the last thing `SlopDeskMacUI` took from the phone's half of the
+// mark. The values did not move: ``style(for:active:)`` and ``label(for:)`` below are still the one
+// source of what a slot draws and what it says.
 
+import AppKit // the cluster and its slots are `NSView`s — see ``MacRailStatusMarksView``
 import SlopDeskAgentDetect // ClaudeStatus — the raw agent status the working reading keys on
 import SlopDeskClientCore
-import SlopDeskClientUI // StatusDotView — the SwiftUI mark renderer this hosted band still draws
 import SlopDeskSlate
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
@@ -197,14 +208,22 @@ struct RailStatusRollup: View {
             )
         }
         let kinds = Self.kinds(sightings.map(\.reading))
+        // ⚠️ NO `.help` and NO `.animation` here any more, and neither is an omission.
+        //  * The cluster's SUMMARY tooltip moved INSIDE (``MacRailStatusMarksView``), because a
+        //    SwiftUI `.help` wrapped around a hosted `NSView` is a tooltip rect the AppKit tooltip
+        //    manager resolves against the deepest view under the pointer — which is now always one
+        //    of the marks or their own container, never the SwiftUI layer above them. It is set on
+        //    the same value (``summary(_:)``) at the same scope; only the framework changed.
+        //  * `.animation(Slate.Anim.smallFade, value: kinds)` used to cross-fade a slot's hue
+        //    between ``disabledInk`` and the state's own. A SwiftUI animation cannot reach inside a
+        //    representable, and the AppKit alternative — a `CATransition` over the mark's layer
+        //    CONTENTS — would smear the working slot, which repaints at display-link rate and would
+        //    ride the transition for every tick inside its duration. The rows and the tab chips have
+        //    always taken the straight step for exactly these marks; the band now matches them
+        //    instead of being the one surface that fades.
         RailStatusMarks(active: kinds) { kind in
             jump(kind, panes: sightings.filter { Self.matches(kind, $0.reading) }.map(\.pane))
         }
-        .help(Self.summary(kinds))
-        // Only the LIT SET may animate. The marks themselves never move in or out any more —
-        // three slots, always — so this is the hue crossing between `disabledInk` and the
-        // state's own, which is the only thing left that changes.
-        .animation(Slate.Anim.smallFade, value: kinds)
     }
 
     /// Walk to the next pane in `kind`'s own list.
@@ -242,8 +261,12 @@ struct RailStatusRollup: View {
 
 /// The rollup's DRAWING, split from its derivation so the marks can be rendered at true size
 /// without a store behind them (the snapshot rig mounts this directly — the LIT SET is the whole
-/// input). Pure SwiftUI, so `ImageRenderer` can capture it; a lit working mark keeps its own
-/// wall-clock phase, an unlit one is frozen.
+/// input). A lit working mark keeps its own wall-clock phase, an unlit one is frozen.
+///
+/// ⚠️ WHAT IS LEFT IN SWIFTUI HERE IS THE CLUSTER'S PLACE, not its picture: the band's control rung
+/// and the width ``RailStatusRollupMount`` positions by, which are read on both sides of the hosting
+/// boundary and so are spelled on the SwiftUI side of it. Everything inside that box — the three
+/// marks, their hit boxes, the tooltips and what VoiceOver hears — is ``MacRailStatusMarksView``.
 struct RailStatusMarks: View {
     /// Which states are happening. Every state in ``RailStatusRollup/order`` is drawn either way —
     /// this only decides which of them is LIT.
@@ -263,39 +286,161 @@ struct RailStatusMarks: View {
     static let width = StatusDot.footprint * 3 + markGap * 2
 
     var body: some View {
-        HStack(spacing: Self.markGap) {
-            // `order`, never `active`: the slots are fixed, so a mark never changes place and the
-            // cluster never changes width.
-            ForEach(RailStatusRollup.order, id: \.self) { kind in
-                mark(kind)
-            }
+        MarkCluster(active: active, onPick: onPick)
+            // The band's control rung: hung from `bandControlInset`, one control tall, so the marks'
+            // centres land on the same line as the traffic lights and the sidebar toggle.
+            .frame(width: Self.width, height: Slate.Metric.heightControl)
+            .padding(.top, Slate.Metric.bandControlInset)
+    }
+}
+
+/// THE HOSTING SEAM, and nothing else: no geometry, no state, no decision. It exists because
+/// ``RailStatusRollupMount`` is still SwiftUI; when that mount becomes AppKit this type disappears
+/// and the window hands ``MacRailStatusMarksView`` straight to its band.
+private struct MarkCluster: NSViewRepresentable {
+    let active: [RailStatusRollup.Kind]
+    let onPick: ((RailStatusRollup.Kind) -> Void)?
+
+    func makeNSView(context _: Context) -> MacRailStatusMarksView { MacRailStatusMarksView() }
+
+    /// ONE call, never two setters. The lit set and the click both decide whether a slot takes a
+    /// press, so applying them separately leaves a window — one `updateNSView` wide — in which a
+    /// mark is already lit and still inert, or the reverse.
+    func updateNSView(_ view: MacRailStatusMarksView, context _: Context) {
+        view.apply(active: active, onPick: onPick)
+    }
+}
+
+// MARK: - The cluster, in AppKit
+
+/// The three fixed slots, one ``RailStatusMarks/markGap`` apart, on the band's control rung.
+///
+/// ⚠️ IT SPEAKS FOR THE WHOLE BAND, and its slots speak for themselves. The cluster carries
+/// ``RailStatusRollup/summary(_:)`` — the resting phrase included, which is why a band with nothing
+/// lit is not silent — and a LIT slot overrides it with its own state's name. An UNLIT slot refuses
+/// the hit entirely (``MacRailStatusMarkSlot/hitTest(_:)``), so the pointer falls through to the
+/// cluster and reads the summary there: the legend entry never pretends to be a control, and the
+/// dead gap between two marks answers the same way the dead slots do.
+@MainActor
+final class MacRailStatusMarksView: NSView {
+    private let slots: [MacRailStatusMarkSlot]
+
+    init() {
+        // `order`, never the lit set: the slots are fixed, so a mark never changes place and the
+        // cluster never changes width. Built once, in that order, and only ever re-inked.
+        slots = RailStatusRollup.order.map { MacRailStatusMarkSlot(kind: $0) }
+        super.init(frame: .zero)
+        for (index, slot) in slots.enumerated() {
+            addSubview(slot)
+            NSLayoutConstraint.activate([
+                // The FULL BAND RUNG tall — taller than the 14pt mark so the pointer does not have
+                // to find a 14pt square. The WIDTH is the slot's own business and is exactly one
+                // footprint, which is what keeps the gap between two marks genuinely dead.
+                slot.topAnchor.constraint(equalTo: topAnchor),
+                slot.bottomAnchor.constraint(equalTo: bottomAnchor),
+                index == 0
+                    ? slot.leadingAnchor.constraint(equalTo: leadingAnchor)
+                    : slot.leadingAnchor.constraint(
+                        equalTo: slots[index - 1].trailingAnchor, constant: RailStatusMarks.markGap,
+                    ),
+            ])
         }
-        // The band's control rung: hung from `bandControlInset`, one control tall, so the marks'
-        // centres land on the same line as the traffic lights and the sidebar toggle.
-        .frame(width: Self.width, height: Slate.Metric.heightControl)
-        .padding(.top, Slate.Metric.bandControlInset)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.group)
+        apply(active: [], onPick: nil)
     }
 
-    /// One slot. Its hit area is the FULL BAND RUNG tall (`heightControl`) and one footprint wide —
-    /// taller than the mark so the pointer does not have to find a 14pt square, but never wider, so
-    /// the gap between two marks stays genuinely dead.
-    @ViewBuilder
-    private func mark(_ kind: RailStatusRollup.Kind) -> some View {
-        let lit = active.contains(kind)
-        if let style = RailStatusRollup.style(for: kind, active: lit) {
-            StatusDotView(style: style)
-                .frame(width: StatusDot.footprint, height: Slate.Metric.heightControl)
-                .contentShape(.rect)
-                .onTapGesture { onPick?(kind) }
-                // An UNLIT slot is a legend entry, not a control: nothing to jump to, so it takes
-                // no press and no hover.
-                .allowsHitTesting(lit && onPick != nil)
-                .help(RailStatusRollup.label(for: kind))
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(RailStatusRollup.label(for: kind))
-                .accessibilityAddTraits(lit ? .isButton : [])
-                .accessibilityHidden(!lit)
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) { fatalError("not from a nib") }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: RailStatusMarks.width, height: Slate.Metric.heightControl)
+    }
+
+    /// Light `active`, and hand every slot the same click. Cheap enough to run on each
+    /// `updateNSView`: a slot only repaints when its resolved ``StatusDotStyle`` actually changes
+    /// (``MacStatusMarkView/style``), so a render pass that lights nothing new costs three compares.
+    func apply(active: [RailStatusRollup.Kind], onPick: ((RailStatusRollup.Kind) -> Void)?) {
+        for slot in slots {
+            slot.apply(lit: active.contains(slot.kind), onPick: onPick)
         }
+        let summary = RailStatusRollup.summary(active)
+        toolTip = summary
+        setAccessibilityLabel(summary)
+    }
+}
+
+/// ONE slot: a mark centred in a hit box that is one ``StatusDot/footprint`` wide and one band rung
+/// tall, lit or not.
+///
+/// ⚠️ AN UNLIT SLOT IS A LEGEND ENTRY, NOT A CONTROL. It keeps its silhouette (that is the whole
+/// point of a fixed slot) and gives up everything a control has: no press, no hover, no tooltip of
+/// its own, and nothing in the accessibility tree — because a mark that is not lit has no panes to
+/// jump to, and an element that announces itself as a button and then does nothing is worse than one
+/// that is not there. All three of those follow from the single refusal in ``hitTest(_:)``.
+@MainActor
+private final class MacRailStatusMarkSlot: NSView {
+    let kind: RailStatusRollup.Kind
+
+    private let mark = MacStatusMarkView()
+    private var lit = false
+    private var onPick: ((RailStatusRollup.Kind) -> Void)?
+
+    init(kind: RailStatusRollup.Kind) {
+        self.kind = kind
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        addSubview(mark)
+        NSLayoutConstraint.activate([
+            // NEVER wider than the mark it holds — see the cluster's note on the dead gap.
+            widthAnchor.constraint(equalToConstant: StatusDot.footprint),
+            mark.centerXAnchor.constraint(equalTo: centerXAnchor),
+            mark.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+        // The state's spoken name, in BOTH registers, from the one function that answers it — the
+        // tooltip and VoiceOver can therefore never disagree about what this mark means.
+        toolTip = RailStatusRollup.label(for: kind)
+        setAccessibilityLabel(RailStatusRollup.label(for: kind))
+        setAccessibilityRole(.button)
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) { fatalError("not from a nib") }
+
+    func apply(lit: Bool, onPick: ((RailStatusRollup.Kind) -> Void)?) {
+        self.lit = lit
+        self.onPick = onPick
+        mark.style = RailStatusRollup.style(for: kind, active: lit)
+        setAccessibilityElement(lit)
+    }
+
+    // MARK: The refusal
+
+    /// ⚠️ `self` OR NOTHING — never `super.hitTest`, which would hand the event to the
+    /// ``MacStatusMarkView`` inside and lose the click, since that view is a drawing and has no
+    /// action. Returning `nil` for an unlit slot (or for the snapshot rig's `onPick == nil`) is what
+    /// makes the legend entry inert down to the tooltip: AppKit resolves both the press and the tip
+    /// against the deepest view that accepts the point, so one refusal covers both.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard lit, onPick != nil else { return nil }
+        return bounds.contains(convert(point, from: superview)) ? self : nil
+    }
+
+    /// Swallowed so the slot stays the click's owner and ``mouseUp(with:)`` is delivered here — an
+    /// unhandled `mouseDown` walks up the responder chain and the release never comes back.
+    override func mouseDown(with _: NSEvent) {}
+
+    /// The jump fires on RELEASE INSIDE, which is the tap gesture this slot replaced and the one
+    /// every other control on this band keeps: a press that slides off the mark is a change of mind.
+    override func mouseUp(with event: NSEvent) {
+        guard bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
+        onPick?(kind)
+    }
+
+    override func accessibilityPerformPress() -> Bool {
+        guard lit, let onPick else { return false }
+        onPick(kind)
+        return true
     }
 }
 
