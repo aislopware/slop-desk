@@ -3056,8 +3056,15 @@ done
 # only so a Swift `switch` had something to switch over, which made three copies of one declaration
 # order — libghostty's header, the mirror, the table — where any two could drift while compiling.
 # The raw `int32_t` travels now. A revived mirror reads like tidying and restores the drift.
-pointer_mirrors=$(grep -rln 'enum OSCPointerShape\|enum MouseVisibility[^M]' \
-  Sources/ Tests/ ThirdParty/ 2> /dev/null || true)
+#
+# `ThirdParty/ghostty/integration` and `--include='*.swift'`, NOT a bare `ThirdParty/`. The bare walk
+# read all 8 GB of it — `.work/` holds a full ghostty checkout plus its zig build tree, 62k files,
+# almost all of them object code — through single-threaded /usr/bin/grep, and cost 4m20s of the
+# ~39s this whole gate is supposed to take. It was the entire pre-push wait. The mirror this bans is
+# Swift by definition, and the only Swift under ThirdParty/ that this repo writes is the embedder in
+# `ghostty/integration` — the same scope the DocC gate below already `find`s for the same reason.
+pointer_mirrors=$(grep -rln --include='*.swift' 'enum OSCPointerShape\|enum MouseVisibility[^M]' \
+  Sources/ Tests/ ThirdParty/ghostty/integration 2> /dev/null || true)
 if [[ -n "${pointer_mirrors}" ]]; then
   printf '%s\n' "${pointer_mirrors}" >&2
   fail "a Swift mirror of a libghostty pointer enum is back — the raw int crosses (docs/56, increment 50)"
