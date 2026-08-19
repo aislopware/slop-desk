@@ -1753,6 +1753,65 @@ offers, it is bounded by the length of a held gesture, and it is the same trade
 Gate count is unchanged (the fact was already spelled once, around the type). What changed is that
 both halves are now real.
 
+### Increment 45 — the pool goes down, and takes the page with it
+
+The first item off the ledger below, and the first Stage D move that deletes MacUI imports rather
+than rewriting a surface. `CodeSidebarWebViewPool`, `CodeSidebarFocusPolicy` and the page itself now
+live in `SlopDeskClientCore`, below both UI halves.
+
+**What made it possible was increment 43, and what nearly stopped it was one line of colour.** The
+mint had to travel with the pool — the pool calls it — and the mint set `underPageBackgroundColor`
+from `Slate.theme`. `SlopDeskSlate` *depends on* `SlopDeskClientCore`, so reading a token from down
+there is a dependency cycle, not a widening. The line did not have to travel, though: both mounts
+already re-apply that colour on the very update that creates the page, and they must, because a
+pooled page outlives a theme switch and a creation-time snapshot flashes the old tone on a scroll
+bounce. The mount's write was never redundant with the mint's — it **outranked** it, and the mint's
+was the redundant one. Deleting it left the mint reading no design token at all.
+
+**A page is not a view, which is the ruling this increment rests on.** `WKWebView` *is* the
+platform's view class, so `CodeSidebarPage.swift` has `#if os(macOS)` / AppKit / UIKit in it and
+belongs below the split anyway: nothing in it lays anything out, reads a token, or names a
+`some View`. ClientCore already imports AppKit or UIKit in five files. What stayed up in
+`SlopDeskClientUI` is the MOUNT — a clipping container and one representable per half — which is
+exactly the part that does lay out, and does read a token.
+
+| Went down to `SlopDeskClientCore` | Why it could |
+| --- | --- |
+| `CodeSidebarWebViewPool` (410) | a resource manager: projects, warm pages, an LRU |
+| `CodeSidebarFocusPolicy` (+ its tests) | pure decisions, `canImport(AppKit)` only |
+| the mint + `CodeSidebarWKWebView` → `CodeSidebarPage` | a page is a view CLASS, not a drawn surface |
+
+Five `internal` → `package` widenings pay for it (`webView(for:url:)`, `noteRemount`, `loadState`,
+`CodeSidebarWebLoadState` and its `veiled`), each for the mount or the panel column that now reads it
+from one target up. `ClientCore` still imports SwiftUI nowhere — the pool's `import SwiftUI` was
+already dead and went with the move.
+
+**Two of thirteen imports gone, not three.** The ledger below estimated three, counting the three
+MacUI files that reach the pool. Only two of them reached it *alone* — `WorkspaceKeyDispatcher` and
+`MacCodeSidebarKeyboard` — and both dropped `import SlopDeskClientUI` outright. `MacCodePanelColumn`
+also takes `CodePanelSurfaces` and `SlopDeskMacApp` also takes the SwiftUI mounts, so both keep the
+import with a narrowed comment. Eleven remain, and every one of them is now kind 1 or kind 3: what is
+left is AppKit rewrites and the canvas.
+
+The supervisor gains the other half of the pin: the pool file must not exist in `SlopDeskClientUI`
+again, which is the ascent rather than the gate.
+
+### Increment 45b — a second git-line renderer, kept alive by its own tests
+
+Found while sweeping for what else was in the wrong place. `PaneGitSummary.compactLine` folded the
+git counts into one flat string and had **zero** call sites anywhere — `Sources/`, `Tests/`,
+`ThirdParty/`. The rail's git line is `SidebarGitLine.segments`, which emits per-segment ink instead
+of a string, and the two disagreed: `~` for a conflict in the live one, `=` in the dead one. Twelve
+assertions in `PaneGitSummaryTests` were the only thing compiling the wrong spelling. Renderer and
+assertions deleted; the wire-fold tests, which are what every renderer reads, stay.
+
+**Two other candidates from the same sweep were NOT dead, and the check that saved them is worth
+recording.** `PasteTransform` and `TerminalContextMenu.Item` both look unreferenced from `Sources/`
+— and both are live, built into a real `NSMenu` by
+`ThirdParty/ghostty/integration/GhosttySurface/GhosttyTerminalView.swift`. The ghostty embedder's
+Swift lives in `ThirdParty/`, not `Sources/`, so a `Sources/`-only grep reports the entire live
+paste/clipboard cluster as dead. Any dead-code claim in this repo has to grep `ThirdParty/` too.
+
 ## Stage D ledger — what the rename actually costs
 
 `SlopDeskClientUI` cannot become `SlopDeskPhoneUI` while `SlopDeskMacUI` still imports it. That is
@@ -1789,15 +1848,19 @@ The canvas dominates by an order of magnitude, and everything else in this table
 cross one at a time. `StatusDotView` is the cheapest and already flagged; the bespoke settings pages
 and the first-launch checklist are next.
 
-### Kind 2 — not views at all, and in a UI target by accident
+### Kind 2 — not views at all, and in a UI target by accident — ✅ DONE (increment 45)
 
 `CodeSidebarWebViewPool` (410 lines) manages warm `WKWebView`s keyed by project. It is a RESOURCE
-manager: no `View` type, no layout, no design token. It is imported by three MacUI files
-(`SlopDeskMacApp`, `MacCodePanelColumn`, `WorkspaceKeyDispatcher`) purely as a shared resource.
-Increment 43 took the mint out of it, and nothing in its body names an `NSView`, a `UIView`, AppKit
-or UIKit any more — so it belongs **below** both halves, not above the phone. Moving it down removes
-three of the thirteen imports **with no AppKit rewrite at all**, which makes it the highest
-value-per-risk item on this page and the one that is now unblocked.
+manager: no `View` type, no layout, no design token. It went down to `SlopDeskClientCore` in
+increment 45, with `CodeSidebarFocusPolicy` and the page mint, and **no AppKit rewrite at all**.
+
+It removed **two** of the thirteen imports rather than the three estimated here: of the three MacUI
+files that reach the pool, only `WorkspaceKeyDispatcher` and `MacCodeSidebarKeyboard` reached it
+alone. `MacCodePanelColumn` also takes `CodePanelSurfaces`, `SlopDeskMacApp` also takes the SwiftUI
+mounts, and both are kind 1.
+
+**This was the whole of kind 2.** Eleven imports remain and every one is kind 1 or kind 3 — from here
+on, Stage D is AppKit rewrites and the canvas.
 
 ### Kind 3 — blocked on a geometry fact, not on effort
 
@@ -1809,7 +1872,7 @@ moat moves out of SwiftUI into the AppKit column. It is not independently schedu
 
 ### So the order is
 
-1. Kind 2 — the pool goes down. Three imports, no rewrite.
+1. ~~Kind 2 — the pool goes down.~~ ✅ increment 45. Two imports, no rewrite.
 2. Kind 1's small surfaces — `StatusDotView`, then the first-launch checklist, then the bespoke
    settings pages. Four more imports, each a contained AppKit rewrite.
 3. The canvas, which takes kind 3 with it and is the remaining bulk.
