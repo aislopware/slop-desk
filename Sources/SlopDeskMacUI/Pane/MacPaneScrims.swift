@@ -68,8 +68,15 @@ final class MacPaneVeil: NSView {
         paint()
     }
 
+    /// `slateScalingAlpha`, NOT `withAlphaComponent`, and the two are not interchangeable: the
+    /// SwiftUI half spends `.opacity(_:)`, which SCALES a colour's own alpha, while
+    /// `withAlphaComponent` REPLACES it. They agree only for as long as the terminal's paper stays
+    /// opaque — the day the profile's glass face carries alpha of its own, `withAlphaComponent` would
+    /// quietly make the AppKit veil the heavier of the two, in the one direction that matters (a
+    /// receded pane stops being readable). Scaling is what is being ported, so scaling is what is
+    /// written. `Slate`'s own note on the helper says the same thing about the system separator.
     private func paint() {
         layer?.backgroundColor = Slate.Native.Surface.terminal
-            .withAlphaComponent(veilAlpha).cgColor
+            .slateScalingAlpha(veilAlpha).cgColor
     }
 }

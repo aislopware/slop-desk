@@ -49,6 +49,31 @@ func macCapsString(
     )
 }
 
+/// The same INSTRUMENT VOICE, without the caps — for a readout whose content has no case to raise.
+///
+/// The divider's live ratio chip (`50 · 50`) is the first caller, and it is why this exists rather
+/// than a seventh private copy: digits carry the instrument face, size and engraving exactly as a
+/// heading does, but `.uppercased()` on "50" is a no-op that would make the call site read as a
+/// heading it is not. Splitting the recipe here instead keeps ``Slate/Typeface/instrumentTracking``
+/// spelled in ONE file, which is the thing `check-supervisor.sh` actually pins — the alternative was
+/// a second owner and a wider ban, i.e. paying for a distinction the kerning constant cannot see.
+///
+/// The caps rule above still holds and is not relaxed by this: tracking on MIXED CASE reads as a
+/// rendering fault. This is for digits and symbols, not for a sentence.
+@MainActor
+func macInstrumentString(
+    _ text: String, color: NSColor, weight: NSFont.Weight = .medium,
+) -> NSAttributedString {
+    NSAttributedString(
+        string: text,
+        attributes: [
+            .font: Slate.Typeface.instrumentNative(Slate.Typeface.small, weight: weight),
+            .foregroundColor: color,
+            .kern: Slate.Typeface.instrumentTracking,
+        ],
+    )
+}
+
 /// The same heading as a finished, non-selectable label.
 ///
 /// `isSelectable = false` is part of the recipe rather than a caller's choice: this is taxonomy, not
