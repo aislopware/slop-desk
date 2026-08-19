@@ -278,6 +278,23 @@ breath, and two handles could be reset in either order.
 It earns a handle the way `VideoPacketizer` does, by being state that must not be copied — but it is
 also where the rule below was written down.
 
+`ChannelTable` is the mux's, and it is the one that shows what a handle is *for* beyond avoiding a
+copy. It crossed first as storage — allocate, open, reject, close, read a state — while the rule that
+decides what to do with a frame stayed in Swift as `MuxRoutingCore.route`. That worked and was
+wrong: every branch of the decision reads a state and then writes one, so the rule was six crossings
+per frame *and* a rule kept apart from the state it reasons about, which is the arrangement that
+lets one of them be edited alone. `slopdesk_channel_table_route` moved the decision to the table,
+and the crossing went from six calls to one.
+
+**A verdict flattens; a payload does not travel.** A C enum with a payload is not a thing, so
+`SlopDeskMuxRouting` carries the discriminant plus every field any verdict could want, and the
+caller reads the ones its verdict names. The frame's bytes stay on the near side — a decision says
+WHERE they go, and copying a chunk across a boundary to be told its channel id would be the whole
+cost of the mux for nothing. Both refusals fail CLOSED (an unknown type byte, a null handle), which
+is the opposite default from the platform tables in §4: those fail open because a missing row means
+"nobody said otherwise", and here a missing table means "there is no channel", so delivering would
+be the defect.
+
 ### What picks the convention is the FAR side
 
 A Rust type's shape does not decide this; the Swift owner's does. `QpController` and

@@ -1605,6 +1605,27 @@ for revived in 'pendingCredit +=' 'remaining -=' 'outstanding +=' 'states\[' ter
   fi
 done
 
+# The DEMUX RULE is Rust's too, and it is the newest of these to move. It used to be a Swift
+# `MuxRoutingCore.route` reaching six ways into a table that was ALREADY Rust — a rule living apart
+# from the state its every branch reads and then writes, which is the arrangement that lets one of
+# them be edited alone. `slopdesk_wire`'s `ChannelTable::route` decides now; the Swift attaches the
+# payload (the bytes never cross) and spells the two drop reasons, which is presentation.
+SWIFT_ROUTING=Sources/SlopDeskTransport/Mux/MuxRoutingCore.swift
+if ! grep -q 'table.route(' "${SWIFT_ROUTING}"; then
+  fail "${SWIFT_ROUTING} stopped asking the door — it is a face, not a second demux rule"
+fi
+if ! grep -q 'pub fn route' rust/slopdesk-wire/src/mux/channels.rs; then
+  fail "rust/slopdesk-wire/src/mux/channels.rs lost route — the demux rule lives beside its table"
+fi
+# What the face must NOT grow back: any branch that re-decides what the rule already decided. Each
+# of these is a table verb the old copy called directly, and one of them reappearing here means the
+# decision has two owners again.
+for redecided in 'table.isOpen' 'table.open(' 'table.reject(' 'table.remoteClose(' 'table.localClose(' 'table.state('; do
+  if grep -q "${redecided}" <<< "$(grep -vE '^[[:space:]]*//|^[[:space:]]*///' "${SWIFT_ROUTING}")"; then
+    fail "${SWIFT_ROUTING} grew '${redecided}' back — the demux decision is Rust's, and there is one"
+  fi
+done
+
 # The metadata RPC's payloads. Eleven encode/decode pairs, the porcelain fold the sidebar and the
 # host status push must agree on, and the three numbers a second speller would drift — all
 # rust/slopdesk-wire's. The Swift is the value types and the flatten.

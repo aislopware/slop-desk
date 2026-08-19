@@ -5304,6 +5304,41 @@ size_t slopdesk_channel_table_state_count(SlopDeskChannelTable *handle);
 
 size_t slopdesk_channel_table_live(SlopDeskChannelTable *handle, unsigned int *out, size_t cap);
 
+// ---- The DEMUX RULE itself, not just the table it reads ----
+//
+// One frame in, one verdict out, with the table advanced exactly as the frame
+// requires. `kind` is the mux envelope's own type byte (1 open, 2 openAck,
+// 3 data, 4 close, 5 windowAdjust); `accepted` is read for the open-ack alone.
+//
+// The PAYLOAD never crosses. A verdict names a channel and the bytes stay with
+// whoever decoded them.
+//
+// A C enum with a payload is not a thing, so the discriminant and every field a
+// verdict could carry travel together and the caller reads the ones its verdict
+// names. `state` is meaningful for LIFECYCLE, `reason` for DROP.
+//
+// Both refusals FAIL CLOSED — a type byte no kind claims, and a null handle,
+// each drop as unknown. That is the opposite default from this header's platform
+// tables, and deliberately: with no table there is no channel, and delivering
+// bytes to one nobody described is what this rule exists to prevent.
+
+#define SLOPDESK_MUX_VERDICT_DELIVER 0u
+#define SLOPDESK_MUX_VERDICT_LIFECYCLE 1u
+#define SLOPDESK_MUX_VERDICT_DROP 2u
+
+#define SLOPDESK_MUX_DROP_NON_OPEN 0u
+#define SLOPDESK_MUX_DROP_UNKNOWN 1u
+
+typedef struct SlopDeskMuxRouting {
+  unsigned int verdict;
+  unsigned int channel_id;
+  unsigned int state;
+  unsigned int reason;
+} SlopDeskMuxRouting;
+
+SlopDeskMuxRouting slopdesk_channel_table_route(
+    SlopDeskChannelTable *handle, unsigned char kind, unsigned int id, bool accepted);
+
 // ---------------------------------------------------------------------------
 // The host metadata RPC's payloads (rust/slopdesk-ffi/src/metadata.rs).
 //

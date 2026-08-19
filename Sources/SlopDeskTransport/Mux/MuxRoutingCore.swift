@@ -1,80 +1,63 @@
+import Foundation
 import SlopDeskProtocol
 
-/// The demux core behind ``MuxRouter``, the CLIENT's side of the mux.
+/// The demux face behind ``MuxRouter``, the CLIENT's side of the mux.
 ///
 /// It was side-agnostic when the host was Swift too, and the name still says so; the host's half
-/// went to Rust with the rest of hostd and now lives in `slopdesk-wire`'s `mux::channels`, which
-/// holds the same allocator and the same SSH-symmetric close machine. What stays here is the one
-/// end that still has to decide in-process, beside the `NWConnection` whose bytes it is reading.
+/// went to Rust with the rest of hostd. The RULE has now followed it: `slopdesk_wire`'s
+/// `ChannelTable::route` decides, and ``ChannelTable/route(kind:id:accepted:)`` is the door.
 ///
-/// The rule it applies to a decoded ``MuxFrame`` is the one both ends apply:
-/// - `channelData` for an OPEN channel → deliver the opaque inner bytes upward;
-/// - `channelData` for an unknown / closed channel → DROP (a stale or hostile frame
-///   must never crash the receiver — same contract as `InputDatagramRouter.drop`);
-/// - `channelOpen` / `channelOpenAck` → advance the channel to ``ChannelState/open``;
-/// - `channelClose` → record the peer's close (one-step SSH symmetry) and report the
-///   resulting state;
-/// - `windowAdjust` → no table state change; reported as `lifecycle` with the
-///   channel's current state (the actual credit math lives in `FlowCreditPolicy`,
-///   owned by the IO layer, not here).
+/// ## Why the rule left and this file did not
 ///
-/// Factored out so the two routers cannot drift apart: the only thing that differs
-/// between client and host is which side allocates ids, not how a frame is demuxed.
+/// Every branch of the decision read a state off the table and then wrote one back — six calls
+/// across the FFI boundary to reach a table that was already Rust, with the rule that reasons about
+/// it living on this side. That is the shape CLAUDE.md's "one implementation, never two languages"
+/// is about: nothing forced the two apart, and a rule kept apart from its own state is a rule that
+/// can be edited on one side only. The decision is one thing now, beside the map and the ring it
+/// walks.
+///
+/// What is left here is genuinely this side's, and it is two things:
+///
+/// - **The payload.** The bytes never cross. A verdict names a channel; the `Data` this layer is
+///   already holding is attached to it here, which is why ``MuxRoutingDecision/deliverData`` carries
+///   one and the rule's own answer does not.
+/// - **The wording.** `ChannelDropReason` is the rule's distinction — a late frame on a real channel
+///   is not the same event as a frame for an id nobody ever issued. The human sentence each one gets
+///   is presentation, and presentation is the caller's, the same way `StatusPresentation` decides a
+///   mark and the renderers spell it.
 enum MuxRoutingCore {
     static func route(_ frame: MuxFrame, in table: ChannelTable) -> MuxRoutingDecision {
-        let id = frame.channelID
+        // Read for the open-ack alone; every other kind ignores it, so `false` is not a default
+        // standing in for a missing answer — it is the absence of a question.
+        let accepted = if case let .channelOpenAck(_, ack, _) = frame { ack } else { false }
 
-        switch frame {
-        case let .channelData(_, payload):
-            // Only deliver to a fully-open channel; everything else is dropped (never a crash).
-            guard table.isOpen(id) else {
-                let known = table.state(of: id) != nil
-                return .dropUnknownChannel(
-                    channelID: id,
-                    reason: known ? "data for non-open channel" : "data for unknown channel",
-                )
+        switch table.route(kind: frame.muxType, id: frame.channelID, accepted: accepted) {
+        case let .deliver(channelID):
+            // The one case that needs this side at all: the rule said WHERE, and the bytes are here.
+            guard case let .channelData(_, payload) = frame else {
+                // Unreachable by construction — `deliver` is only ever answered for a data frame —
+                // and it is a drop rather than a trap because this is the receive path for bytes a
+                // peer chose. A router that can be crashed by a frame is the defect the whole drop
+                // vocabulary exists to avoid.
+                return .dropUnknownChannel(channelID: channelID, reason: "deliver for a non-data frame")
             }
-            return .deliverData(channelID: id, payload: payload)
+            return .deliverData(channelID: channelID, payload: payload)
 
-        case .channelOpen:
-            // Responder registers the peer-initiated channel as open. open() is a no-op
-            // for a closing/closed id, so a late open cannot resurrect a dead channel.
-            table.open(id)
-            let state = table.state(of: id) ?? .open
-            return .lifecycle(channelID: id, newState: state)
+        case let .lifecycle(channelID, state):
+            return .lifecycle(channelID: channelID, newState: state)
 
-        case let .channelOpenAck(_, accepted, _):
-            // The responder ACCEPTED or REFUSED the open we initiated. ONLY an accept
-            // advances the channel to .open; a refusal marks it dead via reject() — never
-            // route data to a refused channel (the original bug routed data to a channel
-            // the host had refused). The IO layer reads the resulting state to either
-            // complete or FAIL the openChannel() caller.
-            let state: ChannelState
-            if accepted {
-                // Advance ONLY an id we ALREADY track. The client records the id as `.open` at
-                // openChannel() time (allocate + dataTable/controlTable.open) BEFORE sending channelOpen,
-                // so a LEGITIMATE ack always lands on an existing entry. An ack for an UNKNOWN id is
-                // spurious/hostile — `table.open(id)` would materialize a permanent phantom `.open` entry
-                // (the same unbounded router-table memory-DoS closed for channelClose and channelOpen;
-                // the openAck path was missed). Don't create an entry for it.
-                if table.state(of: id) != nil { table.open(id) }
-                state = table.state(of: id) ?? .closed
-            } else {
-                state = table.reject(id)
-            }
-            return .lifecycle(channelID: id, newState: state)
+        case let .drop(channelID, reason):
+            return .dropUnknownChannel(channelID: channelID, reason: sentence(for: reason))
+        }
+    }
 
-        case .channelClose:
-            // The peer sent CHANNEL_CLOSE: advance the symmetric close machine.
-            let newState = table.remoteClose(id)
-            return .lifecycle(channelID: id, newState: newState)
-
-        case .windowAdjust:
-            // Window credit is owned by the IO layer's FlowCreditPolicy; the table
-            // state is unchanged. Report the channel's current state (or .closed if
-            // we never knew it — a stale adjust is harmless and not delivered).
-            let state = table.state(of: id) ?? .closed
-            return .lifecycle(channelID: id, newState: state)
+    /// The log line for a refusal. One sentence per reason, spelled once — the strings were inline
+    /// at the two `return` sites they belonged to, which is exactly how two readings of one
+    /// distinction start.
+    private static func sentence(for reason: ChannelDropReason) -> String {
+        switch reason {
+        case .nonOpenChannel: "data for non-open channel"
+        case .unknownChannel: "data for unknown channel"
         }
     }
 }
