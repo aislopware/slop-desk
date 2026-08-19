@@ -17,6 +17,12 @@
 // Hit-test footprint: the handle view fills its leaf but only a SHORT top strip is hit-testable (a `Spacer`
 // fills the rest and passes clicks through to the terminal below it in the ZStack). The strip senses hover
 // (to reveal the pill) and owns the drag gesture. SYSTEM / design-token colours only.
+//
+// This file also carries the drag block's SHARED VOCABULARY — the coordinate space, the drop-zone
+// geometry, the zone enum, and the two things the canvas drag needs a platform for: `PanePointer`
+// (there is no `PointerStyle` on iOS) and `PaneMoveEscapeMonitor` (there is no local event monitor
+// on iOS). Both of those are gated ONCE, here, so no call site in `SplitContainer` or `PaneDivider`
+// has to restate a platform fact it does not own.
 
 #if canImport(SwiftUI)
 import CSlopDeskFFI
@@ -31,6 +37,64 @@ import SwiftUI
 /// compositor ZStack with this so a gesture location lines up 1:1 with the solver's leaf rects.
 enum PaneMoveSpace {
     static let name = "slopdesk.splitspace"
+}
+
+// MARK: - The pointer vocabulary, spelled once
+
+/// What the pointer should SAY over a piece of pane chrome.
+///
+/// SwiftUI's `PointerStyle` is `@available(iOS, unavailable)` OUTRIGHT — not "unavailable before
+/// 18", not "empty on a phone": the type does not exist on the iOS triple and neither does the
+/// `.pointerStyle(_:)` modifier (checked against the iOS 26 SDK's `SwiftUI.swiftinterface`). So this
+/// is the ``slateCancelKey`` situation exactly: there is no shared API to find, only a gate that
+/// must exist EXACTLY ONCE. It was spelled at every call site instead — the grab handle below, the
+/// satellite window's grab strip, and the split seam — which is three places for the rule to drift.
+///
+/// The second defect it prevents is worse than the count. `PaneDivider`'s pointer carries a
+/// DECISION (which way a seam at its min-weight clamp can still travel), and a decision written
+/// inside a platform gate is a decision nobody reads on the other platform. Stated as a value it is
+/// plain Swift on both, and only the DRAWING is gated.
+enum PanePointer: Equatable {
+    /// The pane-move grab handle, hovered but not yet grabbed.
+    case grabIdle
+    /// The pane-move grab handle with the drag in flight.
+    case grabActive
+    /// A vertical seam between side-by-side panes. The flags are the directions the drag can still
+    /// travel — see ``PaneDivider`` — which the handle's pair weights answer, so the glyph can never
+    /// disagree with the gesture's own clamp.
+    case columnResize(toLeading: Bool, toTrailing: Bool)
+    /// A horizontal seam between stacked panes, with the same two directions turned a quarter turn.
+    case rowResize(toUp: Bool, toDown: Bool)
+}
+
+extension View {
+    /// Draw `pointer` while the cursor is over this view — and nothing at all where there is no
+    /// cursor to draw for.
+    ///
+    /// The truth-at-the-clamp rule lives HERE rather than at the seams: a seam that can still move
+    /// both ways and a DEAD seam that can move neither both keep the two-way glyph. There is no
+    /// "cannot resize" pointer, and a plain arrow over a seam reads as a dead zone rather than as a
+    /// seam sitting on its floor.
+    func panePointer(_ pointer: PanePointer) -> some View {
+        #if os(macOS)
+        // Flat on purpose: the specific direction pairs first, then the bare case as the two-way
+        // fallback for (true, true) and (false, false) alike.
+        let style: PointerStyle =
+            switch pointer {
+            case .grabIdle: .grabIdle
+            case .grabActive: .grabActive
+            case .columnResize(toLeading: true, toTrailing: false): .columnResize(directions: .leading)
+            case .columnResize(toLeading: false, toTrailing: true): .columnResize(directions: .trailing)
+            case .columnResize: .columnResize
+            case .rowResize(toUp: true, toDown: false): .rowResize(directions: .up)
+            case .rowResize(toUp: false, toDown: true): .rowResize(directions: .down)
+            case .rowResize: .rowResize
+            }
+        return pointerStyle(style)
+        #else
+        return self
+        #endif
+    }
 }
 
 /// Tunable drop-zone geometry (a UI affordance, deliberately NOT env flags). The hovered target pane is
@@ -225,22 +289,20 @@ struct PaneMoveHandle: View {
         .frame(width: stripWidth, height: stripHeight)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        #if os(macOS)
-            .pointerStyle(isDragging ? .grabActive : .grabIdle)
-        #endif
-            .gesture(
-                DragGesture(minimumDistance: 2, coordinateSpace: .named(PaneMoveSpace.name))
-                    .updating($dragActive) { _, state, _ in state = true }
-                    .onChanged { onChanged($0.location) }
-                    .onEnded { onEnded($0.location) },
-            )
-            .onTapGesture { onTap() }
-            .animation(Slate.Anim.dividerHover, value: revealed)
-            // Fires on end AND on a cancel/teardown (`dragActive` resets either way) — the safety net a
-            // bare `.onEnded` cannot provide.
-            .onChange(of: dragActive) { wasActive, active in
-                if wasActive, !active { onInterrupted() }
-            }
+        .panePointer(isDragging ? .grabActive : .grabIdle)
+        .gesture(
+            DragGesture(minimumDistance: 2, coordinateSpace: .named(PaneMoveSpace.name))
+                .updating($dragActive) { _, state, _ in state = true }
+                .onChanged { onChanged($0.location) }
+                .onEnded { onEnded($0.location) },
+        )
+        .onTapGesture { onTap() }
+        .animation(Slate.Anim.dividerHover, value: revealed)
+        // Fires on end AND on a cancel/teardown (`dragActive` resets either way) — the safety net a
+        // bare `.onEnded` cannot provide.
+        .onChange(of: dragActive) { wasActive, active in
+            if wasActive, !active { onInterrupted() }
+        }
     }
 }
 
@@ -470,6 +532,16 @@ struct PaneMoveOverlay: View {
     }
 }
 
+// MARK: - Escape-to-cancel
+
+// ⚠️ THE GATE ROUND THIS TYPE IS THE WHOLE GATE — the mount in `SplitContainer` carries none. The
+// fact is one fact (a keyboard cancel needs an event monitor, and only AppKit has one), and it was
+// spelled twice: here, and again around the `PaneMoveEscapeMonitor(...)` in the move layer. Two
+// spellings of one fact is two places to fix when it changes and one place for it to drift, so the
+// `#else` below hands the phone a monitor that mounts and does nothing. That is the stage-B shape
+// (docs/56 §3.5: "the platform seams are SINKS, not `#if`s") rather than a second implementation:
+// there is nothing on iOS for it to be an implementation OF.
+
 #if os(macOS)
 import AppKit
 
@@ -529,6 +601,25 @@ struct PaneMoveEscapeMonitor: NSViewRepresentable {
             monitor = nil
         }
     }
+}
+
+#else
+
+/// The phone's half: a monitor that mounts, draws nothing and cancels nothing.
+///
+/// It is EMPTY rather than ported because the Mac's half is not a rendering choice — a local
+/// `NSEvent` monitor is the only way to read a key that no first responder is going to deliver, and
+/// UIKit has no equivalent to reach for. `.onKeyPress(.escape)` is the nearest thing and it wants
+/// keyboard focus, which is precisely what a pane-move drag never takes. So an iPad with a hardware
+/// keyboard cannot yet cancel a live pane drag with Esc; the drag is finger-driven there and ends
+/// where the finger lifts. Filling this in is a real capability owed to the phone (docs/56 §3:
+/// "layout diverges; capability does not"), and it needs a `UIPress` responder over the canvas — not
+/// a gate at the mount, which is what this type exists to keep out of `SplitContainer`.
+struct PaneMoveEscapeMonitor: View {
+    var isActive: Bool
+    var onCancel: () -> Void
+
+    var body: some View { EmptyView() }
 }
 #endif
 #endif

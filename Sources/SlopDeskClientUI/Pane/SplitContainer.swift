@@ -82,21 +82,28 @@ struct SplitContainer: View {
             .onChange(of: bounds) { _, newBounds in if !staticMirror { reportContainerBounds(newBounds) } }
         }
         .background(NativePaneColor.window)
-        #if os(macOS)
-            // Register this canvas's SCREEN rect (and, through it, the main window frame — the tear-off
-            // boundary) with the drag coordinator, so sidebar/satellite drags can hit-test it.
-            .background(canvasFrameReader)
-        #endif
+        // Register this canvas's SCREEN rect (and, through it, the main window frame — the tear-off
+        // boundary) with the drag coordinator, so sidebar/satellite drags can hit-test it.
+        .background(canvasFrameReader)
     }
 
-    #if os(macOS)
+    /// The canvas's drop-target registration, and the LAST platform gate in this file.
+    ///
+    /// It is a gate rather than a missing feature: the reader publishes a SCREEN rect so that a drag
+    /// crossing between separate hosting views (the AppKit split's columns, a satellite `NSWindow`)
+    /// can be hit-tested in one space — and a phone has one window, one hosting view and no
+    /// cross-window drag to resolve. `paneDrag` is nil on iOS for exactly that reason, so the body
+    /// would be empty there even if the type existed. Written as ONE gate INSIDE the builder, not as
+    /// a second gate around the `.background` above: an empty `@ViewBuilder` is `EmptyView`, which
+    /// costs the phone nothing and costs the reader one place to be wrong instead of two.
     @ViewBuilder
     private var canvasFrameReader: some View {
+        #if os(macOS)
         if let paneDrag, !staticMirror {
             DropTargetFrameReader(key: .canvas, coordinator: paneDrag)
         }
+        #endif
     }
-    #endif
 
     /// Push the container bounds to the store (the geometric ops' fallback) AND the drag coordinator
     /// (the canvas-local space a satellite-origin drag resolves its insert zones in).
@@ -278,15 +285,15 @@ struct SplitContainer: View {
                 // overlay) — NOT the 0.20s slab frame-morph, which swept a big rectangle edge-to-edge.
                 .animation(Slate.Anim.smallFade, value: move.zone)
             }
-            #if os(macOS)
             // Escape bails out of a live move without committing — armed only while a drag is in flight,
-            // so it never shadows Escape for anything else at rest.
+            // so it never shadows Escape for anything else at rest. Mounted UNCONDITIONALLY: the
+            // monitor owns its own platform gate (see ``PaneMoveEscapeMonitor``), and restating it
+            // here would be the same fact in two files.
             PaneMoveEscapeMonitor(isActive: move != nil) {
                 move = nil
                 paneDrag?.end()
             }
             .frame(width: 0, height: 0)
-            #endif
         }
     }
 

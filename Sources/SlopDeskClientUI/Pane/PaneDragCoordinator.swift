@@ -18,6 +18,13 @@
 //   • `.none`           — dead chrome / the source's own row → release cancels.
 // Every commit keeps the `PaneID`, so reconcile never tears a live surface down — the move is pure
 // geometry for the terminal / video session.
+//
+// WHERE THE PLATFORM LIVES: the resolution above is pure and the lifecycle below it is plain Swift;
+// everything that needs a cursor, a scroller or a second window is in ONE region ("The platform half
+// of a live drag") behind ONE gate, reached through three seams. The AppKit TYPES it uses —
+// `DropTargetFrameReader`, the chip panel and its card — are at the foot of the file behind the
+// second. Both of those, and the `import AppKit`, are the file's whole gate budget; a fourth means
+// a platform fact got restated at a call site instead of asked for.
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
@@ -224,22 +231,6 @@ package final class PaneDragCoordinator {
     /// Sidebar-row dwell before the spring-loaded tab reveal fires.
     static let springLoadDwell: Duration = .milliseconds(500)
 
-    #if os(macOS)
-    /// The sidebar list's enclosing `NSScrollView` — resolved lazily (registered by a reader INSIDE the
-    /// scroll content; the viewport reader outside it cannot reach the scroller). Drives the drag
-    /// edge-band auto-scroll.
-    @ObservationIgnored package var sidebarScrollProvider: () -> NSScrollView? = { nil }
-
-    /// The auto-scroll heartbeat — runs only while the drag cursor sits in the list's edge band, so a
-    /// STATIONARY cursor keeps scrolling (per-pointer-frame stepping alone would stall the moment the
-    /// hand stops).
-    @ObservationIgnored private var autoScrollTimer: Timer?
-
-    /// The cursor-following chip for the stretches where no canvas overlay can draw (the drag has left
-    /// the content column's hosting view, which clips its SwiftUI overlay).
-    @ObservationIgnored private let chipPanel = PaneDragChipPanel()
-    #endif
-
     // MARK: Target registry
 
     package func register(_ key: PaneDropTargetKey, provider: @escaping () -> CGRect?) {
@@ -286,15 +277,7 @@ package final class PaneDragCoordinator {
         let next = Drag(source: source, origin: origin, destination: destination)
         if drag != next { drag = next }
         armSpringLoad(for: destination)
-        #if os(macOS)
-        updateAutoScroll(at: point)
-        chipPanel.update(
-            at: point,
-            drag: next,
-            label: chipLabel(for: next),
-            symbol: Self.chipSymbol(for: next.destination),
-        )
-        #endif
+        platformDragFrame(at: point, drag: next)
     }
 
     /// Ends the drag and returns the final destination for the commit — one call from `.onEnded`.
@@ -308,10 +291,7 @@ package final class PaneDragCoordinator {
     func end() {
         if drag != nil { drag = nil }
         cancelSpringLoad()
-        #if os(macOS)
-        stopAutoScroll()
-        chipPanel.hide()
-        #endif
+        platformDragEnded()
     }
 
     // MARK: Spring-loaded tab reveal (dwell on a sidebar row → its tab becomes the canvas)
@@ -357,13 +337,16 @@ package final class PaneDragCoordinator {
     /// location; canvas zones resolve from the pushed solved layout (insert semantics — no swap), the
     /// rest from the registered external targets.
     func updateDetachedDrag(source: PaneID) {
-        #if os(macOS)
-        let point = NSEvent.mouseLocation
+        // The gesture lives in the SATELLITE's window, so its own location stream is that window's,
+        // not the workspace's — the only cursor that spans both is the platform's. No platform
+        // cursor means no satellite window either, so there is nothing to update rather than a
+        // point to guess at (``PaneDragResolver/externalDestination(at:targets:origin:source:)``
+        // would happily resolve a tear-off from a fabricated origin).
+        guard let point = Self.platformCursorLocation() else { return }
         update(
             source: source, origin: .detached, screenPoint: point,
             destination: resolveDetachedDestination(at: point, source: source),
         )
-        #endif
     }
 
     /// The destination a DETACHED drag resolves at `point` (screen coords). Canvas first (insert
@@ -409,7 +392,60 @@ package final class PaneDragCoordinator {
         )
     }
 
+    // MARK: - The platform half of a live drag
+
+    // ⚠️ ONE GATE, AND THIS IS IT. Everything the drag needs a POINTING, MULTI-WINDOW platform for
+    // lives inside this region and is reached through the three seams it publishes, so `update`,
+    // `end` and `updateDetachedDrag` above read identically on both platforms. It used to be four
+    // gates — the stored properties up in the property block, a pair inside those two lifecycle
+    // methods, and this section — which is four places for one fact to drift.
+    //
+    // The fact is that three things here have no iOS spelling to find, not that they were not
+    // ported: a borderless `NSPanel` that follows the cursor ACROSS windows (a phone has one window
+    // and no cursor to follow), `NSEvent.mouseLocation` (the drag it answers for begins in a
+    // satellite window, which iOS also has not got), and steering the navigator's `NSScrollView`
+    // under a STATIONARY pointer (a finger scrolls the list itself — there is no parked cursor for a
+    // heartbeat to serve). The shape is `SlateCancelKey`'s and docs/56 §3.5's: a platform seam is a
+    // SINK, not an `#if` at the call site.
+
     #if os(macOS)
+
+    /// The sidebar list's enclosing `NSScrollView` — resolved lazily (registered by a reader INSIDE the
+    /// scroll content; the viewport reader outside it cannot reach the scroller). Drives the drag
+    /// edge-band auto-scroll. Down here with the code that reads it rather than up in the property
+    /// block, so the gate stays one region.
+    @ObservationIgnored package var sidebarScrollProvider: () -> NSScrollView? = { nil }
+
+    /// The auto-scroll heartbeat — runs only while the drag cursor sits in the list's edge band, so a
+    /// STATIONARY cursor keeps scrolling (per-pointer-frame stepping alone would stall the moment the
+    /// hand stops).
+    @ObservationIgnored private var autoScrollTimer: Timer?
+
+    /// The cursor-following chip for the stretches where no canvas overlay can draw (the drag has left
+    /// the content column's hosting view, which clips its SwiftUI overlay).
+    @ObservationIgnored private let chipPanel = PaneDragChipPanel()
+
+    /// The global cursor, in screen coordinates — the one location a gesture in ANOTHER window can be
+    /// resolved against. `nil` where the platform has no such thing.
+    static func platformCursorLocation() -> CGPoint? { NSEvent.mouseLocation }
+
+    /// One drag frame's platform work: steer the edge auto-scroll, then move the floating chip. Both
+    /// read the frame the caller already published, so neither can disagree with it.
+    private func platformDragFrame(at point: CGPoint, drag: Drag) {
+        updateAutoScroll(at: point)
+        chipPanel.update(
+            at: point,
+            drag: drag,
+            label: chipLabel(for: drag),
+            symbol: Self.chipSymbol(for: drag.destination),
+        )
+    }
+
+    /// The drag is over (committed or cancelled): stop the heartbeat and take the chip off screen.
+    private func platformDragEnded() {
+        stopAutoScroll()
+        chipPanel.hide()
+    }
 
     // MARK: Sidebar edge auto-scroll (rows outside the viewport become reachable mid-drag)
 
@@ -479,6 +515,19 @@ package final class PaneDragCoordinator {
             destination: destination, sourceIsSoleLeafOfItsTab: treeSourceIsSoleLeaf,
         )
     }
+
+    #else
+
+    /// No cursor to ask — see the region header. The caller treats `nil` as "no satellite drag to
+    /// resolve", which is the truth on a device with one window.
+    static func platformCursorLocation() -> CGPoint? { nil }
+
+    /// A touch drag IS its own preview (the finger is on the pane), so there is no chip to trail and
+    /// no parked pointer for an auto-scroll heartbeat to serve. Empty, not unported.
+    private func platformDragFrame(at _: CGPoint, drag _: Drag) {}
+
+    private func platformDragEnded() {}
+
     #endif
 
     // MARK: Tear-off placement hand-off

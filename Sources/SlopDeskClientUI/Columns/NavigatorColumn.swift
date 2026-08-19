@@ -41,12 +41,6 @@ struct NavigatorColumn: View {
     /// `NavigationSplitView` but still passes it explicitly for parity.
     var preferences: PreferencesStore?
 
-    /// The cross-container pane-drag rendezvous — makes every sidebar row a DROP TARGET for a live pane
-    /// drag (the pane moves BESIDE that row's pane, its tab revealed) and mounts the New-Tab drop slot
-    /// while a drag is in flight. Threaded in like `preferences` (the sidebar's `NSHostingController`
-    /// inherits no environment); `nil` (previews / iOS) leaves the rows plain.
-    var paneDrag: PaneDragCoordinator?
-
     /// The transient sidebar search query — narrows the rows via the pure
     /// ``RailRowsBuilder/filtered``. On iOS it feeds the system `.searchable`; on macOS the
     /// panel's own header search field (user-directed 2026-08-03: the header row IS the search
