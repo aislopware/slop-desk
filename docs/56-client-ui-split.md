@@ -2883,6 +2883,36 @@ overlays, the pills, the find bar, the hint mode), then the two leaves, then `Ma
 because it mounts everything and is written once. `MacCommandNavigator` **joins** its SwiftUI twin
 rather than replacing it — `binding_rows.rs` files the verb `Both`.
 
+**The order is the mount graph, read upward.** Every batch below is a file nothing else in `Pane/`
+mounts, until R9. That is not a scheduling preference — it is the only order in which a batch can be
+finished, because a Mac part whose mounter is still SwiftUI has nowhere to be put.
+
+| | Ports | Lines | Mounted by |
+| --- | --- | --- | --- |
+| **R1** | `PaneResizeScrim` + `PaneRecedeScrim` | 62 | R11 |
+| **R2** | `PaneStatusPills` | 180 | R9, R10 |
+| **R3** | `PromptJumpFlashOverlay` + `LinkHighlightOverlay` + `ViCursorOverlay` | 261 | R9 |
+| **R4** | `ViModeOverlay` + `HintModeOverlay` | 510 | R9 |
+| **R5** | `TerminalFindBar` | 302 | R9 |
+| **R6** | `PaneDivider` | 152 | R11 |
+| **R7** | `PaneDropOverlay` + `PaneDropReceiver` | 285 | R11 |
+| **R8** | `PaneMoveAffordance` (the grab pill) | 449 | R11 |
+| **R9** | `TerminalLeafView` + `BuildStatusPlaceholderView` | 413 | R11 |
+| **R10** | `GuiLeafView` | 1,005 | R11 |
+| **R11** | `SplitContainer` + `PaneContainer` + `SatellitePaneContent` | 754 | `MacContentColumn` |
+
+R1–R8 are fully parallel — no file in the left column names another, and the dependency arrows in
+`Pane/` that look like exceptions (`HintModeOverlay` "naming" `TerminalLeafView`, `PaneDivider`
+"naming" `SplitContainer`) are doc comments, not mounts. R9 and R10 follow R2–R5. R11 follows all.
+
+**716 lines are iOS-only and must not be read by any of them**: `TerminalInputHost` (395),
+`PaneMoveEscapeResponder` (221) and `TerminalLetterboxContainer` (100) are whole-file iOS and stay
+behind as `SlopDeskPhoneUI`'s, as do the three iOS arms inside `TerminalLeafView` and `TerminalFindBar`.
+An agent porting R5 or R9 that reads its file top-to-bottom will port an arm the Mac never compiles.
+
+**Risk 3 is R9's, not a follow-up.** The `NSTrackingArea` that keeps firing under a hidden tab lands
+with the terminal leaf, and there is no later batch where it becomes cheaper to notice.
+
 - **Closing the satellite edge early cannot work.** `SatellitePaneHost.contentView` mounts
   `PaneContainer`; porting only the drag strip leaves an `NSHostingView` *plus* a third grab-pill
   spelling — strictly worse than today. The ledger already says nothing here is independently
