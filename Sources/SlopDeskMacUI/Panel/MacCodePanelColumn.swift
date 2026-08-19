@@ -3,13 +3,12 @@
 // Two SIBLINGS, not a stack of one inside the other:
 //   1. ``MacPanelStrip`` — the panel's own top strip: the four surface tabs, the showing surface's
 //      reload plate, and the panel's hide toggle at the far trailing corner.
-//   2. the four SURFACES, still SwiftUI (`SlopDeskClientUI/CodePanelSurfaces`), pinned under it.
+//   2. the four SURFACES — ``MacCodePanelSurfaces``, AppKit since increment 51 — pinned under it.
 //
-// The surfaces are the next thing to cross rather than an exception to the split. Three of the four
-// are already AppKit under a thin SwiftUI wrapper — a `WKWebView` for the workbench and an
-// `AVSampleBufferDisplayLayer` for each device stage — so what a port would remove is the wrapper, not
-// a framework choice; the phone will want the same four surfaces on its own layout, which is what
-// makes them surfaces rather than chrome. docs/56 §3.5: a surface crosses whole.
+// What each surface SAYS is `SlopDeskClientCore`'s (``CodePanelPresentation``), because the phone hangs
+// its own chrome — a tab bar, not a strip — off the same three models and the same words. Two of the
+// four surfaces still HOST SwiftUI for their content: the device list and stage are ~4,100 lines in
+// `SlopDeskClientUI` and cross on their own schedule.
 //
 // THE THREE MODELS ARE OWNED HERE, and that is the load-bearing change. They used to be `@State` on
 // the SwiftUI column, which worked by accident: the strip's reload plate was inside the same tree.
@@ -20,11 +19,9 @@
 
 import AppKit
 import SlopDeskClientCore
-import SlopDeskClientUI // CodePanelSurfaces, until the surfaces cross
 import SlopDeskDevicePanels
 import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
 import SlopDeskWorkspaceCore
-import SwiftUI
 
 @MainActor
 final class MacCodePanelColumn: NSViewController {
@@ -54,10 +51,10 @@ final class MacCodePanelColumn: NSViewController {
         self.chrome = chrome
         self.overlay = overlay
         strip = MacPanelStrip(chrome: chrome)
-        surfaces = WorkspaceColumnHosts.codePanelSurfaces(
+        surfaces = MacCodePanelSurfaces(
             store: store, connection: connection, chrome: chrome, preferences: preferences,
-            model: model, simulatorModel: simulatorModel, androidModel: androidModel,
-            overlay: overlay,
+            overlay: overlay, model: model, simulatorModel: simulatorModel,
+            androidModel: androidModel,
         )
         super.init(nibName: nil, bundle: nil)
     }

@@ -2016,11 +2016,54 @@ answer of all. Visibility fails the other way for the same reason read backwards
 hidden value hides, because a pointer wrongly shown is a cosmetic miss during typing and a pointer
 wrongly hidden is a person moving a mouse they cannot see, with no gesture that brings it back.
 
+### Increment 51 — the panel's four surfaces, and a ledger row that was counting one file
+
+The right column's body — the workbench mount, the open gate, the desktop placeholder, the two
+device surfaces, the five poll loops, the collapse fade and the two toast reports — is
+`MacCodePanelSurfaces` now. What each surface SAYS is `CodePanelPresentation` in
+`SlopDeskClientCore`, and the phone's renderer (`CodePanelSurfaces`, `#if os(iOS)`) reads every word
+and every fold out of it rather than restating them.
+
+**The fold is the shared part, not the words.** `CodePanelPresentation.workbench(…)` takes the phase,
+the active root, the opened set and the awaited key and returns one of four states, and its ORDER is
+load-bearing in a way no prose about "the empty state" would have caught: the open gate outranks the
+root, which outranks the awaited key, which outranks the no-project placeholder. Drawn twice from a
+prose description, that ordering had already drifted once — the Mac deferred the poll behind the gate
+and the phone did not — so what descended is the `switch`, and each half only decides what a
+`PanelEmptyState` LOOKS like.
+
+**The poll loop is one task and it sits outside the state switch, on both halves.** The first draft
+of the phone's renderer hung a `.task(id:)` on three of the four branches, which reads correctly and
+is a live bug: those branches are the phases the poll itself moves through, so every transition the
+poll caused would cancel and restart the poll that caused it. The Mac has no `.task(id:)` to misuse —
+AppKit has no equivalent at all — so it carries `keyed(_:on:)`, a `[LoopID: (key, Task)]` dictionary
+that starts a loop when its key appears, leaves it alone while the key holds, and cancels it when the
+key goes nil. Five loops, one rule, and the rule is written once.
+
+**The mount identity excludes the load state on purpose.** `SurfacePlan.identity` folds the surface,
+the project root and the collapse, and deliberately not the veil or the poll keys: remounting a
+pooled `WKWebView` mid-navigation unparents a live page in order to hand it straight back, so a key
+that included the first paint would remount at exactly the moment the pool exists to avoid. The veil
+is followed separately, as an alpha on a sibling.
+
+**And the ledger row was wrong, which is worth more than the increment.** It read
+`CodePanelSurfaces | 632`, as if the file were the debt. The four surfaces host **~4,100 further
+lines** of device-panel SwiftUI — `SimulatorStageView`, `SimulatorDeviceList`, `AndroidStageView`,
+`AndroidScreenView` and their eleven siblings — which the row never named, so "one 632-line file
+between here and the canvas" was off by a factor of seven. The import did not fall to 7 either: it
+MOVED, from `MacCodePanelColumn` to `MacCodePanelSurfaces`, and now names the two device surfaces and
+nothing else. That is the honest shape of a big surface crossing — the seam narrows first and the
+count moves later — and the ledger says so below.
+
 ## Stage D ledger — what the rename actually costs
 
 `SlopDeskClientUI` cannot become `SlopDeskPhoneUI` while `SlopDeskMacUI` still imports it. That is
 the whole test, and it is countable. It was **13 files** when this ledger was written; it is **8**
-after increments 45, 46, 47 and 49, and each one names what it takes in the comment on the import line.
+after increments 45, 46, 47 and 49, and each one names what it takes in the comment on the import
+line. Increment 51 did not move the count — it moved one import, from `MacCodePanelColumn` to
+`MacCodePanelSurfaces`, and NARROWED what it names from a whole column to two device surfaces. A
+count that only falls would have called that increment worthless; what it actually did was cut a
+seam's width by an order of magnitude.
 Grouped, they are three kinds of debt, not one — and only the first kind needs an AppKit rewrite.
 
 ### The ruling first
@@ -2041,18 +2084,21 @@ The expensive kind, and the only one that is.
 | What | Lines | Taken by |
 | --- | --- | --- |
 | the pane canvas (`Pane/`, 24 files) | 6888 | `MacContentColumn`, `SlopDeskSplitViewController` |
-| `CodePanelSurfaces` | 632 | `MacCodePanelColumn` |
+| the device panels (`Simulator/` 9 files, `Android/` 6) | 4154 | `MacCodePanelSurfaces` |
+| ~~`CodePanelSurfaces`~~ | ~~632~~ | ✅ increment 51 — four AppKit surfaces, one vocabulary below |
 | ~~`SettingsBespokeSurface`~~ | ~~325~~ | ✅ increment 49 — five AppKit surfaces, four faces below |
 | ~~`FirstLaunchStepSurface`~~ | ~~286~~ | ✅ increment 47 — the sheet draws both shared steps itself |
 | ~~`StatusDotView`~~ | ~~225~~ | ✅ increment 46 — `RailStatusRollup` draws `MacStatusMarkView`s |
 | `SatellitePaneHost` | 170 | `SatellitePaneWindows` |
 | `WorkspaceColumnHosts` (the factory seam) | 79 | `SlopDeskSplitViewController` |
 
-The canvas dominates by an order of magnitude, and everything else in this table is small enough to
-cross one at a time. `StatusDotView` was the cheapest and went first, then the first-launch
-checklist, then the bespoke settings pages. `SatellitePaneHost` and `WorkspaceColumnHosts` are what
-is left before the canvas, and both are held by it: the first hosts the canvas in a satellite window,
-the second is the factory seam that mounts it.
+The canvas dominates, and the device panels are the second bulk — a row this table did not have
+until increment 51, because `CodePanelSurfaces`' 632 lines were counted as the whole debt when the
+four surfaces they draw host ~4,100 lines more. `StatusDotView` was the cheapest and went first, then
+the first-launch checklist, then the bespoke settings pages, then the panel's own body.
+`SatellitePaneHost` and `WorkspaceColumnHosts` are held by the canvas — the first hosts it in a
+satellite window, the second is the factory seam that mounts it — so the device panels are the only
+row left that is independently schedulable.
 
 ### Kind 2 — not views at all, and in a UI target by accident — ✅ DONE (increment 45)
 
@@ -2081,6 +2127,11 @@ moat moves out of SwiftUI into the AppKit column. It is not independently schedu
 
 1. ~~Kind 2 — the pool goes down.~~ ✅ increment 45. Two imports, no rewrite.
 2. Kind 1's small surfaces — ~~`StatusDotView`~~ (✅ increment 46), ~~the first-launch checklist~~
-   (✅ increment 47), ~~the bespoke settings pages~~ (✅ increment 49). Each a contained AppKit
-   rewrite, and each cost one import.
-3. The canvas, which takes kind 3 with it and is the remaining bulk.
+   (✅ increment 47), ~~the bespoke settings pages~~ (✅ increment 49), ~~the panel's four surfaces~~
+   (✅ increment 51). Each a contained AppKit rewrite, and each cost one import except the last,
+   which narrowed one instead.
+3. The device panels — the only remaining row that is not held by the canvas. `SimulatorScreenView`
+   and `AndroidScreenView` (1405 lines of the 4154) are representables over
+   `AVSampleBufferDisplayLayer` and are kind 2 in disguise: they move to `SlopDeskDevicePanels` as
+   plain view classes with no rewrite at all.
+4. The canvas, which takes kind 3 with it and is the remaining bulk.

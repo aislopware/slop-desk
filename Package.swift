@@ -411,6 +411,11 @@ let package = Package(
                 "SlopDeskFileTransfer",
                 // Settings options name video-path knobs.
                 "SlopDeskVideoProtocol",
+                // `DevicePanelPhase` — the right panel's four surfaces are drawn twice, and what each
+                // one SAYS is not a fact about either drawing (`CodePanelPresentation`). Two of the
+                // four phases are that target's, so the panel's one vocabulary lives above both
+                // rather than in a third target they would each have to agree with.
+                "SlopDeskDevicePanels",
                 // `FuzzyMatcher` marshals `slopdesk_fuzzy_score` — fzf's `FuzzyMatchV2` is Rust, and
                 // every search field in the app ranks through it. `SettingsCatalog` marshals the
                 // rest: what Settings OFFERS is one table of strings both UI splits read.

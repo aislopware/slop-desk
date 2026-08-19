@@ -6749,10 +6749,11 @@ moves. The sidebar row's own `✳` agent marker skips itself when the title alre
 - ✅ **The web title bar is CLIPPED off client-side.** User-directed. No seedable key hides it
   while the activity bar sits at "top" (the band must host the relocated accounts/manage
   actions), and CSS `display: none` leaves a dead gap — the workbench grid positions parts with
-  inline absolute geometry. The macOS mount (`CodeSidebarWebView`) now lays the webview out
-  35px taller than its clipping container and shifts it up by the same: the workbench keeps
-  believing in its title bar, the user never sees it. The container bounds-guards `hitTest` —
-  without that the overhang sits under the panel's strip and eats its clicks.
+  inline absolute geometry. The macOS mount (`MacCodeWorkbenchView` since docs/56 increment 51)
+  now lays the webview out 35px taller than its clipping container and shifts it up by the same:
+  the workbench keeps believing in its title bar, the user never sees it. The container
+  bounds-guards `hitTest` — without that the overhang sits under the panel's strip and eats its
+  clicks.
 - ✅ **A project switch can no longer strand the panel on the OLD project's folder.**
   User-reported: focusing another project's pane left the workbench on the previous project.
   Root cause: the column re-renders BEFORE the switched project's poll task runs, so
@@ -7097,10 +7098,12 @@ colours — nothing is seeded for mermaid itself.
 
 Two things the newer workbench moved, both measured on a fixture profile carrying the real seed:
 
-The web title bar is **30px**, not 35 — `CodeSidebarWebView.clippedTitleBarHeight` would have
-clipped 5px into the editor tab row. The number is not a CSS constant to grep (the workbench grid
-positions its parts with inline geometry); the honest measurement is the laid-out box, and the
-comment now says so, because this constant will move again.
+The web title bar is **30px**, not 35 — the clip constant would have clipped 5px into the editor tab
+row. The number is not a CSS constant to grep (the workbench grid positions its parts with inline
+geometry); the honest measurement is the laid-out box, and the comment now says so, because this
+constant will move again. It lives at `CodePanelPresentation.clippedTitleBarHeight` since docs/56
+increment 51 — it was a `static let` on each of the two mounts, which made one measurement a number
+two files carried.
 
 Chat came back. 4.113+ bundles the Copilot chat extension, which re-registers
 `chat.disableAIFeatures` — the key v7 had to drop as unregistered on Code-OSS. Seed **v18** turns

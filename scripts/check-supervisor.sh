@@ -5067,13 +5067,14 @@ printf 'check-supervisor: both device panels draw on both platforms.\n'
 # rule may be written), the POOL in `CodeSidebarWebViewPool` (projects and their warm pages — one
 # law, and as of docs/56 increment 43 not one platform gate), and the PAGE in `CodeSidebarPage` (the
 # mint, and the Mac's responder-seam subclass — a `WKWebView` is the platform's view class, not a
-# drawn surface). In the UI target: the MOUNT in `CodeSidebarWebView`, a clipping container and one
-# representable per platform, which is the only part of a code page that lays anything out or reads a
-# design token. And one target up in `SlopDeskMacUI`: the keyboard DUEL in
-# `CodeSidebar/MacCodeSidebarKeyboard.swift`. Increments 42, 43 and 45 are the three moves.
+# drawn surface). The MOUNT is per-half and always was: a clipping container that lays out and reads
+# a design token, so increment 51 split it in two — `CodeSidebarWebView` is the phone's
+# representable, `SlopDeskMacUI/MacCodeWorkbenchView` is an `NSView` doing the same four calls with
+# no `View` above it to justify a wrapper. And one target up in `SlopDeskMacUI`: the keyboard DUEL in
+# `CodeSidebar/MacCodeSidebarKeyboard.swift`. Increments 42, 43, 45 and 51 are the four moves.
 for piece in \
   "Sources/SlopDeskClientUI/CodeSidebar/CodeSidebarWebView.swift:UIViewRepresentable" \
-  "Sources/SlopDeskClientUI/CodeSidebar/CodeSidebarWebView.swift:NSViewRepresentable" \
+  "Sources/SlopDeskMacUI/Panel/MacCodeWorkbenchView.swift:noteRemount" \
   "Sources/SlopDeskClientCore/CodeSidebar/CodeSidebarWebViewPool.swift:func noteRemount"; do
   if ! grep -qF "${piece#*:}" "${piece%%:*}"; then
     fail "${piece%%:*} lost ${piece#*:} — the code panel mounts on both platforms (docs/56)"
@@ -5429,6 +5430,51 @@ if [[ -n "${hex_parsers}" ]]; then
   fail "a settings surface parses or prints hex itself — CursorColorHex is the bridge (docs/56, increment 49)"
 fi
 printf 'check-supervisor: one bespoke settings surface, drawn twice and spelled once.\n'
+
+# ── One panel vocabulary, four surfaces, two renderers ────────────────────────────────────────
+# The right panel's four surfaces are drawn twice since increment 51 — `MacCodePanelSurfaces` in
+# AppKit, `CodePanelSurfaces` (`#if os(iOS)`) in SwiftUI — off ONE `CodePanelPresentation` in
+# `SlopDeskClientCore`. What a surface says and which state it is in are decisions; only the drawing
+# is per-half.
+for pair in \
+  "Sources/SlopDeskClientUI/CodeSidebar/CodePanelSurfaces.swift:CodePanelPresentation" \
+  "Sources/SlopDeskMacUI/Panel/MacCodePanelSurfaces.swift:CodePanelPresentation" \
+  "Sources/SlopDeskClientUI/CodeSidebar/CodePanelSurfaces.swift:CodeOpenGateReading" \
+  "Sources/SlopDeskMacUI/Panel/MacPanelEmptyStates.swift:CodeOpenGateReading"; do
+  half="${pair%%:*}"
+  face="${pair##*:}"
+  if ! grep -q "${face}" "${half}" 2> /dev/null; then
+    fail "${half} stopped reading ${face} — a panel surface wording itself is the second speller (docs/56, increment 51)"
+  fi
+done
+# The FOLD, not just the words. Gate outranks root outranks awaited-key outranks placeholder, and
+# that ordering had already drifted between the two halves before it descended: the Mac deferred the
+# poll behind the open gate and the phone did not. Both must ask for the state rather than switch.
+for renderer in Sources/SlopDeskClientUI/CodeSidebar/CodePanelSurfaces.swift \
+  Sources/SlopDeskMacUI/Panel/MacCodePanelSurfaces.swift; do
+  if ! grep -q 'CodePanelPresentation.workbench(' "${renderer}"; then
+    fail "${renderer} folds the workbench phase itself — the four states are one switch, one floor down"
+  fi
+done
+# ONE poll task, outside the state switch. The first draft of the phone's renderer hung a
+# `.task(id:)` on three of the four branches, which reads correctly and cancels the poll on every
+# transition the poll itself caused. Three is the bug's signature; one is the fix.
+poll_tasks=$(grep -c '\.task(id: pollKey)' Sources/SlopDeskClientUI/CodeSidebar/CodePanelSurfaces.swift || true)
+if [[ "${poll_tasks}" != "1" ]]; then
+  fail "the phone's code poll is attached ${poll_tasks} times — a task per branch restarts the loop it caused"
+fi
+# The macOS half of the webview mount stays deleted: it is `MacCodeWorkbenchView`, an `NSView`, and a
+# representable in the phone's target would be the second mount racing the same pooled page.
+if grep -rq 'NSViewRepresentable' Sources/SlopDeskClientUI/CodeSidebar/ 2> /dev/null; then
+  fail "a CodeSidebar representable came back — the Mac mounts the pooled webview in AppKit (docs/56, increment 51)"
+fi
+# And the clip is measured once. Two `static let`s carrying one measurement is how the phone kept
+# clipping 30pt after the workbench moved its title bar.
+clip_owners=$(grep -rl 'let clippedTitleBarHeight' Sources/ 2> /dev/null || true)
+if [[ "${clip_owners}" != "Sources/SlopDeskClientCore/CodeSidebar/CodePanelPresentation.swift" ]]; then
+  fail "the clipped title-bar height is declared outside CodePanelPresentation — one measurement, one owner"
+fi
+printf 'check-supervisor: one panel vocabulary, four surfaces, two renderers.\n'
 
 # ── One design floor, two renderers ───────────────────────────────────────────────────────────
 # `SlopDeskSlate` is the layer BOTH halves stand on: the token ladder in its `NSColor`/`UIColor`

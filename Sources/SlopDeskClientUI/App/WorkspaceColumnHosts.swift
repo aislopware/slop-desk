@@ -11,6 +11,11 @@
 // pane CANVAS: the titlebar band over it is AppKit (``SlopDeskMacUI/MacTitlebarBand``) and the two are
 // siblings under ``SlopDeskMacUI/MacContentColumn``. This factory dies when `SplitContainer` crosses.
 //
+// The RIGHT column's factory NARROWED rather than dying, which is the shape a big surface crosses in.
+// It used to hand over the whole column; increment 51 rewrote the four surfaces, the five poll loops,
+// the collapse fade and the reports in AppKit, and what is left crossing is the two device SURFACES —
+// still SwiftUI, and the next thing to go.
+//
 // The hosting details that belong to NO column live here too: the overlay-coordinator injection each
 // hosted column needs (an `NSHostingController` inherits no WindowGroup environment) and the dropped
 // safe-area regions — with `.hiddenTitleBar` the default titlebar inset pushes every column's top
@@ -45,27 +50,26 @@ package enum WorkspaceColumnHosts {
         )
     }
 
-    /// The RIGHT column's four SURFACES: the project-scoped embedded workbench, the two device sets and
-    /// the announced Desktop. The strip of tabs over them is AppKit and is mounted as this view's
-    /// SIBLING — see ``SlopDeskMacUI/MacCodePanelColumn``, which also owns the three models, because
-    /// the strip's reload plate drives them from outside this tree.
-    package static func codePanelSurfaces(
-        store: WorkspaceStore,
-        connection: AppConnection,
-        chrome: WorkspaceChromeState,
-        preferences: PreferencesStore?,
-        model: CodeSidebarModel,
-        simulatorModel: SimulatorSidebarModel,
-        androidModel: AndroidSidebarModel,
-        overlay: OverlayCoordinator?,
+    /// The Simulators surface's two depths — the device list and the live stage.
+    ///
+    /// A far narrower seam than the `codePanelSurfaces(...)` it replaced in increment 51. That factory
+    /// handed over the whole right column: four surfaces, five poll loops, the collapse fade and the
+    /// reports. All of that is ``SlopDeskMacUI/MacCodePanelSurfaces`` now, and what still crosses is the
+    /// ~4,100 lines of device-panel SwiftUI that have not been rewritten yet — so the factory names the
+    /// two surfaces themselves rather than the column that used to contain them.
+    package static func simulatorSurface(
+        model: SimulatorSidebarModel, overlay: OverlayCoordinator?,
     ) -> NSViewController {
-        hosted(
-            CodePanelSurfaces(
-                store: store, connection: connection, chrome: chrome, preferences: preferences,
-                model: model, simulatorModel: simulatorModel, androidModel: androidModel,
-            ),
-            overlay: overlay,
-        )
+        hosted(SimulatorSurface(model: model), overlay: overlay)
+    }
+
+    /// The Android surface's two depths. A FOURTH tab rather than a second half of Simulators: the two
+    /// share not one byte of protocol, and folding them into one surface would mean a list whose rows
+    /// dispatch on platform and a stage whose every control has two implementations.
+    package static func androidSurface(
+        model: AndroidSidebarModel, overlay: OverlayCoordinator?,
+    ) -> NSViewController {
+        hosted(AndroidSurface(model: model), overlay: overlay)
     }
 
     /// Mount one column: inject the reducer the hosted tree cannot inherit, and drop the titlebar
