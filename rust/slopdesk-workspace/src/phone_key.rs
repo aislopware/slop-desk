@@ -576,6 +576,57 @@ pub fn key_chord(press: &KeyPress<'_>) -> Option<Chord> {
     })
 }
 
+/// What capturing one press in the Settings chord recorder means.
+///
+/// The same four answers `slopdesk_video::key_naming::CaptureOutcome` gives the Mac's recorder, in
+/// the same order, because the two recorders write into ONE override map: a phone that answered
+/// differently would let the same physical key mean "rebind" on one half and "clear" on the other.
+/// The agreement is pinned in `slopdesk-ffi`, which is the crate that can see both.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CaptureVerdict {
+    /// Esc — stop recording and change nothing.
+    Cancel,
+    /// Backspace or Forward Delete — CLEAR the binding, restoring the registry default.
+    Clear,
+    /// A pure modifier, a dead key, or a key the recorder cannot spell back: keep recording.
+    #[default]
+    Ignore,
+    /// Record this chord as the binding's override.
+    Bind(Chord),
+}
+
+/// The chord the RECORDER would persist for this press, or `None` when there is nothing to store.
+///
+/// Stricter than [`key_chord`] in exactly the two ways the Mac's recorder is stricter than its
+/// dispatcher, and for the same reasons. The space bar is no key at all here — a recorder that
+/// offered it would let the user bind the space bar itself — and a printable base must be ASCII or
+/// a letter, because this answer is written to a config file and read back by the chord grammar, so
+/// a key that cannot be spelled back is refused at capture time rather than stored as a chord
+/// nobody can type.
+#[must_use]
+pub fn capture_chord(press: &KeyPress<'_>) -> Option<Chord> {
+    let chord = key_chord(press)?;
+    match chord.key {
+        ChordKey::Named(NamedChordKey::Space) => None,
+        ChordKey::Named(_) => Some(chord),
+        ChordKey::Character(base) => (base.is_ascii() || base.is_alphabetic()).then_some(chord),
+    }
+}
+
+/// What one captured press does to the binding being recorded.
+///
+/// The clear keys are checked BEFORE the chord, which is the ordering the Mac's recorder documents
+/// and for the same reason: Backspace's own base character is the DEL scalar, and a recorder that
+/// asked for the chord first would store it as a binding instead of clearing one.
+#[must_use]
+pub fn capture_verdict(press: &KeyPress<'_>) -> CaptureVerdict {
+    match press.hid_usage {
+        HID_ESCAPE => CaptureVerdict::Cancel,
+        HID_BACKSPACE | HID_FORWARD_DELETE => CaptureVerdict::Clear,
+        _ => capture_chord(press).map_or(CaptureVerdict::Ignore, CaptureVerdict::Bind),
+    }
+}
+
 /// The named key a HID usage is, for the dispatcher.
 ///
 /// Space is the one conditional row, and it is the same rule
@@ -1080,6 +1131,83 @@ mod tests {
         assert_eq!(key_chord(&press(" ")), None);
         assert_eq!(key_chord(&press("ab")), None);
         assert_eq!(key_chord(&press("")), None);
+    }
+
+    /// Esc and the two clear keys are answered by their USAGE, before anything asks what they
+    /// spell — which is the whole reason Backspace clears a binding instead of recording the DEL
+    /// scalar as one.
+    #[test]
+    fn the_recorder_answers_escape_and_the_clear_keys_by_usage() {
+        assert_eq!(capture_verdict(&special(HID_ESCAPE)), CaptureVerdict::Cancel);
+        assert_eq!(
+            capture_verdict(&KeyPress {
+                command: true,
+                ..special(HID_ESCAPE)
+            }),
+            CaptureVerdict::Cancel,
+            "a modifier does not turn Esc into a chord",
+        );
+        assert_eq!(capture_verdict(&special(HID_BACKSPACE)), CaptureVerdict::Clear);
+        assert_eq!(
+            capture_verdict(&special(HID_FORWARD_DELETE)),
+            CaptureVerdict::Clear
+        );
+        assert_eq!(
+            capture_verdict(&KeyPress {
+                base: "\u{7f}",
+                ..special(HID_BACKSPACE)
+            }),
+            CaptureVerdict::Clear,
+            "the DEL scalar Backspace reports is never stored as a chord",
+        );
+    }
+
+    /// What the recorder will and will not persist. The space bar is the one key the dispatcher
+    /// names and the recorder refuses, and a base it cannot spell back is refused with it.
+    #[test]
+    fn the_recorder_persists_only_a_chord_the_grammar_can_spell() {
+        assert_eq!(
+            capture_verdict(&KeyPress {
+                command: true,
+                shift: true,
+                ..press("P")
+            }),
+            CaptureVerdict::Bind(Chord {
+                key: ChordKey::Character('P'),
+                modifiers: MOD_SHIFT | MOD_COMMAND,
+            }),
+        );
+        assert_eq!(
+            capture_verdict(&KeyPress {
+                command: true,
+                ..special(HID_PAGE_UP)
+            }),
+            CaptureVerdict::Bind(Chord {
+                key: ChordKey::Named(NamedChordKey::PageUp),
+                modifiers: MOD_COMMAND,
+            }),
+        );
+        let space = KeyPress {
+            hid_usage: HID_SPACE,
+            control: true,
+            shift: true,
+            ..press(" ")
+        };
+        assert!(key_chord(&space).is_some(), "the dispatcher names ⌃⇧Space");
+        assert_eq!(
+            capture_verdict(&space),
+            CaptureVerdict::Ignore,
+            "the recorder does not let the space bar be bound",
+        );
+        assert_eq!(
+            capture_verdict(&KeyPress {
+                command: true,
+                ..press("→")
+            }),
+            CaptureVerdict::Ignore,
+            "a base that is neither ASCII nor a letter cannot be spelled back",
+        );
+        assert_eq!(capture_verdict(&press("")), CaptureVerdict::Ignore);
     }
 
     #[test]

@@ -126,8 +126,6 @@ package enum SettingsCatalog {
         package let title: String
         /// The row glyph, as an SF Symbol name.
         package let systemImage: String
-        /// Whether the compact list drops this section entirely.
-        package let isMacOSOnly: Bool
     }
 
     /// The whole taxonomy, in the one order both lists render.
@@ -136,12 +134,8 @@ package enum SettingsCatalog {
             id: string { slopdesk_settings_section_id(index, $0, $1) } ?? "",
             title: string { slopdesk_settings_section_title(index, $0, $1) } ?? "",
             systemImage: string { slopdesk_settings_section_symbol(index, $0, $1) } ?? "",
-            isMacOSOnly: slopdesk_settings_section_is_mac_only(index),
         )
     }
-
-    /// The sections a COMPACT list shows — the taxonomy minus the ones that need a Mac to work.
-    package static var compactSections: [Section] { sections.filter { !$0.isMacOSOnly } }
 
     /// One section by its routed identifier, for a caller holding the id rather than the row.
     package static func section(_ id: String) -> Section? { sections.first { $0.id == id } }

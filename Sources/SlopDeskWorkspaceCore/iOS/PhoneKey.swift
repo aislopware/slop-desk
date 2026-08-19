@@ -139,6 +139,35 @@ public enum PhoneKey {
         }
     }
 
+    /// What this press does to the binding being RECORDED in Settings ▸ Key Bindings.
+    ///
+    /// The same four answers the Mac's recorder gets from ``KeybindingCapture/outcome(keyCode:charactersIgnoringModifiers:command:shift:option:control:)``,
+    /// numbered by the same table — the two write into ONE override map, so a press that reads as
+    /// "clear" on one half cannot read as "rebind" on the other. Stricter than ``keyChord(for:)`` in
+    /// the two ways a recorder is stricter than a dispatcher: the space bar is no key here, and a
+    /// base the chord grammar cannot spell back is refused rather than stored.
+    public static func captureOutcome(_ press: Press) -> KeybindingCaptureOutcome {
+        withRecord(press) { record in
+            var record = record
+            var named: UInt8 = 0
+            var character: UInt32 = 0
+            var modifiers: UInt8 = 0
+            let verdict = slopdesk_phone_key_capture(&record, &named, &character, &modifiers)
+            switch verdict {
+            case UInt8(SLOPDESK_PHONE_KEY_CAPTURE_CANCEL): return .cancel
+            case UInt8(SLOPDESK_PHONE_KEY_CAPTURE_CLEAR): return .clear
+            case UInt8(SLOPDESK_PHONE_KEY_CAPTURE_BIND):
+                let mods = KeyChord.Modifiers(rawValue: Int(modifiers))
+                if let key = KeyChord.Key(namedIndex: named) {
+                    return .bind(KeyChord(key, mods).asPreferencesChord)
+                }
+                guard let scalar = UnicodeScalar(character) else { return .ignore }
+                return .bind(KeyChord(character: Character(scalar), mods).asPreferencesChord)
+            default: return .ignore
+            }
+        }
+    }
+
     /// Splits a soft-keyboard text commit when the accessory bar's ⌃ is ARMED: the first scalar
     /// folds to its control byte, to be written RAW because a PTY never echoes one, and the rest
     /// stays text. `nil` when not armed or the text is empty — send it as it came.

@@ -11,12 +11,13 @@
 //
 // ⚠️ THE PHONE's, since docs/56 stage D: the Mac draws the same registry in AppKit
 // (``SlopDeskMacUI/MacKeybindingsEditor``), because the recorder there is an `NSEvent` monitor scoped to
-// the Settings window and a monitor is not a view. The Rust layout table calls this group
-// `Platform::Both` and says why — a phone with a hardware keyboard runs the same bindings, and the LIST
-// is worth reading with none — so this half renders every row and its effective chord, and RECORDING is
-// the one thing it does not offer: there is no `UIKey` path to the macOS virtual key codes
-// ``KeybindingCapture`` resolves against, so a capture UI here would have to invent a second answer to
-// "what key is this", which is the duplicate this whole split exists to prevent.
+// the Settings window and a monitor is not a view. This half records with a view instead —
+// ``KeybindingCaptureHost``, a zero-sized first responder mounted on the armed row — and the two answer
+// the same four things because both ask Rust: the Mac `slopdesk_video::key_naming` off a virtual key
+// code, the phone `slopdesk_workspace::phone_key` off a HID usage, pinned to each other by a test in
+// `slopdesk-ffi` (docs/56 increment 30). The earlier claim that a phone recorder would have to invent a
+// second answer to "what key is this" was wrong twice over: the HID usage IS the identity, and the
+// chord it builds was already resolving against this same table on every terminal keystroke.
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
@@ -36,6 +37,10 @@ struct KeybindingsEditorView: View {
 
     /// Whether the "Reset all key bindings?" confirmation is showing (a global reset, no per-row revert).
     @State private var showResetConfirm: Bool = false
+
+    /// The binding id currently recording a replacement chord, or `nil`. At most one row records at
+    /// a time — the recorder is one first responder, and two would make the order UIKit's.
+    @State private var recordingID: String?
 
     var body: some View {
         let conflicts = store.keybindingConflicts()
@@ -175,32 +180,66 @@ struct KeybindingsEditorView: View {
                     .help("This shortcut conflicts with another command")
             }
             Spacer(minLength: Slate.Metric.space2)
-            // There is NO per-row revert here and no recorder: the header's "Reset to Default" is the
-            // one edit this half offers, and it reverts everything at once.
+            // Tap to record, exactly as the Mac's row does — there is still NO per-row revert, and
+            // Backspace during a recording is what clears one.
             chordChip(for: binding)
         }
         .padding(.vertical, Slate.Metric.space1)
     }
 
     /// The trailing chord chip — the effective shortcut, on the same inset plate the Mac's recorder
-    /// rests at. A plate rather than a button, because tapping it here does nothing: what it shows is
-    /// the chord that fires.
+    /// rests at, and the same affordance: tapping it arms this row, and the next hardware press is
+    /// the answer. While armed it carries the recorder itself, a zero-sized first responder.
     private func chordChip(for binding: WorkspaceBinding) -> some View {
-        Text(effectiveGlyph(for: binding))
-            .font(SettingsType.subtitle.weight(.medium))
-            .foregroundStyle(SettingsInk.secondary)
-            .lineLimit(1)
-            .padding(.horizontal, Slate.Metric.space2)
-            .padding(.vertical, 2)
-            .frame(minWidth: 64)
-            .background(
-                SettingsInk.inset,
-                in: RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous),
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous)
-                    .strokeBorder(SettingsInk.hairline, lineWidth: 1),
-            )
+        let isRecording = recordingID == binding.id
+        return Button {
+            recordingID = isRecording ? nil : binding.id
+        } label: {
+            Text(isRecording ? "Press a shortcut…" : effectiveGlyph(for: binding))
+                .font(SettingsType.subtitle.weight(.medium))
+                .foregroundStyle(isRecording ? SettingsInk.accent : SettingsInk.secondary)
+                .lineLimit(1)
+                .padding(.horizontal, Slate.Metric.space2)
+                .padding(.vertical, 2)
+                .frame(minWidth: 64)
+                .background(
+                    SettingsInk.inset,
+                    in: RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous),
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous)
+                        .strokeBorder(
+                            isRecording ? SettingsInk.accent : SettingsInk.hairline, lineWidth: 1,
+                        ),
+                )
+                .overlay(
+                    KeybindingCaptureHost(isRecording: isRecording) { press in
+                        capture(press, for: binding.id)
+                    },
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Esc cancels (no write), Backspace / Forward Delete CLEAR the binding, a usable chord is
+    /// recorded, and an unmappable press is ignored — the row stays armed. The rule is
+    /// `slopdesk_workspace::phone_key`'s, reached through ``PhoneKey/captureOutcome(_:)``; this only
+    /// applies the answer, through the SAME pure store transitions the Mac's recorder writes with.
+    private func capture(_ press: PhoneKey.Press, for id: String) {
+        switch PhoneKey.captureOutcome(press) {
+        case .cancel:
+            recordingID = nil
+        case .clear:
+            if store.keybindings.chord(for: id) != nil {
+                store.keybindings = KeybindingsEditorModel.clearingOverride(for: id, in: store.keybindings)
+            }
+            recordingID = nil
+        case .ignore:
+            break // no usable chord yet — keep recording
+        case let .bind(chord):
+            store.keybindings = KeybindingsEditorModel.settingOverride(chord, for: id, in: store.keybindings)
+            recordingID = nil
+        }
     }
 
     // MARK: Data helpers

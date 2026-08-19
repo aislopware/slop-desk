@@ -63,16 +63,16 @@ final class SettingsSectionTaxonomyTests: XCTestCase {
     /// assert about the half that COMPILED, so the iOS expectation in a macOS test run was dead text.
     /// The table takes the half as an argument, so one process now checks both.
 
-    /// The compact sheet's list is the taxonomy MINUS what needs a Mac, and the `isMacOSOnly` flag has to
-    /// survive the crossing for that subtraction to happen at all — a door that answered `false` for every
-    /// row would put the macOS `NSEvent` chord capture on a phone with no capture UI behind it. Pins that
-    /// the filter removes exactly Keybindings and leaves the rest in order.
-    func testTheCompactListDropsWhatNeedsAMac() {
-        XCTAssertFalse(SettingsSection.compact.contains(.keybindings), "chord capture is a macOS NSEvent monitor")
+    /// The phone's list is the WHOLE taxonomy. It used to be the taxonomy minus Keybindings, on the
+    /// grounds that recording a chord needs an `NSEvent` monitor; the phone records with a first
+    /// responder off the same Rust tables (docs/56 increment 30), so the subtraction — and the
+    /// per-section platform flag that carried it across the boundary — is gone. A page the phone
+    /// cannot draw is now a statement the LAYOUT table makes about groups, per half, as data.
+    func testEveryPageReachesBothHalves() {
+        XCTAssertTrue(SettingsSection.ordered.contains(.keybindings))
         XCTAssertEqual(
-            SettingsSection.compact,
-            SettingsSection.ordered.filter { $0 != .keybindings },
-            "Keybindings is the only section the compact list drops",
+            Set(SettingsSection.ordered), Set(SettingsSection.allCases),
+            "no section is one half's alone",
         )
     }
 }

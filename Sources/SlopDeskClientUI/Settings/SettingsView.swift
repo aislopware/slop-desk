@@ -81,19 +81,13 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     /// The list row's glyph (SF Symbol name).
     var systemImage: String { row?.systemImage ?? "" }
 
-    /// macOS-only sections are dropped from the compact iOS sheet. Only **Keybindings** qualifies: its
-    /// chord CAPTURE is a macOS `NSEvent` monitor (`KeyCaptureMonitor` is `#if os(macOS)`), with no iOS
-    /// capture UI. Advanced's macOS-HOST-only *groups* (raw `SLOPDESK_*` editor + Video host flags) are
-    /// gated by the layout table's `Platform`, not by hiding the section, so the All-Settings index
-    /// still reaches iOS.
-    var isMacOSOnly: Bool { row?.isMacOSOnly ?? false }
-
     /// The whole taxonomy IN THE CATALOG'S ORDER. Declaration order here is not the contract; the
     /// boundary's is, and `SettingsSectionTaxonomyTests` is what pins that every case is reachable.
+    /// Every page reaches BOTH halves. There is no per-section platform flag any more: Key Bindings
+    /// was the only section the phone dropped, and it dropped it over a recorder the phone has had
+    /// since docs/56 increment 30. What still differs by half is the GROUPS inside a page, which the
+    /// layout table gates as data.
     static let ordered: [Self] = SettingsCatalog.sections.compactMap { Self(rawValue: $0.id) }
-
-    /// What a COMPACT list shows.
-    static var compact: [Self] { ordered.filter { !$0.isMacOSOnly } }
 }
 
 // MARK: - Apply-timing tag (deferred vs live, surfaced as a chip not prose)

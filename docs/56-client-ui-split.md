@@ -745,7 +745,7 @@ with nothing on screen saying so.
 `SettingsSection` STAYS an enum, and that is the interesting part. `SettingsSectionContent` maps a
 section to a `some View` through an exhaustive `switch`, which is the one thing about a section that
 cannot leave Swift. So the enum survives as a DISPATCH key with no data on it: `title`,
-`systemImage` and `isMacOSOnly` read the catalog row keyed by `rawValue`, and `SettingsSection.ordered`
+`systemImage` read the catalog row keyed by `rawValue`, and `SettingsSection.ordered`
 — a `compactMap` over the catalog, not `allCases` — is what both lists render. Declaration order here
 is no longer the contract; the boundary's is.
 
@@ -1106,6 +1106,11 @@ the phone renders every row and its effective chord and offers the global reset,
 `check-supervisor.sh` pins both directions: the phone may not reach for `KeybindingCapture`, the Mac
 must, and neither half may respell the registry read or the search filter.
 
+> 🔁 **The second paragraph is void** (increment 30). "A second answer to what key is this" was the
+> wrong reading of the duplicate rule: the HID usage IS the identity, and the phone had been building
+> chords off it against this very table on every terminal keystroke since increment 15. Both halves
+> record now, each off its own crate's table, pinned to each other by a test in `slopdesk-ffi`.
+
 The monitor moved across as a plain view rather than an `NSViewRepresentable`, and its two hard-won
 details came with it: it captures ONLY events destined for its own key window (an unscoped local
 monitor fires for every window in the process, so clicking "Press a key…" and then clicking away used
@@ -1196,3 +1201,46 @@ worth naming: **a platform gate that outlives its reason reads exactly like one 
 The table's comment was the only place the claim was written down, and a comment cannot be compiled.
 The check that would have caught it is the one the layout tests now make — assert the capability,
 per half, by name.
+
+### Increment 30 — the phone records a chord, and a section stops being macOS-only
+
+Settings ▸ Key Bindings never appeared on the phone. Not gated inside the page — dropped from the
+LIST, by a per-section `is_mac_only` flag that crossed the boundary for that one row. Meanwhile the
+layout table called the group `Platform::Both` and said why, `KeybindingsEditorView` rendered every
+binding, and the bespoke door had an arm for it. Two Rust tables disagreed, and the one that won was
+the one that hid the page: the phone's editor was written, tested and unreachable.
+
+The reason given for the flag was that recording a chord is an `NSEvent` monitor with no touch
+equivalent, and increment 27 stated the sharper version — that `KeybindingCapture` resolves a macOS
+virtual key code, `UIKey` carries a HID usage, and a phone recorder would have to invent a second
+answer to "what key is this". **That was the wrong reading of the duplicate rule.** The HID usage is
+not a second answer; it is *the* answer, and `slopdesk_workspace::phone_key` had been resolving live
+presses against the same user-overridable binding table since increment 15. What was missing was one
+function, not one table: `capture_verdict` — Esc cancels, Backspace and Forward Delete clear, and a
+chord the config grammar can spell back binds — plus the recorder's two strictnesses, which are the
+Mac's own: the space bar is no key, and a base that is neither ASCII nor a letter is refused.
+
+The two rules genuinely do live in crates that cannot see each other — `slopdesk-workspace` takes two
+dependencies on purpose and `slopdesk-video` is not one of them — so the agreement is pinned where
+both are visible, in `slopdesk-ffi`, which is the pattern that crate already carries for the named-key
+numbering. `the_two_recorders_agree_on_every_key_both_can_name` walks sixteen keys twice, once by HID
+usage and once by virtual key code, and asserts the verdict AND the persisted spelling match. A phone
+rebind written under a token the Mac's lookup never builds is a shortcut that simply stops firing;
+that is the failure this test exists for, and it is invisible from either side alone.
+
+`KeybindingCaptureHost` is the near half: a zero-sized, non-interactive `UIView` that holds first
+responder while one row is armed. It is deliberately not a `UIKeyInput`, so arming a row does not
+raise the software keyboard over the list, and it passes nothing on down the chain — a chain that saw
+Esc would dismiss the sheet the user was recording in. `PhoneKey.Press.init(_ key: UIKey)` moved out
+of `TerminalInputHost` on the way, because two views reading a `UIKey` is exactly where a second
+answer to "which key is this" would actually have appeared.
+
+Then the flag died. With Key Bindings reachable, `is_mac_only` was true of nothing — so it is gone
+from the Rust section table, from the boundary (`slopdesk_settings_section_is_mac_only`), from the
+header, from `SettingsCatalog.Section`, and with it `compactSections` and `SettingsSection.compact`.
+The phone's sheet lists `SettingsSection.ordered`, the same eight the Mac's navigator does. What still
+differs by half is the GROUPS inside a page, which the layout table gates as data and per row — the
+distinction increment 19 drew, now with nothing on the other side of it.
+
+One user-visible lie went with it: the phone's editor header has always read "Click a shortcut to
+record a replacement; Backspace clears it, Esc cancels." It is true now.

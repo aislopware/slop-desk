@@ -1,3 +1,4 @@
+import SlopDeskVideoProtocol
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
@@ -24,6 +25,7 @@ final class PhoneKeyTests: XCTestCase {
         static let pageUp: UInt16 = 75
         static let f5: UInt16 = 62
         static let backspace: UInt16 = 42
+        static let forwardDelete: UInt16 = 76
         static let returnKey: UInt16 = 40
     }
 
@@ -110,6 +112,64 @@ final class PhoneKeyTests: XCTestCase {
         let long = String(repeating: "é", count: 40) // 80 UTF-8 bytes, well past the inline buffer
         let press = PhoneKey.Press(charactersIgnoringModifiers: long, option: true)
         XCTAssertEqual(PhoneKey.encode(press), [0x1B] + Array(long.utf8))
+    }
+
+    // MARK: The chord recorder
+
+    /// The verdict crosses, and a bind crosses with the chord it would store — in the PERSISTED
+    /// spelling, which is the only part of this a marshalling bug could get wrong silently: an
+    /// override written under a token the lookup never builds is a shortcut that simply stops
+    /// firing. The rules are `slopdesk_workspace::phone_key::capture_verdict`, tested there and
+    /// pinned against the Mac's recorder in `slopdesk-ffi`.
+    func testTheRecorderCrossesItsVerdictAndItsChord() {
+        XCTAssertEqual(PhoneKey.captureOutcome(PhoneKey.Press(hidUsage: HID.escape)), .cancel)
+        XCTAssertEqual(
+            PhoneKey.captureOutcome(PhoneKey.Press(charactersIgnoringModifiers: "\u{7f}", hidUsage: HID.backspace)),
+            .clear,
+            "the DEL scalar Backspace reports is never stored as a chord",
+        )
+        XCTAssertEqual(PhoneKey.captureOutcome(PhoneKey.Press(hidUsage: HID.forwardDelete)), .clear)
+
+        XCTAssertEqual(
+            PhoneKey.captureOutcome(PhoneKey.Press(
+                charactersIgnoringModifiers: "P", command: true, shift: true,
+            )),
+            .bind(KeybindingPreferences.KeyChord(key: "p", command: true, shift: true)),
+            "⇧ rides in the modifiers, so the base is the lower-cased letter",
+        )
+        XCTAssertEqual(
+            PhoneKey.captureOutcome(PhoneKey.Press(hidUsage: HID.pageUp, command: true)),
+            .bind(KeybindingPreferences.KeyChord(key: "pageup", command: true)),
+            "a named key crosses as its canonical token, not as a scalar",
+        )
+
+        // Nothing to store yet: the row stays armed rather than recording a chord nobody can type.
+        XCTAssertEqual(PhoneKey.captureOutcome(PhoneKey.Press()), .ignore)
+        XCTAssertEqual(
+            PhoneKey.captureOutcome(PhoneKey.Press(
+                charactersIgnoringModifiers: " ", hidUsage: HID.space, control: true, shift: true,
+            )),
+            .ignore,
+            "the dispatcher names ⌃⇧Space; the recorder refuses to let the space bar be bound",
+        )
+    }
+
+    /// The chord a recorded press persists is the chord the DISPATCHER builds for the same press —
+    /// the property the whole recorder exists for, and the one that cannot be checked on either side
+    /// alone.
+    func testARecordedChordIsTheChordThatFires() {
+        for press in [
+            PhoneKey.Press(charactersIgnoringModifiers: "k", command: true),
+            PhoneKey.Press(charactersIgnoringModifiers: "P", command: true, shift: true),
+            PhoneKey.Press(hidUsage: HID.up, command: true, shift: true),
+            PhoneKey.Press(hidUsage: HID.home, control: true),
+        ] {
+            guard case let .bind(recorded) = PhoneKey.captureOutcome(press) else {
+                XCTFail("\(press) should record")
+                return
+            }
+            XCTAssertEqual(recorded, PhoneKey.keyChord(for: press)?.asPreferencesChord)
+        }
     }
 
     // MARK: The accessory bar

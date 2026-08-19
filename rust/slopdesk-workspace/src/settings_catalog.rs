@@ -502,17 +502,6 @@ impl Section {
         }
     }
 
-    /// Whether the compact list drops this section entirely.
-    ///
-    /// Only Key Bindings qualifies, and for a reason about capture rather than about screen size:
-    /// recording a chord is an `NSEvent` monitor with no touch equivalent, so the page would offer
-    /// a field nothing can fill. Advanced's macOS-HOST-only ROWS are gated inside that section
-    /// instead, so the section itself still reaches the phone.
-    #[must_use]
-    pub const fn is_mac_only(self) -> bool {
-        matches!(self, Self::Keybindings)
-    }
-
     /// The section a case index names.
     #[must_use]
     pub fn from_index(index: usize) -> Option<Self> {
@@ -984,19 +973,6 @@ mod tests {
             assert!(!section.symbol().is_empty());
         }
         assert_eq!(Section::from_index(Section::ALL.len()), None);
-    }
-
-    /// Only Key Bindings is dropped from the compact list, and for a reason about CAPTURE rather
-    /// than about screen size. A second mac-only section would be a feature the phone silently
-    /// lacks.
-    #[test]
-    fn key_bindings_is_the_only_section_the_phone_drops() {
-        let dropped: Vec<&str> = Section::ALL
-            .iter()
-            .filter(|section| section.is_mac_only())
-            .map(|section| section.id())
-            .collect();
-        assert_eq!(dropped, vec!["keybindings"]);
     }
 
     #[test]

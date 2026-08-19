@@ -173,19 +173,9 @@ final class TerminalInputHostView: UIView, UIKeyInput {
         super.pressesCancelled(presses, with: event)
     }
 
-    /// One `UIKey` as the rules' vocabulary. The usage is the key's identity under every layout;
-    /// the string is only ever the layout's base, for a ⌃ fold or a binding lookup.
-    private static func read(_ key: UIKey) -> PhoneKey.Press {
-        let modifiers = key.modifierFlags
-        return PhoneKey.Press(
-            charactersIgnoringModifiers: key.charactersIgnoringModifiers,
-            hidUsage: UInt16(key.keyCode.rawValue),
-            control: modifiers.contains(.control),
-            option: modifiers.contains(.alternate),
-            command: modifiers.contains(.command),
-            shift: modifiers.contains(.shift),
-        )
-    }
+    /// One `UIKey` as the rules' vocabulary — `PhoneKey.Press.init(_:)`, which the chord recorder
+    /// reads its presses with too, so there is one answer to "which key is this".
+    private static func read(_ key: UIKey) -> PhoneKey.Press { PhoneKey.Press(key) }
 
     /// Takes the press, or reports that the chain should have it. `true` means handled — either
     /// swallowed as a workspace chord or handed to the repeater, which writes it.

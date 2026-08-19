@@ -28,7 +28,9 @@
 use core::ffi::c_uchar;
 
 use slopdesk_video::key_naming::NamedKey;
-use slopdesk_workspace::phone_key::{self, ChordKey, FloatingCursor, KeyPress, NamedChordKey, Route};
+use slopdesk_workspace::phone_key::{
+    self, CaptureVerdict, ChordKey, FloatingCursor, KeyPress, NamedChordKey, Route,
+};
 
 use crate::{borrow, deliver};
 
@@ -175,6 +177,66 @@ pub unsafe extern "C" fn slopdesk_phone_key_chord(
     }
     true
 }
+
+/// What capturing one press in the Settings chord recorder means, and the chord it would store.
+///
+/// `0` cancel · `1` clear · `2` ignore · `3` bind — the SAME numbering
+/// [`crate::key_naming::slopdesk_key_capture_outcome`] answers the Mac's recorder with, because the
+/// two write into one override map. Only a bind writes through, and it writes the chord the way
+/// [`slopdesk_phone_key_chord`] does, so the near side has one shape to read either way.
+///
+/// # Safety
+/// `press` must be null or point at a live record whose `(base, base_len)` is null or describes
+/// that many live bytes, and each non-null out-parameter must be writable.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_phone_key_capture(
+    press: *const SlopDeskPhoneKeyPress,
+    named: *mut u8,
+    character: *mut u32,
+    modifiers: *mut u8,
+) -> u8 {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(raw) = (unsafe { press.as_ref() }) else {
+        return PHONE_KEY_CAPTURE_IGNORE;
+    };
+    // SAFETY: as above.
+    let chord = match phone_key::capture_verdict(&unsafe { press_of(raw) }) {
+        CaptureVerdict::Cancel => return PHONE_KEY_CAPTURE_CANCEL,
+        CaptureVerdict::Clear => return PHONE_KEY_CAPTURE_CLEAR,
+        CaptureVerdict::Ignore => return PHONE_KEY_CAPTURE_IGNORE,
+        CaptureVerdict::Bind(chord) => chord,
+    };
+    let (index, scalar) = match chord.key {
+        ChordKey::Named(key) => (named_index(key), 0),
+        ChordKey::Character(scalar) => (PHONE_KEY_NAMED_NONE, u32::from(scalar)),
+    };
+    // SAFETY: the caller's obligation; each write is guarded by its own null check.
+    unsafe {
+        if let Some(slot) = named.as_mut() {
+            *slot = index;
+        }
+        if let Some(slot) = character.as_mut() {
+            *slot = scalar;
+        }
+        if let Some(slot) = modifiers.as_mut() {
+            *slot = chord.modifiers;
+        }
+    }
+    PHONE_KEY_CAPTURE_BIND
+}
+
+/// Esc — stop recording, change nothing.
+pub const PHONE_KEY_CAPTURE_CANCEL: u8 = 0;
+/// Backspace or Forward Delete — clear the binding.
+pub const PHONE_KEY_CAPTURE_CLEAR: u8 = 1;
+/// Nothing to store yet — keep recording.
+pub const PHONE_KEY_CAPTURE_IGNORE: u8 = 2;
+/// Record the chord that was written through.
+pub const PHONE_KEY_CAPTURE_BIND: u8 = 3;
 
 /// The `KeyChord.Key` case index a named key crosses as.
 ///
@@ -340,6 +402,102 @@ mod tests {
         // The sentinel is outside the table, so no named key can ever be mistaken for it.
         assert_eq!(NamedKey::from_index(PHONE_KEY_NAMED_NONE), None);
     }
+
+    /// The two recorders answer the same four things in the same order, and this crate is the only
+    /// one that can see both. A phone that numbered them differently would clear a binding where
+    /// the Mac records one, into the same override map.
+    #[test]
+    fn both_recorders_number_their_answers_the_same_way() {
+        use slopdesk_video::key_naming::CaptureOutcome;
+        for (mine, theirs) in [
+            (PHONE_KEY_CAPTURE_CANCEL, CaptureOutcome::Cancel),
+            (PHONE_KEY_CAPTURE_CLEAR, CaptureOutcome::Clear),
+            (PHONE_KEY_CAPTURE_IGNORE, CaptureOutcome::Ignore),
+            (PHONE_KEY_CAPTURE_BIND, CaptureOutcome::Bind),
+        ] {
+            let expected = match theirs {
+                CaptureOutcome::Cancel => 0,
+                CaptureOutcome::Clear => 1,
+                CaptureOutcome::Ignore => 2,
+                CaptureOutcome::Bind => 3,
+            };
+            assert_eq!(mine, expected);
+        }
+    }
+
+    /// Every key BOTH recorders can be asked about gets the same answer, keyed by its own
+    /// vocabulary on each side — a HID usage here, a macOS virtual key code there. This is the
+    /// pairing that would drift silently: the two tables are written in different crates, neither
+    /// of which can see the other.
+    #[test]
+    fn the_two_recorders_agree_on_every_key_both_can_name() {
+        use slopdesk_video::key_naming::{self, CaptureOutcome};
+        // (HID usage, macOS key code, the base the key reports).
+        for (usage, key_code, base) in [
+            (phone_key::HID_ESCAPE, 53_u16, "\u{1b}"),
+            (phone_key::HID_BACKSPACE, key_naming::KEY_CODE_DELETE, "\u{7f}"),
+            (
+                phone_key::HID_FORWARD_DELETE,
+                key_naming::KEY_CODE_FORWARD_DELETE,
+                "\u{7f}",
+            ),
+            (phone_key::HID_RETURN, 36, ""),
+            (phone_key::HID_KEYPAD_ENTER, 76, ""),
+            (phone_key::HID_TAB, 48, "\t"),
+            (phone_key::HID_LEFT, 123, ""),
+            (phone_key::HID_RIGHT, 124, ""),
+            (phone_key::HID_UP, 126, ""),
+            (phone_key::HID_DOWN, 125, ""),
+            (phone_key::HID_PAGE_UP, 116, ""),
+            (phone_key::HID_PAGE_DOWN, 121, ""),
+            (phone_key::HID_HOME, 115, ""),
+            (phone_key::HID_END, 119, ""),
+            // The space bar: named by both dispatchers, refused by both recorders.
+            (phone_key::HID_SPACE, 49, " "),
+            // And an ordinary letter, which neither table names and both persist.
+            (phone_key::HID_NONE, 35, "p"),
+        ] {
+            let press = raw(base, usage, PHONE_KEY_CAPTURE_MODIFIER);
+            let mut named = PHONE_KEY_NAMED_NONE;
+            let mut character = 0_u32;
+            let mut modifiers = 0_u8;
+            // SAFETY: the record and each out-parameter are live locals.
+            let mine = unsafe {
+                slopdesk_phone_key_capture(
+                    &raw const press,
+                    &raw mut named,
+                    &raw mut character,
+                    &raw mut modifiers,
+                )
+            };
+            let theirs = match key_naming::capture_outcome(key_code, base) {
+                CaptureOutcome::Cancel => PHONE_KEY_CAPTURE_CANCEL,
+                CaptureOutcome::Clear => PHONE_KEY_CAPTURE_CLEAR,
+                CaptureOutcome::Ignore => PHONE_KEY_CAPTURE_IGNORE,
+                CaptureOutcome::Bind => PHONE_KEY_CAPTURE_BIND,
+            };
+            assert_eq!(mine, theirs, "usage {usage} / key code {key_code}");
+            if mine != PHONE_KEY_CAPTURE_BIND {
+                continue;
+            }
+            // A bind must also land on the same NAME, or the override is written under a spelling
+            // the other half's lookup never builds.
+            let base_key = key_naming::capture_base_key(key_code, base).unwrap_or_default();
+            let spelling = NamedKey::from_index(named).map_or_else(
+                || {
+                    char::from_u32(character)
+                        .map(|scalar| scalar.to_lowercase().to_string())
+                        .unwrap_or_default()
+                },
+                |key| key.canonical().to_owned(),
+            );
+            assert_eq!(spelling, base_key, "usage {usage} / key code {key_code}");
+        }
+    }
+
+    /// ⌘, held for every row of the agreement table — a recorder is only ever asked about a press
+    /// the user made while a modifier was down, and the space bar needs one to be named at all.
+    const PHONE_KEY_CAPTURE_MODIFIER: u32 = PHONE_KEY_COMMAND;
 
     #[test]
     fn a_control_letter_encodes_and_a_command_one_does_not() {

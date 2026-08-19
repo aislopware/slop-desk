@@ -7,11 +7,11 @@
 // SAME per-section structs in a `NavigationStack` + `List`-of-sections (the standard iOS Settings idiom):
 // each section is a `NavigationLink` row that pushes its `SettingsSectionContent` body.
 //
-// SECTION SET: the iOS list shows only the CROSS-PLATFORM sections (`SettingsSection.isMacOSOnly` filter) —
-// today that drops **Keybindings**, whose chord CAPTURE is a macOS `NSEvent` monitor with no iOS UI. The
-// Advanced section IS shown, but its macOS-host-only ROWS (the raw `SLOPDESK_*` editor + the Video host
-// flags) are gated inside `AdvancedSettingsTab` with `#if os(macOS)`, so the iOS Advanced page shows the
-// pure-SwiftUI All-Settings list only.
+// SECTION SET: EVERY section, the same eight the Mac's navigator lists. Keybindings used to be dropped
+// here — its chord recorder was said to need an `NSEvent` monitor — and it is not dropped any more, because
+// the phone records with `KeybindingCaptureHost` off the same Rust tables (docs/56 increment 30). What still
+// differs by half is the GROUPS inside a page (the raw `SLOPDESK_*` editor, the Video host flags), and those
+// are gated by the layout table's `Platform` as data, so the All-Settings index still reaches every setting.
 //
 // The single live `PreferencesStore` is handed in by `WorkspaceRootView` (read there from
 // `\.preferencesStore`).
@@ -75,7 +75,7 @@ struct SettingsSheet: View {
     var body: some View {
         NavigationStack {
             List {
-                ForEach(SettingsSection.compact) { section in
+                ForEach(SettingsSection.ordered) { section in
                     NavigationLink {
                         SettingsSectionContent(
                             section: section, store: store, selectedSection: $selectedSection,

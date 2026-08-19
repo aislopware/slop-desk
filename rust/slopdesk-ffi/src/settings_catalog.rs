@@ -258,16 +258,6 @@ pub unsafe extern "C" fn slopdesk_settings_section_symbol(
     unsafe { section_field(index, out, cap, Section::symbol) }
 }
 
-/// Whether the compact list drops this section entirely.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub extern "C" fn slopdesk_settings_section_is_mac_only(index: usize) -> bool {
-    Section::from_index(index).is_some_and(Section::is_mac_only)
-}
-
 /// One field of one section, delivered.
 ///
 /// # Safety
@@ -562,8 +552,11 @@ mod tests {
         );
     }
 
+    /// Every section crosses, in one order, for BOTH halves — there is no longer a per-section
+    /// platform flag to cross beside them, because no section is one half's alone (docs/56
+    /// increment 30).
     #[test]
-    fn the_taxonomy_crosses_in_order_with_its_one_mac_only_row() {
+    fn the_taxonomy_crosses_in_order_for_both_halves() {
         assert_eq!(slopdesk_settings_section_count(), 8);
         let ids: Vec<Option<String>> = (0..slopdesk_settings_section_count())
             // SAFETY: the buffer inside `read` is a live local.
@@ -571,11 +564,7 @@ mod tests {
             .collect();
         assert_eq!(ids.first().and_then(Clone::clone).as_deref(), Some("general"));
         assert_eq!(ids.last().and_then(Clone::clone).as_deref(), Some("advanced"));
-        let mac_only: Vec<usize> = (0..slopdesk_settings_section_count())
-            .filter(|index| slopdesk_settings_section_is_mac_only(*index))
-            .collect();
-        assert_eq!(mac_only, vec![6], "Key Bindings, and only it");
-        assert!(!slopdesk_settings_section_is_mac_only(99));
+        assert!(ids.iter().all(Option::is_some), "no section crosses nameless");
     }
 
     #[test]

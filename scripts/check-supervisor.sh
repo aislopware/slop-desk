@@ -5080,7 +5080,7 @@ fi
 for door in slopdesk_settings_option_count slopdesk_settings_option_token slopdesk_settings_option_label \
   slopdesk_settings_option_caption slopdesk_settings_option_menu_label slopdesk_settings_density_token \
   slopdesk_settings_section_count slopdesk_settings_section_id slopdesk_settings_section_title \
-  slopdesk_settings_section_symbol slopdesk_settings_section_is_mac_only slopdesk_settings_timing_label \
+  slopdesk_settings_section_symbol slopdesk_settings_timing_label \
   slopdesk_settings_timing_symbol slopdesk_settings_ladder slopdesk_settings_ladder_preset_count \
   slopdesk_settings_ladder_preset_value slopdesk_settings_ladder_preset_label slopdesk_settings_ladder_readout; do
   if ! grep -qF "${door}" "${catalog_swift}"; then
@@ -5200,7 +5200,7 @@ printf 'check-supervisor: a settings page is SHAPED once — %s groups crossed, 
 
 # ── One chord editor, drawn twice ─────────────────────────────────────────────────────────────
 # Key Bindings is `Platform::Both`, so it is the one BESPOKE group the Mac draws itself rather than
-# hosting: the recorder is an `NSEvent` monitor scoped to the Settings window, and a monitor is not a
+# hosting: its recorder is an `NSEvent` monitor scoped to the Settings window, and a monitor is not a
 # view. Two drawings over one registry is fine; two answers to "what did the user just press" or "does
 # this row match the search" is not, and neither fails loudly — a second capture table just quietly
 # records a chord the dispatcher will never fire.
@@ -5212,16 +5212,20 @@ for half in Sources/SlopDeskMacUI/Settings/MacKeybindingsEditor.swift \
     fi
   done
 done
-# The RECORDER is the Mac's alone, and the phone says why rather than growing a second one: there is
-# no `UIKey` path to the macOS virtual key codes `KeybindingCapture` resolves against, so a capture UI
-# on the phone would have to invent a second answer to "what key is this".
-# Comments are stripped first — both headers NAME the rule they no longer carry, which is exactly
-# what a reader needs and exactly what a blunt grep would read as the regression.
-if spells 'KeybindingCapture' Sources/SlopDeskClientUI/Settings/KeybindingsEditorView.swift > /dev/null; then
-  fail "the phone's chord editor grew a recorder — KeybindingCapture resolves macOS virtual key codes"
+# BOTH halves record, and neither owns a capture table. The Mac reads an `NSEvent` and asks
+# `KeybindingCapture` (`slopdesk_video::key_naming`, off a macOS virtual key code); the phone reads a
+# `UIKey` and asks `PhoneKey.captureOutcome` (`slopdesk_workspace::phone_key`, off its HID usage). The
+# two tables live in crates that cannot see each other, so their agreement is a test in `slopdesk-ffi`,
+# which can — and that test is what stops a phone rebind from being written under a spelling the Mac's
+# lookup never builds. A half that decided a verdict ITSELF would pass every editor test above.
+if ! grep -q 'PhoneKey.captureOutcome' Sources/SlopDeskClientUI/Settings/KeybindingsEditorView.swift; then
+  fail "the phone's chord editor stopped asking PhoneKey.captureOutcome — a second capture table is silent"
 fi
 if ! grep -q 'KeybindingCapture.outcome' Sources/SlopDeskMacUI/Settings/MacKeybindingsEditor.swift; then
   fail "the Mac's chord editor stopped asking KeybindingCapture — a chord it records may never fire"
+fi
+if ! grep -q 'the_two_recorders_agree_on_every_key_both_can_name' rust/slopdesk-ffi/src/phone_key.rs; then
+  fail "the recorders' agreement test is gone — the two capture tables can now drift silently"
 fi
 # The two override writers PRESERVE `textBindings` / `unbinds`. Rebuilding the model as
 # `KeybindingPreferences(overrides:)` defaults both to empty, so a single rebind in Settings silently
@@ -5231,7 +5235,7 @@ if spells 'KeybindingPreferences\(overrides:' Sources/SlopDeskMacUI/Settings/Mac
   Sources/SlopDeskClientUI/Settings/KeybindingsEditorView.swift > /dev/null; then
   fail "a chord editor rebuilt KeybindingPreferences — that wipes the config.toml literal-byte bindings"
 fi
-printf 'check-supervisor: one chord editor, drawn twice, and only one half records.\n'
+printf 'check-supervisor: one chord editor, drawn twice, and both halves record from one table.\n'
 
 # ── One design floor, two renderers ───────────────────────────────────────────────────────────
 # `SlopDeskSlate` is the layer BOTH halves stand on: the token ladder in its `NSColor`/`UIColor`

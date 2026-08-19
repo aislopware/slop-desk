@@ -888,10 +888,6 @@ size_t slopdesk_settings_section_count(void);
 size_t slopdesk_settings_section_id(size_t index, uint8_t *out, size_t cap);
 size_t slopdesk_settings_section_title(size_t index, uint8_t *out, size_t cap);
 size_t slopdesk_settings_section_symbol(size_t index, uint8_t *out, size_t cap);
-// Whether the compact list drops this section entirely. Only Key Bindings does, and for a reason
-// about CAPTURE rather than screen size: recording a chord is an NSEvent monitor with no touch
-// equivalent, so the page would offer a field nothing can fill.
-bool slopdesk_settings_section_is_mac_only(size_t index);
 
 // The apply-timing chip.
 size_t slopdesk_settings_timing_label(uint8_t timing, uint8_t *out, size_t cap);
@@ -1029,6 +1025,12 @@ uint8_t slopdesk_settings_layout_row_control_argument(uint8_t section_index, boo
 #define SLOPDESK_PHONE_KEY_COMMAND (1u << 3)
 // The `named` a chord writes when its key is the printable scalar in `character` instead.
 #define SLOPDESK_PHONE_KEY_NAMED_NONE ((uint8_t)0xFF)
+// What capturing one press in the Settings chord recorder means — the SAME four answers, in the same
+// order, that `slopdesk_key_capture_outcome` gives the Mac's recorder. Both write one override map.
+#define SLOPDESK_PHONE_KEY_CAPTURE_CANCEL ((uint8_t)0)
+#define SLOPDESK_PHONE_KEY_CAPTURE_CLEAR  ((uint8_t)1)
+#define SLOPDESK_PHONE_KEY_CAPTURE_IGNORE ((uint8_t)2)
+#define SLOPDESK_PHONE_KEY_CAPTURE_BIND   ((uint8_t)3)
 
 // One `UIKey`: which key (`UIKey.keyCode`, a USB HID keyboard usage — the only signal that means the
 // same thing under every layout and input method) and what that key produces under this layout
@@ -1058,6 +1060,12 @@ size_t slopdesk_phone_key_encode(const SlopDeskPhoneKeyPress *press, bool applic
 // field of a chord is a legitimate zero, so a length could not have said "not a chord".
 bool slopdesk_phone_key_chord(const SlopDeskPhoneKeyPress *press, uint8_t *named,
                               uint32_t *character, uint8_t *modifiers);
+// What this press does to the binding being RECORDED — one of SLOPDESK_PHONE_KEY_CAPTURE_*. Only a
+// bind writes through, and it writes the chord exactly as `slopdesk_phone_key_chord` would. Stricter
+// than that door in the two ways the Mac's recorder is stricter than its dispatcher: the space bar
+// is no key here, and a base the chord grammar cannot spell back is refused rather than stored.
+uint8_t slopdesk_phone_key_capture(const SlopDeskPhoneKeyPress *press, uint8_t *named,
+                                   uint32_t *character, uint8_t *modifiers);
 // The accessory bar's armed ⌃ folding a soft-keyboard commit: the first scalar's control byte
 // through `code`, the byte offset its remainder starts at through `rest`. `false` for empty text.
 bool slopdesk_phone_key_fold_control(const uint8_t *text, size_t len, uint8_t *code, size_t *rest);
