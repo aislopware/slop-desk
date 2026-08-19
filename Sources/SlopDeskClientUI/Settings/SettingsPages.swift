@@ -1,23 +1,34 @@
-// SettingsView — the settings PAGES, in SwiftUI.
+// SettingsPages — the eight settings pages, in SwiftUI.
 //
-// What lives here is one struct per section of the taxonomy, each of which asks
-// `slopdesk_workspace::settings_layout` for its groups and renders them. The two things a page still
-// decides for itself are the two the table cannot carry: a key → BINDING (`@Default` is a property
-// wrapper, so a key can cross a language boundary and a binding cannot), and what a control KIND looks
-// like in this framework. Everything else — which groups, in what order, under which header, with
-// which timing, on which platform — comes back from the table.
+// One struct per section of the taxonomy, each of which asks `slopdesk_workspace::settings_layout`
+// for its groups and renders them. The two things a page still decides for itself are the two the
+// table cannot carry: a key → BINDING (`@Default` is a property wrapper, so a key can cross a
+// language boundary and a binding cannot), and what a control KIND looks like in this framework.
+// Everything else — which groups, in what order, under which header, with which timing, on which
+// platform — comes back from the table.
 //
-// WHO RENDERS THIS. The phone: `SettingsSheet` presents ``SettingsSectionContent`` for the section a
-// reader taps. The Mac draws its own page in AppKit (`SlopDeskMacUI/Settings`), from the SAME table,
-// because a settings window with a mouse wants an `NSSwitch` and a source list where a sheet wants a
-// `Toggle` and a pushed list — that difference is the whole reason the halves are separate (docs/56
-// §3). What neither half redraws is a `Control.bespoke` group: those are surfaces rather than control
-// kinds, so both resolve them through ``SettingsBespokeSurface`` and the Mac hosts the result.
+// WHO RENDERS THIS. The phone: `SettingsSheet` presents ``SettingsSectionContent`` (in
+// `SettingsTaxonomy.swift`) for the section a reader taps. The Mac draws its own page in AppKit
+// (`SlopDeskMacUI/Settings`), from the SAME table, because a settings window with a mouse wants an
+// `NSSwitch` and a source list where a sheet wants a `Toggle` and a pushed list — that difference is
+// the whole reason the halves are separate (docs/56 §3). What neither half redraws is a
+// `Control.bespoke` group: those are surfaces rather than control kinds, so both resolve them through
+// ``SettingsBespokeSurface`` and each half hosts the result.
 //
-// An 8-section taxonomy (`SettingsSection`): General / Shell / Controls / Editor / Agents / Appearance
-// / Key Bindings / Advanced — finer-grained than a flat tab strip so each group can sit where its
-// screenshot proves it belongs. FONT (family + size) + CURSOR (style + blink) → **Appearance**
-// (`font-setting.png` / `cursor-style.png`); SCROLLBACK → **Controls**
+// WHY EIGHT STRUCTS AND NOT ONE TABLE-WALKER, which is what the Mac half is. The per-key `switch` in
+// each page is not the page's knowledge of the taxonomy — it is a BINDING lookup, and `@Default` is a
+// property wrapper whose whole point is that SwiftUI observes the read. A shared closure-based
+// accessor (`MacSettingsBindings`, which is what the AppKit half builds its generic page on) is
+// invisible to that tracking, so a page built over one would stop redrawing when a value changed
+// under it. The duplication between the halves is therefore of the STORAGE MAPPING only; every word,
+// every option list, every group and every platform gate is read from the one table. Measured
+// 2026-08-19: the phone renders all 76 rows the table lists for it, so the hand-written half is not
+// costing coverage either.
+//
+// WHERE EACH GROUP SITS. An 8-section taxonomy — General / Shell / Controls / Editor / Agents /
+// Appearance / Key Bindings / Advanced — finer-grained than a flat tab strip so each group can sit
+// where its screenshot proves it belongs. FONT (family + size) + CURSOR (style + blink) →
+// **Appearance** (`font-setting.png` / `cursor-style.png`); SCROLLBACK → **Controls**
 // (`spec/terminal-features__scroll.md`); theme → Appearance; agent host flags → Agents; Close
 // Confirmation → **General** (`launch-option.png`). **Editor** is reserved for a built-in FILE-editor
 // (Soft Wrap / Line Numbers / Tab Size — `editor-settings.png`) slopdesk lacks, so it states its own
@@ -25,11 +36,11 @@
 // dedicated section, so they fold into Advanced as four described groups — quality, FEC, pacer and
 // the client's own sharpen — rather than the one hand-drawn surface they used to be.
 //
-// DEFERRED vs LIVE-APPLY: each group carries an `ApplyTiming` chip (`.live` = immediate; `.reconnect` =
-// a HOST-read sidecar flag, effective on the next host connection). Terminal + appearance + keybindings
-// + the fire-time toggles are live; the video/agent HOST flags are reconnect-only; SYMMETRIC keys (FEC)
-// also carry a "set on both ends" warning, which is a `Control.note` row in the table rather than a
-// paragraph hand-placed in a body.
+// DEFERRED vs LIVE-APPLY: each group carries an `ApplyTiming` chip (`.live` = immediate; `.reconnect`
+// = a HOST-read sidecar flag, effective on the next host connection). Terminal + appearance +
+// keybindings + the fire-time toggles are live; the video/agent HOST flags are reconnect-only;
+// SYMMETRIC keys (FEC) also carry a "set on both ends" warning, which is a `Control.note` row in the
+// table rather than a paragraph hand-placed in a body.
 //
 // Colour + type: `SettingsInk` / `SettingsType` (SYSTEM semantics — not the terminal theme); geometry
 // rides `Slate.Metric` (raw font/radius/height literals fail `scripts/check-ds-leaks.sh`).
@@ -43,83 +54,8 @@ import SlopDeskSlate
 import SlopDeskVideoProtocol
 import SlopDeskWorkspaceCore
 import SwiftUI
-import UserNotifications
-#if os(iOS)
-import UIKit // UIApplication.openSettingsURLString — the notification-permission deep link.
-#endif
 
-// MARK: - Settings taxonomy (the 8 sections — one source for the macOS navigator + the iOS list)
-
-/// The settings taxonomy as a DISPATCH key: which section's body to build. It is an enum because that
-/// is what ``SettingsSectionContent``'s exhaustive `switch` needs — a section maps to a `some View`,
-/// which is the one part of a section that cannot leave Swift.
-///
-/// Everything a section IS — its title, its glyph, its place in the order, whether the compact list
-/// drops it — comes from `slopdesk_workspace::settings_catalog` through ``SettingsCatalog/sections``,
-/// so the Mac's navigator and the phone's list read one table rather than two. The cases here carry
-/// no data of their own; ``ordered`` is the list to render, and `SettingsSectionTaxonomyTests` pins
-/// that it covers every case, which is what stops a case added here from being unreachable in both
-/// lists (the same exhaustiveness contract every option group holds).
-enum SettingsSection: String, CaseIterable, Identifiable {
-    case general
-    case shell
-    case controls
-    case editor
-    case agents
-    case appearance
-    case keybindings
-    case advanced
-
-    var id: String { rawValue }
-
-    /// The catalog row behind this case, or `nil` for a case the boundary does not name — which the
-    /// taxonomy test is what rules out.
-    private var row: SettingsCatalog.Section? { SettingsCatalog.section(rawValue) }
-
-    /// The list row's title.
-    var title: String { row?.title ?? "" }
-
-    /// The list row's glyph (SF Symbol name).
-    var systemImage: String { row?.systemImage ?? "" }
-
-    /// The whole taxonomy IN THE CATALOG'S ORDER. Declaration order here is not the contract; the
-    /// boundary's is, and `SettingsSectionTaxonomyTests` is what pins that every case is reachable.
-    /// Every page reaches BOTH halves. There is no per-section platform flag any more: Key Bindings
-    /// was the only section the phone dropped, and it dropped it over a recorder the phone has had
-    /// since docs/56 increment 30. What still differs by half is the GROUPS inside a page, which the
-    /// layout table gates as data.
-    static let ordered: [Self] = SettingsCatalog.sections.compactMap { Self(rawValue: $0.id) }
-}
-
-// MARK: - Apply-timing tag (deferred vs live, surfaced as a chip not prose)
-
-/// When a setting takes effect — surfaced as a chip so the deferred/live distinction is a DATA
-/// attribute, not prose. The two cases and their words are ``SettingsCatalog/ApplyTiming``; only the
-/// tint below is a view decision.
-typealias ApplyTiming = SettingsCatalog.ApplyTiming
-
-/// A small inline timing chip (symbol + label). The tint is resolved in the view body rather than on the
-/// nonisolated `ApplyTiming` enum.
-struct TimingChip: View {
-    let timing: ApplyTiming
-    var body: some View {
-        HStack(spacing: Slate.Metric.space1) {
-            Image(systemName: timing.symbol)
-            Text(timing.label)
-        }
-        .font(SettingsType.caption)
-        .foregroundStyle(tint)
-    }
-
-    private var tint: Color {
-        switch timing {
-        case .live: SettingsInk.ok
-        case .reconnect: SettingsInk.warn
-        }
-    }
-}
-
-// MARK: - Shared per-section content (one dispatch for the macOS navigator + the iOS sheet)
+// MARK: - The one door to the eight pages
 
 /// Resolves a ``SettingsSection`` to its per-section body — the ONE place the section → struct mapping lives,
 /// so the macOS navigator (`SettingsView`) and iOS `SettingsSheet` render byte-identical content. The
@@ -374,88 +310,6 @@ private struct ShellSettingsTab: View {
             get: { WorkingDirectoryPolicy(rawConfig: raw.wrappedValue) == .inherit ? .inherit : .home },
             set: { raw.wrappedValue = ($0 == .inherit ? WorkingDirectoryPolicy.inherit : .home).rawConfig },
         )
-    }
-}
-
-// MARK: - System Permission status row (top of the Notification group)
-
-/// The System Permission status row (`terminal-features__notifications.md`, at the TOP of the Notification
-/// group): a coloured dot (green = allowed, amber = will-prompt / unknown, red = blocked) + an **Open System
-/// Settings** deep-link. The dot DECISION is the pure, headless-pinned
-/// ``PermissionStatus/dot(forAuthorization:)``; this view only queries
-/// `UNUserNotificationCenter.current().getNotificationSettings` and renders it.
-///
-/// **iOS caveat (carryover / spec flag):** macOS deep-links to the Notifications pane
-/// (`x-apple.systempreferences:com.apple.preference.notifications`); iOS CANNOT deep-link to the per-app OS
-/// pane, so the button opens the app's OWN settings via `UIApplication.openSettingsURLString` — macOS
-/// deep-link `#if os(macOS)`, iOS fallback `#if os(iOS)`. See docs/DECISIONS.md.
-struct NotificationPermissionRow: View {
-    /// The current dot — starts amber (unknown) until the async query resolves, never a false green.
-    @State private var dot: PermissionStatus.Dot = .amber
-    /// SwiftUI-native URL opener (replaces `NSWorkspace`/`UIApplication.open` for the deep-link below). The
-    /// custom `x-apple.systempreferences:` scheme routes through LaunchServices exactly as `NSWorkspace.open` did.
-    @Environment(\.openURL) private var openURL
-
-    var body: some View {
-        LabeledContent {
-            Button("Open System Settings", action: openSystemSettings)
-                .controlSize(.small)
-        } label: {
-            HStack(spacing: Slate.Metric.space2) {
-                Circle()
-                    .fill(dotColor)
-                    .frame(width: 8, height: 8)
-                VStack(alignment: .leading, spacing: Slate.Metric.space1) {
-                    Text("System Permission")
-                    Text(dotSubtitle)
-                        .font(SettingsType.subtitle)
-                        .foregroundStyle(SettingsInk.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-        }
-        .task { await refresh() }
-    }
-
-    private var dotColor: Color {
-        switch dot {
-        case .green: SettingsInk.ok
-        case .amber: SettingsInk.warn
-        case .red: SettingsInk.err
-        }
-    }
-
-    private var dotSubtitle: String {
-        switch dot {
-        case .green: "Notifications are allowed for slopdesk."
-        case .amber: "Notification permission has not been granted yet."
-        case .red: "Notifications are blocked — enable them in System Settings."
-        }
-    }
-
-    /// Query `UNUserNotificationCenter` and map the authorization status through the pure dot decision. Never
-    /// instantiated in a test (`PermissionStatusTests` pins the pure mapping) — `current()` traps without a
-    /// bundle, the same hang/crash-safety boundary as the video sessions. The `rawValue` Int is extracted
-    /// INSIDE the `await` so the non-`Sendable` `UNNotificationSettings` never crosses the actor hop (only the
-    /// `Int` does — Swift 6 region isolation).
-    private func refresh() async {
-        let raw = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus.rawValue
-        dot = PermissionStatus.dot(forAuthorization: raw)
-    }
-
-    private func openSystemSettings() {
-        // SwiftUI-native `openURL` (was `NSWorkspace`/`UIApplication.open`). The macOS custom scheme routes via
-        // LaunchServices; on iOS `UIApplication.openSettingsURLString` is still the URL SOURCE (no SwiftUI
-        // equivalent) — only the open ACTION is now `openURL`.
-        #if os(macOS)
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.notifications") {
-            openURL(url)
-        }
-        #elseif os(iOS)
-        if let url = URL(string: UIApplication.openSettingsURLString) {
-            openURL(url)
-        }
-        #endif
     }
 }
 
@@ -1043,43 +897,6 @@ private struct AgentsSettingsTab: View {
             get: { binding.wrappedValue ?? whenUnset },
             set: { binding.wrappedValue = $0 },
         )
-    }
-}
-
-// MARK: - Agents card state derivation (the ONE nil-controller fallback, shared + testable)
-
-/// The Agents card's derived state from the (optional) injected ``AgentHooksController`` — the ONE place the
-/// nil-controller fallbacks live, so the macOS scene and iOS ``SettingsSheet`` derive the card identically. A
-/// `nil` controller (no injection — e.g. the iOS-sheet wiring this regression fixes) MUST fall back to
-/// ``AgentHooksController/InstallState/disconnected`` + behaviour-disabled, NEVER a false live card. Pure +
-/// cross-platform, unit-pinned headlessly (`AgentSettingsCardWiringTests`).
-@MainActor
-enum AgentSettingsCard {
-    /// The install-card state to show: the controller's state, or `.disconnected` when no controller backs it.
-    static func installState(_ controller: AgentHooksController?) -> AgentHooksController.InstallState {
-        controller?.state ?? .disconnected
-    }
-
-    /// Whether the Agent-Behaviour toggles are configurable (an integration is installed). A nil controller ⇒
-    /// `false` ⇒ the whole behaviour section is greyed (the exact iOS bug when the controller is not injected).
-    static func behaviourEnabled(_ controller: AgentHooksController?) -> Bool {
-        controller?.isInstalled ?? false
-    }
-}
-
-// MARK: - Agents settings-card environment slot
-
-extension EnvironmentValues {
-    /// The single app-owned ``AgentHooksController``, injected at the Settings scene root so the
-    /// Agents card reaches it. `nil` outside the app scene (previews / the iOS sheet before its wiring lands)
-    /// → the card renders disabled rather than crashing.
-    @Entry var agentHooksController: AgentHooksController?
-}
-
-package extension View {
-    /// Inject the app-owned ``AgentHooksController`` into the environment (called at the Settings scene root).
-    func agentHooksController(_ controller: AgentHooksController?) -> some View {
-        environment(\.agentHooksController, controller)
     }
 }
 

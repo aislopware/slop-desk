@@ -91,6 +91,32 @@ extension SettingsLayout.Control {
     }
 }
 
+/// When a setting takes effect — surfaced as a chip so the deferred/live distinction is a DATA
+/// attribute, not prose. The two cases and their words are ``SettingsCatalog/ApplyTiming``; only the
+/// tint below is a view decision.
+typealias ApplyTiming = SettingsCatalog.ApplyTiming
+
+/// A small inline timing chip (symbol + label). The tint is resolved in the view body rather than on the
+/// nonisolated `ApplyTiming` enum.
+struct TimingChip: View {
+    let timing: ApplyTiming
+    var body: some View {
+        HStack(spacing: Slate.Metric.space1) {
+            Image(systemName: timing.symbol)
+            Text(timing.label)
+        }
+        .font(SettingsType.caption)
+        .foregroundStyle(tint)
+    }
+
+    private var tint: Color {
+        switch timing {
+        case .live: SettingsInk.ok
+        case .reconnect: SettingsInk.warn
+        }
+    }
+}
+
 /// A right-aligned timing chip used as a section footer so each section's apply timing is visible
 /// inline. Lives beside ``settingsGroup(_:row:)``, which is what places it under every group.
 func timingFooter(_ timing: ApplyTiming) -> some View {

@@ -1023,7 +1023,8 @@ two hardware rounds of `NSEvent`-monitor workarounds used to stand — and it st
 chord-recorder veto. Those are decisions; only the thing that asked them was SwiftUI's.
 
 `SettingsView.swift` keeps the per-section structs, because the phone's sheet renders them. What it
-no longer keeps is a window.
+no longer keeps is a window. (It is `SettingsPages.swift` as of increment 34 — the file outlived its
+name by nine increments.)
 
 ### Increment 25 — the first-launch checklist, and a card that was written twice
 
@@ -1349,3 +1350,42 @@ Two private copies of the `(out, cap)` retry reader collapsed on the way past �
 and `SettingsCatalog`'s were the same ten lines, and the paste face would have been a third. It is
 `wsDelivered(capacity:_:)` in `SlopDeskWorkspaceModel` now, beside `wsTransform`, and each face names
 only how much of an answer it expects to fit inline.
+
+
+### Increment 34 — a file called SettingsView that had not held a SettingsView since increment 24
+
+`SettingsView.swift` was 1229 lines and declared no `SettingsView`. Increment 24 deleted that type with
+the SwiftUI settings scene and left the file named for it; nine increments later it had become a grab
+bag — the taxonomy enum, the section dispatch, a timing chip, a system-permission row, eight page
+structs, an agent-card state derivation and an `EnvironmentValues` slot. Nothing in it was wrong. It
+was just five things wearing one name, and the name was a tenth thing that no longer existed.
+
+It is five files now, each named for what it holds: `SettingsTaxonomy.swift` (the `SettingsSection`
+dispatch key), `NotificationPermissionRow.swift` (a settings ROW that edits no setting — it shows the
+state of an OS grant, which is why it was never an arm of the Shell page's switch),
+`AgentSettingsCard.swift` (the two `nil`-controller answers plus the environment slot that feeds them,
+reader and writer together), the timing chip folded into `SettingsControls.swift` beside the
+`timingFooter` that was already placing it, and `SettingsPages.swift` — the eight page structs.
+
+`SettingsSectionContent` stayed WITH the pages rather than with the taxonomy, which is the one part
+of this that is a decision rather than a move. It is the only door to eight `private` structs; putting
+it in the taxonomy file meant widening all eight to `internal` to keep one caller compiling, and a
+file split that trades encapsulation for tidiness is not a split worth making.
+
+**The rewrite that was considered and rejected.** The Mac half renders all eight sections generically
+— `MacSettingsPage` walks `settings_layout` and names no section, no group, no row, in 236 lines over
+a 427-line `MacSettingsBindings`. The phone spends 1046 hand-written lines on the same eight pages, so
+collapsing it into one table-walker looks like the obvious next move. It is not, for two reasons, both
+measured rather than assumed:
+
+- `MacSettingsBindings`'s own header already ruled on it: a shared accessor has to be closures over
+  `Defaults[...]`, and a closure read is invisible to SwiftUI's dependency tracking, so a page built
+  over one stops redrawing when a value changes under it. `@Default` is a property wrapper precisely
+  because that observation is the point. The reason has not expired.
+- The suspicion that the hand-written half was silently missing rows did not survive a count. The
+  table lists 76 rows for the phone; every one of them has an arm. There is no coverage gap to fix,
+  and the AppKit half needs 962 lines to be generic where the phone needs 1046 to be explicit — so
+  there is no size win either.
+
+What the duplication actually costs is the STORAGE MAPPING, twice. Every word, every option list,
+every group and every platform gate is still read from the one table.
