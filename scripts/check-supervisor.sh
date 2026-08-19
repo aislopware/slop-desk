@@ -2267,6 +2267,68 @@ if ! diff <(printf '%s\n' "${swift_ops}") <(printf '%s\n' "${rust_ops}") > /dev/
 fi
 printf 'check-supervisor: the intent verbs agree too — %s ops, both languages.\n' "${op_count}"
 
+# AND THE GATE ABOVE IS EXACTLY WHY THESE TWO EXIST. It pins this file pair — the right pair — and it
+# compares an op-byte MAP: a name and a number. The blob-length bug lived six lines from where it
+# looks, for as long as this gate has existed, because a vocabulary pin cannot see BEHAVIOUR. Every
+# cross-language defect this project has found is behavioural (docs/55 §8). These two are the cheap
+# half of the answer; the real one is a differential test, and it is owed.
+#
+# 1. A `u16` in front of a blob must name the bytes that follow it. Both call sites once declared a
+#    WRAPPED length and then appended every byte, so a payload past 64 KiB produced a frame that
+#    mis-splits at the decoder — `intent::put_blob` clamps and cuts, and its doc comment named the
+#    Swift bug rather than fixing it. `appendBlob` is the one spelling now; a bare append of the
+#    blob means a second copy has come back.
+if grep -nE '^[[:space:]]*out\.append\(blob\)' "${intent_swift}" >&2; then
+  fail "${intent_swift} appends a blob without cutting it to the declared length — use appendBlob (docs/55 §8)"
+fi
+# 2. `decodeIfPresent` on a key that is PRESENT with a value its type refuses does NOT answer `nil` —
+#    it THROWS, so the `??` default written beside it never runs. On a persisted split that cost the
+#    user their WHOLE arrangement to one typo in a hand-editable file: the throw unwound the entire
+#    `TreeWorkspace` decode and `WorkspacePersistence.load()` wrote a `.corrupt` sidecar. Rust
+#    repaired and Swift bricked. `(try? decode(…)) ?? default` is the idiom that means "fill".
+#
+#    WHAT IS BANNED IS THE PAIRING, not the call. `decodeIfPresent` is correct where absence and
+#    unreadability are BOTH faults — `decodeRaw`'s `leaf` key is the discriminator, and
+#    `persist::decode_raw_node` faults on an unreadable one too (`decode_id(value, "leaf")?`), so
+#    that call agrees with Rust and must stay. What cannot be right is `decodeIfPresent(…) ?? x`:
+#    the `??` says "fill on absence", the throw fires first on a bad value, and the default the
+#    author wrote is unreachable on the one path it was written for. The first draft of this gate
+#    banned the call outright and went red on that correct discriminator immediately — which is the
+#    ban list's standing hazard, and the reason it is worth writing the narrow form.
+#
+#    The lookahead is one line: swiftformat wraps a long `decodeIfPresent` before its `??`, so a
+#    same-line-only match would miss the wrapped form, which is the form a long generic type takes.
+#    Comment lines are dropped first, and that is not cosmetic — the fix in `SplitNode+Codable.swift`
+#    explains this trap in prose directly above the corrected call, so a gate that read comments
+#    would fire on the very comment describing why it fires.
+# shellcheck disable=SC2046 # `$(git ls-files …)` expands to a FILE LIST for awk on purpose
+raw_optional_fills=$(awk '
+  FNR == 1 { prev = ""; prevno = 0 }
+  {
+    line = $0
+    sub(/[[:space:]]*\/\/.*$/, "", line)
+    if (prev != "" && (prev " " line) ~ /\?\?/) { print FILENAME ":" prevno ":" prev; prev = "" }
+    else if (prev != "") prev = ""
+    if (line ~ /decodeIfPresent\((SplitAxis|SplitNodeID|PaneID|PaneKind)\.self/) {
+      if (line ~ /\?\?/) { print FILENAME ":" FNR ":" line; prev = "" }
+      else { prev = line; prevno = FNR }
+    }
+  }
+' $(git ls-files --cached --others --exclude-standard 'Sources/**/*.swift') || true)
+# `git ls-files` spelled out rather than `repo_files`, which is not DEFINED until further down this
+# script — the first draft called it here, bash resolved nothing, `2> /dev/null` swallowed the
+# "command not found", `|| true` turned the corpse into a pass, and the gate was vacuous while
+# printing nothing. It is the same defect this script has a gate against ("no gate that dies
+# quietly"), committed inside a new gate, and it survived a clean-tree run looking exactly like a
+# pass. Hence the guard below: a gate whose haystack is empty is not a gate.
+if [[ "$(git ls-files --cached --others --exclude-standard 'Sources/**/*.swift' | grep -c .)" -lt 400 ]]; then
+  fail "the decodeIfPresent gate found almost no Swift under Sources/ — its file list has gone stale, so it is checking nothing"
+fi
+if [[ -n "${raw_optional_fills}" ]]; then
+  printf '%s\n' "${raw_optional_fills}" >&2
+  fail "a raw-value enum or id filled with decodeIfPresent(…) ?? x — the throw beats the default, use (try? decode(…)) ?? x (docs/55 §8)"
+fi
+
 codec_swift="Sources/SlopDeskWorkspaceModel/Codec/WorkspaceStateCodec.swift"
 codec_code=$(grep -v '^[[:space:]]*//' "${codec_swift}") || true
 # EMPTY is not "clean". Every check below is a `grep -qF` for a banned symbol, so a haystack that

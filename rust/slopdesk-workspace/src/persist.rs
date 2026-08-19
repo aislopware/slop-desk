@@ -16,6 +16,8 @@
 //!   nothing unrenderable ever reaches the layout.
 //! - A split tree past the depth cap collapses to its first leaf; a duplicate pane id anywhere in
 //!   the tree is re-minted, because the live registry is keyed one-to-one by pane id.
+//! - A split with no `id` is given one derived from its place in the tree and the panes under it,
+//!   never a constant: two unnamed seams sharing a name would be ONE divider to every resize.
 //! - A stacking order is clamped, so a hostile `z` of `i64::MAX` cannot make the next
 //!   frontmost-bump overflow.
 //!
@@ -283,41 +285,137 @@ pub fn encode_split_node(node: &SplitNode) -> Json {
 /// split.
 ///
 /// `mint` supplies the fresh pane ids a repair needs — for a re-minted duplicate, and for the
-/// degenerate case where the whole tree repairs away to nothing.
+/// degenerate case where the whole tree repairs away to nothing. It is asked for PANE ids only: a
+/// split the file did not name gets an id derived from the node instead, so that decoding one file
+/// twice names its dividers the same way both times (`derived_split_id` carries why).
 ///
 /// # Errors
 /// [`JsonError`] for a node with neither discriminator, an id that is not a uuid, or nesting past
 /// [`crate::json::MAX_DEPTH`] — the parser refuses that before a value ever exists.
 pub fn decode_split_node(value: &Json, mint: &mut impl FnMut() -> PaneId) -> Result<SplitNode> {
-    let raw = decode_raw_node(value)?;
+    let raw = decode_raw_node(value, ROOT_PATH)?;
     Ok(raw.normalized(mint).unwrap_or_else(|| SplitNode::Leaf(mint())))
 }
 
-fn decode_raw_node(value: &Json) -> Result<SplitNode> {
+/// The FNV-1a 128 offset basis, which is also the hash of the empty path — the root's place.
+const ROOT_PATH: u128 = 0x6C62_272E_07BB_0142_62B8_2175_6295_C58D;
+
+/// The FNV-1a 128 prime.
+const PATH_PRIME: u128 = 0x0000_0000_0100_0000_0000_0000_0000_013B;
+
+/// The UUID version nibble (byte 6, high) and variant bits (byte 8, top two), as a mask over the
+/// 128-bit value those big-endian bytes are read from.
+const UUID_VERSION_AND_VARIANT: u128 = (0xF0 << (9 * 8)) | (0xC0 << (7 * 8));
+
+/// One byte into the running hash.
+///
+/// FNV-1a, and deliberately not a cryptographic hash: the property asked for is that two different
+/// inputs give two different ids on inputs nobody is choosing to collide, not that a collision is
+/// hard to construct. A file that spelled one out by hand has already named the same divider twice.
+fn fold(hash: u128, byte: u8) -> u128 {
+    (hash ^ u128::from(byte)).wrapping_mul(PATH_PRIME)
+}
+
+fn fold_all(hash: u128, bytes: impl IntoIterator<Item = u8>) -> u128 {
+    bytes.into_iter().fold(hash, fold)
+}
+
+/// The id an id-less split is given: DERIVED from where it is and what it holds, never invented.
+///
+/// This used to hand every id-less split in a file the all-zero uuid, which made them all ONE
+/// divider group: `set_divider_weight` moved two seams at once, and the document wrote a single
+/// `splitNode/<nil>/weight` cell for two independent dividers. Swift does not have THAT bug — its
+/// `?? SplitNodeID()` mints a fresh id per split — so the fill here had to beat both languages at
+/// once: no collision, the way Swift already manages, and stable across loads, which Swift does not
+/// (`## Owed` below — the divergence is live, not closed).
+///
+/// Minting a random one was rejected: [`crate::identity`]'s header is "the same inputs give the
+/// same tree, forever", and this crate holds no entropy for exactly that reason. A random id would
+/// mean one file decoded twice named the same seam two different things — unpinnable by a test, and
+/// a second reader of the same file would disagree with the first. Threading a second closure in
+/// from the caller would have bought the same non-determinism at the cost of a wider signature.
+///
+/// So the id is a function of the node itself, in two parts, each covering what the other cannot:
+///
+/// - the PATH from the root, so two splits in one tree differ even when they cover the same panes —
+///   which is the pre-repair single-child chain, the one case where an ancestor's leaf set equals a
+///   descendant's;
+/// - the axis and every pane id BENEATH it, so two splits in different trees differ — a per-tree
+///   path alone would give every tab's root split the same name.
+///
+/// The version and variant nibbles are zeroed, which no v4 uuid the runtime mints ever has, so a
+/// derived id cannot collide with a minted one.
+///
+/// ## Owed
+///
+/// This crate and Swift now disagree about the SECOND property, and the disagreement is scheduled
+/// rather than settled. `SplitNodeID.init` defaults to `UUID()`
+/// (`Sources/SlopDeskWorkspaceModel/Domain/Tree/TreeIdentity.swift`), so Swift's `?? SplitNodeID()`
+/// fill is RANDOM: one file decoded twice names the same seam two different things. Every load
+/// renames every unnamed split, so a `splitNode/<id>/weight` cell written before a relaunch is
+/// orphaned after it — the user drags a divider, quits, reopens, and it is back at the default,
+/// with no `.corrupt` sidecar to explain it because nothing failed. It bites exactly the two kinds
+/// of file whose splits carry no id: a hand-edited one, and one written before the id existed.
+///
+/// What is owed is not a second minting rule written in Swift. It is THIS one behind a door: this
+/// function published as a `slopdesk_ws_*` entry point and put where `?? SplitNodeID()` stands
+/// today. At that point `SplitNode+Codable.swift`'s repair pass does nothing this module does not
+/// already do — `persist.rs` is a complete decoder — so it goes entirely, which is the
+/// one-implementation rule finishing rather than a fix bolted onto the second copy.
+fn derived_split_id(path: u128, axis: SplitAxis, children: &[WeightedChild]) -> SplitNodeId {
+    let mut hash = fold(path, match axis {
+        SplitAxis::Horizontal => 0,
+        SplitAxis::Vertical => 1,
+    });
+    for child in children {
+        for pane in child.node.all_pane_ids() {
+            hash = fold_all(hash, pane.bytes());
+        }
+    }
+    SplitNodeId::from_bytes((hash & !UUID_VERSION_AND_VARIANT).to_be_bytes())
+}
+
+/// `path` is the hash of this node's position: the root's is [`ROOT_PATH`], a child's is its
+/// parent's folded with the child's index. It names nothing on its own — it is only the seed
+/// [`derived_split_id`] uses for a split the file did not name.
+fn decode_raw_node(value: &Json, path: u128) -> Result<SplitNode> {
     if value.get("leaf").is_some() {
         return Ok(SplitNode::Leaf(PaneId::from_bytes(decode_id(value, "leaf")?)));
     }
     let Some(split) = value.get("split") else {
         return Err(malformed("a split node has neither a leaf nor a split"));
     };
-    // A missing id or axis is FILLED rather than refused: the structure is intact, and a node whose
-    // divider group lost its name still describes a real arrangement.
-    let id = decode_optional_id(split, "id")
-        .map_or_else(|| SplitNodeId::from_bytes([0; 16]), SplitNodeId::from_bytes);
+    // A missing or unreadable axis is FILLED rather than refused: the structure is intact, and a
+    // node whose divider group lost its name still describes a real arrangement.
     let axis = match split.get("axis").and_then(Json::string) {
         Some("vertical") => SplitAxis::Vertical,
         _ => SplitAxis::Horizontal,
     };
     let mut children = Vec::new();
-    for child in split.get("children").and_then(Json::array).unwrap_or_default() {
+    for (index, child) in split
+        .get("children")
+        .and_then(Json::array)
+        .unwrap_or_default()
+        .iter()
+        .enumerate()
+    {
         let Some(node) = child.get("node") else {
             return Err(malformed("a split child has no node"));
         };
         children.push(WeightedChild::new(
             child.get("weight").map_or(SplitWeight::Flex(1.0), decode_weight),
-            decode_raw_node(node)?,
+            decode_raw_node(
+                node,
+                fold_all(path, u64::try_from(index).unwrap_or(u64::MAX).to_be_bytes()),
+            )?,
         ));
     }
+    // The id is filled the same way — but from the node, not from a constant. See
+    // [`derived_split_id`] for why an invented one is not an option here.
+    let id = decode_optional_id(split, "id").map_or_else(
+        || derived_split_id(path, axis, &children),
+        SplitNodeId::from_bytes,
+    );
     Ok(SplitNode::Split { id, axis, children })
 }
 
@@ -408,6 +506,100 @@ mod tests {
             panic!("the json itself is fine; it is the SHAPE that is wrong");
         };
         assert!(decode_split_node(&value, &mut minter()).is_err());
+    }
+
+    /// Every split id in the tree, in pre-order — one entry per surviving divider group.
+    fn split_ids(node: &SplitNode) -> Vec<SplitNodeId> {
+        match node {
+            SplitNode::Leaf(_) => Vec::new(),
+            SplitNode::Split { id, children, .. } => {
+                let mut ids = vec![*id];
+                for child in children {
+                    ids.extend(split_ids(&child.node));
+                }
+                ids
+            },
+        }
+    }
+
+    /// A file with two splits and no `id` on either — a hand-written layout, or one from a build
+    /// that predates the id.
+    const UNNAMED_SPLITS: &str = r#"{
+      "split": {
+        "axis": "horizontal",
+        "children": [
+          { "node": { "leaf": { "raw": "01010101-0101-0101-0101-010101010101" } } },
+          { "node": { "split": {
+            "axis": "vertical",
+            "children": [
+              { "node": { "leaf": { "raw": "02020202-0202-0202-0202-020202020202" } } },
+              { "node": { "leaf": { "raw": "03030303-0303-0303-0303-030303030303" } } }
+            ]
+          } } }
+        ]
+      }
+    }"#;
+
+    /// RUST had this one and SWIFT was HALF right. Swift mints a fresh `SplitNodeID()` per id-less
+    /// split, so it never had the collision this pins: where this module handed every one of them
+    /// the all-zero uuid, two independent seams shared a name — `set_divider_weight` moved both at
+    /// once, and the document wrote one `splitNode/<nil>/weight` cell for two dividers.
+    ///
+    /// The other half is the next test, and there it is SWIFT that is wrong: a random mint is not
+    /// stable across loads. `derived_split_id`'s `## Owed` section carries what that costs a user
+    /// and what closing it takes.
+    #[test]
+    fn two_unnamed_splits_are_two_dividers_rather_than_one() {
+        let Ok(value) = parse(UNNAMED_SPLITS) else {
+            panic!("the fixture is json; it is the missing ids that are the point");
+        };
+        let Ok(tree) = decode_split_node(&value, &mut minter()) else {
+            panic!("a split with no id is repaired, not refused");
+        };
+        let ids = split_ids(&tree);
+        assert_eq!(ids.len(), 2, "both splits survive the repair");
+        assert_ne!(
+            ids.first(),
+            ids.last(),
+            "two seams a drag can move independently need two names"
+        );
+        assert!(
+            !ids.contains(&SplitNodeId::from_bytes([0; 16])),
+            "the all-zero uuid was the collision, not a valid fill"
+        );
+    }
+
+    /// The other half of the same fix: the fill is DERIVED, so it is the same on every read. A
+    /// random mint would pass the test above and fail this one — which is precisely what Swift's
+    /// `?? SplitNodeID()` does today, so this is a property this crate holds ALONE until that call
+    /// site is replaced by the derivation (`derived_split_id`, `## Owed`).
+    #[test]
+    fn the_same_file_names_the_same_dividers_every_time_it_is_read() {
+        let Ok(value) = parse(UNNAMED_SPLITS) else {
+            panic!("the fixture is json");
+        };
+        let (Ok(first), Ok(second)) = (
+            decode_split_node(&value, &mut minter()),
+            decode_split_node(&value, &mut minter()),
+        ) else {
+            panic!("both reads decode");
+        };
+        assert_eq!(
+            split_ids(&first),
+            split_ids(&second),
+            "the id is a function of the file, not of when it was read"
+        );
+    }
+
+    /// And a split the file DOES name keeps that name — the derivation is the fill, never an
+    /// override, or a restored divider position would land on a seam nobody dragged.
+    #[test]
+    fn a_split_that_carries_an_id_keeps_it() {
+        let original = tree();
+        let Ok(back) = decode_split_node(&encode_split_node(&original), &mut minter()) else {
+            panic!("a well-formed tree decodes");
+        };
+        assert_eq!(split_ids(&back), split_ids(&original));
     }
 
     #[test]

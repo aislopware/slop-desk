@@ -785,4 +785,58 @@ now one function with the Swift test's own case pinned to it.
    the stamp's closure (§3).
 5. Write the Swift wrapper, **delete the Swift implementation it replaces**, and leave that
    module's existing tests pointing at the same public signature.
-6. `make ffi && make lint && make test`.
+6. **If step 5 could not delete it, pin it** — see §8. A port that lands beside its original with no
+   pin is the single most reliable way this repo has produced bugs.
+7. `make ffi && make lint && make test`.
+
+## 8. The drift class, and why the ratchet has never caught one
+
+Every cross-language bug this project has found has the same shape: **a decision implemented in both
+languages, where the two disagree, and the disagreement is invisible because only one side is on the
+hot path.** Eight pairs are known. Three were defects when found:
+
+| Pair | Who was right | What the user lost |
+| --- | --- | --- |
+| `WorkspaceIntent.encode` vs `intent::put_blob` | Rust | a frame that mis-splits at the decoder |
+| `SplitNode+Codable` unknown `axis`/`id` | Rust | **the entire workspace**, to one typo |
+| `persist::decode_raw_node` id-less splits | Swift | two dividers moving as one |
+| `TreeWorkspace.normalized` vs `workspace::normalized` | — | launch-time and gesture-time repair disagree |
+| the 15 MiB opaque cap, spelled **three** times | — | a silently truncated `git diff` rendered as complete |
+| `templates.rs` vs `SessionTemplate`/`LaunchPreset` | — | agrees today; a security rule written twice |
+| `persist::derived_split_id` vs `SplitNodeID()` | Rust | divider weights reset on every relaunch |
+| `detectionText` vs `detect::detection_text` | Rust | dead Swift, plus a third spelling of the join |
+
+**The direction is not consistent, and that is the point.** Rust is right in most rows and Swift in
+one. So this is not "the port is behind" — it is drift in both directions between paired
+implementations nobody diffs. Where a module got ported it got ported *well*; the failure is entirely
+downstream of that, at the moment the port lands and the original stays.
+
+**Why `check-supervisor.sh` never caught any of them.** Read what it pins, and it pins it well:
+`compare_abi_enum` over four enum→byte maps, the intent op numbers, "did this Swift file come back",
+"does `SplitLayoutSolver.swift` still `import CSlopDeskFFI`". Every one of those is **a name or a
+number**. It has no mechanism for *"these two functions produce the same output on the same input"*,
+so drift is invisible in exactly one direction — the behavioural one — and **all eight instances are
+behavioural.**
+
+The `WorkspaceIntent.swift` / `intent.rs` pair is the proof. The gate is on that exact file pair. It
+diffs the op-byte map, and the blob bug was six lines away.
+
+**So a vocabulary pin is not a pin.** When a port cannot delete its original in the same change — a
+decoder still needed at launch, a constant a second language must agree on, a repair pass whose door
+does not exist yet — the obligation is a **differential test**: same inputs to both sides, assert the
+same output. The candidates are pure functions over small values with no I/O, which is most of what
+crosses here, and a differential suite over `templates.rs` and `persist.rs` alone would have caught
+three of the eight.
+
+Two anti-patterns this class has already produced, both worth recognising on sight:
+
+- **A constant transcribed where a door already exists.** `WorkspaceIntent.swift:99` asks
+  `slopdesk_ws_intent_limit(0)` rather than restating 512 — that is the idiom. The 15 MiB cap is
+  spelled three times in two languages and holds a load-bearing *inequality* across the boundary (the
+  probe must read `cap + 1` so the builder's truncation signal survives). `MIN_WEIGHT` is asked
+  through a door; `MAX_DEPTH` sitting beside it is transcribed. One of those two is wrong.
+- **A comment that names the other language's behaviour, and goes stale.** These are the
+  highest-signal artifacts in the repo — `put_blob`'s comment is how the first defect was found — and
+  they are also the most dangerous when wrong, because they tell the next reader the pair agrees. A
+  comment asserting a cross-language fact is a claim with no gate behind it. Write them, and treat
+  editing one side as an obligation to re-read every such comment on the other.

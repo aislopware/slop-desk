@@ -44,7 +44,11 @@ public extension SplitWeight {
 /// `{"split": {"id": …, "axis": …, "children": […]}}` — so the JSON is self-describing and reviewable
 /// under `.sortedKeys`/`.prettyPrinted`.
 ///
-/// On decode, `normalized()` runs the full repair pass:
+/// `decodeRaw` fills before it reads: a split's `id` or `axis` that is absent or unreadable becomes a
+/// fresh id / `.horizontal` rather than failing the load, because a divider group that lost its name
+/// still describes a real arrangement (see the note at that line for the `decodeIfPresent` trap).
+///
+/// On decode, `normalized()` then runs the full repair pass:
 /// 1. **Depth cap** — anything nested past ``SplitNode/maxDepth`` collapses to its first leaf.
 /// 2. **Drop empty splits** — a `.split` with no valid children is removed.
 /// 3. **Collapse single-child splits** — a 1-child `.split` becomes that child.
@@ -98,16 +102,62 @@ extension SplitNode: Codable {
         }
         if container.contains(.split) {
             let split = try container.nestedContainer(keyedBy: SplitKeys.self, forKey: .split)
-            let id = try split.decodeIfPresent(SplitNodeID.self, forKey: .id) ?? SplitNodeID()
-            let axis = try split.decodeIfPresent(SplitAxis.self, forKey: .axis) ?? .horizontal
-            // WeightedChild decodes recursively (each `node` re-enters decodeRaw via its own init).
-            let children = try split.decodeIfPresent([RawWeightedChild].self, forKey: .children) ?? []
-            return .split(id: id, axis: axis, children: children.map(\.child))
+            // An id or an axis that is missing OR unreadable is FILLED, never a fault: the structure
+            // is intact, and a divider group that lost its name still describes a real arrangement.
+            // The same answer `slopdesk_workspace::persist::decode_raw_node` gives (`Some("vertical")
+            // => Vertical, _ => Horizontal`, and a non-uuid id reads as absent), and the same `try?`
+            // idiom `SplitWeight.init(from:)` above already uses on a value of the wrong type.
+            //
+            // `decodeIfPresent` was the trap. On a key that is PRESENT with a value its type refuses
+            // — `"axis": "diagonal"`, `"id": 7` — it does not answer `nil`, it THROWS
+            // `DecodingError.dataCorrupted`, so the `??` default written right next to it never ran.
+            // One typo in a hand-edited file then threw out of the entire `TreeWorkspace` decode,
+            // `WorkspacePersistence.load()` fell back to the default workspace and wrote a `.corrupt`
+            // sidecar: the user lost the WHOLE arrangement over one word. Rust repaired it and Swift
+            // bricked it; Rust was right, and this file's own header says "repair, never trap".
+            //
+            // Rejected: a tolerant `SplitAxis.init(from:)`. The tolerance belongs to this READER of a
+            // file a person can edit, not to the type — the same axis arriving in an intent from a
+            // network peer is a fault the wire codec must still refuse rather than guess at.
+            let id = (try? split.decode(SplitNodeID.self, forKey: .id)) ?? SplitNodeID()
+            let axis = (try? split.decode(SplitAxis.self, forKey: .axis)) ?? .horizontal
+            return try .split(id: id, axis: axis, children: decodeChildren(of: split))
         }
         throw DecodingError.dataCorrupted(.init(
             codingPath: decoder.codingPath,
             debugDescription: "SplitNode: object has neither a 'leaf' nor a 'split' discriminator",
         ))
+    }
+
+    /// The children of a split: a TOLERANT container wrapped around STRICT elements.
+    ///
+    /// Two different questions, answered two different ways on purpose:
+    ///
+    /// - The `children` VALUE being absent, or being present as something that is not an array,
+    ///   reads as "no children" — what `slopdesk_workspace::persist::decode_raw_node` answers with
+    ///   `.and_then(Json::array).unwrap_or_default()`. `decodeIfPresent([RawWeightedChild].self, …)`
+    ///   was the same trap as the id and the axis above: a present-but-wrong-shaped value THROWS
+    ///   past the `??`, and the throw cost the user the whole `TreeWorkspace` plus a `.corrupt`
+    ///   sidecar.
+    /// - A child that IS in the array still decodes strictly, and anything it throws propagates. A
+    ///   malformed element is an error in Rust too ("a split child has no node"), and it has to
+    ///   be: a `try?` here would drop one pane out of an otherwise decodable arrangement and report
+    ///   success. A pane that silently vanishes is worse than a load that visibly refuses.
+    ///
+    /// What the tolerant container COSTS, stated rather than sold as free: an unreadable `children`
+    /// leaves the split empty, `normalized()` drops an empty split, and if that split was the tab's
+    /// root the tab comes back as one fresh blank pane. The malformed value described no panes to
+    /// begin with — there is nothing under a `5` to recover — so what is actually lost is the seam,
+    /// and at the root the tab's arrangement. Bounded to one subtree, where the throw it replaces
+    /// cost every session, tab and split in the file.
+    private static func decodeChildren(of split: KeyedDecodingContainer<SplitKeys>) throws -> [WeightedChild] {
+        guard var unkeyed = try? split.nestedUnkeyedContainer(forKey: .children) else { return [] }
+        var children: [WeightedChild] = []
+        // WeightedChild decodes recursively (each `node` re-enters decodeRaw via its own init).
+        while !unkeyed.isAtEnd {
+            try children.append(unkeyed.decode(RawWeightedChild.self).child)
+        }
+        return children
     }
 }
 
@@ -124,7 +174,14 @@ private struct RawWeightedChild: Decodable {
 
     init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        let weight = try container.decodeIfPresent(SplitWeight.self, forKey: .weight) ?? .flex(1)
+        // The weight is the one field a repair can invent a right answer for, so an unreadable one
+        // folds to the equal share rather than failing the load — `decode_weight`'s trailing
+        // `SplitWeight::Flex(1.0)`. `SplitWeight.init(from:)` is already tolerant of a wrong-TYPED
+        // value under a key, but it cannot help when the weight is not an object at all
+        // (`"weight": 5`): its `container(keyedBy:)` throws before any of its own `try?`s run, and
+        // `decodeIfPresent` propagated that straight past the `?? .flex(1)` written next to it. A
+        // lost divider position costs one drag; the throw it replaces cost the whole file.
+        let weight = (try? container.decode(SplitWeight.self, forKey: .weight)) ?? .flex(1)
         // Decode the node's RAW shape (no repair) via a nested decoder.
         let nodeDecoder = try container.superDecoder(forKey: .node)
         let node = try SplitNode.rawNode(from: nodeDecoder)

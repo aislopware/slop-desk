@@ -229,10 +229,7 @@ public enum WorkspaceIntentArgs {
     public static func encode(detachedPane: PaneID, kind: PaneKind, video: VideoEndpoint?) -> Data {
         var out = WorkspaceStateCodec.encodeUUID(detachedPane.raw)
         out.append(WorkspacePaneKindTag.byte(for: kind))
-        let blob = video.map { WorkspaceStateCodec.encodeVideoTarget($0) } ?? Data()
-        out.append(UInt8(truncatingIfNeeded: blob.count >> 8))
-        out.append(UInt8(truncatingIfNeeded: blob.count))
-        out.append(blob)
+        appendBlob(video.map { WorkspaceStateCodec.encodeVideoTarget($0) } ?? Data(), to: &out)
         return out
     }
 
@@ -243,10 +240,7 @@ public enum WorkspaceIntentArgs {
     /// distinct from "the bytes did not decode".
     public static func encode(pane: PaneID, video: VideoEndpoint?) -> Data {
         var out = WorkspaceStateCodec.encodeUUID(pane.raw)
-        let blob = video.map { WorkspaceStateCodec.encodeVideoTarget($0) } ?? Data()
-        out.append(UInt8(truncatingIfNeeded: blob.count >> 8))
-        out.append(UInt8(truncatingIfNeeded: blob.count))
-        out.append(blob)
+        appendBlob(video.map { WorkspaceStateCodec.encodeVideoTarget($0) } ?? Data(), to: &out)
         return out
     }
 
@@ -276,6 +270,32 @@ public enum WorkspaceIntentArgs {
             out.append(UInt8(truncatingIfNeeded: bits >> UInt64(shift)))
         }
         return out
+    }
+
+    /// Appends `blob` behind its `u16` big-endian length, writing exactly the number of bytes that
+    /// length DECLARES.
+    ///
+    /// The port of `slopdesk_wire::document::intent::put_blob`, and it closes what this file used to
+    /// do at both of its call sites: write a WRAPPED length (`count >> 8`, `count`) and then append
+    /// every byte regardless. Past 64 KiB the two disagree, and a length that lies is not a big
+    /// blob — it is a MIS-SPLIT FRAME: the decoder stops the blob early and reads its tail as the
+    /// next field, or runs past it into the next one. Clamping the length and cutting the payload to
+    /// it keeps the frame self-consistent whatever the caller hands over.
+    ///
+    /// The fix is invisible in the golden vectors on purpose, and that is the point rather than a
+    /// gap in them: ``maxBlobBytes`` (16 KiB) refuses anything remotely this large on the way back
+    /// in, so no payload a real client sends is within four times of the boundary and every pinned
+    /// byte sequence is unchanged. What moves is only the pathological case, and it moves from "a
+    /// frame that decodes as something else" to "a frame that decodes to a truncated blob the host
+    /// then rejects" — a refusal instead of a corruption.
+    ///
+    /// One helper for both call sites rather than the two identical copies that were here: two
+    /// copies is exactly how one of them gets fixed alone.
+    private static func appendBlob(_ blob: Data, to out: inout Data) {
+        let declared = UInt16(clamping: blob.count)
+        out.append(UInt8(truncatingIfNeeded: declared >> 8))
+        out.append(UInt8(truncatingIfNeeded: declared))
+        out.append(blob.prefix(Int(declared)))
     }
 
     private static func encodeName(_ name: String) -> Data {
