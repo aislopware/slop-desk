@@ -30,8 +30,6 @@ struct TerminalLeafView: View {
     let live: LivePaneSession?
     /// Workspace focus → drives the production renderer's first responder (only the focused pane types).
     let isFocused: Bool
-    /// EAGER/STATIC render path for headless ImageRenderer snapshots.
-    var staticMirror: Bool = false
 
     /// The host-reported working directory (`pane/cwd`, live-set from OSC 7)
     /// for the bottom status bar's left field. Resolved by ``PaneContainer`` from the store's spec so it stays
@@ -140,8 +138,7 @@ struct TerminalLeafView: View {
     /// The terminal pixels (the seam) — production renderer if the app registered one, else the headless
     /// placeholder. This library NEVER imports libghostty/Metal: it only calls the factory seam. The vi-mode
     /// pill, `🔒 READ ONLY ×` pill and ⌘F find bar float top-trailing OVER the surface (none reflow the buffer),
-    /// stacked in one overlay so they never collide; the vi key-hint bar floats along the bottom — never in the
-    /// static-mirror snapshot path.
+    /// stacked in one overlay so they never collide; the vi key-hint bar floats along the bottom.
     private var terminalSurface: some View {
         ZStack(alignment: .topLeading) {
             if let model = live?.terminalModel {
@@ -151,7 +148,7 @@ struct TerminalLeafView: View {
                 // receive a keystroke at all. Zero-sized and touch-transparent — it holds first
                 // responder, the accessory row and the press handlers, nothing visual.
                 #if os(iOS)
-                if !staticMirror, let live {
+                if let live {
                     TerminalInputHost(live: live, focusCoordinator: store.focusCoordinator)
                         .frame(width: 0, height: 0)
                         .allowsHitTesting(false)
@@ -169,35 +166,26 @@ struct TerminalLeafView: View {
                 // top-leading ZStack), so the cell metrics (origin 0,0 = surface top-left) map straight to
                 // the Canvas. Inert unless the renderer set `linkHighlightActive` (macOS ⌘); a placeholder
                 // surface doesn't conform to the viewport seam, so it draws nothing.
-                if !staticMirror {
-                    LinkHighlightOverlay(model: model, cwd: cwd)
-                }
+                LinkHighlightOverlay(model: model, cwd: cwd)
                 // The prompt-jump landed flash — one ~240ms accent fade over the row libghostty pinned
                 // the jumped-to prompt at, anchoring the eye after the viewport hard-cuts. Also a
                 // DECORATION overlay coincident with the surface; inert until a jump settles.
-                if !staticMirror {
-                    PromptJumpFlashOverlay(model: model)
-                }
+                PromptJumpFlashOverlay(model: model)
                 // The copy-mode block cursor — one accent-outlined cell at the vi cursor (the
                 // selection itself renders natively via the fork's set_selection ABI). Also a DECORATION
                 // overlay coincident with the surface; inert outside copy-mode / when the cursor is
                 // scrolled off-viewport / over a placeholder surface.
-                if !staticMirror {
-                    ViCursorOverlay(model: model)
-                }
+                ViCursorOverlay(model: model)
                 // The Vimium Hint Mode overlay — dims the surface + draws yellow 2-letter
                 // labels when armed (⌘⇧J open / ⌘⇧Y copy / reveal). Also a DECORATION overlay coincident with the
                 // surface (origin 0,0). Inert unless the renderer armed `hintMode` (or an iOS tap-on-label); a
                 // placeholder surface draws nothing.
-                if !staticMirror {
-                    HintModeOverlay(model: model)
-                }
+                HintModeOverlay(model: model)
                 // The Command Navigator (⌃⌘O) — a scrimmed, centered card listing the pane's
                 // recent OSC-133 command blocks (search + All/Failed/Bookmarked filter), jumping the scrollback
                 // on ↩. Toggled by `onRequestBlockNavigator` (wired in `wireNavigatorCallbacks`); the store fires
-                // that only on the ACTIVE pane, so this card only mounts over the focused pane. Never in the
-                // static-mirror path.
-                if !staticMirror, navigatorChrome.isVisible {
+                // that only on the ACTIVE pane, so this card only mounts over the focused pane.
+                if navigatorChrome.isVisible {
                     CommandNavigatorView(
                         model: model,
                         store: store,
@@ -219,19 +207,17 @@ struct TerminalLeafView: View {
         // hides under nothing" from the same prose and being right by luck.
         .overlay(alignment: .topTrailing) {
             VStack(alignment: .trailing, spacing: Slate.Metric.space2) {
-                if !staticMirror, PaneStatusPillPresentation.showsViModePill(pillConditions),
+                if PaneStatusPillPresentation.showsViModePill(pillConditions),
                    let model = live?.terminalModel
                 {
                     ViModePill(model: model, onExit: { model.exitCopyMode() })
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
-                if !staticMirror {
-                    ForEach(visiblePills, id: \.self) { pill in
-                        PaneStatusPillView(pill: pill, onDismiss: { dismiss(pill) })
-                            .transition(.move(edge: .top).combined(with: .opacity))
-                    }
+                ForEach(visiblePills, id: \.self) { pill in
+                    PaneStatusPillView(pill: pill, onDismiss: { dismiss(pill) })
+                        .transition(.move(edge: .top).combined(with: .opacity))
                 }
-                if !staticMirror, findBar.visible, live?.terminalModel != nil {
+                if findBar.visible, live?.terminalModel != nil {
                     TerminalFindBar(model: findBar)
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
@@ -242,7 +228,7 @@ struct TerminalLeafView: View {
         // session — the gate is `copyModeBadgeActive`-first, so it tears down the instant vi mode exits
         // (which also resets `showViKeyHints`).
         .overlay(alignment: .bottom) {
-            if !staticMirror, showViHintBar {
+            if showViHintBar {
                 ViKeyHintBar()
                     .padding(Slate.Metric.space2)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -525,7 +511,6 @@ struct TerminalLeafView: View {
     }
 
     private func connectIfNeeded() async {
-        guard !staticMirror else { return }
         // The key above already encodes the hold, and SwiftUI runs the task for the `nil` key too —
         // so the gate is re-asserted here rather than relied upon as a scheduling accident.
         guard store.panesMayDial else { return }

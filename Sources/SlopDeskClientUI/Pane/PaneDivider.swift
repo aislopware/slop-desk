@@ -41,9 +41,6 @@ struct PaneDivider: View {
     /// this handle's `(splitID, childIndex)` — never the whole-tab `balanceActivePaneSplits` reset.
     var onReset: () -> Void = {}
 
-    /// The drawn hairline thickness (the hit band is the handle rect; the line is thinner + crisp).
-    private let hairline: CGFloat = 1
-
     /// `true` for the duration of the gesture. SwiftUI auto-resets `@GestureState` on end/cancel/interrupt, so
     /// the end-cleanup (unsuspend + commit) can NEVER be skipped by a cancelled drag.
     @GestureState private var gestureActive = false
@@ -60,7 +57,11 @@ struct PaneDivider: View {
                 // The pane-seam line INSIDE the island: the profile's edge tone, one step off the
                 // glass — the JetBrains-Islands internal divider, never a chrome-coloured gap.
                 color: gestureActive ? Slate.State.accent : Slate.Terminal.edge,
-                thickness: gestureActive ? Slate.Metric.dividerHoverWidth : hairline,
+                // Both thicknesses are the ladder's, and the resting one used to be a `private let
+                // hairline: CGFloat = 1` on this struct — the same value `Slate.Metric.hairline`
+                // already carried, spelled a second time one floor up. The hit band is the handle
+                // rect either way; only the drawn line moves.
+                thickness: gestureActive ? Slate.Metric.dividerHoverWidth : Slate.Metric.hairline,
             )
         }
         .frame(width: handle.rect.width, height: handle.rect.height)

@@ -20,6 +20,15 @@
 // EVERY READING IS ABSENT, NEVER WRONG: a stat with no sample yet prints `—` rather than `0`, and a
 // stall with no epoch prints `RECONNECTING` with no age rather than `· 0S`. A zero that means "no
 // reading" is the one lie an instrument readout must not tell.
+//
+// THREE OF THE GATES BELOW USED TO TAKE A FOURTH INPUT THAT NO CALLER EVER SET. `showsControlBar`,
+// `isDesktopUploadTarget` and `showsReadOnlyPill` each began `!staticMirror && …`, for a headless
+// `ImageRenderer` snapshot path that reached them as a defaulted `SplitContainer` parameter threaded
+// down through `PaneContainer`. Nothing in `Sources/`, `Apps/` or `ThirdParty/` ever passed `true` —
+// the only `true` in the tree was in these gates' own tests, which is a branch kept alive by the
+// suite that pinned it. Deleted whole in increment 56d, ratcheted by `check-supervisor.sh`. If a
+// snapshot renderer is ever wanted again it gets ONE gate where the render starts, not a flag that
+// every predicate under the canvas has to carry and every AppKit rewrite has to re-type.
 
 import Foundation
 import SlopDeskWorkspaceCore
@@ -179,20 +188,21 @@ package enum GuiPaneReadout {
 
     // MARK: Gates
 
-    /// Whether the `🔒 READ ONLY ×` pill mounts: the pane is read-only AND this is not the
-    /// static-mirror snapshot path (an `ImageRenderer` capture renders no live chrome).
+    /// Whether the `🔒 READ ONLY ×` pill mounts: the pane is read-only.
     ///
     /// Mirrors the terminal leaf's read-only gate minus the vi/copy-mode exclusion — a video pane has
-    /// no copy mode to step aside for.
-    package static func showsReadOnlyPill(staticMirror: Bool, isReadOnly: Bool) -> Bool {
-        !staticMirror && isReadOnly
+    /// no copy mode to step aside for. Kept as a NAMED gate rather than inlined at the one call site
+    /// that reads it today: it is the question an AppKit canvas will ask next, and a pill that is a
+    /// visual peer of the terminal's has to answer it the same way, once.
+    package static func showsReadOnlyPill(isReadOnly: Bool) -> Bool {
+        isReadOnly
     }
 
-    /// Whether the bottom CONTROL bar mounts — only while the LIVE surface is up and not on the
-    /// static-mirror path. Its verbs (resize / lock / zoom) are meaningful only against a live stream,
-    /// so the picker and cap-gated states show no footer.
-    package static func showsControlBar(staticMirror: Bool, hasLiveDescriptor: Bool) -> Bool {
-        !staticMirror && hasLiveDescriptor
+    /// Whether the bottom CONTROL bar mounts — only while the LIVE surface is up. Its verbs
+    /// (resize / lock / zoom) are meaningful only against a live stream, so the picker and cap-gated
+    /// states show no footer.
+    package static func showsControlBar(hasLiveDescriptor: Bool) -> Bool {
+        hasLiveDescriptor
     }
 
     /// Whether any LATCHED pane mode is engaged — the states whose accent tint the control bar carries
@@ -214,10 +224,8 @@ package enum GuiPaneReadout {
     /// The gesture is "drop onto the remote desktop", so a window/dialog pane is not a target: it has
     /// no desktop to drop onto, and lighting the border there would promise an upload that cannot
     /// happen.
-    package static func isDesktopUploadTarget(
-        staticMirror: Bool, kind: PaneKind?, hasLiveDescriptor: Bool,
-    ) -> Bool {
-        !staticMirror && kind == .desktop && hasLiveDescriptor
+    package static func isDesktopUploadTarget(kind: PaneKind?, hasLiveDescriptor: Bool) -> Bool {
+        kind == .desktop && hasLiveDescriptor
     }
 
     /// The video activation `.task` identity: re-run cap admission when THIS session changes (a mount),

@@ -36,6 +36,17 @@ final class PaneDropGeometryTests: XCTestCase {
         )
     }
 
+    /// The PREVIEW's own two numbers, and the relationship that is the actual rule: the drawn rail is
+    /// WIDER than the gutter that resolved the dock. Equal terms would show a 28pt sliver for an op
+    /// that takes a whole column; a NARROWER rail would draw a promise smaller than the region the
+    /// cursor is already inside.
+    func testTheDockRailIsDrawnWiderThanTheGutterThatResolvedIt() {
+        XCTAssertEqual(PaneDropMetrics.dockRailFraction, 0.12, accuracy: 1e-9)
+        XCTAssertEqual(PaneDropMetrics.dockRailMax, 48, accuracy: 1e-9)
+        XCTAssertGreaterThan(PaneDropMetrics.dockRailFraction, PaneDropMetrics.containerGutterFraction)
+        XCTAssertGreaterThan(PaneDropMetrics.dockRailMax, PaneDropMetrics.containerGutterMax)
+    }
+
     // MARK: - `containerEdge`: the gutter width
 
     /// `min(28, min(w, h) · 0.06)`, and on a big canvas the cap is what answers. Without it a 4K
@@ -230,6 +241,175 @@ final class PaneDropGeometryTests: XCTestCase {
         XCTAssertEqual(PaneDropGeometry.dominantEdge(u: 0.5, v: 0.5, band: 0.5), .left)
         XCTAssertEqual(PaneDropGeometry.dominantEdge(u: 0.6, v: 0.5, band: 0.5), .right)
         XCTAssertEqual(PaneDropGeometry.dominantEdge(u: 0.5, v: 0.9, band: 0.5), .bottom)
+    }
+
+    // MARK: - `slabRect`: the half you GET, not the band you AIMED at
+
+    private let target = CGRect(x: 100, y: 200, width: 400, height: 300)
+
+    /// Each edge takes its own half of the target, in the target's own coordinate space (these rects
+    /// are drawn in the compositor space the leaf frames are already in, so the origin is not zero
+    /// and a slab that forgot that would draw over the wrong pane entirely).
+    func testSlabTakesTheDropSideHalf() {
+        XCTAssertEqual(
+            PaneDropGeometry.slabRect(in: target, edge: .left),
+            CGRect(x: 100, y: 200, width: 200, height: 300),
+        )
+        XCTAssertEqual(
+            PaneDropGeometry.slabRect(in: target, edge: .right),
+            CGRect(x: 300, y: 200, width: 200, height: 300),
+        )
+        XCTAssertEqual(
+            PaneDropGeometry.slabRect(in: target, edge: .top),
+            CGRect(x: 100, y: 200, width: 400, height: 150),
+        )
+        XCTAssertEqual(
+            PaneDropGeometry.slabRect(in: target, edge: .bottom),
+            CGRect(x: 100, y: 350, width: 400, height: 150),
+        )
+    }
+
+    /// The two slabs of an axis TILE the target: no gap, no overlap, and together exactly the pane.
+    /// That is what makes the preview honest about a re-split — the op produces two children that
+    /// partition their parent, and a preview drawn at any other fraction would promise a ratio the
+    /// tree never lands on.
+    func testOpposedSlabsPartitionTheTargetExactly() {
+        for (near, far) in [(PaneDropEdge.left, PaneDropEdge.right), (.top, .bottom)] {
+            let a = PaneDropGeometry.slabRect(in: target, edge: near)
+            let b = PaneDropGeometry.slabRect(in: target, edge: far)
+            XCTAssertEqual(a.union(b), target, "\(near)/\(far) must cover the pane")
+            XCTAssertFalse(a.intersects(b), "\(near)/\(far) must not overlap")
+        }
+    }
+
+    /// HALF, and pointedly not ``PaneDropMetrics/edgeBandFraction``. The band is where you aim; the
+    /// half is what you get. Wiring the slab to the band would preview a 30/70 split for an op that
+    /// performs 50/50, and it would look deliberate.
+    func testTheSlabIsAHalfAndNotTheEdgeBand() {
+        let slab = PaneDropGeometry.slabRect(in: target, edge: .left)
+        XCTAssertEqual(slab.width, target.width / 2, accuracy: 1e-9)
+        XCTAssertNotEqual(
+            slab.width, target.width * PaneDropMetrics.edgeBandFraction, accuracy: 1e-9,
+        )
+    }
+
+    // MARK: - The seam: on the slab's INNER edge, spanning it whole
+
+    /// The bar is ``PaneDropMetrics/resplitSeamThickness`` on the split axis and the slab's FULL
+    /// length on the cross axis. A seam short of its own edge reads as a handle rather than as the
+    /// divider the split is about to place.
+    func testSeamIsThinOnTheSplitAxisAndFullOnTheOther() {
+        let vertical = PaneDropGeometry.slabRect(in: target, edge: .left)
+        XCTAssertEqual(
+            PaneDropGeometry.seamSize(vertical, edge: .left),
+            CGSize(width: PaneDropMetrics.resplitSeamThickness, height: vertical.height),
+        )
+        let horizontal = PaneDropGeometry.slabRect(in: target, edge: .top)
+        XCTAssertEqual(
+            PaneDropGeometry.seamSize(horizontal, edge: .top),
+            CGSize(width: horizontal.width, height: PaneDropMetrics.resplitSeamThickness),
+        )
+    }
+
+    /// The seam sits on the boundary FACING THE REST OF THE TARGET — which is the target's own
+    /// midline, since the slab is a half. Both halves of one axis therefore put their seam at the
+    /// same place, which is the point: the divider lands there whichever side you dropped on.
+    func testSeamCentreIsTheTargetMidlineForBothSidesOfAnAxis() {
+        for edge in [PaneDropEdge.left, .right] {
+            let slab = PaneDropGeometry.slabRect(in: target, edge: edge)
+            XCTAssertEqual(
+                PaneDropGeometry.seamCenter(slab, edge: edge),
+                CGPoint(x: target.midX, y: target.midY), "the \(edge) seam is the vertical midline",
+            )
+        }
+        for edge in [PaneDropEdge.top, .bottom] {
+            let slab = PaneDropGeometry.slabRect(in: target, edge: edge)
+            XCTAssertEqual(
+                PaneDropGeometry.seamCenter(slab, edge: edge),
+                CGPoint(x: target.midX, y: target.midY), "the \(edge) seam is the horizontal midline",
+            )
+        }
+    }
+
+    /// And it is INSIDE the slab it belongs to, never on its outer edge. Mirroring
+    /// ``PaneDropGeometry/slabRect(in:edge:)``'s switch by hand is exactly how a renderer would get
+    /// this backwards, and the result — a bar hard against the pane's outer border — reads as a
+    /// rendering artefact rather than as a wrong preview.
+    func testSeamIsOnTheInnerBoundaryNotTheOuterOne() {
+        let left = PaneDropGeometry.slabRect(in: target, edge: .left)
+        XCTAssertEqual(PaneDropGeometry.seamCenter(left, edge: .left).x, left.maxX, accuracy: 1e-9)
+        let right = PaneDropGeometry.slabRect(in: target, edge: .right)
+        XCTAssertEqual(PaneDropGeometry.seamCenter(right, edge: .right).x, right.minX, accuracy: 1e-9)
+        let top = PaneDropGeometry.slabRect(in: target, edge: .top)
+        XCTAssertEqual(PaneDropGeometry.seamCenter(top, edge: .top).y, top.maxY, accuracy: 1e-9)
+        let bottom = PaneDropGeometry.slabRect(in: target, edge: .bottom)
+        XCTAssertEqual(PaneDropGeometry.seamCenter(bottom, edge: .bottom).y, bottom.minY, accuracy: 1e-9)
+    }
+
+    // MARK: - `railRect`: the dock preview, and the gutter it must contain
+
+    /// `min(48, min(w, h) · 0.12)` — the cap answers on a big canvas, the fraction below it, and the
+    /// SHORT side is what the fraction reads. Same shape as the gutter's clamp, different numbers.
+    func testRailThicknessIsCappedThenProportionalToTheShortSide() {
+        XCTAssertEqual(PaneDropGeometry.railRect(in: wide, edge: .left).width, 48, accuracy: 1e-9)
+        let small = CGRect(x: 0, y: 0, width: 200, height: 100)
+        XCTAssertEqual(PaneDropGeometry.railRect(in: small, edge: .top).height, 12, accuracy: 1e-9)
+    }
+
+    /// A rail is PINNED to its edge and spans the container whole on the cross axis — the shape of
+    /// the op it previews, which makes the pane a full-span column or row on that edge. The trailing
+    /// two are the ones an off-by-one hits: they are placed at `max - t`, not at `max`.
+    func testRailIsPinnedToItsEdgeAndSpansTheCrossAxis() {
+        XCTAssertEqual(
+            PaneDropGeometry.railRect(in: wide, edge: .left),
+            CGRect(x: 0, y: 0, width: 48, height: 1000),
+        )
+        XCTAssertEqual(
+            PaneDropGeometry.railRect(in: wide, edge: .right),
+            CGRect(x: 1952, y: 0, width: 48, height: 1000),
+        )
+        XCTAssertEqual(
+            PaneDropGeometry.railRect(in: wide, edge: .top),
+            CGRect(x: 0, y: 0, width: 2000, height: 48),
+        )
+        XCTAssertEqual(
+            PaneDropGeometry.railRect(in: wide, edge: .bottom),
+            CGRect(x: 0, y: 952, width: 2000, height: 48),
+        )
+    }
+
+    /// THE ROUND TRIP, and the one assertion that ties the two halves of this file together: every
+    /// point that RESOLVES to a dock is inside the rail that dock DRAWS. Resolution and preview are
+    /// separate arithmetic with separate constants, so nothing but this stops them drifting into a
+    /// canvas that docks from 28pt in while showing a band that starts at 12.
+    func testEveryPointThatResolvesToADockLiesInsideTheRailItDraws() {
+        for box in [wide, canvas, CGRect(x: 0, y: 0, width: 200, height: 100)] {
+            for probe in [
+                CGPoint(x: box.minX + 0.5, y: box.midY), CGPoint(x: box.maxX - 0.5, y: box.midY),
+                CGPoint(x: box.midX, y: box.minY + 0.5), CGPoint(x: box.midX, y: box.maxY - 0.5),
+            ] {
+                guard let edge = PaneDropGeometry.containerEdge(
+                    at: probe, container: box, sourceRect: nil,
+                ) else {
+                    XCTFail("a point half a point inside \(box) resolved to no dock edge")
+                    continue
+                }
+                XCTAssertTrue(
+                    PaneDropGeometry.railRect(in: box, edge: edge).contains(probe),
+                    "\(probe) docks \(edge) in \(box) but falls outside the rail that previews it",
+                )
+            }
+        }
+    }
+
+    /// A container with no area draws no rail rather than dividing by it — the same fail-quiet the
+    /// gutter takes, since a canvas is momentarily zero-sized on the first layout pass.
+    func testDegenerateContainerDrawsAZeroRail() {
+        XCTAssertEqual(PaneDropGeometry.railRect(in: .zero, edge: .left), .zero)
+        XCTAssertEqual(
+            PaneDropGeometry.railRect(in: CGRect(x: 0, y: 0, width: 0, height: 600), edge: .top).height,
+            0, accuracy: 1e-9,
+        )
     }
 }
 

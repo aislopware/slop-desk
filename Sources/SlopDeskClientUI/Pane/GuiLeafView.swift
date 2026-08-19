@@ -36,9 +36,6 @@ struct GuiLeafView: View {
     /// Workspace focus → forwarded as `RemotePaneContext.isActive` so only the focused pane consumes
     /// pointer/keyboard input; a click on a background pane activates it via `onActivate`.
     let isFocused: Bool
-    /// EAGER/STATIC render path for headless ImageRenderer snapshots — renders the placeholder, never a
-    /// live decode (no Metal/VT in an `ImageRenderer`).
-    var staticMirror: Bool = false
     /// The store — the cap-admission authority (`activateVideo`/`deactivateVideo`) and the focus sink.
     let store: WorkspaceStore
     /// This pane's id — the activation + focus key.
@@ -46,7 +43,7 @@ struct GuiLeafView: View {
     /// Whether this video pane is ON-SCREEN (tab active AND not zoom-hidden). Under the keep-all-mounted
     /// invariant a hidden tab's leaf is NEVER unmounted, so `onDisappear` does not fire on a tab switch — this
     /// flag drives the activation lifecycle: a hidden pane releases its `liveVideoCap` slot
-    /// + stops the UDP/VT/Metal pipeline, a visible one (re)requests a slot. Defaults `true` for static-mirror / preview.
+    /// + stops the UDP/VT/Metal pipeline, a visible one (re)requests a slot. Defaults `true` for a preview.
     var isVisible: Bool = true
     /// BACKGROUND INTERACTION (satellite windows): the user setting behind the background-pointer
     /// grant. Observed via `@Default` so a Settings flip re-renders the leaf and re-threads the seam
@@ -128,7 +125,7 @@ struct GuiLeafView: View {
             // directly — the store enforces the cap + tearingDownVideo accounting. iOS resume re-activates
             // `wasVideoActiveBeforePause` in `LivePaneSession.resume`, so this is idempotent there.
             .task(id: activationKey) {
-                guard !staticMirror, model != nil, isVisible else { return }
+                guard model != nil, isVisible else { return }
                 _ = store.activateVideo(paneID)
                 // A remount (detach/reattach) may find the model's sinks ALREADY live — then neither
                 // `canInjectSystemKeys` nor `isFocused` fires an onChange edge, so the mount itself must
@@ -139,12 +136,11 @@ struct GuiLeafView: View {
             // unmounted, so `onDisappear` does NOT fire on a tab switch — driving (de)activation off `isVisible`
             // frees the slot + stops the decode pipeline off-screen and re-activates on return. (Zoom collapse too.)
             .onChange(of: isVisible) { _, nowVisible in
-                guard !staticMirror, model != nil else { return }
+                guard model != nil else { return }
                 if nowVisible { _ = store.activateVideo(paneID) } else { store.deactivateVideo(paneID) }
             }
             // Belt-and-braces: a genuine unmount (pane close before reconcile teardown) also frees the slot.
             .onDisappear {
-                guard !staticMirror else { return }
                 // An unmounted pane must never keep swallowing the keyboard — but an unmount must NOT
                 // clear the model's immersive WISH either (a detach/reattach remount re-engages from it),
                 // which is the distinction ``PaneImmersiveCapture/teardown()`` carries.
@@ -227,9 +223,9 @@ struct GuiLeafView: View {
             .animation(Slate.Anim.reveal, value: controlsExpanded)
             // PASTE-AS-KEYSTROKES RESULT BANNER: the model's transient "typed N, skipped M" feedback (set only
             // when some clipboard chars had no US-QWERTY mapping and were dropped) so the user learns a paste was
-            // incomplete. Tap to dismiss; auto-clears on a timer. Never on the static-mirror path. Flat bottom pill.
+            // incomplete. Tap to dismiss; auto-clears on a timer. Flat bottom pill.
             .overlay(alignment: .bottom) {
-                if !staticMirror, let feedback = model?.pasteFeedback {
+                if let feedback = model?.pasteFeedback {
                     PasteFeedbackBanner(feedback: feedback) { model?.dismissPasteFeedback() }
                         .padding(
                             .bottom,
@@ -247,11 +243,9 @@ struct GuiLeafView: View {
             // feedback and no exit affordance. A video pane has no ``TerminalViewModel`` (no `exitReadOnly()`), so
             // `×` releases the lock via ``WorkspaceStore/setPaneReadOnly(_:_:)`` — the SAME source of truth the input
             // gate, View-menu item, and sidebar lock read. Gated by the pure
-            // ``GuiPaneReadout/showsReadOnlyPill(staticMirror:isReadOnly:)`` (never on the static path).
+            // ``GuiPaneReadout/showsReadOnlyPill(isReadOnly:)``.
             .overlay(alignment: .topTrailing) {
-                if GuiPaneReadout.showsReadOnlyPill(
-                    staticMirror: staticMirror, isReadOnly: store.isReadOnly(for: paneID),
-                ) {
+                if GuiPaneReadout.showsReadOnlyPill(isReadOnly: store.isReadOnly(for: paneID)) {
                     PaneStatusPillView(pill: .readOnly, onDismiss: { store.setPaneReadOnly(paneID, false) })
                         .transition(.move(edge: .top).combined(with: .opacity))
                         .padding(Slate.Metric.space2)
@@ -261,7 +255,7 @@ struct GuiLeafView: View {
             // STATS READOUT (footer toggle): the client-local telemetry chip — instrument voice, top-leading
             // (top-trailing belongs to the read-only pill), hit-testing off so it never eats pane input.
             .overlay(alignment: .topLeading) {
-                if showStats, !staticMirror, let model, model.active != nil {
+                if showStats, let model, model.active != nil {
                     GuiStatsReadout(model: model)
                         .allowsHitTesting(false)
                         .padding(Slate.Metric.space2)
@@ -297,7 +291,7 @@ struct GuiLeafView: View {
             // UPLOAD PROGRESS: a compact stack of in-flight/just-settled uploads, top-center (clear of
             // the read-only pill top-trailing and the stats readout top-leading). Hit-testing off.
             .overlay(alignment: .top) {
-                if !staticMirror, let model, !model.activeUploads.isEmpty {
+                if let model, !model.activeUploads.isEmpty {
                     FileUploadOverlay(uploads: model.activeUploads)
                         .allowsHitTesting(false)
                         .padding(Slate.Metric.space2)
@@ -313,10 +307,9 @@ struct GuiLeafView: View {
     /// sets the wish and ``PaneImmersiveCapture/isSupported`` keeps the chip off the bar entirely.
     private var immersiveActive: Bool { model?.immersiveEffective == true }
 
-    /// This pane's reading of ``GuiPaneReadout/isDesktopUploadTarget(staticMirror:kind:hasLiveDescriptor:)``.
+    /// This pane's reading of ``GuiPaneReadout/isDesktopUploadTarget(kind:hasLiveDescriptor:)``.
     private var isDesktopUploadTarget: Bool {
         GuiPaneReadout.isDesktopUploadTarget(
-            staticMirror: staticMirror,
             kind: store.tree.spec(for: paneID)?.kind,
             hasLiveDescriptor: model?.active != nil,
         )
@@ -331,9 +324,9 @@ struct GuiLeafView: View {
         )
     }
 
-    /// This pane's reading of ``GuiPaneReadout/showsControlBar(staticMirror:hasLiveDescriptor:)``.
+    /// This pane's reading of ``GuiPaneReadout/showsControlBar(hasLiveDescriptor:)``.
     private var showControlBar: Bool {
-        GuiPaneReadout.showsControlBar(staticMirror: staticMirror, hasLiveDescriptor: model?.active != nil)
+        GuiPaneReadout.showsControlBar(hasLiveDescriptor: model?.active != nil)
     }
 
     /// This pane's reading of ``GuiPaneReadout/hasLatchedMode(immersive:viewportLocked:audioEnabled:streamFpsCap:streamBitrateCeilingBps:)``
@@ -364,25 +357,20 @@ struct GuiLeafView: View {
     }
 
     @ViewBuilder private var content: some View {
-        if staticMirror {
-            // STATIC snapshot: never a live decode — the placeholder mirror only.
+        switch display {
+        case .live:
+            // The live surface fills the leaf rect edge-to-edge: the Metal-hosting view is sized to that rect,
+            // so its tracking area + pointer→host coordinate mapping (relative to view bounds) stays correct.
+            // The stream `.fit`-letterboxes inside; the remote window keeps its own size (no host-follow
+            // resize — see `SlopDeskVideoClientSession.windowFollowsPane`). Resize lives in the bottom
+            // CONTROL bar (`GuiPaneControlBar`), not an in-content corner grip.
+            liveSurface
+        case .entryForm:
+            // Every video pane's target is fixed at mint (a display, or the dialog monitor's fresh
+            // window id) — the transient pre-admission beat shows the calm placeholder.
             placeholder(.entryForm)
-        } else {
-            switch display {
-            case .live:
-                // The live surface fills the leaf rect edge-to-edge: the Metal-hosting view is sized to that rect,
-                // so its tracking area + pointer→host coordinate mapping (relative to view bounds) stays correct.
-                // The stream `.fit`-letterboxes inside; the remote window keeps its own size (no host-follow
-                // resize — see `SlopDeskVideoClientSession.windowFollowsPane`). Resize lives in the bottom
-                // CONTROL bar (`GuiPaneControlBar`), not an in-content corner grip.
-                liveSurface
-            case .entryForm:
-                // Every video pane's target is fixed at mint (a display, or the dialog monitor's fresh
-                // window id) — the transient pre-admission beat shows the calm placeholder.
-                placeholder(.entryForm)
-            case .gated:
-                placeholder(.gated)
-            }
+        case .gated:
+            placeholder(.gated)
         }
     }
 
@@ -473,8 +461,8 @@ struct GuiLeafView: View {
         }
     }
 
-    /// The native placeholder for the non-live states: the cap-gated "video paused" notice, or the bare
-    /// idle mirror used on the static snapshot path.
+    /// The native placeholder for the non-live states: the cap-gated "video paused" notice, or the
+    /// calm idle mirror of the pre-admission beat.
     private func placeholder(_ state: RemoteGUIDisplay) -> some View {
         VStack(spacing: Slate.Metric.space3) {
             Image(systemSymbol: .display)

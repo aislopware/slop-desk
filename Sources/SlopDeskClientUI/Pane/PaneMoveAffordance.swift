@@ -27,6 +27,12 @@
 // `NSEvent` monitor on the Mac and a first responder over the canvas on the phone — one behaviour,
 // two mechanisms) — and the ONE place a `PaneDropRegister.Mark` becomes artwork, which both of this
 // module's drop chips read so neither can grow a glyph table of its own.
+//
+// That list used to be the whole of it and was not: four `static func`s of rect math stayed behind
+// on `PaneMoveOverlay` for another increment, because they were members of a `View` and the census
+// that emptied this file counted files and import edges. They are `PaneDropGeometry`'s preview half
+// now (docs/56 increment 56c), and the rule the miss states is §3's own: the unit is the
+// DECLARATION. A `some View` is a view; a `CGRect` returned by a method on one is not.
 
 #if canImport(SwiftUI)
 import CSlopDeskFFI
@@ -75,26 +81,10 @@ extension View {
     }
 }
 
-// MARK: - The one place a drop MARK becomes artwork
-
-extension PaneDropRegister.Mark {
-    /// The SF Symbol this module draws for a drop mark. `SFSafeSymbols` is a dependency of this target
-    /// and of `SlopDeskSlate`, deliberately not of `SlopDeskClientCore` — the register answers in
-    /// outcomes and each renderer names its own artwork. Both of this module's drop chips (the canvas
-    /// overlay's ghost chip below, and ``PaneDragChipPanel``'s cross-window capsule) come through here,
-    /// so a new mark cannot reach one of them and miss the other.
-    var symbol: SFSymbol {
-        switch self {
-        case .cancel: .xmark
-        case .swap: .rectangle2Swap
-        case .splitColumns: .rectangleSplit2x1
-        case .splitRows: .rectangleSplit1x2
-        case .beside: .rectangleStack
-        case .newTab: .plusSquareOnSquare
-        case .newWindow: .macwindow
-        }
-    }
-}
+// The `PaneDropRegister.Mark` → `SFSymbol` table used to sit here. It is `Slate/PaneDropMarkArt.swift`
+// now (increment 56e): the cross-window capsule it also fed became AppKit, so a table that could stay in
+// one renderer while both chips were SwiftUI would have had to be spelled twice the moment one of them
+// was not. See that file for why the floor is the right home rather than either half.
 
 /// The per-leaf top grab handle. Reveals a `-` pill on hover; the drag reports its live cursor location to
 /// `SplitContainer` (which resolves the zone + commits on `.onEnded`).
@@ -262,7 +252,8 @@ struct PaneMoveOverlay: View {
     /// RE-SPLIT: an accent SLAB over the drop-side HALF of the target, with a bright seam line on the inner
     /// boundary where the new divider lands — the user literally sees a column vs a row form.
     static func slabPreview(in rect: CGRect, edge: PaneDropEdge) -> some View {
-        let slab = Self.slabRect(in: rect, edge: edge)
+        let slab = PaneDropGeometry.slabRect(in: rect, edge: edge)
+        let seam = PaneDropGeometry.seamSize(slab, edge: edge)
         return ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: Slate.Metric.radiusCard)
                 .fill(Slate.State.accentMuted)
@@ -272,18 +263,18 @@ struct PaneMoveOverlay: View {
                 )
                 .frame(width: slab.width, height: slab.height)
                 .position(x: slab.midX, y: slab.midY)
-            // The seam: a 3pt accent bar on the slab's INNER edge (the would-be new divider).
+            // The seam: an accent bar on the slab's INNER edge (the would-be new divider).
             Capsule()
                 .fill(Slate.State.accent)
-                .frame(width: Self.seamSize(slab, edge: edge).width, height: Self.seamSize(slab, edge: edge).height)
-                .position(Self.seamCenter(slab, edge: edge))
+                .frame(width: seam.width, height: seam.height)
+                .position(PaneDropGeometry.seamCenter(slab, edge: edge))
         }
     }
 
     /// DOCK: a full-length accent RAIL pinned to the whole container edge — "full span, tab-wide", visually
     /// distinct from the per-pane half-slab.
     static func railPreview(in container: CGRect, edge: PaneDropEdge) -> some View {
-        let rail = Self.railRect(in: container, edge: edge)
+        let rail = PaneDropGeometry.railRect(in: container, edge: edge)
         return RoundedRectangle(cornerRadius: Slate.Metric.radiusCard)
             .fill(Slate.State.accentMuted)
             .overlay(
@@ -310,8 +301,12 @@ struct PaneMoveOverlay: View {
         }
     }
 
+    /// The in-canvas twin of ``MacPaneDragChipPanel``'s capsule. Every number below is
+    /// ``Slate/DropChip``'s, and that is not tidiness — both chips can be on screen in one drag (this one
+    /// while the cursor is over the canvas, the panel's the moment it leaves), so a user can compare
+    /// them directly and any drift reads as a glitch.
     private var ghostChip: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: Slate.DropChip.glyphGap) {
             Image(systemSymbol: PaneDropRegister.mark(for: drag.zone).symbol)
                 .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
             Text(PaneDropRegister.label(for: drag.zone, title: sourceTitle))
@@ -319,16 +314,18 @@ struct PaneMoveOverlay: View {
                 .lineLimit(1)
         }
         .foregroundStyle(drag.zone == .none ? Slate.Text.tertiary : Slate.Text.primary)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(.horizontal, Slate.DropChip.padH)
+        .padding(.vertical, Slate.DropChip.padV)
         .background(
             Capsule(style: .continuous)
                 .fill(Slate.Surface.face)
                 .overlay(
                     Capsule(style: .continuous)
                         .strokeBorder(
-                            drag.zone == .none ? Slate.Text.tertiary.opacity(0.4) : Slate.State.accent,
-                            lineWidth: 1,
+                            drag.zone == .none
+                                ? Slate.Text.tertiary.opacity(Slate.DropChip.cancelRim)
+                                : Slate.State.accent,
+                            lineWidth: Slate.Metric.hairline,
                         ),
                 ),
         )
@@ -336,64 +333,13 @@ struct PaneMoveOverlay: View {
         .fixedSize()
     }
 
-    // MARK: Geometry helpers (pure rect math)
-
-    /// The drop-side HALF of `rect` for the re-split slab.
-    static func slabRect(in rect: CGRect, edge: PaneDropEdge) -> CGRect {
-        switch edge {
-        case .left:
-            CGRect(x: rect.minX, y: rect.minY, width: rect.width / 2, height: rect.height)
-        case .right:
-            CGRect(x: rect.midX, y: rect.minY, width: rect.width / 2, height: rect.height)
-        case .top:
-            CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height / 2)
-        case .bottom:
-            CGRect(x: rect.minX, y: rect.midY, width: rect.width, height: rect.height / 2)
-        }
-    }
-
-    /// The seam bar's size — a thin bar along the slab's INNER edge (cross-axis full length).
-    static func seamSize(_ slab: CGRect, edge: PaneDropEdge) -> CGSize {
-        switch edge {
-        case .left,
-             .right:
-            CGSize(width: 3, height: slab.height)
-        case .top,
-             .bottom:
-            CGSize(width: slab.width, height: 3)
-        }
-    }
-
-    /// The seam bar's centre — on the slab's inner boundary (the side facing the rest of the target).
-    static func seamCenter(_ slab: CGRect, edge: PaneDropEdge) -> CGPoint {
-        switch edge {
-        case .left:
-            CGPoint(x: slab.maxX, y: slab.midY)
-        case .right:
-            CGPoint(x: slab.minX, y: slab.midY)
-        case .top:
-            CGPoint(x: slab.midX, y: slab.maxY)
-        case .bottom:
-            CGPoint(x: slab.midX, y: slab.minY)
-        }
-    }
-
-    /// The dock rail band along the whole container edge.
-    static func railRect(in container: CGRect, edge: PaneDropEdge) -> CGRect {
-        let thickness = Double.minimum(48, Double.minimum(Double(container.width), Double(container.height)) * 0.12)
-        let t = CGFloat(thickness)
-        switch edge {
-        case .left:
-            return CGRect(x: container.minX, y: container.minY, width: t, height: container.height)
-        case .right:
-            return CGRect(x: container.maxX - t, y: container.minY, width: t, height: container.height)
-        case .top:
-            return CGRect(x: container.minX, y: container.minY, width: container.width, height: t)
-        case .bottom:
-            return CGRect(x: container.minX, y: container.maxY - t, width: container.width, height: t)
-        }
-    }
-
+    // The RECTS these previews are drawn at are ``PaneDropGeometry``'s, not this view's. They were
+    // four `static func`s here, under a banner that already called them "pure rect math", and they
+    // survived docs/56 increment 54's sweep only because that sweep counted IMPORT EDGES: a method
+    // on a `View` is not a view, but nothing that is not one can reach it. The resolver that decides
+    // WHICH zone a point is in already lived below; the arithmetic that turns that answer back into
+    // a rectangle now does too, so the preview cannot promise a shape the commit does not make.
+    //
     // The chip's WORDING and its MARK are ``PaneDropRegister``'s, not this view's — the cross-window
     // panel says the same things in the same voice, and the two were spelled separately until the
     // register was minted. `ghostChip` above asks it directly; there is nothing left to state here.

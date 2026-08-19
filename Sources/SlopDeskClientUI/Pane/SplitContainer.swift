@@ -11,6 +11,16 @@
 // add/remove, a resize all just re-emit rects — the leaf views keep their identity and the libghostty
 // surface survives). Do NOT switch to HSplitView/VSplitView — they rebuild subtrees and kill surfaces.
 //
+// NO STATIC-MIRROR FLAG. This view was the ENTRY POINT of a defaulted-false `staticMirror` parameter
+// for a headless `ImageRenderer` snapshot path: it threaded down through `PaneContainer` into both leaves
+// and branched ~20 times on the way. No caller ever passed `true` — not the two mounts of this view
+// (`ContentColumn`, and `SatellitePaneContent` onto `PaneContainer`), not a preview, not a UI test —
+// so every one of those branches had exactly one reachable arm. It was deleted in increment 56d,
+// before the AppKit canvas rewrite could hand-write them all a second time, and
+// `scripts/check-supervisor.sh` fails the build if the name comes back. A snapshot renderer, if it is
+// ever wanted, gates ONCE where the render starts: a flag that reaches a leaf's `.task` and a pure
+// predicate in ClientCore is a second rendering mode maintained by everyone who touches the canvas.
+//
 // Dividers drag → LIVE resize: `store.setDividerWeightLive` each frame (panes move live) bracketed by
 // `store.setTerminalResizeSuspended` (defer the host grid-resize to release) + `store.commitDividerResize`;
 // double-click → `store.evenDividerTree` (evens ONLY that seam — the whole-tab reset stays on the ⌃⌘=
@@ -25,11 +35,9 @@ import SwiftUI
 
 struct SplitContainer: View {
     let store: WorkspaceStore
-    /// EAGER/STATIC render path for headless ImageRenderer snapshots.
-    var staticMirror: Bool = false
     /// The cross-container drag rendezvous — lets the in-canvas grab handle resolve SIDEBAR / tear-off
     /// destinations once the cursor leaves this hosting view, and lets a satellite-origin drag preview
-    /// its canvas landing here. `nil` (previews / iOS / static path) keeps the drag canvas-only.
+    /// its canvas landing here. `nil` (previews / iOS) keeps the drag canvas-only.
     var paneDrag: PaneDragCoordinator?
 
     /// Live pane-move drag (grab-handle). View-local: the store is untouched until release, so the
@@ -76,10 +84,9 @@ struct SplitContainer: View {
             }
             .frame(width: bounds.width, height: bounds.height, alignment: .topLeading)
             // Report the full container bounds — the geometric ops' fallback before the first solved-layout
-            // report. View-only — never reconciles. Skipped on the static snapshot path. Fires ONCE at the
-            // container level, not per tab.
-            .onAppear { if !staticMirror { reportContainerBounds(bounds) } }
-            .onChange(of: bounds) { _, newBounds in if !staticMirror { reportContainerBounds(newBounds) } }
+            // report. View-only — never reconciles. Fires ONCE at the container level, not per tab.
+            .onAppear { reportContainerBounds(bounds) }
+            .onChange(of: bounds) { _, newBounds in reportContainerBounds(newBounds) }
         }
         .background(Slate.Surface.terminal)
         // Register this canvas's SCREEN rect (and, through it, the main window frame — the tear-off
@@ -99,7 +106,7 @@ struct SplitContainer: View {
     @ViewBuilder
     private var canvasFrameReader: some View {
         #if os(macOS)
-        if let paneDrag, !staticMirror {
+        if let paneDrag {
             DropTargetFrameReader(key: .canvas, coordinator: paneDrag)
         }
         #endif
@@ -145,7 +152,6 @@ struct SplitContainer: View {
                     isVisible: isActive && !entry.isHidden,
                     // The content's live size IS the resize signal `PaneContainer`'s scrim keys off.
                     size: entry.leaf.rect.size,
-                    staticMirror: staticMirror,
                 )
                 .frame(width: entry.leaf.rect.width, height: entry.leaf.rect.height)
                 .position(x: entry.leaf.rect.midX, y: entry.leaf.rect.midY)
@@ -180,7 +186,7 @@ struct SplitContainer: View {
                 // The landing preview for a drag that STARTED OUTSIDE this tab — a satellite window's
                 // grab strip, or a tree pane whose tab was spring-loaded away — same zone visuals,
                 // driven by the coordinator's published destination.
-                if let paneDrag, !staticMirror {
+                if let paneDrag {
                     ExternalDropZonePreview(coordinator: paneDrag, frames: frames, container: bounds)
                         .zIndex(PaneCanvasMetrics.moveZ)
                 }
@@ -191,18 +197,18 @@ struct SplitContainer: View {
         // Report the ACTIVE tab's solved leaf rects to the store (`updateSolvedLayout`) — required wiring:
         // without it `lastSolvedLayout` stays forever nil and the ⌃⌘arrow / ⌥⌘⇧arrow chords resolve against
         // the store's nominal fallback instead of the real geometry. View-only state;
-        // never reconciles. Skipped for hidden tabs (only the visible geometry counts) + the static path.
+        // never reconciles. Skipped for hidden tabs (only the visible geometry counts).
         .onAppear { reportSolvedLayout(frames, isActive: isActive) }
         .onChange(of: frames) { _, newFrames in reportSolvedLayout(newFrames, isActive: isActive) }
         .onChange(of: isActive) { _, nowActive in reportSolvedLayout(frames, isActive: nowActive) }
     }
 
-    /// Forwards the active tab's solved frames to `store.updateSolvedLayout` (a hidden tab / the static
-    /// snapshot path never reports — the store must only ever hold the geometry the user actually sees)
-    /// and mirrors them to the drag coordinator so a satellite-origin drag resolves its canvas insert
-    /// zones against the same live geometry.
+    /// Forwards the active tab's solved frames to `store.updateSolvedLayout` (a hidden tab never
+    /// reports — the store must only ever hold the geometry the user actually sees) and mirrors them
+    /// to the drag coordinator so a satellite-origin drag resolves its canvas insert zones against
+    /// the same live geometry.
     private func reportSolvedLayout(_ frames: [PaneID: CGRect], isActive: Bool) {
-        guard isActive, !staticMirror, !frames.isEmpty else { return }
+        guard isActive, !frames.isEmpty else { return }
         store.updateSolvedLayout(SolvedLayout(frames: frames))
         paneDrag?.canvasFrames = frames
     }
@@ -247,15 +253,14 @@ struct SplitContainer: View {
 
     /// The pane move affordance: a top grab handle per leaf plus the live drag overlay. With a drag
     /// coordinator wired even a SOLE leaf gets its handle — a lone pane has no in-tab target, but it can
-    /// still leave: onto a sidebar row, the New-Tab slot, or out of the window entirely. Skipped
-    /// entirely on the static snapshot path.
+    /// still leave: onto a sidebar row, the New-Tab slot, or out of the window entirely.
     @ViewBuilder
     private func moveLayer(
         leaves: [SplitTreeRenderModel.PlacedLeaf],
         frames: [PaneID: CGRect],
         container: CGRect,
     ) -> some View {
-        if !staticMirror, leaves.count > 1 || paneDrag != nil {
+        if leaves.count > 1 || paneDrag != nil {
             ForEach(leaves, id: \.id) { leaf in
                 moveHandle(for: leaf, leaves: leaves, container: container)
             }

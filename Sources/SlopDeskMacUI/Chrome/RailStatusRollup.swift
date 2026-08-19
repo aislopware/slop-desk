@@ -451,13 +451,13 @@ private final class MacRailStatusMarkSlot: NSView {
 /// trôi về cạnh nút collapse sidebar"*). Inside the column it simply left with the column, because
 /// the split animates the item's width to zero — the marks vanished at exactly the moment the rail
 /// under them stopped being readable, which is when an aggregate is worth most. It now hangs off the
-/// window root beside ``WindowSidebarToggle`` and TRAVELS between two parking spots:
+/// window root beside ``MacWindowSidebarToggle`` and TRAVELS between two parking spots:
 ///
 ///  * **expanded** — trailing edge on the navigator's own gutter, i.e. flush with the search plate,
 ///    which is the alignment the previous round settled;
 ///  * **collapsed** — immediately right of the sidebar toggle, the only chrome left on that band.
 ///
-/// ⚠️ This is NOT the pair-of-buttons mistake ``WindowSidebarToggle``'s header describes. That was
+/// ⚠️ This is NOT the pair-of-buttons mistake ``MacWindowSidebarToggle``'s header describes. That was
 /// TWO views cross-faded at one x, and any drift between them read as a flicker. This is ONE view at
 /// two positions, interpolated by `columnSlide` — the same curve the split animates the column's
 /// width on, so the cluster and the column edge it was standing on move together.

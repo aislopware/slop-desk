@@ -24,11 +24,20 @@
 //
 // The `.task(id: size)` timer stays in the view — a sleep is the framework's, not the reducer's. What
 // crosses is the two edges (`noteSize`, `noteSettled`) and the drag-ended edge.
+//
+// THERE WAS A FOURTH INPUT AND IT WAS NEVER SET. `isVisible` took a `staticMirror` flag that short-
+// circuited it to `false` for a headless `ImageRenderer` snapshot pass. Nothing ever passed `true`:
+// the flag entered the canvas as a defaulted `SplitContainer` parameter, was threaded down through
+// `PaneContainer` to both leaves, and every caller in `Sources/`, `Apps/` and `ThirdParty/` took the
+// default. Only three unit tests — this file's neighbours — ever produced the value, so the branch
+// was a path that existed to be tested. It is gone (increment 56d), and `check-supervisor.sh` keeps
+// it gone; a snapshot path that comes back gets ONE gate at the render root, not a flag every
+// predicate below the canvas has to carry.
 
 import CoreGraphics
 import Foundation
 
-/// The pane resize scrim's reducer. Inputs are edges; ``isVisible(staticMirror:awaitingReflow:)`` is
+/// The pane resize scrim's reducer. Inputs are edges; ``isVisible(isDragging:awaitingReflow:)`` is
 /// the answer.
 package struct PaneResizeScrimState: Equatable, Sendable {
     /// How long `size` must hold steady before the scrim fades — long enough to span the host
@@ -84,8 +93,7 @@ package struct PaneResizeScrimState: Equatable, Sendable {
 
     /// Whether a drag is currently in flight anywhere. Kept as a parameter rather than stored state:
     /// it is the store's fact about the whole workspace, not this pane's.
-    package func isVisible(staticMirror: Bool, isDragging: Bool, awaitingReflow: Bool) -> Bool {
-        guard !staticMirror else { return false }
-        return resizing || (isDragging && resizedDuringDrag) || awaitingReflow
+    package func isVisible(isDragging: Bool, awaitingReflow: Bool) -> Bool {
+        resizing || (isDragging && resizedDuringDrag) || awaitingReflow
     }
 }

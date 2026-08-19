@@ -1244,7 +1244,7 @@ package enum Slate {
         /// controls. MEASURED on the running app with the titlebar declared at toolbar height
         /// (`SlopDeskClientApp.growTitlebarToBandHeight`) — three discs from a 12pt leading inset on
         /// a 23pt pitch, so the cluster's trailing edge lands at 71 — plus air.
-        /// ``WindowSidebarToggle`` is the one thing mounted here, and the titlebar's own strip
+        /// ``MacWindowSidebarToggle`` is the one thing mounted here, and the titlebar's own strip
         /// starts a plate further right so the two never contend for the slot.
         /// ⚠️ This is AppKit's placement, not ours. Do not reintroduce a manual inset constant —
         /// positioning the buttons by frame is what made them flicker on every window re-title.
@@ -1494,6 +1494,15 @@ package enum Slate {
         package static let dividerHover = SlateCurve(0.42, 0, 0.58, 1, duration: 0.16)
         /// The MERIDIAN L4 "needle" — see ``Anim/needle``.
         package static let needle = SlateCurve(0.2, 0, 0, 1, duration: 0.24)
+        /// The prompt-jump landing FLASH's decay — see ``Anim/promptFlash``.
+        ///
+        /// An ALIAS of ``needle`` rather than a second `SlateCurve` carrying the same four numbers,
+        /// which is deliberate in both directions. The flash IS a needle — a hard cut on, a long
+        /// decel off, nothing travelling — so re-typing the control points would be one motion with
+        /// two spellings, the failure this whole namespace exists to prevent; and naming the ROLE is
+        /// what lets ``Anim/promptFlashHold`` be derived from it, so the beat that unmounts the
+        /// flash follows the fade automatically instead of silently stopping being longer than it.
+        package static let promptFlash = needle
         /// A whole COLUMN reflowing — see ``Anim/stackReflow``.
         package static let stackReflow = SlateCurve(0.4, 0, 0.2, 1, duration: 0.28)
         /// The selection plate travelling — see ``Anim/selectionMorph``.
@@ -1521,9 +1530,37 @@ package enum Slate {
         package static let ackSpeed: Double = 1.4
         /// Divider / plate hover — EaseInEaseOut 0.16s.
         package static let dividerHover = Motion.dividerHover.animation
-        /// MERIDIAN L4 "needle" — the mechanical settle used for the ONE orchestrated moment (the connect
-        /// handshake's colour-in). Fast attack, long decel, no overshoot (no springs anywhere).
+        /// MERIDIAN L4 "needle" — the mechanical settle used for the connect handshake's colour-in.
+        /// Fast attack, long decel, no overshoot (no springs anywhere). ``promptFlash`` is the same
+        /// curve under its own name.
         package static let needle = Motion.needle.animation
+        /// The PROMPT-JUMP LANDING FLASH's decay — the ⌘PageUp/⌘PageDown flash that anchors the eye
+        /// where a jump went. The same mechanical settle as ``needle`` and named separately because
+        /// the two rungs below are keyed to this role, not to the handshake's.
+        ///
+        /// The AppKit half animates `Slate.Motion.promptFlash.timingFunction` on a layer's opacity
+        /// and holds for ``promptFlashHold``; the SwiftUI half spends this `Animation` and sleeps
+        /// for the same. One rung, two views of it — ``SlateCurve``'s whole reason.
+        package static let promptFlash = Motion.promptFlash.animation
+        /// The opacity the flash CUTS ON at, before it decays to zero. Loud enough to catch a
+        /// saccade, quiet enough to read as light rather than as a selection band.
+        ///
+        /// On ``Anim`` rather than on ``Opacity``, for ``plateIgniteScale``'s reason: it is an
+        /// amplitude the motion SPENDS and never rests at — no chrome is ever drawn at this alpha —
+        /// while every rung on the alpha ladder is a resting value some surface holds.
+        package static let promptFlashPeak: Double = 0.28
+        /// How long the flash's rects stay MOUNTED — the fade, PLUS the beat that unmounts it.
+        ///
+        /// The extra beat is not part of the motion and must never be spent animating: it is slack
+        /// between the last frame of the decay and tearing the rects out of the view tree, so the
+        /// unmount can never race the fade and clip it. It exists because the two are driven by
+        /// different clocks — an animation's and a `Task.sleep`'s — which will not agree to the
+        /// frame.
+        ///
+        /// Derived from ``Motion/promptFlash`` on purpose. It was a bare `300` at the one call site
+        /// whose only job was "longer than the fade", so it stopped being that the moment anyone
+        /// retuned the curve, and nothing anywhere would have gone red.
+        package static let promptFlashHold: Double = Motion.promptFlash.duration + 0.06
         /// A whole COLUMN reflowing (toast spine expand/collapse shifts every sibling card, not just the
         /// hovered one) — a shade longer than `standard`, gentle symmetric ease so the reverse (mouse-out)
         /// reads as calm as the forward. EaseInEaseOut 0.28s.

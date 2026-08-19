@@ -5929,6 +5929,115 @@ for hook in toggleSidebar toggleCodeSidebar focusCodePanel; do
     fi
   done
 done
+# AND THE WINDOW ROOT IS OFF THE DRAINING FLOOR (docs/56 §3.5, increment 56b). The rename
+# `SlopDeskClientUI` → `SlopDeskPhoneUI` is blocked by exactly the set of `SlopDeskMacUI` files that
+# still import it — that set IS the ledger — so an import this stage retired has to stay retired.
+# Re-adding one is a single line that compiles green, which is the quiet failure every gate in this
+# section is shaped around.
+#
+# `MacWorkspaceRootView` took two things and no more. `WindowSidebarToggle` is `MacWindowSidebarToggle`
+# in AppKit now, and the SwiftUI original is DELETED rather than kept beside it — the phone never drew
+# that button (no window corner, no traffic lights, no split item to collapse), so a surviving copy
+# would be one control in two languages, which is the rule `CLAUDE.md` bans by name. `\.preferencesStore`
+# is an init parameter threaded from `SlopDeskMacApp`, which is what the hosted columns already needed:
+# an `NSHostingController` inherits no WindowGroup environment, so the value was being forwarded
+# explicitly one hop below the read.
+#
+# Three assertions, because two of them can pass while the port is half-done: the import can go while
+# the AppKit button never arrives (the mount would simply not compile — but only until someone reaches
+# for the old one again), and the AppKit button can arrive while the SwiftUI one is kept "just in case".
+MAC_WINDOW_ROOT=Sources/SlopDeskMacUI/App/MacWorkspaceRootView.swift
+MAC_SIDEBAR_TOGGLE=Sources/SlopDeskMacUI/Chrome/MacWindowSidebarToggle.swift
+if grep -qE '^import SlopDeskClientUI' "${MAC_WINDOW_ROOT}"; then
+  grep -nE '^import SlopDeskClientUI' "${MAC_WINDOW_ROOT}" >&2
+  fail "${MAC_WINDOW_ROOT} imports the draining floor again — the window root came off it (docs/56 §3.5)"
+fi
+if [[ ! -e "${MAC_SIDEBAR_TOGGLE}" ]]; then
+  fail "${MAC_SIDEBAR_TOGGLE} is gone — the window's sidebar toggle is AppKit's (docs/56 §3.5)"
+fi
+if [[ -e Sources/SlopDeskClientUI/Chrome/WindowSidebarToggle.swift ]]; then
+  fail "the SwiftUI WindowSidebarToggle is back — MacWindowSidebarToggle replaced it, never joined it (docs/56 §3.5)"
+fi
+printf 'check-supervisor: the window root is off the draining floor — one sidebar toggle, drawn in AppKit.\n'
+
+# ── The drop chip is one chip, and the pill inks are a pair (docs/56 §3.5, increments 56c/56e) ──
+# THE DROP CHIP IS DRAWN TWICE AND BOTH CAN BE ON SCREEN AT ONCE, which is what makes it different
+# from every other "drawn twice" pair in this file. The canvas overlay's ghost chip is anchored to
+# the zone it describes; `MacPaneDragChipPanel`'s capsule takes over the moment the cursor leaves the
+# content column. Drag from the canvas to the sidebar slowly and a user sees both — so a half-step of
+# padding or a different rim does not read as two files disagreeing, it reads as the chip glitching.
+#
+# `Slate/PaneDropChipArt.swift` is the shared answer: the `Mark` → `SFSymbol` table and the four
+# numbers the capsule is made of. Both renderers must READ it rather than restate it. The literals
+# banned below are the exact ones that were open-coded in the SwiftUI chip before the port — a
+# re-introduced `0.4` rim or a raw `10` pad is precisely how the two would drift apart again.
+DROP_CHIP_ART=Sources/SlopDeskSlate/PaneDropChipArt.swift
+if [[ ! -e "${DROP_CHIP_ART}" ]]; then
+  fail "${DROP_CHIP_ART} is gone — the drop chip's two drawings have nothing left to agree on (docs/56 §3.5)"
+fi
+for half in Sources/SlopDeskClientUI/Pane/PaneMoveAffordance.swift \
+  Sources/SlopDeskMacUI/App/MacPaneDragChipPanel.swift; do
+  if [[ ! -e "${half}" ]]; then
+    fail "${half} is gone — the drop chip has two drawings and this ratchet pins both (docs/56 §3.5)"
+  fi
+  for rung in glyphGap padH padV cancelRim; do
+    if ! grep -q "DropChip.${rung}" "${half}"; then
+      fail "${half} stopped reading Slate.DropChip.${rung} — the two drop chips drift, and a user sees both at once"
+    fi
+  done
+  # The symbol table crossed to the floor in 56e. A half that switches on a `Mark` itself has grown a
+  # second one, which is how `.beside` ends up as `rectangle.stack` in one chip and something else in
+  # the other.
+  if sed -E 's#^[[:space:]]*//.*##' "${half}" | grep -qE 'case \.(splitColumns|splitRows|newWindow):'; then
+    fail "${half} switches on a PaneDropRegister.Mark — the mark→artwork table is ${DROP_CHIP_ART}'s alone"
+  fi
+done
+# THE PILL INKS ARE A PAIR, and unlike the chip this one CANNOT be spelled once: `fillColor` returns a
+# `Color`, `Color` belongs to `SlopDeskSlate`, and Slate sits ABOVE `SlopDeskClientCore` — pushing the
+# token down to meet the ink enum would make the floor import the ladder standing on it. So the ink
+# stays a NAME below (`PaneStatusPillInk`) and each renderer resolves it. The cases are read out of the
+# enum rather than listed here, so a THIRD ink is red in both halves until both answer it.
+PILL_INK_SRC=Sources/SlopDeskClientCore/Pane/PaneStatusPillPresentation.swift
+# `|| true`: a grep miss exits 1, and under `set -e` that would kill the run instead of reporting —
+# the empty result is caught explicitly below, which is the reportable failure.
+pill_inks="$(sed -n '/^package enum PaneStatusPillInk/,/^}/p' "${PILL_INK_SRC}" |
+  grep -oE '^[[:space:]]*case [a-zA-Z]+' | awk '{print $2}' || true)"
+if [[ -z "${pill_inks}" ]]; then
+  fail "no ink cases parsed out of ${PILL_INK_SRC} — this gate would pass vacuously (docs/56 §3.5)"
+fi
+# The Mac twin does not exist yet (the pane canvas is the last kind-1 rewrite). Pin whichever halves
+# ARE present, so the day the twin lands it is already obliged to resolve the same roles rather than
+# inventing its own — a ratchet written after the second renderer is a ratchet written too late.
+for half in Sources/SlopDeskClientUI/Pane/PaneStatusPills.swift \
+  Sources/SlopDeskMacUI/Pane/MacPaneStatusPills.swift; do
+  [[ -e "${half}" ]] || continue
+  for ink in ${pill_inks}; do
+    if ! grep -qE "case \.${ink}\b" "${half}"; then
+      fail "${half} does not resolve the .${ink} pill ink — the two renderers would answer differently (docs/56 §3.5)"
+    fi
+  done
+done
+printf 'check-supervisor: one drop chip drawn twice off one art file, and %s pill inks resolved by every renderer present.\n' \
+  "$(printf '%s\n' "${pill_inks}" | wc -l | tr -d ' ')"
+
+# ── `staticMirror` stays deleted (docs/56 §3.5, increment 56d) ──────────────────────────────────
+# IT WAS A PARAMETER NOTHING EVER SET. `staticMirror` threaded through `SplitContainer`,
+# `PaneContainer`, `GuiLeafView` and `TerminalLeafView`, branched at ~20 sites, and rode as a dead
+# argument on four `SlopDeskClientCore` predicates. Every production caller took the default; the only
+# `true` in the repo was in three unit tests, which is the shape of a feature kept alive by its own
+# tests — the same finding increment 45b recorded about a second git-line renderer.
+#
+# It is deleted HERE, before the canvas is rewritten, and the timing is the whole point: ~20 of those
+# branches would otherwise have been translated into AppKit by hand, for a path nothing reaches. A
+# flag that is dead in one language is cheap; the same flag alive in two is the "one implementation,
+# never two" failure `CLAUDE.md` bans, and a rewrite is exactly when it gets committed by accident.
+if grep -rn 'staticMirror' Sources/ Apps/ --include='*.swift' 2> /dev/null |
+  sed -E 's#^[^:]+:[0-9]+:[[:space:]]*(///?|\*).*##' | grep -q 'staticMirror'; then
+  grep -rn 'staticMirror' Sources/ Apps/ --include='*.swift' 2> /dev/null |
+    sed -E 's#^([^:]+:[0-9]+):[[:space:]]*(///?|\*).*#\1 (comment, allowed)#' >&2
+  fail "\`staticMirror\` is back as CODE — it was a dead branch deleted before the AppKit canvas rewrite (docs/56 §3.5)"
+fi
+printf 'check-supervisor: staticMirror stays deleted — the dead mirror branch never reached the AppKit rewrite.\n'
 # A PALETTE ROW DECLARES ITS PLATFORM, and it declares it exactly once. The three window verbs the
 # phone cannot run — the satellite pair and the window level — used to be listed there anyway: one
 # hook no phone root binds, and one run arm that is a macOS-only `#if` with nothing in the else.

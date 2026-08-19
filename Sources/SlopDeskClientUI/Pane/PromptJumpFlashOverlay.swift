@@ -1,9 +1,11 @@
 // PromptJumpFlashOverlay — the prompt-jump "landed" flash (the vim-highlightedyank idiom).
 //
 // A ⌘PageUp/⌘PageDown (or navigator) prompt jump replaces the whole viewport in one frame — the eye has
-// no scroll motion to follow, so the user lands with zero orientation. This overlay paints ONE ~240ms
-// accent fade over the landed prompt row the instant the jump settles, anchoring the eye where the jump
-// went. libghostty PINS the jumped-to prompt at viewport row 0 (`PageList.scrollPrompt` sets the
+// no scroll motion to follow, so the user lands with zero orientation. This overlay paints ONE
+// `Slate.Anim.promptFlash` accent fade over the landed prompt row the instant the jump settles,
+// anchoring the eye where the jump went. The duration is the rung's and is not restated here — the
+// header carrying its own copy of the number was one of the three spellings docs/56 increment 56c
+// merged. libghostty PINS the jumped-to prompt at viewport row 0 (`PageList.scrollPrompt` sets the
 // viewport pin to the prompt), so row 0 is the honest target; the model's arm/settle logic
 // (``TerminalViewModel/noteViewportScroll(atBottom:)``) already SUPPRESSED the epoch bump for the one
 // case where that would lie (a forward jump clamped into the active area) — absent, never wrong.
@@ -25,14 +27,10 @@ struct PromptJumpFlashOverlay: View {
     /// one flash), dereferenced non-reactively for the surface's viewport snapshot at flash time.
     let model: TerminalViewModel
 
-    /// The peak flash opacity over the accent fill — loud enough to catch a saccade, quiet enough to
-    /// read as light, not selection.
-    private static let peak: Double = 0.28
-
     /// The live flash: the landed prompt line's per-row rects (computed ONCE when the epoch bumps —
-    /// the viewport is pinned for the fade's ~240ms, so static rects are truthful) plus the shared
-    /// animating opacity. Several rects when the prompt line soft-WRAPS: each wrapped row gets its own
-    /// text-extent rect, and they fade as one.
+    /// the viewport is pinned for the whole of ``Slate/Anim/promptFlashHold``, so static rects are
+    /// truthful) plus the shared animating opacity. Several rects when the prompt line soft-WRAPS:
+    /// each wrapped row gets its own text-extent rect, and they fade as one.
     @State private var flashRects: [CGRect] = []
     @State private var flashOpacity: Double = 0
 
@@ -68,17 +66,16 @@ struct PromptJumpFlashOverlay: View {
             snap.disablesAnimations = true
             withTransaction(snap) {
                 flashRects = rects
-                flashOpacity = Self.peak
+                flashOpacity = Slate.Anim.promptFlashPeak
             }
             await Task.yield()
-            withAnimation(Slate.Anim.needle) { flashOpacity = 0 }
-            // ⚠️ ONE DURATION, THREE SPELLINGS. The fade is driven by `Slate.Anim.needle` (0.24s), this
-            // unmount waits 300ms, and this file's header calls the flash "~240ms". Nothing is visibly
-            // wrong — the unmount is deliberately AFTER the fade — but the 300 is a bare literal whose
-            // only job is "longer than `needle`", so it silently stops being that if `needle` moves.
-            // Owed: a named rung on `Slate.Anim` for "the fade, plus the beat that unmounts it", which
-            // this file does not own the right to mint.
-            guard await (try? Task.sleep(for: .milliseconds(300))) != nil else { return }
+            withAnimation(Slate.Anim.promptFlash) { flashOpacity = 0 }
+            // ONE DURATION, ONE SPELLING. The fade and the beat that unmounts it are one rung now —
+            // `promptFlashHold` IS `Motion.promptFlash.duration` plus its slack — so the unmount
+            // cannot stop being longer than the fade when the curve is retuned. It used to be a bare
+            // `300` here against a 0.24s `needle`, which was correct by arithmetic nobody was
+            // checking. `Slate` owns the numbers; this file owns only the order they happen in.
+            guard await (try? Task.sleep(for: .seconds(Slate.Anim.promptFlashHold))) != nil else { return }
             flashRects = []
         }
     }

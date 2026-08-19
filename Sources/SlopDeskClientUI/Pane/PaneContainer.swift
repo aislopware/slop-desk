@@ -29,16 +29,14 @@ struct PaneContainer: View {
     /// Whether this pane is the active tab's active (focused) pane.
     let isFocused: Bool
     /// Whether this pane is currently ON-SCREEN (its tab is active AND it is not zoom-hidden). Drives the video
-    /// activation lifecycle for a video pane (see ``GuiLeafView``). Defaults to `true` so terminal /
-    /// static-mirror callers are unaffected.
+    /// activation lifecycle for a video pane (see ``GuiLeafView``). Defaults to `true` so a terminal
+    /// caller is unaffected.
     var isVisible: Bool = true
     /// This pane's current laid-out size (from the solver, via ``SplitContainer``). The SINGLE generic resize
     /// signal: whenever it changes — a pane-divider commit, a window-edge / sidebar / inspector resize, a
     /// split add/remove, a zoom, a balance, a tab switch — the content has been resized and its (frozen /
     /// stretched) surface won't match until it re-renders, so the scrim is shown until things settle.
     var size: CGSize = .zero
-    /// EAGER/STATIC render path for headless ImageRenderer snapshots.
-    var staticMirror: Bool = false
 
     /// The resize-scrim reducer (``PaneResizeScrimState``): the geometry settle, the sticky drag hold,
     /// and the mount-is-not-a-resize rule, as a value rather than three `@State` flags. Only the
@@ -52,8 +50,8 @@ struct PaneContainer: View {
     @State private var dropModel = PaneDropOverlayModel()
 
     /// The scene-root overlay coordinator: the receiver pushes the host-resolved advisory toast
-    /// for a folder → New-Tab `cd` into it. `nil` outside the scene root (tests / the static mirror), where
-    /// the toast is a no-op.
+    /// for a folder → New-Tab `cd` into it. `nil` outside the scene root (tests), where the toast is
+    /// a no-op.
     @Environment(\.overlayCoordinator) private var overlayCoordinator
 
     /// The pane content model's "resized but not re-rendered yet" signal (terminal host-reflow wait OR
@@ -66,10 +64,10 @@ struct PaneContainer: View {
     /// about the whole workspace rather than this pane, so the reducer takes it as a parameter.
     private var dragging: Bool { store.isInteractiveResizeActive }
 
-    /// Cover the surface with the resize scrim while a resize is settling (never on the static snapshot
-    /// path) — the reducer's answer, so the three OR-ed signals are stated once and pinned by tests.
+    /// Cover the surface with the resize scrim while a resize is settling — the reducer's answer, so
+    /// the three OR-ed signals are stated once and pinned by tests.
     private var showResizeScrim: Bool {
-        scrim.isVisible(staticMirror: staticMirror, isDragging: dragging, awaitingReflow: awaitingReflow)
+        scrim.isVisible(isDragging: dragging, awaitingReflow: awaitingReflow)
     }
 
     /// The live session for this pane (terminal model / input bar), if materialized.
@@ -107,7 +105,6 @@ struct PaneContainer: View {
             GuiLeafView(
                 live: live,
                 isFocused: isFocused,
-                staticMirror: staticMirror,
                 store: store,
                 paneID: paneID,
                 isVisible: isVisible,
@@ -116,7 +113,6 @@ struct PaneContainer: View {
             TerminalLeafView(
                 live: live,
                 isFocused: isFocused,
-                staticMirror: staticMirror,
                 // Feeds the bottom status bar. cwd is the host-reported `pane/cwd` read through the
                 // mirror (reactive — reading it here re-renders on change); host is the app-global
                 // connection target, which is device-local and never rides the shared layout.
@@ -162,7 +158,6 @@ struct PaneContainer: View {
             // "fresh pixels landed" signal) keeps the overlay up across the host round-trip and clears it
             // the instant the reflowed / re-captured content actually renders.
             .task(id: size) {
-                guard !staticMirror else { return }
                 // A change between two REAL (non-empty) sizes is a resize. A transition from / to `.zero` is
                 // just the initial layout settling (or teardown), which must NOT flash the scrim on mount.
                 // Both rules live in the reducer; what is left here is the wait.
@@ -182,8 +177,8 @@ struct PaneContainer: View {
             // panes are separated only by the `PaneDivider` hairline `SplitContainer` places between leaves.
             .contentShape(Rectangle())
             .onTapGesture { store.focusPaneTree(paneID) }
-            // Accepts external file/folder/URL/text drags. The receiver is disabled on the
-            // static snapshot path (`!staticMirror`); it gates the overlay above and on `performDrop` FOCUSES
+            // Accepts external file/folder/URL/text drags. The receiver gates the overlay above and on
+            // `performDrop` FOCUSES
             // THIS pane (`paneID`) then actuates against the store (terminal-rooted `cd` ingress),
             // THIS (dropped-on) pane's live terminal (verbatim inject / host-open), and the overlay
             // coordinator (advisory toast) — so a Split / Open-In-Place drop targets the pane under the cursor,
@@ -192,7 +187,12 @@ struct PaneContainer: View {
                 paneID: paneID,
                 layout: PaneDropZoneLayout(size: size),
                 model: dropModel,
-                enabled: !staticMirror,
+                // The ONE producer of this flag, and it has no `false` left to send: it was
+                // `!staticMirror` until increment 56d deleted that dead path. `enabled` therefore
+                // survives with a constant argument until ``PaneDropReceiver`` and the pure
+                // ``PaneDropGate/acceptsDrag(enabled:carriesSupportedType:isReadOnly:)`` below it drop
+                // the parameter too — one change, in the file that owns the gate.
+                enabled: true,
                 store: store,
                 terminalModel: live?.terminalModel,
                 overlayCoordinator: overlayCoordinator,

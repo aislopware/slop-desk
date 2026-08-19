@@ -21,10 +21,16 @@
 //
 // WHAT IS LEFT HERE IS THE `DropInfo`. After docs/56 every answer the callbacks reach for is below them:
 // the accept/decline gate and the hover verdict are ``PaneDropGate``, the pasteboard precedence is
-// ``PaneDropProviderPolicy``, the commit is ``PaneDropActuator``, and the geometry was already the shared
+// ``PaneDropProviderPolicy``, its LOADING is ``PaneDropProviderBundle``, the commit is
+// ``PaneDropActuator``, and the geometry was already the shared
 // ``PaneDropZoneLayout`` / ``DropActionResolver``. That is not tidiness — an `NSDraggingDestination` and a
 // `UIDropInteractionDelegate` are the same five callbacks over a different event object, and every rule
 // that stayed inside one of them would have to be written again, correctly, on the other side.
+//
+// The bundle came down an increment after the precedence did (docs/56 56c), and the reason it did not
+// go with it is worth keeping: the loading was called "the platform's" because it is async, and async
+// is not a framework. `NSItemProvider` is Foundation, so all three drop paths already share it. Only
+// the three `itemProviders(for:)` calls at the foot of this file are SwiftUI's.
 //
 // HEADLESS-SAFE: the receiver itself imports no AppKit-private, and the gating is unit-tested without a GUI
 // (`SlopDeskClientCoreTests`, `SlopDeskWorkspaceCoreTests`); the terminal-rooted `cd`-actuation lives behind
@@ -102,7 +108,7 @@ struct PaneDropReceiver: DropDelegate {
             // reset bumps the generation so a classify that resolves AFTER the reset is dropped as stale rather
             // than re-activating the overlay (the strand-the-overlay race).
             let generation = model.beginClassification()
-            let bundle = ProviderBundle(info: info)
+            let bundle = PaneDropProviderBundle(info: info)
             Task { @MainActor in await model.applyClassified(bundle.classify(), generation: generation) }
         }
     }
@@ -144,7 +150,7 @@ struct PaneDropReceiver: DropDelegate {
                 model.reset()
                 return false
             }
-            let bundle = ProviderBundle(info: info)
+            let bundle = PaneDropProviderBundle(info: info)
             model.reset()
             Task { @MainActor in
                 guard let content = await bundle.classify(),
@@ -159,81 +165,23 @@ struct PaneDropReceiver: DropDelegate {
     }
 }
 
-// MARK: - Pasteboard → DroppedContent (the platform layer)
+// MARK: - The one line of this that is SwiftUI's
 
-/// Extracts the supported item providers from a `DropInfo` and LOADS them; ``PaneDropProviderPolicy`` says
-/// what the results mean. Built on the main actor (the providers come off a `DropInfo`); the loads
-/// themselves suspend off-actor through `NSItemProvider`'s completion handlers. The split is the point: an
-/// `NSItemProvider` load is actuation and belongs to whichever framework produced the drag, while the
-/// file → url → text precedence, the "a file URL also surfaces under `.url`" filter and the folder-vs-file
-/// resolution are decisions every drop path on every platform must reach identically.
-@MainActor
-private struct ProviderBundle {
-    let fileProviders: [NSItemProvider]
-    let urlProviders: [NSItemProvider]
-    let textProviders: [NSItemProvider]
-
+// THE ADAPTER IS THE WHOLE PLATFORM LAYER, and it is three lines. ``PaneDropProviderBundle`` — the
+// load loop, the file → url → text precedence, the lazy text group and both `NSItemProvider`
+// continuations — is `SlopDeskClientCore`'s, because an `NSItemProvider` is Foundation's object and
+// not SwiftUI's: `DropInfo`, `NSDraggingInfo` and `UIDropSession` all hand you the same one. What
+// each framework genuinely owns is only how you ASK it for the three groups, which is this.
+extension PaneDropProviderBundle {
+    /// The three provider groups off a SwiftUI `DropInfo`. The type list is
+    /// ``PaneDropGate/acceptedTypes``'s in the same order the classifier reduces them, spelled
+    /// per-group here because `itemProviders(for:)` takes one group at a time.
     init(info: DropInfo) {
-        fileProviders = info.itemProviders(for: [.fileURL])
-        urlProviders = info.itemProviders(for: [.url])
-        textProviders = info.itemProviders(for: [.text])
-    }
-
-    /// Load the providers and reduce them to one ``DroppedContent``, or `nil` when nothing supported /
-    /// non-empty resolves (validate-then-drop). Every `guard` and `if` below is a call into
-    /// ``PaneDropProviderPolicy`` — what is left is the `await`.
-    func classify() async -> DroppedContent? {
-        var files: [DropPayloadClassifier.FileEntry] = []
-        for provider in fileProviders {
-            guard let url = await provider.loadURLValue(),
-                  let entry = PaneDropProviderPolicy.fileEntry(for: url) else { continue }
-            files.append(entry)
-        }
-
-        var urls: [String] = []
-        for provider in urlProviders {
-            guard let url = await provider.loadURLValue(),
-                  let webURL = PaneDropProviderPolicy.webURLString(for: url) else { continue }
-            urls.append(webURL)
-        }
-
-        var text: String?
-        if PaneDropProviderPolicy.needsTextLoad(files: files, urls: urls) {
-            for provider in textProviders {
-                if let value = await provider.loadTextValue() {
-                    text = value
-                    break
-                }
-            }
-        }
-
-        return PaneDropProviderPolicy.content(files: files, urls: urls, text: text)
-    }
-}
-
-// MARK: - NSItemProvider async helpers
-
-// `@MainActor`: the provider (non-`Sendable`) is only ever touched on the main actor — `loadObject` is
-// CALLED on the main actor and only its `Sendable` continuation crosses to the background completion, so the
-// provider never crosses an actor boundary (Swift-6 strict-concurrency clean). `await` suspends the task
-// without blocking the main actor.
-private extension NSItemProvider {
-    /// Async-load a `URL` (file or web) from this provider, or `nil` on failure — never throws / traps.
-    @MainActor
-    func loadURLValue() async -> URL? {
-        guard canLoadObject(ofClass: URL.self) else { return nil }
-        return await withCheckedContinuation { continuation in
-            _ = loadObject(ofClass: URL.self) { url, _ in continuation.resume(returning: url) }
-        }
-    }
-
-    /// Async-load a plain-`String` snippet from this provider, or `nil` on failure.
-    @MainActor
-    func loadTextValue() async -> String? {
-        guard canLoadObject(ofClass: String.self) else { return nil }
-        return await withCheckedContinuation { continuation in
-            _ = loadObject(ofClass: String.self) { text, _ in continuation.resume(returning: text) }
-        }
+        self.init(
+            fileProviders: info.itemProviders(for: [.fileURL]),
+            urlProviders: info.itemProviders(for: [.url]),
+            textProviders: info.itemProviders(for: [.text]),
+        )
     }
 }
 #endif

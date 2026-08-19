@@ -7,8 +7,7 @@
 // each half is left holding its own event object and nothing else.
 //
 // The pasteboard half is the one worth being explicit about, because it looks like plumbing and is
-// not. LOADING the item providers is actuation: it is async, it is the platform's, and it stays up
-// there. The PRECEDENCE is a decision, and it is two rules that a second implementation would get
+// not. The PRECEDENCE is a decision, and it is two rules that a second implementation would get
 // subtly wrong:
 //
 //   * A Finder file drag ALSO surfaces under `.url` (and under `.text`, as its path string). Files
@@ -23,6 +22,19 @@
 // pure classifier in `SlopDeskWorkspaceCore` never touches the disk on purpose. The stat is local to
 // the DRAGGING client (the dropped item is on THIS Mac), so it is cheap and cannot block on a
 // network mount the way a host path could.
+//
+// ⚠️ AND THE LOADING CAME DOWN TOO, one increment after the precedence did, which is a correction to
+// what this header used to say. It said an `NSItemProvider` load "is actuation: it is async, it is
+// the platform's, and it stays up there" — and the second clause is simply false. `NSItemProvider`
+// is FOUNDATION. It is what a `DropInfo`, an `NSDraggingInfo` and a `UIDropSession` all hand you,
+// which makes it the one part of a drop that is already common to the three frameworks rather than
+// the part that is not. "Async" was doing the work in that sentence, and async is not a framework.
+//
+// What is genuinely per-framework is EXTRACTING the three provider groups from the event object —
+// three lines, and the only thing ``PaneDropProviderBundle`` asks each renderer for. Left up there,
+// the loop and its two continuation wrappers would have been written a second time for
+// `NSDraggingInfo`, and the drift they invite is the silent kind: a `canLoadObject` guard dropped on
+// one side turns a hostile drag from "declines" into a trap (docs/56 increment 56c).
 
 import Foundation
 import SlopDeskWorkspaceCore
@@ -110,5 +122,99 @@ package enum PaneDropProviderPolicy {
             return isDir
         }
         return url.hasDirectoryPath
+    }
+}
+
+// MARK: - The loaded pasteboard
+
+/// The three provider groups a drop carries, and the loop that turns them into one
+/// ``DroppedContent``. Every `guard` and `if` in ``classify()`` is a call into
+/// ``PaneDropProviderPolicy`` — what is left is the `await`.
+///
+/// Each renderer supplies only the three GROUPS, off whatever event object its framework hands it:
+/// `DropInfo.itemProviders(for:)` in SwiftUI, `NSPasteboard` → `NSItemProvider` under AppKit's
+/// `NSDraggingInfo`, `UIDragItem.itemProvider` under UIKit's session. That extraction is three lines
+/// and is the whole of what a drop path writes for itself.
+///
+/// `@MainActor`: `NSItemProvider` is not `Sendable`, and it is only ever touched on the main actor —
+/// a `DropDelegate` callback is delivered there, an `NSDraggingDestination` one is too. `loadObject`
+/// is CALLED on the main actor and only its `Sendable` continuation crosses to the background
+/// completion, so the provider never crosses an actor boundary (Swift-6 strict-concurrency clean).
+/// `await` suspends the task without blocking the main actor.
+@MainActor
+package struct PaneDropProviderBundle {
+    package let fileProviders: [NSItemProvider]
+    package let urlProviders: [NSItemProvider]
+    package let textProviders: [NSItemProvider]
+
+    package init(
+        fileProviders: [NSItemProvider],
+        urlProviders: [NSItemProvider],
+        textProviders: [NSItemProvider],
+    ) {
+        self.fileProviders = fileProviders
+        self.urlProviders = urlProviders
+        self.textProviders = textProviders
+    }
+
+    /// Load the providers and reduce them to one ``DroppedContent``, or `nil` when nothing supported
+    /// and non-empty resolves (validate-then-drop).
+    ///
+    /// The TEXT group is loaded last and only when the other two produced nothing — see
+    /// ``PaneDropProviderPolicy/needsTextLoad(files:urls:)``. It is not an optimisation the caller
+    /// may skip: a Finder drag surfaces its path under `.text` as well, so loading it eagerly and
+    /// letting the classifier discard it would work by accident and stop working the day the
+    /// precedence is re-ordered.
+    package func classify() async -> DroppedContent? {
+        var files: [DropPayloadClassifier.FileEntry] = []
+        for provider in fileProviders {
+            guard let url = await provider.loadURLValue(),
+                  let entry = PaneDropProviderPolicy.fileEntry(for: url) else { continue }
+            files.append(entry)
+        }
+
+        var urls: [String] = []
+        for provider in urlProviders {
+            guard let url = await provider.loadURLValue(),
+                  let webURL = PaneDropProviderPolicy.webURLString(for: url) else { continue }
+            urls.append(webURL)
+        }
+
+        var text: String?
+        if PaneDropProviderPolicy.needsTextLoad(files: files, urls: urls) {
+            for provider in textProviders {
+                if let value = await provider.loadTextValue() {
+                    text = value
+                    break
+                }
+            }
+        }
+
+        return PaneDropProviderPolicy.content(files: files, urls: urls, text: text)
+    }
+}
+
+// MARK: - NSItemProvider async helpers
+
+/// The two loads, and they are Foundation's — no drop path writes its own continuation. The
+/// `canLoadObject` guard in each is the reason: without it a hostile or merely mistyped drag traps
+/// rather than declining, and a second implementation is exactly where that guard goes missing.
+private extension NSItemProvider {
+    /// Async-load a `URL` (file or web) from this provider, or `nil` on failure — never throws / traps.
+    @MainActor
+    func loadURLValue() async -> URL? {
+        guard canLoadObject(ofClass: URL.self) else { return nil }
+        return await withCheckedContinuation { continuation in
+            _ = loadObject(ofClass: URL.self) { url, _ in continuation.resume(returning: url) }
+        }
+    }
+
+    /// Async-load a plain-`String` snippet from this provider, or `nil` on failure.
+    @MainActor
+    func loadTextValue() async -> String? {
+        guard canLoadObject(ofClass: String.self) else { return nil }
+        return await withCheckedContinuation { continuation in
+            _ = loadObject(ofClass: String.self) { text, _ in continuation.resume(returning: text) }
+        }
     }
 }

@@ -1,38 +1,47 @@
-// SlopDeskSplitViewController — the macOS shell. An `NSSplitViewController` with
-// three `NSSplitViewItem`s (navigator | content | code panel), each a view controller the draining
-// floor hands over (``WorkspaceColumnHosts``) while its column is still SwiftUI. Modelled on CodeEdit's `CodeEditSplitViewController`: an AppKit split shell with SwiftUI
-// INSIDE each column. Keeping the split in AppKit (not a SwiftUI `HSplitView` that rebuilds subtrees) is the
-// load-bearing no-teardown choice for L2's libghostty panes — a torn-down NSView kills the surface.
-// There is no Details column — the app is keyboard-centric; the Git details window opens from the
-// palette / View menu instead.
+// SlopDeskSplitViewController — the macOS shell. An `NSSplitViewController` with three
+// `NSSplitViewItem`s (navigator | content | code panel), each one a view controller THIS target owns:
+// ``MacNavigatorColumn``, ``MacContentColumn``, ``MacCodePanelColumn``. Modelled on CodeEdit's
+// `CodeEditSplitViewController`. Keeping the split in AppKit (not a SwiftUI `HSplitView` that rebuilds
+// subtrees) is the load-bearing no-teardown choice for L2's libghostty panes — a torn-down NSView kills
+// the surface. There is no Details column — the app is keyboard-centric; the Git details window opens
+// from the palette / View menu instead.
+//
+// THE `SlopDeskClientUI` IMPORT IS GONE (docs/56 stage D, increment 56a). It survived the three column
+// rewrites as a comment about columns this file no longer builds: every one of the 219 types that target
+// declares was tested against this file's non-comment body, and none appears. The remaining SwiftUI in
+// the tree hangs off ``MacContentColumn``, which imports the draining floor itself; the shell above it
+// does not. `import SwiftUI` went with it, for the same reason and by the same test: not one SwiftUI
+// symbol survives in this file.
 
 import AppKit
 import Defaults
 import ObjectiveC
 import SlopDeskClientCore
-import SlopDeskClientUI // the three hosted columns, until each is rewritten in AppKit
 import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
 import SlopDeskWorkspaceCore
-import SwiftUI
 
 final class SlopDeskSplitViewController: NSSplitViewController {
     private let store: WorkspaceStore
     private let connection: AppConnection
     private let chrome: WorkspaceChromeState
-    /// The live ``PreferencesStore`` — forwarded into the sidebar's ``NavigatorColumn`` so the tab context menu
-    /// can surface the host-LOCAL "Prevent Sleep While Processing" flag. The sidebar is hosted in a
-    /// SEPARATE `NSHostingController` that does not inherit the WindowGroup `\.preferencesStore` environment, so
-    /// it is threaded explicitly. `nil` (a preview / pre-injection scene) hides the Prevent-Sleep row.
+    /// The live ``PreferencesStore`` — forwarded into ``MacNavigatorColumn`` so the tab context menu can
+    /// surface the host-LOCAL "Prevent Sleep While Processing" flag. `nil` (a preview / pre-injection
+    /// scene) hides the Prevent-Sleep row.
+    ///
+    /// It used to say "threaded explicitly because a separate `NSHostingController` does not inherit the
+    /// WindowGroup environment". That reason is spent: all three columns are plain `NSViewController`s
+    /// now, so there is no environment to inherit FROM. The threading survives its own justification
+    /// because the new one is stronger — an init parameter makes the dependency a compile error to
+    /// forget, where an environment key was a silent `nil`.
     private let preferences: PreferencesStore?
     /// Opens the Connect-to-Host editor — wired into the titlebar's connection-status cluster. The shell
     /// binds this to `overlay.openConnect()`; the no-op default keeps the controller buildable without
     /// an overlay.
     private let onConnect: () -> Void
-    /// The scene ``OverlayCoordinator`` — re-injected into BOTH hosted columns' environments
-    /// (`\.overlayCoordinator`): like `preferences`, the columns' separate `NSHostingController`s do not
-    /// inherit the WindowGroup environment, and the connection cluster (sidebar footer + titlebar
-    /// trailing) reads the coordinator's prefix-ARMED flag for its pill swap. `nil` (previews/tests)
-    /// simply never shows the armed pill.
+    /// The scene ``OverlayCoordinator`` — handed to BOTH columns, because the connection cluster (sidebar
+    /// footer + titlebar trailing) reads the coordinator's prefix-ARMED flag for its pill swap. `nil`
+    /// (previews/tests) simply never shows the armed pill. Like `preferences`, this arrives as an init
+    /// parameter rather than an `\.overlayCoordinator` environment read; see that property for why.
     private let overlay: OverlayCoordinator?
     /// The cross-container pane-drag rendezvous — threaded into BOTH columns (the sidebar's rows are
     /// drop targets; the canvas is the drag source + the satellite-drop target). The two columns live in
@@ -104,10 +113,10 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         // 1) Sidebar — the navigator (sessions / panes). A PLAIN split item, NOT
         //    `NSSplitViewItem(sidebarWithViewController:)`: the native sidebar style paints system vibrancy +
         //    inset-grouped/rounded selection, which is the "native SwiftUI rounded corners" look we are
-        //    replacing. A plain item lets `NavigatorColumn` paint its own flat warm panel + white-card rows.
+        //    replacing. A plain item lets ``MacNavigatorColumn`` paint its own flat warm panel + white-card rows.
         //    Holding priority above the content's default so window-resize grows the content, not the sidebar.
         // No `chrome:` — the sidebar's collapse toggle moved to the window root
-        // (``WindowSidebarToggle``), so this column no longer owns a chrome control. It DOES own the
+        // (``MacWindowSidebarToggle``), so this column no longer owns a chrome control. It DOES own the
         // connection island at its foot again (user-directed 2026-08-09), hence `connection` +
         // `onConnect`.
         let navigator = MacNavigatorColumn(
@@ -262,7 +271,7 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         view.appearance = nil
         // The column dividers are the 1px GAPs between the hosting columns, painted TWO ways that must
         // agree: `FlatDividerSplitView.drawDivider(in:)` fills each gap, AND (the split view being
-        // layer-backed for its `NSHostingController` columns) the gaps also show this layer
+        // layer-backed for its layer-backed columns) the gaps also show this layer
         // `backgroundColor`. Both wear the GROUND (`SlateTheme.groundHexValue` — a fixed hex, so the
         // CGColor-snapshot trap family stays dead): under ONE ISLAND the three columns share one
         // ground tone and the side panels SINK into it, so a seam drawn between them would be the

@@ -16,10 +16,20 @@
 // The shell inside it is still SwiftUI-hosted (`WorkspaceSplitRepresentable` over the AppKit
 // `SlopDeskSplitViewController`, whose two items are `NSHostingController`s over the columns). Stage
 // D drains those columns upward one surface at a time; this file is where they land.
+//
+// ⚠️ IT IS OFF THE DRAINING FLOOR (docs/56 §3.5, increment 56b), and `check-supervisor.sh` keeps it
+// off. This file imported `SlopDeskClientUI` for exactly two things and no more: the sidebar toggle,
+// which is ``MacWindowSidebarToggle`` in AppKit now and DELETED from the shared target in the same
+// change (the phone never drew it — no window corner, no traffic lights, no split item), and the
+// `\.preferencesStore` environment key, which is an init parameter threaded from ``SlopDeskMacApp``.
+// The environment read was buying nothing the thread does not: the store's only consumer down here
+// is the navigator's tab context menu, which lives in an `NSHostingController` column that never
+// inherited the WindowGroup environment anyway — so it was already being forwarded EXPLICITLY into
+// the split (see ``WorkspaceSplitRepresentable/preferences``), and the `@Environment` was one hop of
+// implicit plumbing feeding one hop of explicit plumbing. A parameter says the same thing once.
 
 import Defaults // @Default(.autoHideTabsPanel) — re-fires the auto-hide observer on a Settings flip
 import SlopDeskClientCore
-import SlopDeskClientUI // the SwiftUI mounts stage D has not lifted yet
 import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
@@ -37,10 +47,16 @@ struct MacWorkspaceRootView: View {
     /// `.introspect(.window)` closure reads the SAME `chrome.pinned` the titlebar / menu / palette flip
     /// (ONE `NSWindow.level` source of truth, no `NSApplication.windows`).
     let chrome: WorkspaceChromeState
-    /// The single live preferences store, injected once at the WindowGroup root (`\.preferencesStore`) and
-    /// forwarded into the split host so the sidebar tab context menu can surface the host-LOCAL "Prevent
-    /// Sleep While Processing" flag. `nil` (no scene injection / a preview) hides the row.
-    @Environment(\.preferencesStore) private var preferencesStore
+    /// The single live preferences store, built once by ``ClientComposition`` and handed down from
+    /// ``SlopDeskMacApp``, then forwarded into the split host so the sidebar tab context menu can surface
+    /// the host-LOCAL "Prevent Sleep While Processing" flag. `nil` (a preview / a test root) hides the row.
+    ///
+    /// ⚠️ A PARAMETER, NOT `@Environment(\.preferencesStore)` (increment 56b). The key it used to read is
+    /// the phone's — it is declared in the draining target, and reading it here was one of the two things
+    /// keeping this file's `import SlopDeskClientUI` alive. It also bought nothing: the only consumer below
+    /// is inside an `NSHostingController` column, which inherits no WindowGroup environment, so the value
+    /// was ALREADY being threaded explicitly into the split. One hop, spelled once.
+    let preferences: PreferencesStore?
     /// The live `auto-hide-tabs-panel` mode. Read via `@Default` (NOT the plain
     /// ``SettingsKey/autoHideTabsPanel`` accessor) so SwiftUI re-evaluates the body — re-firing the
     /// `.onChange(of: autoHideTabsPanel)` observer below — when the user flips the Settings picker. Drives
@@ -76,6 +92,9 @@ struct MacWorkspaceRootView: View {
         connection: AppConnection,
         overlay: OverlayCoordinator,
         chrome: WorkspaceChromeState,
+        // Defaulted, like every parameter below it: a preview or a test root that never opens a tab
+        // context menu has no preferences to hand over, and the row it would surface hides itself.
+        preferences: PreferencesStore? = nil,
         installSidebarToggle: ((@escaping () -> Void) -> Void)? = nil,
         installCodeSidebarToggle: ((@escaping () -> Void) -> Void)? = nil,
         installFocusCodePanel: ((@escaping () -> Void) -> Void)? = nil,
@@ -86,6 +105,7 @@ struct MacWorkspaceRootView: View {
         self.connection = connection
         self.overlay = overlay
         self.chrome = chrome
+        self.preferences = preferences
         self.installSidebarToggle = installSidebarToggle
         self.installCodeSidebarToggle = installCodeSidebarToggle
         self.installFocusCodePanel = installFocusCodePanel
@@ -118,14 +138,15 @@ struct MacWorkspaceRootView: View {
         // (`MacTitlebarBand`, inside `MacContentColumn`) IS the chrome.
         WorkspaceSplitRepresentable(
             store: store, connection: connection, chrome: chrome, overlay: overlay,
-            preferences: preferencesStore, paneDrag: paneDrag,
+            preferences: preferences, paneDrag: paneDrag,
         )
         // THE SIDEBAR TOGGLE, mounted at WINDOW level rather than in either column (user-directed
         // 2026-08-09). Both columns travel when the panel collapses — the split animates the item
         // width — so a button hosted inside one of them rides that slide and crawls under the traffic
         // lights on its way. Here it cannot move at all: it is pinned to the window's own top-left
-        // corner, and the click's acknowledgement is the plate + glyph morph (see
-        // ``WindowSidebarToggle``). Mounted BELOW the overlay layer so a modal card covers it like
+        // corner, and the click's acknowledgement is the plate's own fill rung (see
+        // ``MacWindowSidebarToggle``, which is AppKit — the SwiftUI original and the symbol bounce
+        // it carried went with it). Mounted BELOW the overlay layer so a modal card covers it like
         // everything else.
         //
         // ⚠️ INSIDE the `.ignoresSafeArea()` below, not after it. The window is `.hiddenTitleBar` but
@@ -133,7 +154,7 @@ struct MacWorkspaceRootView: View {
         // split only escapes it by ignoring it. An overlay attached OUTSIDE that modifier is laid out
         // in the inset content instead, which parks this button one whole band low — on top of the
         // navigator's search field (measured 2026-08-09).
-        .overlay(alignment: .topLeading) { WindowSidebarToggle(chrome: chrome) }
+        .overlay(alignment: .topLeading) { MacWindowSidebarToggle(chrome: chrome) }
         // The band's AGGREGATE AGENT READING, mounted beside the toggle for the SAME reason and with
         // the opposite consequence: the toggle is here so it can never move, this is here so it can
         // move BETWEEN the two places it belongs — flush with the navigator's gutter while the
@@ -299,10 +320,11 @@ struct WorkspaceSplitRepresentable: NSViewControllerRepresentable {
     /// The overlay reducer — threaded so the controller can wire the sidebar's status affordance to
     /// `openConnect()`. Captured once in `makeNSViewController`.
     let overlay: OverlayCoordinator
-    /// The live ``PreferencesStore`` (`\.preferencesStore`) — forwarded into the controller so the sidebar's
-    /// `NavigatorColumn` tab context menu can surface the host-LOCAL "Prevent Sleep While Processing" flag.
-    /// The NSHostingController columns do not inherit the WindowGroup environment, hence the explicit thread.
-    /// `nil` (no scene injection / a preview) hides the row.
+    /// The live ``PreferencesStore`` — forwarded into the controller so the sidebar's `NavigatorColumn`
+    /// tab context menu can surface the host-LOCAL "Prevent Sleep While Processing" flag. The
+    /// NSHostingController columns do not inherit the WindowGroup environment, which is why this was an
+    /// explicit thread even while the root read the value out of one, and why the root now takes it as a
+    /// parameter instead (increment 56b). `nil` (a preview / a test root) hides the row.
     let preferences: PreferencesStore?
     /// The pane-drag rendezvous — forwarded into the controller like `preferences` (same
     /// no-environment-inheritance reason).

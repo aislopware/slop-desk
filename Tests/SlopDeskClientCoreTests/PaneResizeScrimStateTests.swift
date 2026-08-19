@@ -9,6 +9,14 @@
 //     host send is deferred to release, so nothing else is holding the scrim up in between.
 //
 // Headless values only — the `.task(id:)` sleep stays in the view, so nothing here waits.
+//
+// THE FOURTH INPUT IS GONE, AND SO IS THE CASE THAT PINNED IT. `isVisible` used to take a
+// `staticMirror` flag that forced it false for a headless `ImageRenderer` snapshot pass, and
+// `testTheStaticMirrorNeverDims` was its only producer of `true` — in the whole tree, not just in
+// this file. A branch whose sole caller is the test that asserts it is not a covered branch, it is a
+// feature the suite is keeping alive; the flag was deleted with the canvas plumbing it rode in on
+// (increment 56d), so the case was deleted rather than rewritten to pass. `check-supervisor.sh`
+// fails the build if it grows back.
 
 import CoreGraphics
 import XCTest
@@ -34,7 +42,7 @@ final class PaneResizeScrimStateTests: XCTestCase {
         var scrim = PaneResizeScrimState()
 
         XCTAssertFalse(scrim.noteSize(large, isDragging: false), "nothing armed ⇒ no timer to start")
-        XCTAssertFalse(scrim.isVisible(staticMirror: false, isDragging: false, awaitingReflow: false))
+        XCTAssertFalse(scrim.isVisible(isDragging: false, awaitingReflow: false))
     }
 
     /// The ordinary resize: the scrim comes up on the size change and goes down when the size has
@@ -44,10 +52,10 @@ final class PaneResizeScrimStateTests: XCTestCase {
         scrim.noteSize(small, isDragging: false)
 
         XCTAssertTrue(scrim.noteSize(large, isDragging: false), "a real resize arms the settle wait")
-        XCTAssertTrue(scrim.isVisible(staticMirror: false, isDragging: false, awaitingReflow: false))
+        XCTAssertTrue(scrim.isVisible(isDragging: false, awaitingReflow: false))
 
         scrim.noteSettled()
-        XCTAssertFalse(scrim.isVisible(staticMirror: false, isDragging: false, awaitingReflow: false))
+        XCTAssertFalse(scrim.isVisible(isDragging: false, awaitingReflow: false))
     }
 
     /// THE PAUSED-DRAG REGRESSION: the geometry signal clears on its own after the settle, but a drag
@@ -60,12 +68,12 @@ final class PaneResizeScrimStateTests: XCTestCase {
         scrim.noteSettled()
 
         XCTAssertTrue(
-            scrim.isVisible(staticMirror: false, isDragging: true, awaitingReflow: false),
+            scrim.isVisible(isDragging: true, awaitingReflow: false),
             "the cursor is still down — the reflow has not even been requested yet",
         )
 
         scrim.noteDragEnded()
-        XCTAssertFalse(scrim.isVisible(staticMirror: false, isDragging: false, awaitingReflow: false))
+        XCTAssertFalse(scrim.isVisible(isDragging: false, awaitingReflow: false))
     }
 
     /// The drag hold is gated on THIS pane having changed size, so dragging a divider somewhere else
@@ -75,7 +83,7 @@ final class PaneResizeScrimStateTests: XCTestCase {
         scrim.noteSize(large, isDragging: false)
         scrim.noteSize(large, isDragging: true) // the drag moved a seam elsewhere
 
-        XCTAssertFalse(scrim.isVisible(staticMirror: false, isDragging: true, awaitingReflow: false))
+        XCTAssertFalse(scrim.isVisible(isDragging: true, awaitingReflow: false))
     }
 
     /// The REFLOW hold outlasts both of the others: on a slow link the host round trip lands the
@@ -88,19 +96,9 @@ final class PaneResizeScrimStateTests: XCTestCase {
         scrim.noteDragEnded()
 
         XCTAssertTrue(
-            scrim.isVisible(staticMirror: false, isDragging: false, awaitingReflow: true),
+            scrim.isVisible(isDragging: false, awaitingReflow: true),
             "the release committed; the host has not answered yet",
         )
-        XCTAssertFalse(scrim.isVisible(staticMirror: false, isDragging: false, awaitingReflow: false))
-    }
-
-    /// The static-mirror snapshot path renders no live chrome, whatever the reducer thinks — an
-    /// `ImageRenderer` capture of a mid-resize workspace must not bake a scrim into the picture.
-    func testTheStaticMirrorNeverDims() {
-        var scrim = PaneResizeScrimState()
-        scrim.noteSize(small, isDragging: true)
-        scrim.noteSize(large, isDragging: true)
-
-        XCTAssertFalse(scrim.isVisible(staticMirror: true, isDragging: true, awaitingReflow: true))
+        XCTAssertFalse(scrim.isVisible(isDragging: false, awaitingReflow: false))
     }
 }

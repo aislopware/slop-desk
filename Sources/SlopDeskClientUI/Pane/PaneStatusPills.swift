@@ -80,6 +80,19 @@ struct PaneStatusPillView: View {
     /// It is `static` and internal so the colour test reads the SAME source the view fills with: a
     /// regression that re-routed a fill through the theme accent fails the test that pins it against the
     /// fixed token.
+    ///
+    /// THIS TABLE CANNOT DESCEND, and the reason is the layering rather than a judgement call. It
+    /// returns a `Color`, `Color` is `SlopDeskSlate`'s, and `SlopDeskSlate` sits ABOVE
+    /// `SlopDeskClientCore` — a token pushed down to meet it would make the floor import the ladder
+    /// standing on it. So the ink stays a NAME below (``PaneStatusPillInk``) and each renderer keeps
+    /// its own four lines: this one to `Color`, the Mac's to `NSColor` off `Slate.Native.Status`.
+    ///
+    /// That is the ``ToastPresentation`` deal exactly, and it comes with the same obligation: the two
+    /// halves are RATCHETED AS A PAIR in `scripts/check-supervisor.sh`, which reads the ink cases out
+    /// of the shared enum and fails if either half stops naming one. A third ink added below is then
+    /// red in both renderers until both resolve it, which is the only way a "one value, two views"
+    /// split does not decay into one view that quietly knows about a role the other has never heard
+    /// of.
     static func fillColor(_ ink: PaneStatusPillInk) -> Color {
         switch ink {
         case .security: Slate.Status.secureInput

@@ -9,6 +9,15 @@
 // and not `0`; a stall with no epoch prints `RECONNECTING` and not `· 0S`. A zero that means "no
 // reading" is the one lie an instrument readout must not tell — and it is the easy regression, since
 // every one of these values is an `Optional` whose `?? 0` compiles fine.
+//
+// TWO GATES LOST AN INPUT, AND WITH IT THE ASSERTIONS THAT WERE ITS ONLY CALLER. `showsControlBar`
+// and `isDesktopUploadTarget` each began `!staticMirror && …`, a flag for a headless `ImageRenderer`
+// snapshot path that reached them threaded down through the pane canvas. Nothing in `Sources/`,
+// `Apps/` or `ThirdParty/` ever passed `true` — the `true` cases below were, with one in
+// `GuiLeafReadOnlyPillTests`, the only ones in the tree. So the assertions were DELETED with the
+// parameter (increment 56d) rather than rewritten to keep passing: a case that is a branch's sole
+// producer does not cover the branch, it preserves it. `check-supervisor.sh` fails the build if the
+// flag comes back.
 
 import Foundation
 import SlopDeskWorkspaceCore
@@ -111,34 +120,25 @@ final class GuiPaneReadoutQualityTests: XCTestCase {
 
 final class GuiPaneReadoutGateTests: XCTestCase {
     /// The control bar's verbs (resize / lock / zoom) are meaningful only against a live stream, so
-    /// the picker and cap-gated states show no footer — and the static-mirror snapshot path renders
-    /// no live chrome at all.
-    func testTheControlBarNeedsALiveStreamAndALiveRender() {
-        XCTAssertTrue(GuiPaneReadout.showsControlBar(staticMirror: false, hasLiveDescriptor: true))
-        XCTAssertFalse(GuiPaneReadout.showsControlBar(staticMirror: false, hasLiveDescriptor: false))
-        XCTAssertFalse(GuiPaneReadout.showsControlBar(staticMirror: true, hasLiveDescriptor: true))
+    /// the picker and cap-gated states show no footer.
+    func testTheControlBarNeedsALiveStream() {
+        XCTAssertTrue(GuiPaneReadout.showsControlBar(hasLiveDescriptor: true))
+        XCTAssertFalse(GuiPaneReadout.showsControlBar(hasLiveDescriptor: false))
     }
 
     /// The gesture is "drop onto the remote DESKTOP": no other pane kind is a target, and lighting a
     /// border that is not one would promise an upload that cannot happen.
     func testOnlyALiveDesktopPaneAcceptsAFileDrop() {
-        XCTAssertTrue(
-            GuiPaneReadout.isDesktopUploadTarget(staticMirror: false, kind: .desktop, hasLiveDescriptor: true),
-        )
+        XCTAssertTrue(GuiPaneReadout.isDesktopUploadTarget(kind: .desktop, hasLiveDescriptor: true))
         XCTAssertFalse(
-            GuiPaneReadout.isDesktopUploadTarget(staticMirror: false, kind: .terminal, hasLiveDescriptor: true),
+            GuiPaneReadout.isDesktopUploadTarget(kind: .terminal, hasLiveDescriptor: true),
             "a terminal pane has no remote desktop to drop onto",
         )
         XCTAssertFalse(
-            GuiPaneReadout.isDesktopUploadTarget(staticMirror: false, kind: nil, hasLiveDescriptor: true),
+            GuiPaneReadout.isDesktopUploadTarget(kind: nil, hasLiveDescriptor: true),
             "a pane with no spec resolved yet is not a target",
         )
-        XCTAssertFalse(
-            GuiPaneReadout.isDesktopUploadTarget(staticMirror: false, kind: .desktop, hasLiveDescriptor: false),
-        )
-        XCTAssertFalse(
-            GuiPaneReadout.isDesktopUploadTarget(staticMirror: true, kind: .desktop, hasLiveDescriptor: true),
-        )
+        XCTAssertFalse(GuiPaneReadout.isDesktopUploadTarget(kind: .desktop, hasLiveDescriptor: false))
     }
 
     /// EVERY latched mode has to reach the collapsed chip's tint, or folding the bar away hides a

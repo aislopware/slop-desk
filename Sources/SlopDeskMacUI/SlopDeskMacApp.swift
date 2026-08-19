@@ -91,10 +91,16 @@ public struct SlopDeskMacApp: App {
     /// The cross-container pane-drag rendezvous: the sidebar rows, the canvas, and every satellite window
     /// live in SEPARATE hosting views, so the free pane drag (move across tabs / break to a new tab / tear
     /// off to a window / merge back) meets here. Its `store` weak ref is bound in a launch `.task`.
-    /// The chip — the card that follows the cursor — is INJECTED rather than owned, because it is an
-    /// `NSHostingView` over a SwiftUI card and the coordinator is a floor below it. `chip:` defaults to
-    /// `nil`, so a caller that forgets this compiles and silently draws no chip; this is the one caller.
-    @State private var paneDrag = PaneDragCoordinator(chip: PaneDragChipPanel())
+    /// The chip — the card that follows the cursor — is INJECTED rather than owned, because it is a
+    /// DRAWING and the coordinator is a floor below every drawing. `chip:` defaults to `nil`, so a
+    /// caller that forgets this compiles and silently draws no chip; this is the one caller, and on iOS
+    /// the default is the right answer rather than an omission (no cursor, one window, nothing to
+    /// follow).
+    ///
+    /// ``MacPaneDragChipPanel`` as of increment 56e — the same borderless `NSPanel`, with its
+    /// `NSHostingView<PaneDragChipView>` replaced by a hand-drawn capsule and the SwiftUI original
+    /// deleted. The seam did not move: the coordinator still sees only ``PaneDragChipSink``.
+    @State private var paneDrag = PaneDragCoordinator(chip: MacPaneDragChipPanel())
     /// The Settings WINDOW (docs/56 stage D). Not a `Settings` scene: that scene is a SwiftUI construct
     /// that supplies its own ⌘, item, and the page it hosted is now drawn in AppKit from the layout
     /// table. Built once at launch, opened on demand, and it holds its own window.
@@ -317,6 +323,10 @@ public struct SlopDeskMacApp: App {
             connection: connection,
             overlay: overlayCoordinator,
             chrome: chrome,
+            // A PARAMETER, not the `\.preferencesStore` environment the root used to read (increment
+            // 56b): that key is declared in the draining target, and reading it there was one of the two
+            // things keeping `MacWorkspaceRootView`'s `import SlopDeskClientUI` alive.
+            preferences: preferences,
             installSidebarToggle: { [keyDispatcher] toggle in keyDispatcher.setToggleSidebar(toggle) },
             installCodeSidebarToggle: { [keyDispatcher] toggle in keyDispatcher.setToggleCodeSidebar(toggle) },
             installFocusCodePanel: { [keyDispatcher] focus in keyDispatcher.setFocusCodePanel(focus) },
