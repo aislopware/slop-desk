@@ -314,14 +314,7 @@ struct TerminalFindBar: View {
             model.previous()
             return .handled
         }
-        #if os(macOS)
-        .onExitCommand { model.close() }
-        #else
-        .onKeyPress(.escape, phases: .down) { _ in
-            model.close()
-            return .handled
-        }
-        #endif
+        .slateCancelKey { model.close() }
     }
 
     // MARK: - Query field

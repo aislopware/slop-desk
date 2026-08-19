@@ -78,8 +78,10 @@ struct GlobalSearchView: View {
         // Full-sheet: a phone has one width and the results want all of it.
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear { restoreFromStore() }
-        // Esc for the iPad's hardware keyboard. `.onExitCommand` is macOS-only and this card is the
-        // phone's, so the key press IS the handler.
+        // Esc for the iPad's hardware keyboard — deliberately NOT ``View/slateCancelKey(perform:)``.
+        // That modifier exists to carry the macOS responder-chain half; this card is the phone's
+        // (its Mac counterpart is a `MacOverlayPanel`, which takes Esc in AppKit), so the key press
+        // IS the handler and there is no second half to carry.
         .onKeyPress(.escape, phases: .down) { _ in
             coordinator.closeGlobalSearch()
             return .handled
@@ -90,7 +92,7 @@ struct GlobalSearchView: View {
 
     private var queryBar: some View {
         // No leading magnifier — the query text is flush-left per global-search.png. No in-bar `×` either: the
-        // overlay's dismiss affordance is Esc (`onExitCommand` / `.onKeyPress(.escape)` on the surface).
+        // overlay's dismiss affordance is Esc (the `.onKeyPress(.escape)` on the surface above).
         HStack(spacing: Slate.Metric.space2) {
             TextField("Search across all tabs…", text: queryBinding)
                 .textFieldStyle(.plain)

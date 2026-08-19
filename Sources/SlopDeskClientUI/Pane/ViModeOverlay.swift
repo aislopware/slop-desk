@@ -97,19 +97,12 @@ struct ViModePill: View {
         // Belt-and-suspenders Escape dismiss: the primary exit is the renderer's `keyDown` →
         // `exitCopyMode()` once the terminal is first responder (the routing now nudges focus there on arm).
         // This safety net — if Escape lands in the pill's responder chain instead of the surface — still leaves
-        // vi/copy-mode via the SAME `onExit` seam the `×` fires (macOS `onExitCommand`, which is unavailable on
-        // iOS, so the iOS slice uses the equivalent `.onKeyPress(.escape)`).
-        #if os(macOS)
-            .onExitCommand { onExit() }
-        #else
-            .onKeyPress(.escape, phases: .down) { _ in
-                onExit()
-                return .handled
-            }
-        #endif
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel(accessibilityLabel)
-            .accessibilityHint("Exit vi mode")
+        // vi/copy-mode via the SAME `onExit` seam the `×` fires. Which key route that is per platform is
+        // ``View/slateCancelKey(perform:)``'s, not this file's.
+        .slateCancelKey { onExit() }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityHint("Exit vi mode")
     }
 
     /// The combined a11y label — the mode plus any pending count, so VoiceOver reads "Vi mode VISUAL 5".

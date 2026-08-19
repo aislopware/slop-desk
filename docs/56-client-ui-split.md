@@ -1450,3 +1450,29 @@ Three things moved with it, and one had to widen:
 `MacTitlebarBand` dropped `import SlopDeskClientUI` entirely — the rollup mount was the only thing it
 took from there. `SlopDeskMacUITests` gained `SFSafeSymbols`: the probe
 draws the toggle and the search plate as footprints, and both are named glyphs.
+
+
+### Increment 37 — the cancel key, spelled once
+
+Four shared surfaces — `ViModeOverlay`, `HintModeOverlay`, `TerminalFindBar`, `CommandNavigatorView`
+— each carried the same five-line gate: `.onExitCommand` on macOS, `.onKeyPress(.escape, phases:
+.down)` everywhere else. Three of them also carried their own paragraph explaining it.
+
+This one does NOT collapse into a shared API, and the census is worth stating precisely because the
+two halves LOOK interchangeable: macOS routes Esc through the responder chain (`cancelOperation(_:)`,
+which AppKit also sends for ⌘.), so `.onExitCommand` fires from anywhere below the view; iOS has no
+`cancelOperation`, and `.onKeyPress` needs the view or a descendant to hold keyboard focus. The
+narrower half is the only half iOS has. That difference is exactly what these surfaces depend on —
+their primary exit is the terminal renderer's own `keyDown`, and the modifier is the net for an Esc
+that lands in the overlay's chain instead.
+
+So the gate stays and moves: `View.slateCancelKey(perform:)` in the design system, one `#if`, one
+paragraph. 4 gates → 1, and the day SwiftUI unifies the two there is one place to change.
+
+The three phone-only cards (`PaletteView`, `OpenQuicklyView`, `GlobalSearchView`) deliberately do NOT
+adopt it and now say so in a comment that names the modifier: their Mac counterparts are
+`MacOverlayPanel` windows taking Esc in AppKit proper, so the SwiftUI card only ever runs on the
+phone and has no second half to carry. A reader converting them "for consistency" would be adding a
+macOS branch to a view macOS never mounts.
+
+`SlopDeskClientUI` is now at 53 `#if os(macOS)` across 22 files.

@@ -109,8 +109,10 @@ struct PaletteView: View {
             coordinator.acceptSelectedKeepingOpen()
             return .handled
         }
-        // Esc for the iPad's hardware keyboard. `.onExitCommand` is macOS-only and this card is the
-        // phone's, so the key press IS the handler.
+        // Esc for the iPad's hardware keyboard — deliberately NOT ``View/slateCancelKey(perform:)``.
+        // That modifier exists to carry the macOS responder-chain half; this card is the phone's
+        // (its Mac counterpart is a `MacOverlayPanel`, which takes Esc in AppKit), so the key press
+        // IS the handler and there is no second half to carry.
         .onKeyPress(.escape, phases: .down) { _ in
             coordinator.closePalette()
             return .handled

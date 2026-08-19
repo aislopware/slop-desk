@@ -129,14 +129,7 @@ struct CommandNavigatorView: View {
             copyOutputSelected()
             return .handled
         }
-        #if os(macOS)
-        .onExitCommand { onClose() }
-        #else
-        .onKeyPress(.escape, phases: .down) { _ in
-            onClose()
-            return .handled
-        }
-        #endif
+        .slateCancelKey { onClose() }
     }
 
     private var divider: some View {
