@@ -2488,6 +2488,48 @@ not wrong about the file it examined; it was wrong to generalise from one file t
 second sweep found ~445 more lines of not-a-drawing after the first found ~2,900. **A sweep that finds a
 tail is not a failed sweep — but a sweep that reports "last" is a claim about files it never opened.**
 
+### Increment 57d — wave P's last three, and the kind-3 row that was never geometry
+
+**P5 closed the only kind 3 on the ledger by deleting the thing that made it one.** The row read
+*"the compositor rect differs from the hosting view's frame by the island moat"*, and every word of it
+was true — `ContentColumn` applied the moat one level above the canvas, so the hosting view's frame and
+the canvas differed by it, and by a *differently animating* amount while a column collapsed. That is
+what `DropTargetFrameReader` existed to work around: a `GeometryReader` inside `SplitContainer`
+publishing the screen rect the AppKit view above it could not compute. Move the moat down into
+`MacContentColumn`'s constraints and the difference is **zero**. The reader is deleted rather than
+ported and registration is the three lines `MacNavigatorColumn` already spends on `.sidebarList`.
+
+**The row was never a fact about geometry. It was a fact about where a modifier had been applied** —
+which is the general shape worth carrying into wave R: a blocker phrased as a measurement is worth
+re-reading as a statement about layering, because the second kind can be dissolved and the first cannot.
+
+- **P4 — the leaf seam grows a second shape.** Both factories offered one: a SwiftUI `AnyView`. On the
+  Mac that buries the Metal surface under an `NSHostingView` that claims the hit-test over the one view
+  which must take every keystroke — the exact hit-claim stage D spent five increments removing. So the
+  seam widens instead of the canvas thickening: `nativeShared` hands back the `NSView`, `shared` stays
+  and is **permanently** not deprecated, because the phone has no `NSView`. One seam, two shapes, picked
+  by which framework is drawing.
+- **P6 — two values that did not need a pair.** The accent ring's alpha was spelled three times, the
+  third in `MacGlobalSearch` — AppKit, drawing the ON chip of the very pill whose header pins that the
+  find bar and the global-search bar render identically. Both proposing comments undercounted their own
+  spellings.
+
+**P6's finding is the one this page did not have.** The ink of that pair was already filed as a realised
+failure; the ALPHA was the same failure one dimension over and nothing had named it. A `Color` table
+cannot descend below `SlopDeskSlate` and so must be pinned as a pair — but an alpha ladder is
+frameworkless, and **a frameworkless value descends to the floor where a pair would only have reported
+the drift after it shipped.** So before pinning a pair, ask whether the value has a colour in it. If it
+does not, a pair is the wrong answer and the floor was available the whole time.
+
+**What only a click can check, and what a gate can.** P4's registration lives in an app target no
+`Package.swift` builds, so `swift build` never compiles the embedder at all — the pair is verified by
+`enable-macos-renderer.sh` plus `xcodebuild`, and `** BUILD SUCCEEDED **` is the entire pass criterion.
+That leaves the half-registration failure invisible to every suite: only `shared` set ships a Mac that
+cannot mount natively, only `nativeShared` ships iOS the BUILD-STATUS placeholder, and neither is a
+compile error. Hence the census down to `GhosttyRendererSeam.install()` alone — written through
+`spells`, because the embedder names `nativeShared` five times in doc comments explaining the seam and a
+raw grep reads its own explanation as a registrar.
+
 ## Stage D ledger — what the rename actually costs
 
 `SlopDeskClientUI` cannot fold into `SlopDeskPhoneUI` while `SlopDeskMacUI` still imports it. That is
@@ -2613,7 +2655,7 @@ measure of the RENAME's progress, never of kind 2's.** Increment 51 already show
 still while real work lands; 54 shows the reverse — the count can be right while the category behind it
 is wrong.
 
-### Kind 3 — blocked on a geometry fact, not on effort
+### Kind 3 — blocked on a geometry fact, not on effort — ✅ EMPTY (increments 54 and 57d)
 
 `PaneDragCoordinator` (723 lines) was taken by `MacSidebarRow`, `MacNavigatorColumn` and
 `MacContentColumn`, and this section said it could not ascend for the reason increment 41 recorded:
@@ -2634,6 +2676,15 @@ island moat, and by a differently-animating amount during a collapse.
 > the three imports it was blocking dissolved the moment the split was made, with no AppKit written.
 > Before writing "not independently schedulable", check whether the blocker is the file or one
 > declaration in it.
+
+> **Closed, increment 57d — and the remaining ~40 lines were not geometry either.** `DropTargetFrameReader`
+> was the last kind 3 on this page and it is deleted, not ported. The moat that made the compositor rect
+> and the hosting view's frame differ is `MacContentColumn`'s constraints now, the difference is zero,
+> and the AppKit view registers its own rect. **The blocker was a fact about where a modifier had been
+> applied, phrased as a fact about geometry** — so the sentence above, "check whether the blocker is the
+> file or one declaration in it", now has a second half: check whether the blocker is geometry at all, or
+> a layering choice wearing geometry's words. This category is empty; nothing in the canvas is blocked on
+> a measurement.
 
 ### So the order is
 
@@ -2752,17 +2803,19 @@ claims not to do that.
 
 P1–P4 are fully parallel. P5 follows P2 (both edit `SplitContainer`), P6 follows P3, P7 follows P6.
 
-**Landed 2026-08-20: P1, P2, P3 (increment 57c) and P7.** P7 came early rather than last — its three
-rows are ratchets, not code, and the table above had already identified all three, so there was nothing
-for P6 to hand it. Its stated dependency was an artefact of listing it last, which is the same
-scheduling accident this page flags for P5 one paragraph down.
+**Wave P is DONE — all seven landed 2026-08-20** (P1, P2, P3 and P7 in increment 57c; P4, P5, P6 in
+57d). P7 came early rather than last: its three rows are ratchets, not code, and the table above had
+already identified all three, so there was nothing for P6 to hand it. Its stated dependency was an
+artefact of listing it last — the same scheduling accident this page flagged for P5 one paragraph down,
+and the reason both notes are kept below rather than deleted on completion.
 
-**P5 is the highest-leverage item on this page and the ledger schedules it last by accident.** Kind 3
+**P5 was the highest-leverage item on this page and the ledger scheduled it last by accident.** Kind 3
 — *"the compositor rect differs from the hosting view's frame by the island moat"* — is a statement
-about SwiftUI. Move the moat up and the difference is **zero**: the hosting view's frame *is* the
-canvas, `DropTargetFrameReader` is deleted rather than ported, two of the nine platform gates collapse,
-and registration becomes the three lines `MacNavigatorColumn` already uses. It is available now, before
-any leaf is drawn.
+about SwiftUI. Moving the moat up made the difference **zero**: the hosting view's frame *is* the
+canvas, `DropTargetFrameReader` was deleted rather than ported, two of the nine platform gates collapse,
+and registration is the three lines `MacNavigatorColumn` already uses. It was available the whole time,
+before any leaf was drawn — which is the argument for re-reading a dependency order before trusting it,
+not for trusting this one.
 
 ### Three ink tables are ungated, and one has both renderers shipping today
 
@@ -2783,7 +2836,7 @@ its siblings twice (57b caught two, this catches three), which is enough repetit
 an oversight: **a table that resolves to a `Color` is a pair the day it is written, and the ratchet
 belongs in the same commit as the table.**
 
-### The three risks, decided
+### The three risks, decided — 1 and 2 landed (increment 57d), 3 is wave R's
 
 1. **`DropTargetFrameReader`.** Resolved by P5's relocation, but the hazard changes shape rather than
    vanishing: SwiftUI's `GeometryReader` reports the *interpolated* rect every frame, while AppKit's
@@ -2805,6 +2858,14 @@ belongs in the same commit as the table.**
    `enable-macos-renderer.sh` + `xcodebuild` recipe, so P4 lands as its own commit with that recipe in
    the message. Corollary, and increment 45b's lesson again: **any dead-code claim in this port greps
    `ThirdParty/` too.**
+
+   > **Landed, increment 57d — and the config trap was answered structurally, not by remembering it.**
+   > `followTerminalConfig` no longer rides `GhosttyTerminalView.body`: it is armed from `GhosttyApp`'s
+   > `init`, once per process, in the one object that owns `ghostty_app_update_config`. So the native
+   > mount cannot skip it by skipping the SwiftUI wrapper — there is no longer a wrapper to skip. **A
+   > trap that survives only if every future caller remembers it has not been answered.** The end-to-end
+   > proof is still manual and still cannot be automated: open Settings ▸ Terminal on a renderer build
+   > and change the font size TWICE — once proves the arm, twice proves the re-arm.
 3. **Hide/collapse.** `alphaValue = 0` is what ships and is correct; `isHidden` is not, for a reason
    worth writing down — a layer-hosting view sizes its `IOSurfaceLayer` frame and `contentsScale` in
    `layout()`, which does not run on a hidden subtree, so an un-hide after a scale change presents
