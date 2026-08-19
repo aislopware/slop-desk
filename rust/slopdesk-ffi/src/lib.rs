@@ -72,6 +72,9 @@ pub mod frame_decoder;
 pub mod frame_rate;
 pub mod fuzzy;
 pub mod git_line;
+// macOS only: behind it is a vendored `libgit2`, and only hostd asks the question. See the module.
+#[cfg(target_os = "macos")]
+pub mod git_status;
 pub mod hevc_parameter_sets;
 pub mod hint_scan;
 pub mod host_policy;

@@ -6,13 +6,16 @@ import SlopDeskSupervisor
 /// session questions.
 ///
 /// ## What moved, and what did not
-/// Five of ``MetadataQuerying``'s ten methods are subprocess and filesystem work with no handle
-/// behind them: `gitStatus`, `gitDiff`, `listDirectory`, `listAgentSessions`, `readAgentSession`.
-/// Every one of them was untestable in Swift for the reason the whole file carries — the hang-safety
-/// rule keeps a real `Process` out of a unit test, so the porcelain parser, the slug convention and
-/// the diff-base ladder were compiled-and-reviewed only. In Rust they are ordinary functions over
-/// strings with the process boundary at the edge, and they are covered (`docs/DECISIONS.md`,
-/// stage 24). ``TerminfoResolver``'s host probe joined them for the same reason (stage 25).
+/// Four of ``MetadataQuerying``'s ten methods are subprocess and filesystem work with no handle
+/// behind them: `gitDiff`, `listDirectory`, `listAgentSessions`, `readAgentSession`. Every one of
+/// them was untestable in Swift for the reason the whole file carries — the hang-safety rule keeps a
+/// real `Process` out of a unit test, so the slug convention and the diff-base ladder were
+/// compiled-and-reviewed only. In Rust they are ordinary functions over strings with the process
+/// boundary at the edge, and they are covered (`docs/DECISIONS.md`, stage 24). ``TerminfoResolver``'s
+/// host probe joined them for the same reason (stage 25).
+///
+/// `gitStatus` was the fifth and has left entirely: ``HostGitStatus`` answers it IN PROCESS through
+/// `slopdesk-git`, so the verb the repo watcher polls on a cadence costs no spawn at all.
 ///
 /// ``HostMetadataProbe`` kept the five that need something a fork does not have: `paneWorkingDirectory`,
 /// `processes` and `ports` are anchored to the pane's PTY master fd (`tcgetpgrp`, `ptsname`) and to
@@ -20,17 +23,15 @@ import SlopDeskSupervisor
 /// request; `hostName` is one `ProcessInfo` field and not worth a spawn.
 ///
 /// ## Why forking is affordable here
-/// `gitStatus` alone forked `git` FOUR times per request from hostd's own metadata queue. One fork of
-/// this program, which makes those four inside itself, is strictly fewer spawns for the verb that
-/// dominates the traffic — the project-scoped ``RepoStatusWatcher`` polls it on a cadence. The other
-/// four verbs each ride a person: a folder someone expanded, a diff someone opened, a session list
-/// someone asked for.
+/// Every verb left here rides a PERSON: a folder someone expanded, a diff someone opened, a session
+/// list someone asked for. A fork per click is affordable in a way a fork per filesystem event is
+/// not, which is the line `gitStatus` crossed when the project-scoped ``RepoStatusWatcher`` began
+/// polling it on a cadence — and why that one is linked rather than forked.
 ///
 /// ## The degradation
-/// A host with no `slopdesk-probe` answers `.noRepo` for git and `nil` — the verb's `.notFound` — for
-/// everything else. That is the same answer each verb already had for a pane outside a repo or a path
-/// that does not resolve, so a missing binary costs the git line and the file tree, and nothing else
-/// notices.
+/// A host with no `slopdesk-probe` answers `nil` — the verb's `.notFound` — for every question here.
+/// That is the same answer each verb already had for a path that does not resolve, so a missing
+/// binary costs the file tree and the diff, and nothing else notices.
 enum HostProbe {
     /// Names the `slopdesk-probe` to run. The E2E harness points it at its own build.
     static let binaryEnvKey = "SLOPDESK_PROBE_BIN"
@@ -52,29 +53,7 @@ enum HostProbe {
         )
     }
 
-    // MARK: - The six questions
-
-    /// The git status of `cwd`. `.noRepo` for a cwd outside a repo AND for a missing binary — the
-    /// caller has one degraded rendering and it is the right one for both.
-    static func gitStatus(cwd: String) -> MetadataCodec.GitStatusPayload {
-        guard let answer = ask(["git-status", "--cwd", cwd]),
-              answer["hasRepo"] as? Bool == true
-        else { return .noRepo }
-        let files = (answer["files"] as? [[String: Any]] ?? []).compactMap { entry -> MetadataCodec.GitFileChange? in
-            guard let code = entry["statusCode"] as? Int, let path = entry["path"] as? String else { return nil }
-            return MetadataCodec.GitFileChange(statusCode: UInt8(truncatingIfNeeded: code), path: path)
-        }
-        return MetadataCodec.GitStatusPayload(
-            hasRepo: true,
-            branch: answer["branch"] as? String ?? "",
-            remoteURL: answer["remoteURL"] as? String ?? "",
-            repoRoot: answer["repoRoot"] as? String ?? "",
-            ahead: int32(answer["ahead"]),
-            behind: int32(answer["behind"]),
-            stashCount: int32(answer["stashCount"]),
-            files: files,
-        )
-    }
+    // MARK: - The five questions
 
     /// The unified diff of a repo-root-relative `file`. Empty `Data` is a real answer (an unchanged
     /// file); `nil` is the verb's `.notFound`.
@@ -134,13 +113,6 @@ enum HostProbe {
     }
 
     // MARK: - The fork
-
-    /// Decodes a JSON `Int` field that the wire carries as `Int32`, clamping rather than wrapping: a
-    /// stash count past 2^31 is a number nobody reads, and a NEGATIVE one is a badge that lies.
-    private static func int32(_ value: Any?) -> Int32 {
-        guard let number = value as? Int else { return 0 }
-        return Int32(clamping: number)
-    }
 
     /// Runs one subcommand and decodes the single JSON object it prints. `nil` for every failure —
     /// no binary, a non-zero exit, output that is not one object. Each caller above already has a

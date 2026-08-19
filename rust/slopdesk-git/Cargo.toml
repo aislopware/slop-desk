@@ -1,0 +1,151 @@
+# `slopdesk-git` — the repository questions the sidebar asks, answered IN PROCESS.
+#
+# ## Why this is a crate and not four `git` invocations
+# The four questions behind one git line (`status --porcelain -b`, `remote get-url origin`,
+# `rev-parse --show-toplevel`, `stash list`) used to be four forks inside a fifth — hostd spawned
+# `slopdesk-probe`, and the probe spawned `git` four times. The repo watcher re-asks them on every
+# debounced FSEvents tick, PER WATCHED REPO, so that is five process spawns per tick per repo for an
+# answer that is one struct.
+#
+# ## Why LINKED and not a binary on a socket
+# `CLAUDE.md`'s rule picks by lifetime: a component that must outlive its caller or be `execve`d is
+# a binary on a socket; one that is in-process by necessity and lifetime-coupled to its caller is an
+# `.xcframework`. The watcher lives exactly as long as hostd does, so this is the second kind — and
+# it is also why the engine may NOT go in `slopdesk-probe`, whose workspace is tuned
+# (`opt-level = "z"`, `lto`, `panic = "abort"`) for a program whose entire cost is starting up.
+# Linking a vendored libgit2 into a fork-per-event binary would pay `git_libgit2_init` on every
+# fork, which is the cost this port exists to remove.
+#
+# ## Why `git2` and not `gix`
+# Measured and read, 2026-08-19, and the answer went the other way from the expectation. Two
+# reasons, either sufficient:
+#
+#  - **gitoxide has no stash support at all.** There is no `gix-stash` crate; every stash capability
+#    is an unchecked item in gitoxide's own `crate-status.md`. The stash DEPTH is one of the seven
+#    sigils the git line draws, so a `gix` port would have had to keep a `git` fork for it — and one
+#    fork per tick is most of the cost this removes.
+#  - **`gix::status` does not answer in the shape the wire is pinned to.** It decomposes into two
+#    separate comparisons (`index_worktree`, `tree_index`) with no `XY` output, so the porcelain
+#    pair `golden/golden_vectors.json` freezes would have had to be RE-DERIVED on this side.
+#    `git2::Status` is already the X/Y split as one bitflag value per entry, which is the difference
+#    between mapping a contract and reconstructing one.
+#
+# Everything else agreed: 16 transitive crates against 163, a 27 s cold build against 64 s, a
+# one-call `graph_ahead_behind` against a hand-rolled merge-base walk, and a stable API against a
+# crate whose own `STABILITY.md` calls it a development version and whose changelog carries a steady
+# run of "adapt to changes in gix-status". gitoxide is the better-designed library and the wrong one
+# for a wire contract today; revisit when `gix-stash` exists and `gix` is 1.0.
+#
+# libgit2 is GPLv2 WITH the linking exception, which permits linking an unmodified build into any
+# program without licence obligation on that program. It is vendored (built from the bundled C
+# source) so no machine needs a system libgit2 and no build can silently pick up a different one.
+[workspace]
+resolver = "3"
+
+[package]
+name = "slopdesk-git"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The repository state behind the sidebar's git line, answered in process"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[lib]
+name = "slopdesk_git"
+path = "src/lib.rs"
+
+# The one dependency, and it carries a C library. `vendored-libgit2` is not optional: without it
+# the build links whatever libgit2 the machine happens to have, which is a different answer per
+# developer and no answer at all on a CI runner or in a signed release build.
+[dependencies]
+git2 = { version = "0.21", default-features = false, features = ["vendored-libgit2"] }
+# zlib, compiled from source INTO the archive rather than linked from the system.
+#
+# libgit2 inflates every object it reads, so it needs `crc32` and `inflate*` from somewhere. The
+# system `libz` would be the obvious somewhere, and it is the wrong one here: a Rust staticlib is one
+# object per crate, so the object holding this door also holds every other `slopdesk_*` entry point —
+# any executable that calls ANY of them pulls libgit2's members in and would need `-lz` too. That is
+# a linker flag on ~40 SwiftPM targets and two Xcode projects, for a door one program opens. Vendored
+# instead, the archive resolves itself and nothing downstream learns that libgit2 is in there.
+#
+# `libz-sys`'s `static` builds zlib's own C with `cc`; the `zlib-ng-compat` alternative would be
+# faster and needs `cmake`, which is a toolchain requirement no machine here has today.
+libz-sys = { version = "1", default-features = false, features = ["static"] }
+# The ANSWER's type, not a second copy of it. `slopdesk_wire::metadata::GitStatusPayload` already
+# spells these eight fields for the reply this feeds, and a struct here with the same eight would be
+# a mirror to keep in step — see `CLAUDE.md`'s one-implementation rule. Depending on the wire also
+# puts the encode next to the read, so the door in `slopdesk-ffi` stays one line of marshalling.
+slopdesk-wire = { path = "../slopdesk-wire" }
+
+# The parity test names the wire's payload type directly, so it is a dev dependency as well as a
+# real one.
+[dev-dependencies]
+slopdesk-wire = { path = "../slopdesk-wire" }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+debug = 0
+strip = "symbols"
+
+# ---------------------------------------------------------------------------- #
+# The strict block, as everywhere else. `forbid` rather than `deny`: nothing here needs `unsafe`,
+# the C is behind `git2`'s own bindings, and this crate is not one of the three allowed to write it.
+[lints.rust]
+unsafe_code = "forbid"
+
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+missing_copy_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+single_use_lifetimes = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+variant_size_differences = "deny"
+elided_lifetimes_in_paths = "deny"
+let_underscore_drop = "deny"
+non_ascii_idents = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+indexing_slicing = "deny"
+integer_division = "deny"
+exit = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+mem_forget = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+verbose_file_reads = "deny"
+str_to_string = "deny"
+empty_structs_with_brackets = "deny"
+if_then_some_else_none = "deny"
+lossy_float_literal = "deny"
+try_err = "deny"
+
+multiple_crate_versions = "allow"
+# See `slopdesk-ffi/Cargo.toml` — the FMA the nursery wants is the one `CLAUDE.md` forbids, and the
+# allow is repo-wide rather than per-crate so it cannot be obeyed before anyone reads the reason.
+suboptimal_flops = "allow"
+imprecise_flops = "allow"

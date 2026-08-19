@@ -1,7 +1,7 @@
 //! One subcommand per metadata query, one answer on stdout.
 //!
 //! ## Two output shapes, on purpose
-//! Five subcommands print one JSON object. Two — `git-diff` and `read-session` — print RAW BYTES,
+//! Four subcommands print one JSON object. Two — `git-diff` and `read-session` — print RAW BYTES,
 //! because their answer IS bytes: a patch or a transcript, up to 15 MiB of it, that hostd forwards
 //! into an opaque wire payload without looking inside. Wrapping those in JSON would mean escaping
 //! every byte on the way out and unescaping it on the way in, to move a blob neither side reads.
@@ -17,8 +17,6 @@
 //! ```
 //!
 //! ```text
-//! git-status    --cwd P                → {"hasRepo":…,"branch":…,"remoteURL":…,"repoRoot":…,
-//!                                         "ahead":…,"behind":…,"stashCount":…,"files":[…]}
 //! git-diff      --cwd P --file F       → raw patch bytes
 //! list-dir      --path P               → {"entries":[{"isDir":…,"name":…}]}
 //! list-sessions --project P            → {"sessions":[{"kind":…,"id":…,"title":…,"cwd":…,"mtimeMS":…}]}
@@ -53,7 +51,6 @@ fn main() -> ExitCode {
     let home = std::env::var("HOME").unwrap_or_default();
 
     match subcommand.as_str() {
-        "git-status" => flag("--cwd").map_or_else(usage, |cwd| print_json(&git::status(&cwd).to_json())),
         "git-diff" => {
             match (flag("--cwd"), flag("--file")) {
                 (Some(cwd), Some(file)) => print_bytes(git::diff(&cwd, &file)),

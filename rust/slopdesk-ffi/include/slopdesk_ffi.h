@@ -33,6 +33,7 @@
 #ifndef SLOPDESK_FFI_H
 #define SLOPDESK_FFI_H
 
+#include <TargetConditionals.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -6621,6 +6622,35 @@ size_t slopdesk_sidecar_version_banner(const uint8_t *banner, size_t len, uint8_
 size_t slopdesk_sidecar_upgrade_plan(const uint8_t *previous, size_t previous_len,
                                      const uint8_t *current, size_t current_len, uint8_t *out,
                                      size_t cap);
+
+// ---- The repository behind a pane's cwd — MACOS ONLY ----------------------------
+//
+// Everything between the MACOS-ONLY markers is declared on macOS and NOWHERE else,
+// and the markers are read by `scripts/build-ffi.sh`: it requires these symbols on
+// the macOS slice and requires them ABSENT from the two iOS slices, so the guard
+// here and the `cfg(target_os = "macos")` in `src/lib.rs` cannot drift apart.
+//
+// Behind the door is a vendored `libgit2`. Only hostd asks — a client on either
+// platform RECEIVES the git status as a metadata reply and never computes it — so
+// compiling that library into the phone slices would cost every phone build and
+// every phone archive for a door nothing on the phone can reach.
+//
+// MACOS-ONLY BEGIN
+#if TARGET_OS_OSX
+
+// The git status of `path`'s repository, already encoded as the metadata reply's
+// own payload (the layout `slopdesk_metadata_decode_git_status` reads). It crosses
+// encoded rather than as a record and an arena because hostd's responder forwards
+// it verbatim; unpacking it here would only mean packing it again there.
+//
+// A path outside a repository, an unreadable repository and a repository that
+// vanished mid-answer all give the one-byte "no repo" payload — the same degraded
+// rendering, which is the right one for all three. 0 means only that `path` was
+// not UTF-8.
+size_t slopdesk_git_status(const uint8_t *path, size_t len, uint8_t *out, size_t cap);
+
+#endif /* TARGET_OS_OSX */
+// MACOS-ONLY END
 
 #ifdef __cplusplus
 }

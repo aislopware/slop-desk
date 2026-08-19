@@ -8,6 +8,29 @@ import PackageDescription
 // with NO GUI, NO libghostty.
 //
 // Swift 6 tools default to Swift 6 language mode (strict concurrency).
+
+// What the FFI archive's C needs from the system, carried by every target that links it.
+//
+// `CSlopDeskFFI`'s macOS slice contains a vendored `libgit2` — `slopdesk_git_status`, the door that
+// replaced five process spawns per FSEvents tick with one call. libgit2 wants `iconv` for the
+// NFD/NFC path normalisation Apple filesystems make it do, and `Security` + `CoreFoundation` for its
+// certificate handling. (zlib is NOT here: it is compiled into the archive by `libz-sys`'s `static`,
+// because it was the one dependency small enough to vendor.)
+//
+// Every target that names `CSlopDeskFFI` carries this, not just the one whose door it is, because a
+// Rust staticlib is ONE object per crate: the object holding that door also holds every other
+// `slopdesk_*` entry point, so an executable calling ANY of them drags libgit2's members in. The
+// three flags cost a link-time symbol lookup on the products that never call it — `-dead_strip`
+// removes the code itself — and `scripts/check-supervisor.sh` fails a new `CSlopDeskFFI` dependent
+// that forgets them, which is the failure a person would otherwise meet as a wall of `_iconv`.
+//
+// macOS only: the iOS slices have no libgit2 in them at all (`slopdesk_ffi.h`'s `TARGET_OS_OSX`
+// region, and the `cfg` behind it).
+let ffiCLibraries: [LinkerSetting] = [
+    .linkedLibrary("iconv", .when(platforms: [.macOS])),
+    .linkedFramework("Security", .when(platforms: [.macOS])),
+    .linkedFramework("CoreFoundation", .when(platforms: [.macOS])),
+]
 let package = Package(
     name: "SlopDesk",
     platforms: [
@@ -102,7 +125,11 @@ let package = Package(
         // Foundation + Network only, so neither caller widens its graph by naming it.
         .target(name: "SlopDeskNet"),
 
-        .target(name: "SlopDeskProtocol", dependencies: ["SlopDeskArena", "CSlopDeskFFI"]),
+        .target(
+            name: "SlopDeskProtocol",
+            dependencies: ["SlopDeskArena", "CSlopDeskFFI"],
+            linkerSettings: ffiCLibraries,
+        ),
 
         // The `NSPasteboard` ↔ `MetadataCodec.ClipboardClip` conversion, both directions. Clipboard
         // sync has two ends — `HostClipboardPerformer` (daemon graph) and `ClipboardSyncEngine`
@@ -130,7 +157,11 @@ let package = Package(
 
         // NWConnection + TCP_NODELAY, dual data/control channel, ET-style replay
         // buffer, reconnect handshake. (Implemented in WF-2.)
-        .target(name: "SlopDeskTransport", dependencies: ["SlopDeskProtocol", "CSlopDeskFFI"]),
+        .target(
+            name: "SlopDeskTransport",
+            dependencies: ["SlopDeskProtocol", "CSlopDeskFFI"],
+            linkerSettings: ffiCLibraries,
+        ),
 
         // macOS host: PTY (openpty + posix_spawn createSession), session mgr, no-buffer
         // PTY<->transport relay, TIOCSWINSZ resize. (WF-3.) Also hosts the inspector's
@@ -171,6 +202,8 @@ let package = Package(
                 // target it rode in on drops the dependency.
                 "CSlopDeskFFI",
             ],
+
+            linkerSettings: ffiCLibraries,
         ),
 
         // The workspace VALUE MODEL — the Session→Tab→split tree, `PaneSpec`, the pure
@@ -188,7 +221,11 @@ let package = Package(
         // (docs/55), the same one hostd and both clients already link, and it carries the SOLVERS this
         // module used to hold a second copy of — focus, send-keys, the sidebar's ordering. The leaf is
         // still a leaf: it names no other target here, and hostd links the archive regardless.
-        .target(name: "SlopDeskWorkspaceModel", dependencies: ["SlopDeskArena", "CSlopDeskFFI"]),
+        .target(
+            name: "SlopDeskWorkspaceModel",
+            dependencies: ["SlopDeskArena", "CSlopDeskFFI"],
+            linkerSettings: ffiCLibraries,
+        ),
 
         // Shared client: connection mgr, reconnect, input encoding. (WF-4.)
         .target(name: "SlopDeskClient", dependencies: ["SlopDeskTransport", "SlopDeskProtocol"]),
@@ -215,6 +252,8 @@ let package = Package(
             // JSON is decoded here.
             name: "SlopDeskInspector",
             dependencies: ["SlopDeskProtocol", "SlopDeskNet", "CSlopDeskFFI"],
+
+            linkerSettings: ffiCLibraries,
         ),
 
         // Cross-platform Claude Code integration LOGIC (WF-7): the terminal-mode sniffer (DECSET/
@@ -234,7 +273,7 @@ let package = Package(
         // docs/55: every RULE here — the alias table, the keystroke classes, the temporal hold and
         // the status machine — is `rust/slopdesk-agent`, reached in-process. The Swift enums that
         // remain are the case lists a SwiftUI switch needs, and nothing else.
-        .target(name: "SlopDeskAgentDetect", dependencies: ["CSlopDeskFFI"]),
+        .target(name: "SlopDeskAgentDetect", dependencies: ["CSlopDeskFFI"], linkerSettings: ffiCLibraries),
 
         // Headless workspace CORE (L0 of the UI rewrite): the proven logic extracted from the dying
         // `SlopDeskClientUI` view target — the tree-of-intent domain value types, the single
@@ -283,6 +322,8 @@ let package = Package(
                 // zero transitive deps (the macro/swift-syntax targets are not pulled — see the dep note).
                 .product(name: "Defaults", package: "Defaults"),
             ],
+
+            linkerSettings: ffiCLibraries,
         ),
 
         // docs/56 stage A: the DEVICE-PANEL domain, evacuated out of the view target.
@@ -324,6 +365,8 @@ let package = Package(
                 // name onto its own image type.
                 .product(name: "SFSafeSymbols", package: "SFSafeSymbols"),
             ],
+
+            linkerSettings: ffiCLibraries,
         ),
 
         // docs/56 stage A: the client's PRESENTATION LOGIC, evacuated out of the view target.
@@ -382,6 +425,8 @@ let package = Package(
             // data URIs — the webview's WebContent process cannot see a `CTFontManager` process-scope
             // registration — and that dressing is not a view. MIT / OFL-1.1, licences beside them.
             resources: [.copy("Resources/Fonts")],
+
+            linkerSettings: ffiCLibraries,
         ),
 
         // docs/56: the DESIGN FLOOR. `SlopDeskClientUI` is the DRAINING target — when the last macOS
@@ -476,6 +521,8 @@ let package = Package(
                 // lives in `rust/slopdesk-fuzzy`, and every search field in the app ranks through it.
                 "CSlopDeskFFI",
             ],
+
+            linkerSettings: ffiCLibraries,
         ),
 
         // docs/56 stage C: the macOS APP SHELL. `Apps/ClientApp-macOS` links this and nothing else of
@@ -549,7 +596,11 @@ let package = Package(
         // side-channel codec, window-geometry codec, coordinate-mapping math (multi-monitor
         // Cocoa-flip + Retina), and the client->host input-event codec. ZERO platform dependency (no
         // ScreenCaptureKit/VideoToolbox/AppKit) → builds macOS + iOS, unit-testable in isolation.
-        .target(name: "SlopDeskVideoProtocol", dependencies: ["SlopDeskArena", "CSlopDeskFFI"]),
+        .target(
+            name: "SlopDeskVideoProtocol",
+            dependencies: ["SlopDeskArena", "CSlopDeskFFI"],
+            linkerSettings: ffiCLibraries,
+        ),
 
         // macOS-only host capture + encode + input injection. USES ScreenCaptureKit / VideoToolbox /
         // CoreGraphics / AppKit. COMPILED + code-reviewed, NEVER executed in tests: SCStream capture
@@ -581,6 +632,8 @@ let package = Package(
             // macOS-only: SCStream + VTCompressionSession + AX/CGEvent are macOS APIs.
             // (SlopDeskVideoProtocol stays cross-platform; only this host layer is gated.)
             swiftSettings: [],
+
+            linkerSettings: ffiCLibraries,
         ),
 
         // macOS + iOS client decode + Metal render + client-side cursor. USES VideoToolbox (decode) /
@@ -588,7 +641,11 @@ let package = Package(
         // synchronous) but per the hang-safety rule NO VTDecompressionSession is instantiated in tests.
         // CSlopDeskFFI: the client's presentation-depth laws — the one-way-delay spike detector and
         // the promote/demote policy — are `rust/slopdesk-video`'s `pacer_depth` through the door.
-        .target(name: "SlopDeskVideoClient", dependencies: ["SlopDeskVideoProtocol", "CSlopDeskFFI"]),
+        .target(
+            name: "SlopDeskVideoClient",
+            dependencies: ["SlopDeskVideoProtocol", "CSlopDeskFFI"],
+            linkerSettings: ffiCLibraries,
+        ),
 
         // MARK: PATH 4 — dedicated file-transfer channel
 
@@ -601,7 +658,11 @@ let package = Package(
         // channel + fake sink (hang-safety: no live socket / real disk in XCTest for the serve path).
         // PATH 4's codec is `rust/slopdesk-dropd`'s `client` module through the FFI door, so the
         // one dependency this leaf has is the shim.
-        .target(name: "SlopDeskFileTransfer", dependencies: ["SlopDeskArena", "SlopDeskNet", "CSlopDeskFFI"]),
+        .target(
+            name: "SlopDeskFileTransfer",
+            dependencies: ["SlopDeskArena", "SlopDeskNet", "CSlopDeskFFI"],
+            linkerSettings: ffiCLibraries,
+        ),
 
         // The `slopdesk-superd` <-> `slopdesk-hostd` contract: SCM_RIGHTS fd passing, the frame, the
         // message set, and the pane registry. A Darwin + Foundation LEAF with zero package
@@ -613,7 +674,11 @@ let package = Package(
         // LaunchAgent that outlives hostd's BUILD, so this one negotiates. Append-only, version in
         // `hello`, unknown verbs answered `unsupported` — see SupervisorProtocol's doc comment before
         // changing anything in here.
-        .target(name: "SlopDeskSupervisor", dependencies: ["SlopDeskTTY", "CSlopDeskFFI"]),
+        .target(
+            name: "SlopDeskSupervisor",
+            dependencies: ["SlopDeskTTY", "CSlopDeskFFI"],
+            linkerSettings: ffiCLibraries,
+        ),
 
         // hostd's END of the `slopdesk-screend` protocol: the request encoder, the reply
         // decoder, and a pooled synchronous client. The VT parser, the renderer and the
@@ -622,7 +687,11 @@ let package = Package(
         // single `AF_UNIX` connect + `sockaddr_un` validation (one implementation, not two).
         // CSlopDeskFFI: the screend wire's layouts are `rust/slopdesk-screenwire`, which screend
         // itself decodes with — so hostd's end of the frame is a marshaller, not a second copy.
-        .target(name: "SlopDeskScreen", dependencies: ["SlopDeskSupervisor", "SlopDeskTTY", "CSlopDeskFFI"]),
+        .target(
+            name: "SlopDeskScreen",
+            dependencies: ["SlopDeskSupervisor", "SlopDeskTTY", "CSlopDeskFFI"],
+            linkerSettings: ffiCLibraries,
+        ),
 
         // MARK: Executables
 
@@ -666,6 +735,8 @@ let package = Package(
                 // the CLI builds an arena for `cli_parse` and reads one back out of it.
                 "SlopDeskArena",
             ],
+
+            linkerSettings: ffiCLibraries,
         ),
 
         // The user-facing `slopdesk` CLI: arg → `CLIArgs`, dispatch, GUI-launch passthrough for the

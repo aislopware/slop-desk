@@ -47,6 +47,24 @@ while IFS= read -r symbol; do
 done < <(grep -oE '\bslopdesk_[a-z0-9_]+\(' "${CRATE}/include/slopdesk_ffi.h" | tr -d '(' | sort -u)
 [[ "${#REQUIRED_SYMBOLS[@]}" -gt 0 ]] || fail "slopdesk_ffi.h declares nothing — did the header move?"
 
+# The doors that exist on macOS ONLY, read out of the header's `MACOS-ONLY BEGIN/END` region for the
+# reason the whole list is read out of the header: a second list beside it is a list to forget.
+#
+# One door is behind such a guard today — `slopdesk_git_status`, which links a vendored `libgit2`
+# that no client can reach, since a phone RECEIVES the git status as a metadata reply. The bijection
+# below is what keeps the three spellings of that fact in step: the `#if TARGET_OS_OSX` here, the
+# `cfg(target_os = "macos")` in `src/lib.rs`, and the target-gated dependency in `Cargo.toml`. The
+# symbol is REQUIRED on the macOS slice and REQUIRED ABSENT on the other two — so a cfg that stops
+# matching the header fails this script in whichever direction it drifted, rather than shipping a
+# phone archive with a C library in it or a macOS door Swift cannot link.
+MACOS_ONLY_SYMBOLS=()
+while IFS= read -r symbol; do
+  MACOS_ONLY_SYMBOLS+=("_${symbol}")
+done < <(
+  awk '/MACOS-ONLY BEGIN/{inside=1} inside{print} /MACOS-ONLY END/{inside=0}' \
+    "${CRATE}/include/slopdesk_ffi.h" | grep -oE '\bslopdesk_[a-z0-9_]+\(' | tr -d '(' | sort -u
+)
+
 # The crates whose sources decide whether the artifact is stale: the shim and everything it wraps.
 # READ OUT OF THE CARGO GRAPH, for the reason the symbol list above is read out of the header — a
 # hand-kept list is a second list to forget, and forgetting THIS one does not fail loudly. It calls
@@ -244,6 +262,13 @@ for target in "${TARGETS[@]}"; do
   symbols="$(nm --print-armap "${archive}" 2> /dev/null || true)"
   exported="$(printf '%s\n' "${symbols}" | grep -oE '_slopdesk_[a-z0-9_]+' | sort -u || true)"
   declared="$(printf '%s\n' "${REQUIRED_SYMBOLS[@]}" | sort -u)"
+
+  # On a slice that is not macOS, a macOS-only door is not declared — and the OTHER direction of the
+  # bijection below then requires it to be absent from the library too, which is the half that
+  # catches a `cfg` that stopped matching the header.
+  if [[ "${target}" != "aarch64-apple-darwin" && "${#MACOS_ONLY_SYMBOLS[@]}" -gt 0 ]]; then
+    declared="$(comm -23 <(printf '%s\n' "${declared}") <(printf '%s\n' "${MACOS_ONLY_SYMBOLS[@]}" | sort -u))"
+  fi
 
   absent=$(comm -13 <(printf '%s\n' "${exported}") <(printf '%s\n' "${declared}") || true)
   if [[ -n "${absent}" ]]; then

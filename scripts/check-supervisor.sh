@@ -2965,9 +2965,9 @@ if [[ -e Sources/SlopDeskHost/AgentInstaller.swift ]]; then
   fail "AgentInstaller.swift is back — the merge lives in rust/slopdesk-hook/src/install.rs"
 fi
 
-# ── 16. slopdesk-probe: the metadata RPC's git, directory and session half ───────────────────────
+# ── 16. slopdesk-probe: the metadata RPC's directory, session and diff half ─────────────────────
 # The NINTH contract. Same fork-per-question shape as §14 and §15, with one wrinkle neither of those
-# has: two of the five subcommands answer in RAW BYTES, so their "nothing there" cannot be an empty
+# has: two of the subcommands answer in RAW BYTES, so their "nothing there" cannot be an empty
 # answer and has to be the exit code.
 #
 # The subcommand sets first. A renamed one is `usage()` and a non-zero exit, which every caller here
@@ -3005,6 +3005,40 @@ swift_spawns=$(among_deleted '"/usr/bin/(git|infocmp)"')
 if [[ -n "${swift_spawns}" ]]; then
   printf '%s\n' "${swift_spawns}" >&2
   fail "Swift spawns git or infocmp again — both belong inside slopdesk-probe (docs/DECISIONS.md, stages 24 and 25)"
+fi
+
+# ── 16b. The git STATUS is linked, not forked, and it is asked in exactly one place ─────────────
+# `gitStatus` left the probe entirely: `rust/slopdesk-git` opens the repository once and answers from
+# libgit2, linked into hostd through `slopdesk_git_status`. What that removed was five process spawns
+# per debounced FSEvents tick per watched repo — four `git` runs inside one fork of the probe — so a
+# `git status` reappearing ANYWHERE on this path is not a style question, it is the cost coming back.
+#
+# Three things are pinned, because the port has three ways to be undone quietly:
+#
+#  1. The Swift face calls the door. Without this, the face could be rewritten around a `Process`
+#     and every test would still pass — the answer would be identical and only the spawns would
+#     differ, which is the whole of what changed.
+if ! grep -q 'slopdesk_git_status' "Sources/SlopDeskHost/HostGitStatus.swift" 2> /dev/null; then
+  fail "HostGitStatus no longer calls slopdesk_git_status — the git line is back on a subprocess (docs/55)"
+fi
+#  2. The engine is where the answer is decided. A face that grew a fallback parser would be the
+#     two-implementations shape CLAUDE.md forbids, and it would only show up under an unusual repo.
+if ! grep -q 'pub fn of_path' "rust/slopdesk-git/src/status.rs" 2> /dev/null; then
+  fail "rust/slopdesk-git no longer answers of_path — the status engine moved without its ratchet"
+fi
+#  3. The probe does not answer it again. The verb-set gate above compares hostd's asks with the
+#     probe's arms, so a revived `git-status` arm passes it the moment someone adds the Swift side
+#     back — this names the arm itself.
+if grep -q '"git-status"' "${RUST_PROBE_MAIN}" 2> /dev/null; then
+  fail "slopdesk-probe answers git-status again — the status engine is rust/slopdesk-git, linked (docs/DECISIONS.md)"
+fi
+# And the porcelain PAIR is spelled once, in the crate that reads it off libgit2's bitflags. The old
+# probe's table lived beside a parser that is gone; a second copy of it anywhere is a wire contract
+# with two masters.
+porcelain_copies=$(grep -rln 'status_nibble\|pack_status' rust/ --exclude-dir=target 2> /dev/null || true)
+if [[ -n "${porcelain_copies}" ]]; then
+  printf '%s\n' "${porcelain_copies}" >&2
+  fail "the porcelain nibble table is back outside slopdesk-git::porcelain — one table, one crate"
 fi
 
 # ── The `slopdesk` CLI is one implementation ────────────────────────────────────────────────────

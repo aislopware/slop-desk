@@ -16572,3 +16572,61 @@ rows a person actually sees.
 Docs 30, 32 and 35 stay where they are, marked historical in `docs/README.md`'s index. They describe
 a design decision and its reasoning, and that reasoning is why the split tree looks the way it does.
 What they no longer describe is any code.
+
+## The git line stopped forking, and libgit2 came into the archive with it (2026-08-19)
+
+`gitStatus` was five process spawns for one struct: hostd forked `slopdesk-probe`, and the probe
+forked `git` four times inside it — `status --porcelain -b`, `remote get-url origin`, `rev-parse
+--show-toplevel`, `stash list`. That was affordable when the verb rode a person. It stopped being
+affordable when `RepoStatusWatcher` began polling it on every debounced FSEvents tick, per watched
+repo: an editor writing a file could cost five `fork`/`execve` pairs, and a repo with a busy build
+directory could keep doing it.
+
+It is now `rust/slopdesk-git`, LINKED. One `Repository::open_ext`, seven questions off the handle,
+zero spawns. `CLAUDE.md`'s "pick by lifetime" rule decided the shape: the watcher lives exactly as
+long as hostd, so this is a library, not a binary on a socket.
+
+**Why not gitoxide.** The expectation going in was gix — pure Rust, no C, no linker flags. Measured
+and read on 2026-08-19, it lost on two counts either of which was enough. It has no stash support
+(there is no `gix-stash`; every stash capability is an unchecked box in gitoxide's own
+`crate-status.md`), and the stash DEPTH is one of the seven sigils the git line draws — so a gix port
+would have kept a `git` fork for it, which is most of the cost this removes. And `gix::status`
+decomposes into `index_worktree` and `tree_index` with no `XY` output, while `golden_vectors.json`
+freezes the porcelain pair; `git2::Status` is already that X/Y split as one bitflag value, which is
+the difference between MAPPING a wire contract and reconstructing one. Everything else agreed with
+gix (16 transitive crates against 163, 27 s cold build against 64 s) and none of it outweighed those
+two. Revisit when `gix-stash` exists and gix is 1.0 — the parity suite below is written against the
+public function, so a re-port is validated by the tests that are already there.
+
+**It is not in `slopdesk-probe`, and could not be.** That workspace is tuned for programs whose
+whole cost is starting up (`opt-level = "z"`, `lto`, `panic = "abort"`), and every member is forked
+per event. Linking a vendored libgit2 there would pay `git_libgit2_init` on every fork — the cost
+this port exists to remove, moved rather than removed.
+
+**The parity suite is the reason the old path could be deleted in the same commit.** Twelve fixtures
+build REAL repositories under the temp directory and compare every field with what the `git` binary
+says about the same directory: staged-and-unstaged on both axes, an untracked directory as one
+entry, a rename at its new path, two conflict pairs read from our side first, the stash depth, ahead
+AND behind at once, a detached head, a subdirectory, and a directory in no repository at all. The
+oracle is the BINARY — the file spells porcelain's grammar and nothing about how the old probe used
+to read it, because copying that parser in would have left a mirror of a deleted implementation
+behind forever.
+
+**One deliberate divergence, and it is a fix.** Porcelain prints `## No commits yet on main` for an
+unborn head and the old parser took the whole sentence as the branch name — the sidebar said `No
+commits yet on main` where a person expects `main`. The new path reads the name off the symbolic
+reference. The test asserts both sides of that disagreement rather than smoothing it over.
+
+**What linking a C library cost, since it is not nothing.** libgit2 wants zlib, iconv, `Security` and
+`CoreFoundation`. zlib is compiled INTO the archive (`libz-sys`'s `static`) because it was small
+enough to vendor; the other three are declared once in `Package.swift` as `ffiCLibraries` and carried
+by every target that names `CSlopDeskFFI`. Every target, not just hostd's, because a Rust staticlib
+is one object per crate: the object holding this door holds every other `slopdesk_*` entry point, so
+an executable calling ANY of them drags libgit2's members in. `-dead_strip` removes the code from
+products that never call it; what they pay is a link-time symbol lookup.
+
+The iOS slices do not pay even that. The door is `cfg(target_os = "macos")`, its declaration sits in
+a `TARGET_OS_OSX` region of `slopdesk_ffi.h`, and `build-ffi.sh` reads that region's markers: the
+symbol is REQUIRED on the macOS slice and REQUIRED ABSENT on the other two. A client on either
+platform RECEIVES the git status as a metadata reply and never computes it, so there was never a
+phone caller to serve — and now the three spellings of that fact cannot drift apart quietly.

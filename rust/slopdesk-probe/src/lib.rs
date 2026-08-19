@@ -1,10 +1,14 @@
 //! `slopdesk-probe` — the questions hostd asks about the machine it is running on.
 //!
 //! ## What is here, and what stayed in hostd
-//! The Swift `HostMetadataProbe` answered ten queries for the pure `MetadataResponseBuilder`. Five
+//! The Swift `HostMetadataProbe` answered ten queries for the pure `MetadataResponseBuilder`. Four
 //! of them are subprocesses and filesystem walks with nothing behind them but a path, and those are
-//! here: `gitStatus`, `gitDiff`, `listDirectory`, `listAgentSessions`, `readAgentSession`. The
-//! terminfo resolution joined them for the same reason — it is one `stat` sweep and one `infocmp`.
+//! here: `gitDiff`, `listDirectory`, `listAgentSessions`, `readAgentSession`. The terminfo
+//! resolution joined them for the same reason — it is one `stat` sweep and one `infocmp`.
+//!
+//! `gitStatus` was the fifth and is no longer a fork at all: `rust/slopdesk-git` is LINKED into
+//! hostd and answers it from an open repository handle, so the verb the repo watcher polls on a
+//! cadence costs zero spawns. See that crate's manifest for why it is a library and not a program.
 //!
 //! Five stayed, each because a forked program does not have what it needs:
 //!
@@ -20,11 +24,9 @@
 //! That split is the reason this is a fork rather than a daemon: nothing here remembers anything.
 //!
 //! ## Why it is a program at all
-//! `gitStatus` already forked `git` FOUR times per request from hostd's own metadata queue, and it
-//! is the verb the project-scoped repo watcher polls on a cadence. One fork of this replaces those
-//! four — strictly fewer spawns for the traffic that dominates. The other verbs each ride a person:
-//! a folder someone expanded, a diff someone opened, a session list someone asked for, a pane
-//! someone just opened.
+//! Every verb left here rides a PERSON: a folder someone expanded, a diff someone opened, a session
+//! list someone asked for, a pane someone just opened. A fork per click is affordable in a way a
+//! fork per filesystem event is not, which is exactly the line `gitStatus` crossed when it left.
 //!
 //! And it is TESTABLE. The Swift probe carried a standing note that it was compiled and
 //! code-reviewed only, never unit-tested, because spinning a real `git` in a test is precisely what

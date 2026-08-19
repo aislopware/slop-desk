@@ -69,6 +69,15 @@ slopdesk-altscreen = { path = "../slopdesk-altscreen" }
 slopdesk-wire = { path = "../slopdesk-wire" }
 slopdesk-workspace = { path = "../slopdesk-workspace" }
 
+# hostd's door only, and the ONE dependency in this graph that compiles a C library. `libgit2` is
+# vendored inside `slopdesk-git`, and a client never asks the question — the git status arrives as a
+# metadata reply on both platforms. Gated by target rather than by feature so no phone build can opt
+# in by accident: `slopdesk_ffi.h` guards the declaration with `TARGET_OS_OSX`, and
+# `scripts/build-ffi.sh` requires the symbol on the macOS slice and requires it ABSENT on the other
+# two, so this cfg cannot quietly stop matching the header.
+[target.'cfg(target_os = "macos")'.dependencies]
+slopdesk-git = { path = "../slopdesk-git" }
+
 # Linked into an app, and one of the two consumers is the terminal's hot output path. `panic` is
 # `abort` on purpose and it is not a size choice: unwinding across a C ABI frame into Swift is
 # undefined, so a panic that escapes an entry point must end the process rather than corrupt it.
