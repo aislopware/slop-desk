@@ -1,4 +1,9 @@
-// AndroidDeviceHeader — what device this is, and what is true about it right now.
+// AndroidDeviceHeader — what device this is, and what is true about it right now, ON THE PHONE.
+//
+// iOS-ONLY SINCE docs/56 INCREMENT 52b; ``SlopDeskMacUI/MacAndroidDeviceHeader`` draws the same band
+// in AppKit. WHICH facts a device has, in what order, and which of them was read off a machine is
+// ``AndroidPresentation/facts(for:)`` — this file only turns that list into a ``SlateFactLine``, which
+// is a two-line map from ``AndroidFact`` and exactly the amount of translation an ink ROLE costs.
 //
 // The band above the stage: the way back, the device's name, the facts about it, and the verbs that
 // act on it. Structurally identical to ``SimulatorDeviceHeader``, and every rule that header records
@@ -14,6 +19,7 @@
 // and not about the device; printing both would be two resolutions in one line, one of them wrong for
 // every purpose anyone would use it for.
 
+#if os(iOS)
 import SFSafeSymbols
 import SlopDeskDevicePanels
 import SlopDeskSlate
@@ -30,12 +36,12 @@ struct AndroidDeviceHeader<Actions: View>: View {
     var body: some View {
         HStack(spacing: Slate.Metric.space2) {
             PlateIconButton(symbol: .chevronLeft) { onBack() }
-                .help("All Devices")
+                .help(AndroidPresentation.backHelp)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: Slate.Metric.space1) {
                     Text(device.name)
                         .font(.system(size: Slate.Typeface.title, weight: .semibold))
-                        .foregroundStyle(Slate.Text.primary)
+                        .foregroundStyle(AndroidInk.primary.color)
                         .lineLimit(1)
                         .truncationMode(.tail)
                     // The platform version rides the TITLE, not the facts line, for the reason the
@@ -45,7 +51,7 @@ struct AndroidDeviceHeader<Actions: View>: View {
                     if let version = device.versionLabel {
                         Text(version)
                             .font(.system(size: Slate.Typeface.footnote))
-                            .foregroundStyle(Slate.Text.tertiary)
+                            .foregroundStyle(AndroidInk.tertiary.color)
                             .lineLimit(1)
                             .layoutPriority(1)
                     }
@@ -69,36 +75,16 @@ struct AndroidDeviceHeader<Actions: View>: View {
         .background(Slate.Surface.field)
     }
 
-    /// Ordered by how often it is the thing being checked: the screen, then the SERIAL, which is what
-    /// every other tool wants pasted into it (`adb -s`, a Gradle install target, a bug report).
-    /// Density and ABI appear only where they are known.
+    /// The shared fact list, with its ink ROLE resolved to this half's hues. Everything else about a
+    /// fact — its label, its abbreviation, the whole value its Copy hands over, and whether it was
+    /// MEASURED — travels unchanged, because none of those is a drawing decision.
     private var facts: [SlateFact] {
-        var facts: [SlateFact] = []
-        if let width = device.width, let height = device.height {
-            facts.append(SlateFact(
-                "Screen", "\(width) × \(height)",
-                tint: Slate.Text.secondary, isMeasured: true,
-            ))
+        AndroidPresentation.facts(for: device).map {
+            SlateFact(
+                $0.label, $0.text, copies: $0.copies, tint: $0.ink.color,
+                isMeasured: $0.isMeasured, showsLabel: $0.showsLabel,
+            )
         }
-        if let density = device.density {
-            // `420 dpi` rather than the bucket's name (`xxhdpi`): the number is what a layout is
-            // reasoned about in, and the bucket is derivable from it while the reverse is not.
-            facts.append(SlateFact(
-                "Density", "\(density) dpi", tint: Slate.Text.tertiary, isMeasured: true,
-            ))
-        }
-        if let abi = device.abi, !abi.isEmpty {
-            // Unlabelled: `arm64-v8a` names itself, and it is here because a native build that
-            // refuses to install is almost always this line disagreeing with the APK.
-            facts.append(SlateFact(
-                "ABI", abi, tint: Slate.Text.tertiary, showsLabel: false,
-            ))
-        }
-        if let serial = device.serial {
-            facts.append(SlateFact(
-                "Serial", serial, copies: serial, tint: Slate.Text.tertiary, isMeasured: true,
-            ))
-        }
-        return facts
     }
 }
+#endif

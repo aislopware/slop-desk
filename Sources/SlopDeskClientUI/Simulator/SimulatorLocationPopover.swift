@@ -7,7 +7,14 @@
 // PRESETS FIRST, field second. The realistic use is "run this as if it were somewhere else", and the
 // honest answer to that is a short list of somewhere-elses. The field exists because the other real
 // use is a coordinate pasted out of a map, and no list can anticipate that one.
+//
+// iOS-ONLY since docs/56 increment 52a; the Mac draws the same popover in
+// `MacSimulatorLocationPopover`. The five words and the live/pinned fold are
+// ``SimulatorPresentation/Location``'s — the fold in particular, because "Clear" being ABSENT rather
+// than disabled while nothing is pinned is a decision, and a renderer holding two loose labels is a
+// renderer that can draw the verb that undoes nothing.
 
+#if os(iOS)
 import SlopDeskDevicePanels
 import SlopDeskSlate
 import SwiftUI
@@ -21,7 +28,7 @@ struct SimulatorLocationPopover: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Slate.Metric.space2) {
-            Text("Simulated Location")
+            Text(SimulatorPresentation.Location.title)
                 .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .semibold))
                 .tracking(Slate.Typeface.instrumentTracking)
                 .foregroundStyle(Slate.State.header)
@@ -66,8 +73,10 @@ struct SimulatorLocationPopover: View {
     /// like it.
     private var entry: some View {
         HStack(spacing: Slate.Metric.space1) {
-            SlateSearchField(placeholder: "37.334886, -122.008988", text: $text)
-            Button("Set") { if let parsed { send(parsed) } }
+            SlateSearchField(
+                placeholder: SimulatorPresentation.Location.placeholder, text: $text,
+            )
+            Button(SimulatorPresentation.Location.set) { if let parsed { send(parsed) } }
                 .buttonStyle(.plain)
                 .font(.system(size: Slate.Typeface.footnote))
                 .foregroundStyle(parsed == nil ? Slate.Text.tertiary : Slate.State.accent)
@@ -84,17 +93,17 @@ struct SimulatorLocationPopover: View {
     private var footer: some View {
         HStack(spacing: Slate.Metric.space1) {
             if let pinned {
-                Text("Pinned to \(pinned.readout)")
+                Text(SimulatorPresentation.Location.pinned(pinned))
                     .font(.system(size: Slate.Typeface.small))
                     .foregroundStyle(Slate.Text.tertiary)
                     .lineLimit(1)
                 Spacer(minLength: Slate.Metric.space1)
-                Button("Clear") { send(nil) }
+                Button(SimulatorPresentation.Location.clear) { send(nil) }
                     .buttonStyle(.plain)
                     .font(.system(size: Slate.Typeface.footnote))
                     .foregroundStyle(Slate.StatusInk.err)
             } else {
-                Text("The device is using live values.")
+                Text(SimulatorPresentation.Location.live)
                     .font(.system(size: Slate.Typeface.small))
                     .foregroundStyle(Slate.Text.tertiary)
                 Spacer(minLength: 0)
@@ -112,3 +121,4 @@ struct SimulatorLocationPopover: View {
         dismiss()
     }
 }
+#endif

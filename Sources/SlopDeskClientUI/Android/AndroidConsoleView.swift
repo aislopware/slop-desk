@@ -1,4 +1,10 @@
-// AndroidConsoleView — `logcat`, under the device.
+// AndroidConsoleView — `logcat`, under the device, ON THE PHONE.
+//
+// iOS-ONLY SINCE docs/56 INCREMENT 52b; ``SlopDeskMacUI/MacAndroidConsoleView`` draws the same drawer
+// in AppKit. The filter, the three empty sentences, the plain-text form a Copy hands over, the row
+// menu and the severity→ink table all descended to ``AndroidPresentation`` — the last one because it
+// is a scale, and a scale copied into a second framework is the drift nobody sees until two screens
+// sit side by side.
 //
 // A DRAWER, not a tab, for the reason its simulator twin gives: the reason to read a device's log is
 // to see what the thing on screen just did, and a console that replaces the screen breaks exactly
@@ -15,6 +21,7 @@
 // searches it — "hide everything that is not mine" is the first thing anyone does with an Android
 // log.
 
+#if os(iOS)
 import SFSafeSymbols
 import SlopDeskDevicePanels
 import SlopDeskSlate
@@ -47,24 +54,26 @@ struct AndroidConsoleView: View {
 
     private var strip: some View {
         HStack(spacing: Slate.Metric.space2) {
-            Text("Logcat")
+            Text(AndroidPresentation.consoleTitle)
                 .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .semibold))
                 .tracking(Slate.Typeface.instrumentTracking)
                 .foregroundStyle(Slate.State.header)
                 .fixedSize()
             level
-            SlateSearchField(placeholder: "Filter", text: $filter)
-            PlateIconButton(symbol: .arrowDownToLine, active: isFollowing) {
+            SlateSearchField(
+                placeholder: AndroidPresentation.consoleFilterPlaceholder, text: $filter,
+            )
+            PlateIconButton(symbol: AndroidPresentation.consoleFollowSymbol, active: isFollowing) {
                 isFollowing.toggle()
             }
-            .help(isFollowing ? "Following new output" : "Follow new output")
+            .help(AndroidPresentation.consoleFollowHelp(isFollowing: isFollowing))
             SlatePlateGroup {
-                PlateIconButton(symbol: .trash) { model.clearLog() }
-                    .help("Clear Console")
-                PlateIconButton(symbol: .xmark) {
+                PlateIconButton(symbol: AndroidPresentation.consoleClearSymbol) { model.clearLog() }
+                    .help(AndroidPresentation.consoleClearHelp)
+                PlateIconButton(symbol: AndroidPresentation.consoleHideSymbol) {
                     withAnimation(Slate.Anim.standard) { model.toggleConsole() }
                 }
-                .help("Hide Console")
+                .help(AndroidPresentation.consoleHideHelp)
             }
         }
         .padding(.horizontal, Slate.Metric.space2)
@@ -90,11 +99,11 @@ struct AndroidConsoleView: View {
         } label: {
             Text(model.logLevel.title)
                 .font(.system(size: Slate.Typeface.small))
-                .foregroundStyle(Slate.Text.secondary)
+                .foregroundStyle(AndroidInk.secondary.color)
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
-        .help("Minimum priority — changing it restarts logcat")
+        .help(AndroidPresentation.consoleLevelHelp)
     }
 
     // MARK: Rows
@@ -104,7 +113,7 @@ struct AndroidConsoleView: View {
             if visible.isEmpty {
                 Text(emptyMessage)
                     .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.tertiary)
+                    .foregroundStyle(AndroidInk.tertiary.color)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .padding(Slate.Metric.space2)
@@ -146,16 +155,16 @@ struct AndroidConsoleView: View {
         HStack(alignment: .top, spacing: Slate.Metric.space1) {
             if !line.time.isEmpty {
                 Text(line.time)
-                    .foregroundStyle(Slate.Text.tertiary)
+                    .foregroundStyle(AndroidInk.tertiary.color)
                     .fixedSize()
             }
             VStack(alignment: .leading, spacing: 0) {
                 if !line.name.isEmpty {
                     Text(line.name)
-                        .foregroundStyle(Self.tint(for: line.severity))
+                        .foregroundStyle(AndroidPresentation.logInk(line.severity).color)
                 }
                 Text(line.message)
-                    .foregroundStyle(Slate.Text.secondary)
+                    .foregroundStyle(AndroidInk.secondary.color)
                     .textSelection(.enabled)
             }
             Spacer(minLength: 0)
@@ -164,14 +173,26 @@ struct AndroidConsoleView: View {
         // alignment that makes a wall of it scannable.
         .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .regular))
         .padding(.vertical, Slate.Metric.hairline)
-        .contextMenu {
-            Button("Copy Line") { copy(Self.plain(line)) }
-            Button("Copy Console") { copy(visible.map(Self.plain).joined(separator: "\n")) }
-            if !line.name.isEmpty {
-                // The one filter action worth a menu item: a tag is what someone actually wants to
-                // isolate, and typing it into the field is the step this removes.
-                Button("Filter by \(line.name)") { filter = line.name }
-            }
+        .contextMenu { menu(for: line) }
+    }
+
+    /// WHICH verbs a log row offers is ``AndroidPresentation/menu(for:)``; the two Copy verbs run here
+    /// because what "the console" means is this half's own filtered view, and the filter verb runs
+    /// here because the field it writes into is view state by design (see ``filter``).
+    private func menu(for line: DeviceLogLine) -> some View {
+        ForEach(AndroidPresentation.menu(for: line), id: \.self) { verb in
+            Button(verb.title) { run(verb, on: line) }
+        }
+    }
+
+    private func run(_ verb: AndroidLogVerb, on line: DeviceLogLine) {
+        switch verb {
+        case .copyLine:
+            copy(AndroidPresentation.plain(line))
+        case .copyConsole:
+            copy(visible.map(AndroidPresentation.plain).joined(separator: "\n"))
+        case let .filterByTag(tag):
+            filter = tag
         }
     }
 
@@ -181,49 +202,19 @@ struct AndroidConsoleView: View {
 
     // MARK: Deriving
 
-    /// Case-insensitive substring over the whole row — tag included, since "which tag is spamming
-    /// this" is the first question anyone asks of a `logcat`.
     private var visible: [DeviceLogLine] {
-        let trimmed = filter.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return model.logLines }
-        return model.logLines.filter {
-            $0.message.localizedCaseInsensitiveContains(trimmed)
-                || $0.name.localizedCaseInsensitiveContains(trimmed)
-        }
+        AndroidPresentation.visible(model.logLines, filter: filter)
     }
 
-    /// Three states, three sentences. "Nothing here" over a console that never connected is the
-    /// failure this exists to distinguish.
     private var emptyMessage: String {
-        if !model.logLines.isEmpty { return "Nothing matches “\(filter)”." }
-        return model.isLogStarted
-            ? "Waiting for output at \(model.logLevel.title.lowercased()) priority…"
-            : "Connecting to logcat…"
-    }
-
-    static func plain(_ line: DeviceLogLine) -> String {
-        [line.time, line.name, line.message]
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
-    }
-
-    /// The tag's ink. COLOUR ONLY FOR A FAILURE — everything healthy is a grey, and the only
-    /// difference between the greys is how far back they sit. A warning is a grey too: `logcat` at
-    /// warning level on an ordinary Android device is dozens of lines a minute of framework noise, so
-    /// tinting it would spend the alarm colour on the state of nothing being wrong.
-    static func tint(for severity: DeviceLogSeverity) -> Color {
-        switch severity {
-        case .fatal,
-             .error: Slate.StatusInk.err
-        case .warning,
-             .info: Slate.Text.secondary
-        // `logcat`'s V and D both land in `plain`, and both should recede. `debug` is the unified
-        // log's bucket and `logcat` never answers it — it is here so this switch stays exhaustive
-        // over one shared ink scale rather than over an alphabet only Android has.
-        case .debug,
-             .plain: Slate.Text.tertiary
-        }
+        AndroidPresentation.consoleEmptyMessage(
+            hasLines: !model.logLines.isEmpty,
+            isLogStarted: model.isLogStarted,
+            level: model.logLevel,
+            filter: filter,
+        )
     }
 
     private static let bottomAnchor = "android.console.bottom"
 }
+#endif

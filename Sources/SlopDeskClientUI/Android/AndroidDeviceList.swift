@@ -1,4 +1,9 @@
-// AndroidDeviceList — the host's Android devices, drawn in Slate.
+// AndroidDeviceList — the host's Android devices, drawn in Slate ON THE PHONE.
+//
+// iOS-ONLY SINCE docs/56 INCREMENT 52b; the Mac draws the same two depths in AppKit
+// (``SlopDeskMacUI/MacAndroidDeviceList``). What both halves read out of ``AndroidPresentation``
+// rather than spelling twice: the filter, the two empty sentences, the row's subtitle, the predicate
+// that decides whether a tap opens a mirror at all, and the context menu's whole table.
 //
 // Structurally the twin of ``SimulatorDeviceList``: a search plate, running devices lifted into their
 // own group above, the rest cut by family, both groups in a grid whose column count follows the panel
@@ -26,11 +31,37 @@
 // running device is still the thing you are most likely to want and the shape of the screen is worth
 // the width.
 
+#if os(iOS)
 import SFSafeSymbols
 import SlopDeskDevicePanels
 import SlopDeskSlate
 import SlopDeskWorkspaceCore
 import SwiftUI
+
+/// An ink ROLE resolved to this half's hues.
+///
+/// The role descends and the hue does not, because `SlopDeskSlate` sits ABOVE `SlopDeskDevicePanels`
+/// and a token named from down there would be a cycle rather than a widening (docs/56 §2). The Mac's
+/// half spells the same five answers against `Slate.Native.Text`; this is the SwiftUI one, and it is
+/// here rather than in the design floor because the enum it switches over belongs to this panel.
+extension AndroidInk {
+    /// `@MainActor` because the ladder is: `Slate.Text` is main-actor state, and a computed property
+    /// on a `Sendable` enum is nonisolated by default, so this reads as "a background thread asking
+    /// for the theme's current hue" without it. The Mac's half inherits the isolation from the views
+    /// that call it; this one is reached from `Text(…).foregroundStyle(…)` in a nonisolated position.
+    @MainActor
+    var color: Color {
+        switch self {
+        case .primary: Slate.Text.primary
+        case .secondary: Slate.Text.secondary
+        case .tertiary: Slate.Text.tertiary
+        case .icon: Slate.Text.icon
+        // `StatusInk`, not `Status`: this rung is spent on TEXT, and the two ladders part exactly
+        // there — a dot may be `systemRed` because it is a shape, a word may not.
+        case .err: Slate.StatusInk.err
+        }
+    }
+}
 
 /// The device family as a SHAPE, so the kind of machine is answered without reading a word. Shared by
 /// the rows and the cards so one device reads the same in both. Drawn in the ICON ink for the reason
@@ -42,7 +73,7 @@ struct AndroidFamilyMark: View {
     var body: some View {
         Image(systemSymbol: AndroidDeviceKind.infer(device).symbol)
             .font(.system(size: Slate.Typeface.body, weight: .medium))
-            .foregroundStyle(Slate.Text.icon)
+            .foregroundStyle(AndroidInk.icon.color)
             .frame(width: Slate.Metric.deviceMarkWidth, alignment: .leading)
     }
 }
@@ -55,23 +86,16 @@ struct AndroidDeviceList: View {
     @State private var query = ""
 
     private var matches: [AndroidDevice] {
-        let trimmed = query.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return model.devices }
-        return model.devices.filter {
-            $0.name.localizedCaseInsensitiveContains(trimmed)
-                || ($0.model ?? "").localizedCaseInsensitiveContains(trimmed)
-                || ($0.serial ?? "").localizedCaseInsensitiveContains(trimmed)
-                || ($0.release ?? "").localizedCaseInsensitiveContains(trimmed)
-        }
+        AndroidPresentation.matches(model.devices, query: query)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             searchBar
             if model.devices.isEmpty {
-                message("No Android devices or emulators on the host.")
+                message(AndroidPresentation.noDevices)
             } else if matches.isEmpty {
-                message("No devices match “\(query)”.")
+                message(AndroidPresentation.noMatches(query))
             } else {
                 list
             }
@@ -85,13 +109,13 @@ struct AndroidDeviceList: View {
         HStack(spacing: Slate.Metric.space1) {
             Image(systemSymbol: .magnifyingglass)
                 .font(.system(size: Slate.Typeface.footnote))
-                .foregroundStyle(Slate.Text.icon)
-            SlateSearchField(placeholder: "Search devices", text: $query)
+                .foregroundStyle(AndroidInk.icon.color)
+            SlateSearchField(placeholder: AndroidPresentation.searchPlaceholder, text: $query)
             if !query.isEmpty {
                 Button { query = "" } label: {
                     Image(systemSymbol: .xmarkCircleFill)
                         .font(.system(size: Slate.Typeface.footnote))
-                        .foregroundStyle(Slate.Text.icon)
+                        .foregroundStyle(AndroidInk.icon.color)
                         .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
@@ -165,17 +189,17 @@ struct AndroidDeviceList: View {
 
     private func heading(_ section: AndroidListSection) -> some View {
         SlateSectionHeader(section.title, caption: section.version) {
-            // Emulators only, and counted as such: a physical device is not something this panel may
-            // power off, so a control that named every attached device would promise a verb it
-            // refuses for half of them.
-            let stoppable = section.devices.filter { $0.isRunning && $0.isEmulator }
+            // WHICH devices a stop-all may act on is ``AndroidPresentation/stoppable(in:)`` — a
+            // physical device is not something this panel may power off, so a control that named
+            // every attached device would promise a verb it refuses for half of them.
+            let stoppable = AndroidPresentation.stoppable(in: section.devices)
             if section.isRunning, stoppable.count > 1 {
                 SlatePlateButton(
                     symbol: .stopCircle,
-                    help: "Shut down all \(stoppable.count) running emulators",
+                    help: AndroidPresentation.shutDownAllHelp(count: stoppable.count),
                     size: Slate.Typeface.footnote,
                     plate: Slate.Metric.heightControl,
-                    tint: Slate.Text.tertiary,
+                    tint: AndroidInk.tertiary.color,
                 ) {
                     Task { await model.shutdownAll() }
                 }
@@ -187,21 +211,23 @@ struct AndroidDeviceList: View {
     private func row(_ device: AndroidDevice, showsVersion: Bool) -> some View {
         SlateListRow(
             active: false,
-            onTap: { open(device) },
+            onTap: { AndroidPresentation.open(device, on: model) },
             leading: { AndroidFamilyMark(device: device) },
             title: {
                 Text(device.name)
                     .font(.system(size: Slate.Typeface.base))
-                    .foregroundStyle(Slate.Text.primary)
+                    .foregroundStyle(AndroidInk.primary.color)
                     .lineLimit(1)
                     .truncationMode(.tail)
             },
             titleTrailing: { hovering in
                 HStack(spacing: Slate.Metric.space1) {
-                    if let subtitle = subtitle(for: device, showsVersion: showsVersion) {
+                    if let subtitle = AndroidPresentation.subtitle(
+                        for: device, showsVersion: showsVersion,
+                    ) {
                         Text(subtitle)
                             .font(.system(size: Slate.Typeface.footnote))
-                            .foregroundStyle(Slate.Text.tertiary)
+                            .foregroundStyle(AndroidInk.tertiary.color)
                             .lineLimit(1)
                             .layoutPriority(-1)
                     }
@@ -211,18 +237,6 @@ struct AndroidDeviceList: View {
             trailingOverlay: { _ in EmptyView() },
         )
         .contextMenu { menu(for: device) }
-    }
-
-    /// The trailing text: the platform version where the heading has not already said it, and the
-    /// SCREEN otherwise. The screen is the fact the simulator list could not print — an AVD's
-    /// `config.ini` is its definition, not a lookalike's — and it is what tells two similarly-named
-    /// AVDs apart when they share a system image.
-    private func subtitle(for device: AndroidDevice, showsVersion: Bool) -> String? {
-        if showsVersion, let version = device.versionLabel {
-            return version
-        }
-        guard let width = device.width, let height = device.height else { return nil }
-        return "\(width) × \(height)"
     }
 
     /// The one verb that applies, at REST but quiet: a small solid glyph in the tertiary ink, which
@@ -239,10 +253,10 @@ struct AndroidDeviceList: View {
             } else {
                 SlatePlateButton(
                     symbol: .playFill,
-                    help: "Start \(device.name)",
+                    help: AndroidPresentation.startHelp(device),
                     size: Slate.Typeface.footnote,
                     plate: Slate.Metric.heightControl,
-                    tint: hovering ? Slate.Text.primary : Slate.Text.tertiary,
+                    tint: hovering ? AndroidInk.primary.color : AndroidInk.tertiary.color,
                 ) {
                     Task { await model.boot(device) }
                 }
@@ -252,47 +266,30 @@ struct AndroidDeviceList: View {
         .animation(Slate.Anim.smallFade, value: isPending)
     }
 
-    /// A click on a device that is not running starts it — the same intent a click on a running card
-    /// carries, one step earlier. The row's spinner holds until the boot is VISIBLE in the list (see
-    /// ``AndroidSidebarModel/boot(_:)``), at which point the row itself moves to the attached shelf.
-    private func open(_ device: AndroidDevice) {
-        guard !model.pending.contains(device.key) else { return }
-        Task { await model.boot(device) }
-    }
-
     /// The selection write rides ONE `withAnimation` transaction, which is what carries the drill —
     /// the panel's transition vocabulary lives on the surface that owns both depths
-    /// (``CodePanelSurfaces``), and the views themselves declare no animation for it.
+    /// (``CodePanelSurfaces``), and the views themselves declare no animation for it. The GUARD is
+    /// ``AndroidPresentation/canEnter(_:)``, which is why this is not the second hand-spelled copy of
+    /// it that it used to be.
     private func enter(_ device: AndroidDevice) {
-        // A booting emulator may be entered — the stage waits for it. See ``AndroidRunningCard``'s
-        // tap for why a physical device must actually be running.
-        guard device.isRunning || device.isEmulator && device.serial != nil else { return }
+        guard AndroidPresentation.canEnter(device) else { return }
         withAnimation(Slate.Anim.standard) { model.select(device.key) }
     }
 
-    @ViewBuilder
+    /// The menu is a TABLE from below and this is only its drawing — which verbs a device offers, in
+    /// what order, and where the separator falls are decisions, and a decision drawn twice drifts
+    /// silently (``AndroidPresentation/menu(for:)``).
     private func menu(for device: AndroidDevice) -> some View {
-        if device.isRunning {
-            Button("Open Screen") { enter(device) }
-            // The capture is 250 ms and 300 KB, which is why it is a menu item rather than a poll —
-            // see this file's header. Asked for once, it is worth every millisecond.
-            Button("Copy Screenshot") { Task { await model.copyScreenshot(of: device.key) } }
-            if device.isEmulator {
-                Button("Shut Down") { Task { await model.shutdown(device) } }
+        ForEach(Array(AndroidPresentation.menu(for: device).enumerated()), id: \.offset) { entry in
+            switch entry.element {
+            case .separator:
+                Divider()
+            case let .verb(verb):
+                Button(verb.title) {
+                    AndroidPresentation.run(verb, device: device, on: model, enter: enter)
+                }
             }
-        } else if device.avdName != nil {
-            Button("Start") { Task { await model.boot(device) } }
         }
-        Divider()
-        if let serial = device.serial {
-            // The serial is what every other tool wants — `adb -s`, an install target, a bug report.
-            Button("Copy Serial") { copy(serial) }
-        }
-        Button("Copy Name") { copy(device.name) }
-    }
-
-    private func copy(_ text: String) {
-        ClientPasteboard.write(text)
     }
 
     // MARK: Notices
@@ -306,3 +303,4 @@ struct AndroidDeviceList: View {
         DevicePanelChrome.notice(text)
     }
 }
+#endif

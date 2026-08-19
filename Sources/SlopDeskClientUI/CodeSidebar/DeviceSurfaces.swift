@@ -17,7 +17,14 @@
 //
 // A ZSTACK rather than a plain `if`/`else`: mid-transition both views are mounted, and inside a `VStack`
 // the outgoing list would squeeze the arriving device for the length of the fade.
+//
+// PHONE-ONLY SINCE INCREMENT 52. The Mac drew the same two depths through this file for exactly one
+// increment — the seam `WorkspaceColumnHosts` narrowed to before it closed — and now has
+// ``SlopDeskMacUI/MacSimulatorSurface`` and ``SlopDeskMacUI/MacAndroidSurface``, which say the same
+// three things (drill, direction, both mounted mid-beat) in four constraints each. The prose above is
+// the shared decision; only the spelling of it is here.
 
+#if os(iOS)
 import SlopDeskDevicePanels
 import SlopDeskSlate
 import SwiftUI
@@ -65,3 +72,4 @@ struct AndroidSurface: View {
 private func deviceDrill(from shift: CGFloat) -> AnyTransition {
     .offset(x: shift).combined(with: .opacity)
 }
+#endif

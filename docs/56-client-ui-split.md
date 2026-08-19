@@ -2055,15 +2055,60 @@ MOVED, from `MacCodePanelColumn` to `MacCodePanelSurfaces`, and now names the tw
 nothing else. That is the honest shape of a big surface crossing — the seam narrows first and the
 count moves later — and the ledger says so below.
 
+### Increment 52 — the device panels cross, and one seam closes instead of narrowing
+
+The ~4,100 lines increment 51 discovered are rewritten. `MacSimulatorSurface` and `MacAndroidSurface`
+are the two AppKit surfaces `MacCodePanelSurfaces` mounts; the SwiftUI originals stayed and are the
+phone's, all fifteen of them `#if os(iOS)` now. `SlopDeskMacUI` imports `SlopDeskClientUI` in **seven**
+files, down from eight, and `WorkspaceColumnHosts` is back to one factory — the pane canvas.
+
+**A seam that narrows before it closes is the honest signal.** `WorkspaceColumnHosts.codePanelSurfaces`
+handed over the whole right column until increment 51 cut it to two device surfaces, and increment 52
+left it with nothing to hand over. Read as a count the middle step looks like a wasted increment; read
+as a seam it is the useful half — the narrowing is what made the remaining debt nameable, and the
+ledger row that had been wrong for four increments only fell out of naming it.
+
+**Two of the fifteen files were never a view decision.** `SimulatorScreenNSView` (314 lines) and
+`AndroidScreenNSView` (379) are plain `NSView`s over an `AVSampleBufferDisplayLayer` — they moved to
+`SlopDeskDevicePanels` verbatim, and the move DELETED an import edge rather than adding one, because
+both already imported the floor they now live in. This is kind 2, three increments after kind 2 was
+declared finished, and the lesson is that "not a view" is a property of a file rather than of a
+target: it hid inside `SimulatorScreenView.swift` behind an `#if os(macOS)` for as long as the
+representable wrapper above it made the file look like SwiftUI.
+
+**`DeviceKeyEvent` went down with them, and that is the increment's one real bug caught.** Reading
+`event.modifierFlags` into `InputModifiers` is not a drawing either, but it sat in `SlopDeskClientUI`
+because the screen views did. When they became `NSView`s one target down, the extension above them
+was suddenly a call UP — and the AppKit half quietly grew a private six-line copy of the modifier
+fold, with a comment saying the two spellings would have to be kept in step by hand. They would not
+have been. The file is in the floor now, gated on `canImport` rather than `os(…)`, and the copy is
+deleted.
+
+**Two tests moved down and stopped testing half the product.** `DeviceConsoleInkTests` asserted on
+`Slate.Text.tertiary` — a `Color`, i.e. the SwiftUI half's hue — which is why it lived in
+`SlopDeskClientUITests` and why, the moment there were two renderers, it could only ever cover one.
+It asserts the ROLE now (`.tertiary`, `.alarm`) and lives beside the fold. `SimulatorBezelFitTests`
+moved for the same reason: `rotationEffect` does not change layout, and neither does a rotation on a
+`CALayer`, so fitting a quarter-turned phone against swapped bounds is both halves' problem.
+
+**What was deliberately NOT built.** Both AppKit halves grew a `Mac*Parts.swift` of shells — spinner,
+search plate, plate tray, glyph button, veil, row shell, flow grid — and roughly nine of them touch no
+device type at all. Merging them into one `MacDevicePanelParts.swift` was declined *while both
+increments were in flight*, because merging two moving targets is how a shared abstraction gets
+written against neither. It is a follow-up with both halves standing still, and it is the only shape
+in which the "Android is a fourth tab, not a second half of Simulators" rule can safely bend: shells
+with no device type in their signature are not a device abstraction.
+
 ## Stage D ledger — what the rename actually costs
 
 `SlopDeskClientUI` cannot become `SlopDeskPhoneUI` while `SlopDeskMacUI` still imports it. That is
-the whole test, and it is countable. It was **13 files** when this ledger was written; it is **8**
-after increments 45, 46, 47 and 49, and each one names what it takes in the comment on the import
-line. Increment 51 did not move the count — it moved one import, from `MacCodePanelColumn` to
+the whole test, and it is countable. It was **13 files** when this ledger was written; it is **7** after
+increments 45, 46, 47, 49 and 52, and each one names what it takes in the comment on the import line.
+
+Increment 51 did not move the count — it moved one import, from `MacCodePanelColumn` to
 `MacCodePanelSurfaces`, and NARROWED what it names from a whole column to two device surfaces. A
-count that only falls would have called that increment worthless; what it actually did was cut a
-seam's width by an order of magnitude.
+count that only falls would have called that increment worthless; increment 52 then closed the seam
+it had narrowed, and the narrowing is what made the remaining debt nameable in the first place.
 Grouped, they are three kinds of debt, not one — and only the first kind needs an AppKit rewrite.
 
 ### The ruling first
@@ -2084,7 +2129,7 @@ The expensive kind, and the only one that is.
 | What | Lines | Taken by |
 | --- | --- | --- |
 | the pane canvas (`Pane/`, 24 files) | 6888 | `MacContentColumn`, `SlopDeskSplitViewController` |
-| the device panels (`Simulator/` 9 files, `Android/` 6) | 4154 | `MacCodePanelSurfaces` |
+| ~~the device panels (`Simulator/` 9 files, `Android/` 6)~~ | ~~4154~~ | ✅ increment 52 — two AppKit surfaces, two `NSView`s descended |
 | ~~`CodePanelSurfaces`~~ | ~~632~~ | ✅ increment 51 — four AppKit surfaces, one vocabulary below |
 | ~~`SettingsBespokeSurface`~~ | ~~325~~ | ✅ increment 49 — five AppKit surfaces, four faces below |
 | ~~`FirstLaunchStepSurface`~~ | ~~286~~ | ✅ increment 47 — the sheet draws both shared steps itself |
@@ -2092,13 +2137,13 @@ The expensive kind, and the only one that is.
 | `SatellitePaneHost` | 170 | `SatellitePaneWindows` |
 | `WorkspaceColumnHosts` (the factory seam) | 79 | `SlopDeskSplitViewController` |
 
-The canvas dominates, and the device panels are the second bulk — a row this table did not have
-until increment 51, because `CodePanelSurfaces`' 632 lines were counted as the whole debt when the
-four surfaces they draw host ~4,100 lines more. `StatusDotView` was the cheapest and went first, then
-the first-launch checklist, then the bespoke settings pages, then the panel's own body.
-`SatellitePaneHost` and `WorkspaceColumnHosts` are held by the canvas — the first hosts it in a
-satellite window, the second is the factory seam that mounts it — so the device panels are the only
-row left that is independently schedulable.
+The canvas is the whole of what is left. The device panels were the second bulk — a row this table
+did not have until increment 51, because `CodePanelSurfaces`' 632 lines had been counted as the whole
+debt when the four surfaces they draw host ~4,100 lines more — and they crossed in increment 52.
+`StatusDotView` was the cheapest and went first, then the first-launch checklist, then the bespoke
+settings pages, then the panel's own body, then the device panels. `SatellitePaneHost` and
+`WorkspaceColumnHosts` are both held by the canvas — the first hosts it in a satellite window, the
+second is the factory seam that mounts it — so nothing here is independently schedulable any more.
 
 ### Kind 2 — not views at all, and in a UI target by accident — ✅ DONE (increment 45)
 
@@ -2130,8 +2175,7 @@ moat moves out of SwiftUI into the AppKit column. It is not independently schedu
    (✅ increment 47), ~~the bespoke settings pages~~ (✅ increment 49), ~~the panel's four surfaces~~
    (✅ increment 51). Each a contained AppKit rewrite, and each cost one import except the last,
    which narrowed one instead.
-3. The device panels — the only remaining row that is not held by the canvas. `SimulatorScreenView`
-   and `AndroidScreenView` (1405 lines of the 4154) are representables over
-   `AVSampleBufferDisplayLayer` and are kind 2 in disguise: they move to `SlopDeskDevicePanels` as
-   plain view classes with no rewrite at all.
-4. The canvas, which takes kind 3 with it and is the remaining bulk.
+3. ~~The device panels.~~ ✅ increment 52. `SimulatorScreenNSView` and `AndroidScreenNSView` were
+   indeed kind 2 in disguise — 693 lines that moved verbatim, deleting an import edge — and
+   `DeviceKeyEvent` turned out to be a third.
+4. The canvas, which takes kind 3 with it and is now the whole of the remaining bulk.

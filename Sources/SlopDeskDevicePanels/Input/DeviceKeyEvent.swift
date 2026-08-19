@@ -13,13 +13,21 @@
 //
 // There is no second modifier type here on purpose. `InputModifiers` is what the GUI-video input path
 // already sends host-ward, so the panels and the video pane agree on what "⌥ was held" means.
+//
+// IT LIVES IN THE FLOOR SINCE docs/56 increment 52, and the reason is the shape of the whole stage:
+// reading `event.modifierFlags` is not a drawing. It sat in `SlopDeskClientUI` only because the two
+// device screen views did, and when those became `NSView`s in this target the extension above them
+// was suddenly a call UP — so the AppKit half grew a private six-line copy of the modifier fold. One
+// fold, one file, both frameworks; the copy is deleted.
+//
+// ⚠️ THE GATES ARE `canImport`, NEVER `os(…)`. This target is the phone's floor too, and the question
+// each half asks is "is there an `NSEvent` type at all", which is a framework question.
 
-#if os(macOS)
+#if canImport(AppKit)
 import AppKit
-import SlopDeskDevicePanels
 import SlopDeskVideoProtocol
 
-extension AndroidKeyMap {
+package extension AndroidKeyMap {
     /// Resolve one AppKit key-down into what the device should receive.
     static func resolve(_ event: NSEvent) -> Resolution {
         resolve(
@@ -31,7 +39,7 @@ extension AndroidKeyMap {
     }
 }
 
-extension SimulatorKeyMap {
+package extension SimulatorKeyMap {
     /// The modifier names the simulator server expects for one AppKit key event.
     static func modifiers(for event: NSEvent) -> [SimulatorInputEnvelope.Modifier] {
         modifiers(for: InputModifiers(event.modifierFlags))
@@ -54,12 +62,11 @@ package extension InputModifiers {
     }
 }
 
-#elseif os(iOS)
-import SlopDeskDevicePanels
+#elseif canImport(UIKit)
 import SlopDeskVideoProtocol
 import UIKit
 
-extension AndroidKeyMap {
+package extension AndroidKeyMap {
     /// Resolve one hardware-keyboard press into what the device should receive.
     ///
     /// `UIKey` has no separate "characters as typed" and "characters ignoring modifiers" pair the way
@@ -75,14 +82,14 @@ extension AndroidKeyMap {
     }
 }
 
-extension SimulatorKeyMap {
+package extension SimulatorKeyMap {
     /// The modifier names the simulator server expects for one hardware-keyboard press.
     static func modifiers(for key: UIKey) -> [SimulatorInputEnvelope.Modifier] {
         modifiers(for: InputModifiers(key.modifierFlags))
     }
 }
 
-extension InputModifiers {
+package extension InputModifiers {
     /// The held modifiers a UIKit key event carries. Same four named ones the AppKit half folds, plus
     /// caps lock and the function key for completeness — the panels read only what they need.
     init(_ flags: UIKeyModifierFlags) {

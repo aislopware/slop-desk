@@ -15,7 +15,13 @@
 // PRESSES are press-and-hold, not clicks: `DragGesture(minimumDistance: 0)` so the artwork swaps on
 // touch-down. The envelope goes on RELEASE, matching the hardware — a volume key that fired on the
 // way down would repeat on every accidental brush of the trackpad.
+//
+// iOS-ONLY since docs/56 increment 52a; the Mac draws the same body in `MacSimulatorBezelView`. The
+// three things a second renderer could get wrong — the turned footprint, the fit, and a button's name —
+// are ``SimulatorPresentation``'s and are read from there by BOTH halves. They are geometry and words,
+// not tokens, which is why they were allowed to descend at all.
 
+#if os(iOS)
 import SlopDeskDevicePanels
 import SlopDeskSlate
 import SwiftUI
@@ -35,7 +41,10 @@ struct SimulatorBezelView: View {
     var body: some View {
         GeometryReader { proxy in
             let bleed = assets.chrome.bleed
-            let scale = fit(bleed.size, in: Self.footprint(proxy.size, turned: orientation.isLandscape))
+            let scale = SimulatorPresentation.fit(
+                bleed.size,
+                in: SimulatorPresentation.footprint(proxy.size, turned: orientation.isLandscape),
+            )
             let viewport = assets.chrome.screen.viewport
             ZStack(alignment: .topLeading) {
                 ForEach(assets.chrome.buttons) { button in
@@ -58,14 +67,6 @@ struct SimulatorBezelView: View {
             .animation(Slate.Anim.smallFade, value: orientation)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-    }
-
-    /// The box a turned device has to fit into. `rotationEffect` does not change layout, so fitting a
-    /// quarter-turned phone against the panel's real bounds sizes it to a width it will not occupy —
-    /// the device then overflows the sidebar sideways. Swapping the bounds first is what makes a
-    /// landscape device fill the panel the way a portrait one does.
-    static func footprint(_ bounds: CGSize, turned: Bool) -> CGSize {
-        turned ? CGSize(width: bounds.height, height: bounds.width) : bounds
     }
 
     /// The live pixels, clipped to the body's own corner radius. Clipped rather than merely placed:
@@ -108,32 +109,7 @@ struct SimulatorBezelView: View {
                     send(.button(button.envelopeButton))
                 },
         )
-        .help(Self.label(for: button.id))
-    }
-
-    /// Aspect-FIT, and never above 1: a bezel blown past its artwork's own size is a soft, resampled
-    /// device body, which looks worse than the same body drawn small and sharp.
-    private func fit(_ content: CGSize, in bounds: CGSize) -> CGFloat {
-        guard content.width > 0, content.height > 0, bounds.width > 0, bounds.height > 0
-        else { return 0 }
-        return min(bounds.width / content.width, bounds.height / content.height, 1)
-    }
-
-    /// The server's button ids are wire tokens (`volume-up`, `action`). Spelled out for the tooltip
-    /// rather than shown raw — and titled from the id when it is one this build has not seen, so a
-    /// new button is still labelled with something.
-    static func label(for id: String) -> String {
-        switch id {
-        case "power": "Power"
-        case "volume-up": "Volume Up"
-        case "volume-down": "Volume Down"
-        case "action": "Action Button"
-        case "home": "Home"
-        case "lock": "Lock"
-        case "digital-crown": "Digital Crown"
-        case "side-button": "Side Button"
-        default: id.split(separator: "-").map(\.capitalized).joined(separator: " ")
-        }
+        .help(SimulatorPresentation.buttonLabel(for: button.id))
     }
 }
 
@@ -149,7 +125,7 @@ struct SimulatorBareScreen: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let box = SimulatorBezelView.footprint(proxy.size, turned: orientation.isLandscape)
+            let box = SimulatorPresentation.footprint(proxy.size, turned: orientation.isLandscape)
             SimulatorScreenView(
                 frames: frames, orientation: orientation, send: send, onContentSize: onContentSize,
             )
@@ -160,3 +136,4 @@ struct SimulatorBareScreen: View {
         }
     }
 }
+#endif

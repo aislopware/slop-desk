@@ -44,7 +44,14 @@
 // sorts the list without competing with the names (user-directed 2026-08-04).
 //
 // The CONTEXT MENU carries what a sidebar row has no width for — the UDID, and the destructive verb.
+//
+// iOS-ONLY since docs/56 increment 52a; the Mac draws the same list in `MacSimulatorDeviceList`. The
+// grouping was ALREADY shared (``SimulatorDeviceSections``); what descended with this increment is the
+// words, the row's subtitle suppression and the context menu's verb order — the suppression in
+// particular, because "a transition outranks the heading" is a rule a second renderer re-derives from
+// the paragraph above and gets backwards for exactly the row worth watching.
 
+#if os(iOS)
 import SFSafeSymbols
 import SlopDeskDevicePanels
 import SlopDeskSlate
@@ -97,9 +104,9 @@ struct SimulatorDeviceList: View {
         VStack(alignment: .leading, spacing: 0) {
             searchBar
             if model.devices.isEmpty {
-                message("No simulator devices on the host.")
+                message(SimulatorPresentation.noDevices)
             } else if matches.isEmpty {
-                message("No devices match “\(query)”.")
+                message(SimulatorPresentation.noMatches(query))
             } else {
                 list
             }
@@ -119,7 +126,7 @@ struct SimulatorDeviceList: View {
             Image(systemSymbol: .magnifyingglass)
                 .font(.system(size: Slate.Typeface.footnote))
                 .foregroundStyle(Slate.Text.icon)
-            SlateSearchField(placeholder: "Search devices", text: $query)
+            SlateSearchField(placeholder: SimulatorPresentation.searchPlaceholder, text: $query)
             if !query.isEmpty {
                 Button { query = "" } label: {
                     Image(systemSymbol: .xmarkCircleFill)
@@ -229,7 +236,7 @@ struct SimulatorDeviceList: View {
             if section.isRunning, section.devices.count > 1 {
                 SlatePlateButton(
                     symbol: .stopCircle,
-                    help: "Shut down all \(section.devices.count) running devices",
+                    help: SimulatorPresentation.shutdownAllHelp(section.devices.count),
                     size: Slate.Typeface.footnote,
                     plate: Slate.Metric.heightControl,
                     tint: Slate.Text.tertiary,
@@ -261,7 +268,9 @@ struct SimulatorDeviceList: View {
             // the button over the runtime and drew a play glyph through the word "iOS".
             titleTrailing: { hovering in
                 HStack(spacing: Slate.Metric.space1) {
-                    if let subtitle = subtitle(for: device, showsRuntime: showsRuntime) {
+                    if let subtitle = SimulatorPresentation.rowSubtitle(
+                        device, showsRuntime: showsRuntime,
+                    ) {
                         Text(subtitle)
                             .font(.system(size: Slate.Typeface.footnote))
                             .foregroundStyle(Slate.Text.tertiary)
@@ -274,18 +283,6 @@ struct SimulatorDeviceList: View {
             trailingOverlay: { _ in EmptyView() },
         )
         .contextMenu { menu(for: device) }
-    }
-
-    /// The trailing text: the live state while the device is CHANGING, the runtime when it is not and
-    /// the heading has not already said it, and nothing at all otherwise. A device spends seconds in
-    /// `Booting`, and showing its runtime through that is the panel claiming nothing is happening
-    /// while something is — so a transition always outranks the suppression above it.
-    private func subtitle(for device: SimulatorDevice, showsRuntime: Bool) -> String? {
-        let settled = device.state.isEmpty
-            || device.isBooted
-            || device.state.caseInsensitiveCompare("Shutdown") == .orderedSame
-        if !settled { return device.state }
-        return showsRuntime && !device.runtime.isEmpty ? device.runtime : nil
     }
 
     /// The one verb that applies, at REST but quiet: a small solid glyph in the tertiary ink, which
@@ -309,7 +306,7 @@ struct SimulatorDeviceList: View {
             } else {
                 SlatePlateButton(
                     symbol: .playFill,
-                    help: "Boot \(device.name)",
+                    help: SimulatorPresentation.bootHelp(device),
                     size: Slate.Typeface.footnote,
                     plate: Slate.Metric.heightControl,
                     tint: hovering ? Slate.Text.primary : Slate.Text.tertiary,
@@ -337,23 +334,24 @@ struct SimulatorDeviceList: View {
         withAnimation(Slate.Anim.standard) { model.select(udid) }
     }
 
-    @ViewBuilder
+    /// The VERBS and their order are ``SimulatorPresentation/menu(for:)``'s, so the two halves' menus
+    /// cannot come apart; what is here is the wiring from a verb to the model call behind it.
     private func menu(for device: SimulatorDevice) -> some View {
-        if device.isBooted {
-            Button("Open Screen") { enter(device.udid) }
+        ForEach(SimulatorPresentation.menu(for: device), id: \.self) { verb in
+            switch verb {
+            case .openScreen: Button(verb.title ?? "") { enter(device.udid) }
             // The panel can already put a capture on the pasteboard, and a running device's screen is
             // often worth a picture without being worth opening — a card is a hundred points tall, so
             // the reader can see there is something to grab from here.
-            Button("Copy Screenshot") { Task { await model.copyScreenshot(of: device.udid) } }
-            Button("Shut Down") { Task { await model.shutdown(device.udid) } }
-        } else {
-            Button("Boot") { Task { await model.boot(device.udid) } }
+            case .copyScreenshot:
+                Button(verb.title ?? "") { Task { await model.copyScreenshot(of: device.udid) } }
+            case .shutdown: Button(verb.title ?? "") { Task { await model.shutdown(device.udid) } }
+            case .boot: Button(verb.title ?? "") { Task { await model.boot(device.udid) } }
+            case .separator: Divider()
+            case .copyUDID: Button(verb.title ?? "") { ClientPasteboard.write(device.udid) }
+            case .copyName: Button(verb.title ?? "") { ClientPasteboard.write(device.name) }
+            }
         }
-        Divider()
-        // The UDID is what every other tool wants — `xcrun simctl`, a test invocation, a bug report —
-        // and it is far too long to put in a sidebar row.
-        Button("Copy UDID") { ClientPasteboard.write(device.udid) }
-        Button("Copy Name") { ClientPasteboard.write(device.name) }
     }
 
     // MARK: Notices
@@ -369,3 +367,4 @@ struct SimulatorDeviceList: View {
         DevicePanelChrome.notice(text)
     }
 }
+#endif

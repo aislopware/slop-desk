@@ -4749,6 +4749,33 @@ if grep -A4 'draws:' Sources/SlopDeskMacUI/App/MacWorkspaceRootView.swift | grep
 fi
 printf 'check-supervisor: one peek card, drawn twice and spelled once.\n'
 
+# ── The paste-as-keystrokes table and the peek RULES are Rust's, and only Rust's ───────────────
+# `KeystrokeReplay` and `PeekReply` crossed in docs/56 §4. What is left in Swift is marshalling and
+# the vocabulary types; the US-QWERTY table, the grapheme rule, the pane scan and the queue
+# arithmetic are `slopdesk_workspace::{keystroke_replay, peek_reply}` and `slopdesk_agent::attention`.
+for face in Sources/SlopDeskWorkspaceCore/Video/KeystrokeReplay.swift \
+  Sources/SlopDeskWorkspaceCore/Workspace/Domain/PeekReply.swift; do
+  if ! grep -q 'slopdesk_' "${face}"; then
+    fail "${face} stopped asking the door — a rule decided in Swift is the second implementation (docs/56 §4)"
+  fi
+done
+# ⚠️ THE UNIT IS A GRAPHEME CLUSTER, AND THE FIELD SHOWS DOTS. Walked as scalars, a decomposed `é`
+# types a bare `e` and reports one skip — a DIFFERENT password, accepted, with nothing on screen to
+# say so. `unicode-segmentation` is what makes the cluster the unit, and it is not an optimisation
+# anyone may drop as unused.
+if ! grep -q '^unicode-segmentation' rust/slopdesk-workspace/Cargo.toml; then
+  fail "slopdesk-workspace dropped unicode-segmentation — chars() would type a decomposed é as a bare e"
+fi
+if ! grep -q 'UnicodeSegmentation' rust/slopdesk-workspace/src/keystroke_replay.rs; then
+  fail "the keystroke table stopped walking graphemes — see the ⚠️ in its module header"
+fi
+# The cap is ONE number. Swift reads the `#define`; the crate exports the same constant and a test
+# asserts they agree, because a Swift-side copy that drifted LOW would silently truncate a password.
+if ! grep -q 'Int(SLOPDESK_KEYSTROKE_MAX_LENGTH)' Sources/SlopDeskWorkspaceCore/Video/KeystrokeReplay.swift; then
+  fail "KeystrokeReplay.maxLength stopped reading the header define — a drifting cap truncates a password"
+fi
+printf 'check-supervisor: the keystroke table and the peek rules are Rust'"'"'s, graphemes and all.\n'
+
 # ── One global search, two frameworks ─────────────────────────────────────────────────────────
 # docs/56 stage D's third MODAL surface. What the two halves must not re-derive is not copy this
 # time so much as READING: `GlobalSearchPresentation.excerptSlices` cuts a hit's excerpt around a
@@ -5475,6 +5502,60 @@ if [[ "${clip_owners}" != "Sources/SlopDeskClientCore/CodeSidebar/CodePanelPrese
   fail "the clipped title-bar height is declared outside CodePanelPresentation — one measurement, one owner"
 fi
 printf 'check-supervisor: one panel vocabulary, four surfaces, two renderers.\n'
+
+# ── Two device panels, drawn twice and spelled once ───────────────────────────────────────────
+# Increment 52. Each panel has an AppKit renderer in `SlopDeskMacUI/Panel/<Device>/` and a SwiftUI one
+# in `SlopDeskClientUI/<Device>/`, off one `*Presentation` in `SlopDeskDevicePanels`.
+for pair in \
+  "Sources/SlopDeskMacUI/Panel/Simulator/MacSimulatorSurface.swift:SimulatorSidebarModel" \
+  "Sources/SlopDeskMacUI/Panel/Android/MacAndroidSurface.swift:AndroidSidebarModel" \
+  "Sources/SlopDeskClientUI/Simulator/SimulatorDeviceList.swift:SimulatorPresentation" \
+  "Sources/SlopDeskMacUI/Panel/Simulator/MacSimulatorDeviceList.swift:SimulatorPresentation" \
+  "Sources/SlopDeskClientUI/Android/AndroidDeviceList.swift:AndroidPresentation" \
+  "Sources/SlopDeskMacUI/Panel/Android/MacAndroidDeviceList.swift:AndroidPresentation"; do
+  half="${pair%%:*}"
+  face="${pair##*:}"
+  if ! grep -q "${face}" "${half}" 2> /dev/null; then
+    fail "${half} stopped reading ${face} — a device panel wording itself is the second speller (docs/56, increment 52)"
+  fi
+done
+# The phone's fifteen are the PHONE's. A macOS caller reaching back into them is the AppKit half
+# half-ported, which compiles perfectly well and ships two renderers for one surface.
+ungated=$(grep -rLn '#if os(iOS)' Sources/SlopDeskClientUI/Simulator/ Sources/SlopDeskClientUI/Android/ 2> /dev/null || true)
+if [[ -n "${ungated}" ]]; then
+  printf '%s\n' "${ungated}" >&2
+  fail "a device-panel view lost its iOS gate — the Mac draws these in AppKit now (docs/56, increment 52)"
+fi
+# The two display-layer views are the floor's, and NOT because they are shared: they are `NSView`s
+# with no design token and no layout decision in them, which is what kind 2 means. A representable
+# back in the phone's target would be a second mount racing the same layer.
+for moved in Sources/SlopDeskDevicePanels/Simulator/SimulatorScreenSurface.swift \
+  Sources/SlopDeskDevicePanels/Android/AndroidScreenNSView.swift; do
+  if ! grep -q 'NSView' "${moved}" 2> /dev/null; then
+    fail "${moved} is gone or no longer holds the display-layer NSView (docs/56, increment 52)"
+  fi
+done
+# Comments STRIPPED first: both files' headers name the representable they lost, and a gate that
+# cannot quote the rule it guards is a gate nobody may document.
+device_code=$(awk '{ line = $0; sub(/\/\/.*/, "", line); printf "%s:%d:%s\n", FILENAME, FNR, line }' \
+  Sources/SlopDeskClientUI/Simulator/*.swift Sources/SlopDeskClientUI/Android/*.swift)
+if grep -q 'NSViewRepresentable' <<< "${device_code}"; then
+  fail "a device screen representable came back — the Mac mounts the NSView directly (docs/56, increment 52)"
+fi
+# ⚠️ ONE MODIFIER FOLD, WITHIN THE PANELS. `AndroidScreenNSView` carried a private six-line copy for
+# exactly one increment, because the shared one sat one target UP while the view was still in the
+# phone's half. Both are in the floor now; a second walk in either panel target is that copy back.
+#
+# Scoped to the two panel targets on purpose. `SlopDeskVideoHost/InputInjector` and
+# `SlopDeskVideoClient/VideoWindowView` fold the same flags for the GUI-video path, which is a
+# different direction over a different wire — naming them here would be pinning a coincidence.
+folds=$(grep -rln 'contains(.capsLock)' Sources/SlopDeskDevicePanels/ Sources/SlopDeskClientUI/ \
+  Sources/SlopDeskMacUI/ 2> /dev/null || true)
+if [[ "${folds}" != "Sources/SlopDeskDevicePanels/Input/DeviceKeyEvent.swift" ]]; then
+  printf '%s\n' "${folds}" >&2
+  fail "the panels' modifier fold is spelled outside DeviceKeyEvent — one fold, one file, both frameworks"
+fi
+printf 'check-supervisor: two device panels, drawn twice and spelled once.\n'
 
 # ── One design floor, two renderers ───────────────────────────────────────────────────────────
 # `SlopDeskSlate` is the layer BOTH halves stand on: the token ladder in its `NSColor`/`UIColor`

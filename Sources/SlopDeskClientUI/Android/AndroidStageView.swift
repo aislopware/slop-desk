@@ -1,5 +1,11 @@
-// AndroidStageView — the whole mirroring surface: what device this is, the device itself, what you
-// can do to it, and what it is saying.
+// AndroidStageView — the whole mirroring surface ON THE PHONE: what device this is, the device
+// itself, what you can do to it, and what it is saying.
+//
+// iOS-ONLY SINCE docs/56 INCREMENT 52b. The Mac's half is ``SlopDeskMacUI/MacAndroidStageView``, in
+// AppKit, and this file is the phone's renderer rather than a shared one — the split's ruling, applied
+// to the fourth panel surface. What is NOT duplicated is anything a reader reads or a state decides:
+// every word here, the veil's fold, the toolbar's two trays and the verb→model table are
+// ``AndroidPresentation``'s and are asked for rather than spelled.
 //
 // THREE BANDS, top to bottom, exactly as the simulator stage has them and for the same reasons: the
 // top bar names the thing the other two are about and carries the verbs that act on it; the device is
@@ -15,19 +21,17 @@
 // side buttons under the pointer where the eye expects them — is bought here by the toolbar, which is
 // where those buttons already had to live anyway.
 //
-// THE TOOLBAR IS THE THREE NAVIGATION KEYS PLUS WHAT HAS NO GESTURE. Back, Home and Recents are the
-// device's own navigation and are drawn as one tray, because on a gesture-navigation device they have
-// no on-screen target to press and are otherwise unreachable from a mirror. Rotate, capture, the
-// clipboard hop and the device's own backlight are host-side or protocol-side settings and take the
-// second tray. Everything a finger can already do — pulling the shade down, swiping between apps — is
-// deliberately absent: `scrcpy` injects real touch events, so those gestures work on the frame
-// itself, and a plate that duplicates a gesture is a plate that can be pressed by mistake.
+// THE TOOLBAR IS THE THREE NAVIGATION KEYS PLUS WHAT HAS NO GESTURE, and which verbs those are is
+// ``AndroidPresentation/navigationTray`` and ``AndroidPresentation/actionTray`` — a tray is an ordered
+// list, and an ordering drawn twice from prose drifts. Everything a finger can already do is
+// deliberately absent from both.
 //
 // NO DROP TARGET (yet). The simulator stage installs a dropped `.app` because its server routes files
 // by extension. The equivalent here is `adb install`, which is a different verb with a different
 // failure mode (a signature mismatch, a downgrade, an ABI the device cannot run) and deserves its own
 // reporting rather than being smuggled in as a drop.
 
+#if os(iOS)
 import SFSafeSymbols
 import SlopDeskDevicePanels
 import SlopDeskSlate
@@ -37,7 +41,8 @@ import SwiftUI
 struct AndroidStageView: View {
     @Bindable var model: AndroidSidebarModel
 
-    /// The veil's own state, which is the model's loading state DELAYED — see ``veilDelay``.
+    /// The veil's own state, which is the model's loading state DELAYED — see
+    /// ``AndroidPresentation/veilDelay``.
     @State private var showsLoading = false
     @State private var isRetryHovering = false
     /// The device's own backlight, as last set from here. Local because `scrcpy` has no read side for
@@ -50,8 +55,7 @@ struct AndroidStageView: View {
             device
                 .background(Slate.Surface.field)
                 .overlay { stageState }
-                .animation(Slate.Anim.smallFade, value: showsLoading)
-                .animation(Slate.Anim.smallFade, value: isStalled)
+                .animation(Slate.Anim.smallFade, value: reading)
                 .task(id: model.isAwaitingStream) { await followLoading() }
             console
         }
@@ -80,11 +84,16 @@ struct AndroidStageView: View {
         }
     }
 
-    /// The stream is over waiting and there is still no video. Distinct from "loading" by the model's
-    /// deadline and from "streaming" by ``AndroidSidebarModel/hasVideo``, so the stage always resolves
-    /// into one of three definite things rather than into an indicator with no end.
-    private var isStalled: Bool {
-        model.selection != nil && !model.isAwaitingStream && !model.hasVideo
+    /// What stands over the picture, as ONE value — the fold is ``AndroidPresentation/stage(...)``,
+    /// where the order (loading outranks stalled) is the rule and is spelled once.
+    private var reading: AndroidStageReading {
+        AndroidPresentation.stage(
+            showsLoading: showsLoading,
+            hasSelection: model.selection != nil,
+            isAwaitingStream: model.isAwaitingStream,
+            hasVideo: model.hasVideo,
+            deviceIsRunning: model.selectedDevice?.isRunning,
+        )
     }
 
     // MARK: The device
@@ -113,62 +122,53 @@ struct AndroidStageView: View {
     /// put a lit key inside a lit tray and cost exactly the signal it exists to carry.
     private var toolbar: some View {
         HStack(spacing: Slate.Metric.space3) {
-            navigation
-            actions
-            PlateIconButton(symbol: .listBulletRectangle, active: model.isConsoleOpen) {
-                withAnimation(Slate.Anim.standard) { model.toggleConsole() }
+            SlatePlateGroup {
+                ForEach(AndroidPresentation.navigationTray, id: \.action) { plate($0) }
             }
-            .help(model.isConsoleOpen ? "Hide logcat" : "Show logcat")
+            SlatePlateGroup {
+                ForEach(AndroidPresentation.actionTray, id: \.action) { plate($0) }
+            }
+            plate(AndroidPresentation.consoleVerb)
         }
     }
 
-    /// Android's three navigation keys, in the platform's own order — Back, Home, Recents, left to
-    /// right, which is where a device with on-screen keys draws them.
-    private var navigation: some View {
-        SlatePlateGroup {
-            // `BACK_OR_SCREEN_ON` rather than a bare `KEYCODE_BACK`: on a sleeping device the same
-            // press wakes it, which is what the hardware key does and what anyone pressing it means.
-            PlateIconButton(symbol: .chevronBackward) {
-                model.send(AndroidControlMessage.pressBack())
-            }
-            .help("Back")
-            PlateIconButton(symbol: .circle) { model.press(.home) }
-                .help("Home")
-            PlateIconButton(symbol: .squareOnSquare) { model.press(.appSwitch) }
-                .help("Recent Apps")
+    /// One verb as a plate. The LATCH is the view's — `scrcpy` has no read side for the backlight and
+    /// the drawer's own flag is the model's — and everything else about the control (its glyph, its
+    /// sentence, what it does to the device) comes from below.
+    private func plate(_ verb: AndroidStageVerb) -> some View {
+        let latched = isLatched(verb.action)
+        return PlateIconButton(symbol: verb.symbol(latched: latched), active: latched) {
+            press(verb)
+        }
+        .help(verb.help(latched: latched))
+    }
+
+    private func isLatched(_ action: AndroidStageAction) -> Bool {
+        switch action {
+        case .displayPower: isDisplayOff
+        case .console: model.isConsoleOpen
+        default: false
         }
     }
 
-    private var actions: some View {
-        SlatePlateGroup {
-            // ONE rotate, not a pair. `scrcpy`'s `ROTATE_DEVICE` is a toggle between the device's
-            // natural orientation and the other one — there is no left and right to offer, and a pair
-            // of arrows would be two buttons doing the same thing.
-            PlateIconButton(symbol: .rotateRight) { model.rotate() }
-                .help("Rotate")
-            PlateIconButton(symbol: .cameraViewfinder) {
-                Task { await model.copyScreenshot() }
+    /// Flip whichever latch this verb owns FIRST, then run it with the result — the actuator is told
+    /// what the device should now do rather than what the button just did
+    /// (``AndroidPresentation/run(_:on:isDisplayOff:)``).
+    private func press(_ verb: AndroidStageVerb) {
+        switch verb.action {
+        case .displayPower:
+            isDisplayOff.toggle()
+        case .console:
+            // The drawer's own open/close is a LAYOUT change, so it rides the standard transaction the
+            // way every other drill in this panel does.
+            withAnimation(Slate.Anim.standard) {
+                AndroidPresentation.run(verb.action, on: model)
             }
-            .help("Copy Screenshot")
-            // The clipboard hop, one way. The panel can PUSH the Mac's clipboard to the device and
-            // deliberately cannot pull the device's back — a `GET_CLIPBOARD` makes the device write a
-            // reply into the byte stream this panel is decoding as video. See ``AndroidControlMessage``.
-            PlateIconButton(symbol: .documentOnClipboard) {
-                guard let text = ClientPasteboard.text(), !text.isEmpty else {
-                    model.report("The clipboard has no text.")
-                    return
-                }
-                model.setClipboard(text, paste: true)
-            }
-            .help("Paste the Mac's clipboard into the device")
-            // The device's own backlight, which the mirror does not need. A phone on a desk lighting
-            // up the room while somebody mirrors it is a real annoyance, and the stream is unaffected.
-            PlateIconButton(symbol: isDisplayOff ? .lightbulbSlash : .lightbulb, active: isDisplayOff) {
-                isDisplayOff.toggle()
-                model.setDisplayPower(on: !isDisplayOff)
-            }
-            .help(isDisplayOff ? "Turn the device's screen back on" : "Turn the device's screen off")
+            return
+        default:
+            break
         }
+        AndroidPresentation.run(verb.action, on: model, isDisplayOff: isDisplayOff)
     }
 
     // MARK: Output
@@ -192,21 +192,18 @@ struct AndroidStageView: View {
     /// header, which keeps the way out reachable while it is up.
     @ViewBuilder
     private var stageState: some View {
-        if showsLoading {
+        switch reading {
+        case .streaming:
+            EmptyView()
+        case let .loading(caption):
             veil {
                 WorkingSpinner()
-                // Two different waits with two different owners: a mirror the HOST is starting, and
-                // a device that is still booting — the model keeps the veil up through both, and the
-                // second can be tens of seconds, which is too long to blame on "the mirror".
-                caption(
-                    model.selectedDevice?.isRunning == false
-                        ? "Starting the device…" : "Starting the mirror…",
-                )
+                self.caption(caption)
             }
-        } else if isStalled {
+        case let .stalled(caption, retryTitle):
             veil {
-                caption("No video from this device.")
-                retry
+                self.caption(caption)
+                retry(retryTitle)
             }
         }
     }
@@ -214,9 +211,9 @@ struct AndroidStageView: View {
     /// A stalled mirror is the one failure here that a second attempt genuinely fixes — the jar is
     /// pushed, the server is up, the encoder never started — so the stage offers the retry rather than
     /// making someone go back to the list and pick the same row again.
-    private var retry: some View {
+    private func retry(_ title: String) -> some View {
         Button { model.retry() } label: {
-            Text("Try Again")
+            Text(title)
                 .font(.system(size: Slate.Typeface.footnote, weight: .medium))
                 .foregroundStyle(Slate.Text.primary)
                 .padding(.horizontal, Slate.Metric.space3)
@@ -240,23 +237,13 @@ struct AndroidStageView: View {
         DevicePanelChrome.caption(text)
     }
 
-    /// How long the model may be loading before the veil admits it.
-    ///
-    /// 600 ms rather than the simulator stage's 400, and measured: a warm emulator's first keyframe
-    /// arrives 0.83 s after the request (2026-08-04), because the host has to push the server jar,
-    /// start `app_process` and wait for the device's encoder. So the veil DOES appear on an ordinary
-    /// selection here — unlike the simulator's 0.09 s case, where any delay at all would have made it
-    /// a flash. What the delay still buys is the second selection: a device opened, left and reopened
-    /// while the panel is warm comes back faster than this, and flashing grey over it would be the
-    /// failure state drawn onto the ordinary case.
-    private static let veilDelay: Duration = .milliseconds(600)
-
     /// Mirror the model's loading state into ``showsLoading``, late on the way up and immediate on the
     /// way down. `.task(id:)` cancels this when the model's state flips, which is what makes the
-    /// pending veil for a stream that arrived in time never appear at all.
+    /// pending veil for a stream that arrived in time never appear at all. The DELAY is measured and
+    /// lives with the other half of the decision (``AndroidPresentation/veilDelay``).
     private func followLoading() async {
         guard let state = await DevicePanelChrome.loadingVeilState(
-            isAwaiting: model.isAwaitingStream, after: Self.veilDelay,
+            isAwaiting: model.isAwaitingStream, after: AndroidPresentation.veilDelay,
         ) else { return }
         showsLoading = state
     }
@@ -266,3 +253,4 @@ struct AndroidStageView: View {
     // ``CodePanelSurfaces``). What stays here is the STATE, which a notification cannot carry: a
     // mirror with no video is drawn on the stage itself, where the ambiguous empty rectangle is.
 }
+#endif

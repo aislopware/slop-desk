@@ -20,17 +20,15 @@
 // left running for a panel nobody can see, which is exactly the bill ``SimulatorSidebarModel/park()``
 // exists to stop, or a poll that never restarts after a project switch and a panel stuck on a spinner.
 //
-// ## Why the two device surfaces are still hosted
+// ## Nothing here hosts SwiftUI any more
 //
-// `SimulatorStageView`, `SimulatorDeviceList`, `AndroidStageView` and `AndroidDeviceList` are ~4,100
-// lines of SwiftUI in `SlopDeskClientUI`, and they cross on their own schedule — the panel's ledger
-// entry counted the 632 lines of surface switching and missed them (docs/56, increment 51). Until they
-// do, they are mounted through the one factory named for them, and this file's `SlopDeskClientUI`
-// import says so and nothing more.
+// The two device surfaces were the last thing this file reached into `SlopDeskClientUI` for — ~4,100
+// lines that increment 51's ledger entry had missed entirely, counting only the 632 lines of surface
+// switching above them. Increment 52 rewrote both, so all four surfaces are AppKit and this file's
+// import of the draining target is gone rather than narrowed.
 
 import AppKit
 import SlopDeskClientCore
-import SlopDeskClientUI // the two DEVICE surfaces, until they cross — nothing else
 import SlopDeskDevicePanels
 import SlopDeskProtocol
 import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
@@ -264,11 +262,15 @@ final class MacCodePanelSurfaces: NSViewController {
         }
     }
 
-    /// The one seam left into `SlopDeskClientUI`, named for exactly what crosses it.
+    /// The device surface for the tab that is up, as a CHILD controller rather than a bare view.
+    ///
+    /// Both surfaces are two depths with a drill between them, and both have to hear `viewWillDisappear`
+    /// to release a live mirror — an `NSView` added to a hierarchy with no controller above it never
+    /// does, and the stream would run on into the tab beside it.
     private func hostedDevices(_ which: SurfacePlan.Device?) -> NSView {
         let controller: NSViewController = which == .android
-            ? WorkspaceColumnHosts.androidSurface(model: androidModel, overlay: overlay)
-            : WorkspaceColumnHosts.simulatorSurface(model: simulatorModel, overlay: overlay)
+            ? MacAndroidSurface(model: androidModel)
+            : MacSimulatorSurface(model: simulatorModel)
         addChild(controller)
         mountedChild = controller
         return controller.view

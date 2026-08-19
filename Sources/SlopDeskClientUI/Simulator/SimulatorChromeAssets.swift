@@ -1,59 +1,45 @@
-// SimulatorChromeAssets — a fetched `SimulatorChromeBundle`, decoded into pictures this platform
-// can draw.
+// SimulatorChromeAssets — a fetched `SimulatorChromeBundle`, decoded into pictures the PHONE can draw.
 //
 // The FETCH is the domain's (`SlopDeskDevicePanels.SimulatorChromeBundle`): which resources a bezel
-// references, and what makes a fetch a failure, is the same answer on every platform. What is not
-// the same is the picture type, so the bytes stop at the module edge and this decodes them.
+// references, and what makes a fetch a failure, is the same answer on every platform. What is not the
+// same is the picture type, so the bytes stop at the module edge and each half decodes them — the phone
+// here into a SwiftUI `Image`, the Mac in `MacSimulatorChrome` into an `NSImage`.
 //
-// The decoded values are SwiftUI `Image`s, not the platform's own picture type, so nothing here is
-// platform-shaped at all — the decode itself is ``Image/decoded(_:)``, which is the client's one
-// place that names `NSImage` or `UIImage`.
+// ## What moved down in docs/56 increment 52a, and what deliberately did not
 //
-// Decoding is cached by device, because a bundle is stable for as long as a device is selected and a
-// SwiftUI body may be evaluated many times inside that window — decoding four images per evaluation
-// is a per-frame cost for a value that never changes. The cache is keyed on the bundle's udid and
-// holds one entry: stepping between two devices re-decodes, which is a once-per-switch cost on
-// artwork the server just sent us anyway.
+// The two RULES moved: all-or-nothing on the body, best-effort on the buttons, and one decode per
+// device cached one entry deep. They are ``SimulatorChromeArt`` and ``SimulatorChromeArtCache`` now,
+// generic over the picture type, so neither half re-derives them — and the "a failed decode is not
+// cached" clause in particular is the sort of thing a second renderer gets wrong once and nobody
+// notices until a bezel is permanently missing.
+//
+// The DECODE did not move, and could not: `Image` is a SwiftUI type and `NSImage` an AppKit one, and a
+// shared target that named either would be a view target below the split — the thing docs/56 stage D
+// exists to prevent. What is left in this file is one closure.
+//
+// iOS-ONLY since increment 52a: the Mac mounts `MacSimulatorBezelView`, which decodes the same bundle
+// through the same cache into `NSImage`, so this decode has no caller on that platform.
 
+#if os(iOS)
 import Foundation
 import SlopDeskDevicePanels
 import SwiftUI
 
-@MainActor
-struct SimulatorChromeAssets {
-    var chrome: SimulatorChrome
-    /// The body WITHOUT its buttons — the panel draws those itself so a press can move them.
-    var body: Image
-    /// Per button id: the rest and pressed artwork. Missing entries draw nothing but stay clickable,
-    /// which keeps a partial fetch usable rather than dead.
-    var buttons: [String: (rest: Image, pressed: Image)]
-
-    /// `nil` ⇒ the body bytes are not an image, so there is no bezel to draw and the panel falls
-    /// back to the bare screen. Button art that fails to decode is dropped instead: a body with one
-    /// undrawn button is still the right frame around the right screen.
-    init?(_ bundle: SimulatorChromeBundle) {
-        guard let body = Image.decoded(bundle.body) else { return nil }
-        chrome = bundle.chrome
-        self.body = body
-        buttons = bundle.buttons.reduce(into: [:]) { out, entry in
-            guard let rest = Image.decoded(entry.value.rest),
-                  let pressed = Image.decoded(entry.value.pressed) else { return }
-            out[entry.key] = (rest, pressed)
-        }
-    }
-}
+/// The phone's decode of a device's chrome. A `typealias` rather than a wrapper: the shape is entirely
+/// ``SimulatorChromeArt``'s, and a struct that only forwarded three stored properties would be a second
+/// name for the same value that could drift from it.
+typealias SimulatorChromeAssets = SimulatorChromeArt<Image>
 
 /// The one decode of a given device's chrome, kept for as long as that device is on screen.
 @MainActor
 enum SimulatorChromeDecoder {
-    private static var cached: (udid: String, assets: SimulatorChromeAssets)?
+    private static let cache = SimulatorChromeArtCache<Image>()
 
     /// Decode `bundle`, reusing the last decode when it is for the same device. `nil` ⇒ undrawable
-    /// body (see ``SimulatorChromeAssets/init(_:)``), which the stage renders as a bare screen.
+    /// body, which the stage renders as a bare screen rather than as an error: a working screen with no
+    /// body around it is still a working screen.
     static func assets(for bundle: SimulatorChromeBundle) -> SimulatorChromeAssets? {
-        if let cached, cached.udid == bundle.udid { return cached.assets }
-        guard let assets = SimulatorChromeAssets(bundle) else { return nil }
-        cached = (bundle.udid, assets)
-        return assets
+        cache.art(for: bundle) { Image.decoded($0) }
     }
 }
+#endif

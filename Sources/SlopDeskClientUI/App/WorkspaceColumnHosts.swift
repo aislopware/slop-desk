@@ -11,10 +11,11 @@
 // pane CANVAS: the titlebar band over it is AppKit (``SlopDeskMacUI/MacTitlebarBand``) and the two are
 // siblings under ``SlopDeskMacUI/MacContentColumn``. This factory dies when `SplitContainer` crosses.
 //
-// The RIGHT column's factory NARROWED rather than dying, which is the shape a big surface crosses in.
-// It used to hand over the whole column; increment 51 rewrote the four surfaces, the five poll loops,
-// the collapse fade and the reports in AppKit, and what is left crossing is the two device SURFACES —
-// still SwiftUI, and the next thing to go.
+// The RIGHT column's factory is GONE, and it went in two steps rather than one, which is the shape a
+// big surface crosses in. Increment 51 rewrote the four surfaces, the five poll loops, the collapse
+// fade and the reports in AppKit and NARROWED the factory to the two device surfaces; increment 52
+// rewrote those and the factory had nothing left to hand over. A seam that narrows before it closes
+// is the honest signal that the thing behind it was bigger than the ledger said.
 //
 // The hosting details that belong to NO column live here too: the overlay-coordinator injection each
 // hosted column needs (an `NSHostingController` inherits no WindowGroup environment) and the dropped
@@ -48,28 +49,6 @@ package enum WorkspaceColumnHosts {
             ),
             overlay: overlay,
         )
-    }
-
-    /// The Simulators surface's two depths — the device list and the live stage.
-    ///
-    /// A far narrower seam than the `codePanelSurfaces(...)` it replaced in increment 51. That factory
-    /// handed over the whole right column: four surfaces, five poll loops, the collapse fade and the
-    /// reports. All of that is ``SlopDeskMacUI/MacCodePanelSurfaces`` now, and what still crosses is the
-    /// ~4,100 lines of device-panel SwiftUI that have not been rewritten yet — so the factory names the
-    /// two surfaces themselves rather than the column that used to contain them.
-    package static func simulatorSurface(
-        model: SimulatorSidebarModel, overlay: OverlayCoordinator?,
-    ) -> NSViewController {
-        hosted(SimulatorSurface(model: model), overlay: overlay)
-    }
-
-    /// The Android surface's two depths. A FOURTH tab rather than a second half of Simulators: the two
-    /// share not one byte of protocol, and folding them into one surface would mean a list whose rows
-    /// dispatch on platform and a stage whose every control has two implementations.
-    package static func androidSurface(
-        model: AndroidSidebarModel, overlay: OverlayCoordinator?,
-    ) -> NSViewController {
-        hosted(AndroidSurface(model: model), overlay: overlay)
     }
 
     /// Mount one column: inject the reducer the hosted tree cannot inherit, and drop the titlebar
