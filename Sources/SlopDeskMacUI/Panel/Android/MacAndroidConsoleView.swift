@@ -54,7 +54,7 @@ final class MacAndroidConsoleView: NSView {
     private let emptyLabel = NSTextField(labelWithString: "")
     private let level = NSPopUpButton()
     private let followPlate: MacPlateIconButton
-    private var search: MacAndroidSearchPlate?
+    private var search: MacDevicePanelSearchPlate?
 
     init(model: AndroidSidebarModel) {
         self.model = model
@@ -135,12 +135,12 @@ final class MacAndroidConsoleView: NSView {
         let strip = MacAndroidStripBed()
         strip.translatesAutoresizingMaskIntoConstraints = false
 
-        let title = macAndroidCapsLabel(AndroidPresentation.consoleTitle)
+        let title = macDevicePanelCapsLabel(AndroidPresentation.consoleTitle)
         title.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         buildLevelMenu()
 
-        let search = MacAndroidSearchPlate(
+        let search = MacDevicePanelSearchPlate(
             placeholder: AndroidPresentation.consoleFilterPlaceholder,
         ) { [weak self] query in
             self?.filter = query
@@ -163,7 +163,7 @@ final class MacAndroidConsoleView: NSView {
         hide.onClick = { [weak self] in self?.model.toggleConsole() }
 
         let row = NSStackView(views: [
-            title, level, search, followPlate, MacAndroidPlateTray([clear, hide]),
+            title, level, search, followPlate, MacDevicePanelPlateTray([clear, hide]),
         ])
         row.orientation = .horizontal
         row.alignment = .centerY

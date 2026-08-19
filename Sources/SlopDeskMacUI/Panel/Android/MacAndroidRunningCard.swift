@@ -38,8 +38,8 @@ final class MacAndroidRunningCard: NSView {
     private let onOpen: () -> Void
     private let onMenu: (AndroidDevice) -> NSMenu?
 
-    private let spinner = MacAndroidSpinner()
-    private var stop: MacAndroidGlyphButton?
+    private let spinner = MacDevicePanelSpinner()
+    private var stop: MacDevicePanelGlyphButton?
     private var hovering = false { didSet { fade() } }
 
     init(
@@ -155,7 +155,7 @@ final class MacAndroidRunningCard: NSView {
     /// clause inside a box a phone's width wide, and truncating it would cut off exactly the half that
     /// says what to do about it.
     private static func stateLabel(_ words: String) -> NSTextField {
-        let label = macAndroidLabel(
+        let label = macDevicePanelLabel(
             words, size: Slate.Typeface.footnote, color: MacAndroidInk.color(.tertiary),
         )
         label.maximumNumberOfLines = 0
@@ -168,7 +168,7 @@ final class MacAndroidRunningCard: NSView {
     // MARK: The caption
 
     private var caption: NSView {
-        let name = macAndroidLabel(
+        let name = macDevicePanelLabel(
             device.name, size: Slate.Typeface.base, weight: .medium,
             color: MacAndroidInk.color(.primary),
         )
@@ -177,7 +177,7 @@ final class MacAndroidRunningCard: NSView {
         identity.alignment = .leading
         identity.spacing = 0
         if !device.summary.isEmpty {
-            identity.addArrangedSubview(macAndroidLabel(
+            identity.addArrangedSubview(macDevicePanelLabel(
                 device.summary, size: Slate.Typeface.footnote,
                 color: MacAndroidInk.color(.tertiary),
             ))
@@ -205,9 +205,9 @@ final class MacAndroidRunningCard: NSView {
 
     /// Stop, and only for an emulator. A physical device is somebody's phone: this panel mirrors it
     /// and does not power it off, so the plate is simply ABSENT rather than present-and-refusing.
-    private func makeStop() -> MacAndroidGlyphButton? {
+    private func makeStop() -> MacDevicePanelGlyphButton? {
         guard device.isEmulator, device.isRunning else { return nil }
-        return MacAndroidGlyphButton(
+        return MacDevicePanelGlyphButton(
             symbol: .stopFill, help: AndroidPresentation.shutDownHelp(device),
             tint: MacAndroidInk.color(.tertiary),
         ) { [model, device] in

@@ -80,7 +80,7 @@ final class MacSimulatorStageView: NSView {
     private let console = MacPlateIconButton(
         symbolName: SimulatorPresentation.Toolbar.console(isOpen: false).symbolName,
     )
-    private let sending = MacSimulatorSpinner()
+    private let sending = MacDevicePanelSpinner()
     private var toolbar = NSStackView()
 
     // MARK: What is mounted right now
@@ -99,7 +99,7 @@ final class MacSimulatorStageView: NSView {
     /// ``SimulatorPresentation/veilDelay``.
     private var showsLoading = false
     private var veilView: NSView?
-    private let veilLoop = MacSimulatorLoop()
+    private let veilLoop = MacDevicePanelLoop()
 
     private var consoleView: MacSimulatorConsoleView?
     /// Held so a second click on the plate reaches the same popover rather than stacking a new one over
@@ -331,7 +331,7 @@ final class MacSimulatorStageView: NSView {
         case .live:
             wanted = nil
         case let .starting(caption):
-            wanted = MacSimulatorVeil(caption: caption, spinner: true, action: nil)
+            wanted = MacDevicePanelVeil(caption: caption, spinner: true, action: nil)
         case let .stalled(caption):
             // A stalled stream is the one failure here that a second attempt genuinely fixes — the
             // socket is fine, the encoder never started — so the stage offers the retry rather than
@@ -340,7 +340,7 @@ final class MacSimulatorStageView: NSView {
             let retry = MacPanelPlateButton(title: SimulatorPresentation.retryTitle) { [model] in
                 model.retry()
             }
-            wanted = MacSimulatorVeil(caption: caption, spinner: false, action: retry)
+            wanted = MacDevicePanelVeil(caption: caption, spinner: false, action: retry)
         }
 
         let outgoing = veilView
@@ -407,9 +407,9 @@ final class MacSimulatorStageView: NSView {
         sending.isHidden = true
 
         let trays = NSStackView(views: [
-            MacSimulatorPlateTray([rotateLeft, rotateRight]),
-            MacSimulatorPlateTray([home, appSwitcher]),
-            MacSimulatorPlateTray([screenshot, statusBar]),
+            MacDevicePanelPlateTray([rotateLeft, rotateRight]),
+            MacDevicePanelPlateTray([home, appSwitcher]),
+            MacDevicePanelPlateTray([screenshot, statusBar]),
         ])
         trays.orientation = .horizontal
         trays.alignment = .centerY

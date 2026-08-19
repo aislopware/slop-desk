@@ -2099,6 +2099,39 @@ written against neither. It is a follow-up with both halves standing still, and 
 in which the "Android is a fourth tab, not a second half of Simulators" rule can safely bend: shells
 with no device type in their signature are not a device abstraction.
 
+### Increment 53 — the eleven shells merge, and the follow-up 52 deferred is paid
+
+Increment 52 declined the merge *while both halves were in flight*, and named the condition under which
+it would be safe: both standing still, and the line drawn at the signature. That is this increment.
+**1530 lines became 969** — `MacDevicePanelParts.swift` (655) holds the eleven chrome shells, and each
+`Mac*Parts.swift` keeps exactly the four declarations that name a device type (153 and 161).
+
+**The test is mechanical, and it is the whole reason this bend is safe.** A declaration merged if no
+device type appears in its signature. `MacDevicePanelLoop`, `macDevicePanelCapsLabel`,
+`macDevicePanelLabel`, `MacDevicePanelSectionHeader`, `MacDevicePanelPlateTray`,
+`MacDevicePanelGlyphButton`, `MacDevicePanelSpinner`, `MacDevicePanelSearchPlate`,
+`MacDevicePanelVeil`, `MacDevicePanelRowShell` and `MacDevicePanelGrid` take `String`, `NSView`,
+`SFSymbol` or nothing. What stayed takes a `SimulatorInk`, a `SimulatorDevice`, a `SimulatorFact` —
+or the Android four. The "Android is a fourth tab, not a second half of Simulators" rule is not bent
+by a spinner: the two panels share no byte of protocol, and a shared spinner is not a claim that they
+do. `check-supervisor.sh` now pins that line in both directions — no device type name may appear in
+the merged file, and each merged class may be declared in exactly one place.
+
+**Two shells were supersets rather than duplicates, and taking the superset was pixel-neutral.**
+`RowShell` differed by an `active` flag and a `cardBorderWidth`; the Android rows never set `active`,
+so the simulator's shape is a strict widening for them. `SearchPlate` differed by a `setQuery` the
+simulator never called. Merging a pair where one side is strictly larger is the only merge that
+cannot silently change a drawing — and the argument for why the Android rows carry NO active state
+moved to `MacAndroidDeviceRow`, the class it is actually about, rather than staying in a file that no
+longer holds the shell.
+
+**One string was being spelled in the renderer, and only one half had noticed.** `"Copy \(label)"` was
+built inside the AppKit simulator view while the Android half — the same sentence — already asked
+`AndroidPresentation.copyTitle`. `SimulatorPresentation.copyTitle` now exists, both renderers ask it,
+and a ratchet bans `"Copy \(` from every renderer. This is the split's own rule catching a leak the
+split created: two renderers make a word spelled at the drawing a word that can drift, and the drift
+had already started.
+
 ## Stage D ledger — what the rename actually costs
 
 `SlopDeskClientUI` cannot become `SlopDeskPhoneUI` while `SlopDeskMacUI` still imports it. That is

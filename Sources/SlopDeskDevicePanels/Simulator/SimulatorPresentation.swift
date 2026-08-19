@@ -228,6 +228,17 @@ package enum SimulatorPresentation {
     /// value is 36 characters and would own the line; Copy hands over the whole thing.
     package static func shortenedUDID(_ udid: String) -> String { String(udid.prefix(8)) }
 
+    /// What a fact's own Copy verb is called. The LABEL names the fact, so the item reads "Copy
+    /// Resolution" rather than "Copy" — which is the whole reason a fact carries a label at all.
+    ///
+    /// It is here rather than in the renderer for the reason every other word in this file is: the Mac
+    /// draws an `NSMenuItem` and the phone a `Button`, and a title spelled at each of them is a title
+    /// that can drift. Increment 53 found exactly that — the AppKit half had built the string itself
+    /// while the Android half, which is the same sentence, already asked ``AndroidPresentation``.
+    package static func copyTitle(_ fact: SimulatorFact) -> String {
+        "Copy \(fact.label)"
+    }
+
     package static func orientationTitle(_ orientation: SimulatorOrientation) -> String {
         switch orientation {
         case .portrait: "Portrait"

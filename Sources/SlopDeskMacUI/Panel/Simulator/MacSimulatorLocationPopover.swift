@@ -61,7 +61,7 @@ final class MacSimulatorLocationPopover: NSViewController, NSPopoverDelegate {
         let root = NSView()
         root.translatesAutoresizingMaskIntoConstraints = false
 
-        let title = macSimulatorCapsLabel(SimulatorPresentation.Location.title)
+        let title = macDevicePanelCapsLabel(SimulatorPresentation.Location.title)
 
         let places = NSStackView(views: SimulatorPlace.all.map(row))
         places.orientation = .vertical
@@ -99,10 +99,10 @@ final class MacSimulatorLocationPopover: NSViewController, NSPopoverDelegate {
     // MARK: The presets
 
     private func row(_ place: SimulatorPlace) -> NSView {
-        let shell = MacSimulatorRowShell()
+        let shell = MacDevicePanelRowShell()
         shell.active = pinned == place.coordinate
         shell.onTap = { [weak self] in self?.send(place.coordinate) }
-        shell.content.addArrangedSubview(macSimulatorLabel(
+        shell.content.addArrangedSubview(macDevicePanelLabel(
             place.name, size: Slate.Typeface.base, color: Slate.Native.Text.primary,
         ))
         let spacer = NSView()
@@ -110,7 +110,7 @@ final class MacSimulatorLocationPopover: NSViewController, NSPopoverDelegate {
         shell.content.addArrangedSubview(spacer)
         // The readout is MEASURED, so it speaks the instrument voice, and it yields its width first —
         // the name is what the reader is picking from.
-        let readout = macSimulatorLabel(
+        let readout = macDevicePanelLabel(
             place.coordinate.readout, size: Slate.Typeface.small,
             color: Slate.Native.Text.tertiary, mono: true,
         )
@@ -122,7 +122,7 @@ final class MacSimulatorLocationPopover: NSViewController, NSPopoverDelegate {
     // MARK: The typed coordinate
 
     private func entry() -> NSView {
-        let plate = MacSimulatorSearchPlate(
+        let plate = MacDevicePanelSearchPlate(
             placeholder: SimulatorPresentation.Location.placeholder,
         ) { [weak self] _ in self?.refreshSetButton() }
 
@@ -142,7 +142,7 @@ final class MacSimulatorLocationPopover: NSViewController, NSPopoverDelegate {
         return row
     }
 
-    private var typedPlate: MacSimulatorSearchPlate?
+    private var typedPlate: MacDevicePanelSearchPlate?
 
     private var parsed: SimulatorCoordinate? {
         guard let typedPlate else { return nil }
@@ -170,12 +170,12 @@ final class MacSimulatorLocationPopover: NSViewController, NSPopoverDelegate {
     /// it is ignored.
     private func footer() -> NSView {
         guard let pinned else {
-            return macSimulatorLabel(
+            return macDevicePanelLabel(
                 SimulatorPresentation.Location.live, size: Slate.Typeface.small,
                 color: Slate.Native.Text.tertiary,
             )
         }
-        let readout = macSimulatorLabel(
+        let readout = macDevicePanelLabel(
             SimulatorPresentation.Location.pinned(pinned), size: Slate.Typeface.small,
             color: Slate.Native.Text.tertiary,
         )

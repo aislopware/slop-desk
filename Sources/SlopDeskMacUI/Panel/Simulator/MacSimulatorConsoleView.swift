@@ -124,12 +124,12 @@ final class MacSimulatorConsoleView: NSView {
         strip.wantsLayer = true
         strip.layer?.backgroundColor = Slate.Native.Surface.raised.cgColor
 
-        let title = macSimulatorCapsLabel(SimulatorPresentation.Console.title)
+        let title = macDevicePanelCapsLabel(SimulatorPresentation.Console.title)
         title.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         buildLevelMenu()
 
-        let search = MacSimulatorSearchPlate(
+        let search = MacDevicePanelSearchPlate(
             placeholder: SimulatorPresentation.Console.filterPlaceholder,
         ) { [weak self] query in
             self?.filter = query
@@ -149,7 +149,7 @@ final class MacSimulatorConsoleView: NSView {
         hide.onClick = { [weak self] in self?.model.toggleConsole() }
 
         let row = NSStackView(views: [
-            title, level, search, followPlate, MacSimulatorPlateTray([clear, hide]),
+            title, level, search, followPlate, MacDevicePanelPlateTray([clear, hide]),
         ])
         row.orientation = .horizontal
         row.alignment = .centerY

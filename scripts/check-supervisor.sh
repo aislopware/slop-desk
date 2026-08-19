@@ -5564,6 +5564,53 @@ if [[ "${folds}" != "Sources/SlopDeskDevicePanels/Input/DeviceKeyEvent.swift" ]]
 fi
 printf 'check-supervisor: two device panels, drawn twice and spelled once.\n'
 
+# ── And ONE set of shells under both of them ──────────────────────────────────────────────────
+# Increment 53. The two AppKit halves each grew a `Mac*Parts.swift`, and eleven of the shells in them
+# were the same file twice: the keyed loop, the two label helpers, the section header, the plate tray,
+# the glyph button, the spinner, the search plate, the veil, the row shell and the flow grid. They are
+# `MacDevicePanelParts.swift` now.
+#
+# THE TEST IS THE SIGNATURE, and it is the only thing standing between this merge and the device
+# abstraction increment 52b banned. A shell taking `String`, `NSView`, `SFSymbol` or nothing at all is
+# CHROME and belongs in one file; a function taking a `SimulatorDevice`, a `SimulatorFact`, an
+# `AndroidDevice`, an `AndroidFact` or either `Ink` is PROTOCOL and may never be folded — the two
+# panels share not one byte of wire, so a common device vocabulary would be an abstraction over a
+# coincidence.
+MAC_SHARED_PARTS=Sources/SlopDeskMacUI/Panel/MacDevicePanelParts.swift
+if hit=$(spells 'SimulatorDevice|SimulatorFact|SimulatorInk|AndroidDevice|AndroidFact|AndroidInk' \
+  "${MAC_SHARED_PARTS}"); then
+  printf '%s\n' "${hit}" >&2
+  fail "${MAC_SHARED_PARTS} names a device type — a shared shell is chrome, never a device abstraction (docs/56, increment 53)"
+fi
+# The other direction: a shell that went down must not grow back beside one caller. Each of the eleven
+# is a `Mac*` name that may exist EXACTLY once, and a re-minted copy compiles perfectly well.
+for shell in MacDevicePanelLoop MacDevicePanelSectionHeader MacDevicePanelPlateTray \
+  MacDevicePanelGlyphButton MacDevicePanelSpinner MacDevicePanelSearchPlate MacDevicePanelVeil \
+  MacDevicePanelRowShell MacDevicePanelGrid; do
+  # shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
+  owners=$(grep -lE "^(final )?class ${shell}[[:space:]:]" \
+    $(repo_files 'Sources/SlopDeskMacUI/*.swift' 'Sources/SlopDeskMacUI/**/*.swift') 2> /dev/null || true)
+  if [[ -n "${owners}" && "${owners}" != "${MAC_SHARED_PARTS}" ]]; then
+    printf '%s\n' "${owners}" >&2
+    fail "${shell} is declared outside ${MAC_SHARED_PARTS} — one shell, one set of constants (docs/56, increment 53)"
+  fi
+done
+# Both halves keep exactly the four that name a device, and each still asks its own `*Presentation`
+# for the words. The simulator's Copy title was BUILT IN THE RENDERER until increment 53 while the
+# Android half already asked for it — one sentence, two spellings, and only one of them could drift.
+for face in Sources/SlopDeskMacUI/Panel/Simulator/MacSimulatorParts.swift:SimulatorPresentation \
+  Sources/SlopDeskMacUI/Panel/Android/MacAndroidParts.swift:AndroidPresentation; do
+  if ! spells "${face##*:}" "${face%%:*}" > /dev/null; then
+    fail "${face%%:*} stopped asking ${face##*:} for its words — the renderer is not where a title lives"
+  fi
+done
+if hit=$(spells '"Copy \\\(' Sources/SlopDeskMacUI/Panel/**/*.swift \
+  Sources/SlopDeskClientUI/Simulator/*.swift Sources/SlopDeskClientUI/Android/*.swift 2> /dev/null); then
+  printf '%s\n' "${hit}" >&2
+  fail "a Copy verb is spelled in a renderer — SimulatorPresentation/AndroidPresentation.copyTitle owns it"
+fi
+printf 'check-supervisor: one set of device-panel shells, and neither half names the other.\n'
+
 # ── One design floor, two renderers ───────────────────────────────────────────────────────────
 # `SlopDeskSlate` is the layer BOTH halves stand on: the token ladder in its `NSColor`/`UIColor`
 # spelling and its `Color` one, the status mark's geometry and its wandering tempo, the vector

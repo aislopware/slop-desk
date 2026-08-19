@@ -20,7 +20,7 @@
 // draws. The bareness was never a want of ornament — it was a want of subject.
 //
 // AND THE PANEL'S WIDTH IS SPENT ON DEVICES, not on air. Both groups lay out in a grid whose column
-// count follows the width (``MacSimulatorGrid``) — cards at a fixed width, rows at a minimum — so a
+// count follows the width (``MacDevicePanelGrid``) — cards at a fixed width, rows at a minimum — so a
 // wider panel shows more devices rather than longer rows.
 //
 // EVERY ROW CARRIES ITS ACTION, at rest, not on hover. An earlier revision hid boot and shutdown behind
@@ -75,7 +75,7 @@ final class MacSimulatorDeviceList: NSView {
         // THE GROUND, like every other column in this window (ONE ISLAND, law 1) — the list sinks.
         layer?.backgroundColor = Slate.Native.Surface.field.cgColor
 
-        let search = MacSimulatorSearchPlate(
+        let search = MacDevicePanelSearchPlate(
             placeholder: SimulatorPresentation.searchPlaceholder,
         ) { [weak self] typed in
             self?.query = typed
@@ -224,12 +224,12 @@ final class MacSimulatorDeviceList: NSView {
         var accessory: NSView?
         if section.isRunning, section.devices.count > 1 {
             let count = section.devices.count
-            accessory = MacSimulatorGlyphButton(
+            accessory = MacDevicePanelGlyphButton(
                 symbol: .stopCircle, help: SimulatorPresentation.shutdownAllHelp(count),
                 tint: Slate.Native.Text.tertiary,
             ) { [model] in Task { await model.shutdownAll() } }
         }
-        let header = MacSimulatorSectionHeader(
+        let header = MacDevicePanelSectionHeader(
             section.title, caption: section.runtime, accessory: accessory,
         )
         let box = NSView()
@@ -252,7 +252,7 @@ final class MacSimulatorDeviceList: NSView {
         let cards = section.devices.map { device in
             MacSimulatorRunningCard(model: model, device: device) { [onEnter] in onEnter(device.udid) }
         }
-        let grid = MacSimulatorGrid(
+        let grid = MacDevicePanelGrid(
             cells: cards, columnWidth: Slate.Metric.deviceCardWidth, isFixed: true,
             spacing: Slate.Metric.space2,
         )
@@ -269,7 +269,7 @@ final class MacSimulatorDeviceList: NSView {
                 onEnter: onEnter,
             )
         }
-        return MacSimulatorGrid(
+        return MacDevicePanelGrid(
             cells: rows, columnWidth: Slate.Metric.deviceRowWidth, isFixed: false,
             spacing: Slate.Metric.space1,
         )
@@ -301,12 +301,12 @@ final class MacSimulatorFlippedClip: NSView {
 /// A row for a device that is not running: its family mark, its name, whatever the heading has not
 /// already said, and the one verb that applies.
 @MainActor
-final class MacSimulatorDeviceRow: MacSimulatorRowShell {
+final class MacSimulatorDeviceRow: MacDevicePanelRowShell {
     private let model: SimulatorSidebarModel
     private let device: SimulatorDevice
     private let onEnter: (String) -> Void
-    private let boot: MacSimulatorGlyphButton
-    private let spinner = MacSimulatorSpinner()
+    private let boot: MacDevicePanelGlyphButton
+    private let spinner = MacDevicePanelSpinner()
 
     init(
         model: SimulatorSidebarModel, device: SimulatorDevice, showsRuntime: Bool,
@@ -317,14 +317,14 @@ final class MacSimulatorDeviceRow: MacSimulatorRowShell {
         self.onEnter = onEnter
         // SOLID rather than the enclosing `…Circle` pair — a ring at this size reads as a control
         // chrome rather than as a direction, and a dozen of them down the trailing edge read as a rule.
-        boot = MacSimulatorGlyphButton(
+        boot = MacDevicePanelGlyphButton(
             symbol: .playFill, help: SimulatorPresentation.bootHelp(device),
             tint: Slate.Native.Text.tertiary,
         ) { Task { await model.boot(device.udid) } }
         super.init(frame: .zero)
 
         content.addArrangedSubview(macSimulatorFamilyMark(device))
-        let name = macSimulatorLabel(
+        let name = macDevicePanelLabel(
             device.name, size: Slate.Typeface.base, color: Slate.Native.Text.primary,
         )
         name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -338,7 +338,7 @@ final class MacSimulatorDeviceRow: MacSimulatorRowShell {
         // side they cannot collide — the first cut of this row put the button over the runtime and drew
         // a play glyph through the word "iOS".
         if let subtitle = SimulatorPresentation.rowSubtitle(device, showsRuntime: showsRuntime) {
-            let meta = macSimulatorLabel(
+            let meta = macDevicePanelLabel(
                 subtitle, size: Slate.Typeface.footnote, color: Slate.Native.Text.tertiary,
             )
             meta.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)

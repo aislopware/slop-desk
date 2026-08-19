@@ -52,7 +52,7 @@ final class MacAndroidStageView: NSView {
     /// The veil's own state, which is the model's loading state DELAYED
     /// (``AndroidPresentation/veilDelay``), and the loop that delays it.
     private var showsLoading = false
-    private let veilLoop = MacAndroidLoop()
+    private let veilLoop = MacDevicePanelLoop()
     private var veil: NSView?
     private var reading: AndroidStageReading = .streaming
 
@@ -213,8 +213,8 @@ final class MacAndroidStageView: NSView {
     /// lit key inside a lit tray and cost exactly the signal it exists to carry.
     private var toolbar: NSView {
         let row = NSStackView(views: [
-            MacAndroidPlateTray(AndroidPresentation.navigationTray.map(plate)),
-            MacAndroidPlateTray(AndroidPresentation.actionTray.map(plate)),
+            MacDevicePanelPlateTray(AndroidPresentation.navigationTray.map(plate)),
+            MacDevicePanelPlateTray(AndroidPresentation.actionTray.map(plate)),
             plate(AndroidPresentation.consoleVerb),
         ])
         row.orientation = .horizontal
@@ -334,12 +334,12 @@ final class MacAndroidStageView: NSView {
             case .streaming:
                 nil
             case let .loading(caption):
-                MacAndroidVeil(caption: caption, spinner: true, action: nil)
+                MacDevicePanelVeil(caption: caption, spinner: true, action: nil)
             case let .stalled(caption, retry):
                 // A stalled mirror is the one failure here that a second attempt genuinely fixes — the jar
                 // is pushed, the server is up, the encoder never started — so the stage offers the retry
                 // rather than making someone go back to the list and pick the same row again.
-                MacAndroidVeil(
+                MacDevicePanelVeil(
                     caption: caption, spinner: false,
                     action: MacPanelPlateButton(title: retry) { [model] in model.retry() },
                 )

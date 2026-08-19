@@ -63,7 +63,7 @@ final class MacSimulatorDeviceHeader: NSView {
         back.toolTip = SimulatorPresentation.backHelp
         back.onClick = onBack
 
-        let name = macSimulatorLabel(
+        let name = macDevicePanelLabel(
             device.name, size: Slate.Typeface.title, weight: .semibold,
             color: Slate.Native.Text.primary,
         )
@@ -71,7 +71,7 @@ final class MacSimulatorDeviceHeader: NSView {
         // iPhone 17 Pros differ by nothing else — and a caption reading "iPhone 17 Pro · iOS 26.5" is
         // how every simulator UI writes it. On the facts line it was one dot-separated figure among
         // four, which is where the thing you are actually looking for goes to hide.
-        let runtime = macSimulatorLabel(
+        let runtime = macDevicePanelLabel(
             device.runtime, size: Slate.Typeface.footnote, color: Slate.Native.Text.tertiary,
         )
         runtime.setContentCompressionResistancePriority(.required, for: .horizontal)

@@ -41,7 +41,7 @@ final class MacAndroidDeviceHeader: NSView {
         back.onClick = onBack
 
         let title = NSStackView(views: [
-            macAndroidLabel(
+            macDevicePanelLabel(
                 device.name, size: Slate.Typeface.title, weight: .semibold,
                 color: MacAndroidInk.color(.primary),
             ),
@@ -53,7 +53,7 @@ final class MacAndroidDeviceHeader: NSView {
         // header gives its runtime: it is half of what NAMES a device. Two Pixel 7 AVDs differ by
         // nothing else, and on the facts line it would be one dot-separated figure among four.
         if let version = device.versionLabel {
-            let label = macAndroidLabel(
+            let label = macDevicePanelLabel(
                 version, size: Slate.Typeface.footnote, color: MacAndroidInk.color(.tertiary),
             )
             label.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)

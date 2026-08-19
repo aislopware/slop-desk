@@ -45,13 +45,13 @@ final class MacAndroidDeviceList: NSView {
     /// its two depths, and the transaction that carries it belongs to the surface that owns both.
     private let onEnter: (AndroidDevice) -> Void
 
-    private lazy var search = MacAndroidSearchPlate(
+    private lazy var search = MacDevicePanelSearchPlate(
         placeholder: AndroidPresentation.searchPlaceholder,
     ) { [weak self] _ in self?.rebuild() }
 
     private let scroll = NSScrollView()
     private let document = MacAndroidListDocument()
-    private let notice = macAndroidLabel(
+    private let notice = macDevicePanelLabel(
         "", size: Slate.Typeface.footnote, color: MacAndroidInk.color(.tertiary),
     )
 
@@ -184,7 +184,7 @@ final class MacAndroidDeviceList: NSView {
         let stoppable = AndroidPresentation.stoppable(in: section.devices)
         var accessory: NSView?
         if section.isRunning, stoppable.count > 1 {
-            accessory = MacAndroidGlyphButton(
+            accessory = MacDevicePanelGlyphButton(
                 symbol: .stopCircle,
                 help: AndroidPresentation.shutDownAllHelp(count: stoppable.count),
                 tint: MacAndroidInk.color(.tertiary),
@@ -192,7 +192,7 @@ final class MacAndroidDeviceList: NSView {
                 Task { await model.shutdownAll() }
             }
         }
-        return MacAndroidSectionHeader(
+        return MacDevicePanelSectionHeader(
             section.title, caption: section.version, accessory: accessory,
         )
     }
@@ -200,7 +200,7 @@ final class MacAndroidDeviceList: NSView {
     /// The attached group: fixed-width cards, because a card's width IS the device's shape and a card
     /// stretched to share the panel would make the one claim it exists to make a lie.
     private func shelf(_ section: AndroidListSection) -> NSView {
-        MacAndroidGrid(
+        MacDevicePanelGrid(
             cells: section.devices.map { device in
                 MacAndroidRunningCard(
                     model: model, device: device, onMenu: { [weak self] in self?.menu(for: $0) },
@@ -215,7 +215,7 @@ final class MacAndroidDeviceList: NSView {
     /// Every other group: width-SHARING rows, because a row's content is a name and a name is happy to
     /// have more room.
     private func grid(_ section: AndroidListSection) -> NSView {
-        MacAndroidGrid(
+        MacDevicePanelGrid(
             cells: section.devices.map { device in
                 MacAndroidDeviceRow(
                     model: model, device: device,
@@ -307,14 +307,21 @@ private final class MacAndroidListDocument: NSStackView {
 
 /// One device that is not attached: its family mark, its name, the fact that tells it from its
 /// look-alikes, and the one verb that applies.
+///
+/// IT NEVER SETS ``MacDevicePanelRowShell/active``, and that is not an omission. The Android list has
+/// ONE depth of selection — a selected device is not a lit row, it is the stage, drawn INSTEAD of the
+/// list — so there is no moment at which a row here could be the active one. The simulator's list keeps
+/// a selected row visible beside its stage, which is why the shell offers the state at all; with
+/// `active` left `false` the shell's border resolves `.clear` and this row draws exactly what it drew
+/// when the two shells were separate types (docs/56, increment 53).
 @MainActor
-final class MacAndroidDeviceRow: MacAndroidRowShell {
+final class MacAndroidDeviceRow: MacDevicePanelRowShell {
     private let model: AndroidSidebarModel
     private let device: AndroidDevice
     private let onMenu: (AndroidDevice) -> NSMenu?
 
-    private let spinner = MacAndroidSpinner()
-    private var start: MacAndroidGlyphButton?
+    private let spinner = MacDevicePanelSpinner()
+    private var start: MacDevicePanelGlyphButton?
 
     init(
         model: AndroidSidebarModel, device: AndroidDevice, showsVersion: Bool,
@@ -326,7 +333,7 @@ final class MacAndroidDeviceRow: MacAndroidRowShell {
         super.init(frame: .zero)
 
         content.addArrangedSubview(macAndroidFamilyMark(device))
-        let name = macAndroidLabel(
+        let name = macDevicePanelLabel(
             device.name, size: Slate.Typeface.base, color: MacAndroidInk.color(.primary),
         )
         content.addArrangedSubview(name)
@@ -339,7 +346,7 @@ final class MacAndroidDeviceRow: MacAndroidRowShell {
         // SCREEN otherwise — the fact the simulator list could not print, and what tells two
         // similarly-named AVDs apart when they share a system image.
         if let subtitle = AndroidPresentation.subtitle(for: device, showsVersion: showsVersion) {
-            let caption = macAndroidLabel(
+            let caption = macDevicePanelLabel(
                 subtitle, size: Slate.Typeface.footnote, color: MacAndroidInk.color(.tertiary),
             )
             // The SUBTITLE yields before the name does: it qualifies, and a name that truncated so a
@@ -348,7 +355,7 @@ final class MacAndroidDeviceRow: MacAndroidRowShell {
             content.addArrangedSubview(caption)
         }
         content.addArrangedSubview(spinner)
-        let start = MacAndroidGlyphButton(
+        let start = MacDevicePanelGlyphButton(
             symbol: .playFill, help: AndroidPresentation.startHelp(device),
             tint: MacAndroidInk.color(.tertiary),
         ) { [model, device] in

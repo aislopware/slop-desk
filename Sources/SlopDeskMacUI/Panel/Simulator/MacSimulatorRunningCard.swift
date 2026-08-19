@@ -40,10 +40,10 @@ final class MacSimulatorRunningCard: NSView {
     /// The placeholder plate, shown for the second between a boot landing in the device list and the
     /// first capture coming back — and ONLY then.
     private let plate = NSView()
-    private let stop: MacSimulatorGlyphButton
-    private let spinner = MacSimulatorSpinner()
+    private let stop: MacDevicePanelGlyphButton
+    private let spinner = MacDevicePanelSpinner()
 
-    private let poll = MacSimulatorLoop()
+    private let poll = MacDevicePanelLoop()
     private var hovering = false { didSet { repaint() } }
 
     /// The last picture that arrived, kept across a FAILED poll rather than blanked: the server answers
@@ -55,7 +55,7 @@ final class MacSimulatorRunningCard: NSView {
         self.model = model
         self.device = device
         self.onOpen = onOpen
-        stop = MacSimulatorGlyphButton(
+        stop = MacDevicePanelGlyphButton(
             symbol: .stopFill, help: SimulatorPresentation.shutdownHelp(device),
             tint: Slate.Native.Text.tertiary,
         ) { Task { await model.shutdown(device.udid) } }
@@ -145,7 +145,7 @@ final class MacSimulatorRunningCard: NSView {
         // than a 13pt symbol can — but a card and a row for the same device should read the same way,
         // and for the second before the first capture the placeholder is the only thing above this line.
         let mark = macSimulatorFamilyMark(device)
-        let name = macSimulatorLabel(
+        let name = macDevicePanelLabel(
             device.name, size: Slate.Typeface.base, weight: .medium,
             color: Slate.Native.Text.primary,
         )
