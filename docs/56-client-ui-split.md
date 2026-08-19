@@ -1476,3 +1476,48 @@ phone and has no second half to carry. A reader converting them "for consistency
 macOS branch to a view macOS never mounts.
 
 `SlopDeskClientUI` is now at 53 `#if os(macOS)` across 22 files.
+
+
+### Increment 38 — a palette verb declares its platform, in Rust
+
+Increment 35's lens found a feature the phone was denied. This one found the opposite failure, in the
+one surface whose whole job is to say what the app can do: three verbs the phone was OFFERED and
+could not run.
+
+  * **Pin Window** — routed to `OverlayCoordinator.togglePinWindow`, which defaults to an empty
+    closure and which no phone root binds.
+  * **Detach Pane into Window** — a `.store` row whose run arm was `#if os(macOS) store.detachActivePane() #else _ = store #endif`.
+  * **Reattach All Panes** — runs, but folds back a set that on a shell which cannot detach is always
+    empty.
+
+None of the palette's existing suites could see this, and the reason is structural: every actuator on
+the coordinator defaults to an empty closure, so **a row that is listed and inert is
+indistinguishable, at the keystroke, from a row that ran and had nothing to do** — and every one of
+those suites runs on a Mac, where all three are real. `check-supervisor.sh` already carried the rule
+in words ("an action that is absent on a platform is fine; an action that is listed and inert is
+not") and ratcheted three coordinator hooks by name, but a rule that has to name its instances only
+ever catches the instances someone thought of. `togglePinWindow` was excused there on the grounds
+that "the palette row itself records" being a macOS no-op — and a comment recording it is not the row
+being absent.
+
+So the platform became a FIELD, exactly as it is on a settings group: `rust/slopdesk-workspace/src/palette_rows.rs`,
+reusing `settings_layout::Platform` rather than respelling it. `ActionsPaletteSource.catalog` is now
+`declared.filter { PaletteRowPlatform.lists($0.id) }`, and the `#if` inside `detachPane`'s run arm is
+gone — a row whose platform is data has no business branching on one.
+
+Three things make it hold:
+
+  * **The far side fails OPEN.** An id the table does not declare is LISTED. Failing closed would let
+    a typo delete a verb in exactly the silence this module exists to end.
+  * **The supervisor closes it instead** — the Swift catalog's `action.*` ids and the Rust table's
+    must be the same set, in both directions, and no `#if os(` may reappear in the catalog.
+  * **The table takes `mac` as an argument**, not `cfg!`. That is what lets a Mac test ask what the
+    PHONE lists, which is the only place the answer was ever interesting. `PaletteRowPlatformTests`
+    asks it four ways, including that nothing OTHER than the three window verbs is withheld from
+    either half — a phone is not a reduced product.
+
+**Half done, deliberately.** The same three verbs are still listed by the binding registry, which
+drives the cheat sheet and the keybindings editor, and `WorkspaceBindingRouting`'s `.detachPane` arm
+still carries its own `#if`. That is 78 rows in a different id space (`pane.detach`, `view.pinWindow`)
+and it gets its own table and its own increment; the routing gate stays until then, because until the
+registry declares platforms it is the only thing stopping a rebound chord from stranding a pane.

@@ -76,6 +76,7 @@ pub mod jump;
 pub mod list_nav;
 pub mod listen;
 pub mod notify;
+pub mod palette_rows;
 pub mod persist;
 pub mod phone_key;
 pub mod rail_list;

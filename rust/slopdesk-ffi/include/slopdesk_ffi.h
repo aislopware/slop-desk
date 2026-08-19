@@ -973,6 +973,25 @@ size_t slopdesk_settings_row_matches(const uint8_t *query, size_t query_len, siz
 // otherwise, so a caller never has to know which rows carry an override.
 size_t slopdesk_settings_row_page_label(size_t index, uint8_t *out, size_t cap);
 
+// ---- Which half lists a command-palette VERB ----
+//
+// The same "a platform gate is DATA" rule as the settings table below, applied to the one surface
+// whose whole job is to tell the user what the app can do. Every actuator on the palette's
+// coordinator defaults to an empty closure and a `.store` row's run arm may be a macOS-only `#if`
+// with nothing in the else, so a row that is listed and INERT is indistinguishable from one that ran
+// and had nothing to do. Three of the phone's rows were exactly that.
+//
+// `shown` rather than `platform` on purpose: the near side already knows which slice it is, and what
+// it must never do is turn that back into an `#if` around a row. The count/index pair exists so a
+// test can walk this table and prove it names the same verbs the Swift catalog does — an id declared
+// on only one side is the failure that would put the hole back.
+//
+// An id no row declares is SHOWN. A typo must not delete a row without a word;
+// `scripts/check-supervisor.sh` is what makes an undeclared id impossible.
+bool slopdesk_palette_row_shown(const uint8_t *id, size_t len, bool mac);
+size_t slopdesk_palette_row_count(void);
+size_t slopdesk_palette_row_id(size_t index, uint8_t *out, size_t cap);
+
 // ---- The SHAPE of a settings page ----
 //
 // Which groups a page shows, in what order, what each row is, and — the reason this table exists —

@@ -52,7 +52,12 @@ public struct ActionsPaletteSource: PaletteDataSource {
     /// cheat sheet renders) so a chord change can't desync the displayed glyph. A verb with no registry
     /// chord (New Remote Window Tab, Reconnect Pane, …) resolves to `nil` ⇒ no hint chip — correct, since
     /// the chord genuinely does not exist.
-    public static let catalog: [PaletteItem] = [
+    public static let catalog: [PaletteItem] = declared.filter { PaletteRowPlatform.lists($0.id) }
+
+    /// Every verb the catalog DECLARES, before the platform filter. Private because a caller that
+    /// wanted this one rather than ``catalog`` would be asking for the rows this half cannot run —
+    /// which is the defect ``PaletteRowPlatform`` exists to close.
+    private static let declared: [PaletteItem] = [
         // WORKING DIRECTORY — leads the palette (the section header OWNS the cwd badge in the view). "Copy
         // Path" is a CLIENT-side write of the focused pane's cwd to the platform
         // pasteboard. Sibling "Reveal in Finder" / "Open in…" rows are host-routed —
@@ -133,15 +138,10 @@ public struct ActionsPaletteSource: PaletteDataSource {
             id: "action.detachPane", icon: "macwindow.on.rectangle", title: "Detach Pane into Window",
             keywords: "detach pop out float window satellite separate monitor",
             shortcut: glyph(.detachPane), category: .pane,
-            run: { store in
-                // Same macOS-only gate as the routing arm + the control-bar button: iOS has no
-                // satellite NSWindow — an ungated palette run would strand the pane out of every tab.
-                #if os(macOS)
-                store.detachActivePane()
-                #else
-                _ = store
-                #endif
-            },
+            // The gate this run arm used to carry is now the row's PLATFORM
+            // (`slopdesk_workspace::palette_rows`): a shell with no satellite `NSWindow` does not
+            // list the verb at all, rather than listing it and answering with nothing.
+            run: { store in store.detachActivePane() },
         ),
         item(
             id: "action.reattachAllPanes", icon: "macwindow.and.cursorarrow", title: "Reattach All Panes",

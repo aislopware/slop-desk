@@ -5491,6 +5491,35 @@ for hook in toggleSidebar toggleCodeSidebar focusCodePanel; do
     fi
   done
 done
+# A PALETTE ROW DECLARES ITS PLATFORM, and it declares it exactly once. The three window verbs the
+# phone cannot run — the satellite pair and the window level — used to be listed there anyway: one
+# hook no phone root binds, and one run arm that is a macOS-only `#if` with nothing in the else.
+# Both are invisible from the row, and both answer a keystroke by doing nothing.
+#
+# `slopdesk_workspace::palette_rows` is where that fact lives now, and it can only close the hole if
+# it names the SAME verbs the catalog serves. An id on one side only is the failure: a Swift row the
+# table never heard of is listed unconditionally (the far side fails OPEN on purpose, so a typo
+# cannot delete a verb in silence), and a Rust row no catalog serves is a rule about nothing.
+SWIFT_PALETTE=Sources/SlopDeskClientCore/Palette/PaletteDataSource.swift
+RUST_PALETTE=rust/slopdesk-workspace/src/palette_rows.rs
+palette_swift_ids=$(grep -oE 'id: "action\.[A-Za-z]+"' "${SWIFT_PALETTE}" |
+  grep -oE 'action\.[A-Za-z]+' | sort -u || true)
+palette_rust_ids=$(grep -oE 'row\("action\.[A-Za-z]+"' "${RUST_PALETTE}" |
+  grep -oE 'action\.[A-Za-z]+' | sort -u || true)
+if [[ "${palette_swift_ids}" != "${palette_rust_ids}" ]]; then
+  diff <(printf '%s\n' "${palette_swift_ids}") <(printf '%s\n' "${palette_rust_ids}") >&2 || true
+  fail "the palette catalog and its platform table name different verbs (< Swift only, > Rust only)"
+fi
+# AND THE GATE DOES NOT COME BACK. A row whose platform is data has no business branching on one:
+# `detachPane`'s run arm carried the `#if` this table replaced, and re-adding one anywhere in the
+# catalog would make a row half-listed again.
+if grep -qE '^\s*#if os\(' "${SWIFT_PALETTE}"; then
+  grep -nE '^\s*#if os\(' "${SWIFT_PALETTE}" >&2
+  fail "a platform gate is back in the palette catalog — a row's platform is DATA (palette_rows.rs)"
+fi
+printf 'check-supervisor: a palette verb names its platform once — %s verbs, no gate in the catalog.\n' \
+  "$(printf '%s\n' "${palette_rust_ids}" | wc -l | tr -d ' ')"
+
 printf 'check-supervisor: the UI split holds — views only, no dead gates, no ancestor between the halves, no palette row that lies.\n'
 
 # ── A pane's master is decided once, and it is OWNED ────────────────────────────────────────────
