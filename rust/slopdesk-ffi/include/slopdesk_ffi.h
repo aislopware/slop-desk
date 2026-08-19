@@ -1512,6 +1512,48 @@ size_t slopdesk_ws_apply_intent(uint8_t op, const uint8_t *args, size_t args_len
                                 uint8_t *status, uint8_t *out, size_t cap);
 
 
+// MARK: The workspace state FILE
+//
+// What of the document survives a host restart, and in what shape on disk. The JSON is the boring
+// half; the FILTER is not. Persisting the entry map wholesale would restore `commandRunning = 1`,
+// `agentState = working` and a liveness of `attached` for a pane whose child exited weeks ago —
+// a workspace of fake-live rows, busy dots spinning for nothing — so a second answer to "may this
+// cell touch the disk" does not conflict with the first, it RENDERS.
+//
+// Both directions ride the document's own encoding, as the intent applier's do: the cells go in as
+// the flat `SlopDeskWsEntry` pairs `slopdesk_ws_encode_snapshot` takes, and a decoded file comes
+// back as an encoded snapshot read with `slopdesk_ws_decode_snapshot`.
+
+// Whether one cell survives a restart. A KIND and a FIELD are all the rule reads — a pane splits by
+// field, its `title` surviving where its `liveness` must not — so the caller's filter loop is a
+// loop and not a decision. A kind this build does not know answers false: bytes nothing can read
+// and nothing can reap would leave ghost objects with nothing able to remove them.
+bool slopdesk_ws_state_file_is_persisted(uint8_t kind, uint8_t field);
+
+// The file's bytes for a document, §4-shaped. UTF-8 JSON, sorted keys, canonical entry order, so
+// two saves of one value are byte-identical. The cells are taken as given — what belongs on disk is
+// the caller's own pass through `slopdesk_ws_state_file_is_persisted`. Encoding cannot fail.
+size_t slopdesk_ws_state_file_encode(const SlopDeskWsEntry *entries, size_t count,
+                                     const uint8_t *blob, size_t blob_len,
+                                     uint8_t *out, size_t cap);
+
+// Reads a file back, answering the surviving cells as an encoded SNAPSHOT. `status` receives the
+// refusal byte on EVERY path — index 0 of `slopdesk_ws_state_file_status` when the load worked — so
+// a caller wanting only the verdict passes a null `out`. `version` receives the version the file
+// CLAIMED and is written on the version-mismatch path ONLY: every int64 is a version a hand edit
+// can type, so none of them could have meant "not about a version". A refusal answers 0 bytes,
+// which is not the four an empty document encodes to.
+size_t slopdesk_ws_state_file_decode(const uint8_t *bytes, size_t len, uint8_t *status,
+                                     int64_t *version, uint8_t *out, size_t cap);
+
+// The refusal byte for one outcome, by index: 0 the load that worked, then the arms — 1 malformed
+// (not our file), 2 version mismatch (our file, another shape of the store), 3 malformed row. An
+// index past the last answers the malformed byte, which refuses rather than admits. Exported
+// because a transcribed copy that drifted on one arm would turn a corrupt row into a
+// mint-the-default, and the old file would not be kept aside.
+uint8_t slopdesk_ws_state_file_status(uint8_t index);
+
+
 // MARK: The layout structure and the split weights
 //
 // The layout decoder is ITERATIVE where a recursive one would need a depth cap to stay safe: it

@@ -97,6 +97,45 @@ pub enum FileError {
     MalformedRow,
 }
 
+/// The byte a load that did NOT refuse reports.
+///
+/// Zero, so a caller reading one out-parameter on every path can tell a load that worked from one
+/// that did not without a second flag beside it. No [`FileError`] answers it — that is the property
+/// `every_refusal_has_its_own_byte_and_none_of_them_is_ok` pins.
+pub const NO_REFUSAL: u8 = 0;
+
+impl FileError {
+    /// The byte this refusal crosses a C boundary as.
+    ///
+    /// The numbering lives on the ARMS rather than in the shim that exports it. `docs/55` §5
+    /// forbids a door to map an error onto a different error, and a door that invented these
+    /// bytes would be doing exactly that — as well as being the second place this taxonomy is
+    /// written down, which is what the whole file exists to avoid. A caller that must tell "not
+    /// our file" from "wrong shape of our file" from "one bad row" reads these and nothing
+    /// else.
+    #[must_use]
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::Malformed => 1,
+            Self::VersionMismatch(_) => 2,
+            Self::MalformedRow => 3,
+        }
+    }
+
+    /// The version the file CLAIMED, for the one arm that names one.
+    ///
+    /// An `Option` rather than a number with a reserved absence, because every `i64` is a version
+    /// somebody could have typed into the file by hand — including `0` — so no in-band value could
+    /// have meant "this refusal is not about a version".
+    #[must_use]
+    pub const fn claimed_version(self) -> Option<i64> {
+        match self {
+            Self::VersionMismatch(version) => Some(version),
+            Self::Malformed | Self::MalformedRow => None,
+        }
+    }
+}
+
 /// Renders the state as the file's bytes.
 ///
 /// Sorted keys and canonical entry order, so two saves of one value are byte-identical and the file
@@ -170,6 +209,22 @@ pub fn decode(text: &str) -> Result<HostWorkspaceState, FileError> {
     Ok(state)
 }
 
+/// Reads a file's raw BYTES back into a state.
+///
+/// The same load as [`decode`], for a caller holding bytes rather than a `str` — which is every
+/// caller that just read a file off disk, and the FFI door in particular, since a C boundary has no
+/// `str`. Bytes that are not UTF-8 are [`FileError::Malformed`] for the same reason a stray brace
+/// is: they are not this document. Deciding that HERE rather than in the shim is the point — a door
+/// that mapped a UTF-8 fault onto a file error would be holding a decision `docs/55` §5 says it may
+/// not hold.
+///
+/// # Errors
+/// As [`decode`], plus [`FileError::Malformed`] for bytes that are not UTF-8 at all.
+pub fn decode_bytes(bytes: &[u8]) -> Result<HostWorkspaceState, FileError> {
+    let text = core::str::from_utf8(bytes).map_err(|_ignored| FileError::Malformed)?;
+    decode(text)
+}
+
 // ---------------------------------------------------------------------------------------------- //
 // Base64
 // ---------------------------------------------------------------------------------------------- //
@@ -196,8 +251,8 @@ mod tests {
     )]
 
     use super::{
-        FileError, PERSISTED_PANE_FIELDS, VERSION, base64_decode, base64_encode, decode, encode,
-        is_persisted, persisting,
+        FileError, NO_REFUSAL, PERSISTED_PANE_FIELDS, VERSION, base64_decode, base64_encode, decode,
+        decode_bytes, encode, is_persisted, persisting,
     };
     use crate::document::fields::{pane, project};
     use crate::document::liveness::{LIVENESS_FIELDS, TOPOLOGY_FIELDS};
@@ -327,6 +382,51 @@ mod tests {
             panic!("the row is well-formed; it is the POLICY that refuses it");
         };
         assert!(back.get(&pane_key(pane::AGENT_STATE)).is_none());
+    }
+
+    #[test]
+    fn every_refusal_has_its_own_byte_and_none_of_them_is_ok() {
+        // The whole taxonomy's reason for existing is that a caller can TELL these apart, and across
+        // a C boundary it can only tell them apart by these bytes. Two arms sharing one would make
+        // "not our file" and "one bad row" the same report, which is the difference between minting
+        // a default and hunting a corrupt row.
+        let bytes: Vec<u8> = [
+            FileError::Malformed,
+            FileError::VersionMismatch(99),
+            FileError::MalformedRow,
+        ]
+        .iter()
+        .map(|refusal| refusal.code())
+        .collect();
+        let mut unique = bytes.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), bytes.len(), "two refusals share one byte");
+        assert!(
+            !bytes.contains(&NO_REFUSAL),
+            "a refusal reads as the load that worked"
+        );
+    }
+
+    #[test]
+    fn only_the_version_arm_names_a_version() {
+        assert_eq!(FileError::VersionMismatch(99).claimed_version(), Some(99));
+        // Zero is a version somebody can type into the file, so it cannot double as "no version".
+        assert_eq!(FileError::VersionMismatch(0).claimed_version(), Some(0));
+        assert_eq!(FileError::Malformed.claimed_version(), None);
+        assert_eq!(FileError::MalformedRow.claimed_version(), None);
+    }
+
+    #[test]
+    fn bytes_that_are_not_utf8_are_not_this_document() {
+        // What a caller holding a file gets: raw bytes. A truncated multi-byte scalar is the shape a
+        // half-written file presents, and it must land on the same answer a stray brace does.
+        assert_eq!(decode_bytes(&[0xFF, 0xFE, 0xFD]), Err(FileError::Malformed));
+        let text = encode(&persisting(&pane_state()));
+        let Ok(back) = decode_bytes(text.as_bytes()) else {
+            panic!("what this module wrote, it reads as bytes too");
+        };
+        assert_eq!(back.sorted_entries(), persisting(&pane_state()).sorted_entries());
     }
 
     #[test]

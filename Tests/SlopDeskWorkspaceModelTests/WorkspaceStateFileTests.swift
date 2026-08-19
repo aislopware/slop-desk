@@ -6,6 +6,13 @@ import XCTest
 /// `DetachedSessionStore` is in-process, so no live process crosses a restart. A document that
 /// restored `commandRunning`, `agentState` or `liveness: attached` would come back as a wall of
 /// fake-live rows: busy dots spinning for children that exited weeks ago, on every client at once.
+///
+/// **These are the BOUNDARY's tests now.** The rule moved to `rust/slopdesk-wire`'s
+/// `document::state_file`, which carries its own suite over the same properties; what is left here
+/// is what only this side can ask — that the filter, the round trip and every arm of the refusal
+/// survive a crossing through `slopdesk_ws_state_file_*` and arrive as the Swift vocabulary a
+/// `catch` reads. Every case below was written against the deleted Swift implementation and is
+/// unchanged, which is the evidence the port is behaviour-identical (`docs/55` §6).
 final class WorkspaceStateFileTests: XCTestCase {
     private func paneState(_ paneID: UUID) -> HostWorkspaceState {
         var state = HostWorkspaceState()
@@ -118,9 +125,9 @@ final class WorkspaceStateFileTests: XCTestCase {
 
     /// Two saves of one value must be byte-identical, or the file churns on every write and its
     /// diffs stop being reviewable.
-    func testTheEncodingIsDeterministic() throws {
+    func testTheEncodingIsDeterministic() {
         let saved = WorkspaceStateFile.persisting(paneState(UUID()))
-        XCTAssertEqual(try WorkspaceStateFile.encode(saved), try WorkspaceStateFile.encode(saved))
+        XCTAssertEqual(WorkspaceStateFile.encode(saved), WorkspaceStateFile.encode(saved))
     }
 
     /// A zero-length value is how a field is RETIRED. It has to stay distinct from an absent row all
@@ -154,6 +161,31 @@ final class WorkspaceStateFileTests: XCTestCase {
         XCTAssertThrowsError(try WorkspaceStateFile.decode(data)) { error in
             XCTAssertEqual(error as? WorkspaceStateFile.FileError, .malformedRow)
         }
+    }
+
+    /// Bytes that are not this document at all get an arm of their own. They used to arrive as a raw
+    /// Foundation `DecodingError` — the refusal a truncated or hand-mangled file most often produces
+    /// was the one the Swift taxonomy could not name, while the crate had named it all along.
+    func testBytesThatAreNotThisDocumentAreMalformed() {
+        for hostile in [
+            Data("not json at all".utf8),
+            Data("{}".utf8),
+            Data(#"{"version":1}"#.utf8),
+            Data([0xFF, 0xFE, 0xFD]),
+            Data(),
+        ] {
+            XCTAssertThrowsError(try WorkspaceStateFile.decode(hostile)) { error in
+                XCTAssertEqual(error as? WorkspaceStateFile.FileError, .malformed)
+            }
+        }
+    }
+
+    /// A file holding NO surviving cells is a load that worked, not a refusal. The two answers reach
+    /// the caller down different paths — one mints the default and keeps the file aside, the other
+    /// does not — and across the door they differ only by the status byte.
+    func testAnEmptyDocumentDecodesRatherThanRefusing() throws {
+        let decoded = try WorkspaceStateFile.decode(WorkspaceStateFile.encode(HostWorkspaceState()))
+        XCTAssertTrue(decoded.isEmpty)
     }
 
     /// The filter runs on the way IN as well as out. This file is the one input a user can edit by

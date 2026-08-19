@@ -488,6 +488,42 @@ Swift original — passed unchanged the first time the door was wired in. That s
 is: it is the boundary's own test, not a mirror of `apply.rs`, and a dozen of its cases have no
 counterpart there.
 
+### The same bytes again, and the predicate that did NOT become a crossing
+
+The workspace state FILE (`slopdesk_ws_state_file_encode` / `_decode`) is `apply_intent`'s shape a
+second time and for the same reason: what goes in is a document, what comes back is a document, and
+the document's own encoding already exists. Nothing new travels — the cells are the flat
+`(SlopDeskWsEntry, blob)` pairs, and a decoded file is an encoded snapshot the caller reads with the
+decoder it already runs against a host's push.
+
+What it adds is the third entry, and the argument for it is what did NOT cross. The interesting half
+of a state file is not the JSON, it is the FILTER: which cells may touch the disk at all. Persisting
+the entry map wholesale restores `commandRunning = 1`, `agentState = working` and a liveness of
+`attached` for a pane whose child exited weeks ago — a workspace of fake-live rows, busy dots
+spinning for nothing — so two answers to it do not conflict, they RENDER, and neither logs anything.
+That rule reads a KIND and a FIELD and **nothing else**: not the object id, not the value, not the
+rest of the document. So it crosses as `slopdesk_ws_state_file_is_persisted(kind, field)`, the shape
+`slopdesk_ws_key_is_topology` already has one section down, and the near side's filter loop is a loop
+rather than a decision — every branch inside it is behind the door. Handing the whole state over to
+have it handed back minus some rows was the alternative, and it would marshal every byte of a
+document twice to ask a question about two of them.
+
+**The refusal taxonomy crosses as bytes the ARMS own.** A load can fail three ways and the caller's
+answer differs across them, so `FileError::code()` lives on the enum in `slopdesk-wire` and
+`slopdesk_ws_state_file_status(index)` merely exports it — a door that invented the numbering would
+be §5's "no error mapped to a different error", and it would be the second place the taxonomy is
+written down, which is the whole thing this port removes. The version a mismatched file CLAIMED
+rides in an `int64_t *` written on that arm ONLY and left untouched otherwise, because every `i64` is
+a version a hand edit can type and none of them could have meant "not about a version" — the
+presence rule of §4b, at the width of a word.
+
+The port found a drift the same way the agent one did, and it is on the ENCODE side: the two writers
+were never byte-identical. Foundation's `JSONEncoder` escapes `/` as `\/` unless asked not to, and
+base64 values are full of slashes; it also writes no trailing newline where
+`slopdesk_workspace::json` writes one. Both readers accept both spellings, so nothing breaks — the
+cost is one whole-file diff on the first save after the port, and it is recorded here rather than
+"fixed" quietly, because the file on disk is the evidence anyone debugging a lost workspace reads.
+
 ### The door that stopped being a door, because the answer had nowhere left to go
 
 A Claude Code hook body is three discriminants and five optional strings (session id, tool, tool-use

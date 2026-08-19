@@ -99,12 +99,16 @@ const fn status_of(outcome: &IntentOutcome) -> WorkspaceIntentStatus {
     }
 }
 
-/// Builds the document the applier decides from, out of the caller's flat cells.
+/// Builds the document a door decides from, out of the caller's flat cells.
 ///
 /// A span the blob cannot back reads as an EMPTY value rather than trapping — the same bounds
 /// discipline `slopdesk_ws_encode_snapshot` applies, for the same reason: the arithmetic came from
 /// another process.
-fn document(entries: &[CEntry], blob: &[u8]) -> HostWorkspaceState {
+///
+/// Shared with [`crate::workspace_state_file`] rather than written twice. Both doors take the
+/// document in the SAME flat `(CEntry, blob)` form, so a second copy of this would be two readings
+/// of one encoding — and the bounds check is exactly the part that must not be re-derived.
+pub(crate) fn document(entries: &[CEntry], blob: &[u8]) -> HostWorkspaceState {
     HostWorkspaceState::from_entries(
         entries
             .iter()

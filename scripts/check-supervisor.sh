@@ -54,7 +54,7 @@ INVARIANTS_PID=$!
 #
 # The union is BUILT from the bans, not maintained beside them: `make lint` runs
 # `scripts/check-ban-union.py`, which fails if any ban's pattern is missing from it.
-DELETED_SWIFT_UNION='((enum|struct|final class) (GF256|NeonGf|ReedSolomonMatrix)\b)|((struct|enum|final class) StreamHasher\b|func (hashRow|hashNV12Scalar|rowHashes|rowHashesQuantized|borrowPlane|estimateVerticalShift|changedFraction|adaptiveMaxQP)\b)|(func (targetSeconds|stepSeconds|cgRectToCocoa|backingScaleFactor)\(|(struct|enum|final class) ScreenInfo\b)|((func|var) appendBE|(struct|enum|final class|class) BigEndianReader)|((enum|struct|final class|class|actor) (AgentManifest|CompiledAgentManifest|AgentManifestCatalog|TOMLSubsetParser|ManifestRegion|ManifestRuleEngine|BundledAgentManifests|AgentDetectionExplain|AgentOscTracker|AgentSyncFrameTracker|ClaudeManifestMatcher)\b)|((enum|struct|final class|class|actor) ShellIntegration\b|slopdesk-zdotdir-)|((enum|struct|final class|class|actor|protocol) (FileTransferServer|FileReceiveLogic|FileDropSink|DiskFileDropSink|FileNameSanitizer|LoopbackFileTransferChannel)\b)|((enum|struct|final class|class|actor|protocol) (AndroidBridgeServer|AndroidBridgeManager|AndroidToolchain|AndroidScrcpySession|AndroidDeviceCatalog|AndroidEmulatorConsole|AndroidSocket|AndroidListener|AndroidBridgeRequest)\b)|((enum|struct|final class|class|actor|protocol) (TranscriptParser|TranscriptTailer|TranscriptLine|LineAccumulator|SubagentWatcher|EventBuilder|InspectorEngine|InspectorReplayLog|InspectorSource|InspectorServer)\b)|((static (let|var|func)|let|var|func) (seededUserSettings|obsoleteSeeds|themeExtension[A-Za-z]*|bridgeExtension[A-Za-z]*|registerExtension|unregisterExtension|bundledMarketplaceExtensions|retiredExtensions|ownThemeResources)\b)|((enum|struct|final class|static (let|var|func)) (AgentInstaller|hookMarker|installedEvents|hookCommand|entryIsOurs)\b)|((struct|static (let|var|func)|private static func) (parseBranchHeader|parseStatusLine|statusNibble|packStatus|claudeProjectSlug|gitToplevel|gitStashCount|gitDiffArgumentPlan|resolveGitDiff|jsonlSessions|claudeSessions|opencodeSessions|sessionRoots|GhosttyTerminfoProbe|terminfoEntryExists|isGhosttyResolvable|effectiveTerm|liveProbe|runInfocmp)\b)|("/usr/bin/(git|infocmp)")|((let|var|func|case) *(bonusBoundary|bonusCamel123|bonusConsecutive|scoreGapStart|scoreGapExtension|bonusMatrix|bonusFor|backtrace)\b)|((enum|struct) *(HookPayload|StopInfo|ToolUseBlock|NotificationInfo|ClaudeHookBody|ClaudeHookEvent)\b|func +(mapToHookEvent|classifyNotification|stopLabel)\b)|((enum|struct|final class|class|actor) (ClaudeStatusMachine|ClaudeProcessMatcher|PaneInputClassifier)\b|enum ClaudeSignal\b)|(func +(skipEscapeSequence|isEraseToLineEnd|applySGR|extendedColour)\b)|(enum TerminalScreenModel|struct TerminalScreenModel|enum LineOverprintCollapser|enum TerminalSnapshotRenderer)|((enum|struct|final class|class|actor) (TerminalInputModeStripper|InputModeFinalState|AltScreenSegmentStripper|SyncUpdateFrameCollapser|ScrollbackDistiller|TerminalQueryStripper|PromptEOLMarkStripper)\b)|(func (splitTrailingIncompleteEscape|splitTrailingIncompleteUTF8)\b|trailingEscapeScanBytes *[:=])|((enum|struct|final class|class|actor) (ScrollbackJournal|ScrollbackJournalStore)\b)|((createFile|forWritingTo|\.write\(to:).*\.(scrollback|resume)("|\)|$))|((enum|struct|final class|class|actor) (HostOutputSniffer|OutputSniffer)\b)|((enum|struct|final class|class|actor) (CommandBlockSegmenter|CommandBlockTracker|AutoProgressMatcher)\b)|(\[\[rules\]\]|min_engine_version\s*=|skip_state_update\s*=|line_regex\s*=)|(autoProgressCommands: \[String\]|autoProgressPrefixes)'
+DELETED_SWIFT_UNION='((enum|struct|final class) (GF256|NeonGf|ReedSolomonMatrix)\b)|((struct|enum|final class) StreamHasher\b|func (hashRow|hashNV12Scalar|rowHashes|rowHashesQuantized|borrowPlane|estimateVerticalShift|changedFraction|adaptiveMaxQP)\b)|(func (targetSeconds|stepSeconds|cgRectToCocoa|backingScaleFactor)\(|(struct|enum|final class) ScreenInfo\b)|((func|var) appendBE|(struct|enum|final class|class) BigEndianReader)|((enum|struct|final class|class|actor) (AgentManifest|CompiledAgentManifest|AgentManifestCatalog|TOMLSubsetParser|ManifestRegion|ManifestRuleEngine|BundledAgentManifests|AgentDetectionExplain|AgentOscTracker|AgentSyncFrameTracker|ClaudeManifestMatcher)\b)|((enum|struct|final class|class|actor) ShellIntegration\b|slopdesk-zdotdir-)|((enum|struct|final class|class|actor|protocol) (FileTransferServer|FileReceiveLogic|FileDropSink|DiskFileDropSink|FileNameSanitizer|LoopbackFileTransferChannel)\b)|((enum|struct|final class|class|actor|protocol) (AndroidBridgeServer|AndroidBridgeManager|AndroidToolchain|AndroidScrcpySession|AndroidDeviceCatalog|AndroidEmulatorConsole|AndroidSocket|AndroidListener|AndroidBridgeRequest)\b)|((enum|struct|final class|class|actor|protocol) (TranscriptParser|TranscriptTailer|TranscriptLine|LineAccumulator|SubagentWatcher|EventBuilder|InspectorEngine|InspectorReplayLog|InspectorSource|InspectorServer)\b)|((static (let|var|func)|let|var|func) (seededUserSettings|obsoleteSeeds|themeExtension[A-Za-z]*|bridgeExtension[A-Za-z]*|registerExtension|unregisterExtension|bundledMarketplaceExtensions|retiredExtensions|ownThemeResources)\b)|((enum|struct|final class|static (let|var|func)) (AgentInstaller|hookMarker|installedEvents|hookCommand|entryIsOurs)\b)|((struct|static (let|var|func)|private static func) (parseBranchHeader|parseStatusLine|statusNibble|packStatus|claudeProjectSlug|gitToplevel|gitStashCount|gitDiffArgumentPlan|resolveGitDiff|jsonlSessions|claudeSessions|opencodeSessions|sessionRoots|GhosttyTerminfoProbe|terminfoEntryExists|isGhosttyResolvable|effectiveTerm|liveProbe|runInfocmp)\b)|("/usr/bin/(git|infocmp)")|((let|var|func|case) *(bonusBoundary|bonusCamel123|bonusConsecutive|scoreGapStart|scoreGapExtension|bonusMatrix|bonusFor|backtrace)\b)|((enum|struct) *(HookPayload|StopInfo|ToolUseBlock|NotificationInfo|ClaudeHookBody|ClaudeHookEvent)\b|func +(mapToHookEvent|classifyNotification|stopLabel)\b)|((enum|struct|final class|class|actor) (ClaudeStatusMachine|ClaudeProcessMatcher|PaneInputClassifier)\b|enum ClaudeSignal\b)|(func +(skipEscapeSequence|isEraseToLineEnd|applySGR|extendedColour)\b)|(enum TerminalScreenModel|struct TerminalScreenModel|enum LineOverprintCollapser|enum TerminalSnapshotRenderer)|((enum|struct|final class|class|actor) (TerminalInputModeStripper|InputModeFinalState|AltScreenSegmentStripper|SyncUpdateFrameCollapser|ScrollbackDistiller|TerminalQueryStripper|PromptEOLMarkStripper)\b)|(func (splitTrailingIncompleteEscape|splitTrailingIncompleteUTF8)\b|trailingEscapeScanBytes *[:=])|((enum|struct|final class|class|actor) (ScrollbackJournal|ScrollbackJournalStore)\b)|((createFile|forWritingTo|\.write\(to:).*\.(scrollback|resume)("|\)|$))|((enum|struct|final class|class|actor) (HostOutputSniffer|OutputSniffer)\b)|((enum|struct|final class|class|actor) (CommandBlockSegmenter|CommandBlockTracker|AutoProgressMatcher)\b)|(\[\[rules\]\]|min_engine_version\s*=|skip_state_update\s*=|line_regex\s*=)|(autoProgressCommands: \[String\]|autoProgressPrefixes)|(static let persistedPaneFields\b|(struct|private struct) Row: Codable\b)'
 DELETED_SWIFT_CANDIDATES=$(grep -rlE "${DELETED_SWIFT_UNION}" Sources/ 2> /dev/null || true)
 # The candidates matching ONE ban, or nothing. An empty candidate list answers without a grep.
 among_deleted() {
@@ -2303,6 +2303,61 @@ done
 if ! grep -qF 'depthExceeded' "${codec_swift}"; then
   fail "${codec_swift} stopped distinguishing a too-deep tree from a malformed one (docs/55 §6)"
 fi
+
+# ── One answer to "may this cell touch the disk" ────────────────────────────────────────────────
+# `WorkspaceStateFile` was 129 lines of Swift that were a near-verbatim second copy of
+# `rust/slopdesk-wire`'s `document::state_file`: the same version constant, the same persisted-field
+# set, the same base64 rows, the same refusals. Two answers to that question do not CONFLICT, they
+# render — the wider one brings a pane back as `liveness: attached` with no process behind it, busy
+# dots spinning for a child that exited weeks ago, and the narrower one silently loses the
+# arrangement the person made. Neither logs anything, which is why a compiler could never find it
+# and this gate has to.
+#
+# The file moved to `Codec/` when it became a marshaller, and the old path staying gone is half the
+# check: a re-implementation grows back where the original was, not beside its replacement.
+WS_FILE_SWIFT=Sources/SlopDeskWorkspaceModel/Codec/WorkspaceStateFile.swift
+if [[ -e Sources/SlopDeskWorkspaceModel/State/WorkspaceStateFile.swift ]]; then
+  fail "Sources/SlopDeskWorkspaceModel/State/WorkspaceStateFile.swift is back — the rule is rust/slopdesk-wire's document::state_file (docs/55 §6)"
+fi
+if [[ ! -e "${WS_FILE_SWIFT}" ]]; then
+  fail "${WS_FILE_SWIFT} is gone — the state file's door has no Swift face, so the bans below stopped checking anything (docs/55 §6)"
+fi
+state_file_revived=$(among_deleted 'static let persistedPaneFields\b|(struct|private struct) Row: Codable\b')
+if [[ -n "${state_file_revived}" ]]; then
+  printf '%s\n' "${state_file_revived}" >&2
+  fail "a Swift state-file policy is back in Sources/ — the persisted set and the row shape live in rust/slopdesk-wire (docs/55 §6)"
+fi
+# Every door the face must keep asking. Dropping ANY of them is a decision coming back to this side:
+# the predicate is the filter, the two codecs are the file's bytes, and the status probe is the
+# taxonomy — a transcribed refusal byte that drifted on one arm turns a corrupt row into a
+# mint-the-default, and the file nobody kept aside is the one nobody can look at.
+for door in slopdesk_ws_state_file_is_persisted slopdesk_ws_state_file_encode \
+  slopdesk_ws_state_file_decode slopdesk_ws_state_file_status; do
+  if ! grep -qF "${door}" "${WS_FILE_SWIFT}"; then
+    fail "${WS_FILE_SWIFT} stopped asking ${door} — one answer to what survives a restart (docs/55 §6)"
+  fi
+done
+# And what a marshaller cannot have. An encoder of its own is the whole file coming back; a version
+# literal is the no-migration rule spelled twice, where the smaller number refuses files the other
+# happily writes; a base64 call is the row codec; a pane-field name is the filter itself.
+#
+# Comments are stripped first — naming what moved is how a boundary stays legible, and only CODE can
+# re-implement it. `spells` is not defined this early in the file, so this is the plain-grep form the
+# neighbouring gates use, and the same EMPTY trap applies: a haystack that read as nothing would
+# pass silently, which is why the file's existence is checked above.
+ws_file_code=$(grep -v '^[[:space:]]*//' "${WS_FILE_SWIFT}" 2> /dev/null) || true
+if grep -qE 'JSONEncoder|JSONDecoder|base64Encoded|version *= *[0-9]|WorkspacePaneField\.|WorkspaceProjectField\.' <<< "${ws_file_code}"; then
+  fail "${WS_FILE_SWIFT} decides something again — it marshals, and rust/slopdesk-wire's state_file rules (docs/55 §6)"
+fi
+# The far side, so the door cannot be a shim over a shim. The three refusal arms are the taxonomy a
+# caller reads, and the door may only carry the byte each arm names.
+for rule in 'pub fn is_persisted' 'pub fn persisting' 'pub fn encode' 'pub fn decode_bytes' \
+  'const fn code' 'Malformed,' 'VersionMismatch(i64)' 'MalformedRow,'; do
+  if ! grep -qF "${rule}" rust/slopdesk-wire/src/document/state_file.rs; then
+    fail "rust/slopdesk-wire/src/document/state_file.rs lost ${rule} — the rule and its taxonomy are one place (docs/55 §6)"
+  fi
+done
+printf 'check-supervisor: one answer to what survives a restart, and the Swift face only marshals it.\n'
 
 for solver in Domain/SendKeysParser Domain/FocusResolver Domain/Tree/TabOrdering \
   Domain/Tree/SplitLayoutSolver Domain/Tree/SplitNode+Ops \
@@ -5609,7 +5664,29 @@ if hit=$(spells '"Copy \\\(' Sources/SlopDeskMacUI/Panel/**/*.swift \
   printf '%s\n' "${hit}" >&2
   fail "a Copy verb is spelled in a renderer — SimulatorPresentation/AndroidPresentation.copyTitle owns it"
 fi
-printf 'check-supervisor: one set of device-panel shells, and neither half names the other.\n'
+# ── And ONE engraved caps heading under the whole AppKit half ─────────────────────────────────
+# Increment 55. The four-attribute dictionary that makes a caps micro-heading — the instrument face at
+# `Typeface.small`, `.uppercased()`, and `Typeface.instrumentTracking` kerning — was open-coded SIX
+# times: the device panel's section header, the palette's section row, Open Quickly's filter header,
+# the peek card's `RECENT`, the cheat sheet's categories and the keybindings editor's groups. Five of
+# them even carried their own copy of the "wide enough to read as engraving" comment.
+#
+# `Chrome/MacCapsLabel.swift` is the one recipe. The kerning constant is the tell that cannot be
+# faked: any seventh copy has to spell `instrumentTracking` to look the same, so the ban is on that
+# name appearing anywhere in this target but the file that owns it. The INK is deliberately not
+# pinned — an overlay's ladder is not a page's, and the six sites disagree on purpose.
+MAC_CAPS_RECIPE=Sources/SlopDeskMacUI/Chrome/MacCapsLabel.swift
+# shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
+if hit=$(spells 'instrumentTracking' \
+  $(repo_files 'Sources/SlopDeskMacUI/*.swift' 'Sources/SlopDeskMacUI/**/*.swift' |
+    grep -v "${MAC_CAPS_RECIPE}") 2> /dev/null); then
+  printf '%s\n' "${hit}" >&2
+  fail "a caps heading is spelled outside ${MAC_CAPS_RECIPE} — macCapsString/macCapsLabel own the recipe (docs/56, increment 55)"
+fi
+if ! grep -q 'macCapsString(words, color: color, weight: weight)' "${MAC_CAPS_RECIPE}"; then
+  fail "${MAC_CAPS_RECIPE}'s label spelling stopped going through its string spelling — that IS the merge"
+fi
+printf 'check-supervisor: one set of device-panel shells, one caps heading, and neither half names the other.\n'
 
 # ── One design floor, two renderers ───────────────────────────────────────────────────────────
 # `SlopDeskSlate` is the layer BOTH halves stand on: the token ladder in its `NSColor`/`UIColor`

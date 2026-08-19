@@ -26,6 +26,17 @@
 //! The parser could go alone, but a parser and a writer that disagree about the same file's shape
 //! is a worse thing to own than either half.
 //!
+//! **The "pinned to what Swift wrote" claim is not exact, and increment 56 is what found out.**
+//! Porting `WorkspaceStateFile` to Rust put this writer on a file Foundation used to write, and two
+//! differences fell out that the three above had not covered. Foundation escapes `/` as `\/` unless
+//! `.withoutEscapingSlashes` is passed and nothing in this repo passes it, while this writer
+//! escapes only `"`, `\`, `\n`, `\r`, `\t` and the controls — and every base64 `value` row contains
+//! `/`. And `to_pretty_string` ends the file with a newline where `.prettyPrinted` does not. Both
+//! are ENCODE-only and both parsers accept both spellings, so the cost is the same one-time
+//! whole-file diff the paragraph above already prices; nothing was reconciled. They are recorded
+//! because a header that enumerates its differences and stops short of two of them reads as
+//! exhaustive.
+//!
 //! Revisit if the on-disk spelling is ever allowed to change for another reason — then the whole
 //! module goes at once.
 //!
