@@ -2516,7 +2516,7 @@ The expensive kind, and the only one that is.
 > was retired. The rename's cost is untouched by all six rows.
 >
 > The heading "what the rename actually costs" is therefore answered by neither column. The rename
-> moves **every** file in the target — 101 files, 21,092 lines as of increment 57 — and it moves them
+> moves **every** file in the target — 101 files, 21,085 lines as of increment 57 — and it moves them
 > whether or not the Mac ever imported them. `Pane/`'s 5,492 lines are 26% of it. The other 74% has no
 > row in this table at all, has never had one, and needs no work: it is already phone-only in effect
 > and simply travels.
@@ -2579,7 +2579,8 @@ island moat, and by a differently-animating amount during a collapse.
 > is still true of `DropTargetFrameReader`, which is ~40 lines and a genuine kind 3. It was never true
 > of the other 683: a spring-load latch, a drop resolver, a chip sink and a rendezvous of weak refs
 > read no geometry at all. The coordinator DESCENDED to `SlopDeskClientCore/Pane/`, the reader stayed in
-> `SlopDeskClientUI` (in `PaneDragChrome.swift`, riding under the canvas as kind 1), and the chip —
+> `SlopDeskClientUI` (in `PaneDragChrome.swift`, riding under the canvas as kind 1 — 56e then gave it a
+> file of its own and deleted `PaneDragChrome.swift`), and the chip —
 > an `NSHostingView` over a SwiftUI card, one floor UP — reaches the coordinator through a
 > `PaneDragChipSink` protocol, which is stage B's pattern.
 >
@@ -2601,21 +2602,40 @@ island moat, and by a differently-animating amount during a collapse.
    indeed kind 2 in disguise — 693 lines that moved verbatim, deleting an import edge — and
    `DeviceKeyEvent` turned out to be a third.
 4. The canvas. Increment 54 emptied it of everything that was not a drawing — ~2,900 lines down,
-   3,617 in `SlopDeskClientCore/Pane/`, and kind 3 dissolved on the way (see the amendment above). What
-   is left is **5,492 lines across 23 files** in `Sources/SlopDeskClientUI/Pane/`, and **all of it is
-   genuinely `some View`**: `PaneContainer`, `SplitContainer`, `PaneDivider`, `TerminalLeafView`,
-   `GuiLeafView`, the overlays, `SatellitePaneHost`, `DropTargetFrameReader`. That is the AppKit
-   rewrite, and it is the only thing between here and **two** remaining import edges — both a mount of
-   the canvas or of a column that hosts it. (`WorkspaceColumnHosts` is in `App/`, not `Pane/`; the
-   five-file claim this step used to make was stale by three increments.)
+   3,850 in `SlopDeskClientCore/Pane/` (3,617 at the time; 56c and 57b added 233), and kind 3 dissolved on the way (see the amendment above). What
+   is left in `Sources/SlopDeskClientUI/Pane/` is **5,485 lines across 23 files**. That is the AppKit
+   rewrite's core, and it is the only thing between here and **two** remaining import edges — both a
+   mount of the canvas or of a column that hosts it. (`WorkspaceColumnHosts` is in `App/`, not `Pane/`;
+   the five-file claim this step used to make was stale by three increments.)
 
-   **But this is a SECOND renderer, not a port-and-delete, and the step above says so wrongly by
-   omission.** Of those 5,492 lines, eight files already carry a `#if os(` (`SplitContainer`,
-   `TerminalLeafView`, `TerminalInputHost`, `TerminalFindBar`, `PaneMoveAffordance`,
-   `PaneMoveEscapeResponder`, `SatellitePaneContent`, `DropTargetFrameReader`) — those gates are the
-   macOS branches, and they are what the AppKit rewrite *replaces*. The rest is phone code that stays
-   exactly where it is. Nothing in `Pane/` is deleted by the canvas rewrite except the macOS arms of
-   those eight gates.
+   **`Pane/` is not the canvas, though, and reading it as the scope under-counts by a fifth.** Six
+   files outside the directory are inside the mount closure and no ledger row names them:
+   `Overlays/CommandNavigatorView` (491), `Overlays/IslandChipStack` (150),
+   `DesignSystem/SlateIsland` (138 — the moat, and therefore the kind-3 blocker), `Columns/ContentColumn`
+   (133), `DesignSystem/SlateEmptyState` (109), `App/WorkspaceColumnHosts` (62). **+1,083, so the real
+   figure is 6,568 across 29 files.** This is increment 51's finding one row down — `CodePanelSurfaces`
+   was carried at 632 while the surfaces it draws host ~4,100 more — and `CommandNavigatorView` is filed
+   `Platform::Both` at `binding_rows.rs:131`, so it is a second renderer, never a deletion.
+
+   **This is a SECOND renderer, not a port-and-delete.**
+
+   > ⚠️ **The first version of this paragraph, written 2026-08-20, said the nine `#if os(` files carry
+   > "the macOS branches, and they are what the AppKit rewrite *replaces*". That is FALSE for five of
+   > the nine and it is the most dangerous sentence this page has carried**, because it is an
+   > instruction. Only four carry a macOS arm: `SplitContainer` (×1), `PaneMoveAffordance` (×2),
+   > `DropTargetFrameReader` and `SatellitePaneContent` (whole-file). The other five carry **iOS** arms
+   > or are whole-file iOS — `TerminalLeafView` (2), `TerminalFindBar` (1), `TerminalInputHost`,
+   > `PaneMoveEscapeResponder`, `TerminalLetterboxContainer` (whole-file each). **716 lines of `Pane/`
+   > are code the AppKit rewrite must not read, not touch and not translate.** An agent handed "replace
+   > the macOS arms" against `TerminalInputHost.swift` would delete the phone's only keyboard.
+   >
+   > The count was wrong too — nine, not eight. `TerminalLetterboxContainer` gates on
+   > `#if canImport(SwiftUI) && os(iOS)`, which a `#if os(` grep does not match. That is 56a's
+   > *"capitalised"* failure one form down: the census was keyed on a **spelling**, not on the property
+   > it was meant to test, and a spelling census reports a clean miss as a clean pass.
+
+   So the rewrite deletes the four macOS arms and **nothing else** in `Pane/`; the 716 iOS-only lines
+   and every ungated shared file stay exactly where they are, because the phone still draws them.
 
    Doing the evacuation first was not a detour. A 7,123-line canvas ported to AppKit with the decisions
    still inside it would have been ~2,900 lines of logic rewritten by hand into a second language, and
@@ -2644,9 +2664,130 @@ island moat, and by a differently-animating amount during a collapse.
      take `SlateProjectIsland`, `SlateSearchField`, `SlatePlateStyle` and `StatusDotView` — the SwiftUI
      design-system halves — into the **Mac's** snapshot harness. That is the same edge the gate exists
      to forbid, wearing a `Tests/` prefix, and it blocks the fold exactly as a source edge would.
-     Extending the glob to `Tests/` is cheap and should happen before the canvas, not after.
+     **Done in increment 57b** — the gate covers `Tests/` across both spellings and all four edges,
+     with those two files in a subset-checked allowlist so a third crossing is red immediately. What
+     is still owed is the design call underneath it, not the lint: see F3 in the fold plan.
    - **A `Platform::Both` binding is a second renderer, not a port.** `CommandNavigatorView` was read
      as port-and-delete work; `binding_rows.rs` files its verb as `Both`, which means the phone needs
      it too and the Mac's AppKit version joins it rather than replacing it. Check the Rust table before
      scheduling any surface as a deletion — the table is the authority on which platforms want it, and
      it is generated from the same rows the supervisor pins.
+
+## Stage F — the canvas plan
+
+Audited 2026-08-20 against the tree, not against this page. Where the two disagreed the tree won, and
+the corrections are folded in above rather than listed here. Two waves: **P** moves what is not a
+drawing and is not AppKit at all; **R** writes the second renderer. Batches own disjoint files because
+that is how they are dispatched.
+
+### The canvas is 6,568 lines across 29 files
+
+`Pane/` is 5,485 of it (23 files). **716 of those are iOS-only and must not be read by the AppKit
+work**: `TerminalInputHost` (395), `PaneMoveEscapeResponder` (221), `TerminalLetterboxContainer` (100)
+are whole-file iOS, and `TerminalLeafView`/`TerminalFindBar` carry three more iOS arms between them.
+Only four files carry a macOS arm at all. The other 1,083 lines are the six files outside the directory
+listed in §3.5 step 4.
+
+### Wave P — before a line of AppKit
+
+Increment 54 asked "what in here is not a drawing" and found ~2,900 lines. Asked again after the port
+was scheduled, the answer is **~445 more**. A second sweep finding a tail is expected; the point is
+that every line of it would otherwise be hand-translated into a second language by the batch that
+claims not to do that.
+
+| | Moves | Why it is not a drawing |
+| --- | --- | --- |
+| **P1** | `TerminalLeafView`'s six `wire*`/`clear*` pairs + four lifecycle methods → `ClientCore/Pane/TerminalPaneWiring` | ~250 lines of retain-cycle discipline, teardown ordering and `EnableSecureEventInput` reference balance. None of it reads a token or names a view |
+| **P2** | `SplitContainer`'s drag orchestration → `ClientCore/Pane/PaneCanvasDragController` | ~120 lines. `commitDestination`'s ordering — record placement *before* `detachPaneToWindow`, because `detachedPanes` mutates synchronously — is currently pinned only by a comment |
+| **P3** | `PaneMoveAffordance`'s `PaneMoveEscapeMonitor` → `ClientCore/Input/` | ~75 lines: an `NSEvent` monitor and an FFI call behind a representable returning a bare `NSView()`. 54 already ruled on this exact shape for `SystemKeyCaptureController` |
+| **P4** | `nativeShared` on both leaf factories | See risk 2 |
+| **P5** | The island moat into `MacContentColumn`; delete `DropTargetFrameReader` | See risk 1 |
+| **P6** | The grab pill and the pill glyphs → `SlopDeskSlate`; mint `Slate.Metric.glyphPlate` and `Slate.Opacity.accentRing` | 56e's ruling: when both renderers need the same *artwork*, it goes to the floor rather than into a gate |
+| **P7** | Three missing pair-ratchets | Below |
+
+P1–P4 are fully parallel. P5 follows P2 (both edit `SplitContainer`), P6 follows P3, P7 follows P6.
+
+**P5 is the highest-leverage item on this page and the ledger schedules it last by accident.** Kind 3
+— *"the compositor rect differs from the hosting view's frame by the island moat"* — is a statement
+about SwiftUI. Move the moat up and the difference is **zero**: the hosting view's frame *is* the
+canvas, `DropTargetFrameReader` is deleted rather than ported, two of the nine platform gates collapse,
+and registration becomes the three lines `MacNavigatorColumn` already uses. It is available now, before
+any leaf is drawn.
+
+### Three ink tables are ungated, and one has both renderers shipping today
+
+The pair-ratchet exists because a `Color`-returning table cannot descend below `SlopDeskSlate`, which
+sits *above* `SlopDeskClientCore` — so each renderer resolves it and the halves are pinned as a pair.
+Three are gated (`PaneStatusPillInk`, `DropZoneInk`, `GuiUploadTint`). Three are not:
+
+| Table | SwiftUI half | AppKit half |
+| --- | --- | --- |
+| `FindTogglePillAppearance` | `TerminalFindBar.swift` ×3 | **`MacGlobalSearch.swift:395` — SHIPPING** |
+| `PaneStatusPillFill` | `PaneStatusPills.swift` ×5 | none yet |
+| `DropZoneLabelInk` | `PaneDropOverlay.swift` | none yet |
+
+The first is not a future risk — **it is 56c's stated failure, already realised.** Its own header says
+the invariant it exists for is *"the find bar and the global-search query bar render the pills
+identically"*, both halves are live, and nothing checks it. 56c's sentence has now gone unapplied to
+its siblings twice (57b caught two, this catches three), which is enough repetition to stop calling it
+an oversight: **a table that resolves to a `Color` is a pair the day it is written, and the ratchet
+belongs in the same commit as the table.**
+
+### The three risks, decided
+
+1. **`DropTargetFrameReader`.** Resolved by P5's relocation, but the hazard changes shape rather than
+   vanishing: SwiftUI's `GeometryReader` reports the *interpolated* rect every frame, while AppKit's
+   `convert(bounds, to: nil)` reports the **model** frame, which jumps to the final value the instant
+   the animation opens. During the island settle a drop would resolve against where the canvas *will
+   be*. **Take the model frame** — a drop resolves to a layout that is committing anyway, and the
+   alternative reads `layer.presentation()`, which is `nil` outside an animation and resolves against a
+   rect the pointer has already left. Write the choice into the registration closure's doc comment: it
+   is the one place the two halves genuinely answer differently, and nothing fails if it regresses.
+2. **The terminal leaf is layer-hosted, and `swift build` never compiles its embedder.** Both leaf
+   pixel seams already cross as `AnyView` (`TerminalRendererFactory`, `VideoWindowFactory`) over views
+   that are *already* `NSView`s — `GhosttyLayerBackedView` and `MetalLayerBackedView` — which neither
+   UI target can reach. Widen the seam with a `nativeShared` slot returning the platform view. The
+   alternative, an `NSHostingView` over the `AnyView`, reintroduces the full-bleed hit-claim the split
+   spent five increments removing, at the one surface that must take every keystroke. Two traps ride
+   along: `GhosttyTerminalView.body` carries the `TerminalConfigBroadcaster` observation that is the
+   only path from a Settings edit to a surface reflow — skip the SwiftUI wrapper and you skip it — and
+   anything touched under `ThirdParty/ghostty/` is verified **only** by the manual
+   `enable-macos-renderer.sh` + `xcodebuild` recipe, so P4 lands as its own commit with that recipe in
+   the message. Corollary, and increment 45b's lesson again: **any dead-code claim in this port greps
+   `ThirdParty/` too.**
+3. **Hide/collapse.** `alphaValue = 0` is what ships and is correct; `isHidden` is not, for a reason
+   worth writing down — a layer-hosting view sizes its `IOSurfaceLayer` frame and `contentsScale` in
+   `layout()`, which does not run on a hidden subtree, so an un-hide after a scale change presents
+   stale geometry. The genuine open item is **hit-testing, not visibility**: SwiftUI's
+   `.allowsHitTesting(false)` suppresses a whole composed subtree, but AppKit's `hitTest → nil` does
+   nothing for `NSTrackingArea`s, which are rect-based and keep firing. A hidden tab's terminal keeps a
+   tracking area over the visible tab's. It presents as a mouse-reporting TUI in a background tab
+   following the cursor in the foreground one, and nothing on this page named it before now.
+
+### Wave R, and two batches that would be mistakes
+
+Eleven renderer batches, every one landing `Sources/SlopDeskMacUI/Pane/Mac*.swift` and **deleting
+nothing from `Pane/`** except the four macOS arms. Cheap and independent first (the scrims, the
+overlays, the pills, the find bar, the hint mode), then the two leaves, then `MacSplitCanvasView` last
+because it mounts everything and is written once. `MacCommandNavigator` **joins** its SwiftUI twin
+rather than replacing it — `binding_rows.rs` files the verb `Both`.
+
+- **Closing the satellite edge early cannot work.** `SatellitePaneHost.contentView` mounts
+  `PaneContainer`; porting only the drag strip leaves an `NSHostingView` *plus* a third grab-pill
+  spelling — strictly worse than today. The ledger already says nothing here is independently
+  schedulable; an agent chasing the count will try it anyway.
+- **A shared `MacPaneParts.swift` written up front.** Increments 52/53 settled this: merge shells only
+  with both halves standing still. Write the duplication, then merge it as a 53-style follow-up.
+
+### The fold, concretely
+
+**F2 first, not last** — reconcile the two roots (`SlopDeskPhoneApp`'s `@main` keeps it,
+`WorkspaceRootView` becomes its scene root) so the tree has one root while 101 files move. Then **F1**,
+resolving 54 platform directives across 40 files — the macOS arm deleted, the `#else` promoted, six
+agents split by directory. Then **F3**, the two Mac snapshot harnesses: 57b made that debt fail loudly,
+it did not pay it, and the answer is to **split the harness** rather than write renderers to satisfy a
+test or move `some View` into the floor (which a ratchet forbids, correctly). Then **F4**, the move and
+`Package.swift`. Then **F5**: every gate naming `Sources/SlopDeskClientUI/…` re-points, **and each one
+is re-run against a deliberately broken tree afterwards** — a path rename is precisely how a gate
+becomes absent while staying green, which 56f, 57b and the `repo_files` ordering bug in the
+`decodeIfPresent` gate have now demonstrated three times.
