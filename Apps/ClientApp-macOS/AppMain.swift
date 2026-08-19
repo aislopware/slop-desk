@@ -50,10 +50,15 @@ struct ClientAppMain {
         // docs/21-HANDOFF.md). Until then this block compiles to NOTHING and the seam
         // shows the gated `BuildStatusPlaceholderView` (libghostty-only policy — no
         // fallback VT renderer).
+        //
+        // ONE CALL, BOTH SHAPES OF THE SEAM (docs/56 stage F, risk 2). `shared` is the SwiftUI shape
+        // and iOS's ONLY shape — the phone has no `NSView` — and `nativeShared` is the AppKit one the
+        // Mac canvas adds as a subview rather than burying under an `NSHostingView` that would claim
+        // the hit-test over the one surface that must take every keystroke. Registering only half of
+        // it ships a renderer whose terminal is the BUILD-STATUS placeholder, which is why the two
+        // assignments live behind one installer in the embedder instead of being spelled here twice.
         #if canImport(CGhostty)
-        TerminalRendererFactory.shared = { model, isFocused in
-            AnyView(GhosttyTerminalView(model: model, isFocused: isFocused))
-        }
+        MainActor.assumeIsolated { GhosttyRendererSeam.install() }
         #endif
 
         // PATH 2 (GUI video path, doc 17 §3): register the production remote-GUI-window
@@ -63,7 +68,12 @@ struct ClientAppMain {
         // `SlopDeskVideoClient` — injects it here at launch. With no registration the seam
         // shows the gated `RemoteWindowPlaceholderView`.
         #if canImport(SlopDeskVideoClient)
-        VideoWindowFactory.shared = { descriptor, paneContext in
+        // ONE BUILDER, TWO REGISTRATIONS (docs/56 stage F, risk 2). The AppKit mount is built from the
+        // SAME `VideoWindowView` value the SwiftUI mount is, so the two cannot drift: every seam
+        // callback threaded below is threaded once. Splitting them into two closures here is how the
+        // twelve injector sinks end up wired on one path and forgotten on the other.
+        @MainActor
+        func videoPane(_ descriptor: RemoteWindowDescriptor, _ paneContext: RemotePaneContext) -> VideoWindowView {
             // LIVE path when the descriptor carries a full endpoint (host + media/cursor
             // ports), entered via the Remote-window panel: build the VideoWindowConnection
             // and the orchestrator-backed VideoWindowView(title:connection:). Otherwise the
@@ -81,7 +91,7 @@ struct ClientAppMain {
                     windowID: descriptor.windowID,
                     displayID: descriptor.displayID, // full-desktop pane → wire helloDisplay
                 )
-                return AnyView(VideoWindowView(
+                return VideoWindowView(
                     title: descriptor.title,
                     // Smart-zoom ⌘0 gate (`PinchZeroPolicy`): the pane's app display name rides
                     // the descriptor (client seam, not wire); empty (desktop pane) fails open.
@@ -114,9 +124,15 @@ struct ClientAppMain {
                     // TERMINAL REJECTION: host refused the session — the seam routes it to
                     // `RemoteWindowModel.noteSessionRejected()` (picker + error, no rebuild loop).
                     onSessionRejected: paneContext.onSessionRejected,
-                ))
+                )
             }
-            return AnyView(VideoWindowView(title: descriptor.title))
+            return VideoWindowView(title: descriptor.title)
+        }
+        VideoWindowFactory.shared = { descriptor, paneContext in
+            AnyView(videoPane(descriptor, paneContext))
+        }
+        VideoWindowFactory.nativeShared = { descriptor, paneContext in
+            VideoSurfaceHost(videoPane(descriptor, paneContext))
         }
         // UDP-mux: install the per-host shared-flow registry on the video pipeline. Panes targeting the
         // same host share ONE UDP flow (one flow per host, N panes); the host's `slopdesk-videohostd`
@@ -210,4 +226,9 @@ struct ClientAppMain {
 /// `@MainActor` with matching shapes. The conformance lives HERE (retroactive) because the video
 /// module deliberately never imports `SlopDeskWorkspaceCore` (the seam-split discipline).
 extension WindowFeedChannel: @retroactive HostWindowFeedLink {}
+
+/// And the video pane's AppKit mount IS the seam's native host, for the same reason one file up: the
+/// video module never imports `SlopDeskWorkspaceCore`, so neither side can name the other's half and
+/// the app target — which links both — is the only place the two can be joined.
+extension VideoSurfaceHost: @retroactive RemoteSurfaceHosting {}
 #endif

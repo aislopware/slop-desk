@@ -50,10 +50,15 @@ struct ClientAppMain {
         // docs/21-HANDOFF.md). Until then this block compiles to NOTHING and the seam
         // shows the gated `BuildStatusPlaceholderView` (libghostty-only policy — no
         // fallback VT renderer).
+        //
+        // ONE CALL, BOTH SHAPES OF THE SEAM (docs/56 stage F, risk 2). `shared` is the SwiftUI shape
+        // and iOS's ONLY shape — the phone has no `NSView` — and `nativeShared` is the AppKit one the
+        // Mac canvas adds as a subview rather than burying under an `NSHostingView` that would claim
+        // the hit-test over the one surface that must take every keystroke. Registering only half of
+        // it ships a renderer whose terminal is the BUILD-STATUS placeholder, which is why the two
+        // assignments live behind one installer in the embedder instead of being spelled here twice.
         #if canImport(CGhostty)
-        TerminalRendererFactory.shared = { model, isFocused in
-            AnyView(GhosttyTerminalView(model: model, isFocused: isFocused))
-        }
+        MainActor.assumeIsolated { GhosttyRendererSeam.install() }
         #endif
 
         // PATH 2 (GUI video path, doc 17 §3): register the production remote-GUI-window

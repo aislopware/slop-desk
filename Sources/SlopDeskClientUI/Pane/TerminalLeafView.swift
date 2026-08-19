@@ -137,7 +137,15 @@ struct TerminalLeafView: View {
     }
 
     /// The terminal pixels (the seam) — production renderer if the app registered one, else the headless
-    /// placeholder. This library NEVER imports libghostty/Metal: it only calls the factory seam. The vi-mode
+    /// placeholder. This library NEVER imports libghostty/Metal: it only calls the factory seam.
+    ///
+    /// This is the seam's SwiftUI shape, and the phone's only one. The AppKit canvas takes the same
+    /// renderer through `TerminalRendererFactory.nativeShared`, which hands back the layer-hosting `NSView`
+    /// itself rather than an `AnyView` an `NSHostingView` would have to claim the hit-test for (docs/56
+    /// stage F, risk 2). Both shapes resolve to one `GhosttyLayerBackedView` per pane and one libghostty
+    /// surface; nothing that must happen for BOTH may live in `GhosttyTerminalView.body` or here.
+    ///
+    /// The vi-mode
     /// pill, `🔒 READ ONLY ×` pill and ⌘F find bar float top-trailing OVER the surface (none reflow the buffer),
     /// stacked in one overlay so they never collide; the vi key-hint bar floats along the bottom.
     private var terminalSurface: some View {

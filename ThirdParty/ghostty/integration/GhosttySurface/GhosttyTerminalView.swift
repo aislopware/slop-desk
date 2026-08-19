@@ -254,10 +254,12 @@ final class GhosttyApp {
 
     /// W13: apply a NEW terminal-render config string LIVE to the running app (and thus every surface).
     /// Builds a fresh `ghostty_config_t`, loads the string, finalizes, and pushes it via
-    /// `ghostty_app_update_config` (header 1153) which reflows all surfaces. Called from the SwiftUI
-    /// `.onChange(of: TerminalConfigBroadcaster.shared.generation)` seam in `GhosttyTerminalView`; the
-    /// view then re-measures the cell size and resizes the host PTY grid (the grid-mismatch fix). A
+    /// `ghostty_app_update_config` (header 1153) which reflows all surfaces; each surface's resize_callback
+    /// then fires `onResize`, so the host PTY grid tracks the new font metrics (the grid-mismatch fix). A
     /// no-op when the generation hasn't advanced past the last apply.
+    ///
+    /// Its ONE caller is ``followTerminalConfig()``, which is armed from `init` — NOT a SwiftUI modifier.
+    /// See there for why it stopped being one.
     func applyTerminalConfig(_ configString: String, generation: Int) {
         guard generation != lastAppliedConfigGeneration else { return }
         lastAppliedConfigGeneration = generation
@@ -597,6 +599,62 @@ final class GhosttyApp {
 
         // The config can be freed after app_new copies what it needs (header 1124).
         ghostty_config_free(config)
+
+        // 5. W13 LIVE CONFIG: start following `TerminalConfigBroadcaster` HERE, in the one process-wide
+        //    object that owns `ghostty_app_update_config`. See `followTerminalConfig` for why this is not
+        //    (any longer) a SwiftUI `.onChange` on the renderer's `body`.
+        followTerminalConfig()
+    }
+
+    /// W13, THE LIVE TERMINAL-CONFIG APPLY, AND THE ONE PLACE IT IS ARMED.
+    ///
+    /// This observation used to live in `GhosttyTerminalView.body` as
+    /// `.onChange(of: TerminalConfigBroadcaster.shared.generation, initial: true)`, and it is the ONLY path
+    /// from a Settings ▸ Terminal edit to a surface reflow: `PreferencesStore` rebuilds the libghostty
+    /// config string, publishes it (bumping `generation`), and `ghostty_app_update_config` reflows +
+    /// re-draws every surface — after which each surface's resize_callback fires `onResize` so the host PTY
+    /// grid tracks the new font metrics. Nothing else calls it; nothing tests it (the apply needs a real
+    /// libghostty app handle), so losing it is silent — the font just stops changing.
+    ///
+    /// It moved OFF the SwiftUI body because the body is no longer on every path to a surface. An AppKit
+    /// canvas mounts `GhosttyLayerBackedView` through `TerminalRendererFactory.nativeShared` and never
+    /// builds `GhosttyTerminalView` at all, so an observation living in that struct's `body` would apply on
+    /// the phone and in the SwiftUI canvas and silently not on the Mac's. Here it is armed exactly once per
+    /// process, by the object the apply is a method ON, and it covers every renderer shape there will ever
+    /// be. Lifetime is unchanged and needs none: `GhosttyApp.shared` is built lazily by the first surface,
+    /// and until there is a surface there is no libghostty state to reflow — `init` loads whatever is
+    /// published at that moment, and this follows every publish after it.
+    ///
+    /// ⚠️ `withObservationTracking` fires its `onChange` ONCE, and fires it on WILL-set — before the new
+    /// `generation` is readable. So the callback hops one runloop (the new value is committed by then),
+    /// applies, and RE-ARMS by calling this method again. Dropping the re-arm gives exactly one live
+    /// config change per process, which looks like it works.
+    private func followTerminalConfig() {
+        withObservationTracking {
+            _ = TerminalConfigBroadcaster.shared.generation
+        } onChange: {
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    GhosttyApp.shared.applyPublishedTerminalConfig()
+                    GhosttyApp.shared.followTerminalConfig()
+                }
+            }
+        }
+        // The `initial: true` half of the old `.onChange`. `init` already loaded the published string into
+        // the config it built the app from, so this is usually a no-op — but `applyTerminalConfig` is
+        // generation-guarded, not string-guarded, and a publish that lands between that read and here would
+        // otherwise never be applied by anyone.
+        applyPublishedTerminalConfig()
+    }
+
+    /// Apply whatever `TerminalConfigBroadcaster` currently holds. Split from ``followTerminalConfig`` so
+    /// the arming and the applying are separately readable; generation-guarded inside, so calling it twice
+    /// for one publish costs nothing.
+    private func applyPublishedTerminalConfig() {
+        applyTerminalConfig(
+            TerminalConfigBroadcaster.shared.configString,
+            generation: TerminalConfigBroadcaster.shared.generation,
+        )
     }
 }
 
@@ -643,21 +701,15 @@ public struct GhosttyTerminalView: TerminalRenderingView {
         self.isFocused = isFocused
     }
 
+    /// ⚠️ NOTHING BUT THE SURFACE MAY LIVE HERE. This body is the SwiftUI shape of the seam, and the seam
+    /// now has two — an AppKit canvas mounts `GhosttyLayerBackedView` through
+    /// `TerminalRendererFactory.nativeShared` and never builds this struct. A `.onChange` / `.task` /
+    /// `@Environment` added here therefore applies on the phone and in the SwiftUI canvas, and silently not
+    /// on the Mac's. The W13 live terminal-config apply WAS such a modifier; it lives in
+    /// ``GhosttyApp/followTerminalConfig()`` now, armed once per process, so both shapes reflow.
     public var body: some View {
         GhosttyMetalLayerView(model: model, isFocused: isFocused)
             .accessibilityLabel(Text("Terminal"))
-            // W13: LIVE terminal-config apply. The client's `PreferencesStore` publishes a new libghostty
-            // config string to `TerminalConfigBroadcaster` (bumping `generation`) on every Settings ▸
-            // Terminal change. Push it app-wide (reflows every surface), then nudge the surface to
-            // re-measure its cell size + resize the host PTY grid so a font reflow doesn't desync the grid.
-            .onChange(of: TerminalConfigBroadcaster.shared.generation, initial: true) {
-                // `ghostty_app_update_config` reflows + re-draws every surface; the surface's
-                // resize_callback then fires onResize → the host PTY grid tracks the new font metrics.
-                GhosttyApp.shared.applyTerminalConfig(
-                    TerminalConfigBroadcaster.shared.configString,
-                    generation: TerminalConfigBroadcaster.shared.generation,
-                )
-            }
     }
 }
 
@@ -2827,6 +2879,21 @@ extension GhosttyLayerBackedView: @MainActor NSTextInputClient {
     }
 }
 
+// MARK: - The native half of the terminal pixel seam (docs/56 stage F, risk 2)
+
+/// `GhosttyLayerBackedView` IS the terminal surface an AppKit canvas wants, so the seam's native half is
+/// a conformance and not a wrapper. All three members already existed for the representable — `isFocusedPane`
+/// is what `updateNSView` writes and `detach()` is what `dismantleNSView` calls — which is the point: the
+/// AppKit canvas and the SwiftUI representable drive the SAME view through the SAME two doors, so there is
+/// no second lifecycle to keep in step.
+extension GhosttyLayerBackedView: TerminalSurfaceHosting {
+    var surfaceView: NSView { self }
+
+    func setPaneFocused(_ isFocused: Bool) { isFocusedPane = isFocused }
+
+    func detachSurface() { detach() }
+}
+
 #elseif os(iOS)
 
 /// `UIViewRepresentable` host backing the `CAMetalLayer` that owns the `GhosttySurface`.
@@ -3263,5 +3330,45 @@ final class GhosttyLayerBackedView: UIView {
 }
 
 #endif  // os(macOS) / os(iOS)
+
+// MARK: - The one registration site
+
+/// Registers the production terminal renderer on BOTH shapes of the seam, so the app target has one call
+/// to make and cannot register half of it — a Mac that registered only `shared` would silently draw its
+/// terminal through an `NSHostingView`, and a Mac that registered only `nativeShared` would show the
+/// BUILD-STATUS placeholder anywhere the SwiftUI leaf still mounts (a satellite pane, a preview).
+///
+/// ⚠️ This file is compiled by NO `Package.swift` target — it joins the Xcode app target through
+/// `scripts/enable-macos-renderer.sh` (macOS) / `scripts/enable-ios-renderer.sh` (iOS), and the whole file
+/// is behind `#if canImport(CGhostty)`. A grep over `Sources/` and `Tests/` reads every symbol here as
+/// dead, and none of it is (docs/56 stage F risk 2's corollary; increment 45b's lesson). The only callers
+/// are `Apps/ClientApp-macOS/AppMain.swift` and `Apps/ClientApp-iOS/AppMain.swift`.
+public enum GhosttyRendererSeam {
+    /// Idempotent — safe to call more than once, and it must stay so: it is called from `main()` before the
+    /// scene exists, which is the only ordering the seam guarantees.
+    ///
+    /// `shared` is the SwiftUI shape (iOS's ONLY shape — the phone has no `NSView` — and the SwiftUI
+    /// canvas's). `nativeShared` is the AppKit shape, which hands the layer-hosting `NSView` straight to the
+    /// canvas rather than burying it under an `NSHostingView` that would claim the hit-test over the one
+    /// surface that must take every keystroke.
+    @MainActor
+    public static func install() {
+        TerminalRendererFactory.shared = { model, isFocused in
+            AnyView(GhosttyTerminalView(model: model, isFocused: isFocused))
+        }
+        #if os(macOS)
+        TerminalRendererFactory.nativeShared = { model, isFocused in
+            let view = GhosttyLayerBackedView()
+            // Mirrors `makeNSView` EXACTLY, and for the same reason: do NOT create the surface here.
+            // `ghostty_surface_new` installs the IOSurfaceLayer and spawns the renderer/io thread pair, so
+            // a view that is built and then never put in a window would leave a second surface spinning.
+            // The surface is created lazily in `viewDidMoveToWindow`, so exactly one exists per pane.
+            view.model = model
+            view.isFocusedPane = isFocused
+            return view
+        }
+        #endif
+    }
+}
 
 #endif  // canImport(CGhostty)

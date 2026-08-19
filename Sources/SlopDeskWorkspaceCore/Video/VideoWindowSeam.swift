@@ -1,4 +1,7 @@
 #if canImport(SwiftUI)
+#if canImport(AppKit)
+import AppKit
+#endif
 import SwiftUI
 
 /// The **seam** between the cross-platform SwiftUI client and a remote GUI-window
@@ -350,7 +353,67 @@ public final class VideoWindowFactory {
         }
         return AnyView(EmptyView())
     }
+
+    #if canImport(AppKit)
+    /// The **native** half of the same seam — the app-registered factory that hands back the video pane's
+    /// `NSView` DIRECTLY instead of wrapping it in an `AnyView`. `nil` → no native video renderer.
+    ///
+    /// Same reasoning as ``TerminalRendererFactory/nativeShared``: `MetalLayerBackedView` is ALREADY an
+    /// `NSView` and ``shared`` exists only because neither UI target may name it, so an AppKit canvas
+    /// mounting ``make(_:context:)`` would interpose an `NSHostingView` for nothing. It matters slightly
+    /// less here than on the terminal (a video pane takes pointer traffic, not every keystroke) and is
+    /// still the same needless layer between the canvas and a `CAMetalLayer`.
+    ///
+    /// ADDITIVE, permanently — ``shared`` stays the iOS shape.
+    ///
+    /// `@MainActor` on the closure TYPE, unlike ``shared``: this one builds and returns an `NSView`, which
+    /// is main-actor isolated, so the factory could not be written without it (as ``RemoteWindowDiscovery``
+    /// already is, in this file).
+    public static var nativeShared: (@MainActor (RemoteWindowDescriptor, RemotePaneContext)
+        -> RemoteSurfaceHosting)?
+
+    /// Builds the native video surface host, or `nil` when no native renderer was registered. The
+    /// descriptor and context are the MOUNT-time values; every later render's gates go through
+    /// ``RemoteSurfaceHosting/setPaneGates(isActive:inputEnabled:backgroundPointer:)``, because an AppKit
+    /// canvas has no `updateNSView` being re-run to carry them.
+    public static func makeNative(
+        _ descriptor: RemoteWindowDescriptor,
+        context: RemotePaneContext = .standalone,
+    ) -> RemoteSurfaceHosting? {
+        guard let factory = nativeShared else { return nil }
+        return factory(descriptor, context)
+    }
+    #endif
 }
+
+#if canImport(AppKit)
+/// What an AppKit canvas may ask of the remote-GUI surface it just mounted — the AppKit spellings of
+/// `makeNSView` / `updateNSView` / `dismantleNSView`.
+///
+/// The gates are passed as PRIMITIVES rather than as a ``RemotePaneContext``, and that is not a
+/// convenience: the only conformer lives in `SlopDeskVideoClient`, which deliberately never imports
+/// `SlopDeskWorkspaceCore` (the whole reason this seam exists), so the conformance is declared
+/// RETROACTIVELY in the app target — exactly like `WindowFeedChannel: @retroactive HostWindowFeedLink`.
+/// A protocol member naming a WorkspaceCore type could not be satisfied from there at all.
+@preconcurrency
+@MainActor
+public protocol RemoteSurfaceHosting: AnyObject {
+    /// The view to add as a subview. It is layer-backed by a `CAMetalLayer` with a cursor overlay layer
+    /// on top, and it owns the client decode pipeline for its lifetime.
+    var surfaceView: NSView { get }
+
+    /// Re-push the per-render pane gates. `isActive` is the workspace focus (only the active pane forwards
+    /// pointer hover/clicks/pinch; scroll follows the pointer regardless), `inputEnabled` is the read-only
+    /// LOCK (false ⇒ forward nothing to the host and withhold the host-affecting injector sinks), and
+    /// `backgroundPointer` is the detached-satellite rule (take pointer input while not key). A flip of
+    /// `inputEnabled` re-publishes the injector sinks, so this is the ONLY way a lock reaches the host.
+    func setPaneGates(isActive: Bool, inputEnabled: Bool, backgroundPointer: Bool)
+
+    /// Tear down the client session (the AppKit twin of `dismantleNSView`). Removing the view from its
+    /// superview is NOT enough: the session owns UDP sockets, a decoder and a display link.
+    func detachSurface()
+}
+#endif
 
 /// One host-side window the Remote-Window PICKER lists (docs/31). The cross-platform mirror of the
 /// video protocol's `WindowSummary`, kept here so `SlopDeskClientUI` needn't depend on `SlopDeskVideoProtocol`.

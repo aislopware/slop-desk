@@ -378,6 +378,14 @@ struct GuiLeafView: View {
     /// descriptor (host + UDP ports from the app target) at `open()` time, so we pass `model.active` straight
     /// through. `onStreamNativeSize: nil` letterboxes a TILED leaf via `.fit`.
     ///
+    /// The seam's SwiftUI shape, and the phone's only one. The AppKit canvas takes the same renderer
+    /// through `VideoWindowFactory.nativeShared`, which hands back the `NSView` over the `CAMetalLayer`
+    /// directly (docs/56 stage F, risk 2). The per-render `RemotePaneContext` below is what SwiftUI
+    /// re-evaluates on every pass; the AppKit half pushes the same three gates explicitly through
+    /// `RemoteSurfaceHosting.setPaneGates(isActive:inputEnabled:backgroundPointer:)`, because it has no
+    /// render pass to be re-run for it — which is exactly how a read-only flip could stop reaching the host
+    /// on one canvas and not the other.
+    ///
     /// READ-ONLY: the per-render context via ``RemotePaneContext/videoLeaf(...)`` from the pane's
     /// convergent read-only state (`store.isReadOnly(for:)`) — `inputEnabled = !readOnly` gates the app-target
     /// client's pointer/keycode forwarding, and the helper CLEARS the paste-as-keystrokes sink
