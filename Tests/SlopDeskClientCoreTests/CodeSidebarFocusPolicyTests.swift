@@ -1,7 +1,7 @@
 #if os(macOS)
 import AppKit
 import XCTest
-@testable import SlopDeskClientUI
+@testable import SlopDeskClientCore
 
 /// ``CodeSidebarFocusPolicy`` — the embedded VS Code may take the keyboard ONLY from a direct user
 /// mouse-down inside the webview; every autofocus path is refused. Pure truth-table (hang-safety:

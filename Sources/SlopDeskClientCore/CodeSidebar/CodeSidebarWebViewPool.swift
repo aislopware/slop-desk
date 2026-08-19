@@ -38,9 +38,7 @@
 // design rests on, that `WKWebView` IS the platform's view type on both. Everything else the pool
 // touches is `WKWebView`, `URL` and `String`.
 
-import SlopDeskClientCore
 import SlopDeskWorkspaceCore
-import SwiftUI
 import WebKit
 
 /// The platform's keyboard duel, as the pool and its pages see it — installed by the shell that has
@@ -95,8 +93,8 @@ package typealias CodeSidebarPooledPage = CodeSidebarKeyboardPage & WKWebView
 /// so the column's overlay fades out exactly on settle; a reload re-veils through the same events.
 @MainActor
 @Observable
-final class CodeSidebarWebLoadState {
-    private(set) var veiled = true
+package final class CodeSidebarWebLoadState {
+    package private(set) var veiled = true
     func navigationStarted() { veiled = true }
     func navigationSettled() { veiled = false }
 }
@@ -157,7 +155,7 @@ package final class CodeSidebarWebViewPool {
     /// The project's veil state — the column reads `veiled` to hold its dark waiting surface over
     /// the webview until the workbench paints. Created on demand so the read can precede the
     /// webview's own creation in the same body evaluation.
-    func loadState(for projectRoot: String) -> CodeSidebarWebLoadState {
+    package func loadState(for projectRoot: String) -> CodeSidebarWebLoadState {
         if let existing = loadStates[projectRoot] { return existing }
         let state = CodeSidebarWebLoadState()
         loadStates[projectRoot] = state
@@ -168,7 +166,7 @@ package final class CodeSidebarWebViewPool {
     /// re-loaded ONLY when the endpoint moved (`CodeSidebarModel.endpointMoved` — a respawned
     /// service on a fresh port); the page otherwise owns its own navigation.
     ///
-    func webView(for projectRoot: String, url: URL) -> WKWebView {
+    package func webView(for projectRoot: String, url: URL) -> WKWebView {
         touch(projectRoot)
         if let existing = webViews[projectRoot] {
             if CodeSidebarModel.endpointMoved(current: existing.url, target: url) {
@@ -306,7 +304,7 @@ package final class CodeSidebarWebViewPool {
     /// rotation ahead of the ones the user has stopped visiting — and where a duel exists it may also
     /// owe the keyboard back. Two things in one word, which is precisely why the pool could not cross
     /// until they came apart: the recency touch is every platform's, the hand-back is the duel's.
-    func noteRemount(projectRoot: String) {
+    package func noteRemount(projectRoot: String) {
         touch(projectRoot)
         keyboard?.noteRemount(projectRoot: projectRoot)
     }

@@ -4952,16 +4952,19 @@ printf 'check-supervisor: both device panels draw on both platforms.\n'
 # has no iOS analogue at all (no app-level event monitor, no menu bar, no shared field editor), and
 # for as long as it sat in the same file as the pool, the whole code surface was Mac-only.
 #
-# Four files now, and the split is the rule: the DECISIONS in `CodeSidebarFocusPolicy` (pure, and
-# the only place a focus rule may be written), the POOL in `CodeSidebarWebViewPool` (projects and
-# their warm pages — one law, and as of docs/56 increment 43 not one platform gate), the MOUNT in
-# `CodeSidebarWebView` (a clipping container, a representable and a page mint per platform), and the
-# Mac's keyboard DUEL in `SlopDeskMacUI/CodeSidebar/MacCodeSidebarKeyboard.swift`, which left the
-# shared floor entirely in increment 42.
+# Five files now, across THREE targets, and the split is the rule. Below both UI halves, in
+# `SlopDeskClientCore`: the DECISIONS in `CodeSidebarFocusPolicy` (pure, and the only place a focus
+# rule may be written), the POOL in `CodeSidebarWebViewPool` (projects and their warm pages — one
+# law, and as of docs/56 increment 43 not one platform gate), and the PAGE in `CodeSidebarPage` (the
+# mint, and the Mac's responder-seam subclass — a `WKWebView` is the platform's view class, not a
+# drawn surface). In the UI target: the MOUNT in `CodeSidebarWebView`, a clipping container and one
+# representable per platform, which is the only part of a code page that lays anything out or reads a
+# design token. And one target up in `SlopDeskMacUI`: the keyboard DUEL in
+# `CodeSidebar/MacCodeSidebarKeyboard.swift`. Increments 42, 43 and 45 are the three moves.
 for piece in \
   "Sources/SlopDeskClientUI/CodeSidebar/CodeSidebarWebView.swift:UIViewRepresentable" \
   "Sources/SlopDeskClientUI/CodeSidebar/CodeSidebarWebView.swift:NSViewRepresentable" \
-  "Sources/SlopDeskClientUI/CodeSidebar/CodeSidebarWebViewPool.swift:func noteRemount"; do
+  "Sources/SlopDeskClientCore/CodeSidebar/CodeSidebarWebViewPool.swift:func noteRemount"; do
   if ! grep -qF "${piece#*:}" "${piece%%:*}"; then
     fail "${piece%%:*} lost ${piece#*:} — the code panel mounts on both platforms (docs/56)"
   fi
@@ -4973,7 +4976,7 @@ done
 # doc link is exactly the reference that is allowed to cross.
 while IFS= read -r file; do
   [[ -z "${file}" ]] && continue
-  [[ "${file}" =~ CodeSidebar/CodeSidebarWebView(Pool)?\.swift$ ]] && continue
+  [[ "${file}" =~ CodeSidebar/CodeSidebarPage\.swift$ ]] && continue
   if sed -E 's#^[[:space:]]*//.*##' "${file}" | grep -q 'CodeSidebarWKWebView'; then
     fail "${file} names CodeSidebarWKWebView — it is the Mac's responder seam, not an API"
   fi
@@ -4983,14 +4986,14 @@ done < <(grep -rl 'CodeSidebarWKWebView' Sources/ || true)
 # WebKit — and `CodePanelSurfaces` was gated because of what it mounted, which has since crossed.
 # A gate INSIDE one of them is fine, and the pool now has NONE — not an `#if`, not an AppKit/UIKit
 # import. The keyboard machine went up to `SlopDeskMacUI/CodeSidebar/MacCodeSidebarKeyboard.swift`
-# and the MINT (subclass-vs-plain, chrome polarity, base-canvas kill) went sideways into
-# `CodeSidebarWebView.swift`, which was already two per-platform halves — docs/56 increments 42 and
-# 43 name the two moves. The import went with it: the one platform member the pool still touches is
-# `window`, inherited from the view class WebKit already brings into scope. What is banned is the
-# wrapper that makes the file compile to nothing on the phone, and that shape is exactly "the first
-# line of code is `#if os(macOS)`".
+# and the MINT (subclass-vs-plain, base-canvas kill) went sideways into `CodeSidebarPage.swift`,
+# which is two per-platform halves on purpose — docs/56 increments 42, 43 and 45 name the moves. The
+# import went with it: the one platform member the pool still touches is `window`, inherited from the
+# view class WebKit already brings into scope. What is banned is the wrapper that makes the file
+# compile to nothing on the phone, and that shape is exactly "the first line of code is
+# `#if os(macOS)`".
 for crossed in Sources/SlopDeskClientUI/CodeSidebar/CodePanelSurfaces.swift \
-  Sources/SlopDeskClientUI/CodeSidebar/CodeSidebarWebViewPool.swift \
+  Sources/SlopDeskClientCore/CodeSidebar/CodeSidebarWebViewPool.swift \
   Sources/SlopDeskClientCore/CodeSidebar/CodeSidebarProxy.swift \
   Sources/SlopDeskClientCore/CodeSidebar/CodeSidebarFontSchemeHandler.swift; do
   first=$(grep -vE '^[[:space:]]*(//.*)?$' "${crossed}" | head -n 1 || true)
@@ -5001,12 +5004,19 @@ done
 # THE POOL CARRIES NO GATE AT ALL, which is stronger than the four above and is the point of
 # increments 42-43. Its subject is projects and their warm pages — one law on both halves — so every
 # platform-shaped thing it used to hold has left: the keyboard duel went UP to `SlopDeskMacUI`, the
-# page mint went ACROSS to `CodeSidebarWebView.swift`, which already has halves. A gate reappearing
+# page mint went ACROSS to `CodeSidebarPage.swift`, which has halves on purpose. A gate reappearing
 # here is not a gate problem; it is the signal that whatever it guards belongs in one of those two
 # files instead, and a comment saying so is not a pin.
-if grep -qE '^\s*#if os\(' Sources/SlopDeskClientUI/CodeSidebar/CodeSidebarWebViewPool.swift; then
-  grep -nE '^\s*#if os\(' Sources/SlopDeskClientUI/CodeSidebar/CodeSidebarWebViewPool.swift >&2
+if grep -qE '^\s*#if os\(' Sources/SlopDeskClientCore/CodeSidebar/CodeSidebarWebViewPool.swift; then
+  grep -nE '^\s*#if os\(' Sources/SlopDeskClientCore/CodeSidebar/CodeSidebarWebViewPool.swift >&2
   fail "the code-page pool grew a platform gate — it manages pages, it does not draw them"
+fi
+# AND THE POOL IS BELOW BOTH UI HALVES, which is what the gate removal bought (increment 45). It is a
+# RESOURCE manager, not a view: no `some View`, no design token, and the only reason it ever sat in
+# the phone's draining target was the mint it used to carry. `SlopDeskMacUI` reaching it through
+# `SlopDeskClientUI` is the import stage D exists to delete, so the ascent is pinned shut here.
+if [[ -e Sources/SlopDeskClientUI/CodeSidebar/CodeSidebarWebViewPool.swift ]]; then
+  fail "the code-page pool climbed back into the UI target — it manages pages, it does not draw them"
 fi
 # A focus RULE lives in the policy, which is pure and testable; the seam only calls it. The three
 # spellings below are the ones that were inline before the split and would be inline again first.

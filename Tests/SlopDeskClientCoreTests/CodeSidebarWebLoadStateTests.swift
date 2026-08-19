@@ -1,6 +1,6 @@
 #if os(macOS)
 import XCTest
-@testable import SlopDeskClientUI
+@testable import SlopDeskClientCore
 
 /// ``CodeSidebarWebLoadState`` — the first-paint veil's state machine (a plain class; no WKWebView
 /// is ever constructed here, per hang-safety).

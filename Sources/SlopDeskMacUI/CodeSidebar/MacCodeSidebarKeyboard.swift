@@ -23,7 +23,6 @@
 
 import AppKit
 import SlopDeskClientCore
-import SlopDeskClientUI // the pool and its keyboard seam — the duel is fought over its warm pages
 import SlopDeskWorkspaceModel // TabID — the focus region is per TAB, which is the whole point
 import WebKit
 
