@@ -29,8 +29,12 @@
 
 use core::ffi::c_uchar;
 
+use slopdesk_wire::document::codec as wire_codec;
+use slopdesk_wire::document::state::HostWorkspaceState;
+use slopdesk_wire::document::topology::WorkspaceTopology;
 use slopdesk_workspace::identity::{IdSource, SessionId};
 use slopdesk_workspace::tree_ops::{self, TileLayout};
+use slopdesk_workspace::workspace::{self, TreeWorkspace};
 use slopdesk_workspace::{
     FocusDirection, PaneId, PaneKind, PaneSpec, Rect, Size, SolvedLayout, SplitAxis, SplitNode, SplitNodeId,
     SplitWeight, TabId, WeightedChild, focus, geometry, listen, rail_title, secrets, send_keys,
@@ -3139,6 +3143,232 @@ pub unsafe extern "C" fn slopdesk_ws_encode_video_target(
     unsafe { deliver(&state_codec::encode_video_target(&target), out, cap) }
 }
 
+// MARK: The repair pass a loader runs
+//
+// ## Why this door exists at all
+// `TreeWorkspace::normalized` ran in BOTH languages until 2026-08-20, and the two did not shadow
+// each other because they fired on different events: the Swift copy on file load, the Rust one on
+// every intent. So launch-time repair and gesture-time repair reached different trees for the same
+// input, and a workspace that closed cleanly came back subtly different after a relaunch. Four
+// disagreements were live — which panes count as VIDEO (`kind == .desktop` against
+// `PaneKind::is_video`), how one is REMOVED (a close intent per id against pruning the tree), where
+// a re-seeded identity comes from, and which leaf a dangling focus falls back to. `docs/55` §8 is
+// the row this closes.
+//
+// ## It rides the document's own bytes, as the intent applier does
+// A `TreeWorkspace` is a split tree, and §4b's argument applies unchanged: there is no `#[repr(C)]`
+// flattening of one that is not a second grammar to keep in step. It does not need one — the
+// topology already HAS a byte encoding, so the cells go in as the flat `(CEntry, blob)` pairs
+// `slopdesk_ws_encode_snapshot` takes and the repaired tree comes back as an encoded snapshot the
+// caller reads with `slopdesk_ws_decode_snapshot`.
+//
+// ## The one shape that encoding cannot carry, stated out loud
+// A session with NO usable tab is dropped by the document ingest, on BOTH sides
+// (`WorkspaceTopology::from_document` here, `WorkspaceTopology.init?(entries:)` in Swift) —
+// rightly, because a host push naming a tabless session is describing nothing, and minting a tab
+// there would invent a workspace the host never published. A REPAIR wants the opposite answer: the
+// session's name and its detached panes are still worth keeping, so `normalizing_active` re-seeds
+// it a tab. That case therefore cannot reach this door, and the caller repairs it before encoding.
+// It is the only part of the pass that did not cross, it is named in `docs/55` §8 and pinned by
+// `check-supervisor.sh`, and the fix that removes it is a whole-`TreeWorkspace` codec in
+// `slopdesk_workspace::persist` — which `derived_split_id`'s `## Owed` note is already headed for.
+//
+// A document with no workspace in it AT ALL does cross, and answers the re-seeded default: that is
+// `normalizing_active`'s own `sessions.is_empty()` branch, reached by handing it an empty
+// workspace, rather than a default this shim decided on.
+
+/// The caller's pool of pre-minted identities, handed out in order.
+///
+/// This crate holds no entropy and [`slopdesk_workspace::identity`] explains why — every repair
+/// here has to be replayable, so the runtime that owns the randomness supplies the ids and a test
+/// supplies a counter. One cursor across all four kinds rather than four, so a pass that takes a
+/// tab and a split gets two DIFFERENT ids.
+///
+/// A pool that runs dry repeats its last entry rather than panicking. The caller's obligation is
+/// [`slopdesk_ws_normalize_minted_ids`], and repeating is what this boundary owes a caller who got
+/// their own arithmetic wrong: a refusal they can see in the tree, not a process that is gone.
+struct MintedPool<'a> {
+    ids: &'a [Uuid],
+    next: usize,
+}
+
+impl MintedPool<'_> {
+    fn take(&mut self) -> [u8; 16] {
+        let picked = self.ids.get(self.next).or_else(|| self.ids.last());
+        self.next += 1;
+        picked.map_or([0; 16], |id| id.bytes)
+    }
+}
+
+impl IdSource for MintedPool<'_> {
+    fn pane(&mut self) -> PaneId {
+        PaneId::from_bytes(self.take())
+    }
+
+    fn tab(&mut self) -> TabId {
+        TabId::from_bytes(self.take())
+    }
+
+    fn session(&mut self) -> SessionId {
+        SessionId::from_bytes(self.take())
+    }
+
+    fn split(&mut self) -> SplitNodeId {
+        SplitNodeId::from_bytes(self.take())
+    }
+}
+
+/// The identity pool one repair can spend over a workspace of that shape, exported rather than
+/// transcribed.
+///
+/// A pool one short does not fail — it REPEATS an identity, and two tabs born with one id surfaces
+/// days later as a tab that will not close. So the arithmetic lives in the crate that spends the
+/// ids, and a caller asks.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_ws_normalize_minted_ids(sessions: usize, detached: usize) -> usize {
+    tree_ops::RepairPass::minted_ids(sessions, detached)
+}
+
+/// How many repair passes there are, so a caller can neither name one this build lacks nor miss one
+/// it grew.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_ws_normalize_pass_count() -> usize {
+    tree_ops::RepairPass::ALL.len()
+}
+
+/// Runs one repair pass over a document's topology, answering the repaired cells as an encoded
+/// snapshot.
+///
+/// `pass` is [`tree_ops::RepairPass`]'s arm order: 0 the spec table, 1 the selections, 2 both in
+/// the order a load applies them, 3 the whole launch restore. A byte naming no pass answers 0 — a
+/// refusal, never a silently different repair, because "specs only" and "the launch restore" differ
+/// by whether a detached pane comes back.
+///
+/// `entries`/`blob` are the document in `slopdesk_ws_encode_snapshot`'s flat form. `minted` is the
+/// identity pool, sized by [`slopdesk_ws_normalize_minted_ids`].
+///
+/// The return is the encoded snapshot's byte count under §4's convention — write nothing when it
+/// does not fit, answer what was needed. `0` is the refusal above and nothing else: every pass over
+/// every document answers a workspace, because a document with none in it is answered with the
+/// re-seeded default rather than with silence.
+///
+/// # Safety
+/// `entries` must be null or point to `entry_count` live [`CEntry`]s; `blob` null or to `blob_len`
+/// live bytes; `minted` null or to `minted_count` live [`Uuid`]s; `out` null or writable for `cap`
+/// bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_ws_normalize(
+    pass: c_uchar,
+    entries: *const CEntry,
+    entry_count: usize,
+    blob: *const c_uchar,
+    blob_len: usize,
+    minted: *const Uuid,
+    minted_count: usize,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    let Some(pass) = tree_ops::RepairPass::from_byte(pass) else {
+        return 0;
+    };
+    // SAFETY: the caller's obligations, restated above; each helper states its own.
+    let (cells, bytes, pool) = unsafe {
+        (
+            borrow_array(entries, entry_count),
+            borrow(blob, blob_len),
+            borrow_array(minted, minted_count),
+        )
+    };
+    let mut ids = MintedPool { ids: pool, next: 0 };
+    let state = crate::workspace_intent::document(cells, bytes);
+    // No workspace in the document is not an error and not an empty answer: it is the input
+    // `normalizing_active` re-seeds from, so it is handed over as one rather than answered here.
+    let mut topology = state
+        .topology()
+        .unwrap_or_else(|| WorkspaceTopology::new(TreeWorkspace::new(Vec::new(), None)));
+    topology.tree = tree_ops::repaired(&topology.tree, pass, &mut ids);
+    let answer = wire_codec::encode_snapshot(&HostWorkspaceState::from_entries(topology.entries()));
+    // SAFETY: the caller's obligation, restated above; `deliver` states its own.
+    unsafe { deliver(&answer, out, cap) }
+}
+
+/// Whether a `pane/kind` byte names a VIDEO pane — one that rides the shared UDP flow, counts
+/// against the live-video cap, and never restores across a relaunch.
+///
+/// A predicate rather than a case list because it is what the launch restore DROPS by, and a second
+/// spelling of it is exactly the drift `docs/55` §8 records: Swift asked `kind == .desktop` where
+/// this crate asks `PaneKind::is_video`, which selects the same panes today and would stop the day
+/// a third video-ish kind is added on one side only. A byte this build has no kind for reads as a
+/// terminal — the degradation `WorkspacePaneKindTag` already picks — so an unknown kind is a
+/// degraded pane rather than a stream opened for a window that will never exist.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_ws_pane_kind_is_video(kind: c_uchar) -> bool {
+    PaneKind::from_byte(kind).is_video()
+}
+
+/// How many pane kinds there are.
+///
+/// Exported so a caller can WALK the vocabulary rather than name its members: a test that iterates
+/// `0..count` against [`slopdesk_ws_pane_kind_is_video`] fails the day a third kind lands on one
+/// side only, which counting Swift's cases against this crate's cannot see.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_ws_pane_kind_count() -> usize {
+    PaneKind::ALL.len()
+}
+
+/// The title a re-seeded pane takes, §4-shaped.
+///
+/// Asked for rather than transcribed for the reason every constant here is: a caller comparing
+/// against its own copy passes on a default this crate stopped producing, and the fresh-workspace
+/// shape test is precisely a comparison against this string.
+///
+/// # Safety
+/// `out` must be null or writable for `cap` bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub const unsafe extern "C" fn slopdesk_ws_default_pane_title(out: *mut c_uchar, cap: usize) -> usize {
+    // SAFETY: the caller's obligation, restated above; `deliver` states its own.
+    unsafe { deliver(workspace::DEFAULT_PANE_TITLE.as_bytes(), out, cap) }
+}
+
+/// The name a fresh workspace's first session takes, §4-shaped. Asked for
+/// [`slopdesk_ws_default_pane_title`]'s reason.
+///
+/// # Safety
+/// `out` must be null or writable for `cap` bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub const unsafe extern "C" fn slopdesk_ws_default_session_name(out: *mut c_uchar, cap: usize) -> usize {
+    // SAFETY: the caller's obligation, restated above; `deliver` states its own.
+    unsafe { deliver(workspace::DEFAULT_SESSION_NAME.as_bytes(), out, cap) }
+}
+
 #[cfg(test)]
 #[expect(unsafe_code, reason = "calling the boundary IS what these tests are for")]
 #[expect(
@@ -3146,15 +3376,21 @@ pub unsafe extern "C" fn slopdesk_ws_encode_video_target(
     reason = "exact is the assertion: `CLAUDE.md` pins these results bit-exactly, so a tolerance here would \
               pass on the drift it exists to catch"
 )]
+#[expect(
+    clippy::expect_used,
+    reason = "a door that refuses its own fixture IS the report"
+)]
 mod tests {
     use slopdesk_workspace::{PaneId, SplitAxis, SplitNode, SplitNodeId, SplitWeight, WeightedChild};
 
     use super::{
         CRect, CVideoTarget, DividerHandle, Frame, KeyedTab, Span, TreeNode, Uuid, decode_tree, encode_tree,
-        slopdesk_ws_cwd_badge_path, slopdesk_ws_decode_video_target, slopdesk_ws_divider_can_move,
-        slopdesk_ws_divider_clamped_weight, slopdesk_ws_divider_percents, slopdesk_ws_divider_thickness,
-        slopdesk_ws_divider_weight_delta, slopdesk_ws_dividers, slopdesk_ws_encode_video_target,
-        slopdesk_ws_focus_cycle, slopdesk_ws_focus_neighbor, slopdesk_ws_project_key,
+        slopdesk_ws_cwd_badge_path, slopdesk_ws_decode_video_target, slopdesk_ws_default_pane_title,
+        slopdesk_ws_divider_can_move, slopdesk_ws_divider_clamped_weight, slopdesk_ws_divider_percents,
+        slopdesk_ws_divider_thickness, slopdesk_ws_divider_weight_delta, slopdesk_ws_dividers,
+        slopdesk_ws_encode_video_target, slopdesk_ws_focus_cycle, slopdesk_ws_focus_neighbor,
+        slopdesk_ws_normalize, slopdesk_ws_normalize_minted_ids, slopdesk_ws_normalize_pass_count,
+        slopdesk_ws_pane_kind_count, slopdesk_ws_pane_kind_is_video, slopdesk_ws_project_key,
         slopdesk_ws_section_header, slopdesk_ws_section_precedes, slopdesk_ws_send_keys,
         slopdesk_ws_solve_layout, slopdesk_ws_successor_after_close, slopdesk_ws_tree_removing,
         slopdesk_ws_tree_splitting,
@@ -3726,5 +3962,192 @@ mod tests {
         };
         assert_eq!(text(answer.title), "Terminal");
         assert_eq!(text(answer.app_name), "Ghostty");
+    }
+
+    // ---------------------------------------------------------------------------------------- //
+    // The repair pass
+    // ---------------------------------------------------------------------------------------- //
+
+    /// A document's cells in the flat `(CEntry, blob)` form the door takes — the encoding under
+    /// test as much as anything else.
+    fn flat_document(
+        topology: &slopdesk_wire::document::topology::WorkspaceTopology,
+    ) -> (Vec<super::CEntry>, Vec<u8>) {
+        let mut blob = Vec::new();
+        let cells = slopdesk_wire::document::state::HostWorkspaceState::from_entries(topology.entries())
+            .sorted_entries()
+            .into_iter()
+            .map(|entry| {
+                let offset = blob.len();
+                blob.extend_from_slice(&entry.value);
+                super::CEntry {
+                    kind: entry.key.kind,
+                    field: entry.key.field,
+                    object: Uuid {
+                        bytes: entry.key.object_id,
+                    },
+                    value: Span {
+                        offset,
+                        len: blob.len() - offset,
+                        present: true,
+                    },
+                }
+            })
+            .collect();
+        (cells, blob)
+    }
+
+    /// One repair through the C signature, sized the way §4 says to: probe, grow, call again.
+    fn normalize(
+        pass: u8,
+        cells: &[super::CEntry],
+        blob: &[u8],
+        pool: &[Uuid],
+    ) -> Option<slopdesk_wire::document::topology::WorkspaceTopology> {
+        // SAFETY: every pointer is a live local's, and the null `out` is what §4 says to probe with.
+        let needed = unsafe {
+            slopdesk_ws_normalize(
+                pass,
+                cells.as_ptr(),
+                cells.len(),
+                blob.as_ptr(),
+                blob.len(),
+                pool.as_ptr(),
+                pool.len(),
+                core::ptr::null_mut(),
+                0,
+            )
+        };
+        if needed == 0 {
+            return None;
+        }
+        let mut out = vec![0_u8; needed];
+        // SAFETY: `out` is now exactly `needed` bytes and every input pointer is still live.
+        let written = unsafe {
+            slopdesk_ws_normalize(
+                pass,
+                cells.as_ptr(),
+                cells.len(),
+                blob.as_ptr(),
+                blob.len(),
+                pool.as_ptr(),
+                pool.len(),
+                out.as_mut_ptr(),
+                out.len(),
+            )
+        };
+        assert_eq!(written, needed, "the sized call disagreed with the probe");
+        let state = slopdesk_wire::document::codec::decode_snapshot(&out).ok()?;
+        state.topology()
+    }
+
+    fn pool() -> Vec<Uuid> {
+        (0..slopdesk_ws_normalize_minted_ids(4, 4))
+            .map(|index| {
+                Uuid {
+                    bytes: [0xB0_u8.wrapping_add(u8::try_from(index).unwrap_or(0)); 16],
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_repair_answers_the_documents_own_encoding_and_nothing_else() {
+        let broken = slopdesk_wire::document::topology::WorkspaceTopology::new(
+            slopdesk_workspace::workspace::TreeWorkspace::single_pane(
+                slopdesk_workspace::identity::SessionId::from_bytes([1; 16]),
+                slopdesk_workspace::identity::TabId::from_bytes([1; 16]),
+                PaneId::from_bytes([1; 16]),
+                slopdesk_workspace::PaneSpec::new(slopdesk_workspace::PaneKind::Terminal, "Terminal"),
+            ),
+        );
+        let (cells, blob) = flat_document(&broken);
+        let repaired = normalize(2, &cells, &blob, &pool()).expect("a repaired document");
+        assert_eq!(repaired.tree.all_pane_ids(), vec![PaneId::from_bytes([1; 16])]);
+        assert!(repaired.tree.invariant_holds());
+    }
+
+    #[test]
+    fn a_pass_byte_this_build_does_not_know_is_a_refusal_rather_than_a_different_repair() {
+        // The one 0 this door answers. Every real pass answers a workspace — even over a document
+        // with none in it, which is re-seeded rather than refused — so the refusal cannot be
+        // mistaken for a repair that came back empty.
+        let empty: Vec<super::CEntry> = Vec::new();
+        assert!(normalize(200, &empty, &[], &pool()).is_none());
+        let re_seeded = normalize(2, &empty, &[], &pool()).expect("an empty document is re-seeded");
+        assert_eq!(re_seeded.tree.sessions.len(), 1);
+        assert_eq!(re_seeded.tree.all_pane_ids().len(), 1);
+    }
+
+    #[test]
+    fn a_probe_that_did_not_fit_leaves_the_buffer_untouched() {
+        let topology = slopdesk_wire::document::topology::WorkspaceTopology::new(
+            slopdesk_workspace::workspace::TreeWorkspace::single_pane(
+                slopdesk_workspace::identity::SessionId::from_bytes([1; 16]),
+                slopdesk_workspace::identity::TabId::from_bytes([1; 16]),
+                PaneId::from_bytes([1; 16]),
+                slopdesk_workspace::PaneSpec::new(slopdesk_workspace::PaneKind::Terminal, "Terminal"),
+            ),
+        );
+        let (cells, blob) = flat_document(&topology);
+        let ids = pool();
+        let mut out = [0_u8; 8];
+        // SAFETY: every pointer is a live local's; `out` is deliberately too small.
+        let needed = unsafe {
+            slopdesk_ws_normalize(
+                2,
+                cells.as_ptr(),
+                cells.len(),
+                blob.as_ptr(),
+                blob.len(),
+                ids.as_ptr(),
+                ids.len(),
+                out.as_mut_ptr(),
+                out.len(),
+            )
+        };
+        assert!(needed > out.len());
+        assert!(out.iter().all(|byte| *byte == 0), "a short call still wrote");
+    }
+
+    #[test]
+    fn the_video_predicate_covers_the_whole_kind_vocabulary() {
+        // Walked rather than named: a third kind added to the crate makes this loop ask about a
+        // byte no caller has a case for, which is exactly the drift docs/55 §8 records. A byte past
+        // the vocabulary reads as a terminal, so an unknown kind degrades rather than opening a
+        // stream for a window that will never exist.
+        let count = slopdesk_ws_pane_kind_count();
+        assert_eq!(count, slopdesk_workspace::PaneKind::ALL.len());
+        for (index, kind) in slopdesk_workspace::PaneKind::ALL.into_iter().enumerate() {
+            let byte = u8::try_from(index).unwrap_or(u8::MAX);
+            assert_eq!(slopdesk_ws_pane_kind_is_video(byte), kind.is_video());
+        }
+        assert!(!slopdesk_ws_pane_kind_is_video(200));
+    }
+
+    #[test]
+    fn the_exported_pass_count_and_pool_size_are_the_crates_own() {
+        assert_eq!(
+            slopdesk_ws_normalize_pass_count(),
+            slopdesk_workspace::tree_ops::RepairPass::ALL.len(),
+        );
+        assert_eq!(
+            slopdesk_ws_normalize_minted_ids(3, 5),
+            slopdesk_workspace::tree_ops::RepairPass::minted_ids(3, 5),
+        );
+    }
+
+    #[test]
+    fn the_default_strings_come_back_whole_under_the_size_then_read_protocol() {
+        // SAFETY: the null probe §4 describes.
+        let needed = unsafe { slopdesk_ws_default_pane_title(core::ptr::null_mut(), 0) };
+        let mut out = vec![0_u8; needed];
+        // SAFETY: `out` is exactly `needed` bytes.
+        let written = unsafe { slopdesk_ws_default_pane_title(out.as_mut_ptr(), out.len()) };
+        assert_eq!(written, needed);
+        assert_eq!(
+            core::str::from_utf8(&out).ok(),
+            Some(slopdesk_workspace::workspace::DEFAULT_PANE_TITLE),
+        );
     }
 }

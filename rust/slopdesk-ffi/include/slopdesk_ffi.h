@@ -1512,6 +1512,60 @@ size_t slopdesk_ws_apply_intent(uint8_t op, const uint8_t *args, size_t args_len
                                 uint8_t *status, uint8_t *out, size_t cap);
 
 
+// MARK: The repair pass a loader runs
+//
+// A hand-edited or partially-written workspace must come back rather than be refused, so every
+// degenerate shape has a defined repair: an orphan spec is dropped, a spec-less pane is re-seeded,
+// an out-of-range selection is clamped, an empty workspace is minted from scratch, and a persisted
+// video pane is dropped rather than re-docked because a remote desktop never restores.
+//
+// This ran in BOTH languages until 2026-08-20 and the two did not shadow each other — the Swift
+// copy fired on file load, this one on every intent — so launch-time and gesture-time repair
+// reached different trees for the same input (docs/55 §8).
+//
+// It rides the document's own bytes, as the intent applier does: the cells go in as the flat
+// `SlopDeskWsEntry` pairs `slopdesk_ws_encode_snapshot` takes, and the repaired tree comes back as
+// an encoded snapshot read with `slopdesk_ws_decode_snapshot`. One shape cannot make that trip: a
+// session with NO usable tab is dropped by the document ingest on both sides, rightly, since a host
+// push naming one describes nothing — so the caller repairs that single case before encoding, and
+// `check-supervisor.sh` pins it to stay that one case.
+
+// The identity pool one repair can spend over a workspace of that shape. Sized here rather than at
+// the call site: a pool one short REPEATS an identity rather than failing, and two tabs born with
+// one id surfaces days later as a tab that will not close.
+size_t slopdesk_ws_normalize_minted_ids(size_t sessions, size_t detached);
+
+// How many repair passes there are, so a caller can neither name one this build lacks nor miss one
+// it grew.
+size_t slopdesk_ws_normalize_pass_count(void);
+
+// `pass` is the arm order: 0 the spec table, 1 the selections, 2 both in the order a load applies
+// them (specs first, so the selection repair sees a consistent set of panes), 3 the whole launch
+// restore — video panes dropped, detached panes re-docked, the persisted selection preserved.
+// A byte naming no pass answers 0, which is the ONLY 0: every pass over every document answers a
+// workspace, because a document with none in it is answered with the re-seeded default.
+size_t slopdesk_ws_normalize(uint8_t pass, const SlopDeskWsEntry *entries, size_t entry_count,
+                             const uint8_t *blob, size_t blob_len,
+                             const SlopDeskWsUuid *minted, size_t minted_count,
+                             uint8_t *out, size_t cap);
+
+// Whether a `pane/kind` byte names a VIDEO pane — the predicate the launch restore DROPS by. A
+// second spelling of it is the exact drift docs/55 §8 records: `kind == .desktop` and
+// `PaneKind::is_video` select the same panes today and stop agreeing the day a third video-ish kind
+// lands on one side only. An unknown byte reads as a terminal, so it is a degraded pane rather than
+// a stream opened for a window that will never exist.
+bool slopdesk_ws_pane_kind_is_video(uint8_t kind);
+
+// How many pane kinds there are, so a caller can WALK the vocabulary rather than name its members.
+size_t slopdesk_ws_pane_kind_count(void);
+
+// The title a re-seeded pane takes, and the name a fresh workspace's first session takes. §4-shaped
+// and asked for rather than transcribed: a caller comparing against its own copy passes on a
+// default this crate stopped producing, and the fresh-workspace shape test IS that comparison.
+size_t slopdesk_ws_default_pane_title(uint8_t *out, size_t cap);
+size_t slopdesk_ws_default_session_name(uint8_t *out, size_t cap);
+
+
 // MARK: The workspace state FILE
 //
 // What of the document survives a host restart, and in what shape on disk. The JSON is the boring

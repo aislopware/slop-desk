@@ -1117,6 +1117,155 @@ pub fn break_pane_to_tab(ws: &TreeWorkspace, target: PaneId, tab: TabId) -> Tree
     next
 }
 
+// ---------------------------------------------------------------------------------------------- //
+// The launch restore, and the one pass a loader runs
+// ---------------------------------------------------------------------------------------------- //
+
+/// Every detached pane folded back into a tab — the LAUNCH-only restore.
+///
+/// Satellite windows do not survive a relaunch, but a quit or a crash while a pane was detached
+/// must lose nothing, so the persisted detached panes re-enter their sessions: the origin tab when
+/// it is still there, a fresh one when it is not, which is [`reattach_pane`]'s rule and not a
+/// second one written here.
+///
+/// **It is deliberately not part of [`TreeWorkspace::normalized`].** That pass runs after every
+/// close and cascade, so folding a re-dock into it would undo a detach the person just performed,
+/// within the same gesture. The two are separate for that reason alone, and this one has exactly
+/// one caller: the loader.
+///
+/// The persisted SELECTION is preserved across the whole fold. Each reattach focuses the pane it
+/// docked — correct for a gesture, wrong for a restore, where the last pane to have been detached
+/// would otherwise steal the selection the person left behind. Appended tabs never shift an
+/// existing index, so restoring the active session and each session's active tab afterwards lands
+/// on the same tabs the file named.
+///
+/// `mint` supplies two identities per detached pane, because a reattach takes a tab for the case
+/// where the origin is gone and a split for the case where it is not.
+///
+/// It ends in [`TreeWorkspace::normalized`] rather than the selection half alone, so the answer is
+/// a tree a reconcile can be handed straight away: dropping the video panes can empty a tab, and a
+/// file broken enough to need a re-dock is broken enough to have an orphan spec in it too.
+#[must_use]
+pub fn redocking_detached_panes(ws: &TreeWorkspace, mint: &mut impl IdSource) -> TreeWorkspace {
+    // The remote desktop NEVER restores across a relaunch, so a persisted video pane is DROPPED
+    // here rather than re-docked — a detached one whose window is gone, or a stale tree leaf from a
+    // file written when the desktop was a tab. Its spec goes with it, so nothing downstream opens a
+    // stream for a pane no window will show.
+    let mut next = ws.dropping_video_panes();
+    if next.sessions.iter().all(|session| session.detached.is_empty()) {
+        return next.normalized(mint);
+    }
+    let active_session = next.active_session_id;
+    let active_tabs: Vec<(SessionId, usize)> = next
+        .sessions
+        .iter()
+        .map(|session| (session.id, session.active_tab_index))
+        .collect();
+    for pane in next.detached_pane_ids() {
+        next = reattach_pane(&next, pane, mint.tab(), mint);
+    }
+    next.active_session_id = active_session;
+    for (id, index) in active_tabs {
+        if let Some(session) = next.sessions.iter_mut().find(|session| session.id == id)
+            && index < session.tabs.len()
+        {
+            session.active_tab_index = index;
+        }
+    }
+    next.normalized(mint)
+}
+
+/// Which repair a loader is asking for.
+///
+/// The byte is the ARM ORDER and crosses the FFI boundary, so it is a vocabulary rather than a
+/// number anyone writes down twice: [`RepairPass::from_byte`] is total, and an index this build
+/// does not know is `None` — a refusal, never a silently different pass. Choosing the safe pass for
+/// an unknown byte would be worse than refusing, because "specs only" and "the whole launch
+/// restore" differ by whether a detached pane comes back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RepairPass {
+    /// [`TreeWorkspace::normalizing_specs`] alone.
+    Specs,
+    /// [`TreeWorkspace::normalizing_active`] alone.
+    Active,
+    /// [`TreeWorkspace::normalized`] — specs, then selections.
+    Normalized,
+    /// [`redocking_detached_panes`] — the whole launch restore.
+    LaunchRestore,
+}
+
+impl RepairPass {
+    /// Every pass, in the order their bytes name them.
+    pub const ALL: [Self; 4] = [Self::Specs, Self::Active, Self::Normalized, Self::LaunchRestore];
+
+    /// The byte this pass crosses as — the case INDEX, written once here so the caller's copy has
+    /// something to be compared against rather than something to be trusted.
+    ///
+    /// **Named `ffi_byte`, not `index`, on purpose — and this comment may not spell the other name
+    /// in full either.** `scripts/check-supervisor.sh` lifts a byte map out of a file by `sed`-ing
+    /// from a marker line to the next closing brace, and its marker for [`TileLayout`] is that
+    /// enum's own accessor signature, written out literally. A `sed` address range RESTARTS after
+    /// it closes, so a SECOND occurrence anywhere below in this file does not shadow the first, it
+    /// APPENDS to it: the gate then holds Swift's five `TileLayout` cases against nine rows and
+    /// reports the two languages as disagreeing about a layout byte. A false report about the
+    /// wrong enum is worse than no report, because it sends the reader to a diff that is correct.
+    /// A prose mention is enough to trip it, which is why the signature above is the only place in
+    /// this impl that names an accessor at all. The name also matches the Swift side's `ffiByte`,
+    /// so this pair can be gated on its own markers rather than borrowing another enum's.
+    #[must_use]
+    pub const fn ffi_byte(self) -> u8 {
+        match self {
+            Self::Specs => 0,
+            Self::Active => 1,
+            Self::Normalized => 2,
+            Self::LaunchRestore => 3,
+        }
+    }
+
+    /// The pass a byte names, or `None` for one this build has no pass for.
+    ///
+    /// Derived from [`Self::ALL`] rather than a second `match`, so the two cannot disagree — the
+    /// failure `direction_from` in the shim was rewritten to avoid, where a hand-written fallback
+    /// silently answered the wrong arm for a case both enums had grown.
+    #[must_use]
+    pub fn from_byte(byte: u8) -> Option<Self> {
+        Self::ALL.into_iter().find(|pass| pass.ffi_byte() == byte)
+    }
+
+    /// How many identities this pass can spend over a workspace of that shape.
+    ///
+    /// A CEILING, not a count: the caller pre-mints a pool because this crate holds no entropy
+    /// ([`crate::identity`]), and a pool one short would REPEAT an identity rather than fail — two
+    /// tabs born with one id, which surfaces days later as a tab that will not close.
+    ///
+    /// Three for a workspace with no session at all (a session, a tab and a pane, which is what a
+    /// re-seed from nothing costs), two per session that lost its tabs, and two per detached pane
+    /// the launch restore folds back in. Saturating, because the counts are another process's
+    /// arithmetic.
+    #[must_use]
+    pub const fn minted_ids(sessions: usize, detached: usize) -> usize {
+        3_usize
+            .saturating_add(sessions.saturating_mul(2))
+            .saturating_add(detached.saturating_mul(2))
+    }
+}
+
+/// One repair pass over a workspace.
+///
+/// The whole reason this exists as a single entry point is that the ORDER inside a pass is itself a
+/// decision — specs before selections, so the selection repair sees a consistent set of panes — and
+/// a caller that composed the halves for itself would be holding that decision in the other
+/// language. There is one composition, and it is here.
+#[must_use]
+pub fn repaired(ws: &TreeWorkspace, pass: RepairPass, mint: &mut impl IdSource) -> TreeWorkspace {
+    match pass {
+        RepairPass::Specs => ws.normalizing_specs(),
+        RepairPass::Active => ws.normalizing_active(mint),
+        RepairPass::Normalized => ws.normalized(mint),
+        RepairPass::LaunchRestore => redocking_detached_panes(ws, mint),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![expect(
@@ -1127,11 +1276,11 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        TileLayout, break_pane_to_tab, close_detached_pane, close_pane, close_session, close_tab,
+        RepairPass, TileLayout, break_pane_to_tab, close_detached_pane, close_pane, close_session, close_tab,
         detach_pane, focus_pane, insert_session, insert_tab, locate, mint_detached_pane, move_leaf,
         move_leaf_across_tabs, move_leaf_to_root_edge, move_leaf_to_tab_root_edge, new_session, new_tab,
-        reattach_pane, rename_session, rename_tab, select_session, set_divider_weight, split_pane,
-        swap_panes, updating_spec,
+        reattach_pane, redocking_detached_panes, rename_session, rename_tab, repaired, select_session,
+        set_divider_weight, split_pane, swap_panes, updating_spec,
     };
     use crate::identity::{IdSource, PaneId, SessionId, SplitNodeId, TabId};
     use crate::session::{NewTabPosition, PaneKind, PaneSpec, Tab};
@@ -1755,5 +1904,192 @@ mod tests {
     fn locate_answers_indices_and_nothing_for_an_absent_pane() {
         assert_eq!(locate(&two_panes(), pane(2)), Some((0, 0)));
         assert_eq!(locate(&two_panes(), pane(90)), None);
+    }
+
+    // ------------------------------------------------------------------------------------------ //
+    // The launch restore
+    // ------------------------------------------------------------------------------------------ //
+
+    #[test]
+    fn a_repair_pass_round_trips_through_the_byte_it_crosses_as() {
+        // The byte is the CASE INDEX and the caller holds a copy of that order, so a reorder here
+        // would silently ask for a different repair — and every repair answers a perfectly valid
+        // tree, so nothing downstream could notice. Checked against `ALL`'s own positions rather
+        // than a second list of numbers.
+        for (position, pass) in RepairPass::ALL.into_iter().enumerate() {
+            assert_eq!(usize::from(pass.ffi_byte()), position);
+            assert_eq!(RepairPass::from_byte(pass.ffi_byte()), Some(pass));
+        }
+        assert_eq!(
+            RepairPass::from_byte(200),
+            None,
+            "a byte naming no pass is a refusal, never the safe-looking pass",
+        );
+    }
+
+    #[test]
+    fn the_launch_restore_folds_a_detached_pane_back_without_stealing_the_selection() {
+        // Two tabs, a pane detached out of the FIRST, the SECOND selected. A restore must put the
+        // pane back where it came from and leave the selection where the person left it — each
+        // reattach focuses the pane it docked, which is right for a gesture and wrong for a launch.
+        let with_second_tab = new_tab(
+            &two_panes(),
+            spec("Second"),
+            NewTabPosition::End,
+            tab_id(7),
+            pane(7),
+        );
+        let detached = detach_pane(&with_second_tab, pane(2), &mut ids());
+        let Some(session) = detached.sessions.first() else {
+            panic!("one session");
+        };
+        assert_eq!(session.detached.len(), 1, "the fixture detached a pane");
+        let selected = select_session(&detached, session_id(1));
+        let mut chosen = selected;
+        if let Some(session) = chosen.sessions.first_mut() {
+            session.active_tab_index = 1;
+        }
+
+        let restored = redocking_detached_panes(&chosen, &mut ids());
+
+        assert!(restored.contains(pane(2)), "the satellite came back into a tab");
+        assert!(!restored.is_detached(pane(2)));
+        assert_eq!(
+            restored.location_of(pane(2)).map(|(_, tab)| tab),
+            Some(tab_id(1)),
+            "back into its ORIGIN tab, not whichever tab happened to be active",
+        );
+        assert_eq!(
+            restored.sessions.first().map(|s| s.active_tab_index),
+            Some(1),
+            "the persisted selection survived the fold",
+        );
+        assert!(restored.invariant_holds());
+    }
+
+    #[test]
+    fn a_video_pane_is_dropped_by_the_launch_restore_rather_than_re_docked() {
+        // The remote desktop never restores across a relaunch. What is pinned here is that the
+        // drop happens whether the pane is a satellite or a stale tree leaf, and that its SPEC goes
+        // with it — a surviving spec is what opens a stream for a window that will never exist.
+        let mut stale = two_panes();
+        let Some(session) = stale.sessions.first_mut() else {
+            panic!("one session");
+        };
+        session
+            .specs
+            .insert(pane(2), PaneSpec::new(PaneKind::Desktop, "Display"));
+        session
+            .specs
+            .insert(pane(70), PaneSpec::new(PaneKind::Desktop, "Satellite"));
+        session.detached.push(crate::session::DetachedPane {
+            pane: pane(70),
+            origin_tab: Some(tab_id(1)),
+        });
+
+        let restored = redocking_detached_panes(&stale, &mut ids());
+
+        assert_eq!(restored.all_pane_ids(), vec![pane(1)]);
+        assert!(restored.detached_pane_ids().is_empty());
+        assert!(restored.spec_for(pane(2)).is_none());
+        assert!(restored.spec_for(pane(70)).is_none());
+        assert!(restored.invariant_holds());
+    }
+
+    #[test]
+    fn every_pass_spends_no_more_identities_than_the_pool_it_asks_for() {
+        // A pool one short REPEATS an identity rather than failing, so the ceiling the caller sizes
+        // from has to be one this crate cannot exceed. The worst shape for it: two sessions that
+        // both lost their tabs, plus two detached panes to fold back.
+        struct Counting {
+            inner: Counter,
+            taken: usize,
+        }
+        impl IdSource for Counting {
+            fn pane(&mut self) -> PaneId {
+                self.taken += 1;
+                self.inner.pane()
+            }
+
+            fn tab(&mut self) -> TabId {
+                self.taken += 1;
+                self.inner.tab()
+            }
+
+            fn session(&mut self) -> SessionId {
+                self.taken += 1;
+                self.inner.session()
+            }
+
+            fn split(&mut self) -> SplitNodeId {
+                self.taken += 1;
+                self.inner.split()
+            }
+        }
+
+        let mut hostile = insert_session(
+            &two_panes(),
+            crate::session::Session::single_pane(session_id(2), "Other", tab_id(2), pane(20), spec("Two")),
+            false,
+        );
+        for session in &mut hostile.sessions {
+            session.tabs.clear();
+        }
+        let Some(session) = hostile.sessions.first_mut() else {
+            panic!("one session");
+        };
+        session.specs.insert(pane(80), spec("Satellite"));
+        session.specs.insert(pane(81), spec("Satellite"));
+        session.detached.push(crate::session::DetachedPane {
+            pane: pane(80),
+            origin_tab: None,
+        });
+        session.detached.push(crate::session::DetachedPane {
+            pane: pane(81),
+            origin_tab: None,
+        });
+
+        let ceiling = RepairPass::minted_ids(hostile.sessions.len(), hostile.detached_pane_ids().len());
+        for pass in RepairPass::ALL {
+            let mut counting = Counting {
+                inner: ids(),
+                taken: 0,
+            };
+            let out = repaired(&hostile, pass, &mut counting);
+            assert!(
+                counting.taken <= ceiling,
+                "{pass:?} spent {} of a pool sized {ceiling}",
+                counting.taken,
+            );
+            // Only the two COMPOSITE passes owe the invariant: `Specs` does not repair selections
+            // and `Active` does not repair the spec table, so demanding it of either would be
+            // asserting they are the same pass.
+            if matches!(pass, RepairPass::Normalized | RepairPass::LaunchRestore) {
+                assert!(out.invariant_holds(), "{pass:?} left the invariant broken");
+            }
+        }
+    }
+
+    #[test]
+    fn an_empty_workspace_is_re_seeded_by_every_pass_that_repairs_selections() {
+        // The one shape with no session at all. `Specs` deliberately leaves it alone — it repairs
+        // the spec table and nothing else — so this is where the passes are legitimately different
+        // rather than accidentally so.
+        let empty = TreeWorkspace::new(Vec::new(), None);
+        assert!(
+            repaired(&empty, RepairPass::Specs, &mut ids())
+                .sessions
+                .is_empty()
+        );
+        for pass in [
+            RepairPass::Active,
+            RepairPass::Normalized,
+            RepairPass::LaunchRestore,
+        ] {
+            let out = repaired(&empty, pass, &mut ids());
+            assert_eq!(out.sessions.len(), 1, "{pass:?} left the workspace empty");
+            assert_eq!(out.all_pane_ids().len(), 1);
+            assert!(out.invariant_holds());
+        }
     }
 }

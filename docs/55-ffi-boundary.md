@@ -793,7 +793,8 @@ now one function with the Swift test's own case pinned to it.
 
 Every cross-language bug this project has found has the same shape: **a decision implemented in both
 languages, where the two disagree, and the disagreement is invisible because only one side is on the
-hot path.** Eight pairs are known. Three were defects when found:
+hot path.** **Ten** pairs are known. Seven were live defects when found; the other three agree
+today and are held together by nothing but the week they were written in:
 
 | Pair | Who was right | What the user lost |
 | --- | --- | --- |
@@ -805,11 +806,33 @@ hot path.** Eight pairs are known. Three were defects when found:
 | `templates.rs` vs `SessionTemplate`/`LaunchPreset` | — | agrees today; a security rule written twice |
 | `persist::derived_split_id` vs `SplitNodeID()` | Rust | divider weights reset on every relaunch |
 | `detectionText` vs `detect::detection_text` | Rust | dead Swift, plus a third spelling of the join |
+| `PaneSpec+Codable` `userRenamed` vs `decode_spec` | Rust | **the entire workspace**, to a non-boolean flag |
+| `VideoEndpoint`'s synthesized `Codable` vs `decode_video` | Rust | **the entire workspace**, to a hand-edited window id |
 
-**The direction is not consistent, and that is the point.** Rust is right in most rows and Swift in
-one. So this is not "the port is behind" — it is drift in both directions between paired
-implementations nobody diffs. Where a module got ported it got ported *well*; the failure is entirely
-downstream of that, at the moment the port lands and the original stays.
+**The direction is not consistent ACROSS families, and that is the point.** Rust is right in most
+rows and Swift in one. So this is not "the port is behind" — it is drift in both directions between
+paired implementations nobody diffs. Where a module got ported it got ported *well*; the failure is
+entirely downstream of that, at the moment the port lands and the original stays.
+
+**Within the decoder family, though, it is perfectly consistent, and that is a sharper finding.** Rust
+repaired and Swift threw at every single site: `axis`, `id`, `children`, `weight`, `userRenamed`, and
+all three repairable `VideoEndpoint` fields. That is not eight coincidences. `persist.rs` was written
+as a **repair pass** and Swift's decoders were written as **parsers**, and the difference is one design
+decision that only one language ever made. So the useful question about a pair is rarely "did someone
+make a mistake here" — it is *"were these two written to answer the same question at all?"* A parser
+and a repairer agree on every well-formed input and disagree on every malformed one, which is exactly
+the input class no test covers and every hand-edited file eventually produces.
+
+Three sites in that sweep have **no Rust counterpart yet** — `Session.activeTabIndex`, `specs`,
+`detached` — because `persist.rs` stops at the spec and the node. Swift now answers them the way a
+repair pass would, and the comments there say so, so the obligation is visible from the Rust side when
+`persist.rs` grows to the session and file level. It inherits three answers it did not choose; better
+that it inherits them knowingly than re-derives them differently.
+
+One limit of the ratchet worth stating, because it was found the hard way: the gate bans the **pairing**
+`decodeIfPresent(…) ?? default`, since `decodeIfPresent` is correct where absence and unreadability are
+both faults. **Deleting the `??` therefore silences the gate without fixing the defect** — the throw is
+still there and the file is still lost. A pattern ban can see a shape, never an intent.
 
 **Why `check-supervisor.sh` never caught any of them.** Read what it pins, and it pins it well:
 `compare_abi_enum` over four enum→byte maps, the intent op numbers, "did this Swift file come back",

@@ -103,7 +103,14 @@ public extension PaneKind {
     /// A video (PATH 2) pane — rides the shared UDP flow, counts against the live-video cap, renders the
     /// remote-GUI view. The full-desktop ``desktop`` is the only video kind, and it lives in a dedicated
     /// OS window (the detached set), never in the workspace tree.
-    var isVideo: Bool { self == .desktop }
+    ///
+    /// This ASKS rather than restates. It was `self == .desktop`, which is the same answer the crate's
+    /// `pane_kind_is_video` gives today — and that agreement was a coincidence, not a shared rule. The
+    /// tree-repair pass reads the predicate to decide which panes may live in the tree at all, so a
+    /// third video-ish `PaneKind` would have made the two halves select different panes with both
+    /// sides' tests green. `TreeWorkspaceRepairDifferentialTests` walks
+    /// `slopdesk_ws_pane_kind_count()` for exactly that case.
+    var isVideo: Bool { slopdesk_ws_pane_kind_is_video(WorkspacePaneKindTag.byte(for: self)) }
     /// Whether this pane has a shell input funnel that text can be typed into — the recipient set for
     /// broadcast/synchronized input (tmux `synchronize-panes`). Only the PTY-backed `.terminal` kind; the
     /// video `.desktop` takes input through the cursor/key side-channel, not a text bar.

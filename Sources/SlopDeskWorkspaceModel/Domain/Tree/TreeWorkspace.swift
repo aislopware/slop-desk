@@ -1,3 +1,6 @@
+import CSlopDeskFFI
+import Foundation
+
 // MARK: - TreeWorkspace (the tree-rooted workspace container — transitional name)
 
 /// The tree-rooted workspace container for the `Session → Tab → Pane` redesign (docs/42 §Domain model).
@@ -47,11 +50,28 @@ public struct TreeWorkspace: Codable, Sendable, Equatable {
     ///
     /// This is tolerance for a hand-edited file, NOT a migration seam: a whole file written by a
     /// build that shaped the tree differently is caught by ``currentSchemaVersion`` and reset aside.
+    ///
+    /// ## `try?`, not `decodeIfPresent`, on the selection
+    /// `decodeIfPresent` answers `nil` for a key that is ABSENT and THROWS for one that is present
+    /// carrying a value its type refuses. Those are the same fact here — the selection is a hint,
+    /// and a hint no one can read is a hint no one gave — but the throw is not local: it unwinds the
+    /// whole decode, so `WorkspacePersistence.load()` takes the `.corrupt` path and hands back the
+    /// DEFAULT workspace. One unreadable optional field costs the user every session they had.
+    /// `slopdesk_workspace::persist`'s `decode_optional_id` reads the same input as absent and lets
+    /// ``normalizingActive()`` fill the selection from `sessions.first`, so the file that survives
+    /// under Rust used to be the file that vanished under Swift.
+    ///
+    /// **`scripts/check-supervisor.sh` cannot see this, and removing the `??` is what blinded it.**
+    /// The ratchet added in `fffc9dc1` bans the PAIRING `decodeIfPresent(…) ?? default`, because
+    /// `decodeIfPresent` alone is right wherever absence and unreadability really are different
+    /// faults. This line once had the `??`; it came off and the throw stayed, and the gate has read
+    /// it as compliant ever since. A pattern ban sees spelling, not consequence — so if this line
+    /// ever needs `decodeIfPresent` back, the reason belongs here in prose, not in the shape.
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         schemaVersion = try c.decode(Int.self, forKey: .schemaVersion)
         sessions = try c.decode([Session].self, forKey: .sessions)
-        activeSessionID = try c.decodeIfPresent(SessionID.self, forKey: .activeSessionID)
+        activeSessionID = try? c.decode(SessionID.self, forKey: .activeSessionID)
     }
 
     /// The schema version this shape writes. A file carrying any OTHER version is not migrated — the
@@ -73,14 +93,39 @@ public extension TreeWorkspace {
     /// A fresh workspace: one session ("Local"), one tab, one leaf carrying `spec`. The
     /// fresh-launch / re-seed shape (mirrors ``Workspace/defaultWorkspace()`` for the new model).
     static func singlePane(spec: PaneSpec) -> TreeWorkspace {
-        let session = Session.singlePane(name: "Local", spec: spec)
+        let session = Session.singlePane(name: TreeWorkspaceDefaults.sessionName, spec: spec)
         return TreeWorkspace(sessions: [session], activeSessionID: session.id)
     }
 
     /// The default workspace: one "Local" session with a single terminal pane.
     static func defaultWorkspace() -> TreeWorkspace {
-        singlePane(spec: PaneSpec(kind: .terminal, title: "Terminal"))
+        singlePane(spec: PaneSpec(kind: .terminal, title: TreeWorkspaceDefaults.paneTitle))
     }
+}
+
+/// The two strings a re-seed writes, ASKED for rather than written down here.
+///
+/// The crate re-seeds too — a spec-less leaf, a session that lost its tabs, a workspace with nothing
+/// in it — so a copy of either literal on this side is a second answer to "what is a fresh pane
+/// called". It would not fail loudly: the pane would simply be titled one thing when a gesture made
+/// it and another when a launch repaired it, and the shape test
+/// (``WorkspacePersistence/isDefaultTreeShape(_:)``) that compares against a spelled-out `"Terminal"`
+/// would pass on a default the crate had stopped producing. `docs/55` §8 names this exact
+/// anti-pattern.
+public enum TreeWorkspaceDefaults {
+    /// The title a re-seeded pane takes.
+    public static let paneTitle = wsString { out, cap in slopdesk_ws_default_pane_title(out, cap) }
+    /// The name a fresh workspace's first session takes.
+    public static let sessionName = wsString { out, cap in slopdesk_ws_default_session_name(out, cap) }
+}
+
+/// A §4-shaped door's answer as text. Empty when the crate answered nothing, which none of the
+/// callers here can produce.
+private func wsString(_ call: (UnsafeMutablePointer<UInt8>?, Int) -> Int) -> String {
+    // Non-failable on purpose: what comes back is a `&'static str` the crate spelled, so it is UTF-8
+    // by construction and a failable initialiser would only add an arm no answer can reach.
+    // swiftlint:disable:next optional_data_string_conversion
+    String(decoding: wsBytes(call), as: UTF8.self)
 }
 
 // MARK: - Facade the store consumes (docs/42 §"Facade the store consumes")
@@ -160,156 +205,223 @@ public extension TreeWorkspace {
 
 // MARK: - Normalizing repairs (applied on load — never crash on a hand-edited file)
 
+/// Every repair below is `rust/slopdesk-workspace`'s, reached through `slopdesk_ws_normalize`.
+///
+/// **It was implemented twice until 2026-08-20, and the two copies did not shadow each other.** This
+/// one fired on FILE LOAD (`WorkspacePersistence.loadTree`, the store's bootstrap and its launch
+/// restore); the crate's fired on EVERY INTENT, through `tree_ops`. So launch-time repair and
+/// gesture-time repair reached different trees for the same input, and a workspace that closed
+/// cleanly came back subtly different after a relaunch. Four disagreements were live and none of
+/// them logged anything (`docs/55` §8):
+///
+/// - which panes count as VIDEO. Here it was `spec.kind == .desktop`; there it is
+///   `PaneKind::is_video`. The two select the same panes today because `PaneKind` has two cases, and
+///   they stop agreeing the moment a third video-ish kind is added on one side — at which point a
+///   persisted stream pane lands back in a tab and opens a channel for a window that will never
+///   exist. It is now one predicate, `slopdesk_ws_pane_kind_is_video`, and a test walks the whole
+///   kind vocabulary against it rather than naming the cases it knows.
+/// - how such a pane is REMOVED. Here it was a `closePane` intent per id, which runs the whole close
+///   cascade — refocus, tab drop, session drop, a re-seed when the last pane goes. There it is a
+///   prune of the tree, with a tab that held nothing but streams dropped rather than re-seeded,
+///   because a tab that only ever held one is not a place the person put anything.
+/// - where a re-seeded IDENTITY comes from. See ``repaired(_:)``.
+/// - which leaf a dangling focus falls back to: `allPaneIDs().first` against `first_leaf_id()`. Both
+///   are the pre-order first leaf, so this pair AGREED — and agreeing by coincidence in two
+///   languages is the state every row in that table was in the day before it stopped.
+///
+/// The public signatures are unchanged, so every existing caller and every existing test still
+/// points at the same four names and now exercises the crate (`docs/55` §6).
 public extension TreeWorkspace {
     /// Repairs the **specs == leafIDs invariant** against a corrupt / hand-edited file: drops orphan
     /// spec entries (a spec for a pane no longer in any tab — this is also what silently retires the
     /// Stage era's persisted stage-pane specs) and re-seeds a default ``PaneSpec`` for a leaf whose
-    /// spec went missing (so the store can always materialize it). Pure. (Validate-then-repair, the
-    /// CLAUDE.md contract for untrusted persisted data.)
+    /// spec went missing (so the store can always materialize it). The detached list is repaired
+    /// FIRST so the spec filter sees a consistent membership. Pure.
     func normalizingSpecs() -> TreeWorkspace {
-        var copy = self
-        copy.sessions = sessions.map { session in
-            var s = session
-            let leafIDs = s.leafIDSet()
-            // Repair the detached list FIRST so the spec filter below sees a consistent membership:
-            // an entry shadowed by a tree leaf is dropped (tree membership wins — a pane cannot be both
-            // tiled and detached), as is a duplicate id or an entry with no spec to materialize from
-            // (a spec-less detached record is unrecoverable garbage, unlike a tree leaf whose STRUCTURE
-            // demands a re-seeded default).
-            var seenDetached = Set<PaneID>()
-            s.detached = s.detached.filter { entry in
-                guard !leafIDs.contains(entry.pane), s.specs[entry.pane] != nil else { return false }
-                return seenDetached.insert(entry.pane).inserted
-            }
-            let keepIDs = leafIDs.union(s.detachedIDSet())
-            // Drop orphan specs (no matching leaf or detached pane).
-            s.specs = s.specs.filter { keepIDs.contains($0.key) }
-            // Re-seed a default spec for any leaf that lost its spec.
-            for id in leafIDs where s.specs[id] == nil {
-                s.specs[id] = PaneSpec(kind: .terminal, title: "Terminal")
-            }
-            return s
-        }
-        return copy
+        repaired(.specs)
     }
 
     /// Repairs the active-selection invariants: the workspace always has ≥ 1 session; `activeSessionID`
-    /// points at a real session; each session's `activeTabIndex` is clamped to `tabs.indices`; each tab's
-    /// `activePane`/`zoomedPane` is dropped if it no longer names a leaf in that tab. Pure.
+    /// points at a real session; each session has ≥ 1 tab; each `activeTabIndex` is clamped to
+    /// `tabs.indices`; each tab's `activePane`/`zoomedPane` is dropped if it no longer names a leaf in
+    /// that tab. Pure.
     func normalizingActive() -> TreeWorkspace {
-        var copy = self
-        // Re-seed an empty workspace.
-        if copy.sessions.isEmpty {
-            return .defaultWorkspace()
-        }
-        copy.sessions = copy.sessions.map { session in
-            var s = session
-            // A session must have ≥ 1 tab.
-            if s.tabs.isEmpty {
-                let paneID = PaneID()
-                s.tabs = [Tab(root: .leaf(paneID), activePane: paneID)]
-                s.specs[paneID] = PaneSpec(kind: .terminal, title: "Terminal")
-            }
-            // Clamp the active tab index.
-            if !s.tabs.indices.contains(s.activeTabIndex) {
-                s.activeTabIndex = 0
-            }
-            // Repair per-tab focus / zoom against the tab's leaf set.
-            s.tabs = s.tabs.map { tab in
-                var t = tab
-                let treeLeafIDs = Set(t.root.allPaneIDs())
-                if let active = t.activePane, !treeLeafIDs.contains(active) {
-                    t.activePane = t.allPaneIDs().first
-                } else if t.activePane == nil {
-                    t.activePane = t.allPaneIDs().first
-                }
-                if let zoom = t.zoomedPane, !treeLeafIDs.contains(zoom) {
-                    t.zoomedPane = nil
-                }
-                return t
-            }
-            return s
-        }
-        // Repair the active session pointer.
-        if let id = copy.activeSessionID, !copy.sessions.contains(where: { $0.id == id }) {
-            copy.activeSessionID = copy.sessions.first?.id
-        } else if copy.activeSessionID == nil {
-            copy.activeSessionID = copy.sessions.first?.id
-        }
-        return copy
+        repaired(.active)
     }
 
     /// The repairs in the order `load()` applies them: specs first, so the active-pane repair sees a
-    /// consistent leaf set. Pure. Deliberately does NOT re-dock detached panes — `normalized()` runs after
-    /// every close/cascade op, so folding ``redockingDetachedPanes()`` in here would instantly undo any
+    /// consistent leaf set. Pure. Deliberately does NOT re-dock detached panes — this runs after every
+    /// close/cascade op, so folding ``redockingDetachedPanes()`` in here would instantly undo any
     /// detach. Re-dock is a LAUNCH-ONLY step (the store's restore path).
     func normalized() -> TreeWorkspace {
-        normalizingSpecs().normalizingActive()
+        repaired(.normalized)
     }
 
     /// Re-docks every detached pane back into a tab — the LAUNCH-ONLY restore policy (v1): satellite
     /// windows do not restore across relaunch, but a quit/crash while detached must lose nothing, so the
-    /// persisted detached panes fold back into their sessions (origin tab when alive, else a fresh tab —
-    /// the `reattachPane` intent). The persisted SELECTION is preserved (each reattach
-    /// focuses its pane; a launch restore must not let the last-detached pane steal the saved focus).
-    /// Applied by the store AFTER `normalized()` and ONLY at restore time — never op-internally (see
-    /// ``normalized()``).
+    /// persisted detached panes fold back into their sessions (origin tab when alive, else a fresh tab).
+    /// The persisted SELECTION is preserved: each reattach focuses its pane, and a launch restore must
+    /// not let the last-detached pane steal the saved focus.
+    ///
+    /// Every video pane goes first and is DROPPED rather than re-docked — the remote desktop never
+    /// restores across a relaunch (docs/DECISIONS.md 2026-07-22), whether it is a satellite whose
+    /// window is gone or a stale tree leaf from the era when the desktop was a tab. Its spec goes with
+    /// it, so reconcile never opens a stream for a pane no window will show.
+    ///
+    /// Applied by the store AFTER `normalized()` and ONLY at restore time — never op-internally.
     func redockingDetachedPanes() -> TreeWorkspace {
-        // The remote desktop NEVER restores across relaunch (docs/DECISIONS.md 2026-07-22): a
-        // persisted `.desktop` pane — detached (its window) or a stale tree leaf from an older
-        // file — is dropped here, launch-only, instead of redocked (it must never land in a tab).
-        var copy = droppingDesktopPanes()
-        guard copy.sessions.contains(where: { !$0.detached.isEmpty }) else { return copy }
-        // Snapshot the persisted selection; reattach mutates it per pane.
-        let savedActiveSession = copy.activeSessionID
-        let savedTabIndices = copy.sessions.map { ($0.id, $0.activeTabIndex) }
-        for id in copy.detachedPaneIDs() {
-            copy = copy.applying(.reattachPane, to: id)
+        repaired(.launchRestore)
+    }
+}
+
+// MARK: - The crossing
+
+/// Which repair to ask the crate for.
+///
+/// The CASE ORDER is the byte, and it is the crate's — `slopdesk_workspace::tree_ops::RepairPass`.
+/// `scripts/check-supervisor.sh` compares the two maps case-name against case-name, because a
+/// reorder here would silently ask for a different repair: "specs only" and "the whole launch
+/// restore" differ by whether a detached pane comes back, and both answer a perfectly valid tree.
+private enum RepairPass {
+    case specs
+    case active
+    case normalized
+    case launchRestore
+
+    /// The CASE index — the crate's `RepairPass` order, pinned by `scripts/check-supervisor.sh`.
+    var ffiByte: UInt8 {
+        switch self {
+        case .specs: 0
+        case .active: 1
+        case .normalized: 2
+        case .launchRestore: 3
         }
-        // Restore the saved selection (appended tabs never shift existing indices).
-        copy.activeSessionID = savedActiveSession
-        for (sessionID, tabIndex) in savedTabIndices {
-            if let sIdx = copy.sessions.firstIndex(where: { $0.id == sessionID }),
-               copy.sessions[sIdx].tabs.indices.contains(tabIndex)
-            {
-                copy.sessions[sIdx].activeTabIndex = tabIndex
+    }
+}
+
+private extension TreeWorkspace {
+    /// Asks the crate to run `pass`, and keeps the workspace as it was if the crossing answers
+    /// nothing it can read.
+    ///
+    /// **The tree crosses as the DOCUMENT's own bytes**, exactly as ``WorkspaceIntentApplier`` sends
+    /// one: a `TreeWorkspace` is a split tree, and there is no `#[repr(C)]` flattening of one that is
+    /// not a second grammar somebody has to keep in step with the first. It does not need one — the
+    /// topology already has a byte encoding, the one every client decodes off the socket. The launch
+    /// restore is the one place a document-shaping decision runs outside an intent (there is no client
+    /// to send one and no host to answer), and routing it through the same encoding anyway is what
+    /// keeps the rule honest: a repair means here exactly what it means during a gesture, because it
+    /// is the same code deciding. It runs once per launch, so the round trip costs nothing that
+    /// matters.
+    ///
+    /// **The identity pool is minted HERE, and that is the decision rather than the default.** The
+    /// crate holds no entropy on purpose (`slopdesk_workspace::identity`), so a repair that needs a
+    /// fresh pane, tab or session takes an `IdSource`. The alternative was `persist.rs`'s
+    /// `derived_split_id` — an id computed from the node's position and contents, so one file decoded
+    /// twice names the same thing both times. That is right THERE and wrong here, for a reason that
+    /// is about what the id JOINS to. A `SplitNodeID` names a divider group and joins to nothing
+    /// outside the tree, so a persisted `splitNode/<id>/weight` cell only keeps pointing at its seam
+    /// if the name is stable — deriving it is what makes a divider drag survive a relaunch. A re-seeded
+    /// pane is the opposite case twice over: it is a pane the file did NOT contain, so no persisted
+    /// cell is keyed by it and there is nothing for a stable name to keep pointing at; and a `PaneID`
+    /// is the join to the live-session registry that owns a process, so a name derived from the file's
+    /// own contents is a name two launches — or two clients reading one document — can both produce,
+    /// and reconcile would then hand a fresh pane a process it did not open. Determinism where a test
+    /// wants it is bought by the CALLER supplying a fixed pool, which is what the crate's own tests do,
+    /// rather than by the rule inventing ids it cannot vary.
+    ///
+    /// A pool one short would REPEAT an identity rather than fail, so its size is asked for.
+    func repaired(_ pass: RepairPass) -> TreeWorkspace {
+        let seeded = withTheDocumentsBlindSpotsClosed()
+        var blob = WsBlob()
+        var cells = WorkspaceTopology(tree: seeded).entries().map { blob.entry($0) }
+        let minted = (0..<slopdesk_ws_normalize_minted_ids(
+            seeded.sessions.count,
+            seeded.detachedPaneIDs().count,
+        )).map { _ in SlopDeskWsUuid(UUID()) }
+
+        let answer = blob.lend { arena in
+            cells.withUnsafeMutableBufferPointer { cell in
+                minted.withUnsafeBufferPointer { pool in
+                    wsBytes { out, cap in
+                        slopdesk_ws_normalize(
+                            pass.ffiByte,
+                            cell.baseAddress,
+                            cell.count,
+                            arena.baseAddress,
+                            arena.count,
+                            pool.baseAddress,
+                            pool.count,
+                            out,
+                            cap,
+                        )
+                    }
+                }
             }
         }
-        return copy.normalizingActive()
+
+        // Bytes the codec refuses are not a repair that failed — they are this boundary having gone
+        // wrong, and keeping the input is the only answer that does not replace a workspace with a
+        // half-read one.
+        guard let state = try? WorkspaceStateCodec.decodeSnapshot(answer),
+              var next = state.topology?.tree
+        else { return seeded }
+        // The document has no `schemaVersion` — it is a property of the client's FILE, not of the
+        // shape (see ``WorkspaceTopologyOmissions``) — so it is carried across rather than reset to
+        // this build's, which would make a repair silently claim a version the value never had.
+        next.schemaVersion = seeded.schemaVersion
+        return next
     }
 
-    /// LAUNCH-ONLY companion of ``redockingDetachedPanes()``: removes every `.desktop` pane — the
-    /// detached entries (their satellite windows do not restore) AND any tree-resident leaves an
-    /// older file may carry from the era when the desktop was a tab. Specs are dropped with them so
-    /// reconcile never opens a stream for a pane no window will show. Pure.
-    private func droppingDesktopPanes() -> TreeWorkspace {
-        let desktopIDs = sessions.flatMap { session in
-            session.specs.filter { $0.value.kind == .desktop }.map(\.key)
-        }
-        guard !desktopIDs.isEmpty else { return self }
-        // ONE op for both shapes a stale desktop can take: `closePane` walks the detached set as well
-        // as the tree, and it drops the spec with the pane either way, so reconcile never opens a
-        // stream for a pane no window will show.
-        var copy = self
-        for id in desktopIDs {
-            copy = copy.applying(.closePane, to: id)
-        }
-        return copy.normalized()
-    }
-
-    /// Asks the applier — the Rust decision, through the FFI door — to run `op` against `pane`, and
-    /// keeps the workspace unchanged on a refusal.
+    /// The two repairs that could not cross, and the reason is the transport rather than the rule.
     ///
-    /// The launch restore is the ONE place a document-shaping op runs outside an intent: it is not a
-    /// gesture, so there is no client to send one, and no host to answer. Routing it through the same
-    /// door anyway is what keeps the rule honest — a re-dock and a close mean here exactly what they
-    /// mean when a person asks for them, because it is the same code deciding. It runs once per
-    /// launch, so the round trip through the snapshot encoding costs nothing that matters.
-    private func applying(_ op: WorkspaceIntentOp, to pane: PaneID) -> TreeWorkspace {
-        WorkspaceIntentApplier.apply(
-            op: op.rawValue,
-            args: WorkspaceIntentArgs.encode(pane: pane),
-            to: WorkspaceTopology(tree: self),
-        ).topology?.tree ?? self
+    /// ## One root cause, two symptoms
+    /// The document is a PUSH format: it says what a workspace IS, and its ingest is written to
+    /// refuse or fill rather than to preserve — which is right for a push and wrong for a repair,
+    /// because a repair's whole input is the degenerate shape. Both cases below are absences the
+    /// document simply cannot spell, so they are gone (or invented) before the door ever sees them.
+    ///
+    /// **A session with no usable tab is DROPPED.** `read_session` in `slopdesk-wire` and
+    /// ``WorkspaceTopology/init(entries:)`` here say it in the same words on purpose: a host push
+    /// naming a tabless session is describing nothing, and minting a tab for it would invent a
+    /// workspace the host never published. A repair wants the opposite — the session still has a
+    /// name and may still own detached panes worth keeping — which is why `normalizing_active`
+    /// re-seeds it one. So the re-seed happens here, and it is deliberately the crate's re-seed: one
+    /// fresh tab holding one fresh terminal, titled whatever ``TreeWorkspaceDefaults/paneTitle``
+    /// says, focused on its only leaf. Nothing about it is decided here — the title is asked for,
+    /// and the crate's own selection repair lands on the same focus.
+    ///
+    /// **A detached pane with no spec is INVENTED, which is the sharper of the two.** `read_spec` is
+    /// total: no `pane/title` cell means the default title, not "no such pane". So a hand-edited
+    /// file listing a satellite it never described would come back a real terminal satellite and
+    /// open a window for a pane nobody asked for — where `normalizing_specs` drops it, precisely
+    /// because an entry with nothing to materialize from is not a pane. The entry is dropped here so
+    /// the door is never handed a shape whose absence it cannot see. Note what is NOT done here: a
+    /// detached entry that shadows a live tree leaf, and a duplicate of a valid one, both cross
+    /// fine — the ingest already resolves them the way the crate's rule does, and re-doing them on
+    /// this side would be a second implementation of a rule that works.
+    ///
+    /// **Both are known duplicated decisions and are pinned as such** (`docs/55` §8): the
+    /// differential suite holds each against the crate's own answer, and
+    /// `scripts/check-supervisor.sh` fails if a third repair grows beside them. The change that
+    /// DELETES this function is a whole-`TreeWorkspace` codec in `slopdesk_workspace::persist` — the
+    /// file's own encoding, which loses nothing because losing nothing is what a persistence codec
+    /// is for. `derived_split_id`'s `## Owed` note is already headed there.
+    func withTheDocumentsBlindSpotsClosed() -> TreeWorkspace {
+        let blind = sessions.contains { session in
+            session.tabs.isEmpty || session.detached.contains { session.specs[$0.pane] == nil }
+        }
+        guard blind else { return self }
+        var copy = self
+        copy.sessions = sessions.map { session in
+            var s = session
+            if s.tabs.isEmpty {
+                let pane = PaneID()
+                s.tabs = [Tab(root: .leaf(pane), activePane: pane)]
+                s.specs[pane] = PaneSpec(kind: .terminal, title: TreeWorkspaceDefaults.paneTitle)
+            }
+            s.detached = s.detached.filter { s.specs[$0.pane] != nil }
+            return s
+        }
+        return copy
     }
 }
