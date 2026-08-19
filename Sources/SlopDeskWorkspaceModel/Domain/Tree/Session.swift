@@ -46,8 +46,9 @@ public struct Session: Identifiable, Sendable, Equatable {
     public var specs: [PaneID: PaneSpec]
     /// Panes detached into their own OS windows, in detach order. Each keeps its spec in ``specs`` and
     /// its live registry handle (the store's reconcile counts detached panes as desired), so detach ↔
-    /// reattach never tears a session down. Additive v11 field — absent in older files (`decodeIfPresent`),
-    /// encoded only when non-empty so a detach-free workspace file stays byte-identical.
+    /// reattach never tears a session down. Additive v11 field — absent in older files (a missing or
+    /// unreadable list reads as none, see `decodeArray` below), encoded only when non-empty
+    /// so a detach-free workspace file stays byte-identical.
     public var detached: [DetachedPane]
 
     public init(
@@ -96,15 +97,69 @@ extension Session: Codable {
         id = try container.decode(SessionID.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
         tabs = try container.decode([Tab].self, forKey: .tabs)
-        activeTabIndex = try container.decodeIfPresent(Int.self, forKey: .activeTabIndex) ?? 0
-        let entries = try container.decodeIfPresent([SpecEntry].self, forKey: .specs) ?? []
+        // Absent OR unreadable ⇒ `0`. There is NO Rust counterpart yet — `persist.rs` decodes nodes
+        // and specs, not sessions — so this Swift is currently the only implementation of the
+        // answer, and `persist.rs` will have to agree with it when it grows to the session/file
+        // level: a `"activeTabIndex": "two"` is a session whose selection is unknown, not a session
+        // that is gone.
+        //
+        // Decided on the merits rather than copied: this field is ALREADY tolerated out of range.
+        // `normalizingActive()` clamps anything outside `tabs.indices` back to `0` and `activeTab`
+        // falls through to `tabs.first`, so `-1` and `900` both cost the user exactly one click. A
+        // value of the wrong type carries strictly LESS information than those, and the trap made it
+        // cost strictly more — `decodeIfPresent` throws past its own `?? 0` on a present-but-refused
+        // value, unwinding every session in the file into a `.corrupt` sidecar. Repairing it to the
+        // same `0` the clamp already produces is the only answer consistent with the field's own
+        // normalizer.
+        activeTabIndex = (try? container.decode(Int.self, forKey: .activeTabIndex)) ?? 0
         var map: [PaneID: PaneSpec] = [:]
-        for entry in entries { map[entry.pane] = entry.spec }
+        for entry in try Self.decodeArray(SpecEntry.self, forKey: .specs, in: container) {
+            map[entry.pane] = entry.spec
+        }
         specs = map
-        detached = try container.decodeIfPresent([DetachedPane].self, forKey: .detached) ?? []
+        detached = try Self.decodeArray(DetachedPane.self, forKey: .detached, in: container)
         // A file written during the short-lived Stage era may carry `stagePanes`/`activeStagePane`
         // keys — ignored here; the orphaned specs are pruned by `normalizingSpecs()` (streamed-window
         // stage tabs were ephemeral viewing surfaces, so dropping them loses no terminal state).
+    }
+
+    /// A persisted list: a TOLERANT container wrapped around STRICT elements — the shape
+    /// `SplitNode+Codable.swift`'s `decodeChildren` established, applied to the session's two lists.
+    ///
+    /// There is no Rust counterpart to either call yet (`persist.rs` stops at the spec and the
+    /// node), so this Swift is currently the only implementation and is what `persist.rs` will have
+    /// to agree with when it reaches the session/file level: **an unreadable list VALUE is no list;
+    /// an unreadable ELEMENT is a fault.**
+    ///
+    /// Why the container is tolerant. `decodeIfPresent([…].self, …) ?? []` was the trap on both
+    /// keys: `"specs": 5` or `"detached": {}` is present with a value the type refuses, so it THREW
+    /// past the `?? []` written beside it, and the throw did not stop at the list — it unwound the
+    /// session, the `TreeWorkspace`, and `WorkspacePersistence.load()` filed every session, tab and
+    /// split the user had arranged away as `.corrupt`. There is nothing under a `5` to recover, so
+    /// the tolerant read loses no pane the file still described.
+    ///
+    /// Why the elements are NOT tolerant, which is where the two keys differ and both still land the
+    /// same way. This repair is asymmetric and worth naming rather than assuming:
+    ///
+    /// - `specs` is a SIDE table, not the pane list — the tabs' trees are. An empty `specs` costs
+    ///   titles, kinds and video targets, and `normalizingSpecs()` re-seeds every leaf a default
+    ///   `PaneSpec`, so the arrangement itself survives intact. But a `try?` per ELEMENT would turn
+    ///   one malformed row into that same silent re-seed for one pane: a `.desktop` pane would come
+    ///   back as a blank terminal and the load would report success. A pane that quietly changes
+    ///   into a different pane is worse than a load that visibly refuses.
+    /// - `detached` IS the only record of a pane living outside every tab tree, so an entry lost
+    ///   here is a pane deleted — `normalizingSpecs()` prunes its now-orphan spec. That is exactly
+    ///   why a malformed element must stay a fault: the only path that drops a detached pane is a
+    ///   whole-list value that named no panes to begin with.
+    private static func decodeArray<T: Decodable>(
+        _ type: T.Type, forKey key: CodingKeys, in container: KeyedDecodingContainer<CodingKeys>,
+    ) throws -> [T] {
+        guard var unkeyed = try? container.nestedUnkeyedContainer(forKey: key) else { return [] }
+        var decoded: [T] = []
+        while !unkeyed.isAtEnd {
+            try decoded.append(unkeyed.decode(type))
+        }
+        return decoded
     }
 
     public func encode(to encoder: any Encoder) throws {

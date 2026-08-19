@@ -127,8 +127,8 @@ public struct VideoEndpoint: Codable, Sendable, Equatable {
     /// bindings.
     public var appName: String
     /// FULL-DESKTOP TARGET (a ``PaneKind/desktop`` pane): non-nil ⇒ stream this whole host display
-    /// (`0` = the main display) instead of a window. Additive (synthesized Codable decodes a
-    /// missing key to `nil` — an older file's window endpoints are unaffected).
+    /// (`0` = the main display) instead of a window. Additive (a missing key decodes to `nil` — an
+    /// older file's window endpoints are unaffected).
     public var displayID: UInt32?
 
     /// The stable TARGET identity latched modes are keyed by (`DevicePreferences.videoModesByTarget`):
@@ -146,6 +146,47 @@ public struct VideoEndpoint: Codable, Sendable, Equatable {
         self.appName = appName
         self.displayID = displayID
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case windowID
+        case title
+        case appName
+        case displayID
+    }
+
+    /// Hand-written because the SYNTHESIZED decode faulted on three of these four keys, and
+    /// `slopdesk_workspace::persist::decode_video` repairs all three. **Rust had it right**; this is
+    /// that function transcribed field for field:
+    ///
+    /// - `windowID` — `.and_then(Json::integer).and_then(|raw| u32::try_from(raw).ok()).unwrap_or(0)`:
+    ///   absent, non-numeric, negative or past `u32` all read as `0`, the value that already MEANS
+    ///   "not a window-shaped target" (see ``modesKey``). Synthesized Swift required the key and
+    ///   threw on any of them.
+    /// - `title` — `text(value, "title")?` is a fault in Rust, so it stays a fault here. It is the
+    ///   only thing a window-shaped endpoint says about itself that a repair cannot invent; an
+    ///   endpoint with no title describes no target, and `decode_spec` refuses that whole spec.
+    /// - `appName` — `.and_then(Json::string).unwrap_or_default()`: absent or non-string is `""`,
+    ///   which the doc comment above already calls the manual/display binding.
+    /// - `displayID` — the same integer chain, answering `None`. An unreadable display target
+    ///   therefore falls back to the window shape rather than failing, which is what Rust does.
+    ///
+    /// The trap being closed is `decodeIfPresent`/required-key decode on a key that is PRESENT with
+    /// a value its type refuses: it does not answer `nil`, it THROWS, and here the throw did not
+    /// stop at the endpoint. It unwound the `PaneSpec`, the `Session`, the whole `TreeWorkspace`, so
+    /// `WorkspacePersistence.load()` fell back to the default workspace and filed the user's
+    /// arrangement away as `.corrupt` — every session and tab lost to one edited window id.
+    ///
+    /// `encode(to:)` stays synthesized: it already writes what `encode_video` writes, `displayID`
+    /// included only when set (`encodeIfPresent`).
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        windowID = (try? c.decode(UInt32.self, forKey: .windowID)) ?? 0
+        title = try c.decode(String.self, forKey: .title)
+        appName = (try? c.decode(String.self, forKey: .appName)) ?? ""
+        // No `??` needed: `try?` on a non-optional decode already collapses "absent" and
+        // "unreadable" into the `nil` this field spells as "not a display target".
+        displayID = try? c.decode(UInt32.self, forKey: .displayID)
+    }
 }
 
 /// The user's LATCHED video-pane modes (a `.desktop` pane): immersive system-key
@@ -157,8 +198,8 @@ public struct VideoEndpoint: Codable, Sendable, Equatable {
 /// (which re-asserts each wish into every freshly-published sink on a detach/reattach remount); this
 /// struct is only the persisted snapshot of the user's last EXPLICIT toggles for a target.
 ///
-/// Additive (synthesized-key `decodeIfPresent` per field): an older file without the key — or a newer
-/// file with fields this build doesn't know — decodes to the defaults, never traps.
+/// Additive per field: an older file without the key — or a newer file with fields this build
+/// doesn't know — decodes to the defaults, never traps.
 public struct VideoPaneModes: Codable, Sendable, Equatable {
     /// Immersive system-key capture (⌘Tab/⌘Space… → host). macOS-only at runtime; the flag itself is
     /// platform-neutral so a shared workspace file round-trips losslessly.
@@ -197,14 +238,25 @@ public struct VideoPaneModes: Codable, Sendable, Equatable {
         case bitrateCeilingBps
     }
 
+    /// Every field FILLS, because the doc comment above already promised it would ("never traps")
+    /// and `decodeIfPresent(…) ?? default` does not keep that promise: on a key present with a value
+    /// its type refuses it THROWS rather than answering `nil`, past the default written beside it.
+    /// Here the throw unwinds `DevicePreferences`, so one hand-edited `"immersive": "yes"` in
+    /// `device-prefs.json` resets every latched mode for every target rather than that one flag.
+    ///
+    /// No Rust counterpart — this struct is device-local and has never been persisted by
+    /// `slopdesk-workspace`. Swift is the only implementation of the answer; a future Rust decoder
+    /// has to agree that each of these five is independently repairable, which is exactly what
+    /// makes them safe to fill: every one is a toggle or a `0`-means-auto override that the user can
+    /// re-assert in one click, and none of them names a pane.
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        immersive = try c.decodeIfPresent(Bool.self, forKey: .immersive) ?? false
-        audioEnabled = try c.decodeIfPresent(Bool.self, forKey: .audioEnabled) ?? false
-        viewportLocked = try c.decodeIfPresent(Bool.self, forKey: .viewportLocked) ?? false
+        immersive = (try? c.decode(Bool.self, forKey: .immersive)) ?? false
+        audioEnabled = (try? c.decode(Bool.self, forKey: .audioEnabled)) ?? false
+        viewportLocked = (try? c.decode(Bool.self, forKey: .viewportLocked)) ?? false
         // Validate-then-default (untrusted persisted data): a negative override is nonsense — auto.
-        fpsCap = try Swift.max(0, c.decodeIfPresent(Int.self, forKey: .fpsCap) ?? 0)
-        bitrateCeilingBps = try Swift.max(0, c.decodeIfPresent(Int.self, forKey: .bitrateCeilingBps) ?? 0)
+        fpsCap = Swift.max(0, (try? c.decode(Int.self, forKey: .fpsCap)) ?? 0)
+        bitrateCeilingBps = Swift.max(0, (try? c.decode(Int.self, forKey: .bitrateCeilingBps)) ?? 0)
     }
 }
 
@@ -353,9 +405,22 @@ extension PaneSpec: Codable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         kind = try c.decode(PaneKind.self, forKey: .kind)
         title = try c.decode(String.self, forKey: .title)
+        // STRICT on purpose, and it agrees with Rust: `decode_spec` matches `Some(Json::Null) | None
+        // => None` and propagates anything `decode_video` refuses. A `video` object that is present
+        // but malformed is a fault on both sides — a video pane whose target silently became `nil`
+        // would come back as a blank surface pointed at nothing.
         video = try c.decodeIfPresent(VideoEndpoint.self, forKey: .video)
-        // Absent ⇒ `false` (validate-then-default).
-        userRenamed = try c.decodeIfPresent(Bool.self, forKey: .userRenamed) ?? false
+        // Absent OR unreadable ⇒ `false`. `decode_spec` asks exactly one question here —
+        // `matches!(value.get("userRenamed"), Some(Json::Bool(true)))` — so `"userRenamed": "yes"`
+        // is not true, and is not a fault either. **Rust had it right.**
+        //
+        // `decodeIfPresent(Bool.self, …) ?? false` was the trap: on a key present with a value the
+        // type refuses it THROWS instead of answering `nil`, so the `?? false` beside it never ran
+        // and the throw unwound the entire `TreeWorkspace` decode — `WorkspacePersistence.load()`
+        // then replaced the user's whole arrangement with the default and wrote a `.corrupt`
+        // sidecar. The field it was guarding decides one thing: whether a later host title may
+        // overwrite this pane's name. That is not worth a workspace.
+        userRenamed = (try? c.decode(Bool.self, forKey: .userRenamed)) ?? false
     }
 
     public func encode(to encoder: any Encoder) throws {
