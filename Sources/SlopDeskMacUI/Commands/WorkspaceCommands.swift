@@ -1,6 +1,10 @@
 // WorkspaceCommands — the macOS menu-bar surface over the binding registry. Optional: the app works
 // without it.
 //
+// It lived in the draining floor until it had no reason to: a menu bar is macOS's, it names no view
+// from that target (only `WorkspaceBindingRegistry` and SwiftUI), and the whole-file `#if os(macOS)`
+// it wore was the tell. Here the gate is the TARGET, so the file has none — docs/56 §3.
+//
 // A thin, DISCOVERABILITY-ONLY menu that renders `WorkspaceBindingRegistry.groupedForDisplay` as menu
 // sections (Panes / Tabs / Focus / View) so the workspace actions are visible in the
 // macOS menu bar. Each item is a plain `Button(title) { route(action, to: store, …) }` that dispatches
@@ -14,7 +18,6 @@
 // a key equivalent) so the menu stays a faithful cheat sheet without binding the chord. See the
 // `WorkspaceKeyDispatcher` header + docs/DECISIONS.md (menu-bar entry) for the full rationale.
 
-#if os(macOS)
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 import SwiftUI
@@ -24,7 +27,7 @@ import SwiftUI
 /// `.keyboardShortcut` (the `NSEvent` dispatcher owns chords — a shortcut here would double-fire / swallow a
 /// prefix tail). `@MainActor` because the button actions touch the `@MainActor` store + routing.
 @MainActor
-package struct WorkspaceCommands: Commands {
+struct WorkspaceCommands: Commands {
     /// The single live store every item routes against.
     let store: WorkspaceStore
     /// The view-overlay toggles `route(...)` takes (palette / cheat sheet / find / peek-reply). The app
@@ -69,7 +72,7 @@ package struct WorkspaceCommands: Commands {
     /// The memberwise init, spelled out because an implicit one is never more than `internal` and the
     /// macOS shell that builds this menu bar lives in its own target (docs/56 §3). Every toggle defaults
     /// to `nil` — an unwired action stays a graceful no-op through `route`, never a dead menu item.
-    package init(
+    init(
         store: WorkspaceStore,
         togglePalette: (() -> Void)? = nil,
         toggleCheatSheet: (() -> Void)? = nil,
@@ -99,7 +102,7 @@ package struct WorkspaceCommands: Commands {
         self.closeWindow = closeWindow
     }
 
-    package var body: some Commands {
+    var body: some Commands {
         // One top-level menu per display category, in the registry's display order. A `CommandMenu` inserts
         // a brand-new top-level menu (after the app's standard menus) — the workspace's own action verbs.
         //
@@ -200,4 +203,3 @@ package struct WorkspaceCommands: Commands {
         store.tree.activeSession?.activeTab?.activePane
     }
 }
-#endif

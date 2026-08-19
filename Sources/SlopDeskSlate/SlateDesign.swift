@@ -640,7 +640,7 @@ package enum Slate {
     /// its steps, not by its floor.
     ///
     /// ⚠️ The LIGHT rungs are flat hexes; the dark side is NOT a free system fallback. Two subtrees
-    /// flip `colorScheme` to glass (the selected row's ``SlateCompactIsland``, the pane chrome inside
+    /// flip `colorScheme` to glass (the selected row's plate in ``MacSidebarRowView``, the pane chrome inside
     /// the terminal island), and a light-pinned hex would draw dark-on-dark there — which is why
     /// `secondary` still defers to the system tier on that side (`secondaryLabel` composites to
     /// 5.76 on the glass face and needs no help).
@@ -1528,7 +1528,7 @@ package enum Slate {
         /// hovered one) — a shade longer than `standard`, gentle symmetric ease so the reverse (mouse-out)
         /// reads as calm as the forward. EaseInEaseOut 0.28s.
         package static let stackReflow = Motion.stackReflow.animation
-        /// The SELECTION PLATE travelling between two chips (`SlateCompactIsland`'s morph). Longer
+        /// The SELECTION PLATE travelling between two chips (``MacPanelTabGroup``'s morph). Longer
         /// than `standard` and on the emphasized curve on purpose: `standard` is sized for a state
         /// that CHANGES IN PLACE, and spent on a plate crossing the whole panel it read as a skip
         /// rather than a move (measured: the plate cleared 128pt in ~120ms). This is still well
@@ -1545,7 +1545,7 @@ package enum Slate {
         /// the running app, an 0.88 plate was back to full height 53ms in — while it was still almost
         /// transparent — so the opening finished before there was anything to watch and the change
         /// read as the plain cross-fade it was supposed to replace. Opening from 0.80 at full ink
-        /// (see ``SwiftUI/AnyTransition/plateIgnite``) puts the motion where the eye already is.
+        /// (the ignite ``MacPanelTabGroup`` runs) puts the motion where the eye already is.
         package static let plateIgniteScale: CGFloat = 0.80
         /// A SPLIT COLUMN opening or closing — the sidebar and the code panel (user-directed
         /// 2026-08-09). The longest move in the app: an entire column's width travels, so it takes

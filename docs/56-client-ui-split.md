@@ -1278,3 +1278,33 @@ a phone screen at a 1x stream is precisely where it earns its keep. So the first
 `Platform::Mac` and the fourth is `Platform::Both`, which is one more setting the phone reaches than
 it did, and `only_the_client_side_video_row_reaches_the_phone` asserts it per KEY rather than per
 group, so moving a row between groups cannot quietly move it between platforms.
+
+
+### Increment 32 — the menu bar goes home, and the port's leftovers go
+
+Four types in the two UI targets had no caller left, and all four are the same kind of leftover: the
+AppKit port replaced the surface that mounted them and nobody swept up behind it.
+
+`SlateCompactIsland` was the chip a selected tab is stamped out of, with `SlateMorphScope` and
+`AnyTransition.plateIgnite` — a `matchedGeometryEffect` plate that travelled between chips inside one
+project island. Both tab surfaces that mounted it are AppKit now (`MacSidebarRow`, `MacPanelTabGroup`),
+and the AppKit one opens the plate from `Slate.Anim.plateIgniteScale` directly. The RULE was never in
+the view; it is the token, and the token is in `SlopDeskSlate` where both halves reach it — so deleting
+three SwiftUI types cost the design nothing and retired two of the three `matchedGeometryEffect` morphs
+the motion ledger still listed.
+
+`SidebarScrollCapturer` was an `NSViewRepresentable` mounted inside the SwiftUI navigator's scroll view
+to hand the drag coordinator an `NSScrollView` for edge auto-scroll. `MacNavigatorColumn` sets
+`paneDrag.sidebarScrollProvider` from the scroll view it owns, so the representable had been dead since
+the navigator crossed — and the auto-scroll it fed is live, which is the only reason deleting it is safe
+rather than a silent feature loss.
+
+`MacActionRadios` was the first-launch step's vertical radio group, on the reasoning that a step is one
+question with a whole card to ask it in. The steps draw differently now; the pop-up and the segments
+beside it still have callers, and this one did not.
+
+`WorkspaceCommands` moved rather than died. A menu bar is macOS's, it names no view from the draining
+floor (only `WorkspaceBindingRegistry` and SwiftUI), and the whole-file `#if os(macOS)` it wore in
+`SlopDeskClientUI` was the tell — docs/56 §3 says a gate that spans a whole file is a file in the wrong
+target. In `SlopDeskMacUI` the gate is the target, so the file has none, and `package` came off three
+declarations that only ever had it to cross a boundary that is now internal.

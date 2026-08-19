@@ -577,25 +577,6 @@ struct DropTargetFrameReader: NSViewRepresentable {
     }
 }
 
-// MARK: - Sidebar scroll capture (drag edge auto-scroll)
-
-/// Captures the sidebar list's enclosing `NSScrollView` for the coordinator's drag auto-scroll. Must be
-/// mounted INSIDE the ScrollView's content (`enclosingScrollView` walks superviews — the viewport
-/// reader on the ScrollView's `.background` is a sibling and can't reach it). Resolution stays lazy
-/// (a weak-view closure), so a missing scroller (layout not settled / SwiftUI backing change) just
-/// means no auto-scroll — never a crash or a stale strong reference.
-struct SidebarScrollCapturer: NSViewRepresentable {
-    let coordinator: PaneDragCoordinator
-
-    func makeNSView(context _: Context) -> DropTargetFrameReader.PassthroughView {
-        let view = DropTargetFrameReader.PassthroughView()
-        coordinator.sidebarScrollProvider = { [weak view] in view?.enclosingScrollView }
-        return view
-    }
-
-    func updateNSView(_: DropTargetFrameReader.PassthroughView, context _: Context) {}
-}
-
 // MARK: - Cursor-following chip panel
 
 /// A tiny borderless, non-activating, mouse-transparent panel that carries the drag's ghost chip once
