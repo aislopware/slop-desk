@@ -35,7 +35,7 @@ use slopdesk_agent::{
     attention, badge, sleep,
 };
 
-use crate::{borrow, deliver};
+use crate::{borrow, deliver, records_of, saturating_u32};
 
 // MARK: The shared vocabulary, as discriminants
 //
@@ -501,6 +501,140 @@ pub unsafe extern "C" fn slopdesk_agent_attention_walk(
         attention::Step::PopHome => -1,
         attention::Step::PopNowhere => -2,
     }
+}
+
+/// Which pane the Peek & Reply card answers.
+///
+/// Three fields rather than one signed position, because the answer has three shapes and only two
+/// of them are a place in the caller's list. `is_focused` names a pane that need not be in that
+/// list at all — the person may be looking at one the list does not include — so a position would
+/// have to lie about which pane it meant.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SlopDeskPeekTarget {
+    /// Whether anything is waiting to be answered.
+    pub present: bool,
+    /// Whether the answer is the FOCUSED pane rather than a position.
+    pub is_focused: bool,
+    /// The position in the caller's `statuses`, when it is not the focused pane.
+    pub position: usize,
+}
+
+/// Nothing is waiting.
+const NO_PEEK_TARGET: SlopDeskPeekTarget = SlopDeskPeekTarget {
+    present: false,
+    is_focused: false,
+    position: 0,
+};
+
+/// The card's "N of M" counter.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SlopDeskPeekQueue {
+    /// Whether there is a queue worth counting at all — under two there is not.
+    pub present: bool,
+    /// Which of the queue the card is on.
+    pub position: u32,
+    /// How many panes this run of the card set out to answer.
+    pub total: u32,
+}
+
+/// No queue: one waiting pane is not a queue, and the calm caption stays.
+const NO_PEEK_QUEUE: SlopDeskPeekQueue = SlopDeskPeekQueue {
+    present: false,
+    position: 0,
+    total: 0,
+};
+
+/// The pane the Peek & Reply card should answer, over the caller's panes in canonical order.
+///
+/// `has_focused` says whether there IS a focused pane; when false the other two focus arguments are
+/// ignored. `focused_answered` and the `answered` run are the advance-to-next exclusion — a pane
+/// replied to a moment ago still reports blocked until the host re-reports, so without them the
+/// card would hand back the pane it had only just finished with.
+///
+/// The focused pane's status crosses as a value rather than as an index because it need not be in
+/// `statuses`; see [`SlopDeskPeekTarget`].
+///
+/// # Safety
+/// `statuses` must be null or point to `len` initialised bytes, and `answered` null or `len`
+/// initialised bools — both live for the whole call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_agent_peek_target(
+    has_focused: bool,
+    focused_status: c_uchar,
+    focused_answered: bool,
+    statuses: *const c_uchar,
+    answered: *const bool,
+    len: usize,
+) -> SlopDeskPeekTarget {
+    let focused = has_focused.then(|| {
+        attention::FocusedPane {
+            status: status_from(focused_status),
+            answered: focused_answered,
+        }
+    });
+    // SAFETY: the caller's obligation, restated above; `borrow` and `records_of` state their own.
+    let raw = unsafe { borrow(statuses, len) };
+    let panes: Vec<ClaudeStatus> = raw.iter().copied().map(status_from).collect();
+    // SAFETY: as above.
+    let flags = unsafe { records_of(answered, len) };
+    attention::peek_target(focused, &panes, flags).map_or(NO_PEEK_TARGET, |target| {
+        match target {
+            attention::PeekTarget::Focused => {
+                SlopDeskPeekTarget {
+                    present: true,
+                    is_focused: true,
+                    position: 0,
+                }
+            },
+            attention::PeekTarget::Pane(position) => {
+                SlopDeskPeekTarget {
+                    present: true,
+                    is_focused: false,
+                    position,
+                }
+            },
+        }
+    })
+}
+
+/// The card's triage counter, or absent when the queue is under two.
+///
+/// `answered_count` is how many panes this run has already advanced past, and it is NOT counted out
+/// of `answered`: a pane can be answered and then closed, which takes it out of the list without
+/// taking back the fact that it was answered. Counting it here would make the total shrink under
+/// the person as they worked through it.
+///
+/// # Safety
+/// The same obligation [`slopdesk_agent_peek_target`] carries, on the same two arrays.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_agent_peek_queue(
+    statuses: *const c_uchar,
+    answered: *const bool,
+    len: usize,
+    answered_count: usize,
+) -> SlopDeskPeekQueue {
+    // SAFETY: the caller's obligation, restated above; `borrow` and `records_of` state their own.
+    let raw = unsafe { borrow(statuses, len) };
+    let panes: Vec<ClaudeStatus> = raw.iter().copied().map(status_from).collect();
+    // SAFETY: as above.
+    let flags = unsafe { records_of(answered, len) };
+    attention::peek_queue(&panes, flags, answered_count).map_or(NO_PEEK_QUEUE, |queue| {
+        SlopDeskPeekQueue {
+            present: true,
+            position: saturating_u32(queue.position),
+            total: saturating_u32(queue.total),
+        }
+    })
 }
 
 /// The rolled-up status of a run of statuses, given as discriminants.
@@ -1808,5 +1942,65 @@ mod tests {
         );
         assert!((slopdesk_agent_hold_constant(5) - AgentDetectionHold::SCAN_INTERVAL).abs() < f64::EPSILON);
         assert!(slopdesk_agent_hold_constant(200).abs() < f64::EPSILON);
+    }
+
+    /// The peek card's three answer shapes, through the door.
+    ///
+    /// The focused case is the one worth crossing for: it must come back as a FLAG and not as a
+    /// position, because the pane it names may not be in the list the caller passed at all.
+    #[test]
+    fn the_peek_target_crosses_as_a_flag_a_position_or_nothing() {
+        let blocked = status_byte(ClaudeStatus::NeedsPermission);
+        let working = status_byte(ClaudeStatus::Working);
+        let statuses = [blocked, blocked];
+        let answered = [false, false];
+        // SAFETY: every pointer names a live local for the duration of the call.
+        let focused = unsafe {
+            slopdesk_agent_peek_target(true, blocked, false, statuses.as_ptr(), answered.as_ptr(), 2)
+        };
+        assert_eq!(focused, SlopDeskPeekTarget {
+            present: true,
+            is_focused: true,
+            position: 0
+        });
+        // SAFETY: as above.
+        let oldest = unsafe {
+            slopdesk_agent_peek_target(true, working, false, statuses.as_ptr(), answered.as_ptr(), 2)
+        };
+        assert_eq!(oldest, SlopDeskPeekTarget {
+            present: true,
+            is_focused: false,
+            position: 0
+        });
+        // The advance: the focused pane answered, so the next one in the list. Both flags off is
+        // "nothing waiting", which the near side must not read as position zero.
+        // SAFETY: as above.
+        let advanced = unsafe {
+            slopdesk_agent_peek_target(true, blocked, true, statuses.as_ptr(), [true, false].as_ptr(), 2)
+        };
+        assert_eq!(advanced.position, 1);
+        // SAFETY: a null pair is exactly what the door is documented to accept.
+        let nothing =
+            unsafe { slopdesk_agent_peek_target(false, 0, false, core::ptr::null(), core::ptr::null(), 0) };
+        assert_eq!(nothing, NO_PEEK_TARGET);
+    }
+
+    /// The counter crosses as a presence flag plus two numbers — never as a sentinel, because
+    /// "1 of 1" and "no queue" are different things to draw.
+    #[test]
+    fn the_peek_queue_crosses_as_a_flag_and_two_numbers() {
+        let blocked = status_byte(ClaudeStatus::NeedsPermission);
+        let statuses = [blocked, blocked, status_byte(ClaudeStatus::Done)];
+        let answered = [true, false, false];
+        // SAFETY: every pointer names a live local for the duration of the call.
+        let queue = unsafe { slopdesk_agent_peek_queue(statuses.as_ptr(), answered.as_ptr(), 3, 1) };
+        assert_eq!(queue, SlopDeskPeekQueue {
+            present: true,
+            position: 2,
+            total: 3
+        });
+        // SAFETY: as above.
+        let alone = unsafe { slopdesk_agent_peek_queue(statuses.as_ptr(), answered.as_ptr(), 1, 0) };
+        assert_eq!(alone, NO_PEEK_QUEUE, "one waiting pane is not a queue");
     }
 }

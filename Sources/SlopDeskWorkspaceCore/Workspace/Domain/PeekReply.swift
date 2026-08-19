@@ -1,4 +1,4 @@
-import Foundation
+import CSlopDeskFFI
 import SlopDeskAgentDetect
 import SlopDeskWorkspaceModel
 
@@ -25,19 +25,83 @@ public struct PeekContent: Equatable, Sendable {
         self.recent = recent
     }
 
-    /// Pure builder for the recent-output lines from a pane's index-ordered ``CommandBlock`` list (oldest
-    /// first): takes the newest `limit` blocks and renders one line each as `"<command> · <status>"` (the
-    /// command text trimmed, with its status label — "running…" / "exit 0" / "exit 137"). Blocks with an
-    /// empty command line render their status alone. The result is oldest-first within the kept window so it
-    /// reads top-to-bottom like a transcript tail. Generic over a tiny line-shape protocol so it is testable
-    /// with a stand-in (no `SlopDeskTerminal` import in the test).
+    /// The recent-output lines for a pane's index-ordered ``CommandBlock`` list (oldest first).
+    ///
+    /// The fold is `slopdesk_workspace::peek_reply::recent_lines` — which window is kept, what a line
+    /// says, and what a still-forming block with no command text prints instead. This is the crossing:
+    /// the two fields become two PARALLEL flat blobs under one count, and the lines come back the same
+    /// way. Generic over ``PeekBlockLine`` so the caller can hand over any block shape without this file
+    /// importing `SlopDeskTerminal`.
     public static func recentLines(from blocks: [some PeekBlockLine], limit: Int) -> [String] {
-        guard limit > 0, !blocks.isEmpty else { return [] }
-        let kept = blocks.suffix(limit)
-        return kept.map { block in
-            let cmd = block.commandText.trimmingCharacters(in: .whitespacesAndNewlines)
-            return cmd.isEmpty ? block.statusLabel : "\(cmd) · \(block.statusLabel)"
+        let (commandBlob, commandLengths) = TerminalLinkDetector.flatten(blocks.map(\.commandText))
+        let (statusBlob, statusLengths) = TerminalLinkDetector.flatten(blocks.map(\.statusLabel))
+        // A negative limit is clamped rather than rejected: the door's `limit` is a `size_t`, and a
+        // negative `Int` reinterpreted there would be an enormous window instead of an empty one.
+        // Zero is a real answer the rule already gives, so nothing here decides anything.
+        let window = max(0, limit)
+        let call = { (out: inout UnsafeMutableBufferPointer<UInt8>) -> Int in
+            commandBlob.withUnsafeBufferPointer { commands in
+                commandLengths.withUnsafeBufferPointer { commandSizes in
+                    statusBlob.withUnsafeBufferPointer { statuses in
+                        statusLengths.withUnsafeBufferPointer { statusSizes in
+                            slopdesk_ws_peek_recent_lines(
+                                commands.baseAddress, commands.count, commandSizes.baseAddress,
+                                statuses.baseAddress, statuses.count, statusSizes.baseAddress,
+                                blocks.count, window,
+                                out.baseAddress, out.count,
+                            )
+                        }
+                    }
+                }
+            }
         }
+        // The exact upper bound rather than a guess: at most `window` lines, each a length word plus
+        // its two fields plus the four-byte " · " between them.
+        let kept = min(window, blocks.count)
+        let capacity = lineCountBytes + kept * (lineCountBytes + separatorBytes)
+            + commandBlob.count + statusBlob.count
+        var out = [UInt8](repeating: 0, count: capacity)
+        var needed = out.withUnsafeMutableBufferPointer(call)
+        if needed > out.count {
+            out = [UInt8](repeating: 0, count: needed)
+            needed = out.withUnsafeMutableBufferPointer(call)
+        }
+        return decodeLines(out, needed)
+    }
+
+    /// `[uint32 count]`, and one `[uint32 length]` per line.
+    private static let lineCountBytes = 4
+
+    /// The UTF-8 width of `" · "` — the widest a line can grow past its two fields.
+    private static let separatorBytes = 4
+
+    /// Reads `[uint32 count]`, that many `[uint32 length]` words, and the runs they name.
+    ///
+    /// A truncated answer decodes to nothing rather than to a partial tail: the block is a transcript,
+    /// and a transcript missing its last line reads as a command that never ran.
+    private static func decodeLines(_ bytes: [UInt8], _ length: Int) -> [String] {
+        guard length >= lineCountBytes, length <= bytes.count else { return [] }
+        let word = { (at: Int) -> Int in
+            var value = 0
+            for offset in at..<(at + lineCountBytes) { value = value << 8 | Int(bytes[offset]) }
+            return value
+        }
+        let count = word(0)
+        var cursor = lineCountBytes + count * lineCountBytes
+        guard length >= cursor else { return [] }
+        var lines: [String] = []
+        lines.reserveCapacity(count)
+        for index in 0..<count {
+            let run = word(lineCountBytes + index * lineCountBytes)
+            guard cursor + run <= length else { return [] }
+            // The producer is `slopdesk_workspace::peek_reply`, so these bytes are a Rust `String`'s
+            // and cannot be invalid UTF-8. A failable init would add a `nil` branch with no failure
+            // mode behind it — and the caller would have to invent a meaning for it.
+            // swiftlint:disable:next optional_data_string_conversion
+            lines.append(String(decoding: bytes[cursor..<(cursor + run)], as: UTF8.self))
+            cursor += run
+        }
+        return lines
     }
 }
 
@@ -51,116 +115,104 @@ public protocol PeekBlockLine {
     var statusLabel: String { get }
 }
 
-// MARK: - PeekReplyTarget (the pure "which blocked pane does ⌘⇧J answer" selection)
+// MARK: - PeekReplyTarget (the pure "which blocked pane does ⌘⌥J answer" selection)
 
-/// The PURE selection policy for the P4 "Peek & Reply" overlay (⌘⇧J): given the FOCUSED pane, a status
-/// lookup, and the canonical-order pane list, pick the pane whose blocked agent the human should answer
-/// INLINE — without a full tab/context switch.
+/// The face over `slopdesk-agent`'s `attention::peek_target` / `peek_queue` — given the FOCUSED pane, a
+/// status lookup and the canonical-order pane list, which pane's blocked agent the human should answer
+/// INLINE, and where that pane sits in the triage queue.
 ///
-/// Distinct from ``AttentionJump`` (⌘⇧U "jump TO the pane"): jump MOVES focus to the oldest attention
-/// pane; peek-reply REPLIES to it in place and may keep the human where they are. The selection rule
-/// therefore has one extra clause: a FOCUSED pane that is itself blocked (`.needsPermission`) is answered
-/// first (you are already looking at it), and only then does it fall back to the oldest-attention order.
+/// Distinct from ``AttentionJump`` (⌘⇧U "jump TO the pane") by exactly one clause, which is why the two
+/// live in the SAME Rust module: jump MOVES focus, so it has no reason to prefer where you already are;
+/// peek-reply REPLIES in place, so a focused pane that is itself blocked is answered first. Written
+/// apart, that clause is the seam a second ordering grows out of.
 ///
-/// Split from the store + the view so the rule (focused-blocked-first, then oldest-attention, with an
-/// optional exclusion for advance-to-next) is unit-tested with NO `WorkspaceStore` and NO SwiftUI — the
-/// store passes `tree.activeSession?.activeTab?.activePane`, its `agentStatus(for:)` closure, and
-/// `tree.allPaneIDs()`. `#if`-unguarded so it compiles + tests on every platform.
+/// The pane identities never leave Swift. What crosses is a run of status bytes, a run of
+/// already-answered flags, and the focused pane's own two facts — and what comes back is a POSITION in
+/// the list this side handed over, or a flag naming the focused pane, which need not be in that list.
 public enum PeekReplyTarget {
-    /// The pane ⌘⇧J should peek + reply to, or `nil` when nothing needs attention (a no-op / read-only
+    /// The pane ⌘⌥J should peek + reply to, or `nil` when nothing needs attention (a no-op / read-only
     /// peek of `focused` is the caller's choice).
-    ///
-    /// Priority:
-    ///  1. `focused` when it is `.needsPermission` (you are already on a blocked pane — answer it first),
-    ///     UNLESS it is in `excluding` (the just-answered pane on an immediate advance).
-    ///  2. else the oldest attention pane via ``AttentionJump/oldestPane(in:status:)`` — needsPermission
-    ///     before done, oldest-first — over `panes` MINUS `excluding`.
-    ///  3. else `nil`.
     ///
     /// `excluding` (default empty) is the advance-to-next exclusion: right after a reply the just-answered
     /// pane may still report `.needsPermission` until the host re-reports, so the immediate advance drops
-    /// it from BOTH the focused-first clause and the candidate set — else ⌘⇧J would re-target the same pane.
+    /// it from BOTH the focused-first clause and the candidate set — else ⌘⌥J would re-target the same pane.
     public static func select(
         focused: PaneID?,
         status: (PaneID) -> ClaudeStatus,
         panes: some Sequence<PaneID>,
         excluding: Set<PaneID> = [],
     ) -> PaneID? {
-        // 1. The focused pane, if it is blocked and not the one we just answered.
-        if let focused, !excluding.contains(focused), status(focused) == .needsPermission {
-            return focused
+        let ordered = Array(panes)
+        let statuses = ordered.map { status($0).ffiByte }
+        let answered = ordered.map { excluding.contains($0) }
+        let target = statuses.withUnsafeBufferPointer { statusBytes in
+            answered.withUnsafeBufferPointer { answeredFlags in
+                slopdesk_agent_peek_target(
+                    focused != nil,
+                    focused.map { status($0).ffiByte } ?? 0,
+                    focused.map { excluding.contains($0) } ?? false,
+                    statusBytes.baseAddress, answeredFlags.baseAddress, ordered.count,
+                )
+            }
         }
-        // 2. The oldest attention pane over the remaining candidates.
-        return AttentionJump.oldestPane(
-            in: panes.lazy.filter { !excluding.contains($0) },
-            status: status,
-        )
+        guard target.present else { return nil }
+        if target.is_focused { return focused }
+        guard target.position < ordered.count else { return nil }
+        return ordered[target.position]
     }
 
-    /// The "N of M" triage-queue position for the header counter: `answered` is how many
-    /// panes the overlay has already advanced past this session (``excluding``'s count); `remaining` is
-    /// how many still-untouched panes carry the SAME attention predicate ``AttentionJump/oldestPane(in:status:)``
-    /// orders by (`.needsPermission` or `.done`) — so the counter and the chain it counts can never
-    /// disagree. `nil` when the total is under 2: a queue of one is not a queue, and the calm static
-    /// "Peek & Reply" caption stays instead.
+    /// The "N of M" triage-queue position for the header counter, or `nil` when the total is under 2 —
+    /// a queue of one is not a queue, and the calm static "Peek & Reply" caption stays instead.
+    ///
+    /// `excluding`'s COUNT crosses beside its flags, because the two answer different questions: the flags
+    /// say which of these panes are already done with, and the count says how many this run has answered
+    /// at all — including panes that have since closed and left the list.
     public static func queuePosition(
         status: (PaneID) -> ClaudeStatus,
         panes: some Sequence<PaneID>,
         excluding: Set<PaneID>,
     ) -> (position: Int, total: Int)? {
-        let answered = excluding.count
-        var remaining = 0
-        for id in panes where !excluding.contains(id) {
-            switch status(id) {
-            case .needsPermission,
-                 .done: remaining += 1
-            case .none,
-                 .idle,
-                 .working: continue
+        let ordered = Array(panes)
+        let statuses = ordered.map { status($0).ffiByte }
+        let answered = ordered.map { excluding.contains($0) }
+        let queue = statuses.withUnsafeBufferPointer { statusBytes in
+            answered.withUnsafeBufferPointer { answeredFlags in
+                slopdesk_agent_peek_queue(
+                    statusBytes.baseAddress, answeredFlags.baseAddress, ordered.count, excluding.count,
+                )
             }
         }
-        let total = answered + remaining
-        guard total >= 2 else { return nil }
-        return (position: answered + 1, total: total)
+        guard queue.present else { return nil }
+        return (position: Int(queue.position), total: Int(queue.total))
     }
 }
 
 // MARK: - PeekReplyFormatter (the pure "what bytes does this reply send" formatting)
 
-/// The PURE reply-formatting policy for the P4 overlay: converts what the human typed (a free-text line,
-/// a quick-answer digit, or a `!`-prefixed shell line) into the exact text the pane's PTY should receive.
+/// The face over `slopdesk-workspace`'s `peek_reply` — what the human typed, as the exact text the
+/// pane's PTY should receive.
 ///
-/// Every reply ends in a single trailing newline (the agent / shell reads a line). The three shapes:
-///  - a quick-answer DIGIT (1–9, fired by a number key when the field is empty) → `"<n>\n"` — the common
-///    "pick option N of a numbered multiple-choice prompt" case;
-///  - a `!`-prefixed line → the rest, trimmed of the leading `!` (a shell line the human wants run in the
-///    same PTY — no privilege change, it is just bytes to the same shell the agent runs in);
-///  - any other non-empty line → itself + `"\n"`.
-///
-/// `nil` for an empty / whitespace-only field (nothing to send — the caller no-ops). `nonisolated` +
-/// `#if`-unguarded so it composes from any context and tests on every platform.
+/// Every reply ends in a single trailing newline (the agent / shell reads a line), and the rule about
+/// which shape a field is — a `!`-prefixed shell line, a quick-answer digit, or plain text — is Rust's.
+/// `nil` here is the door's `0`: nothing to send, and the caller no-ops.
 public enum PeekReplyFormatter {
     /// The text to send for a free-text reply `field`, or `nil` when there is nothing to send.
-    ///
-    /// A leading `!` strips to a shell line (`"!ls"` → `"ls\n"`); a `!` with nothing after it is treated
-    /// as empty (nothing to send). Otherwise the trimmed line + a single newline. Leading/trailing
-    /// whitespace around the WHOLE field is trimmed; interior spacing is preserved.
     public static func reply(for field: String) -> String? {
-        let trimmed = field.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        if trimmed.hasPrefix("!") {
-            let shell = String(trimmed.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !shell.isEmpty else { return nil }
-            return shell + "\n"
+        let answer = wsTransform(field) { bytes, len, out, cap in
+            slopdesk_ws_peek_reply_text(bytes, len, out, cap)
         }
-        return trimmed + "\n"
+        // Rust's, therefore valid UTF-8 — see the note in `decodeLines`.
+        // swiftlint:disable:next optional_data_string_conversion
+        return answer.map { String(decoding: $0, as: UTF8.self) }
     }
 
-    /// The text to send for a quick-answer digit `n` (1–9), as `"<n>\n"`. `nil` for an out-of-range value
-    /// so the caller can ignore a stray key. The digit path is a separate entry point (NOT routed through
-    /// ``reply(for:)``) because it fires on a key press while the field is empty, not on submit.
+    /// The text to send for a quick-answer digit `n`, or `nil` for a key that is not one. A separate
+    /// entry point (NOT routed through ``reply(for:)``) because it fires on a key press while the field
+    /// is empty, not on submit.
     public static func quickAnswer(_ n: Int) -> String? {
-        guard (1...9).contains(n) else { return nil }
-        return "\(n)\n"
+        // "<n>\n" is two bytes; the door reports its own size, so this is only the inline guess.
+        wsDelivered(capacity: 8) { out, cap in
+            slopdesk_ws_peek_quick_answer(Int32(clamping: n), out, cap)
+        }
     }
 }

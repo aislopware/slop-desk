@@ -36,13 +36,22 @@ path = "src/lib.rs"
 # with a second matcher would put the palette and the fuzzy tests in different orders.
 slopdesk-fuzzy = { path = "../slopdesk-fuzzy" }
 
-# The secret shapes, and the other dependency this crate takes. `src/secrets.rs` scans text a remote
-# shell wrote — a title, a notification body, a clipboard — for credential patterns published as
-# regular expressions, which is the notation they should stay in: a new vendor prefix is then one
-# line, not a new byte loop to review. Same crate and same reason as `slopdesk-screend`: a finite
-# automaton with a documented linear-time guarantee, where ICU's backtracking has no such bound on
-# a line an adversary chose.
+# The secret shapes. `src/secrets.rs` scans text a remote shell wrote — a title, a notification
+# body, a clipboard — for credential patterns published as regular expressions, which is the
+# notation they should stay in: a new vendor prefix is then one line, not a new byte loop to review.
+# Same crate and same reason as `slopdesk-screend`: a finite automaton with a documented
+# linear-time guarantee, where ICU's backtracking has no such bound on a line an adversary chose.
 regex = "1"
+
+# UAX-29 grapheme clusters, for `src/keystroke_replay.rs` and NOTHING else. Swift iterates a
+# `String` as `Character`s — extended grapheme CLUSTERS — and the port must, because the caller
+# feeds it a clipboard and the sink is a `sudo` password field. `chars()` would walk SCALARS, so a
+# decomposed "é" (`e` + U+0301) would type a bare `e` and drop the accent as unmappable, turning a
+# password into a DIFFERENT password that the user watches be accepted. The rule the table encodes
+# is "a cluster maps only when it is one ASCII byte", and deciding where one cluster ends is the
+# standard's job, not a byte loop's — hand-rolling the break table is the second implementation of
+# a spec, with a silent-corruption failure mode.
+unicode-segmentation = "1"
 
 # The layout ops run on every drag frame with a live terminal reflow behind them.
 [profile.release]

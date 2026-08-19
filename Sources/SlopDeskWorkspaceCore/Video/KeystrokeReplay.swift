@@ -1,4 +1,4 @@
-import Foundation
+import CSlopDeskFFI
 
 // MARK: - KeystrokeReplay (clipboard text → key-event sequence)
 
@@ -15,107 +15,79 @@ public struct ReplayStroke: Sendable, Equatable {
     }
 }
 
-/// Encodes a clipboard string into a sequence of ``ReplayStroke``s against the US-QWERTY layout — the
-/// layout-dependent inverse of unicode text injection, needed because secure fields drop synthetic
-/// unicode events but accept HID key events. Characters with no US-QWERTY mapping (accented letters,
-/// emoji, other scripts) are SKIPPED rather than mis-typed; the count is reported so the caller can
-/// warn. Pure + `nonisolated` — fully unit-testable with no view, session, or pasteboard.
+/// The face over `slopdesk-workspace`'s `keystroke_replay` — the US-QWERTY inverse of unicode text
+/// injection, needed because secure fields drop synthetic unicode events but accept HID key events.
+///
+/// The table, the cap and the skip counting are all Rust's (docs/55). What is here is the crossing:
+/// a `String` in, and the door's `[skipped][count][records]` blob back as ``Encoded``.
+///
+/// ⚠️ The unit on the far side is the grapheme CLUSTER, not the scalar, and that is the difference
+/// between a paste and a corruption: a decomposed `é` walked as scalars would type a bare `e` into a
+/// password field and report a single skip. Nothing on this side re-derives it — the whole reason
+/// the encode crosses at all rather than staying a Swift `for ch in text` is that the two languages
+/// would otherwise each have their own answer to what one character is.
 public enum KeystrokeReplay {
-    /// The encoded result: the strokes to send, and how many input characters had no mapping (skipped).
+    /// The encoded result: the strokes to send, and how many input clusters had no mapping (skipped).
     public struct Encoded: Sendable, Equatable {
         public var strokes: [ReplayStroke]
         public var skipped: Int
     }
 
-    /// The largest clipboard payload we will replay as keystrokes — a guard against a multi-megabyte
-    /// paste turning into an endless typing storm into a password field. Beyond this the caller should
-    /// refuse (a password is never this long; a giant accidental paste is the real risk).
-    public static let maxLength = 4096
+    /// The largest clipboard payload we will replay as keystrokes, in grapheme clusters. Read off
+    /// the header rather than transcribed: ``SecretPasteClassifier`` refuses past the same number,
+    /// and two copies of a ceiling is how one of them ends up being the other minus a byte.
+    public static let maxLength = Int(SLOPDESK_KEYSTROKE_MAX_LENGTH)
 
-    /// Encodes `text` into key strokes, skipping unmappable characters. Truncates at ``maxLength``
-    /// (the overflow counts as skipped so the caller can surface "typed N, skipped M").
+    /// `[uint32 skipped][uint32 count]`.
+    private static let headerBytes = 8
+
+    /// `[uint16 keyCode][uint8 shift]`.
+    private static let recordBytes = 3
+
+    /// Encodes `text` into key strokes, skipping what US-QWERTY has no key for and everything past
+    /// ``maxLength``.
     public static func encode(_ text: String) -> Encoded {
-        // Normalize Windows / web / Git-on-Windows CRLF line endings to LF FIRST: Swift segments "\r\n" as a
-        // SINGLE extended-grapheme Character with no US-QWERTY mapping, so without this every CRLF line break
-        // would silently fall through to `skipped` (no Return key sent) and collapse multi-line clipboard
-        // text onto one line. A lone "\r" or "\n" already maps to Return; only the combined grapheme needs it.
-        let normalized = text.contains("\r\n") ? text.replacingOccurrences(of: "\r\n", with: "\n") : text
+        var bytes = Array(text.utf8)
+        return bytes.withUnsafeMutableBufferPointer { input -> Encoded in
+            let call = { (out: inout UnsafeMutableBufferPointer<UInt8>) -> Int in
+                slopdesk_keystroke_replay(input.baseAddress, input.count, out.baseAddress, out.count)
+            }
+            // An ARITHMETIC bound, not a guess: a cluster is at least one byte, so no clipboard can
+            // yield more strokes than it has UTF-8 bytes, and the cap bounds it again. The §4 retry
+            // below is therefore unreachable — it stays because the convention is what makes a short
+            // buffer safe, and a bound that silently stopped holding must not become a truncation.
+            var out = [UInt8](repeating: 0, count: headerBytes + min(input.count, maxLength) * recordBytes)
+            var needed = out.withUnsafeMutableBufferPointer(call)
+            if needed > out.count {
+                out = [UInt8](repeating: 0, count: needed)
+                needed = out.withUnsafeMutableBufferPointer(call)
+            }
+            return decode(out, needed)
+        }
+    }
+
+    /// Reads `[uint32 skipped][uint32 count]` and that many fixed-stride records out of the answer.
+    ///
+    /// A short or truncated answer decodes to NOTHING rather than to a partial list. The payload is
+    /// usually a password: half of one typed into a field is not a degraded paste, it is a wrong
+    /// one, and the caller's "typed N, skipped M" would be reporting on a string that never existed.
+    private static func decode(_ bytes: [UInt8], _ length: Int) -> Encoded {
+        guard length >= headerBytes, length <= bytes.count else { return Encoded(strokes: [], skipped: 0) }
+        let word = { (at: Int) -> Int in
+            var value = 0
+            for offset in at..<(at + 4) { value = value << 8 | Int(bytes[offset]) }
+            return value
+        }
+        let skipped = word(0)
+        let count = word(4)
+        guard length >= headerBytes + count * recordBytes else { return Encoded(strokes: [], skipped: 0) }
         var strokes: [ReplayStroke] = []
-        var skipped = 0
-        var count = 0
-        for ch in normalized {
-            if count >= maxLength { skipped += 1
-                continue
-            }
-            count += 1
-            if let stroke = stroke(for: ch) {
-                strokes.append(stroke)
-            } else {
-                skipped += 1
-            }
+        strokes.reserveCapacity(count)
+        for index in 0..<count {
+            let at = headerBytes + index * recordBytes
+            let keyCode = UInt16(bytes[at]) << 8 | UInt16(bytes[at + 1])
+            strokes.append(ReplayStroke(keyCode: keyCode, shift: bytes[at + 2] != 0))
         }
         return Encoded(strokes: strokes, skipped: skipped)
     }
-
-    /// The ``ReplayStroke`` for a single character, or `nil` if it is not on the US-QWERTY layout.
-    static func stroke(for ch: Character) -> ReplayStroke? {
-        // Letters: same key, Shift for upper case.
-        if let ascii = ch.asciiValue {
-            switch ascii {
-            case 0x61...0x7A: // a–z
-                guard let kc = letterKey[Character(UnicodeScalar(ascii))] else { return nil }
-                return ReplayStroke(keyCode: kc, shift: false)
-            case 0x41...0x5A: // A–Z
-                guard let kc = letterKey[Character(UnicodeScalar(ascii + 0x20))] else { return nil }
-                return ReplayStroke(keyCode: kc, shift: true)
-            default:
-                break
-            }
-        }
-        return symbolKey[ch]
-    }
-
-    // MARK: - US-QWERTY key tables (macOS kVK_ANSI_* virtual key codes)
-
-    /// Lower-case letter → key code.
-    private static let letterKey: [Character: UInt16] = [
-        "a": 0, "b": 11, "c": 8, "d": 2, "e": 14, "f": 3, "g": 5, "h": 4, "i": 34, "j": 38,
-        "k": 40, "l": 37, "m": 46, "n": 45, "o": 31, "p": 35, "q": 12, "r": 15, "s": 1, "t": 17,
-        "u": 32, "v": 9, "w": 13, "x": 7, "y": 16, "z": 6,
-    ]
-
-    /// Digits, punctuation, their shifted symbols, and whitespace → (key code, Shift).
-    private static let symbolKey: [Character: ReplayStroke] = {
-        var m: [Character: ReplayStroke] = [:]
-        // Digit row, unshifted.
-        let digits: [(Character, UInt16)] = [
-            ("0", 29), ("1", 18), ("2", 19), ("3", 20), ("4", 21),
-            ("5", 23), ("6", 22), ("7", 26), ("8", 28), ("9", 25),
-        ]
-        for (c, kc) in digits { m[c] = ReplayStroke(keyCode: kc, shift: false) }
-        // Digit row, shifted symbols (same keys).
-        let shiftedDigits: [(Character, UInt16)] = [
-            (")", 29), ("!", 18), ("@", 19), ("#", 20), ("$", 21),
-            ("%", 23), ("^", 22), ("&", 26), ("*", 28), ("(", 25),
-        ]
-        for (c, kc) in shiftedDigits { m[c] = ReplayStroke(keyCode: kc, shift: true) }
-        // Punctuation, unshifted.
-        let punct: [(Character, UInt16)] = [
-            ("-", 27), ("=", 24), ("[", 33), ("]", 30), ("\\", 42), (";", 41),
-            ("'", 39), (",", 43), (".", 47), ("/", 44), ("`", 50),
-        ]
-        for (c, kc) in punct { m[c] = ReplayStroke(keyCode: kc, shift: false) }
-        // Punctuation, shifted.
-        let shiftedPunct: [(Character, UInt16)] = [
-            ("_", 27), ("+", 24), ("{", 33), ("}", 30), ("|", 42), (":", 41),
-            ("\"", 39), ("<", 43), (">", 47), ("?", 44), ("~", 50),
-        ]
-        for (c, kc) in shiftedPunct { m[c] = ReplayStroke(keyCode: kc, shift: true) }
-        // Whitespace.
-        m[" "] = ReplayStroke(keyCode: 49, shift: false) // space
-        m["\t"] = ReplayStroke(keyCode: 48, shift: false) // tab
-        m["\n"] = ReplayStroke(keyCode: 36, shift: false) // return
-        m["\r"] = ReplayStroke(keyCode: 36, shift: false)
-        return m
-    }()
 }

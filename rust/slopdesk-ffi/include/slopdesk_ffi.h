@@ -270,6 +270,39 @@ ptrdiff_t slopdesk_agent_attention_oldest(const uint8_t *statuses, size_t len);
 // One press of the jump walk over a queue of `len` entries, `visited` flagging the ones already
 // stepped onto: >= 0 advance to that position, -1 pop back to the origin, -2 nowhere to pop to.
 ptrdiff_t slopdesk_agent_attention_walk(const bool *visited, size_t len, bool origin_is_live);
+
+// ---- Peek & Reply: the same ordering with one clause in front of it -------------
+//
+// The card ANSWERS a blocked pane in place instead of jumping to it, so a focused pane that is
+// itself blocked is taken first. `answered` is the advance-to-next exclusion: a pane replied to a
+// moment ago keeps reporting blocked until the host re-reports, so without it the card would hand
+// back the pane it had only just finished with.
+
+// `is_focused` names the FOCUSED pane rather than a position, because that pane need not appear in
+// `statuses` at all. `present == false` is "nothing waiting", which is not position 0.
+typedef struct {
+    bool   present;
+    bool   is_focused;
+    size_t position;
+} SlopDeskPeekTarget;
+
+// `present == false` is "no queue worth counting" — a total under two, where the calm static
+// caption stays. Never a sentinel: "1 of 1" and "no queue" are different things to draw.
+typedef struct {
+    bool     present;
+    uint32_t position;
+    uint32_t total;
+} SlopDeskPeekQueue;
+
+SlopDeskPeekTarget slopdesk_agent_peek_target(bool has_focused, uint8_t focused_status,
+                                              bool focused_answered, const uint8_t *statuses,
+                                              const bool *answered, size_t len);
+// `answered_count` is how many panes this run has already advanced past, and is NOT counted out of
+// `answered`: a pane can be answered and then closed, which takes it out of the list without taking
+// back the fact that it was answered — a total counted from the flags would shrink as it was worked.
+SlopDeskPeekQueue  slopdesk_agent_peek_queue(const uint8_t *statuses, const bool *answered,
+                                             size_t len, size_t answered_count);
+
 // The rollup RANK — the wire's type-27 state byte — which is deliberately not the case order:
 // none(0) < idle(1) < done(2) < working(3) < needsPermission(4). from_urgency degrades unknown to
 // none, so a newer host's datagram cannot trap an older client.
@@ -465,6 +498,39 @@ size_t slopdesk_ws_cwd_display_name(const uint8_t *bytes, size_t len, uint8_t *o
 size_t slopdesk_ws_cwd_badge_path(const uint8_t *bytes, size_t len, uint8_t *out, size_t cap);
 uint8_t slopdesk_ws_paste_risk(const uint8_t *bytes, size_t len, bool target_is_secure,
                                size_t max_length);
+
+// ---- A clipboard as the KEYS that type it --------------------------------------
+//
+// macOS drops synthetic UNICODE events at a secure field, and takes synthetic KEY events, so the
+// only paste a `sudo` prompt accepts is the text spelled back out as US-QWERTY presses. The unit
+// walked is the grapheme CLUSTER, never the scalar: a decomposed "é" walked as scalars would type
+// a bare "e" into a password field and report one skip, which is a DIFFERENT password accepted
+// with nothing on screen to say so.
+
+// The largest clipboard, in CLUSTERS, that will be replayed. Also the ceiling
+// `slopdesk_ws_paste_risk` refuses past — one number, asked for at both sites.
+#define SLOPDESK_KEYSTROKE_MAX_LENGTH 4096
+
+// `[u32 BE skipped][u32 BE count]` then `count` × `[u16 BE key_code][u8 shift]`. Never 0: an empty
+// clipboard is the eight header bytes with both counts zero, which is not §4's refusal. `skipped`
+// counts a cluster with no key AND every cluster past the cap — in both cases the field will not
+// hold what the clipboard did, and the caller has one banner to say so with.
+size_t slopdesk_keystroke_replay(const uint8_t *text, size_t text_len, uint8_t *out, size_t cap);
+
+// ---- Peek & Reply: what the card sends, and the tail it shows -------------------
+//
+// Which PANE it answers is `slopdesk_agent_peek_*` above. Every reply carries its own single
+// trailing newline; `0` means send NOTHING, which is an empty, whitespace-only or bare-`!` field.
+size_t slopdesk_ws_peek_reply_text(const uint8_t *field, size_t field_len, uint8_t *out, size_t cap);
+// A quick-answer digit typed into an empty field. `0` for anything outside 1–9.
+size_t slopdesk_ws_peek_quick_answer(int32_t digit, uint8_t *out, size_t cap);
+// The `limit` newest blocks as one line each, oldest-first, from two PARALLEL flat blobs under one
+// count. `[u32 BE lines]`, then that many `[u32 BE length]` words, then the bytes back to back —
+// the count leads so "this pane has no blocks yet" is not §4's "ask again".
+size_t slopdesk_ws_peek_recent_lines(const uint8_t *commands, size_t commands_len,
+                                     const size_t *command_lengths, const uint8_t *statuses,
+                                     size_t statuses_len, const size_t *status_lengths,
+                                     size_t count, size_t limit, uint8_t *out, size_t cap);
 
 // What a preset or a template types into the pane it just opened: a literal `cd` line when a
 // directory is set, then the command through the token parser. A null or empty `cwd` is "no

@@ -1,93 +1,46 @@
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// Pins ``KeystrokeReplay`` (clipboard text → US-QWERTY key strokes) and ``RemoteWindowModel``'s
-/// paste-as-keystrokes sequencing:
+/// Pins the CROSSING for ``KeystrokeReplay`` and ``RemoteWindowModel``'s paste-as-keystrokes sequencing.
 ///
-/// - lower/upper letters share a key with Shift carrying case; digits, punctuation and their shifted
-///   symbols map to the right key + Shift; whitespace maps to space/tab/return.
-/// - unmappable characters (accents, emoji, other scripts) are SKIPPED and counted, never mis-typed.
-/// - the payload is capped at ``KeystrokeReplay/maxLength`` (overflow counts as skipped).
+/// The US-QWERTY table, the skip rule, the grapheme-cluster unit and the payload cap are
+/// `slopdesk_workspace::keystroke_replay`'s, and asserted there — restating them here would be the
+/// second implementation the port exists to delete. What is left is what only this side can be wrong
+/// about:
+///
+/// - the door's `[skipped][count][records]` blob decodes back into ordered ``ReplayStroke``s, with the
+///   key code read big-endian and Shift read as its own byte;
+/// - ``KeystrokeReplay/maxLength`` agrees with the cap the door enforces, which is what makes the
+///   arithmetic bound on the answer buffer safe;
 /// - `pasteAsKeystrokes` emits a balanced down/up per stroke through the live sink, in order, with
 ///   Shift folded into both edges, and is a no-op when no sink is wired.
 @MainActor
 final class KeystrokeReplayTests: XCTestCase {
-    // MARK: - Encoding
+    // MARK: - The crossing
 
-    func testLowerAndUpperLettersShareKeyWithShift() {
-        let lower = KeystrokeReplay.encode("a")
-        XCTAssertEqual(lower.strokes, [ReplayStroke(keyCode: 0, shift: false)])
-        let upper = KeystrokeReplay.encode("A")
-        XCTAssertEqual(upper.strokes, [ReplayStroke(keyCode: 0, shift: true)])
-        // Different letters, distinct keys.
-        XCTAssertEqual(KeystrokeReplay.encode("z").strokes, [ReplayStroke(keyCode: 6, shift: false)])
-    }
-
-    func testDigitsAndShiftedSymbols() {
-        XCTAssertEqual(KeystrokeReplay.encode("1").strokes, [ReplayStroke(keyCode: 18, shift: false)])
-        XCTAssertEqual(
-            KeystrokeReplay.encode("!").strokes,
-            [ReplayStroke(keyCode: 18, shift: true)],
-            "! is Shift+1 — same key",
-        )
-        XCTAssertEqual(KeystrokeReplay.encode("0").strokes, [ReplayStroke(keyCode: 29, shift: false)])
-        XCTAssertEqual(KeystrokeReplay.encode(")").strokes, [ReplayStroke(keyCode: 29, shift: true)])
-    }
-
-    func testCRLFLineEndingsTypeAsReturnNotSkipped() {
-        // Swift segments "\r\n" as ONE grapheme with no US-QWERTY mapping, so without CRLF normalization a
-        // Windows/web/Git clipboard newline would silently fall through to `skipped` (no Return sent),
-        // collapsing multi-line text onto one line. Normalization turns each CRLF into a single Return.
-        let crlf = KeystrokeReplay.encode("ab\r\ncd")
-        XCTAssertEqual(crlf.strokes, [
-            ReplayStroke(keyCode: 0, shift: false), // a
-            ReplayStroke(keyCode: 11, shift: false), // b
-            ReplayStroke(keyCode: 36, shift: false), // Return (from \r\n)
-            ReplayStroke(keyCode: 8, shift: false), // c
-            ReplayStroke(keyCode: 2, shift: false), // d
-        ])
-        XCTAssertEqual(crlf.skipped, 0, "the CRLF newline is typed as Return, not dropped")
-        // A bare LF and a bare CR each still map to Return (unchanged).
-        XCTAssertEqual(KeystrokeReplay.encode("a\nb").strokes.count, 3)
-        XCTAssertEqual(KeystrokeReplay.encode("a\rb").strokes.count, 3)
-    }
-
-    func testPunctuationAndWhitespace() {
-        XCTAssertEqual(KeystrokeReplay.encode("-").strokes, [ReplayStroke(keyCode: 27, shift: false)])
-        XCTAssertEqual(KeystrokeReplay.encode("_").strokes, [ReplayStroke(keyCode: 27, shift: true)])
-        XCTAssertEqual(KeystrokeReplay.encode("/").strokes, [ReplayStroke(keyCode: 44, shift: false)])
-        XCTAssertEqual(KeystrokeReplay.encode("?").strokes, [ReplayStroke(keyCode: 44, shift: true)])
-        XCTAssertEqual(KeystrokeReplay.encode(" ").strokes, [ReplayStroke(keyCode: 49, shift: false)])
-        XCTAssertEqual(KeystrokeReplay.encode("\t").strokes, [ReplayStroke(keyCode: 48, shift: false)])
-        XCTAssertEqual(KeystrokeReplay.encode("\n").strokes, [ReplayStroke(keyCode: 36, shift: false)])
-    }
-
-    func testRealisticPasswordEncodesFully() {
-        // A typical password — every character must map (no skips), in order.
-        let encoded = KeystrokeReplay.encode("Tr0ub4dor&3")
-        XCTAssertEqual(encoded.skipped, 0)
-        XCTAssertEqual(encoded.strokes.count, 11)
-        XCTAssertEqual(encoded.strokes.first, ReplayStroke(keyCode: 17, shift: true)) // 'T'
-        XCTAssertEqual(encoded.strokes.last, ReplayStroke(keyCode: 20, shift: false)) // '3'
-    }
-
-    func testUnmappableCharactersAreSkippedNotMistyped() {
-        let encoded = KeystrokeReplay.encode("aé😀b")
-        XCTAssertEqual(encoded.skipped, 2, "é and 😀 have no US-QWERTY key")
+    /// One mixed payload through the door: order kept, Shift carried, and the unmappable clusters
+    /// counted rather than typed as something else.
+    func testTheDoorAnswersOrderedStrokesAndASkipCount() {
+        let encoded = KeystrokeReplay.encode("Hi!\u{65}\u{301}\u{1f600}")
         XCTAssertEqual(encoded.strokes, [
-            ReplayStroke(keyCode: 0, shift: false), // a
-            ReplayStroke(keyCode: 11, shift: false), // b
+            ReplayStroke(keyCode: 4, shift: true), // H — Shift+h
+            ReplayStroke(keyCode: 34, shift: false), // i
+            ReplayStroke(keyCode: 18, shift: true), // ! — Shift+1
         ])
+        XCTAssertEqual(encoded.skipped, 2, "the decomposed é and the emoji crossed as skips")
     }
 
-    func testPayloadCapCountsOverflowAsSkipped() {
+    /// The cap the Swift side sizes its buffer from is the one the door enforces. A drift here would
+    /// not fail loudly — it would truncate a password.
+    func testTheCapCrossesAsTheSameNumberBothSidesUse() {
         let big = String(repeating: "a", count: KeystrokeReplay.maxLength + 17)
         let encoded = KeystrokeReplay.encode(big)
         XCTAssertEqual(encoded.strokes.count, KeystrokeReplay.maxLength)
         XCTAssertEqual(encoded.skipped, 17)
     }
 
-    func testEmptyStringEncodesToNothing() {
+    /// An empty clipboard is a real answer (both counts zero), not the §4 refusal.
+    func testEmptyStringCrossesAsNothingRatherThanAFailure() {
         let encoded = KeystrokeReplay.encode("")
         XCTAssertTrue(encoded.strokes.isEmpty)
         XCTAssertEqual(encoded.skipped, 0)

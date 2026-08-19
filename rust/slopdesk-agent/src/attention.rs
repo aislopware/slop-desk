@@ -1,8 +1,16 @@
 //! Which pane is asking for the human, and which one the user is sent to next.
 //!
-//! Three questions, one subject, so they are written together: whether a status CHANGE is worth
-//! interrupting someone for, which waiting pane is the oldest, and where one press of the
-//! jump-to-attention chord goes.
+//! Four questions, one subject, so they are written together: whether a status CHANGE is worth
+//! interrupting someone for, which waiting pane is the oldest, where one press of the
+//! jump-to-attention chord goes, and which pane the Peek & Reply card answers without going
+//! anywhere at all.
+//!
+//! ## Why the card's selection lives beside the chord's
+//!
+//! They rank the same panes by the same predicate and differ in one clause — the chord MOVES focus,
+//! so it has no reason to prefer where you already are, and the card replies in place, so it does.
+//! Written apart, that one clause is the seam a second ordering grows out of, and the card's own
+//! "N of M" counter would then be counting a queue the chain does not walk.
 //!
 //! ## Edges, not levels
 //!
@@ -61,13 +69,121 @@ pub const fn is_completion(previous: ClaudeStatus, current: ClaudeStatus) -> boo
 /// wins, which in traversal order is the one that has been waiting longest.
 #[must_use]
 pub fn oldest_needing_attention(statuses: &[ClaudeStatus]) -> Option<usize> {
-    let blocked = statuses
-        .iter()
-        .position(|status| matches!(status, ClaudeStatus::NeedsPermission));
-    blocked.or_else(|| {
+    oldest_needing_attention_among(statuses, &[])
+}
+
+/// The same ordering with some panes ALREADY ANSWERED, still counted in the caller's positions.
+///
+/// `answered` is one flag per pane; a short or missing run reads as all-false, because it is the
+/// caller's array and a card that offered one pane too many is a better failure than a refusal.
+///
+/// It exists so the peek card's advance can skip the pane it just replied to. The reason it
+/// delegates instead of filtering first is the position: a caller that pre-filtered would get an
+/// index into a list it does not hold, and would have to map it back — which is where the ordering
+/// would eventually be re-derived and start to disagree with itself.
+#[must_use]
+pub fn oldest_needing_attention_among(statuses: &[ClaudeStatus], answered: &[bool]) -> Option<usize> {
+    let unanswered = |position: &usize| !answered.get(*position).copied().unwrap_or(false);
+    let oldest = |wanted: ClaudeStatus| {
         statuses
             .iter()
-            .position(|status| matches!(status, ClaudeStatus::Done))
+            .enumerate()
+            .filter(|(_, status)| **status == wanted)
+            .map(|(position, _)| position)
+            .find(unanswered)
+    };
+    oldest(ClaudeStatus::NeedsPermission).or_else(|| oldest(ClaudeStatus::Done))
+}
+
+/// The FOCUSED pane, as the peek selection sees it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FocusedPane {
+    /// What it is doing.
+    pub status: ClaudeStatus,
+    /// Whether this run of the card has already replied to it.
+    pub answered: bool,
+}
+
+/// Which pane the peek card answers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PeekTarget {
+    /// The focused pane — which the caller holds, and which need not be in the list it passed.
+    Focused,
+    /// The pane at this position in the caller's list.
+    Pane(usize),
+}
+
+/// The pane the Peek & Reply card should answer, or `None` when nothing is waiting.
+///
+/// This is [`oldest_needing_attention`]'s ordering with ONE clause in front of it: a focused pane
+/// that is itself blocked is answered first. The jump chord MOVES focus, so it has no reason to
+/// prefer where you already are; the card replies in place, so the pane you are looking at is the
+/// one you can answer without reading anything new.
+///
+/// `answered` drops a pane from BOTH clauses, which is what makes the advance-to-next work: a pane
+/// that was just replied to keeps reporting blocked until the host re-reports, so without the
+/// exclusion the card would hand back the pane it had only that moment finished with.
+///
+/// The focused pane is answered as [`PeekTarget::Focused`] rather than as a position, because it
+/// need not appear in `statuses` at all — the caller may be looking at a pane the list it built
+/// does not include, and a position would have to lie about which one.
+#[must_use]
+pub fn peek_target(
+    focused: Option<FocusedPane>,
+    statuses: &[ClaudeStatus],
+    answered: &[bool],
+) -> Option<PeekTarget> {
+    if let Some(pane) = focused
+        && !pane.answered
+        && matches!(pane.status, ClaudeStatus::NeedsPermission)
+    {
+        return Some(PeekTarget::Focused);
+    }
+    oldest_needing_attention_among(statuses, answered).map(PeekTarget::Pane)
+}
+
+/// The card's "N of M" triage counter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QueuePosition {
+    /// Which of the queue this card is on — one past however many were answered, so it reads `M+1`
+    /// of `M` on the press that empties it and the card is closing anyway.
+    pub position: usize,
+    /// How many panes this run of the card set out to answer.
+    pub total: usize,
+}
+
+/// The counter above the card, or `None` when there is no queue worth counting.
+///
+/// `answered_count` is how many panes this run has already advanced PAST, and it is passed rather
+/// than counted out of `answered` because a pane can be answered and then closed: it left the list,
+/// it did not stop having been answered, and a total that shrank under the person would make the
+/// card look like it was losing work.
+///
+/// What still counts as remaining is [`is_attention`] — the SAME predicate
+/// [`oldest_needing_attention`] orders by — so the number on the card and the chain it counts can
+/// never disagree about which panes are in the queue.
+///
+/// Under two, there is no queue: one waiting pane is just a waiting pane, and "1 of 1" is noise
+/// where the card's calm static caption belongs.
+#[must_use]
+pub fn peek_queue(
+    statuses: &[ClaudeStatus],
+    answered: &[bool],
+    answered_count: usize,
+) -> Option<QueuePosition> {
+    let remaining = statuses
+        .iter()
+        .enumerate()
+        .filter(|(position, status)| {
+            is_attention(**status) && !answered.get(*position).copied().unwrap_or(false)
+        })
+        .count();
+    let total = answered_count.saturating_add(remaining);
+    (total >= 2).then(|| {
+        QueuePosition {
+            position: answered_count.saturating_add(1),
+            total,
+        }
     })
 }
 
@@ -102,8 +218,19 @@ pub fn walk_step(visited: &[bool], origin_is_live: bool) -> Step {
 
 #[cfg(test)]
 mod tests {
-    use super::{Step, is_attention, is_completion, is_edge, oldest_needing_attention, walk_step};
+    use super::{
+        FocusedPane, PeekTarget, QueuePosition, Step, is_attention, is_completion, is_edge,
+        oldest_needing_attention, peek_queue, peek_target, walk_step,
+    };
     use crate::status::ClaudeStatus;
+
+    /// A focused pane in that status, not yet answered.
+    const fn looking_at(status: ClaudeStatus) -> FocusedPane {
+        FocusedPane {
+            status,
+            answered: false,
+        }
+    }
 
     #[test]
     fn only_blocked_and_finished_are_attention() {
@@ -167,6 +294,144 @@ mod tests {
         );
         assert_eq!(oldest_needing_attention(&[ClaudeStatus::Working]), None);
         assert_eq!(oldest_needing_attention(&[]), None);
+    }
+
+    /// The one clause that separates the card from the chord: being looked at wins.
+    #[test]
+    fn a_focused_blocked_pane_is_answered_before_an_older_one() {
+        let panes = [ClaudeStatus::NeedsPermission, ClaudeStatus::NeedsPermission];
+        assert_eq!(
+            peek_target(Some(looking_at(ClaudeStatus::NeedsPermission)), &panes, &[]),
+            Some(PeekTarget::Focused)
+        );
+    }
+
+    #[test]
+    fn a_focused_pane_that_is_not_blocked_does_not_pre_empt_the_order() {
+        let panes = [ClaudeStatus::NeedsPermission, ClaudeStatus::Working];
+        for busy in [ClaudeStatus::Working, ClaudeStatus::Idle, ClaudeStatus::None] {
+            assert_eq!(
+                peek_target(Some(looking_at(busy)), &panes, &[]),
+                Some(PeekTarget::Pane(0)),
+                "{busy:?}"
+            );
+        }
+        // A finished focused pane does NOT jump the queue either: only blocked does, because only
+        // blocked is holding something up.
+        assert_eq!(
+            peek_target(Some(looking_at(ClaudeStatus::Done)), &panes, &[]),
+            Some(PeekTarget::Pane(0))
+        );
+    }
+
+    #[test]
+    fn with_nothing_focused_the_card_is_the_chord_order() {
+        let panes = [
+            ClaudeStatus::Done,
+            ClaudeStatus::NeedsPermission,
+            ClaudeStatus::Done,
+        ];
+        assert_eq!(peek_target(None, &panes, &[]), Some(PeekTarget::Pane(1)));
+        assert_eq!(
+            peek_target(None, &panes, &[]).map(|target| {
+                match target {
+                    PeekTarget::Pane(position) => Some(position),
+                    PeekTarget::Focused => None,
+                }
+            }),
+            Some(oldest_needing_attention(&panes))
+        );
+    }
+
+    #[test]
+    fn nothing_waiting_is_no_target() {
+        let panes = [ClaudeStatus::Working, ClaudeStatus::Idle];
+        assert_eq!(
+            peek_target(Some(looking_at(ClaudeStatus::Working)), &panes, &[]),
+            None
+        );
+        assert_eq!(peek_target(None, &[], &[]), None);
+    }
+
+    /// The advance drops the answered pane from BOTH clauses, or the card hands back the pane it
+    /// has only just finished with — it is still reporting blocked until the host re-reports.
+    #[test]
+    fn an_answered_pane_leaves_both_the_focused_clause_and_the_candidates() {
+        let panes = [ClaudeStatus::NeedsPermission, ClaudeStatus::NeedsPermission];
+        let focused = Some(FocusedPane {
+            status: ClaudeStatus::NeedsPermission,
+            answered: true,
+        });
+        assert_eq!(
+            peek_target(focused, &panes, &[true, false]),
+            Some(PeekTarget::Pane(1))
+        );
+        assert_eq!(peek_target(focused, &panes, &[true, true]), None);
+    }
+
+    #[test]
+    fn the_counter_advances_while_the_total_holds_still() {
+        let panes = [
+            ClaudeStatus::NeedsPermission,
+            ClaudeStatus::NeedsPermission,
+            ClaudeStatus::Done,
+        ];
+        assert_eq!(
+            peek_queue(&panes, &[], 0),
+            Some(QueuePosition {
+                position: 1,
+                total: 3
+            })
+        );
+        assert_eq!(
+            peek_queue(&panes, &[true, false, false], 1),
+            Some(QueuePosition {
+                position: 2,
+                total: 3
+            })
+        );
+        // All answered: one PAST the total, which is the press that closes the card.
+        assert_eq!(
+            peek_queue(&panes, &[true, true, true], 3),
+            Some(QueuePosition {
+                position: 4,
+                total: 3
+            })
+        );
+    }
+
+    /// The counter's predicate is the chain's, so a finished pane counts exactly like a blocked one
+    /// and a working pane never inflates the total.
+    #[test]
+    fn the_counter_counts_what_the_chain_walks() {
+        let panes = [
+            ClaudeStatus::NeedsPermission,
+            ClaudeStatus::Working,
+            ClaudeStatus::Idle,
+            ClaudeStatus::Done,
+            ClaudeStatus::None,
+        ];
+        assert_eq!(peek_queue(&panes, &[], 0).map(|queue| queue.total), Some(2));
+    }
+
+    #[test]
+    fn a_queue_of_one_is_not_a_queue() {
+        assert_eq!(peek_queue(&[ClaudeStatus::NeedsPermission], &[], 0), None);
+        assert_eq!(peek_queue(&[], &[], 0), None);
+        assert_eq!(
+            peek_queue(&[ClaudeStatus::Working], &[], 1),
+            None,
+            "one answered and nothing left is still not a queue"
+        );
+    }
+
+    /// A short or absent `answered` run reads as all-false rather than refusing: it is the caller's
+    /// array, and offering one pane too many beats offering none.
+    #[test]
+    fn a_ragged_answered_run_reads_as_unanswered() {
+        let panes = [ClaudeStatus::NeedsPermission, ClaudeStatus::NeedsPermission];
+        assert_eq!(peek_target(None, &panes, &[true]), Some(PeekTarget::Pane(1)));
+        assert_eq!(peek_queue(&panes, &[true], 1).map(|queue| queue.total), Some(2));
     }
 
     #[test]
