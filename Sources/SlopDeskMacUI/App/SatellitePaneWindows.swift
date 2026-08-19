@@ -24,7 +24,6 @@ import SlopDeskClientCore
 import SlopDeskClientUI // SatellitePaneHost — the hosted pane content, until the leaf UI is AppKit
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
-import SwiftUI // AnyView — the scene-environment `decorate` the app supplies for each hosted root
 
 // MARK: - SatellitePaneWindow (marker class)
 
@@ -85,7 +84,7 @@ final class SatellitePaneWindowController: NSWindowController, NSWindowDelegate 
 
     init(
         store: WorkspaceStore, paneID: PaneID, title: String, paneDrag: PaneDragCoordinator?,
-        decorate: (AnyView) -> AnyView,
+        overlay: OverlayCoordinator,
     ) {
         self.store = store
         self.paneID = paneID
@@ -101,7 +100,7 @@ final class SatellitePaneWindowController: NSWindowController, NSWindowDelegate 
         // released on close mid-diff double-frees; the coordinator owns the lifetime instead.
         window.isReleasedWhenClosed = false
         window.contentView = SatellitePaneHost.contentView(
-            store: store, paneID: paneID, keyState: keyState, paneDrag: paneDrag, decorate: decorate,
+            store: store, paneID: paneID, keyState: keyState, paneDrag: paneDrag, overlay: overlay,
         )
         super.init(window: window)
         window.delegate = self
@@ -299,14 +298,17 @@ final class SatelliteWindowsCoordinator {
             .contains { (env[$0]?.isEmpty == false) }
     }
 
-    /// One sync pass. `decorate` wraps each window's root with the scene-level environment (theme tint /
-    /// colour scheme / preferences / overlay coordinator) — an `NSHostingView` root inherits NOTHING from
-    /// the main scene, so the app supplies the injection exactly once here. `paneDrag` (optional) wires
-    /// the grab strip into each satellite AND supplies the tear-off drop point: a pane detached by
-    /// DRAGGING it out of the main window opens under the cursor, not in the centre-cascade.
+    /// One sync pass. `overlay` is handed through to each window's hosted root, which is where the ONE
+    /// environment key that subtree reads gets applied (``SatellitePaneHost/contentView(store:paneID:
+    /// keyState:paneDrag:overlay:)``) — an `NSHostingView` root inherits NOTHING from the main scene, and
+    /// the key is declared in the same target as the view that reads it, so the injection was moved to
+    /// that side of the seam in increment 57a. What crosses here is a plain `SlopDeskClientCore` value.
+    /// `paneDrag` (optional) wires the grab strip into each satellite AND supplies the tear-off drop
+    /// point: a pane detached by DRAGGING it out of the main window opens under the cursor, not in the
+    /// centre-cascade.
     func sync(
         _ detached: [DetachedPane], store: WorkspaceStore, paneDrag: PaneDragCoordinator? = nil,
-        decorate: (AnyView) -> AnyView,
+        overlay: OverlayCoordinator,
     ) {
         let desired = Set(detached.map(\.pane))
 
@@ -323,7 +325,7 @@ final class SatelliteWindowsCoordinator {
             let isDesktop = spec?.kind == .desktop
             let title = spec?.title ?? "Detached Pane"
             let controller = SatellitePaneWindowController(
-                store: store, paneID: entry.pane, title: title, paneDrag: paneDrag, decorate: decorate,
+                store: store, paneID: entry.pane, title: title, paneDrag: paneDrag, overlay: overlay,
             )
             if let window = controller.window {
                 if isDesktop {

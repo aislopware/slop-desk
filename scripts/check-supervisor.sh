@@ -5974,6 +5974,61 @@ for edge in "${ui_edges[@]}"; do
     fail "${edge%%:*} reached for ${edge#*import }: the two halves share no view ancestor (docs/56 §3)"
   fi
 done
+# ── …AND A TEST TARGET IS THE SAME EDGE WEARING A `Tests/` PREFIX (docs/56 §3.5 step 5) ─────────
+# The loop above globs `Sources/` and nothing else, so `Tests/` was unopposed — and the fold is
+# blocked by a Mac test target naming the draining floor exactly as hard as by a Mac source file
+# naming it. `SlopDeskClientUI` cannot become `SlopDeskPhoneUI` while ANY `SlopDeskMacUI*` target
+# reaches into it, and a `@testable import` is a stronger edge than a plain one, not a weaker one.
+#
+# The target's OWN tests are not the violation and are deliberately not matched: twenty-eight files
+# under `Tests/SlopDeskClientUITests` say `@testable import SlopDeskClientUI`, and every one of them
+# travels with the target through the rename. What is banned is a half's test target naming the OTHER
+# half — or the floor the other half is about to become.
+declare -a ui_test_edges=(
+  "Tests/SlopDeskMacUITests:SlopDeskPhoneUI"
+  "Tests/SlopDeskPhoneUITests:SlopDeskMacUI"
+  "Tests/SlopDeskClientUITests:SlopDeskMacUI"
+  "Tests/SlopDeskMacUITests:SlopDeskClientUI"
+)
+# TWO FILES CROSS TODAY AND THIS RECORDS THE DEBT RATHER THAN HIDING IT. Both are snapshot-render
+# harnesses that mount the SwiftUI design-system halves the Mac has not finished replacing —
+# `SlateProjectIsland`, `SlateSearchField`, `SlatePlateStyle`, `StatusDotView` — from the Mac's own
+# test target. Where a shared pixel-verify harness should LIVE is a design call, not a lint fix, so
+# they are named here in full and left where they are: the gate goes red the moment a THIRD one
+# appears, which is the failure mode an unwritten gate has no answer for.
+#
+# The check is a SUBSET test, so paying the debt (a harness moving, or the views it mounts becoming
+# AppKit) passes. When the crossing set empties, delete this array and the entry above it becomes a
+# flat ban — the same shrink-only discipline the `draws` ledger retired itself under.
+declare -a ui_test_debt=(
+  "Tests/SlopDeskMacUITests/MacChromeSnapshotRender.swift"
+  "Tests/SlopDeskMacUITests/MacRailStatusRollupRender.swift"
+)
+for edge in "${ui_test_edges[@]}"; do
+  test_dir="${edge%%:*}"
+  test_target="${edge#*:}"
+  [[ -d "${test_dir}" ]] || continue
+  # `@testable ` is OPTIONAL in the pattern on purpose — a test target reaches for a UI half both
+  # ways, and matching only the plain spelling would wave every crossing in the tree through.
+  # `|| true`: a miss exits 1, and under `set -e` that kills the run instead of reporting.
+  test_crossing=$(grep -rlE "^(@testable )?import ${test_target}\$" "${test_dir}" --include='*.swift' |
+    sort || true)
+  # The debt is the DRAINING FLOOR's alone. Every other edge here is banned outright — a Mac test
+  # naming the phone's target has no harness story behind it, and inheriting the allowlist across
+  # edges is how a two-file exemption becomes a general one.
+  test_allowed=''
+  if [[ "${test_target}" == "SlopDeskClientUI" ]]; then
+    test_allowed=$(printf '%s\n' "${ui_test_debt[@]}" | sort)
+  fi
+  test_unexpected=$(comm -23 <(printf '%s\n' "${test_crossing}" | grep -v '^$' || true) \
+    <(printf '%s\n' "${test_allowed}" | grep -v '^$' || true) || true)
+  if [[ -n "${test_unexpected}" ]]; then
+    printf '%s\n' "${test_unexpected}" >&2
+    fail "${test_dir} reached for ${test_target}: a UI half's tests name no other half (docs/56 §3.5 step 5)"
+  fi
+done
+printf 'check-supervisor: no UI half names another, in Sources or in Tests — %s harnesses still owe the fold.\n' \
+  "${#ui_test_debt[@]}"
 # A COORDINATOR HOOK BOUND ON ONE PLATFORM IS A DEAD ROW ON THE OTHER, and it dies quietly: every
 # actuator on `OverlayCoordinator` defaults to an empty closure, so a palette row whose hook nobody
 # bound looks exactly like a row that ran and had nothing to do. Three of them were bound only by the
@@ -6032,29 +6087,44 @@ printf 'check-supervisor: the window root is off the draining floor — one side
 # it accumulates, and it reads to the next person as evidence that a subtree still resolves keys it
 # stopped resolving three increments ago. That is exactly how the stale import in 56a survived.
 #
-# `\.overlayCoordinator` on the SATELLITE root is the one live application and is deliberately not
-# banned: a satellite mounts `PaneContainer`, which reads it, and an `NSHostingView` root inherits
-# nothing. It dies with increment 62, when the satellite's content becomes AppKit.
+# `\.overlayCoordinator` on the SATELLITE root is the one live application, and increment 57a moved it
+# to the other side of the seam rather than deleting it: a satellite mounts `PaneContainer`, which reads
+# the key, and an `NSHostingView` root inherits nothing — but BOTH the key and its reader are declared
+# in `SlopDeskClientUI`, so the injection was making `SlopDeskMacUI` import that whole target purely to
+# spell one modifier. `SatellitePaneHost.contentView` applies it now and takes the coordinator as a
+# plain `SlopDeskClientCore` value. It dies with increment 62, when the satellite's content is AppKit.
 MAC_APP=Sources/SlopDeskMacUI/SlopDeskMacApp.swift
 # NOT anchored to the start of a line, deliberately: `.a().b()` chained on one line is the same
 # injection and the obvious way to reintroduce it. The `(` is what keeps this off the `\.key`
 # spelling every doc comment in this section uses.
-for key in preferencesStore agentHooksController; do
+#
+# `overlayCoordinator` JOINED the ban list in 57a. It is not banned because nobody reads it — the
+# satellite's subtree does — but because naming it HERE is what the import was for.
+for key in preferencesStore agentHooksController overlayCoordinator; do
   if sed -E 's#^[[:space:]]*//.*##' "${MAC_APP}" | grep -qE "\.${key}\("; then
     grep -nE "\.${key}\(" "${MAC_APP}" >&2
-    fail "${MAC_APP} injects \\.${key} again — every reader of it is a phone view (docs/56 §3.5)"
+    fail "${MAC_APP} injects \\.${key} again — the scene is off the draining floor (docs/56 §3.5)"
   fi
 done
-# The satellite decorator applies EXACTLY the one key its subtree reads. A second one creeping back is
-# the same failure one scope down, and it is invisible for the same reason.
+# AND WITH THE LAST SYMBOL GONE, SO IS THE IMPORT. This is the ledger assertion for the third of the
+# three files: `SlopDeskClientUI` cannot be renamed `SlopDeskPhoneUI` while a `SlopDeskMacUI` file
+# imports it, so an import this stage retired stays retired. Re-adding one is a single green line.
+if grep -qE '^import SlopDeskClientUI' "${MAC_APP}"; then
+  grep -nE '^import SlopDeskClientUI' "${MAC_APP}" >&2
+  fail "${MAC_APP} imports the draining floor again — its last symbol left in 57a (docs/56 §3.5)"
+fi
+# The satellite's hosted root applies EXACTLY the one key its subtree reads, and it applies it in the
+# target that DECLARES the key. A second one creeping back is the same failure one scope down, and it
+# is invisible for the same reason.
 # `grep -o | wc -l` counts OCCURRENCES, not matching lines — two keys chained on one line is precisely
 # the shape a line count would wave through.
-sat_keys="$(sed -n '/private func decorateSatelliteRoot/,/^    }/p' "${MAC_APP}" |
+SATELLITE_HOST=Sources/SlopDeskClientUI/Pane/SatellitePaneContent.swift
+sat_keys="$(sed -n '/package static func contentView/,/^    }/p' "${SATELLITE_HOST}" |
   grep -oE '\.(preferencesStore|agentHooksController|overlayCoordinator)\(' | wc -l | tr -d ' ' || true)"
 if [[ "${sat_keys}" != "1" ]]; then
-  fail "decorateSatelliteRoot applies ${sat_keys} environment keys, not the 1 PaneContainer reads (docs/56 §3.5)"
+  fail "SatellitePaneHost.contentView applies ${sat_keys} environment keys, not the 1 PaneContainer reads (docs/56 §3.5)"
 fi
-printf 'check-supervisor: the Mac injects no environment it does not read — 1 key on the satellite, none on the scene.\n'
+printf 'check-supervisor: the Mac injects no environment at all — the satellite'"'"'s 1 key is applied where it is declared.\n'
 
 # ── The drop chip is one chip, and the pill inks are a pair (docs/56 §3.5, increments 56c/56e) ──
 # THE DROP CHIP IS DRAWN TWICE AND BOTH CAN BE ON SCREEN AT ONCE, which is what makes it different
@@ -6115,6 +6185,57 @@ for half in Sources/SlopDeskClientUI/Pane/PaneStatusPills.swift \
 done
 printf 'check-supervisor: one drop chip drawn twice off one art file, and %s pill inks resolved by every renderer present.\n' \
   "$(printf '%s\n' "${pill_inks}" | wc -l | tr -d ' ')"
+
+# AND THE PILL INKS WERE NOT THE ONLY PAIR OF THAT SHAPE — increment 56c ratcheted one of three and
+# missed two (fixed in 57b). `DropZoneInk` and `GuiUploadTint` are the identical arrangement for the
+# identical reason: each is a NAME in `SlopDeskClientCore` because its resolution is a `Color`, `Color`
+# is `SlopDeskSlate`'s, and Slate sits ABOVE the logic floor — so the branch descends and the LOOKUP
+# stays in each renderer, one four-line `switch` per framework. 56c's own sentence is why they are here
+# rather than waiting for the canvas rewrite: *a ratchet written after the second renderer arrives is a
+# ratchet written too late*. The Mac twins do not exist yet; the loop pins whichever halves do, so the
+# day a twin lands it is already obliged to answer the same roles instead of inventing its own.
+#
+# The `\b` after the case name is load-bearing on the drop-zone table: without it `case \.accent`
+# also matches `case .accentMuted:`, so a half that resolved only the muted rung would pass the gate
+# for the rung it dropped. `M` follows `t` with no word boundary between them, which is exactly the
+# hole. Read the cases out of the enum, never list them here — a THIRD rung must be red in every half.
+#
+# `|| true` on each parse: a grep miss exits 1, and under `set -e` that kills the run instead of
+# reporting. The empty result is the reportable failure and is caught right after.
+#
+# Field 1 is the enum's declaring file, 2 the enum, then every renderer that resolves it.
+declare -a named_ink_tables=(
+  "Sources/SlopDeskClientCore/Pane/DropZonePresentation.swift:DropZoneInk:Sources/SlopDeskClientUI/Pane/PaneDropOverlay.swift:Sources/SlopDeskMacUI/Pane/MacPaneDropOverlay.swift"
+  "Sources/SlopDeskClientCore/Pane/GuiPaneReadout.swift:GuiUploadTint:Sources/SlopDeskClientUI/Pane/GuiLeafView.swift:Sources/SlopDeskMacUI/Pane/MacGuiLeafView.swift"
+)
+for table in "${named_ink_tables[@]}"; do
+  ink_src="${table%%:*}"
+  ink_rest="${table#*:}"
+  ink_enum="${ink_rest%%:*}"
+  ink_halves="${ink_rest#*:}"
+  if [[ ! -e "${ink_src}" ]]; then
+    fail "${ink_src} is gone — ${ink_enum} is the name two renderers agree on (docs/56 §3.5)"
+  fi
+  # The name is bounded by `[:[:space:]{]` rather than left open: `/^package enum DropZoneInk/` also
+  # matches `DropZoneInkRung`, so an enum RENAMED out from under the gate would keep parsing and the
+  # gate would keep passing against a table nothing declares any more.
+  ink_cases="$(sed -n "/^package enum ${ink_enum}[:[:space:]{]/,/^}/p" "${ink_src}" |
+    grep -oE '^[[:space:]]*case [a-zA-Z]+' | awk '{print $2}' || true)"
+  if [[ -z "${ink_cases}" ]]; then
+    fail "no ${ink_enum} cases parsed out of ${ink_src} — this gate would pass vacuously (docs/56 §3.5)"
+  fi
+  IFS=':' read -r -a ink_half_list <<< "${ink_halves}"
+  for half in "${ink_half_list[@]}"; do
+    [[ -e "${half}" ]] || continue
+    for ink in ${ink_cases}; do
+      if ! grep -qE "case \.${ink}\b" "${half}"; then
+        fail "${half} does not resolve the ${ink_enum} .${ink} rung — the renderers would ink it differently (docs/56 §3.5)"
+      fi
+    done
+  done
+  printf 'check-supervisor: %s is %s rungs, resolved by every renderer present.\n' \
+    "${ink_enum}" "$(printf '%s\n' "${ink_cases}" | wc -l | tr -d ' ')"
+done
 
 # ── `staticMirror` stays deleted (docs/56 §3.5, increment 56d) ──────────────────────────────────
 # IT WAS A PARAMETER NOTHING EVER SET. `staticMirror` threaded through `SplitContainer`,

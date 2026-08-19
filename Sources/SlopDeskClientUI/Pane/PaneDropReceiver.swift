@@ -63,9 +63,6 @@ struct PaneDropReceiver: DropDelegate {
     let layout: PaneDropZoneLayout
     /// The overlay state to drive (classified content + active zone).
     let model: PaneDropOverlayModel
-    /// `false` on the static-mirror (ImageRenderer) path — the receiver then declines every drag so a
-    /// snapshot pass never engages the live overlay.
-    let enabled: Bool
     /// The workspace store the terminal-rooted (`newTabCd` / `splitInjectPath`) actions drive — reusing the
     /// existing `openTerminalRooted` ingress.
     let store: WorkspaceStore
@@ -75,12 +72,12 @@ struct PaneDropReceiver: DropDelegate {
     /// canonical `cd` idiom lives in the store ingress (``LinkActionPolicy/changeDirectoryCommandLine(_:)``).
     let terminalModel: TerminalViewModel?
     /// The overlay coordinator the host-resolved advisory toast is pushed into (folder → New-Tab `cd`).
-    /// `nil` outside the scene root (tests / the static mirror) — a no-op then.
+    /// `nil` outside the scene root (tests) — a no-op then.
     let overlayCoordinator: OverlayCoordinator?
 
     // MARK: Lifecycle
 
-    /// Accept the drag iff ``PaneDropGate/acceptsDrag(enabled:carriesSupportedType:isReadOnly:)`` says so —
+    /// Accept the drag iff ``PaneDropGate/acceptsDrag(carriesSupportedType:isReadOnly:)`` says so —
     /// otherwise decline so no overlay shows (validate-then-drop). SwiftUI's contribution is the ONE query
     /// the gate cannot make itself: `hasItemsConforming(to:)` over ``PaneDropGate/acceptedTypes``. That is a
     /// pure query; the read-only read hops to the main actor, where every `DropDelegate` callback is already
@@ -90,7 +87,6 @@ struct PaneDropReceiver: DropDelegate {
         let terminalModel = terminalModel
         return MainActor.assumeIsolated {
             PaneDropGate.acceptsDrag(
-                enabled: enabled,
                 carriesSupportedType: carriesSupportedType,
                 isReadOnly: terminalModel?.isReadOnly,
             )
@@ -98,10 +94,9 @@ struct PaneDropReceiver: DropDelegate {
     }
 
     /// On entry, kick off the async classification of the pasteboard; the overlay appears once `content` is
-    /// set (a few ms later — the loads are local). A no-op when disabled. (`model` is bound as a local so the
-    /// async `Task` captures the `Sendable` `@MainActor` model, not the non-`Sendable` receiver.)
+    /// set (a few ms later — the loads are local). (`model` is bound as a local so the async `Task` captures
+    /// the `Sendable` `@MainActor` model, not the non-`Sendable` receiver.)
     func dropEntered(info: DropInfo) {
-        guard enabled else { return }
         let model = model
         MainActor.assumeIsolated {
             // Stamp this entry with a fresh generation the classify Task captures; a `dropExited`/`performDrop`

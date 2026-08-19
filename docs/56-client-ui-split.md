@@ -2229,6 +2229,20 @@ environment key was a silent `nil`.
 A stale import is not free. It is what makes the ledger a count of files rather than a count of work,
 and it is why increment 54 found 2,900 lines hiding behind a single edge.
 
+> **Correction, increment 57a — the census above has a hole, and it is the word "capitalised".**
+> Swift's most common cross-target symbol is not a type: it is a `func` on `View`, and those are
+> lowercase by convention. `overlayCoordinator(_:)` and `preferencesStore(_:)` are both declared in
+> `SlopDeskClientUI`, both applied in `SlopDeskMacUI`, and **neither is in the 219.** The census would
+> have returned "zero hits" for a file that used them on every line.
+>
+> It reached the right answer here — this file genuinely used nothing, and the build proves it — but
+> it reached it for a reason narrower than the one written down, and a method reused on a file where
+> the answer differs would delete a live import. The test is every declared name, of any case,
+> including bare `func`s at file scope and in extensions. 57a runs both censuses and reports both
+> counts; anything later that cites "56a's method" means the corrected one.
+
+
+
 ### Increment 56b — the window's sidebar toggle, and the second import falls
 
 `MacWorkspaceRootView` took exactly two things from the draining floor. `WindowSidebarToggle` was a
@@ -2366,14 +2380,79 @@ occurrences, so two keys on one line counted as one. Both were caught by trying 
 by reading it — which is the only way a ratchet gets tested, since a green gate and an absent gate look
 identical.
 
+### Increment 57a — an injection in the wrong file, and the third import
+
+`SlopDeskMacApp`'s last `SlopDeskClientUI` symbol was `overlayCoordinator(_:)` — a lowercase `func` on
+`View`, applied in exactly one place, wrapped in a `decorate: (AnyView) -> AnyView` closure and threaded
+two hops down into `SatellitePaneHost.contentView`. The whole target imported the draining floor for
+five lines that name no AppKit at all.
+
+**The key is declared in the same target as the view that reads it.** `\.overlayCoordinator` lives in
+`SlopDeskClientUI`; `PaneContainer`, which reads it, lives in `SlopDeskClientUI`. The hosting-root trap
+56f described is real and unchanged — an `NSHostingView` root inherits nothing — but the answer to it
+was never the caller's to spell. `contentView` takes the coordinator as a plain `SlopDeskClientCore`
+value now and applies the modifier itself, and the parameter is deliberately NON-optional: the slot is
+`OverlayCoordinator?` because a preview may have none, but a satellite window always has one, and a
+defaulted `nil` is exactly the shape that silently mounts a pane whose drop toasts go nowhere.
+
+`SatellitePaneWindows`'s own `import SwiftUI` fell with it — it was there for `AnyView` in the closure
+type and nothing else. Its `SlopDeskClientUI` import stays: that file mounts `SatellitePaneHost`.
+
+**The census that proved it, and why 56a's would have missed this.** 56a tested only CAPITALISED
+declaration names. `overlayCoordinator(_:)` and `preferencesStore(_:)` are lowercase `func`s on `View`
+and would have walked straight through. So both halves were run against the file with its comments
+stripped: **215 capitalised declarations, 0 hits; 311 `func` names, 12 raw hits and all twelve false
+positives** — argument labels (`of:`, `title:`, `body:`), members of types from other targets
+(`DockProgressController.apply`, `ClipboardMonitor.run`), parameter names, the `App`'s own `body`, and
+`SlopDeskMacApp`'s own `private var overlayCoordinator`. **Ledger: 3 → 2.**
+
+### Increment 57b — `enabled:`, and two ratchets 56c was owed
+
+**`enabled:` was `staticMirror`'s corpse.** 56d deleted the flag; what survived it was the parameter the
+flag used to feed. `PaneContainer` passed a literal `true`, `PaneDropReceiver` stored it, and
+`PaneDropGate.acceptsDrag` branched on it — one reachable value through three files, with the receiver's
+doc comment still describing `false` as "the static-mirror (ImageRenderer) path", a path that no longer
+exists. 56d's reason applies verbatim one call deeper: an `NSDraggingDestination`'s `draggingEntered`
+would have re-typed the guard by hand for something nothing reaches. The five test assertions came with
+it, and the one that had to go was `enabled: false` — *"a static-mirror pass never engages the live
+overlay"*, the suite pinning the dead branch, which is 45b's finding for the third time.
+
+**And 56c ratcheted one of three ink tables.** `PaneStatusPillInk` was pinned as a pair because it
+resolves to a `Color` and therefore cannot descend below Slate. `DropZoneInk` and `GuiUploadTint` are
+the identical arrangement for the identical reason and were missed — so 56c's own sentence, *a ratchet
+written after the second renderer arrives is a ratchet written too late*, was written and then not
+applied to its own siblings. Both are gated now, cases read out of the enum, pinning whichever halves
+exist today.
+
+Writing them turned up two holes, both found by breaking the gate rather than by reading it. The `\b`
+after the case name is load-bearing: without it `case \.accent` also matches `case .accentMuted:`, so a
+half that dropped the accent rung would have passed for the rung it dropped. And the enum-name match was
+a PREFIX match — `/^package enum DropZoneInk/` still matches `DropZoneInkRung`, so an enum renamed out
+from under the gate would keep parsing and the gate would keep passing against a table nothing declares.
+That is the same class as 56f's line anchor and its line-vs-occurrence count: a green gate and an absent
+gate look identical, and the only way to tell them apart is to try to break one.
+
+**The `Tests/` edge (see §3.5 step 5).** The "neither half imports the other" gate globbed `Sources/`
+only, so `Tests/` was unopposed, and two Mac snapshot harnesses — `MacChromeSnapshotRender` and
+`MacRailStatusRollupRender` — reach into `SlopDeskClientUI` for `SlateProjectIsland`, `SlateSearchField`,
+`SlatePlateStyle` and `StatusDotView`. A `@testable import` is a stronger edge than a plain one, and the
+fold is blocked by a Mac test target naming the draining floor exactly as hard as by a Mac source file
+naming it. The gate covers both spellings and all four edges; the two files are an explicit,
+subset-checked allowlist scoped to that one edge, so a THIRD crossing is red immediately while paying
+the debt passes. Where a shared pixel-verify harness should live is a design call, not a lint fix — 56d's
+`SlateProjectIsland` note already flagged this exact pair as "an edge the rename still has to answer
+for", and this is what makes that debt fail loudly instead of sitting in a doc.
+
 ## Stage D ledger — what the rename actually costs
 
-`SlopDeskClientUI` cannot become `SlopDeskPhoneUI` while `SlopDeskMacUI` still imports it. That is
-the whole test, and it is countable. It was **13 files** when this ledger was written; it is **3** after
-increments 45, 46, 47, 49, 52, 54 and the 56 wave, and each one names what it takes in the comment on
-the import line. The three that remain are `SlopDeskMacApp`, `MacContentColumn` and
-`SatellitePaneWindows` — every one of them a mount of the pane canvas or of a column that hosts it,
-which is to say the rename now blocks on exactly one thing.
+`SlopDeskClientUI` cannot fold into `SlopDeskPhoneUI` while `SlopDeskMacUI` still imports it. That is
+the whole test, and it is countable — but see the boxed warning under kind 1 before reading any number
+on this page as a quantity of work, and step 5 before reading "fold" as a rename. The count is a
+gate condition, not a burndown. It was **13 files** when this ledger was written; it is **2** after
+increments 45, 46, 47, 49, 52, 54 and the 56/57 waves, and each one names what it takes in the comment
+on the import line. The two that remain are `MacContentColumn` and `SatellitePaneWindows` — both a
+mount of the pane canvas or of a column that hosts it, which is to say the fold now blocks on exactly
+one thing.
 
 Wave 56 took two of them (`SlopDeskSplitViewController`, `MacWorkspaceRootView`) and **neither cost an
 AppKit rewrite of anything the canvas depends on**: one was a stale import, one was a 47-line button no
@@ -2381,11 +2460,14 @@ other caller had. That is the pattern increments 51 and 54 established from oppo
 count can stand still while real work lands, and it can fall while nothing hard happens. Read it as
 progress on the RENAME, never as progress on the port.
 
-`SlopDeskMacApp`'s import is held by **one call**: `.overlayCoordinator(…)` on the satellite root, which
-`PaneContainer` genuinely reads. Increment 56f removed the other five injections as dead. So all three
-surviving edges are now the same edge — the pane canvas — reached three ways: hosted in the content
-column, hosted in a satellite window, and one environment key a satellite's subtree resolves. There is
-no longer any cheap one left; 58 onward is the canvas or nothing.
+`SlopDeskMacApp`'s import was held by **one call** — `.overlayCoordinator(…)` on the satellite root,
+which `PaneContainer` genuinely reads — after 56f removed the other five injections as dead. Increment
+57a took that one too, by moving the injection into the target that declares the key. So both surviving
+edges are now the same edge, the pane canvas, reached two ways: hosted in the content column and hosted
+in a satellite window. **There is no cheap one left; 58 onward is the canvas or nothing.** Every
+increment from 56a to 57b was a stale import, a dead branch, a button, or an injection in the wrong
+file — five edges' worth of debt that had accumulated *behind* the expensive row and cost no AppKit at
+all to clear.
 
 Increment 51 did not move the count — it moved one import, from `MacCodePanelColumn` to
 `MacCodePanelSurfaces`, and NARROWED what it names from a whole column to two device surfaces. A
@@ -2410,22 +2492,55 @@ The expensive kind, and the only one that is.
 
 | What | Lines | Taken by |
 | --- | --- | --- |
-| the pane canvas (`Pane/`, 24 files) | 6888 | `MacContentColumn`, `SlopDeskSplitViewController` |
+| the pane canvas (`Pane/`, 23 files) | 5492 | `MacContentColumn`, `SatellitePaneWindows` |
 | ~~the device panels (`Simulator/` 9 files, `Android/` 6)~~ | ~~4154~~ | ✅ increment 52 — two AppKit surfaces, two `NSView`s descended |
 | ~~`CodePanelSurfaces`~~ | ~~632~~ | ✅ increment 51 — four AppKit surfaces, one vocabulary below |
 | ~~`SettingsBespokeSurface`~~ | ~~325~~ | ✅ increment 49 — five AppKit surfaces, four faces below |
 | ~~`FirstLaunchStepSurface`~~ | ~~286~~ | ✅ increment 47 — the sheet draws both shared steps itself |
 | ~~`StatusDotView`~~ | ~~225~~ | ✅ increment 46 — `RailStatusRollup` draws `MacStatusMarkView`s |
-| `SatellitePaneHost` | 170 | `SatellitePaneWindows` |
-| `WorkspaceColumnHosts` (the factory seam) | 79 | `SlopDeskSplitViewController` |
+| `SatellitePaneHost` | 13 | `SatellitePaneWindows` |
+| `WorkspaceColumnHosts` (the factory seam) | 62 | `MacContentColumn` |
 
-The canvas is the whole of what is left. The device panels were the second bulk — a row this table
-did not have until increment 51, because `CodePanelSurfaces`' 632 lines had been counted as the whole
-debt when the four surfaces they draw host ~4,100 lines more — and they crossed in increment 52.
-`StatusDotView` was the cheapest and went first, then the first-launch checklist, then the bespoke
-settings pages, then the panel's own body, then the device panels. `SatellitePaneHost` and
+> **⚠️ READ THE STRIKETHROUGHS CORRECTLY — they do not mean what this section's title implies, and
+> that is the single most misleading thing on this page.**
+>
+> **Not one struck row was deleted.** `Simulator/` is 1,986 lines today, `Android/` 1,358,
+> `CodeSidebar/` 631, `Settings/` 4,231, `FirstLaunch/` 298, and `StatusDotView.swift` is still in
+> `DesignSystem/`. Every one of them is alive in `SlopDeskClientUI` right now. What each increment
+> actually did was give the **Mac** an AppKit renderer so the Mac stopped importing the SwiftUI one.
+> The SwiftUI one stayed, because the phone still draws it — which was always the plan, and is exactly
+> the mandate: *two separate implementations, the decision shared below, the drawing never.*
+>
+> So a strikethrough means **"this no longer holds a `SlopDeskMacUI` import edge"**, not "this is
+> gone", and the `Lines` column is the size of the AppKit rewrite that was PAID, not of a debt that
+> was retired. The rename's cost is untouched by all six rows.
+>
+> The heading "what the rename actually costs" is therefore answered by neither column. The rename
+> moves **every** file in the target — 101 files, 21,092 lines as of increment 57 — and it moves them
+> whether or not the Mac ever imported them. `Pane/`'s 5,492 lines are 26% of it. The other 74% has no
+> row in this table at all, has never had one, and needs no work: it is already phone-only in effect
+> and simply travels.
+>
+> Both readings are useful; they are answers to different questions. **Which import edges remain?** —
+> the table, and the answer is the canvas. **What does the fold move?** — the whole target, and the
+> table is silent. Increment 54's lesson was that an import count measures the rename and not kind 2.
+> This is its twin: a struck row measures the Mac's independence and not the phone's inventory.
+
+The canvas is the whole of what is left *of the import edges*. The device panels were the second bulk
+— a row this table did not have until increment 51, because `CodePanelSurfaces`' 632 lines had been
+counted as the whole debt when the four surfaces they draw host ~4,100 lines more — and they crossed in
+increment 52. `StatusDotView` was the cheapest and went first, then the first-launch checklist, then
+the bespoke settings pages, then the panel's own body, then the device panels. `SatellitePaneHost` and
 `WorkspaceColumnHosts` are both held by the canvas — the first hosts it in a satellite window, the
 second is the factory seam that mounts it — so nothing here is independently schedulable any more.
+
+Two of this table's numbers were also simply wrong, and both were wrong in the direction that flatters
+the ledger. `SatellitePaneHost` was carried at 170 lines; it is a `package enum` with one static
+factory at `SatellitePaneContent.swift:152`, and it is **13**. The 170 was the whole file, most of which
+is the `NSWindow` subclass's content view and its comments. `WorkspaceColumnHosts` was carried at 79 and
+is **62**. Neither error changes a decision — both were already "held by the canvas" — but a ledger
+whose cheap rows are inflated is a ledger that makes the expensive row look proportionally smaller than
+it is.
 
 ### Kind 2 — not views at all, and in a UI target by accident — ✅ DONE (increments 45 and 54)
 
@@ -2487,16 +2602,51 @@ island moat, and by a differently-animating amount during a collapse.
    `DeviceKeyEvent` turned out to be a third.
 4. The canvas. Increment 54 emptied it of everything that was not a drawing — ~2,900 lines down,
    3,617 in `SlopDeskClientCore/Pane/`, and kind 3 dissolved on the way (see the amendment above). What
-   is left is 5,699 lines across 23 files in `Sources/SlopDeskClientUI/Pane/`, and **all of it is
+   is left is **5,492 lines across 23 files** in `Sources/SlopDeskClientUI/Pane/`, and **all of it is
    genuinely `some View`**: `PaneContainer`, `SplitContainer`, `PaneDivider`, `TerminalLeafView`,
-   `GuiLeafView`, the overlays, `SatellitePaneHost`, `WorkspaceColumnHosts`, `DropTargetFrameReader`.
-   That is the AppKit rewrite, and it is now the ONLY thing between here and the rename — the five
-   remaining imports are all a mount of it or of a column that hosts it.
+   `GuiLeafView`, the overlays, `SatellitePaneHost`, `DropTargetFrameReader`. That is the AppKit
+   rewrite, and it is the only thing between here and **two** remaining import edges — both a mount of
+   the canvas or of a column that hosts it. (`WorkspaceColumnHosts` is in `App/`, not `Pane/`; the
+   five-file claim this step used to make was stale by three increments.)
+
+   **But this is a SECOND renderer, not a port-and-delete, and the step above says so wrongly by
+   omission.** Of those 5,492 lines, eight files already carry a `#if os(` (`SplitContainer`,
+   `TerminalLeafView`, `TerminalInputHost`, `TerminalFindBar`, `PaneMoveAffordance`,
+   `PaneMoveEscapeResponder`, `SatellitePaneContent`, `DropTargetFrameReader`) — those gates are the
+   macOS branches, and they are what the AppKit rewrite *replaces*. The rest is phone code that stays
+   exactly where it is. Nothing in `Pane/` is deleted by the canvas rewrite except the macOS arms of
+   those eight gates.
 
    Doing the evacuation first was not a detour. A 7,123-line canvas ported to AppKit with the decisions
    still inside it would have been ~2,900 lines of logic rewritten by hand into a second language, and
    the "one implementation, never two" rule would have been broken in the same commit that claimed to
    honour it — because the phone would still be reading the SwiftUI copy.
 
-5. The rename itself: `SlopDeskClientUI` → `SlopDeskPhoneUI`, whole-file `#if os(iOS)`, and the two
-   ratchets that keep the halves from naming each other.
+5. The fold — **and it is a merge into a target that already exists, not a rename.** Every version of
+   this step until now read *"`SlopDeskClientUI` → `SlopDeskPhoneUI`"*, which describes moving a name
+   onto empty ground. `Sources/SlopDeskPhoneUI/SlopDeskPhoneApp.swift` has been there since stage A:
+   155 lines, declared at `Package.swift`, and it `import SlopDeskClientUI` like any other consumer.
+   The fold is the draining target's 101 files landing on top of an occupied target whose own app
+   entry point is one of its consumers. That is a different operation with a different failure mode —
+   two `@main`s, two roots, and a `WorkspaceRootView` that has to reconcile with `SlopDeskPhoneApp`'s
+   scene — and none of it is a `git mv`.
+
+   Three more facts this step never recorded:
+
+   - **"whole-file `#if os(iOS)`" is not what happens to most of it.** 40 of the 101 files already
+     carry an internal `#if os(macOS)`/`#if os(iOS)`. Those are not wrapped — they are *resolved*, the
+     macOS arm deleted, because by then the Mac has its own renderer and the gate has one live side.
+     The supervisor's "one allowed gate" rule (`check-supervisor.sh`, the `SlopDeskPhoneUI` whole-file
+     exemption) is the shape the target must be left in, not the shape it is in now.
+   - **Two test files cross the halves and no ratchet sees them.** `ui_edges` in
+     `check-supervisor.sh` globs `Sources/…` only, so `Tests/SlopDeskMacUITests/MacRailStatusRollupRender.swift:31`
+     and `MacChromeSnapshotRender.swift:44` both `@testable import SlopDeskClientUI` unopposed. They
+     take `SlateProjectIsland`, `SlateSearchField`, `SlatePlateStyle` and `StatusDotView` — the SwiftUI
+     design-system halves — into the **Mac's** snapshot harness. That is the same edge the gate exists
+     to forbid, wearing a `Tests/` prefix, and it blocks the fold exactly as a source edge would.
+     Extending the glob to `Tests/` is cheap and should happen before the canvas, not after.
+   - **A `Platform::Both` binding is a second renderer, not a port.** `CommandNavigatorView` was read
+     as port-and-delete work; `binding_rows.rs` files its verb as `Both`, which means the phone needs
+     it too and the Mac's AppKit version joins it rather than replacing it. Check the Rust table before
+     scheduling any surface as a deletion — the table is the authority on which platforms want it, and
+     it is generated from the same rows the supervisor pins.

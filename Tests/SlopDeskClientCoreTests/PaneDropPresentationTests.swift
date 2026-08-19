@@ -160,25 +160,26 @@ final class PaneDropPresentationTests: XCTestCase {
         XCTAssertEqual(PaneDropGate.acceptedTypes, [.fileURL, .url, .text])
     }
 
-    /// Validate-then-drop: a drag gets in only when the pane is live, the payload is supported, and the pane
-    /// is not read-only. The read-only arm is the one with teeth — it is why the affordance never appears on
-    /// a locked pane — and `nil` (a chooser pane, where read-only does not apply) must NOT read as read-only.
+    /// Validate-then-drop: a drag gets in only when the payload is supported and the pane is not read-only.
+    /// The read-only arm is the one with teeth — it is why the affordance never appears on a locked pane —
+    /// and `nil` (a chooser pane, where read-only does not apply) must NOT read as read-only.
+    ///
+    /// The `enabled:` arm this suite used to assert is GONE (increment 57b). It was `staticMirror`'s last
+    /// caller: after 56d deleted that path the only value the parameter could take was `true`, and the one
+    /// case pinned here — "a static-mirror pass never engages the live overlay" — was the suite keeping a
+    /// dead branch alive, which is the exact finding 56d recorded about the flag itself.
     func testAcceptsDragNeedsEveryConditionAndTreatsNilAsWritable() {
-        XCTAssertTrue(PaneDropGate.acceptsDrag(enabled: true, carriesSupportedType: true, isReadOnly: false))
+        XCTAssertTrue(PaneDropGate.acceptsDrag(carriesSupportedType: true, isReadOnly: false))
         XCTAssertTrue(
-            PaneDropGate.acceptsDrag(enabled: true, carriesSupportedType: true, isReadOnly: nil),
+            PaneDropGate.acceptsDrag(carriesSupportedType: true, isReadOnly: nil),
             "a chooser pane has no read-only flag — that is not a refusal",
         )
         XCTAssertFalse(
-            PaneDropGate.acceptsDrag(enabled: true, carriesSupportedType: true, isReadOnly: true),
+            PaneDropGate.acceptsDrag(carriesSupportedType: true, isReadOnly: true),
             "a read-only pane refuses every drop (parity with the paste halt)",
         )
         XCTAssertFalse(
-            PaneDropGate.acceptsDrag(enabled: false, carriesSupportedType: true, isReadOnly: false),
-            "a static-mirror pass never engages the live overlay",
-        )
-        XCTAssertFalse(
-            PaneDropGate.acceptsDrag(enabled: true, carriesSupportedType: false, isReadOnly: false),
+            PaneDropGate.acceptsDrag(carriesSupportedType: false, isReadOnly: false),
             "an unsupported drag is declined, not crashed on",
         )
     }

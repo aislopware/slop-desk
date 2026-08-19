@@ -25,7 +25,6 @@ import Combine // AnyCancellable — the `.remember` frame-save observers, retai
 import Defaults // fire-time reads of the Code Agent sound toggles in the attention sink
 import ObjectiveC // objc_setAssociatedObject — retain the window-close delegate for the window's life
 import SlopDeskClientCore
-import SlopDeskClientUI // the SwiftUI mounts stage D has not lifted yet
 import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
 import SlopDeskTerminal // TerminalCellMetrics + TerminalViewportSnapshotting (live cell advance)
 import SlopDeskWorkspaceCore
@@ -360,6 +359,15 @@ public struct SlopDeskMacApp: App {
                 // fail a test, so it survives every rewrite that removes its readers. That is the same
                 // shape as the stale import increment 56a found — a line that documents an arrangement
                 // which stopped being true, and reads to the next person as evidence it still is.
+                //
+                // AND THE SATELLITE'S ONE LIVE INJECTION LEFT TOO (increment 57a) — not because it was
+                // dead, but because it was in the wrong file. `\.overlayCoordinator` is declared in
+                // `SlopDeskClientUI` and read by `PaneContainer`, also in `SlopDeskClientUI`; this scene
+                // was passing a `decorate:` closure down purely so it could SPELL the modifier, which
+                // cost the whole target an `import SlopDeskClientUI` for five lines that name no AppKit.
+                // `SatellitePaneHost.contentView` applies it now and takes the coordinator as a plain
+                // `SlopDeskClientCore` value, so nothing about the hosting-root trap changed — only who
+                // answers it. That was the last symbol holding this file's import to the draining floor.
                 // The guided first-launch checklist — On-Launch / Default-Terminal / Install-CLI /
                 // Install-Claude-hooks. Presents once on a fresh install (the `hasCompletedFirstLaunch`
                 // Defaults flag) and never under automation (it would steal the autoconnect focus).
@@ -531,7 +539,9 @@ public struct SlopDeskMacApp: App {
                 // persist as windows), so the initial sync is normally a no-op — kept for the
                 // automation/replay paths that could restore a mid-detach state.
                 .onChange(of: store.detachedPanes) { _, panes in
-                    satelliteWindows.sync(panes, store: store, paneDrag: paneDrag, decorate: decorateSatelliteRoot)
+                    satelliteWindows.sync(
+                        panes, store: store, paneDrag: paneDrag, overlay: overlayCoordinator,
+                    )
                 }
                 // THE ⌘/ CHEAT SHEET is the Mac's own AppKit panel (docs/56 stage D) — driven from
                 // HERE for the same reason the satellites are: `windowBox` holds the one workspace
@@ -626,7 +636,7 @@ public struct SlopDeskMacApp: App {
                     // `@State` objects cannot reference each other at property-init time.
                     paneDrag.store = store
                     satelliteWindows.sync(
-                        store.detachedPanes, store: store, paneDrag: paneDrag, decorate: decorateSatelliteRoot,
+                        store.detachedPanes, store: store, paneDrag: paneDrag, overlay: overlayCoordinator,
                     )
                     // The store stays AppKit-free, so a reveal calls back into this coordinator through
                     // the injected seam instead of minting a second live stream.
@@ -718,21 +728,5 @@ public struct SlopDeskMacApp: App {
                 },
             )
         }
-    }
-
-    /// Wraps a satellite window's SwiftUI root with the ONE piece of scene environment it actually
-    /// reads. An `NSHostingView` root inherits NOTHING from the main scene (the known hosting-root env
-    /// trap), so anything the satellite's subtree resolves has to be re-applied here or it comes back
-    /// `nil`. No colour scheme is forced — the chrome follows the OS appearance like every other window.
-    ///
-    /// ⚠️ EXACTLY ONE KEY, and the trimming is not cosmetic (increment 56f). This used to re-apply three.
-    /// A satellite mounts ``SatellitePaneRootView`` → ``PaneContainer``, and `PaneContainer` is the only
-    /// thing down there that reads an environment key at all — `\.overlayCoordinator`. The other two
-    /// were being re-applied against the hosting-root trap for readers that are all phone views.
-    ///
-    /// This one is LIVE and must stay until increment 62 makes the satellite's content AppKit. The trap
-    /// the doc comment describes is real; what changed is how much of it still applies.
-    private func decorateSatelliteRoot(_ root: AnyView) -> AnyView {
-        AnyView(root.overlayCoordinator(overlayCoordinator))
     }
 }

@@ -53,16 +53,23 @@ package enum PaneDropGate {
     /// Whether a drag is accepted at all — validate-then-drop: an unsupported or hostile drag is the
     /// NORMAL case, so it is declined and no overlay ever appears, never a crash.
     ///
+    /// ⚠️ IT USED TO TAKE A THIRD INPUT, `enabled`, AND THAT WAS `staticMirror`'S CORPSE. The
+    /// `ImageRenderer` snapshot path increment 56d deleted was the only thing that ever sent `false`;
+    /// after the deletion the one production caller passed a literal `true` and the parameter carried
+    /// exactly one reachable value through two files. That is the same branch-about-to-be-hand-written-
+    /// into-a-second-language 56d's whole argument was about, one increment later and one call deep:
+    /// an `NSDraggingDestination`'s `draggingEntered` would have re-typed the guard for a path nothing
+    /// reaches. Deleted in increment 57b. If a headless render pass is ever wanted again it gets ONE
+    /// gate where the render starts — never a flag every predicate under the canvas has to carry.
+    ///
     /// - Parameters:
-    ///   - enabled: `false` on a static-mirror (snapshot) pass, which declines everything so a
-    ///     render pass can never engage the live overlay.
     ///   - carriesSupportedType: the platform's answer to "does this drag carry one of
     ///     ``acceptedTypes``" (`DropInfo.hasItemsConforming(to:)` and its siblings).
     ///   - isReadOnly: the dropped-on terminal pane's read-only flag, or `nil` for a chooser pane
     ///     (where read-only does not apply). READ-ONLY refuses every drop — parity with the paste
     ///     halt — so the affordance never appears and no inject / open-in-place can land.
-    package static func acceptsDrag(enabled: Bool, carriesSupportedType: Bool, isReadOnly: Bool?) -> Bool {
-        guard enabled, carriesSupportedType else { return false }
+    package static func acceptsDrag(carriesSupportedType: Bool, isReadOnly: Bool?) -> Bool {
+        guard carriesSupportedType else { return false }
         return isReadOnly != true
     }
 

@@ -133,9 +133,21 @@ private struct SatelliteDragStrip: View {
 
 // MARK: - The seam the window mounts it through
 
-/// One satellite window's content, mounted. `decorate` wraps the root with the scene-level environment
-/// (theme tint / colour scheme / preferences / overlay coordinator) — an `NSHostingView` root inherits
-/// NOTHING from the main scene, so the app supplies that injection once per window.
+/// One satellite window's content, mounted. An `NSHostingView` root inherits NOTHING from the main
+/// scene (the hosting-root environment trap), so the ONE key this subtree reads is applied here.
+///
+/// ⚠️ THE INJECTION BELONGS ON THIS SIDE OF THE SEAM, and increment 57a is where it moved. It used to
+/// arrive as a `decorate: (AnyView) -> AnyView` closure the window target passed down — which meant
+/// `SlopDeskMacUI` had to import the draining target for five lines that name no AppKit at all, purely
+/// to spell `\.overlayCoordinator`'s modifier. The key is declared in THIS target and read by
+/// ``PaneContainer``, also in this target; a caller one floor up was never the right place to say so.
+/// The coordinator crosses as a plain value instead — `SlopDeskClientCore` is below both halves — and
+/// the whole application is the one line below.
+///
+/// The parameter is NON-optional deliberately. The environment slot is `OverlayCoordinator?` because a
+/// test or a preview may have none, but the satellite window always has one, and a defaulted-`nil`
+/// parameter is exactly the shape that lets a future caller silently mount a pane whose drop toasts go
+/// nowhere. It dies with increment 62, when the satellite's content becomes AppKit.
 @MainActor
 package enum SatellitePaneHost {
     package static func contentView(
@@ -143,10 +155,10 @@ package enum SatellitePaneHost {
         paneID: PaneID,
         keyState: SatelliteWindowKeyState,
         paneDrag: PaneDragCoordinator?,
-        decorate: (AnyView) -> AnyView,
+        overlay: OverlayCoordinator,
     ) -> NSView {
         let root = SatellitePaneRootView(store: store, paneID: paneID, keyState: keyState, paneDrag: paneDrag)
-        return NSHostingView(rootView: decorate(AnyView(root)))
+        return NSHostingView(rootView: root.overlayCoordinator(overlay))
     }
 }
 #endif

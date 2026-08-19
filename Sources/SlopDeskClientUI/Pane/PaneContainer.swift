@@ -187,12 +187,10 @@ struct PaneContainer: View {
                 paneID: paneID,
                 layout: PaneDropZoneLayout(size: size),
                 model: dropModel,
-                // The ONE producer of this flag, and it has no `false` left to send: it was
-                // `!staticMirror` until increment 56d deleted that dead path. `enabled` therefore
-                // survives with a constant argument until ``PaneDropReceiver`` and the pure
-                // ``PaneDropGate/acceptsDrag(enabled:carriesSupportedType:isReadOnly:)`` below it drop
-                // the parameter too — one change, in the file that owns the gate.
-                enabled: true,
+                // (No `enabled:` — increment 57b took it. It was `!staticMirror` until 56d deleted that
+                // path, then a literal `true` from this one call site, threaded through
+                // ``PaneDropReceiver`` into ``PaneDropGate/acceptsDrag(carriesSupportedType:isReadOnly:)``
+                // as a parameter with one reachable value. The AppKit twin would have re-typed the guard.)
                 store: store,
                 terminalModel: live?.terminalModel,
                 overlayCoordinator: overlayCoordinator,
