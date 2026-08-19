@@ -1389,3 +1389,28 @@ measured rather than assumed:
 
 What the duplication actually costs is the STORAGE MAPPING, twice. Every word, every option list,
 every group and every platform gate is still read from the one table.
+
+
+### Increment 35 — the phone gets the file drop it was never actually barred from
+
+`GuiLeafView`'s drag-drop upload — a file dropped on a live desktop pane, sent over the dedicated
+PATH-4 connection — was `#if os(macOS)` across three sites: the hover `@State`, the `.dropDestination`
+plus its highlight and progress overlay, and the two helpers behind them. Nothing in that path is
+macOS's. `FileUploadCoordinator` is Foundation over the Network-backed `FileTransferClient`;
+`.dropDestination(for: URL.self)` is SwiftUI's on both platforms; `FileDropHighlight` and
+`FileUploadOverlay` are plain SwiftUI in the same file. `PaneDropReceiver` — the terminal pane's
+drop — was never gated at all, which is what made this one look like the odd one out rather than a
+platform rule.
+
+The one thing that genuinely differs is the GRANT. A URL dropped on iOS arrives security-scoped: it
+names a file the app may read only between `startAccessingSecurityScopedResource()` and its stop, and
+the upload's read spans the whole transfer rather than one call. So the scope is taken in
+`FileUploadCoordinator`, inside the Task that already outlives the drop callback — and taken
+UNCONDITIONALLY, because the API answers `false` for a URL that needs no grant. The stop is balanced
+against that answer rather than against the platform, which is why this needed no gate of its own.
+
+What is left is a device difference, not a platform one: an iPhone has no cross-app drag, so the
+destination never lights there; an iPad has, and now uploads. `GuiLeafView` is down from 13 gates to
+10, and the three that went were the only ones in it that were a MISSING FEATURE rather than a thing
+the platform cannot do. The remaining ten are immersive system-key capture (nine — a `CGEventTap`,
+which iOS has no equivalent of and no way to intercept the Home gesture with) and detach-into-window.

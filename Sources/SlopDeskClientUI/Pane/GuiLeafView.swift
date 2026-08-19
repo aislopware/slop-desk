@@ -60,11 +60,9 @@ struct GuiLeafView: View {
     /// state is all stream, with the corner chip as the way in. Per-pane view state — resets on
     /// remount, like `showStats`.
     @State private var controlsExpanded = false
-    #if os(macOS)
     /// Whether a file drag is hovering a live desktop pane (drives the drop-target highlight). Set only
     /// when the pane actually accepts uploads, so a window/dialog pane never flashes the border.
     @State private var isDropTargeted = false
-    #endif
     #if os(macOS)
     /// IMMERSIVE capture (system keys → host): the CGEventTap owner. Engaged while the toggle is ON —
     /// focus/app/window/read-only edges only SUSPEND swallowing (capture resumes by itself), so the
@@ -190,11 +188,18 @@ struct GuiLeafView: View {
                 }
             }
             .animation(Slate.Anim.reveal, value: showStats)
-        #if os(macOS)
-            // DRAG-DROP FILE UPLOAD (desktop panes): a file dragged from Finder onto the remote
-            // desktop uploads over the DEDICATED PATH-4 connection (never the terminal/video paths).
-            // The drop is accepted only for a live desktop pane; a window/dialog pane rejects it (the
-            // existing `PaneDropReceiver` path-inject still covers terminal panes elsewhere).
+            // DRAG-DROP FILE UPLOAD (desktop panes): a file dragged from Finder — or, on iPad, from
+            // Files.app or any app that vends a file URL — onto the remote desktop uploads over the
+            // DEDICATED PATH-4 connection (never the terminal/video paths). The drop is accepted only
+            // for a live desktop pane; a window/dialog pane rejects it (the existing
+            // `PaneDropReceiver` path-inject still covers terminal panes elsewhere).
+            //
+            // NOT platform-gated, and it used to be. Nothing in the path is macOS's: the coordinator
+            // is Foundation over the Network-backed transfer client, `.dropDestination` is SwiftUI's
+            // on both, and the security-scoped grant an iOS drop needs is taken in
+            // `FileUploadCoordinator` where it can outlive this callback. What differs is only what a
+            // device can drag FROM — an iPhone has no cross-app drag, so the destination simply never
+            // lights there; an iPad has, and now uploads.
             .dropDestination(for: URL.self) { urls, _ in
                 handleFileDrop(urls)
             } isTargeted: { targeted in
@@ -219,7 +224,6 @@ struct GuiLeafView: View {
                 }
             }
             .animation(Slate.Anim.reveal, value: model?.activeUploads ?? [])
-        #endif
             // CAP ADMISSION: request a slot when ON-SCREEN, on appear AND whenever a sibling
             // frees one (`videoPromotionGeneration` bumps); `.task(id:)` cancels+restarts on either. Gated on
             // `isVisible` so a background-tab / zoom-hidden pane does NOT claim a `liveVideoCap` slot (else the
@@ -365,7 +369,6 @@ struct GuiLeafView: View {
     }
     #endif
 
-    #if os(macOS)
     /// Whether this is a LIVE desktop pane that accepts drag-drop uploads (the gesture is "drop onto
     /// the remote desktop"; a window/dialog pane is not a drop target).
     private var isDesktopUploadTarget: Bool {
@@ -379,7 +382,6 @@ struct GuiLeafView: View {
         FileUploadCoordinator.upload(files: urls, host: endpoint.host, port: endpoint.port, into: model)
         return true
     }
-    #endif
 
     /// The `.task` identity: re-run admission when THIS session changes (mount), a sibling frees a slot, OR
     /// visibility flips (so a pane returning to screen re-requests its slot immediately).
