@@ -1,9 +1,14 @@
-// CursorColorHexTests — pins the pure 6-hex ↔ RGB bridge that `CursorPreviewView`'s color wells
-// use to read/write the `TerminalPreferences.cursorColor` / `cursorTextColor` fields. The helper is AppKit-
-// free so it runs headlessly on the macOS `swift test` host. Each case asserts against an INDEPENDENT
-// expected value (not the helper's own derivation), so a broken parse / format / clamp fails the build.
+// CursorColorHexTests — pins the pure 6-hex ↔ RGB bridge the cursor colour wells read and write the
+// `TerminalPreferences.cursorColor` / `cursorTextColor` fields through. The helper is AppKit-free so it runs
+// headlessly on the macOS `swift test` host. Each case asserts against an INDEPENDENT expected value (not the
+// helper's own derivation), so a broken parse / format / clamp fails the build.
+//
+// It moved to `SlopDeskClientCore` in increment 49 — there are two wells now, an `NSColorWell` and a SwiftUI
+// `ColorPicker`, and only the codec between them is shared. The tests stay here, beside the SwiftUI glue that
+// was its first caller.
 
 #if canImport(SwiftUI)
+import SlopDeskClientCore
 import XCTest
 @testable import SlopDeskClientUI
 

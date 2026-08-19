@@ -135,6 +135,20 @@ package enum SettingsLayout {
         }
     }
 
+    /// What a setting is CALLED on a page, by its key.
+    ///
+    /// The flat index's `pageLabel`, which is the register a row is set in — deliberately not its
+    /// `label` (the index's own, longer form) and not its `description` (docs/56 §18). Named here rather
+    /// than at each row because a BESPOKE surface draws settings too: the cursor group's style and blink
+    /// rows are inside `cursor-preview` rather than described by the table, and they must still be called
+    /// what the table would have called them. Three call sites had this lookup typed out before increment
+    /// 49 — here, `SettingsControls.settingLabel(_:)` and the Mac's cursor surface.
+    ///
+    /// Falls back to the key, which is the honest answer for a setting the catalog does not advertise.
+    package static func label(for key: String) -> String {
+        AllSettingsCatalog.entries.first { $0.key == key }?.pageLabel ?? key
+    }
+
     // MARK: The crossing
 
     /// The rows of one group, read position by position.
@@ -144,7 +158,7 @@ package enum SettingsLayout {
             let key = string { slopdesk_settings_layout_row_key(section, mac, group, position, $0, $1) } ?? ""
             return Row(
                 key: key,
-                label: AllSettingsCatalog.entries.first { $0.key == key }?.pageLabel ?? key,
+                label: label(for: key),
                 subtitle: string { slopdesk_settings_layout_row_subtitle(section, mac, group, position, $0, $1) } ?? "",
                 control: control,
             )

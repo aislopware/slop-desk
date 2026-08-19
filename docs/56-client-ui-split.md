@@ -1932,11 +1932,64 @@ written form would have to hand a half-answer back to be re-read at a narrower w
 the same crossing that decided the run exists, so there is no second role→weight table on this side
 to disagree with the one in Rust.
 
+### Increment 49 — the bespoke settings surfaces, and four labels that had already drifted
+
+The third kind-1 surface and the largest yet: `MacSettingsRows` hosted `SettingsBespokeSurface` for
+every group the layout table marks `Control.bespoke(id)` — the reserved Editor page, the Claude-hooks
+card, the notification-permission row, the live caret preview, the font specimen, the All-Settings
+index, the Advanced groups. Those are `MacSettingsBespokeSurfaces`, `MacCursorPreviewSurface`,
+`MacFontFamilySurface`, `MacAllSettingsIndex` and `MacAdvancedSurfaces` now. **9 → 8**, and the
+Settings window no longer hosts a SwiftUI view anywhere.
+
+**`Control.bespoke(id)` is the layout table admitting a group is not a list of settings**, so this
+increment is the one where the words outnumber the widgets. Four faces went down: what the
+cross-platform surfaces SAY and which control their state picks
+(`SettingsBespokePresentation`, 462 lines), the index's wording and its option-group table
+(`SettingsIndexPresentation`), the config file's resolved path and its two actions
+(`SettingsConfigFile`), and the hex ↔ RGB bridge the two colour wells persist through
+(`CursorColorHex`). The Mac's five surfaces read them, the phone's rewritten views read them, and
+neither re-decides.
+
+**The fold is smaller than "which widget", on purpose.** A renderer already knows the SHAPE of a
+key's storage — it holds the binding — so what descends is the three things storage cannot say:
+which OPTION GROUP a token picks from, which LADDER a number steps along, and which key is shown
+read-only. The alternative was measured rather than imagined: `AllSettingsListView` spelled thirteen
+option lists inline as `Text(…).tag(…)`, and **four had already drifted** from
+`slopdesk_workspace::settings_catalog`, which has held the same lists all along — "Context Menu" vs
+"Context menu", "Copy or Paste" vs "Copy or paste", "Home" vs "Home Directory". Naming the group is
+what makes a fourteenth list impossible to type. The scroll multiplier was the same shape in
+numbers: its range, granularity and `%.2f×` readout are `Ladder::ScrollMultiplier`'s, and both halves
+had re-typed all three at the control.
+
+**The fourth drift was a third spelling, and it needed a fix rather than a lift.**
+`FirstLaunchStepPresentation` had `OnLaunchBehavior.title` typed out — "Restore Last Session" — while
+Settings → General read `ON_LAUNCH` and said "Restore session". Two names for one choice, on two
+surfaces a reader sees within a minute of each other, and increment 47 had just finished making that
+pair single-spelled *for the checklist*. `title` forwards to `SettingsCatalog.label(.onLaunch,)` now,
+and the note under the picker interpolates it rather than repeating it — prose that names a choice
+the picker above it spells differently is the same drift, and reads worse.
+
+**A lookup that was typed at three call sites is one function.** `SettingsLayout.label(for:)` is the
+page label of a key. The row table wanted it, `SettingsControls.settingLabel(_:)` wanted it, and — the
+reason it could not just stay at the row table — the Mac's cursor surface wants it too: a BESPOKE
+surface draws settings, so the cursor group's style and blink rows sit inside `cursor-preview` rather
+than being described by the table, and they must still be called what the table would have called
+them.
+
+**What stayed with each half is the same three things as every increment since 19**, and the list has
+not grown: the binding (`@Default` is a property wrapper, and SwiftUI observing the read is its whole
+point), the widget, and the hue — `SlopDeskSlate` depends on `SlopDeskClientCore`, so an ink cannot
+descend without becoming a cycle. `SettingsProseInk` is the role, resolved to `SettingsInk.ok` in
+SwiftUI and `Slate.Native.StatusInk.ok` in AppKit. `os-integration`, `cli-install`, `raw-overrides`
+and `config-file` are `Platform::Mac` in the layout table and keep their words with their single
+renderer, exactly as `MacOSIntegrationRows`' and `MacCLIInstallCard`'s already do — a surface with
+one half has nothing to spell once.
+
 ## Stage D ledger — what the rename actually costs
 
 `SlopDeskClientUI` cannot become `SlopDeskPhoneUI` while `SlopDeskMacUI` still imports it. That is
-the whole test, and it is countable. It was **13 files** when this ledger was written; it is **9**
-after increments 45, 46 and 47, and each one names what it takes in the comment on the import line.
+the whole test, and it is countable. It was **13 files** when this ledger was written; it is **8**
+after increments 45, 46, 47 and 49, and each one names what it takes in the comment on the import line.
 Grouped, they are three kinds of debt, not one — and only the first kind needs an AppKit rewrite.
 
 ### The ruling first
@@ -1958,7 +2011,7 @@ The expensive kind, and the only one that is.
 | --- | --- | --- |
 | the pane canvas (`Pane/`, 24 files) | 6888 | `MacContentColumn`, `SlopDeskSplitViewController` |
 | `CodePanelSurfaces` | 632 | `MacCodePanelColumn` |
-| `SettingsBespokeSurface` | 325 | `MacSettingsRows` |
+| ~~`SettingsBespokeSurface`~~ | ~~325~~ | ✅ increment 49 — five AppKit surfaces, four faces below |
 | ~~`FirstLaunchStepSurface`~~ | ~~286~~ | ✅ increment 47 — the sheet draws both shared steps itself |
 | ~~`StatusDotView`~~ | ~~225~~ | ✅ increment 46 — `RailStatusRollup` draws `MacStatusMarkView`s |
 | `SatellitePaneHost` | 170 | `SatellitePaneWindows` |
@@ -1966,7 +2019,9 @@ The expensive kind, and the only one that is.
 
 The canvas dominates by an order of magnitude, and everything else in this table is small enough to
 cross one at a time. `StatusDotView` was the cheapest and went first, then the first-launch
-checklist; the bespoke settings pages are next.
+checklist, then the bespoke settings pages. `SatellitePaneHost` and `WorkspaceColumnHosts` are what
+is left before the canvas, and both are held by it: the first hosts the canvas in a satellite window,
+the second is the factory seam that mounts it.
 
 ### Kind 2 — not views at all, and in a UI target by accident — ✅ DONE (increment 45)
 
@@ -1995,6 +2050,6 @@ moat moves out of SwiftUI into the AppKit column. It is not independently schedu
 
 1. ~~Kind 2 — the pool goes down.~~ ✅ increment 45. Two imports, no rewrite.
 2. Kind 1's small surfaces — ~~`StatusDotView`~~ (✅ increment 46), ~~the first-launch checklist~~
-   (✅ increment 47), then the bespoke settings pages. Each a contained AppKit rewrite, and each
-   costs one import.
+   (✅ increment 47), ~~the bespoke settings pages~~ (✅ increment 49). Each a contained AppKit
+   rewrite, and each cost one import.
 3. The canvas, which takes kind 3 with it and is the remaining bulk.

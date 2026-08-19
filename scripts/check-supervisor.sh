@@ -5354,6 +5354,49 @@ if spells 'KeybindingPreferences\(overrides:' Sources/SlopDeskMacUI/Settings/Mac
 fi
 printf 'check-supervisor: one chord editor, drawn twice, and both halves record from one table.\n'
 
+# ── One bespoke settings surface, drawn twice and spelled once ─────────────────────────────────
+# `Control.bespoke(id)` is the layout table admitting a group is not a list of settings, so those
+# groups carry the settings words that the table cannot: an empty page stating its own emptiness, a
+# card writing `~/.claude/settings.json`, a caret preview, a font specimen, the searchable index.
+# They had ONE renderer until increment 49, which is how every word in them came to have a single
+# speller BY ACCIDENT. There are two now, and the accident does not survive a second drawing.
+for pair in \
+  "Sources/SlopDeskClientUI/Settings/SettingsBespokeSurfaces.swift:SettingsBespokePresentation" \
+  "Sources/SlopDeskMacUI/Settings/MacSettingsBespokeSurfaces.swift:SettingsBespokePresentation" \
+  "Sources/SlopDeskClientUI/Settings/AllSettingsListView.swift:SettingsIndexPresentation" \
+  "Sources/SlopDeskMacUI/Settings/MacAllSettingsIndex.swift:SettingsIndexPresentation" \
+  "Sources/SlopDeskClientUI/Settings/CursorPreviewView.swift:CursorColorHex" \
+  "Sources/SlopDeskMacUI/Settings/MacCursorPreviewSurface.swift:CursorColorHex"; do
+  half="${pair%%:*}"
+  face="${pair##*:}"
+  if ! grep -q "${face}" "${half}" 2> /dev/null; then
+    fail "${half} stopped reading ${face} — a bespoke surface deciding for itself is the second speller (docs/56, increment 49)"
+  fi
+done
+# The index's option lists are the CATALOG's. Thirteen were typed at the SwiftUI control as
+# `Text(…).tag(…)` before increment 49 and FOUR had drifted — "Context Menu" against the catalog's
+# "Context menu", "Home" against "Home Directory". Naming the group is what makes a fourteenth list
+# impossible to type, so both index renderers must ask for a group rather than build one.
+for index in Sources/SlopDeskClientUI/Settings/AllSettingsListView.swift \
+  Sources/SlopDeskMacUI/Settings/MacAllSettingsIndex.swift; do
+  if ! grep -q 'SettingsIndexPresentation.optionGroup' "${index}"; then
+    fail "${index} stopped asking optionGroup — an option list typed at a control is how four labels drifted"
+  fi
+done
+# And the on-launch pair, which is the drift increment 49 found rather than prevented: the checklist
+# spelled "Restore Last Session" while Settings → General read ON_LAUNCH and said "Restore session".
+if ! grep -q 'SettingsCatalog.label(.onLaunch' Sources/SlopDeskClientCore/FirstLaunch/FirstLaunchStepPresentation.swift; then
+  fail "OnLaunchBehavior.title stopped reading ON_LAUNCH — the checklist and Settings named one choice twice before"
+fi
+# One hex parser under the two colour wells. A second one keeps passing both halves' tests while
+# rounding a channel differently, and the value it writes is a libghostty `cursor-color` string.
+hex_parsers=$(grep -rln 'radix: 16' Sources/SlopDeskClientUI/Settings Sources/SlopDeskMacUI/Settings 2> /dev/null || true)
+if [[ -n "${hex_parsers}" ]]; then
+  printf '%s\n' "${hex_parsers}" >&2
+  fail "a settings surface parses or prints hex itself — CursorColorHex is the bridge (docs/56, increment 49)"
+fi
+printf 'check-supervisor: one bespoke settings surface, drawn twice and spelled once.\n'
+
 # ── One design floor, two renderers ───────────────────────────────────────────────────────────
 # `SlopDeskSlate` is the layer BOTH halves stand on: the token ladder in its `NSColor`/`UIColor`
 # spelling and its `Color` one, the status mark's geometry and its wandering tempo, the vector

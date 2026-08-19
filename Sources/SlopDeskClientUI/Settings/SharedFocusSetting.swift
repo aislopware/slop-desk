@@ -19,6 +19,7 @@
 // whole wiring — including the `device-prefs.json` round trip — with NO view.
 
 #if canImport(SwiftUI)
+import SlopDeskClientCore // SettingsIndexPresentation — the one spelling of the readout
 import SlopDeskWorkspaceCore
 import SwiftUI
 
@@ -45,8 +46,13 @@ enum SharedFocusSetting {
     static func isConfigurable(_ store: WorkspaceStore?) -> Bool { store != nil }
 
     /// The readout the All-Settings list shows beside its ✎ jump.
+    ///
+    /// Forwards to ``SettingsIndexPresentation/followSessionFocusText(_:)`` since increment 49, so the two
+    /// index renderers and this row cannot end up disagreeing about one word.
     @MainActor
-    static func valueText(_ store: WorkspaceStore?) -> String { isFollowing(store) ? "On" : "Off" }
+    static func valueText(_ store: WorkspaceStore?) -> String {
+        SettingsIndexPresentation.followSessionFocusText(store)
+    }
 
     /// The row's binding. Writes go through ``WorkspaceStore/setFollowSessionFocus(_:)`` — the ONE edit
     /// path, so the "resuming follow drops the device-local overlay" rule can never be routed around.

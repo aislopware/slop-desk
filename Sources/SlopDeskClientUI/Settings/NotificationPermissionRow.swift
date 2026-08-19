@@ -5,10 +5,13 @@
 // arm of the Shell page's control switch — the page renders settings, and this renders a permission.
 //
 // The DOT is a decision and lives where decisions live: ``PermissionStatus/dot(forAuthorization:)``,
-// pure and headlessly pinned (`PermissionStatusTests`). This view only queries
-// `UNUserNotificationCenter` and renders the answer.
+// pure and headlessly pinned (`PermissionStatusTests`). Since increment 49 the WORDS around it live one
+// floor down too, in ``SettingsPermissionRow`` — there are two renderers now
+// (``SlopDeskMacUI/MacNotificationPermissionRow``) and a sentence about an OS grant reads the same on
+// both. This view queries `UNUserNotificationCenter` and arranges the answer; it decides nothing.
 
 #if canImport(SwiftUI)
+import SlopDeskClientCore // SettingsPermissionRow — the words this row is not allowed to re-type
 import SlopDeskSlate
 import SlopDeskWorkspaceCore
 import SwiftUI
@@ -36,7 +39,7 @@ struct NotificationPermissionRow: View {
 
     var body: some View {
         LabeledContent {
-            Button("Open System Settings", action: openSystemSettings)
+            Button(SettingsPermissionRow.buttonTitle, action: openSystemSettings)
                 .controlSize(.small)
         } label: {
             HStack(spacing: Slate.Metric.space2) {
@@ -44,8 +47,8 @@ struct NotificationPermissionRow: View {
                     .fill(dotColor)
                     .frame(width: 8, height: 8)
                 VStack(alignment: .leading, spacing: Slate.Metric.space1) {
-                    Text("System Permission")
-                    Text(dotSubtitle)
+                    Text(SettingsPermissionRow.title)
+                    Text(SettingsPermissionRow.subtitle(dot))
                         .font(SettingsType.subtitle)
                         .foregroundStyle(SettingsInk.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -55,21 +58,7 @@ struct NotificationPermissionRow: View {
         .task { await refresh() }
     }
 
-    private var dotColor: Color {
-        switch dot {
-        case .green: SettingsInk.ok
-        case .amber: SettingsInk.warn
-        case .red: SettingsInk.err
-        }
-    }
-
-    private var dotSubtitle: String {
-        switch dot {
-        case .green: "Notifications are allowed for slopdesk."
-        case .amber: "Notification permission has not been granted yet."
-        case .red: "Notifications are blocked — enable them in System Settings."
-        }
-    }
+    private var dotColor: Color { SettingsInk.of(SettingsPermissionRow.ink(dot)) }
 
     /// Query `UNUserNotificationCenter` and map the authorization status through the pure dot decision. Never
     /// instantiated in a test (`PermissionStatusTests` pins the pure mapping) — `current()` traps without a
@@ -86,7 +75,7 @@ struct NotificationPermissionRow: View {
         // LaunchServices; on iOS `UIApplication.openSettingsURLString` is still the URL SOURCE (no SwiftUI
         // equivalent) — only the open ACTION is now `openURL`.
         #if os(macOS)
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.notifications") {
+        if let url = URL(string: SettingsPermissionRow.macPreferencesURL) {
             openURL(url)
         }
         #elseif os(iOS)

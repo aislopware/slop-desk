@@ -9,11 +9,14 @@
 // are emitted by `TerminalConfigBuilder`) — there is NO `refreshTerminalControls()` hop here (that seam
 // is for the fire-time `Defaults` Controls toggles, not the typed render prefs).
 //
-// BOTH halves, one surface. This was `#if os(macOS)` with the phone reduced to plain Style/Blink rows on the
-// stated grounds that the section is AppKit — it never was: every control here is stock SwiftUI and the
-// `Color`↔hex glue resolves through `Color.resolve(in:)`, not an `NSColor` bridge. The gate cost the phone
-// the cursor colour, the text-under colour and the opacity outright, which is a capability the phone is owed.
-// The pure hex helper (`CursorColorHex`) is headlessly testable (`CursorColorHexTests`).
+// BOTH halves — this is the PHONE's. It was once `#if os(macOS)` with the phone reduced to plain Style/Blink
+// rows on the stated grounds that the section is AppKit; it never was, and the gate cost the phone the cursor
+// colour, the text-under colour and the opacity outright. Increment 49 gave the Mac its own AppKit drawing
+// (``SlopDeskMacUI/MacCursorPreviewSurface``) and moved everything BOTH of them say — the blurb, the three
+// control labels, the mock prompt's runs and their inks, the preview cell estimate, the blink rule — down to
+// ``SettingsCursorSurface``. The hex codec went with it (``CursorColorHex`` in `SlopDeskClientCore`, still
+// pinned headlessly by `CursorColorHexTests`); what stays here is the `Color` glue, because `Color.resolve(in:)`
+// is SwiftUI's and the Mac reads its own well through `NSColor.usingColorSpace(.sRGB)`.
 // Colour + type: `SettingsInk` / `SettingsType` (SYSTEM semantics — not the terminal theme); geometry
 // rides `Slate.Metric` (raw font/radius/height literals fail `scripts/check-ds-leaks.sh`).
 
@@ -23,38 +26,6 @@ import SlopDeskSlate
 import SlopDeskVideoProtocol
 import SlopDeskWorkspaceCore
 import SwiftUI
-
-// MARK: - CursorColorHex (pure 6-hex ↔ RGB bridge — no SwiftUI / AppKit, so it is unit-pinned)
-
-/// The pure conversion between a libghostty `cursor-color` 6-hex string (what `TerminalPreferences` persists
-/// and `TerminalConfigBuilder` emits) and integer / unit RGB channels. Kept AppKit-free so
-/// `CursorColorHexTests` can pin the round-trip headlessly; the SwiftUI `Color`↔hex glue (via
-/// `Color.resolve(in:)`) lives in the macOS-only `Color` extension below and is code-reviewed, not unit-tested.
-enum CursorColorHex {
-    /// Parse a 6-hex RGB string (no leading `#`) into 0…255 channels. Returns `nil` for an empty string
-    /// (an empty string means "Default" = follow the theme), the wrong length, or any non-hex character — the caller then
-    /// falls back to the effective default colour. Case-insensitive.
-    static func rgb(_ hex: String) -> (r: Int, g: Int, b: Int)? {
-        let trimmed = hex.trimmingCharacters(in: .whitespaces)
-        guard trimmed.count == 6, let value = UInt32(trimmed, radix: 16) else { return nil }
-        return (Int((value >> 16) & 0xFF), Int((value >> 8) & 0xFF), Int(value & 0xFF))
-    }
-
-    /// Format unit RGB doubles (each clamped to `0…1`, NaN → `0`) into an UPPERCASE 6-hex string (no `#`) —
-    /// exactly the shape `TerminalConfigBuilder` forwards as `cursor-color = …`. The clamp uses an ordered
-    /// comparison (NaN-faithful) rather than a bare `min`/`max` ternary.
-    static func hex(r: Double, g: Double, b: Double) -> String {
-        String(format: "%02X%02X%02X", channel(r), channel(g), channel(b))
-    }
-
-    /// One unit-double channel → a `0…255` int (rounded-to-nearest). NaN → `0` (a safe default); ±infinity
-    /// falls through to the ordered, NaN-faithful clamp (→ `1` / `0`).
-    private static func channel(_ value: Double) -> Int {
-        guard !value.isNaN else { return 0 }
-        let clamped = Double.minimum(1, Double.maximum(0, value))
-        return Int((clamped * 255).rounded())
-    }
-}
 
 // MARK: - Color ↔ cursor-hex glue (pure SwiftUI, via Color.resolve(in:))
 
@@ -98,24 +69,24 @@ struct CursorPreviewView: View {
         // The rows only — the `Cursor` header and its timing chip come from the layout table, which
         // is where the phone's version of this group gets them too.
         Group {
-            Text("Live preview of your cursor color, style, opacity and blink behavior.")
+            Text(SettingsCursorSurface.blurb)
                 .font(SettingsType.subtitle)
                 .foregroundStyle(SettingsInk.secondary)
 
             previewCard
 
             ColorPicker(
-                "Cursor color",
+                SettingsCursorSurface.colorLabel,
                 selection: cursorColorBinding(\.cursorColor, fallbackHex: store.terminal.foreground),
                 supportsOpacity: false,
             )
             ColorPicker(
-                "Text color under cursor",
+                SettingsCursorSurface.textColorLabel,
                 selection: cursorColorBinding(\.cursorTextColor, fallbackHex: store.terminal.background),
                 supportsOpacity: false,
             )
 
-            LabeledContent("Cursor opacity") {
+            LabeledContent(SettingsCursorSurface.opacityLabel) {
                 HStack(spacing: Slate.Metric.space2) {
                     Text(String(format: "%.2f", store.terminal.cursorOpacity))
                         .foregroundStyle(SettingsInk.secondary)
@@ -145,17 +116,17 @@ struct CursorPreviewView: View {
     // MARK: Live preview
 
     /// The `john@doe-pc$ git commit -m "│"` mock — a monospaced prompt line with the live caret between the
-    /// quotes, on the inset element surface (the preview card). Per `cursor-style.png`'s visual spec the
-    /// prompt colours are `john` in green, `@doe-pc` in muted blue-gray (the host run, distinct from the user),
-    /// and `$ git commit -m "` in the default foreground — so the host part maps to the blue `SettingsInk.info`
-    /// token (the closest theme-aware blue-gray), NOT the same green as `john`.
+    /// quotes, on the inset element surface (the preview card). The runs and what each one MEANS are
+    /// ``SettingsCursorSurface/promptBeforeCaret``'s; this resolves those roles to hues and lays them out.
     private var previewCard: some View {
         HStack(spacing: 0) {
-            Text("john").foregroundStyle(SettingsInk.ok)
-            Text("@doe-pc").foregroundStyle(SettingsInk.info)
-            Text("$ git commit -m \"").foregroundStyle(SettingsInk.primary)
+            ForEach(SettingsCursorSurface.promptBeforeCaret, id: \.text) { run in
+                Text(run.text).foregroundStyle(SettingsInk.of(run.ink))
+            }
             cursorGlyph
-            Text("\"").foregroundStyle(SettingsInk.primary)
+            ForEach(SettingsCursorSurface.promptAfterCaret, id: \.text) { run in
+                Text(run.text).foregroundStyle(SettingsInk.of(run.ink))
+            }
         }
         .font(SettingsType.mono)
         .padding(.vertical, Slate.Metric.space2)
@@ -185,12 +156,13 @@ struct CursorPreviewView: View {
         CursorCaret(style: store.terminal.cursorStyle, color: cursorPreviewColor, cell: previewCellSize)
     }
 
-    /// The approximate monospace cell for the preview font (advance ≈ 0.62 em, line height ≈ 1.3 em),
-    /// measured off the LIVE resolved `.body` size so the caret keeps its proportions when the user changes
-    /// the system text size. A preview-only estimate — the real surface metrics come from libghostty.
+    /// The approximate monospace cell for the preview font, measured off the LIVE resolved `.body` size so
+    /// the caret keeps its proportions when the user changes the system text size. The RATIOS are
+    /// ``SettingsCursorSurface/previewCell(em:)``'s — the Mac reads the same ones, or the one caret would
+    /// read as two silhouettes.
     private var previewCellSize: CGSize {
-        let em = SettingsMetric.resolvedBodyPointSize
-        return CGSize(width: em * 0.62, height: em * 1.3)
+        let cell = SettingsCursorSurface.previewCell(em: Double(SettingsMetric.resolvedBodyPointSize))
+        return CGSize(width: cell.width, height: cell.height)
     }
 
     /// The effective caret colour: the pinned `cursorColor`, else the foreground ("Default").
@@ -200,10 +172,7 @@ struct CursorPreviewView: View {
             ?? SettingsInk.primary
     }
 
-    /// Whether the cosmetic preview caret blinks: `.on` (and `.default`, which defers to DEC mode 12 — the
-    /// terminal's usual blink-on default) animate; `.off` holds steady. Preview-only — the real surface
-    /// honours DEC mode 12 for `.default`.
-    private var previewBlinks: Bool { store.terminal.cursorBlink != .off }
+    private var previewBlinks: Bool { SettingsCursorSurface.previewBlinks(store.terminal.cursorBlink) }
 
     private func restartBlink() {
         blinkVisible = true

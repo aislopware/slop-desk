@@ -110,6 +110,32 @@ final class MacActionSegments: NSSegmentedControl {
     }
 }
 
+/// A colour well that reports the colour it now holds.
+///
+/// `isContinuous = false` on purpose, and it is the one place in this file where the choice is not
+/// obvious: the system picker sends its action for every drag across the colour wheel, and each one here
+/// persists a `TerminalPreferences` field and re-publishes the whole libghostty config. The well still
+/// shows the live colour under the pointer — that is the panel's own drawing — but only the colour the
+/// reader settles on is written, which is the same "commit when the edit ends" rule ``MacActionField``
+/// states for text.
+final class MacActionColorWell: NSColorWell {
+    private let handler: (NSColor) -> Void
+
+    init(_ handler: @escaping (NSColor) -> Void) {
+        self.handler = handler
+        super.init(frame: .zero)
+        isContinuous = false
+        target = self
+        action = #selector(fire)
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) { nil }
+
+    @objc
+    private func fire() { handler(color) }
+}
+
 /// A slider that reports its value as it moves — continuously, so the readout beside it tracks the
 /// thumb rather than jumping when the drag ends.
 final class MacActionSlider: NSSlider {

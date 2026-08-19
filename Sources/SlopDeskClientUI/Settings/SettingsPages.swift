@@ -11,9 +11,12 @@
 // `SettingsTaxonomy.swift`) for the section a reader taps. The Mac draws its own page in AppKit
 // (`SlopDeskMacUI/Settings`), from the SAME table, because a settings window with a mouse wants an
 // `NSSwitch` and a source list where a sheet wants a `Toggle` and a pushed list — that difference is
-// the whole reason the halves are separate (docs/56 §3). What neither half redraws is a
-// `Control.bespoke` group: those are surfaces rather than control kinds, so both resolve them through
-// ``SettingsBespokeSurface`` and each half hosts the result.
+// the whole reason the halves are separate (docs/56 §3). That now includes the `Control.bespoke`
+// groups: until increment 49 the Mac hosted this file's ``SettingsBespokeSurface`` in an
+// `NSHostingView` on the grounds that a surface is not a control kind, and what that missed is that a
+// hosted subtree is a SwiftUI runtime rather than shared drawing. Both halves now draw their own and
+// read one set of ANSWERS below them (`SettingsBespokePresentation`, `SettingsIndexPresentation` in
+// `SlopDeskClientCore`) — the DECISION is shared, the DRAWING never is.
 //
 // WHY EIGHT STRUCTS AND NOT ONE TABLE-WALKER, which is what the Mac half is. The per-key `switch` in
 // each page is not the page's knowledge of the taxonomy — it is a BINDING lookup, and `@Default` is a

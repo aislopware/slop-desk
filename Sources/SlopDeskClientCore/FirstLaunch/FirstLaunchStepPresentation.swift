@@ -33,12 +33,14 @@ public extension OnLaunchBehavior {
     /// picked. Here rather than at the picker because the SAME two words are offered by the guided
     /// checklist's step 1 and by Settings → General, in two frameworks; a raw value is an on-disk
     /// config string and is never shown.
-    var title: String {
-        switch self {
-        case .restoreLastSession: "Restore Last Session"
-        case .newWindow: "New Window"
-        }
-    }
+    ///
+    /// ⚠️ THE WORDS ARE `ON_LAUNCH`'s, not this file's. They were typed out here until increment 49,
+    /// which is how the checklist came to offer "Restore Last Session" while Settings → General — which
+    /// has read `slopdesk_workspace::settings_catalog` all along — offered "Restore session". Two
+    /// spellings of one choice, on two surfaces a reader sees within a minute of each other. The token
+    /// is the raw value because that IS the catalog's token, so the group cannot be looked up under a
+    /// name it does not hold.
+    var title: String { SettingsCatalog.label(.onLaunch, for: rawValue) }
 }
 
 // MARK: - Step 4 · Install Claude Code hooks
@@ -114,9 +116,12 @@ public enum FirstLaunchStepPresentation {
 
     /// The note under the picker: what the recommended choice actually brings back, and where to change
     /// the answer later. Named here so the checklist and any future second renderer cannot drift.
+    ///
+    /// It NAMES the option, so it interpolates the label rather than repeating it — prose that spells a
+    /// choice the picker above it spells differently is the same drift as two pickers, and reads worse.
     public static let onLaunchNote =
-        "Restore Last Session brings back your scrollback and reconnects agents that kept running "
-            + "on the host. You can change this any time in Settings → General."
+        "\(OnLaunchBehavior.restoreLastSession.title) brings back your scrollback and reconnects "
+            + "agents that kept running on the host. You can change this any time in Settings → General."
 
     // MARK: Step 4 · Install Claude Code hooks
 

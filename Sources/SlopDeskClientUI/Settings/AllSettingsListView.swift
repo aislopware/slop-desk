@@ -1,4 +1,4 @@
-// AllSettingsListView — the Advanced → "All Settings" searchable list.
+// AllSettingsListView — the Advanced → "All Settings" searchable list, for the PHONE.
 //
 // A searchable, scrollable list of every client-side config key (driven by the headless
 // `AllSettingsCatalog`), rendered into the Advanced `Form` as a `Group` of `Section`s. Matches the design
@@ -8,9 +8,20 @@
 //   • rows: monospace key + gray description ("· Default: …"), then EITHER an inline control
 //     (`.advancedOnly`, bound to its `Defaults.Key`) OR a value + ✎ jump-to-tab button (`.hasDedicatedTab`).
 //
-// The catalog is the single source of WHAT to show; this view owns the `Defaults.Key` bindings + the
-// cross-tab jump (reported by section id). Cross-tab HIGHLIGHT of the target control is
-// deferred (only the jump itself ships here).
+// EVERY OPTION LIST HERE USED TO BE TYPED IN THIS FILE, as `Text("…").tag(…)` children — thirteen of them,
+// and by the time increment 49 measured it FOUR had drifted from `slopdesk_workspace::settings_catalog`,
+// which has held the same lists all along: "Context Menu" against the catalog's "Context menu", "Copy or
+// Paste" against "Copy or paste", "Home" against "Home Directory", and an On-Launch pair spelled a third
+// way again in `FirstLaunchStepPresentation`. The scroll-multiplier row re-typed `0.25...5`, `step: 0.25`
+// and `"%.2f×"` against `Ladder::ScrollMultiplier`, which owns all three. So this file no longer names a
+// choice: ``SettingsIndexPresentation`` says which GROUP or LADDER a key draws from, the catalog says what
+// the choices are called, and the Mac's ``SlopDeskMacUI/MacAllSettingsIndex`` reads exactly the same
+// answers.
+//
+// The catalog is the single source of WHAT to show; this view owns the `Defaults.Key` bindings (a
+// `@Default` is a property wrapper whose whole point is that SwiftUI observes the read, which is why the
+// bindings are the one thing that cannot descend) + the cross-tab jump (reported by section id). Cross-tab
+// HIGHLIGHT of the target control is deferred (only the jump itself ships here).
 // Colour + type: `SettingsInk` / `SettingsType` (SYSTEM semantics — not the terminal theme); geometry
 // rides `Slate.Metric` (raw font/radius/height literals fail `scripts/check-ds-leaks.sh`).
 
@@ -111,14 +122,14 @@ struct AllSettingsListView: View {
         Group {
             Section {
                 HStack(spacing: Slate.Metric.space2) {
-                    Button("Reset All Settings") { confirmResetAll = true }
-                    Button("Reset Advanced Only") { confirmResetAdvanced = true }
+                    Button(SettingsIndexPresentation.resetAllTitle) { confirmResetAll = true }
+                    Button(SettingsIndexPresentation.resetAdvancedTitle) { confirmResetAdvanced = true }
                     Spacer()
                 }
                 .buttonStyle(.bordered)
 
                 if filtered.isEmpty {
-                    Text("No settings match “\(query)”.")
+                    Text(SettingsIndexPresentation.noMatches(query))
                         .font(SettingsType.subtitle)
                         .foregroundStyle(SettingsInk.tertiary)
                 } else {
@@ -126,36 +137,34 @@ struct AllSettingsListView: View {
                 }
             } header: {
                 HStack {
-                    Text("ALL SETTINGS")
+                    Text(SettingsIndexPresentation.header)
                         .font(SettingsType.subtitle.weight(.medium))
                         .tracking(1)
                         .foregroundStyle(SettingsInk.tertiary)
                     Spacer()
-                    TextField("Search", text: $query)
+                    TextField(SettingsIndexPresentation.searchPlaceholder, text: $query)
                         .textFieldStyle(.roundedBorder)
                         .frame(maxWidth: 180)
                 }
             }
         }
-        .alert("Reset All Settings?", isPresented: $confirmResetAll) {
-            Button("Cancel", role: .cancel) {}
-            Button("Reset All", role: .destructive) {
+        .alert(SettingsIndexPresentation.resetAllPrompt, isPresented: $confirmResetAll) {
+            Button(SettingsIndexPresentation.cancelTitle, role: .cancel) {}
+            Button(SettingsIndexPresentation.resetAllConfirm, role: .destructive) {
                 // The affordance in full: `resetAll()` alone cannot reach `device-prefs.json`, and the
-                // alert below promises "every setting" (`AllSettingsCatalog.deviceLocalKeys`).
+                // message promises "every setting" (`AllSettingsCatalog.deviceLocalKeys`).
                 store.resetEverySetting(deviceLocal: workspaceStore)
             }
         } message: {
-            Text("This restores every setting to its default — font, keybindings, and all expert "
-                + "keys. This cannot be undone.")
+            Text(SettingsIndexPresentation.resetAllMessage)
         }
-        .alert("Reset Advanced Settings?", isPresented: $confirmResetAdvanced) {
-            Button("Cancel", role: .cancel) {}
-            Button("Reset Advanced", role: .destructive) {
+        .alert(SettingsIndexPresentation.resetAdvancedPrompt, isPresented: $confirmResetAdvanced) {
+            Button(SettingsIndexPresentation.cancelTitle, role: .cancel) {}
+            Button(SettingsIndexPresentation.resetAdvancedConfirm, role: .destructive) {
                 store.resetAdvancedOnly()
             }
         } message: {
-            Text("This restores the advanced keys (video, agent, and raw overrides) to their defaults, "
-                + "leaving your font and keybinding choices intact. This cannot be undone.")
+            Text(SettingsIndexPresentation.resetAdvancedMessage)
         }
     }
 
@@ -170,7 +179,7 @@ struct AllSettingsListView: View {
                 Spacer(minLength: Slate.Metric.space2)
                 control(for: entry)
             }
-            Text("\(entry.description) · Default: \(entry.defaultText)")
+            Text(SettingsIndexPresentation.detail(entry))
                 .font(SettingsType.subtitle)
                 .foregroundStyle(SettingsInk.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -194,7 +203,7 @@ struct AllSettingsListView: View {
             if let raw = entry.targetSection { onJump(raw) }
         } label: {
             HStack(spacing: Slate.Metric.space1) {
-                Text(dedicatedValue(for: entry))
+                Text(SettingsIndexPresentation.dedicatedValue(entry, store: store, device: workspaceStore))
                     .foregroundStyle(SettingsInk.secondary)
                 Image(systemSymbol: .pencil)
                     .foregroundStyle(SettingsInk.icon)
@@ -202,36 +211,6 @@ struct AllSettingsListView: View {
             .font(SettingsType.subtitle)
         }
         .buttonStyle(.borderless)
-    }
-
-    /// The current value of a `.hasDedicatedTab` render-pref, read live from the store.
-    private func dedicatedValue(for entry: AllSettingsCatalog.SettingEntry) -> String {
-        switch entry.key {
-        case "font-family": store.terminal.fontFamily
-        case "font-size": "\(Int(store.terminal.fontSize))"
-        case "scrollback-limit": "\(store.terminal.scrollbackLines)"
-        case "cursor-style": store.terminal.cursorStyle.displayName
-        case "cursor-style-blink": store.terminal.cursorBlink.rawValue.capitalized
-        case SettingsKey.density: (store.appearance.density ?? SettingsCatalog.densityComfortable).capitalized
-        // Device-local, so it is read from the `WorkspaceStore` rather than a typed prefs model.
-        case SharedFocusSetting.catalogKey: SharedFocusSetting.valueText(workspaceStore)
-        // The video sidecar's optional fields. Read through the named unset default rather than
-        // left to the `default:` arm below: that arm prints the row's DEFAULT text, which for an
-        // optional reads correctly while nothing is set and lies the moment something is.
-        case AllSettingsCatalog.RenderKey.videoQpSharp:
-            "\(store.video.qpSharp ?? VideoPreferences.qpSharpDefault)"
-        case AllSettingsCatalog.RenderKey.videoQpCoarse:
-            "\(store.video.qpCoarse ?? VideoPreferences.qpCoarseDefault)"
-        case AllSettingsCatalog.RenderKey.videoFecM:
-            "\(store.video.fecM ?? VideoPreferences.fecMDefault)"
-        case AllSettingsCatalog.RenderKey.videoFecK:
-            "\(store.video.fecK ?? VideoPreferences.fecKDefault)"
-        case AllSettingsCatalog.RenderKey.videoPacer:
-            SettingsCatalog.label(.videoPacer, for: (store.video.pacer ?? VideoPreferences.pacerDefault).rawValue)
-        case AllSettingsCatalog.RenderKey.videoSharpen:
-            SettingsCatalog.Ladder.videoSharpen.readout(store.video.sharpen ?? VideoPreferences.sharpenDefault)
-        default: entry.defaultText
-        }
     }
 
     // MARK: - Inline advanced-only controls (bound to the `Defaults.Keys`)
@@ -262,14 +241,15 @@ struct AllSettingsListView: View {
         case SettingsKey.recordClipboardHistory: boolControl($recordClipboardHistory)
         // OSC-52 clipboard access gates (allow / deny / ask) — live under Advanced → All Settings; feed the
         // config passthrough, so refresh on change.
-        case SettingsKey.clipboardReadKey:
-            menuPicker($clipboardRead, refresh: true) { clipboardAccessOptions }
-        case SettingsKey.clipboardWriteKey:
-            menuPicker($clipboardWrite, refresh: true) { clipboardAccessOptions }
+        // OSC-52 clipboard access gates (allow / deny / ask) — live under Advanced → All Settings; feed the
+        // config passthrough, so refresh on change.
+        case SettingsKey.clipboardReadKey: tokenPicker(entry.key, $clipboardRead, refresh: true)
+        case SettingsKey.clipboardWriteKey: tokenPicker(entry.key, $clipboardWrite, refresh: true)
         case SettingsKey.allowShiftClickKey:
             // Exposed as an ON/OFF switch (`spec/cursor-and-mouse`): ON ⇒ `.enabled` (⇧ extends the
             // selection, the default), OFF ⇒ `.disabled` (⇧ forwarded to the program). The leaf enum retains
-            // `.always`/`.never` for the token mapping, but the UI surfaces only the binary the spec shows.
+            // `.always`/`.never` for the token mapping, but the UI surfaces only the binary the spec shows —
+            // which is why this key has no option group: two states a switch already says.
             boolControl(
                 Binding(
                     get: { allowShiftClick == .enabled },
@@ -277,79 +257,34 @@ struct AllSettingsListView: View {
                 ),
                 refresh: true,
             )
-        case SettingsKey.rightClickActionKey:
-            menuPicker($rightClickAction) {
-                Text("Context Menu").tag(RightClickAction.contextMenu)
-                Text("Copy").tag(RightClickAction.copy)
-                Text("Paste").tag(RightClickAction.paste)
-                Text("Copy or Paste").tag(RightClickAction.copyOrPaste)
-                Text("Ignore").tag(RightClickAction.ignore)
-            }
-        case SettingsKey.optionAsAltKey:
-            menuPicker($optionAsAlt, refresh: true) {
-                Text("Off").tag(OptionAsAlt.off)
-                Text("Both Option Keys").tag(OptionAsAlt.both)
-                Text("Left Option Only").tag(OptionAsAlt.left)
-                Text("Right Option Only").tag(OptionAsAlt.right)
-            }
-        case SettingsKey.scrollMultiplier:
-            AnyView(HStack(spacing: Slate.Metric.space1) {
-                Text(String(format: "%.2f×", scrollMultiplier))
-                    .font(SettingsType.subtitle)
-                    .foregroundStyle(SettingsInk.secondary)
-                    .monospacedDigit()
-                Stepper("", value: store.refreshing($scrollMultiplier), in: 0.25...5, step: 0.25).labelsHidden()
-            })
-        case SettingsKey.onLaunchKey:
-            menuPicker($onLaunch) {
-                Text("Restore Last Session").tag(OnLaunchBehavior.restoreLastSession)
-                Text("New Window").tag(OnLaunchBehavior.newWindow)
-            }
-        case SettingsKey.newTabPositionKey:
-            menuPicker($newTabPosition) {
-                Text("Automatic").tag(NewTabPosition.auto)
-                Text("End").tag(NewTabPosition.end)
-                Text("After Current").tag(NewTabPosition.afterCurrent)
-            }
-        case SettingsKey.closeConfirmTabKey: menuPicker($closeConfirmTab) { closeConfirmTabOptions }
-        case SettingsKey.closeConfirmWindowKey: menuPicker($closeConfirmWindow) { closeConfirmOptions }
-        case SettingsKey.workingDirectoryNewWindowKey: workingDirControl($workingDirNewWindow)
-        case SettingsKey.workingDirectoryNewTabKey: workingDirControl($workingDirNewTab)
-        case SettingsKey.workingDirectoryNewSplitKey: workingDirControl($workingDirNewSplit)
+        case SettingsKey.rightClickActionKey: tokenPicker(entry.key, $rightClickAction)
+        case SettingsKey.optionAsAltKey: tokenPicker(entry.key, $optionAsAlt, refresh: true)
+        case SettingsKey.scrollMultiplier: ladderStepper(entry.key, $scrollMultiplier)
+        case SettingsKey.onLaunchKey: tokenPicker(entry.key, $onLaunch)
+        case SettingsKey.newTabPositionKey: tokenPicker(entry.key, $newTabPosition)
+        case SettingsKey.closeConfirmTabKey: tokenPicker(entry.key, $closeConfirmTab)
+        case SettingsKey.closeConfirmWindowKey: tokenPicker(entry.key, $closeConfirmWindow)
+        case SettingsKey.workingDirectoryNewWindowKey: rawTokenPicker(entry.key, $workingDirNewWindow)
+        case SettingsKey.workingDirectoryNewTabKey: rawTokenPicker(entry.key, $workingDirNewTab)
+        case SettingsKey.workingDirectoryNewSplitKey: rawTokenPicker(entry.key, $workingDirNewSplit)
         // Link interaction — client-side knobs (no config rebuild on change).
         case SettingsKey.linkDetection: boolControl($linkDetection)
-        case SettingsKey.linkCmdClickKey:
-            menuPicker($linkCmdClick) {
-                Text("Open").tag(LinkCmdClick.open)
-                Text("Copy").tag(LinkCmdClick.copy)
-                Text("Do Nothing").tag(LinkCmdClick.nothing)
-            }
-        case SettingsKey.linkCmdShiftClickKey:
-            menuPicker($linkCmdShiftClick) {
-                Text("Reveal in Finder").tag(LinkCmdShiftClick.revealFinder)
-                Text("Open with System Default").tag(LinkCmdShiftClick.openSystemDefault)
-            }
-        case SettingsKey.autoDetectLinkSchemesKey:
-            menuPicker($autoDetectLinkSchemes) {
-                Text("All").tag(AutoDetectLinkSchemes.all)
-                Text("Custom").tag(AutoDetectLinkSchemes.custom)
-            }
+        case SettingsKey.linkCmdClickKey: tokenPicker(entry.key, $linkCmdClick)
+        case SettingsKey.linkCmdShiftClickKey: tokenPicker(entry.key, $linkCmdShiftClick)
+        case SettingsKey.autoDetectLinkSchemesKey: tokenPicker(entry.key, $autoDetectLinkSchemes)
         case SettingsKey.customLinkSchemes:
-            // Read-only live summary here — the full editor lives on the Controls → Link Schemes section.
-            AnyView(Text(customLinkSchemes.isEmpty ? "None" : customLinkSchemes.joined(separator: ", "))
+            // Read-only live summary here — the full editor lives on the Controls → Link Schemes section,
+            // and a second editor would be a second way to write a list whose separator rules live at the
+            // first one (``SettingsIndexPresentation/isReadOnly(_:)`` says so for both halves).
+            AnyView(Text(SettingsIndexPresentation.readOnlySummary(customLinkSchemes.joined(separator: ", ")))
                 .font(SettingsType.subtitle)
                 .foregroundStyle(SettingsInk.secondary)
                 .lineLimit(1))
+        case SettingsKey.notifyWhileForegroundKey: tokenPicker(entry.key, $notifyWhileForeground)
         // Notifications / sounds / agent-notify (Shell groups) — plain live toggles, no config rebuild.
         case SettingsKey.notifyOnFinish: boolControl($notifyOnFinish)
         case SettingsKey.notifyOnError: boolControl($notifyOnError)
         case SettingsKey.notifyOnWatchFinish: boolControl($notifyOnWatchFinish)
-        case SettingsKey.notifyWhileForegroundKey:
-            menuPicker($notifyWhileForeground) {
-                ForEach(NotifyWhileForeground.allCases, id: \.self) { mode in
-                    Text(mode.displayLabel).tag(mode)
-                }
-            }
         case SettingsKey.bounceDockIcon: boolControl($bounceDockIcon)
         case SettingsKey.soundShellControlled: boolControl($soundShellControlled)
         case SettingsKey.soundOnErrorExit: boolControl($soundOnErrorExit)
@@ -374,51 +309,79 @@ struct AllSettingsListView: View {
         AnyView(Toggle("", isOn: refresh ? store.refreshing(binding) : binding).labelsHidden())
     }
 
-    private func menuPicker(
-        _ binding: Binding<some Hashable>, refresh: Bool = false, @ViewBuilder _ content: () -> some View,
-    ) -> AnyView {
-        AnyView(Picker("", selection: refresh ? store.refreshing(binding) : binding, content: content)
+    /// A menu over the option group ``SettingsIndexPresentation/optionGroup(_:)`` names for `key`, bridged
+    /// onto a typed `@Default` binding.
+    ///
+    /// The bridge is what lets the CHOICES come from the catalog while the STORAGE stays a typed enum: the
+    /// picker selects a token, and a token no case parses is dropped rather than written — the same rule the
+    /// boundary itself follows, and the reason it crosses tokens instead of case indices.
+    ///
+    /// A key with no group draws NOTHING. That is a real answer, not a hole to paper over: it means the list
+    /// belongs in `settings_catalog.rs` and has not been added, which is exactly what a blank row should
+    /// prompt.
+    private func tokenPicker<Value: RawRepresentable & Hashable>(
+        _ key: String, _ binding: Binding<Value>, refresh: Bool = false,
+    ) -> AnyView where Value.RawValue == String {
+        tokenPicker(
+            key,
+            Binding(
+                get: { binding.wrappedValue.rawValue },
+                set: { raw in
+                    guard let value = Value(rawValue: raw) else { return }
+                    binding.wrappedValue = value
+                },
+            ),
+            refresh: refresh,
+        )
+    }
+
+    /// The same menu over a key whose stored type IS the token — the three working-directory rows, which
+    /// persist a bare `WorkingDirectoryPolicy.rawConfig` string.
+    private func rawTokenPicker(_ key: String, _ binding: Binding<String>) -> AnyView {
+        tokenPicker(key, binding)
+    }
+
+    /// The menu itself, over a token binding.
+    ///
+    /// Reading through ``SettingsIndexPresentation/selectedToken(_:_:)`` is what keeps a working-directory
+    /// key holding a literal PATH from selecting nothing: the catalog offers two policies and a path reads
+    /// as `home`, which is the Rust table's own ruling rather than this view's.
+    private func tokenPicker(_ key: String, _ binding: Binding<String>, refresh: Bool = false) -> AnyView {
+        guard let group = SettingsIndexPresentation.optionGroup(key) else { return AnyView(EmptyView()) }
+        let selection = Binding(
+            get: { SettingsIndexPresentation.selectedToken(key, binding.wrappedValue) },
+            set: { binding.wrappedValue = $0 },
+        )
+        return AnyView(
+            Picker("", selection: refresh ? store.refreshing(selection) : selection) {
+                ForEach(SettingsCatalog.stringOptions(group)) { option in
+                    Text(option.menuLabel).tag(option.value)
+                }
+            }
             .labelsHidden()
             .pickerStyle(.menu)
-            .fixedSize())
-    }
-
-    /// The shared allow / deny / ask options for the OSC-52 clipboard-read and -write access pickers.
-    @ViewBuilder private var clipboardAccessOptions: some View {
-        Text("Allow").tag(ClipboardAccess.allow)
-        Text("Deny").tag(ClipboardAccess.deny)
-        Text("Ask").tag(ClipboardAccess.ask)
-    }
-
-    @ViewBuilder private var closeConfirmOptions: some View {
-        closeConfirmTabOptions
-        Text("Multiple Tabs").tag(CloseConfirmationPolicy.multipleTabs)
-    }
-
-    /// The TAB row's policies — the window set MINUS `multiple_tabs`, which can never fire for a tab (closing
-    /// one tab loses exactly one tab). Composed INTO `closeConfirmOptions` so the shared rows stay identical.
-    @ViewBuilder private var closeConfirmTabOptions: some View {
-        Text("Running Process").tag(CloseConfirmationPolicy.process)
-        Text("Always").tag(CloseConfirmationPolicy.always)
-    }
-
-    /// The two working-dir choices, bridged onto the `WorkingDirectoryPolicy.rawConfig` String key (any
-    /// non-`inherit` policy reads as `home`, exactly as the Shell tab's picker).
-    private func workingDirControl(_ raw: Binding<String>) -> AnyView {
-        let bridged = Binding<WorkingDirChoice>(
-            get: { WorkingDirectoryPolicy(rawConfig: raw.wrappedValue) == .inherit ? .inherit : .home },
-            set: { raw.wrappedValue = ($0 == .inherit ? WorkingDirectoryPolicy.inherit : .home).rawConfig },
+            .fixedSize(),
         )
-        return menuPicker(bridged) {
-            Text("Same as Current").tag(WorkingDirChoice.inherit)
-            Text("Home").tag(WorkingDirChoice.home)
-        }
     }
 
-    private enum WorkingDirChoice: String, CaseIterable, Identifiable {
-        case inherit
-        case home
-        var id: String { rawValue }
+    /// A stepper over the ladder ``SettingsIndexPresentation/ladder(_:)`` names for `key`, with the ladder's
+    /// own readout beside it — range, step and format all read from `settings_catalog.rs` rather than typed
+    /// at the control, which is where this row had drifted.
+    private func ladderStepper(_ key: String, _ binding: Binding<Double>) -> AnyView {
+        guard let ladder = SettingsIndexPresentation.ladder(key) else { return AnyView(EmptyView()) }
+        return AnyView(HStack(spacing: Slate.Metric.space1) {
+            Text(ladder.readout(binding.wrappedValue))
+                .font(SettingsType.subtitle)
+                .foregroundStyle(SettingsInk.secondary)
+                .monospacedDigit()
+            Stepper(
+                "",
+                value: store.refreshing(binding),
+                in: ladder.range,
+                step: ladder.step,
+            )
+            .labelsHidden()
+        })
     }
 }
 #endif

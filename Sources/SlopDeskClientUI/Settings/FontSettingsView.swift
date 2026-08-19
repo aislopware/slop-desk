@@ -30,14 +30,16 @@
 // THIS device's monospaced faces only as a convenience; a note makes the host boundary explicit. There are
 // no "Install font" / "Open font folder" buttons — no client analog exists (the host owns font installation).
 //
-// PLATFORM: cross-platform (compiled on iOS too). The installed-font enumeration goes through CoreText
-// (`CTFontManagerCopyAvailableFontFamilyNames`), nonisolated + cross-platform — no AppKit/UIKit, no
-// MainActor hop.
+// PLATFORM: this is the PHONE's drawing. The Mac grew its own in increment 49
+// (``SlopDeskMacUI/MacFontFamilySurface``), and everything both of them SAY or DECIDE went down to
+// `SlopDeskClientCore` with it: the scope tabs and their notes (``SettingsFontScope``), every placeholder
+// and the host-boundary note (``SettingsFontSurface``), the fallback list's parse/join/dedupe rules
+// (``SettingsFontFallbackList``) and the installed-family enumeration (``InstalledFontFamilies``, still
+// CoreText, still nonisolated and cross-platform). Nothing here re-decides one of them.
 // Colour + type: `SettingsInk` / `SettingsType` (SYSTEM semantics — not the terminal theme); geometry
 // rides `Slate.Metric` (raw font/radius/height literals fail `scripts/check-ds-leaks.sh`).
 
 #if canImport(SwiftUI)
-import CoreText
 import SFSafeSymbols
 import SlopDeskClientCore
 import SlopDeskSlate
@@ -53,7 +55,7 @@ struct FontSettingsView: View {
     @Bindable var store: PreferencesStore
 
     /// The active Font-Family SCOPE tab. Defaults to **Global** — the primary, always-rendered family field.
-    @State private var scope: FontScope = .global
+    @State private var scope: SettingsFontScope = .global
 
     /// The section's HEADER comes from the layout table, which places this surface, so this draws only
     /// what a row cannot: a pair of tabs whose choice picks which other controls exist.
@@ -69,16 +71,16 @@ struct FontSettingsView: View {
     /// The "Settings for" label + the pill row of scope tabs (Global / Fallback).
     private var scopeTabs: some View {
         VStack(alignment: .leading, spacing: Slate.Metric.space1) {
-            Text("Settings for")
+            Text(SettingsFontSurface.scopeHeading)
                 .font(SettingsType.subtitle)
                 .foregroundStyle(SettingsInk.secondary)
             HStack(spacing: Slate.Metric.space2) {
-                ForEach(FontScope.allCases) { tab in scopePill(tab) }
+                ForEach(SettingsFontScope.allCases) { tab in scopePill(tab) }
             }
         }
     }
 
-    private func scopePill(_ tab: FontScope) -> some View {
+    private func scopePill(_ tab: SettingsFontScope) -> some View {
         let selected = tab == scope
         return Button { scope = tab } label: {
             Text(tab.label)
@@ -94,14 +96,7 @@ struct FontSettingsView: View {
     }
 
     /// The contextual note under the tab row.
-    @ViewBuilder private var scopeNote: some View {
-        switch scope {
-        case .global:
-            note("The terminal's primary family, and the faces derived from it.")
-        case .fallback:
-            note("Fonts used, in order, when the primary font lacks a glyph (e.g. CJK or Nerd-Font icons).")
-        }
-    }
+    private var scopeNote: some View { note(scope.note) }
 
     /// The body for the active scope — the Global auto-match + four face pickers, or the Fallback list
     /// editor.
@@ -122,7 +117,7 @@ struct FontSettingsView: View {
             settingLabel(AllSettingsCatalog.RenderKey.fontAutoMatchWeightStyle),
             isOn: $store.terminal.autoMatchWeightStyle,
         )
-        primaryFamilyRow($store.terminal.fontFamily, placeholder: "Default")
+        primaryFamilyRow($store.terminal.fontFamily, placeholder: SettingsFontSurface.primaryPlaceholder)
         let locked = store.terminal.autoMatchWeightStyle
         faceRow(AllSettingsCatalog.RenderKey.fontFamilyBold, $store.terminal.fontFamilyBold, locked: locked)
         faceRow(AllSettingsCatalog.RenderKey.fontFamilyItalic, $store.terminal.fontFamilyItalic, locked: locked)
@@ -141,17 +136,16 @@ struct FontSettingsView: View {
 
     private func faceRow(_ key: String, _ binding: Binding<String>, locked: Bool) -> some View {
         LabeledContent(settingLabel(key)) {
-            FontFamilyComboBox(selection: binding, placeholder: locked ? "Auto" : "Unset")
+            FontFamilyComboBox(
+                selection: binding, placeholder: SettingsFontSurface.derivedPlaceholder(locked: locked),
+            )
         }
         .disabled(locked)
         .opacity(locked ? 0.5 : 1)
     }
 
     /// The host-installation boundary note (the terminal renders on the host; specimens are this device's).
-    private var hostFontNote: some View {
-        note("Fonts are installed and rendered on the host. Type any family the host has; the picker lists "
-            + "this device's monospaced faces for convenience.")
-    }
+    private var hostFontNote: some View { note(SettingsFontSurface.hostNote) }
 
     // MARK: - Note helpers
 
@@ -161,24 +155,6 @@ struct FontSettingsView: View {
             .font(SettingsType.subtitle)
             .foregroundStyle(SettingsInk.secondary)
             .fixedSize(horizontal: false, vertical: true)
-    }
-}
-
-// MARK: - FontScope (the "Settings for" tabs)
-
-/// The Font-Family scope tabs (`font-setting.png`): the primary family and the fallback list. UI-only
-/// (the per-scope write target lives in `FontSettingsView`).
-private enum FontScope: String, CaseIterable, Identifiable {
-    case global
-    case fallback
-
-    var id: String { rawValue }
-
-    var label: String {
-        switch self {
-        case .global: "Global"
-        case .fallback: "Fallback"
-        }
     }
 }
 
@@ -278,7 +254,7 @@ private struct FontFamilyComboBox: View {
                 Image(systemSymbol: .magnifyingglass)
                     .font(SettingsType.subtitle)
                     .foregroundStyle(SettingsInk.tertiary)
-                TextField("Search fonts", text: $query)
+                TextField(SettingsFontSurface.specimenSearchPlaceholder, text: $query)
                     .textFieldStyle(.plain)
                     .font(SettingsType.label)
             }
@@ -290,7 +266,7 @@ private struct FontFamilyComboBox: View {
                         specimenRow(family)
                     }
                     if filtered.isEmpty {
-                        Text("No matching fonts on this device.")
+                        Text(SettingsFontSurface.specimenEmpty)
                             .font(SettingsType.subtitle)
                             .foregroundStyle(SettingsInk.tertiary)
                             .padding(Slate.Metric.space2)
@@ -329,11 +305,7 @@ private struct FontFamilyComboBox: View {
         .buttonStyle(.plain)
     }
 
-    private var filtered: [String] {
-        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !needle.isEmpty else { return InstalledFonts.families }
-        return InstalledFonts.families.filter { $0.lowercased().contains(needle) }
-    }
+    private var filtered: [String] { InstalledFontFamilies.matching(query) }
 }
 
 // MARK: - FallbackListEditor (the comma-separated fallback list)
@@ -345,16 +317,12 @@ private struct FallbackListEditor: View {
     @Binding var raw: String
     @State private var draft = ""
 
-    private var entries: [String] {
-        raw.split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-    }
+    private var entries: [String] { SettingsFontFallbackList.entries(raw) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Slate.Metric.space2) {
             if entries.isEmpty {
-                Text("No fallback fonts.")
+                Text(SettingsFontSurface.fallbackEmpty)
                     .font(SettingsType.subtitle)
                     .foregroundStyle(SettingsInk.tertiary)
             } else {
@@ -371,7 +339,7 @@ private struct FallbackListEditor: View {
                                 .foregroundStyle(SettingsInk.tertiary)
                         }
                         .buttonStyle(.plain)
-                        .help("Remove fallback font")
+                        .help(SettingsFontSurface.fallbackRemoveHint)
                     }
                 }
             }
@@ -379,51 +347,30 @@ private struct FallbackListEditor: View {
                 // Write-through (`draftCommit: false`): this binding is the editor's own local `@State` —
                 // no store write per keystroke — and the Add button + its `.disabled` gate read it
                 // synchronously, so an inner idle-draft would make Add act on a stale value.
-                FontFamilyComboBox(selection: $draft, placeholder: "Add a fallback font", draftCommit: false)
-                Button("Add") { add() }
+                FontFamilyComboBox(
+                    selection: $draft,
+                    placeholder: SettingsFontSurface.fallbackAddPlaceholder,
+                    draftCommit: false,
+                )
+                Button(SettingsFontSurface.fallbackAddTitle) { add() }
                     .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }
     }
 
+    /// A `nil` from the shared rule means there is nothing to add — an empty name, or one the list already
+    /// has — and leaving `raw` alone is what keeps an identical rewrite from churning the store's `didSet`.
     private func add() {
-        let name = draft.trimmingCharacters(in: .whitespaces)
+        let name = draft
         draft = ""
-        guard !name.isEmpty, !entries.contains(name) else { return }
-        raw = (entries + [name]).joined(separator: ", ")
+        guard let updated = SettingsFontFallbackList.adding(name, to: raw) else { return }
+        raw = updated
     }
 
     private func remove(at index: Int) {
-        var list = entries
-        guard list.indices.contains(index) else { return }
-        list.remove(at: index)
-        raw = list.joined(separator: ", ")
+        guard let updated = SettingsFontFallbackList.removing(at: index, from: raw) else { return }
+        raw = updated
     }
 }
 
-// MARK: - InstalledFonts (this device's monospaced faces — a typing convenience, not authoritative)
-
-/// The locally-installed monospaced font families (best-effort), computed ONCE (a `static let` is lazy +
-/// thread-safe) via CoreText so it stays nonisolated + cross-platform. NOTE: these are the CLIENT's fonts —
-/// the terminal renders on the HOST, which may have a different set; the list is a convenience for typing,
-/// never an authoritative or enforced set. The monospace filter falls back to the full family list if it
-/// resolves nothing (so the picker is never empty on an unusual font setup).
-private enum InstalledFonts {
-    static let families: [String] = compute()
-
-    private static func compute() -> [String] {
-        let all = (CTFontManagerCopyAvailableFontFamilyNames() as? [String]) ?? []
-        let mono = all.filter(isMonospace)
-        return (mono.isEmpty ? all : mono).sorted()
-    }
-
-    /// Whether a family resolves to a monospaced (fixed-pitch) face — a CoreText symbolic-trait probe.
-    private static func isMonospace(_ family: String) -> Bool {
-        let descriptor = CTFontDescriptorCreateWithAttributes(
-            [kCTFontFamilyNameAttribute: family] as CFDictionary,
-        )
-        let font = CTFontCreateWithFontDescriptor(descriptor, 12, nil)
-        return CTFontGetSymbolicTraits(font).contains(.traitMonoSpace)
-    }
-}
 #endif

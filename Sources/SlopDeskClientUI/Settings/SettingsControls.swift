@@ -261,9 +261,11 @@ func glyphLabel(_ symbol: SFSymbol, _ title: String, _ subtitle: String?) -> som
 ///
 /// An unknown key answers with the key itself, which is visible on screen rather than silent — a
 /// blank row label would look like a layout bug instead of a missing table entry.
-func settingLabel(_ key: String) -> String {
-    AllSettingsCatalog.entries.first { $0.key == key }?.pageLabel ?? key
-}
+///
+/// Forwards to ``SettingsLayout/label(for:)`` since increment 49: the same lookup was typed out at three
+/// call sites — here, the row table, and the Mac's cursor surface, which draws two settings a row table
+/// does not describe and still has to call them what the table would have.
+func settingLabel(_ key: String) -> String { SettingsLayout.label(for: key) }
 
 // MARK: - SettingsOptionMenuRow (the same list, as a native dropdown)
 

@@ -93,7 +93,6 @@ final class MacSettingsPageController: NSViewController {
         let builder = MacSettingsRowBuilder(
             bindings: bindings,
             agentHooks: agentHooks,
-            workspace: workspace,
             onValueChanged: { [weak self] key in
                 guard Self.gatesAnotherRow(key) else { return }
                 // Rebuilding on the next turn of the run loop rather than inside the control's own

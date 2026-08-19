@@ -159,7 +159,8 @@ private struct FirstLaunchStepSurface: View {
 // MARK: - Step 1 · On Launch (cross-platform)
 
 /// Step 1 — the On-Launch picker (`@Default(.onLaunch)` — the SAME live key Settings → General binds).
-/// "Restore Last Session" reconnects the still-running detached host sessions; "New Window" starts fresh.
+/// `restoreLastSession` reconnects the still-running detached host sessions; `newWindow` starts fresh.
+/// The labels are `ON_LAUNCH`'s, not this file's — quoting them here is how a third spelling gets born.
 private struct FirstLaunchOnLaunchStep: View {
     @Default(.onLaunch) private var onLaunch
 

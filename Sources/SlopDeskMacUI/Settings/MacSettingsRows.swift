@@ -14,10 +14,8 @@
 
 import AppKit
 import SlopDeskClientCore
-import SlopDeskClientUI // SettingsBespokeSurface — the bespoke pages neither half redraws
 import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
 import SlopDeskWorkspaceCore
-import SwiftUI
 
 // MARK: - The label stack every row leads with
 
@@ -66,10 +64,11 @@ func macRowLabel(_ title: String, _ subtitle: String, glyph: String? = nil) -> N
 @MainActor
 struct MacSettingsRowBuilder {
     let bindings: MacSettingsBindings
-    /// The Agents card's install-hooks model and the device-local preference owner, injected into the
-    /// hosted surfaces' environment — the same two slots the SwiftUI scene fills at ITS root.
+    /// The Agents card's install-hooks model. Handed to the hooks surface DIRECTLY rather than through an
+    /// environment: the environment injection existed for the hosted SwiftUI subtree, and the device-local
+    /// preference owner that rode beside it is already on ``bindings`` (`MacSettingsBindings.workspace`),
+    /// which is the one place the Mac resolves device-local storage.
     let agentHooks: AgentHooksController?
-    let workspace: WorkspaceStore?
     /// Called with the key a control just wrote. Some writes change which OTHER rows belong on the
     /// page — the window-size mode, the link-scheme mode, the line-height mode — and those conditions
     /// are on a setting's value rather than on the platform, so they are the renderer's and the page
@@ -107,41 +106,51 @@ struct MacSettingsRowBuilder {
         }
     }
 
-    /// A bespoke group: the Mac's own where it is the Mac's alone, hosted where it is not.
+    /// A bespoke group, drawn in AppKit — every one of them.
     ///
-    /// Every DESCRIBED row above is drawn twice on purpose: a switch wants to be an `NSSwitch` here and
-    /// a `Toggle` there, and that difference is the whole reason the two halves exist. A bespoke
-    /// surface is not a control kind — it is a card that writes someone's `~/.claude/settings.json`,
-    /// a searchable index of two hundred keys, a free-text override box — so there is nothing for the
-    /// halves to differ ABOUT, and drawing it twice would be two chances to get the same words wrong.
+    /// UNTIL INCREMENT 49 SEVEN OF THESE WERE `NSHostingView`s over the phone's SwiftUI, on the argument
+    /// that a surface which is not a control kind has nothing for the two halves to differ about. What that
+    /// argument missed is that a hosted surface is not shared drawing, it is a SwiftUI RUNTIME inside an
+    /// `NSStackView`: it sizes itself by its own measurement pass, it cannot be reached by the window's
+    /// responder chain the way the rows around it can, and — the one that decided it — an `ImageRenderer`
+    /// snapshot of the page photographs it as a hole. Meanwhile the words those surfaces carried WERE
+    /// shared, but by being typed once in a view rather than once below both halves, so the option lists
+    /// inside them had already drifted from the Rust catalog in four places.
     ///
-    /// The two below are the reverse case: the layout table gates them to `Platform::Mac` and their
-    /// content is LaunchServices and `/usr/local/bin`, so there is no other half. They are AppKit, and
-    /// the SAME views the first-launch checklist shows — which is what stopped them being two copies of
-    /// four rows of prose that had already begun to drift.
+    /// So the split is now the one docs/56 stage D states everywhere else: every DECISION descends to
+    /// `SlopDeskClientCore` (`SettingsBespokePresentation`, `SettingsIndexPresentation`,
+    /// `SettingsConfigFile`), and each half draws it in its own framework. `SettingsBespokeSurface` stays
+    /// where it is — it is the PHONE's renderer, not a shared one.
+    ///
+    /// Two ids need no phone half at all: the layout table gates `os-integration` and `cli-install` to
+    /// `Platform::Mac` and their content is LaunchServices and `/usr/local/bin`. They are the SAME views
+    /// the first-launch checklist shows, which is what stopped them being two copies of four rows of prose.
+    /// `raw-overrides` and `config-file` joined them here for the same reason — a config path under
+    /// `~/.config` has no iOS reading.
+    ///
+    /// An id with no arm draws NOTHING, which is the honest answer for a surface this build does not have
+    /// and the same contract a key with no binding holds on the described side.
     private func bespoke(_ id: String) -> NSView {
         switch id {
-        case "os-integration": return MacOSIntegrationRows()
-        case "cli-install": return MacCLIInstallCard()
+        case "os-integration": MacOSIntegrationRows()
+        case "cli-install": MacCLIInstallCard()
+        case "notification-permission": MacNotificationPermissionRow()
+        case "editor-empty": MacEditorEmptyCard()
+        case "claude-hooks": MacHooksSettingsRows(agentHooks: agentHooks)
+        // The Font-Family scope tabs over two different bodies — the primary family with its three
+        // derived faces, or the ordered fallback list — and the "Aa" specimen list. Size, line height,
+        // ligatures and style are described rows above it.
+        case "font-family": MacFontFamilySurface(store: bindings.store)
+        case "cursor-preview": MacCursorPreviewSurface(store: bindings.store)
         // The chord editor is `Platform::Both`, so BOTH halves draw it — but the Mac's recorder is an
         // `NSEvent` monitor scoped to this window, and a monitor is not a view to host. Both read the
         // same registry and the same ``KeybindingCapture``; only the drawing differs.
-        case "keybindings": return MacKeybindingsEditor(store: bindings.store)
-        default: break
+        case "keybindings": MacKeybindingsEditor(store: bindings.store)
+        case "raw-overrides": MacRawOverridesBox(store: bindings.store)
+        case "config-file": MacConfigFileRows(store: bindings.store)
+        case "all-settings": MacAllSettingsIndex(bindings: bindings, onJump: onJump)
+        default: NSView()
         }
-        // `.intrinsicContentSize` is what makes a SwiftUI subtree behave as a stack view arrangement:
-        // the host reports the size SwiftUI measured, and the column lays it out like any other row.
-        let host = NSHostingView(
-            rootView: VStack(alignment: .leading, spacing: Slate.Metric.space2) {
-                SettingsBespokeSurface(id: id, store: bindings.store, onJump: onJump)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .agentHooksController(agentHooks)
-            .workspaceStore(workspace),
-        )
-        host.sizingOptions = [.intrinsicContentSize]
-        host.translatesAutoresizingMaskIntoConstraints = false
-        return host
     }
 
     /// Prose belonging to the GROUP rather than to a setting — a footnote explaining why a choice the
