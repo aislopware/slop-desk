@@ -585,13 +585,8 @@ final class MacPeekRecentView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         // The caps micro-label in the instrument voice — the card NAMING a region.
-        heading.attributedStringValue = NSAttributedString(
-            string: "RECENT",
-            attributes: [
-                .font: Slate.Typeface.instrumentNative(Slate.Typeface.small, weight: .medium),
-                .foregroundColor: Slate.Native.Overlay.tertiary,
-                .kern: Slate.Typeface.instrumentTracking,
-            ],
+        heading.attributedStringValue = macCapsString(
+            "Recent", color: Slate.Native.Overlay.tertiary,
         )
         heading.isSelectable = false
 

@@ -2182,6 +2182,29 @@ either. They are `PaneEmptyCause` and `DropZoneInk` in `SlopDeskClientCore` now.
 That is the check on this whole increment being real work rather than tidying: a sweep that only sorted
 files would have left the number alone.
 
+### Increment 55 — one engraved caps heading, six copies
+
+A one-line follow-up from increment 53, and it is here because of what the grep turned up. Merging the
+device panels' shells produced `macDevicePanelCapsLabel`; grepping for the constant that makes it —
+`Slate.Typeface.instrumentTracking` — found the same four-attribute dictionary open-coded **five more
+times**, in `MacPalette`, `MacOpenQuickly`, `MacPeekReply`, `MacCheatSheetPanel` and
+`MacKeybindingsEditor`. Five of the six even carried their own copy of the comment explaining the
+kerning.
+
+`Chrome/MacCapsLabel.swift` is the one recipe, in two spellings because the call sites genuinely differ:
+four of them already own an `NSTextField` and want only the string, two want a finished label. The label
+spelling goes through the string spelling, and a ratchet pins that it keeps doing so.
+
+**The ink is deliberately NOT shared.** The six sites disagree — `State.header` on a device panel,
+`Overlay.tertiary` on a summoned card, `Text.tertiary` in Settings — and they are right to: an
+overlay's ink ladder is not a page's. What is shared is the FACE, the caps and the tracking. So the
+colour stays a required argument, and a call site cannot inherit the wrong one by omission. This is the
+same line increment 53 drew between chrome and protocol, one layer down: a *typographic* rule is
+shared, a *semantic* one is the surface's own.
+
+The ban is on the kerning constant rather than on the shape, because that is the tell a seventh copy
+cannot avoid spelling.
+
 ## Stage D ledger — what the rename actually costs
 
 `SlopDeskClientUI` cannot become `SlopDeskPhoneUI` while `SlopDeskMacUI` still imports it. That is

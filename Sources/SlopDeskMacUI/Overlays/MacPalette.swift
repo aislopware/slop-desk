@@ -425,13 +425,8 @@ final class MacPaletteRowView: NSView {
         heightConstraint?.constant = Slate.Metric.heightRow
         // The caps micro-label in the instrument voice — the card NAMING a region, which a shouted
         // row in the system face at semibold did not read as.
-        title.attributedStringValue = NSAttributedString(
-            string: item.title.uppercased(),
-            attributes: [
-                .font: Slate.Typeface.instrumentNative(Slate.Typeface.small, weight: .medium),
-                .foregroundColor: Slate.Native.Overlay.tertiary,
-                .kern: Slate.Typeface.instrumentTracking,
-            ],
+        title.attributedStringValue = macCapsString(
+            item.title, color: Slate.Native.Overlay.tertiary,
         )
         let owns = PalettePresentation.headerOwnsWorkingDirectoryBadge(item.title)
         badge.isHidden = !(owns && badgeText != nil)

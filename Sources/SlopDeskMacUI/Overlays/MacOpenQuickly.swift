@@ -904,13 +904,8 @@ final class MacOpenQuicklyRowView: NSView {
         symbol.image = nil
         for view in [subtitle, stamp, badge] as [NSView] { view.isHidden = true }
         heightConstraint?.constant = Slate.Metric.heightRow
-        title.attributedStringValue = NSAttributedString(
-            string: filter.sectionHeader,
-            attributes: [
-                .font: Slate.Typeface.instrumentNative(Slate.Typeface.small, weight: .medium),
-                .foregroundColor: Slate.Native.Overlay.tertiary,
-                .kern: Slate.Typeface.instrumentTracking,
-            ],
+        title.attributedStringValue = macCapsString(
+            filter.sectionHeader, color: Slate.Native.Overlay.tertiary,
         )
         setAccessibilityLabel(filter.sectionHeader)
     }

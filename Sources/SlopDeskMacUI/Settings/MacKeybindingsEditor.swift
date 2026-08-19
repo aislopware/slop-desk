@@ -186,17 +186,7 @@ final class MacKeybindingsEditor: NSView, NSSearchFieldDelegate {
     }
 
     private func sectionHeader(_ words: String) -> NSView {
-        let label = NSTextField(labelWithAttributedString: NSAttributedString(
-            string: words.uppercased(),
-            attributes: [
-                .font: Slate.Typeface.instrumentNative(Slate.Typeface.small, weight: .medium),
-                .foregroundColor: Slate.Native.Text.tertiary,
-                // Wide enough to read as engraving, applied ONLY to an all-caps label.
-                .kern: Slate.Typeface.instrumentTracking,
-            ],
-        ))
-        label.isSelectable = false
-        return label
+        macCapsLabel(words, color: Slate.Native.Text.tertiary)
     }
 
     /// One binding: its glyph, its name, a conflict mark when it shares a chord, and the chip.

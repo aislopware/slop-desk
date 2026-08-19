@@ -140,16 +140,7 @@ final class MacCheatSheetView: NSView {
     /// One category: its caps heading, then its rows. No plate and no box — a card that is already a
     /// distinct object does not need internal boxes to say where a run begins; the air above does.
     private static func sectionView(_ section: CheatSheetSection) -> NSView {
-        let heading = NSTextField(labelWithAttributedString: NSAttributedString(
-            string: section.title.uppercased(),
-            attributes: [
-                .font: Slate.Typeface.instrumentNative(Slate.Typeface.small, weight: .medium),
-                .foregroundColor: Slate.Native.Overlay.tertiary,
-                // Wide enough to read as engraving, applied ONLY to an all-caps label.
-                .kern: Slate.Typeface.instrumentTracking,
-            ],
-        ))
-        heading.isSelectable = false
+        let heading = macCapsLabel(section.title, color: Slate.Native.Overlay.tertiary)
 
         let stack = NSStackView(views: [heading] + section.rows.map(rowView))
         stack.orientation = .vertical

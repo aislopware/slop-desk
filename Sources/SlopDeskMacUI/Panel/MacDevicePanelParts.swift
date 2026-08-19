@@ -84,17 +84,11 @@ func macDevicePanelCapsLabel(
     _ words: String, color: NSColor = Slate.Native.State.header,
     weight: NSFont.Weight = .semibold,
 ) -> NSTextField {
-    let label = NSTextField(labelWithAttributedString: NSAttributedString(
-        string: words.uppercased(),
-        attributes: [
-            .font: Slate.Typeface.instrumentNative(Slate.Typeface.small, weight: weight),
-            .foregroundColor: color,
-            // Wide enough to read as engraving, applied ONLY to an all-caps label.
-            .kern: Slate.Typeface.instrumentTracking,
-        ],
-    ))
-    label.isSelectable = false
-    return label
+    // SEMIBOLD, where the other five sites are medium: a device-panel heading sits on the PAGE rather
+    // than on a summoned card, with rows of live figures under it, and at `.medium` on that surface it
+    // stopped separating the runs it exists to separate. The face, the caps and the tracking are
+    // ``macCapsLabel(_:color:weight:)``'s — only the two defaults are this panel's.
+    macCapsLabel(words, color: color, weight: weight)
 }
 
 /// A plain one-line label on a rung of the ladder.
