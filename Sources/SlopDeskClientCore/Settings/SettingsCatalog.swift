@@ -69,6 +69,7 @@ package enum SettingsCatalog {
         case fontLigatures = 19
         case fontStyleMode = 20
         case fontBlending = 21
+        case videoPacer = 22
     }
 
     /// A group's choices, in the order they render, rebuilt as `Value`.
@@ -103,6 +104,13 @@ package enum SettingsCatalog {
                 menuLabel: string { slopdesk_settings_option_menu_label(group.rawValue, index, $0, $1) } ?? "",
             )
         }
+    }
+
+    /// What one persisted token is CALLED — for a readout that shows the current choice without
+    /// drawing the control (the all-settings index's jump row). Falls back to the token itself,
+    /// which is the honest answer for a value no option in the group names.
+    package static func label(_ group: Group, for token: String) -> String {
+        tokens(group).first { $0.token == token }?.label ?? token
     }
 
     /// The `density` tokens the store persists, named rather than spelled. Density is the one group
@@ -166,6 +174,7 @@ package enum SettingsCatalog {
         case scrollback = 0
         case scrollMultiplier = 1
         case busyDelay = 2
+        case videoSharpen = 3
 
         /// The settable range. Empty for a ladder the boundary does not know, which no case is.
         package var range: ClosedRange<Double> {
@@ -212,6 +221,9 @@ package enum SettingsCatalog {
         case windowCells = 0
         case windowPixels = 1
         case fontPoints = 2
+        case videoQp = 3
+        case videoFecParity = 4
+        case videoFecGroup = 5
 
         /// The settable range. Empty for a range the boundary does not know, which no case is.
         package var range: ClosedRange<Int> {

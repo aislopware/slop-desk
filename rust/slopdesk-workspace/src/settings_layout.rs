@@ -1311,19 +1311,102 @@ pub const GROUPS: &[LayoutGroup] = &[
             platform: Platform::Mac,
         }],
     },
-    // The video host flags draw four sections of their own — quality, FEC, pacer, client render —
-    // so the table claims no header for them. Their fields are `VideoPreferences` sidecar values
-    // with an UNSET state, which is a control shape no row here describes yet.
+    // The video flags, in four groups because they land at three different times and on two
+    // different machines. They were ONE bespoke surface, on the stated grounds that a
+    // `VideoPreferences` field has an unset state and no control kind here describes one. The
+    // premise was true and the conclusion did not follow: unset means "the value the daemon would
+    // have picked anyway", which is a DEFAULT, and a row that reads its default through a named
+    // constant is what every other sidecar-backed row already does (`agent-prevent-sleep`). The
+    // hatch cost these six rows their place in the all-settings index — a search for `FEC` matched
+    // nothing — which is the thing the index exists to prevent.
     LayoutGroup {
         section: Section::Advanced,
-        title: "",
+        title: "Video · Quality (host)",
+        timing: ApplyTiming::Reconnect,
+        platform: Platform::Mac,
+        rows: &[
+            LayoutRow {
+                key: "video-qp-sharp",
+                subtitle: "The sharpest quantiser on a clean link. Lower is crisper and costlier.",
+                control: Control::Stepper {
+                    range: Stepper::VideoQp,
+                },
+                platform: Platform::Mac,
+            },
+            LayoutRow {
+                key: "video-qp-coarse",
+                subtitle: "The coarsest quantiser under congestion. Higher trades detail for pace.",
+                control: Control::Stepper {
+                    range: Stepper::VideoQp,
+                },
+                platform: Platform::Mac,
+            },
+        ],
+    },
+    LayoutGroup {
+        section: Section::Advanced,
+        title: "Video · Forward Error Correction",
+        timing: ApplyTiming::Reconnect,
+        platform: Platform::Mac,
+        rows: &[
+            LayoutRow {
+                key: "video-fec-m",
+                subtitle: "Parity shards per group. Two or more repairs multi-packet loss.",
+                control: Control::Stepper {
+                    range: Stepper::VideoFecParity,
+                },
+                platform: Platform::Mac,
+            },
+            LayoutRow {
+                key: "video-fec-k",
+                subtitle: "Data shards one parity group covers. Read only once parity is 2 or more.",
+                control: Control::Stepper {
+                    range: Stepper::VideoFecGroup,
+                },
+                platform: Platform::Mac,
+            },
+            // The warning was a hand-placed `HStack` with a triangle glyph inside the surface. It
+            // is prose about the group rather than about either row, which is what a note is.
+            LayoutRow {
+                key: "",
+                subtitle: "Both ends must agree: set these IDENTICALLY on the host and the client, or the \
+                           two disagree about how to rebuild a lost packet.",
+                control: Control::Note,
+                platform: Platform::Mac,
+            },
+        ],
+    },
+    LayoutGroup {
+        section: Section::Advanced,
+        title: "Video · Pacer",
         timing: ApplyTiming::Reconnect,
         platform: Platform::Mac,
         rows: &[LayoutRow {
-            key: "",
-            subtitle: "",
-            control: Control::Bespoke { id: "video-host" },
+            key: "video-pacer",
+            subtitle: "Whether a decoded frame waits for a smoothness deadline or shows on arrival.",
+            control: Control::Menu {
+                group: Group::VideoPacer,
+                glyph: None,
+            },
             platform: Platform::Mac,
+        }],
+    },
+    // The one video row a phone reaches. The other five are read by the host daemon off a sidecar
+    // file on the machine hostd runs on, so a phone editing them would write a file nothing opens;
+    // this one is `MetalVideoRenderer`'s own unsharp pass, in the client, on whichever device is
+    // doing the looking — and a phone screen at a 1x stream is exactly where it earns its keep.
+    LayoutGroup {
+        section: Section::Advanced,
+        title: "Video · Client render",
+        timing: ApplyTiming::Live,
+        platform: Platform::Both,
+        rows: &[LayoutRow {
+            key: "video-sharpen",
+            subtitle: "Unsharp-mask strength on the luma channel. Crisps text, cannot restore detail.",
+            control: Control::Slider {
+                ladder: Ladder::VideoSharpen,
+            },
+            platform: Platform::Both,
         }],
     },
     // The config file lives under `~/.config`, which iOS has no path to.
@@ -1436,6 +1519,40 @@ mod tests {
                     row.platform,
                 );
             }
+        }
+    }
+
+    /// The video flags split by WHICH MACHINE READS THEM, not by which page they sit on.
+    ///
+    /// Five are folded into `video-prefs.json` and read by the host daemon at launch, so a phone
+    /// editing one would write a file nothing on that device opens. `video-sharpen` is
+    /// `MetalVideoRenderer`'s unsharp pass, in the client, on whichever device is looking — and a
+    /// phone at a 1x stream is where it earns its keep. Asserted per key rather than per group so
+    /// moving one between groups cannot quietly move it between platforms.
+    #[test]
+    fn only_the_client_side_video_row_reaches_the_phone() {
+        let reachable = |mac: bool| -> Vec<&'static str> {
+            groups(Section::Advanced, mac)
+                .iter()
+                .flat_map(|group| rows(group, mac))
+                .map(|row| row.key)
+                .filter(|key| key.starts_with("video-"))
+                .collect()
+        };
+        assert_eq!(
+            reachable(false),
+            ["video-sharpen"],
+            "the phone reaches exactly the row its own renderer reads",
+        );
+        for key in [
+            "video-qp-sharp",
+            "video-qp-coarse",
+            "video-fec-m",
+            "video-fec-k",
+            "video-pacer",
+            "video-sharpen",
+        ] {
+            assert!(reachable(true).contains(&key), "the Mac lost {key}");
         }
     }
 

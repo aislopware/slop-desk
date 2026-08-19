@@ -76,6 +76,14 @@ final class SettingsOptionCatalogTests: XCTestCase {
     }
     #endif
 
+    /// The pacer menu offers both REAL modes. The model field is optional and absent presents on
+    /// arrival, so the list is the enum and not the enum plus a "Default" — a third item that set
+    /// `arrival` would be a second way to pick it that nothing on screen tells apart. The absent
+    /// state is `VideoPreferences.pacerDefault`'s job, which is the binding's, not the menu's.
+    func testPacerMenuCoversBothModesAndOffersNoDefaultItem() {
+        assertRoundTrips(.videoPacer, VideoPreferences.Pacer.allCases, "pacer mode")
+    }
+
     /// Density is the one group with no enum behind it — the store persists the raw string — so it has no
     /// `allCases` to cover. What it has instead is two NAMED tokens, and the group must be exactly them:
     /// a picker writing a token the appearance applier does not know leaves the tier silently unapplied.

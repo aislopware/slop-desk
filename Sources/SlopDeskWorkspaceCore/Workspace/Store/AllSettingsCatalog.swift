@@ -110,6 +110,12 @@ public enum AllSettingsCatalog {
         public static let cursorStyleBlink = "cursor-style-blink"
         public static let agentPreventSleep = "agent-prevent-sleep"
         public static let agentResumeOnRecovery = "agent-resume-on-recovery"
+        public static let videoQpSharp = "video-qp-sharp"
+        public static let videoQpCoarse = "video-qp-coarse"
+        public static let videoFecM = "video-fec-m"
+        public static let videoFecK = "video-fec-k"
+        public static let videoPacer = "video-pacer"
+        public static let videoSharpen = "video-sharpen"
     }
 
     /// The advertised rows ``PreferencesStore/resetAll()`` restores WITHOUT a global `Defaults.Key`:
@@ -125,6 +131,8 @@ public enum AllSettingsCatalog {
         RenderKey.fontLigatures, RenderKey.fontLigaturesAlphabet,
         RenderKey.fontBold, RenderKey.fontItalic, RenderKey.fontBlending,
         RenderKey.agentPreventSleep, RenderKey.agentResumeOnRecovery,
+        RenderKey.videoQpSharp, RenderKey.videoQpCoarse, RenderKey.videoFecM,
+        RenderKey.videoFecK, RenderKey.videoPacer, RenderKey.videoSharpen,
         SettingsKey.density,
     ]
 

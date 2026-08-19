@@ -946,8 +946,9 @@ a timing chip under every headed group, which is right for a list of controls an
 surface: "Applies immediately" under "No File Editor Yet" answers a question nothing on the page
 asked, and the four Advanced and Agents surfaces had quietly acquired chips they never had before
 the port. The chip belongs where an EDIT does, so it is now drawn only where some row names a
-setting — which is also why `VideoHostSettingsView`, whose four sections each land on reconnect,
-places its own.
+setting — which is also why the video surface, whose four sections each land on reconnect, placed its
+own. (🔁 That surface is gone — increment 31 describes its six settings as rows, so the chip comes
+from the group like everyone else's.)
 
 ### Increment 23 — the font surface stops being one bespoke block
 
@@ -1244,3 +1245,36 @@ distinction increment 19 drew, now with nothing on the other side of it.
 
 One user-visible lie went with it: the phone's editor header has always read "Click a shortcut to
 record a replacement; Backspace clears it, Esc cancels." It is true now.
+
+
+### Increment 31 — the video flags stop being a surface
+
+`Control::Bespoke`'s doc says the hatch is for a group that is not a list of settings at all, and
+warns in as many words that reaching for it to avoid describing a plain control puts the row's words
+back in a view. `video-host` was a list of six settings. It held four section titles, six labels,
+four ranges, five defaults, a pacer picker and a symmetric-FEC warning — all of them literals in a
+SwiftUI body, none of them reachable from the all-settings index. A reader searching Settings for
+`FEC`, or for `sharpen`, matched nothing at all.
+
+The reason the table gave for the hatch was real and the conclusion did not follow. A
+`VideoPreferences` field is an OPTIONAL, and unset is a state the described controls have no shape
+for — so the surface had drawn a leading "Set" switch beside every field and the word `default` where
+the value would be. But what unset MEANS is "the value the daemon would have picked anyway", which is
+a default, and a row that reads its default through a named constant is what the two sidecar-backed
+agent flags have done since they were described. `VideoPreferences` now names all six
+(`qpSharpDefault` … `pacerDefault`) beside `AgentPreferences`' pair, the bindings read through them,
+and an untouched field still writes nothing — the sidecar carries a value only once someone sets one,
+so a fresh install's env overlay is empty exactly as before.
+
+What the table gained is the shape of the thing: three new `Stepper` ranges (the QP band, the two FEC
+counts), one new `Ladder` with stops (`Off` · `0.5x` · `1x` · `2x`), one new option `Group` for the
+pacer, six rows in `settings_rows`, and the FEC warning as a `Control::Note` — which is what that
+control is for and what the hand-placed triangle-and-`HStack` had been standing in for.
+
+The split fell out of it. The five host flags are folded into `video-prefs.json` and read by hostd at
+launch, so a phone editing one would write a file nothing on that device opens; `video-sharpen` is
+`MetalVideoRenderer`'s own unsharp pass, in the client, on whichever device is doing the looking — and
+a phone screen at a 1x stream is precisely where it earns its keep. So the first three groups are
+`Platform::Mac` and the fourth is `Platform::Both`, which is one more setting the phone reaches than
+it did, and `only_the_client_side_video_row_reaches_the_phone` asserts it per KEY rather than per
+group, so moving a row between groups cannot quietly move it between platforms.

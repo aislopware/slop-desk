@@ -72,7 +72,6 @@ package struct SettingsBespokeSurface: View {
         case "cursor-preview": CursorPreviewView(store: store)
         case "keybindings": KeybindingsEditorView(store: store)
         case "raw-overrides": RawOverridesSurface(store: store)
-        case "video-host": VideoHostSettingsView(store: store)
         case "config-file": ConfigFileSurface(store: store)
         case "all-settings": AllSettingsListView(store: store, onJump: onJump)
         default: EmptyView()

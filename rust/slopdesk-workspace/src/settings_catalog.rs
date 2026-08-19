@@ -137,11 +137,13 @@ pub enum Group {
     FontStyleMode,
     /// Appearance → Font → Style & Rendering → Blending.
     FontBlending,
+    /// Advanced → Video · Pacer → how a decoded frame is scheduled for presentation.
+    VideoPacer,
 }
 
 impl Group {
     /// Every group, in case-index order — the numbering the boundary carries.
-    pub const ALL: [Self; 22] = [
+    pub const ALL: [Self; 23] = [
         Self::CursorStyle,
         Self::NewTabPosition,
         Self::Density,
@@ -164,6 +166,7 @@ impl Group {
         Self::FontLigatures,
         Self::FontStyleMode,
         Self::FontBlending,
+        Self::VideoPacer,
     ];
 
     /// The case index a group crosses as.
@@ -192,6 +195,7 @@ impl Group {
             Self::FontLigatures => 19,
             Self::FontStyleMode => 20,
             Self::FontBlending => 21,
+            Self::VideoPacer => 22,
         }
     }
 
@@ -376,6 +380,18 @@ const FONT_BLENDINGS: &[OptionRow] = &[
     OptionRow::noted("macos-like", "macOS-like", "thickens the stroke"),
 ];
 
+/// Advanced → Video · Pacer. Two ways to schedule a decoded frame: hold it to a smoothness-tuned
+/// deadline, or show it the moment it lands.
+///
+/// The tokens are `VideoPreferences.Pacer`'s raw values, which are already in `video-prefs.json`.
+/// The model holds the field as an OPTIONAL and unset means present-on-arrival, so there is no
+/// third "Default" choice here — a menu that offered one would have two items doing the same thing
+/// and no way for a reader to tell which one was in force.
+const VIDEO_PACERS: &[OptionRow] = &[
+    OptionRow::noted("arrival", "On arrival", "Lowest latency"),
+    OptionRow::noted("deadline", "Deadline", "Smoothest"),
+];
+
 /// The choices in a group, in the order they render.
 ///
 /// The tab close-confirmation row is the window row MINUS `multiple_tabs`, taken as a PREFIX rather
@@ -407,6 +423,7 @@ pub const fn group(group: Group) -> &'static [OptionRow] {
         Group::FontLigatures => FONT_LIGATURES,
         Group::FontStyleMode => FONT_STYLE_MODES,
         Group::FontBlending => FONT_BLENDINGS,
+        Group::VideoPacer => VIDEO_PACERS,
     }
 }
 
@@ -595,11 +612,18 @@ pub enum Ladder {
     ScrollMultiplier,
     /// Shell → Tab Badge → Busy reveal delay, in seconds.
     BusyDelay,
+    /// Advanced → Video · Client render → unsharp-mask strength on the luma channel.
+    VideoSharpen,
 }
 
 impl Ladder {
     /// Every ladder, in case-index order.
-    pub const ALL: [Self; 3] = [Self::Scrollback, Self::ScrollMultiplier, Self::BusyDelay];
+    pub const ALL: [Self; 4] = [
+        Self::Scrollback,
+        Self::ScrollMultiplier,
+        Self::BusyDelay,
+        Self::VideoSharpen,
+    ];
 
     /// The case index a ladder crosses as.
     #[must_use]
@@ -608,6 +632,7 @@ impl Ladder {
             Self::Scrollback => 0,
             Self::ScrollMultiplier => 1,
             Self::BusyDelay => 2,
+            Self::VideoSharpen => 3,
         }
     }
 
@@ -618,6 +643,7 @@ impl Ladder {
             0 => Some(Self::Scrollback),
             1 => Some(Self::ScrollMultiplier),
             2 => Some(Self::BusyDelay),
+            3 => Some(Self::VideoSharpen),
             _ => None,
         }
     }
@@ -647,6 +673,15 @@ impl Ladder {
                     step: 0.5,
                 }
             },
+            // The renderer clamps above 4 and treats anything at or below 0 as off, so the settable
+            // band stops well inside both ends: past ~2 an unsharp pass rings rather than crisps.
+            Self::VideoSharpen => {
+                LadderBounds {
+                    min: 0.0,
+                    max: 2.0,
+                    step: 0.1,
+                }
+            },
         }
     }
 
@@ -657,6 +692,7 @@ impl Ladder {
             Self::Scrollback => SCROLLBACK_PRESETS,
             Self::ScrollMultiplier => SCROLL_MULTIPLIER_PRESETS,
             Self::BusyDelay => BUSY_DELAY_PRESETS,
+            Self::VideoSharpen => VIDEO_SHARPEN_PRESETS,
         }
     }
 
@@ -673,6 +709,8 @@ impl Ladder {
             Self::ScrollMultiplier => format!("{value:.2}×"),
             Self::BusyDelay if value == 0.0 => "Instant".to_owned(),
             Self::BusyDelay => format!("{value:.1}s"),
+            Self::VideoSharpen if value == 0.0 => "Off".to_owned(),
+            Self::VideoSharpen => format!("{value:.1}×"),
         }
     }
 }
@@ -710,11 +748,24 @@ pub enum Stepper {
     WindowPixels,
     /// Appearance → Font → Text → the terminal font size, in points.
     FontPoints,
+    /// Advanced → Video · Quality → an H.264 quantiser, shared by the sharp and coarse ends.
+    VideoQp,
+    /// Advanced → Video · FEC → Reed–Solomon parity shards per group.
+    VideoFecParity,
+    /// Advanced → Video · FEC → how many data shards a parity group covers.
+    VideoFecGroup,
 }
 
 impl Stepper {
     /// Every range, in case-index order.
-    pub const ALL: [Self; 3] = [Self::WindowCells, Self::WindowPixels, Self::FontPoints];
+    pub const ALL: [Self; 6] = [
+        Self::WindowCells,
+        Self::WindowPixels,
+        Self::FontPoints,
+        Self::VideoQp,
+        Self::VideoFecParity,
+        Self::VideoFecGroup,
+    ];
 
     /// The case index a range crosses as.
     #[must_use]
@@ -723,6 +774,9 @@ impl Stepper {
             Self::WindowCells => 0,
             Self::WindowPixels => 1,
             Self::FontPoints => 2,
+            Self::VideoQp => 3,
+            Self::VideoFecParity => 4,
+            Self::VideoFecGroup => 5,
         }
     }
 
@@ -733,6 +787,9 @@ impl Stepper {
             0 => Some(Self::WindowCells),
             1 => Some(Self::WindowPixels),
             2 => Some(Self::FontPoints),
+            3 => Some(Self::VideoQp),
+            4 => Some(Self::VideoFecParity),
+            5 => Some(Self::VideoFecGroup),
             _ => None,
         }
     }
@@ -768,6 +825,32 @@ impl Stepper {
                     step: 1,
                 }
             },
+            // H.264's whole quantiser range. Both ends are offered because which one is useful
+            // depends on the link, and a band narrowed to "sensible" here would be a second opinion
+            // fighting the encoder's own.
+            Self::VideoQp => {
+                StepperBounds {
+                    min: 1,
+                    max: 51,
+                    step: 1,
+                }
+            },
+            // One parity shard is "detect only"; two is where Reed–Solomon starts repairing, and
+            // past eight the overhead costs more bandwidth than the loss it covers.
+            Self::VideoFecParity => {
+                StepperBounds {
+                    min: 1,
+                    max: 8,
+                    step: 1,
+                }
+            },
+            Self::VideoFecGroup => {
+                StepperBounds {
+                    min: 1,
+                    max: 32,
+                    step: 1,
+                }
+            },
         }
     }
 
@@ -780,7 +863,11 @@ impl Stepper {
     #[must_use]
     pub const fn unit(self) -> &'static str {
         match self {
-            Self::WindowCells | Self::FontPoints => "",
+            Self::WindowCells
+            | Self::FontPoints
+            | Self::VideoQp
+            | Self::VideoFecParity
+            | Self::VideoFecGroup => "",
             Self::WindowPixels => " px",
         }
     }
@@ -813,6 +900,26 @@ const SCROLLBACK_PRESETS: &[LadderPreset] = &[
     LadderPreset {
         label: "100k",
         value: 100_000.0,
+    },
+];
+
+/// Sharpen stops: off, the two strengths that read well at a 1x stream, and the ceiling.
+const VIDEO_SHARPEN_PRESETS: &[LadderPreset] = &[
+    LadderPreset {
+        label: "Off",
+        value: 0.0,
+    },
+    LadderPreset {
+        label: "0.5x",
+        value: 0.5,
+    },
+    LadderPreset {
+        label: "1x",
+        value: 1.0,
+    },
+    LadderPreset {
+        label: "2x",
+        value: 2.0,
     },
 ];
 
@@ -1002,7 +1109,10 @@ mod tests {
             }
             assert_eq!(Ladder::from_index(ladder.index()), Some(ladder));
         }
-        assert_eq!(Ladder::from_index(3), None);
+        // Past the end, derived rather than spelled, so adding a ladder does not need this line
+        // rewritten to keep asserting the same thing.
+        let past_the_end = u8::try_from(Ladder::ALL.len()).ok();
+        assert_eq!(past_the_end.and_then(Ladder::from_index), None);
     }
 
     #[test]

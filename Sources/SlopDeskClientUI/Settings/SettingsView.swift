@@ -21,14 +21,15 @@
 // (`spec/terminal-features__scroll.md`); theme → Appearance; agent host flags → Agents; Close
 // Confirmation → **General** (`launch-option.png`). **Editor** is reserved for a built-in FILE-editor
 // (Soft Wrap / Line Numbers / Tab Size — `editor-settings.png`) slopdesk lacks, so it states its own
-// emptiness rather than being backfilled with terminal-render prefs. The Video HOST flags
-// (QP/FEC/pacer/sharpen) have no dedicated section, so they fold into Advanced as a "Video (host)"
-// sub-section — real functionality, not dropped.
+// emptiness rather than being backfilled with terminal-render prefs. The VIDEO flags have no
+// dedicated section, so they fold into Advanced as four described groups — quality, FEC, pacer and
+// the client's own sharpen — rather than the one hand-drawn surface they used to be.
 //
 // DEFERRED vs LIVE-APPLY: each group carries an `ApplyTiming` chip (`.live` = immediate; `.reconnect` =
 // a HOST-read sidecar flag, effective on the next host connection). Terminal + appearance + keybindings
 // + the fire-time toggles are live; the video/agent HOST flags are reconnect-only; SYMMETRIC keys (FEC)
-// also carry a "set on both ends" warning.
+// also carry a "set on both ends" warning, which is a `Control.note` row in the table rather than a
+// paragraph hand-placed in a body.
 //
 // Colour + type: `SettingsInk` / `SettingsType` (SYSTEM semantics — not the terminal theme); geometry
 // rides `Slate.Metric` (raw font/radius/height literals fail `scripts/check-ds-leaks.sh`).
@@ -1097,12 +1098,12 @@ private struct KeybindingsSettingsTab: View {
     }
 }
 
-// MARK: - Advanced section (raw overrides + folded-in Video host flags)
+// MARK: - Advanced section (raw overrides + the folded-in video flags)
 
 /// The power-user raw `SLOPDESK_*` override box, folded LAST into the env overlay (so a typed raw key beats
 /// the matching typed pref); a precedence note makes clear a REAL process env var still wins over the whole
-/// overlay. The Video HOST flags (QP/FEC/pacer/sharpen) have no dedicated section, so they fold in here as a
-/// "Video (host)" sub-section — real functionality, reconnect-tagged + symmetric-FEC-warned.
+/// overlay. The VIDEO flags have no dedicated section, so they fold in here as four described groups —
+/// quality, FEC, pacer, client render — reconnect-tagged and symmetric-FEC-warned by the table.
 private struct AdvancedSettingsTab: View {
     @Bindable var store: PreferencesStore
     /// The shared navigator selection — threaded into the All-Settings list so a ✎ jump can repoint it.
@@ -1137,8 +1138,61 @@ private struct AdvancedSettingsTab: View {
             )
         case SettingsKey.clipboardReadKey: clipboardPicker(row, $clipboardRead)
         case SettingsKey.clipboardWriteKey: clipboardPicker(row, $clipboardWrite)
-        default: bespoke(row)
+        // The video flags. Each optional field reads its unset state through the named default on
+        // `VideoPreferences`, which is the half of an optional a table cannot state: the row says
+        // what the control IS, the binding says what the absent value MEANS.
+        case AllSettingsCatalog.RenderKey.videoQpSharp:
+            settingsStepper(row, count(\.qpSharp, default: VideoPreferences.qpSharpDefault))
+        case AllSettingsCatalog.RenderKey.videoQpCoarse:
+            settingsStepper(row, count(\.qpCoarse, default: VideoPreferences.qpCoarseDefault))
+        case AllSettingsCatalog.RenderKey.videoFecM:
+            settingsStepper(row, count(\.fecM, default: VideoPreferences.fecMDefault))
+        case AllSettingsCatalog.RenderKey.videoFecK:
+            settingsStepper(row, count(\.fecK, default: VideoPreferences.fecKDefault))
+        case AllSettingsCatalog.RenderKey.videoPacer: pacerPicker(row)
+        case AllSettingsCatalog.RenderKey.videoSharpen:
+            SettingsSliderRow(
+                row.label,
+                subtitle: row.subtitle,
+                value: Binding(
+                    get: { store.video.sharpen ?? VideoPreferences.sharpenDefault },
+                    set: { store.video.sharpen = $0 },
+                ),
+                range: SettingsCatalog.Ladder.videoSharpen.range,
+                step: SettingsCatalog.Ladder.videoSharpen.step,
+                presets: SettingsCatalog.Ladder.videoSharpen.presets,
+                readout: SettingsCatalog.Ladder.videoSharpen.readout,
+            )
+        default:
+            if case .note = row.control { settingsNote(row) } else { bespoke(row) }
         }
+    }
+
+    // MARK: - Video (the sidecar's optional fields, read through their named defaults)
+
+    /// One optional whole-number ``VideoPreferences`` field as a non-optional binding: absent reads
+    /// as the default the daemon would have used, and a write makes it explicit.
+    private func count(
+        _ field: WritableKeyPath<VideoPreferences, Int?>, default unset: Int,
+    ) -> Binding<Int> {
+        Binding(
+            get: { store.video[keyPath: field] ?? unset },
+            set: { store.video[keyPath: field] = $0 },
+        )
+    }
+
+    /// The pacer menu. Unset already presents on arrival, so the two REAL modes are the whole list —
+    /// a third "Default" item would be a second way to pick `arrival` that nothing distinguishes.
+    private func pacerPicker(_ row: SettingsLayout.Row) -> some View {
+        SettingsOptionMenuRow(
+            row.label,
+            subtitle: row.subtitle,
+            options: SettingsCatalog.options(.videoPacer, as: VideoPreferences.Pacer.self),
+            selection: Binding(
+                get: { store.video.pacer ?? VideoPreferences.pacerDefault },
+                set: { store.video.pacer = $0 },
+            ),
+        )
     }
 
     /// The four groups this page draws itself. Three are surfaces rather than lists of settings — a
@@ -1172,103 +1226,4 @@ private struct AdvancedSettingsTab: View {
     }
 }
 
-// MARK: - Video (host) sub-section — folded into Advanced
-
-/// The Video / FEC / pacer host flags, folded into Advanced (no dedicated Video section). Read by the HOST
-/// daemon at launch and shipped via the `video-prefs.json` sidecar, so labelled "applies on reconnect"; the
-/// SYMMETRIC FEC keys add a "set on both ends" warning. Client-side `sharpen` is the one live field. Body
-/// returns a `Group` of `Section`s so the host `Form` (Advanced) renders them inline.
-struct VideoHostSettingsView: View {
-    @Bindable var store: PreferencesStore
-
-    var body: some View {
-        Group {
-            slateFormSection("Video · Quality (host)") {
-                optionalIntStepper("Sharp QP", $store.video.qpSharp, range: 1...51, default: 26)
-                optionalIntStepper("Coarse QP", $store.video.qpCoarse, range: 1...51, default: 40)
-                timingFooter(.reconnect)
-            }
-
-            slateFormSection("Video · Forward Error Correction (symmetric)") {
-                optionalIntStepper("Parity (m)", $store.video.fecM, range: 1...8, default: 1)
-                optionalIntStepper("Group size (k)", $store.video.fecK, range: 1...32, default: 5)
-                HStack(spacing: Slate.Metric.space1) {
-                    Image(systemSymbol: .exclamationmarkTriangleFill)
-                    Text("FEC must be set IDENTICALLY on both ends or the host and client disagree.")
-                }
-                .font(SettingsType.caption)
-                .foregroundStyle(SettingsInk.warn)
-                timingFooter(.reconnect)
-            }
-
-            slateFormSection("Video · Pacer (client present)") {
-                Picker("Mode", selection: pacerBinding) {
-                    Text("Default (on arrival)").tag(VideoPreferences.Pacer?.none)
-                    Text("Deadline").tag(Optional(VideoPreferences.Pacer.deadline))
-                    Text("On arrival").tag(Optional(VideoPreferences.Pacer.arrival))
-                }
-                timingFooter(.reconnect)
-            }
-
-            slateFormSection("Video · Client render") {
-                optionalDoubleSlider("Sharpen", $store.video.sharpen, range: 0...2, default: 0)
-                timingFooter(.live)
-            }
-        }
-    }
-
-    private var pacerBinding: Binding<VideoPreferences.Pacer?> {
-        Binding(get: { store.video.pacer }, set: { store.video.pacer = $0 })
-    }
-
-    // MARK: Optional-field editors (nil = "unset / use compile-time default")
-
-    /// An optional-Int stepper: a leading "Set" toggle gates the value (off ⇒ `nil` ⇒ unset, golden-safe).
-    private func optionalIntStepper(
-        _ title: String, _ binding: Binding<Int?>, range: ClosedRange<Int>, default def: Int,
-    ) -> some View {
-        HStack {
-            Toggle(isOn: setBinding(binding, default: def)) { Text(title) }
-                .toggleStyle(.switch)
-            Spacer()
-            if let value = binding.wrappedValue {
-                Stepper("\(value)", value: nonOptional(binding, default: def), in: range)
-                    .labelsHidden()
-                Text("\(value)").foregroundStyle(SettingsInk.secondary)
-            } else {
-                Text("default").foregroundStyle(SettingsInk.tertiary)
-                    .font(SettingsType.subtitle)
-            }
-        }
-    }
-
-    private func optionalDoubleSlider(
-        _ title: String, _ binding: Binding<Double?>, range: ClosedRange<Double>, default def: Double,
-    ) -> some View {
-        VStack(alignment: .leading, spacing: Slate.Metric.space1) {
-            Toggle(isOn: setBinding(binding, default: def)) { Text(title) }
-                .toggleStyle(.switch)
-            if binding.wrappedValue != nil {
-                Slider(value: nonOptional(binding, default: def), in: range)
-            }
-        }
-    }
-
-    /// A `Bool` binding that toggles an optional field between `nil` (unset) and a default value.
-    private func setBinding<T>(_ binding: Binding<T?>, default def: T) -> Binding<Bool> {
-        Binding(
-            get: { binding.wrappedValue != nil },
-            set: { binding.wrappedValue = $0 ? def : nil },
-        )
-    }
-
-    /// A non-optional projection of an optional binding (only used when the value is already non-nil; falls
-    /// back to `def` defensively).
-    private func nonOptional<T>(_ binding: Binding<T?>, default def: T) -> Binding<T> {
-        Binding(
-            get: { binding.wrappedValue ?? def },
-            set: { binding.wrappedValue = $0 },
-        )
-    }
-}
 #endif

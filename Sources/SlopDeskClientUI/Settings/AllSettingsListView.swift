@@ -215,6 +215,21 @@ struct AllSettingsListView: View {
         case SettingsKey.density: (store.appearance.density ?? SettingsCatalog.densityComfortable).capitalized
         // Device-local, so it is read from the `WorkspaceStore` rather than a typed prefs model.
         case SharedFocusSetting.catalogKey: SharedFocusSetting.valueText(workspaceStore)
+        // The video sidecar's optional fields. Read through the named unset default rather than
+        // left to the `default:` arm below: that arm prints the row's DEFAULT text, which for an
+        // optional reads correctly while nothing is set and lies the moment something is.
+        case AllSettingsCatalog.RenderKey.videoQpSharp:
+            "\(store.video.qpSharp ?? VideoPreferences.qpSharpDefault)"
+        case AllSettingsCatalog.RenderKey.videoQpCoarse:
+            "\(store.video.qpCoarse ?? VideoPreferences.qpCoarseDefault)"
+        case AllSettingsCatalog.RenderKey.videoFecM:
+            "\(store.video.fecM ?? VideoPreferences.fecMDefault)"
+        case AllSettingsCatalog.RenderKey.videoFecK:
+            "\(store.video.fecK ?? VideoPreferences.fecKDefault)"
+        case AllSettingsCatalog.RenderKey.videoPacer:
+            SettingsCatalog.label(.videoPacer, for: (store.video.pacer ?? VideoPreferences.pacerDefault).rawValue)
+        case AllSettingsCatalog.RenderKey.videoSharpen:
+            SettingsCatalog.Ladder.videoSharpen.readout(store.video.sharpen ?? VideoPreferences.sharpenDefault)
         default: entry.defaultText
         }
     }

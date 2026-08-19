@@ -219,6 +219,18 @@ struct MacSettingsBindings {
                 get: { store.appearance.density ?? SettingsCatalog.densityComfortable },
                 set: { store.appearance.density = $0 },
             )
+        // Unset presents on arrival, so the menu offers the two REAL modes and reads the absent
+        // state as the one it already behaves as — a third "Default" item would be a second way to
+        // pick `arrival` with nothing on screen telling the two apart.
+        case AllSettingsCatalog.RenderKey.videoPacer:
+            token(
+                key,
+                get: { (store.video.pacer ?? VideoPreferences.pacerDefault).rawValue },
+                set: { raw in
+                    guard let pacer = VideoPreferences.Pacer(rawValue: raw) else { return }
+                    store.video.pacer = pacer
+                },
+            )
         case AllSettingsCatalog.RenderKey.cursorStyle:
             token(
                 key,
@@ -318,8 +330,37 @@ struct MacSettingsBindings {
             )
         case AllSettingsCatalog.RenderKey.fontSize:
             number(key, get: { store.terminal.fontSize }, set: { store.terminal.fontSize = $0 })
+        // The video fields ride the `video-prefs.json` sidecar, where absent means "whatever the
+        // daemon (or, for sharpen, the renderer) would have picked" — read through the named
+        // default for the same reason the two agent flags are, and written as a value, so an
+        // untouched field stays absent and a set one is explicit.
+        case AllSettingsCatalog.RenderKey.videoQpSharp:
+            optionalCount(key, \.qpSharp, default: VideoPreferences.qpSharpDefault)
+        case AllSettingsCatalog.RenderKey.videoQpCoarse:
+            optionalCount(key, \.qpCoarse, default: VideoPreferences.qpCoarseDefault)
+        case AllSettingsCatalog.RenderKey.videoFecM:
+            optionalCount(key, \.fecM, default: VideoPreferences.fecMDefault)
+        case AllSettingsCatalog.RenderKey.videoFecK:
+            optionalCount(key, \.fecK, default: VideoPreferences.fecKDefault)
+        case AllSettingsCatalog.RenderKey.videoSharpen:
+            number(
+                key,
+                get: { store.video.sharpen ?? VideoPreferences.sharpenDefault },
+                set: { store.video.sharpen = $0 },
+            )
         default: nil
         }
+    }
+
+    /// One optional whole-number `VideoPreferences` field, read through its named unset default.
+    private func optionalCount(
+        _ key: String, _ field: WritableKeyPath<VideoPreferences, Int?>, default unset: Int,
+    ) -> MacSettingAccess {
+        number(
+            key,
+            get: { Double(store.video[keyPath: field] ?? unset) },
+            set: { store.video[keyPath: field] = Int($0) },
+        )
     }
 
     // MARK: The four shapes, and the refresh that rides a write

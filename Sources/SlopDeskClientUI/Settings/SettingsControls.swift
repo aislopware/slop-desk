@@ -110,7 +110,7 @@ func timingFooter(_ timing: ApplyTiming) -> some View {
 /// The chip appears only where some row EDITS a setting. "Applies immediately" answers a question a
 /// list of controls raises; under a surface that draws itself — the chord editor, the flat index, the
 /// reserved Editor page's empty state — it either states nothing or contradicts what that surface says
-/// about itself, which is why `VideoHostSettingsView` places its own four.
+/// about itself.
 @ViewBuilder
 func settingsGroup(
     _ group: SettingsLayout.Group,
