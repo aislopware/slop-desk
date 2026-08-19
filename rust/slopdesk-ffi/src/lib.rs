@@ -71,6 +71,7 @@ pub mod folders;
 pub mod frame_decoder;
 pub mod frame_rate;
 pub mod fuzzy;
+pub mod git_line;
 pub mod hevc_parameter_sets;
 pub mod hint_scan;
 pub mod host_policy;

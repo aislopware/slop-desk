@@ -184,7 +184,7 @@ final class MacSidebarHeaderView: NSView {
             font: .systemFont(ofSize: Slate.Typeface.footnote, weight: .semibold),
             color: ink,
         )
-        git.segments = SidebarGitLine.detailSegments(collapsed: collapsed, summary: summary)
+        git.summary = SidebarGitLine.detailSummary(collapsed: collapsed, summary: summary)
         git.isHidden = git.segments.isEmpty
 
         if let trailing = SidebarGitLine.trailingCount(collapsed: collapsed, count: rows.count) {
@@ -257,28 +257,38 @@ final class MacSidebarHeaderView: NSView {
 /// The git line as it PAINTS, across the widths the sidebar's real column asks for.
 ///
 /// Roomy: the whole dialect inline, branch then counts. Tight: the counts fold to
-/// ``SidebarGitLine/compactStatus(_:)``'s bare sigils pinned flush to the trailing edge, one cluster
-/// with no gaps so they read as a single readout rather than a second sentence. Presence is what a
-/// sigil reports — `!` says there is uncommitted work at any width — so the NUMBERS retreat to the
-/// tooltip first.
+/// ``SidebarGitLine/compactStatus(_:shedding:)``'s bare sigils pinned flush to the trailing edge, one
+/// cluster with no gaps so they read as a single readout rather than a second sentence. Presence is
+/// what a sigil reports — `!` says there is uncommitted work at any width — so the NUMBERS retreat
+/// to the tooltip first.
 ///
 /// Narrower still, the branch and the readout compete for the same line, and the readout starts
-/// SHEDDING down ``SidebarGitLine/shedLadder`` — one rung per candidate — rather than crowding the
-/// name into a stub. Only when even the worktree core cannot buy the branch enough room does the name
-/// truncate (tail: a long branch loses its end, which is the part that repeats).
+/// SHEDDING down the dialect's ladder — one rung per candidate — rather than crowding the name into
+/// a stub. The ladder is `slopdesk_workspace::git_line`'s, asked for by rung: this view says how much
+/// room it has, never which role should go. Only when even the worktree core cannot buy the branch
+/// enough room does the name truncate (tail: a long branch loses its end, which is the part that
+/// repeats).
 ///
 /// The whole ladder exists because one tail-truncating line took the counts down WITH the branch:
 /// `feature/some-very-long-name…` spelled three more characters of a name you already know and ate the
 /// readout you were actually watching.
 @MainActor
 final class MacGitLineView: NSView {
-    var segments: [GitSegment] = [] {
+    /// The line's COUNTS — the one thing this view holds, and the one thing the dialect answers
+    /// from. It used to hold the spelled segments and shed them itself; the ladder is Rust's now,
+    /// and it folds from counts, so a view keeping only the written form would have to hand a
+    /// half-answer back to be re-read. `nil` is a collapsed header or a directory with no repo.
+    var summary: PaneGitSummary? {
         didSet {
-            guard segments != oldValue else { return }
+            guard summary != oldValue else { return }
+            segments = summary.map(SidebarGitLine.segments) ?? []
             invalidateIntrinsicContentSize()
             needsDisplay = true
         }
     }
+
+    /// The whole line, written. Derived, never set: it is `summary` spelled.
+    private(set) var segments: [GitSegment] = []
 
     override var isFlipped: Bool { true }
 
@@ -308,10 +318,7 @@ final class MacGitLineView: NSView {
         }
         let name = Self.attributed(branch)
         for level in 0...3 {
-            let compact = Self.attributed(
-                SidebarGitLine.compactStatus(SidebarGitLine.shedding(status, to: level)),
-                separator: "",
-            )
+            let compact = Self.attributed(shed(to: level), separator: "")
             // The one gap the tight form keeps: the branch never touches the readout, however little
             // room is left for it.
             guard name.size().width + 4 + compact.size().width <= bounds.width else { continue }
@@ -321,10 +328,15 @@ final class MacGitLineView: NSView {
         // The last rung's escape hatch — the worktree core stays whole and the NAME truncates.
         draw(
             name,
-            Self.attributed(
-                SidebarGitLine.compactStatus(SidebarGitLine.shedding(status, to: 3)), separator: "",
-            ),
+            Self.attributed(shed(to: 3), separator: ""),
         )
+    }
+
+    /// The readout at one rung of the ladder, as bare sigils. One call rather than a shed followed
+    /// by a compaction: the dialect folds both in the same crossing.
+    private func shed(to level: Int) -> [GitSegment] {
+        guard let summary else { return [] }
+        return SidebarGitLine.compactStatus(summary, shedding: level)
     }
 
     private func draw(_ name: NSAttributedString, _ status: NSAttributedString) {
@@ -355,7 +367,7 @@ final class MacGitLineView: NSView {
                 string: index == 0 ? segment.text : separator + segment.text,
                 attributes: [
                     .font: Slate.Typeface.instrumentNative(
-                        Slate.Typeface.small, weight: weight(segment.ink),
+                        Slate.Typeface.small, weight: weight(segment),
                     ),
                     .foregroundColor: Slate.Native.gitInk(segment.ink),
                     .paragraphStyle: paragraph,
@@ -365,9 +377,10 @@ final class MacGitLineView: NSView {
         return line
     }
 
-    /// ``SidebarGitLine/weight(_:)``'s three rungs, in the face's own units.
-    private static func weight(_ role: GitInk) -> NSFont.Weight {
-        switch SidebarGitLine.weight(role) {
+    /// A run's three rungs, in the face's own units. The RUNG is the dialect's — it arrives on the
+    /// segment — so this maps and never decides.
+    private static func weight(_ segment: GitSegment) -> NSFont.Weight {
+        switch segment.weight {
         case .regular: .regular
         case .semibold: .semibold
         case .bold: .bold

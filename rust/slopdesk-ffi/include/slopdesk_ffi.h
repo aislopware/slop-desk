@@ -796,6 +796,67 @@ size_t slopdesk_ws_rail_disambiguated_label(const SlopDeskWsRailLabel *items, si
 // clamps to this number, so a transcribed copy would describe a rule the client does not share.
 double slopdesk_ws_min_weight(void);
 
+// ---- The project header's git DIALECT — `slopdesk_workspace::git_line` ----
+//
+// `main ↑2 ↓1 +3 !4 ?5 ~1 $2` is a language, not a label: the branch first, then only the NON-ZERO
+// sigils in a fixed order, each with a role that decides its ink and its weight, and a shedding
+// ladder for the widths a real sidebar column actually offers.
+//
+// No TEXT crosses. A run is a role, one glyph and a number, so the near side spells `↑` beside `2`
+// where it is already laying out glyphs — but it never CHOOSES the glyph. A dead second Swift
+// renderer once spelled a conflict `=` against this dialect's `~`, and both compiled for months.
+//
+// The branch is the one run with no sigil: it is a NAME, which is why it truncates rather than
+// compacting, and why its text is the caller's own string. `detached` on that run says the far side
+// had no branch to name.
+
+// The most runs one line can have — the branch plus one per non-zero count.
+#define SLOPDESK_GIT_MAX_RUNS 8
+#define SLOPDESK_GIT_INK_BRANCH 0
+#define SLOPDESK_GIT_INK_DIVERGENCE 1
+#define SLOPDESK_GIT_INK_STAGED 2
+#define SLOPDESK_GIT_INK_MODIFIED 3
+#define SLOPDESK_GIT_INK_UNTRACKED 4
+#define SLOPDESK_GIT_INK_CONFLICTED 5
+#define SLOPDESK_GIT_INK_STASH 6
+#define SLOPDESK_GIT_WEIGHT_REGULAR 0
+#define SLOPDESK_GIT_WEIGHT_SEMIBOLD 1
+#define SLOPDESK_GIT_WEIGHT_BOLD 2
+// What `sigil` holds for the branch. Tested BEFORE any decode: NUL is a scalar like any other, so a
+// `UnicodeScalar(0)` is a real character and would spell the branch as a blank.
+#define SLOPDESK_GIT_NO_SIGIL 0
+
+typedef struct {
+    bool     has_repo;
+    bool     detached;
+    uint32_t ahead;
+    uint32_t behind;
+    uint32_t staged;
+    uint32_t modified;
+    uint32_t untracked;
+    uint32_t conflicted;
+    uint32_t stash;
+} SlopDeskGitCounts;
+
+typedef struct {
+    uint8_t  ink;
+    // Carried alongside the role so a caller laying out one run never asks twice about it.
+    uint8_t  weight;
+    uint32_t sigil;
+    uint32_t count;
+    bool     detached;
+} SlopDeskGitRun;
+
+// Both doors write at most `cap` runs and return how many the line HAS — §4's protocol at a size
+// that never needs the retry, since `SLOPDESK_GIT_MAX_RUNS` bounds it structurally.
+size_t slopdesk_git_line_runs(const SlopDeskGitCounts *counts, SlopDeskGitRun *out, size_t cap);
+// The READOUT alone — the branch dropped — after giving up `level` rungs of the shed ladder. Folded
+// from the same counts rather than from a run array handed back: the counts are three words the
+// caller already holds, and a returned array would have to be validated field by field to be
+// trusted.
+size_t slopdesk_git_line_shed(const SlopDeskGitCounts *counts, size_t level, SlopDeskGitRun *out,
+                              size_t cap);
+
 // ---- Where the highlight goes — `slopdesk_workspace::list_nav` ----
 //
 // The rows never cross: each rule reads a COUNT and answers an INDEX into the list the caller

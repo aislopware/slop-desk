@@ -17,6 +17,8 @@
 //!   shares, and what its second line says once the surface has said the rest.
 //! - [`rail_list`] — what happens to that pane once it is standing next to every other one:
 //!   filtered, sectioned, ordered, and told apart from its namesakes.
+//! - [`git_line`] — the project header's git dialect: which runs a line has, in what order, what
+//!   each one means, and which of them give up their place when the column narrows.
 //! - [`list_nav`] — where the highlight goes when an arrow, a page key, a Tab or a `⌘1–9` chord
 //!   arrives over any of those lists.
 //! - [`responsive`] — the one switch between the two projections, and the live-video ceiling that
@@ -71,6 +73,7 @@ pub mod drop_zone;
 pub mod focus;
 pub mod frecency;
 pub mod geometry;
+pub mod git_line;
 pub mod identity;
 pub mod json;
 pub mod jump;

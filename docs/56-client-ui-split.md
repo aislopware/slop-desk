@@ -1902,6 +1902,36 @@ implicit radio grouping answers "whichever button is `.on`" and a third option w
 as the first. The picker has two options today. It is one line either way, and only one of them
 stays right when a third arrives.
 
+### Increment 48 — the git dialect goes to Rust, and only the writing stays
+
+Not a UI crossing at all — the OTHER prong of the mandate, and it landed in the file the sidebar
+header reads. `main ↑2 ↓1 +3 !4 ?5 ~1 $2` is a language: which runs a line has, in what order, what
+each one means, the weight it is set at, and the ladder it sheds down as the column narrows. All of
+that is `slopdesk_workspace::git_line` now, with `SidebarGitLine` in `SlopDeskClientCore` as the face
+(docs/55 §4b — "a glyph is not text").
+
+**What is left on this side is the writing, and the split is where a disagreement can live.** A run
+crosses as a role, one GLYPH and a number. Putting `↑` next to `2` is not a decision anyone can
+disagree with; choosing `↑` is. That distinction is not theoretical here: increment 45 deleted a
+`PaneGitSummary.compactLine` that spelled a conflict `=` where the live renderer spelled it `~`, and
+the two compiled side by side for as long as both existed. `scripts/check-supervisor.sh` now bans a
+sigil literal in the face outright — a second dialect cannot be born without typing one of them.
+
+**The one string this side supplies is the branch**, because the text is the caller's own. It is a
+NAME, which is why it truncates rather than compacting, and why the rule carries only the one bit it
+reads from it: whether there was a name at all. The word "detached" is a label like any other and
+stays with the writing.
+
+**Two API shapes changed, and both got smaller.** `compactStatus(shedding(status, to:))` was always
+called as a pair and is one call now, because the rule folds both in one crossing — a caller holding
+a half-shed line was never something the dialect meant to offer. And `MacGitLineView` holds the
+SUMMARY rather than the spelled segments: the ladder folds from counts, so a view keeping only the
+written form would have to hand a half-answer back to be re-read at a narrower width.
+
+`SidebarGitLine.weight(_ role:)` is gone entirely. The rung rides along on the segment, filled in by
+the same crossing that decided the run exists, so there is no second role→weight table on this side
+to disagree with the one in Rust.
+
 ## Stage D ledger — what the rename actually costs
 
 `SlopDeskClientUI` cannot become `SlopDeskPhoneUI` while `SlopDeskMacUI` still imports it. That is

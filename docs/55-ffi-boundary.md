@@ -295,6 +295,27 @@ is the opposite default from the platform tables in §4: those fail open because
 "nobody said otherwise", and here a missing table means "there is no channel", so delivering would
 be the defect.
 
+**A glyph is not text.** `slopdesk_git_line_runs` answers the project header's git dialect — `main ↑2
+↓1 +3 !4 ?5 ~1 $2` — as an array of fixed records, with no arena and no spans, though every other
+list door in the crate hands its records' strings over through a blob. The reason is that a git run
+is not made of text: it is a role, ONE glyph and a number. The glyph crosses as a Unicode scalar, so
+the near side puts `↑` next to `2` where it is already laying out glyphs, and the whole answer is
+`(role, weight, scalar, count)` × at most eight. The one string in the line is the BRANCH, which
+never crosses at all — it is the caller's own, and the rule reads only the one bit it needs from it
+(was there a name), which is why the branch run carries `detached` and no text.
+
+What that split has to survive is the obvious objection: if the near side does the writing, has the
+dialect really moved? It has, and the boundary is exactly where the disagreement can live.
+Concatenating a glyph with a number is not a choice; CHOOSING `~` over `=` for a conflict is, and
+that one had already been got wrong — a dead second Swift renderer spelled it `=` beside a live one
+spelling `~`, and both compiled until the copy was deleted. `scripts/check-supervisor.sh` bans a
+sigil literal in the Swift face for that reason, which is a cheaper pin than any test: a second
+dialect cannot be born without typing one of those glyphs.
+
+The buffer is the caller's for the same structural reason the walk in §4d is not: a line is at most
+eight runs and the ceiling is a property of the dialect, not of a repo. Both doors write at most
+`cap` and answer the true length, which is §4's retry protocol at a size that never needs the retry.
+
 ### What picks the convention is the FAR side
 
 A Rust type's shape does not decide this; the Swift owner's does. `QpController` and

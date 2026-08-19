@@ -1,10 +1,15 @@
-// SidebarGitLineTests — the header's GIT DIALECT, pinned where it lives.
+// SidebarGitLineTests — the header's GIT DIALECT as it arrives on this side.
 //
-// The dialect moved to ClientCore with docs/56 stage D: one spelling of the line, read by the Mac's
-// `MacGitLineView` and by the tooltip and by every accessibility label. It had NO suite before that
-// — it was private to a SwiftUI view — which is exactly why the squeeze ladder could only ever be
-// judged by looking at `MacChromeSnapshotRender`'s render. These pins are the arithmetic half;
-// the render stays the visual half.
+// The dialect itself is `slopdesk_workspace::git_line` and its arithmetic is pinned there: the
+// order, the ladder, which rung a role leaves on, which run survives. What is pinned HERE is the
+// crossing and the spelling — that a `↑` and a `2` arrive as two fields and leave as one string,
+// that the branch's text is this side's and its detached reading is not, and that eight runs come
+// back through a boundary that carries no text at all.
+//
+// Deliberately NOT thinned to "the door answered something". A boundary suite that only checks the
+// call succeeded cannot tell a dialect from a table of zeroes, and this line had no suite of any
+// kind until docs/56 stage D — it was private to a SwiftUI view, and the squeeze ladder could only
+// ever be judged by looking at `MacChromeSnapshotRender`'s render.
 
 import XCTest
 @testable import SlopDeskClientCore
@@ -42,10 +47,20 @@ final class SidebarGitLineTests: XCTestCase {
     }
 
     /// A detached HEAD still has an identity run — the line without one would start at a sigil and
-    /// read as a readout with no subject.
+    /// read as a readout with no subject. The RULE says the branch had no name; the WORD is this
+    /// side's, which is the one piece of text the crossing does not carry.
     func testEmptyBranchReadsAsDetached() {
         let detached = PaneGitSummary(hasRepo: true, branch: "", ahead: 0, behind: 0, changedCount: 0)
         XCTAssertEqual(SidebarGitLine.segments(detached).map(\.text), ["detached"])
+    }
+
+    /// The branch's text is the caller's own string, never anything the dialect holds — so a name
+    /// with a sigil in it survives verbatim rather than being read as a run.
+    func testTheBranchCarriesTheCallersOwnName() {
+        let odd = PaneGitSummary(
+            hasRepo: true, branch: "feature/~weird+name", ahead: 0, behind: 0, changedCount: 0,
+        )
+        XCTAssertEqual(SidebarGitLine.segments(odd).map(\.text), ["feature/~weird+name"])
     }
 
     /// The painted line and the SPOKEN one are the same runs joined — they cannot drift.
@@ -53,16 +68,35 @@ final class SidebarGitLineTests: XCTestCase {
         XCTAssertEqual(SidebarGitLine.line(busy), "main ↑2 ↓1 +3 !4 ?5 ~6 $7")
     }
 
+    /// A count larger than the crossing's `uint32_t` SATURATES rather than trapping. These are
+    /// counts a remote host folded, and a rail that crashes on a hostile number is a worse answer
+    /// than one that prints a large one.
+    func testAnAbsurdCountSaturatesRatherThanTrapping() {
+        let absurd = PaneGitSummary(
+            hasRepo: true, branch: "main", ahead: 0, behind: 0, changedCount: 0,
+            modified: Int(UInt32.max) + 5,
+        )
+        XCTAssertEqual(SidebarGitLine.segments(absurd).map(\.text), ["main", "!\(UInt32.max)"])
+    }
+
     // MARK: - The header's two slots
 
     /// Collapsing folds the git line away — the hidden-row count speaks in its place, and a header
     /// carrying both would say two things on one line.
     func testCollapsedHeaderTradesTheGitLineForTheCount() {
-        XCTAssertTrue(SidebarGitLine.detailSegments(collapsed: true, summary: busy).isEmpty)
-        XCTAssertFalse(SidebarGitLine.detailSegments(collapsed: false, summary: busy).isEmpty)
+        XCTAssertNil(SidebarGitLine.detailSummary(collapsed: true, summary: busy))
+        XCTAssertNotNil(SidebarGitLine.detailSummary(collapsed: false, summary: busy))
         XCTAssertEqual(SidebarGitLine.trailingCount(collapsed: true, count: 3), "3")
         XCTAssertNil(SidebarGitLine.trailingCount(collapsed: false, count: 3))
         XCTAssertNil(SidebarGitLine.trailingCount(collapsed: true, count: 0))
+    }
+
+    /// A directory with no repo has nothing for the second line either — the slot is hidden, not
+    /// drawn empty.
+    func testAnOpenHeaderWithNoRepoStillHasNoDetailLine() {
+        let plain = PaneGitSummary(hasRepo: false, branch: "", ahead: 0, behind: 0, changedCount: 0)
+        XCTAssertNil(SidebarGitLine.detailSummary(collapsed: false, summary: plain))
+        XCTAssertNil(SidebarGitLine.detailSummary(collapsed: false, summary: nil))
     }
 
     /// The tooltip carries the FULL path (the name line shows only the basename) then the git line;
@@ -79,41 +113,42 @@ final class SidebarGitLineTests: XCTestCase {
     /// Every COUNT is heavy and the BRANCH is not: at 10 pt mono a regular sigil run leaves the
     /// colour doing all the work, and a heavy branch would stop the counts reading as one group.
     /// `~conflicted` goes a rung further on IMPORTANCE, in a channel free of the palette.
+    ///
+    /// Read off the SEGMENT rather than asked for by role: the rung rides along on the same crossing
+    /// that decides the run exists, so there is no second table on this side to disagree with.
     func testOnlyTheBranchIsRegularAndOnlyTheConflictIsBold() {
-        XCTAssertEqual(SidebarGitLine.weight(.branch), .regular)
-        XCTAssertEqual(SidebarGitLine.weight(.conflicted), .bold)
+        let weights = Dictionary(
+            SidebarGitLine.segments(busy).map { ($0.ink, $0.weight) }, uniquingKeysWith: { first, _ in first },
+        )
+        XCTAssertEqual(weights[.branch], .regular)
+        XCTAssertEqual(weights[.conflicted], .bold)
         for role in GitInk.allCases where role != .branch && role != .conflicted {
-            XCTAssertEqual(SidebarGitLine.weight(role), .semibold, "\(role) is a count")
+            XCTAssertEqual(weights[role], .semibold, "\(role) is a count")
         }
     }
 
-    // MARK: - The compact form
+    // MARK: - The compact form and the shed ladder
 
     /// `↑2 ↓1 !3` → `↑ ↓ !`: the counts go, the ROLES stay, so a squeezed line still says exactly
     /// which states are live. The branch has no sigil and drops out — it truncates instead.
-    func testCompactStatusKeepsTheRolesAndDropsTheBranch() {
-        let compact = SidebarGitLine.compactStatus(SidebarGitLine.segments(busy))
+    func testTheCompactFormKeepsTheRolesAndDropsTheBranch() {
+        let compact = SidebarGitLine.compactStatus(busy, shedding: 0)
         XCTAssertEqual(compact.map(\.text), ["↑", "↓", "+", "!", "?", "~", "$"])
         XCTAssertEqual(compact.map(\.ink).first, .divergence)
         XCTAssertFalse(compact.contains { $0.ink == .branch })
     }
 
-    // MARK: - The shed ladder
-
     /// The ladder's order IS the ranking of "how much does knowing this right now change what I do
     /// next": stash, then divergence, then untracked go first; the WORKTREE survives.
     func testSheddingGivesUpTheLeastUrgentRolesFirst() {
-        let status = SidebarGitLine.compactStatus(SidebarGitLine.segments(busy))
-        XCTAssertEqual(SidebarGitLine.shedding(status, to: 0).map(\.text), ["↑", "↓", "+", "!", "?", "~", "$"])
-        XCTAssertEqual(SidebarGitLine.shedding(status, to: 1).map(\.text), ["↑", "↓", "+", "!", "?", "~"])
-        XCTAssertEqual(SidebarGitLine.shedding(status, to: 2).map(\.text), ["+", "!", "?", "~"])
-        XCTAssertEqual(SidebarGitLine.shedding(status, to: 3).map(\.text), ["+", "!", "~"])
+        XCTAssertEqual(SidebarGitLine.compactStatus(busy, shedding: 1).map(\.text), ["↑", "↓", "+", "!", "?", "~"])
+        XCTAssertEqual(SidebarGitLine.compactStatus(busy, shedding: 2).map(\.text), ["+", "!", "?", "~"])
+        XCTAssertEqual(SidebarGitLine.compactStatus(busy, shedding: 3).map(\.text), ["+", "!", "~"])
     }
 
     /// `↑` and `↓` are ONE fact about one remote — they leave together, on one rung.
     func testDivergenceShedsAsOneRung() {
-        let status = SidebarGitLine.compactStatus(SidebarGitLine.segments(busy))
-        let after = SidebarGitLine.shedding(status, to: 2)
+        let after = SidebarGitLine.compactStatus(busy, shedding: 2)
         XCTAssertFalse(after.contains { $0.ink == .divergence }, "both arrows leave on the same rung")
     }
 
@@ -124,10 +159,9 @@ final class SidebarGitLineTests: XCTestCase {
             hasRepo: true, branch: "main", ahead: 2, behind: 0, changedCount: 1, staged: 0,
             modified: 1, untracked: 0, conflicted: 0, stash: 0,
         )
-        let status = SidebarGitLine.compactStatus(SidebarGitLine.segments(noStash))
-        XCTAssertEqual(status.map(\.text), ["↑", "!"])
+        XCTAssertEqual(SidebarGitLine.compactStatus(noStash, shedding: 0).map(\.text), ["↑", "!"])
         // Rung 1 is `$`, which this line never had — so one rung of budget still sheds `↑`.
-        XCTAssertEqual(SidebarGitLine.shedding(status, to: 1).map(\.text), ["!"])
+        XCTAssertEqual(SidebarGitLine.compactStatus(noStash, shedding: 1).map(\.text), ["!"])
     }
 
     /// The last run standing is NEVER shed. A git line that reports nothing is not a tighter readout,
@@ -136,7 +170,6 @@ final class SidebarGitLineTests: XCTestCase {
         let onlyAhead = PaneGitSummary(
             hasRepo: true, branch: "main", ahead: 2, behind: 0, changedCount: 0,
         )
-        let status = SidebarGitLine.compactStatus(SidebarGitLine.segments(onlyAhead))
-        XCTAssertEqual(SidebarGitLine.shedding(status, to: 99).map(\.text), ["↑"])
+        XCTAssertEqual(SidebarGitLine.compactStatus(onlyAhead, shedding: 99).map(\.text), ["↑"])
     }
 }

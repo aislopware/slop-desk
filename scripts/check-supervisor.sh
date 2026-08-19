@@ -1626,6 +1626,28 @@ for redecided in 'table.isOpen' 'table.open(' 'table.reject(' 'table.remoteClose
   fi
 done
 
+# The git DIALECT — `main ↑2 ↓1 +3 !4 ?5 ~1 $2`. The order, the sigil each role gets, the weight it
+# is set at and the ladder it sheds down are `slopdesk_workspace::git_line`'s. The Swift face asks
+# and SPELLS: it puts a glyph next to a number, and it supplies the branch's own text.
+#
+# This one is ratcheted because it has already been got wrong once, in exactly the way a second
+# speller gets things wrong: a dead `PaneGitSummary.compactLine` spelled a conflict `=` where the
+# live renderer spelled it `~`, and both compiled until the copy was deleted (docs/56 increment 45).
+SWIFT_GIT_LINE=Sources/SlopDeskClientCore/Rail/SidebarGitLine.swift
+if ! grep -q 'slopdesk_git_line_runs' "${SWIFT_GIT_LINE}"; then
+  fail "${SWIFT_GIT_LINE} stopped asking the door — it spells the dialect, it does not choose it"
+fi
+if ! grep -q 'pub fn runs' rust/slopdesk-workspace/src/git_line.rs; then
+  fail "rust/slopdesk-workspace/src/git_line.rs lost runs — the dialect lives where its ladder does"
+fi
+# No SIGIL may be minted on the Swift side. Every one of these is a glyph the rule chooses; a
+# literal here is a second dialect being born, whatever it happens to agree with today.
+for sigil in '"↑' '"↓' '"+\\(' '"!\\(' '"?\\(' '"~' '"\$\\('; do
+  if grep -qF "${sigil}" <<< "$(grep -vE '^[[:space:]]*//|^[[:space:]]*///' "${SWIFT_GIT_LINE}")"; then
+    fail "${SWIFT_GIT_LINE} minted the sigil ${sigil} — the glyph is the rule's, only the join is not"
+  fi
+done
+
 # The metadata RPC's payloads. Eleven encode/decode pairs, the porcelain fold the sidebar and the
 # host status push must agree on, and the three numbers a second speller would drift — all
 # rust/slopdesk-wire's. The Swift is the value types and the flatten.
