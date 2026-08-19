@@ -753,6 +753,26 @@ package enum Slate {
         package static let accentRing = 0.5
         /// Muted presence: soft hairlines (``Line/subtle``), secondary badge ink on a plate.
         package static let muted = 0.6
+        /// A veil that RECEDES a pane while another one is the subject — the ⌃⇥ walk's dimming of
+        /// everything you are not about to land on.
+        ///
+        /// Its own rung between ``muted`` and ``scrim`` because it answers a question neither does.
+        /// ``scrim`` is a backdrop a readout stands ON and may hide what is under it; ``muted`` is a
+        /// presence an *ink* is spent at. This one has to subtract exactly enough that the eye finds
+        /// the one undimmed pane across a 1280pt window in the length of a modifier tap, and no more
+        /// — a dimmed pane must stay READABLE or the walk is a jump between blanks rather than a look.
+        ///
+        /// MEASURED, not picked. 0.55 was the first pass and was photographed: on a light theme the
+        /// black text only reached mid-grey, so the difference was there and not findable at a glance,
+        /// which is the one thing this rung has to be. It is deliberately NOT a resting treatment —
+        /// permanently dimming unfocused panes was tried and removed, because a pane you are watching
+        /// a build in must not be half-erased for having the cursor elsewhere.
+        ///
+        /// Minted before its second speller existed (docs/56 wave R, batch R1), which is the only
+        /// difference between this comment and a post-mortem: an alpha has no framework in it, so it
+        /// descends to the floor and BOTH renderers read the one rung — where a `Color` could only be
+        /// pinned as a pair and reported the drift after it shipped (P6's finding, increment 57d).
+        package static let recede = 0.72
         /// The near-opaque backdrop a readout stands on over live content (video HUD chips).
         package static let scrim = 0.88
     }

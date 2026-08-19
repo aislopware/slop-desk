@@ -27,11 +27,12 @@ struct PaneRecedeScrim: View {
         // construction: on a dark theme it sinks the content toward the background, on a light one it
         // washes it toward the paper. Either way the pane reads as a step BACK rather than a covered one.
         //
-        // 0.72 is MEASURED, not picked: at 0.55 (the first try, photographed) a light theme's black text
-        // only went mid-grey and the difference was there but not findable at a glance across a 1280pt
-        // window, which is the one thing this has to be.
+        // The alpha is ``Slate/Opacity/recede``, which carries the measurement this comment used to
+        // (0.55 was photographed and rejected). It is a rung on the floor rather than a literal here
+        // because `MacPaneScrims` draws the same veil in AppKit — and an alpha, having no framework in
+        // it, descends instead of becoming a pair that could only report the drift afterwards.
         Slate.Surface.terminal
-            .opacity(0.72)
+            .opacity(Slate.Opacity.recede)
     }
 }
 #endif

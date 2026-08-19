@@ -5428,7 +5428,13 @@ fi
 # while checking nothing. It was written that way and caught by its own break test on 2026-08-20 —
 # the third time in this file a gate has died quietly by resolving to an empty file list, which is
 # why the count below is asserted rather than assumed.
-pane_views=$(repo_files 'Sources/SlopDeskClientUI/Pane/*.swift' 'Sources/SlopDeskMacUI/Terminal/*.swift')
+# `Sources/SlopDeskMacUI/Pane/*.swift` is listed BEFORE it exists, and that is the point: wave R
+# creates that directory eleven batches deep, and a gate whose pathspec omits the directory the new
+# renderers land in is a gate that goes quietly stale exactly when it starts mattering. A pathspec
+# matching nothing costs nothing — the floor below is what makes an empty LIST loud, and the other
+# two globs keep it well clear of 20 on their own.
+pane_views=$(repo_files 'Sources/SlopDeskClientUI/Pane/*.swift' 'Sources/SlopDeskMacUI/Terminal/*.swift' \
+  'Sources/SlopDeskMacUI/Pane/*.swift')
 if [[ "$(printf '%s\n' "${pane_views}" | grep -c .)" -lt 20 ]]; then
   fail "the pane-view file list came back nearly empty — this gate has gone stale and is checking nothing"
 fi
