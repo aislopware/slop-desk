@@ -801,7 +801,7 @@ today and are held together by nothing but the week they were written in:
 | `WorkspaceIntent.encode` vs `intent::put_blob` | Rust | a frame that mis-splits at the decoder |
 | `SplitNode+Codable` unknown `axis`/`id` | Rust | **the entire workspace**, to one typo |
 | `persist::decode_raw_node` id-less splits | Swift | two dividers moving as one |
-| `TreeWorkspace.normalized` vs `workspace::normalized` | — | launch-time and gesture-time repair disagree |
+| `TreeWorkspace.normalized` vs `workspace::normalized` | — | launch-time and gesture-time repair disagree — **ported 2026-08-20** |
 | the 15 MiB opaque cap, spelled **three** times | — | a silently truncated `git diff` rendered as complete |
 | `templates.rs` vs `SessionTemplate`/`LaunchPreset` | — | agrees today; a security rule written twice |
 | `persist::derived_split_id` vs `SplitNodeID()` | Rust | divider weights reset on every relaunch |
@@ -838,8 +838,10 @@ still there and the file is still lost. A pattern ban can see a shape, never an 
 `compare_abi_enum` over four enum→byte maps, the intent op numbers, "did this Swift file come back",
 "does `SplitLayoutSolver.swift` still `import CSlopDeskFFI`". Every one of those is **a name or a
 number**. It has no mechanism for *"these two functions produce the same output on the same input"*,
-so drift is invisible in exactly one direction — the behavioural one — and **all eight instances are
-behavioural.**
+so drift is invisible in exactly one direction — the behavioural one — and **every instance in the
+table is behavioural.** (This paragraph said "all eight" while the table said ten: the count was
+written once and the table grew twice. A number restated beside the thing it counts is the same defect
+this section is about, one register up.)
 
 The `WorkspaceIntent.swift` / `intent.rs` pair is the proof. The gate is on that exact file pair. It
 diffs the op-byte map, and the blob bug was six lines away.
@@ -849,7 +851,25 @@ decoder still needed at launch, a constant a second language must agree on, a re
 does not exist yet — the obligation is a **differential test**: same inputs to both sides, assert the
 same output. The candidates are pure functions over small values with no I/O, which is most of what
 crosses here, and a differential suite over `templates.rs` and `persist.rs` alone would have caught
-three of the eight.
+three of them.
+
+**The first one exists (2026-08-20): `TreeWorkspaceRepairDifferentialTests`.** It is worth reading for
+the shape rather than the subject. Two things it does that a normal suite does not:
+
+- **It walks a vocabulary the crate exports instead of naming cases.** `PaneKind` has two cases today,
+  so `kind == .desktop` and `PaneKind::is_video` select the same panes — a test naming them would agree
+  forever while the predicate quietly stopped being one. It loops `0..<slopdesk_ws_pane_kind_count()`,
+  so a third video-ish kind fails in the suite rather than in a restored workspace. Same argument for
+  `slopdesk_ws_normalize_pass_count()`: `compare_abi_enum` holds the two byte MAPS against each other,
+  which catches a reorder and a renumber but *not a pass the crate adds*, because a map Swift never grew
+  still agrees with itself. **A vocabulary pin needs a COUNT as well as a map**, and that is general.
+- **It drives both doors on one input and asserts they converge** — repair-then-close against
+  close-then-repair. That property is what the `TreeWorkspace` row was violating, and it is checkable
+  without knowing what either door does.
+
+A door with no caller is how the second half gets lost: `slopdesk_ws_normalize_pass_count` shipped dead
+and `make lint-ffi-doors` caught it, which is the ratchet doing exactly its job. **A differential suite
+is not finished until every door it justified is one the suite calls.**
 
 Two anti-patterns this class has already produced, both worth recognising on sight:
 
