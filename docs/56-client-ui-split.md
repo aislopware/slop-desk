@@ -1308,3 +1308,44 @@ floor (only `WorkspaceBindingRegistry` and SwiftUI), and the whole-file `#if os(
 `SlopDeskClientUI` was the tell — docs/56 §3 says a gate that spans a whole file is a file in the wrong
 target. In `SlopDeskMacUI` the gate is the target, so the file has none, and `package` came off three
 declarations that only ever had it to cross a boundary that is now internal.
+
+
+### Increment 33 — the paste confirmation's words move to Rust, its alert moves to AppKit
+
+`PasteProtectionSheet` wore the same whole-file `#if os(macOS)` that increment 32's `WorkspaceCommands`
+did, and for the same reason: an `NSAlert` is macOS's. It moves to `SlopDeskMacUI/Terminal`, where the
+gate is the target.
+
+**Its caller is not under `Sources/`.** `ThirdParty/ghostty/integration/GhosttySurface/GhosttyTerminalView.swift`
+is the libghostty embedder, added to the two Xcode app targets by `enable-macos-renderer.sh` /
+`enable-ios-renderer.sh` and compiled by neither `swift build` nor `make quick`'s macOS half. It is
+where `PasteSafetyAnalyzer`, `PastePrecheck`, `ClipboardWritePolicy`, `RightClickPasteInterceptPolicy`
+and `PasteTransform` are all reached from — so a grep over `Sources/` reports that whole cluster as
+dead, and it is not. Anything moved or renamed here is verified by hand:
+`bash scripts/enable-macos-renderer.sh && xcodebuild -project Apps/ClientApp-macOS/ClientApp-macOS.xcodeproj
+-scheme ClientApp-macOS -destination 'generic/platform=macOS' CODE_SIGNING_ALLOWED=NO build`, then
+`git checkout -- Apps/ClientApp-macOS/project.yml && xcodegen generate --spec Apps/ClientApp-macOS/project.yml`.
+
+What is new is what did NOT move with it. The sheet was carrying four sentences of its own — three
+headings, two OSC-52 reasons, the "Paste Anyway" button — plus a 28-line preview renderer that capped
+the payload and rewrote its control characters in caret notation. None of that is AppKit. All of it is
+now `slopdesk_terminal::paste`, beside the four dangers it describes: `Ask` (heading / button /
+reason), `descriptions` (one line per flagged bit, derived from the same four constants) and `preview`
+(the cap and the caret notation). The sheet is 139 lines down to 86, and none of the remainder is a
+decision or a sentence.
+
+The reason to move COPY, not just logic, is that here the copy IS the guard. A danger the mask can trip
+and no sentence names renders as a blank bullet — a warning that looks like a rendering bug. Deriving
+the lines from the same four bit constants in one file makes that unrepresentable, and
+`every_danger_the_mask_can_trip_has_a_sentence` asserts it. `check-supervisor` pins both halves: the
+crate must keep `Ask` / `descriptions` / `preview`, and the sheet may not spell a heading, a button
+title or a preview cap of its own.
+
+The preview's caret notation earns its own test either way. A preview that rendered the payload raw
+would let the escape sequence the user is being warned about run inside the warning itself, which is
+the one bug in this cluster that a reviewer cannot see by reading the dialog.
+
+Two private copies of the `(out, cap)` retry reader collapsed on the way past — `AllSettingsCatalog`'s
+and `SettingsCatalog`'s were the same ten lines, and the paste face would have been a third. It is
+`wsDelivered(capacity:_:)` in `SlopDeskWorkspaceModel` now, beside `wsTransform`, and each face names
+only how much of an answer it expects to fit inline.

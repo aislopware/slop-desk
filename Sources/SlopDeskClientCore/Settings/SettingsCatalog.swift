@@ -1,5 +1,6 @@
 import CSlopDeskFFI
 import Foundation
+import SlopDeskWorkspaceModel
 
 // SettingsCatalog — the near side of what Settings OFFERS.
 //
@@ -262,18 +263,11 @@ package enum SettingsCatalog {
 
     // MARK: The crossing
 
-    /// Reads one delivered string, retrying at the size the door named. `nil` for a zero length,
-    /// which every door uses for "there is nothing here".
+    /// Reads one delivered string at this catalog's inline size. `nil` for a zero length, which
+    /// every door uses for "there is nothing here". The retry is ``wsDelivered(capacity:_:)``'s;
+    /// what is named here is only how much of an answer this catalog expects to fit.
     private static func string(_ door: (UnsafeMutablePointer<UInt8>?, Int) -> Int) -> String? {
-        var out = [UInt8](repeating: 0, count: inlineCapacity)
-        var written = out.withUnsafeMutableBufferPointer { door($0.baseAddress, $0.count) }
-        guard written > 0 else { return nil }
-        if written > out.count {
-            out = [UInt8](repeating: 0, count: written)
-            written = out.withUnsafeMutableBufferPointer { door($0.baseAddress, $0.count) }
-            guard written > 0, written <= out.count else { return nil }
-        }
-        return String(bytes: out.prefix(written), encoding: .utf8)
+        wsDelivered(capacity: inlineCapacity, door)
     }
 
     /// Long enough for every label and readout the catalog holds; a longer one makes the door report

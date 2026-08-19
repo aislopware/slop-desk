@@ -112,6 +112,30 @@ package func wsTransform(
     }
 }
 
+/// Runs an `(out, cap) -> needed` door that takes no input and returns the string it delivered.
+///
+/// The INDEXED-list sibling of ``wsTransform(_:_:)``: a catalog door already knows its answer and
+/// only needs somewhere to put it, so what crosses is the size rather than a payload. `capacity` is
+/// the caller's guess at what fits inline; over it the door reports its size and the reader asks
+/// again, which is the retry docs/55 §4 exists to make correct rather than to be travelled.
+///
+/// `nil` for a zero length, which every door uses for "there is nothing here". A caller for whom
+/// the empty string is a real answer coalesces it; one for whom it is not lets the `nil` through.
+package func wsDelivered(
+    capacity: Int,
+    _ door: (UnsafeMutablePointer<UInt8>?, Int) -> Int,
+) -> String? {
+    var out = [UInt8](repeating: 0, count: capacity)
+    var written = out.withUnsafeMutableBufferPointer { door($0.baseAddress, $0.count) }
+    guard written > 0 else { return nil }
+    if written > out.count {
+        out = [UInt8](repeating: 0, count: written)
+        written = out.withUnsafeMutableBufferPointer { door($0.baseAddress, $0.count) }
+        guard written > 0, written <= out.count else { return nil }
+    }
+    return String(bytes: out.prefix(written), encoding: .utf8)
+}
+
 /// Lends an optional string as the `(bytes, len, present)` triple the crate reads.
 ///
 /// The `withUnsafeBytes` scope IS the safety contract — the pointer is live for exactly the call

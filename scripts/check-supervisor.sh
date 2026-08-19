@@ -3886,13 +3886,26 @@ printf 'check-supervisor: one VT grammar for styled text, and the clipboard dest
 # now; what this pins is that neither Swift face grows rules of its own, and that the four dangers
 # keep the same bit numbering on both sides — the mask crosses as itself, so a renumbering here
 # would silently relabel every warning the sheet prints.
+#
+# The SENTENCES are pinned the same way, and for the same reason. A line describing a danger is as
+# much the guard as the bit that trips it: a renderer that spelled its own would be a second guard
+# saying something slightly different, and a fifth danger would reach the user as a blank bullet.
 SWIFT_PASTE=Sources/SlopDeskWorkspaceCore/Terminal/PasteSafetyAnalyzer.swift
+SWIFT_PASTE_SHEET=Sources/SlopDeskMacUI/Terminal/PasteProtectionSheet.swift
 if hit=$(spells 'containsElevationToken|isSeparator|unicodeScalars' "${SWIFT_PASTE}"); then
   fail "${hit} classifies a paste in Swift again — slopdesk-terminal::paste owns the four dangers"
 fi
-for entry in 'slopdesk_paste_dangers' 'slopdesk_paste_should_warn'; do
+for entry in 'slopdesk_paste_dangers' 'slopdesk_paste_should_warn' 'slopdesk_paste_danger_description' 'slopdesk_paste_preview'; do
   if ! spells "${entry}" "${SWIFT_PASTE}" > /dev/null; then
     fail "${SWIFT_PASTE} no longer asks ${entry} — the guard is one implementation"
+  fi
+done
+if hit=$(spells 'previewLimit|messageText = "|Paste Anyway|OSC 52' "${SWIFT_PASTE_SHEET}"); then
+  fail "${hit} spells the confirmation's own words — slopdesk-terminal::paste owns every sentence"
+fi
+for law in 'pub fn descriptions' 'pub fn preview' 'pub enum Ask'; do
+  if ! spells "${law}" rust/slopdesk-terminal/src/paste.rs > /dev/null; then
+    fail "rust/slopdesk-terminal/src/paste.rs lost ${law} — the sheet's words live beside its rules"
   fi
 done
 for bit in 'MULTI_LINE: u32 = 1 << 0' 'TRAILING_NEWLINE: u32 = 1 << 1' 'SUDO_OR_SU: u32 = 1 << 2' 'CONTROL_CHARS: u32 = 1 << 3'; do

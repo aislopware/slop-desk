@@ -99,6 +99,16 @@ uint32_t slopdesk_paste_dangers(const uint8_t *text, size_t len);
 bool slopdesk_paste_should_warn(const uint8_t *text, size_t len, bool protection_on,
                                 bool bracketed_safe, bool program_advertised_bracketed,
                                 bool is_alternate_screen);
+// The confirmation's whole text. `ask` is 0 unsafe paste, 1 OSC-52 read, 2 OSC-52 write. The
+// bullets are the mask SAID OUT LOUD, in bit order; the reason is what the body prints when the
+// mask is empty, so only the two OSC asks have one. The preview caps the payload and renders every
+// control character in caret notation, so the escape being warned about cannot run in the warning.
+size_t slopdesk_paste_danger_count(uint32_t mask);
+size_t slopdesk_paste_danger_description(uint32_t mask, size_t index, uint8_t *out, size_t cap);
+size_t slopdesk_paste_ask_title(uint8_t ask, uint8_t *out, size_t cap);
+size_t slopdesk_paste_ask_affirmative(uint8_t ask, uint8_t *out, size_t cap);
+size_t slopdesk_paste_ask_reason(uint8_t ask, uint8_t *out, size_t cap);
+size_t slopdesk_paste_preview(const uint8_t *text, size_t len, uint8_t *out, size_t cap);
 
 /* ---- what a gesture at the terminal surface MEANS, before anything is sent ----------------
  * Every answer is a boolean, a case index or a count, so none of these takes the (out, cap)

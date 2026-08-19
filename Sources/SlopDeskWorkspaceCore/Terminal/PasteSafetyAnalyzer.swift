@@ -1,5 +1,6 @@
 import CSlopDeskFFI
 import Foundation
+import SlopDeskWorkspaceModel
 
 // MARK: - Paste-protection danger analyzer
 
@@ -11,8 +12,10 @@ import Foundation
 ///
 /// ## This is a call, not an implementation
 /// The rules are `rust/slopdesk-terminal`'s `paste` (docs/55), reached through
-/// `slopdesk_paste_dangers` / `slopdesk_paste_should_warn`. Only ``descriptions(for:)`` stays here:
-/// it is the sheet's COPY, not a rule, and the flags it reads are the crate's.
+/// `slopdesk_paste_dangers` / `slopdesk_paste_should_warn`. So is every WORD the sheet prints —
+/// ``Ask``'s three strings, ``descriptions(for:)``'s bullets and ``preview(of:)``'s defused
+/// payload. A sentence describing a danger is as much the guard as the bit that trips it: the two
+/// live in one file there so a fifth danger cannot arrive as a blank bullet.
 ///
 /// This is DISTINCT from ``SecretPasteClassifier`` (which classifies a SECRET-into-field shape for the
 /// host's "Paste as Keystrokes" guard). They are deliberately separate engines: this one answers "would
@@ -81,22 +84,62 @@ public enum PasteSafetyAnalyzer {
         }
     }
 
-    /// Human-readable one-line descriptions of the flagged dangers, in a stable order, for the sheet
-    /// body. The sheet's COPY, which is why it is the one thing here that is not a call.
+    /// One line per flagged danger, in the mask's own bit order, for the sheet body.
     public static func descriptions(for dangers: PasteDangers) -> [String] {
-        var out: [String] = []
-        if dangers.contains(.multiLine) {
-            out.append("Multiple lines — earlier lines run the moment they are pasted.")
+        let mask = UInt32(truncatingIfNeeded: dangers.rawValue)
+        return (0..<slopdesk_paste_danger_count(mask)).compactMap { index in
+            wsDelivered(capacity: descriptionCapacity) {
+                slopdesk_paste_danger_description(mask, index, $0, $1)
+            }
         }
-        if dangers.contains(.trailingNewline) {
-            out.append("Ends with a newline — the command runs on paste, before you can review it.")
-        }
-        if dangers.contains(.sudoOrSu) {
-            out.append("Contains sudo or su — the paste may run with elevated privileges.")
-        }
-        if dangers.contains(.controlChars) {
-            out.append("Contains control characters — possible hidden terminal-escape injection.")
-        }
-        return out
     }
+
+    /// The payload as the confirmation shows it: length-capped, with every control character in
+    /// caret notation so the escape being warned about cannot run inside the warning.
+    public static func preview(of text: String) -> String {
+        var text = text
+        return text.withUTF8 { bytes in
+            wsDelivered(capacity: previewCapacity) {
+                slopdesk_paste_preview(bytes.baseAddress, bytes.count, $0, $1)
+            }
+        } ?? ""
+    }
+
+    /// Which confirmation is being drawn. The three asks share one surface because they share one
+    /// shape — a preview, a reason and a choice — and only the sentence differs. The raw values are
+    /// the boundary's own case indices.
+    public enum Ask: UInt8, Sendable, CaseIterable {
+        /// ⌘V into a prompt, where the payload tripped at least one of the four dangers.
+        case unsafePaste = 0
+        /// OSC 52 — a program asked to READ the clipboard (`clipboard-read = ask`).
+        case clipboardRead = 1
+        /// OSC 52 — a program asked to SET the clipboard (`clipboard-write = ask`).
+        case clipboardWrite = 2
+
+        /// The question, as the dialog's heading.
+        public var title: String { word { slopdesk_paste_ask_title(rawValue, $0, $1) } }
+
+        /// The affirmative button. It names the ACTION rather than saying "OK".
+        public var affirmative: String {
+            word { slopdesk_paste_ask_affirmative(rawValue, $0, $1) }
+        }
+
+        /// What the body says when the mask flagged nothing. `""` for ``unsafePaste``, which never
+        /// arrives without a danger to list.
+        public var reason: String { word { slopdesk_paste_ask_reason(rawValue, $0, $1) } }
+
+        private func word(_ door: (UnsafeMutablePointer<UInt8>?, Int) -> Int) -> String {
+            wsDelivered(capacity: PasteSafetyAnalyzer.descriptionCapacity, door) ?? ""
+        }
+    }
+
+    /// Long enough for every heading, button and bullet the crate holds; a longer one makes the door
+    /// report its size and the reader ask again.
+    private static let descriptionCapacity = 128
+
+    /// Big enough for a FULL preview at the crate's cap: every one of its scalars can widen (a tab
+    /// to four spaces, a control character to two) or arrive as four UTF-8 bytes, so this is sized
+    /// for the worst payload rather than the typical one and the retry is never travelled. It does
+    /// NOT grow with the clipboard — the answer is capped whatever the input.
+    private static let previewCapacity = 2048
 }

@@ -16,6 +16,14 @@
 //! the TEXT rather than a guess about intent. The skip rules in [`should_warn`] are the opposite:
 //! each one names a state in which the paste provably cannot run — an alternate screen, or a
 //! program that framed the paste as an inert bracketed block.
+//!
+//! ## The words the confirmation uses
+//!
+//! [`Ask`], [`descriptions`] and [`preview`] are the sheet's whole text. They sit beside the rules
+//! rather than in the renderer because they are the rules SAID OUT LOUD: a danger the mask can trip
+//! and no sentence names renders as a missing bullet, and the only way to see that is to have both
+//! halves in one file. What stays in the renderer is the alert itself — that is `AppKit`, and it is
+//! the one part of the sheet that could not cross.
 
 /// More than one line of content — earlier lines run as soon as they are pasted.
 pub const MULTI_LINE: u32 = 1 << 0;
@@ -109,6 +117,133 @@ pub fn should_warn(
     dangers(text) != 0
 }
 
+/// Which confirmation is being drawn.
+///
+/// Three asks share one surface because they share one shape — a preview, a reason, and a choice —
+/// and the only thing that differs is the sentence. Splitting them into three surfaces would let
+/// two drift into looking like different features when they are one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ask {
+    /// ⌘V into a prompt, where the payload tripped at least one of the four dangers.
+    UnsafePaste,
+    /// OSC 52 — a program asked to READ the clipboard (`clipboard-read = ask`).
+    ClipboardRead,
+    /// OSC 52 — a program asked to SET the clipboard (`clipboard-write = ask`).
+    ClipboardWrite,
+}
+
+impl Ask {
+    /// Every ask, in the order the boundary indexes them.
+    pub const ALL: [Self; 3] = [Self::UnsafePaste, Self::ClipboardRead, Self::ClipboardWrite];
+
+    /// The ask at a boundary index, or `None` past the end.
+    #[must_use]
+    pub const fn from_index(index: u8) -> Option<Self> {
+        match index {
+            0 => Some(Self::UnsafePaste),
+            1 => Some(Self::ClipboardRead),
+            2 => Some(Self::ClipboardWrite),
+            _ => None,
+        }
+    }
+
+    /// The question, as the dialog's heading.
+    #[must_use]
+    pub const fn title(self) -> &'static str {
+        match self {
+            Self::UnsafePaste => "Paste potentially dangerous content?",
+            Self::ClipboardRead => "Allow this program to read the clipboard?",
+            Self::ClipboardWrite => "Allow this program to set the clipboard?",
+        }
+    }
+
+    /// The affirmative button. It names the ACTION rather than saying "OK", so the button read on
+    /// its own still says what pressing it does.
+    #[must_use]
+    pub const fn affirmative(self) -> &'static str {
+        match self {
+            Self::UnsafePaste => "Paste Anyway",
+            Self::ClipboardRead | Self::ClipboardWrite => "Allow",
+        }
+    }
+
+    /// What the body says when no danger was flagged — an OSC-52 ask always reaches the sheet with
+    /// an empty mask, because the request itself is the reason rather than the payload. `""` for
+    /// the unsafe paste, which never arrives without a danger to list.
+    #[must_use]
+    pub const fn reason(self) -> &'static str {
+        match self {
+            Self::UnsafePaste => "",
+            Self::ClipboardRead => "A terminal program is requesting clipboard access via OSC 52.",
+            Self::ClipboardWrite => "A terminal program is requesting to set the clipboard via OSC 52.",
+        }
+    }
+}
+
+/// One line per flagged danger, in the constants' own bit order.
+///
+/// The list is what the mask MEANS, so it is derived from the same four bits rather than written
+/// again: a fifth danger cannot be added without a sentence, and a sentence cannot outlive its bit.
+#[must_use]
+pub fn descriptions(mask: u32) -> Vec<&'static str> {
+    const LINES: [(u32, &str); 4] = [
+        (
+            MULTI_LINE,
+            "Multiple lines — earlier lines run the moment they are pasted.",
+        ),
+        (
+            TRAILING_NEWLINE,
+            "Ends with a newline — the command runs on paste, before you can review it.",
+        ),
+        (
+            SUDO_OR_SU,
+            "Contains sudo or su — the paste may run with elevated privileges.",
+        ),
+        (
+            CONTROL_CHARS,
+            "Contains control characters — possible hidden terminal-escape injection.",
+        ),
+    ];
+    LINES
+        .iter()
+        .filter(|&&(bit, _)| mask & bit != 0)
+        .map(|&(_, line)| line)
+        .collect()
+}
+
+/// How many scalars of the payload the preview shows before eliding — enough to see the SHAPE of a
+/// paste without rendering a megabyte blob into an alert.
+pub const PREVIEW_LIMIT: usize = 480;
+
+/// The payload as the confirmation shows it: capped at [`PREVIEW_LIMIT`], with every control
+/// character made VISIBLE.
+///
+/// The caret notation is the point. A preview that rendered the payload raw would let the escape
+/// sequence the user is being warned about run inside the warning — so `ESC` reads `^[`, `NUL`
+/// reads `^@`, `DEL` reads `^?`. Only LF (a real line) and TAB (four spaces) pass through, because
+/// those two are the shape the reader came to see.
+#[must_use]
+pub fn preview(text: &str) -> String {
+    let mut out = String::with_capacity(text.len().min(PREVIEW_LIMIT) + 1);
+    for (count, scalar) in text.chars().enumerate() {
+        if count >= PREVIEW_LIMIT {
+            out.push('…');
+            break;
+        }
+        match scalar {
+            '\n' => out.push('\n'),
+            '\t' => out.push_str("    "),
+            c if (c as u32) < 0x20 || c as u32 == 0x7F => {
+                out.push('^');
+                // `^ 0x40` maps C0 to `@`..`_` and DEL to `?` — the notation every terminal prints.
+                out.push(char::from_u32((c as u32 ^ 0x40) & 0x7F).unwrap_or(c));
+            },
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 /// Whether `scalars` contains a `sudo` / `su` token at a word boundary.
 ///
 /// Tokens are maximal runs of non-separator scalars; separators are whitespace and the common shell
@@ -123,7 +258,10 @@ fn contains_elevation_token(scalars: &[char]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{CONTROL_CHARS, MULTI_LINE, SUDO_OR_SU, TRAILING_NEWLINE, dangers, should_warn};
+    use super::{
+        Ask, CONTROL_CHARS, MULTI_LINE, PREVIEW_LIMIT, SUDO_OR_SU, TRAILING_NEWLINE, dangers, descriptions,
+        preview, should_warn,
+    };
 
     #[test]
     fn an_empty_payload_is_no_danger_and_never_warns() {
@@ -178,5 +316,57 @@ mod tests {
             should_warn(risky, true, true, false, false),
             "bracketed-safe alone is not enough — the program never advertised it"
         );
+    }
+
+    #[test]
+    fn every_danger_the_mask_can_trip_has_a_sentence() {
+        for bit in [MULTI_LINE, TRAILING_NEWLINE, SUDO_OR_SU, CONTROL_CHARS] {
+            assert_eq!(descriptions(bit).len(), 1, "bit {bit} has no sentence");
+        }
+        assert!(descriptions(0).is_empty(), "no danger, no bullet");
+        let all = descriptions(MULTI_LINE | TRAILING_NEWLINE | SUDO_OR_SU | CONTROL_CHARS);
+        assert_eq!(all.len(), 4, "four bits, four lines, no duplicates");
+        assert_eq!(
+            descriptions(dangers("sudo rm -rf /\n")),
+            all.get(1..3).unwrap_or_default(),
+            "the lines follow the bits that tripped, in bit order"
+        );
+    }
+
+    #[test]
+    fn each_ask_reaches_its_own_words_and_only_the_osc_ones_carry_a_reason() {
+        for (index, ask) in Ask::ALL.into_iter().enumerate() {
+            assert_eq!(u8::try_from(index).ok().and_then(Ask::from_index), Some(ask));
+            assert!(!ask.title().is_empty() && !ask.affirmative().is_empty());
+        }
+        let past_the_end = u8::try_from(Ask::ALL.len()).ok();
+        assert_eq!(past_the_end.and_then(Ask::from_index), None);
+        assert!(Ask::UnsafePaste.reason().is_empty(), "the dangers are the reason");
+        assert!(!Ask::ClipboardRead.reason().is_empty());
+        assert!(!Ask::ClipboardWrite.reason().is_empty());
+    }
+
+    #[test]
+    fn the_preview_shows_a_control_character_rather_than_running_it() {
+        assert_eq!(preview("go \u{1B}[31m"), "go ^[[31m");
+        assert_eq!(preview("a\u{0}b\u{7F}c"), "a^@b^?c");
+        assert_eq!(preview("one\ntwo"), "one\ntwo", "a real line stays a line");
+        assert_eq!(preview("a\tb"), "a    b", "tab widens rather than escaping");
+        assert_eq!(preview("a\rb"), "a^Mb", "a bare CR is not a line");
+        assert_eq!(preview(""), "");
+    }
+
+    #[test]
+    fn the_preview_elides_rather_than_rendering_a_blob() {
+        let long = "x".repeat(PREVIEW_LIMIT + 40);
+        let shown = preview(&long);
+        assert_eq!(
+            shown.chars().count(),
+            PREVIEW_LIMIT + 1,
+            "the cap plus the ellipsis"
+        );
+        assert!(shown.ends_with('…'));
+        let exact = "x".repeat(PREVIEW_LIMIT);
+        assert_eq!(preview(&exact), exact, "exactly at the cap is not elided");
     }
 }

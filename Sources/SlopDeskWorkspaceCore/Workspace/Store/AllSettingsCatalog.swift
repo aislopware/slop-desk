@@ -1,5 +1,6 @@
 import CSlopDeskFFI
 import Foundation
+import SlopDeskWorkspaceModel
 
 // MARK: - AllSettingsCatalog (the near side of every setting, as a ROW)
 
@@ -203,19 +204,12 @@ public enum AllSettingsCatalog {
         return index == SLOPDESK_SETTINGS_ROW_NONE ? 0 : index
     }()
 
-    /// Reads one delivered string, retrying at the size the door named. `nil` for a zero length,
-    /// which every door uses for "there is nothing here" — which for `targetSection` is the honest
-    /// answer for a row edited in place.
+    /// Reads one delivered string at this catalog's inline size. `nil` for a zero length, which
+    /// every door uses for "there is nothing here" — which for `targetSection` is the honest answer
+    /// for a row edited in place. The retry is ``wsDelivered(capacity:_:)``'s; what is named here is
+    /// only how much of an answer this catalog expects to fit.
     private static func string(_ door: (UnsafeMutablePointer<UInt8>?, Int) -> Int) -> String? {
-        var out = [UInt8](repeating: 0, count: inlineCapacity)
-        var written = out.withUnsafeMutableBufferPointer { door($0.baseAddress, $0.count) }
-        guard written > 0 else { return nil }
-        if written > out.count {
-            out = [UInt8](repeating: 0, count: written)
-            written = out.withUnsafeMutableBufferPointer { door($0.baseAddress, $0.count) }
-            guard written > 0, written <= out.count else { return nil }
-        }
-        return String(bytes: out.prefix(written), encoding: .utf8)
+        wsDelivered(capacity: inlineCapacity, door)
     }
 
     /// Long enough for every label, key and default; a description or a keyword blob overflows it and
