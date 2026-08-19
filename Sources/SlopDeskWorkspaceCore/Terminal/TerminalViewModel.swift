@@ -1806,6 +1806,23 @@ public final class TerminalViewModel {
     /// suppress ONLY inside a true full-screen TUI.
     public var isAlternateScreen: Bool { modeTracker.mode == .altScreen }
 
+    /// The OBSERVABLE twin of ``isAlternateScreen`` — the same truth, readable by a view that needs to
+    /// be told when it changes. Same idiom as the ``isCopyMode``/``copyModeBadgeActive`` pair above,
+    /// and here for the same reason: ``modeTracker`` is `@ObservationIgnored`, so reading
+    /// ``isAlternateScreen`` inside a SwiftUI body or a `withObservationTracking` closure registers
+    /// **nothing**. Two overlay headers claimed it did.
+    ///
+    /// WHAT THAT COSTS, precisely, because it is not "the overlay never updates". A screen flip
+    /// arrives WITH bytes, so any view that also reads an ingest-driven property re-evaluates on the
+    /// next chunk and looks correct. The miss is the quiet case: ⌘ held over a pane that flips to a
+    /// full-screen TUI and then stops producing output leaves the link underlines drawn over vim —
+    /// decoration positioned by a grid that no longer exists. A wrong mark, not a missing one, which
+    /// is the failure this overlay family says it refuses.
+    ///
+    /// Mirrored from ``ingestPass`` rather than computed, because the tracker's own mode is only
+    /// re-read there and at the two session-boundary resets.
+    public private(set) var alternateScreenActive = false
+
     /// TRUE while the foreground program has bracketed-paste mode (DECSET `?2004h`) enabled — the real
     /// parse from the host output stream (the same bracketed state libghostty's surface derives). The
     /// paste-protection pre-check reads this as `programAdvertisedBracketed`: with the "Paste Bracketed
@@ -2126,6 +2143,11 @@ public final class TerminalViewModel {
         for chunk in chunks {
             _ = modeTracker.consume(chunk)
         }
+        // Publish the alt-screen truth to the observable twin. Assigned only on a CHANGE: this runs on
+        // every ingest, and an unconditional write to an `@Observable` property wakes every reader on
+        // every chunk of output — which is the whole terminal, continuously.
+        let onAltScreen = modeTracker.mode == .altScreen
+        if alternateScreenActive != onAltScreen { alternateScreenActive = onAltScreen }
         // Glitch caret (docs/31 #3): host output is ground truth — ANY ingest hides the caret (the whole
         // reconciliation policy: we never painted characters, so a "misprediction" can only be a caret shown
         // one output-gap too long).
@@ -2431,6 +2453,9 @@ public final class TerminalViewModel {
         // latched and would disarm the caret for the entire new session; a drop mid-DCS would swallow the new
         // session's markers).
         modeTracker.reset()
+        // ...and the observable twin with it, or a drop taken inside vim leaves the mirror latched ON
+        // for the whole new session — the reset that exists to stop exactly that for the tracker.
+        alternateScreenActive = false
         // The dead session's no-echo (password-prompt) state is likewise a lie for the fresh shell, which
         // echoes by default — clear it so secure input does not stay latched across a reconnect (the leaf's
         // controller disengages on the resulting `onHostEchoChanged(false)`).
@@ -2477,6 +2502,7 @@ public final class TerminalViewModel {
         clearGlitchCaret()
         endAwaitingReflow() // a fresh session has nothing pending to reflow
         modeTracker.reset() // same session-boundary truth as markReconnecting()
+        alternateScreenActive = false // and the twin, for the same reason
         // A fresh connect target starts at a normal echoing prompt with no manual secure-entry — drop any stale
         // secure-input state so the pill / process-global lock never carry across a target change.
         hostNoEcho = false

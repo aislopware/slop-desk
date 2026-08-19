@@ -39,15 +39,21 @@ struct LinkHighlightOverlay: View {
     let cwd: String?
 
     var body: some View {
-        // Reading `linkHighlightActive` / `isAlternateScreen` here registers observation, so the overlay
-        // reveals / clears the instant ⌘ is pressed / released (or the screen flips to a TUI). The heavy reads
+        // Reading `linkHighlightActive` / `alternateScreenActive` here registers observation, so the overlay
+        // reveals / clears the instant ⌘ is pressed / released (or the screen flips to a TUI). The SECOND of
+        // those is the observable TWIN, and the distinction is the whole reason it exists: `isAlternateScreen`
+        // reads through an `@ObservationIgnored` tracker and registers NOTHING, so this comment used to
+        // describe a dependency the code did not have. The miss was quiet — a flip arrives with bytes, so the
+        // `bytesReceived` read below covered it whenever output kept coming — and it showed up exactly when it
+        // was worst: ⌘ held over a pane that flips to a TUI and goes silent left the underlines drawn over vim.
+        // The heavy reads
         // (`bytesReceived`, the surface snapshot, the detector) live INSIDE the active branch so the dependency
         // on streaming output is only registered while the underline is actually live — no idle re-eval per
         // ingest when ⌘ is not held.
         if LinkUnderlineGeometry.isArmed(
             highlightActive: model.linkHighlightActive,
             detectionEnabled: SettingsKey.linkDetectionEnabled,
-            isAlternateScreen: model.isAlternateScreen,
+            isAlternateScreen: model.alternateScreenActive,
         ),
             let snapshot = model.surface as? TerminalViewportSnapshotting,
             let metrics = snapshot.cellMetrics()
