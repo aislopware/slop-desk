@@ -101,9 +101,9 @@ extension PhoneKey.Press {
     /// One `UIKey` as the rules' vocabulary. The usage is the key's identity under every layout; the
     /// string is only ever the layout's base, for a ⌃ fold or a binding lookup.
     ///
-    /// One spelling of this, for the two views that read a `UIKey` — the terminal's responder and
-    /// the chord recorder. A second would be a second answer to "which key is this", which is the
-    /// duplicate the whole HID-usage rule exists to prevent.
+    /// One spelling of this, for every view that reads a `UIKey` — the terminal's responder, the
+    /// chord recorder, and the pane drag's cancel key. A second would be a second answer to "which
+    /// key is this", which is the duplicate the whole HID-usage rule exists to prevent.
     init(_ key: UIKey) {
         let modifiers = key.modifierFlags
         self.init(

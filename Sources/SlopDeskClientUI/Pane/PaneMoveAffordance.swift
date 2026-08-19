@@ -20,9 +20,10 @@
 //
 // This file also carries the drag block's SHARED VOCABULARY — the coordinate space, the drop-zone
 // geometry, the zone enum, and the two things the canvas drag needs a platform for: `PanePointer`
-// (there is no `PointerStyle` on iOS) and `PaneMoveEscapeMonitor` (there is no local event monitor
-// on iOS). Both of those are gated ONCE, here, so no call site in `SplitContainer` or `PaneDivider`
-// has to restate a platform fact it does not own.
+// (there is no `PointerStyle` on iOS) and `PaneMoveEscapeMonitor` (a drag holds no first responder,
+// so reading its cancel key is a local `NSEvent` monitor on the Mac and a first responder over the
+// canvas on the phone — one behaviour, two mechanisms). Both of those are gated ONCE, here, so no
+// call site in `SplitContainer` or `PaneDivider` has to restate a platform fact it does not own.
 
 #if canImport(SwiftUI)
 import CSlopDeskFFI
@@ -535,12 +536,18 @@ struct PaneMoveOverlay: View {
 // MARK: - Escape-to-cancel
 
 // ⚠️ THE GATE ROUND THIS TYPE IS THE WHOLE GATE — the mount in `SplitContainer` carries none. The
-// fact is one fact (a keyboard cancel needs an event monitor, and only AppKit has one), and it was
-// spelled twice: here, and again around the `PaneMoveEscapeMonitor(...)` in the move layer. Two
-// spellings of one fact is two places to fix when it changes and one place for it to drift, so the
-// `#else` below hands the phone a monitor that mounts and does nothing. That is the stage-B shape
-// (docs/56 §3.5: "the platform seams are SINKS, not `#if`s") rather than a second implementation:
-// there is nothing on iOS for it to be an implementation OF.
+// fact is one fact (a pane-move drag holds no first responder, so its cancel key has to be read by
+// something other than a focused view), and it was spelled twice: here, and again around the
+// `PaneMoveEscapeMonitor(...)` in the move layer. Two spellings of one fact is two places to fix
+// when it changes and one place for it to drift, so the gate stays here and the mount stays plain.
+//
+// BOTH HALVES ARE REAL, and they run the same cancel: the Mac installs a local `NSEvent` monitor,
+// the phone takes first responder for the length of the drag (``PaneMoveEscapeResponder``). The
+// phone's half used to be a SINK that mounted and did nothing, and docs/56 increment 41 recorded
+// that as what it was — a capability the phone was OWED (§3: "layout diverges; capability does
+// not"), since an iPad with a hardware keyboard could not bail out of a drag it had started. What
+// makes the two halves one implementation rather than two is the closure: neither knows what
+// cancelling means, and the single mount in `SplitContainer` supplies it.
 
 #if os(macOS)
 import AppKit
@@ -605,21 +612,28 @@ struct PaneMoveEscapeMonitor: NSViewRepresentable {
 
 #else
 
-/// The phone's half: a monitor that mounts, draws nothing and cancels nothing.
+/// The phone's half: a zero-sized `UIPress` responder that holds first responder for exactly as
+/// long as the drag is in flight.
 ///
-/// It is EMPTY rather than ported because the Mac's half is not a rendering choice — a local
-/// `NSEvent` monitor is the only way to read a key that no first responder is going to deliver, and
-/// UIKit has no equivalent to reach for. `.onKeyPress(.escape)` is the nearest thing and it wants
-/// keyboard focus, which is precisely what a pane-move drag never takes. So an iPad with a hardware
-/// keyboard cannot yet cancel a live pane drag with Esc; the drag is finger-driven there and ends
-/// where the finger lifts. Filling this in is a real capability owed to the phone (docs/56 §3:
-/// "layout diverges; capability does not"), and it needs a `UIPress` responder over the canvas — not
-/// a gate at the mount, which is what this type exists to keep out of `SplitContainer`.
+/// Same arming rule, same cancel closure, same "mounted unconditionally, armed by `isActive`"
+/// lifetime as the Mac's half above. The mechanism differs because it must: UIKit has no local
+/// event monitor, and `.onKeyPress(.escape)` — ``View/slateCancelKey(perform:)``'s phone half, which
+/// every other cancel on this platform uses — wants keyboard focus, which is precisely what a
+/// pane-move drag never takes. ``PaneMoveEscapeResponder`` is where that lives, and its header
+/// carries the two things this shape has to answer for: what arms the grab, and what the keyboard
+/// is handed back to.
 struct PaneMoveEscapeMonitor: View {
     var isActive: Bool
     var onCancel: () -> Void
 
-    var body: some View { EmptyView() }
+    var body: some View {
+        PaneMoveEscapeResponder(isActive: isActive, onCancel: onCancel)
+            // Zero-sized and touch-transparent, the ``KeybindingCaptureHost`` way: the drag's own
+            // touches belong to the grab handle and the canvas, and a responder that took one would
+            // be cancelling the gesture it exists to rescue.
+            .frame(width: 0, height: 0)
+            .allowsHitTesting(false)
+    }
 }
 #endif
 #endif

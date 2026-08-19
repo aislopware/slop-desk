@@ -1617,7 +1617,7 @@ Two facts, now spelled once each:
 (§3.5), not a second implementation. **This is a real capability gap and is recorded as one:** the
 Mac's half is a local `NSEvent` monitor precisely *because* the drag holds no first responder, so
 `.onKeyPress(.escape)` cannot substitute. Escape-to-cancel on iPad needs a `UIPress` responder over
-the canvas — a feature, not a gate fix.
+the canvas — a feature, not a gate fix. *(Paid in increment 44, which is exactly that responder.)*
 
 **14 gates → 6.** `PaneDragCoordinator` 7→3, `SplitContainer` 3→1, `PaneDivider` 2→0,
 `PaneMoveAffordance` 2→2 while absorbing three from the other two files.
@@ -1675,3 +1675,141 @@ subject, and this increment's subject was the duel.
 
 Eight `internal` → `package` widenings in `CodeSidebarFocusPolicy` pay for the move, each for the one
 caller that crossed. `CodeSidebarFocusPolicyTests` is unchanged — `@testable` never cared.
+
+### Increment 43 — the pool takes the last two gates off, and neither was a choice
+
+Increment 42 left the pool at two gates and named the way out of both in the same breath. This is
+that follow-up, and it moved the mint SIDEWAYS rather than up: `CodeSidebarWebView.swift` already
+compiles as two per-platform halves, so a decision that genuinely differs per platform costs it no
+seam it did not already have — while the same decision inside the pool is a `#if` in the middle of a
+law with no platform in it.
+
+`CodeSidebarPageMint` is an ungated `@MainActor enum` with one `private static func finish` (the
+`isInspectable` and `underPageBackgroundColor` tail, one spelling for both) and one
+`page(projectRoot:configuration:)` declared inside each existing half. The pool builds the
+`WKWebViewConfiguration` — the faces, the five user scripts, the clipboard bridge, every one of them
+platform-blind — and takes back a dressed page **whose class it never learns**. The three decisions
+the mint makes (subclass-vs-plain, chrome polarity, base-canvas kill) are now stated once, in the
+file's header, and each half below only spells them.
+
+The AppKit/UIKit import went with it, which was the surprise. The pool still touches exactly one
+platform member — `window`, in `protectedProjectRoots()` and `mountedPage()` — and it needs no import
+to: `window` is inherited from `NSView` here and `UIView` there, and WebKit already brings its own
+superclass's framework into scope. That is not a trick. It is the fact the pool's whole design rests
+on, that `WKWebView` IS the platform's view type on both halves.
+
+**2 gates → 0, and it is pinned that way.** The pool is the first file in the code-sidebar cluster to
+carry no `#if os(` at all, which is stronger than the four-file whole-file-gate ban above it and gets
+its own ratchet in `scripts/check-supervisor.sh`. The failure message says what a new gate would mean
+rather than how to spell it away: whatever it guards belongs in `MacCodeSidebarKeyboard.swift` (up)
+or `CodeSidebarWebView.swift` (sideways), because those are the two files that already have halves.
+
+This is also the first entry on the ledger below — **kind 2**, the pool going *down* below both
+halves, needs no AppKit rewrite and removes three of the thirteen imports. It could not start while
+the file named a platform framework. Now it can.
+
+### Increment 44 — the iPad gets its escape-to-cancel, which increment 41 recorded as owed
+
+Increment 41 turned `PaneMoveEscapeMonitor` into a two-half type and wrote its phone side as a SINK —
+correctly labelled at the time as a real capability gap rather than a gate, with the mechanism it
+would need named on the spot. §3's rule is that layout diverges and capability does not, so a sink
+that stays a sink is a debt, not a design. This pays it.
+
+`PaneMoveEscapeResponder` is the phone's half: a zero-sized, touch-transparent `UIViewRepresentable`
+that takes first responder for exactly as long as the drag is in flight, and reads Esc off
+`pressesBegan`. The two halves are ONE implementation of one behaviour — neither knows what
+cancelling means, and the single mount in `SplitContainer` (which carries no gate) supplies the
+closure both call. What differs is only the mechanism, and it differs because it must: UIKit has no
+local event monitor, and `slateCancelKey`'s `.onKeyPress(.escape)` wants keyboard focus, which is
+precisely what a `DragGesture` never takes.
+
+Three things the shape had to answer for, and does:
+
+  * **What arms the grab.** The drag, edge-triggered — *and* a hardware keyboard being attached
+    (`GCKeyboard.coalesced`, read at arm time so a keyboard paired after launch is seen). That gate
+    is not politeness. `TerminalInputHostView` is a `UIKeyInput`, so taking first responder off it
+    dismisses the software keyboard, whose animation makes SwiftUI's keyboard avoidance re-lay the
+    canvas out *under the moving finger*. A user with no hardware keyboard has no Esc to press and
+    loses nothing by the view staying inert.
+  * **What the keyboard is handed back to.** Whoever held it, remembered weakly, restored by
+    identity, and **only if this view still actually holds it** — a spring-loaded tab reveal can move
+    first responder through `PaneFocusCoordinator` mid-drag, and forcing the remembered owner back
+    then would take the keyboard off the pane the user just landed on. Same shape as
+    `MacCodeSidebarKeyboard`'s `lastKeyboardOwner`, with the one difference UIKit forces: AppKit
+    publishes `window.firstResponder` and UIKit does not, so the outgoing owner is found by walking
+    the window for `isFirstResponder`, once per drag.
+  * **Which key it is.** By HID usage, through `PhoneKey.Press.init(_ key: UIKey)` — the module's one
+    `UIKey` reader, now shared by three views instead of two. A press identified by the character it
+    committed is the defect that cost the phone its whole nav block (`docs/29` #7). Modifiers are
+    deliberately not consulted, which is the Mac's rule too, so ⌘Esc and ⌥Esc bail out on both.
+
+**One delta, stated rather than hidden.** The Mac's monitor swallows Esc and returns every other key
+untouched, so typing during a drag still reaches the terminal. Here the keyboard is the drag's for
+its whole duration: a non-cancel press goes on down this view's chain, which is the canvas's SIBLING
+and not the terminal's ancestor, so it reaches nothing. That is the price of the only mechanism iOS
+offers, it is bounded by the length of a held gesture, and it is the same trade
+`KeybindingCaptureView` makes while a row records.
+
+Gate count is unchanged (the fact was already spelled once, around the type). What changed is that
+both halves are now real.
+
+## Stage D ledger — what the rename actually costs
+
+`SlopDeskClientUI` cannot become `SlopDeskPhoneUI` while `SlopDeskMacUI` still imports it. That is
+the whole test, and it is countable: **13 files in `SlopDeskMacUI` carry `import SlopDeskClientUI`**,
+and each one names what it takes in the comment on the import line. Grouped, they are three kinds of
+debt, not one — and only the first kind needs an AppKit rewrite.
+
+### The ruling first
+
+There is **no shared SwiftUI-view target below the two halves, and there must not be one.**
+`SlopDeskSlate` imports SwiftUI in four files but declares zero `View` types — it is tokens and
+modifiers. `SlopDeskClientCore` imports SwiftUI nowhere at all. That is not an omission to fix by
+adding a `SlopDeskSurfaces` target: the mandate is two separate implementations, and the ratchets
+already encode the alternative — *"one cheat sheet, drawn twice and spelled once"*, *"one palette,
+drawn twice and spelled once"*, *"one design floor, two renderers, and the floor never draws"*. The
+DECISION is shared and lives below; the DRAWING is per-half and never is. A surface currently "drawn
+once" for both halves is therefore not a category needing a home — it is unfinished Stage D.
+
+### Kind 1 — hosted SwiftUI that must be rewritten in AppKit
+
+The expensive kind, and the only one that is.
+
+| What | Lines | Taken by |
+| --- | --- | --- |
+| the pane canvas (`Pane/`, 24 files) | 6888 | `MacContentColumn`, `SlopDeskSplitViewController` |
+| `CodePanelSurfaces` | 632 | `MacCodePanelColumn` |
+| `SettingsBespokeSurface` | 325 | `MacSettingsRows` |
+| `FirstLaunchStepSurface` | 286 | `MacFirstLaunchSheet` |
+| `StatusDotView` | 225 | `RailStatusRollup` (already carries its expiry note) |
+| `SatellitePaneHost` | 170 | `SatellitePaneWindows` |
+| `WorkspaceColumnHosts` (the factory seam) | 79 | `SlopDeskSplitViewController` |
+
+The canvas dominates by an order of magnitude, and everything else in this table is small enough to
+cross one at a time. `StatusDotView` is the cheapest and already flagged; the bespoke settings pages
+and the first-launch checklist are next.
+
+### Kind 2 — not views at all, and in a UI target by accident
+
+`CodeSidebarWebViewPool` (410 lines) manages warm `WKWebView`s keyed by project. It is a RESOURCE
+manager: no `View` type, no layout, no design token. It is imported by three MacUI files
+(`SlopDeskMacApp`, `MacCodePanelColumn`, `WorkspaceKeyDispatcher`) purely as a shared resource.
+Increment 43 took the mint out of it, and nothing in its body names an `NSView`, a `UIView`, AppKit
+or UIKit any more — so it belongs **below** both halves, not above the phone. Moving it down removes
+three of the thirteen imports **with no AppKit rewrite at all**, which makes it the highest
+value-per-risk item on this page and the one that is now unblocked.
+
+### Kind 3 — blocked on a geometry fact, not on effort
+
+`PaneDragCoordinator` (723 lines) is taken by `MacSidebarRow`, `MacNavigatorColumn` and
+`MacContentColumn`. It cannot ascend for the reason increment 41 recorded: `DropTargetFrameReader`
+reads the compositor rect, which differs from the hosting view's frame by the island moat, and by a
+differently-animating amount during a collapse. Either the canvas is ported whole (kind 1) or the
+moat moves out of SwiftUI into the AppKit column. It is not independently schedulable.
+
+### So the order is
+
+1. Kind 2 — the pool goes down. Three imports, no rewrite.
+2. Kind 1's small surfaces — `StatusDotView`, then the first-launch checklist, then the bespoke
+   settings pages. Four more imports, each a contained AppKit rewrite.
+3. The canvas, which takes kind 3 with it and is the remaining bulk.
