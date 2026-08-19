@@ -2530,6 +2530,68 @@ compile error. Hence the census down to `GhosttyRendererSeam.install()` alone �
 `spells`, because the embedder names `nativeShared` five times in doc comments explaining the seam and a
 raw grep reads its own explanation as a registrar.
 
+### Increment 58 — wave R's first eight, and three things the fan-out found that no batch owned
+
+**R1–R8 landed together**, twelve files under `Sources/SlopDeskMacUI/Pane/` (4,616 lines) against seven
+new suites in `Tests/SlopDeskMacUITests/`. Nothing was deleted from `Pane/`, as the wave's rule says.
+The batches themselves went as the table predicted; what is worth writing down is what came back from
+the *edges* of a parallel fan-out, because all three were invisible from inside any single batch.
+
+**The AppKit spelling of a SwiftUI modifier is not the identically-named one, and the brief got it
+wrong.** Every batch was told to render `.opacity(x)` as `withAlphaComponent(x)`. They are not the same
+function: `.opacity` **scales** a colour's own alpha and `withAlphaComponent` **replaces** it, so they
+agree only for as long as the underlying colour is opaque. Under the terminal's paper they agree today
+and would diverge the day a profile's glass face carries alpha — silently, and in the one direction that
+matters, since the *recede* veil exists to keep a pane readable and replacing its alpha makes it the
+heavier of the two. `Slate` already had the right verb (`slateScalingAlpha`) and already said this at
+its own definition. The lesson is not about alpha: **a port brief that names the destination API is
+asserting an equivalence, and the equivalence is the part to check.** Name the *behaviour* to preserve.
+
+**The cross-half invariant that could not be written as a test, split into two that could.**
+`PaneStatusPillInk` is ratcheted as a pair so both renderers must answer every case — but a ratchet
+reading two files structurally cannot see whether they answer the **same**, and the obvious test for
+that (compare the SwiftUI table's `Color` against the AppKit table's `NSColor`) has to name both UI
+halves at once, which §3.5 step 5 forbids and should keep forbidding. Neither deleting the invariant nor
+buying a third tracked exception is right. Split it instead: `check-supervisor.sh` pins that the two
+tables name **corresponding rungs**, and `SlateNativeTokenTests` pins that a corresponding rung **is the
+same colour**. Together they state what the illegal test wanted to, from inside the floor. **A
+cross-half invariant is usually two legal halves that meet at the token layer** — worth reaching for
+before an exception, since the pair-ratchet's blind spot is structural and will recur.
+
+- **A computed property over a non-observable tracker is not observable, and reads as a rendering bug.**
+  `TerminalViewModel.isAlternateScreen` derived from `modeTracker.mode`, which nothing observes, so a
+  view reading it never re-rendered on an alt-screen transition. Fixed with a stored twin updated in
+  `ingestPass` and cleared beside both `modeTracker.reset()` sites. Found by a batch agent in a file
+  **no batch owned** — which is the argument for letting a fan-out report outside its lane even while
+  it may only edit inside it.
+- **Parallel batches drift at their shared API before either is wrong.** R4 called
+  `MacPaneStatusPillCloseView(help:ink:)`; R2 had defined `(help:fill:)`. Neither batch could have seen
+  it, and the tiebreak is not "whoever landed first" — it is the SwiftUI original, which spends
+  `Slate.Text.secondary` unconditionally and therefore means `.chrome`.
+
+### Increment 59 — the lint's own hang, and why the fold was scheduled to trigger it
+
+**`make lint` could not fail; it could only stop returning.** `check-supervisor.sh`'s `spells` helper
+takes a pattern and a file list, and forty bans build that list from a
+`$(repo_files 'Sources/SomeTarget/**/*.swift')` splat. A splat matching nothing expands to nothing, at
+which point the inner `grep -lE` has no file operands, falls back to stdin, and blocks forever. Three of
+these sat wedged for the better part of three hours. It is the worst available failure direction — a
+hung gate reports neither pass nor fail — and it is only reachable under an invocation whose stdin stays
+open, which is why it never showed in a shell that closes it and did show under an agent.
+
+**The fold was going to trigger this on the day it succeeded.** Draining `SlopDeskClientUI` to empty is
+the entire point of F1–F4, and several bans glob exactly that directory. F5's rule — re-run every
+re-pointed gate against a deliberately broken tree — now has a fourth demonstration behind it, and a
+sharper one than the first three: those gates went *green while blind*, this one would not have gone
+anywhere at all.
+
+**Guarded at the choke point, and the answer is `return 1` rather than a shout.** An empty corpus is the
+correct and expected state for a draining target, where the ban really is trivially satisfied; only a
+caller knows whether its own corpus was meant to be non-empty. So that judgement stays where the
+knowledge is — in the per-gate vacuity floors that count their list before they call. **A floor that
+reports and returns is not a floor if its caller runs on regardless**, which is what `fail` does here by
+design, and was the second half of this bug.
+
 ## Stage D ledger — what the rename actually costs
 
 `SlopDeskClientUI` cannot fold into `SlopDeskPhoneUI` while `SlopDeskMacUI` still imports it. That is
@@ -2887,19 +2949,19 @@ rather than replacing it — `binding_rows.rs` files the verb `Both`.
 mounts, until R9. That is not a scheduling preference — it is the only order in which a batch can be
 finished, because a Mac part whose mounter is still SwiftUI has nowhere to be put.
 
-| | Ports | Lines | Mounted by |
-| --- | --- | --- | --- |
-| **R1** | `PaneResizeScrim` + `PaneRecedeScrim` | 62 | R11 |
-| **R2** | `PaneStatusPills` | 180 | R9, R10 |
-| **R3** | `PromptJumpFlashOverlay` + `LinkHighlightOverlay` + `ViCursorOverlay` | 261 | R9 |
-| **R4** | `ViModeOverlay` + `HintModeOverlay` | 510 | R9 |
-| **R5** | `TerminalFindBar` | 302 | R9 |
-| **R6** | `PaneDivider` | 152 | R11 |
-| **R7** | `PaneDropOverlay` + `PaneDropReceiver` | 285 | R11 |
-| **R8** | `PaneMoveAffordance` (the grab pill) | 449 | R11 |
-| **R9** | `TerminalLeafView` + `BuildStatusPlaceholderView` | 413 | R11 |
-| **R10** | `GuiLeafView` | 1,005 | R11 |
-| **R11** | `SplitContainer` + `PaneContainer` + `SatellitePaneContent` | 754 | `MacContentColumn` |
+| | Ports | Lines | Mounted by | |
+| --- | --- | --- | --- | --- |
+| **R1** | `PaneResizeScrim` + `PaneRecedeScrim` | 62 | R11 | ✅ 58 |
+| **R2** | `PaneStatusPills` | 180 | R9, R10 | ✅ 58 |
+| **R3** | `PromptJumpFlashOverlay` + `LinkHighlightOverlay` + `ViCursorOverlay` | 261 | R9 | ✅ 58 |
+| **R4** | `ViModeOverlay` + `HintModeOverlay` | 510 | R9 | ✅ 58 |
+| **R5** | `TerminalFindBar` | 302 | R9 | ✅ 58 |
+| **R6** | `PaneDivider` | 152 | R11 | ✅ 58 |
+| **R7** | `PaneDropOverlay` + `PaneDropReceiver` | 285 | R11 | ✅ 58 |
+| **R8** | `PaneMoveAffordance` (the grab pill) | 449 | R11 | ✅ 58 |
+| **R9** | `TerminalLeafView` + `BuildStatusPlaceholderView` | 413 | R11 | |
+| **R10** | `GuiLeafView` | 1,005 | R11 | |
+| **R11** | `SplitContainer` + `PaneContainer` + `SatellitePaneContent` | 754 | `MacContentColumn` | |
 
 R1–R8 are fully parallel — no file in the left column names another, and the dependency arrows in
 `Pane/` that look like exceptions (`HintModeOverlay` "naming" `TerminalLeafView`, `PaneDivider`
