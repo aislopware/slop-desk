@@ -6266,6 +6266,50 @@ if [[ -e Sources/SlopDeskClientUI/Chrome/WindowSidebarToggle.swift ]]; then
   fail "the SwiftUI WindowSidebarToggle is back — MacWindowSidebarToggle replaced it, never joined it (docs/56 §3.5)"
 fi
 printf 'check-supervisor: the window root is off the draining floor — one sidebar toggle, drawn in AppKit.\n'
+
+# ── THE CANVAS REGISTERS ITSELF IN APPKIT (docs/56 stage F, P5) ─────────────────────────────────
+# `DropTargetFrameReader` published the canvas's SCREEN rect from inside `SplitContainer`'s
+# `GeometryReader` because the AppKit view hosting the canvas could not: `ContentColumn` applied the
+# island moat one level up, so the hosting view's frame and the canvas differed by it — and by a
+# DIFFERENTLY ANIMATING amount while a column collapsed. That was the last kind 3 in the ledger and
+# it was a statement about SwiftUI, not about geometry. The moat is `MacContentColumn`'s constraints
+# now, the difference is zero, and the registration is the three lines `MacNavigatorColumn` already
+# spends on `.sidebarList`.
+MAC_CONTENT_COLUMN=Sources/SlopDeskMacUI/Columns/MacContentColumn.swift
+if [[ -e Sources/SlopDeskClientUI/Pane/DropTargetFrameReader.swift ]]; then
+  fail "DropTargetFrameReader is back — the island moat moved to ${MAC_CONTENT_COLUMN} instead (docs/56 stage F, P5)"
+fi
+for half in 'register(.canvas)' 'mainWindowFrame'; do
+  if ! grep -qF "${half}" "${MAC_CONTENT_COLUMN}"; then
+    fail "${MAC_CONTENT_COLUMN} stopped spelling ${half} — the canvas is un-droppable, and no test goes red for it (docs/56 stage F, P5)"
+  fi
+done
+# ONE PROVIDER FOR ONE KEY. A re-mounted SwiftUI reader registering a SECOND provider does not fail:
+# which one wins is mount order, so a drag resolves against whichever view happened to appear last.
+# Counted rather than compared as a string — a census that is empty, or that grew, must both be loud.
+canvas_registrars=$(grep -rlF 'register(.canvas)' Sources/ --include='*.swift' 2> /dev/null | sort || true)
+if [[ "${canvas_registrars}" != "${MAC_CONTENT_COLUMN}" ]]; then
+  printf '%s\n' "${canvas_registrars:-<none>}" >&2
+  fail "the .canvas drop target is registered somewhere other than ${MAC_CONTENT_COLUMN} alone — two providers for one key resolve by mount order (docs/56 stage F, P5)"
+fi
+# AND THE MOAT DOES NOT COME BACK. It did not descend to `SlopDeskClientCore` and that was the ruling,
+# not an omission: it reads three `Slate.Metric` tokens and lays out, which is docs/56 §3's test for a
+# DRAWING exactly inverted — and `SlopDeskClientCore` sits BELOW `SlopDeskSlate` and cannot read the
+# tokens at all. So the pin is on the measurements, because the measurements are what the difference
+# was made of. Through `spells`: `SplitContainer`'s header names the moat to explain why its gate is
+# gone, and a gate that cannot tell code from its own post-mortem forbids writing the post-mortem.
+# shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
+# The `\b` is load-bearing, and 57b already paid for learning that: without it `islandRadius` also
+# matches `islandRadiusCompact`, which is `SlateProjectIsland`'s own token and legitimately drawn in
+# this target. A prefix match here bans a surviving token by accident and reads as the moat coming
+# back — the gate would be red for something that is right.
+moat_respelled=$(spells 'Slate\.Metric\.(islandInset|islandRadius|bandInset|bandHeight|panelRailWidth)\b' \
+  $(repo_files 'Sources/SlopDeskClientUI/**/*.swift') 2> /dev/null || true)
+if [[ -n "${moat_respelled}" ]]; then
+  printf '%s\n' "${moat_respelled}" >&2
+  fail "the island's measurements are spelled in the draining target again — the moat is ${MAC_CONTENT_COLUMN}'s (docs/56 stage F, P5)"
+fi
+printf 'check-supervisor: the canvas registers itself in AppKit — one provider, the model frame, no SwiftUI reader.\n'
 # AND THE MAC INJECTS NO ENVIRONMENT IT DOES NOT READ (docs/56 §3.5, increment 56f). `SlopDeskMacApp`
 # handed its scene root three of the draining target's environment keys — `\.preferencesStore`,
 # `\.agentHooksController`, `\.overlayCoordinator` — and re-applied all three to every satellite root
