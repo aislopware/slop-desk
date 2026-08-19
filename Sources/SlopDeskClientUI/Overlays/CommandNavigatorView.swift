@@ -16,6 +16,12 @@
 // delta math is never re-derived here). The navigator only ever opens over the ACTIVE pane, so the store's
 // active-pane jump always re-anchors the pane this card floats over.
 //
+// The per-pane VISIBILITY holder is NOT here: `CommandNavigatorChrome` is one `Bool` that a model
+// callback toggles, so it descended with the rest of the leaf's wiring to `TerminalPaneWiring`
+// (`SlopDeskClientCore`) — a flag is not a drawing, and an AppKit canvas has to flip the same one.
+// Nothing else left this file: the card IS a drawing, `Platform::Both`, and its second renderer is a
+// later batch rather than a deletion.
+//
 // `Slate.*` tokens ONLY (raw font/colour/radius literals fail `scripts/check-ds-leaks.sh`). Cross-platform:
 // the ⌃⌘O chord is macOS-only, but the overlay + its keyboard handling compile for iOS too (the toolbar /
 // menu surfaces it there), so this whole file builds under `bash scripts/check-ios.sh`.
@@ -28,19 +34,6 @@ import SlopDeskSlate
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 import SwiftUI
-
-/// Per-pane chrome holder driving the Command Navigator's visibility — a reference type so the pane model's
-/// `onRequestBlockNavigator` `@MainActor` closure can TOGGLE it (the seam doc: "show/hide"), exactly like the
-/// find bar's ``TerminalFindBarModel``. Held as `@State` on the
-/// `.id(PaneID)`-keyed ``TerminalLeafView``, so it is per-pane (no cross-pane bleed) and never the durable
-/// model's concern.
-@MainActor
-@Observable
-final class CommandNavigatorChrome {
-    /// Whether the navigator card is mounted over this pane. Toggled by `onRequestBlockNavigator` (⌃⌘O),
-    /// cleared by the card's Esc / scrim-tap / row-jump.
-    var isVisible = false
-}
 
 struct CommandNavigatorView: View {
     /// The pane's live terminal model — its pure block store (`blocks`) is the navigator's data source, and

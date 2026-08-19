@@ -13,6 +13,15 @@
 // NO command-block decoration on the surface: the per-command tick rail that stood in the trailing
 // gutter (round 14) was REMOVED WHOLE at the user's direction 2026-08-10. Block navigation keeps its
 // keyboard and Command Navigator paths; the pane's edges carry nothing.
+//
+// WHAT IS LEFT HERE IS THE DRAWING AND THE TRIGGER. Everything this leaf DOES on appear, on a
+// live-session swap and on teardown is ``TerminalPaneWiring``'s (`SlopDeskClientCore`) — the five
+// callback pairs, the dial, the autotype seam, the secure-input reconcile and the chip `×`. None of
+// them read a token, laid anything out or named a view type, and an AppKit canvas would have had to
+// hand-translate the retain-cycle discipline, the teardown ORDER and the `EnableSecureEventInput`
+// reference balance into a second language to reach them (docs/56 §3, increment 56c). This file keeps
+// SwiftUI's `.task` / `.onChange` / `.onDisappear` and nothing else; the AppKit half keeps its
+// `withObservationTracking` and nothing else.
 
 #if canImport(SwiftUI)
 import Defaults // observe the Auto-Secure-Input / indicator defaults so the toggle is LIVE.
@@ -44,19 +53,13 @@ struct TerminalLeafView: View {
     /// re-anchor engine, which resolves the ACTIVE pane = the pane the navigator is over). Passed from ``PaneContainer``.
     let store: WorkspaceStore
 
-    /// The in-pane ⌘F find bar's view-model (pure ``TerminalSearchController`` + the libghostty
-    /// `search:` passthrough). Wired to the pane's `onRequestFind*` callbacks in `.task`; per-pane `@State`
-    /// (the leaf is `.id(PaneID)`-keyed), so no cross-pane bleed.
-    @State private var findBar = TerminalFindBarModel()
-
-    /// The per-pane macOS Secure Keyboard Entry actuator. Driven (in `wirePaneCallbacks`)
-    /// from the model's `onHostEchoChanged` (auto, on a host no-echo password prompt) + the manual
-    /// `onManualSecureInputChanged` toggle, it engages / disengages process-global `EnableSecureEventInput`
-    /// with a strict single-reference balance. It also observes the app-frontmost edge
-    /// (``SecureKeyboardEntryController/observeAppActivity()``), so the lock releases whenever slopdesk is
-    /// backgrounded / window-resigned and re-acquires on return — never leaked to other apps' keyboards.
-    /// Torn down on disappear so the lock can't leak past a pane close either. Inert off macOS (no-op controller).
-    @State private var secureInput = SecureKeyboardEntryController()
+    /// This pane's wiring — the find bar, the Secure Keyboard Entry actuator and the Command Navigator
+    /// chrome, plus every callback they are driven by. Per-pane `@State` (the leaf is `.id(PaneID)`-keyed,
+    /// so no cross-pane bleed) and BELOW the view layer, because none of it is a drawing: an AppKit canvas
+    /// holds the same object and triggers it from `withObservationTracking`. The three holders are `let`
+    /// on it, so reading `wiring.findBar.visible` here observes the FIND BAR, exactly as the three separate
+    /// `@State`s this replaced did.
+    @State private var wiring = TerminalPaneWiring()
 
     /// The LIVE "Auto Secure Input" setting, OBSERVED (not just read at wire time) so a
     /// Settings toggle reconciles every open pane at once. Reading it as `@Default` registers observation, so the
@@ -68,12 +71,6 @@ struct TerminalLeafView: View {
     /// leaf and ``PaneStatusPillPresentation`` re-evaluates the secure-input pill at once — turning it
     /// off mid-prompt without waiting for a pane swap or the next echo edge.
     @Default(.secureInputIndicator) private var secureInputIndicator
-
-    /// The per-leaf Command Navigator (⌃⌘O) chrome the model's `onRequestBlockNavigator` callback
-    /// TOGGLES. A reference type so the `@MainActor` closure can flip it (the find-bar idiom); per-pane
-    /// (`.id(PaneID)`-keyed), so no cross-pane bleed, and the modal only opens over the pane the store fired — the
-    /// active pane.
-    @State private var navigatorChrome = CommandNavigatorChrome()
 
     /// The single overlay coordinator, used ONLY to surface a transient error
     /// toast when a host open/reveal RPC fails — so the action is never a SILENT no-op. `nil` outside the app
@@ -108,21 +105,25 @@ struct TerminalLeafView: View {
         // Keyed on the pane AND on the launch dial hold, so a leaf that mounts while this client's
         // restored layout is still unanswered runs the task, does nothing, and RE-runs on the release
         // (the key moves off `nil` — the `autotypeTaskKey` shape).
-        .task(id: dialTaskKey) { await connectIfNeeded() }
+        .task(id: dialTaskKey) { await TerminalPaneWiring.connectIfNeeded(live: live, store: store) }
         // The `SLOPDESK_AUTOTYPE` OUT-path proof (docs/22 §7) rides its OWN task, keyed on the pane
         // being connected rather than on this leaf appearing — see `autotypeTargetIfConnected`.
-        .task(id: autotypeTargetIfConnected) { await runAutotypeIfRequested() }
+        .task(id: autotypeTargetIfConnected) { await TerminalPaneWiring.runAutotypeIfRequested(live: live) }
         // Wire the pane's ⌘F / ⌘G / ⇧⌘G callbacks on appear AND on every live-session swap (`initial: true`
         // fires once up-front, then on each `live?.id` change). Synchronous `@MainActor` closure — no actor
         // hop, unlike the `@Sendable async` `.task` above.
-        .onChange(of: live?.id, initial: true) { wirePaneCallbacks() }
-        // Keep Secure Input LIVE to a Settings toggle. `wireSecureInputCallbacks()` only
-        // re-syncs on a pane swap, so without this an engaged process-global lock + the pill would linger past
+        .onChange(of: live?.id, initial: true) {
+            wiring.wire(live: live, store: store, overlay: overlayCoordinator, chrome: workspaceChrome)
+        }
+        // Keep Secure Input LIVE to a Settings toggle. The wiring above only re-syncs on a pane
+        // swap, so without this an engaged process-global lock + the pill would linger past
         // the user turning "Auto Secure Input" OFF — the carryover footgun. Pushing the new value into BOTH the
         // controller (releases the lock on the OFF edge) AND the model's pill mirror reconciles them at once.
         // The indicator change needs no push — `secureInputIndicator` as `@Default` already re-renders
         // the pill gate; the reconcile keeps the model mirror authoritative if a future read moves off it.
-        .onChange(of: autoSecureInput) { reconcileSecureInputSetting() }
+        .onChange(of: autoSecureInput) {
+            wiring.reconcileSecureInput(live: live, autoSecureInput: autoSecureInput)
+        }
         // Mirror the host cwd onto the model so the AppKit renderer's ⌘-hover hit-test can
         // resolve a RELATIVE detected path to its absolute form. The cwd arrives reactively from `PaneContainer`
         // (OSC 7) and changes independently of the live-session id, so it gets its own `onChange`; `initial: true`
@@ -132,7 +133,7 @@ struct TerminalLeafView: View {
         }
         // Clear the callbacks when the leaf is torn down so a dead `@State` holder can't be driven by a
         // surviving model (the model is owned by the live session, which can outlive this `.id(PaneID)` leaf).
-        .onDisappear { clearPaneCallbacks() }
+        .onDisappear { wiring.clear(live: live) }
     }
 
     /// The terminal pixels (the seam) — production renderer if the app registered one, else the headless
@@ -183,13 +184,13 @@ struct TerminalLeafView: View {
                 HintModeOverlay(model: model)
                 // The Command Navigator (⌃⌘O) — a scrimmed, centered card listing the pane's
                 // recent OSC-133 command blocks (search + All/Failed/Bookmarked filter), jumping the scrollback
-                // on ↩. Toggled by `onRequestBlockNavigator` (wired in `wireNavigatorCallbacks`); the store fires
+                // on ↩. Toggled by `onRequestBlockNavigator` (wired by ``TerminalPaneWiring``); the store fires
                 // that only on the ACTIVE pane, so this card only mounts over the focused pane.
-                if navigatorChrome.isVisible {
+                if wiring.navigatorChrome.isVisible {
                     CommandNavigatorView(
                         model: model,
                         store: store,
-                        onClose: { navigatorChrome.isVisible = false },
+                        onClose: { wiring.navigatorChrome.isVisible = false },
                     )
                     .transition(.opacity)
                 }
@@ -214,11 +215,14 @@ struct TerminalLeafView: View {
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
                 ForEach(visiblePills, id: \.self) { pill in
-                    PaneStatusPillView(pill: pill, onDismiss: { dismiss(pill) })
-                        .transition(.move(edge: .top).combined(with: .opacity))
+                    PaneStatusPillView(
+                        pill: pill,
+                        onDismiss: { TerminalPaneWiring.dismiss(pill, live: live, store: store) },
+                    )
+                    .transition(.move(edge: .top).combined(with: .opacity))
                 }
-                if findBar.visible, live?.terminalModel != nil {
-                    TerminalFindBar(model: findBar)
+                if wiring.findBar.visible, live?.terminalModel != nil {
+                    TerminalFindBar(model: wiring.findBar)
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
             }
@@ -240,11 +244,11 @@ struct TerminalLeafView: View {
         // to know where to look. The pane still OWNS the receipt (`TerminalViewModel.copyReceipt`, which is
         // its state); only the mount moved, to `IslandChipStack`, which now reads it through
         // `WorkspaceStore.activePaneCopyReceipt()`.
-        .animation(Slate.Anim.reveal, value: findBar.visible)
+        .animation(Slate.Anim.reveal, value: wiring.findBar.visible)
         .animation(Slate.Anim.reveal, value: visiblePills)
         .animation(Slate.Anim.reveal, value: PaneStatusPillPresentation.showsViModePill(pillConditions))
         .animation(Slate.Anim.reveal, value: showViHintBar)
-        .animation(Slate.Anim.reveal, value: navigatorChrome.isVisible)
+        .animation(Slate.Anim.reveal, value: wiring.navigatorChrome.isVisible)
     }
 
     /// Places the terminal pixels.
@@ -312,194 +316,6 @@ struct TerminalLeafView: View {
         )
     }
 
-    /// The `×` on a dismissible chip. Read-only releases through the model, whose `onReadOnlyChanged`
-    /// hook converges the store's `paneReadOnly` set; sync input disarms the WHOLE tab, because the mode
-    /// is the tab's and clearing it on one pane only would leave the siblings still fanning input.
-    /// Secure input carries no `×` (``PaneStatusPill/dismissHelp``), so it never reaches here.
-    private func dismiss(_ pill: PaneStatusPill) {
-        switch pill {
-        case .readOnly:
-            live?.terminalModel?.exitReadOnly()
-        case .syncInput:
-            if let paneID = live?.id { store.disarmSyncInput(for: paneID) }
-        case .secureInput:
-            break
-        }
-    }
-
-    /// Wire all per-pane view callbacks (find + secure input + hint mode + host path actions) on
-    /// appear / live-session swap.
-    private func wirePaneCallbacks() {
-        wireFindCallbacks()
-        wireSecureInputCallbacks()
-        wireHintCallbacks()
-        wireNavigatorCallbacks()
-        wirePathActionCallbacks()
-    }
-
-    /// Clear all per-pane view callbacks on teardown so a surviving model can't drive a dead leaf's `@State`.
-    private func clearPaneCallbacks() {
-        clearFindCallbacks()
-        clearSecureInputCallbacks()
-        clearHintCallbacks()
-        clearNavigatorCallbacks()
-        clearPathActionCallbacks()
-    }
-
-    /// Wire the pane's host OPEN / REVEAL path callbacks to the live
-    /// ``MetadataClient`` — so ⌘click "Open", ⌘⇧click "Reveal in Finder", the right-click Open / Reveal items,
-    /// Jump-To open/reveal, and Hint-to-open/reveal on a detected PATH all route to the HOST Mac's Finder/app (a
-    /// path lives on the host, not the client). The client provider captures `live` WEAKLY (so the model-stored
-    /// closure never retains the live session into a cycle) and reads the CURRENT façade each fire (replaced on
-    /// every reconnect — `activeMetadataClient` is `nil` while disconnected). A `.notFound`/`.error`/timeout
-    /// raises a transient error toast rather than being swallowed. No-op for a non-terminal / not-yet-live pane.
-    private func wirePathActionCallbacks() {
-        guard let model = live?.terminalModel else { return }
-        let overlay = overlayCoordinator
-        let chrome = workspaceChrome
-        HostPathActions.wire(
-            model: model,
-            client: { [weak live] in live?.connection?.activeMetadataClient },
-            revealCodePanel: { [weak live] in
-                // Open-in-editor is the second doorway through the code panel's open gate: the host
-                // has already routed the file into the workbench, so the panel must mount it — a
-                // reveal that landed on the gate's button would ask permission for a thing already
-                // done. The pane's host-pushed key is the root the panel will render for.
-                if let pane = live?.id, let root = store.hostPushedProjectKey(pane) {
-                    chrome?.openCodeProject(root)
-                }
-                chrome?.revealCodeSidebar()
-            },
-            onResult: { action, path, ok in
-                guard !ok else { return }
-                overlay?.pushToast(Toast(
-                    id: "host-path-action",
-                    flavor: .error,
-                    // The subject is the ACTION that failed, not a sentence about failing: the `FAILED`
-                    // eyebrow already carries that, and lower-case keeps the instrument register the rest
-                    // of the card is set in.
-                    title: TerminalLeafPolicy.pathActionFailureTitle(action),
-                    body: path,
-                    // No `paneKey`: this reports a FAILED host action the user just took in the pane they
-                    // are looking at — there is nowhere else to go, so the card stays a plain notice.
-                ))
-            },
-        )
-    }
-
-    /// Nil the host path callbacks so the durable terminal model stops referencing this torn-down leaf.
-    private func clearPathActionCallbacks() {
-        guard let model = live?.terminalModel else { return }
-        HostPathActions.clear(model: model)
-    }
-
-    /// Wire the pane's Command Navigator toggle: ⌃⌘O routes through the store
-    /// (`requestBlockNavigatorInActivePane` → `activeTerminalModel.onRequestBlockNavigator`), so this closure
-    /// fires only when THIS pane is active. It TOGGLES the per-leaf ``CommandNavigatorChrome``. No `[weak chrome]`
-    /// needed: the chrome is the leaf's own `@State`, not the model, so there is no model→leaf retain cycle
-    /// (`clearNavigatorCallbacks` nils the model's reference on teardown). No-op for a non-terminal / not-yet-live pane.
-    private func wireNavigatorCallbacks() {
-        guard let model = live?.terminalModel else { return }
-        let chrome = navigatorChrome
-        model.onRequestBlockNavigator = { chrome.isVisible.toggle() }
-    }
-
-    /// Nil the navigator callback so the durable terminal model stops referencing this torn-down leaf's
-    /// `@State` chrome (the leaf is `.id(PaneID)`-keyed and can be rebuilt while the live session survives).
-    private func clearNavigatorCallbacks() {
-        live?.terminalModel?.onRequestBlockNavigator = nil
-    }
-
-    /// Wire the pane's Hint Mode actuation: the model resolves a label (macOS key-resolve
-    /// or iOS tap-on-label) and fires ``TerminalViewModel/onHintConfirmed`` with the target + intent; the view is
-    /// the thin platform actuator (open path → host RPC, open URL → client, copy → client pasteboard, reveal →
-    /// host RPC — the SAME `LinkActionPolicy` the ⌘click / Jump-To paths use). `[weak model]` so the closure never
-    /// retains the model into a cycle (also nilled on teardown). No-op off-terminal.
-    private func wireHintCallbacks() {
-        guard let model = live?.terminalModel else { return }
-        model.onHintConfirmed = { [weak model] target, intent in
-            guard let model else { return }
-            TerminalHintActuator.perform(target, intent: intent, model: model)
-        }
-    }
-
-    /// Nil the hint callback so the durable terminal model stops referencing this torn-down leaf.
-    private func clearHintCallbacks() {
-        live?.terminalModel?.onHintConfirmed = nil
-    }
-
-    /// Wire the pane's ⌘F / ⌘G / ⇧⌘G callbacks to the find-bar holder (the seam the store fires via
-    /// `requestFind*InActivePane()`). No-op for a non-terminal / not-yet-live pane (`terminalModel == nil`);
-    /// `terminalModel` is non-nil from session creation for a terminal pane, so this lands on first `.task`.
-    private func wireFindCallbacks() {
-        guard let model = live?.terminalModel else { return }
-        let bar = findBar
-        bar.attach(model)
-        model.onRequestFind = { bar.open() }
-        // Copy-mode `?` opens the SAME bar biased BACKWARD so its `n`/`N` step against the
-        // forward sense (vim parity). Without this the `?` handler falls back to `onRequestFind` (forward) and
-        // the backward bias never lands.
-        model.onRequestFindBackward = { bar.open(backward: true) }
-        model.onRequestFindNext = { bar.next() }
-        model.onRequestFindPrev = { bar.previous() }
-        // "Search all tabs" (find.png's `rectangle.stack` button): escalate the in-pane find to cross-tab
-        // Global Search (⇧⌘F), seeded with the live query. The coordinator is captured by value (a long-lived
-        // scene object); `nil` outside the app scene (tests/previews) ⇒ the button just dismisses the bar.
-        bar.onSearchAllTabs = { [overlayCoordinator] seed in
-            overlayCoordinator?.openGlobalSearch(seed: seed)
-        }
-    }
-
-    /// Detach the holder + nil the callbacks so the model stops referencing a torn-down leaf's `@State`.
-    private func clearFindCallbacks() {
-        findBar.attach(nil)
-        findBar.onSearchAllTabs = nil
-        guard let model = live?.terminalModel else { return }
-        model.onRequestFind = nil
-        model.onRequestFindBackward = nil
-        model.onRequestFindNext = nil
-        model.onRequestFindPrev = nil
-    }
-
-    /// Wire the pane's SECURE-INPUT actuator: sync the controller to the model's current
-    /// secure-input inputs + the live Auto-Secure-Input setting, then drive it on each change so macOS
-    /// process-global Secure Keyboard Entry engages on a host no-echo password prompt (auto) or the manual toggle
-    /// and disengages on the inverse edge. Also starts the controller observing the app-frontmost edge
-    /// (idempotent) so an engaged lock is RELEASED whenever slopdesk is backgrounded and re-acquired on return —
-    /// never leaked process-wide to other apps' keyboards. No-op for a non-terminal / not-yet-live pane; inert
-    /// off macOS (stub controller).
-    private func wireSecureInputCallbacks() {
-        guard let model = live?.terminalModel else { return }
-        let controller = secureInput
-        controller.setAutoSecureInput(SettingsKey.autoSecureInputEnabled)
-        controller.setHostNoEcho(model.hostNoEcho)
-        controller.setManualOn(model.manualSecureInput)
-        controller.observeAppActivity()
-        model.onHostEchoChanged = { controller.setHostNoEcho($0) }
-        model.onManualSecureInputChanged = { controller.setManualOn($0) }
-    }
-
-    /// Reconcile this pane's Secure Input to a LIVE "Auto Secure Input" settings change.
-    /// Driven by `.onChange(of: autoSecureInput)`, it pushes the new value into BOTH the actuator and the pill
-    /// mirror so an engaged process-global `EnableSecureEventInput` lock is RELEASED (and the pill hidden) the
-    /// instant the setting turns OFF — never lingering until the next pane swap / echo edge. No-op for a
-    /// not-yet-live pane; inert off macOS (stub controller, model mirror stays `false`).
-    private func reconcileSecureInputSetting() {
-        guard let model = live?.terminalModel else { return }
-        secureInput.setAutoSecureInput(autoSecureInput)
-        model.reconcileSecureInputSetting()
-    }
-
-    /// Force-disengage secure input + nil the callbacks on teardown so the process-global `EnableSecureEventInput`
-    /// reference is always released on a pane close (never leaked) and a surviving model can't drive a dead
-    /// leaf's controller.
-    private func clearSecureInputCallbacks() {
-        secureInput.teardown()
-        guard let model = live?.terminalModel else { return }
-        model.onHostEchoChanged = nil
-        model.onManualSecureInputChanged = nil
-    }
-
     /// What the connect-on-appear task waits for: this pane, once its id is one the host answers for.
     ///
     /// `nil` while this launch's `adoptWorkspace` is outstanding. The layout on screen is then the one
@@ -508,18 +324,6 @@ struct TerminalLeafView: View {
     /// per stale id on the host and abandons it a round trip later (``WorkspaceStore/panesMayDial``).
     private var dialTaskKey: PaneID? {
         TerminalLeafPolicy.dialTaskKey(pane: live?.id, mayDial: store.panesMayDial)
-    }
-
-    private func connectIfNeeded() async {
-        // The key above already encodes the hold, and SwiftUI runs the task for the `nil` key too —
-        // so the gate is re-asserted here rather than relied upon as a scheduling accident.
-        guard store.panesMayDial else { return }
-        // IDEMPOTENT: SwiftUI re-fires this `.task` on every remount — including a pane REMOUNT on a TAB switch
-        // (the inactive tab's subtree is unmounted, then remounted on return). Route through the model's
-        // `connectIfNeeded()`, which no-ops on a live/in-flight/supervised channel, so a tab switch never tears
-        // down a healthy session or wipes the replay ring (the scrollback-lost-on-tab-switch regression). A genuinely
-        // idle/dead channel still dials.
-        await live?.connection?.connectIfNeeded()
     }
 
     /// What the `SLOPDESK_AUTOTYPE` seam waits for: the marked pane, actually CONNECTED.
@@ -535,20 +339,6 @@ struct TerminalLeafView: View {
             pane: live?.id,
             isTarget: live?.isAutotypeTarget ?? false,
             status: live?.connection?.status,
-        )
-    }
-
-    /// Hands this leaf to the `SLOPDESK_AUTOTYPE` OUT-path proof seam (``AutotypeSeam``), which owns
-    /// the once-per-launch latch. Unset in normal use, so a production launch is unaffected.
-    private func runAutotypeIfRequested() async {
-        guard let live else { return }
-        let connected = if case .connected = live.connection?.status { true } else { false }
-        let model = live.terminalModel
-        await AutotypeSeam.run(
-            command: ProcessInfo.processInfo.environment["SLOPDESK_AUTOTYPE"],
-            isTarget: live.isAutotypeTarget,
-            isConnected: connected,
-            send: model.map { model in { model.sendInput($0) } },
         )
     }
 }
