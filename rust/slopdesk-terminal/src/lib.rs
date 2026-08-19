@@ -19,6 +19,8 @@
 //! - [`paste`] — what a clipboard payload would DO at a prompt, and the states in which it provably
 //!   cannot run, which is the difference between a confirmation worth reading and one worth
 //!   dismissing.
+//! - [`pointer`] — what the far side asked the POINTER to look like: the `OSC 22` shape libghostty
+//!   parsed, and whether `mouse-hide-while-typing` wants it on screen at all.
 //! - [`surface`] — what a gesture MEANS before anything is sent: which clicks and keys the embedder
 //!   takes for itself, and the two facts — who owns the pointer, who owns the screen — that make it
 //!   step aside.
@@ -44,6 +46,7 @@ pub mod link;
 pub mod link_action;
 pub mod mode;
 pub mod paste;
+pub mod pointer;
 pub mod surface;
 pub mod tracker;
 pub mod vimotion;

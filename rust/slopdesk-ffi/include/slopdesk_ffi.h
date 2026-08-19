@@ -6623,6 +6623,27 @@ size_t slopdesk_sidecar_upgrade_plan(const uint8_t *previous, size_t previous_le
                                      const uint8_t *current, size_t current_len, uint8_t *out,
                                      size_t cap);
 
+// ---- The pointer libghostty hands to the embedder --------------------------------
+//
+// Two actions, both one raw C enum value in and one scalar out. The RAW value
+// crosses because the C callback already holds it; parsing it Swift-side first
+// would need a Swift mirror of the C enum, which is the third copy of a table
+// whose first two already have to agree.
+
+// KEEP the cursor the pointer is already wearing — the answer for the nineteen
+// shapes macOS has no native cursor for AND for any value no libghostty emits.
+#define SLOPDESK_POINTER_TOKEN_NONE (-1)
+
+// The cursor a `ghostty_action_mouse_shape_e` asks for, as a PointerShapeToken
+// discriminant, or SLOPDESK_POINTER_TOKEN_NONE.
+int32_t slopdesk_pointer_shape_token(int32_t raw);
+
+// Whether the pointer should be VISIBLE, from a
+// `ghostty_action_mouse_visibility_e`. Only the explicit hidden value hides:
+// a pointer wrongly shown is a cosmetic miss, one wrongly hidden is a person
+// moving a mouse they cannot see.
+bool slopdesk_pointer_mouse_visible(int32_t raw);
+
 // ---- The repository behind a pane's cwd — MACOS ONLY ----------------------------
 //
 // Everything between the MACOS-ONLY markers is declared on macOS and NOWHERE else,

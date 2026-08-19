@@ -3041,6 +3041,39 @@ if [[ -n "${porcelain_copies}" ]]; then
   fail "the porcelain nibble table is back outside slopdesk-git::porcelain — one table, one crate"
 fi
 
+# ── 16c. The pointer tables are one table, and the raw value crosses unparsed ────────────────────
+# `slopdesk_terminal::pointer` owns both of libghostty's pointer actions. This one is pinned harder
+# than its size suggests, because EVERY way it breaks is silent: a resize handle showing a hand, or a
+# pointer hidden with no gesture that brings it back. Nothing fails to compile, nothing crashes, and
+# `check-macos.sh` is the only thing that would ever have noticed.
+for face in Sources/SlopDeskWorkspaceCore/Terminal/PointerShapeMapping.swift \
+  Sources/SlopDeskWorkspaceCore/Terminal/MouseVisibilityMapping.swift; do
+  if ! grep -q 'slopdesk_pointer_' "${face}" 2> /dev/null; then
+    fail "${face} stopped asking the door — a pointer table decided in Swift is a second table (docs/56, increment 50)"
+  fi
+done
+# The mirror that was deleted, by name. `OSCPointerShape` (34 cases) and `MouseVisibility` existed
+# only so a Swift `switch` had something to switch over, which made three copies of one declaration
+# order — libghostty's header, the mirror, the table — where any two could drift while compiling.
+# The raw `int32_t` travels now. A revived mirror reads like tidying and restores the drift.
+pointer_mirrors=$(grep -rln 'enum OSCPointerShape\|enum MouseVisibility[^M]' \
+  Sources/ Tests/ ThirdParty/ 2> /dev/null || true)
+if [[ -n "${pointer_mirrors}" ]]; then
+  printf '%s\n' "${pointer_mirrors}" >&2
+  fail "a Swift mirror of a libghostty pointer enum is back — the raw int crosses (docs/56, increment 50)"
+fi
+# `PointerShapeToken`'s discriminants ARE the wire, so they are spelled with explicit raw values on
+# both sides and asserted THROUGH the door. A case reordered under implicit numbering is a cursor
+# swapped for another cursor with nothing to notice it.
+if ! grep -q 'case arrow = 0' Sources/SlopDeskWorkspaceCore/Terminal/PointerShapeMapping.swift; then
+  fail "PointerShapeToken stopped pinning its raw values — its discriminants are the wire (docs/56, increment 50)"
+fi
+if ! grep -q 'the_supported_shapes_cross_as_the_discriminants_swift_is_pinned_to' \
+  rust/slopdesk-ffi/src/pointer_shape.rs; then
+  fail "the door's discriminant test is gone — Swift's enum and Rust's can now renumber apart"
+fi
+printf 'check-supervisor: one pointer table, and the raw libghostty value crosses unparsed.\n'
+
 # ── The `slopdesk` CLI is one implementation ────────────────────────────────────────────────────
 # These faces DOCUMENT the rules they no longer implement — a doc comment naming the XDG path or an
 # escape sequence is the point of the face, not a violation — so the bans below read CODE only.

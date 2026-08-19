@@ -1985,6 +1985,37 @@ and `config-file` are `Platform::Mac` in the layout table and keep their words w
 renderer, exactly as `MacOSIntegrationRows`' and `MacCLIInstallCard`'s already do — a surface with
 one half has nothing to spell once.
 
+### Increment 50 — the pointer tables, and the mirror that was a third copy
+
+Two lookup tables libghostty hands the embedder — `GHOSTTY_ACTION_MOUSE_SHAPE` (OSC 22) and
+`GHOSTTY_ACTION_MOUSE_VISIBILITY` (`mouse-hide-while-typing`) — are `slopdesk_terminal::pointer`
+now. Both are the §4 convention's degenerate case: one scalar in, one scalar out, nothing to size
+and nothing to free.
+
+**The deletion is the point, and it is not the table.** `PointerShapeMapping.swift` used to open with
+`OSCPointerShape`, a 34-case Swift enum mirroring `ghostty_action_mouse_shape_e`, whose entire reason
+to exist was that the table below it wanted something to `switch` over. That made THREE copies of one
+declaration order — libghostty's header, the Swift mirror, and the table — of which any two could
+drift while the third still compiled, and nothing about a drift is loud: a resize handle starts
+showing a hand. `MouseVisibility` was the same shape at two cases. The raw `int32_t` travels now, and
+the crate that owns the meaning validates it by `match`, not by `transmute`.
+
+**What stayed on this side is the discriminant, so it is what the tests pin.** `PointerShapeToken`
+is `Int32`-raw-valued 0–14 and those numbers ARE the wire; `slopdesk-ffi`'s suite asserts all fifteen
+through the door rather than against the Rust enum, because the number Swift receives is the number
+the door returns. The Swift suites no longer restate the table — repeating it here is the mirror
+`CLAUDE.md` bans — and assert only the crossing: that each discriminant lands on the right case, and
+that visibility is not inverted on the way back. The GUI keeps the one `PointerShapeToken → NSCursor`
+switch, with its macOS-15 `columnResize`/`rowResize` availability handling, because that is drawing.
+
+**The two unknowns fold into one answer on purpose.** A shape macOS has no native cursor for
+(nineteen of the thirty-four) and a value from a newer or corrupt libghostty both mean KEEP the
+current cursor, so the surface needs one branch rather than two, and the door spells it as a negative
+sentinel — `SLOPDESK_POINTER_TOKEN_NONE` — because "no change" is not an error, it is the commonest
+answer of all. Visibility fails the other way for the same reason read backwards: only the explicit
+hidden value hides, because a pointer wrongly shown is a cosmetic miss during typing and a pointer
+wrongly hidden is a person moving a mouse they cannot see, with no gesture that brings it back.
+
 ## Stage D ledger — what the rename actually costs
 
 `SlopDeskClientUI` cannot become `SlopDeskPhoneUI` while `SlopDeskMacUI` still imports it. That is

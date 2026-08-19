@@ -104,6 +104,7 @@ pub mod pacer_depth;
 pub mod palette_rows;
 pub mod paste_safety;
 pub mod phone_key;
+pub mod pointer_shape;
 pub mod present_queue;
 pub mod rail_list;
 pub mod rate_control;
