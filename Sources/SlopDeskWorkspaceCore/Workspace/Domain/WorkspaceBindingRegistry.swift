@@ -347,12 +347,26 @@ public struct WorkspaceBinding: Sendable, Equatable {
 /// ⌘⇧L toggle Tabs panel, ⌃⌘T break-pane-to-tab, ⌘⇧P palette,
 /// ⌘/ cheat sheet. Rename has no default chord — menu / palette / context-menu only (`chord: nil`).
 public enum WorkspaceBindingRegistry {
-    /// The shipped binding table, in cheat-sheet / palette display order (panes, tabs, focus,
-    /// view). `.selectPane(n)` for n=1…9 is generated (one chord each) but is NOT listed here — it is
-    /// expanded by ``selectPaneBindings`` so the table stays readable; the cheat sheet collapses the nine
-    /// slots to the one representative row ``selectPaneRepresentative``, appended by ``groupedForDisplay``
-    /// (the menu builds its own "Select Pane" submenu, the palette catalog omits the digits).
-    public static let bindings: [WorkspaceBinding] = [
+    /// The shipped binding table for THIS half — ``declared`` minus the rows
+    /// `slopdesk_workspace::binding_rows` says this platform does not list.
+    ///
+    /// Filtering here rather than at each display surface is deliberate, and the chord table is why.
+    /// Every surface downstream reads from this one array, ``allBindings`` or ``groupedForDisplay``,
+    /// and ``chordTable`` is one of them: a row kept on a half that cannot run it takes its chord away
+    /// from the terminal to do nothing. Dropping the row drops the chord, so the key falls through to
+    /// the pane the way an unbound chord should.
+    public static let bindings: [WorkspaceBinding] = declared.filter { BindingRowPlatform.lists($0.id) }
+
+    /// Every binding the registry DECLARES, before the platform filter, in cheat-sheet / palette
+    /// display order (panes, tabs, focus, view). `.selectPane(n)` for n=1…9 is generated (one chord
+    /// each) but is NOT listed here — it is expanded by ``selectPaneBindings`` so the table stays
+    /// readable; the cheat sheet collapses the nine slots to the one representative row
+    /// ``selectPaneRepresentative``, appended by ``groupedForDisplay`` (the menu builds its own
+    /// "Select Pane" submenu, the palette catalog omits the digits).
+    ///
+    /// Private because a caller that wanted this one rather than ``bindings`` would be asking for the
+    /// rows this half cannot run — which is the defect ``BindingRowPlatform`` exists to close.
+    private static let declared: [WorkspaceBinding] = [
         // Panes
         WorkspaceBinding(
             id: "pane.splitRight", action: .splitRight, title: "Split Right",

@@ -47,6 +47,7 @@ pub mod android_control;
 pub mod android_stream;
 pub mod annexb;
 pub mod audio_jitter;
+pub mod binding_rows;
 pub mod blob;
 pub mod blocks;
 pub mod cheat_sheet;

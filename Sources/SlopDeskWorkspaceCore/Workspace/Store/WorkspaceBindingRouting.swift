@@ -111,13 +111,12 @@ public extension WorkspaceBindingRegistry {
         case .renamePane: store.requestRenameActivePane()
         case .breakPaneToTab: store.breakActivePaneToTab()
         // Detach / reattach (own-window satellites): NON-destructive by design — never routed through
-        // the close-confirmation surface (detach isn't a close; the session survives). macOS-only
-        // actuation: iOS has no satellite NSWindow, so detaching there would strand the pane out of
-        // every tab with nothing rendering it (documented no-op, like `.pinWindow`).
-        case .detachPane:
-            #if os(macOS)
-            store.detachActivePane()
-            #endif
+        // the close-confirmation surface (detach isn't a close; the session survives). The gate these
+        // two arms used to carry is now the ROW's platform (`slopdesk_workspace::binding_rows`): a
+        // shell with no satellite `NSWindow` does not list the binding, so it has no chord to
+        // dispatch and no editor row to rebind, rather than binding ⌥⌘P away from the PTY to run an
+        // empty `#else`.
+        case .detachPane: store.detachActivePane()
         case .reattachAllPanes: store.reattachAllPanes()
         // Move pane (swap with the geometric neighbour, against the reported layout)
         case .movePaneLeft: store.swapActivePaneInDirection(.left)

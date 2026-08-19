@@ -4979,9 +4979,11 @@ done < <(grep -rl 'CodeSidebarWKWebView' Sources/ || true)
 # The four code-panel files below carry NO WHOLE-FILE gate. `CodeSidebarProxy` and
 # `CodeSidebarFontSchemeHandler` were gated for no reason at all — Network is Network and WebKit is
 # WebKit — and `CodePanelSurfaces` was gated because of what it mounted, which has since crossed.
-# A gate INSIDE one of them is fine and the pool has two (the AppKit/UIKit import, the keyboard
-# machine); what is banned is the wrapper that makes the file compile to nothing on the phone, and
-# that shape is exactly "the first line of code is `#if os(macOS)`".
+# A gate INSIDE one of them is fine and the pool has two — the AppKit/UIKit import, and the MINT
+# (subclass-vs-plain, chrome polarity, base-canvas kill: three decisions, one spelling each). The
+# keyboard machine that used to be the second is gone up to `SlopDeskMacUI/CodeSidebar/MacCodeSidebarKeyboard.swift`
+# (docs/56 increment 42). What is banned is the wrapper that makes the file compile to nothing on the
+# phone, and that shape is exactly "the first line of code is `#if os(macOS)`".
 for crossed in Sources/SlopDeskClientUI/CodeSidebar/CodePanelSurfaces.swift \
   Sources/SlopDeskClientUI/CodeSidebar/CodeSidebarWebViewPool.swift \
   Sources/SlopDeskClientCore/CodeSidebar/CodeSidebarProxy.swift \
@@ -5519,6 +5521,37 @@ if grep -qE '^\s*#if os\(' "${SWIFT_PALETTE}"; then
 fi
 printf 'check-supervisor: a palette verb names its platform once — %s verbs, no gate in the catalog.\n' \
   "$(printf '%s\n' "${palette_rust_ids}" | wc -l | tr -d ' ')"
+
+# ── …and a KEYBINDING names its platform once, in the other id space ────────────────────────────
+# The registry is four surfaces at once — cheat sheet, keybindings editor, `ctl` verb list, and the
+# CHORD TABLE. That last one is why a listed-and-inert binding is worse than a listed-and-inert
+# palette row: a bound chord does not reach the terminal, so ⌥⌘P was taken from the PTY to run a
+# macOS-only `#if` with nothing in its else. Same pin as the palette's, over `binding_rows.rs`.
+#
+# The nine generated `pane.select.N` slots are minted by a loop and are deliberately undeclared (they
+# are `Both`, and the table declares the ONE collapsed representative `pane.selectN`), so they are
+# excluded here BY NAME rather than by the grep quietly not matching them.
+SWIFT_BINDINGS=Sources/SlopDeskWorkspaceCore/Workspace/Domain/WorkspaceBindingRegistry.swift
+RUST_BINDINGS=rust/slopdesk-workspace/src/binding_rows.rs
+binding_swift_ids=$(grep -oE 'id: "[a-z]+\.[A-Za-z0-9]+"' "${SWIFT_BINDINGS}" |
+  grep -oE '[a-z]+\.[A-Za-z0-9]+' | sort -u || true)
+binding_rust_ids=$(grep -oE 'row\("[a-z]+\.[A-Za-z0-9]+"' "${RUST_BINDINGS}" |
+  grep -oE '[a-z]+\.[A-Za-z0-9]+' | sort -u || true)
+if [[ "${binding_swift_ids}" != "${binding_rust_ids}" ]]; then
+  diff <(printf '%s\n' "${binding_swift_ids}") <(printf '%s\n' "${binding_rust_ids}") >&2 || true
+  fail "the binding registry and its platform table name different rows (< Swift only, > Rust only)"
+fi
+# AND THE GATE DOES NOT COME BACK, in either the table or its routing. `.detachPane`'s routing arm
+# carried the `#if` this table replaced; re-adding one would make a chord half-bound again.
+BINDING_ROUTING=Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceBindingRouting.swift
+for gated in "${SWIFT_BINDINGS}" "${BINDING_ROUTING}"; do
+  if grep -qE '^\s*#if os\(' "${gated}"; then
+    grep -nE '^\s*#if os\(' "${gated}" >&2
+    fail "a platform gate is back in the binding layer — a row's platform is DATA (binding_rows.rs)"
+  fi
+done
+printf 'check-supervisor: a keybinding names its platform once — %s rows, no gate in the registry or its routing.\n' \
+  "$(printf '%s\n' "${binding_rust_ids}" | wc -l | tr -d ' ')"
 
 printf 'check-supervisor: the UI split holds — views only, no dead gates, no ancestor between the halves, no palette row that lies.\n'
 
