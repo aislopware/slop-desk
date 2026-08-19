@@ -889,6 +889,10 @@ thing for the same two settings — the Mac's live caret preview with its colour
 phone's two plain rows. A gate that means "drawn differently" is not the same gate as one that means
 "unavailable", and only the second may cost the phone a capability (§3).
 
+> 🔁 **The cursor half of that is void** (increment 29). The two Cursor groups were never a "drawn
+> differently" gate — the preview is pure SwiftUI, and the phone's two plain rows were three settings
+> short of it. One `Platform::Both` group now. Window and Dock Icon still make the paragraph's point.
+
 Two additions came with it. `Control::Stepper` is `Slider`'s sibling, and the rule for choosing is
 whether the useful values are a handful of MAGNITUDES — scrollback depth, which is a ladder with stops
 — or any literal count in a range, like a window's 80 columns. And a group may now have an EMPTY
@@ -1158,3 +1162,37 @@ field's coordinator — moved the other way, into `SlopDeskClientUITests`.
 This reverses the 2026-06-24 ruling that the token layer stays inside the view target with no separate
 SPM product. That decision was correct on its own terms and is void on ours: it was taken when there
 was exactly ONE UI target to compile the constants into, and there are two.
+
+### Increment 29 — the caret section was never AppKit
+
+Increment 19 read Appearance → Cursor as the table's showcase of a gate that means *drawn
+differently*: the Mac's live preview with its colour wells, the phone's `cursor-style` +
+`cursor-style-blink` as two plain rows, one header either way and — the table said so in a comment —
+"the same capability either way". It was not the same capability. The phone had no cursor colour, no
+text-colour-under-cursor and no opacity slider, three settings it could not reach from anywhere but
+the All-Settings index. That is a gate that means *unavailable*, which §3 does not allow.
+
+The stated reason was that the preview is AppKit. It never was. `CursorPreviewView` is stock SwiftUI
+to the last line: `ColorPicker`, `Slider`, the shared `CursorCaret`, and a `Color`↔hex bridge that
+resolves through `Color.resolve(in:)` precisely so it would not need an `NSColor` — a choice its own
+header documents, two lines under the `#if os(macOS)` that claimed the opposite. Nothing in the file
+fails to compile for the iOS triple, and nothing did before either; the gate was inherited from the
+days when the whole Settings page was Mac-only and was never re-read after the phone got one.
+
+So: one `Platform::Both` group with the one bespoke row, and the phone's two stand-in rows deleted —
+`cursor-style` and `cursor-style-blink` are still advertised settings, drawn now inside the surface
+that also draws what they look like. `CursorPreviewSurface`, a wrapper whose entire body was the
+`#if`, went with it; the door dispatches `CursorPreviewView` directly. The layout test that pinned
+the divergence now asserts the opposite property — the `cursor-preview` row is reachable on BOTH
+halves, checked per half so a gate reappearing on either side fails there.
+
+It cost one duplicate title. Cursor was the only group name that appeared twice in the table, and the
+test that permits a repeat when the platforms are disjoint now has no case to permit. The check stays
+as written — the rule is about what one reader sees on one page, not about the table being globally
+unique — but its comment no longer cites an example that has stopped existing.
+
+This is the third gate of this shape (increments 11 and 12 were the first two), and the pattern is
+worth naming: **a platform gate that outlives its reason reads exactly like one that still has it.**
+The table's comment was the only place the claim was written down, and a comment cannot be compiled.
+The check that would have caught it is the one the layout tests now make — assert the capability,
+per half, by name.

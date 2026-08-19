@@ -69,7 +69,7 @@ package struct SettingsBespokeSurface: View {
         // derived faces, or the ordered fallback list — and the "Aa" specimen combobox
         // (`font-setting.png`). Size, line height, ligatures and style are described rows above it.
         case "font-family": FontSettingsView(store: store)
-        case "cursor-preview": CursorPreviewSurface(store: store)
+        case "cursor-preview": CursorPreviewView(store: store)
         case "keybindings": KeybindingsEditorView(store: store)
         case "raw-overrides": RawOverridesSurface(store: store)
         case "video-host": VideoHostSettingsView(store: store)
@@ -204,20 +204,6 @@ struct ClaudeHooksSurface: View {
              .unknown:
             Text("—").foregroundStyle(SettingsInk.tertiary)
         }
-    }
-}
-
-// MARK: - Appearance → the caret preview
-
-/// The live caret preview with its colour wells and text-under toggle (`cursor-style.png`). AppKit,
-/// hence the gate — which is one of the last in this directory and dies with the AppKit shell.
-struct CursorPreviewSurface: View {
-    let store: PreferencesStore
-
-    var body: some View {
-        #if os(macOS)
-        CursorPreviewView(store: store)
-        #endif
     }
 }
 

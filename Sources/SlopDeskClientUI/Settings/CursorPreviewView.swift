@@ -9,10 +9,11 @@
 // are emitted by `TerminalConfigBuilder`) — there is NO `refreshTerminalControls()` hop here (that seam
 // is for the fire-time `Defaults` Controls toggles, not the typed render prefs).
 //
-// macOS-only: the full Cursor section (`ColorPicker` + live preview) is macOS; the Appearance tab keeps a
-// simpler Style/Blink section on iOS (see `AppearanceSettingsTab`). The pure hex helper (`CursorColorHex`) is
-// cross-platform + headlessly testable (`CursorColorHexTests`); the `Color`↔hex glue below is pure SwiftUI
-// (`Color.resolve(in:)`, NO `NSColor`).
+// BOTH halves, one surface. This was `#if os(macOS)` with the phone reduced to plain Style/Blink rows on the
+// stated grounds that the section is AppKit — it never was: every control here is stock SwiftUI and the
+// `Color`↔hex glue resolves through `Color.resolve(in:)`, not an `NSColor` bridge. The gate cost the phone
+// the cursor colour, the text-under colour and the opacity outright, which is a capability the phone is owed.
+// The pure hex helper (`CursorColorHex`) is headlessly testable (`CursorColorHexTests`).
 // Colour + type: `SettingsInk` / `SettingsType` (SYSTEM semantics — not the terminal theme); geometry
 // rides `Slate.Metric` (raw font/radius/height literals fail `scripts/check-ds-leaks.sh`).
 
@@ -55,9 +56,7 @@ enum CursorColorHex {
     }
 }
 
-#if os(macOS)
-
-// MARK: - Color ↔ cursor-hex glue (macOS — pure SwiftUI, via Color.resolve(in:))
+// MARK: - Color ↔ cursor-hex glue (pure SwiftUI, via Color.resolve(in:))
 
 extension Color {
     /// Build a colour from a 6-hex `cursor-color` string, or `nil` when the string is empty / malformed (the
@@ -84,7 +83,7 @@ extension Color {
 // MARK: - CursorPreviewView
 
 /// The Appearance → Cursor `Section` (live preview + colour / opacity / style / blink / animation), bound to
-/// `store.terminal`. Hosted by `AppearanceSettingsTab` on macOS.
+/// `store.terminal`. Reached from the layout table's `cursor-preview` bespoke row on either half.
 struct CursorPreviewView: View {
     @Bindable var store: PreferencesStore
 
@@ -232,5 +231,4 @@ struct CursorPreviewView: View {
         )
     }
 }
-#endif
 #endif

@@ -114,20 +114,18 @@ final class SettingsLayoutTests: XCTestCase {
         }
     }
 
-    /// The one page position where each half draws a DIFFERENT thing for the same two settings: the
-    /// Mac's live caret preview against the phone's two plain rows. Every other divergence in the
-    /// table is a group one half omits, so this is the arm that says a platform gate can also mean
-    /// "drawn differently" without meaning "unavailable".
-    func testTheCursorSettingsAreReachableOnBothHalvesByDifferentMeans() {
-        let phoneKeys = SettingsLayout.groups("appearance", for: .phone).flatMap(\.rows).map(\.key)
-        XCTAssertTrue(phoneKeys.contains(AllSettingsCatalog.RenderKey.cursorStyle))
-        XCTAssertTrue(phoneKeys.contains(AllSettingsCatalog.RenderKey.cursorStyleBlink))
-
-        let macControls = SettingsLayout.groups("appearance", for: .mac).flatMap(\.rows).map(\.control)
-        XCTAssertTrue(
-            macControls.contains(.bespoke(id: "cursor-preview")),
-            "the Mac reaches the same pair through the preview surface it draws itself",
-        )
+    /// The caret surface reaches BOTH halves, by the same row. It was the table's one "drawn
+    /// differently" gate — a Mac preview against two plain phone rows — until the preview turned out
+    /// to be pure SwiftUI and the phone's version turned out to be three settings short of it
+    /// (docs/56 increment 29). Asserted per half so a gate reappearing on either side fails here.
+    func testTheCursorSurfaceIsReachableOnBothHalves() {
+        for half in [SettingsLayout.Half.mac, .phone] {
+            let controls = SettingsLayout.groups("appearance", for: half).flatMap(\.rows).map(\.control)
+            XCTAssertTrue(
+                controls.contains(.bespoke(id: "cursor-preview")),
+                "\(half) cannot reach the cursor colour, the text-under colour or the opacity",
+            )
+        }
     }
 
     /// A section id no section has is not a page. The lookup is by string, so this is the arm that

@@ -1190,46 +1190,24 @@ pub const GROUPS: &[LayoutGroup] = &[
             },
         ],
     },
-    // The one page position where the two halves differ in CONTENT rather than in presence, and the
-    // only place two groups share a title: macOS draws the live caret preview with its colour wells,
-    // both AppKit, and the phone draws the same two settings as plain rows. One header either way,
-    // and the same capability either way, which is the rule (docs/56 §3) — only the drawing diverges.
+    // ONE caret surface, both halves: the live preview card, the two colour wells, the opacity
+    // slider, the style cards and the blink menu. This was two groups sharing a title — the Mac's
+    // bespoke surface and a phone reduced to `cursor-style` + `cursor-style-blink` as plain rows —
+    // on the stated grounds that the preview is AppKit. It never was: `CursorPreviewView` is pure
+    // SwiftUI down to `Color.resolve(in:)`, with no `NSColor` anywhere in the file. The gate cost the
+    // phone the cursor colour, the text-under colour and the opacity outright, which is a capability
+    // difference, not a drawing one — and docs/56 §3 lets only the drawing diverge.
     LayoutGroup {
         section: Section::Appearance,
         title: "Cursor",
         timing: ApplyTiming::Live,
-        platform: Platform::Mac,
+        platform: Platform::Both,
         rows: &[LayoutRow {
             key: "",
             subtitle: "",
             control: Control::Bespoke { id: "cursor-preview" },
-            platform: Platform::Mac,
+            platform: Platform::Both,
         }],
-    },
-    LayoutGroup {
-        section: Section::Appearance,
-        title: "Cursor",
-        timing: ApplyTiming::Live,
-        platform: Platform::Phone,
-        rows: &[
-            LayoutRow {
-                key: "cursor-style",
-                subtitle: "",
-                control: Control::Cards {
-                    group: Group::CursorStyle,
-                },
-                platform: Platform::Phone,
-            },
-            LayoutRow {
-                key: "cursor-style-blink",
-                subtitle: "",
-                control: Control::Menu {
-                    group: Group::CursorBlink,
-                    glyph: None,
-                },
-                platform: Platform::Phone,
-            },
-        ],
     },
     // macOS-only for the plainest reason there is: iOS has no Dock. Both toggles actuate
     // `DockProgressController` through the pure `DockTintPolicy`, so neither is dead UI.
@@ -1524,11 +1502,12 @@ mod tests {
 
     /// No page repeats a group header ON ONE HALF, and no group repeats a key.
     ///
-    /// The qualifier is the interesting half of it. Two groups MAY share a title when their
-    /// platforms are disjoint — the cursor group is drawn one way on a Mac and another on a phone,
-    /// and calling the phone's "Cursor (iOS)" to satisfy a cruder check would put the divergence in
-    /// the reader's face instead of in the table. A headerless group is identified by its bespoke
-    /// id instead, which is what the near side keys it by.
+    /// The qualifier is the interesting half of it: the rule is about what ONE reader sees on ONE
+    /// page, so two groups sharing a title is only a fault when their platforms overlap. No pair in
+    /// the table takes that allowance today — the cursor group did until it turned out to be one
+    /// group with a gate on it — and a new one would have to argue for itself, since a title is the
+    /// only handle a reader has on a group. A headerless group is identified by its bespoke id
+    /// instead, which is what the near side keys it by.
     #[test]
     fn a_group_is_named_once_and_edits_each_setting_once() {
         let mut seen_titles: Vec<(&str, &str, Platform)> = Vec::new();
@@ -1586,10 +1565,10 @@ mod tests {
         ]);
     }
 
-    /// Appearance is the page where the two halves differ in three different WAYS at once, which is
-    /// what makes it the sharpest test of a platform gate being data: a group the phone omits
-    /// (Window, Dock Icon), a group both draw identically (Tabs, Appearance), and one page position
-    /// where each half draws a different thing for the same two settings (the cursor).
+    /// Appearance is the page where the platform gate earns its place as data: two groups the phone
+    /// omits because iOS has nothing behind them (Window, Dock Icon), and seven both halves draw
+    /// from the same rows — including Cursor, whose bespoke preview surface is pure `SwiftUI` and
+    /// so belongs to both.
     #[test]
     fn the_appearance_page_diverges_by_group_and_by_row() {
         let titled = |mac: bool| -> Vec<&'static str> {
@@ -1620,21 +1599,19 @@ mod tests {
             "Cursor"
         ]);
 
-        // The cursor settings are reachable on BOTH, which is the property the omitted groups above
-        // are allowed to break and this one is not: the phone draws them as rows, the Mac inside the
-        // preview surface it draws itself.
-        let phone_keys: Vec<_> = groups(Section::Appearance, false)
-            .iter()
-            .flat_map(|group| rows(group, false))
-            .map(|row| row.key)
-            .collect();
-        assert!(phone_keys.contains(&"cursor-style") && phone_keys.contains(&"cursor-style-blink"));
-        assert!(
-            groups(Section::Appearance, true)
-                .iter()
-                .flat_map(|group| rows(group, true))
-                .any(|row| row.control.bespoke_id() == "cursor-preview"),
-        );
+        // The caret surface is reachable on BOTH, and by the SAME row — the property the omitted
+        // groups above are allowed to break and this one is not. Asserted per half rather than once
+        // so a gate re-appearing on either side fails here.
+        for mac in [true, false] {
+            assert!(
+                groups(Section::Appearance, mac)
+                    .iter()
+                    .flat_map(|group| rows(group, mac))
+                    .any(|row| row.control.bespoke_id() == "cursor-preview"),
+                "the cursor preview vanished from the {} half",
+                if mac { "Mac" } else { "phone" },
+            );
+        }
     }
 
     /// Positional lookup agrees with the filtered list it indexes into — the property the boundary
