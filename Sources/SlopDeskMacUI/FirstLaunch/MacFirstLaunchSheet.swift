@@ -9,21 +9,24 @@
 // in `SlopDeskWorkspaceCore`, which is also what drops the two macOS-only steps for the phone. So this
 // file names no step and no wording, and the phone's `FirstLaunchView` renders the same model.
 //
-// TWO OF THE FOUR STEPS ARE THE MAC'S ALONE, and they are drawn here in AppKit: registering as the
-// default terminal and putting `slopdesk` on the PATH are LaunchServices and `/usr/local/bin`, which the
-// phone has no version of. The other two exist on both platforms, so they are drawn ONCE in SwiftUI
-// (`FirstLaunchStepSurface`) and hosted — the same division the settings page makes between a control
-// kind, which each half draws its own way, and a surface, which there is nothing to differ about.
+// ALL FOUR STEPS ARE DRAWN HERE, IN APPKIT. Two of them are the Mac's alone — registering as the default
+// terminal and putting `slopdesk` on the PATH are LaunchServices and `/usr/local/bin`, which the phone has
+// no version of. The other two exist on both platforms and used to be drawn ONCE in SwiftUI
+// (`FirstLaunchStepSurface`) and hosted here; they are ``MacOnLaunchCard`` and ``MacClaudeHooksCard`` now
+// (docs/56 stage D, increment 47), which is what deleted this file's `SlopDeskClientUI` import — the last
+// thing any Mac file took from the phone's half of the checklist.
+//
+// The words did not move with the painting. Both cross-platform bodies read
+// ``FirstLaunchStepPresentation`` in `SlopDeskClientCore`, which is below both halves, so the phone's
+// `FirstLaunchView` renders the same answers from the same place.
 //
 // A REBUILD IS THE UPDATE: `FirstLaunchModel` is `@Observable`, and every mutation here goes through a
 // button in this file, so the button rebuilds. There is no second writer to miss.
 
 import AppKit
 import SlopDeskClientCore
-import SlopDeskClientUI // FirstLaunchStepSurface — the checklist steps, drawn once
 import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
 import SlopDeskWorkspaceCore
-import SwiftUI
 
 /// Presents the guided first-launch sheet over the workspace window.
 @preconcurrency
@@ -172,16 +175,20 @@ final class MacFirstLaunchController: NSViewController {
 
     /// One step's body, in a card.
     ///
-    /// The two macOS-only steps are AppKit here; the two cross-platform ones are the SwiftUI surface both
-    /// platforms show, hosted. A step this build has no body for draws nothing rather than an empty card.
+    /// ⚠️ THE CARD IS DRAWN ONCE, HERE. While the two cross-platform bodies were hosted they brought their
+    /// own SwiftUI `FirstLaunchCard` inside this one, so those two steps shipped a card inside a card — a
+    /// hairline and a raised fill drawn twice, one inset from the other. Every body is now bare content and
+    /// the chrome below is the only chrome.
     private func card(for step: FirstLaunchStep) -> NSView {
         let inner: NSView =
             switch step {
             case .defaultTerminal: MacOSIntegrationRows { [model] in model.markComplete(.defaultTerminal) }
             case .installCLI: MacCLIInstallCard { [model] in model.markComplete(.installCLI) }
-            case .onLaunch,
-                 .installClaudeHooks:
-                hosted(step)
+            case .onLaunch: MacOnLaunchCard()
+            case .installClaudeHooks:
+                MacClaudeHooksCard(agentHooks: agentHooks) { [model] in
+                    model.markComplete(.installClaudeHooks)
+                }
             }
 
         let card = NSView()
@@ -202,16 +209,6 @@ final class MacFirstLaunchController: NSViewController {
         ])
         card.widthAnchor.constraint(equalTo: bodyArea.widthAnchor).isActive = true
         return card
-    }
-
-    private func hosted(_ step: FirstLaunchStep) -> NSView {
-        let host = NSHostingView(
-            rootView: FirstLaunchStepSurface(step: step, model: model)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .agentHooksController(agentHooks),
-        )
-        host.sizingOptions = [.intrinsicContentSize]
-        return host
     }
 
     private func footerControls() -> [NSView] {

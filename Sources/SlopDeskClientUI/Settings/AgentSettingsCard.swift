@@ -11,6 +11,7 @@
 // together.
 
 #if canImport(SwiftUI)
+import SlopDeskClientCore // FirstLaunchStepPresentation — where the nil fallback now lives
 import SlopDeskWorkspaceCore
 import SwiftUI
 
@@ -22,8 +23,14 @@ import SwiftUI
 @MainActor
 enum AgentSettingsCard {
     /// The install-card state to show: the controller's state, or `.disconnected` when no controller backs it.
+    ///
+    /// ⚠️ FORWARDED, not spelled here any more. The Mac's AppKit first-launch checklist needs the same
+    /// fallback and cannot reach this target (docs/56 stage D — `SlopDeskMacUI` does not import the phone's
+    /// half), so the rule descended to ``FirstLaunchStepPresentation/hooksState(_:)`` in `SlopDeskClientCore`
+    /// and this stays as the name the settings pages and `AgentSettingsCardWiringTests` already call. Two
+    /// callers, ONE answer — which is the whole point of the fallback existing as a function at all.
     static func installState(_ controller: AgentHooksController?) -> AgentHooksController.InstallState {
-        controller?.state ?? .disconnected
+        FirstLaunchStepPresentation.hooksState(controller)
     }
 
     /// Whether the Agent-Behaviour toggles are configurable (an integration is installed). A nil controller ⇒

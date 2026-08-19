@@ -5,15 +5,21 @@
 // in the PURE `FirstLaunchModel` (`SlopDeskWorkspaceCore`); this is the view layer only — compiled +
 // HW-verified, never unit-tested.
 //
-// WHO RENDERS THIS. `FirstLaunchView` is the PHONE's shell: `FirstLaunchModel.steps(for: .iOS)` drops the
-// two macOS-only OS-integration steps, so the phone's checklist is On-Launch and Claude-hooks. The Mac
-// draws its own shell in AppKit (`SlopDeskMacUI/FirstLaunch`) from the SAME model, and draws those two
-// macOS-only steps itself — registering as the default terminal is LaunchServices and installing the CLI
-// is `/usr/local/bin`, neither of which the phone has a version of.
+// WHO RENDERS THIS. `FirstLaunchView` is the PHONE's shell, and only the phone's:
+// `FirstLaunchModel.steps(for: .iOS)` drops the two macOS-only OS-integration steps, so the phone's
+// checklist is On-Launch and Claude-hooks. The Mac draws its own shell in AppKit
+// (`SlopDeskMacUI/FirstLaunch`) from the SAME model, and draws ALL FOUR of its steps itself.
 //
-// The two CROSS-PLATFORM step bodies are drawn once, here, and reached through ``FirstLaunchStepSurface``
-// — the Mac hosts it. The same division the settings page makes: a control KIND each half draws its own
-// way, a SURFACE there is nothing to differ about.
+// ⚠️ NOTHING IN THIS FILE IS DRAWN FOR THE MAC ANY MORE (docs/56 stage D, increment 47). It used to be:
+// the two CROSS-PLATFORM step bodies were drawn once here, in ``FirstLaunchStepSurface``, and the Mac
+// HOSTED that surface — which was the last thing `MacFirstLaunchSheet` imported this target for. The Mac
+// draws them in AppKit now, so `FirstLaunchStepSurface` is `private` and this whole file is the phone's.
+//
+// What CROSSED is the painting; what did NOT is any answer. Every word these bodies say, the picker's
+// option order, which state earns a badge rather than a button, and whether an install ticks the step
+// are ``FirstLaunchStepPresentation`` in `SlopDeskClientCore` — below both halves, so neither half can
+// re-decide them. The hue is the one thing that stays with each drawing, because `SlopDeskSlate` depends
+// on `SlopDeskClientCore` and a token read from below would be a cycle.
 
 #if canImport(SwiftUI)
 import Defaults
@@ -129,16 +135,17 @@ public struct FirstLaunchView: View {
 /// The two CROSS-PLATFORM steps have a body here; the two macOS-only ones do not, and draw nothing —
 /// the honest answer, since the phone never reaches them and the Mac draws its own. That is the same
 /// contract `SettingsBespokeSurface` holds for an id it has no surface for.
-package struct FirstLaunchStepSurface: View {
-    private let step: FirstLaunchStep
-    private let model: FirstLaunchModel
+///
+/// ⚠️ `private`, NARROWED FROM `package`. The widening existed for exactly one cross-target caller —
+/// `MacFirstLaunchSheet` hosting this in an `NSHostingView` — under docs/56's promise that it comes back
+/// the moment that caller draws its own. It does, so it is: the only caller left is
+/// ``FirstLaunchView/stepBody`` a few lines up, and an access level that outlives its reason reads
+/// exactly like one that still has it.
+private struct FirstLaunchStepSurface: View {
+    let step: FirstLaunchStep
+    let model: FirstLaunchModel
 
-    package init(step: FirstLaunchStep, model: FirstLaunchModel) {
-        self.step = step
-        self.model = model
-    }
-
-    package var body: some View {
+    var body: some View {
         switch step {
         case .onLaunch: FirstLaunchOnLaunchStep()
         case .installClaudeHooks: FirstLaunchClaudeHooksStep(model: model)
@@ -159,20 +166,22 @@ private struct FirstLaunchOnLaunchStep: View {
     var body: some View {
         FirstLaunchCard {
             onLaunchPicker
-            FirstLaunchNote(
-                "Restore Last Session brings back your scrollback and reconnects agents that kept running "
-                    + "on the host. You can change this any time in Settings → General.",
-            )
+            FirstLaunchNote(FirstLaunchStepPresentation.onLaunchNote)
         }
     }
 
     /// The On-Launch picker — a radio group on macOS, an inline list on iOS (`.radioGroup` is
     /// macOS-only).
+    ///
+    /// The options and their order come from ``FirstLaunchStepPresentation/onLaunchOptions``, never from
+    /// two `Text(…).tag(…)` lines typed here: the Mac's AppKit radios offer the same two, and a picker
+    /// that grew a third case would otherwise grow it on one platform only.
     @ViewBuilder
     private var onLaunchPicker: some View {
         let picker = Picker("On Launch", selection: $onLaunch) {
-            Text("Restore Last Session").tag(OnLaunchBehavior.restoreLastSession)
-            Text("New Window").tag(OnLaunchBehavior.newWindow)
+            ForEach(FirstLaunchStepPresentation.onLaunchOptions, id: \.self) { option in
+                Text(option.title).tag(option)
+            }
         }
         #if os(macOS)
         picker.pickerStyle(.radioGroup)
@@ -191,16 +200,14 @@ private struct FirstLaunchClaudeHooksStep: View {
     @Environment(\.agentHooksController) private var agentHooks
     let model: FirstLaunchModel
 
-    private var state: AgentHooksController.InstallState { AgentSettingsCard.installState(agentHooks) }
-
     var body: some View {
         FirstLaunchCard {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: Slate.Metric.space1) {
-                    Text("Claude Code")
+                    Text(FirstLaunchStepPresentation.hooksAgentName)
                         .font(.system(size: Slate.Typeface.base, weight: .semibold))
                         .foregroundStyle(Slate.Text.primary)
-                    Text("Add hooks to ~/.claude/settings.json for real-time agent state.")
+                    Text(FirstLaunchStepPresentation.hooksBlurb)
                         .font(.system(size: Slate.Typeface.footnote))
                         .foregroundStyle(Slate.Text.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -208,41 +215,45 @@ private struct FirstLaunchClaudeHooksStep: View {
                 Spacer()
                 installControl
             }
-            if state == .disconnected || state == .unknown {
-                FirstLaunchNote("Connect a session first, then install the hooks. You can also do this later in "
-                    + "Settings → Agents.")
+            if FirstLaunchStepPresentation.showsConnectNote(agentHooks) {
+                FirstLaunchNote(FirstLaunchStepPresentation.hooksConnectNote)
             }
         }
         .task { await agentHooks?.refresh() }
     }
 
+    /// The trailing slot, drawn from ``FirstLaunchHooksControl``. The SWITCH is on the resolved control,
+    /// never on the raw ``AgentHooksController/InstallState`` — the fold from six states to three shapes
+    /// is the decision, and it is spelled once, below, for both halves.
     @ViewBuilder
     private var installControl: some View {
-        switch state {
-        case .installed:
-            Label("Installed", systemImage: "checkmark").foregroundStyle(Slate.StatusInk.ok)
-        case .installedInactive:
-            // Written to settings.json but the host listener is not bound — honest amber, not the green
-            // check (Settings ▸ Agents carries the restart hint).
-            Label("Installed — inactive", systemImage: "exclamationmark.triangle")
-                .foregroundStyle(Slate.StatusInk.warn)
-                .help("The host's hook socket isn't bound. Restart the host daemon, then open new panes.")
-        case .notInstalled:
-            Button("Install") {
+        switch FirstLaunchStepPresentation.hooksControl(agentHooks) {
+        case let .badge(badge):
+            badgeLabel(badge)
+        case let .offerInstall(enabled):
+            Button(FirstLaunchStepPresentation.hooksInstallTitle) {
                 Task {
                     await agentHooks?.install()
-                    // The settings.json write is what this step tracks — `installedInactive` still
-                    // counts (the listener half is a hostd-launch concern, surfaced by the badge).
-                    if agentHooks?.isInstalled == true { model.markComplete(.installClaudeHooks) }
+                    if FirstLaunchStepPresentation.completesHooksStep(agentHooks) {
+                        model.markComplete(.installClaudeHooks)
+                    }
                 }
             }
+            .disabled(!enabled)
             .buttonStyle(.bordered)
         case .working:
             ProgressView().controlSize(.small)
-        case .disconnected,
-             .unknown:
-            Button("Install") {}.disabled(true).buttonStyle(.bordered)
         }
+    }
+
+    /// A finished badge. The word, the silhouette and the hint are the badge's own; the HUE is this
+    /// renderer's, because `SlopDeskSlate` sits above `SlopDeskClientCore` and a token cannot descend.
+    /// The Mac's AppKit twin spells the same two constants `Slate.Native.StatusInk.*`.
+    @ViewBuilder
+    private func badgeLabel(_ badge: FirstLaunchHooksBadge) -> some View {
+        let label = Label(badge.label, systemImage: badge.systemImage)
+            .foregroundStyle(badge == .installed ? Slate.StatusInk.ok : Slate.StatusInk.warn)
+        if let hint = badge.hint { label.help(hint) } else { label }
     }
 }
 

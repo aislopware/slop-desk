@@ -1860,11 +1860,53 @@ like one that still has it. Both are `internal` now, with one in-target caller a
 expires: after the rename this target is the phone's, and a SwiftUI mark is what the phone should
 have.
 
+### Increment 47 — the checklist's two shared steps cross, and the words go down instead
+
+The second kind-1 surface, and the first that could not be done by moving a drawing alone.
+`MacFirstLaunchSheet` hosted `FirstLaunchStepSurface` for its two CROSS-PLATFORM steps — On-Launch
+and the Claude-hooks install — and that host was the file's whole reason to import
+`SlopDeskClientUI`. They are `MacOnLaunchCard` and `MacClaudeHooksCard` now, plain `NSStackView`s
+beside the two macOS-only cards the sheet already drew. **10 → 9.**
+
+`FirstLaunchStepSurface` STAYS, and is `private`. It is the phone's renderer, not a corpse: deleting
+it is the mistake this workstream already made once. What it lost is the `package` its one
+cross-target caller bought — collected on the schedule increment 46 set for `StatusDotView`.
+
+**The expensive half of this increment was the lift, not the rewrite.** Unlike the band's marks —
+where `style(for:active:)` was already the one source of the answer — the checklist's answers were
+all inside the SwiftUI view, because there had only ever been one renderer to hold them. Two
+renderers would have made every one of them a pair: the picker's two option labels, the four notes
+and blurbs, the fold from six `InstallState`s to three control shapes, the rule that shows the
+"connect a session" note, and the rule that an install landing `installedInactive` still TICKS the
+step. They are `FirstLaunchStepPresentation` in `SlopDeskClientCore` now, and both halves read them.
+The `nil`-controller fallback went down with them: `AgentSettingsCard.installState(_:)` forwards to
+`FirstLaunchStepPresentation.hooksState(_:)` rather than spelling `?? .disconnected` a second time
+where the Mac cannot reach it — that fallback exists because the iOS sheet once shipped a card
+claiming an integration was installed, and it does not get to exist twice.
+
+**One thing stayed with each drawing, and only because it must.** `SlopDeskSlate` DEPENDS on
+`SlopDeskClientCore`, so an ink cannot descend to an answer without becoming a cycle. A badge names
+its own silhouette — one SF-Symbol name both halves ask for — and each renderer spells the hue:
+`Slate.StatusInk.ok` in SwiftUI, `Slate.Native.StatusInk.ok` in AppKit. The badge cases are two, so
+that is two lines per half. A `Slate.hooksInk(_:)` pair beside `attentionInk(_:)` would collapse even
+those, and is the only thing left owed here.
+
+**A card inside a card, caught in passing.** The hosted bodies each wrapped themselves in a SwiftUI
+`FirstLaunchCard` and then landed inside the sheet's own AppKit card — a hairline and a raised fill
+drawn twice, one inset from the other, on exactly the two steps that were hosted. The AppKit bodies
+are bare content; the sheet's chrome is the only chrome.
+
+An `NSStackView` of radios needed one thing SwiftUI's `Picker` gave for free and AppKit does not:
+`MacOnLaunchRadios` resolves a pick to an OPTION VALUE rather than a button index, because AppKit's
+implicit radio grouping answers "whichever button is `.on`" and a third option would otherwise read
+as the first. The picker has two options today. It is one line either way, and only one of them
+stays right when a third arrives.
+
 ## Stage D ledger — what the rename actually costs
 
 `SlopDeskClientUI` cannot become `SlopDeskPhoneUI` while `SlopDeskMacUI` still imports it. That is
-the whole test, and it is countable. It was **13 files** when this ledger was written; it is **10**
-after increments 45 and 46, and each one names what it takes in the comment on the import line.
+the whole test, and it is countable. It was **13 files** when this ledger was written; it is **9**
+after increments 45, 46 and 47, and each one names what it takes in the comment on the import line.
 Grouped, they are three kinds of debt, not one — and only the first kind needs an AppKit rewrite.
 
 ### The ruling first
@@ -1887,14 +1929,14 @@ The expensive kind, and the only one that is.
 | the pane canvas (`Pane/`, 24 files) | 6888 | `MacContentColumn`, `SlopDeskSplitViewController` |
 | `CodePanelSurfaces` | 632 | `MacCodePanelColumn` |
 | `SettingsBespokeSurface` | 325 | `MacSettingsRows` |
-| `FirstLaunchStepSurface` | 286 | `MacFirstLaunchSheet` |
+| ~~`FirstLaunchStepSurface`~~ | ~~286~~ | ✅ increment 47 — the sheet draws both shared steps itself |
 | ~~`StatusDotView`~~ | ~~225~~ | ✅ increment 46 — `RailStatusRollup` draws `MacStatusMarkView`s |
 | `SatellitePaneHost` | 170 | `SatellitePaneWindows` |
 | `WorkspaceColumnHosts` (the factory seam) | 79 | `SlopDeskSplitViewController` |
 
 The canvas dominates by an order of magnitude, and everything else in this table is small enough to
-cross one at a time. `StatusDotView` was the cheapest and went first; the bespoke settings pages and
-the first-launch checklist are next.
+cross one at a time. `StatusDotView` was the cheapest and went first, then the first-launch
+checklist; the bespoke settings pages are next.
 
 ### Kind 2 — not views at all, and in a UI target by accident — ✅ DONE (increment 45)
 
@@ -1907,8 +1949,9 @@ files that reach the pool, only `WorkspaceKeyDispatcher` and `MacCodeSidebarKeyb
 alone. `MacCodePanelColumn` also takes `CodePanelSurfaces`, `SlopDeskMacApp` also takes the SwiftUI
 mounts, and both are kind 1.
 
-**This was the whole of kind 2.** Eleven imports remained after it — ten after increment 46 — and
-every one is kind 1 or kind 3, so from here on Stage D is AppKit rewrites and the canvas.
+**This was the whole of kind 2.** Eleven imports remained after it — ten after increment 46, nine
+after 47 — and every one is kind 1 or kind 3, so from here on Stage D is AppKit rewrites and the
+canvas.
 
 ### Kind 3 — blocked on a geometry fact, not on effort
 
@@ -1921,6 +1964,7 @@ moat moves out of SwiftUI into the AppKit column. It is not independently schedu
 ### So the order is
 
 1. ~~Kind 2 — the pool goes down.~~ ✅ increment 45. Two imports, no rewrite.
-2. Kind 1's small surfaces — ~~`StatusDotView`~~ (✅ increment 46, one import), then the first-launch
-   checklist, then the bespoke settings pages. Each a contained AppKit rewrite.
+2. Kind 1's small surfaces — ~~`StatusDotView`~~ (✅ increment 46), ~~the first-launch checklist~~
+   (✅ increment 47), then the bespoke settings pages. Each a contained AppKit rewrite, and each
+   costs one import.
 3. The canvas, which takes kind 3 with it and is the remaining bulk.
