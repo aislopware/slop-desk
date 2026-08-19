@@ -422,12 +422,16 @@ final class MacPaneMoveHandle: NSView {
         placePill(animated: true)
     }
 
-    /// ESCAPE, WITH THE BUTTON STILL DOWN. The gesture stays `.cancelled` until the release, and that
-    /// is a deliberate DIFFERENCE from the SwiftUI half rather than an oversight: there, Escape cleared
-    /// the controller's `move` while the `DragGesture` kept running, so the very next mouse movement
-    /// published a fresh drag and the release committed the landing the user had just bailed out of.
-    /// A bail-out that un-bails on a tremor is worse than no bail-out, because the user has already
-    /// stopped watching.
+    /// ESCAPE, WITH THE BUTTON STILL DOWN. The gesture stays `.cancelled` until the release, because a
+    /// bail-out that un-bails on a tremor is worse than no bail-out — the user has already stopped
+    /// watching. Clearing the drag state without latching is not enough on its own: the pointer is
+    /// still down, so the next movement simply refills whatever the cancel emptied and the release
+    /// commits the landing the user bailed out of. Stickiness IS the cancel.
+    ///
+    /// This used to be recorded here as a deliberate DIFFERENCE from the SwiftUI half, which cleared
+    /// the controller's `move` while its `DragGesture` kept running and had exactly that defect. It was
+    /// never a difference worth keeping — it was that half's bug, and it is now fixed there on the same
+    /// three-phase latch this uses. **The two halves agree.**
     private func cancelDrag() {
         guard phase == .dragging else { return }
         phase = .cancelled
@@ -436,8 +440,15 @@ final class MacPaneMoveHandle: NSView {
     }
 
     /// The leaf closed under a live drag — this handle was torn out of the mount before a release could
-    /// reach it. The safety net the SwiftUI half got from `@GestureState`'s automatic reset, spelled
-    /// here as the two hierarchy hooks that actually mean it.
+    /// reach it. The two hierarchy hooks below are the whole safety net.
+    ///
+    /// This comment used to call that net "the one the SwiftUI half got from `@GestureState`'s automatic
+    /// reset", and **that reset never covered this case in either half.** It fires on an end and on a
+    /// cancel, but it is OBSERVED through an `.onChange` that is part of the view, so an unmount mid-drag
+    /// destroys the observer instead of firing it — the SwiftUI half was stranding the same state this
+    /// guards, and now spells the same net as `.onDisappear`. The claim survived here only because it was
+    /// written from the other file's comment rather than from its behaviour, which is the cheapest way to
+    /// launder an assumption into two languages at once.
     ///
     /// Not clearing it wedges the canvas: the mount gates every OTHER handle on the drag being over, so
     /// a stranded drag leaves every pill but one dead forever — and leaves Escape swallowed app-wide.

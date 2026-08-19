@@ -228,6 +228,13 @@ struct SplitContainer: View {
                     leadingWeight: leadingWeight,
                 )
             },
+            // The release, and the ONE place the suspend raised above comes back down. It arrives on a
+            // gesture end, on a cancel, AND on the divider's teardown, because the flag is workspace-wide
+            // store state rather than this seam's: unmounting a seam mid-drag — which this very view does
+            // routinely, since the whole divider band lives under `if isActive` and `layout.dividers` loses
+            // a handle the moment a neighbouring pane closes — would otherwise leave every terminal's grid
+            // send suspended for the rest of the session. `PaneDivider` owns the idempotence (its
+            // `releaseDrag`), so a seam that unmounts without ever having been dragged calls none of this.
             onResizeEnd: {
                 store.setTerminalResizeSuspended(false)
                 store.commitDividerResize()

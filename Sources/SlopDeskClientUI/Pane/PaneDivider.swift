@@ -16,6 +16,17 @@
 // The store clamps the weight at `SplitWeight.minWeight`, so the seam stops on the neighbour by itself: no
 // ghost-seam preview and no travel clamp are needed (the real panes move + the resize scrim covers them).
 //
+// THE END-CLEANUP IS OWED ON TEARDOWN, NOT ONLY ON GESTURE END. `onResizeBegin` raises
+// `setTerminalResizeSuspended(true)`, which is WORKSPACE-WIDE state on the store rather than anything this
+// seam owns: every live terminal stops forwarding its grid to the host until something lowers it again.
+// SwiftUI's `@GestureState` reset covers an end and a cancel, but it covers them through an `.onChange`
+// observer that dies with the view — so a seam that is UNMOUNTED while the button is still down (a pane
+// closed under the drag, the tab switched, the tab layer rebuilt) would leave the flag raised for the rest
+// of the session and the host would never hear another grid resize. That wedges the whole workspace, not
+// just this seam. `.onDisappear` is the SwiftUI spelling of the same safety net ``MacPaneDivider`` reaches
+// through `viewDidMoveToWindow`, and both funnel into ONE release guarded by `startLead` so the drag that
+// ends normally and then unmounts releases exactly once.
+//
 // Hit-test guardrail: the FAT transparent hit band gets `.contentShape(Rectangle())` over a
 // thin visual hairline; SplitContainer applies `.position(...)` to this whole view, so the hit area travels
 // WITH the handle. SYSTEM/DS colours only (the accent hairline is a drag affordance, not a hover state).
@@ -34,18 +45,23 @@ struct PaneDivider: View {
     /// Each frame — the new ABSOLUTE leading-child weight (store clamps it). Wired to
     /// `store.setDividerWeightLive`, which re-solves the layout WITHOUT reconciling / persisting per frame.
     var onResizeChange: (_ leadingWeight: Double) -> Void = { _ in }
-    /// Drag end / cancel — wired to `store.setTerminalResizeSuspended(false)` (flush the settled grid to the
-    /// host) + `store.commitDividerResize()` (reconcile + persist ONCE).
+    /// Drag end / cancel / TEARDOWN — wired to `store.setTerminalResizeSuspended(false)` (flush the settled
+    /// grid to the host) + `store.commitDividerResize()` (reconcile + persist ONCE). Called at most ONCE per
+    /// `onResizeBegin`, from whichever of the three arrives first (see ``releaseDrag()``); a seam that never
+    /// began a drag never calls it at all.
     var onResizeEnd: () -> Void = {}
     /// Double-click → even out THIS seam (50/50, sum-preserving). Wired to `store.evenDividerTree` with
     /// this handle's `(splitID, childIndex)` — never the whole-tab `balanceActivePaneSplits` reset.
     var onReset: () -> Void = {}
 
     /// `true` for the duration of the gesture. SwiftUI auto-resets `@GestureState` on end/cancel/interrupt, so
-    /// the end-cleanup (unsuspend + commit) can NEVER be skipped by a cancelled drag.
+    /// the end-cleanup (unsuspend + commit) can never be skipped by a CANCELLED drag. It says nothing about an
+    /// UNMOUNTED one — the reset is observed through an `.onChange` that goes away with the view — which is
+    /// why the release is also owed from `.onDisappear`; see the file header.
     @GestureState private var gestureActive = false
-    /// The leading child's weight captured at drag start — the absolute anchor for the whole gesture. `nil`
-    /// between drags; set on the first change, cleared on end.
+    /// The leading child's weight captured at drag start — the absolute anchor for the whole gesture, and the
+    /// "a drag is in flight" flag that makes ``releaseDrag()`` idempotent. `nil` between drags; set on the
+    /// first change, cleared by whichever release arrives first.
     @State private var startLead: Double?
 
     var body: some View {
@@ -81,19 +97,51 @@ struct PaneDivider: View {
                 },
         )
         .onTapGesture(count: 2) { onReset() }
-        // Fires on end AND cancel (`gestureActive` resets either way). Clean up exactly once.
+        // Fires on end AND cancel (`gestureActive` resets either way) — the ordinary release, for a drag
+        // whose seam is still on screen when the button comes up.
         .onChange(of: gestureActive) { _, active in
-            if !active, startLead != nil {
-                startLead = nil
-                onResizeEnd()
-            }
+            if !active { releaseDrag() }
         }
+        // THE TEARDOWN SAFETY NET, and the reason it is not redundant with the observer above: that
+        // observer is part of this view, so an unmount mid-drag destroys it INSTEAD of firing it, and the
+        // workspace-wide suspend flag `onResizeBegin` raised would stay raised for the rest of the session.
+        // Every way this seam can vanish under a live drag ends here — `SplitContainer` mounts the whole
+        // divider band under `if isActive`, so a tab switch removes it; `layout.dividers` loses this
+        // handle's `key` when the pane on either side closes, so the `ForEach` row goes; and an evicted or
+        // torn-out tab takes the entire `.id(tab.id)` layer, descendants included. SwiftUI runs
+        // `.onDisappear` for all three, which is the same "removed from the tree" event AppKit reports to
+        // ``MacPaneDivider`` as `window == nil`.
+        //
+        // A drag that ends normally and THEN unmounts is not double-released: the `.onChange` above already
+        // cleared `startLead`, and ``releaseDrag()`` is a no-op without it. The reverse order is safe for
+        // the same reason, so it does not matter which SwiftUI delivers first. It is also safe if SwiftUI
+        // were ever to re-identify this seam mid-drag: the old view releases what it began instead of
+        // stranding it, which is strictly better than the wedge, and cannot happen anyway while the
+        // `ForEach` keys on the weight-independent ``SplitDividerHandle/key``.
+        .onDisappear { releaseDrag() }
         .animation(Slate.Anim.dividerHover, value: gestureActive)
         // The live ratio readout (`62 · 38`) — MERIDIAN L3 status: present ONLY while the drag is
         // working, hard-cut on release (mounted AFTER the `.animation` above so it never fades).
         // Each frame's re-solve rebuilds `handle` with fresh pair weights, so the numbers track the
         // seam live; a degenerate pair (a `.fixed` side) yields nil ⇒ absent, never wrong.
         .overlay { if gestureActive { ratioReadout } }
+    }
+
+    /// The drag's end-cleanup, spelled ONCE because two different events owe it: the gesture ending or
+    /// cancelling, and this view being torn out of the tree while the button is still down. `startLead` is
+    /// both the anchor and the latch — set on the first drag frame, right after `onResizeBegin`, so it is
+    /// exactly the "there is something to release" bit, and clearing it before the callback makes a second
+    /// arrival a no-op. That also makes a release with no matching begin harmless, which is what a plain
+    /// unmount at rest (every tab switch, every pane close) delivers: `onResizeEnd` unsuspends the whole
+    /// workspace's terminals and stages a commit, so calling it on a seam that was never dragged would spend
+    /// a reconcile per divider per tab switch and could lower a suspend a DIFFERENT drag is holding.
+    ///
+    /// The AppKit half's `endDrag()` is the same three lines against the same flag — the guarantee is
+    /// shared, the mechanism is each framework's own.
+    private func releaseDrag() {
+        guard startLead != nil else { return }
+        startLead = nil
+        onResizeEnd()
     }
 
     /// The instrument-voice split percentages, centered on the seam: the answer to "am I at the ratio I

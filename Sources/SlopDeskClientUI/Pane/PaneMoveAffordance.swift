@@ -103,18 +103,25 @@ extension View {
 struct PaneMoveHandle: View {
     /// This leaf's on-screen size (the handle fills it; only the top strip is interactive).
     let leafSize: CGSize
-    /// Whether THIS leaf is the one currently being dragged (drives the pill's active styling + cursor).
+    /// Whether THIS leaf is the one currently being dragged — and it is NOT only styling. It is the drag
+    /// layer's own answer to "is this handle's move still live", so its withdrawal WHILE the gesture is
+    /// still tracking is the cancel arriving as state (see the latch below). It drives the pill's active
+    /// ink and the closed-hand cursor as a consequence of that, not the other way round.
     let isDragging: Bool
     /// Live drag callbacks — locations are in the `PaneMoveSpace.name` coordinate space.
     let onChanged: (CGPoint) -> Void
     let onEnded: (CGPoint) -> Void
     /// A plain tap on the strip focuses the pane (so the top strip is not a focus dead-zone).
     let onTap: () -> Void
-    /// Fires when the gesture goes inactive WITHOUT `onEnded` having run — a cancel, a system interrupt,
-    /// or this very handle's view being torn out of the `ForEach` mid-drag (the pane it belongs to closed
-    /// while the mouse button was still down). Safe to treat as idempotent: on a normal release both this
-    /// and `onEnded` fire, but `onEnded`'s commit reads its own captured location, not caller state, so
-    /// this running first (or twice) never drops or reorders the commit.
+    /// Fires when the gesture ends having COMMITTED NOTHING — a cancel (Escape, with the release
+    /// afterwards reporting nothing), or this very handle's view being torn out of the `ForEach` mid-drag
+    /// so no release could ever reach it (the pane it belongs to closed while the button was still down).
+    ///
+    /// It does NOT fire on the success path, and that is the whole point of the name. It used to fire on
+    /// EVERY end, because it hung off `dragActive`'s reset alone and that reset is what a normal release
+    /// does too — so a callback called "interrupted" ran immediately after every committed drop, and its
+    /// caller had to be written to survive being told the drop it had just committed was an interruption.
+    /// A predicate that is true on both branches tells its reader nothing; this one is now the branch.
     var onInterrupted: () -> Void = {}
 
     /// Whether this leaf renders UNTHEMED content (a `.desktop` video stream): the bare
@@ -124,10 +131,48 @@ struct PaneMoveHandle: View {
     var contentIsUnthemed: Bool = false
 
     @State private var hovering = false
-    /// `true` for the duration of the gesture. SwiftUI auto-resets `@GestureState` on end/cancel/interrupt
-    /// — including this view being removed from its `ForEach` mid-drag — so `onInterrupted` can NEVER be
-    /// skipped the way a bare `.onEnded` closure can (see `PaneDivider`'s identical safety net).
+    /// `true` for the duration of the gesture. SwiftUI auto-resets `@GestureState` on end/cancel/interrupt,
+    /// so an ORDINARY release can never skip the end-cleanup the way a bare `.onEnded` closure can.
+    ///
+    /// It says nothing whatever about an UNMOUNTED drag, and this comment used to claim that it did — that
+    /// the reset covered "this view being removed from its `ForEach` mid-drag", citing `PaneDivider` for a
+    /// safety net that file no longer describes that way. The reset is observed through an `.onChange`
+    /// that is part of this view, so an unmount DESTROYS the observer instead of firing it. That is why
+    /// ``releaseDrag()`` is owed from `.onDisappear` as well, and why the latch below rather than this
+    /// flag is what says whether there is anything left to release.
     @GestureState private var dragActive = false
+
+    /// THE ONE LATCH, and both of this handle's guarantees are read off it, because both are the same
+    /// sentence said twice: a drag is released EXACTLY ONCE per begin, and after a bail-out it reports
+    /// nothing at all.
+    ///
+    /// The bail-out is what needs a third state rather than a Bool. SwiftUI cannot un-recognise a live
+    /// `DragGesture` — there is no `cancel()`, and `.disabled(true)` applied mid-gesture does not retract
+    /// a recogniser that is already tracking — so the cancel cannot be spelled "stop the gesture", only
+    /// "stop REPORTING it", and that has to hold for every remaining event of the same press. Before this
+    /// latch existed, Escape cleared the drag layer's `move` and nothing else: the very next mouse
+    /// movement published a fresh `onChanged` that re-armed exactly what had just been cleared, and the
+    /// release committed the landing the user had explicitly backed out of. A bail-out that un-bails on a
+    /// tremor is worse than no bail-out, because by then the user has stopped watching the screen.
+    ///
+    /// It is also `PaneDivider`'s `startLead` in this file's terms — the "a begin is outstanding" bit that
+    /// makes ``releaseDrag()`` idempotent — and the two were deliberately not kept apart. Two latches
+    /// over one gesture would need a rule for every pair of their states, and three of those four pairs
+    /// are unreachable; one value with three named cases has no unreachable pairs to reason about.
+    /// `MacPaneMoveHandle` reached the same shape from the other side and calls it `Phase` too, minus the
+    /// `.pressed` case AppKit needs because it has no `minimumDistance` and no `.onTapGesture`.
+    @State private var phase = Phase.idle
+
+    /// Where the gesture is. `.cancelled` is the state neither "dragging" nor "idle" can express: the
+    /// button is still down, so the gesture is not over, and nothing more may be reported, so it is not
+    /// running either.
+    private enum Phase {
+        case idle
+        case dragging
+        /// Escape was pressed (or the drag was interrupted from outside) and the button is still down.
+        /// Absorbs every remaining event of the gesture; the release commits nothing.
+        case cancelled
+    }
 
     private var revealed: Bool { hovering || isDragging }
 
@@ -175,16 +220,85 @@ struct PaneMoveHandle: View {
         .gesture(
             DragGesture(minimumDistance: 2, coordinateSpace: .named(PaneMoveSpace.name))
                 .updating($dragActive) { _, state, _ in state = true }
-                .onChanged { onChanged($0.location) }
-                .onEnded { onEnded($0.location) },
+                // The begin is the FIRST frame past `minimumDistance` — SwiftUI has no separate began
+                // callback — so it is spelled as the one `.idle` → `.dragging` transition, exactly the
+                // way `PaneDivider` takes its anchor on the first change. A `.cancelled` gesture must
+                // never come back through this door, which is why the transition is written out rather
+                // than assigned unconditionally.
+                .onChanged { value in
+                    switch phase {
+                    case .cancelled: return
+                    case .idle: phase = .dragging
+                    case .dragging: break
+                    }
+                    onChanged(value.location)
+                }
+                // The release commits, and BOTH halves of that sentence are conditional on the latch.
+                // Suppressing `onChanged` alone would have left this arm free to commit whatever zone
+                // the pointer happened to be over at the moment of the bail-out — the whole defect, one
+                // event later. A cancelled release reports nothing here and is released by the
+                // `dragActive` observer below, which owes it exactly one `onInterrupted` either way.
+                .onEnded { value in
+                    guard phase == .dragging else { return }
+                    // Cleared BEFORE the commit, `PaneDivider`'s rule: `onEnded` can tear this very view
+                    // out of the tree (a drop that closes this pane), and the `.onDisappear` that then
+                    // fires must find nothing outstanding rather than report a committed drop as an
+                    // interruption.
+                    phase = .idle
+                    onEnded(value.location)
+                },
         )
         .onTapGesture { onTap() }
         .animation(Slate.Anim.dividerHover, value: revealed)
-        // Fires on end AND on a cancel/teardown (`dragActive` resets either way) — the safety net a
-        // bare `.onEnded` cannot provide.
-        .onChange(of: dragActive) { wasActive, active in
-            if wasActive, !active { onInterrupted() }
+        // THE CANCEL, ARRIVING AS STATE RATHER THAN AS AN EVENT. This handle never reads Escape itself
+        // and must not: the key is read by ONE local `NSEvent` monitor mounted with the move layer, and
+        // ``PaneMoveEscapeMonitorController``'s header states why a second one is not an option — two
+        // local monitors on one keyDown stream do not layer, they RACE, and whichever swallows first
+        // decides for both. What reaches this view instead is the CONSEQUENCE of the cancel: the drag
+        // layer clears its `move`, so `isDragging` — this handle's own input — goes false underneath a
+        // gesture that is still tracking. Nothing else can do that mid-press, which is what makes the
+        // withdrawal readable as the bail-out rather than as a repaint.
+        //
+        // `phase == .dragging` is the whole guard, and it is what separates this from a normal end: a
+        // release clears the drag layer's `move` too, but only from inside `onEnded`, which has already
+        // moved the phase to `.idle` by the time any observer can run. SwiftUI promises nothing about
+        // whether that withdrawal lands in the same update as `@GestureState`'s reset or the next one,
+        // and this guard does not care — a finished drag can never arm a latch the next one inherits.
+        .onChange(of: isDragging) { wasDragging, nowDragging in
+            guard wasDragging, !nowDragging, phase == .dragging else { return }
+            phase = .cancelled
         }
+        // The ordinary release: `@GestureState` resets on an end and on a system cancel alike, so this
+        // covers the drag whose handle is still on screen when the button comes up.
+        .onChange(of: dragActive) { _, active in
+            if !active { releaseDrag() }
+        }
+        // THE TEARDOWN SAFETY NET, and it is not redundant with the observer above: that observer is
+        // part of this view, so an unmount mid-drag destroys it INSTEAD of firing it. The header used to
+        // claim the opposite. Every way this handle can vanish under a live drag ends here — the pane it
+        // belongs to closes and `leaves` loses its `ForEach` row; the move layer's own
+        // `leaves.count > 1 || paneDrag != nil` condition goes false; an evicted tab takes the whole
+        // layer, descendants included — and a drag stranded that way leaves `drag.move` non-nil forever,
+        // which wedges `.allowsHitTesting(move == nil || …)` on EVERY other handle in the workspace for
+        // the rest of the session. Silently: no crash, no log, just pills that stop responding.
+        .onDisappear { releaseDrag() }
+    }
+
+    /// The drag's end, spelled ONCE because three different events owe it: the gesture ending or
+    /// cancelling, a release that arrives after a bail-out, and this view being torn out of the tree
+    /// while the button is still down. `phase` is both the latch and the answer — anything but `.idle`
+    /// means a begin is outstanding — and clearing it before the callback makes a second arrival in
+    /// either order a no-op, so it does not matter which SwiftUI delivers first.
+    ///
+    /// A committed release never reaches the callback, because `onEnded` set `.idle` itself before
+    /// committing: `onInterrupted` says nothing was committed, and it now means it. Nothing else needs
+    /// unwinding here — the pill's accent, the closed-hand pointer and the overlay all hang off
+    /// `isDragging`, and the Escape monitor arms and disarms off the same `move` the interruption
+    /// clears, so one report puts every one of them back.
+    private func releaseDrag() {
+        guard phase != .idle else { return }
+        phase = .idle
+        onInterrupted()
     }
 }
 
@@ -370,6 +484,18 @@ struct PaneMoveOverlay: View {
 // not"), since an iPad with a hardware keyboard could not bail out of a drag it had started. What
 // makes the two halves one implementation rather than two is the closure: neither knows what
 // cancelling means, and the single mount in `SplitContainer` supplies it.
+//
+// WHAT THE CANCEL DOES NOT DO IS STOP THE GESTURE, and that gap was the defect. Neither half of the
+// monitor can reach the `DragGesture` on the handle: the closure the mount supplies clears the drag
+// layer's `move` and there SwiftUI's story ends, because a live gesture cannot be un-recognised —
+// there is no `cancel()` on one, and `.disabled(true)` does not retract a recogniser that is already
+// tracking. So Escape used to clear state that the very next mouse movement refilled, and the eventual
+// release committed the landing the user had bailed out of. The handle closes that itself, off the
+// signal it already has: ``PaneMoveHandle/isDragging`` going false underneath a gesture that is still
+// tracking IS the cancel, and it latches the gesture inert until the button comes up. The monitor
+// stays exactly one, for ``PaneMoveEscapeMonitorController``'s stated reason — two local `NSEvent`
+// monitors on one keyDown stream do not layer, they race — so the handle reads the consequence rather
+// than the key.
 //
 // THE MAC'S HALF IS NO LONGER THE MECHANISM, only its mount. The monitor descended to
 // ``PaneMoveEscapeMonitorController`` — an `NSEvent` monitor draws nothing, and a representable whose
