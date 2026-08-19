@@ -117,7 +117,9 @@ public struct SlopDeskMacApp: App {
     private var connection: AppConnection { app.connection }
     private var preferences: PreferencesStore { app.preferences }
     private var overlayCoordinator: OverlayCoordinator { app.overlay }
-    private var agentHooks: AgentHooksController { app.agentHooks }
+    // No `agentHooks` shorthand: its only two readers were the environment injections increment 56f
+    // deleted, and the two surfaces that genuinely need the controller — the first-launch sheet and the
+    // Settings hooks card — take it as an init parameter off `app.agentHooks` directly.
     private var chrome: WorkspaceChromeState { app.chrome }
 
     public init() {
@@ -344,13 +346,20 @@ public struct SlopDeskMacApp: App {
     public var body: some Scene {
         WindowGroup {
             workspaceRootView
-                // Hand the single live PreferencesStore to deep views (the agent footer's notification
-                // dismissal/enable persistence reads it via `\.preferencesStore`).
-                .preferencesStore(preferences)
-                // The Agents install-hooks controller (the `Settings` scene injects it on its own side).
-                .agentHooksController(agentHooks)
-                // The single overlay coordinator, so deep views reach it via `\.overlayCoordinator`.
-                .overlayCoordinator(overlayCoordinator)
+                // NO ENVIRONMENT INJECTIONS HERE ANY MORE (docs/56 stage D, increment 56f). This root
+                // used to hand down `\.preferencesStore`, `\.agentHooksController` and
+                // `\.overlayCoordinator` "so deep views can reach them". There are no such deep views
+                // left on this platform: every reader of all three keys is a PHONE view, and each has an
+                // AppKit twin the Mac mounts instead — `MacSettingsBespokeSurfaces` and
+                // `MacFirstLaunchSheet` take their controller as an INIT PARAMETER, and increment 56b
+                // did the same to `MacWorkspaceRootView`'s preferences. The canvas, which does still
+                // read `\.overlayCoordinator`, gets it from `WorkspaceColumnHosts` at its own hosting
+                // root — not from here, because an `NSHostingController` inherits no scene environment.
+                //
+                // They were dead ONE-WAY: an injection nobody reads costs nothing at runtime and cannot
+                // fail a test, so it survives every rewrite that removes its readers. That is the same
+                // shape as the stale import increment 56a found — a line that documents an arrangement
+                // which stopped being true, and reads to the next person as evidence it still is.
                 // The guided first-launch checklist — On-Launch / Default-Terminal / Install-CLI /
                 // Install-Claude-hooks. Presents once on a fresh install (the `hasCompletedFirstLaunch`
                 // Defaults flag) and never under automation (it would steal the autoconnect focus).
@@ -711,16 +720,19 @@ public struct SlopDeskMacApp: App {
         }
     }
 
-    /// Wraps a satellite window's SwiftUI root with the scene-level environment. An `NSHostingView` root
-    /// inherits NOTHING from the main scene (the known hosting-root env trap), so the injected stores
-    /// must be re-applied here or the satellite's deep views resolve nil coordinators. No colour scheme
-    /// is forced — the chrome follows the OS appearance like every other window.
+    /// Wraps a satellite window's SwiftUI root with the ONE piece of scene environment it actually
+    /// reads. An `NSHostingView` root inherits NOTHING from the main scene (the known hosting-root env
+    /// trap), so anything the satellite's subtree resolves has to be re-applied here or it comes back
+    /// `nil`. No colour scheme is forced — the chrome follows the OS appearance like every other window.
+    ///
+    /// ⚠️ EXACTLY ONE KEY, and the trimming is not cosmetic (increment 56f). This used to re-apply three.
+    /// A satellite mounts ``SatellitePaneRootView`` → ``PaneContainer``, and `PaneContainer` is the only
+    /// thing down there that reads an environment key at all — `\.overlayCoordinator`. The other two
+    /// were being re-applied against the hosting-root trap for readers that are all phone views.
+    ///
+    /// This one is LIVE and must stay until increment 62 makes the satellite's content AppKit. The trap
+    /// the doc comment describes is real; what changed is how much of it still applies.
     private func decorateSatelliteRoot(_ root: AnyView) -> AnyView {
-        AnyView(
-            root
-                .preferencesStore(preferences)
-                .agentHooksController(agentHooks)
-                .overlayCoordinator(overlayCoordinator),
-        )
+        AnyView(root.overlayCoordinator(overlayCoordinator))
     }
 }

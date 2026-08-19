@@ -5959,6 +5959,40 @@ if [[ -e Sources/SlopDeskClientUI/Chrome/WindowSidebarToggle.swift ]]; then
   fail "the SwiftUI WindowSidebarToggle is back — MacWindowSidebarToggle replaced it, never joined it (docs/56 §3.5)"
 fi
 printf 'check-supervisor: the window root is off the draining floor — one sidebar toggle, drawn in AppKit.\n'
+# AND THE MAC INJECTS NO ENVIRONMENT IT DOES NOT READ (docs/56 §3.5, increment 56f). `SlopDeskMacApp`
+# handed its scene root three of the draining target's environment keys — `\.preferencesStore`,
+# `\.agentHooksController`, `\.overlayCoordinator` — and re-applied all three to every satellite root
+# against the hosting-root env trap. Every reader of all three is a PHONE view. Each has an AppKit twin
+# the Mac mounts instead, and each twin takes its dependency as an INIT PARAMETER.
+#
+# A dead injection is worse than dead code, which is why this is a gate and not a cleanup. It costs
+# nothing at runtime, cannot fail a test, and survives every rewrite that deletes its last reader — so
+# it accumulates, and it reads to the next person as evidence that a subtree still resolves keys it
+# stopped resolving three increments ago. That is exactly how the stale import in 56a survived.
+#
+# `\.overlayCoordinator` on the SATELLITE root is the one live application and is deliberately not
+# banned: a satellite mounts `PaneContainer`, which reads it, and an `NSHostingView` root inherits
+# nothing. It dies with increment 62, when the satellite's content becomes AppKit.
+MAC_APP=Sources/SlopDeskMacUI/SlopDeskMacApp.swift
+# NOT anchored to the start of a line, deliberately: `.a().b()` chained on one line is the same
+# injection and the obvious way to reintroduce it. The `(` is what keeps this off the `\.key`
+# spelling every doc comment in this section uses.
+for key in preferencesStore agentHooksController; do
+  if sed -E 's#^[[:space:]]*//.*##' "${MAC_APP}" | grep -qE "\.${key}\("; then
+    grep -nE "\.${key}\(" "${MAC_APP}" >&2
+    fail "${MAC_APP} injects \\.${key} again — every reader of it is a phone view (docs/56 §3.5)"
+  fi
+done
+# The satellite decorator applies EXACTLY the one key its subtree reads. A second one creeping back is
+# the same failure one scope down, and it is invisible for the same reason.
+# `grep -o | wc -l` counts OCCURRENCES, not matching lines — two keys chained on one line is precisely
+# the shape a line count would wave through.
+sat_keys="$(sed -n '/private func decorateSatelliteRoot/,/^    }/p' "${MAC_APP}" |
+  grep -oE '\.(preferencesStore|agentHooksController|overlayCoordinator)\(' | wc -l | tr -d ' ' || true)"
+if [[ "${sat_keys}" != "1" ]]; then
+  fail "decorateSatelliteRoot applies ${sat_keys} environment keys, not the 1 PaneContainer reads (docs/56 §3.5)"
+fi
+printf 'check-supervisor: the Mac injects no environment it does not read — 1 key on the satellite, none on the scene.\n'
 
 # ── The drop chip is one chip, and the pill inks are a pair (docs/56 §3.5, increments 56c/56e) ──
 # THE DROP CHIP IS DRAWN TWICE AND BOTH CAN BE ON SCREEN AT ONCE, which is what makes it different

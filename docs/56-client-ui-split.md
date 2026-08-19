@@ -2336,6 +2336,36 @@ not a new question.
 `Package.swift` had already anticipated the home: Slate carries `SFSafeSymbols` precisely so *the marks
 are named as `SFSymbol`s, and both renderers ask for the same artwork*.
 
+### Increment 56f — five environment injections nobody reads
+
+`SlopDeskMacApp` handed its scene root three of the draining target's environment keys —
+`\.preferencesStore`, `\.agentHooksController`, `\.overlayCoordinator` — and re-applied all three to
+every satellite root against the hosting-root env trap. Each carried a comment explaining which deep
+view needed it.
+
+**Every reader of all three is a phone view.** Each has an AppKit twin the Mac mounts instead, and every
+twin takes its dependency as an init parameter: `MacSettingsBespokeSurfaces(agentHooks:)`,
+`MacFirstLaunchSheet`, and — since 56b — `MacWorkspaceRootView(preferences:)`. Five of the six
+injections were writing into a subtree with nobody listening.
+
+The sixth is live and stays: a satellite mounts `SatellitePaneRootView` → `PaneContainer`, which reads
+`\.overlayCoordinator`, and an `NSHostingView` root really does inherit nothing. It dies with increment
+62. The main scene's copy of that same key is dead for the opposite reason — the canvas gets it from
+`WorkspaceColumnHosts` at its own hosting root, not from the scene.
+
+**Why this is a gate and not a tidy-up.** A dead injection costs nothing at runtime, cannot fail a
+test, and survives every rewrite that removes its last reader. So it accumulates, and worse, it reads
+to the next person as evidence that a subtree still resolves keys it stopped resolving three increments
+ago — which is exactly how 56a's stale import survived three column rewrites. Both are the same defect:
+**a line that documents an arrangement which has stopped being true**, in a form nothing can fail on.
+The ratchet bans the two dead keys outright and pins the satellite decorator at exactly one.
+
+Writing the gate found two holes in the gate. The first draft anchored the ban to the start of a line,
+so `.a().b()` chained on one line walked through it; the second counted matching LINES rather than
+occurrences, so two keys on one line counted as one. Both were caught by trying to break it rather than
+by reading it — which is the only way a ratchet gets tested, since a green gate and an absent gate look
+identical.
+
 ## Stage D ledger — what the rename actually costs
 
 `SlopDeskClientUI` cannot become `SlopDeskPhoneUI` while `SlopDeskMacUI` still imports it. That is
@@ -2351,8 +2381,11 @@ other caller had. That is the pattern increments 51 and 54 established from oppo
 count can stand still while real work lands, and it can fall while nothing hard happens. Read it as
 progress on the RENAME, never as progress on the port.
 
-`SlopDeskMacApp`'s import is now held by `.preferencesStore(…)` alone — the environment key the deep
-footer views read. It is the cheapest of the three and it is not the canvas.
+`SlopDeskMacApp`'s import is held by **one call**: `.overlayCoordinator(…)` on the satellite root, which
+`PaneContainer` genuinely reads. Increment 56f removed the other five injections as dead. So all three
+surviving edges are now the same edge — the pane canvas — reached three ways: hosted in the content
+column, hosted in a satellite window, and one environment key a satellite's subtree resolves. There is
+no longer any cheap one left; 58 onward is the canvas or nothing.
 
 Increment 51 did not move the count — it moved one import, from `MacCodePanelColumn` to
 `MacCodePanelSurfaces`, and NARROWED what it names from a whole column to two device surfaces. A
