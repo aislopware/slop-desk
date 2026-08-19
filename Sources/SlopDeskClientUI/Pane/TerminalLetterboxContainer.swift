@@ -11,13 +11,14 @@
 // `bash scripts/check-ios.sh` is what proves it.
 //
 // The geometry is a pure value (``SlopDeskTerminal/TerminalLetterbox``) so it carries unit tests the
-// SwiftUI path cannot. `Slate.*` tokens ONLY — raw literals fail `scripts/check-ds-leaks.sh`. No
-// libghostty / Metal is touched: the surface is placed and transformed, never reached into.
+// SwiftUI path cannot — INCLUDING the placement's five-way degrade-to-full-bleed, which used to be a
+// `private func` here and so was geometry `swift build` never even compiled (only `check-ios.sh` did).
+// `Slate.*` tokens ONLY — raw literals fail `scripts/check-ds-leaks.sh`. No libghostty / Metal is
+// touched: the surface is placed and transformed, never reached into.
 
 #if canImport(SwiftUI) && os(iOS)
 import SlopDeskSlate
 import SlopDeskTerminal
-import SlopDeskWorkspaceCore
 import SwiftUI
 
 /// Places `content` at the HOST's resolved grid inside the space this pane has, centred with
@@ -40,11 +41,13 @@ struct TerminalLetterboxContainer<Content: View>: View {
 
     var body: some View {
         GeometryReader { proxy in
-            if let placement = placement(in: proxy.size) {
+            if let placement = TerminalLetterbox.placement(
+                grid: grid, cellSize: cellSize, in: proxy.size,
+            ) {
                 ZStack {
                     // The bars. The pane surface colour, not a black mask: the letterbox is empty
                     // space around a terminal, not a video pillarbox.
-                    NativePaneColor.terminalBackground
+                    Slate.Surface.terminal
                     // The surface is framed at its NATURAL size for the host's grid and then
                     // transformed, so the renderer lays out exactly `cols × rows` and the scale is a
                     // layer transform over the result. Sizing the frame to the SCALED rect instead
@@ -67,25 +70,6 @@ struct TerminalLetterboxContainer<Content: View>: View {
                     .frame(width: proxy.size.width, height: proxy.size.height)
             }
         }
-    }
-
-    /// The fit, plus the natural (unscaled) size the surface is framed at. `nil` whenever anything
-    /// the placement depends on is unknown.
-    private func placement(in container: CGSize) -> (fit: TerminalLetterbox, natural: CGSize)? {
-        guard let grid, let cellSize else { return nil }
-        guard let fit = TerminalLetterbox.fit(
-            cols: grid.cols,
-            rows: grid.rows,
-            cellWidth: cellSize.width,
-            cellHeight: cellSize.height,
-            in: container,
-        ) else { return nil }
-        // Plain separate `*` (never `addingProduct`), per CLAUDE.md §2.
-        let natural = CGSize(
-            width: cellSize.width * CGFloat(grid.cols),
-            height: cellSize.height * CGFloat(grid.rows),
-        )
-        return (fit, natural)
     }
 }
 

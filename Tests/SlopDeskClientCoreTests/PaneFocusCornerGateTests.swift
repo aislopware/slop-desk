@@ -3,18 +3,18 @@
 // disambiguate, so the marker there is pure ornament). Headless VALUE assertions — no SwiftUI render.
 
 import XCTest
-@testable import SlopDeskClientUI
+@testable import SlopDeskClientCore
 
 @MainActor
 final class PaneFocusCornerGateTests: XCTestCase {
     func testCornerOnlyOnFocusedPaneOfASplitTab() {
-        XCTAssertTrue(PaneContainer.showsFocusCorner(isFocused: true, tabPaneCount: 2))
-        XCTAssertTrue(PaneContainer.showsFocusCorner(isFocused: true, tabPaneCount: 3))
+        XCTAssertTrue(PaneFocusPolicy.showsFocusCorner(isFocused: true, tabPaneCount: 2))
+        XCTAssertTrue(PaneFocusPolicy.showsFocusCorner(isFocused: true, tabPaneCount: 3))
         XCTAssertFalse(
-            PaneContainer.showsFocusCorner(isFocused: true, tabPaneCount: 1),
+            PaneFocusPolicy.showsFocusCorner(isFocused: true, tabPaneCount: 1),
             "a single-pane tab shows no focus marker — nothing to disambiguate",
         )
-        XCTAssertFalse(PaneContainer.showsFocusCorner(isFocused: false, tabPaneCount: 2))
-        XCTAssertFalse(PaneContainer.showsFocusCorner(isFocused: false, tabPaneCount: 1))
+        XCTAssertFalse(PaneFocusPolicy.showsFocusCorner(isFocused: false, tabPaneCount: 2))
+        XCTAssertFalse(PaneFocusPolicy.showsFocusCorner(isFocused: false, tabPaneCount: 1))
     }
 }

@@ -1,18 +1,26 @@
-// TerminalFindBarModelTests pins the in-pane find bar's view-model (``TerminalFindBarModel``):
-// the driver over the PURE ``TerminalSearchController`` (count / N-of-M / next-prev-wrap) + the libghostty
+// TerminalFindBarModelTests pins the in-pane find bar's driver (``TerminalFindBarModel``):
+// the wrapper over the PURE ``TerminalSearchController`` (count / N-of-M / next-prev-wrap) + the libghostty
 // `search:` / `navigate_search:` / `end_search` passthrough. The model is HEADLESS — its only renderer touch
 // is `surface as? TerminalSurfaceActions`, which a pure in-memory ``FakeSearchSurface`` satisfies (NO real
 // `GhosttySurface` / VideoToolbox / Metal — the hang-safety rule; this mirrors the existing
 // `CapturingSurface`/`RecordingSurface` fakes in `TerminalViewModelTests`).
 //
+// It moved here with the model (docs/56 §3): the driver never needed a view framework — it imported SwiftUI
+// for `@Observable`, which is `Observation` — so both it and its suite belong below the UI targets, where the
+// phone's find bar and the Mac's read one implementation.
+//
+// The bind-action strings are still asserted as STRINGS on purpose, even though the model now builds them
+// through ``TerminalSearchSurfaceAction``. They are libghostty's wire vocabulary, not ours: a test that
+// asserted `.end` against `.end` would pass on the day the enum's `wire` spelling drifted from what the
+// surface parses.
+//
 // Every case FAILS on a tree without this model and asserts an observable state
 // transition (visibility / query / flags / `N of M` / the fired bind-action strings) against expected values,
 // never against the output's own derivation.
 
-#if canImport(SwiftUI)
 import SlopDeskTerminal
 import XCTest
-@testable import SlopDeskClientUI
+@testable import SlopDeskClientCore
 @testable import SlopDeskWorkspaceCore
 
 @MainActor
@@ -407,4 +415,3 @@ final class TerminalFindBarModelTests: XCTestCase {
         }
     }
 }
-#endif

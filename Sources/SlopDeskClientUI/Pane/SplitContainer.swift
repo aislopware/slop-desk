@@ -44,11 +44,11 @@ struct SplitContainer: View {
     /// by the `tree.sessions` intersection; the active session is always included even before the first switch
     /// (when the retention set is still empty).
     private var tabs: [SlopDeskWorkspaceModel.Tab] {
-        let retained = store.retainedSessionIDs
-        let activeID = store.tree.activeSessionID
-        return store.tree.sessions
-            .filter { retained.contains($0.id) || $0.id == activeID }
-            .flatMap(\.tabs)
+        PaneCanvasMounting.mountedTabs(
+            sessions: store.tree.sessions,
+            retained: store.retainedSessionIDs,
+            activeID: store.tree.activeSessionID,
+        )
     }
 
     /// The selected tab's id — the ONE tab shown + interactive; every other tab is mounted but hidden.
@@ -81,7 +81,7 @@ struct SplitContainer: View {
             .onAppear { if !staticMirror { reportContainerBounds(bounds) } }
             .onChange(of: bounds) { _, newBounds in if !staticMirror { reportContainerBounds(newBounds) } }
         }
-        .background(NativePaneColor.window)
+        .background(Slate.Surface.terminal)
         // Register this canvas's SCREEN rect (and, through it, the main window frame — the tear-off
         // boundary) with the drag coordinator, so sidebar/satellite drags can hit-test it.
         .background(canvasFrameReader)
@@ -135,7 +135,7 @@ struct SplitContainer: View {
                     // re-taking the keyboard the editor is using.
                     isFocused: CodeSidebarKeyboardState.paneRendersFocused(
                         workspaceFocused: !entry.isHidden
-                            && Self.isPaneFocused(entry.id, in: tab, activeTabID: activeTabID),
+                            && PaneFocusPolicy.isPaneFocused(entry.id, in: tab, activeTabID: activeTabID),
                         sidebarOwnsKeyboard: CodeSidebarKeyboardState.shared.ownsKeyboard,
                     ),
                     // ON-SCREEN gate: visible ⟺ the pane's tab is the active tab AND it is
@@ -169,12 +169,12 @@ struct SplitContainer: View {
                 ForEach(layout.dividers, id: \.key) { handle in
                     dividerView(handle)
                 }
-                .zIndex(Self.dividerZ)
+                .zIndex(PaneCanvasMetrics.dividerZ)
             }
             if isActive || moveSourceIsIn(frames) {
                 // Grab-handles + the live drag overlay (extracted to keep this ZStack type-checkable).
                 moveLayer(leaves: layout.leaves, frames: frames, container: bounds)
-                    .zIndex(Self.moveZ)
+                    .zIndex(PaneCanvasMetrics.moveZ)
             }
             if isActive {
                 // The landing preview for a drag that STARTED OUTSIDE this tab — a satellite window's
@@ -182,7 +182,7 @@ struct SplitContainer: View {
                 // driven by the coordinator's published destination.
                 if let paneDrag, !staticMirror {
                     ExternalDropZonePreview(coordinator: paneDrag, frames: frames, container: bounds)
-                        .zIndex(Self.moveZ)
+                        .zIndex(PaneCanvasMetrics.moveZ)
                 }
             }
         }
@@ -207,25 +207,11 @@ struct SplitContainer: View {
         paneDrag?.canvasFrames = frames
     }
 
-    /// The z-index band the compositor ZStack stacks by: panes at the base (0), then the divider layer,
-    /// then the move-handle / drag-overlay layer.
-    static let dividerZ: Double = 10
-    static let moveZ: Double = 20
-
     /// Whether the live drag's SOURCE pane is one of this tab layer's leaves — the keep-mounted gate
     /// that lets its grab-handle gesture survive a spring-loaded tab switch.
     private func moveSourceIsIn(_ frames: [PaneID: CGRect]) -> Bool {
         guard let move else { return false }
         return frames[move.source] != nil
-    }
-
-    /// Whether pane `paneID` (in `tab`) should own the renderer's keyboard focus — the guard that makes
-    /// keep-all-mounted safe. TRUE only when `tab` is the ACTIVE tab AND `paneID` is that tab's `activePane`.
-    /// Every mounted background tab still carries its own `activePane`, but it must NOT claim first responder
-    /// (`GhosttyLayerBackedView.applyKeyboardFocus` acts only when `isFocusedPane`), or the last-mounted hidden
-    /// tab would steal the keyboard from the visible one. Pure + static so it is headlessly testable.
-    static func isPaneFocused(_ paneID: PaneID, in tab: SlopDeskWorkspaceModel.Tab, activeTabID: TabID?) -> Bool {
-        tab.id == activeTabID && paneID == tab.activePane
     }
 
     /// One divider, placed at its LIVE solved seam (`handle.rect.mid`, which the solver re-emits as the panes
@@ -315,7 +301,8 @@ struct SplitContainer: View {
                 // are the affordance out there), and so does a spring-loaded canvas zone (the ACTIVE
                 // tab's `ExternalDropZonePreview` owns that preview — this layer's frames are the wrong
                 // tab's).
-                let localZone = sourceIsInActiveTab(leaf.id) ? Self.canvasZone(of: dest) : PaneDropZone.none
+                let localZone: PaneDropZone = sourceIsInActiveTab(leaf.id)
+                    ? PaneCanvasMetrics.canvasZone(of: dest) : .none
                 move = PaneMoveDrag(source: leaf.id, location: loc, zone: localZone)
                 publishTreeDrag(dest, source: leaf.id, local: loc, soleLeaf: leaves.count <= 1)
             },
@@ -347,21 +334,6 @@ struct SplitContainer: View {
         .allowsHitTesting(move == nil || move?.source == leaf.id)
     }
 
-    /// Commits the resolved drop `zone` with exactly ONE store op (remote-app rule: the drag was all
-    /// view-local; the terminal-grid / remote-window redraw fires once, here on release).
-    private func commit(_ zone: PaneDropZone, source: PaneID) {
-        switch zone {
-        case .none:
-            break
-        case let .swap(target):
-            store.swapPanesTree(source, target)
-        case let .resplit(target, edge):
-            store.moveLeafTree(source, beside: target, axis: edge.axis, before: edge.insertsBefore)
-        case let .dock(edge):
-            store.moveLeafToRootEdgeTree(source, edge: edge)
-        }
-    }
-
     /// The FULL destination for a tree drag at canvas-local `loc`: inside the canvas the live in-tab
     /// resolution applies unchanged; outside it, the coordinator's registered targets (sidebar rows,
     /// the New-Tab slot, the tear-off boundary) take over. Without a coordinator (previews / iOS) the
@@ -386,7 +358,7 @@ struct SplitContainer: View {
             )
         }
         if container.contains(loc) || paneDrag == nil {
-            return .canvas(resolveZone(
+            return .canvas(PaneCanvasDrop.zone(
                 at: loc, leaves: leaves, container: container, source: source, sourceRect: sourceRect,
             ))
         }
@@ -419,82 +391,33 @@ struct SplitContainer: View {
         )
     }
 
-    /// Commits the FULL destination with exactly ONE store op. `.canvas` keeps the original in-tab
-    /// vocabulary; the external destinations map onto the (PaneID-preserving) cross-tab / detach ops,
-    /// so no surface tears down on any path.
+    /// Commits the FULL destination with exactly ONE store op, by asking whichever half of the drop
+    /// vocabulary owns it.
+    ///
+    /// The fork here is not a fourth spelling of the four cases — it is the ONE fact the two shared
+    /// decisions cannot read for themselves. ``PaneCanvasDrop`` owns the in-tab vocabulary (swap,
+    /// in-tab re-split, in-tab dock); ``PaneDragCommit`` owns every landing that leaves the tab, in
+    /// the `.tree` op family, and is the same decision the satellite window's reattach asks. What is
+    /// left is the tear-off, which is deliberately NOT one op: the drop point must be recorded BEFORE
+    /// the detach, because `detachedPanes` changes synchronously and the satellite coordinator reads
+    /// the placement as it opens the window. That ordering is the reason it stays spelled out here.
     private func commitDestination(_ dest: PaneDragDestination, source: PaneID, local: CGPoint) {
         switch dest {
-        case let .canvas(zone) where !sourceIsInActiveTab(source):
-            // Spring-loaded landing: the zone was resolved (insert semantics) against ANOTHER tab's
-            // canvas — commit with the cross-tab ops. `.swap` can't come out of the insert resolution.
-            switch zone {
-            case let .resplit(target, edge):
-                store.moveLeafAcrossTabsTree(source, beside: target, axis: edge.axis, before: edge.insertsBefore)
-            case let .dock(edge):
-                store.moveLeafToActiveTabRootEdgeTree(source, edge: edge)
-            case .swap,
-                 .none:
-                break
-            }
-        case let .canvas(zone):
-            commit(zone, source: source)
-        case let .sidebarRow(anchor):
-            store.moveLeafAcrossTabsTree(source, beside: anchor, axis: .horizontal, before: false)
-        case .newTab:
-            store.breakPaneToTab(source)
+        case let .canvas(zone) where sourceIsInActiveTab(source):
+            PaneCanvasDrop.commit(zone, pane: source, in: store)
         case .tearOff:
-            // Record the drop point FIRST — the detach op's `detachedPanes` change synchronously drives
-            // the satellite coordinator, which consumes the placement when it opens the window.
             if let paneDrag, let canvas = paneDrag.targetFrame(.canvas) {
                 paneDrag.recordPlacement(
                     source, at: PaneDragResolver.screenPoint(fromCanvasLocal: local, canvas: canvas),
                 )
             }
             store.detachPaneToWindow(source)
-        case .none:
-            break
+        default:
+            // A spring-loaded landing (the zone was resolved with INSERT semantics against ANOTHER
+            // tab's canvas), a sidebar row, or the New-Tab slot. `.none` — and the `.swap` an insert
+            // resolution can never produce — commit nothing there, which is the cancel.
+            PaneDragCommit.commit(dest, pane: source, origin: .tree, in: store)
         }
-    }
-
-    /// The in-canvas zone a full destination carries (`.none` for every external destination — the
-    /// local overlay must not preview a drop that will land outside this canvas).
-    static func canvasZone(of dest: PaneDragDestination) -> PaneDropZone {
-        if case let .canvas(zone) = dest { return zone }
-        return .none
-    }
-
-    // MARK: - Drop-zone resolution (container gutter > target edge band > target centre)
-
-    /// Resolves the cursor `location` to the drop action a release would commit. Precedence: the container
-    /// outer DOCK gutter first (full-span dock), then — over a non-source target leaf — its CENTRE box
-    /// (swap) vs an EDGE band (re-split). Empty space / the source's own pane → `.none` (cancel).
-    private func resolveZone(
-        at location: CGPoint,
-        leaves: [SplitTreeRenderModel.PlacedLeaf],
-        container: CGRect,
-        source: PaneID,
-        sourceRect: CGRect,
-    ) -> PaneDropZone {
-        // 1) Container outer gutter → dock. Suppress an edge the source ALREADY fully spans (docking there is
-        //    a visual no-op — also keeps grabbing the top/edge pane from instantly previewing a dock).
-        if let edge = PaneDropGeometry.containerEdge(at: location, container: container, sourceRect: sourceRect) {
-            return .dock(edge: edge)
-        }
-        // 2) Over a target leaf (not the source): centre → swap, edge band → re-split.
-        guard let (target, rect) = PaneDropGeometry.leaf(at: location, in: leaves, excluding: source),
-              rect.width > 0, rect.height > 0
-        else {
-            return .none
-        }
-        let u = (location.x - rect.minX) / rect.width
-        let v = (location.y - rect.minY) / rect.height
-        let band = PaneDropMetrics.edgeBandFraction
-        let inCentreX = u >= band && u <= 1 - band
-        let inCentreY = v >= band && v <= 1 - band
-        if inCentreX, inCentreY {
-            return .swap(target: target)
-        }
-        return .resplit(target: target, edge: PaneDropGeometry.dominantEdge(u: u, v: v, band: band))
     }
 }
 

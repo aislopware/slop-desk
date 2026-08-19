@@ -91,7 +91,10 @@ public struct SlopDeskMacApp: App {
     /// The cross-container pane-drag rendezvous: the sidebar rows, the canvas, and every satellite window
     /// live in SEPARATE hosting views, so the free pane drag (move across tabs / break to a new tab / tear
     /// off to a window / merge back) meets here. Its `store` weak ref is bound in a launch `.task`.
-    @State private var paneDrag = PaneDragCoordinator()
+    /// The chip — the card that follows the cursor — is INJECTED rather than owned, because it is an
+    /// `NSHostingView` over a SwiftUI card and the coordinator is a floor below it. `chip:` defaults to
+    /// `nil`, so a caller that forgets this compiles and silently draws no chip; this is the one caller.
+    @State private var paneDrag = PaneDragCoordinator(chip: PaneDragChipPanel())
     /// The Settings WINDOW (docs/56 stage D). Not a `Settings` scene: that scene is a SwiftUI construct
     /// that supplies its own ⌘, item, and the page it hosted is now drawn in AppKit from the layout
     /// table. Built once at launch, opened on demand, and it holds its own window.

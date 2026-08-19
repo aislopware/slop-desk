@@ -5999,7 +5999,8 @@ while IFS= read -r file; do
     fail "a cancel-and-re-arm deadline grew back — DeadlineLatch.arm owns the three details"
   fi
 done <<< "$(grep -lF 'Task { [weak self] in' \
-  $(repo_files 'Sources/SlopDeskClientUI/**/*.swift' 'Sources/SlopDeskWorkspaceCore/**/*.swift') \
+  $(repo_files 'Sources/SlopDeskClientUI/**/*.swift' 'Sources/SlopDeskClientCore/**/*.swift' \
+    'Sources/SlopDeskWorkspaceCore/**/*.swift') \
   2> /dev/null || true)"
 declare -a latch_shares=(
   "Sources/SlopDeskWorkspaceCore/Terminal/TerminalViewModel.swift:reflowDeadline.arm"
@@ -6007,7 +6008,7 @@ declare -a latch_shares=(
   "Sources/SlopDeskDevicePanels/Android/AndroidSidebarModel.swift:noticeClear.arm"
   "Sources/SlopDeskDevicePanels/Simulator/SimulatorSidebarModel.swift:noticeClear.arm"
   "Sources/SlopDeskDevicePanels/Android/AndroidSidebarModel.swift:reattempt.arm"
-  "Sources/SlopDeskClientUI/Pane/PaneDragCoordinator.swift:springLoadTask.arm"
+  "Sources/SlopDeskClientCore/Pane/PaneDragCoordinator.swift:springLoadTask.arm"
 )
 for share in "${latch_shares[@]}"; do
   if ! grep -qF "${share#*:}" "${share%%:*}"; then

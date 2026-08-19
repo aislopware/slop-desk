@@ -7,7 +7,7 @@
 import CoreGraphics
 import SlopDeskWorkspaceModel
 import XCTest
-@testable import SlopDeskClientUI
+@testable import SlopDeskClientCore
 
 final class PaneDragResolverTests: XCTestCase {
     // MARK: Fixtures (screen coords, bottom-left origin — the resolver never cares, only containment)

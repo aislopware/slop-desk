@@ -10,26 +10,16 @@
 // only chrome is the action's raised plate — which IS the action, not decoration.
 
 #if canImport(SwiftUI)
+import SlopDeskClientCore
 import SlopDeskSlate
 import SwiftUI
 
 struct SlateEmptyState: View {
-    /// WHY the surface is empty — each cause pins its own symbol/title/caption/action copy.
-    enum Cause: Equatable {
-        /// No host connected (fresh launch / disconnected) — the next action is the Connect editor.
-        case neverConnected
-        /// A host WAS reachable and the link is down — the supervisor is redialing on its own, so
-        /// there is no action; the caption names the host being re-dialed.
-        case linkDown(host: String)
-        /// Connected fine — just no open tabs; the next action mints one.
-        case noTabs
-        /// The last explicit connect attempt failed — the caption carries the REAL reason (not the
-        /// generic not-connected copy) so a wrong host/port reads as its own mistake, and the action
-        /// reopens the Connect editor to correct it.
-        case connectFailed(reason: String)
-    }
-
-    let cause: Cause
+    /// WHY the surface is empty. The cause is ``PaneEmptyCause``, one target down: it is a reading of
+    /// the CONNECTION, not a view, and both renderers have to reach the same verdict from the same
+    /// status. It was nested inside this `View` until increment 54, which is why it could not be
+    /// reached from AppKit at all.
+    let cause: PaneEmptyCause
     /// Fires the cause's single next action (Connect editor / New Tab). Ignored when the cause has none.
     var onAction: () -> Void = {}
 
@@ -37,7 +27,7 @@ struct SlateEmptyState: View {
 
     // MARK: - Pinned copy (pure, unit-tested)
 
-    static func symbol(for cause: Cause) -> String {
+    static func symbol(for cause: PaneEmptyCause) -> String {
         switch cause {
         case .neverConnected: "bolt.horizontal"
         case .linkDown: "wifi.exclamationmark"
@@ -46,7 +36,7 @@ struct SlateEmptyState: View {
         }
     }
 
-    static func title(for cause: Cause) -> String {
+    static func title(for cause: PaneEmptyCause) -> String {
         switch cause {
         case .neverConnected: "Not Connected"
         case .linkDown: "Connection Lost"
@@ -55,7 +45,7 @@ struct SlateEmptyState: View {
         }
     }
 
-    static func caption(for cause: Cause) -> String {
+    static func caption(for cause: PaneEmptyCause) -> String {
         switch cause {
         case .neverConnected: "Connect to a host to open a terminal."
         case let .linkDown(host): "Reconnecting to \(host)…"
@@ -66,7 +56,7 @@ struct SlateEmptyState: View {
 
     /// The single next action's label, or `nil` when the cause has no user action (link-down redials
     /// itself — offering a button there would suggest the user must do something).
-    static func actionLabel(for cause: Cause) -> String? {
+    static func actionLabel(for cause: PaneEmptyCause) -> String? {
         switch cause {
         case .neverConnected: "Connect to Host…"
         case .linkDown: nil

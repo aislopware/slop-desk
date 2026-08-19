@@ -55,6 +55,15 @@ public enum FindModePill: String, CaseIterable, Sendable {
     /// search runs over a scrollback mirror rather than over libghostty's own buffer, and the two
     /// engines do not agree about what a word boundary is.
     public static let globalSearch: [Self] = [.caseSensitive, .regex]
+
+    /// The three the IN-PANE find bar offers, in drawn order: `Aa`, `ab|`, `.*`.
+    ///
+    /// It lives beside ``globalSearch`` rather than in the find bar's own presentation for the reason
+    /// the sentence above gives — the two lists are one DECISION, "which engine can answer which
+    /// question", and a reader who wants to know why whole-word is missing upstairs has to be able to
+    /// see both lists at once. A subset spelled in another file is a subset that can quietly stop
+    /// being one.
+    public static let inPaneFindBar: [Self] = [.caseSensitive, .wholeWord, .regex]
 }
 
 // MARK: - The card's measurements

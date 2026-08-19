@@ -31,7 +31,6 @@
 
 import AppKit
 import SlopDeskClientCore
-import SlopDeskClientUI // PaneDragCoordinator + the rollup mount, until both are AppKit
 import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
 import SlopDeskVideoProtocol // AgentPreferences — the `preventSleep` flag the row menu toggles
 import SlopDeskWorkspaceCore

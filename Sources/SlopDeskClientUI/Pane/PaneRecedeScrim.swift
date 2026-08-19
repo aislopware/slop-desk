@@ -18,18 +18,19 @@
 // cursor, which is the right escape and must not be blocked. SYSTEM/DS colours only.
 
 #if canImport(SwiftUI)
+import SlopDeskSlate
 import SwiftUI
 
 struct PaneRecedeScrim: View {
     var body: some View {
-        // The pane's own surface colour (`Slate.Surface.face`), so the veil is theme-directed by
+        // The pane's own surface colour (`Slate.Surface.terminal`), so the veil is theme-directed by
         // construction: on a dark theme it sinks the content toward the background, on a light one it
         // washes it toward the paper. Either way the pane reads as a step BACK rather than a covered one.
         //
         // 0.72 is MEASURED, not picked: at 0.55 (the first try, photographed) a light theme's black text
         // only went mid-grey and the difference was there but not findable at a glance across a 1280pt
         // window, which is the one thing this has to be.
-        NativePaneColor.terminalBackground
+        Slate.Surface.terminal
             .opacity(0.72)
     }
 }

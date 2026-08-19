@@ -40,21 +40,11 @@ struct PaneContainer: View {
     /// EAGER/STATIC render path for headless ImageRenderer snapshots.
     var staticMirror: Bool = false
 
-    /// `true` from the moment ``size`` changes until it has held steady for ``resizeScrimSettle``. This is
-    /// the geometry signal that STARTS the scrim — it covers EVERY resize source and self-clears. On its
-    /// own it is only a TIMER proxy for "re-rendered"; the real "fresh pixels landed" signal that HOLDS the
-    /// scrim past this timer is the model's ``LivePaneSession/awaitingResizeReflow`` (OR-ed in below).
-    @State private var resizing = false
-    /// The last ``size`` the settle task observed — distinguishes the initial mount (no scrim) from a real
-    /// resize, and lets the task keep the scrim up across a continuous drag (every step restarts the settle).
-    @State private var settledSize: CGSize?
-
-    /// STICKY for the duration of an interactive divider drag: set the first time THIS pane changes size
-    /// while a drag is active, cleared when the drag ends. It holds the scrim across a PAUSED drag (mouse
-    /// held, cursor still) — the geometry-settle timer clears `resizing` after 200 ms, but the host send is
-    /// deferred to release so `awaitingReflow` is not armed yet, leaving a gap the overlay would flash
-    /// through. Gating on a real size-change keeps it scoped to the panes actually being resized.
-    @State private var resizedDuringDrag = false
+    /// The resize-scrim reducer (``PaneResizeScrimState``): the geometry settle, the sticky drag hold,
+    /// and the mount-is-not-a-resize rule, as a value rather than three `@State` flags. Only the
+    /// `.task(id: size)` timer below stays here — a sleep is the framework's; every EDGE it drives is
+    /// the reducer's.
+    @State private var scrim = PaneResizeScrimState()
 
     /// The external-drag state for THIS pane: the classified payload of a hovering drag + the
     /// zone under the cursor. Drives ``PaneDropOverlay`` (which zones to show / highlight) and is mutated by
@@ -66,26 +56,20 @@ struct PaneContainer: View {
     /// the toast is a no-op.
     @Environment(\.overlayCoordinator) private var overlayCoordinator
 
-    /// How long ``size`` must hold steady before the scrim fades — long enough to span the host grid-reflow /
-    /// surface relayout that lands the fresh pixels, short enough not to linger once they have.
-    private let resizeScrimSettle: Duration = .milliseconds(200)
-
     /// The pane content model's "resized but not re-rendered yet" signal (terminal host-reflow wait OR
     /// remote-GUI host-re-capture wait), `false` for a pane with no live model. HOLDS the scrim past the
     /// geometry settle so the overlay clears only when the fresh pixels actually land — on a slow link the
     /// geometry timer alone would uncover the stretched / stale frame ~1 RTT too early.
     private var awaitingReflow: Bool { live?.awaitingResizeReflow ?? false }
 
-    /// Whether an interactive divider drag is in progress anywhere (pane or sidebar divider). Combined with
-    /// ``resizedDuringDrag`` it holds the scrim across a paused drag without showing it on untouched panes.
+    /// Whether an interactive divider drag is in progress anywhere (pane or sidebar divider). A fact
+    /// about the whole workspace rather than this pane, so the reducer takes it as a parameter.
     private var dragging: Bool { store.isInteractiveResizeActive }
 
     /// Cover the surface with the resize scrim while a resize is settling (never on the static snapshot
-    /// path). THREE signals OR together: the geometry settle STARTS it; the drag-in-progress hold keeps it
-    /// up while the mouse is held (even paused); the model's reflow signal HOLDS it across the host
-    /// round-trip until the fresh pixels land. Together they leave no gap to flash through.
+    /// path) — the reducer's answer, so the three OR-ed signals are stated once and pinned by tests.
     private var showResizeScrim: Bool {
-        !staticMirror && (resizing || (dragging && resizedDuringDrag) || awaitingReflow)
+        scrim.isVisible(staticMirror: staticMirror, isDragging: dragging, awaitingReflow: awaitingReflow)
     }
 
     /// The live session for this pane (terminal model / input bar), if materialized.
@@ -99,30 +83,11 @@ struct PaneContainer: View {
             .allPaneIDs().count ?? 1
     }
 
-    /// Whether the focus-corner marker shows: the pane is focused AND its tab actually has siblings to
-    /// disambiguate from — a single-pane tab needs no "which pane is active" answer, so the marker there
-    /// would be pure ornament. Pure + static so the gate is unit-pinned.
-    static func showsFocusCorner(isFocused: Bool, tabPaneCount: Int) -> Bool {
-        isFocused && tabPaneCount > 1
-    }
-
-    /// Whether this pane RECEDES for the ⌃⇥ walk: the switcher is open and this is not the pane it is
-    /// on. Pure + static so the composition is unit-pinned against a live store (see
-    /// ``PaneRecedeScrim`` for why the treatment is transient rather than resting).
-    ///
-    /// `isFocused` is the subject on BOTH settings of the preview: with it on, each step moves this
-    /// device's focus onto the highlighted pane, so the lit pane IS the highlight; with it off the focus
-    /// stays put and the lit pane is where a cancel would leave you. Either way exactly one pane of the
-    /// visible tab stays lit, which is the whole claim.
-    static func showsSwitcherRecede(switcherIsOpen: Bool, isFocused: Bool) -> Bool {
-        switcherIsOpen && !isFocused
-    }
-
-    /// This pane's reading of ``showsSwitcherRecede(switcherIsOpen:isFocused:)``. Observing
-    /// `store.paneSwitcher` here is what repaints the veil on every ⇥ tap; it costs nothing at rest,
-    /// where the switcher is nil and the branch is a compare.
+    /// This pane's reading of ``PaneFocusPolicy/showsSwitcherRecede(switcherIsOpen:isFocused:)``.
+    /// Observing `store.paneSwitcher` here is what repaints the veil on every ⇥ tap; it costs nothing at
+    /// rest, where the switcher is nil and the branch is a compare.
     private var recedesForSwitcher: Bool {
-        Self.showsSwitcherRecede(switcherIsOpen: store.paneSwitcher != nil, isFocused: isFocused)
+        PaneFocusPolicy.showsSwitcherRecede(switcherIsOpen: store.paneSwitcher != nil, isFocused: isFocused)
     }
 
     private var spec: PaneSpec? { store.tree.activeSession?.specs[paneID] }
@@ -191,35 +156,25 @@ struct PaneContainer: View {
                 .animation(Slate.Anim.reveal, value: dropModel.isActive)
             }
             // Generic resize signal: when this pane's laid-out `size` changes (from ANY source) show the
-            // scrim, then hold it until the size has been steady for `resizeScrimSettle`. `.task(id:)`
-            // cancels + restarts on every change, so a continuous drag keeps the scrim up. The first run
-            // (initial mount, `settledSize == nil`) is NOT a resize, so it shows nothing. This timer is only
-            // the START + a floor — once it elapses, `awaitingReflow` (the model's real "fresh pixels
-            // landed" signal, OR-ed into `showResizeScrim`) keeps the overlay up across the host round-trip
-            // and clears it the instant the reflowed / re-captured content actually renders.
+            // scrim, then hold it until the size has been steady for `PaneResizeScrimState.settle`.
+            // `.task(id:)` cancels + restarts on every change, so a continuous drag keeps the scrim up.
+            // This timer is only the START + a floor — once it elapses, `awaitingReflow` (the model's real
+            // "fresh pixels landed" signal) keeps the overlay up across the host round-trip and clears it
+            // the instant the reflowed / re-captured content actually renders.
             .task(id: size) {
                 guard !staticMirror else { return }
-                let prev = settledSize
-                settledSize = size
                 // A change between two REAL (non-empty) sizes is a resize. A transition from / to `.zero` is
                 // just the initial layout settling (or teardown), which must NOT flash the scrim on mount.
-                if let prev, prev != size,
-                   prev.width > 0, prev.height > 0, size.width > 0, size.height > 0
-                {
-                    resizing = true
-                    // Mark this pane as part of the active drag (sticky through pauses) so the scrim
-                    // survives a still-held cursor — see ``resizedDuringDrag``.
-                    if dragging { resizedDuringDrag = true }
-                }
-                guard resizing else { return }
-                do { try await Task.sleep(for: resizeScrimSettle) } catch { return }
-                resizing = false
+                // Both rules live in the reducer; what is left here is the wait.
+                guard scrim.noteSize(size, isDragging: dragging) else { return }
+                do { try await Task.sleep(for: PaneResizeScrimState.settle) } catch { return }
+                scrim.noteSettled()
             }
             // Drag ENDED → drop the sticky drag-hold. The release commit arms `awaitingReflow`, which now
             // carries the scrim across the host round-trip until the reflowed pixels land — so clearing the
             // hold here (both settle in the same runloop turn) leaves no gap for the overlay to flash through.
             .onChange(of: dragging) { _, active in
-                if !active { resizedDuringDrag = false }
+                if !active { scrim.noteDragEnded() }
             }
             // The terminal is a FLUSH, borderless panel on paper — fills the leaf rect edge-to-edge.
             // No rounded card, no accent ring, no drop shadow, no gutter, and NO per-pane header bar (the
@@ -233,7 +188,7 @@ struct PaneContainer: View {
             // THIS (dropped-on) pane's live terminal (verbatim inject / host-open), and the overlay
             // coordinator (advisory toast) — so a Split / Open-In-Place drop targets the pane under the cursor,
             // not whichever pane was focused. The accepted UTTypes mirror the receiver's classifier precedence.
-            .onDrop(of: PaneDropReceiver.acceptedTypes, delegate: PaneDropReceiver(
+            .onDrop(of: PaneDropGate.acceptedTypes, delegate: PaneDropReceiver(
                 paneID: paneID,
                 layout: PaneDropZoneLayout(size: size),
                 model: dropModel,
@@ -250,7 +205,7 @@ struct PaneContainer: View {
             .overlay(alignment: .topLeading) {
                 PaneFocusCorner(size: Slate.Metric.focusCornerSize)
                     .fill(Slate.State.accent)
-                    .opacity(Self.showsFocusCorner(isFocused: isFocused, tabPaneCount: tabPaneCount) ? 1 : 0)
+                    .opacity(PaneFocusPolicy.showsFocusCorner(isFocused: isFocused, tabPaneCount: tabPaneCount) ? 1 : 0)
                     .allowsHitTesting(false)
             }
             // The ⌃⇥ walk's contrast: every pane but the one the walk is on recedes, for the length of the

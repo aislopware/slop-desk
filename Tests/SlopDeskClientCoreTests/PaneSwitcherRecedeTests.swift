@@ -1,26 +1,26 @@
 // PaneSwitcherRecedeTests — pins the ⌃⇥ walk's contrast: while the switcher is open, EXACTLY ONE pane of
 // the visible tab stays lit, and it is the pane the walk is on.
 //
-// The claim is a COMPOSITION, not a predicate: `PaneContainer.showsSwitcherRecede` is trivial on its own,
+// The claim is a COMPOSITION, not a predicate: ``PaneFocusPolicy/showsSwitcherRecede(switcherIsOpen:isFocused:)`` is trivial on its own,
 // and asserting it in isolation would be a tautology. What can actually break is the join — the switcher's
-// highlight, the preview that moves this device's focus onto it, and `SplitContainer.isPaneFocused`, which
+// highlight, the preview that moves this device's focus onto it, and ``PaneFocusPolicy/isPaneFocused(_:in:activeTabID:)``, which
 // is what the view feeds the predicate. So every case below drives a LIVE store and evaluates the same two
 // calls the view makes.
 //
 // Headless: no view is instantiated (both entry points are pure statics) and the store rides the tree-model
-// `MountTestPaneSession` fake — no socket, no video, no Metal.
+// `RecordingPaneSession` fake — no socket, no video, no Metal.
 
 #if os(macOS)
 import Defaults
 import SlopDeskWorkspaceModel
 import XCTest
-@testable import SlopDeskClientUI
+@testable import SlopDeskClientCore
 @testable import SlopDeskWorkspaceCore
 
 @MainActor
 final class PaneSwitcherRecedeTests: XCTestCase {
     private func makeStore() -> WorkspaceStore {
-        let store = WorkspaceStore(makeSession: { seed in MountTestPaneSession(seed.spec) })
+        let store = WorkspaceStore(makeSession: { seed in RecordingPaneSession(seed.spec) })
         store.attachLoopbackWorkspaceDocument()
         return store
     }
@@ -30,9 +30,9 @@ final class PaneSwitcherRecedeTests: XCTestCase {
         let tab = try XCTUnwrap(store.tree.activeSession?.activeTab)
         let open = store.paneSwitcher != nil
         return Set(tab.allPaneIDs().filter { id in
-            PaneContainer.showsSwitcherRecede(
+            PaneFocusPolicy.showsSwitcherRecede(
                 switcherIsOpen: open,
-                isFocused: SplitContainer.isPaneFocused(
+                isFocused: PaneFocusPolicy.isPaneFocused(
                     id, in: tab, activeTabID: store.tree.activeSession?.activeTab?.id,
                 ),
             )

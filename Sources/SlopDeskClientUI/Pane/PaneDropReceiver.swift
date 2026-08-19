@@ -5,10 +5,11 @@
 //   1. validate — a drag must carry a supported type (`.fileURL` / `.url` / `.text`), else the receiver
 //      declines and NO overlay appears (validate-then-drop: a hostile / unsupported drag is the normal
 //      case, never a crash).
-//   2. classify — on entry it loads the pasteboard's item providers (`NSItemProvider`, cross-platform) into
-//      a ``DropPayloadClassifier/Payload`` and reduces it to one ``DroppedContent`` (folder vs file is
-//      resolved HERE from the file URL's `isDirectory`; this is the only platform-touching layer). The
-//      classified content drives the overlay's allowed-zone gating (``DropActionResolver/allowedZones(for:)``).
+//   2. classify — on entry it LOADS the pasteboard's item providers (`NSItemProvider`, cross-platform) and
+//      hands each result to ``PaneDropProviderPolicy``, which reduces them to one ``DroppedContent``
+//      (folder vs file is resolved from the file URL's `isDirectory` — the one place the disk is touched).
+//      The classified content drives the overlay's allowed-zone gating
+//      (``DropActionResolver/allowedZones(for:)``).
 //   3. hover — `dropUpdated` maps `info.location` through the SHARED ``PaneDropZoneLayout`` (draw == hit, so
 //      the `.contentShape`-before-`.position` trap is mooted) and lights the zone the cursor is over, but
 //      ONLY if that zone is allowed for the dragged content (a file can't land on the green New-Tab half).
@@ -18,11 +19,17 @@
 //      with the host-resolved advisory toast), or the host-open verb. Nothing is actuated on hover —
 //      commit-on-`performDrop` only.
 //
-// HEADLESS-SAFE: the receiver itself imports no AppKit-private. The geometry + policy are the pure
-// ``PaneDropZoneLayout`` / ``DropActionResolver`` from `SlopDeskWorkspaceCore`, so the gating is unit-tested
-// there without a GUI; the terminal-rooted `cd`-actuation lives behind the store ingress, unit-tested against
-// the `FakePaneSession` sink (`OpenTerminalRootedStoreTests`). The live drag/overlay render is the Phase-3
-// HW-fidelity target the plan flags.
+// WHAT IS LEFT HERE IS THE `DropInfo`. After docs/56 every answer the callbacks reach for is below them:
+// the accept/decline gate and the hover verdict are ``PaneDropGate``, the pasteboard precedence is
+// ``PaneDropProviderPolicy``, the commit is ``PaneDropActuator``, and the geometry was already the shared
+// ``PaneDropZoneLayout`` / ``DropActionResolver``. That is not tidiness — an `NSDraggingDestination` and a
+// `UIDropInteractionDelegate` are the same five callbacks over a different event object, and every rule
+// that stayed inside one of them would have to be written again, correctly, on the other side.
+//
+// HEADLESS-SAFE: the receiver itself imports no AppKit-private, and the gating is unit-tested without a GUI
+// (`SlopDeskClientCoreTests`, `SlopDeskWorkspaceCoreTests`); the terminal-rooted `cd`-actuation lives behind
+// the store ingress, unit-tested against the `FakePaneSession` sink (`OpenTerminalRootedStoreTests`). The
+// live drag/overlay render is the Phase-3 HW-fidelity target the plan flags.
 
 #if canImport(SwiftUI)
 import Foundation
@@ -65,23 +72,23 @@ struct PaneDropReceiver: DropDelegate {
     /// `nil` outside the scene root (tests / the static mirror) — a no-op then.
     let overlayCoordinator: OverlayCoordinator?
 
-    /// The content types this receiver accepts — a file/folder URL, a web URL, or plain text. Mirrors the
-    /// ``DropPayloadClassifier`` precedence (file → url → text). Exposed so ``PaneContainer`` passes the
-    /// identical list to `.onDrop(of:)`.
-    static let acceptedTypes: [UTType] = [.fileURL, .url, .text]
-
     // MARK: Lifecycle
 
-    /// Accept the drag iff it is enabled, the dropped-on terminal pane is NOT read-only, AND it carries a
-    /// supported type — otherwise decline so no overlay shows (validate-then-drop). READ-ONLY gate (parity
-    /// with the ``TerminalViewModel/sendInput(_:)`` paste halt): a read-only pane refuses every drop, so the
-    /// affordance never appears and no inject / open-in-place can land. `terminalModel` is nil for a
-    /// chooser pane (read-only doesn't apply). `hasItemsConforming(to:)` is a pure query; the read-only read
-    /// hops to the main actor, where every `DropDelegate` callback is already delivered.
+    /// Accept the drag iff ``PaneDropGate/acceptsDrag(enabled:carriesSupportedType:isReadOnly:)`` says so —
+    /// otherwise decline so no overlay shows (validate-then-drop). SwiftUI's contribution is the ONE query
+    /// the gate cannot make itself: `hasItemsConforming(to:)` over ``PaneDropGate/acceptedTypes``. That is a
+    /// pure query; the read-only read hops to the main actor, where every `DropDelegate` callback is already
+    /// delivered.
     func validateDrop(info: DropInfo) -> Bool {
-        guard enabled, info.hasItemsConforming(to: Self.acceptedTypes) else { return false }
+        let carriesSupportedType = info.hasItemsConforming(to: PaneDropGate.acceptedTypes)
         let terminalModel = terminalModel
-        return MainActor.assumeIsolated { terminalModel?.isReadOnly != true }
+        return MainActor.assumeIsolated {
+            PaneDropGate.acceptsDrag(
+                enabled: enabled,
+                carriesSupportedType: carriesSupportedType,
+                isReadOnly: terminalModel?.isReadOnly,
+            )
+        }
     }
 
     /// On entry, kick off the async classification of the pasteboard; the overlay appears once `content` is
@@ -100,18 +107,18 @@ struct PaneDropReceiver: DropDelegate {
         }
     }
 
-    /// On every move, hit-test the cursor against the SHARED layout and light the zone under it — but only
-    /// when that zone is *allowed* for the dragged content (a disabled cell never becomes active). Returns a
-    /// `.copy` proposal over an allowed zone, `.forbidden` in a gap / over a disabled zone (so a release
-    /// there does not fire `performDrop`). The overlay itself stays up (driven by `content`) regardless.
+    /// On every move, hit-test the cursor against the SHARED layout and hand the hit to
+    /// ``PaneDropGate/hoverZone(_:allowedZones:)``, which lights it only when the dragged content can act on
+    /// it (a disabled cell never becomes active). `nil` back means FORBIDDEN — a gap, or a disabled zone —
+    /// so a release there does not fire `performDrop`; the `DropProposal` is the only part of this SwiftUI
+    /// owns. The overlay itself stays up (driven by `content`) regardless.
     func dropUpdated(info: DropInfo) -> DropProposal? {
         let model = model
         let layout = layout
         return MainActor.assumeIsolated {
-            let hovered = layout.zone(at: info.location)
-            let allowed = hovered.flatMap { model.allowedZones.contains($0) ? $0 : nil }
-            model.activeZone = allowed
-            return DropProposal(operation: allowed != nil ? .copy : .forbidden)
+            let target = PaneDropGate.hoverZone(layout.zone(at: info.location), allowedZones: model.allowedZones)
+            model.activeZone = target
+            return DropProposal(operation: target != nil ? .copy : .forbidden)
         }
     }
 
@@ -143,81 +150,23 @@ struct PaneDropReceiver: DropDelegate {
                 guard let content = await bundle.classify(),
                       let action = DropActionResolver.resolve(zone: zone, content: content)
                 else { return }
-                Self.actuate(action, store: store, terminalModel: terminalModel, overlay: overlay, paneID: paneID)
+                PaneDropActuator.actuate(
+                    action, store: store, terminalModel: terminalModel, overlay: overlay, paneID: paneID,
+                )
             }
             return true
         }
-    }
-
-    // MARK: - Actuation
-
-    /// Carry out a resolved ``DropAction`` against the store / live terminal / overlay. The pure policy
-    /// (``DropActionResolver``) decided WHAT; this turns it into the concrete call, reusing the existing
-    /// actuators (the verbatim PTY funnel, the store's terminal-rooted `cd` ingress, the host-open verb)
-    /// — no new engine — and layers the host-resolved advisory toast on the
-    /// folder → New-Tab `cd`. `static` so it captures no non-Sendable `self`.
-    ///
-    /// FOCUS-FIRST: `paneID` is the pane the cursor was dropped onto. We focus it BEFORE actuating so the
-    /// active-pane-reading ingress (`splitActivePane`) targets the
-    /// dropped-on pane — a drop never moves focus on its own, so a Split-Left/Right or Open-In-Place drop
-    /// onto a NON-focused sibling would otherwise split / replace the focused pane instead of this one. The
-    /// focus is a no-op when the pane is already active (or has since closed — `focusPaneTree` self-guards).
-    /// `internal` (not `private`) so `PaneDropReceiverActuateTests` can drive it without a real `DropInfo`.
-    @MainActor
-    static func actuate(
-        _ action: DropAction,
-        store: WorkspaceStore,
-        terminalModel: TerminalViewModel?,
-        overlay: OverlayCoordinator?,
-        paneID: PaneID,
-    ) {
-        // READ-ONLY gate (parity with the paste halt): a read-only terminal pane is inert to drops — no
-        // verbatim inject, no open-in-place host verb, no terminal-rooted tab/split. Belt-and-suspenders with
-        // `validateDrop` (which suppresses the overlay) AND the single defence on the open-in-place `hostOpen`
-        // path, which — unlike `injectText` → `sendInput` — does NOT self-gate read-only. `terminalModel` is
-        // nil for a chooser pane, where read-only doesn't apply, so those drops are unaffected.
-        guard terminalModel?.isReadOnly != true else { return }
-        store.focusPaneTree(paneID)
-        switch action {
-        case let .injectText(text):
-            // VERBATIM UTF-8 into THIS focused pane's PTY (never `SendKeysParser`). `sendInput` self-gates
-            // read-only (rings the beep + drops), so a read-only pane can't be written by a drop.
-            terminalModel?.sendInput(Data(text.utf8))
-        case let .newTabCd(folder):
-            // A dropped folder opens a fresh terminal tab rooted there; the path is HOST-resolved, so advise.
-            store.openTerminalRooted(at: folder, split: false, leading: false)
-            overlay?.pushToast(cwdAdvisoryToast(for: folder))
-        case let .splitInjectPath(path, leading):
-            store.openTerminalRooted(at: path, split: true, leading: leading)
-        case let .hostOpen(path):
-            // Open-In-Place on the HOST — fire the SAME host-open verb (verb 9, `MetadataClient.openPath`)
-            // the ⌘-click path uses; `TerminalLeafView` has already wired this callback (+ its failure toast).
-            terminalModel?.onRequestOpenHostPath?(path)
-        }
-    }
-
-    /// The host-resolved advisory toast for a dropped folder → New-Tab `cd`: we are a REMOTE
-    /// terminal, so the dropped path is resolved on the HOST and may not exist there — advise,
-    /// never block. A fixed `id` de-dupes repeated drops to one toast (the warp `object_id` discipline).
-    @MainActor
-    private static func cwdAdvisoryToast(for path: String) -> Toast {
-        Toast(
-            id: "drop-cwd",
-            flavor: .attention,
-            title: "cd'd on host",
-            body: "\(path) is resolved on the host; it may not exist there.",
-            // No `paneKey`: the drop just FOCUSED the pane this advises about, so a jump door would land
-            // where the user already is. Renders as a plain, non-interactive notice.
-        )
     }
 }
 
 // MARK: - Pasteboard → DroppedContent (the platform layer)
 
-/// Extracts the supported item providers from a `DropInfo` and loads them into a ``DroppedContent``. Built
-/// on the main actor (the providers come off a `DropInfo`); the loads themselves suspend off-actor through
-/// `NSItemProvider`'s completion handlers. `folder` vs `file` is resolved HERE from the file URL's
-/// `isDirectory` (the pure ``DropPayloadClassifier`` never touches the disk).
+/// Extracts the supported item providers from a `DropInfo` and LOADS them; ``PaneDropProviderPolicy`` says
+/// what the results mean. Built on the main actor (the providers come off a `DropInfo`); the loads
+/// themselves suspend off-actor through `NSItemProvider`'s completion handlers. The split is the point: an
+/// `NSItemProvider` load is actuation and belongs to whichever framework produced the drag, while the
+/// file → url → text precedence, the "a file URL also surfaces under `.url`" filter and the folder-vs-file
+/// resolution are decisions every drop path on every platform must reach identically.
 @MainActor
 private struct ProviderBundle {
     let fileProviders: [NSItemProvider]
@@ -230,24 +179,26 @@ private struct ProviderBundle {
         textProviders = info.itemProviders(for: [.text])
     }
 
-    /// Reduce the loaded providers to one ``DroppedContent`` (file → url → text precedence), or `nil` when
-    /// nothing supported / non-empty resolves (validate-then-drop).
+    /// Load the providers and reduce them to one ``DroppedContent``, or `nil` when nothing supported /
+    /// non-empty resolves (validate-then-drop). Every `guard` and `if` below is a call into
+    /// ``PaneDropProviderPolicy`` — what is left is the `await`.
     func classify() async -> DroppedContent? {
         var files: [DropPayloadClassifier.FileEntry] = []
         for provider in fileProviders {
-            guard let url = await provider.loadURLValue(), url.isFileURL else { continue }
-            files.append(.init(path: url.path, isDirectory: Self.isDirectory(url)))
+            guard let url = await provider.loadURLValue(),
+                  let entry = PaneDropProviderPolicy.fileEntry(for: url) else { continue }
+            files.append(entry)
         }
 
         var urls: [String] = []
         for provider in urlProviders {
-            // A file URL can also surface under `.url`; keep only true web URLs here (files already handled).
-            guard let url = await provider.loadURLValue(), !url.isFileURL else { continue }
-            urls.append(url.absoluteString)
+            guard let url = await provider.loadURLValue(),
+                  let webURL = PaneDropProviderPolicy.webURLString(for: url) else { continue }
+            urls.append(webURL)
         }
 
         var text: String?
-        if files.isEmpty, urls.isEmpty {
+        if PaneDropProviderPolicy.needsTextLoad(files: files, urls: urls) {
             for provider in textProviders {
                 if let value = await provider.loadTextValue() {
                     text = value
@@ -256,17 +207,7 @@ private struct ProviderBundle {
             }
         }
 
-        return DropPayloadClassifier.classify(.init(files: files, urls: urls, text: text))
-    }
-
-    /// Whether `url` points at a directory — resolved from the URL's resource values, falling back to its
-    /// path shape (`hasDirectoryPath`) when the disk can't answer. Local to the dragging client, so the stat
-    /// is cheap and safe (the dropped item lives on THIS Mac).
-    private static func isDirectory(_ url: URL) -> Bool {
-        if let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory {
-            return isDir
-        }
-        return url.hasDirectoryPath
+        return PaneDropProviderPolicy.content(files: files, urls: urls, text: text)
     }
 }
 

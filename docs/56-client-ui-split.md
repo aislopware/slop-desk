@@ -1573,7 +1573,7 @@ injectability edges, re-engage from the model's remembered wish, tear down on un
 with four outcomes — so left at the call site it was a stored property, three view modifiers, a
 computed read, a toggle body and two private helpers, each an invisible empty `#else`.
 
-`Sources/SlopDeskClientUI/Pane/PaneImmersiveCapture.swift` is that one place: a macOS half that is a
+`Sources/SlopDeskClientCore/Input/PaneImmersiveCapture.swift` is that one place: a macOS half that is a
 thin policy layer over `SystemKeyCaptureController`, and a phone half where every method is a no-op.
 The pane holds one and branches on nothing.
 
@@ -1587,10 +1587,15 @@ That button is the FOURTH surface for one verb, after the palette row, the chord
 editor; reading the same declaration the other three read is what stops a fourth answer from drifting.
 `BindingRowPlatform` went `public` for exactly that caller, and says so.
 
-`GuiLeafView`: **10 gates → 0.** `SystemKeyCaptureController` keeps its whole-file `#if os(macOS)` and
-stays in the draining floor on purpose — it is now reached from exactly one place, and it cannot
-ascend to `SlopDeskMacUI` before its only caller does, since `SlopDeskClientUI` cannot import the
-target that depends on it.
+`GuiLeafView`: **10 gates → 0.** `SystemKeyCaptureController` keeps its whole-file `#if os(macOS)`.
+
+> **Amended, increment 54.** The paragraph that stood here said the controller had to stay in the
+> draining floor because it "cannot ascend to `SlopDeskMacUI` before its only caller does". That is
+> true and it was the trap: it only ever considered ASCENDING. A `CGEvent` tap draws nothing, so the
+> direction was never up — the controller and the `PaneImmersiveCapture` seam both **descended** to
+> `SlopDeskClientCore/Input/`, beside `SystemKeyCapturePolicy`, the seam that made the tap testable in
+> the first place. §3's rule is directional in both senses: an actuator that draws nothing belongs
+> with the logic it actuates for, whichever way that is.
 
 ### Increment 41 — the drag block: fourteen spellings of two facts
 
@@ -2132,11 +2137,59 @@ and a ratchet bans `"Copy \(` from every renderer. This is the split's own rule 
 split created: two renderers make a word spelled at the drawing a word that can drift, and the drift
 had already started.
 
+### Increment 54 — kind 2 was not finished, and the canvas was where it hid
+
+The ledger below said kind 2 closed at increment 45 and that everything left was "AppKit rewrites and
+the canvas". Both halves of that sentence were wrong in the same way: **the canvas was full of kind 2.**
+Five parallel sweeps over `Sources/SlopDeskClientUI/Pane/` moved **~2,900 lines of decision** down to
+`SlopDeskClientCore` and wrote ~2,400 lines of test against it — and **not one line of AppKit was
+written to do it.** `Sources/SlopDeskClientCore/Pane/` is 3,617 lines now and did not exist a week ago.
+
+**Why the ledger could not see it.** Kind 2 was counted by IMPORT EDGES — a file was kind 2 if moving
+it dropped a `SlopDeskMacUI` → `SlopDeskClientUI` edge. Every file in this increment was invisible to
+that count, because the canvas is one edge no matter how much logic is inside it. The census that found
+them asks a different question, and it is the one §3 actually states: *does this declaration name a
+`View`?* `PaneDragResolver` did not. `TerminalFindBarModel` did not. Neither did the five gates deciding
+whether the vi key-hint bar is up, nor the four statics deciding which drop zone a point is in.
+
+**What moved, by sweep.** The drag vocabulary and `PaneDragCoordinator` itself (723 lines, kind 3 in the
+ledger below — see the amendment there); the external-drop path (`actuate`, the accepted UTTypes, the
+provider precedence, the overlay's tint verdict); `TerminalFindBarModel` whole, plus the find bar's
+words, the three status pills folded into ONE value, the vi key-hint tables and Hint Mode's rules; the
+terminal and GUI leaf statics, the letterbox placement, the canvas spine's focus/zone/pointer verdicts,
+the resize-scrim reducer; and `PaneImmersiveCapture` + `SystemKeyCaptureController`.
+
+**Three renderer-side defects fell out of the moves, and each is the split's own argument.**
+`PaneMoveOverlay.zoneLabel` said `title ?? "pane"` while the chip beside it said
+`title.isEmpty ? "pane" : title`, so an untitled pane made the chip read `"swap "` with a trailing
+space. `SecureInputPill` had a fixed-colour escape hatch and a test; `SyncInputPill` had the hatch and
+no test. `"Copy \(label)"` was built in one renderer and asked of `AndroidPresentation` in the other
+(increment 53). Every one is a rule that was spelled at a drawing, and every one only became findable
+because a second renderer forced the question of where it is spelled.
+
+**Two `ViewThatFits` became arithmetic**, which is the shape §2 keeps predicting: `ViewThatFits` is a
+SwiftUI *measurement*, so a layout expressed in it cannot be asked by AppKit at all. The vi card is a
+`Layout` over `ViKeyHintLayout.layout(forWidth:gap:columnWidth:)` now, and the numbers are readable
+from either half. (`PanelTabs` was the first.)
+
+**Two enums were nested inside `View`s and could not be reached.** `SlateEmptyState.Cause` and the drop
+zone's ink roles are verdicts about the CONNECTION and the POINTER, not about a drawing; nesting them
+in a `struct … : View` made them unreachable from AppKit for a reason that had nothing to do with
+either. They are `PaneEmptyCause` and `DropZoneInk` in `SlopDeskClientCore` now.
+
+**And the count moved anyway: 7 → 5.** `MacSidebarRow` and `MacNavigatorColumn` took nothing from
+`SlopDeskClientUI` but `PaneDragCoordinator`, so both import lines simply went away when it descended.
+That is the check on this whole increment being real work rather than tidying: a sweep that only sorted
+files would have left the number alone.
+
 ## Stage D ledger — what the rename actually costs
 
 `SlopDeskClientUI` cannot become `SlopDeskPhoneUI` while `SlopDeskMacUI` still imports it. That is
-the whole test, and it is countable. It was **13 files** when this ledger was written; it is **7** after
-increments 45, 46, 47, 49 and 52, and each one names what it takes in the comment on the import line.
+the whole test, and it is countable. It was **13 files** when this ledger was written; it is **5** after
+increments 45, 46, 47, 49, 52 and 54, and each one names what it takes in the comment on the import
+line. The five that remain are `SlopDeskMacApp`, `MacWorkspaceRootView`, `SlopDeskSplitViewController`,
+`MacContentColumn` and `SatellitePaneWindows` — every one of them a mount of the pane canvas or of a
+column that hosts it, which is to say the rename now blocks on exactly one thing.
 
 Increment 51 did not move the count — it moved one import, from `MacCodePanelColumn` to
 `MacCodePanelSurfaces`, and NARROWED what it names from a whole column to two device surfaces. A
@@ -2178,7 +2231,7 @@ settings pages, then the panel's own body, then the device panels. `SatellitePan
 `WorkspaceColumnHosts` are both held by the canvas — the first hosts it in a satellite window, the
 second is the factory seam that mounts it — so nothing here is independently schedulable any more.
 
-### Kind 2 — not views at all, and in a UI target by accident — ✅ DONE (increment 45)
+### Kind 2 — not views at all, and in a UI target by accident — ✅ DONE (increments 45 and 54)
 
 `CodeSidebarWebViewPool` (410 lines) manages warm `WKWebView`s keyed by project. It is a RESOURCE
 manager: no `View` type, no layout, no design token. It went down to `SlopDeskClientCore` in
@@ -2189,21 +2242,46 @@ files that reach the pool, only `WorkspaceKeyDispatcher` and `MacCodeSidebarKeyb
 alone. `MacCodePanelColumn` also takes `CodePanelSurfaces`, `SlopDeskMacApp` also takes the SwiftUI
 mounts, and both are kind 1.
 
-**This was the whole of kind 2.** Eleven imports remained after it — ten after increment 46, nine
-after 47 — and every one is kind 1 or kind 3, so from here on Stage D is AppKit rewrites and the
-canvas.
+**This was NOT the whole of kind 2, and the claim that it was survived nine increments.** Eleven
+imports remained after 45 — ten after 46, nine after 47 — and the sentence that used to stand here
+concluded "from here on Stage D is AppKit rewrites and the canvas".
+
+Increment 54 disproved it with ~2,900 lines. The error was in the TEST, not the sweep: kind 2 was being
+counted by import edges, and the canvas is ONE edge no matter how much non-view logic is inside it. So
+"kind 2 is finished" only ever meant "no remaining *file* both is non-view and is the sole reason for
+an import" — which is a much smaller claim than the words. §3's own test is per-DECLARATION: a `some
+View` is a view, and nothing else in a UI target is.
+
+The rule that falls out, and it is why this section now names two increments: **an import count is a
+measure of the RENAME's progress, never of kind 2's.** Increment 51 already showed the count can stand
+still while real work lands; 54 shows the reverse — the count can be right while the category behind it
+is wrong.
 
 ### Kind 3 — blocked on a geometry fact, not on effort
 
-`PaneDragCoordinator` (723 lines) is taken by `MacSidebarRow`, `MacNavigatorColumn` and
-`MacContentColumn`. It cannot ascend for the reason increment 41 recorded: `DropTargetFrameReader`
-reads the compositor rect, which differs from the hosting view's frame by the island moat, and by a
-differently-animating amount during a collapse. Either the canvas is ported whole (kind 1) or the
-moat moves out of SwiftUI into the AppKit column. It is not independently schedulable.
+`PaneDragCoordinator` (723 lines) was taken by `MacSidebarRow`, `MacNavigatorColumn` and
+`MacContentColumn`, and this section said it could not ascend for the reason increment 41 recorded:
+`DropTargetFrameReader` reads the compositor rect, which differs from the hosting view's frame by the
+island moat, and by a differently-animating amount during a collapse.
+
+> **Resolved, increment 54 — and the resolution is that the question was mis-asked.** Every word above
+> is still true of `DropTargetFrameReader`, which is ~40 lines and a genuine kind 3. It was never true
+> of the other 683: a spring-load latch, a drop resolver, a chip sink and a rendezvous of weak refs
+> read no geometry at all. The coordinator DESCENDED to `SlopDeskClientCore/Pane/`, the reader stayed in
+> `SlopDeskClientUI` (in `PaneDragChrome.swift`, riding under the canvas as kind 1), and the chip —
+> an `NSHostingView` over a SwiftUI card, one floor UP — reaches the coordinator through a
+> `PaneDragChipSink` protocol, which is stage B's pattern.
+>
+> **The lesson generalises past this row.** "Blocked on a geometry fact" was a property of one member,
+> and it was allowed to describe the whole file because the file was the unit of the ledger. Two of
+> the three imports it was blocking dissolved the moment the split was made, with no AppKit written.
+> Before writing "not independently schedulable", check whether the blocker is the file or one
+> declaration in it.
 
 ### So the order is
 
-1. ~~Kind 2 — the pool goes down.~~ ✅ increment 45. Two imports, no rewrite.
+1. ~~Kind 2 — the pool goes down.~~ ✅ increment 45 (two imports, no rewrite) and ✅ increment 54 (the
+   canvas's ~2,900 lines of decision, two more imports, still no rewrite).
 2. Kind 1's small surfaces — ~~`StatusDotView`~~ (✅ increment 46), ~~the first-launch checklist~~
    (✅ increment 47), ~~the bespoke settings pages~~ (✅ increment 49), ~~the panel's four surfaces~~
    (✅ increment 51). Each a contained AppKit rewrite, and each cost one import except the last,
@@ -2211,4 +2289,18 @@ moat moves out of SwiftUI into the AppKit column. It is not independently schedu
 3. ~~The device panels.~~ ✅ increment 52. `SimulatorScreenNSView` and `AndroidScreenNSView` were
    indeed kind 2 in disguise — 693 lines that moved verbatim, deleting an import edge — and
    `DeviceKeyEvent` turned out to be a third.
-4. The canvas, which takes kind 3 with it and is now the whole of the remaining bulk.
+4. The canvas. Increment 54 emptied it of everything that was not a drawing — ~2,900 lines down,
+   3,617 in `SlopDeskClientCore/Pane/`, and kind 3 dissolved on the way (see the amendment above). What
+   is left is 5,699 lines across 23 files in `Sources/SlopDeskClientUI/Pane/`, and **all of it is
+   genuinely `some View`**: `PaneContainer`, `SplitContainer`, `PaneDivider`, `TerminalLeafView`,
+   `GuiLeafView`, the overlays, `SatellitePaneHost`, `WorkspaceColumnHosts`, `DropTargetFrameReader`.
+   That is the AppKit rewrite, and it is now the ONLY thing between here and the rename — the five
+   remaining imports are all a mount of it or of a column that hosts it.
+
+   Doing the evacuation first was not a detour. A 7,123-line canvas ported to AppKit with the decisions
+   still inside it would have been ~2,900 lines of logic rewritten by hand into a second language, and
+   the "one implementation, never two" rule would have been broken in the same commit that claimed to
+   honour it — because the phone would still be reading the SwiftUI copy.
+
+5. The rename itself: `SlopDeskClientUI` → `SlopDeskPhoneUI`, whole-file `#if os(iOS)`, and the two
+   ratchets that keep the halves from naming each other.

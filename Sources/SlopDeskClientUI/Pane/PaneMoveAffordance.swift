@@ -18,12 +18,15 @@
 // fills the rest and passes clicks through to the terminal below it in the ZStack). The strip senses hover
 // (to reveal the pill) and owns the drag gesture. SYSTEM / design-token colours only.
 //
-// This file also carries the drag block's SHARED VOCABULARY — the coordinate space, the drop-zone
-// geometry, the zone enum, and the two things the canvas drag needs a platform for: `PanePointer`
-// (there is no `PointerStyle` on iOS) and `PaneMoveEscapeMonitor` (a drag holds no first responder,
-// so reading its cancel key is a local `NSEvent` monitor on the Mac and a first responder over the
-// canvas on the phone — one behaviour, two mechanisms). Both of those are gated ONCE, here, so no
-// call site in `SplitContainer` or `PaneDivider` has to restate a platform fact it does not own.
+// The drag block's shared VALUE vocabulary is no longer here. `PaneDropZone`, `PaneMoveDrag`,
+// `PaneDropMetrics`, `PaneDropGeometry` and `PanePointer` are `SlopDeskClientCore`'s — none of them
+// names a view, and each is asked by surfaces in two targets (docs/56 §3). What this file keeps is
+// what a drawing has to keep: the SwiftUI coordinate space the gesture reports in, the two things the
+// canvas drag needs a platform for — `panePointer(_:)` (there is no `PointerStyle` on iOS at all) and
+// `PaneMoveEscapeMonitor` (a drag holds no first responder, so reading its cancel key is a local
+// `NSEvent` monitor on the Mac and a first responder over the canvas on the phone — one behaviour,
+// two mechanisms) — and the ONE place a `PaneDropRegister.Mark` becomes artwork, which both of this
+// module's drop chips read so neither can grow a glyph table of its own.
 
 #if canImport(SwiftUI)
 import CSlopDeskFFI
@@ -40,33 +43,7 @@ enum PaneMoveSpace {
     static let name = "slopdesk.splitspace"
 }
 
-// MARK: - The pointer vocabulary, spelled once
-
-/// What the pointer should SAY over a piece of pane chrome.
-///
-/// SwiftUI's `PointerStyle` is `@available(iOS, unavailable)` OUTRIGHT — not "unavailable before
-/// 18", not "empty on a phone": the type does not exist on the iOS triple and neither does the
-/// `.pointerStyle(_:)` modifier (checked against the iOS 26 SDK's `SwiftUI.swiftinterface`). So this
-/// is the ``slateCancelKey`` situation exactly: there is no shared API to find, only a gate that
-/// must exist EXACTLY ONCE. It was spelled at every call site instead — the grab handle below, the
-/// satellite window's grab strip, and the split seam — which is three places for the rule to drift.
-///
-/// The second defect it prevents is worse than the count. `PaneDivider`'s pointer carries a
-/// DECISION (which way a seam at its min-weight clamp can still travel), and a decision written
-/// inside a platform gate is a decision nobody reads on the other platform. Stated as a value it is
-/// plain Swift on both, and only the DRAWING is gated.
-enum PanePointer: Equatable {
-    /// The pane-move grab handle, hovered but not yet grabbed.
-    case grabIdle
-    /// The pane-move grab handle with the drag in flight.
-    case grabActive
-    /// A vertical seam between side-by-side panes. The flags are the directions the drag can still
-    /// travel — see ``PaneDivider`` — which the handle's pair weights answer, so the glyph can never
-    /// disagree with the gesture's own clamp.
-    case columnResize(toLeading: Bool, toTrailing: Bool)
-    /// A horizontal seam between stacked panes, with the same two directions turned a quarter turn.
-    case rowResize(toUp: Bool, toDown: Bool)
-}
+// MARK: - The pointer vocabulary, drawn once
 
 extension View {
     /// Draw `pointer` while the cursor is over this view — and nothing at all where there is no
@@ -98,121 +75,25 @@ extension View {
     }
 }
 
-/// Tunable drop-zone geometry (a UI affordance, deliberately NOT env flags). The hovered target pane is
-/// divided into a central SWAP box and four edge bands; the whole container gets an outer DOCK gutter.
-enum PaneDropMetrics {
-    /// Each edge band is this fraction of the target's width/height (so the central swap box is the middle
-    /// `1 - 2·edgeBandFraction` — 40% at 0.30). A generous centre keeps the common swap easy; 30% bands stay
-    /// aimable on small panes.
-    static let edgeBandFraction: CGFloat = 0.30
-    /// The container outer DOCK gutter is `min(containerGutterMax, minDimension · containerGutterFraction)`.
-    static let containerGutterFraction: CGFloat = 0.06
-    static let containerGutterMax: CGFloat = 28
-}
+// MARK: - The one place a drop MARK becomes artwork
 
-/// The pure rect math behind drop-zone resolution — shared between `SplitContainer`'s live in-canvas
-/// resolution and ``PaneDragResolver``'s cross-window INSERT resolution (a satellite drag has no live
-/// view to resolve in), so the two paths can never disagree on what a gutter or an edge band is.
-enum PaneDropGeometry {
-    /// The first leaf (in the given order) whose rect contains `location`, excluding the dragged
-    /// `source` (`nil` for an INSERT drag — a satellite drop has no source pane to exclude). Iterating
-    /// the ORDERED leaves (not an unordered dict) keeps the resolved target deterministic if a
-    /// min-clamped, over-subscribed layout ever overlaps two rects.
-    static func leaf(
-        at location: CGPoint,
-        in leaves: [SplitTreeRenderModel.PlacedLeaf],
-        excluding source: PaneID?,
-    ) -> (PaneID, CGRect)? {
-        for placed in leaves where placed.id != source && placed.rect.contains(location) {
-            return (placed.id, placed.rect)
-        }
-        return nil
-    }
-
-    /// The container outer edge whose gutter contains `location` (deepest wins; tie → a vertical
-    /// left/right edge), or `nil` if the cursor is in no gutter. An edge the `sourceRect` already fully
-    /// spans is skipped (docking there changes nothing); `nil` for an INSERT drag — every edge is
-    /// meaningful then.
-    static func containerEdge(
-        at location: CGPoint, container: CGRect, sourceRect: CGRect?,
-    ) -> PaneDropEdge? {
-        guard container.width > 0, container.height > 0 else { return nil }
-        let gutter = Double.minimum(
-            Double(PaneDropMetrics.containerGutterMax),
-            Double.minimum(Double(container.width), Double(container.height))
-                * Double(PaneDropMetrics.containerGutterFraction),
-        )
-        let distances: [(edge: PaneDropEdge, dist: CGFloat)] = [
-            (.left, location.x - container.minX),
-            (.right, container.maxX - location.x),
-            (.top, location.y - container.minY),
-            (.bottom, container.maxY - location.y),
-        ]
-        var best: (edge: PaneDropEdge, dist: CGFloat)?
-        for entry in distances {
-            if let sourceRect, sourceSpans(sourceRect, entry.edge, container) { continue }
-            guard entry.dist >= 0, Double(entry.dist) <= gutter else { continue }
-            // Deepest into the gutter (smallest distance) wins; iteration order left,right,top,bottom makes a
-            // vertical edge win an exact tie (matches the default mental model).
-            if let current = best {
-                if entry.dist < current.dist { best = entry }
-            } else {
-                best = entry
-            }
-        }
-        return best?.edge
-    }
-
-    /// Whether `rect` already fully spans the container `edge` (so docking the pane there would be a no-op).
-    static func sourceSpans(_ rect: CGRect, _ edge: PaneDropEdge, _ container: CGRect) -> Bool {
-        let eps: CGFloat = 1
-        switch edge {
-        case .left:
-            return rect.minX <= container.minX + eps && rect.height >= container.height - eps
-        case .right:
-            return rect.maxX >= container.maxX - eps && rect.height >= container.height - eps
-        case .top:
-            return rect.minY <= container.minY + eps && rect.width >= container.width - eps
-        case .bottom:
-            return rect.maxY >= container.maxY - eps && rect.width >= container.width - eps
+extension PaneDropRegister.Mark {
+    /// The SF Symbol this module draws for a drop mark. `SFSafeSymbols` is a dependency of this target
+    /// and of `SlopDeskSlate`, deliberately not of `SlopDeskClientCore` — the register answers in
+    /// outcomes and each renderer names its own artwork. Both of this module's drop chips (the canvas
+    /// overlay's ghost chip below, and ``PaneDragChipPanel``'s cross-window capsule) come through here,
+    /// so a new mark cannot reach one of them and miss the other.
+    var symbol: SFSymbol {
+        switch self {
+        case .cancel: .xmark
+        case .swap: .rectangle2Swap
+        case .splitColumns: .rectangleSplit2x1
+        case .splitRows: .rectangleSplit1x2
+        case .beside: .rectangleStack
+        case .newTab: .plusSquareOnSquare
+        case .newWindow: .macwindow
         }
     }
-
-    /// The edge band the cursor (normalized `u`,`v` in the target) has penetrated deepest. With the
-    /// MOVE band (< 0.5) it is called only when the cursor is NOT in the centre box, so at least one
-    /// penetration is positive; band 0.5 (the INSERT drag) maps every interior point to its nearest
-    /// edge. Exact tie → a vertical (left/right) edge.
-    static func dominantEdge(u: CGFloat, v: CGFloat, band: CGFloat) -> PaneDropEdge {
-        let penetrations: [(edge: PaneDropEdge, pen: CGFloat)] = [
-            (.left, band - u),
-            (.right, u - (1 - band)),
-            (.top, band - v),
-            (.bottom, v - (1 - band)),
-        ]
-        var best = penetrations[0]
-        for entry in penetrations.dropFirst() where entry.pen > best.pen { best = entry }
-        return best.edge
-    }
-}
-
-/// The action a release at the current cursor location would commit (resolved every drag frame, committed
-/// once on `.onEnded`). `.none` is a cancel (release commits nothing).
-package enum PaneDropZone: Equatable {
-    case none
-    /// Drop in the centre of `target` → exchange the two panes' positions.
-    case swap(target: PaneID)
-    /// Drop on an `edge` band of `target` → the dragged pane becomes a new column/row beside it.
-    case resplit(target: PaneID, edge: PaneDropEdge)
-    /// Drop in the container's outer gutter → dock the dragged pane to that whole `edge`.
-    case dock(edge: PaneDropEdge)
-}
-
-/// View-local move-drag state (held in `SplitContainer`). `zone` is the resolved drop action under the
-/// cursor; the overlay previews it and `.onEnded` commits it.
-struct PaneMoveDrag: Equatable {
-    var source: PaneID
-    var location: CGPoint
-    var zone: PaneDropZone
 }
 
 /// The per-leaf top grab handle. Reveals a `-` pill on hover; the drag reports its live cursor location to
@@ -431,9 +312,9 @@ struct PaneMoveOverlay: View {
 
     private var ghostChip: some View {
         HStack(spacing: 6) {
-            Image(systemSymbol: Self.zoneIcon(drag.zone))
+            Image(systemSymbol: PaneDropRegister.mark(for: drag.zone).symbol)
                 .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
-            Text(Self.zoneLabel(drag.zone, title: sourceTitle))
+            Text(PaneDropRegister.label(for: drag.zone, title: sourceTitle))
                 .font(.system(size: Slate.Typeface.base, weight: .medium))
                 .lineLimit(1)
         }
@@ -513,24 +394,9 @@ struct PaneMoveOverlay: View {
         }
     }
 
-    static func zoneIcon(_ zone: PaneDropZone) -> SFSymbol {
-        switch zone {
-        case .none: .xmark
-        case .swap: .rectangle2Swap
-        case let .resplit(_, edge): edge.axis == .horizontal ? .rectangleSplit2x1 : .rectangleSplit1x2
-        case let .dock(edge): edge.axis == .horizontal ? .rectangleSplit2x1 : .rectangleSplit1x2
-        }
-    }
-
-    static func zoneLabel(_ zone: PaneDropZone, title: String?) -> String {
-        let name = title ?? "pane"
-        switch zone {
-        case .none: return "cancel"
-        case .swap: return "swap \(name)"
-        case let .resplit(_, edge): return "split \(edge.rawValue)"
-        case let .dock(edge): return "dock \(edge.rawValue)"
-        }
-    }
+    // The chip's WORDING and its MARK are ``PaneDropRegister``'s, not this view's — the cross-window
+    // panel says the same things in the same voice, and the two were spelled separately until the
+    // register was minted. `ghostChip` above asks it directly; there is nothing left to state here.
 }
 
 // MARK: - Escape-to-cancel

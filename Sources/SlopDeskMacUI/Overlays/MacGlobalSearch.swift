@@ -331,8 +331,9 @@ final class MacGlobalSearchWellView: NSView {
 ///
 /// ⚠️ LOCKED RENDERING, and the lock is the reason this file may hold a second one at all: every idle
 /// chip is INDIVIDUALLY DELINEATED — its own plate and hairline, never a bare glyph — and the find
-/// bar's chips and these must read identically. What keeps them identical is ``FindModePill``, which
-/// is the label and the help; what is here is the same three-state recipe in `NSView` terms.
+/// bar's chips and these must read identically. What keeps them identical is ``FindModePill`` (the
+/// label and the help) plus ``FindTogglePillAppearance`` (which of the three states is showing); what
+/// is here is only the rung → `NSColor` lookup.
 @MainActor
 final class MacFindTogglePillView: NSView {
     var onToggle: () -> Void = {}
@@ -389,13 +390,24 @@ final class MacFindTogglePillView: NSView {
 
     override func updateLayer() {
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            layer?.backgroundColor = isOn
-                ? Slate.Native.State.accentMuted.cgColor
-                : (hovering ? Slate.Native.State.hover.cgColor : Slate.Native.Surface.face.cgColor)
-            layer?.borderColor = isOn
-                ? Slate.Native.accent.withAlphaComponent(0.5).cgColor
-                : Slate.Native.Line.subtle.cgColor
-            glyph.textColor = isOn ? Slate.Native.accent : Slate.Native.Text.secondary
+            // One arm per STATE rather than three ternaries per property: the recipe is "what does an
+            // idle / hovered / on chip look like", and split across three conditionals a state can be
+            // half-changed. The verdict itself is ``FindTogglePillAppearance``, shared with the in-pane
+            // find bar's chips — what is left here is the rung → `NSColor` lookup, this renderer's alone.
+            switch FindTogglePillAppearance.resolve(isOn: isOn, hovering: hovering) {
+            case .idle:
+                layer?.backgroundColor = Slate.Native.Surface.face.cgColor
+                layer?.borderColor = Slate.Native.Line.subtle.cgColor
+                glyph.textColor = Slate.Native.Text.secondary
+            case .hovering:
+                layer?.backgroundColor = Slate.Native.State.hover.cgColor
+                layer?.borderColor = Slate.Native.Line.subtle.cgColor
+                glyph.textColor = Slate.Native.Text.secondary
+            case .on:
+                layer?.backgroundColor = Slate.Native.State.accentMuted.cgColor
+                layer?.borderColor = Slate.Native.accent.withAlphaComponent(0.5).cgColor
+                glyph.textColor = Slate.Native.accent
+            }
         }
     }
 

@@ -24,6 +24,7 @@
 // the on-glass vocabulary (`Slate.Terminal.ink` — the cell foreground).
 
 #if canImport(SwiftUI)
+import SlopDeskClientCore
 import SlopDeskSlate
 import SlopDeskTerminal
 import SlopDeskWorkspaceCore
@@ -43,12 +44,13 @@ struct LinkHighlightOverlay: View {
         // (`bytesReceived`, the surface snapshot, the detector) live INSIDE the active branch so the dependency
         // on streaming output is only registered while the underline is actually live — no idle re-eval per
         // ingest when ⌘ is not held.
-        if model.linkHighlightActive,
-           SettingsKey.linkDetectionEnabled,
-           !model.isAlternateScreen,
-           let snapshot = model.surface as? TerminalViewportSnapshotting,
-           let metrics = snapshot.cellMetrics(),
-           metrics.cellWidth > 0, metrics.cellHeight > 0
+        if LinkUnderlineGeometry.isArmed(
+            highlightActive: model.linkHighlightActive,
+            detectionEnabled: SettingsKey.linkDetectionEnabled,
+            isAlternateScreen: model.isAlternateScreen,
+        ),
+            let snapshot = model.surface as? TerminalViewportSnapshotting,
+            let metrics = snapshot.cellMetrics()
         {
             // Re-detect under a held ⌘ on EITHER viewport-change signal: new streaming output (`bytesReceived`)
             // OR a LOCAL scrollback scroll (`viewportRevision`, bumped by the renderer's scroll/pan handler).
@@ -67,27 +69,25 @@ struct LinkHighlightOverlay: View {
             // semantic `State`/`Text` tiers do not — those are appearance-tuned for the chrome and can
             // invert against a profile that keeps its own palette under either OS appearance.
             let ink = Slate.Terminal.ink
-            let links = TerminalLinkDetector.detect(
-                rows: snapshot.viewportTextRows(),
-                cwd: cwd,
-                schemes: SettingsKey.linkSchemePolicy,
+            // WHERE each underline goes is a value — clamped to the visible grid, inset off the row
+            // boundary — so it is decided in ``LinkUnderlineGeometry`` and pinned by tests. What was
+            // here before was that same arithmetic INSIDE a `Canvas` closure, which is a place nothing
+            // can call: the one rule the underline has could not be checked at all.
+            let strokes = LinkUnderlineGeometry.strokes(
+                links: TerminalLinkDetector.detect(
+                    rows: snapshot.viewportTextRows(),
+                    cwd: cwd,
+                    schemes: SettingsKey.linkSchemePolicy,
+                ),
+                metrics: metrics,
             )
             Canvas { context, _ in
                 let shading = GraphicsContext.Shading.color(ink)
-                for link in links {
-                    // CLAMP to the visible grid: skip a span that starts off-screen-right and trim one that
-                    // overruns the grid edge, so a soft-wrap-shifted span is never drawn in the void to the
-                    // right of the terminal.
-                    guard let rect = metrics.clampedRect(
-                        row: link.row, colStart: link.colStart, colEnd: link.colEnd,
-                    ) else { continue }
-                    // Underline along the cell's bottom edge (1pt inset so it sits just under the glyph, not
-                    // clipped at the row boundary). Plain `-` (no `addingProduct`/`fma` — CLAUDE.md §2 habit).
-                    let baseline = rect.maxY - 1
+                for stroke in strokes {
                     var underline = Path()
-                    underline.move(to: CGPoint(x: rect.minX, y: baseline))
-                    underline.addLine(to: CGPoint(x: rect.maxX, y: baseline))
-                    context.stroke(underline, with: shading, lineWidth: 1)
+                    underline.move(to: stroke.start)
+                    underline.addLine(to: stroke.end)
+                    context.stroke(underline, with: shading, lineWidth: stroke.lineWidth)
                 }
             }
             // DECORATION only: never swallow a click — the renderer owns ⌘click / right-click on the link.

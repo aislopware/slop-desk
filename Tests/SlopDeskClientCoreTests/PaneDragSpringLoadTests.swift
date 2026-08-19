@@ -3,19 +3,19 @@
 // reveals that row's tab, but only when there is genuinely a tab to reveal — the active tab's own rows
 // and a detached pane's row must never fire a tab switch under the drag.
 //
-// Headless: a tree-model `WorkspaceStore` over the `MountTestPaneSession` fake (no socket / video /
-// Metal — hang-safety). The dwell/cancel TIMING rides a Task the gesture drives; only the pure target
-// resolution is pinned here.
+// Headless: a tree-model `WorkspaceStore` over this suite's `RecordingPaneSession` double (no socket /
+// video / Metal — hang-safety). The dwell/cancel TIMING rides a Task the gesture drives; only the pure
+// target resolution is pinned here.
 
 import SlopDeskWorkspaceModel
 import XCTest
-@testable import SlopDeskClientUI
+@testable import SlopDeskClientCore
 @testable import SlopDeskWorkspaceCore
 
 @MainActor
 final class PaneDragSpringLoadTests: XCTestCase {
     private func makeStore() -> WorkspaceStore {
-        let store = WorkspaceStore(makeSession: { seed in MountTestPaneSession(seed.spec) })
+        let store = WorkspaceStore(makeSession: { seed in RecordingPaneSession(seed.spec) })
         store.attachLoopbackWorkspaceDocument()
         return store
     }

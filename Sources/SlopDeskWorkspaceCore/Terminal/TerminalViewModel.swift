@@ -473,6 +473,20 @@ public final class TerminalViewModel {
             case .block: "VISUAL BLOCK"
             }
         }
+
+        /// The label ACTUALLY drawn, with `.none`'s fallback folded in.
+        ///
+        /// The `?? "VI"` used to be spelled at the pill, which made the enum's own answer incomplete:
+        /// four cases, three labels, and the fourth left to whoever drew it. Two renderers is what
+        /// turns that into a defect rather than a shrug — see docs/56 §2.
+        public var pillLabelOrDefault: String { pillLabel ?? "VI" }
+
+        /// Whether a SELECTION is being extended, as opposed to plain scrollback navigation.
+        ///
+        /// Named rather than left as `!= .none` at the call sites, because the two things it gates are
+        /// not obviously the same question: the pill's outline goes loud, and the line-motion handler
+        /// switches from `scroll_page_lines` to `adjust_selection:<dir>`.
+        public var isVisual: Bool { self != .none }
     }
 
     /// The PURE copy-mode vi state: the pending repeat-count digits + the active visual mode. Free of

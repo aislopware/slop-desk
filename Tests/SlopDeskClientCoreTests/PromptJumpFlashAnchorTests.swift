@@ -7,7 +7,7 @@
 // (all-blank ⇒ empty, a pathological grid-filling line is capped).
 
 import XCTest
-@testable import SlopDeskClientUI
+@testable import SlopDeskClientCore
 
 @MainActor
 final class PromptJumpFlashAnchorTests: XCTestCase {
@@ -15,7 +15,7 @@ final class PromptJumpFlashAnchorTests: XCTestCase {
     private let cols = 80
 
     func testDirectPromptOnRowZeroAnchorsThere() {
-        let anchors = PromptJumpFlashOverlay.anchorRows(in: ["user@host ~ %", "output"], cols: cols)
+        let anchors = PromptJumpFlashGeometry.anchorRows(in: ["user@host ~ %", "output"], cols: cols)
         XCTAssertEqual(anchors.count, 1)
         XCTAssertEqual(anchors.first?.row, 0)
         XCTAssertEqual(anchors.first?.cellCount, "user@host ~ %".count)
@@ -25,7 +25,7 @@ final class PromptJumpFlashAnchorTests: XCTestCase {
         // The exact shape that hid the flash in the field: OSC-133 A on the blank spacer, the
         // two-line starship prompt below it.
         let rows = ["", "slop-desk on  main [!] via  v6.3.2", "❯ echo AAA"]
-        let anchors = PromptJumpFlashOverlay.anchorRows(in: rows, cols: cols)
+        let anchors = PromptJumpFlashGeometry.anchorRows(in: rows, cols: cols)
         XCTAssertEqual(anchors.first?.row, 1, "the flash anchors to the block's first TEXT row, not the spacer")
         XCTAssertEqual(anchors.count, 1, "an unwrapped info line flashes exactly one row")
         XCTAssertEqual(anchors.first?.cellCount, rows[1].count)
@@ -36,7 +36,7 @@ final class PromptJumpFlashAnchorTests: XCTestCase {
         // means the next row continues the same logical line, so the flash must cover them all.
         let grid = 10
         let rows = ["", String(repeating: "a", count: 10), String(repeating: "b", count: 10), "tail", "❯"]
-        let anchors = PromptJumpFlashOverlay.anchorRows(in: rows, cols: grid)
+        let anchors = PromptJumpFlashGeometry.anchorRows(in: rows, cols: grid)
         XCTAssertEqual(anchors.map(\.row), [1, 2, 3], "two full rows + the line's short tail row")
         XCTAssertEqual(anchors.map(\.cellCount), [10, 10, 4])
     }
@@ -44,29 +44,29 @@ final class PromptJumpFlashAnchorTests: XCTestCase {
     func testNonFullRowEndsTheLineBeforeTheInputRow() {
         // The info line does NOT fill the grid ⇒ the ❯ input row below is a NEW line, never flashed.
         let rows = ["", "short info", "❯ next line"]
-        let anchors = PromptJumpFlashOverlay.anchorRows(in: rows, cols: cols)
+        let anchors = PromptJumpFlashGeometry.anchorRows(in: rows, cols: cols)
         XCTAssertEqual(anchors.map(\.row), [1], "a non-full row is the logical line's end")
     }
 
     func testPathologicalGridFillingLineIsCapped() {
         let grid = 3
         let rows = Array(repeating: "xxx", count: 8)
-        let anchors = PromptJumpFlashOverlay.anchorRows(in: rows, cols: grid)
+        let anchors = PromptJumpFlashGeometry.anchorRows(in: rows, cols: grid)
         XCTAssertEqual(anchors.count, 4, "maxRows caps the walk — never flash half the screen")
     }
 
     func testWhitespaceOnlyRowNeverAnchors() {
-        let anchors = PromptJumpFlashOverlay.anchorRows(in: ["   ", "❯"], cols: cols)
+        let anchors = PromptJumpFlashGeometry.anchorRows(in: ["   ", "❯"], cols: cols)
         XCTAssertEqual(anchors.first?.row, 1, "a space-flash reads as a rendering artifact — skip it like a blank")
     }
 
     func testAllBlankLandingIsAbsentNeverWrong() {
         XCTAssertTrue(
-            PromptJumpFlashOverlay.anchorRows(in: ["", "  ", ""], cols: cols).isEmpty,
+            PromptJumpFlashGeometry.anchorRows(in: ["", "  ", ""], cols: cols).isEmpty,
             "nothing to anchor to ⇒ no flash",
         )
         XCTAssertTrue(
-            PromptJumpFlashOverlay.anchorRows(in: [], cols: cols).isEmpty,
+            PromptJumpFlashGeometry.anchorRows(in: [], cols: cols).isEmpty,
             "an empty snapshot (torn-down surface) is silent",
         )
     }
@@ -76,7 +76,7 @@ final class PromptJumpFlashAnchorTests: XCTestCase {
         // unrelated output line far below the pinned prompt block.
         let rows = ["", "", "", "way-below output"]
         XCTAssertTrue(
-            PromptJumpFlashOverlay.anchorRows(in: rows, cols: cols).isEmpty,
+            PromptJumpFlashGeometry.anchorRows(in: rows, cols: cols).isEmpty,
             "depth 3 bounds the anchor to the prompt block",
         )
     }

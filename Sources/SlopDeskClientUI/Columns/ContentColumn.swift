@@ -101,7 +101,9 @@ struct ContentColumn: View {
             } else {
                 // The Slate empty-state voice (MERIDIAN C3) — the cause names WHY the area is empty
                 // (not-connected vs link-down vs no-tabs) and carries the one next action.
-                let cause = Self.emptyCause(status: connection.status, host: connection.target.host)
+                let cause = PaneEmptyCause.resolve(
+                    status: connection.status, host: connection.target.host,
+                )
                 SlateEmptyState(cause: cause) {
                     switch cause {
                     case .neverConnected,
@@ -125,22 +127,6 @@ struct ContentColumn: View {
                     sidebarCollapsed: chrome.sidebarCollapsed,
                 )
             }
-        }
-    }
-
-    /// Resolves the empty pane area's CAUSE from the live connection: connected ⇒ the only thing
-    /// missing is a tab; an active redial ⇒ link-down (named host, no action — the supervisor is
-    /// already dialing); anything else (fresh launch, give-up states, a first `connecting`) reads
-    /// not-connected, whose action opens the Connect editor. Static + pure so the mapping is pinned
-    /// by tests.
-    static func emptyCause(status: ConnectionStatus, host: String) -> SlateEmptyState.Cause {
-        switch status {
-        case .connected: .noTabs
-        case .reconnecting: .linkDown(host: host)
-        case let .failed(reason): .connectFailed(reason: ConnectionPresenter.friendlyFailure(reason))
-        case .disconnected,
-             .connecting,
-             .unreachable: .neverConnected
         }
     }
 }

@@ -18,19 +18,6 @@ import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 import SwiftUI
 
-// MARK: - Key-state relay (window key ⇄ pane focus)
-
-/// Relays the satellite window's key state into its SwiftUI root: `isKey` drives ``PaneContainer``'s
-/// `isFocused` — for a video pane that gates pointer/keycode forwarding (`RemotePaneContext.isActive`),
-/// so a background satellite never fights the main window (or another satellite) for host input.
-@MainActor
-@Observable
-package final class SatelliteWindowKeyState {
-    package init() {}
-
-    package var isKey = false
-}
-
 // MARK: - Root view
 
 /// The satellite window's content: the SAME leaf UI a split-tree slot mounts (``PaneContainer`` routes
@@ -113,7 +100,10 @@ private struct SatelliteDragStrip: View {
             .frame(width: 160, height: 14)
             .contentShape(Rectangle())
             .onHover { hovering = $0 }
-            .pointerStyle(dragging ? .grabActive : .grabIdle)
+            // Through ``PanePointer`` like every other piece of pane chrome, not `pointerStyle`
+            // directly: this file is Mac-only so the raw call compiles, and that is exactly how the
+            // rule grew a third spelling once already.
+            .panePointer(dragging ? .grabActive : .grabIdle)
             .gesture(
                 DragGesture(minimumDistance: 2)
                     .onChanged { _ in
@@ -122,30 +112,22 @@ private struct SatelliteDragStrip: View {
                     }
                     .onEnded { _ in
                         dragging = false
-                        commit(coordinator.takeDestination())
+                        // ONE store op on release, in the reattach family — the SAME four-case
+                        // decision the canvas commits a spring-loaded landing through, asked once
+                        // (``PaneDragCommit``). `.tearOff` and `.none` fall through it untouched,
+                        // which is the honest answer here: the pane already is its own window, so
+                        // releasing anywhere else keeps it one.
+                        PaneDragCommit.commit(
+                            coordinator.takeDestination(),
+                            pane: paneID,
+                            origin: .detached,
+                            in: store,
+                        )
                     },
             )
             .animation(Slate.Anim.dividerHover, value: revealed)
         }
         .frame(maxWidth: .infinity, alignment: .center)
-    }
-
-    /// ONE store op on release — the reattach twin of `SplitContainer.commitDestination`.
-    private func commit(_ destination: PaneDragDestination) {
-        switch destination {
-        case let .canvas(.resplit(target, edge)):
-            store.reattachPaneTree(paneID, beside: target, axis: edge.axis, before: edge.insertsBefore)
-        case let .canvas(.dock(edge)):
-            store.reattachPaneToActiveTabRootEdgeTree(paneID, edge: edge)
-        case let .sidebarRow(anchor):
-            store.reattachPaneTree(paneID, beside: anchor, axis: .horizontal, before: false)
-        case .newTab:
-            store.reattachPaneToNewTabTree(paneID)
-        case .canvas,
-             .tearOff,
-             .none:
-            break // already its own window — releasing anywhere else keeps it one
-        }
     }
 }
 

@@ -1,31 +1,34 @@
-// ViModeOverlay — the vi / copy-mode VIEW layer: the per-pane ``ViModePill`` (the
-// persistent mode badge with a live repeat-count + an `×` exit) and the on-demand ``ViKeyHintBar`` (the `⌘/`
-// reference card). This is the copy-mode overlay that the REBUILD-V2 leaf was missing — it rides the EXISTING
-// pure copy-mode engine in ``TerminalViewModel``: both views read the OBSERVABLE mirrors
-// (``TerminalViewModel/viVisualMode`` / ``viPendingCount`` / ``showViKeyHints`` / ``copyModeBadgeActive``),
-// never the `@ObservationIgnored` `isCopyMode` flag the renderer's keyDown path reads, so they re-render
-// reactively without ever touching the keyDown intercept's AttributeGraph hazard.
+// ViModeOverlay — the vi / copy-mode VIEW layer: the per-pane ``ViModePill`` (the persistent mode badge
+// with a live repeat-count + an `×` exit) and the on-demand ``ViKeyHintBar`` (the `⌘/` reference card).
+// Both are DRAWINGS over ``ViKeyHintPresentation`` (`SlopDeskClientCore`), which holds the three hint
+// tables, the headings, the pill's wording and the reflow ladder.
 //
-// The vi pill renders inside the terminal pane itself. slopdesk has NO persistent titlebar, so — like
-// ``ReadOnlyPill`` — the pill floats in the pane's TOP-TRAILING overlay region; the key-hint bar floats along
-// the pane BOTTOM. The leaf gates BOTH on `copyModeBadgeActive` and tears them down when copy-mode exits
-// (``TerminalViewModel/exitCopyMode()`` clears the flag + resets the hint bar).
+// It rides the EXISTING pure copy-mode engine in ``TerminalViewModel``: both views read the OBSERVABLE
+// mirrors (``TerminalViewModel/viVisualMode`` / ``viPendingCount`` / ``showViKeyHints`` /
+// ``copyModeBadgeActive``), never the `@ObservationIgnored` `isCopyMode` flag the renderer's keyDown path
+// reads, so they re-render reactively without ever touching the keyDown intercept's AttributeGraph hazard.
 //
-// `Slate.*` tokens ONLY — raw font / radius / colour literals fail `scripts/check-ds-leaks.sh`. No libghostty /
-// Metal / VideoToolbox is touched (CLAUDE.md rule #6): plain SwiftUI chips driven by the pane model's
-// observables.
+// The vi pill renders inside the terminal pane itself. slopdesk has NO persistent titlebar, so — like the
+// status pills — it floats in the pane's TOP-TRAILING overlay region; the key-hint card floats along the
+// pane BOTTOM. The leaf gates BOTH through ``PaneStatusPillPresentation``.
 //
-// HONESTY (the "nothing is a dead key" rule): the ``ViKeyHintBar`` lists ONLY the keys
-// ``TerminalViewModel/handleCopyModeKey(_:)`` actually wires in slopdesk's copy-mode — a faithful subset of
-// full vi. Since the E17 ceiling LIFT (DECISIONS.md 2026-07-14: the fork gained a set-selection /
-// viewport-info ABI) that subset includes the CURSOR motions — `h`/`l`, `w`/`b`/`e`, `0`/`^`/`$` — plus the
-// visual anchor-swap `o` and the `Y` line-yank, all of which were previously omitted as unwired. Still
-// deliberately absent: `H`/`M`/`L` (screen-relative jumps, not wired). Hint Mode (`f`) is a separate
-// visible-viewport label overlay armed via ``TerminalViewModel/beginHint(_:)``, the same seam the ⌘⇧J
-// chord uses.
+// THE CARD'S REFLOW IS ARITHMETIC, NOT A `ViewThatFits`. The rung — three columns, MOTION beside a
+// stacked SELECT+SEARCH, or one tall column — is ``ViKeyHintPresentation/layout(forWidth:gap:columnWidth:)``,
+// and this file supplies only the MEASUREMENT, the way `PhonePanelSheet` supplies `named:` to
+// `PanelTabs.labelling`. `ViewThatFits` had to BUILD all three candidates to compare them and has no
+// AppKit equivalent at all, so an AppKit card could only have re-derived the ladder from prose.
+//
+// `Slate.*` tokens ONLY — raw font / radius / colour literals fail `scripts/check-ds-leaks.sh`. No
+// libghostty / Metal / VideoToolbox is touched (CLAUDE.md rule #6): plain SwiftUI chips driven by the
+// pane model's observables.
+//
+// HONESTY (the "nothing is a dead key" rule) lives with the tables now: ``ViKeyHintPresentation`` lists
+// ONLY the keys ``TerminalViewModel/handleCopyModeKey(_:)`` actually wires, and `ViKeyHintBarTests` pins
+// it there.
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
+import SlopDeskClientCore
 import SlopDeskSlate
 import SlopDeskWorkspaceCore
 import SwiftUI
@@ -38,7 +41,7 @@ import SwiftUI
 ///
 /// Reads the pane model's OBSERVABLE mirrors directly (``TerminalViewModel`` is `@Observable`), so the label
 /// swaps and the count appears / clears reactively as ``TerminalViewModel/handleCopyModeKey(_:)`` mutates the
-/// pure state and syncs the twins. The `×` calls ``onExit`` — ``TerminalLeafView`` wires it to the model's
+/// pure state and syncs the twins. The `×` calls ``onExit`` — the leaf wires it to the model's
 /// ``TerminalViewModel/exitCopyMode()`` (the single exit seam, which also resets the count / visual mode / hint
 /// bar), so the pill, the `Esc`/`q` keys, and a programmatic dismiss all converge on one state.
 struct ViModePill: View {
@@ -49,18 +52,12 @@ struct ViModePill: View {
 
     @State private var closeHover = false
 
-    /// The mode label: a visual mode's own label, else the bare `VI` (plain scrollback navigation).
-    private var modeLabel: String { model.viVisualMode.pillLabel ?? "VI" }
-
-    /// Whether a visual selection mode is active (drives the accent ring — the pill stands out while selecting).
-    private var inVisualMode: Bool { model.viVisualMode != .none }
-
     var body: some View {
         HStack(spacing: Slate.Metric.space1) {
             Image(systemSymbol: .characterCursorIbeam)
                 .font(.system(size: Slate.Typeface.small, weight: .semibold))
                 .foregroundStyle(Slate.Text.primary)
-            Text(modeLabel)
+            Text(model.viVisualMode.pillLabelOrDefault)
                 .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
                 .tracking(Slate.Typeface.pillTracking)
                 .foregroundStyle(Slate.Text.primary)
@@ -86,10 +83,7 @@ struct ViModePill: View {
             // Plain navigation wears the same subtle hairline as the read-only pill; a visual selection swaps in
             // the accent ring so the "I am selecting" state is unmistakable beside the count.
             RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
-                .strokeBorder(
-                    inVisualMode ? Slate.State.accent.opacity(0.5) : Slate.Line.subtle,
-                    lineWidth: Slate.Metric.hairline,
-                ),
+                .strokeBorder(ring, lineWidth: Slate.Metric.hairline),
         )
         .slateShadow(.chip)
         .animation(Slate.Anim.smallFade, value: model.viPendingCount)
@@ -101,24 +95,31 @@ struct ViModePill: View {
         // ``View/slateCancelKey(perform:)``'s, not this file's.
         .slateCancelKey { onExit() }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(accessibilityLabel)
-        .accessibilityHint("Exit vi mode")
+        .accessibilityLabel(
+            ViKeyHintPresentation.accessibilityLabel(mode: model.viVisualMode, count: model.viPendingCount),
+        )
+        .accessibilityHint(ViKeyHintPresentation.exitHelp)
     }
 
-    /// The combined a11y label — the mode plus any pending count, so VoiceOver reads "Vi mode VISUAL 5".
-    private var accessibilityLabel: String {
-        var parts = ["Vi mode", modeLabel]
-        if let count = model.viPendingCount { parts.append(String(count)) }
-        return parts.joined(separator: " ")
+    /// The pill's outline — this renderer's two-line ink ladder over ``TerminalViewModel/VisualMode/isVisual``.
+    private var ring: Color {
+        // ⚠️ 0.5 is UNNAMED and spelled twice (here and the lit find-bar mode chip). It is a proposed
+        // `Slate.Opacity.accentRing` rung; until it lands it stays a literal rather than borrowing a rung
+        // solved for something else.
+        model.viVisualMode.isVisual
+            ? Slate.State.accent.opacity(0.5)
+            : Slate.Line.subtle
     }
 
-    /// The `×` exit glyph — LIGHTER than the label (the ``ReadOnlyPill`` close-button idiom), with the subtle
+    /// The `×` exit glyph — LIGHTER than the label (the status-pill close-button idiom), with the subtle
     /// hover plate. Leaves vi mode via ``onExit``.
     private var closeButton: some View {
         Button(action: onExit) {
             Image(systemSymbol: .xmark)
                 .font(.system(size: Slate.Typeface.small, weight: .medium))
                 .foregroundStyle(Slate.Text.secondary)
+                // ⚠️ 16×16 is UNNAMED and spelled four times across this directory. Proposed
+                // `Slate.Metric.glyphPlate`.
                 .frame(width: 16, height: 16)
                 .background(
                     closeHover ? Slate.State.selected : .clear,
@@ -128,86 +129,26 @@ struct ViModePill: View {
         }
         .buttonStyle(.plain)
         .onHover { closeHover = $0 }
-        .slateHelp("Exit vi mode")
+        .slateHelp(ViKeyHintPresentation.exitHelp)
     }
 }
 
 // MARK: - Key-hint bar
 
-/// The vi key-hint bar — the on-demand reference card toggled by `⌘/` while in vi mode
+/// The vi key-hint card — the on-demand reference toggled by `⌘/` while in vi mode
 /// (off by default; ``TerminalViewModel/showViKeyHints`` drives its visibility, flipped by
-/// ``TerminalViewModel/toggleViKeyHints()``). Floats along the pane BOTTOM (the spec's likely position) and
-/// lists, in compact columns, the keys slopdesk's copy-mode ACTUALLY wires — a faithful subset of full vi
-/// (see the file header for the honest-omission rationale). Pure presentation: no model reads, no state.
+/// ``TerminalViewModel/toggleViKeyHints()``). Floats along the pane BOTTOM and lists, in compact columns,
+/// the keys slopdesk's copy-mode ACTUALLY wires. Pure presentation: no model reads, no state — every row
+/// comes from ``ViKeyHintPresentation``.
 struct ViKeyHintBar: View {
-    /// One reference entry: the key chip(s) and what they do.
-    private struct Hint: Identifiable {
-        let keys: [String]
-        let label: String
-        var id: String { keys.joined(separator: " ") + "|" + label }
-    }
-
-    private static let motion: [Hint] = [
-        Hint(keys: ["h", "j", "k", "l"], label: "Move cursor"),
-        Hint(keys: ["w", "b", "e"], label: "Word motions"),
-        Hint(keys: ["0", "^", "$"], label: "Line start / end"),
-        Hint(keys: ["⌃d", "⌃u"], label: "Half page"),
-        Hint(keys: ["⌃f", "⌃b"], label: "Full page"),
-        Hint(keys: ["g", "G"], label: "Top / bottom"),
-        Hint(keys: ["[", "]"], label: "Prev / next prompt"),
-        Hint(keys: ["1", "…", "9"], label: "Repeat count"),
-    ]
-
-    // Every row here is WIRED (the honesty rule): the cursor motions + `o` + `Y` joined the bar with the
-    // E17 ceiling lift (see the file header); `f` rides the Hint Mode overlay via `beginHint`, its own seam.
-    private static let selection: [Hint] = [
-        Hint(keys: ["v"], label: "Visual"),
-        Hint(keys: ["V"], label: "Visual line"),
-        Hint(keys: ["⌃v"], label: "Visual block"),
-        Hint(keys: ["o"], label: "Swap ends"),
-        Hint(keys: ["y", "↩"], label: "Yank + exit"),
-        Hint(keys: ["Y"], label: "Yank line"),
-        Hint(keys: ["f"], label: "Hint links"),
-    ]
-
-    private static let search: [Hint] = [
-        Hint(keys: ["/"], label: "Find forward"),
-        Hint(keys: ["?"], label: "Find backward"),
-        Hint(keys: ["n", "N"], label: "Next / prev match"),
-        Hint(keys: ["Esc", "q"], label: "Exit vi mode"),
-        Hint(keys: ["⌘/"], label: "Toggle this bar"),
-    ]
-
-    /// Every key chip the bar advertises, flattened across all columns (separator tokens like `…` excluded) —
-    /// the honesty surface a test reads to prove the bar lists ONLY wired keys (e.g. never the dead `o`). The
-    /// view body renders from the SAME static arrays, so this can never drift from what is shown.
-    static var advertisedKeys: [String] {
-        (motion + selection + search).flatMap(\.keys).filter { $0 != "…" }
-    }
-
     var body: some View {
-        // RESPONSIVE: the reference card re-flows to the pane's width instead of clipping — three
-        // columns side-by-side when they fit, else MOTION beside a stacked SELECT+SEARCH, else one
-        // tall column (a narrow split pane still gets the whole card). `ViewThatFits` proposes the
-        // pane width; the `fixedSize()` rows keep each layout's intrinsic width honest so the first
-        // layout that truly fits wins.
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .top, spacing: Slate.Metric.space4) {
-                column("MOTION", Self.motion)
-                column("SELECT", Self.selection)
-                column("SEARCH", Self.search)
-            }
-            HStack(alignment: .top, spacing: Slate.Metric.space4) {
-                column("MOTION", Self.motion)
-                VStack(alignment: .leading, spacing: Slate.Metric.space3) {
-                    column("SELECT", Self.selection)
-                    column("SEARCH", Self.search)
-                }
-            }
-            VStack(alignment: .leading, spacing: Slate.Metric.space3) {
-                column("MOTION", Self.motion)
-                column("SELECT", Self.selection)
-                column("SEARCH", Self.search)
+        // RESPONSIVE: the card re-flows to the pane's width instead of clipping. The RUNG is
+        // ``ViKeyHintPresentation/layout(forWidth:gap:columnWidth:)``; ``ViKeyHintReflow`` is the SwiftUI
+        // half — it hands that arithmetic the proposal and each column's intrinsic width, then places the
+        // columns the rung asked for.
+        ViKeyHintReflow(gap: Slate.Metric.space4, stackSpacing: Slate.Metric.space3) {
+            ForEach(ViKeyHintColumn.allCases, id: \.self) { column in
+                self.column(column)
             }
         }
         .padding(.horizontal, Slate.Metric.space3)
@@ -219,25 +160,29 @@ struct ViKeyHintBar: View {
         )
         .slateShadow(.panel)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Vi mode key hints")
+        .accessibilityLabel(ViKeyHintPresentation.barAccessibilityLabel)
     }
 
+    /// Every key chip the card advertises — the honesty surface, forwarded so the test and the snapshot rig
+    /// keep one address for it.
+    static var advertisedKeys: [String] { ViKeyHintPresentation.advertisedKeys }
+
     /// One labelled column of hints (heading + rows).
-    private func column(_ heading: String, _ hints: [Hint]) -> some View {
+    private func column(_ column: ViKeyHintColumn) -> some View {
         VStack(alignment: .leading, spacing: Slate.Metric.space1) {
-            Text(heading)
+            Text(column.heading)
                 .font(.system(size: Slate.Typeface.small, weight: .semibold))
                 .tracking(Slate.Typeface.pillTracking)
                 .foregroundStyle(Slate.Text.tertiary)
                 .padding(.bottom, Slate.Metric.space1)
-            ForEach(hints) { hint in
+            ForEach(column.hints) { hint in
                 hintRow(hint)
             }
         }
     }
 
     /// One hint row — the key chip(s) followed by the description.
-    private func hintRow(_ hint: Hint) -> some View {
+    private func hintRow(_ hint: ViKeyHint) -> some View {
         HStack(spacing: Slate.Metric.space1) {
             ForEach(Array(hint.keys.enumerated()), id: \.offset) { _, key in
                 keycap(key)
@@ -251,10 +196,11 @@ struct ViKeyHintBar: View {
     }
 
     /// A single key chip — mirrors the keyboard cheat sheet's `keycapChip` so the two reference surfaces read
-    /// identically. A separator token (`…`) renders as bare text (no plate) so `1 … 9` reads as a range.
+    /// identically. The RANGE token (``ViKeyHintPresentation/separator``) renders as bare text (no plate) so
+    /// `1 … 9` reads as a range rather than as three keys.
     @ViewBuilder
     private func keycap(_ key: String) -> some View {
-        if key == "…" {
+        if key == ViKeyHintPresentation.separator {
             Text(key)
                 .font(.system(size: Slate.Typeface.small, weight: .medium))
                 .foregroundStyle(Slate.Text.tertiary)
@@ -262,6 +208,8 @@ struct ViKeyHintBar: View {
             Text(key)
                 .font(.system(size: Slate.Typeface.small, weight: .medium, design: .monospaced))
                 .foregroundStyle(Slate.Text.secondary)
+                // ⚠️ 18 is UNNAMED — the keycap's minimum square, one rung under the control plate.
+                // Proposed `Slate.Metric.keycap`.
                 .frame(minWidth: 18, minHeight: 18)
                 .padding(.horizontal, Slate.Metric.space1)
                 .background(Slate.Surface.face, in: .rect(cornerRadius: Slate.Metric.radiusSmall))
@@ -270,6 +218,94 @@ struct ViKeyHintBar: View {
                         .strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline),
                 )
         }
+    }
+}
+
+/// The SwiftUI half of the card's width ladder: a `Layout` that asks
+/// ``ViKeyHintPresentation/layout(forWidth:gap:columnWidth:)`` which rung the proposal affords, then places
+/// its three column subviews into the slots ``ViKeyHintPresentation/groups(for:)`` names.
+///
+/// A `Layout` rather than a `GeometryReader` for one mechanical reason: a `Layout` is HANDED the proposal in
+/// `sizeThatFits(proposal:…)`, while a `GeometryReader` reports the size it has already taken by expanding to
+/// fill — which would stretch a card whose whole point is to hug its content. It measures each column with
+/// `sizeThatFits(.unspecified)`, which is the intrinsic width the `fixedSize()` rows make honest, and that is
+/// the `named:` closure's role in `PanelTabs.labelling`: the decision is shared, the measurement is the
+/// framework's.
+private struct ViKeyHintReflow: Layout {
+    /// Between two side-by-side column slots.
+    let gap: CGFloat
+    /// Between two columns stacked into one slot.
+    let stackSpacing: CGFloat
+
+    /// NOT named `Cache`: a nested type with the associated type's own name shadows it, and the
+    /// protocol witness then resolves circularly.
+    struct ColumnCache {
+        var columns: [CGSize]
+    }
+
+    func makeCache(subviews: Subviews) -> ColumnCache {
+        ColumnCache(columns: subviews.map { $0.sizeThatFits(.unspecified) })
+    }
+
+    func updateCache(_ cache: inout ColumnCache, subviews: Subviews) {
+        cache.columns = subviews.map { $0.sizeThatFits(.unspecified) }
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ColumnCache) -> CGSize {
+        guard subviews.count == ViKeyHintColumn.allCases.count else { return .zero }
+        let slots = slots(for: proposal, cache: cache)
+        let width = slots.reduce(CGFloat.zero) { $0 + $1.size.width } + gap * CGFloat(max(slots.count - 1, 0))
+        let height = slots.reduce(CGFloat.zero) { Swift.max($0, $1.size.height) }
+        return CGSize(width: width, height: height)
+    }
+
+    func placeSubviews(
+        in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ColumnCache,
+    ) {
+        guard subviews.count == ViKeyHintColumn.allCases.count else { return }
+        var x = bounds.minX
+        for slot in slots(for: proposal, cache: cache) {
+            var y = bounds.minY
+            for column in slot.columns {
+                let index = Self.index(of: column)
+                let size = cache.columns[index]
+                subviews[index].place(
+                    at: CGPoint(x: x, y: y), anchor: .topLeading, proposal: ProposedViewSize(size),
+                )
+                y += size.height + stackSpacing
+            }
+            x += slot.size.width + gap
+        }
+    }
+
+    /// One horizontal slot: the columns stacked into it, and the box they occupy.
+    private struct Slot {
+        let columns: [ViKeyHintColumn]
+        let size: CGSize
+    }
+
+    /// The rung the proposal affords, resolved into placed boxes.
+    ///
+    /// An UNSPECIFIED width (the intrinsic-size query every parent makes before it proposes anything) reads
+    /// as infinite, so the card reports its widest arrangement as its ideal — which is what makes a parent
+    /// that has room give it room.
+    private func slots(for proposal: ProposedViewSize, cache: ColumnCache) -> [Slot] {
+        let rung = ViKeyHintPresentation.layout(
+            forWidth: Double(proposal.width ?? .infinity), gap: Double(gap),
+            columnWidth: { Double(cache.columns[Self.index(of: $0)].width) },
+        )
+        return ViKeyHintPresentation.groups(for: rung).map { group in
+            let sizes = group.map { cache.columns[Self.index(of: $0)] }
+            let width = sizes.reduce(CGFloat.zero) { Swift.max($0, $1.width) }
+            let height = sizes.reduce(CGFloat.zero) { $0 + $1.height }
+                + stackSpacing * CGFloat(max(group.count - 1, 0))
+            return Slot(columns: group, size: CGSize(width: width, height: height))
+        }
+    }
+
+    /// The subview index a column occupies — the `ForEach` builds them in ``ViKeyHintColumn/allCases`` order.
+    private static func index(of column: ViKeyHintColumn) -> Int {
+        ViKeyHintColumn.allCases.firstIndex(of: column) ?? 0
     }
 }
 #endif

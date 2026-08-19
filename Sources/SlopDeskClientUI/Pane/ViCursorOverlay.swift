@@ -15,6 +15,7 @@
 // `Slate.*` tokens only; hit-transparent; no libghostty / Metal touched (CLAUDE.md rule #6).
 
 #if canImport(SwiftUI)
+import SlopDeskClientCore
 import SlopDeskSlate
 import SlopDeskTerminal
 import SlopDeskWorkspaceCore
@@ -29,22 +30,25 @@ struct ViCursorOverlay: View {
         // Reading `copyModeBadgeActive` / `viCursorCell` registers observation, so the cursor moves the
         // instant a motion lands. The geometry read lives inside the active branch (the hint-overlay
         // idiom) so the snapshot is only taken while there is actually a cursor to draw.
-        if model.copyModeBadgeActive, let cell = model.viCursorCell,
-           let snapshot = model.surface as? TerminalViewportSnapshotting,
-           let metrics = snapshot.cellMetrics(),
-           metrics.cellWidth > 0, metrics.cellHeight > 0,
-           let rect = metrics.clampedRect(row: cell.row, colStart: cell.col, colEnd: cell.col + cell.width)
-        {
+        if let rect = ViCursorGeometry.rect(
+            copyModeActive: model.copyModeBadgeActive,
+            cell: model.viCursorCell,
+            metrics: (model.surface as? TerminalViewportSnapshotting)?.cellMetrics(),
+        ) {
             ZStack(alignment: .topLeading) {
                 // A terminal-authentic BLOCK cursor: one sharp-cornered accent block, exactly the
-                // glyph's cell footprint (`cell.width` = 2 on a wide glyph). A real terminal block
-                // inverts the glyph; an overlay can't, so the roles split: the FULL-strength edge is
-                // the visibility (the crisp silhouette the eye finds across a busy buffer) and the
-                // interior wash stays LIGHT so the glyph underneath reads clearly. Sharp corners,
-                // no glow (the Meridian at-rest zero-ornament law).
+                // glyph's cell footprint (`cell.width` = 2 on a wide glyph — the span rule lives in
+                // ``ViCursorGeometry``). A real terminal block inverts the glyph; an overlay can't, so
+                // the roles split: the FULL-strength edge is the visibility (the crisp silhouette the
+                // eye finds across a busy buffer) and the interior wash stays LIGHT so the glyph
+                // underneath reads clearly. Sharp corners, no glow (the Meridian at-rest
+                // zero-ornament law).
                 Rectangle()
-                    .fill(Slate.State.accent.opacity(0.3))
-                    .overlay(Rectangle().strokeBorder(Slate.State.accent, lineWidth: 1.5))
+                    .fill(Slate.State.accent.opacity(ViCursorGeometry.fillOpacity))
+                    .overlay(
+                        Rectangle()
+                            .strokeBorder(Slate.State.accent, lineWidth: ViCursorGeometry.strokeWidth),
+                    )
                     .frame(width: rect.width, height: rect.height)
                     .offset(x: rect.minX, y: rect.minY)
             }

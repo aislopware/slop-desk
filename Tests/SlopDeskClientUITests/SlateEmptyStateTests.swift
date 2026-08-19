@@ -1,7 +1,11 @@
-// SlateEmptyStateTests — pins the typed empty-state copy (cause → symbol/title/caption/action) and
-// the ContentColumn's status → cause resolution, so the pane area's "nothing here" wording can't
-// drift per call site and a give-up state never renders the self-healing "Reconnecting…" caption.
+// SlateEmptyStateTests — pins the typed empty-state COPY (cause → symbol/title/caption/action), so
+// the pane area's "nothing here" wording cannot drift per call site.
+//
+// The status → cause RESOLUTION moved out with the cause: it is `PaneEmptyCause.resolve` now, pinned
+// by `Tests/SlopDeskClientCoreTests/PaneCanvasPolicyTests.swift`. That split is the point rather than
+// tidiness — the verdict runs on a phone build too, and only the wording is this renderer's.
 
+import SlopDeskClientCore
 import SlopDeskSlate
 import XCTest
 @testable import SlopDeskClientUI
@@ -28,30 +32,6 @@ final class SlateEmptyStateTests: XCTestCase {
         XCTAssertEqual(
             SlateEmptyState.actionLabel(for: .connectFailed(reason: "Connection refused")),
             "Connect to Host…",
-        )
-    }
-
-    func testEmptyCauseResolution() {
-        XCTAssertEqual(ContentColumn.emptyCause(status: .connected, host: "h"), .noTabs)
-        XCTAssertEqual(
-            ContentColumn.emptyCause(status: .reconnecting(attempt: 2, nextRetry: nil), host: "mac-studio"),
-            .linkDown(host: "mac-studio"),
-        )
-        // Fresh launch, in-flight first dial, and unreachable all read not-connected (whose action
-        // opens the Connect editor) — never the self-healing "Reconnecting…" caption.
-        XCTAssertEqual(ContentColumn.emptyCause(status: .disconnected, host: "h"), .neverConnected)
-        XCTAssertEqual(ContentColumn.emptyCause(status: .connecting, host: "h"), .neverConnected)
-        XCTAssertEqual(ContentColumn.emptyCause(status: .unreachable, host: "h"), .neverConnected)
-        // An explicit failed connect keeps its reason — it must NOT fold into the generic copy.
-        // Unknown payloads pass through verbatim; known transport dumps arrive already run through
-        // `ConnectionPresenter.friendlyFailure` (the same voice as the status pill).
-        XCTAssertEqual(
-            ContentColumn.emptyCause(status: .failed("boom"), host: "h"),
-            .connectFailed(reason: "boom"),
-        )
-        XCTAssertEqual(
-            ContentColumn.emptyCause(status: .failed("POSIXErrorCode(rawValue: 61): Connection refused"), host: "h"),
-            .connectFailed(reason: "Connection refused — is slopdesk-hostd running on the host?"),
         )
     }
 }

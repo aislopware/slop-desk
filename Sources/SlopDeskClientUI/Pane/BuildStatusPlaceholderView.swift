@@ -42,7 +42,7 @@ struct BuildStatusPlaceholderView: TerminalRenderingView {
         }
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(NativePaneColor.terminalBackground)
+        .background(Slate.Surface.terminal)
     }
 
     @ViewBuilder private var statusLine: some View {

@@ -1,80 +1,167 @@
-// PaneStatusPills — the per-pane status pills that float in the pane's TOP-TRAILING overlay region.
+// PaneStatusPills — the pane's status chips, drawn. ONE view over ``PaneStatusPill``
+// (`SlopDeskClientCore`), which says what each chip is CALLED, what VoiceOver reads, whether it carries
+// an `×` and what kind of plate it stands on.
+//
+// It used to be three views. `ReadOnlyPill`, `SecureInputPill` and `SyncInputPill` were the same
+// HStack — glyph, uppercase word, optional `×`, padding, rounded plate, chip shadow, combined a11y
+// element — differing in a word, a symbol, two sentences of copy and a fill. Three copies of one shape
+// is how the two `static var fillColor: Color` escape hatches ended up inconsistent (two pills had one,
+// the third did not), and it is what an AppKit half would have had to reproduce three times.
 //
 // The design reference mock places these in a window TITLEBAR's top-right corner
-// (`docs/ui-shell/screenshots/readonly-mode.png` and, later, `secure-input.png`). slopdesk has NO persistent
-// titlebar — the window chrome is a hover-reveal strip and the pane is a flush, window-level surface — so the
-// EQUIVALENT placement is the pane's top-trailing overlay region (the same place the ⌘F find bar floats). This
-// file is the home for
-// those pills: it ships ``ReadOnlyPill`` (the `🔒 READ ONLY ×` chip) and `SecureInputPill` beside it.
+// (`docs/ui-shell/screenshots/readonly-mode.png` and, later, `secure-input.png`). slopdesk has NO
+// persistent titlebar — the window chrome is a hover-reveal strip and the pane is a flush, window-level
+// surface — so the EQUIVALENT placement is the pane's top-trailing overlay region (the same place the
+// ⌘F find bar floats).
 //
-// `Slate.*` tokens ONLY — raw font / radius / colour literals fail `scripts/check-ds-leaks.sh`. No libghostty /
-// Metal / VideoToolbox is touched (CLAUDE.md rule #6): these are plain SwiftUI chips driven by the pane model's
-// OBSERVABLE mirrors (``TerminalViewModel/readOnlyBadgeActive`` / ``copyModeBadgeActive``), never the
+// WHICH chips are up, and in what order, is ``PaneStatusPillPresentation/visible(_:)``'s — not this
+// file's and not the leaf's. `Slate.*` tokens ONLY — raw font / radius / colour literals fail
+// `scripts/check-ds-leaks.sh`. No libghostty / Metal / VideoToolbox is touched (CLAUDE.md rule #6):
+// these are plain SwiftUI chips driven by the pane model's OBSERVABLE mirrors
+// (``TerminalViewModel/readOnlyBadgeActive`` / ``copyModeBadgeActive``), never the
 // `@ObservationIgnored` `isReadOnly`/`isCopyMode` flags the renderer's keyDown path reads.
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
+import SlopDeskClientCore
 import SlopDeskSlate
 import SwiftUI
 
-/// The `🔒 READ ONLY ×` pill — shown in the pane's top-trailing overlay while the pane's
-/// input gate is armed. Faithful to `readonly-mode.png`: a compact, SUBTLY-FILLED rounded chip (NOT a brightly
-/// coloured badge — it blends with the chrome rather than standing out) carrying a solid padlock + the uppercase
-/// `READ ONLY` label in the primary text tone, then a LIGHTER `×` close glyph.
+/// One pane status chip: `🔒 READ ONLY ×`, `🛡 SECURE INPUT`, or `⚠ SYNC INPUT ×`.
 ///
-/// Clicking `×` calls ``onDeactivate`` — ``TerminalLeafView`` wires it to the pane model's
-/// ``TerminalViewModel/exitReadOnly()``, whose `onReadOnlyChanged` hook converges the store's `paneReadOnly`
-/// set (the single source of truth the pill `×`, the View-menu item, the command-palette term, and the sidebar
-/// lock indicator all read), so every entry point lands on one state.
+/// Faithful to `readonly-mode.png` and `secure-input.png`: the read-only chip is compact and SUBTLY
+/// FILLED (it blends with the chrome rather than standing out) with a solid padlock and a primary-tone
+/// label, then a LIGHTER `×`; the two mode chips are VIVID FILLED plates carrying a white glyph and a
+/// white label, with no `×` on secure input.
 ///
-/// Visibility is gated by the LEAF, not this view: `readOnlyBadgeActive && !copyModeBadgeActive` — vi / copy
-/// mode temporarily hides the pill (its keybindings drive selection, not the shell, so the lock is not needed
-/// while it is active), per the spec. The pill reappears when copy mode exits; the lock itself stays on.
-struct ReadOnlyPill: View {
-    /// Called when the user clicks `×` to release the lock — the leaf routes it to `exitReadOnly()` so the
-    /// store's wired `onReadOnlyChanged` clears the convergent `paneReadOnly` set.
-    let onDeactivate: () -> Void
+/// `onDismiss` fires from the `×` and is ignored by a chip that has none. The leaf routes it: read-only
+/// to ``TerminalViewModel/exitReadOnly()`` (whose `onReadOnlyChanged` hook converges the store's
+/// `paneReadOnly` set, so the `×`, the View-menu item, the palette term and the sidebar lock all land on
+/// one state) and sync input to ``WorkspaceStore/disarmSyncInput(for:)`` (which disarms the WHOLE tab,
+/// so the chip leaves every sibling at once).
+struct PaneStatusPillView: View {
+    let pill: PaneStatusPill
+    var onDismiss: () -> Void = {}
 
     @State private var closeHover = false
 
     var body: some View {
         HStack(spacing: Slate.Metric.space1) {
-            // The solid padlock — a theme-tinted SF Symbol (NOT the gold 🔒 emoji): `readonly-mode.png` shows a
-            // monochrome dark padlock matching the label weight, which the emoji can't honour.
-            Image(systemSymbol: .lockFill)
-                .font(.system(size: Slate.Typeface.small, weight: .semibold))
-                .foregroundStyle(Slate.Text.primary)
-            Text("READ ONLY")
-                .font(.system(size: Slate.Typeface.footnote, weight: .medium))
+            Image(systemSymbol: glyph)
+                .font(.system(size: Slate.Typeface.small, weight: glyphWeight))
+                .foregroundStyle(ink)
+            Text(pill.label)
+                .font(.system(size: Slate.Typeface.footnote, weight: labelWeight))
                 .tracking(Slate.Typeface.pillTracking)
-                .foregroundStyle(Slate.Text.primary)
+                .foregroundStyle(ink)
                 .lineLimit(1)
                 .fixedSize()
-            closeButton
+            if let help = pill.dismissHelp { closeButton(help: help) }
         }
         .padding(.horizontal, Slate.Metric.space2)
         .padding(.vertical, Slate.Metric.space1)
-        // Subtly-filled chip: the inset-control surface + a hairline — distinct from, but not louder than, the
-        // chrome behind it (the screenshot's "bordered or subtly filled chip rather than a brightly coloured
-        // badge"). A small shadow lifts it off busy terminal output for legibility.
-        .background(Slate.Surface.raised, in: .rect(cornerRadius: Slate.Metric.radiusControl))
-        .overlay(
+        .background(plate, in: .rect(cornerRadius: Slate.Metric.radiusControl))
+        .overlay(hairline)
+        // A small shadow lifts the chip off busy terminal output for legibility.
+        .slateShadow(.chip)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(pill.accessibilityLabel)
+        .accessibilityHint(pill.accessibilityHint)
+    }
+
+    // MARK: - This renderer's ink ladder
+
+    /// The fixed tones, resolved. THREE LINES, one per named ink — the ``ToastPresentation`` idiom, and
+    /// the reason ``PaneStatusPillFill`` is a kind rather than a `Color`: the two vivid tones are
+    /// theme-INDEPENDENT on purpose (the shipped themes have `info == accent`, so a palette-derived
+    /// security badge would be invisible against the accent — `secure-input.png` is the green-accent
+    /// Paper theme yet the pill is the same royal blue), and only a NAME can say that.
+    ///
+    /// It is `static` and internal so the colour test reads the SAME source the view fills with: a
+    /// regression that re-routed a fill through the theme accent fails the test that pins it against the
+    /// fixed token.
+    static func fillColor(_ ink: PaneStatusPillInk) -> Color {
+        switch ink {
+        case .security: Slate.Status.secureInput
+        case .sync: Slate.Status.syncInput
+        }
+    }
+
+    /// The chip's plate.
+    private var plate: Color {
+        switch pill.fill {
+        case .chrome: Slate.Surface.raised
+        case let .fixed(ink): Self.fillColor(ink)
+        }
+    }
+
+    /// A chrome plate is DELINEATED by a hairline (it is only a shade off the chrome behind it); a vivid
+    /// plate is not (the fill already is the boundary, and a border would only muddy it).
+    @ViewBuilder private var hairline: some View {
+        switch pill.fill {
+        case .chrome:
             RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
-                .strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline),
-        )
-        .slateShadow(.chip)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Read only")
-        .accessibilityHint("Disable read-only mode to allow input again")
+                .strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline)
+        case .fixed:
+            EmptyView()
+        }
     }
 
-    /// The `×` close glyph — LIGHTER than the label (per the screenshot), with the `SlateTabRow` close-button's
-    /// subtle hover plate. Releases the lock via ``onDeactivate``.
-    private var closeButton: some View {
-        Button(action: onDeactivate) {
+    /// Label and glyph ink: the theme's primary tone on the chrome plate, white on a vivid one.
+    private var ink: Color {
+        switch pill.fill {
+        case .chrome: Slate.Text.primary
+        case .fixed: Slate.Text.onAccent
+        }
+    }
+
+    /// The mark. A solid padlock for the lock (a theme-tinted SF Symbol, NOT the gold 🔒 emoji:
+    /// `readonly-mode.png` shows a monochrome dark padlock matching the label weight, which the emoji
+    /// can't honour); the lock-SHIELD for secure input, the macOS secure-input idiom; and the
+    /// grouped-panes glyph for sync input — the same symbol the palette entry that armed it uses, so the
+    /// chip and the command read as one feature.
+    private var glyph: SFSymbol {
+        switch pill {
+        case .readOnly: .lockFill
+        case .secureInput: .lockShieldFill
+        case .syncInput: .rectangle3Group
+        }
+    }
+
+    /// A vivid chip carries more weight than a chrome one — it is louder on purpose.
+    private var glyphWeight: Font.Weight {
+        switch pill.fill {
+        case .chrome: .semibold
+        case .fixed: .bold
+        }
+    }
+
+    private var labelWeight: Font.Weight {
+        switch pill.fill {
+        case .chrome: .medium
+        case .fixed: .semibold
+        }
+    }
+
+    /// The `×` glyph's own ink: LIGHTER than the label on the chrome plate (per the screenshot), but
+    /// full white on a vivid one, where a secondary tone would vanish.
+    private var closeInk: Color {
+        switch pill.fill {
+        case .chrome: Slate.Text.secondary
+        case .fixed: Slate.Text.onAccent
+        }
+    }
+
+    // MARK: - The × plate
+
+    /// The `×` close glyph, with the tab row's subtle hover plate. Fires ``onDismiss``.
+    private func closeButton(help: String) -> some View {
+        Button(action: onDismiss) {
             Image(systemSymbol: .xmark)
                 .font(.system(size: Slate.Typeface.small, weight: .medium))
-                .foregroundStyle(Slate.Text.secondary)
+                .foregroundStyle(closeInk)
+                // ⚠️ 16×16 is UNNAMED and spelled four times across this directory (here, the vi pill's
+                // `×`, the hint badge's `×`). It is a proposed `Slate.Metric.glyphPlate` rung.
                 .frame(width: 16, height: 16)
                 .background(
                     closeHover ? Slate.State.selected : .clear,
@@ -84,127 +171,7 @@ struct ReadOnlyPill: View {
         }
         .buttonStyle(.plain)
         .onHover { closeHover = $0 }
-        .slateHelp("Disable read-only")
-    }
-}
-
-/// The `🛡 SECURE INPUT` pill — shown in the pane's top-trailing overlay while macOS
-/// Secure Keyboard Entry is active for the pane (the host is at a no-echo password prompt and Auto Secure
-/// Input is on, OR the manual toggle is on) AND the secure-input INDICATOR setting is on. Faithful to
-/// `secure-input.png`: a VIVID-BLUE FILLED pill in the FIXED security-blue `Slate.Status.secureInput`
-/// (#2D6FE8) — a theme-INDEPENDENT token, NOT the theme-derived `Slate.Status.info`. The pill must stay a
-/// constant royal-blue on every theme so it can never collapse into the theme accent: the shipped themes
-/// have `info == accent`, which would make a theme-derived security badge invisible
-/// against the accent (the screenshot is the green-accent Paper theme yet the pill is the same blue).
-/// Carries a WHITE filled lock-shield + the uppercase `SECURE INPUT` label in white.
-///
-/// Unlike ``ReadOnlyPill`` there is no `×`: secure input is a SAFETY indicator the user does not dismiss with
-/// a click (the auto path clears when the password prompt ends; the manual path clears via the Edit-menu /
-/// palette toggle). Visibility is gated by the LEAF (`secureInputActive && indicator && !readOnly`) — it is
-/// HIDDEN while read-only is on (no input path can fire there, so the secure-input cue is moot), mirroring
-/// the spec's "those pills hide under read-only".
-struct SecureInputPill: View {
-    /// The pill's FIXED fill — the theme-INDEPENDENT security-blue `Slate.Status.secureInput` (#2D6FE8), NOT
-    /// the theme-derived `Slate.Status.info`. Exposed as a single source so the view and its colour test read
-    /// the SAME token (mirroring `ToastStackView.ink(for:)`): a regression that re-routed the fill back through
-    /// the theme accent fails the test that pins this against the fixed token and asserts it ≠ the theme accent.
-    static var fillColor: Color { Slate.Status.secureInput }
-
-    var body: some View {
-        HStack(spacing: Slate.Metric.space1) {
-            // The white lock-shield — `secure-input.png` shows a filled shield-with-lock, the macOS
-            // secure-input idiom (NOT the plain padlock the read-only pill uses).
-            Image(systemSymbol: .lockShieldFill)
-                .font(.system(size: Slate.Typeface.small, weight: .bold))
-                .foregroundStyle(Slate.Text.onAccent)
-            Text("SECURE INPUT")
-                .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
-                .tracking(Slate.Typeface.pillTracking)
-                .foregroundStyle(Slate.Text.onAccent)
-                .lineLimit(1)
-                .fixedSize()
-        }
-        .padding(.horizontal, Slate.Metric.space2)
-        .padding(.vertical, Slate.Metric.space1)
-        // VIVID-BLUE FILLED chip in the FIXED security-blue (theme-INDEPENDENT, never the theme accent) — the
-        // screenshot's bold royal-blue badge. A small shadow lifts it off busy terminal output.
-        .background(Self.fillColor, in: .rect(cornerRadius: Slate.Metric.radiusControl))
-        .slateShadow(.chip)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Secure input")
-        .accessibilityHint("Secure keyboard entry is active — other apps cannot read your keystrokes")
-    }
-}
-
-/// The `⚠ SYNC INPUT ×` pill — shown in the pane's top-trailing overlay while the pane's TAB is armed
-/// for synchronized input (⌘⇧I / palette "Sync Input to All Panes"): every keystroke typed in ANY pane
-/// of the tab is mirrored into all its sibling panes.
-///
-/// This pill is LOAD-BEARING safety chrome, not decoration: sync-input armed with no indicator is a
-/// cross-pane input leak the user cannot explain — a command typed in one pane silently executes in
-/// every sibling (field report: two same-project panes "leaking into each other"; the armed state had
-/// NO surfacing after the v6 UI reset dropped the old tab-bar badge). Like ``SecureInputPill`` it is a
-/// VIVID FILLED chip in a FIXED theme-independent tone (`Slate.Status.syncInput` amber — a mode this
-/// dangerous never blends with the chrome); like ``ReadOnlyPill`` it carries an `×` so the mode can be
-/// disarmed right where its effect is felt (routes to ``WorkspaceStore/disarmSyncInput(for:)``, which
-/// disarms the WHOLE tab — the pill disappears from every sibling at once).
-///
-/// Shown on EVERY pane of the armed tab (each one both leaks and receives), gated by the LEAF on
-/// `store.syncInputArmed(for:)` — reading the observable `syncInputTabs`, so arming/disarming from the
-/// chord, the palette, or any sibling's `×` re-renders all panes live.
-struct SyncInputPill: View {
-    /// The pill's FIXED fill — the theme-INDEPENDENT sync-amber (see `Slate.Status.syncInput`). One
-    /// source for the view and its colour test, mirroring ``SecureInputPill/fillColor``.
-    static var fillColor: Color { Slate.Status.syncInput }
-
-    /// Called when the user clicks `×` — the leaf routes it to `WorkspaceStore.disarmSyncInput(for:)`.
-    let onDisarm: () -> Void
-
-    @State private var closeHover = false
-
-    var body: some View {
-        HStack(spacing: Slate.Metric.space1) {
-            // The grouped-panes glyph — the same symbol the palette entry uses, so the pill and the
-            // command that armed it read as one feature.
-            Image(systemSymbol: .rectangle3Group)
-                .font(.system(size: Slate.Typeface.small, weight: .bold))
-                .foregroundStyle(Slate.Text.onAccent)
-            Text("SYNC INPUT")
-                .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
-                .tracking(Slate.Typeface.pillTracking)
-                .foregroundStyle(Slate.Text.onAccent)
-                .lineLimit(1)
-                .fixedSize()
-            closeButton
-        }
-        .padding(.horizontal, Slate.Metric.space2)
-        .padding(.vertical, Slate.Metric.space1)
-        // VIVID-AMBER FILLED chip in the FIXED sync-amber (theme-INDEPENDENT, never the theme accent) —
-        // a mode this dangerous must never blend with the chrome. A small shadow lifts it off busy output.
-        .background(Self.fillColor, in: .rect(cornerRadius: Slate.Metric.radiusControl))
-        .slateShadow(.chip)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Sync input")
-        .accessibilityHint("Keystrokes typed here are mirrored into every other pane in this tab")
-    }
-
-    /// The `×` close glyph — white-on-amber (the fill is vivid, so the ReadOnlyPill's secondary tone
-    /// would vanish), with the same subtle hover plate. Disarms the WHOLE tab via ``onDisarm``.
-    private var closeButton: some View {
-        Button(action: onDisarm) {
-            Image(systemSymbol: .xmark)
-                .font(.system(size: Slate.Typeface.small, weight: .medium))
-                .foregroundStyle(Slate.Text.onAccent)
-                .frame(width: 16, height: 16)
-                .background(
-                    closeHover ? Slate.State.selected : .clear,
-                    in: .rect(cornerRadius: Slate.Metric.radiusSmall),
-                )
-                .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-        .onHover { closeHover = $0 }
-        .slateHelp("Turn off sync input for this tab")
+        .slateHelp(help)
     }
 }
 #endif

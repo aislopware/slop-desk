@@ -24,8 +24,14 @@
 // `Slate.*` tokens for chrome; the badge is a FIXED yellow plate with BLACK text (the hint-mode spec's "yellow
 // background / black text" — theme-independent so it reads over any terminal background, the secure-input-pill
 // rationale). check-ds-leaks forbids only raw font-size / radius literals, not these colours.
+//
+// Every DECISION and every WORD in this file is ``HintPresentation``'s (`SlopDeskClientCore`): the arm
+// predicate, the per-letter fade rule, the uppercasing, the dim predicate over
+// ``HintLabelAssigner/filter(typed:labels:)``, and the five strings. What is left here is the ink and the
+// placement — which is the whole of what an AppKit half would differ in.
 
 #if canImport(SwiftUI)
+import SlopDeskClientCore
 import SlopDeskSlate
 import SlopDeskTerminal
 import SlopDeskWorkspaceCore
@@ -43,12 +49,14 @@ struct HintModeOverlay: View {
         if let intent = model.hintMode,
            let snapshot = model.surface as? TerminalViewportSnapshotting,
            let metrics = snapshot.cellMetrics(),
-           metrics.cellWidth > 0, metrics.cellHeight > 0
+           HintPresentation.isArmed(
+               intent: intent, cellWidth: metrics.cellWidth, cellHeight: metrics.cellHeight,
+           )
         {
             let typed = model.hintTyped
             let labels = model.hintLabels
             let targets = model.hintTargets
-            let matched = Set(HintLabelAssigner.filter(typed: typed, labels: labels).matched)
+            let matched = HintPresentation.matchedLabels(typed: typed, labels: labels)
 
             ZStack(alignment: .topLeading) {
                 // Dim the surface so the labels pop — the SAME scrim token the modal overlays
@@ -67,9 +75,12 @@ struct HintModeOverlay: View {
                     if let rect = metrics.clampedRect(
                         row: pair.0.row, colStart: pair.0.colStart, colEnd: pair.0.colEnd,
                     ) {
-                        HintLabelBadge(label: pair.1, typed: typed, dimmed: !matched.contains(pair.1))
-                            .offset(x: rect.minX, y: rect.minY)
-                            .onTapGesture { model.confirmHintTarget(pair.0) } // iOS tap-on-label fallback
+                        HintLabelBadge(
+                            label: pair.1, typed: typed,
+                            dimmed: HintPresentation.dimmed(label: pair.1, matched: matched),
+                        )
+                        .offset(x: rect.minX, y: rect.minY)
+                        .onTapGesture { model.confirmHintTarget(pair.0) } // iOS tap-on-label fallback
                     }
                 }
             }
@@ -100,6 +111,8 @@ private struct HintLabelBadge: View {
         labelText
             .font(.system(size: Slate.Typeface.small, weight: .bold, design: .monospaced))
             .padding(.horizontal, Slate.Metric.space1)
+            // ⚠️ 14 is UNNAMED — the badge's minimum height, deliberately under the keycap's 18 because a
+            // badge stands ON the grid rather than beside a label. Proposed `Slate.Metric.hintBadge`.
             .frame(minHeight: 14)
             .background(Slate.Status.warn, in: .rect(cornerRadius: Slate.Metric.radiusSmall))
             .overlay(
@@ -107,17 +120,20 @@ private struct HintLabelBadge: View {
                     // A thin dark hairline so the yellow plate reads on a light background too.
                     .strokeBorder(Slate.Text.onWarn.opacity(Slate.Opacity.dim), lineWidth: Slate.Metric.hairline),
             )
+            // ⚠️ 0.2 is UNNAMED — the ruled-out badge's opacity, a rung BELOW `Slate.Opacity.dim` (0.35)
+            // because this dims a whole plate rather than ink on one. Proposed `Slate.Opacity.dimmedPlate`.
             .opacity(dimmed ? 0.2 : 1)
             .fixedSize()
-            .accessibilityLabel("Hint \(label.uppercased())")
+            .accessibilityLabel(HintPresentation.labelAccessibility(label))
     }
 
     /// The 2 uppercase letters — already-typed letters faded (progress cue), the rest solid black. Black on the
     /// fixed-yellow plate is theme-independent + high-contrast (the hint-mode spec; the secure-input-pill rationale).
+    /// WHICH letters are faded, and that the label is uppercased at all, are ``HintPresentation``'s.
     private var labelText: Text {
         // Splice the per-character `Text` runs left-to-right into one run (`Text.spliced`).
-        Text.spliced(Array(label.uppercased()).enumerated().map { offset, element in
-            let faded = offset < typed.count
+        Text.spliced(Array(HintPresentation.displayLabel(label)).enumerated().map { offset, element in
+            let faded = HintPresentation.isFaded(offset: offset, typed: typed)
             let ink = faded ? Slate.Text.onWarn.opacity(Slate.Opacity.dim) : Slate.Text.onWarn
             return Text(String(element)).foregroundStyle(ink)
         })
@@ -135,17 +151,11 @@ private struct HintModeBadge: View {
 
     @State private var closeHover = false
 
-    private var intentLabel: String {
-        switch intent {
-        case .open: "OPEN"
-        case .copy: "COPY"
-        case .reveal: "REVEAL"
-        }
-    }
+    private var intentLabel: String { intent.badgeLabel }
 
     var body: some View {
         HStack(spacing: Slate.Metric.space1) {
-            Text("HINTS")
+            Text(HintPresentation.title)
                 .font(.system(size: Slate.Typeface.footnote, weight: .bold))
                 .tracking(Slate.Typeface.pillTracking)
                 .foregroundStyle(Slate.Text.onWarn)
@@ -154,7 +164,7 @@ private struct HintModeBadge: View {
                 .tracking(Slate.Typeface.pillTracking)
                 .foregroundStyle(Slate.Text.onWarn.opacity(Slate.Opacity.muted))
             if !typed.isEmpty {
-                Text(typed.uppercased())
+                Text(HintPresentation.displayLabel(typed))
                     .font(.system(size: Slate.Typeface.footnote, weight: .bold, design: .monospaced))
                     .foregroundStyle(Slate.Text.onWarn)
             }
@@ -165,8 +175,8 @@ private struct HintModeBadge: View {
         .background(Slate.Status.warn, in: .rect(cornerRadius: Slate.Metric.radiusControl))
         .slateShadow(.chip)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Hint mode \(intentLabel)")
-        .accessibilityHint("Press a label, or Escape to exit")
+        .accessibilityLabel(HintPresentation.badgeAccessibilityLabel(intent))
+        .accessibilityHint(HintPresentation.badgeAccessibilityHint)
     }
 
     /// The `×` exit glyph — leaves hint mode (the same seam Esc / the dim-plate tap fire).
@@ -175,12 +185,14 @@ private struct HintModeBadge: View {
             Image(systemName: "xmark")
                 .font(.system(size: Slate.Typeface.small, weight: .bold))
                 .foregroundStyle(Slate.Text.onWarn.opacity(closeHover ? 1 : Slate.Opacity.muted))
+                // ⚠️ 16×16 is UNNAMED and spelled four times across this directory. Proposed
+                // `Slate.Metric.glyphPlate`.
                 .frame(width: 16, height: 16)
                 .contentShape(.rect)
         }
         .buttonStyle(.plain)
         .onHover { closeHover = $0 }
-        .slateHelp("Exit hint mode (Esc)")
+        .slateHelp(HintPresentation.exitHelp)
     }
 }
 #endif

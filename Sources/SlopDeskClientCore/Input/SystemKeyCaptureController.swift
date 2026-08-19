@@ -5,6 +5,13 @@
 // of triggering local macOS actions. Every DECISION is the pure ``SystemKeyCapturePolicy`` (unit-pinned
 // headlessly); this file is ONLY the tap/run-loop/observer lifecycle.
 //
+// It lived in `SlopDeskClientUI/Input/` and declared no `View` — the whole file is a CGEvent tap, a run loop
+// and four `NotificationCenter` observers, and its one import of a view framework was AppKit, named as an
+// ACTUATOR. docs/56 §3: *a framework call is not a view; a `some View` is.* The seam that made the move safe
+// was already cut — ``SystemKeyCapturePolicy`` is the decision table, and it has been in this target (and
+// headlessly pinned) since it moved to Rust — so what descended is the mechanism alone, beside the rules it
+// actuates and beside ``SecureKeyboardEntryController``, the keyboard actuator with the same shape.
+//
 // TAP LOCATION — `.cgSessionEventTap`, not `.cghidEventTap`: the session tap is the earliest point a
 // non-root, Accessibility-trusted process can FILTER events (HID placement is documented for root; a user
 // process gains nothing there), and head-inserted (`.headInsertEventTap`) it still runs BEFORE the
@@ -15,13 +22,13 @@
 // returns nil — ``engage(forward:keyWindow:)`` then returns `false` and the controller stays inert (never
 // crashes); the caller surfaces ``promptForTrust()``.
 //
-// HANG-SAFETY: never instantiate this controller in a unit test — creating a live event tap needs AX trust
-// and swallows the TEST RUNNER's (and the whole session's) keyboard. The decision table is pinned by
-// `SystemKeyCapturePolicyTests`; the tap lifecycle is GUI-verified only.
+// HANG-SAFETY: never ENGAGE this controller in a unit test — creating a live event tap needs AX trust and
+// swallows the TEST RUNNER's (and the whole session's) keyboard. The decision table is pinned by
+// `SystemKeyCapturePolicyTests`, and `PaneImmersiveCaptureTests` reaches only the wish arms that provably
+// return before ``engage(forward:keyWindow:)``; the tap lifecycle itself is GUI-verified only.
 
 #if os(macOS)
 import AppKit
-import SlopDeskClientCore
 
 /// Owns ONE immersive-mode CGEvent tap: created on ``engage(forward:keyWindow:)``, torn down on
 /// ``disengage()`` (the toggle, the ⌃⌥⌘E escape chord, unmount) / deinit. Default state is OFF — nothing is

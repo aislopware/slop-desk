@@ -14,6 +14,20 @@ public enum HintIntent: Equatable, Sendable {
     case open
     case copy
     case reveal
+
+    /// The word the overlay's badge prints, and the word its accessibility label reads.
+    ///
+    /// On the enum rather than at the badge because the badge is drawn twice — one SwiftUI overlay on
+    /// the phone, one AppKit overlay on the Mac (docs/56 §2) — and a verb spelled at each drawing is a
+    /// verb that can drift. Upper-case is the SHAPE of the badge, not a shout: it is one word in a
+    /// 14pt plate over a terminal, and mixed case at that size reads as body text.
+    public var badgeLabel: String {
+        switch self {
+        case .open: "OPEN"
+        case .copy: "COPY"
+        case .reveal: "REVEAL"
+        }
+    }
 }
 
 /// A user-defined hint pattern (`hint-pattern` + `hint-pattern-action`): a regex string plus an

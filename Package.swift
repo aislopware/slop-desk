@@ -382,10 +382,13 @@ let package = Package(
         // for. Keeping the two apart is what stops the domain target from growing a view model every
         // time a surface is added.
         //
-        // The three files that name a framework name it as an ACTUATOR, not a view:
+        // The files that name a framework name it as an ACTUATOR, not a view:
         // `SecureKeyboardEntryController` (Carbon `EnableSecureEventInput` + the app-frontmost edge),
-        // `CodeSidebarFontSchemeHandler` (a `WKScriptMessageHandler`) and `WorkspaceControlBackend`
-        // (`NSFontManager`, for `font list`). A framework call is not a view; a `some View` is.
+        // `SystemKeyCaptureController` (the immersive `CGEvent` tap), `CodeSidebarFontSchemeHandler`
+        // (a `WKScriptMessageHandler`) and `WorkspaceControlBackend` (`NSFontManager`, for
+        // `font list`). A framework call is not a view; a `some View` is — which is also why the
+        // count above is no longer spelled: it was wrong before `SystemKeyCaptureController`
+        // descended, and a number maintained beside a list is a number that goes stale.
         .target(
             name: "SlopDeskClientCore",
             dependencies: [
@@ -394,6 +397,12 @@ let package = Package(
                 "SlopDeskWorkspaceCore",
                 // Pane specs, `PaneID`, `ShellQuoting`.
                 "SlopDeskWorkspaceModel",
+                // `TerminalCellMetrics` / `TerminalViewportSnapshotting` — the cell-grid decorations
+                // (the ⌘-hold underline, the copy-mode block cursor, the prompt-jump flash) are pure
+                // geometry over the viewport seam, so the DECISION lives here and only the drawing is
+                // per-framework. Transitive via WorkspaceCore, but a direct `import` needs it declared
+                // here (same rationale as Protocol/Inspector/Transport).
+                "SlopDeskTerminal",
                 // The palette + the rail read host metadata (process / port / dir / git-file).
                 "SlopDeskProtocol",
                 // The rail's rows and the palette's agent entries are keyed by agent state.
@@ -1005,12 +1014,13 @@ let package = Package(
         // design-system tests were deleted with their views); L1+ re-add per-layer view-logic tests.
         .testTarget(
             name: "SlopDeskClientUITests",
-            // E5/WI-3: `TerminalFindBarModelTests` conforms an in-memory fake to `SlopDeskTerminal`'s
-            // `TerminalSurface`/`TerminalSurfaceActions` (the scrollback-mirror + bind-action seam) to drive
-            // the find bar's view-model headlessly — declare the (already-transitive) module explicitly.
+            // `TerminalGridFitTests` and `SlateSnapshotRender` name `SlopDeskTerminal`'s grid + surface
+            // types directly — declare the (already-transitive) module explicitly. `SlopDeskClientCore`
+            // for the same reason: ~10 files here read a presentation verdict, and increment 54 moved
+            // the driver they used to reach it through one target down.
             dependencies: [
-                "SlopDeskClientUI", "SlopDeskSlate", "SlopDeskWorkspaceCore", "SlopDeskProtocol",
-                "SlopDeskTerminal",
+                "SlopDeskClientUI", "SlopDeskSlate", "SlopDeskClientCore", "SlopDeskWorkspaceCore",
+                "SlopDeskProtocol", "SlopDeskTerminal",
             ],
         ),
         // docs/56 stage C: the macOS SHELL's own suite, moved out of `SlopDeskClientUITests` with the
@@ -1054,9 +1064,12 @@ let package = Package(
         // build too, and a rule that only a Mac can test is a rule the iOS half will re-derive.
         .testTarget(
             name: "SlopDeskClientCoreTests",
+            // `SlopDeskTerminal`: `TerminalFindBarModelTests` conforms an in-memory fake to
+            // `TerminalSurface`/`TerminalSurfaceActions` (the scrollback-mirror + bind-action seam) to
+            // drive the find bar's view-model headlessly. It arrived with increment 54.
             dependencies: [
                 "SlopDeskClientCore", "SlopDeskWorkspaceCore", "SlopDeskWorkspaceModel",
-                "SlopDeskProtocol", "SlopDeskClient",
+                "SlopDeskProtocol", "SlopDeskClient", "SlopDeskTerminal",
             ],
         ),
 

@@ -93,8 +93,13 @@ struct GuiLeafView: View {
     /// Mbps at the surface (the picker's unit), bps on the model/wire.
     private var bitrateCapMbpsSelection: Binding<Int> {
         Binding(
-            get: { (model?.streamBitrateCeilingBps ?? 0) / 1_000_000 },
-            set: { model?.applyStreamSettings(fpsCap: model?.streamFpsCap ?? 0, bitrateCeilingBps: $0 * 1_000_000) },
+            get: { GuiPaneReadout.mbps(fromBps: model?.streamBitrateCeilingBps ?? 0) },
+            set: {
+                model?.applyStreamSettings(
+                    fpsCap: model?.streamFpsCap ?? 0,
+                    bitrateCeilingBps: GuiPaneReadout.bps(fromMbps: $0),
+                )
+            },
         )
     }
 
@@ -111,123 +116,11 @@ struct GuiLeafView: View {
     }
 
     var body: some View {
-        // EDGE-TO-EDGE: no inner padding — every point of a video pane is remote pixels (a gutter
-        // here is pure wasted stream area, unlike a terminal where the inset is a reading margin).
-        // The Metal-hosting view is sized to the FULL leaf rect, so its pointer→host coordinate
-        // mapping (relative to view bounds) stays consistent.
-        content
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(NativePaneColor.terminalBackground)
-            // WINDOW-PANE CONTROL BAR — COLLAPSED CHROME: the bar is an OVERLAY along the pane bottom,
-            // hidden by default behind the corner chip below, so a video pane spends its whole leaf rect
-            // on remote pixels (a resident footer would tax every pane ~28 pt of stream area forever for
-            // controls used in bursts). Expanded it covers the bottom strip of the stream — a deliberate,
-            // transient occlusion the user opted into. Only while live.
-            .overlay(alignment: .bottom) {
-                if showControlBar, controlsExpanded {
-                    GuiPaneControlBar(
-                        model: model, store: store, paneID: paneID,
-                        showStats: $showStats,
-                        fpsCapSelection: fpsCapSelection,
-                        bitrateCapMbpsSelection: bitrateCapMbpsSelection,
-                        immersiveOn: immersiveActive,
-                        onToggleImmersive: { immersiveCapture.toggle(model: model) },
-                        onCollapse: { controlsExpanded = false },
-                    )
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                }
-            }
-            // The COLLAPSED chip (Parsec-style): a single small plate, bottom-trailing (bottom-leading
-            // belongs to the stall caption). Accent-tinted while any latched pane mode is engaged —
-            // immersive / viewport lock / host audio / a stream override — so collapsing the bar never
-            // hides a status light. A CLICK target, never hover-reveal: the bottom edge of a video pane
-            // is the edge-hover auto-pan strip, so a hover-revealed bar would fight the pan gesture.
-            .overlay(alignment: .bottomTrailing) {
-                if showControlBar, !controlsExpanded {
-                    collapsedControlsChip
-                        .padding(Slate.Metric.space2)
-                        .transition(.opacity)
-                }
-            }
-            .animation(Slate.Anim.reveal, value: controlsExpanded)
-            // PASTE-AS-KEYSTROKES RESULT BANNER: the model's transient "typed N, skipped M" feedback (set only
-            // when some clipboard chars had no US-QWERTY mapping and were dropped) so the user learns a paste was
-            // incomplete. Tap to dismiss; auto-clears on a timer. Never on the static-mirror path. Flat bottom pill.
-            .overlay(alignment: .bottom) {
-                if !staticMirror, let feedback = model?.pasteFeedback {
-                    PasteFeedbackBanner(feedback: feedback) { model?.dismissPasteFeedback() }
-                        .padding(
-                            .bottom,
-                            showControlBar && controlsExpanded
-                                ? Slate.Metric.paneHeaderHeight + Slate.Metric.space2
-                                : Slate.Metric.space2,
-                        )
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                }
-            }
-            .animation(Slate.Anim.reveal, value: model?.pasteFeedback)
-            // The `🔒 READ ONLY ×` pill (``ReadOnlyPill``) so a read-only `.desktop`
-            // pane is a VISUAL peer of a read-only terminal leaf (same top-trailing overlay/reveal as
-            // ``TerminalLeafView``). Without it a locked remote window silently swallows clicks/keys with ZERO
-            // feedback and no exit affordance. A video pane has no ``TerminalViewModel`` (no `exitReadOnly()`), so
-            // `×` releases the lock via ``WorkspaceStore/setPaneReadOnly(_:_:)`` — the SAME source of truth the input
-            // gate, View-menu item, and sidebar lock read. Gated by the pure
-            // ``showReadOnlyPill(staticMirror:isReadOnly:)`` (never on the static-mirror path).
-            .overlay(alignment: .topTrailing) {
-                if Self.showReadOnlyPill(staticMirror: staticMirror, isReadOnly: store.isReadOnly(for: paneID)) {
-                    ReadOnlyPill(onDeactivate: { store.setPaneReadOnly(paneID, false) })
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                        .padding(Slate.Metric.space2)
-                }
-            }
-            .animation(Slate.Anim.reveal, value: store.isReadOnly(for: paneID))
-            // STATS READOUT (footer toggle): the client-local telemetry chip — instrument voice, top-leading
-            // (top-trailing belongs to the read-only pill), hit-testing off so it never eats pane input.
-            .overlay(alignment: .topLeading) {
-                if showStats, !staticMirror, let model, model.active != nil {
-                    GuiStatsReadout(model: model)
-                        .allowsHitTesting(false)
-                        .padding(Slate.Metric.space2)
-                        .transition(.opacity)
-                }
-            }
-            .animation(Slate.Anim.reveal, value: showStats)
-            // DRAG-DROP FILE UPLOAD (desktop panes): a file dragged from Finder — or, on iPad, from
-            // Files.app or any app that vends a file URL — onto the remote desktop uploads over the
-            // DEDICATED PATH-4 connection (never the terminal/video paths). The drop is accepted only
-            // for a live desktop pane; a window/dialog pane rejects it (the existing
-            // `PaneDropReceiver` path-inject still covers terminal panes elsewhere).
-            //
-            // NOT platform-gated, and it used to be. Nothing in the path is macOS's: the coordinator
-            // is Foundation over the Network-backed transfer client, `.dropDestination` is SwiftUI's
-            // on both, and the security-scoped grant an iOS drop needs is taken in
-            // `FileUploadCoordinator` where it can outlive this callback. What differs is only what a
-            // device can drag FROM — an iPhone has no cross-app drag, so the destination simply never
-            // lights there; an iPad has, and now uploads.
-            .dropDestination(for: URL.self) { urls, _ in
-                handleFileDrop(urls)
-            } isTargeted: { targeted in
-                isDropTargeted = targeted && isDesktopUploadTarget
-            }
-            .overlay {
-                if isDropTargeted {
-                    FileDropHighlight()
-                        .allowsHitTesting(false)
-                        .transition(.opacity)
-                }
-            }
-            .animation(Slate.Anim.reveal, value: isDropTargeted)
-            // UPLOAD PROGRESS: a compact stack of in-flight/just-settled uploads, top-center (clear of
-            // the read-only pill top-trailing and the stats readout top-leading). Hit-testing off.
-            .overlay(alignment: .top) {
-                if !staticMirror, let model, !model.activeUploads.isEmpty {
-                    FileUploadOverlay(uploads: model.activeUploads)
-                        .allowsHitTesting(false)
-                        .padding(Slate.Metric.space2)
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                }
-            }
-            .animation(Slate.Anim.reveal, value: model?.activeUploads ?? [])
+        // SPLIT IN TWO, and not for taste: as one chain this body defeated the type checker
+        // ("unable to type-check this expression in reasonable time"). The cut is at the seam that was
+        // already there — everything above DRAWS over the stream, everything below is LIFECYCLE (cap
+        // admission, visibility, unmount, immersive capture, pointer). Neither half reads the other.
+        chrome
             // CAP ADMISSION: request a slot when ON-SCREEN, on appear AND whenever a sibling
             // frees one (`videoPromotionGeneration` bumps); `.task(id:)` cancels+restarts on either. Gated on
             // `isVisible` so a background-tab / zoom-hidden pane does NOT claim a `liveVideoCap` slot (else the
@@ -287,54 +180,172 @@ struct GuiLeafView: View {
             }
     }
 
+    /// Everything drawn OVER the stream: the control bar and its collapsed chip, the paste banner,
+    /// the read-only pill, the stats readout, the upload destination and its progress stack.
+    ///
+    /// Pure decoration over ``content`` — it starts no task and watches no lifecycle edge, which is
+    /// exactly why the cut is here and not at some arbitrary modifier count.
+    private var chrome: some View {
+        // EDGE-TO-EDGE: no inner padding — every point of a video pane is remote pixels (a gutter
+        // here is pure wasted stream area, unlike a terminal where the inset is a reading margin).
+        // The Metal-hosting view is sized to the FULL leaf rect, so its pointer→host coordinate
+        // mapping (relative to view bounds) stays consistent.
+        content
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Slate.Surface.terminal)
+            // WINDOW-PANE CONTROL BAR — COLLAPSED CHROME: the bar is an OVERLAY along the pane bottom,
+            // hidden by default behind the corner chip below, so a video pane spends its whole leaf rect
+            // on remote pixels (a resident footer would tax every pane ~28 pt of stream area forever for
+            // controls used in bursts). Expanded it covers the bottom strip of the stream — a deliberate,
+            // transient occlusion the user opted into. Only while live.
+            .overlay(alignment: .bottom) {
+                if showControlBar, controlsExpanded {
+                    GuiPaneControlBar(
+                        model: model, store: store, paneID: paneID,
+                        showStats: $showStats,
+                        fpsCapSelection: fpsCapSelection,
+                        bitrateCapMbpsSelection: bitrateCapMbpsSelection,
+                        immersiveOn: immersiveActive,
+                        onToggleImmersive: { immersiveCapture.toggle(model: model) },
+                        onCollapse: { controlsExpanded = false },
+                    )
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            // The COLLAPSED chip (Parsec-style): a single small plate, bottom-trailing (bottom-leading
+            // belongs to the stall caption). Accent-tinted while any latched pane mode is engaged —
+            // immersive / viewport lock / host audio / a stream override — so collapsing the bar never
+            // hides a status light. A CLICK target, never hover-reveal: the bottom edge of a video pane
+            // is the edge-hover auto-pan strip, so a hover-revealed bar would fight the pan gesture.
+            .overlay(alignment: .bottomTrailing) {
+                if showControlBar, !controlsExpanded {
+                    collapsedControlsChip
+                        .padding(Slate.Metric.space2)
+                        .transition(.opacity)
+                }
+            }
+            .animation(Slate.Anim.reveal, value: controlsExpanded)
+            // PASTE-AS-KEYSTROKES RESULT BANNER: the model's transient "typed N, skipped M" feedback (set only
+            // when some clipboard chars had no US-QWERTY mapping and were dropped) so the user learns a paste was
+            // incomplete. Tap to dismiss; auto-clears on a timer. Never on the static-mirror path. Flat bottom pill.
+            .overlay(alignment: .bottom) {
+                if !staticMirror, let feedback = model?.pasteFeedback {
+                    PasteFeedbackBanner(feedback: feedback) { model?.dismissPasteFeedback() }
+                        .padding(
+                            .bottom,
+                            showControlBar && controlsExpanded
+                                ? Slate.Metric.paneHeaderHeight + Slate.Metric.space2
+                                : Slate.Metric.space2,
+                        )
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .animation(Slate.Anim.reveal, value: model?.pasteFeedback)
+            // The `🔒 READ ONLY ×` pill (``PaneStatusPillView``) so a read-only `.desktop`
+            // pane is a VISUAL peer of a read-only terminal leaf (same top-trailing overlay/reveal as
+            // ``TerminalLeafView``). Without it a locked remote window silently swallows clicks/keys with ZERO
+            // feedback and no exit affordance. A video pane has no ``TerminalViewModel`` (no `exitReadOnly()`), so
+            // `×` releases the lock via ``WorkspaceStore/setPaneReadOnly(_:_:)`` — the SAME source of truth the input
+            // gate, View-menu item, and sidebar lock read. Gated by the pure
+            // ``GuiPaneReadout/showsReadOnlyPill(staticMirror:isReadOnly:)`` (never on the static path).
+            .overlay(alignment: .topTrailing) {
+                if GuiPaneReadout.showsReadOnlyPill(
+                    staticMirror: staticMirror, isReadOnly: store.isReadOnly(for: paneID),
+                ) {
+                    PaneStatusPillView(pill: .readOnly, onDismiss: { store.setPaneReadOnly(paneID, false) })
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .padding(Slate.Metric.space2)
+                }
+            }
+            .animation(Slate.Anim.reveal, value: store.isReadOnly(for: paneID))
+            // STATS READOUT (footer toggle): the client-local telemetry chip — instrument voice, top-leading
+            // (top-trailing belongs to the read-only pill), hit-testing off so it never eats pane input.
+            .overlay(alignment: .topLeading) {
+                if showStats, !staticMirror, let model, model.active != nil {
+                    GuiStatsReadout(model: model)
+                        .allowsHitTesting(false)
+                        .padding(Slate.Metric.space2)
+                        .transition(.opacity)
+                }
+            }
+            .animation(Slate.Anim.reveal, value: showStats)
+            // DRAG-DROP FILE UPLOAD (desktop panes): a file dragged from Finder — or, on iPad, from
+            // Files.app or any app that vends a file URL — onto the remote desktop uploads over the
+            // DEDICATED PATH-4 connection (never the terminal/video paths). The drop is accepted only
+            // for a live desktop pane; a window/dialog pane rejects it (the existing
+            // `PaneDropReceiver` path-inject still covers terminal panes elsewhere).
+            //
+            // NOT platform-gated, and it used to be. Nothing in the path is macOS's: the coordinator
+            // is Foundation over the Network-backed transfer client, `.dropDestination` is SwiftUI's
+            // on both, and the security-scoped grant an iOS drop needs is taken in
+            // `FileUploadCoordinator` where it can outlive this callback. What differs is only what a
+            // device can drag FROM — an iPhone has no cross-app drag, so the destination simply never
+            // lights there; an iPad has, and now uploads.
+            .dropDestination(for: URL.self) { urls, _ in
+                GuiPaneUploads.handleDrop(urls, isUploadTarget: isDesktopUploadTarget, model: model)
+            } isTargeted: { targeted in
+                isDropTargeted = targeted && isDesktopUploadTarget
+            }
+            .overlay {
+                if isDropTargeted {
+                    FileDropHighlight()
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
+                }
+            }
+            .animation(Slate.Anim.reveal, value: isDropTargeted)
+            // UPLOAD PROGRESS: a compact stack of in-flight/just-settled uploads, top-center (clear of
+            // the read-only pill top-trailing and the stats readout top-leading). Hit-testing off.
+            .overlay(alignment: .top) {
+                if !staticMirror, let model, !model.activeUploads.isEmpty {
+                    FileUploadOverlay(uploads: model.activeUploads)
+                        .allowsHitTesting(false)
+                        .padding(Slate.Metric.space2)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
+            .animation(Slate.Anim.reveal, value: model?.activeUploads ?? [])
+    }
+
     /// Whether immersive capture is ON for the footer toggle/chip tint. This is the model's WISH —
     /// like a suspension, a not-yet-re-engaged remount still shows the latched tint so the mode never
     /// silently reads as off. Constant `false` on a half with no capture, because nothing there ever
     /// sets the wish and ``PaneImmersiveCapture/isSupported`` keeps the chip off the bar entirely.
     private var immersiveActive: Bool { model?.immersiveEffective == true }
 
-    /// Whether this is a LIVE desktop pane that accepts drag-drop uploads (the gesture is "drop onto
-    /// the remote desktop"; a window/dialog pane is not a drop target).
+    /// This pane's reading of ``GuiPaneReadout/isDesktopUploadTarget(staticMirror:kind:hasLiveDescriptor:)``.
     private var isDesktopUploadTarget: Bool {
-        !staticMirror && store.tree.spec(for: paneID)?.kind == .desktop && model?.active != nil
+        GuiPaneReadout.isDesktopUploadTarget(
+            staticMirror: staticMirror,
+            kind: store.tree.spec(for: paneID)?.kind,
+            hasLiveDescriptor: model?.active != nil,
+        )
     }
 
-    /// Routes dropped Finder file URLs to the dedicated PATH-4 uploader. Returns whether the drop was
-    /// accepted (false for a non-desktop / non-streaming pane, so the OS shows the reject cursor).
-    private func handleFileDrop(_ urls: [URL]) -> Bool {
-        guard isDesktopUploadTarget, let model, let endpoint = model.fileTransferTarget() else { return false }
-        FileUploadCoordinator.upload(files: urls, host: endpoint.host, port: endpoint.port, into: model)
-        return true
-    }
-
-    /// The `.task` identity: re-run admission when THIS session changes (mount), a sibling frees a slot, OR
-    /// visibility flips (so a pane returning to screen re-requests its slot immediately).
+    /// This pane's reading of ``GuiPaneReadout/activationKey(paneHash:promotionGeneration:isVisible:)``.
     private var activationKey: String {
-        "\(live?.id.hashValue ?? 0):\(store.videoPromotionGeneration):\(isVisible ? 1 : 0)"
+        GuiPaneReadout.activationKey(
+            paneHash: live?.id.hashValue ?? 0,
+            promotionGeneration: store.videoPromotionGeneration,
+            isVisible: isVisible,
+        )
     }
 
-    /// Whether the `🔒 READ ONLY ×` pill mounts — pane is read-only
-    /// (``WorkspaceStore/isReadOnly(for:)``, the convergent set) AND NOT the static-mirror path (an
-    /// `ImageRenderer` capture renders no live chrome). PURE so it is headless-testable without instantiating
-    /// the view (hang-safety: no SCStream/VT/Metal/NSWindow). Mirrors ``TerminalLeafView``'s gate minus the
-    /// vi/copy-mode exclusion — a video pane has no copy mode.
-    static func showReadOnlyPill(staticMirror: Bool, isReadOnly: Bool) -> Bool {
-        !staticMirror && isReadOnly
-    }
-
-    /// Whether the bottom CONTROL bar mounts — only while the LIVE surface is up (a live descriptor exists) and
-    /// NOT on the static-mirror path. Its controls (resize / lock / zoom) are meaningful only against a live
-    /// stream, so the picker / cap-gated states show no footer.
+    /// This pane's reading of ``GuiPaneReadout/showsControlBar(staticMirror:hasLiveDescriptor:)``.
     private var showControlBar: Bool {
-        !staticMirror && model?.active != nil
+        GuiPaneReadout.showsControlBar(staticMirror: staticMirror, hasLiveDescriptor: model?.active != nil)
     }
 
-    /// Whether any LATCHED pane mode is engaged — the states whose accent tint the control bar carries
-    /// as status lights. While the bar is collapsed the chip inherits that tint, so no latched mode is
-    /// ever invisible. `showStats` is deliberately absent: its readout is its own visibility.
+    /// This pane's reading of ``GuiPaneReadout/hasLatchedMode(immersive:viewportLocked:audioEnabled:streamFpsCap:streamBitrateCeilingBps:)``
+    /// — the tint the collapsed chip inherits, so no latched mode is ever invisible.
     private var hasLatchedMode: Bool {
-        immersiveActive || model?.viewportLocked == true || model?.audioStreamEnabled == true
-            || (model?.streamFpsCap ?? 0) != 0 || (model?.streamBitrateCeilingBps ?? 0) != 0
+        GuiPaneReadout.hasLatchedMode(
+            immersive: immersiveActive,
+            viewportLocked: model?.viewportLocked == true,
+            audioEnabled: model?.audioStreamEnabled == true,
+            streamFpsCap: model?.streamFpsCap ?? 0,
+            streamBitrateCeilingBps: model?.streamBitrateCeilingBps ?? 0,
+        )
     }
 
     /// The collapsed-chrome chip: one plate button on the same dim-ground material as the stall caption /
@@ -343,7 +354,7 @@ struct GuiLeafView: View {
     private var collapsedControlsChip: some View {
         SlatePlateButton(
             symbol: .ellipsis,
-            help: "Window controls",
+            help: GuiPaneReadout.Tooltip.expandControls,
             tint: hasLatchedMode ? Slate.State.accent : Slate.Text.icon,
         ) { controlsExpanded = true }
             .background(
@@ -469,17 +480,12 @@ struct GuiLeafView: View {
             Image(systemSymbol: .display)
                 .font(.system(size: Slate.Typeface.display, weight: .regular))
                 .foregroundStyle(Slate.Text.secondary)
-            Text(placeholderLabel(state))
+            Text(GuiPaneReadout.placeholderLabel(state))
                 .font(.system(size: Slate.Typeface.body, weight: .semibold))
                 .foregroundStyle(Slate.Text.primary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(NativePaneColor.terminalBackground)
-    }
-
-    private func placeholderLabel(_ state: RemoteGUIDisplay) -> String {
-        if state == .gated { return "Video paused — too many live streams" }
-        return "desktop"
+        .background(Slate.Surface.terminal)
     }
 }
 
@@ -496,7 +502,7 @@ private struct StreamStallCaption: View {
             HStack(spacing: Slate.Metric.space2) {
                 ProgressView()
                     .controlSize(.mini)
-                Text(caption(at: timeline.date))
+                Text(GuiPaneReadout.stallCaption(since: since, now: timeline.date))
                     .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .medium))
                     .tracking(Slate.Typeface.instrumentTracking)
                     .foregroundStyle(Slate.Text.primary)
@@ -508,12 +514,6 @@ private struct StreamStallCaption: View {
                 in: .rect(cornerRadius: Slate.Metric.radiusSmall),
             )
         }
-    }
-
-    private func caption(at now: Date) -> String {
-        guard let since else { return "RECONNECTING" }
-        let age = max(0, Int(now.timeIntervalSince(since).rounded(.down)))
-        return "RECONNECTING · \(age)S"
     }
 }
 
@@ -548,6 +548,10 @@ private struct GuiPaneControlBar: View {
 
     /// Whether the stream-quality (fps cap / bitrate ceiling) popover is open.
     @State private var showTunePopover = false
+
+    /// The bar's copy, spelled once below the UI. Aliased only so a two-state tooltip fits on one
+    /// line — the strings themselves live in ``GuiPaneReadout/Tooltip``.
+    private typealias Tip = GuiPaneReadout.Tooltip
 
     /// Whether this pane currently lives in a satellite window (drives detach ⇄ reattach flip).
     private var isDetached: Bool { store.tree.isDetached(paneID) }
@@ -594,7 +598,7 @@ private struct GuiPaneControlBar: View {
                 if BindingRowPlatform.lists("pane.detach") {
                     SlatePlateButton(
                         symbol: isDetached ? .macwindowAndPointerArrow : .macwindowOnRectangle,
-                        help: isDetached ? "Reattach as a pane" : "Detach into its own window (⌥⌘P)",
+                        help: isDetached ? Tip.reattach : Tip.detach,
                     ) {
                         if isDetached { store.reattachPane(paneID) } else { store.detachPaneToWindow(paneID) }
                     }
@@ -612,16 +616,16 @@ private struct GuiPaneControlBar: View {
                     // compositor zoom = min per-axis pane/window ratio) — the one-tap escape from an
                     // overflowing viewport. Arrows-INTO-a-rectangle: "fit content into the frame" (kept
                     // visually distinct from the host-window `squareResize` glyph above).
-                    SlatePlateButton(symbol: .rectangleArrowtriangle2Inward, help: "Fit window to pane") {
+                    SlatePlateButton(symbol: .rectangleArrowtriangle2Inward, help: Tip.fitToPane) {
                         model.sendViewport(.fitToPane)
                     }
-                    SlatePlateButton(symbol: .minusMagnifyingglass, help: "Zoom out") {
+                    SlatePlateButton(symbol: .minusMagnifyingglass, help: Tip.zoomOut) {
                         model.sendViewport(.zoomOut)
                     }
-                    SlatePlateButton(symbol: ._1Magnifyingglass, help: "Actual size (1× + re-anchor top-left)") {
+                    SlatePlateButton(symbol: ._1Magnifyingglass, help: Tip.actualSize) {
                         model.sendViewport(.reset)
                     }
-                    SlatePlateButton(symbol: .plusMagnifyingglass, help: "Zoom in") {
+                    SlatePlateButton(symbol: .plusMagnifyingglass, help: Tip.zoomIn) {
                         model.sendViewport(.zoomIn)
                     }
                 }
@@ -637,7 +641,7 @@ private struct GuiPaneControlBar: View {
                 if model != nil {
                     SlatePlateButton(
                         symbol: .chartBarXaxis,
-                        help: showStats ? "Hide stream stats" : "Show stream stats",
+                        help: showStats ? Tip.hideStats : Tip.showStats,
                         tint: showStats ? Slate.State.accent : Slate.Text.icon,
                     ) { showStats.toggle() }
                 }
@@ -646,7 +650,7 @@ private struct GuiPaneControlBar: View {
                 if let model, model.canAdjustStreamSettings {
                     SlatePlateButton(
                         symbol: .gaugeWithDotsNeedle67percent,
-                        help: "Stream quality — fps cap / bitrate ceiling…",
+                        help: Tip.streamQuality,
                         tint: (fpsCapSelection != 0 || bitrateCapMbpsSelection != 0)
                             ? Slate.State.accent : Slate.Text.icon,
                     ) { showTunePopover = true }
@@ -665,9 +669,7 @@ private struct GuiPaneControlBar: View {
                 if let model, model.canToggleAudio || model.audioStreamEnabled {
                     SlatePlateButton(
                         symbol: model.audioStreamEnabled ? .speakerWave2 : .speakerSlash,
-                        help: model.audioStreamEnabled
-                            ? "Mute host audio"
-                            : "Play host audio in this pane",
+                        help: model.audioStreamEnabled ? Tip.muteAudio : Tip.playAudio,
                         tint: model.audioStreamEnabled ? Slate.State.accent : Slate.Text.icon,
                     ) { model.applyAudioEnabled(!model.audioStreamEnabled) }
                         .disabled(!model.canToggleAudio)
@@ -681,9 +683,7 @@ private struct GuiPaneControlBar: View {
                 {
                     SlatePlateButton(
                         symbol: model.privacyEnabled ? .eyeSlashFill : .eye,
-                        help: model.privacyEnabled
-                            ? "Show the host display + restore its input"
-                            : "Privacy: black the host display + block its keyboard/mouse",
+                        help: model.privacyEnabled ? Tip.privacyOff : Tip.privacyOn,
                         tint: model.privacyEnabled ? Slate.State.accent : Slate.Text.icon,
                     ) { model.applyPrivacyEnabled(!model.privacyEnabled) }
                         .disabled(!model.canTogglePrivacy)
@@ -701,9 +701,7 @@ private struct GuiPaneControlBar: View {
                     {
                         SlatePlateButton(
                             symbol: .command,
-                            help: immersiveOn
-                                ? "Immersive on — system keys (⌘Tab, ⌘Q, ⌘Space…) go to the host · ⌃⌥⌘E exits"
-                                : "Immersive — send system keys (⌘Tab, ⌘Q, ⌘Space…) to the host",
+                            help: immersiveOn ? Tip.immersiveOn : Tip.immersiveOff,
                             tint: immersiveOn ? Slate.State.accent : Slate.Text.icon,
                         ) { onToggleImmersive() }
                     }
@@ -712,9 +710,7 @@ private struct GuiPaneControlBar: View {
                     if let model, model.canControlViewport {
                         SlatePlateButton(
                             symbol: model.viewportLocked ? .lockFill : .lockOpen,
-                            help: model.viewportLocked
-                                ? "Unlock viewport (resume edge-pan) (⌥⌘L)"
-                                : "Lock viewport position (freeze edge-pan) (⌥⌘L)",
+                            help: model.viewportLocked ? Tip.unlockViewport : Tip.lockViewport,
                             tint: model.viewportLocked ? Slate.State.accent : Slate.Text.icon,
                         ) {
                             model.toggleViewportLock()
@@ -725,7 +721,7 @@ private struct GuiPaneControlBar: View {
             // ── COLLAPSE: fold the bar back into the corner chip — the way OUT lives where the way IN
             // was, at the bar's outer edge. A momentary command, so it never carries a tint. The bar's
             // only chevron.
-            SlatePlateButton(symbol: .chevronDown, help: "Hide controls") { onCollapse() }
+            SlatePlateButton(symbol: .chevronDown, help: Tip.collapseControls) { onCollapse() }
         }
         .padding(.horizontal, Slate.Metric.space2)
         .frame(height: Slate.Metric.paneHeaderHeight)
@@ -746,14 +742,13 @@ private struct GuiStatsReadout: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Slate.Metric.space1) {
-            row("\(model.streamFps.map(String.init) ?? "—") FPS · \(mbpsLabel) MBPS")
-            row("RX \(model.statsFps.map { String(format: "%.0f", $0) } ?? "—") FPS · DEPTH "
-                + "\(model.statsPacerDepth.map(String.init) ?? "—")")
-            row("FEC \(perSecLabel(model.statsFecPerSec)) · LOST \(perSecLabel(model.statsUnrecoveredPerSec))")
-            row(
-                "RTT \(msLabel(model.statsRttMs)) · ENC \(msLabel(model.statsEncodeMs)) · DEC \(msLabel(model.statsDecodeMs))",
-            )
-            row("HOLD \(model.statsHoldMs.map(String.init) ?? "—") MS")
+            // WHAT the five rows say — and the `—`-until-measured rule inside each — is
+            // ``GuiPaneReadout/statRows(_:)``, over one ``GuiStreamTelemetry`` sample.
+            // Every model property is still read HERE, so observation registers and the chip ticks with
+            // the ~2 Hz stats mirror exactly as before.
+            ForEach(Array(rows.enumerated()), id: \.offset) { _, text in
+                row(text)
+            }
         }
         .padding(.horizontal, Slate.Metric.space2)
         .padding(.vertical, Slate.Metric.space1)
@@ -763,19 +758,19 @@ private struct GuiStatsReadout: View {
         )
     }
 
-    private var mbpsLabel: String {
-        guard let kbps = model.streamKbps else { return "—" }
-        return String(format: "%.1f", Double(kbps) / 1000.0)
-    }
-
-    private func perSecLabel(_ value: Double?) -> String {
-        guard let value else { return "—/S" }
-        return String(format: "%.1f/S", value)
-    }
-
-    private func msLabel(_ value: Double?) -> String {
-        guard let value else { return "—" }
-        return String(format: "%.1f", value)
+    private var rows: [String] {
+        GuiPaneReadout.statRows(GuiStreamTelemetry(
+            streamFps: model.streamFps,
+            streamKbps: model.streamKbps,
+            statsFps: model.statsFps,
+            statsPacerDepth: model.statsPacerDepth,
+            statsFecPerSec: model.statsFecPerSec,
+            statsUnrecoveredPerSec: model.statsUnrecoveredPerSec,
+            statsRttMs: model.statsRttMs,
+            statsEncodeMs: model.statsEncodeMs,
+            statsDecodeMs: model.statsDecodeMs,
+            statsHoldMs: model.statsHoldMs,
+        ))
     }
 
     private func row(_ text: String) -> some View {
@@ -795,9 +790,6 @@ private struct GuiStreamTunePopover: View {
     @Binding var fpsCap: Int
     @Binding var bitrateCapMbps: Int
 
-    private static let fpsChoices = [0, 15, 30, 60]
-    private static let mbpsChoices = [0, 5, 10, 20, 50]
-
     var body: some View {
         VStack(alignment: .leading, spacing: Slate.Metric.space3) {
             Text("Stream quality")
@@ -808,8 +800,8 @@ private struct GuiStreamTunePopover: View {
                     .font(.system(size: Slate.Typeface.footnote))
                     .foregroundStyle(Slate.Text.secondary)
                 Picker("FPS cap", selection: $fpsCap) {
-                    ForEach(Self.fpsChoices, id: \.self) { fps in
-                        Text(fps == 0 ? "Auto" : "\(fps)").tag(fps)
+                    ForEach(GuiPaneReadout.fpsChoices, id: \.self) { fps in
+                        Text(GuiPaneReadout.fpsChoiceLabel(fps)).tag(fps)
                     }
                 }
                 .pickerStyle(.segmented)
@@ -820,8 +812,8 @@ private struct GuiStreamTunePopover: View {
                     .font(.system(size: Slate.Typeface.footnote))
                     .foregroundStyle(Slate.Text.secondary)
                 Picker("Bitrate ceiling", selection: $bitrateCapMbps) {
-                    ForEach(Self.mbpsChoices, id: \.self) { mbps in
-                        Text(mbps == 0 ? "Auto" : "\(mbps) Mb").tag(mbps)
+                    ForEach(GuiPaneReadout.mbpsChoices, id: \.self) { mbps in
+                        Text(GuiPaneReadout.mbpsChoiceLabel(mbps)).tag(mbps)
                     }
                 }
                 .pickerStyle(.segmented)
@@ -843,7 +835,7 @@ private struct GuiDisplaySwitcherMenu: View {
     let model: RemoteWindowModel
 
     var body: some View {
-        SlatePlateMenu(symbol: .display, help: "Switch host display") {
+        SlatePlateMenu(symbol: .display, help: GuiPaneReadout.Tooltip.displaySwitcher) {
             if model.availableDisplays.isEmpty {
                 Button("No display list from host") {}.disabled(true)
             } else {
@@ -891,7 +883,7 @@ private struct GuiPastePlateMenu: View {
         // tooltip), and the immersive toggle needs the keyboard family to itself.
         SlatePlateMenu(
             symbol: .documentOnClipboard,
-            help: "Paste local clipboard into the remote window as keystrokes (⌥⌘V)",
+            help: GuiPaneReadout.Tooltip.paste,
         ) {
             Button("Paste as Keystrokes") {
                 if let text = clipboard { model.pasteAsKeystrokes(text) }
@@ -978,7 +970,7 @@ private struct FileUploadOverlay: View {
 
     private func row(_ upload: FileUploadProgress) -> some View {
         HStack(spacing: Slate.Metric.space2) {
-            Image(systemSymbol: glyph(upload.phase))
+            Image(systemName: GuiPaneReadout.uploadGlyph(upload.phase))
                 .foregroundStyle(tint(upload.phase))
                 .font(.system(size: Slate.Typeface.small, weight: .semibold))
             VStack(alignment: .leading, spacing: 2) {
@@ -1004,19 +996,13 @@ private struct FileUploadOverlay: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func glyph(_ phase: FileUploadProgress.Phase) -> SFSymbol {
-        switch phase {
-        case .sending: .arrowUpCircle
-        case .completed: .checkmarkCircleFill
-        case .failed: .exclamationmarkTriangleFill
-        }
-    }
-
+    /// The row's tone, looked up from the SEMANTIC ``GuiUploadTint``: the branch is
+    /// ``GuiPaneReadout/uploadTint(_:)``'s, the token is this framework's. A `Color` cannot descend
+    /// below the token floor, so only the part that could ever be wrong does.
     private func tint(_ phase: FileUploadProgress.Phase) -> Color {
-        switch phase {
-        case .sending: Slate.Text.icon
-        case .completed: Slate.State.accent
-        case .failed: Slate.State.accent
+        switch GuiPaneReadout.uploadTint(phase) {
+        case .icon: Slate.Text.icon
+        case .accent: Slate.State.accent
         }
     }
 }

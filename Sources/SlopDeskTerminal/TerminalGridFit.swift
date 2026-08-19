@@ -67,6 +67,53 @@ public struct TerminalLetterbox: Sendable, Equatable {
     }
 }
 
+public extension TerminalLetterbox {
+    /// The fit, PLUS the natural (unscaled) size the surface must be framed at.
+    ///
+    /// The pair is one value because the two numbers are only correct together. The renderer is framed
+    /// at `natural` and then transformed by `fit.scale`; framing it at the SCALED rect instead would
+    /// make the renderer derive a different grid from its own bounds — the phone would reflow to its
+    /// own window, which is the exact thing size-passivity exists to stop (docs/45 §8.3).
+    struct Placement: Equatable, Sendable {
+        /// Where the grid lands, and at what scale.
+        public var fit: TerminalLetterbox
+        /// The grid's size at the renderer's NATURAL cell metrics, before the scale is applied.
+        public var natural: CGSize
+
+        public init(fit: TerminalLetterbox, natural: CGSize) {
+            self.fit = fit
+            self.natural = natural
+        }
+    }
+
+    /// Places a host-resolved `grid` drawn at `cellSize` inside `container`.
+    ///
+    /// DEGRADES TO FULL-BLEED, and that is the whole contract: `nil` whenever ANYTHING it depends on is
+    /// unknown. Every input can legitimately be absent — the roster has not landed, the document is
+    /// off, the renderer is a placeholder with no cell metrics, or the layout pass has not run — and in
+    /// each of those cases the caller draws the content at full bleed exactly as it always did. An
+    /// absent letterbox, never a wrong one, which is the rule this whole decoration family keeps.
+    ///
+    /// Plain separate `*` (never `addingProduct`/`fma`), per CLAUDE.md §2.
+    static func placement(
+        grid: (cols: Int, rows: Int)?, cellSize: CGSize?, in container: CGSize,
+    ) -> Placement? {
+        guard let grid, let cellSize else { return nil }
+        guard let fit = fit(
+            cols: grid.cols,
+            rows: grid.rows,
+            cellWidth: cellSize.width,
+            cellHeight: cellSize.height,
+            in: container,
+        ) else { return nil }
+        let natural = CGSize(
+            width: cellSize.width * CGFloat(grid.cols),
+            height: cellSize.height * CGFloat(grid.rows),
+        )
+        return Placement(fit: fit, natural: natural)
+    }
+}
+
 /// What the pane says about a grid it did not choose — docs/45 §8.3 rule 7's readout, verbatim:
 /// `120×40 · sized by MacBook Pro`.
 ///

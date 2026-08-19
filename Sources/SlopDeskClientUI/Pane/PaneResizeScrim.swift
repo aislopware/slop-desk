@@ -18,7 +18,7 @@ struct PaneResizeScrim: View {
     var body: some View {
         // A soft translucent veil in the terminal's own paper colour — dims the frozen / stretched surface so
         // it reads as a deliberate "resizing" haze without fully hiding it. Tune the opacity to taste.
-        NativePaneColor.terminalBackground
+        Slate.Surface.terminal
             .opacity(Slate.Opacity.muted)
     }
 }

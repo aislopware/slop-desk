@@ -1,12 +1,12 @@
 import XCTest
-@testable import SlopDeskClientUI
+@testable import SlopDeskClientCore
 @testable import SlopDeskWorkspaceCore
 
 /// The `🔒 READ ONLY ×` pill mounts on a read-only video pane.
 ///
 /// A locked remote window needs to be a VISUAL peer of a read-only terminal leaf (the input gate already
 /// withholds keys/clicks, but without the pill there is ZERO in-pane feedback and no `×` exit affordance).
-/// ``GuiLeafView`` gates the pill through the PURE ``GuiLeafView/showReadOnlyPill(staticMirror:isReadOnly:)``
+/// `GuiLeafView` gates the pill through the PURE ``GuiPaneReadout/showsReadOnlyPill(staticMirror:isReadOnly:)``
 /// — this suite pins that gate (the body's mount predicate) plus the `×` release path through the store's
 /// convergent set.
 ///
@@ -20,15 +20,15 @@ final class GuiLeafReadOnlyPillTests: XCTestCase {
     /// tautological.
     func testReadOnlyPillGateLightsOnlyWhenLockedAndLive() {
         XCTAssertTrue(
-            GuiLeafView.showReadOnlyPill(staticMirror: false, isReadOnly: true),
+            GuiPaneReadout.showsReadOnlyPill(staticMirror: false, isReadOnly: true),
             "a live, read-only remote window shows the lock pill",
         )
         XCTAssertFalse(
-            GuiLeafView.showReadOnlyPill(staticMirror: false, isReadOnly: false),
+            GuiPaneReadout.showsReadOnlyPill(staticMirror: false, isReadOnly: false),
             "a writable remote window shows no pill",
         )
         XCTAssertFalse(
-            GuiLeafView.showReadOnlyPill(staticMirror: true, isReadOnly: true),
+            GuiPaneReadout.showsReadOnlyPill(staticMirror: true, isReadOnly: true),
             "the static-mirror snapshot path renders no live chrome even when read-only",
         )
     }
@@ -37,25 +37,25 @@ final class GuiLeafReadOnlyPillTests: XCTestCase {
     /// release path (``WorkspaceStore/setPaneReadOnly(_:_:)`` with `false`) clears the convergent set so the
     /// gate falls back to false — proving the in-pane exit affordance the body wires actually unlocks the pane.
     func testReadOnlyPillReleasesTheRemoteWindowLock() {
-        let store = WorkspaceStore(makeSession: { seed in MountTestPaneSession(seed.spec) })
+        let store = WorkspaceStore(makeSession: { seed in RecordingPaneSession(seed.spec) })
         store.attachLoopbackWorkspaceDocument()
         let video = store.openDesktopWindow()
 
         XCTAssertFalse(
-            GuiLeafView.showReadOnlyPill(staticMirror: false, isReadOnly: store.isReadOnly(for: video)),
+            GuiPaneReadout.showsReadOnlyPill(staticMirror: false, isReadOnly: store.isReadOnly(for: video)),
             "a fresh video pane is writable ⇒ no pill",
         )
 
         store.setPaneReadOnly(video, true)
         XCTAssertTrue(
-            GuiLeafView.showReadOnlyPill(staticMirror: false, isReadOnly: store.isReadOnly(for: video)),
+            GuiPaneReadout.showsReadOnlyPill(staticMirror: false, isReadOnly: store.isReadOnly(for: video)),
             "locking the `.desktop` pane lights the pill",
         )
 
         // The pill `×` wires exactly this call (a video pane has no `terminalModel.exitReadOnly()`).
         store.setPaneReadOnly(video, false)
         XCTAssertFalse(
-            GuiLeafView.showReadOnlyPill(staticMirror: false, isReadOnly: store.isReadOnly(for: video)),
+            GuiPaneReadout.showsReadOnlyPill(staticMirror: false, isReadOnly: store.isReadOnly(for: video)),
             "clicking `×` releases the lock through the convergent set ⇒ the pill clears",
         )
     }

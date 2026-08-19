@@ -14,6 +14,7 @@
 // (mechanical, MERIDIAN L4 — the flash APPEARS as a hard cut and decays; nothing travels).
 
 #if canImport(SwiftUI)
+import SlopDeskClientCore
 import SlopDeskSlate
 import SlopDeskTerminal
 import SlopDeskWorkspaceCore
@@ -71,66 +72,29 @@ struct PromptJumpFlashOverlay: View {
             }
             await Task.yield()
             withAnimation(Slate.Anim.needle) { flashOpacity = 0 }
+            // ⚠️ ONE DURATION, THREE SPELLINGS. The fade is driven by `Slate.Anim.needle` (0.24s), this
+            // unmount waits 300ms, and this file's header calls the flash "~240ms". Nothing is visibly
+            // wrong — the unmount is deliberately AFTER the fade — but the 300 is a bare literal whose
+            // only job is "longer than `needle`", so it silently stops being that if `needle` moves.
+            // Owed: a named rung on `Slate.Anim` for "the fade, plus the beat that unmounts it", which
+            // this file does not own the right to mint.
             guard await (try? Task.sleep(for: .milliseconds(300))) != nil else { return }
             flashRects = []
         }
     }
 
-    /// The landed prompt line's rects: the pinned prompt block's first TEXT row plus its soft-WRAP
-    /// continuation rows (see ``anchorRows(in:cols:searchDepth:maxRows:)``), each spanning that row's
-    /// text extent (a full-grid-width bar reads as a selection band; the line's own width reads as
-    /// "this line"). Empty — no flash — for an alt-screen TUI, a placeholder surface (no viewport
-    /// seam), or a blank landing (nothing to anchor to).
+    /// The landed prompt line's rects, from the pure ``PromptJumpFlashGeometry/rects(rows:metrics:isAlternateScreen:)``
+    /// — the pinned prompt block's first TEXT row plus its soft-WRAP continuation rows, each spanning
+    /// that row's text extent (a full-grid-width bar reads as a selection band; the line's own width
+    /// reads as "this line"). Empty — no flash — for an alt-screen TUI, a placeholder surface (no
+    /// viewport seam), or a blank landing (nothing to anchor to).
     private func landedPromptRects() -> [CGRect] {
-        guard !model.isAlternateScreen,
-              let snapshot = model.surface as? TerminalViewportSnapshotting,
-              let metrics = snapshot.cellMetrics(),
-              metrics.cellWidth > 0, metrics.cellHeight > 0
-        else { return [] }
-        return Self.anchorRows(in: snapshot.viewportTextRows(), cols: metrics.cols)
-            .compactMap { metrics.clampedRect(row: $0.row, colStart: 0, colEnd: $0.cellCount) }
-    }
-
-    /// The viewport rows the flash anchors to: the first row with visible TEXT within the top
-    /// `searchDepth` rows, PLUS that line's soft-wrap continuations. libghostty pins the jumped-to
-    /// prompt at row 0, but the OSC-133 `A` mark is emitted at the pre-prompt cursor position — with a
-    /// spacer-printing prompt (starship's default `add_newline` blank line) the PINNED row is that
-    /// BLANK spacer and the visible prompt text sits on row 1/2. A whitespace-only row never anchors
-    /// (a space-flash reads as a rendering artifact); all blank ⇒ empty (absent, never wrong).
-    ///
-    /// WRAP RULE: a row whose text fills the whole grid width soft-wrapped, so the next row continues
-    /// the SAME logical prompt line — the flash walks those continuations (field report: a wrapped
-    /// prompt flashed only its first row, reading as a truncated cue). The walk stops at the first
-    /// non-full row (the line's true end), a blank row, or the `maxRows` cap (a pathological
-    /// grid-filling line must not flash half the screen). An exactly-grid-width line over-includes at
-    /// most one following row — benign versus under-flashing every wrapped prompt.
-    ///
-    /// `cellCount` is the row's grapheme count — under-measures a wide (2-cell) glyph's span,
-    /// acceptable: the flash covers the text from column 0, just stopping a few cells early on
-    /// CJK-heavy prompts (and its wrap detection errs the same safe way: a wide-glyph row reads as
-    /// non-full, ending the walk early rather than over-flashing). Static + pure so
-    /// `PromptJumpFlashAnchorTests` pins the spacer-row + wrap rules.
-    static func anchorRows(
-        in rows: [String], cols: Int, searchDepth: Int = 3, maxRows: Int = 4,
-    ) -> [(row: Int, cellCount: Int)] {
-        var anchor: Int?
-        for (index, text) in rows.prefix(searchDepth).enumerated()
-            where !text.trimmingCharacters(in: .whitespaces).isEmpty
-        {
-            anchor = index
-            break
-        }
-        guard let start = anchor else { return [] }
-        var result: [(row: Int, cellCount: Int)] = []
-        var row = start
-        while row < rows.count, result.count < maxRows {
-            let cellCount = rows[row].count
-            guard cellCount > 0 else { break }
-            result.append((row, cellCount))
-            guard cols > 0, cellCount >= cols else { break } // a non-full row ends the logical line
-            row += 1
-        }
-        return result
+        guard let snapshot = model.surface as? TerminalViewportSnapshotting else { return [] }
+        return PromptJumpFlashGeometry.rects(
+            rows: snapshot.viewportTextRows(),
+            metrics: snapshot.cellMetrics(),
+            isAlternateScreen: model.isAlternateScreen,
+        )
     }
 
     /// stderr diagnostics gated by `SLOPDESK_BLOCKS_DEBUG == "1"` — the paint end of the one-flag

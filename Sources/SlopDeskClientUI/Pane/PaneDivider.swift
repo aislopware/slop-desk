@@ -57,7 +57,9 @@ struct PaneDivider: View {
             Color.clear.contentShape(Rectangle())
             // The crisp resting hairline — accent + a touch thicker while actively dragging.
             hairlineShape(
-                color: gestureActive ? Slate.State.accent : NativePaneColor.separator,
+                // The pane-seam line INSIDE the island: the profile's edge tone, one step off the
+                // glass — the JetBrains-Islands internal divider, never a chrome-coloured gap.
+                color: gestureActive ? Slate.State.accent : Slate.Terminal.edge,
                 thickness: gestureActive ? Slate.Metric.dividerHoverWidth : hairline,
             )
         }
@@ -112,22 +114,15 @@ struct PaneDivider: View {
         }
     }
 
-    /// The hover cursor, telling the truth at the clamp (the same rule as the shell's column
-    /// dividers): a seam whose neighbour sits at the ``SplitWeight/minWeight`` floor asks for the
-    /// ONE-WAY resize arrow for the only direction the drag still has. Movability comes from the
-    /// handle's pair weights (``SplitTreeRenderModel/DividerHandle/canMoveTowardLeading``), the
-    /// exact quantities the drag clamp reads, so the glyph can never disagree with the gesture.
-    ///
-    /// It answers in ``PanePointer`` rather than in SwiftUI's `PointerStyle` on purpose: the rule
-    /// above is a statement about THIS seam's clamp, and the type that draws it does not exist on
-    /// iOS. Stated as a value it stays plain Swift on both platforms and only the drawing is gated
-    /// (see ``PanePointer``), which is also where the dead-seam fallback is written down.
+    /// This seam's reading of ``PaneCanvasMetrics/resizePointer(axis:toLeading:toTrailing:)`` — the
+    /// truth-at-the-clamp rule, taken from the handle's own pair weights so the glyph can never
+    /// disagree with the gesture's clamp.
     private var resizePointer: PanePointer {
-        let toLeading = handle.canMoveTowardLeading
-        let toTrailing = handle.canMoveTowardTrailing
-        return handle.axis == .horizontal
-            ? .columnResize(toLeading: toLeading, toTrailing: toTrailing)
-            : .rowResize(toUp: toLeading, toDown: toTrailing)
+        PaneCanvasMetrics.resizePointer(
+            axis: handle.axis,
+            toLeading: handle.canMoveTowardLeading,
+            toTrailing: handle.canMoveTowardTrailing,
+        )
     }
 
     /// The absolute leading weight for a cursor translation of `translation` points along the split axis:

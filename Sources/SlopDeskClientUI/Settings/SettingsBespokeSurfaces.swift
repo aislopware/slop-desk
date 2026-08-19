@@ -83,7 +83,7 @@ struct SettingsBespokeSurface: View {
 
 /// A RESERVED page states its own emptiness in the empty-state voice (MERIDIAN C3: muted symbol,
 /// short title, one-line cause) rather than as a "File editor — Not available" row, which read like a
-/// broken control. NOT a new `SlateEmptyState.Cause`: that enum's typed causes are the pane area's
+/// broken control. NOT a new `PaneEmptyCause`: that enum's typed causes are the pane area's
 /// connection states, with pinned copy per case.
 ///
 /// The glyph, the title and the sentence are ``SettingsEditorEmpty``'s — this is the arrangement only.
