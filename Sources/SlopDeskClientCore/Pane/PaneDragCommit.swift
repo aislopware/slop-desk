@@ -8,6 +8,12 @@
 // `SplitContainer.commitDestination`". Two spellings of one decision, in two files, one of which is
 // about to be rewritten in AppKit.
 //
+// That quoted address is now stale by one move and is left in quotation marks on purpose: the twin it
+// names descended to `PaneCanvasDragController.commitDestination`, out of the view layer entirely, in
+// the same sweep that is rewriting the canvas. The sentence is a QUOTE of what the other file used to
+// say, so correcting it in place would misreport history; what matters is that the live address is the
+// controller's, and the reason the move happened is the reason this file exists.
+//
 // WHAT DIFFERS BETWEEN THE TWO IS THE OP FAMILY, AND THE FAMILY IS THE ORIGIN. A pane still in a
 // tab's tree MOVES across tabs; a detached pane REATTACHES into one. Both keep the `PaneID` — that is
 // the whole point of every path here, since a torn-down surface would drop the live PTY or re-hello

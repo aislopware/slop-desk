@@ -21,6 +21,17 @@
 // ever wanted, gates ONCE where the render starts: a flag that reaches a leaf's `.task` and a pure
 // predicate in ClientCore is a second rendering mode maintained by everyone who touches the canvas.
 //
+// NO DRAG DECISIONS. The grab-handle drag used to live here as a `@State private var move` plus six
+// private methods — where the cursor would land, whether the source is still in the active tab, what a
+// release commits, and the two geometry reports. Not one of them read a design token, laid anything
+// out or named a view type, which is docs/56 §3's per-DECLARATION test verbatim; increment 54 missed
+// them because the canvas is ONE import edge no matter how much decision is inside it, and 56c's ruling
+// says why that is not an excuse — *a method on a `View` is not a view, but nothing that is not one can
+// reach it*. They are ``PaneCanvasDragController``'s (`SlopDeskClientCore`) now, so the second renderer
+// CALLS them instead of translating them. The one that had to move most is `commitDestination`: its
+// tear-off arm records the drop placement BEFORE `detachPaneToWindow`, because `detachedPanes` mutates
+// synchronously — an ordering that was pinned by a doc comment and is pinned by a test now.
+//
 // Dividers drag → LIVE resize: `store.setDividerWeightLive` each frame (panes move live) bracketed by
 // `store.setTerminalResizeSuspended` (defer the host grid-resize to release) + `store.commitDividerResize`;
 // double-click → `store.evenDividerTree` (evens ONLY that seam — the whole-tab reset stays on the ⌃⌘=
@@ -40,9 +51,23 @@ struct SplitContainer: View {
     /// its canvas landing here. `nil` (previews / iOS) keeps the drag canvas-only.
     var paneDrag: PaneDragCoordinator?
 
-    /// Live pane-move drag (grab-handle). View-local: the store is untouched until release, so the
-    /// terminal-grid / remote-window redraw fires once on commit, not per drag frame.
-    @State private var move: PaneMoveDrag?
+    /// The live pane-move drag (grab handle) and every decision it turns on — where the cursor would
+    /// land, what a release commits, and the two geometry reports the chords resolve against. It is
+    /// ``PaneCanvasDragController`` in `SlopDeskClientCore` rather than six private methods here for the
+    /// reason docs/56 §3 states per DECLARATION: none of them read a token, laid anything out or named a
+    /// view, so leaving them inside this `some View` meant the AppKit canvas would have re-written them
+    /// by hand — `commitDestination`'s load-bearing tear-off ORDER included.
+    ///
+    /// `@State` with the store + coordinator taken at construction: both are app-lifetime and this view
+    /// already holds them for exactly as long, and a later `attach` would have raced the tab layer's own
+    /// appear hook, which is where the first solved-layout report comes from.
+    @State private var drag: PaneCanvasDragController
+
+    init(store: WorkspaceStore, paneDrag: PaneDragCoordinator? = nil) {
+        self.store = store
+        self.paneDrag = paneDrag
+        _drag = State(initialValue: PaneCanvasDragController(store: store, coordinator: paneDrag))
+    }
 
     /// EVERY tab of every RETAINED session (the active session + the LRU-retained previous ones — see
     /// ``WorkspaceStore/retainedSessionIDs``), in session-then-tab-bar order. We render ALL of them (see
@@ -85,8 +110,8 @@ struct SplitContainer: View {
             .frame(width: bounds.width, height: bounds.height, alignment: .topLeading)
             // Report the full container bounds — the geometric ops' fallback before the first solved-layout
             // report. View-only — never reconciles. Fires ONCE at the container level, not per tab.
-            .onAppear { reportContainerBounds(bounds) }
-            .onChange(of: bounds) { _, newBounds in reportContainerBounds(newBounds) }
+            .onAppear { drag.reportContainerBounds(bounds) }
+            .onChange(of: bounds) { _, newBounds in drag.reportContainerBounds(newBounds) }
         }
         .background(Slate.Surface.terminal)
         // Register this canvas's SCREEN rect (and, through it, the main window frame — the tear-off
@@ -110,13 +135,6 @@ struct SplitContainer: View {
             DropTargetFrameReader(key: .canvas, coordinator: paneDrag)
         }
         #endif
-    }
-
-    /// Push the container bounds to the store (the geometric ops' fallback) AND the drag coordinator
-    /// (the canvas-local space a satellite-origin drag resolves its insert zones in).
-    private func reportContainerBounds(_ bounds: CGRect) {
-        store.updateContainerBounds(bounds)
-        paneDrag?.canvasBounds = bounds
     }
 
     /// One tab's pane tree, placed absolutely in a ZStack. Rendered for EVERY tab; the caller hides +
@@ -177,7 +195,7 @@ struct SplitContainer: View {
                 }
                 .zIndex(PaneCanvasMetrics.dividerZ)
             }
-            if isActive || moveSourceIsIn(frames) {
+            if isActive || drag.moveSourceIsIn(frames) {
                 // Grab-handles + the live drag overlay (extracted to keep this ZStack type-checkable).
                 moveLayer(leaves: layout.leaves, frames: frames, container: bounds)
                     .zIndex(PaneCanvasMetrics.moveZ)
@@ -198,26 +216,9 @@ struct SplitContainer: View {
         // without it `lastSolvedLayout` stays forever nil and the ⌃⌘arrow / ⌥⌘⇧arrow chords resolve against
         // the store's nominal fallback instead of the real geometry. View-only state;
         // never reconciles. Skipped for hidden tabs (only the visible geometry counts).
-        .onAppear { reportSolvedLayout(frames, isActive: isActive) }
-        .onChange(of: frames) { _, newFrames in reportSolvedLayout(newFrames, isActive: isActive) }
-        .onChange(of: isActive) { _, nowActive in reportSolvedLayout(frames, isActive: nowActive) }
-    }
-
-    /// Forwards the active tab's solved frames to `store.updateSolvedLayout` (a hidden tab never
-    /// reports — the store must only ever hold the geometry the user actually sees) and mirrors them
-    /// to the drag coordinator so a satellite-origin drag resolves its canvas insert zones against
-    /// the same live geometry.
-    private func reportSolvedLayout(_ frames: [PaneID: CGRect], isActive: Bool) {
-        guard isActive, !frames.isEmpty else { return }
-        store.updateSolvedLayout(SolvedLayout(frames: frames))
-        paneDrag?.canvasFrames = frames
-    }
-
-    /// Whether the live drag's SOURCE pane is one of this tab layer's leaves — the keep-mounted gate
-    /// that lets its grab-handle gesture survive a spring-loaded tab switch.
-    private func moveSourceIsIn(_ frames: [PaneID: CGRect]) -> Bool {
-        guard let move else { return false }
-        return frames[move.source] != nil
+        .onAppear { drag.reportSolvedLayout(frames, isActive: isActive) }
+        .onChange(of: frames) { _, newFrames in drag.reportSolvedLayout(newFrames, isActive: isActive) }
+        .onChange(of: isActive) { _, nowActive in drag.reportSolvedLayout(frames, isActive: nowActive) }
     }
 
     /// One divider, placed at its LIVE solved seam (`handle.rect.mid`, which the solver re-emits as the panes
@@ -264,7 +265,7 @@ struct SplitContainer: View {
             ForEach(leaves, id: \.id) { leaf in
                 moveHandle(for: leaf, leaves: leaves, container: container)
             }
-            if let move {
+            if let move = drag.move {
                 PaneMoveOverlay(
                     drag: move,
                     frames: frames,
@@ -279,12 +280,10 @@ struct SplitContainer: View {
             // Escape bails out of a live move without committing — armed only while a drag is in flight,
             // so it never shadows Escape for anything else at rest. Mounted UNCONDITIONALLY: the
             // monitor owns its own platform gate (see ``PaneMoveEscapeMonitor``), and restating it
-            // here would be the same fact in two files.
-            PaneMoveEscapeMonitor(isActive: move != nil) {
-                move = nil
-                paneDrag?.end()
-            }
-            .frame(width: 0, height: 0)
+            // here would be the same fact in two files. Escape and a gesture cancel are the SAME
+            // bail-out, so both are the controller's one `interrupted()` rather than two spellings.
+            PaneMoveEscapeMonitor(isActive: drag.move != nil) { drag.interrupted() }
+                .frame(width: 0, height: 0)
         }
     }
 
@@ -295,39 +294,23 @@ struct SplitContainer: View {
     ) -> some View {
         PaneMoveHandle(
             leafSize: leaf.rect.size,
-            isDragging: move?.source == leaf.id,
+            isDragging: drag.move?.source == leaf.id,
+            // Every arm of the gesture is the controller's — this closure supplies the cursor point and
+            // the frame it was measured in, and nothing else. What the destination IS, which zone the
+            // local overlay may preview, and what a release commits are all decisions, so they are the
+            // one place an AppKit canvas will ask them from too.
             onChanged: { loc in
-                let dest = dragDestination(
-                    at: loc, leaves: leaves, container: container, source: leaf.id, sourceRect: leaf.rect,
-                )
-                // The local overlay draws only the CANVAS zones of the source's OWN (active) tab; an
-                // external destination reads `.none` here (its cursor chip is clipped at the
-                // hosting-view edge anyway — the coordinator's floating panel + the sidebar highlights
-                // are the affordance out there), and so does a spring-loaded canvas zone (the ACTIVE
-                // tab's `ExternalDropZonePreview` owns that preview — this layer's frames are the wrong
-                // tab's).
-                let localZone: PaneDropZone = sourceIsInActiveTab(leaf.id)
-                    ? PaneCanvasMetrics.canvasZone(of: dest) : .none
-                move = PaneMoveDrag(source: leaf.id, location: loc, zone: localZone)
-                publishTreeDrag(dest, source: leaf.id, local: loc, soleLeaf: leaves.count <= 1)
+                drag.changed(leaf: leaf, among: leaves, container: container, at: loc)
             },
             onEnded: { loc in
-                let dest = dragDestination(
-                    at: loc, leaves: leaves, container: container, source: leaf.id, sourceRect: leaf.rect,
-                )
-                commitDestination(dest, source: leaf.id, local: loc)
-                move = nil
-                paneDrag?.end()
+                drag.ended(leaf: leaf, among: leaves, container: container, at: loc)
             },
             onTap: { store.focusPaneTree(leaf.id) },
             // The interruption safety net: a cancel, or this leaf closing mid-drag (torn out of the
-            // `ForEach` before `onEnded` can fire), still clears the view-local move state + the
-            // cross-window coordinator — otherwise `.allowsHitTesting(move == nil || …)` below wedges
-            // EVERY other handle non-interactive forever. No commit here — a cancel commits nothing.
-            onInterrupted: {
-                move = nil
-                paneDrag?.end()
-            },
+            // `ForEach` before `onEnded` can fire), still clears the drag state + the cross-window
+            // coordinator — otherwise `.allowsHitTesting(move == nil || …)` below wedges EVERY other
+            // handle non-interactive forever. No commit here — a cancel commits nothing.
+            onInterrupted: { drag.interrupted() },
             // A video leaf streams arbitrary (usually light) content — the handle pill needs its
             // contrast plate there (see `PaneMoveHandle.contentIsUnthemed`).
             contentIsUnthemed: store.tree.spec(for: leaf.id)?.kind.isVideo == true,
@@ -336,93 +319,7 @@ struct SplitContainer: View {
         .position(x: leaf.rect.midX, y: leaf.rect.midY)
         // During a drag only the source handle stays live (it owns the gesture); the rest stop hit-testing
         // so their top strips don't shadow the drop target.
-        .allowsHitTesting(move == nil || move?.source == leaf.id)
-    }
-
-    /// The FULL destination for a tree drag at canvas-local `loc`: inside the canvas the live in-tab
-    /// resolution applies unchanged; outside it, the coordinator's registered targets (sidebar rows,
-    /// the New-Tab slot, the tear-off boundary) take over. Without a coordinator (previews / iOS) the
-    /// gesture stays canvas-only, exactly the old behaviour.
-    ///
-    /// A SPRING-LOADED reveal can switch the active tab mid-drag — the source then no longer lives in
-    /// the visible tab, so the canvas resolves with INSERT semantics against the coordinator's pushed
-    /// active-tab layout instead of this (hidden) layer's own leaves.
-    private func dragDestination(
-        at loc: CGPoint,
-        leaves: [SplitTreeRenderModel.PlacedLeaf],
-        container: CGRect,
-        source: PaneID,
-        sourceRect: CGRect,
-    ) -> PaneDragDestination {
-        if let paneDrag, !sourceIsInActiveTab(source) {
-            guard let canvas = paneDrag.targetFrame(.canvas) else { return .canvas(.none) }
-            return paneDrag.resolveSpringLoadedTreeDestination(
-                at: PaneDragResolver.screenPoint(fromCanvasLocal: loc, canvas: canvas),
-                source: source,
-                sourceIsSoleLeafOfItsTab: leaves.count <= 1,
-            )
-        }
-        if container.contains(loc) || paneDrag == nil {
-            return .canvas(PaneCanvasDrop.zone(
-                at: loc, leaves: leaves, container: container, source: source, sourceRect: sourceRect,
-            ))
-        }
-        guard let paneDrag, let canvas = paneDrag.targetFrame(.canvas) else { return .canvas(.none) }
-        return paneDrag.resolveTreeExternalDestination(
-            at: PaneDragResolver.screenPoint(fromCanvasLocal: loc, canvas: canvas),
-            source: source,
-            sourceIsSoleLeafOfItsTab: leaves.count <= 1,
-        )
-    }
-
-    /// Whether `source` still lives in the ACTIVE tab — false after a spring-loaded reveal switched
-    /// tabs under a live drag. Decides both the canvas resolution semantics (in-tab swap/re-split vs
-    /// insert) and the commit family (same-tab move vs cross-tab move).
-    private func sourceIsInActiveTab(_ source: PaneID) -> Bool {
-        store.tree.activeSession?.activeTab?.allPaneIDs().contains(source) ?? true
-    }
-
-    /// Mirror the live tree drag to the coordinator — the sidebar highlights / New-Tab slot / floating
-    /// chip / spring-load dwell all render off this one published state. `soleLeaf` rides along so the
-    /// coordinator's auto-scroll tick can re-resolve the external destination without re-asking here.
-    private func publishTreeDrag(_ dest: PaneDragDestination, source: PaneID, local: CGPoint, soleLeaf: Bool) {
-        guard let paneDrag, let canvas = paneDrag.targetFrame(.canvas) else { return }
-        paneDrag.update(
-            source: source,
-            origin: .tree,
-            screenPoint: PaneDragResolver.screenPoint(fromCanvasLocal: local, canvas: canvas),
-            destination: dest,
-            sourceIsSoleLeafOfItsTab: soleLeaf,
-        )
-    }
-
-    /// Commits the FULL destination with exactly ONE store op, by asking whichever half of the drop
-    /// vocabulary owns it.
-    ///
-    /// The fork here is not a fourth spelling of the four cases — it is the ONE fact the two shared
-    /// decisions cannot read for themselves. ``PaneCanvasDrop`` owns the in-tab vocabulary (swap,
-    /// in-tab re-split, in-tab dock); ``PaneDragCommit`` owns every landing that leaves the tab, in
-    /// the `.tree` op family, and is the same decision the satellite window's reattach asks. What is
-    /// left is the tear-off, which is deliberately NOT one op: the drop point must be recorded BEFORE
-    /// the detach, because `detachedPanes` changes synchronously and the satellite coordinator reads
-    /// the placement as it opens the window. That ordering is the reason it stays spelled out here.
-    private func commitDestination(_ dest: PaneDragDestination, source: PaneID, local: CGPoint) {
-        switch dest {
-        case let .canvas(zone) where sourceIsInActiveTab(source):
-            PaneCanvasDrop.commit(zone, pane: source, in: store)
-        case .tearOff:
-            if let paneDrag, let canvas = paneDrag.targetFrame(.canvas) {
-                paneDrag.recordPlacement(
-                    source, at: PaneDragResolver.screenPoint(fromCanvasLocal: local, canvas: canvas),
-                )
-            }
-            store.detachPaneToWindow(source)
-        default:
-            // A spring-loaded landing (the zone was resolved with INSERT semantics against ANOTHER
-            // tab's canvas), a sidebar row, or the New-Tab slot. `.none` — and the `.swap` an insert
-            // resolution can never produce — commit nothing there, which is the cancel.
-            PaneDragCommit.commit(dest, pane: source, origin: .tree, in: store)
-        }
+        .allowsHitTesting(drag.move == nil || drag.move?.source == leaf.id)
     }
 }
 
