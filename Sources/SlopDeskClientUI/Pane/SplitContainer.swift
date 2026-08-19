@@ -32,6 +32,14 @@
 // tear-off arm records the drop placement BEFORE `detachPaneToWindow`, because `detachedPanes` mutates
 // synchronously — an ordering that was pinned by a doc comment and is pinned by a test now.
 //
+// NO PLATFORM GATE, AND NO DROP-TARGET READER (docs/56 stage F, P5). This view used to carry one
+// `#if os(macOS)` and one reason for it: the pane drag needs this canvas's SCREEN rect, and the
+// AppKit view hosting the canvas could not publish it because its frame and the canvas differed by
+// the island moat — which `ContentColumn` applied one level up, in SwiftUI. That was the last kind 3
+// in the ledger, and it was a statement about SwiftUI rather than about geometry: the moat is
+// ``SlopDeskMacUI/MacContentColumn``'s now, the hosting view's frame IS this canvas, and the
+// registration is three AppKit lines in that column. `DropTargetFrameReader` was deleted, not ported.
+//
 // Dividers drag → LIVE resize: `store.setDividerWeightLive` each frame (panes move live) bracketed by
 // `store.setTerminalResizeSuspended` (defer the host grid-resize to release) + `store.commitDividerResize`;
 // double-click → `store.evenDividerTree` (evens ONLY that seam — the whole-tab reset stays on the ⌃⌘=
@@ -114,27 +122,6 @@ struct SplitContainer: View {
             .onChange(of: bounds) { _, newBounds in drag.reportContainerBounds(newBounds) }
         }
         .background(Slate.Surface.terminal)
-        // Register this canvas's SCREEN rect (and, through it, the main window frame — the tear-off
-        // boundary) with the drag coordinator, so sidebar/satellite drags can hit-test it.
-        .background(canvasFrameReader)
-    }
-
-    /// The canvas's drop-target registration, and the LAST platform gate in this file.
-    ///
-    /// It is a gate rather than a missing feature: the reader publishes a SCREEN rect so that a drag
-    /// crossing between separate hosting views (the AppKit split's columns, a satellite `NSWindow`)
-    /// can be hit-tested in one space — and a phone has one window, one hosting view and no
-    /// cross-window drag to resolve. `paneDrag` is nil on iOS for exactly that reason, so the body
-    /// would be empty there even if the type existed. Written as ONE gate INSIDE the builder, not as
-    /// a second gate around the `.background` above: an empty `@ViewBuilder` is `EmptyView`, which
-    /// costs the phone nothing and costs the reader one place to be wrong instead of two.
-    @ViewBuilder
-    private var canvasFrameReader: some View {
-        #if os(macOS)
-        if let paneDrag {
-            DropTargetFrameReader(key: .canvas, coordinator: paneDrag)
-        }
-        #endif
     }
 
     /// One tab's pane tree, placed absolutely in a ZStack. Rendered for EVERY tab; the caller hides +

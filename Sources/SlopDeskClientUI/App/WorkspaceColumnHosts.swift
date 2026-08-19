@@ -8,8 +8,9 @@
 // So the seam is factories instead: the shell asks for a column, the draining floor hands back an
 // `NSViewController`. Each factory dies with the column it wraps — the NAVIGATOR's already has (that
 // column is ``SlopDeskMacUI/MacNavigatorColumn`` now, foot and all), and `content(...)` is down to the
-// pane CANVAS: the titlebar band over it is AppKit (``SlopDeskMacUI/MacTitlebarBand``) and the two are
-// siblings under ``SlopDeskMacUI/MacContentColumn``. This factory dies when `SplitContainer` crosses.
+// pane CANVAS ALONE: the titlebar band over it (``SlopDeskMacUI/MacTitlebarBand``), the rail beside it
+// and, since stage F's P5, the ISLAND UNDER IT are all AppKit, and this hosted view is the island's
+// whole interior (``SlopDeskMacUI/MacContentColumn``). This factory dies when `SplitContainer` crosses.
 //
 // The RIGHT column's factory is GONE, and it went in two steps rather than one, which is the shape a
 // big surface crosses in. Increment 51 rewrote the four surfaces, the five poll loops, the collapse
@@ -31,9 +32,14 @@ import SwiftUI
 
 @MainActor
 package enum WorkspaceColumnHosts {
-    /// The CENTRE column's CANVAS: the pane grid, its island geometry and the collapsed panel's rail.
-    /// The titlebar band that stands over it is AppKit and is mounted as this view's SIBLING — see
-    /// ``SlopDeskMacUI/MacContentColumn``.
+    /// The CENTRE column's CANVAS — the pane grid and nothing around it. The island it stands on, the
+    /// titlebar band over it and the collapsed panel's rail beside it are all AppKit, and this view is
+    /// mounted INSIDE the island as its whole interior (``SlopDeskMacUI/MacContentColumn``).
+    ///
+    /// Hence `ground: nil`: the island's layer is what this canvas stands on, so painting a ground
+    /// here would lay chrome cream over the glass. It is also what makes the hosting view's frame the
+    /// canvas's rect exactly, which is why the pane drag's `.canvas` registration is three lines up
+    /// there instead of a SwiftUI reader down here (docs/56 stage F, P5).
     package static func content(
         store: WorkspaceStore,
         connection: AppConnection,
@@ -45,7 +51,7 @@ package enum WorkspaceColumnHosts {
         hosted(
             ContentColumn(
                 store: store, connection: connection, chrome: chrome, onConnect: onConnect,
-                paneDrag: paneDrag,
+                paneDrag: paneDrag, ground: nil,
             ),
             overlay: overlay,
         )

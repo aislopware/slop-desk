@@ -1213,7 +1213,7 @@ package enum Slate {
         /// row sits centred on the traffic lights' own centre. Every column's SECOND row starts
         /// here: the navigator's search field, the panel's surfaces, and — only while the navigator
         /// is hidden, when the band runs over the content column — the island's top edge
-        /// (``slateIsland(clearingBand:)``).
+        /// (``SlopDeskMacUI/MacContentColumn``, which is where the moat is measured).
         ///
         /// The island's FIRST row does not: it starts at ``bandInset``, inside the band
         /// (user-directed 2026-08-09). A band the island merely hung below — tried at both 40 and 32

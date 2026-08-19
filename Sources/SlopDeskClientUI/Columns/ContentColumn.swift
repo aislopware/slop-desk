@@ -1,14 +1,21 @@
-// ContentColumn — the centre content area's CANVAS: the active tab's pane tree via the
-// identity-preserving `SplitContainer` (a Slate empty-state when there is no session/tab) and the
-// island geometry that lifts it off the ground.
+// ContentColumn — the centre content area's CANVAS, and now ONLY that: the active tab's pane tree via
+// the identity-preserving `SplitContainer`, or a Slate empty-state when there is no session/tab.
 //
-// The TITLEBAR BAND and the collapsed panel's RAIL are no longer here. Both are AppKit now
+// The TITLEBAR BAND and the collapsed panel's RAIL are no longer here. Both are AppKit
 // (``SlopDeskMacUI/MacTitlebarBand``, ``SlopDeskMacUI/MacPanelRail``), mounted as this column's
 // SIBLINGS by ``SlopDeskMacUI/MacContentColumn`` rather than as overlays on top of it — which is why
 // nothing in this file reserves the band's height or hands hit-testing back to either.
 //
-// What DOES stay is the rail's WIDTH. The moat is measured inside what the rail leaves, so the column
-// that draws the island is the one that has to give the width back.
+// AND NEITHER IS THE ISLAND (docs/56 stage F, P5). The moat, the window-scale corner, the glass and
+// its rim were `slateIsland(clearingBand:)` applied here, plus a trailing padding giving the rail its
+// width back; they are ``SlopDeskMacUI/MacContentColumn``'s constraints and one CALayer now. The point
+// is not tidiness. This view is hosted in ONE `NSView`, and the moat was the whole of the difference
+// between that view's frame and the canvas the pane drag hit-tests against — the difference
+// `DropTargetFrameReader` was written to measure from the SwiftUI side because AppKit could not see
+// it. Moved up, the difference is zero, the registration is three AppKit lines in the column, and the
+// reader is deleted rather than ported.
+//
+// The last platform gate went with it: what is left in this file is what BOTH renderers mount.
 
 #if canImport(SwiftUI)
 import SlopDeskClientCore
@@ -27,6 +34,14 @@ struct ContentColumn: View {
     /// a drag SOURCE and — for satellite-origin drags — a drop target). `nil` (previews / iOS) keeps the
     /// pane drag canvas-only.
     var paneDrag: PaneDragCoordinator?
+    /// The tone this column stands on wherever nothing covers it — in practice the empty state's
+    /// ground, since a mounted canvas paints its own face.
+    ///
+    /// `nil` means the HOST paints it, which is the Mac: there this column IS the island's interior,
+    /// and the island's fill, corner and rim are one AppKit layer's three properties
+    /// (``SlopDeskMacUI/MacContentColumn``). A second fill here would lay chrome GROUND over the
+    /// island's GLASS — the two tones the one-island law is spent keeping apart.
+    var ground: Color? = Slate.Surface.field
 
     /// The scene overlay reducer, re-injected by the split host (the hosted column does not inherit
     /// the WindowGroup environment). Read for the modal pointer shield below; `nil` (previews /
@@ -36,19 +51,15 @@ struct ContentColumn: View {
     private var hasActiveTab: Bool { store.tree.activeSession?.activeTab != nil }
 
     var body: some View {
-        content
+        paneArea
             // The chrome model rides the environment so DEEP descendants (a terminal leaf actuating
             // open-in-code-panel) can reveal the code sidebar without threading the reference
             // through every pane-tree layer. The leaf reads it OPTIONALLY (nil in previews/tests).
             .environment(chrome)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            // ONE ISLAND: this column paints GROUND end-to-end and the pane canvas is lifted off it
-            // as the window's single island (see ``content``). The band beside the island is that
-            // same ground — the tone the navigator and the code panel stand on — so the top of the
-            // window reads as one field with one card in it. The old rule ("the band must wear the
-            // pane tone or it reads as a mispainted header") belonged to a world where the panes
-            // were flush under it; with a moat and a corner between them the band is plainly ground.
-            .background(Slate.Surface.field)
+            // Whatever this column stands on where the canvas does not reach — the phone's own
+            // ground, and NOTHING on the Mac, where the island under it is the ground (see ``ground``).
+            .background(ground ?? .clear)
             // ⚠️ THE MODAL POINTER SHIELD. A hosted column lives in its OWN NSHostingView inside the
             // AppKit split while the floating overlay layer lives in the window root's — so a card
             // floating over this column does NOT occlude its hover tracking: AppKit tracking areas
@@ -62,33 +73,6 @@ struct ContentColumn: View {
             // (``SlopDeskMacUI/MacModalShield``); this modifier is what the phone has instead.
             .allowsHitTesting(!(overlayCoordinator?.anyModalVisible ?? false))
     }
-
-    /// On macOS the pane canvas is THE ISLAND — glass, a window-scale corner, and a 12pt moat of
-    /// ground on all four sides, so its top edge lands on the band's TOP LINE, level with the
-    /// traffic lights and the panel's surface tabs (``slateIsland(clearingBand:)``, user-directed
-    /// 2026-08-09). The navigator carries the lights, so nothing in this column needs the clearance —
-    /// until the navigator is collapsed and the band's own tab strip moves over this column, which is
-    /// what `clearingBand` answers. iOS has no titlebar and no island: the pane area fills its
-    /// column directly.
-    private var content: some View {
-        #if os(macOS)
-        paneArea
-            .slateIsland(clearingBand: chrome.sidebarCollapsed)
-            // The collapsed panel leaves a RAIL on the window's trailing edge rather than vanishing
-            // (``SlopDeskMacUI/MacPanelRail``, user-directed 2026-08-09), so this column gives back
-            // its width. The island's own moat is measured inside what is left, which keeps the rail
-            // standing on ground with the usual channel between it and the glass.
-            .padding(.trailing, railed ? Slate.Metric.panelRailWidth : 0)
-            .animation(Slate.Anim.columnSlide, value: railed)
-        #else
-        paneArea
-        #endif
-    }
-
-    #if os(macOS)
-    /// True while the panel is standing in as its rail.
-    private var railed: Bool { chrome.codeSidebarCollapsed }
-    #endif
 
     private var paneArea: some View {
         Group {
