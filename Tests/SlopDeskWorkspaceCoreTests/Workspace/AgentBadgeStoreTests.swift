@@ -12,7 +12,6 @@ final class AgentBadgeStoreTests: XCTestCase {
     private func makeStore() -> WorkspaceStore {
         let store = WorkspaceStore(
             restoringTree: .defaultWorkspace(),
-            liveModel: .tree,
             makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: 2,
         )
@@ -22,6 +21,28 @@ final class AgentBadgeStoreTests: XCTestCase {
 
     private func firstPane(_ store: WorkspaceStore) throws -> PaneID {
         try XCTUnwrap(store.tree.allPaneIDs().first)
+    }
+
+    // MARK: Per-pane status prune
+
+    /// A closed pane's per-pane agent status (``WorkspaceStore/paneAgentStatus``) is pruned by the
+    /// registry diff — like the sibling per-pane caches. Before the fix the entry lingered forever
+    /// (unbounded growth + a dead pane could surface in a rollup). The SURVIVING pane's status is
+    /// untouched: the prune is selective, not a blanket clear.
+    func testPaneAgentStatusEvictedWhenPaneCloses() throws {
+        let store = makeStore()
+        let a = try firstPane(store)
+        store.splitActivePane(axis: .horizontal, kind: .terminal)
+        let b = try XCTUnwrap(store.tree.allPaneIDs().first { $0 != a }, "the split minted a second leaf")
+
+        store.setAgentStatus(.needsPermission, for: a)
+        store.setAgentStatus(.working, for: b)
+        XCTAssertEqual(store.agentStatus(for: a), .needsPermission)
+
+        store.closePaneTree(a)
+        XCTAssertEqual(store.agentStatus(for: a), .none, "a closed pane's agent status entry is pruned")
+        XCTAssertFalse(store.paneAgentStatus.keys.contains(a), "the dict no longer holds the orphaned pane's key")
+        XCTAssertEqual(store.agentStatus(for: b), .working, "the surviving pane's status is untouched")
     }
 
     // MARK: Per-pane override resolution

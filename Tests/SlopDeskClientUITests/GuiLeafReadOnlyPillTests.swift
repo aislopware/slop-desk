@@ -37,7 +37,7 @@ final class GuiLeafReadOnlyPillTests: XCTestCase {
     /// release path (``WorkspaceStore/setPaneReadOnly(_:_:)`` with `false`) clears the convergent set so the
     /// gate falls back to false — proving the in-pane exit affordance the body wires actually unlocks the pane.
     func testReadOnlyPillReleasesTheRemoteWindowLock() {
-        let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in MountTestPaneSession(seed.spec) })
+        let store = WorkspaceStore(makeSession: { seed in MountTestPaneSession(seed.spec) })
         store.attachLoopbackWorkspaceDocument()
         let video = store.openDesktopWindow()
 

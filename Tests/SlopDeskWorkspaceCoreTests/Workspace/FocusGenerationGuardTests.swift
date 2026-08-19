@@ -3,7 +3,7 @@ import XCTest
 
 /// Pure, macOS-runnable tests for ``FocusGenerationGuard`` — the value-typed generation counter
 /// that defeats the iOS first-responder race (docs/22 §7). No UIKit: the race logic is assertable
-/// without a device, exactly like ``FloatingCursorMapping`` is.
+/// without a device, exactly like ``PhoneKey`` is.
 ///
 /// Guard contract under test:
 /// - The initial generation is `0` (a sentinel no real callback is issued under).

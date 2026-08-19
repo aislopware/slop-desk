@@ -17,9 +17,19 @@
 // Hit-test footprint: the handle view fills its leaf but only a SHORT top strip is hit-testable (a `Spacer`
 // fills the rest and passes clicks through to the terminal below it in the ZStack). The strip senses hover
 // (to reveal the pill) and owns the drag gesture. SYSTEM / design-token colours only.
+//
+// This file also carries the drag block's SHARED VOCABULARY — the coordinate space, the drop-zone
+// geometry, the zone enum, and the two things the canvas drag needs a platform for: `PanePointer`
+// (there is no `PointerStyle` on iOS) and `PaneMoveEscapeMonitor` (a drag holds no first responder,
+// so reading its cancel key is a local `NSEvent` monitor on the Mac and a first responder over the
+// canvas on the phone — one behaviour, two mechanisms). Both of those are gated ONCE, here, so no
+// call site in `SplitContainer` or `PaneDivider` has to restate a platform fact it does not own.
 
 #if canImport(SwiftUI)
+import CSlopDeskFFI
 import SFSafeSymbols
+import SlopDeskClientCore
+import SlopDeskSlate
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 import SwiftUI
@@ -28,6 +38,64 @@ import SwiftUI
 /// compositor ZStack with this so a gesture location lines up 1:1 with the solver's leaf rects.
 enum PaneMoveSpace {
     static let name = "slopdesk.splitspace"
+}
+
+// MARK: - The pointer vocabulary, spelled once
+
+/// What the pointer should SAY over a piece of pane chrome.
+///
+/// SwiftUI's `PointerStyle` is `@available(iOS, unavailable)` OUTRIGHT — not "unavailable before
+/// 18", not "empty on a phone": the type does not exist on the iOS triple and neither does the
+/// `.pointerStyle(_:)` modifier (checked against the iOS 26 SDK's `SwiftUI.swiftinterface`). So this
+/// is the ``slateCancelKey`` situation exactly: there is no shared API to find, only a gate that
+/// must exist EXACTLY ONCE. It was spelled at every call site instead — the grab handle below, the
+/// satellite window's grab strip, and the split seam — which is three places for the rule to drift.
+///
+/// The second defect it prevents is worse than the count. `PaneDivider`'s pointer carries a
+/// DECISION (which way a seam at its min-weight clamp can still travel), and a decision written
+/// inside a platform gate is a decision nobody reads on the other platform. Stated as a value it is
+/// plain Swift on both, and only the DRAWING is gated.
+enum PanePointer: Equatable {
+    /// The pane-move grab handle, hovered but not yet grabbed.
+    case grabIdle
+    /// The pane-move grab handle with the drag in flight.
+    case grabActive
+    /// A vertical seam between side-by-side panes. The flags are the directions the drag can still
+    /// travel — see ``PaneDivider`` — which the handle's pair weights answer, so the glyph can never
+    /// disagree with the gesture's own clamp.
+    case columnResize(toLeading: Bool, toTrailing: Bool)
+    /// A horizontal seam between stacked panes, with the same two directions turned a quarter turn.
+    case rowResize(toUp: Bool, toDown: Bool)
+}
+
+extension View {
+    /// Draw `pointer` while the cursor is over this view — and nothing at all where there is no
+    /// cursor to draw for.
+    ///
+    /// The truth-at-the-clamp rule lives HERE rather than at the seams: a seam that can still move
+    /// both ways and a DEAD seam that can move neither both keep the two-way glyph. There is no
+    /// "cannot resize" pointer, and a plain arrow over a seam reads as a dead zone rather than as a
+    /// seam sitting on its floor.
+    func panePointer(_ pointer: PanePointer) -> some View {
+        #if os(macOS)
+        // Flat on purpose: the specific direction pairs first, then the bare case as the two-way
+        // fallback for (true, true) and (false, false) alike.
+        let style: PointerStyle =
+            switch pointer {
+            case .grabIdle: .grabIdle
+            case .grabActive: .grabActive
+            case .columnResize(toLeading: true, toTrailing: false): .columnResize(directions: .leading)
+            case .columnResize(toLeading: false, toTrailing: true): .columnResize(directions: .trailing)
+            case .columnResize: .columnResize
+            case .rowResize(toUp: true, toDown: false): .rowResize(directions: .up)
+            case .rowResize(toUp: false, toDown: true): .rowResize(directions: .down)
+            case .rowResize: .rowResize
+            }
+        return pointerStyle(style)
+        #else
+        return self
+        #endif
+    }
 }
 
 /// Tunable drop-zone geometry (a UI affordance, deliberately NOT env flags). The hovered target pane is
@@ -129,7 +197,7 @@ enum PaneDropGeometry {
 
 /// The action a release at the current cursor location would commit (resolved every drag frame, committed
 /// once on `.onEnded`). `.none` is a cancel (release commits nothing).
-enum PaneDropZone: Equatable {
+package enum PaneDropZone: Equatable {
     case none
     /// Drop in the centre of `target` → exchange the two panes' positions.
     case swap(target: PaneID)
@@ -222,22 +290,20 @@ struct PaneMoveHandle: View {
         .frame(width: stripWidth, height: stripHeight)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        #if os(macOS)
-            .pointerStyle(isDragging ? .grabActive : .grabIdle)
-        #endif
-            .gesture(
-                DragGesture(minimumDistance: 2, coordinateSpace: .named(PaneMoveSpace.name))
-                    .updating($dragActive) { _, state, _ in state = true }
-                    .onChanged { onChanged($0.location) }
-                    .onEnded { onEnded($0.location) },
-            )
-            .onTapGesture { onTap() }
-            .animation(Slate.Anim.dividerHover, value: revealed)
-            // Fires on end AND on a cancel/teardown (`dragActive` resets either way) — the safety net a
-            // bare `.onEnded` cannot provide.
-            .onChange(of: dragActive) { wasActive, active in
-                if wasActive, !active { onInterrupted() }
-            }
+        .panePointer(isDragging ? .grabActive : .grabIdle)
+        .gesture(
+            DragGesture(minimumDistance: 2, coordinateSpace: .named(PaneMoveSpace.name))
+                .updating($dragActive) { _, state, _ in state = true }
+                .onChanged { onChanged($0.location) }
+                .onEnded { onEnded($0.location) },
+        )
+        .onTapGesture { onTap() }
+        .animation(Slate.Anim.dividerHover, value: revealed)
+        // Fires on end AND on a cancel/teardown (`dragActive` resets either way) — the safety net a
+        // bare `.onEnded` cannot provide.
+        .onChange(of: dragActive) { wasActive, active in
+            if wasActive, !active { onInterrupted() }
+        }
     }
 }
 
@@ -467,6 +533,22 @@ struct PaneMoveOverlay: View {
     }
 }
 
+// MARK: - Escape-to-cancel
+
+// ⚠️ THE GATE ROUND THIS TYPE IS THE WHOLE GATE — the mount in `SplitContainer` carries none. The
+// fact is one fact (a pane-move drag holds no first responder, so its cancel key has to be read by
+// something other than a focused view), and it was spelled twice: here, and again around the
+// `PaneMoveEscapeMonitor(...)` in the move layer. Two spellings of one fact is two places to fix
+// when it changes and one place for it to drift, so the gate stays here and the mount stays plain.
+//
+// BOTH HALVES ARE REAL, and they run the same cancel: the Mac installs a local `NSEvent` monitor,
+// the phone takes first responder for the length of the drag (``PaneMoveEscapeResponder``). The
+// phone's half used to be a SINK that mounted and did nothing, and docs/56 increment 41 recorded
+// that as what it was — a capability the phone was OWED (§3: "layout diverges; capability does
+// not"), since an iPad with a hardware keyboard could not bail out of a drag it had started. What
+// makes the two halves one implementation rather than two is the closure: neither knows what
+// cancelling means, and the single mount in `SplitContainer` supplies it.
+
 #if os(macOS)
 import AppKit
 
@@ -502,9 +584,6 @@ struct PaneMoveEscapeMonitor: NSViewRepresentable {
     final class Coordinator {
         var onCancel: () -> Void = {}
         private var monitor: Any?
-        // Hardware-independent virtual key code (Carbon `kVK_Escape`) — literal, matching the same
-        // no-Carbon-import convention `SystemKeyCapturePolicy` uses.
-        private static let keyCodeEscape: UInt16 = 53
 
         var isActive: Bool = false {
             didSet {
@@ -517,7 +596,8 @@ struct PaneMoveEscapeMonitor: NSViewRepresentable {
             guard monitor == nil else { return }
             monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
                 guard let self else { return event }
-                guard event.keyCode == Self.keyCodeEscape else { return event }
+                // The cancel key is named by the crate that already has to know its number.
+                guard slopdesk_key_capture_is_escape(event.keyCode) else { return event }
                 onCancel()
                 return nil // swallow — Escape cancels the drag, never types into the focused pane
             }
@@ -527,6 +607,32 @@ struct PaneMoveEscapeMonitor: NSViewRepresentable {
             if let monitor { NSEvent.removeMonitor(monitor) }
             monitor = nil
         }
+    }
+}
+
+#else
+
+/// The phone's half: a zero-sized `UIPress` responder that holds first responder for exactly as
+/// long as the drag is in flight.
+///
+/// Same arming rule, same cancel closure, same "mounted unconditionally, armed by `isActive`"
+/// lifetime as the Mac's half above. The mechanism differs because it must: UIKit has no local
+/// event monitor, and `.onKeyPress(.escape)` — ``View/slateCancelKey(perform:)``'s phone half, which
+/// every other cancel on this platform uses — wants keyboard focus, which is precisely what a
+/// pane-move drag never takes. ``PaneMoveEscapeResponder`` is where that lives, and its header
+/// carries the two things this shape has to answer for: what arms the grab, and what the keyboard
+/// is handed back to.
+struct PaneMoveEscapeMonitor: View {
+    var isActive: Bool
+    var onCancel: () -> Void
+
+    var body: some View {
+        PaneMoveEscapeResponder(isActive: isActive, onCancel: onCancel)
+            // Zero-sized and touch-transparent, the ``KeybindingCaptureHost`` way: the drag's own
+            // touches belong to the grab handle and the canvas, and a responder that took one would
+            // be cancelling the gesture it exists to rescue.
+            .frame(width: 0, height: 0)
+            .allowsHitTesting(false)
     }
 }
 #endif

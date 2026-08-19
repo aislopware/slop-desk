@@ -8,32 +8,22 @@ import XCTest
 /// where the parked confirmation lands) is pinned separately in ``CloseConfirmationStoreTests``; here the
 /// decision math is isolated from any store/UI.
 final class CloseConfirmationPolicyTests: XCTestCase {
-    // MARK: - shouldConfirm truth table (3 policies × {busy, idle} × {1 tab, >1 tab})
-
-    func testProcessConfirmsOnlyWhenBusy() {
-        // `.process` → mirrors `isBusy`, regardless of tab count.
+    /// Each case reaches its own index, and each fact its own parameter: a policy that crossed as its
+    /// neighbour's byte would confirm on the wrong fact entirely. The truth table itself is
+    /// `slopdesk_workspace::chrome::should_confirm`'s.
+    func testEachCaseAndFactCrossesInItsOwnSlot() {
         XCTAssertTrue(CloseConfirmationPolicy.shouldConfirm(.process, isBusy: true, tabCount: 1))
-        XCTAssertTrue(CloseConfirmationPolicy.shouldConfirm(.process, isBusy: true, tabCount: 4))
-        XCTAssertFalse(CloseConfirmationPolicy.shouldConfirm(.process, isBusy: false, tabCount: 1))
         XCTAssertFalse(CloseConfirmationPolicy.shouldConfirm(.process, isBusy: false, tabCount: 4))
-    }
-
-    func testAlwaysConfirmsUnconditionally() {
-        // `.always` → true for every busy/tab-count combination.
         XCTAssertTrue(CloseConfirmationPolicy.shouldConfirm(.always, isBusy: false, tabCount: 1))
-        XCTAssertTrue(CloseConfirmationPolicy.shouldConfirm(.always, isBusy: false, tabCount: 7))
-        XCTAssertTrue(CloseConfirmationPolicy.shouldConfirm(.always, isBusy: true, tabCount: 1))
-        XCTAssertTrue(CloseConfirmationPolicy.shouldConfirm(.always, isBusy: true, tabCount: 7))
+        XCTAssertTrue(CloseConfirmationPolicy.shouldConfirm(.multipleTabs, isBusy: false, tabCount: 2))
+        XCTAssertFalse(CloseConfirmationPolicy.shouldConfirm(.multipleTabs, isBusy: true, tabCount: 1))
     }
 
-    func testMultipleTabsConfirmsOnlyAboveOneTab() {
-        // `.multipleTabs` → keyed purely on `tabCount > 1`, independent of busy.
-        XCTAssertFalse(CloseConfirmationPolicy.shouldConfirm(.multipleTabs, isBusy: false, tabCount: 1))
-        XCTAssertFalse(CloseConfirmationPolicy.shouldConfirm(.multipleTabs, isBusy: true, tabCount: 1))
-        XCTAssertTrue(CloseConfirmationPolicy.shouldConfirm(.multipleTabs, isBusy: false, tabCount: 2))
-        XCTAssertTrue(CloseConfirmationPolicy.shouldConfirm(.multipleTabs, isBusy: true, tabCount: 9))
-        // A degenerate zero-tab count never trips `> 1`.
+    /// A degenerate count crosses as a count, not as a huge unsigned one: `size_t` cannot carry a
+    /// negative, so a scope that asked about a tab-less unit must still answer "nothing to lose".
+    func testADegenerateCountIsNotReadAsAHugeOne() {
         XCTAssertFalse(CloseConfirmationPolicy.shouldConfirm(.multipleTabs, isBusy: true, tabCount: 0))
+        XCTAssertFalse(CloseConfirmationPolicy.shouldConfirm(.multipleTabs, isBusy: true, tabCount: -1))
     }
 
     // MARK: - rawValue (config strings) + validate-then-repair init
@@ -86,7 +76,6 @@ final class CloseConfirmationStoreTests: XCTestCase {
     private func makeTreeStore(restoringTree: TreeWorkspace) -> WorkspaceStore {
         let store = WorkspaceStore(
             restoringTree: restoringTree,
-            liveModel: .tree,
             makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: 2,
             persistence: nil,

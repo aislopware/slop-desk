@@ -18,7 +18,7 @@ import XCTest
 @MainActor
 final class CompletionEpochTests: XCTestCase {
     private func makeStore() -> WorkspaceStore {
-        let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in FakePaneSession(seed.spec) })
+        let store = WorkspaceStore(makeSession: { seed in FakePaneSession(seed.spec) })
         store.attachLoopbackWorkspaceDocument()
         return store
     }
@@ -224,7 +224,7 @@ final class CompletionEpochTests: XCTestCase {
         // the SAME tree, so the pane keeps its id — which is exactly the id the seen map is keyed by.
         let restored = store.tree
         let returning = WorkspaceStore(
-            restoringTree: restored, liveModel: .tree,
+            restoringTree: restored,
             makeSession: { seed in FakePaneSession(seed.spec) },
         )
         returning.attachLoopbackWorkspaceDocument()
@@ -240,7 +240,7 @@ final class CompletionEpochTests: XCTestCase {
 
         // …and a relaunch against a DIFFERENT document drops it, because the counters restarted.
         let elsewhere = WorkspaceStore(
-            restoringTree: restored, liveModel: .tree,
+            restoringTree: restored,
             makeSession: { seed in FakePaneSession(seed.spec) },
         )
         elsewhere.attachLoopbackWorkspaceDocument()

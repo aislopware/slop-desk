@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import SlopDeskVideoProtocol
 
 // MARK: - WorkspaceBindingRegistry × KeybindingPreferences (user overrides)
@@ -114,32 +115,43 @@ public extension KeyChord {
     /// Total (every registry chord has a persisted spelling) — no `nil` path.
     var asPreferencesChord: KeybindingPreferences.KeyChord {
         KeybindingPreferences.KeyChord(
-            key: Self.preferencesKeyToken(key),
+            key: key.canonicalToken,
             command: modifiers.contains(.command),
             shift: modifiers.contains(.shift),
             option: modifiers.contains(.option),
             control: modifiers.contains(.control),
         )
     }
+}
 
-    /// The canonical persisted-key token for a registry `Key` — the spelling `KeybindingPreferences.KeyChord
-    /// .mapKey` accepts, so the round-trip registry → prefs → registry is identity.
-    private static func preferencesKeyToken(_ key: Key) -> String {
-        switch key {
-        case let .character(c): String(c) // already lowercased by KeyChord.init
-        case .tab: "tab"
-        case .return: "return"
-        case .space: "space"
-        case .leftArrow: "left"
-        case .rightArrow: "right"
-        case .upArrow: "up"
-        case .downArrow: "down"
-        case .pageUp: "pageup"
-        case .pageDown: "pagedown"
-        case .home: "home"
-        case .end: "end"
+public extension KeyChord.Key {
+    /// The ONE spelling this key is persisted and looked up under, asked of
+    /// `slopdesk_video::key_naming` — the same table the config grammar folds its aliases into, so
+    /// the round-trip registry → prefs → registry is identity. A printable character is its own
+    /// token (already lower-cased by ``KeyChord/init(character:_:)``).
+    var canonicalToken: String {
+        if case let .character(c) = self { return String(c) }
+        guard let index = namedIndex else { return "" }
+        var token = [UInt8](repeating: 0, count: Self.tokenCapacity)
+        let written = token.withUnsafeMutableBufferPointer { out in
+            slopdesk_key_named_canonical(index, out.baseAddress, out.count)
         }
+        return String(bytes: token.prefix(max(0, written)), encoding: .utf8) ?? ""
     }
+
+    /// The key a canonical token names, or `nil` for an empty / multi-character / unrecognised one.
+    /// The inverse of ``canonicalToken`` — the door answers the case INDEX, so the eleven cases are
+    /// named in one place (``init(namedIndex:)``) rather than in a second string table here.
+    static func named(token: String) -> Self? {
+        var token = token
+        let index = token.withUTF8 { slopdesk_key_named_index($0.baseAddress, $0.count) }
+        if index >= 0, let named = Self(namedIndex: UInt8(truncatingIfNeeded: index)) { return named }
+        guard token.count == 1, let character = token.first else { return nil }
+        return .character(character)
+    }
+
+    /// `pagedown` is the longest token there is, so nothing here ever forces the door's retry.
+    private static var tokenCapacity: Int { 16 }
 }
 
 // MARK: - KeybindingPreferences.KeyChord → registry KeyChord
@@ -167,22 +179,6 @@ public extension KeybindingPreferences.KeyChord {
     /// init and its decoder do. An alias branch here would be a second table that could only ever
     /// drift from that one, and unreachable while it agreed.
     private static func mapKey(_ key: String) -> KeyChord.Key? {
-        switch key {
-        case "return": return .return
-        case "tab": return .tab
-        case "space": return .space
-        case "left": return .leftArrow
-        case "right": return .rightArrow
-        case "up": return .upArrow
-        case "down": return .downArrow
-        case "pageup": return .pageUp
-        case "pagedown": return .pageDown
-        case "home": return .home
-        case "end": return .end
-        default:
-            // A single printable character (already lowercased by KeyChord.init). Reject empty / multi.
-            guard key.count == 1, let c = key.first else { return nil }
-            return .character(c)
-        }
+        KeyChord.Key.named(token: key)
     }
 }

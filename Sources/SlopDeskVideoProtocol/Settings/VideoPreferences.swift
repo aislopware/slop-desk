@@ -67,6 +67,29 @@ public struct VideoPreferences: Codable, Sendable, Equatable {
     /// Unsharp-mask strength on the luma channel → `SLOPDESK_SHARPEN` (0 = off). Client-side.
     public var sharpen: Double?
 
+    // MARK: What UNSET means, named
+
+    /// What each surfaced field resolves to while it is `nil`, and therefore what a control over it
+    /// must SHOW while nothing is set.
+    ///
+    /// Named here rather than spelled at the control, for the reason
+    /// ``AgentPreferences/preventSleepDefault`` is: these are the daemon's and the renderer's own
+    /// defaults, and a settings page that repeated them as literals would be a second copy that
+    /// nothing tells when the first one moves. A control reads through `?? …`, so an untouched field
+    /// stays `nil` — the sidecar carries a value only once someone sets one, which is what keeps a
+    /// fresh install's env overlay empty.
+    public static let qpSharpDefault = 26
+    /// See ``qpSharpDefault``.
+    public static let qpCoarseDefault = 40
+    /// See ``qpSharpDefault``.
+    public static let fecMDefault = 1
+    /// See ``qpSharpDefault``.
+    public static let fecKDefault = 5
+    /// See ``qpSharpDefault`` — `MetalVideoRenderer` reads anything at or below zero as off.
+    public static let sharpenDefault: Double = 0
+    /// See ``qpSharpDefault`` — the pacer presents on arrival unless told to hold to a deadline.
+    public static let pacerDefault: Pacer = .arrival
+
     public init(
         qpSharp: Int? = nil,
         qpCoarse: Int? = nil,

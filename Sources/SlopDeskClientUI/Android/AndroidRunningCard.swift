@@ -1,4 +1,11 @@
-// AndroidRunningCard — an attached device in the list, drawn at its own proportions.
+// AndroidRunningCard — an attached device in the list, drawn at its own proportions, ON THE PHONE.
+//
+// iOS-ONLY SINCE docs/56 INCREMENT 52b; ``SlopDeskMacUI/MacAndroidRunningCard`` draws the same card in
+// AppKit. What descended rather than being spelled twice: the aspect clamp
+// (``AndroidPresentation/artWidth(for:art:floor:cap:)``), the tooltip, and the two `explain` folds —
+// the last of which is the one this file most wanted to keep, and precisely the reason it could not:
+// `adb`'s state words turned into English is a TABLE, and a table copied into a second framework grows
+// a case on one side only.
 //
 // A CARD AND NOT A ROW, for the reason its simulator twin gives: an attached device is the thing you
 // are most likely to want, and the shape of its screen is worth the width.
@@ -21,8 +28,10 @@
 // and it is the one condition where the panel can do nothing at all and the user can fix it in two
 // seconds — provided they are told.
 
-#if os(macOS)
+#if os(iOS)
 import SFSafeSymbols
+import SlopDeskDevicePanels
+import SlopDeskSlate
 import SwiftUI
 
 struct AndroidRunningCard: View {
@@ -47,18 +56,13 @@ struct AndroidRunningCard: View {
                 .strokeBorder(Slate.Line.card, lineWidth: Slate.Metric.cardBorderWidth)
         }
         .contentShape(.rect)
-        // A booting emulator opens too: the stage knows how to wait for a device now, and "click,
-        // then watch it come up" is strictly better than "watch the list until clicking works".
-        // A physical device that is attached-but-unusable stays un-clickable — its fix (an
-        // authorization dialog on its own screen) is not something waiting can do.
-        .onTapGesture { if device.isRunning || device.isEmulator && device.serial != nil { onOpen() } }
+        // WHETHER THE TAP OPENS ANYTHING is ``AndroidPresentation/canEnter(_:)`` — the same predicate
+        // the list's own `enter(_:)` asks, which is the point: it used to be spelled here AND there,
+        // one edit away from a card that opens a booting emulator and a row that refuses it.
+        .onTapGesture { if AndroidPresentation.canEnter(device) { onOpen() } }
         .onHover { hovering = $0 }
         .animation(Slate.Anim.smallFade, value: hovering)
-        .help(help)
-    }
-
-    private var help: String {
-        device.isRunning ? "Open \(device.name)" : "\(device.name) — \(Self.explain(device))"
+        .help(AndroidPresentation.cardHelp(device))
     }
 
     /// The screen box: a FIXED height and a width that follows the device's own aspect, so what varies
@@ -74,33 +78,35 @@ struct AndroidRunningCard: View {
             if device.isAttachedButUnusable {
                 // The one state that gets a word instead of a glyph. `unauthorized` is fixed by
                 // looking at the device, and a symbol cannot say that.
-                Text(Self.explain(device))
+                Text(AndroidPresentation.explain(device))
                     .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.tertiary)
+                    .foregroundStyle(AndroidInk.tertiary.color)
                     .multilineTextAlignment(.center)
                     .padding(Slate.Metric.space1)
             } else {
                 Image(systemSymbol: AndroidDeviceKind.infer(device).symbol)
                     .font(.system(size: Slate.Typeface.display, weight: .light))
-                    .foregroundStyle(Slate.Text.icon)
+                    .foregroundStyle(AndroidInk.icon.color)
             }
         }
         .frame(width: boxWidth, height: Slate.Metric.deviceCardArt)
         .frame(maxWidth: .infinity)
     }
 
-    /// The box's width at the card's fixed art height, from the device's own aspect ratio. Clamped so
-    /// an unreported or absurd ratio cannot produce a box wider than the card — the fallback is a
-    /// portrait phone's proportions, which is the shape most likely to be right.
+    /// The box's width at the card's fixed art height, from the device's own aspect ratio, clamped so
+    /// an unreported or absurd ratio cannot produce a box wider than the card.
+    ///
+    /// The three LENGTHS are this half's, because they are design tokens and Slate sits above the
+    /// target the arithmetic lives in; the fallback and the order of the clamp are shared, because
+    /// those are the parts that would drift.
     private var boxWidth: CGFloat {
-        let ratio = device.aspectRatio ?? Self.fallbackAspect
-        let width = Slate.Metric.deviceCardArt * ratio
-        return min(max(width, Slate.Metric.heightBar), Slate.Metric.deviceCardWidth)
+        AndroidPresentation.artWidth(
+            for: device,
+            art: Slate.Metric.deviceCardArt,
+            floor: Slate.Metric.heightBar,
+            cap: Slate.Metric.deviceCardWidth,
+        )
     }
-
-    /// 9:19.5 — the proportions of essentially every current Android phone, and the right guess for a
-    /// device that has not said.
-    static let fallbackAspect: CGFloat = 9.0 / 19.5
 
     private var caption: some View {
         HStack(spacing: Slate.Metric.space1) {
@@ -108,13 +114,13 @@ struct AndroidRunningCard: View {
             VStack(alignment: .leading, spacing: 0) {
                 Text(device.name)
                     .font(.system(size: Slate.Typeface.base, weight: .medium))
-                    .foregroundStyle(Slate.Text.primary)
+                    .foregroundStyle(AndroidInk.primary.color)
                     .lineLimit(1)
                     .truncationMode(.tail)
                 if !device.summary.isEmpty {
                     Text(device.summary)
                         .font(.system(size: Slate.Typeface.footnote))
-                        .foregroundStyle(Slate.Text.tertiary)
+                        .foregroundStyle(AndroidInk.tertiary.color)
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }
@@ -134,39 +140,13 @@ struct AndroidRunningCard: View {
         } else if device.isEmulator, device.isRunning {
             SlatePlateButton(
                 symbol: .stopFill,
-                help: "Shut down \(device.name)",
+                help: AndroidPresentation.shutDownHelp(device),
                 size: Slate.Typeface.footnote,
                 plate: Slate.Metric.heightControl,
-                tint: hovering ? Slate.Text.primary : Slate.Text.tertiary,
+                tint: hovering ? AndroidInk.primary.color : AndroidInk.tertiary.color,
             ) {
                 Task { await model.shutdown(device) }
             }
-        }
-    }
-
-    /// The device's state as a sentence, with the one reading `adb`'s word alone would get wrong:
-    /// an EMULATOR that is `offline` is almost always a boot in progress — the serial registers
-    /// within seconds of launch and the guest's `adbd` answers ~21 s later (measured 2026-08-07) —
-    /// and "Not responding" over a card that is doing exactly what was asked reads as a fault.
-    static func explain(_ device: AndroidDevice) -> String {
-        if device.isEmulator, device.state == "offline" { return "Starting up…" }
-        return explain(device.state)
-    }
-
-    /// `adb`'s state word as a sentence. The words are `adb`'s own and mean nothing to most readers —
-    /// `unauthorized` in particular reads as a permissions error on the HOST, when what it means is
-    /// that a dialog is waiting on the device's screen.
-    static func explain(_ state: String) -> String {
-        switch state {
-        case "unauthorized": "Waiting for you to allow debugging on the device"
-        case "offline": "Not responding"
-        case "authorizing": "Authorizing…"
-        case "connecting": "Connecting…"
-        case "recovery": "In recovery mode"
-        case "sideload": "In sideload mode"
-        case "bootloader": "In the bootloader"
-        case "device": "Ready"
-        default: state
         }
     }
 }

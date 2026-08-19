@@ -115,9 +115,61 @@ public final class ChannelTable {
     /// router table cannot be grown without bound by hostile channelOpen/Close spam.
     public var stateCount: Int { slopdesk_channel_table_state_count(handle) }
 
+    /// Applies the DEMUX RULE to one frame of `kind` on `id`, advancing this table exactly as the
+    /// frame requires, and answers what the caller must do with it.
+    ///
+    /// The rule is `slopdesk_wire`'s `ChannelTable::route` — it moved there because every branch of
+    /// it reads a state and then writes one, and a rule kept apart from its own table is a rule that
+    /// can be edited on one side only. What is left on this side is the marshalling and the payload:
+    /// the bytes never cross, so a verdict names a channel and the caller attaches the `Data` it is
+    /// already holding.
+    ///
+    /// `accepted` is read for ``MuxFrameType/channelOpenAck`` alone.
+    public func route(kind: MuxFrameType, id: UInt32, accepted: Bool = false) -> ChannelRouting {
+        let verdict = slopdesk_channel_table_route(handle, kind.rawValue, id, accepted)
+        switch verdict.verdict {
+        case SLOPDESK_MUX_VERDICT_DELIVER:
+            return .deliver(channelID: verdict.channel_id)
+        case SLOPDESK_MUX_VERDICT_LIFECYCLE:
+            return .lifecycle(channelID: verdict.channel_id, state: state(verdict.state))
+        default:
+            // Every verdict this door can answer that is not one of the two above IS a drop, and an
+            // ordinal it has never spoken is one too — the door's own default is to refuse rather
+            // than deliver, and reading it any other way here would reintroduce exactly the
+            // fail-open this rule exists to prevent.
+            return .drop(
+                channelID: verdict.channel_id,
+                reason: verdict.reason == SLOPDESK_MUX_DROP_NON_OPEN ? .nonOpenChannel : .unknownChannel,
+            )
+        }
+    }
+
     /// A state ordinal, read back. An unknown id answers ``ChannelState/closed`` here, which is what
     /// every close-path caller has always been told: there is nothing left to close.
     private func state(_ ordinal: UInt32) -> ChannelState {
         ChannelState(rawValue: ordinal) ?? .closed
     }
+}
+
+/// Why the rule refused to route a frame. The two are kept apart because they describe different
+/// situations; the human WORDING for each belongs to whoever logs it, not to the rule.
+public enum ChannelDropReason: Sendable, Equatable {
+    /// The channel exists but is not fully open — a late frame on a real channel.
+    case nonOpenChannel
+    /// No entry for the id at all — never allocated, or long since evicted.
+    case unknownChannel
+}
+
+/// What the demux rule says to do with one frame, as the table answers it.
+///
+/// Payload-free on purpose: this says WHERE bytes go, and the bytes stay with whoever decoded them.
+/// ``MuxRoutingDecision`` is the transport layer's version of the same three answers, with the
+/// payload attached on the one case that carries one.
+public enum ChannelRouting: Sendable, Equatable {
+    /// Feed the frame's payload to this channel's stream.
+    case deliver(channelID: UInt32)
+    /// A lifecycle frame was applied; this is the channel's resulting state.
+    case lifecycle(channelID: UInt32, state: ChannelState)
+    /// The frame was dropped, for one of two different reasons.
+    case drop(channelID: UInt32, reason: ChannelDropReason)
 }

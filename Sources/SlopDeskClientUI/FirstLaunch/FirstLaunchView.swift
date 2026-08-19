@@ -1,18 +1,30 @@
-// The guided first-launch sheet.
+// The guided first-launch checklist, in SwiftUI.
 //
-// A non-blocking, one-time setup flow composing already-built settings into a first-launch checklist
-// (`spec/getting-started__first-launch.md`, governed by the 6 screenshots): On-Launch, Set-as-Default-
-// Terminal (LOCAL handler; the remote "Common Apps" case honestly-DISABLED with a note), Install-CLI (the
-// macOS `CLIInstaller` symlink + Omit-Prefix + Allow-Overwrite) and Install-Claude-hooks
-// (the `AgentHooksController` card). The gating + step order live in the PURE `FirstLaunchModel`
-// (`SlopDeskWorkspaceCore`); this is the view layer only — compiled + HW-verified, never unit-tested.
+// A non-blocking, one-time setup flow composing already-built settings into a checklist
+// (`spec/getting-started__first-launch.md`, governed by the 6 screenshots). The gating + step order live
+// in the PURE `FirstLaunchModel` (`SlopDeskWorkspaceCore`); this is the view layer only — compiled +
+// HW-verified, never unit-tested.
 //
-// iOS keeps the cross-platform steps (On-Launch, Claude-hooks); `FirstLaunchModel.steps(for: .iOS)`
-// drops the two macOS-only OS-integration steps, so the macOS-only step bodies (`#if os(macOS)`) are never
-// reached on iOS.
+// WHO RENDERS THIS. `FirstLaunchView` is the PHONE's shell, and only the phone's:
+// `FirstLaunchModel.steps(for: .iOS)` drops the two macOS-only OS-integration steps, so the phone's
+// checklist is On-Launch and Claude-hooks. The Mac draws its own shell in AppKit
+// (`SlopDeskMacUI/FirstLaunch`) from the SAME model, and draws ALL FOUR of its steps itself.
+//
+// ⚠️ NOTHING IN THIS FILE IS DRAWN FOR THE MAC ANY MORE (docs/56 stage D, increment 47). It used to be:
+// the two CROSS-PLATFORM step bodies were drawn once here, in ``FirstLaunchStepSurface``, and the Mac
+// HOSTED that surface — which was the last thing `MacFirstLaunchSheet` imported this target for. The Mac
+// draws them in AppKit now, so `FirstLaunchStepSurface` is `private` and this whole file is the phone's.
+//
+// What CROSSED is the painting; what did NOT is any answer. Every word these bodies say, the picker's
+// option order, which state earns a badge rather than a button, and whether an install ticks the step
+// are ``FirstLaunchStepPresentation`` in `SlopDeskClientCore` — below both halves, so neither half can
+// re-decide them. The hue is the one thing that stays with each drawing, because `SlopDeskSlate` depends
+// on `SlopDeskClientCore` and a token read from below would be a cycle.
 
 #if canImport(SwiftUI)
 import Defaults
+import SlopDeskClientCore
+import SlopDeskSlate
 import SlopDeskWorkspaceCore // FirstLaunchModel, PreferencesStore
 import SwiftUI
 
@@ -71,28 +83,8 @@ public struct FirstLaunchView: View {
         .padding(Slate.Metric.space4)
     }
 
-    // MARK: - Step body (exhaustive switch; macOS-only cases never reached on iOS)
-
-    @ViewBuilder
     private var stepBody: some View {
-        switch model.currentStep {
-        case .onLaunch:
-            FirstLaunchOnLaunchStep()
-        case .installClaudeHooks:
-            FirstLaunchClaudeHooksStep(model: model)
-        case .defaultTerminal:
-            #if os(macOS)
-            FirstLaunchDefaultTerminalStep(model: model)
-            #else
-            EmptyView()
-            #endif
-        case .installCLI:
-            #if os(macOS)
-            FirstLaunchInstallCLIStep(model: model)
-            #else
-            EmptyView()
-            #endif
-        }
+        FirstLaunchStepSurface(step: model.currentStep, model: model)
     }
 
     // MARK: - Footer
@@ -136,30 +128,61 @@ public struct FirstLaunchView: View {
     }
 }
 
+// MARK: - The step bodies both platforms show
+
+/// One step's body, by the step.
+///
+/// The two CROSS-PLATFORM steps have a body here; the two macOS-only ones do not, and draw nothing —
+/// the honest answer, since the phone never reaches them and the Mac draws its own. That is the same
+/// contract `SettingsBespokeSurface` holds for an id it has no surface for.
+///
+/// ⚠️ `private`, NARROWED FROM `package`. The widening existed for exactly one cross-target caller —
+/// `MacFirstLaunchSheet` hosting this in an `NSHostingView` — under docs/56's promise that it comes back
+/// the moment that caller draws its own. It does, so it is: the only caller left is
+/// ``FirstLaunchView/stepBody`` a few lines up, and an access level that outlives its reason reads
+/// exactly like one that still has it.
+private struct FirstLaunchStepSurface: View {
+    let step: FirstLaunchStep
+    let model: FirstLaunchModel
+
+    var body: some View {
+        switch step {
+        case .onLaunch: FirstLaunchOnLaunchStep()
+        case .installClaudeHooks: FirstLaunchClaudeHooksStep(model: model)
+        case .defaultTerminal,
+             .installCLI:
+            EmptyView()
+        }
+    }
+}
+
 // MARK: - Step 1 · On Launch (cross-platform)
 
 /// Step 1 — the On-Launch picker (`@Default(.onLaunch)` — the SAME live key Settings → General binds).
-/// "Restore Last Session" reconnects the still-running detached host sessions; "New Window" starts fresh.
+/// `restoreLastSession` reconnects the still-running detached host sessions; `newWindow` starts fresh.
+/// The labels are `ON_LAUNCH`'s, not this file's — quoting them here is how a third spelling gets born.
 private struct FirstLaunchOnLaunchStep: View {
     @Default(.onLaunch) private var onLaunch
 
     var body: some View {
         FirstLaunchCard {
             onLaunchPicker
-            FirstLaunchNote(
-                "Restore Last Session brings back your scrollback and reconnects agents that kept running "
-                    + "on the host. You can change this any time in Settings → General.",
-            )
+            FirstLaunchNote(FirstLaunchStepPresentation.onLaunchNote)
         }
     }
 
     /// The On-Launch picker — a radio group on macOS, an inline list on iOS (`.radioGroup` is
     /// macOS-only).
+    ///
+    /// The options and their order come from ``FirstLaunchStepPresentation/onLaunchOptions``, never from
+    /// two `Text(…).tag(…)` lines typed here: the Mac's AppKit radios offer the same two, and a picker
+    /// that grew a third case would otherwise grow it on one platform only.
     @ViewBuilder
     private var onLaunchPicker: some View {
         let picker = Picker("On Launch", selection: $onLaunch) {
-            Text("Restore Last Session").tag(OnLaunchBehavior.restoreLastSession)
-            Text("New Window").tag(OnLaunchBehavior.newWindow)
+            ForEach(FirstLaunchStepPresentation.onLaunchOptions, id: \.self) { option in
+                Text(option.title).tag(option)
+            }
         }
         #if os(macOS)
         picker.pickerStyle(.radioGroup)
@@ -178,16 +201,14 @@ private struct FirstLaunchClaudeHooksStep: View {
     @Environment(\.agentHooksController) private var agentHooks
     let model: FirstLaunchModel
 
-    private var state: AgentHooksController.InstallState { AgentSettingsCard.installState(agentHooks) }
-
     var body: some View {
         FirstLaunchCard {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: Slate.Metric.space1) {
-                    Text("Claude Code")
+                    Text(FirstLaunchStepPresentation.hooksAgentName)
                         .font(.system(size: Slate.Typeface.base, weight: .semibold))
                         .foregroundStyle(Slate.Text.primary)
-                    Text("Add hooks to ~/.claude/settings.json for real-time agent state.")
+                    Text(FirstLaunchStepPresentation.hooksBlurb)
                         .font(.system(size: Slate.Typeface.footnote))
                         .foregroundStyle(Slate.Text.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -195,41 +216,45 @@ private struct FirstLaunchClaudeHooksStep: View {
                 Spacer()
                 installControl
             }
-            if state == .disconnected || state == .unknown {
-                FirstLaunchNote("Connect a session first, then install the hooks. You can also do this later in "
-                    + "Settings → Agents.")
+            if FirstLaunchStepPresentation.showsConnectNote(agentHooks) {
+                FirstLaunchNote(FirstLaunchStepPresentation.hooksConnectNote)
             }
         }
         .task { await agentHooks?.refresh() }
     }
 
+    /// The trailing slot, drawn from ``FirstLaunchHooksControl``. The SWITCH is on the resolved control,
+    /// never on the raw ``AgentHooksController/InstallState`` — the fold from six states to three shapes
+    /// is the decision, and it is spelled once, below, for both halves.
     @ViewBuilder
     private var installControl: some View {
-        switch state {
-        case .installed:
-            Label("Installed", systemImage: "checkmark").foregroundStyle(Slate.StatusInk.ok)
-        case .installedInactive:
-            // Written to settings.json but the host listener is not bound — honest amber, not the green
-            // check (Settings ▸ Agents carries the restart hint).
-            Label("Installed — inactive", systemImage: "exclamationmark.triangle")
-                .foregroundStyle(Slate.StatusInk.warn)
-                .help("The host's hook socket isn't bound. Restart the host daemon, then open new panes.")
-        case .notInstalled:
-            Button("Install") {
+        switch FirstLaunchStepPresentation.hooksControl(agentHooks) {
+        case let .badge(badge):
+            badgeLabel(badge)
+        case let .offerInstall(enabled):
+            Button(FirstLaunchStepPresentation.hooksInstallTitle) {
                 Task {
                     await agentHooks?.install()
-                    // The settings.json write is what this step tracks — `installedInactive` still
-                    // counts (the listener half is a hostd-launch concern, surfaced by the badge).
-                    if agentHooks?.isInstalled == true { model.markComplete(.installClaudeHooks) }
+                    if FirstLaunchStepPresentation.completesHooksStep(agentHooks) {
+                        model.markComplete(.installClaudeHooks)
+                    }
                 }
             }
+            .disabled(!enabled)
             .buttonStyle(.bordered)
         case .working:
             ProgressView().controlSize(.small)
-        case .disconnected,
-             .unknown:
-            Button("Install") {}.disabled(true).buttonStyle(.bordered)
         }
+    }
+
+    /// A finished badge. The word, the silhouette and the hint are the badge's own; the HUE is this
+    /// renderer's, because `SlopDeskSlate` sits above `SlopDeskClientCore` and a token cannot descend.
+    /// The Mac's AppKit twin spells the same two constants `Slate.Native.StatusInk.*`.
+    @ViewBuilder
+    private func badgeLabel(_ badge: FirstLaunchHooksBadge) -> some View {
+        let label = Label(badge.label, systemImage: badge.systemImage)
+            .foregroundStyle(badge == .installed ? Slate.StatusInk.ok : Slate.StatusInk.warn)
+        if let hint = badge.hint { label.help(hint) } else { label }
     }
 }
 
@@ -270,178 +295,4 @@ struct FirstLaunchNote: View {
     }
 }
 
-#if os(macOS)
-
-// MARK: - Step 2 · Set as Default Terminal (macOS-only — LOCAL handler)
-
-/// Step 2 — register the app as the LOCAL OS handler for terminal URL schemes / shell scripts, plus the
-/// Finder-Integration and Full-Disk-Access deep-links. The "Set as Default Terminal for Common Apps" remote
-/// case is honestly-DISABLED with a note (no dead button: a remote-host editor's config
-/// can't be rewritten from the client).
-private struct FirstLaunchDefaultTerminalStep: View {
-    let model: FirstLaunchModel
-    @State private var isDefault = false
-
-    var body: some View {
-        FirstLaunchCard {
-            actionRow(
-                "Default Terminal",
-                "Handle `ssh://` links and shell scripts opened from Finder or `open`.",
-            ) {
-                if isDefault {
-                    Label("Default", systemImage: "checkmark").foregroundStyle(Slate.StatusInk.ok)
-                } else {
-                    Button("Set as Default Terminal") {
-                        Task {
-                            await DefaultTerminalIntegration.setAsDefaultTerminal()
-                            isDefault = DefaultTerminalIntegration.isDefaultTerminal()
-                            if isDefault { model.markComplete(.defaultTerminal) }
-                        }
-                    }
-                    .buttonStyle(.bordered)
-                }
-            }
-            // Honestly-disabled remote case (no dead button) — a documented note, not a Configure… button.
-            actionRow(
-                "Default Terminal for Common Apps",
-                "Editors and git GUIs hardcode Terminal.app. Rewriting their config only works for a LOCAL "
-                    + "editor — an editor on the remote host needs a host-side agent, so this is unavailable "
-                    + "in the remote model.",
-            ) {
-                Text("Unavailable").foregroundStyle(Slate.Text.tertiary)
-            }
-            actionRow(
-                "Finder Integration",
-                "Add \u{201C}Open in SlopDesk\u{201D} to Finder's right-click Services menu for folders.",
-            ) {
-                Button("Open System Settings") { DefaultTerminalIntegration.openFinderServicesSettings() }
-                    .buttonStyle(.bordered)
-            }
-            actionRow(
-                "Full Disk Access",
-                "Needed when commands run inside SlopDesk must read or write protected files. The app works "
-                    + "without it.",
-            ) {
-                Button("Open System Settings") { DefaultTerminalIntegration.openFullDiskAccessSettings() }
-                    .buttonStyle(.bordered)
-            }
-        }
-        .onAppear { isDefault = DefaultTerminalIntegration.isDefaultTerminal() }
-    }
-
-    private func actionRow(
-        _ title: String,
-        _ subtitle: String,
-        @ViewBuilder trailing: () -> some View,
-    ) -> some View {
-        HStack(alignment: .top, spacing: Slate.Metric.space3) {
-            VStack(alignment: .leading, spacing: Slate.Metric.space1) {
-                Text(title)
-                    .font(.system(size: Slate.Typeface.base, weight: .semibold))
-                    .foregroundStyle(Slate.Text.primary)
-                Text(subtitle)
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: Slate.Metric.space2)
-            trailing()
-        }
-    }
-}
-
-// MARK: - Step 3 · Install the SlopDesk CLI (macOS-only)
-
-/// Step 3 — install the `/usr/local/bin/slopdesk` symlink (admin-once via `CLIInstaller`), the
-/// Omit-Prefix shell-function toggle, and the Allow-Overwrite toggle. The toggles drive `CLIInstaller`'s
-/// shim-file write (the SAME card lives in Settings → Shell).
-private struct FirstLaunchInstallCLIStep: View {
-    let model: FirstLaunchModel
-    @State private var installer = CLIInstaller()
-
-    var body: some View {
-        FirstLaunchCard {
-            CLIInstallCardBody(installer: installer, onInstalled: { model.markComplete(.installCLI) })
-        }
-        .onAppear { installer.refreshInstalled() }
-    }
-}
-
-// MARK: - Shared CLI-install card body (first-launch step 3 + Settings → Shell)
-
-/// The "SlopDesk CLI" card body — Install/Uninstall (admin-once via ``CLIInstaller``), the Omit-Prefix
-/// toggle, and the Allow-Overwrite toggle — shared by the first-launch step and the Settings → Shell card so
-/// the two are byte-identical (one source). The toggles drive ``CLIInstaller/applyOmitPrefix(enabled:allowOverwrite:)``
-/// (writes the shim file). macOS-only.
-struct CLIInstallCardBody: View {
-    /// The shared install controller (owned by the presenting view's `@State`; read here via Observation).
-    let installer: CLIInstaller
-    /// Called when an install SUCCEEDS (the first-launch step marks itself complete; Settings passes nil).
-    let onInstalled: (() -> Void)?
-    @Default(.cliInstalled) private var cliInstalled
-    @Default(.omitCLIPrefix) private var omitPrefix
-    @Default(.allowPrefixOverwrite) private var allowOverwrite
-
-    init(installer: CLIInstaller, onInstalled: (() -> Void)? = nil) {
-        self.installer = installer
-        self.onInstalled = onInstalled
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Slate.Metric.space3) {
-            installRow
-            Divider().overlay(Slate.Line.divider)
-            Toggle("Omit `slopdesk` Prefix", isOn: $omitPrefix)
-                .onChange(of: omitPrefix) { _, on in
-                    installer.applyOmitPrefix(enabled: on, allowOverwrite: allowOverwrite)
-                }
-            FirstLaunchNote("Expose `edit`, `view`, `watch`, `jump`, and `learn` as bare commands in shells "
-                + "launched by SlopDesk.")
-            Toggle("Allow Overwrite", isOn: $allowOverwrite)
-                .onChange(of: allowOverwrite) { _, _ in
-                    if omitPrefix { installer.applyOmitPrefix(enabled: true, allowOverwrite: allowOverwrite) }
-                }
-            FirstLaunchNote("Leave OFF unless you already have your own `edit`/`view`/… functions you want "
-                + "SlopDesk to replace.")
-            if installer.phase == .failed, let message = installer.errorMessage {
-                FirstLaunchNote(message)
-            }
-        }
-    }
-
-    private var installRow: some View {
-        HStack(alignment: .top, spacing: Slate.Metric.space3) {
-            VStack(alignment: .leading, spacing: Slate.Metric.space1) {
-                Text("Install CLI")
-                    .font(.system(size: Slate.Typeface.base, weight: .semibold))
-                    .foregroundStyle(Slate.Text.primary)
-                Text("Adds `/usr/local/bin/slopdesk` (requests admin once).")
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: Slate.Metric.space2)
-            installControl
-        }
-    }
-
-    @ViewBuilder
-    private var installControl: some View {
-        if installer.phase == .working {
-            ProgressView().controlSize(.small)
-        } else if cliInstalled {
-            HStack(spacing: Slate.Metric.space2) {
-                Label("Installed", systemImage: "checkmark").foregroundStyle(Slate.StatusInk.ok)
-                Button("Uninstall") { Task { await installer.uninstall() } }
-                    .buttonStyle(.bordered)
-            }
-        } else {
-            Button("Install") {
-                Task { if await installer.install() { onInstalled?() } }
-            }
-            .buttonStyle(.bordered)
-        }
-    }
-}
-#endif
 #endif

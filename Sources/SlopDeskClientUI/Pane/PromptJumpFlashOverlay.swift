@@ -14,6 +14,7 @@
 // (mechanical, MERIDIAN L4 — the flash APPEARS as a hard cut and decays; nothing travels).
 
 #if canImport(SwiftUI)
+import SlopDeskSlate
 import SlopDeskTerminal
 import SlopDeskWorkspaceCore
 import SwiftUI

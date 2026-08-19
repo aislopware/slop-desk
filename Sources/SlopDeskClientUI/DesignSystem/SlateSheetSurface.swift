@@ -22,6 +22,7 @@
 // object is the halo that made the earlier sheet experiments look wrong.
 
 #if canImport(SwiftUI)
+import SlopDeskSlate
 import SwiftUI
 
 #if os(macOS)

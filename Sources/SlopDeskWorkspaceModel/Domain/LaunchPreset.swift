@@ -8,8 +8,7 @@ import Foundation
 /// Applying one opens a terminal pane (or a tab of split panes) and runs the command(s) in it — the
 /// "launch Claude / htop / git log into a fresh pane" power feature.
 ///
-/// Distinct from ``LayoutPreset`` (a saved *canvas geometry* snapshot): a `LaunchPreset` is a
-/// *template that SPAWNS* panes. It is a pure
+/// A `LaunchPreset` is a *template that SPAWNS* panes, not a snapshot of ones already open. It is a pure
 /// `Codable` value; the store's apply path turns it into pane specs + the keystrokes to send, computed by
 /// the pure ``LaunchPresetEngine`` so the whole expansion is unit-testable with no view / no transport.
 public struct LaunchPreset: Codable, Sendable, Equatable, Identifiable {

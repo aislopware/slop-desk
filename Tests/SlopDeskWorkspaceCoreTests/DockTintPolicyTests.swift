@@ -1,121 +1,59 @@
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// The PURE macOS Dock-tile decision (``DockTintPolicy``) + the store aggregate it reads.
-/// The AppKit actuation (`DockProgressController` drawing the `NSDockTile` + the `requestUserAttention` bounce)
-/// is GUI-verified only (never instantiate an `NSDockTile` in a test); EVERY decision the controller
-/// makes is one of these pure functions, pinned here. Headless: pure static + a `FakePaneSession` store (no
-/// AppKit, no socket).
+/// The Dock-tile CROSSING (``DockTintPolicy``) + the store aggregate it reads. The rollup crosses as the
+/// wire's own `OSC 9;4` discriminant and the fraction comes back beside a `present` flag, so what is
+/// pinned here is that each case reaches the byte it means and each answer is read back into the right
+/// field. Which rollup tints, which animates, and the fraction the determinate one draws with are
+/// `slopdesk_workspace::chrome::dock_tile`'s, and are tested there.
+///
+/// The AppKit actuation (`DockProgressController` drawing the `NSDockTile` + the `requestUserAttention`
+/// bounce) is GUI-verified only — never instantiate an `NSDockTile` in a test.
 @MainActor
 final class DockTintPolicyTests: XCTestCase {
-    // MARK: - tint(forRollup:) — the plan-pinned function
-
-    /// An `.error` rollup tints red; an in-progress / indeterminate / cleared rollup leaves it untinted. This
-    /// is the decision the Dock red-on-error reads. Revert-to-confirm-fail: collapsing `tint` to always-`.none`
-    /// makes the error case FAIL.
-    func testTintIsErrorOnlyForErrorRollup() {
-        XCTAssertEqual(DockTintPolicy.tint(forRollup: .error(percent: 80)), .error)
-        XCTAssertEqual(DockTintPolicy.tint(forRollup: .indeterminate), .none, "a spinner is not an error")
-        XCTAssertEqual(DockTintPolicy.tint(forRollup: .determinate(percent: 40)), .none, "in-progress is not an error")
-        XCTAssertEqual(DockTintPolicy.tint(forRollup: nil), .none, "a clear is not an error")
+    private func resolve(
+        _ rollup: PaneProgress?, failure: Bool = false, animate: Bool = true, badge: Bool = true,
+    ) -> DockTileModel {
+        DockTintPolicy.resolve(
+            progressRollup: rollup, anyFailure: failure,
+            animateProgressEnabled: animate, errorBadgeEnabled: badge,
+        )
     }
 
-    // MARK: - resolve(...) — the complete tile decision (toggles + non-zero-exit signal)
+    /// Each rollup case reaches its own discriminant: a spinner that crossed as the error byte would
+    /// tint instead of animating, and a determinate value that crossed as the spinner's would lose its
+    /// fraction. `nil` — the clear — crosses as no rollup at all.
+    func testEachRollupCaseCrossesAsItsOwnDiscriminant() throws {
+        let spinner = resolve(.indeterminate)
+        XCTAssertTrue(spinner.animatesProgress)
+        XCTAssertNil(spinner.determinateFraction, "a spinner has no fraction to draw")
+        XCTAssertEqual(spinner.tint, .none)
 
-    /// The error tint requires the `dock-icon-error-badge` toggle ON: an `.error` rollup with the toggle OFF
-    /// produces NO tint. Revert-to-confirm-fail: dropping the `errorBadgeEnabled &&` gate makes the OFF case FAIL.
-    func testErrorTintGatedByErrorBadgeToggle() {
-        let on = DockTintPolicy.resolve(
-            progressRollup: .error(percent: 80), anyFailure: false,
-            animateProgressEnabled: false, errorBadgeEnabled: true,
-        )
-        XCTAssertEqual(on.tint, .error, "error rollup + badge ON → red")
+        let bar = resolve(.determinate(percent: 40))
+        XCTAssertTrue(bar.animatesProgress)
+        XCTAssertEqual(try XCTUnwrap(bar.determinateFraction), 0.4, accuracy: 0.0001, "the percent came too")
 
-        let off = DockTintPolicy.resolve(
-            progressRollup: .error(percent: 80), anyFailure: false,
-            animateProgressEnabled: false, errorBadgeEnabled: false,
-        )
-        XCTAssertEqual(off.tint, .none, "error rollup + badge OFF → no tint")
+        let held = resolve(.error(percent: 80))
+        XCTAssertEqual(held.tint, .error)
+        XCTAssertFalse(held.animatesProgress)
+
+        XCTAssertEqual(resolve(nil), .inert, "nothing reported is the inert tile, not a stuck one")
     }
 
-    /// A non-zero EXIT (a `.failure` completion badge, surfaced as `anyFailure`) tints red even with NO `.error`
-    /// progress — the spec "tints when any session reports a non-zero exit OR OSC 9;4;2". Gated by the toggle.
-    func testNonZeroExitTintsEvenWithoutErrorProgress() {
-        let model = DockTintPolicy.resolve(
-            progressRollup: nil, anyFailure: true,
-            animateProgressEnabled: false, errorBadgeEnabled: true,
-        )
-        XCTAssertEqual(model.tint, .error, "a failing exit alone tints the Dock red")
-
-        let gated = DockTintPolicy.resolve(
-            progressRollup: nil, anyFailure: true,
-            animateProgressEnabled: false, errorBadgeEnabled: false,
-        )
-        XCTAssertEqual(gated.tint, .none, "the error-badge toggle gates the exit tint too")
-    }
-
-    /// Animation requires the `dock-icon-animate-progress` toggle ON AND a RUNNING aggregate: an indeterminate
-    /// spinner animates with NO determinate fraction; a determinate value animates WITH its clamped fraction; a
-    /// held error never animates; the toggle OFF never animates. Revert-to-confirm-fail: dropping the
-    /// `animateProgressEnabled` gate makes the OFF assertions FAIL.
-    func testAnimationGatedByToggleAndRunningState() throws {
-        let spinner = DockTintPolicy.resolve(
-            progressRollup: .indeterminate, anyFailure: false,
-            animateProgressEnabled: true, errorBadgeEnabled: true,
-        )
-        XCTAssertTrue(spinner.animatesProgress, "an indeterminate spinner animates")
-        XCTAssertNil(spinner.determinateFraction, "a spinner has no determinate fraction")
-
-        let bar = DockTintPolicy.resolve(
-            progressRollup: .determinate(percent: 40), anyFailure: false,
-            animateProgressEnabled: true, errorBadgeEnabled: true,
-        )
-        XCTAssertTrue(bar.animatesProgress, "a determinate value animates")
-        XCTAssertEqual(try XCTUnwrap(bar.determinateFraction), 0.4, accuracy: 0.0001, "40% → 0.4 fraction")
-
-        let held = DockTintPolicy.resolve(
-            progressRollup: .error(percent: 80), anyFailure: false,
-            animateProgressEnabled: true, errorBadgeEnabled: true,
-        )
-        XCTAssertFalse(held.animatesProgress, "a held error never animates")
-
-        let toggledOff = DockTintPolicy.resolve(
-            progressRollup: .indeterminate, anyFailure: false,
-            animateProgressEnabled: false, errorBadgeEnabled: true,
-        )
-        XCTAssertFalse(toggledOff.animatesProgress, "the animate toggle OFF suppresses the animation")
-    }
-
-    /// A full / clamped determinate value maps its fraction into `0…1` (no fused multiply, ordered clamp).
-    func testDeterminateFractionClampsToUnit() throws {
-        let full = DockTintPolicy.resolve(
-            progressRollup: .determinate(percent: 100), anyFailure: false,
-            animateProgressEnabled: true, errorBadgeEnabled: true,
-        )
-        XCTAssertEqual(try XCTUnwrap(full.determinateFraction), 1.0, accuracy: 0.0001)
-
-        let zero = DockTintPolicy.resolve(
-            progressRollup: .determinate(percent: 0), anyFailure: false,
-            animateProgressEnabled: true, errorBadgeEnabled: true,
-        )
-        XCTAssertEqual(try XCTUnwrap(zero.determinateFraction), 0.0, accuracy: 0.0001)
-    }
-
-    /// Nothing reported + no failure → the inert tile (the CLEAR state the controller restores when the last
-    /// progress/error session ends — the carryover "no stuck red tile" trap).
-    func testNothingReportedIsInert() {
-        let model = DockTintPolicy.resolve(
-            progressRollup: nil, anyFailure: false,
-            animateProgressEnabled: true, errorBadgeEnabled: true,
-        )
-        XCTAssertEqual(model, .inert)
-        XCTAssertTrue(model.isInert)
+    /// The two toggles and the exit signal land in their own parameters — swapping either toggle at the
+    /// door would tint what should animate, or animate what should only tint.
+    func testTheTogglesAndTheExitLandInTheirOwnSlots() {
+        XCTAssertEqual(resolve(.error(percent: 80), badge: false).tint, .none)
+        XCTAssertEqual(resolve(nil, failure: true).tint, .error, "a failing exit alone tints")
+        XCTAssertEqual(resolve(nil, failure: true, badge: false).tint, .none)
+        XCTAssertFalse(resolve(.indeterminate, animate: false).animatesProgress)
+        XCTAssertNil(resolve(.determinate(percent: 40), animate: false).determinateFraction)
     }
 
     // MARK: - store aggregate: dockTileModel reflects the cross-session union (default toggles)
 
     private func makeStore() -> WorkspaceStore {
-        let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in FakePaneSession(seed.spec) })
+        let store = WorkspaceStore(makeSession: { seed in FakePaneSession(seed.spec) })
         store.attachLoopbackWorkspaceDocument()
         return store
     }

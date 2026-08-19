@@ -1,106 +1,52 @@
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// Pins the pure OSC-22 ``PointerShapeMapping`` table. The GUI surface
-/// (`GhosttyTerminalView`, compile-only behind `#if canImport(CGhostty)`) is a thin actuator that turns the
-/// resolved ``PointerShapeToken`` into an `NSCursor`, so the faithful shape→token table is pinned here.
+/// Pins what is left on THIS side of the OSC-22 pointer-shape crossing: the ``PointerShapeToken``
+/// discriminants.
 ///
-/// Faithful to ghostty's macOS `setCursorShape` (`SurfaceView_AppKit.swift`): every shape with a native
-/// `NSCursor` resolves to its token; every shape upstream ignores resolves to `nil` ("keep current cursor").
-/// None of these assertions is tautological — they encode the upstream mapping + the C enum's raw ordering,
-/// not the function's own derivation; a wrong raw value or a dropped `default→arrow` case fails the suite.
+/// The table itself — which of libghostty's thirty-four shapes has a native cursor, which nineteen keep
+/// the current one, and that an unknown raw value behaves like an unsupported shape — is
+/// `slopdesk_terminal::pointer`'s, tested there and through the door in `slopdesk-ffi`. Repeating it here
+/// would be the mirror `CLAUDE.md` bans; what cannot be tested there is that Swift's enum receives the
+/// number Rust sends, so that is what this asserts.
+///
+/// A case reordered in ``PointerShapeToken`` is a cursor silently swapped for another cursor: nothing
+/// fails to compile, nothing crashes, and a resize handle starts showing a hand. These fifteen equalities
+/// are the only thing standing between that edit and a shipped build.
 final class PointerShapeMappingTests: XCTestCase {
-    /// The raw values MUST match the `ghostty_action_mouse_shape_e` declaration order (`ghostty.h:672-707`),
-    /// because the GUI hands us the C enum's integer payload directly. A reorder here silently mis-maps every
-    /// shape, so pin the load-bearing anchors (and the full count) explicitly.
-    func testRawValuesMatchCEnumDeclarationOrder() {
-        XCTAssertEqual(OSCPointerShape.default.rawValue, 0)
-        XCTAssertEqual(OSCPointerShape.contextMenu.rawValue, 1)
-        XCTAssertEqual(OSCPointerShape.pointer.rawValue, 3)
-        XCTAssertEqual(OSCPointerShape.crosshair.rawValue, 7)
-        XCTAssertEqual(OSCPointerShape.text.rawValue, 8)
-        XCTAssertEqual(OSCPointerShape.verticalText.rawValue, 9)
-        XCTAssertEqual(OSCPointerShape.notAllowed.rawValue, 14)
-        XCTAssertEqual(OSCPointerShape.grab.rawValue, 15)
-        XCTAssertEqual(OSCPointerShape.grabbing.rawValue, 16)
-        XCTAssertEqual(OSCPointerShape.nResize.rawValue, 20)
-        XCTAssertEqual(OSCPointerShape.eResize.rawValue, 21)
-        XCTAssertEqual(OSCPointerShape.sResize.rawValue, 22)
-        XCTAssertEqual(OSCPointerShape.wResize.rawValue, 23)
-        XCTAssertEqual(OSCPointerShape.ewResize.rawValue, 28)
-        XCTAssertEqual(OSCPointerShape.nsResize.rawValue, 29)
-        XCTAssertEqual(OSCPointerShape.zoomOut.rawValue, 33)
-        // The C enum has exactly 34 shapes (0…33); a new shape must be added deliberately.
-        XCTAssertEqual(OSCPointerShape.allCases.count, 34)
-    }
-
-    /// The shapes macOS has a native `NSCursor` for resolve to their token — mirrors upstream `setCursorShape`
-    /// (`SurfaceView_AppKit.swift:505-556`). `default → arrow` is the "reset to arrow" anchor of the spec.
-    func testMappedShapesResolveToTheirToken() {
-        let expected: [OSCPointerShape: PointerShapeToken] = [
-            .default: .arrow,
-            .text: .text,
-            .verticalText: .verticalText,
-            .pointer: .pointer,
-            .grab: .grab,
-            .grabbing: .grabbing,
-            .contextMenu: .contextMenu,
-            .crosshair: .crosshair,
-            .notAllowed: .notAllowed,
-            .wResize: .resizeLeft,
-            .eResize: .resizeRight,
-            .nResize: .resizeUp,
-            .sResize: .resizeDown,
-            .nsResize: .resizeUpDown,
-            .ewResize: .resizeLeftRight,
+    /// Every shape with a native `NSCursor`, by the raw `ghostty_action_mouse_shape_e` the GUI hands over.
+    func testEverySupportedShapeArrivesAsItsToken() {
+        let expected: [Int32: PointerShapeToken] = [
+            0: .arrow, // default — the reset a full-screen program leaves behind
+            1: .contextMenu,
+            3: .pointer,
+            7: .crosshair,
+            8: .text,
+            9: .verticalText,
+            14: .notAllowed,
+            15: .grab,
+            16: .grabbing,
+            20: .resizeUp, // n-resize
+            21: .resizeRight, // e-resize
+            22: .resizeDown, // s-resize
+            23: .resizeLeft, // w-resize
+            28: .resizeLeftRight, // ew-resize
+            29: .resizeUpDown, // ns-resize
         ]
-        for (shape, token) in expected {
-            XCTAssertEqual(
-                PointerShapeMapping.token(for: shape), token,
-                "OSC-22 shape \(shape) must map to \(token)",
-            )
+        for (raw, token) in expected {
+            XCTAssertEqual(PointerShapeMapping.token(forRawValue: raw), token, "raw \(raw)")
         }
+        XCTAssertEqual(expected.count, PointerShapeToken.allCases.count, "every token is reachable")
     }
 
-    /// Every shape with NO native `NSCursor` resolves to `nil` (keep the current cursor) — upstream's
-    /// "ignore unknown shapes". A naive table that guessed a substitute (e.g. mapping `move`/`copy` to some
-    /// cursor) would FAIL this; the faithful behaviour is to leave the pointer unchanged.
-    func testUnmappedShapesResolveToNil() {
-        let unmapped: [OSCPointerShape] = [
-            .help, .progress, .wait, .cell, .alias, .copy, .move, .noDrop, .allScroll,
-            .colResize, .rowResize, .neResize, .nwResize, .seResize, .swResize,
-            .neswResize, .nwseResize, .zoomIn, .zoomOut,
-        ]
-        for shape in unmapped {
-            XCTAssertNil(
-                PointerShapeMapping.token(for: shape),
-                "OSC-22 shape \(shape) has no native NSCursor and must keep the current cursor (nil)",
-            )
+    /// A shape upstream ignores and a value no libghostty emits both mean KEEP the current cursor, so the
+    /// surface needs one branch rather than two.
+    func testUnsupportedAndUnknownBothKeepTheCurrentCursor() {
+        for raw: Int32 in [2, 4, 5, 6, 10, 11, 12, 13, 17, 18, 19, 24, 25, 26, 27, 30, 31, 32, 33] {
+            XCTAssertNil(PointerShapeMapping.token(forRawValue: raw), "unsupported shape \(raw)")
         }
-    }
-
-    /// Exhaustiveness guard: the mapped + unmapped partition covers ALL 34 shapes with no overlap, so the
-    /// table can never silently drop a future shape into an undefined state.
-    func testEveryShapeIsClassifiedExactlyOnce() {
-        var mappedCount = 0
-        var nilCount = 0
-        for shape in OSCPointerShape.allCases {
-            if PointerShapeMapping.token(for: shape) == nil { nilCount += 1 } else { mappedCount += 1 }
+        for raw: Int32 in [-1, 34, 9999, .min, .max] {
+            XCTAssertNil(PointerShapeMapping.token(forRawValue: raw), "unknown raw \(raw)")
         }
-        XCTAssertEqual(mappedCount, 15)
-        XCTAssertEqual(nilCount, 19)
-        XCTAssertEqual(mappedCount + nilCount, OSCPointerShape.allCases.count)
-    }
-
-    /// The raw-int convenience used by the `action_cb`: a valid raw resolves through, an out-of-range raw is
-    /// dropped to `nil` (validate-then-drop on a future/corrupt enum value — never trap).
-    func testRawValueConvenienceValidatesThenDrops() {
-        XCTAssertEqual(PointerShapeMapping.token(forRawValue: 0), .arrow) // default
-        XCTAssertEqual(PointerShapeMapping.token(forRawValue: 8), .text) // text
-        XCTAssertEqual(PointerShapeMapping.token(forRawValue: 23), .resizeLeft) // w-resize
-        XCTAssertNil(PointerShapeMapping.token(forRawValue: 2)) // help → no cursor
-        XCTAssertNil(PointerShapeMapping.token(forRawValue: 34)) // out of range
-        XCTAssertNil(PointerShapeMapping.token(forRawValue: -1)) // out of range
-        XCTAssertNil(PointerShapeMapping.token(forRawValue: 9999)) // out of range
     }
 }

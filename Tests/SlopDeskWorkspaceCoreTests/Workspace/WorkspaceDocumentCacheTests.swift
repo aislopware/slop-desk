@@ -64,7 +64,6 @@ final class WorkspaceDocumentCacheTests: XCTestCase {
         // Session one: the pane is created with a spawn directory and the store is asked to persist.
         let first = WorkspaceStore(
             restoringTree: tree(pane: pane),
-            liveModel: .tree,
             makeSession: { FakePaneSession($0.spec) },
             documentCache: cache,
             cacheHostKey: hostKey,
@@ -77,7 +76,6 @@ final class WorkspaceDocumentCacheTests: XCTestCase {
         let log = MaterializationLog()
         _ = WorkspaceStore(
             restoringTree: tree(pane: pane),
-            liveModel: .tree,
             makeSession: { seed in
                 log.record(seed)
                 return FakePaneSession(seed.spec)
@@ -101,7 +99,6 @@ final class WorkspaceDocumentCacheTests: XCTestCase {
 
         let first = WorkspaceStore(
             restoringTree: tree(pane: pane),
-            liveModel: .tree,
             makeSession: { FakePaneSession($0.spec) },
             documentCache: cache,
             cacheHostKey: hostKey,
@@ -113,7 +110,6 @@ final class WorkspaceDocumentCacheTests: XCTestCase {
         let log = MaterializationLog()
         let second = WorkspaceStore(
             restoringTree: tree(pane: pane),
-            liveModel: .tree,
             makeSession: { seed in
                 log.record(seed)
                 return FakePaneSession(seed.spec)
@@ -136,7 +132,6 @@ final class WorkspaceDocumentCacheTests: XCTestCase {
 
         let store = WorkspaceStore(
             restoringTree: tree(pane: pane),
-            liveModel: .tree,
             makeSession: { FakePaneSession($0.spec) },
             documentCache: cache,
         )
@@ -164,7 +159,6 @@ final class WorkspaceDocumentCacheTests: XCTestCase {
 
         let store = WorkspaceStore(
             restoringTree: tree(pane: pane),
-            liveModel: .tree,
             makeSession: { FakePaneSession($0.spec) },
             documentCache: cache,
             cacheHostKey: hostKey,
@@ -202,7 +196,6 @@ final class WorkspaceDocumentCacheTests: XCTestCase {
 
         let first = WorkspaceStore(
             restoringTree: tree(pane: pane),
-            liveModel: .tree,
             makeSession: { FakePaneSession($0.spec) },
             documentCache: cache,
             cacheHostKey: hostKey,
@@ -214,7 +207,6 @@ final class WorkspaceDocumentCacheTests: XCTestCase {
 
         let second = WorkspaceStore(
             restoringTree: tree(pane: pane),
-            liveModel: .tree,
             makeSession: { FakePaneSession($0.spec) },
             documentCache: cache,
             cacheHostKey: hostKey,
@@ -234,7 +226,6 @@ final class WorkspaceDocumentCacheTests: XCTestCase {
 
         let first = WorkspaceStore(
             restoringTree: tree(pane: pane),
-            liveModel: .tree,
             makeSession: { FakePaneSession($0.spec) },
             documentCache: cache,
             cacheHostKey: hostKey,
@@ -245,7 +236,6 @@ final class WorkspaceDocumentCacheTests: XCTestCase {
 
         let second = WorkspaceStore(
             restoringTree: tree(pane: pane),
-            liveModel: .tree,
             makeSession: { FakePaneSession($0.spec) },
             documentCache: cache,
             cacheHostKey: hostKey,
@@ -291,7 +281,6 @@ final class WorkspaceDocumentCacheTests: XCTestCase {
         let log = MaterializationLog()
         let store = WorkspaceStore(
             restoringTree: seeded,
-            liveModel: .tree,
             makeSession: { seed in
                 log.record(seed)
                 return FakePaneSession(seed.spec)

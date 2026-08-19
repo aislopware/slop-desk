@@ -51,18 +51,21 @@ extension TabID {
     init(ffi: SlopDeskWsUuid) { self.init(raw: ffi.uuid) }
 }
 
-extension ResizeAnchor {
-    /// The CASE index — the crate's enum order, pinned by `scripts/check-supervisor.sh`.
+extension SplitNodeID {
+    var ffi: SlopDeskWsUuid { SlopDeskWsUuid(raw) }
+    init(ffi: SlopDeskWsUuid) { self.init(raw: ffi.uuid) }
+}
+
+package extension PaneKind {
+    /// The CASE index — the crate's `PaneKind` order, pinned by `scripts/check-supervisor.sh`.
+    ///
+    /// The crate reads anything but `1` as a terminal, so a disagreement here degrades to the safe
+    /// kind rather than opening a dead video pane. That is a floor, not a licence: the gate compares
+    /// the two maps so the floor never has to catch anything.
     var ffiByte: UInt8 {
         switch self {
-        case .topLeft: 0
-        case .top: 1
-        case .topRight: 2
-        case .left: 3
-        case .right: 4
-        case .bottomLeft: 5
-        case .bottom: 6
-        case .bottomRight: 7
+        case .terminal: 0
+        case .desktop: 1
         }
     }
 }
@@ -88,7 +91,7 @@ extension FocusDirection {
 /// A first guess generous by an order of magnitude, and a retry that exists to be correct rather
 /// than to be travelled (docs/55 §4). `nil` distinguishes "no answer" from "the empty answer",
 /// which is the difference between an absent project key and a blank one.
-func wsTransform(
+package func wsTransform(
     _ text: String,
     _ call: (UnsafePointer<UInt8>?, Int, UnsafeMutablePointer<UInt8>?, Int) -> Int,
 ) -> [UInt8]? {
@@ -109,11 +112,35 @@ func wsTransform(
     }
 }
 
+/// Runs an `(out, cap) -> needed` door that takes no input and returns the string it delivered.
+///
+/// The INDEXED-list sibling of ``wsTransform(_:_:)``: a catalog door already knows its answer and
+/// only needs somewhere to put it, so what crosses is the size rather than a payload. `capacity` is
+/// the caller's guess at what fits inline; over it the door reports its size and the reader asks
+/// again, which is the retry docs/55 §4 exists to make correct rather than to be travelled.
+///
+/// `nil` for a zero length, which every door uses for "there is nothing here". A caller for whom
+/// the empty string is a real answer coalesces it; one for whom it is not lets the `nil` through.
+package func wsDelivered(
+    capacity: Int,
+    _ door: (UnsafeMutablePointer<UInt8>?, Int) -> Int,
+) -> String? {
+    var out = [UInt8](repeating: 0, count: capacity)
+    var written = out.withUnsafeMutableBufferPointer { door($0.baseAddress, $0.count) }
+    guard written > 0 else { return nil }
+    if written > out.count {
+        out = [UInt8](repeating: 0, count: written)
+        written = out.withUnsafeMutableBufferPointer { door($0.baseAddress, $0.count) }
+        guard written > 0, written <= out.count else { return nil }
+    }
+    return String(bytes: out.prefix(written), encoding: .utf8)
+}
+
 /// Lends an optional string as the `(bytes, len, present)` triple the crate reads.
 ///
 /// The `withUnsafeBytes` scope IS the safety contract — the pointer is live for exactly the call
 /// inside it — so nothing else goes in the closure.
-func withOptionalText<T>(
+package func withOptionalText<T>(
     _ text: String?,
     _ body: (UnsafePointer<UInt8>?, Int, Bool) -> T,
 ) -> T {
@@ -128,18 +155,197 @@ func withOptionalText<T>(
 /// One buffer means one pointer, one lifetime, one scope, where a span per string would mean a
 /// nested `withUnsafeBytes` per element. The crate bounds-checks every span, so a caller that got
 /// the arithmetic wrong reads as "no key" rather than reading someone else's memory.
-struct WsStrings {
-    private(set) var bytes: [UInt8] = []
+package struct WsStrings {
+    package private(set) var bytes: [UInt8] = []
 
-    static let absent = SlopDeskWsSpan(offset: 0, len: 0, present: false)
+    package static let absent = SlopDeskWsSpan(offset: 0, len: 0, present: false)
 
-    mutating func span(_ text: String?) -> SlopDeskWsSpan {
+    package init() {}
+
+    package mutating func span(_ text: String?) -> SlopDeskWsSpan {
         guard let text else { return Self.absent }
         let offset = bytes.count
         bytes.append(contentsOf: text.utf8)
         return SlopDeskWsSpan(offset: offset, len: bytes.count - offset, present: true)
     }
 }
+
+/// Reads a `(out, cap) -> needed` answer, with the retry docs/55 §4 describes.
+///
+/// `nil` is "no answer", which is not the empty answer: an absent project key and a blank one are
+/// different facts about a pane, and so are a pane with no last command and one whose last command
+/// was blank. A door whose empty answer is REAL — the at-root idle shell's yielded title — says so
+/// where it is declared, and its caller maps `nil` to `""` there rather than here.
+package func wsAnswer(_ call: (UnsafeMutablePointer<UInt8>?, Int) -> Int) -> String? {
+    let bytes = wsAnswerBytes(call)
+    guard !bytes.isEmpty else { return nil }
+    return String(bytes: bytes, encoding: .utf8)
+}
+
+/// The same read for an answer that is not ONE string — two run together, or bytes with a shape.
+///
+/// Empty is the no-answer, which every door reading this way already spells `0`; a caller that
+/// needs to tell a blank answer from an absent one takes the second size the door hands back.
+package func wsAnswerBytes(_ call: (UnsafeMutablePointer<UInt8>?, Int) -> Int) -> [UInt8] {
+    var out = [UInt8](repeating: 0, count: 256)
+    var needed = out.withUnsafeMutableBufferPointer { call($0.baseAddress, $0.count) }
+    if needed > out.count {
+        out = [UInt8](repeating: 0, count: needed)
+        needed = out.withUnsafeMutableBufferPointer { call($0.baseAddress, $0.count) }
+    }
+    guard needed > 0, needed <= out.count else { return [] }
+    return Array(out[0..<needed])
+}
+
+/// The sidebar's draw order for a list of things that each belong to a project — where each one
+/// lands, and in which section. `slopdesk_workspace::rail_list::plan`.
+///
+/// `tabRanks[i]` is where element `i`'s TAB sits in the display order, which is the within-section
+/// order; a list that IS its own order passes its own indices. Every element comes back exactly
+/// once, so a caller can rebuild its array from the answer without checking for a hole.
+package func wsRailPlan(keys: [String?], tabRanks: [Int]) -> [(element: Int, section: Int)] {
+    guard !keys.isEmpty else { return [] }
+    var strings = WsStrings()
+    var rows = keys.enumerated().map { index, key in
+        SlopDeskWsRailPlanRow(
+            project_key: strings.span(key),
+            // A rank the caller did not supply is an element whose tab is not in the order at all,
+            // which sorts last rather than first.
+            tab_rank: tabRanks.indices.contains(index) ? tabRanks[index] : Int.max,
+        )
+    }
+    var blob = strings.bytes
+    var out = [SlopDeskWsRailPlacement](
+        repeating: SlopDeskWsRailPlacement(row_index: 0, section: 0), count: keys.count,
+    )
+    let written = blob.withUnsafeMutableBufferPointer { text in
+        rows.withUnsafeMutableBufferPointer { planned in
+            out.withUnsafeMutableBufferPointer { placements in
+                slopdesk_ws_rail_plan(
+                    planned.baseAddress, planned.count, text.baseAddress, text.count,
+                    placements.baseAddress, placements.count,
+                )
+            }
+        }
+    }
+    guard written == keys.count else { return [] }
+    return out.map { (element: $0.row_index, section: $0.section) }
+}
+
+// MARK: - The one ranking every search field asks
+
+/// Where one candidate placed in a search field's list.
+package struct WsRanked {
+    /// Its index in the array the caller passed in.
+    package let candidate: Int
+    /// Which of its fields matched; 0 is the most important, and a lower tier always wins.
+    package let tier: Int
+    /// The fzf score within that tier.
+    package let score: Int
+    /// The scalar offsets the query matched, ascending — empty for every row but the ones that
+    /// matched the tier the caller said it would underline.
+    package let positions: [Int]
+}
+
+/// Every candidate that matches `query`, best first. `slopdesk_workspace::search_rank::rank`.
+///
+/// `fields` is ONE flat array holding `stride` fields per candidate in priority order — a search
+/// field with one searchable string and one with three differ by that number, not by having two
+/// rankings. `underlining` names the one tier the caller draws large; `nil` asks for no highlight
+/// at all, which is the matcher's cheap path.
+package func wsSearchRank(
+    query: String,
+    fields: [String?],
+    stride: Int,
+    underlining tier: Int?,
+) -> [WsRanked] {
+    let candidateCount = stride > 0 ? fields.count / stride : 0
+    guard candidateCount > 0 else { return [] }
+    var strings = WsStrings()
+    var spans = fields.map { strings.span($0) }
+    let inputs = SlopDeskWsSearchRankInputs(
+        candidate_count: candidateCount,
+        stride: stride,
+        positions_wanted: tier != nil,
+        positions_tier: tier ?? 0,
+    )
+    var blob = strings.bytes
+    var needle = Array(query.utf8)
+    var out = [SlopDeskWsSearchRanked](
+        repeating: SlopDeskWsSearchRanked(
+            candidate: 0, tier: 0, score: 0, position_offset: 0, position_count: 0,
+        ),
+        count: candidateCount,
+    )
+    // Both guesses are the arithmetic BOUND, not an estimate: no more rows can match than were
+    // offered, and a match carries exactly one offset per query scalar. The retry below is docs/55
+    // §4's, kept because a size the caller derived is still a size the caller could get wrong.
+    var positions = [UInt32](
+        repeating: 0, count: tier == nil ? 0 : candidateCount * query.unicodeScalars.count,
+    )
+    var needed = 0
+    func ask() -> Int {
+        blob.withUnsafeMutableBufferPointer { text in
+            needle.withUnsafeMutableBufferPointer { typed in
+                spans.withUnsafeMutableBufferPointer { held in
+                    out.withUnsafeMutableBufferPointer { placed in
+                        positions.withUnsafeMutableBufferPointer { runs in
+                            slopdesk_ws_search_rank(
+                                inputs, held.baseAddress, text.baseAddress, text.count,
+                                typed.baseAddress, typed.count, placed.baseAddress, placed.count,
+                                runs.baseAddress, runs.count, &needed,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+    var matched = ask()
+    if matched > out.count || needed > positions.count {
+        out = [SlopDeskWsSearchRanked](
+            repeating: SlopDeskWsSearchRanked(
+                candidate: 0, tier: 0, score: 0, position_offset: 0, position_count: 0,
+            ),
+            count: matched,
+        )
+        positions = [UInt32](repeating: 0, count: needed)
+        matched = ask()
+    }
+    guard matched <= out.count, needed <= positions.count else { return [] }
+    return out.prefix(matched).map { row in
+        let start = row.position_offset
+        let end = start + row.position_count
+        let run = end <= positions.count ? positions[start..<end] : positions[0..<0]
+        return WsRanked(
+            candidate: row.candidate, tier: row.tier, score: Int(row.score),
+            positions: run.map(Int.init),
+        )
+    }
+}
+
+/// `elements` ordered by how well each one's searchable text answers `query`, misses dropped.
+///
+/// The shape four overlays used to spell out for themselves: score, drop the misses, order by score
+/// with arrival breaking ties. A blank query is the list in its own order, which is a search field's
+/// zero state. An element with nothing to be found by passes `""` — a real query cannot match it, a
+/// blank one leaves it where it is, and neither needs a rule of its own.
+package func wsSearchRanked<Element>(
+    _ elements: [Element],
+    query: String,
+    searchText: (Element) -> String,
+) -> [Element] {
+    wsSearchRank(query: query, fields: elements.map(searchText), stride: 1, underlining: nil)
+        .compactMap { placed in
+            elements.indices.contains(placed.candidate) ? elements[placed.candidate] : nil
+        }
+}
+
+/// The most rows a search field hands back, however many matched.
+///
+/// Asked for rather than transcribed: a copy that drifted would let one surface build rows the one
+/// beside it capped away.
+package var wsMaxSearchResults: Int { slopdesk_ws_max_search_results() }
 
 // MARK: - The split tree's walk
 

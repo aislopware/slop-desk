@@ -152,7 +152,7 @@ struct HostMetadataProbe: MetadataQuerying {
 
     // MARK: - forwarded to `slopdesk-probe` (git, directories, sessions)
 
-    func gitStatus(cwd: String) -> MetadataCodec.GitStatusPayload { HostProbe.gitStatus(cwd: cwd) }
+    func gitStatus(cwd: String) -> MetadataCodec.GitStatusPayload { HostGitStatus.of(cwd: cwd) }
 
     func gitDiff(cwd: String, file: String) -> Data? { HostProbe.gitDiff(cwd: cwd, file: file) }
 

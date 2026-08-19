@@ -15,6 +15,7 @@
 // libghostty / Metal is touched: the surface is placed and transformed, never reached into.
 
 #if canImport(SwiftUI) && os(iOS)
+import SlopDeskSlate
 import SlopDeskTerminal
 import SlopDeskWorkspaceCore
 import SwiftUI

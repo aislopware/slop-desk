@@ -26,6 +26,7 @@
 // rationale). check-ds-leaks forbids only raw font-size / radius literals, not these colours.
 
 #if canImport(SwiftUI)
+import SlopDeskSlate
 import SlopDeskTerminal
 import SlopDeskWorkspaceCore
 import SwiftUI
@@ -79,16 +80,8 @@ struct HintModeOverlay: View {
             // Belt-and-suspenders Escape dismiss: the primary cancel is the renderer's `keyDown` →
             // `cancelHintMode()` once the terminal is first responder (the key-routing nudges focus there). This
             // safety net — if Escape lands in the overlay's responder chain instead of the surface — still cancels
-            // the mode (the same idiom PaletteView / OpenQuicklyView use: macOS `onExitCommand`, which is
-            // unavailable on iOS, so the iOS slice uses the equivalent `.onKeyPress(.escape)`).
-            #if os(macOS)
-            .onExitCommand { model.cancelHintMode() }
-            #else
-            .onKeyPress(.escape, phases: .down) { _ in
-                model.cancelHintMode()
-                return .handled
-            }
-            #endif
+            // the mode. Which key route that is per platform is ``View/slateCancelKey(perform:)``'s.
+            .slateCancelKey { model.cancelHintMode() }
             .transition(.opacity)
         }
     }

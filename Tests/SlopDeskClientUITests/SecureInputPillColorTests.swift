@@ -9,6 +9,7 @@
 // fails on its `assertNotEqual(... accent)` leg. Headless / pure-token — no SCStream/VT/Metal touched.
 
 #if canImport(SwiftUI) && canImport(AppKit)
+import SlopDeskSlate
 import SwiftUI
 import XCTest
 @testable import SlopDeskClientUI

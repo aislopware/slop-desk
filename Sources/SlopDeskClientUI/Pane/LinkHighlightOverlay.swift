@@ -24,6 +24,7 @@
 // the on-glass vocabulary (`Slate.Terminal.ink` — the cell foreground).
 
 #if canImport(SwiftUI)
+import SlopDeskSlate
 import SlopDeskTerminal
 import SlopDeskWorkspaceCore
 import SwiftUI

@@ -8,13 +8,11 @@ import SlopDeskWorkspaceModel
 /// exist). The parked STATE (``WorkspaceStore/pendingClose`` / ``WorkspaceStore/pendingTabCloseID``) stays a
 /// stored property on the main type; everything that arms or resolves it lives here.
 public extension WorkspaceStore {
-    /// Confirms the parked close in whichever live model is current. A parked TAB close
-    /// (``pendingTabCloseID``) drops the WHOLE tab via ``closeTab(_:)`` — NOT a single leaf — so a
-    /// multi-pane tab does not keep its siblings; it is checked first since the two parks are mutually
-    /// exclusive. Otherwise the parked pane id closes via ``closePaneTree(_:)`` under ``LiveModel/tree`` (the
-    /// canvas ``closePane(_:)`` would early-return on a tree id, silently dropping the close) or
-    /// ``closePane(_:)`` under ``LiveModel/canvas``. No-op when nothing is pending (the unit was already
-    /// closed by another path — a close clears a matching park).
+    /// Confirms the parked close. A parked TAB close (``pendingTabCloseID``) drops the WHOLE tab via
+    /// ``closeTab(_:)`` — NOT a single leaf — so a multi-pane tab does not keep its siblings; it is checked
+    /// first since the two parks are mutually exclusive. Otherwise the parked pane id closes via
+    /// ``closePaneTree(_:)``. No-op when nothing is pending (the unit was already closed by another path —
+    /// a close clears a matching park).
     func confirmPendingClose() {
         if let tabID = pendingTabCloseID {
             pendingTabCloseID = nil
@@ -23,10 +21,7 @@ public extension WorkspaceStore {
         }
         guard let id = pendingClose else { return }
         pendingClose = nil
-        switch liveModel {
-        case .tree: closePaneTree(id)
-        case .canvas: closePane(id)
-        }
+        closePaneTree(id)
     }
 
     /// Dismisses the busy-shell / policy close confirmation (pane OR tab) without closing.
@@ -35,21 +30,15 @@ public extension WorkspaceStore {
         pendingTabCloseID = nil
     }
 
-    /// The ``PaneSpec`` of the pane awaiting a busy-close confirmation, resolved from whichever live model
-    /// is current — the tree's side table under ``LiveModel/tree``, else the canvas. Lets the
-    /// confirmation dialog name the leaf it would close on EITHER shell (a canvas-only lookup would show a
-    /// generic title under `.tree`). `nil` when nothing is pending or the pane vanished (a parked TAB close
-    /// carries no pane spec — the dialog titles it generically off ``pendingTabCloseID``).
+    /// The ``PaneSpec`` of the pane awaiting a busy-close confirmation, so the confirmation dialog can
+    /// name the leaf it would close. `nil` when nothing is pending or the pane vanished (a parked TAB
+    /// close carries no pane spec — the dialog titles it generically off ``pendingTabCloseID``).
     var pendingCloseSpec: PaneSpec? {
-        guard let id = pendingClose else { return nil }
-        switch liveModel {
-        case .tree: return tree.spec(for: id)
-        case .canvas: return workspace.canvas.spec(for: id)
-        }
+        pendingClose.flatMap { tree.spec(for: $0) }
     }
 
     /// The close-confirmation policy that GATED the currently-parked close — drives the in-app
-    /// ``CloseConfirmationPanel`` subtitle so it reads accurately (a `.process` park says "a
+    /// close-confirmation dialog's subtitle so it reads accurately (a `.process` park says "a
     /// process is still running", an `.always` park does not). A parked PANE close reports
     /// ``CloseConfirmationPolicy/process`` — ⌘W's only policy gate is the busy-shell guard (see
     /// ``WorkspaceStore/closeConfirmationNeeded(scope:pane:)``), so the subtitle names the running command
@@ -122,9 +111,10 @@ public extension WorkspaceStore {
         pendingTabCloseID = tabID
     }
 
-    /// Whether `id` is the SOLE pane on the canvas — so closing it empties the workspace (the "Add a
-    /// pane" empty state). Lets the pane chrome label the close button honestly.
+    /// Whether `id` is the SOLE pane in the workspace — so closing it empties it (the "Add a pane"
+    /// empty state). Lets the pane chrome label the close button honestly.
     func isOnlyLeaf(_ id: PaneID) -> Bool {
-        workspace.canvas.contains(id) && workspace.canvas.itemCount == 1
+        let leaves = tree.allPaneIDs()
+        return leaves.count == 1 && leaves.first == id
     }
 }

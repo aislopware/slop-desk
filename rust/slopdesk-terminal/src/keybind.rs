@@ -314,6 +314,53 @@ pub fn canonical_chord(chord: &Chord) -> String {
     text
 }
 
+/// The chord as a HUMAN reads it: the modifier glyphs in the platform's order, then the key.
+///
+/// The sibling of [`canonical_chord`], and deliberately beside it: one writes the chord for the
+/// config file and the other for a menu, a palette row or the cheat sheet, and the two must name
+/// the same chord. Modifier order is the platform's own — ⌃⌥⇧⌘, the order macOS prints in every
+/// menu — which is also the order the canonical form uses, so the two never disagree about which
+/// chord is which.
+#[must_use]
+pub fn glyph_chord(chord: &Chord) -> String {
+    let mut text = String::new();
+    for (held, glyph) in [
+        (chord.control, '⌃'),
+        (chord.option, '⌥'),
+        (chord.shift, '⇧'),
+        (chord.command, '⌘'),
+    ] {
+        if held {
+            text.push(glyph);
+        }
+    }
+    text.push_str(&key_glyph(&chord.key));
+    text
+}
+
+/// The glyph one base key wears.
+///
+/// A named key has a printed symbol — the ones macOS puts in its own menus — and anything else is
+/// the key itself, upper-cased: a chord is stored lower-cased because the shift is a modifier, but
+/// a human reads ⌘D, not ⌘d. The lookup folds aliases first, so `pgup` and `pageup` print one
+/// glyph rather than one glyph and one word.
+fn key_glyph(key: &str) -> String {
+    match canonical_base_key(key).as_str() {
+        "space" => "␣".to_owned(),
+        "return" => "↩".to_owned(),
+        "tab" => "⇥".to_owned(),
+        "left" => "←".to_owned(),
+        "right" => "→".to_owned(),
+        "up" => "↑".to_owned(),
+        "down" => "↓".to_owned(),
+        "pageup" => "⇞".to_owned(),
+        "pagedown" => "⇟".to_owned(),
+        "home" => "↖".to_owned(),
+        "end" => "↘".to_owned(),
+        other => other.to_uppercase(),
+    }
+}
+
 /// A payload that decoded to nothing is not a payload.
 fn non_empty(bytes: Vec<u8>) -> Option<Vec<u8>> {
     (!bytes.is_empty()).then_some(bytes)
@@ -361,7 +408,7 @@ mod tests {
     )]
 
     use super::{
-        Action, Chord, ESC, NAMED_KEYS, canonical_base_key, canonical_chord, is_valid_base_key,
+        Action, Chord, ESC, NAMED_KEYS, canonical_base_key, canonical_chord, glyph_chord, is_valid_base_key,
         literal_bytes, parse_action, parse_chord, parse_line,
     };
 
@@ -578,5 +625,29 @@ mod tests {
             canonical_chord(&parse_chord("CMD+SHIFT+D").expect("parses")),
             canonical_chord(&chord)
         );
+    }
+
+    #[test]
+    fn the_glyph_form_names_the_same_chord_the_canonical_one_does() {
+        let shifted = chord("d", true, true, false, false);
+        assert_eq!(
+            glyph_chord(&shifted),
+            "⇧⌘D",
+            "lower-cased storage, upper-cased display"
+        );
+        assert_eq!(canonical_chord(&shifted), "shift+cmd+d");
+        let every_modifier = chord("pageup", true, true, true, true);
+        assert_eq!(glyph_chord(&every_modifier), "⌃⌥⇧⌘⇞");
+    }
+
+    #[test]
+    fn an_alias_prints_the_glyph_its_canonical_spelling_does() {
+        for (spelling, canonical) in NAMED_KEYS {
+            assert_eq!(
+                glyph_chord(&chord(spelling, false, false, false, false)),
+                glyph_chord(&chord(canonical, false, false, false, false)),
+                "{spelling}"
+            );
+        }
     }
 }

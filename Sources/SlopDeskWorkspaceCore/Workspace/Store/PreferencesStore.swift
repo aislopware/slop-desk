@@ -398,6 +398,7 @@ public final class PreferencesStore {
         .agentSoundTaskComplete, .agentSoundAwaitInput,
         // Shell — TAB BADGE command-badge toggles (progress-state.md)
         .tabBadgeOnCommandFinish, .tabBadgeOnCommandFail, .tabBadgeOnCommandAwaitInput,
+        .tabBadgeBusyDelaySeconds,
         // Shell — working directory + CLI prefix toggles
         .workingDirectoryNewWindow, .workingDirectoryNewTab, .workingDirectoryNewSplit,
         .omitCLIPrefix, .allowPrefixOverwrite,
@@ -418,8 +419,12 @@ public final class PreferencesStore {
         // Appearance
         .newTabPosition, .autoHideTabsPanel,
         .dockIconAnimateProgress, .dockIconErrorBadge,
+        // Appearance → Window (macOS-only controls, but the keys round-trip on both platforms and
+        // are advertised either way, so a reset has to reach them on both)
+        .windowSize, .windowCols, .windowRows, .windowWidthPx, .windowHeightPx,
+        .desktopWindowPresentation, .satelliteBackgroundPointer,
         // Agents
-        .autoSwitchLayouts, .recordClipboardHistory,
+        .recordClipboardHistory,
         .agentBadgeWhileProcessing, .agentBadgeWhenComplete, .agentBadgeWhenAwaitingInput,
     ]
 

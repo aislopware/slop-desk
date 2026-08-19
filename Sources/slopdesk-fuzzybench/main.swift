@@ -13,7 +13,7 @@
 // (optionally `… <scaleN>` to repeat the corpus to ~N entries for throughput numbers).
 
 import Foundation
-import SlopDeskClientUI
+import SlopDeskClientCore
 
 // MARK: - Corpus
 

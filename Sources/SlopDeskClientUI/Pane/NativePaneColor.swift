@@ -6,6 +6,7 @@
 // alias names are kept so the 10 call sites need no change; the SOURCE of truth is `SlateDesign.swift`.
 
 #if canImport(SwiftUI)
+import SlopDeskSlate
 import SwiftUI
 
 // `@MainActor` because the aliases read the runtime ``Slate/theme`` (D3) — call sites are SwiftUI views.

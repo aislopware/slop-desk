@@ -119,7 +119,7 @@ pub struct SlopDeskScrollPin {
 pub struct SlopDeskScrollRoute {
     /// The pin after this event.
     pub state: SlopDeskScrollPin,
-    /// True to forward this event to the remote window, false to pan the canvas.
+    /// True to forward this event to the remote window, false to scroll the pane locally.
     pub remote: bool,
 }
 

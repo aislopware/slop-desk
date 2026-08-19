@@ -12,6 +12,9 @@
 //! what was just lent, and re-crossing the strings to say so would be the one wasteful thing in an
 //! otherwise-free call.
 //!
+//! The REPAIR of a loaded file answers the same way, for the same reason: which entries a
+//! hand-edited database keeps is a subset of what was lent, so it comes back as indices too.
+//!
 //! ## A jump answers two strings, so it answers through an arena
 //! The resolved path is one of `$HOME`, the recorded source, or a ranked entry, and the source the
 //! caller should persist is a second string that may or may not be present. Both come back in one
@@ -21,8 +24,8 @@
 use std::ffi::c_uchar;
 
 use slopdesk_workspace::frecency::{
-    FolderEntry, ReferenceSeconds, WEIGHT_DAY, WEIGHT_HOUR, WEIGHT_MONTH, WEIGHT_STALE, WEIGHT_WEEK, ranked,
-    recency_weight, score,
+    DEFAULT_MAX_ENTRIES, FolderEntry, MAX_PATH_SCALARS, ReferenceSeconds, WEIGHT_DAY, WEIGHT_HOUR,
+    WEIGHT_MONTH, WEIGHT_STALE, WEIGHT_WEEK, is_valid_path, ranked, recency_weight, sanitized, score,
 };
 use slopdesk_workspace::jump::resolve;
 
@@ -39,6 +42,11 @@ pub const SLOPDESK_FOLDER_WEIGHT_WEEK: u32 = 2;
 pub const SLOPDESK_FOLDER_WEIGHT_MONTH: u32 = 3;
 /// Older than a month — the lowest weight, still above zero.
 pub const SLOPDESK_FOLDER_WEIGHT_STALE: u32 = 4;
+
+/// The default ceiling on stored entries.
+pub const SLOPDESK_FOLDER_LIMIT_MAX_ENTRIES: u32 = 0;
+/// The longest storable path, in Unicode scalars.
+pub const SLOPDESK_FOLDER_LIMIT_PATH_SCALARS: u32 = 1;
 
 /// One folder record as it crosses: a span into the caller's arena, plus the two scored terms.
 #[repr(C)]
@@ -204,6 +212,77 @@ pub unsafe extern "C" fn slopdesk_folder_ranked(
     indices.len()
 }
 
+/// The two limits the store is written against, by code, so neither language writes them down
+/// twice.
+///
+/// `SLOPDESK_FOLDER_LIMIT_MAX_ENTRIES` is the default ceiling on stored entries;
+/// `SLOPDESK_FOLDER_LIMIT_PATH_SCALARS` the longest storable path, in Unicode scalars. An unknown
+/// code answers `0`, which no caller can mistake for a limit.
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+#[unsafe(no_mangle)]
+pub const extern "C" fn slopdesk_folder_limit(limit: u32) -> usize {
+    match limit {
+        SLOPDESK_FOLDER_LIMIT_MAX_ENTRIES => DEFAULT_MAX_ENTRIES,
+        SLOPDESK_FOLDER_LIMIT_PATH_SCALARS => MAX_PATH_SCALARS,
+        _ => 0,
+    }
+}
+
+/// Whether a path may be STORED at all: not blank, and within the scalar cap.
+///
+/// # Safety
+/// The pair must describe live, initialised memory for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_folder_path_is_valid(path: *const c_uchar, len: usize) -> bool {
+    // SAFETY: the caller's obligation above.
+    is_valid_path(&unsafe { text(path, len) })
+}
+
+/// Repairs a LOADED database, answering the caller's own indices for the entries worth keeping.
+///
+/// Same two-call shape as the ranking, and the same reason for indices: the caller holds every
+/// record already, so what comes back is which of them survived, in the order they should be
+/// stored.
+///
+/// # Safety
+/// The record array, the arena and the index buffer must each be null or live for their stated
+/// lengths for the whole call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_folder_sanitized(
+    entries: *const SlopDeskFolderEntry,
+    count: usize,
+    arena: *const c_uchar,
+    arena_len: usize,
+    max_entries: usize,
+    order: *mut u32,
+    order_cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligation above.
+    let owned = unsafe { database(entries, count, arena, arena_len) };
+    let kept: Vec<u32> = sanitized(&owned, max_entries)
+        .into_iter()
+        .map(|index| u32::try_from(index).unwrap_or(u32::MAX))
+        .collect();
+    if kept.len() > order_cap || order.is_null() || kept.is_empty() {
+        return kept.len();
+    }
+    // SAFETY: the buffer is non-null and holds at least `kept.len()` entries, by the check above and
+    // the caller's obligation that it is writable for `order_cap`.
+    unsafe { std::ptr::copy_nonoverlapping(kept.as_ptr(), order, kept.len()) };
+    kept.len()
+}
+
 /// Resolves an `slopdesk jump` target over the lent database.
 ///
 /// An empty `query`, `cwd` or `source` means absent, which is what a blank one already trims to.
@@ -295,9 +374,11 @@ fn intern(pool: &mut Vec<u8>, bytes: &[u8]) -> (u32, u32) {
 )]
 mod tests {
     use super::{
-        SLOPDESK_FOLDER_WEIGHT_DAY, SLOPDESK_FOLDER_WEIGHT_HOUR, SLOPDESK_FOLDER_WEIGHT_STALE,
-        SlopDeskFolderEntry, SlopDeskJumpResolution, slopdesk_folder_ranked, slopdesk_folder_recency_weight,
-        slopdesk_folder_score, slopdesk_folder_weight, slopdesk_jump_resolve,
+        SLOPDESK_FOLDER_LIMIT_MAX_ENTRIES, SLOPDESK_FOLDER_LIMIT_PATH_SCALARS, SLOPDESK_FOLDER_WEIGHT_DAY,
+        SLOPDESK_FOLDER_WEIGHT_HOUR, SLOPDESK_FOLDER_WEIGHT_STALE, SlopDeskFolderEntry,
+        SlopDeskJumpResolution, slopdesk_folder_limit, slopdesk_folder_path_is_valid, slopdesk_folder_ranked,
+        slopdesk_folder_recency_weight, slopdesk_folder_sanitized, slopdesk_folder_score,
+        slopdesk_folder_weight, slopdesk_jump_resolve,
     };
     use crate::host_state::SlopDeskByteSpan;
 
@@ -439,6 +520,71 @@ mod tests {
         assert_eq!(rank(&rows, 2), vec![2, 1]);
         // An empty database ranks to nothing, through the same call.
         assert!(rank(&[], -1).is_empty());
+    }
+
+    #[test]
+    fn the_limits_come_from_the_crate_and_an_unknown_code_is_not_one() {
+        assert_eq!(slopdesk_folder_limit(SLOPDESK_FOLDER_LIMIT_MAX_ENTRIES), 200);
+        assert_eq!(slopdesk_folder_limit(SLOPDESK_FOLDER_LIMIT_PATH_SCALARS), 4096);
+        assert_eq!(slopdesk_folder_limit(9), 0);
+    }
+
+    #[test]
+    fn a_path_crosses_and_comes_back_storable_or_not() {
+        let ask = |path: &str| unsafe { slopdesk_folder_path_is_valid(path.as_ptr(), path.len()) };
+        assert!(ask("/tmp"));
+        assert!(!ask("   "));
+        assert!(!ask(""));
+        // A null pair is the empty path, not a trap.
+        assert!(!unsafe { slopdesk_folder_path_is_valid(std::ptr::null(), 0) });
+        let cap = slopdesk_folder_limit(SLOPDESK_FOLDER_LIMIT_PATH_SCALARS);
+        assert!(
+            ask(&"é".repeat(cap)),
+            "the cap counts scalars, and this is twice as many bytes"
+        );
+        assert!(!ask(&"a".repeat(cap + 1)));
+    }
+
+    #[test]
+    fn the_repair_answers_the_callers_own_indices() {
+        let rows = [
+            ("/keep", 3, 90_000.0),
+            ("  ", 3, 0.0),
+            ("/negative", -1, 0.0),
+            ("/fresh", 1, 1.0),
+        ];
+        let (records, arena) = database(&rows);
+        let repair = |max_entries: usize| {
+            let needed = unsafe {
+                slopdesk_folder_sanitized(
+                    records.as_ptr(),
+                    records.len(),
+                    arena.as_ptr(),
+                    arena.len(),
+                    max_entries,
+                    std::ptr::null_mut(),
+                    0,
+                )
+            };
+            let mut order = vec![0_u32; needed];
+            let written = unsafe {
+                slopdesk_folder_sanitized(
+                    records.as_ptr(),
+                    records.len(),
+                    arena.as_ptr(),
+                    arena.len(),
+                    max_entries,
+                    order.as_mut_ptr(),
+                    order.len(),
+                )
+            };
+            assert_eq!(written, needed);
+            order
+        };
+        // The blank path and the negative count could not have been written by the store.
+        assert_eq!(repair(200), vec![0, 3]);
+        // Over the cap, the freshest survives.
+        assert_eq!(repair(1), vec![3]);
     }
 
     #[test]

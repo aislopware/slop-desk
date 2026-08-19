@@ -1,3 +1,5 @@
+import CSlopDeskFFI
+
 // MARK: - The embedder side of the clipboard-WRITE "Ask" gate
 
 /// What the terminal embedder should do when libghostty asks it to WRITE the pasteboard — a
@@ -15,22 +17,17 @@ public enum ClipboardWriteDecision: Equatable, Sendable {
     case drop
 }
 
-/// The PURE, headless decision behind the **clipboard-write = ask** gate at the libghostty `write_clipboard_cb`.
+/// The embedder half of the **clipboard-write = ask** gate at the libghostty `write_clipboard_cb`.
 ///
-/// ## Why this exists (the inert-"Ask" bug)
-/// The clipboard-write Allow / Deny / Ask picker and the config builder emit `clipboard-write =
-/// ask`. libghostty enforces `deny` itself (it never calls the write callback) and `allow` itself (it calls
-/// the callback with `confirm == false`), but `ask` is DELEGATED to the embedder: libghostty calls
-/// `write_clipboard_cb` with `confirm == true` and trusts the embedder to gate the write. A callback that
-/// ignores that `confirm` argument writes the pasteboard unconditionally — so "Ask" would silently behave
-/// like "Allow", and any remote OSC-52 could overwrite the system clipboard with no prompt.
+/// The decision is `slopdesk_terminal::surface::clipboard_write`, which also carries why it is a decision
+/// at all: libghostty enforces `deny` and `allow` itself, but DELEGATES `ask` — it calls the write callback
+/// with `confirm` set and trusts the embedder to gate, so a callback that ignored the flag would make "Ask"
+/// behave as "Allow" and let any remote OSC-52 overwrite the clipboard silently.
 ///
-/// This enum is the **testable heart** of the fix; the GUI surface (`GhosttyTerminalView.write_clipboard_cb`,
-/// compile-only behind `#if canImport(CGhostty)`) is the thin actuator that reads the C `confirm` bool,
-/// calls ``decide(confirmRequested:text:)``, and either writes, presents the confirmation sheet, or drops.
-/// It mirrors the READ-ask plumbing (``ClipboardAccess/silentClipboardRead(text:)`` →
-/// `slopdeskConfirmClipboardRead`); the two directions stay separate enums because the READ access is a
-/// 3-state config value the embedder resolves, while the WRITE confirm is a per-call flag libghostty hands us.
+/// The GUI surface (`GhosttyTerminalView.write_clipboard_cb`, compile-only behind `#if canImport(CGhostty)`)
+/// reads the C `confirm` bool, calls ``decide(confirmRequested:text:)``, and either writes, presents the
+/// sheet, or drops. The READ direction stays a separate type (``ClipboardAccess/silentClipboardRead(text:)``):
+/// that access is a 3-state config value the embedder resolves, while this confirm is a per-call flag.
 public enum ClipboardWritePolicy {
     /// Decide what a libghostty clipboard WRITE should do.
     ///
@@ -38,10 +35,15 @@ public enum ClipboardWritePolicy {
     ///   - confirmRequested: the libghostty `write_clipboard_cb` `confirm` flag — `true` when
     ///     `clipboard-write = ask` (the embedder must confirm before writing), `false` when `allow`.
     ///   - text: the text/plain payload libghostty is asking to write.
-    /// - Returns: ``ClipboardWriteDecision/drop`` for an empty payload (validate-then-drop),
-    ///   ``ClipboardWriteDecision/confirm`` when a prompt is required, else ``ClipboardWriteDecision/write``.
     public static func decide(confirmRequested: Bool, text: String) -> ClipboardWriteDecision {
-        guard !text.isEmpty else { return .drop }
-        return confirmRequested ? .confirm : .write
+        var text = text
+        let answer = text.withUTF8 {
+            slopdesk_term_clipboard_write(confirmRequested, $0.baseAddress, $0.count)
+        }
+        return switch answer {
+        case 0: .write
+        case 1: .confirm
+        default: .drop
+        }
     }
 }

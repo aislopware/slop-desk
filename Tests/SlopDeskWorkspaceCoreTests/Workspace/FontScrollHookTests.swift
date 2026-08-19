@@ -24,7 +24,6 @@ final class FontScrollHookTests: XCTestCase {
     private func makeStore() -> WorkspaceStore {
         let store = WorkspaceStore(
             restoringTree: .defaultWorkspace(),
-            liveModel: .tree,
             makeSession: { seed in RecordingTerminalPaneSession(seed.spec) },
             liveVideoCap: 2,
         )

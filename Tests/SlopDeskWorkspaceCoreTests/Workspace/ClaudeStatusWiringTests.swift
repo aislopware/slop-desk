@@ -168,7 +168,7 @@ final class ClaudeStatusWiringTests: XCTestCase {
     /// the dedupe guard removed, an idempotent re-set would re-assign (and re-notify) on every repeat —
     /// this test would then see extra mutations. Driven through the real store sink + the session fold.
     func testRepeatedIdenticalStatusEmitsOnlyOnce() throws {
-        let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in FakePaneSession(seed.spec) })
+        let store = WorkspaceStore(makeSession: { seed in FakePaneSession(seed.spec) })
         store.attachLoopbackWorkspaceDocument()
         let paneID = try XCTUnwrap(store.tree.allPaneIDs().first)
 
@@ -202,7 +202,7 @@ final class ClaudeStatusWiringTests: XCTestCase {
     /// owning session/tab `rollupStatus(...)` surface the most-urgent state (Herdr rollup). This is the
     /// `AgentStatusDot`'s live source.
     func testSetAgentStatusFeedsRollupDots() throws {
-        let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in FakePaneSession(seed.spec) })
+        let store = WorkspaceStore(makeSession: { seed in FakePaneSession(seed.spec) })
         store.attachLoopbackWorkspaceDocument()
         // The default tree has one session with one tab + one leaf.
         let sessionID = try XCTUnwrap(store.tree.sessions.first?.id)
@@ -228,7 +228,7 @@ final class ClaudeStatusWiringTests: XCTestCase {
     /// The most-urgent rollup over a multi-pane tab (blocked > working > done > idle > none) — a `.idle`
     /// pane next to a `.needsPermission` pane rolls up to `.needsPermission`.
     func testRollupSurfacesMostUrgentAcrossPanes() throws {
-        let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in FakePaneSession(seed.spec) })
+        let store = WorkspaceStore(makeSession: { seed in FakePaneSession(seed.spec) })
         store.attachLoopbackWorkspaceDocument()
         let sessionID = try XCTUnwrap(store.tree.sessions.first?.id)
         let first = try XCTUnwrap(store.tree.allPaneIDs().first)

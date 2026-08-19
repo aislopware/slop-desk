@@ -7,6 +7,7 @@
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
+import SlopDeskSlate
 import SwiftUI
 
 /// A small icon button with a rounded hover plate: transparent when idle, fills on hover.

@@ -21,10 +21,14 @@
 // The poll rides `.task`, so it dies with the view — deliberately unlike the model's sockets, which
 // outlive their view and needed an explicit `park()` (see ``SimulatorSidebarModel/park()``). A card
 // exists only while the list is on screen, so the view's own lifetime is exactly the right one.
+//
+// iOS-ONLY since docs/56 increment 52a; the Mac draws the same card in `MacSimulatorRunningCard`,
+// where the poll rides window MEMBERSHIP because AppKit has no `.task(id:)`.
 
-#if os(macOS)
-import AppKit
+#if os(iOS)
 import SFSafeSymbols
+import SlopDeskDevicePanels
+import SlopDeskSlate
 import SwiftUI
 
 struct SimulatorRunningCard: View {
@@ -35,7 +39,7 @@ struct SimulatorRunningCard: View {
     /// The last picture that arrived. Kept across a failed poll rather than blanked: the server
     /// answers 500 for a device that has just gone away, and a card that flickered to grey for one
     /// round would be reporting a stumble the reader cannot act on.
-    @State private var screen: NSImage?
+    @State private var screen: Image?
     @State private var hovering = false
 
     var body: some View {
@@ -56,7 +60,7 @@ struct SimulatorRunningCard: View {
         .onTapGesture(perform: onOpen)
         .onHover { hovering = $0 }
         .animation(Slate.Anim.smallFade, value: hovering)
-        .help("Open \(device.name)")
+        .help(SimulatorPresentation.openHelp(device))
         .task(id: device.udid) { await poll() }
     }
 
@@ -72,7 +76,7 @@ struct SimulatorRunningCard: View {
     private var art: some View {
         ZStack {
             if let screen {
-                Image(nsImage: screen)
+                screen
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     // The framebuffer is a rectangle; every device that can run this is not. Clipping
@@ -122,7 +126,7 @@ struct SimulatorRunningCard: View {
             } else {
                 SlatePlateButton(
                     symbol: .stopFill,
-                    help: "Shut down \(device.name)",
+                    help: SimulatorPresentation.shutdownHelp(device),
                     size: Slate.Typeface.footnote,
                     plate: Slate.Metric.heightControl,
                     tint: hovering ? Slate.Text.primary : Slate.Text.tertiary,
@@ -139,7 +143,7 @@ struct SimulatorRunningCard: View {
     private func poll() async {
         while !Task.isCancelled {
             if let data = await model.thumbnail(for: device.udid),
-               let image = NSImage(data: data)
+               let image = Image.decoded(data)
             {
                 screen = image
             }

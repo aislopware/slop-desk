@@ -17,7 +17,7 @@ final class TerminalViewModelTests: XCTestCase {
         model.inputSink = { d in localOrder.append("local")
             sunk.append(d)
         }
-        model.broadcastTap = { d in localOrder.append("tap")
+        model.syncInputTap = { d in localOrder.append("tap")
             tapped.append(d)
         }
         model.sendInput(Data("x".utf8))
@@ -30,7 +30,7 @@ final class TerminalViewModelTests: XCTestCase {
         let model = TerminalViewModel()
         var sunk: [Data] = []
         model.inputSink = { sunk.append($0) }
-        model.sendInput(Data("y".utf8)) // no broadcastTap wired → no-op, no crash
+        model.sendInput(Data("y".utf8)) // no syncInputTap wired → no-op, no crash
         XCTAssertEqual(sunk, [Data("y".utf8)])
     }
 

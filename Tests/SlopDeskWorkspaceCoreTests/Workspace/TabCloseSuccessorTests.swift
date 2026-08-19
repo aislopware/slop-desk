@@ -107,7 +107,6 @@ final class TabCloseSuccessorTests: XCTestCase {
     private func makeStore(_ tree: TreeWorkspace) -> WorkspaceStore {
         let store = WorkspaceStore(
             restoringTree: tree,
-            liveModel: .tree,
             makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: 2,
             persistence: nil,

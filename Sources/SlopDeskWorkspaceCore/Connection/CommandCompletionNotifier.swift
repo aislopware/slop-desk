@@ -1,4 +1,6 @@
+import CSlopDeskFFI
 import Foundation
+import SlopDeskWorkspaceModel
 
 /// The PURE decision policy for "should a finished command raise a desktop notification".
 ///
@@ -9,13 +11,14 @@ import Foundation
 public enum CommandNotificationPolicy {
     /// Commands shorter than this never notify — only LONG-running commands are worth a
     /// desktop alert (matches the iTerm2/Warp "command finished" default of ~10 seconds).
-    /// A quick `ls` (milliseconds) is far below this and stays silent.
-    public static let longRunningThresholdMS: UInt32 = 10000
+    /// A quick `ls` (milliseconds) is far below this and stays silent. Asked for rather than
+    /// transcribed, so "long" cannot come to mean two things.
+    public static var longRunningThresholdMS: UInt32 { slopdesk_ws_notify_long_threshold_ms() }
 
-    /// The pure decision: notify iff the host-measured C→D duration is at least the threshold.
-    /// `>=` so a command that took exactly the threshold notifies (and `sleep 12` clearly does).
+    /// Notify iff the host-measured C→D duration is at least the threshold. `>=`, so a command that
+    /// took exactly the threshold notifies (and `sleep 12` clearly does).
     public static func shouldNotify(durationMS: UInt32) -> Bool {
-        durationMS >= longRunningThresholdMS
+        slopdesk_ws_notify_is_long_running(durationMS)
     }
 }
 
@@ -52,9 +55,13 @@ public enum BackgroundCompletionPolicy {
         isPaneFocused: Bool,
         longThresholdMS: UInt32,
     ) -> PaneCompletionBadge? {
-        guard !isPaneFocused else { return nil }
-        if (exitCode ?? 0) != 0 { return .failure }
-        return durationMS >= longThresholdMS ? .success : nil
+        switch slopdesk_ws_notify_badge(
+            exitCode ?? 0, exitCode != nil, durationMS, isPaneFocused, longThresholdMS,
+        ) {
+        case 1: .success
+        case 2: .failure
+        default: nil
+        }
     }
 
     /// The focus gate for the long-command desktop notification: notify ONLY when the pane is
@@ -66,8 +73,9 @@ public enum BackgroundCompletionPolicy {
         enabled: Bool,
         longThresholdMS: UInt32,
     ) -> Bool {
-        guard enabled, !isPaneFocused else { return false }
-        return durationMS >= longThresholdMS
+        slopdesk_ws_notify_should_notify_completion(
+            durationMS, isPaneFocused, enabled, longThresholdMS,
+        )
     }
 }
 
@@ -84,16 +92,31 @@ public enum ExplicitNotificationContent {
         explicitTitle: String,
         body: String,
     ) -> (title: String, body: String) {
-        let pane = paneTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        let explicit = explicitTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !explicit.isEmpty {
-            return (explicit, body)
+        var pane = paneTitle
+        var explicit = explicitTitle
+        var body = body
+        var split = 0
+        // The two strings come back as one run; `split` says where the title ends, so a title
+        // carrying any byte a separator could use is still read back whole.
+        let answer = wsAnswerBytes { out, cap in
+            pane.withUTF8 { paneText in
+                explicit.withUTF8 { explicitText in
+                    body.withUTF8 { bodyText in
+                        slopdesk_ws_notify_explicit_content(
+                            paneText.baseAddress, paneText.count,
+                            explicitText.baseAddress, explicitText.count,
+                            bodyText.baseAddress, bodyText.count,
+                            out, cap, &split,
+                        )
+                    }
+                }
+            }
         }
-        if !pane.isEmpty {
-            return (pane, body)
-        }
-        // No title anywhere: promote the body so the alert is never blank.
-        return (body, "")
+        guard split <= answer.count else { return ("", "") }
+        return (
+            String(bytes: answer[..<split], encoding: .utf8) ?? "",
+            String(bytes: answer[split...], encoding: .utf8) ?? "",
+        )
     }
 }
 
@@ -119,26 +142,24 @@ public enum LongCommandNotificationUserInfo {
 /// notification consumes one. Deterministic (caller passes a monotonic `now`), so it is unit-tested
 /// with no clock.
 public struct NotificationRateLimiter: Sendable {
-    public let capacity: Double
-    public let refillPerSecond: Double
-    private var tokens: Double
-    private var lastRefill: TimeInterval
+    /// The bucket itself, which is the whole state — it crosses by value in both directions, so
+    /// there is no handle to own and nothing to free.
+    private var bucket: SlopDeskWsNotifyRateLimiter
+
+    public var capacity: Double { bucket.capacity }
+    public var refillPerSecond: Double { bucket.refill_per_second }
 
     public init(capacity: Double = 5, refillPerSecond: Double = 0.5, now: TimeInterval) {
-        self.capacity = capacity
-        self.refillPerSecond = refillPerSecond
-        tokens = capacity
-        lastRefill = now
+        bucket = SlopDeskWsNotifyRateLimiter(
+            capacity: capacity, refill_per_second: refillPerSecond, tokens: capacity,
+            last_refill: now,
+        )
     }
 
     /// Refills by elapsed time then consumes a token if one is available. Returns whether the
     /// notification is allowed (a burst beyond `capacity` is dropped until tokens refill).
     public mutating func allow(now: TimeInterval) -> Bool {
-        tokens = min(capacity, tokens + max(0, now - lastRefill) * refillPerSecond)
-        lastRefill = now
-        guard tokens >= 1 else { return false }
-        tokens -= 1
-        return true
+        slopdesk_ws_notify_rate_limit_allow(&bucket, now)
     }
 }
 

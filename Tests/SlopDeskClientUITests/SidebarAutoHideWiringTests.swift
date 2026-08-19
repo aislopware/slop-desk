@@ -2,14 +2,15 @@
 // WITHOUT a live view or an NSWindow.
 //
 // The pure decision (`SidebarAutoHidePolicy.desiredCollapsed`) is pinned headlessly in
-// `SidebarAutoHidePolicyTests`. What this suite pins is the thin view-side glue in
-// `WorkspaceRootView`: the static `applyAutoHide(mode:tabCount:chrome:)` that the `.onChange(of:)` observers
-// call, and the iOS `sidebarVisibility(sidebarCollapsed:)` column mapping that makes the shared
+// `SidebarAutoHidePolicyTests`. What this suite pins is the ACTUATION either shell performs:
+// `WorkspaceChromePolicy.applyAutoHide(mode:tabCount:chrome:)`, which the `.onChange(of:)` observers
+// call, and the phone shell's `SidebarColumnVisibility` column mapping that makes the shared
 // `chrome.sidebarCollapsed` flag honored on iPad (not a dead toggle). Both are pure + cross-platform so the
 // contract is unit-tested in the macOS `swift test` Gate, never instantiating a view / split / NSWindow.
 
 import SwiftUI
 import XCTest
+@testable import SlopDeskClientCore
 @testable import SlopDeskClientUI
 @testable import SlopDeskWorkspaceCore
 
@@ -19,13 +20,12 @@ final class SidebarAutoHideWiringTests: XCTestCase {
 
     /// `.auto` COLLAPSES the sidebar when the active session drops to ≤1 tab. Start REVEALED, apply the policy
     /// at one tab, and the live chrome flag flips to collapsed — the actuation the `.onChange(of:)` observer
-    /// performs on a tab-close transition. REVERT-TO-CONFIRM-FAIL: `applyAutoHide` does not exist on the
-    /// un-fixed `WorkspaceRootView`, so this fails to compile-then-pass only once it's added.
+    /// performs on a tab-close transition.
     func testAutoModeCollapsesWhenDownToOneTab() {
         let chrome = WorkspaceChromeState()
         chrome.sidebarCollapsed = false // resting: sidebar revealed
 
-        WorkspaceRootView.applyAutoHide(mode: .auto, tabCount: 1, chrome: chrome)
+        WorkspaceChromePolicy.applyAutoHide(mode: .auto, tabCount: 1, chrome: chrome)
         XCTAssertTrue(chrome.sidebarCollapsed, ".auto at 1 tab collapses the TABS panel")
     }
 
@@ -36,7 +36,7 @@ final class SidebarAutoHideWiringTests: XCTestCase {
         let chrome = WorkspaceChromeState()
         chrome.sidebarCollapsed = true // resting: sidebar collapsed
 
-        WorkspaceRootView.applyAutoHide(mode: .auto, tabCount: 2, chrome: chrome)
+        WorkspaceChromePolicy.applyAutoHide(mode: .auto, tabCount: 2, chrome: chrome)
         XCTAssertFalse(chrome.sidebarCollapsed, ".auto at 2 tabs reveals the TABS panel")
     }
 
@@ -45,7 +45,7 @@ final class SidebarAutoHideWiringTests: XCTestCase {
     func testAutoModeCollapsesAtZeroTabs() {
         let chrome = WorkspaceChromeState()
         chrome.sidebarCollapsed = false
-        WorkspaceRootView.applyAutoHide(mode: .auto, tabCount: 0, chrome: chrome)
+        WorkspaceChromePolicy.applyAutoHide(mode: .auto, tabCount: 0, chrome: chrome)
         XCTAssertTrue(chrome.sidebarCollapsed, ".auto at 0 tabs collapses (nothing to switch between)")
     }
 
@@ -59,7 +59,7 @@ final class SidebarAutoHideWiringTests: XCTestCase {
         let chrome = WorkspaceChromeState() // a fresh window: sidebarCollapsed defaults to false (revealed)
         XCTAssertFalse(chrome.sidebarCollapsed, "precondition: a fresh window rests revealed")
 
-        WorkspaceRootView.applyAutoHide(mode: .auto, tabCount: 1, chrome: chrome)
+        WorkspaceChromePolicy.applyAutoHide(mode: .auto, tabCount: 1, chrome: chrome)
         XCTAssertTrue(chrome.sidebarCollapsed, ".auto + a single-tab session collapses the TABS panel at launch")
     }
 
@@ -74,7 +74,7 @@ final class SidebarAutoHideWiringTests: XCTestCase {
         let chrome = WorkspaceChromeState()
         chrome.sidebarCollapsed = true // the user manually collapsed it (⌘⇧L)
 
-        WorkspaceRootView.applyAutoHide(mode: .default, tabCount: 5, chrome: chrome)
+        WorkspaceChromePolicy.applyAutoHide(mode: .default, tabCount: 5, chrome: chrome)
         XCTAssertTrue(chrome.sidebarCollapsed, ".default has no opinion — a manual collapse is never fought")
     }
 
@@ -84,7 +84,7 @@ final class SidebarAutoHideWiringTests: XCTestCase {
         let chrome = WorkspaceChromeState()
         chrome.sidebarCollapsed = false // manually revealed
 
-        WorkspaceRootView.applyAutoHide(mode: .default, tabCount: 1, chrome: chrome)
+        WorkspaceChromePolicy.applyAutoHide(mode: .default, tabCount: 1, chrome: chrome)
         XCTAssertFalse(chrome.sidebarCollapsed, ".default never collapses a manually-revealed sidebar")
     }
 
@@ -93,7 +93,7 @@ final class SidebarAutoHideWiringTests: XCTestCase {
     func testAlwaysModeHasNoOpinion() {
         let chrome = WorkspaceChromeState()
         chrome.sidebarCollapsed = false
-        WorkspaceRootView.applyAutoHide(mode: .always, tabCount: 1, chrome: chrome)
+        WorkspaceChromePolicy.applyAutoHide(mode: .always, tabCount: 1, chrome: chrome)
         XCTAssertFalse(chrome.sidebarCollapsed, ".always never auto-hides (no opinion)")
     }
 
@@ -106,12 +106,12 @@ final class SidebarAutoHideWiringTests: XCTestCase {
     func testAlreadySatisfiedStateIsLeftAsIs() {
         let revealed = WorkspaceChromeState()
         revealed.sidebarCollapsed = false
-        WorkspaceRootView.applyAutoHide(mode: .auto, tabCount: 2, chrome: revealed)
+        WorkspaceChromePolicy.applyAutoHide(mode: .auto, tabCount: 2, chrome: revealed)
         XCTAssertFalse(revealed.sidebarCollapsed, "already-revealed at >1 tab stays revealed")
 
         let collapsed = WorkspaceChromeState()
         collapsed.sidebarCollapsed = true
-        WorkspaceRootView.applyAutoHide(mode: .auto, tabCount: 1, chrome: collapsed)
+        WorkspaceChromePolicy.applyAutoHide(mode: .auto, tabCount: 1, chrome: collapsed)
         XCTAssertTrue(collapsed.sidebarCollapsed, "already-collapsed at ≤1 tab stays collapsed")
     }
 
@@ -127,14 +127,14 @@ final class SidebarAutoHideWiringTests: XCTestCase {
         let chrome = WorkspaceChromeState()
         chrome.sidebarCollapsed = false // resting revealed
 
-        WorkspaceRootView.applyAutoHide(mode: .auto, tabCount: 2, chrome: chrome)
+        WorkspaceChromePolicy.applyAutoHide(mode: .auto, tabCount: 2, chrome: chrome)
         XCTAssertFalse(chrome.sidebarCollapsed, "precondition: .auto at 2 tabs reveals")
 
         chrome.toggleSidebar() // the user manually COLLAPSES (⌘⇧L / titlebar / palette all route here)
         XCTAssertTrue(chrome.sidebarCollapsed, "precondition: ⌘⇧L collapsed it")
         XCTAssertTrue(chrome.manualSidebarOverride, "precondition: the manual override is recorded")
 
-        WorkspaceRootView.applyAutoHide(mode: .auto, tabCount: 3, chrome: chrome)
+        WorkspaceChromePolicy.applyAutoHide(mode: .auto, tabCount: 3, chrome: chrome)
         XCTAssertTrue(
             chrome.sidebarCollapsed,
             "a manual ⌘⇧L collapse survives an unrelated tab open (2→3, same >1 regime) — never fought",
@@ -148,13 +148,13 @@ final class SidebarAutoHideWiringTests: XCTestCase {
         let chrome = WorkspaceChromeState()
         chrome.sidebarCollapsed = true // resting collapsed
 
-        WorkspaceRootView.applyAutoHide(mode: .auto, tabCount: 1, chrome: chrome) // settle the regime at ≤1
+        WorkspaceChromePolicy.applyAutoHide(mode: .auto, tabCount: 1, chrome: chrome) // settle the regime at ≤1
         XCTAssertTrue(chrome.sidebarCollapsed, "precondition: .auto at 1 tab collapses")
 
         chrome.toggleSidebar() // the user manually REVEALS at one tab
         XCTAssertFalse(chrome.sidebarCollapsed, "precondition: ⌘⇧L revealed it")
 
-        WorkspaceRootView.applyAutoHide(mode: .auto, tabCount: 1, chrome: chrome) // same ≤1 regime
+        WorkspaceChromePolicy.applyAutoHide(mode: .auto, tabCount: 1, chrome: chrome) // same ≤1 regime
         XCTAssertFalse(chrome.sidebarCollapsed, "a manual reveal at one tab survives a same-regime re-evaluation")
     }
 
@@ -166,21 +166,21 @@ final class SidebarAutoHideWiringTests: XCTestCase {
         let chrome = WorkspaceChromeState()
         chrome.sidebarCollapsed = false
 
-        WorkspaceRootView.applyAutoHide(mode: .auto, tabCount: 2, chrome: chrome) // revealed (>1 regime)
+        WorkspaceChromePolicy.applyAutoHide(mode: .auto, tabCount: 2, chrome: chrome) // revealed (>1 regime)
         chrome.toggleSidebar() // manual collapse → override set
         XCTAssertTrue(chrome.sidebarCollapsed && chrome.manualSidebarOverride, "precondition: manual collapse recorded")
 
-        WorkspaceRootView.applyAutoHide(mode: .auto, tabCount: 1, chrome: chrome) // EDGE >1→1
+        WorkspaceChromePolicy.applyAutoHide(mode: .auto, tabCount: 1, chrome: chrome) // EDGE >1→1
         XCTAssertFalse(chrome.manualSidebarOverride, "the 1↔>1 regime edge clears the manual override")
 
-        WorkspaceRootView.applyAutoHide(mode: .auto, tabCount: 2, chrome: chrome) // EDGE 1→>1, override gone
+        WorkspaceChromePolicy.applyAutoHide(mode: .auto, tabCount: 2, chrome: chrome) // EDGE 1→>1, override gone
         XCTAssertFalse(
             chrome.sidebarCollapsed,
             "after the edge cleared the override, .auto reveals again at >1 tabs (default state, not a lock)",
         )
     }
 
-    // MARK: - sidebarVisibility: the iOS column mapping makes the shared flag honored on iPad
+    // MARK: - SidebarColumnVisibility.visibility: the iOS column mapping makes the shared flag honored on iPad
 
     /// The pure map the iOS `sidebarColumnVisibility` binding uses: a collapsed sidebar hides the leading TABS
     /// column (`.detailOnly` — the shell is TWO columns now that the inspector is removed), a revealed
@@ -190,16 +190,16 @@ final class SidebarAutoHideWiringTests: XCTestCase {
     /// macOS Gate.
     func testSidebarVisibilityMapping() {
         XCTAssertEqual(
-            WorkspaceRootView.sidebarVisibility(sidebarCollapsed: true), .detailOnly,
+            SidebarColumnVisibility.visibility(sidebarCollapsed: true), .detailOnly,
             "a collapsed sidebar hides the leading TABS column on iPad (the detail column remains)",
         )
         XCTAssertEqual(
-            WorkspaceRootView.sidebarVisibility(sidebarCollapsed: false), .all,
+            SidebarColumnVisibility.visibility(sidebarCollapsed: false), .all,
             "a revealed sidebar shows all columns on iPad",
         )
     }
 
-    // MARK: - applySidebarVisibility: the iPad swipe is the SECOND manual entry point
+    // MARK: - SidebarColumnVisibility.apply: the iPad swipe is the SECOND manual entry point
 
     /// A user SWIPE that collapses the leading column (revealed → `.detailOnly`) is a genuine manual choice:
     /// it writes the shared flag AND records the override, so the policy honors it like ⌘⇧L. REVERT-TO-CONFIRM-
@@ -210,7 +210,7 @@ final class SidebarAutoHideWiringTests: XCTestCase {
         chrome.sidebarCollapsed = false // resting revealed (the swipe genuinely flips it)
         XCTAssertFalse(chrome.manualSidebarOverride, "precondition: no override yet")
 
-        WorkspaceRootView.applySidebarVisibility(.detailOnly, chrome: chrome)
+        SidebarColumnVisibility.apply(.detailOnly, chrome: chrome)
         XCTAssertTrue(chrome.sidebarCollapsed, "the swipe collapses the TABS panel")
         XCTAssertTrue(chrome.manualSidebarOverride, "an iPad swipe is a manual entry point — the override is recorded")
     }
@@ -219,7 +219,7 @@ final class SidebarAutoHideWiringTests: XCTestCase {
     func testSwipeRevealRecordsManualOverride() {
         let chrome = WorkspaceChromeState()
         chrome.sidebarCollapsed = true // resting collapsed
-        WorkspaceRootView.applySidebarVisibility(.all, chrome: chrome)
+        SidebarColumnVisibility.apply(.all, chrome: chrome)
         XCTAssertFalse(chrome.sidebarCollapsed, "the swipe reveals the TABS panel")
         XCTAssertTrue(chrome.manualSidebarOverride, "a manual reveal swipe is recorded too")
     }
@@ -230,7 +230,7 @@ final class SidebarAutoHideWiringTests: XCTestCase {
     func testEchoOfPolicyValueDoesNotRecordOverride() {
         let chrome = WorkspaceChromeState()
         chrome.sidebarCollapsed = true // the policy just collapsed it; the getter yields `.detailOnly`
-        WorkspaceRootView.applySidebarVisibility(.detailOnly, chrome: chrome) // SwiftUI echoes it back unchanged
+        SidebarColumnVisibility.apply(.detailOnly, chrome: chrome) // SwiftUI echoes it back unchanged
         XCTAssertTrue(chrome.sidebarCollapsed, "the flag is unchanged")
         XCTAssertFalse(chrome.manualSidebarOverride, "an echo of the policy's own value is NOT a manual override")
     }
@@ -243,13 +243,13 @@ final class SidebarAutoHideWiringTests: XCTestCase {
         let chrome = WorkspaceChromeState()
         chrome.sidebarCollapsed = false
 
-        WorkspaceRootView.applyAutoHide(mode: .auto, tabCount: 2, chrome: chrome) // settle >1 regime, revealed
+        WorkspaceChromePolicy.applyAutoHide(mode: .auto, tabCount: 2, chrome: chrome) // settle >1 regime, revealed
         XCTAssertFalse(chrome.sidebarCollapsed, "precondition: .auto at 2 tabs reveals")
 
-        WorkspaceRootView.applySidebarVisibility(.detailOnly, chrome: chrome) // the iPad swipe-away
+        SidebarColumnVisibility.apply(.detailOnly, chrome: chrome) // the iPad swipe-away
         XCTAssertTrue(chrome.sidebarCollapsed && chrome.manualSidebarOverride, "precondition: swipe recorded")
 
-        WorkspaceRootView.applyAutoHide(mode: .auto, tabCount: 3, chrome: chrome) // unrelated tab open, same regime
+        WorkspaceChromePolicy.applyAutoHide(mode: .auto, tabCount: 3, chrome: chrome) // unrelated tab open, same regime
         XCTAssertTrue(
             chrome.sidebarCollapsed,
             "an iPad swipe-collapse survives an unrelated tab open (2→3, same >1 regime) — never forcibly revealed",

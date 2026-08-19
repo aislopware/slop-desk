@@ -8,6 +8,29 @@ import PackageDescription
 // with NO GUI, NO libghostty.
 //
 // Swift 6 tools default to Swift 6 language mode (strict concurrency).
+
+// What the FFI archive's C needs from the system, carried by every target that links it.
+//
+// `CSlopDeskFFI`'s macOS slice contains a vendored `libgit2` — `slopdesk_git_status`, the door that
+// replaced five process spawns per FSEvents tick with one call. libgit2 wants `iconv` for the
+// NFD/NFC path normalisation Apple filesystems make it do, and `Security` + `CoreFoundation` for its
+// certificate handling. (zlib is NOT here: it is compiled into the archive by `libz-sys`'s `static`,
+// because it was the one dependency small enough to vendor.)
+//
+// Every target that names `CSlopDeskFFI` carries this, not just the one whose door it is, because a
+// Rust staticlib is ONE object per crate: the object holding that door also holds every other
+// `slopdesk_*` entry point, so an executable calling ANY of them drags libgit2's members in. The
+// three flags cost a link-time symbol lookup on the products that never call it — `-dead_strip`
+// removes the code itself — and `scripts/check-supervisor.sh` fails a new `CSlopDeskFFI` dependent
+// that forgets them, which is the failure a person would otherwise meet as a wall of `_iconv`.
+//
+// macOS only: the iOS slices have no libgit2 in them at all (`slopdesk_ffi.h`'s `TARGET_OS_OSX`
+// region, and the `cfg` behind it).
+let ffiCLibraries: [LinkerSetting] = [
+    .linkedLibrary("iconv", .when(platforms: [.macOS])),
+    .linkedFramework("Security", .when(platforms: [.macOS])),
+    .linkedFramework("CoreFoundation", .when(platforms: [.macOS])),
+]
 let package = Package(
     name: "SlopDesk",
     platforms: [
@@ -27,9 +50,20 @@ let package = Package(
         .library(name: "SlopDeskClaudeCode", targets: ["SlopDeskClaudeCode"]),
         .library(name: "SlopDeskAgentDetect", targets: ["SlopDeskAgentDetect"]),
         .library(name: "SlopDeskWorkspaceCore", targets: ["SlopDeskWorkspaceCore"]),
-        // REBUILD-V2: thin SwiftUI layer over SlopDeskWorkspaceCore, STOCK SwiftUI + system semantic
-        // colours/fonts — no custom token target (the Warp-clone `SlopDeskDesignSystem` is deleted).
+        // docs/56: the simulator + Android panels' DOMAIN — their wire, their sockets, their device
+        // models. No view framework, so both UI halves reach the one implementation (docs 47, 48).
+        .library(name: "SlopDeskDevicePanels", targets: ["SlopDeskDevicePanels"]),
+        .library(name: "SlopDeskClientCore", targets: ["SlopDeskClientCore"]),
+        // docs/56: the DESIGN FLOOR — the token ladder in BOTH of its spellings, the status mark's
+        // geometry and cadence, the vector artwork. Values, never views, so the AppKit half and the
+        // SwiftUI half render one design instead of two.
+        .library(name: "SlopDeskSlate", targets: ["SlopDeskSlate"]),
+        // REBUILD-V2: thin SwiftUI layer over SlopDeskWorkspaceCore, over the `SlopDeskSlate` tokens.
         .library(name: "SlopDeskClientUI", targets: ["SlopDeskClientUI"]),
+        // docs/56 stage C: the two APP SHELLS. Each Xcode app target links exactly one of them, and
+        // neither imports the other — the products exist so the two `@main`s can be linked apart.
+        .library(name: "SlopDeskMacUI", targets: ["SlopDeskMacUI"]),
+        .library(name: "SlopDeskPhoneUI", targets: ["SlopDeskPhoneUI"]),
         // PATH 2 (GUI video path, Phase 4 / WF-9).
         .library(name: "SlopDeskVideoProtocol", targets: ["SlopDeskVideoProtocol"]),
         .library(name: "SlopDeskVideoHost", targets: ["SlopDeskVideoHost"]),
@@ -91,7 +125,11 @@ let package = Package(
         // Foundation + Network only, so neither caller widens its graph by naming it.
         .target(name: "SlopDeskNet"),
 
-        .target(name: "SlopDeskProtocol", dependencies: ["SlopDeskArena", "CSlopDeskFFI"]),
+        .target(
+            name: "SlopDeskProtocol",
+            dependencies: ["SlopDeskArena", "CSlopDeskFFI"],
+            linkerSettings: ffiCLibraries,
+        ),
 
         // The `NSPasteboard` ↔ `MetadataCodec.ClipboardClip` conversion, both directions. Clipboard
         // sync has two ends — `HostClipboardPerformer` (daemon graph) and `ClipboardSyncEngine`
@@ -119,7 +157,11 @@ let package = Package(
 
         // NWConnection + TCP_NODELAY, dual data/control channel, ET-style replay
         // buffer, reconnect handshake. (Implemented in WF-2.)
-        .target(name: "SlopDeskTransport", dependencies: ["SlopDeskProtocol", "CSlopDeskFFI"]),
+        .target(
+            name: "SlopDeskTransport",
+            dependencies: ["SlopDeskProtocol", "CSlopDeskFFI"],
+            linkerSettings: ffiCLibraries,
+        ),
 
         // macOS host: PTY (openpty + posix_spawn createSession), session mgr, no-buffer
         // PTY<->transport relay, TIOCSWINSZ resize. (WF-3.) Also hosts the inspector's
@@ -160,6 +202,8 @@ let package = Package(
                 // target it rode in on drops the dependency.
                 "CSlopDeskFFI",
             ],
+
+            linkerSettings: ffiCLibraries,
         ),
 
         // The workspace VALUE MODEL — the Session→Tab→split tree, `PaneSpec`, the pure
@@ -177,7 +221,11 @@ let package = Package(
         // (docs/55), the same one hostd and both clients already link, and it carries the SOLVERS this
         // module used to hold a second copy of — focus, send-keys, the sidebar's ordering. The leaf is
         // still a leaf: it names no other target here, and hostd links the archive regardless.
-        .target(name: "SlopDeskWorkspaceModel", dependencies: ["SlopDeskArena", "CSlopDeskFFI"]),
+        .target(
+            name: "SlopDeskWorkspaceModel",
+            dependencies: ["SlopDeskArena", "CSlopDeskFFI"],
+            linkerSettings: ffiCLibraries,
+        ),
 
         // Shared client: connection mgr, reconnect, input encoding. (WF-4.)
         .target(name: "SlopDeskClient", dependencies: ["SlopDeskTransport", "SlopDeskProtocol"]),
@@ -204,6 +252,8 @@ let package = Package(
             // JSON is decoded here.
             name: "SlopDeskInspector",
             dependencies: ["SlopDeskProtocol", "SlopDeskNet", "CSlopDeskFFI"],
+
+            linkerSettings: ffiCLibraries,
         ),
 
         // Cross-platform Claude Code integration LOGIC (WF-7): the terminal-mode sniffer (DECSET/
@@ -223,7 +273,7 @@ let package = Package(
         // docs/55: every RULE here — the alias table, the keystroke classes, the temporal hold and
         // the status machine — is `rust/slopdesk-agent`, reached in-process. The Swift enums that
         // remain are the case lists a SwiftUI switch needs, and nothing else.
-        .target(name: "SlopDeskAgentDetect", dependencies: ["CSlopDeskFFI"]),
+        .target(name: "SlopDeskAgentDetect", dependencies: ["CSlopDeskFFI"], linkerSettings: ffiCLibraries),
 
         // Headless workspace CORE (L0 of the UI rewrite): the proven logic extracted from the dying
         // `SlopDeskClientUI` view target — the tree-of-intent domain value types, the single
@@ -272,6 +322,146 @@ let package = Package(
                 // zero transitive deps (the macro/swift-syntax targets are not pulled — see the dep note).
                 .product(name: "Defaults", package: "Defaults"),
             ],
+
+            linkerSettings: ffiCLibraries,
+        ),
+
+        // docs/56 stage A: the DEVICE-PANEL domain, evacuated out of the view target.
+        //
+        // The simulator panel (docs/47) and the Android panel (docs/48) are each a wire format, a
+        // socket client, a frame sink and a device model — none of which is a view, and all of which
+        // both UI halves need once iOS carries the same features macOS does. Leaving them inside
+        // `SlopDeskClientUI` would have forced the AppKit and SwiftUI halves to each carry a copy of
+        // `SimulatorSidebarModel` (731 lines) and `AndroidSidebarModel` (833), which is the same
+        // product implemented twice — what `CLAUDE.md`'s one-implementation rule exists to stop.
+        //
+        // Declarations are `package`, not `public`: every caller is inside this package (the two UI
+        // targets and the test target), and the Xcode app targets are outside it, so the app-facing
+        // surface does not grow by a symbol.
+        //
+        // NO PLATFORM GATE ANYWHERE INSIDE. Every one of these files used to be wrapped whole in
+        // `#if os(macOS)` — inherited from the days the panels were a Mac-only surface, never from a
+        // Mac-only dependency: the module imports Foundation, CoreGraphics, CoreMedia and Network,
+        // all four of which the phone has. The gates made the iOS build compile forty-one EMPTY
+        // files, which is why the parity gap was invisible. They are gone, `scripts/check-supervisor.sh`
+        // keeps them gone, and what is left is the floor both UI halves stand on.
+        .target(
+            name: "SlopDeskDevicePanels",
+            dependencies: [
+                // The two sidebar models read the workspace store (a panel row opens a pane).
+                "SlopDeskWorkspaceCore",
+                // Pane specs + the `PaneID` a device row spawns against.
+                "SlopDeskWorkspaceModel",
+                // The metadata RPC the simulator control client rides.
+                "SlopDeskProtocol",
+                // `MuxNWConnection` — the Android bridge and the simulator stream are mux channels.
+                "SlopDeskTransport",
+                // `DevicePanelGeometry` maps a touch into VIDEO pixels (docs/48 — the jank fix), which
+                // is the video path's coordinate domain, not the panel's.
+                "SlopDeskVideoProtocol",
+                // The Android control codec + the device console grammars are Rust (`slopdesk-devicelog`).
+                "CSlopDeskFFI",
+                // Device-kind glyph names. A string enum, not a view framework — the UI half maps the
+                // name onto its own image type.
+                .product(name: "SFSafeSymbols", package: "SFSafeSymbols"),
+            ],
+
+            linkerSettings: ffiCLibraries,
+        ),
+
+        // docs/56 stage A: the client's PRESENTATION LOGIC, evacuated out of the view target.
+        //
+        // The layer between the domain and a view: what the palette offers and in what order, which
+        // rows the rail draws, which overlay is up, what a settings option means, how a key chord
+        // normalises. None of it draws — every file here imported neither SwiftUI nor AppKit while it
+        // still lived in the view target — and all of it is answered the same way on a phone as on a
+        // Mac, since the two halves ship the same features and differ only in layout (docs/56 §2).
+        //
+        // Distinct from `SlopDeskWorkspaceCore`, which is the DOMAIN: a store, a connection, a
+        // terminal, an agent. A rail row is not a domain concept; it is what a UI asks the domain
+        // for. Keeping the two apart is what stops the domain target from growing a view model every
+        // time a surface is added.
+        //
+        // The three files that name a framework name it as an ACTUATOR, not a view:
+        // `SecureKeyboardEntryController` (Carbon `EnableSecureEventInput` + the app-frontmost edge),
+        // `CodeSidebarFontSchemeHandler` (a `WKScriptMessageHandler`) and `WorkspaceControlBackend`
+        // (`NSFontManager`, for `font list`). A framework call is not a view; a `some View` is.
+        .target(
+            name: "SlopDeskClientCore",
+            dependencies: [
+                // The store, the connection, the settings keys, the terminal — what this layer
+                // presents.
+                "SlopDeskWorkspaceCore",
+                // Pane specs, `PaneID`, `ShellQuoting`.
+                "SlopDeskWorkspaceModel",
+                // The palette + the rail read host metadata (process / port / dir / git-file).
+                "SlopDeskProtocol",
+                // The rail's rows and the palette's agent entries are keyed by agent state.
+                "SlopDeskAgentDetect",
+                // `PendingToolSummary` — the todo SCENT a working row's tooltip carries.
+                "SlopDeskInspector",
+                // `SessionResumeOutcome` — the fresh-vs-resumed reconnect verdict a toast reports.
+                "SlopDeskClient",
+                // `JumpResolver` — the PURE frecency/$HOME-toggle/`--no-cd` resolution the CLI pins.
+                "SlopDeskCLICore",
+                // The client control server answers over a mux channel and writes with `write(2)`.
+                "SlopDeskTransport",
+                "SlopDeskTTY",
+                // The pane's drop destination drives `FileTransferClient`.
+                "SlopDeskFileTransfer",
+                // Settings options name video-path knobs.
+                "SlopDeskVideoProtocol",
+                // `DevicePanelPhase` — the right panel's four surfaces are drawn twice, and what each
+                // one SAYS is not a fact about either drawing (`CodePanelPresentation`). Two of the
+                // four phases are that target's, so the panel's one vocabulary lives above both
+                // rather than in a third target they would each have to agree with.
+                "SlopDeskDevicePanels",
+                // `FuzzyMatcher` marshals `slopdesk_fuzzy_score` — fzf's `FuzzyMatchV2` is Rust, and
+                // every search field in the app ranks through it. `SettingsCatalog` marshals the
+                // rest: what Settings OFFERS is one table of strings both UI splits read.
+                "CSlopDeskFFI",
+                // The `SettingsKey` app-flag namespace and the persisted chrome flags.
+                .product(name: "Defaults", package: "Defaults"),
+            ],
+            // The bundled faces: the Symbols Nerd Font (the SAME fallback face ghostty gives the
+            // terminal grid) and JetBrains Mono (the face libghostty falls back to when "SF Mono"
+            // does not resolve, which on a stock system it does not). They live with the CORE rather
+            // than with a UI target because the code sidebar injects the same bytes as @font-face
+            // data URIs — the webview's WebContent process cannot see a `CTFontManager` process-scope
+            // registration — and that dressing is not a view. MIT / OFL-1.1, licences beside them.
+            resources: [.copy("Resources/Fonts")],
+
+            linkerSettings: ffiCLibraries,
+        ),
+
+        // docs/56: the DESIGN FLOOR. `SlopDeskClientUI` is the DRAINING target — when the last macOS
+        // surface leaves it, what is left is the phone's and it is renamed `SlopDeskPhoneUI`. The
+        // token ladder cannot ride that rename: `SlopDeskMacUI` reads ~200 of these constants, and an
+        // AppKit target importing the phone's would be exactly the common view ancestor docs/56 §3
+        // forbids. So the floor is its own target, BELOW both halves.
+        //
+        // The line it holds is "a value, never a `some View`": `Slate` (the ladder, in `NSColor`/
+        // `UIColor` AND in `Color`), `StatusDot`/`StatusMark`/`StatusDotStyle`, `AgentSpinner`'s
+        // wandering tempo and `BrailleCell`'s walk, `SVGPath`/`VectorIcon`/`OttyIcon`, the nerd-font
+        // splice's AppKit half, the search field's jump-free configuration, and `StatusPresentation`
+        // — which is a palette ANSWER, not a drawing. Every mark that has two renderers keeps them
+        // one floor up, one per framework, and `check-supervisor.sh` fails the build if a `some View`
+        // appears here.
+        //
+        // It reverses the 2026-06-24 "no separate SPM target — `SlopDeskDesignSystem` stays deleted"
+        // ruling on new grounds: that decision was taken when there was exactly ONE UI target to
+        // compile the constants into, and there are two now.
+        .target(
+            name: "SlopDeskSlate",
+            dependencies: [
+                // `AgentReading` / `NerdSymbolFont` / `TabBadgeReading` — the readings this ladder
+                // resolves an ink and a silhouette for, decided one floor further down.
+                "SlopDeskClientCore",
+                "SlopDeskAgentDetect",
+                "SlopDeskWorkspaceCore",
+                // The marks are named as `SFSymbol`s, so both renderers ask for the same artwork.
+                .product(name: "SFSafeSymbols", package: "SFSafeSymbols"),
+            ],
         ),
 
         // REBUILD-V2: `SlopDeskClientUI` — pure SwiftUI views over `SlopDeskWorkspaceCore`, STOCK
@@ -284,6 +474,12 @@ let package = Package(
             name: "SlopDeskClientUI",
             dependencies: [
                 "SlopDeskWorkspaceCore",
+                // docs/56: the design floor both halves render.
+                "SlopDeskSlate",
+                // docs/56: the simulator + Android panel domain, which this target now only RENDERS.
+                "SlopDeskDevicePanels",
+                // docs/56: the presentation logic this target now only DRAWS.
+                "SlopDeskClientCore",
                 // The one `write(2)`-until-done loop, for the control server's replies.
                 "SlopDeskTTY",
                 // The `ShellQuoting` face — one door for every place that types a path into a live
@@ -330,10 +526,72 @@ let package = Package(
                 // lives in `rust/slopdesk-fuzzy`, and every search field in the app ranks through it.
                 "CSlopDeskFFI",
             ],
-            // The bundled Symbols Nerd Font (the SAME fallback face ghostty gives the terminal grid),
-            // registered at first use by `NerdSymbolFont` so chrome text carrying nerd-font private-use
-            // glyphs (agent/program titles) renders them instead of tofu. MIT — licence ships beside it.
-            resources: [.copy("Resources/Fonts")],
+
+            linkerSettings: ffiCLibraries,
+        ),
+
+        // docs/56 stage C: the macOS APP SHELL. `Apps/ClientApp-macOS` links this and nothing else of
+        // the UI; it is the only target that carries a macOS `@main`.
+        //
+        // Everything here is AppKit the way a Mac app is AppKit — `NSApplicationDelegate`, `NSWindow`
+        // and its close gate, the `NSEvent` chord monitor's install site, the Dock tile, the satellite
+        // windows, the menu bar — and NOT ONE `#if os(...)`. That absence is the point: a platform gate
+        // inside a platform target means the file is in the wrong target (docs/56 §3).
+        //
+        // It sits ABOVE `SlopDeskClientUI` rather than beside it. Stage D rewrites the macOS surfaces in
+        // AppKit and each one lands HERE as its SwiftUI original is deleted, so `SlopDeskClientUI`
+        // drains from both ends: its macOS half moves up into this target, and what is left when the
+        // last one goes is the phone's, which is then renamed `SlopDeskPhoneUI`. Until that day the two
+        // shells share the SwiftUI view layer instead of each carrying a copy of it.
+        .target(
+            name: "SlopDeskMacUI",
+            dependencies: [
+                // The SwiftUI view layer both shells still stand on (Stage D drains it upward).
+                "SlopDeskClientUI",
+                // The design floor — the ONE ladder, in its native (NSColor/NSFont) spelling.
+                "SlopDeskSlate",
+                // `ClientComposition` — what the app IS, built once for both shells.
+                "SlopDeskClientCore",
+                "SlopDeskWorkspaceCore",
+                "SlopDeskWorkspaceModel",
+                // Live cell metrics for the `grid` window-size mode.
+                "SlopDeskTerminal",
+                // The peek card names the pending tool call the blocked agent is asking about, and
+                // reads that agent's own status for the header's glyph.
+                "SlopDeskInspector",
+                "SlopDeskAgentDetect",
+                // `MetadataClient` — the host RPC behind Open Quickly's Agents source.
+                "SlopDeskProtocol",
+                // Reach THIS scene's `NSWindow` from the SwiftUI `WindowGroup` (never an
+                // `NSApplication.windows` scan).
+                .product(name: "SwiftUIIntrospect", package: "swiftui-introspect"),
+                // Fire-time reads of the Code Agent sound toggles in the attention sink.
+                .product(name: "Defaults", package: "Defaults"),
+                // The status marks and slot glyphs the navigator's rows draw are named as
+                // `SFSymbol`s by `StatusPresentation`, and an `NSImage(systemSymbolName:)` needs the
+                // name, not a stringly-typed guess at it.
+                .product(name: "SFSafeSymbols", package: "SFSafeSymbols"),
+            ],
+        ),
+
+        // docs/56 stage C: the iOS APP SHELL. `Apps/ClientApp-iOS` links this and nothing else of the
+        // UI; it is the only target that carries an iOS `@main`.
+        //
+        // The whole target is guarded `#if os(iOS)` — the ONE allowed platform gate, because `swift
+        // build` compiles every SwiftPM target on the host triple and this one has nothing to say
+        // there. Inside that guard there is no second gate.
+        //
+        // The two shells ship the SAME product: every feature the Mac has, the phone and the iPad have,
+        // laid out for the device. What is NOT owed is the same arrangement.
+        .target(
+            name: "SlopDeskPhoneUI",
+            dependencies: [
+                "SlopDeskClientUI",
+                "SlopDeskSlate",
+                "SlopDeskClientCore",
+                "SlopDeskWorkspaceCore",
+                "SlopDeskWorkspaceModel",
+            ],
         ),
 
         // MARK: PATH 2 — GUI video path (Phase 4 / WF-9)
@@ -343,7 +601,11 @@ let package = Package(
         // side-channel codec, window-geometry codec, coordinate-mapping math (multi-monitor
         // Cocoa-flip + Retina), and the client->host input-event codec. ZERO platform dependency (no
         // ScreenCaptureKit/VideoToolbox/AppKit) → builds macOS + iOS, unit-testable in isolation.
-        .target(name: "SlopDeskVideoProtocol", dependencies: ["SlopDeskArena", "CSlopDeskFFI"]),
+        .target(
+            name: "SlopDeskVideoProtocol",
+            dependencies: ["SlopDeskArena", "CSlopDeskFFI"],
+            linkerSettings: ffiCLibraries,
+        ),
 
         // macOS-only host capture + encode + input injection. USES ScreenCaptureKit / VideoToolbox /
         // CoreGraphics / AppKit. COMPILED + code-reviewed, NEVER executed in tests: SCStream capture
@@ -375,6 +637,8 @@ let package = Package(
             // macOS-only: SCStream + VTCompressionSession + AX/CGEvent are macOS APIs.
             // (SlopDeskVideoProtocol stays cross-platform; only this host layer is gated.)
             swiftSettings: [],
+
+            linkerSettings: ffiCLibraries,
         ),
 
         // macOS + iOS client decode + Metal render + client-side cursor. USES VideoToolbox (decode) /
@@ -382,7 +646,11 @@ let package = Package(
         // synchronous) but per the hang-safety rule NO VTDecompressionSession is instantiated in tests.
         // CSlopDeskFFI: the client's presentation-depth laws — the one-way-delay spike detector and
         // the promote/demote policy — are `rust/slopdesk-video`'s `pacer_depth` through the door.
-        .target(name: "SlopDeskVideoClient", dependencies: ["SlopDeskVideoProtocol", "CSlopDeskFFI"]),
+        .target(
+            name: "SlopDeskVideoClient",
+            dependencies: ["SlopDeskVideoProtocol", "CSlopDeskFFI"],
+            linkerSettings: ffiCLibraries,
+        ),
 
         // MARK: PATH 4 — dedicated file-transfer channel
 
@@ -395,7 +663,11 @@ let package = Package(
         // channel + fake sink (hang-safety: no live socket / real disk in XCTest for the serve path).
         // PATH 4's codec is `rust/slopdesk-dropd`'s `client` module through the FFI door, so the
         // one dependency this leaf has is the shim.
-        .target(name: "SlopDeskFileTransfer", dependencies: ["SlopDeskArena", "SlopDeskNet", "CSlopDeskFFI"]),
+        .target(
+            name: "SlopDeskFileTransfer",
+            dependencies: ["SlopDeskArena", "SlopDeskNet", "CSlopDeskFFI"],
+            linkerSettings: ffiCLibraries,
+        ),
 
         // The `slopdesk-superd` <-> `slopdesk-hostd` contract: SCM_RIGHTS fd passing, the frame, the
         // message set, and the pane registry. A Darwin + Foundation LEAF with zero package
@@ -407,7 +679,11 @@ let package = Package(
         // LaunchAgent that outlives hostd's BUILD, so this one negotiates. Append-only, version in
         // `hello`, unknown verbs answered `unsupported` — see SupervisorProtocol's doc comment before
         // changing anything in here.
-        .target(name: "SlopDeskSupervisor", dependencies: ["SlopDeskTTY", "CSlopDeskFFI"]),
+        .target(
+            name: "SlopDeskSupervisor",
+            dependencies: ["SlopDeskTTY", "CSlopDeskFFI"],
+            linkerSettings: ffiCLibraries,
+        ),
 
         // hostd's END of the `slopdesk-screend` protocol: the request encoder, the reply
         // decoder, and a pooled synchronous client. The VT parser, the renderer and the
@@ -416,7 +692,11 @@ let package = Package(
         // single `AF_UNIX` connect + `sockaddr_un` validation (one implementation, not two).
         // CSlopDeskFFI: the screend wire's layouts are `rust/slopdesk-screenwire`, which screend
         // itself decodes with — so hostd's end of the frame is a marshaller, not a second copy.
-        .target(name: "SlopDeskScreen", dependencies: ["SlopDeskSupervisor", "SlopDeskTTY", "CSlopDeskFFI"]),
+        .target(
+            name: "SlopDeskScreen",
+            dependencies: ["SlopDeskSupervisor", "SlopDeskTTY", "CSlopDeskFFI"],
+            linkerSettings: ffiCLibraries,
+        ),
 
         // MARK: Executables
 
@@ -460,6 +740,8 @@ let package = Package(
                 // the CLI builds an arena for `cli_parse` and reads one back out of it.
                 "SlopDeskArena",
             ],
+
+            linkerSettings: ffiCLibraries,
         ),
 
         // The user-facing `slopdesk` CLI: arg → `CLIArgs`, dispatch, GUI-launch passthrough for the
@@ -578,7 +860,7 @@ let package = Package(
         // agreement) and throughput. macOS dev instrument: shells out to `fzf` when present (skips that
         // comparison otherwise), so it is NOT part of `swift test`. Depends on SlopDeskClientUI for
         // `FuzzyMatcher`. `swift run -c release slopdesk-fuzzybench [scaleN]`.
-        .executableTarget(name: "slopdesk-fuzzybench", dependencies: ["SlopDeskClientUI"]),
+        .executableTarget(name: "slopdesk-fuzzybench", dependencies: ["SlopDeskClientCore"]),
 
         // Golden-vector dumper: emits the golden reference corpus — a deterministic JSON corpus from
         // the SlopDeskVideoProtocol codecs + the pure realtime controllers (public API only) that the
@@ -706,6 +988,17 @@ let package = Package(
                 "SlopDeskBenchClock",
             ],
         ),
+        // docs/56: the DESIGN FLOOR's own suite, moved out of `SlopDeskClientUITests` with the code.
+        // Everything here is a VALUE the two renderers share — that the two spellings of a rung are
+        // the same colour, that a project bed deals the same way twice, that the spinner's closed-form
+        // integral really is its rate integrated, that a transcribed `d` string parses to the drawing
+        // it was copied from. None of it mounts a view, which is exactly the line the target holds.
+        .testTarget(
+            name: "SlopDeskSlateTests",
+            dependencies: [
+                "SlopDeskSlate", "SlopDeskClientCore", "SlopDeskAgentDetect", "SlopDeskWorkspaceCore",
+            ],
+        ),
         // Client UI: view-logic tests for the rebuilt native-SwiftUI chrome. VIEW-MODEL level only —
         // never instantiates Ghostty/VT/Metal/SCStream (the hang-safety rule); the renderer/video views
         // stay behind the factory seams. L0 carries only a placeholder test (the old Warp-clone view +
@@ -715,7 +1008,56 @@ let package = Package(
             // E5/WI-3: `TerminalFindBarModelTests` conforms an in-memory fake to `SlopDeskTerminal`'s
             // `TerminalSurface`/`TerminalSurfaceActions` (the scrollback-mirror + bind-action seam) to drive
             // the find bar's view-model headlessly — declare the (already-transitive) module explicitly.
-            dependencies: ["SlopDeskClientUI", "SlopDeskWorkspaceCore", "SlopDeskProtocol", "SlopDeskTerminal"],
+            dependencies: [
+                "SlopDeskClientUI", "SlopDeskSlate", "SlopDeskWorkspaceCore", "SlopDeskProtocol",
+                "SlopDeskTerminal",
+            ],
+        ),
+        // docs/56 stage C: the macOS SHELL's own suite, moved out of `SlopDeskClientUITests` with the
+        // code. All four are pure decisions the AppKit shims delegate to — should ⌘Q ask before
+        // quitting, does the drain reply once and only once, does a `windowShouldClose` resolve, does
+        // the chord monitor own the keyboard right now — so they run headlessly, without an `NSWindow`
+        // (the key-window gate takes `AnyObject` for exactly that reason).
+        .testTarget(
+            name: "SlopDeskMacUITests",
+            // `SlopDeskClientUI` is named because the chord suites drive the real `WorkspaceKeyDispatcher`
+            // against seams the shared view target still owns (the code panel's first-responder hold).
+            dependencies: [
+                "SlopDeskMacUI", "SlopDeskClientUI", "SlopDeskSlate", "SlopDeskClientCore",
+                "SlopDeskWorkspaceCore",
+                "SlopDeskWorkspaceModel", "SlopDeskVideoProtocol",
+                // `SlopDeskTransport` is named for ONE thing: the navigator snapshot mounts the real
+                // column, which takes an `AppConnection`, which takes a `ConnectionRegistry`. The
+                // fixture hands it one that always refuses, so no socket is ever opened.
+                "SlopDeskTransport",
+                // The band rollup's pixel probe draws the sidebar toggle and the search plate as
+                // FOOTPRINTS (mounting the real ones would drag a store into a geometry fixture),
+                // and both are named glyphs. Already transitive through `SlopDeskMacUI`; named here
+                // for the same reason `SlopDeskClientUITests` names `SlopDeskTerminal`.
+                .product(name: "SFSafeSymbols", package: "SFSafeSymbols"),
+            ],
+        ),
+
+        // docs/56: the device panels' DOMAIN suite, moved out of `SlopDeskClientUITests` with the code
+        // it covers. Every one of these already tested a wire format, a socket client, a gesture
+        // recogniser or a device model — never a view — which is exactly why the code they cover could
+        // leave the view target at all. `Network`/`CoreMedia` are named because two of the tests drive
+        // an `NWConnection` framing seam and a `CMSampleBuffer` sink directly.
+        .testTarget(
+            name: "SlopDeskDevicePanelsTests",
+            dependencies: ["SlopDeskDevicePanels", "SlopDeskProtocol", "SlopDeskTransport"],
+        ),
+
+        // docs/56: the client's presentation-logic suite, moved out of `SlopDeskClientUITests` with
+        // the code it covers. What is left in the UI suite is what actually renders — a snapshot, a
+        // layout, a mount — and the split is load-bearing rather than tidy: these run on a phone
+        // build too, and a rule that only a Mac can test is a rule the iOS half will re-derive.
+        .testTarget(
+            name: "SlopDeskClientCoreTests",
+            dependencies: [
+                "SlopDeskClientCore", "SlopDeskWorkspaceCore", "SlopDeskWorkspaceModel",
+                "SlopDeskProtocol", "SlopDeskClient",
+            ],
         ),
 
         // WF-9 GUI video path: ONLY the PURE SlopDeskVideoProtocol is unit-tested

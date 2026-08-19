@@ -12,7 +12,7 @@
 /// This guard is the deterministic core of the fix: a monotonically increasing token stamped at
 /// the moment a focus change is *requested*. Each pending `becomeFirstResponder` callback captures
 /// the token it was issued under and, before acting, asks ``isCurrent(_:)`` — a callback minted at
-/// an older generation is simply dropped. The same shape as ``FloatingCursorMapping``: no UIKit,
+/// an older generation is simply dropped. The same shape as ``PhoneKey``: no UIKit,
 /// no actor, fully `Sendable`, and unit-tested on macOS so the race logic is assertable without a
 /// device. The UIKit wiring lives in ``PaneFocusCoordinator``.
 ///

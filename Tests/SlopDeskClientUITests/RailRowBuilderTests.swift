@@ -10,6 +10,7 @@
 
 import SlopDeskWorkspaceModel
 import XCTest
+@testable import SlopDeskClientCore
 @testable import SlopDeskClientUI
 @testable import SlopDeskWorkspaceCore
 
@@ -17,7 +18,7 @@ import XCTest
 final class RailRowBuilderTests: XCTestCase {
     /// A headless tree-model store over the fake session (mirrors `OverlayCoordinatorMountTests`).
     private func makeStore() -> WorkspaceStore {
-        let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in MountTestPaneSession(seed.spec) })
+        let store = WorkspaceStore(makeSession: { seed in MountTestPaneSession(seed.spec) })
         store.attachLoopbackWorkspaceDocument()
         return store
     }
@@ -291,7 +292,7 @@ final class RailRowBuilderTests: XCTestCase {
         XCTAssertTrue(RailRowsBuilder.filtered(rows, query: "zzz-nope").isEmpty)
     }
 
-    /// The relative-cwd subtitle rule (``RailRowsBuilder/paneSubtitle(kind:spec:projectKey:)``): a
+    /// The relative-cwd subtitle rule (``PaneSpec/railSubtitle(cwd:liveTitle:projectKey:)``): a
     /// pane INSIDE its project's subtree shows the path RELATIVE to the key, a pane AT the key shows
     /// nothing, and a pane whose cwd fell OUTSIDE the key's subtree (stale key across an
     /// un-re-pushed `cd`) falls back to the full cwd — hiding the location would lie. Fails on the
@@ -1155,13 +1156,19 @@ final class RailRowBuilderTests: XCTestCase {
         XCTAssertEqual(out[1].title, "myapp", "the explicit rename (cwd folder ≠ title) is left verbatim")
     }
 
-    /// The pure parent-qualifier helper: qualifies a folder-name title, declines an explicit rename / a
-    /// root-level path / a blank cwd.
-    func testParentQualifiedTitleHelper() {
-        XCTAssertEqual(RailRowsBuilder.parentQualifiedTitle(cwd: "/a/b/repo", title: "repo"), "b/repo")
-        XCTAssertNil(RailRowsBuilder.parentQualifiedTitle(cwd: "/a/b/repo", title: "renamed"), "not the folder name")
-        XCTAssertNil(RailRowsBuilder.parentQualifiedTitle(cwd: "/repo", title: "repo"), "no parent segment")
-        XCTAssertNil(RailRowsBuilder.parentQualifiedTitle(cwd: nil, title: "repo"))
+    /// A row with no parent to name keeps its colliding title: two identical rows are a smaller
+    /// problem than one row wearing a label that means nothing.
+    func testRootLevelCollisionIsLeftVerbatim() {
+        let row = { (cwd: String) in
+            RailRow(
+                id: PaneID(), tabID: TabID(), kind: .terminal, title: "repo", subtitle: nil, status: .none,
+                tabNumber: 1, badge: nil, processLabel: nil, readOnly: false, cwd: cwd,
+                isEditing: false, isSelected: false,
+            )
+        }
+        let out = RailRowsBuilder.disambiguated([row("/repo"), row("/a/b/repo")])
+        XCTAssertEqual(out[0].title, "repo", "no parent segment to qualify with")
+        XCTAssertEqual(out[1].title, "b/repo")
     }
 
     // MARK: - The row exposes inline-rename mode

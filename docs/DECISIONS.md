@@ -222,6 +222,7 @@
 - 🔁 **Supersedes both the Warp-clone design system AND the L0 "native bare system-colours" rebuild.** The Warp clone (`#1D2022` slate) and then the L0 rebuild (which DELETED `SlopDeskDesignSystem` for stock SwiftUI + system semantic colours) both missed; the user judged the native-bare UI too plain and chose to rebuild a CLEAN, token-driven design system from scratch. SwiftUI is NOT abandoned — it stays the composition layer; the change is a real token system + adopting external UI libraries (the "force pure-SwiftUI" stance is dropped).
 - ✅ **The default chrome theme ("Paper") is a warm off-white light theme** — warm off-white (`#FCFBF9`/`#F5F4F0`), text `#37352F`, **green accent `#2B5A38`** — over a floating-rounded-CARD (radius 8) on a shared material/vibrancy backdrop; NOT amber (amber is reserved for the marketing logo only).
 - ✅ **DNA: "clean / minimalist, floating card."** Card radius 8 / control radius 6; ultra-thin structure (borders ~6% opacity, hover ~5%); 8pt grid; NEUTRAL-gray row selection (`#E7E5DF`), accent used ONLY for active/focus; timing curves from `ReplicaKit.Anim` (EaseInOut/EaseOut, NO springs).
+- 🔁 **REVERSED 2026-08-19 by docs/56 increment 28 — the token layer IS its own SPM target again (`SlopDeskSlate`).** Not because the 2026-06-24 reasoning was wrong, but because its premise is void: it was taken when there was exactly ONE UI target to compile the constants into, and there are two now. `SlopDeskMacUI` reads ~200 of these tokens, and `SlopDeskClientUI` is renamed `SlopDeskPhoneUI` when stage D lands — an AppKit target importing the phone's is the common view ancestor docs/56 §3 forbids. The floor holds VALUES only (a `some View` in it fails `check-supervisor.sh`); every mark with two renderers keeps them one floor up, one per framework. The rest of the entry below stands as history.
 - ✅ **Token layer = a THIN, static namespace in `Sources/SlopDeskClientUI/DesignSystem/` (no separate SPM target — `SlopDeskDesignSystem` stays deleted).** `SlateTheme` carries BOTH `.paper` (default) + `.dark` (dual-theme; from design-tokens.css neutral grays + system-blue `#007aff`); static `Slate.{Surface,Text,Line,State,Status,Metric,Anim,Typeface}` read the active theme. Tokens are STATIC (not Environment) deliberately: SwiftUI `.preferredColorScheme`/Environment does NOT cross the `NSSplitViewController` AppKit boundary, so the window appearance is pinned in `SlopDeskSplitViewController.viewDidAppear` and colours are literal. Component kit: `SlatePlateButton`/`SlateSidebarRow`/`SlateSectionHeader`/`SlateStatusDot`/`SlateKeyValueRow`/`SlatePill`/`.slateCard()`.
 - ✅ **First external SPM dependencies — attached ONLY to `SlopDeskClientUI`** (the headless core + codec/controller targets stay dependency-free; `swift test`/golden never fetch). swiftui-introspect 26.0.1 (clear the navigator NSScrollView bg for the sidebar vibrancy), SFSafeSymbols 7.0.0 (type-safe icons), Pow 1.0.6 (status-dot glow), KeyboardShortcuts 3.0.1 (macOS-gated, recorder/global-hotkey wiring deferred to the Settings layer). Trade-off: this RETIRES the "clean checkout builds with no prerequisite" property (SPM network resolution); versions pinned in `Package.resolved`.
 - ✅ **iOS navigator = `List(selection:)`, macOS = custom `SlateSidebarRow` list.** The custom sidebar list gives macOS neutral-gray selection + full control (3 columns always visible in the split controller), but on a compact iPhone a button list does NOT drive `NavigationSplitView`'s push-to-content — so iOS keeps a system `List(selection:)` (matching the same visual style) whose selection navigates.
@@ -631,7 +632,7 @@
 - ✅ **One continuous margin surface** — the macOS detail `HStack` itself backs `Surface.margin`, so the GUI-panel divider band no longer exposes the system window background between the two themed columns. Gutter rhythm: cards within a region sit `paneGap` (8pt) apart; the two REGIONS sit a double gap (16pt = 4+8+4) apart across the divider band — hierarchy by spacing, not by lines.
 - ✅ **`GuiPanelDivider` goes invisible-at-rest** (the `PaneDivider` language): no hairline; the gutter IS the seam; a 2pt accent line appears only while dragging. Band width 9→`paneGap`; hit band + column-resize pointer + commit-on-release discipline unchanged.
 - ✅ **Connection cluster moves to the titlebar CENTRE** (`.principal` — the Xcode activity-pill seat) with a resting bezel fill; trailing keeps the actions (pane menu, windows-panel toggle). Ambient state reads from the middle; actions live at the edge.
-- ✅ **`.navigationSubtitle` = the focused pane's cwd**, home-abbreviated via the palette's `CwdDisplay` (the document-proxy idiom); empty until known.
+- ✅ **`.navigationSubtitle` = the focused pane's cwd**, home-abbreviated via `PaneSpec::cwd_badge_path` (the document-proxy idiom); empty until known.
 - ✅ **The window dock floats on the margin** — the hard `Divider()` under it is gone; the strip gets breathing room instead (the space to the video card below is the seam). Tiles grow to 32pt icons.
 - ✅ **Sidebar footer New-Tab affordance** (`safeAreaInset(edge: .bottom)`, the Things/Reminders idiom) — before this, macOS had NO mouse-visible tab mint (⌘T / palette / menu only). Mints a terminal tab; remote windows keep minting from the dock's `+`.
 
@@ -6748,10 +6749,11 @@ moves. The sidebar row's own `✳` agent marker skips itself when the title alre
 - ✅ **The web title bar is CLIPPED off client-side.** User-directed. No seedable key hides it
   while the activity bar sits at "top" (the band must host the relocated accounts/manage
   actions), and CSS `display: none` leaves a dead gap — the workbench grid positions parts with
-  inline absolute geometry. The macOS mount (`CodeSidebarWebView`) now lays the webview out
-  35px taller than its clipping container and shifts it up by the same: the workbench keeps
-  believing in its title bar, the user never sees it. The container bounds-guards `hitTest` —
-  without that the overhang sits under the panel's strip and eats its clicks.
+  inline absolute geometry. The macOS mount (`MacCodeWorkbenchView` since docs/56 increment 51)
+  now lays the webview out 35px taller than its clipping container and shifts it up by the same:
+  the workbench keeps believing in its title bar, the user never sees it. The container
+  bounds-guards `hitTest` — without that the overhang sits under the panel's strip and eats its
+  clicks.
 - ✅ **A project switch can no longer strand the panel on the OLD project's folder.**
   User-reported: focusing another project's pane left the workbench on the previous project.
   Root cause: the column re-renders BEFORE the switched project's poll task runs, so
@@ -7096,10 +7098,12 @@ colours — nothing is seeded for mermaid itself.
 
 Two things the newer workbench moved, both measured on a fixture profile carrying the real seed:
 
-The web title bar is **30px**, not 35 — `CodeSidebarWebView.clippedTitleBarHeight` would have
-clipped 5px into the editor tab row. The number is not a CSS constant to grep (the workbench grid
-positions its parts with inline geometry); the honest measurement is the laid-out box, and the
-comment now says so, because this constant will move again.
+The web title bar is **30px**, not 35 — the clip constant would have clipped 5px into the editor tab
+row. The number is not a CSS constant to grep (the workbench grid positions its parts with inline
+geometry); the honest measurement is the laid-out box, and the comment now says so, because this
+constant will move again. It lives at `CodePanelPresentation.clippedTitleBarHeight` since docs/56
+increment 51 — it was a `static let` on each of the two mounts, which made one measurement a number
+two files carried.
 
 Chat came back. 4.113+ bundles the Copilot chat extension, which re-registers
 `chat.disableAIFeatures` — the key v7 had to drop as unregistered on Code-OSS. Seed **v18** turns
@@ -16485,3 +16489,147 @@ mis-keyed by both the writer and the reader round-trips perfectly. Two gates now
 `check-shared-constants.py` ratchets `WorkspaceFields.swift` against `document::fields` letter for
 letter, and `WorkspaceTopologyTests.testTheWholeTopologyCrossesToTheCrateAndBack` sends the rich
 fixture through `slopdesk_ws_apply_intent` and back, which drops anything the crate keys elsewhere.
+
+## The client UI was two products in one target, so it becomes two (2026-08-17)
+
+`SlopDeskClientUI` splits into `SlopDeskMacUI` (AppKit, macOS) and `SlopDeskPhoneUI` (SwiftUI, iOS).
+The full measurement and the boundary rules are [56-client-ui-split.md](56-client-ui-split.md); the
+three numbers that decided it are here.
+
+**It was already two targets.** 183 files, 48 410 lines — and 72 of those files compile to NOTHING
+on iOS. The macOS slice is 27 037 lines, the iOS slice 16 840, and a good share of the iOS slice is
+accidental: `CodeSidebarRecommendationTips` (838 lines), `WorkspaceControlBackend` (308),
+`PaneDragCoordinator` (246) and `ClientControlServer` (171) are compiled into the iOS app for a code
+panel, a control socket and a pane-drag gesture that platform does not have.
+
+**On macOS the escape hatch is already the norm.** 53 files import AppKit, with 19
+`NSView`/`NSViewController` subclasses, 13 `NSViewRepresentable`, 21 hosting mounts and 32
+`swiftui-introspect` sites — each of the last a place SwiftUI did not expose what was needed. Every
+hard interaction has already fallen out of SwiftUI and landed in AppKit: the divider drag, the rail
+drag-and-drop (both SwiftUI DnD sides failed — 2026-07-12), the satellite windows, and the shell
+itself. This entry therefore REVERSES "Shell = pure SwiftUI `NavigationSplitView`" (2026-07-03),
+which the code had already reversed in practice — macOS runs `SlopDeskSplitViewController` today.
+
+**The two arguments for keeping SwiftUI on macOS do not hold here.** `#Preview`/`PreviewProvider`
+across `Sources/` and `Tests/`: zero — the design loop is pixel-verify against a screenshot, which
+AppKit runs identically. And of 114 `SlopDeskClientUITests` files only 11 import SwiftUI and 4 touch
+a `body`: the logic is already outside the views, so the suite survives the port.
+
+What the port actually costs is motion — 118 `withAnimation`/`.animation(` sites and 3
+`matchedGeometryEffect` morphs become explicit `CAAnimation`/`NSAnimationContext`. That is work, not
+risk, and it puts the timing in the same place the pixel-verify loop measures it.
+
+**iOS keeps every feature; only the LAYOUT differs.** The phone and the iPad are not a reduced
+desktop — the code panel, the simulator and Android panels, splits, the palette and the rail all
+exist there, arranged for a small screen and a touch pointer. SwiftUI reaches that ceiling: the
+limitations that pushed macOS out (divider drags, cross-hosting-view drag-and-drop, secondary
+windows) are macOS-shaped problems.
+
+**Which makes stage one an evacuation, not a copy.** Feature parity across two view frameworks is
+only affordable if the features are not IN the view framework. So before either half is written,
+everything in `SlopDeskClientUI` that is not a view type — models, reducers, socket clients, wire
+codecs, policies, caches — moves to the shared logic target. Two halves each carrying their own
+`SimulatorSidebarModel` (731 lines) and `AndroidSidebarModel` (833) would be one product implemented
+twice, which `CLAUDE.md` bans by name. After the evacuation a UI target holds layout and actuation
+only, and "the same feature, laid out differently" costs a view rather than a subsystem. It also
+puts every pure-logic file in one place, which is where §4 of doc 56 starts the Rust ports.
+
+Neither UI target imports the other. `#if os(...)` inside one is a smell — the file is in the wrong
+target — with one exception: the whole-file guard that declares `SlopDeskPhoneUI` iOS-only to
+`swift build`, which compiles every SwiftPM target on the host triple.
+
+## The canvas is deleted, two years after it stopped being live (2026-08-17)
+
+The 2026-06-20 W5 cutover made the `TreeWorkspace` the live source of truth and left the canvas
+"retained-but-dead": `Canvas`, `PaneGroup`, `Workspace`, the drag/snap/non-overlap/camera solvers,
+the free-floating `WorkspaceCommand` enum and its interpreter, all still compiling behind a
+`liveModel` switch that the app only ever constructed as `.tree`. The entry that made that call
+booked the deletion as "a later W5 follow-up". This is that follow-up.
+
+**What went.** Swift: `Canvas.swift`, `Canvas+Ops`, `Canvas+Codable`, `CanvasGeometry`,
+`CanvasNonOverlap`, `CanvasSnap`, `PaneGroup`, `Workspace`, `CompactLayoutResolver`,
+`CommandInterpreter`, and ~40 `WorkspaceStore` members that only the canvas reached (viewport
+membership, the focus-history ring, `addPane`/`closePane`/`duplicatePane`, the recently-closed
+single slot, zoom, `move`, the spec side-door). Rust: `canvas.rs`, `canvas_arrange.rs`,
+`canvas_geometry.rs`, `canvas_non_overlap.rs`, `canvas_snap.rs`, the camera half of `geometry.rs`,
+the canvas half of `persist.rs`, and `PaneGroupId`/`LayoutPresetId`. The `liveModel` switch itself
+went with them — a two-case enum whose second case has no model behind it is not a choice.
+
+**27 FFI doors went too, and that is why this landed as one commit.** `check-ffi-doors` fails on a
+door nothing calls, so deleting the Swift callers without deleting the doors is a red gate, and
+deleting the doors without the callers does not compile. The two languages are one change here, in
+exactly the way `CLAUDE.md`'s one-implementation rule says a port is: the original goes in the same
+commit, not a fallback, not a test fake.
+
+**The tests were ported, not deleted.** 22 canvas suites went, but the LIVE contracts inside them
+did not: agent-status eviction on close, the in-flight video-cap accounting, the quiesce fixpoint,
+the focus reassert, the phone video cap, the pause/resume fan-out, and the palette recents ring were
+each rewritten against the tree. A test deleted with its fixture is a contract that silently stopped
+being checked — which is the failure this repo has a supervisor script for.
+
+**The recents ring changed shape on the way.** It held `WorkspaceCommand` values, an enum that no
+longer exists; it now holds palette CATALOG IDs (`"action.closePane"`), which is what the palette
+was already keying rows by. One vocabulary instead of an enum plus a lookup table between it and the
+rows a person actually sees.
+
+Docs 30, 32 and 35 stay where they are, marked historical in `docs/README.md`'s index. They describe
+a design decision and its reasoning, and that reasoning is why the split tree looks the way it does.
+What they no longer describe is any code.
+
+## The git line stopped forking, and libgit2 came into the archive with it (2026-08-19)
+
+`gitStatus` was five process spawns for one struct: hostd forked `slopdesk-probe`, and the probe
+forked `git` four times inside it — `status --porcelain -b`, `remote get-url origin`, `rev-parse
+--show-toplevel`, `stash list`. That was affordable when the verb rode a person. It stopped being
+affordable when `RepoStatusWatcher` began polling it on every debounced FSEvents tick, per watched
+repo: an editor writing a file could cost five `fork`/`execve` pairs, and a repo with a busy build
+directory could keep doing it.
+
+It is now `rust/slopdesk-git`, LINKED. One `Repository::open_ext`, seven questions off the handle,
+zero spawns. `CLAUDE.md`'s "pick by lifetime" rule decided the shape: the watcher lives exactly as
+long as hostd, so this is a library, not a binary on a socket.
+
+**Why not gitoxide.** The expectation going in was gix — pure Rust, no C, no linker flags. Measured
+and read on 2026-08-19, it lost on two counts either of which was enough. It has no stash support
+(there is no `gix-stash`; every stash capability is an unchecked box in gitoxide's own
+`crate-status.md`), and the stash DEPTH is one of the seven sigils the git line draws — so a gix port
+would have kept a `git` fork for it, which is most of the cost this removes. And `gix::status`
+decomposes into `index_worktree` and `tree_index` with no `XY` output, while `golden_vectors.json`
+freezes the porcelain pair; `git2::Status` is already that X/Y split as one bitflag value, which is
+the difference between MAPPING a wire contract and reconstructing one. Everything else agreed with
+gix (16 transitive crates against 163, 27 s cold build against 64 s) and none of it outweighed those
+two. Revisit when `gix-stash` exists and gix is 1.0 — the parity suite below is written against the
+public function, so a re-port is validated by the tests that are already there.
+
+**It is not in `slopdesk-probe`, and could not be.** That workspace is tuned for programs whose
+whole cost is starting up (`opt-level = "z"`, `lto`, `panic = "abort"`), and every member is forked
+per event. Linking a vendored libgit2 there would pay `git_libgit2_init` on every fork — the cost
+this port exists to remove, moved rather than removed.
+
+**The parity suite is the reason the old path could be deleted in the same commit.** Twelve fixtures
+build REAL repositories under the temp directory and compare every field with what the `git` binary
+says about the same directory: staged-and-unstaged on both axes, an untracked directory as one
+entry, a rename at its new path, two conflict pairs read from our side first, the stash depth, ahead
+AND behind at once, a detached head, a subdirectory, and a directory in no repository at all. The
+oracle is the BINARY — the file spells porcelain's grammar and nothing about how the old probe used
+to read it, because copying that parser in would have left a mirror of a deleted implementation
+behind forever.
+
+**One deliberate divergence, and it is a fix.** Porcelain prints `## No commits yet on main` for an
+unborn head and the old parser took the whole sentence as the branch name — the sidebar said `No
+commits yet on main` where a person expects `main`. The new path reads the name off the symbolic
+reference. The test asserts both sides of that disagreement rather than smoothing it over.
+
+**What linking a C library cost, since it is not nothing.** libgit2 wants zlib, iconv, `Security` and
+`CoreFoundation`. zlib is compiled INTO the archive (`libz-sys`'s `static`) because it was small
+enough to vendor; the other three are declared once in `Package.swift` as `ffiCLibraries` and carried
+by every target that names `CSlopDeskFFI`. Every target, not just hostd's, because a Rust staticlib
+is one object per crate: the object holding this door holds every other `slopdesk_*` entry point, so
+an executable calling ANY of them drags libgit2's members in. `-dead_strip` removes the code from
+products that never call it; what they pay is a link-time symbol lookup.
+
+The iOS slices do not pay even that. The door is `cfg(target_os = "macos")`, its declaration sits in
+a `TARGET_OS_OSX` region of `slopdesk_ffi.h`, and `build-ffi.sh` reads that region's markers: the
+symbol is REQUIRED on the macOS slice and REQUIRED ABSENT on the other two. A client on either
+platform RECEIVES the git status as a metadata reply and never computes it, so there was never a
+phone caller to serve — and now the three spellings of that fact cannot drift apart quietly.

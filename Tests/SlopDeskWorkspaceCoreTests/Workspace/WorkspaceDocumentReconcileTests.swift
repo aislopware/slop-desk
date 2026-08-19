@@ -37,7 +37,6 @@ final class WorkspaceDocumentReconcileTests: XCTestCase {
     private func makeStore(_ tree: TreeWorkspace) -> WorkspaceStore {
         let store = WorkspaceStore(
             restoringTree: tree,
-            liveModel: .tree,
             makeSession: { FakePaneSession($0.spec) },
         )
         store.attachLoopbackWorkspaceDocument()

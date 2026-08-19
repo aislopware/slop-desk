@@ -145,11 +145,68 @@ pub fn ranked(entries: &[FolderEntry], now: ReferenceSeconds, limit: Option<usiz
     sorted
 }
 
+/// The default ceiling on stored entries. Past it the least-frecent are evicted, so a machine that
+/// visits directories all day keeps a database a person could still read.
+pub const DEFAULT_MAX_ENTRIES: usize = 200;
+
+/// The longest path the store will keep, in Unicode scalars.
+///
+/// Four kibi-scalars is past any real path — the platform's own `PATH_MAX` is a quarter of it — and
+/// what it actually bounds is a runaway or hostile writer, not a deep tree.
+pub const MAX_PATH_SCALARS: usize = 4096;
+
+/// Whether a path may be STORED: non-empty once surrounding whitespace is discounted, and within
+/// the length cap.
+///
+/// The path is kept verbatim, not normalised: the store keys on what the shell reported, and two
+/// spellings of one directory are two entries on purpose — the one that was actually visited is the
+/// one that ranks.
+#[must_use]
+pub fn is_valid_path(path: &str) -> bool {
+    !path.trim().is_empty() && path.chars().count() <= MAX_PATH_SCALARS
+}
+
+/// The entries of a LOADED database worth keeping, as indices into `entries`.
+///
+/// The one input a person can open in an editor, so it is repaired rather than trusted: an entry
+/// whose path could not have been stored, or whose count is negative, is dropped, and a file over
+/// the cap is trimmed to the `max_entries` most recently accessed. The trim is deliberately
+/// now-INDEPENDENT — a load must not depend on the clock, or the same file would sanitize into
+/// different databases at different times of day.
+///
+/// Indices rather than entries, because the caller already holds every one of them; the surviving
+/// order is the answer.
+#[must_use]
+pub fn sanitized(entries: &[FolderEntry], max_entries: usize) -> Vec<usize> {
+    let mut kept: Vec<usize> = entries
+        .iter()
+        .enumerate()
+        .filter(|(_, entry)| is_valid_path(&entry.path) && entry.access_count >= 0)
+        .map(|(index, _)| index)
+        .collect();
+    if kept.len() <= max_entries {
+        return kept;
+    }
+    // Freshest first, `total_cmp` so a corrupt NaN timestamp sorts to one end rather than making
+    // the sort's contract undefined; the path breaks the remaining ties for a stable answer.
+    kept.sort_by(|left, right| {
+        let (Some(left_entry), Some(right_entry)) = (entries.get(*left), entries.get(*right)) else {
+            return core::cmp::Ordering::Equal;
+        };
+        right_entry
+            .last_access
+            .total_cmp(&left_entry.last_access)
+            .then_with(|| left_entry.path.cmp(&right_entry.path))
+    });
+    kept.truncate(max_entries);
+    kept
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        FolderEntry, WEIGHT_DAY, WEIGHT_HOUR, WEIGHT_MONTH, WEIGHT_STALE, WEIGHT_WEEK, ranked,
-        recency_weight, score,
+        DEFAULT_MAX_ENTRIES, FolderEntry, MAX_PATH_SCALARS, WEIGHT_DAY, WEIGHT_HOUR, WEIGHT_MONTH,
+        WEIGHT_STALE, WEIGHT_WEEK, is_valid_path, ranked, recency_weight, sanitized, score,
     };
 
     /// An arbitrary "now" far enough from the epoch that every bucket has room beneath it.
@@ -257,5 +314,70 @@ mod tests {
                 .collect::<Vec<_>>(),
             order
         );
+    }
+
+    #[test]
+    fn a_path_with_nothing_in_it_is_not_storable() {
+        assert!(!is_valid_path(""));
+        assert!(!is_valid_path("   "));
+        assert!(!is_valid_path("\t\n "));
+        assert!(is_valid_path("/tmp"));
+        assert!(
+            is_valid_path(" /tmp "),
+            "the trim decides emptiness, not the stored spelling"
+        );
+    }
+
+    #[test]
+    fn the_length_cap_counts_scalars_rather_than_bytes() {
+        assert!(is_valid_path(&"a".repeat(MAX_PATH_SCALARS)));
+        assert!(!is_valid_path(&"a".repeat(MAX_PATH_SCALARS + 1)));
+        // A multi-byte path at the cap is well past the cap in bytes, and still storable.
+        assert!(is_valid_path(&"é".repeat(MAX_PATH_SCALARS)));
+        assert!(!is_valid_path(&"é".repeat(MAX_PATH_SCALARS + 1)));
+    }
+
+    #[test]
+    fn a_hand_edited_file_loses_only_the_entries_that_could_not_have_been_written() {
+        let entries = vec![
+            entry("/keep", 3, 0.0),
+            entry("   ", 3, 0.0),
+            entry("/negative", -1, 0.0),
+            entry(&"z".repeat(MAX_PATH_SCALARS + 1), 3, 0.0),
+            entry("/keep-too", 0, 0.0),
+        ];
+        assert_eq!(sanitized(&entries, DEFAULT_MAX_ENTRIES), [0, 4]);
+    }
+
+    #[test]
+    fn a_database_under_the_cap_keeps_the_order_it_arrived_in() {
+        let entries = vec![entry("/old", 1, 90_000.0), entry("/new", 1, 1.0)];
+        assert_eq!(sanitized(&entries, 2), [0, 1]);
+        assert_eq!(sanitized(&[], 0), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn a_database_over_the_cap_evicts_by_recency_and_not_by_the_clock() {
+        let entries = vec![
+            entry("/oldest", 100, 90_000.0),
+            entry("/newest", 1, 1.0),
+            entry("/middle", 50, 3_600.0),
+        ];
+        // Frequency is what RANKS; what EVICTS is recency alone, so /oldest goes despite the count.
+        assert_eq!(sanitized(&entries, 2), [1, 2]);
+        // And the same file sanitizes the same way whatever the hour, because no `now` is read.
+        assert_eq!(sanitized(&entries, 1), [1]);
+    }
+
+    #[test]
+    fn a_corrupt_timestamp_neither_traps_nor_makes_the_eviction_arbitrary() {
+        let entries = vec![
+            FolderEntry::new("/corrupt".to_owned(), 1, f64::NAN),
+            entry("/real", 1, 1.0),
+            entry("/older", 1, 90_000.0),
+        ];
+        let kept = sanitized(&entries, 2);
+        assert_eq!(kept, sanitized(&entries, 2));
+        assert_eq!(kept.len(), 2);
     }
 }

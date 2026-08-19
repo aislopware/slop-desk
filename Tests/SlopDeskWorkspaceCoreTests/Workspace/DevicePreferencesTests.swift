@@ -122,7 +122,7 @@ final class DevicePreferencesTests: XCTestCase {
 
     /// The test seam / automation path: a store nobody injected never touches the filesystem.
     func testAStoreIsOptionalAndTheDefaultIsPure() {
-        let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in FakePaneSession(seed.spec) })
+        let store = WorkspaceStore(makeSession: { seed in FakePaneSession(seed.spec) })
         store.attachLoopbackWorkspaceDocument()
         XCTAssertEqual(store.devicePreferences.launchPresets.map(\.name), LaunchPreset.builtIns.map(\.name))
         XCTAssertFalse(

@@ -86,8 +86,8 @@ RUST_DROP_PROTOCOL="rust/slopdesk-dropd/src/protocol.rs"
 RUST_DROP_CLIENT="rust/slopdesk-dropd/src/client.rs"
 RUST_DROP_FFI="rust/slopdesk-ffi/src/file_transfer.rs"
 RUST_DROP_SERVER="rust/slopdesk-dropd/src/server.rs"
-SWIFT_ANDROID_CLIENT="Sources/SlopDeskClientUI/Android"
-SWIFT_ANDROID_DEVICE="Sources/SlopDeskClientUI/Android/AndroidDevice.swift"
+SWIFT_ANDROID_CLIENT="Sources/SlopDeskDevicePanels/Android"
+SWIFT_ANDROID_DEVICE="Sources/SlopDeskDevicePanels/Android/AndroidDevice.swift"
 SWIFT_ANDROID_MANAGER="Sources/SlopDeskHost/AndroidServiceManager.swift"
 RUST_ANDROID_SERVER="rust/slopdesk-androidd/src/server.rs"
 RUST_ANDROID_PROTOCOL="rust/slopdesk-androidd/src/protocol.rs"
@@ -1605,6 +1605,49 @@ for revived in 'pendingCredit +=' 'remaining -=' 'outstanding +=' 'states\[' ter
   fi
 done
 
+# The DEMUX RULE is Rust's too, and it is the newest of these to move. It used to be a Swift
+# `MuxRoutingCore.route` reaching six ways into a table that was ALREADY Rust — a rule living apart
+# from the state its every branch reads and then writes, which is the arrangement that lets one of
+# them be edited alone. `slopdesk_wire`'s `ChannelTable::route` decides now; the Swift attaches the
+# payload (the bytes never cross) and spells the two drop reasons, which is presentation.
+SWIFT_ROUTING=Sources/SlopDeskTransport/Mux/MuxRoutingCore.swift
+if ! grep -q 'table.route(' "${SWIFT_ROUTING}"; then
+  fail "${SWIFT_ROUTING} stopped asking the door — it is a face, not a second demux rule"
+fi
+if ! grep -q 'pub fn route' rust/slopdesk-wire/src/mux/channels.rs; then
+  fail "rust/slopdesk-wire/src/mux/channels.rs lost route — the demux rule lives beside its table"
+fi
+# What the face must NOT grow back: any branch that re-decides what the rule already decided. Each
+# of these is a table verb the old copy called directly, and one of them reappearing here means the
+# decision has two owners again.
+for redecided in 'table.isOpen' 'table.open(' 'table.reject(' 'table.remoteClose(' 'table.localClose(' 'table.state('; do
+  if grep -q "${redecided}" <<< "$(grep -vE '^[[:space:]]*//|^[[:space:]]*///' "${SWIFT_ROUTING}")"; then
+    fail "${SWIFT_ROUTING} grew '${redecided}' back — the demux decision is Rust's, and there is one"
+  fi
+done
+
+# The git DIALECT — `main ↑2 ↓1 +3 !4 ?5 ~1 $2`. The order, the sigil each role gets, the weight it
+# is set at and the ladder it sheds down are `slopdesk_workspace::git_line`'s. The Swift face asks
+# and SPELLS: it puts a glyph next to a number, and it supplies the branch's own text.
+#
+# This one is ratcheted because it has already been got wrong once, in exactly the way a second
+# speller gets things wrong: a dead `PaneGitSummary.compactLine` spelled a conflict `=` where the
+# live renderer spelled it `~`, and both compiled until the copy was deleted (docs/56 increment 45).
+SWIFT_GIT_LINE=Sources/SlopDeskClientCore/Rail/SidebarGitLine.swift
+if ! grep -q 'slopdesk_git_line_runs' "${SWIFT_GIT_LINE}"; then
+  fail "${SWIFT_GIT_LINE} stopped asking the door — it spells the dialect, it does not choose it"
+fi
+if ! grep -q 'pub fn runs' rust/slopdesk-workspace/src/git_line.rs; then
+  fail "rust/slopdesk-workspace/src/git_line.rs lost runs — the dialect lives where its ladder does"
+fi
+# No SIGIL may be minted on the Swift side. Every one of these is a glyph the rule chooses; a
+# literal here is a second dialect being born, whatever it happens to agree with today.
+for sigil in '"↑' '"↓' '"+\\(' '"!\\(' '"?\\(' '"~' '"\$\\('; do
+  if grep -qF "${sigil}" <<< "$(grep -vE '^[[:space:]]*//|^[[:space:]]*///' "${SWIFT_GIT_LINE}")"; then
+    fail "${SWIFT_GIT_LINE} minted the sigil ${sigil} — the glyph is the rule's, only the join is not"
+  fi
+done
+
 # The metadata RPC's payloads. Eleven encode/decode pairs, the porcelain fold the sidebar and the
 # host status push must agree on, and the three numbers a second speller would drift — all
 # rust/slopdesk-wire's. The Swift is the value types and the flatten.
@@ -2262,8 +2305,7 @@ if ! grep -qF 'depthExceeded' "${codec_swift}"; then
 fi
 
 for solver in Domain/SendKeysParser Domain/FocusResolver Domain/Tree/TabOrdering \
-  Domain/CanvasGeometry Domain/CanvasNonOverlap Domain/CanvasSnap \
-  Domain/Tree/SplitLayoutSolver Domain/Tree/SplitNode+Ops Domain/Canvas+Ops \
+  Domain/Tree/SplitLayoutSolver Domain/Tree/SplitNode+Ops \
   Domain/Tree/WorkspaceTreeOps; do
   solver_swift="Sources/SlopDeskWorkspaceModel/${solver}.swift"
   if [[ "$(grep -c 'import CSlopDeskFFI' "${solver_swift}")" -eq 0 ]]; then
@@ -2327,15 +2369,12 @@ compare_abi_enum() {
     fail "${label}: the two languages disagree about which byte a case crosses as (docs/55)"
   fi
 }
-compare_abi_enum "AlignEdge" \
-  Sources/SlopDeskWorkspaceModel/Domain/Canvas+Ops.swift 'extension AlignEdge' \
-  rust/slopdesk-workspace/src/canvas.rs 'pub const fn index(self) -> u8'
 compare_abi_enum "FocusDirection" \
   Sources/SlopDeskWorkspaceModel/WorkspaceSolverBridge.swift 'extension FocusDirection' \
   rust/slopdesk-workspace/src/focus.rs 'pub const fn index(self) -> u8'
-compare_abi_enum "ResizeAnchor" \
-  Sources/SlopDeskWorkspaceModel/WorkspaceSolverBridge.swift 'extension ResizeAnchor' \
-  rust/slopdesk-workspace/src/canvas_geometry.rs 'pub const fn index(self) -> u8'
+compare_abi_enum "PaneKind" \
+  Sources/SlopDeskWorkspaceModel/WorkspaceSolverBridge.swift 'extension PaneKind' \
+  rust/slopdesk-workspace/src/session.rs 'pub const fn as_byte(self) -> u8'
 compare_abi_enum "LayoutPreset/TileLayout" \
   Sources/SlopDeskWorkspaceModel/Domain/Tree/WorkspaceTreeOps.swift 'var ffiByte: UInt8' \
   rust/slopdesk-workspace/src/tree_ops.rs 'pub const fn index(self) -> u8'
@@ -2926,9 +2965,9 @@ if [[ -e Sources/SlopDeskHost/AgentInstaller.swift ]]; then
   fail "AgentInstaller.swift is back — the merge lives in rust/slopdesk-hook/src/install.rs"
 fi
 
-# ── 16. slopdesk-probe: the metadata RPC's git, directory and session half ───────────────────────
+# ── 16. slopdesk-probe: the metadata RPC's directory, session and diff half ─────────────────────
 # The NINTH contract. Same fork-per-question shape as §14 and §15, with one wrinkle neither of those
-# has: two of the five subcommands answer in RAW BYTES, so their "nothing there" cannot be an empty
+# has: two of the subcommands answer in RAW BYTES, so their "nothing there" cannot be an empty
 # answer and has to be the exit code.
 #
 # The subcommand sets first. A renamed one is `usage()` and a non-zero exit, which every caller here
@@ -2967,6 +3006,73 @@ if [[ -n "${swift_spawns}" ]]; then
   printf '%s\n' "${swift_spawns}" >&2
   fail "Swift spawns git or infocmp again — both belong inside slopdesk-probe (docs/DECISIONS.md, stages 24 and 25)"
 fi
+
+# ── 16b. The git STATUS is linked, not forked, and it is asked in exactly one place ─────────────
+# `gitStatus` left the probe entirely: `rust/slopdesk-git` opens the repository once and answers from
+# libgit2, linked into hostd through `slopdesk_git_status`. What that removed was five process spawns
+# per debounced FSEvents tick per watched repo — four `git` runs inside one fork of the probe — so a
+# `git status` reappearing ANYWHERE on this path is not a style question, it is the cost coming back.
+#
+# Three things are pinned, because the port has three ways to be undone quietly:
+#
+#  1. The Swift face calls the door. Without this, the face could be rewritten around a `Process`
+#     and every test would still pass — the answer would be identical and only the spawns would
+#     differ, which is the whole of what changed.
+if ! grep -q 'slopdesk_git_status' "Sources/SlopDeskHost/HostGitStatus.swift" 2> /dev/null; then
+  fail "HostGitStatus no longer calls slopdesk_git_status — the git line is back on a subprocess (docs/55)"
+fi
+#  2. The engine is where the answer is decided. A face that grew a fallback parser would be the
+#     two-implementations shape CLAUDE.md forbids, and it would only show up under an unusual repo.
+if ! grep -q 'pub fn of_path' "rust/slopdesk-git/src/status.rs" 2> /dev/null; then
+  fail "rust/slopdesk-git no longer answers of_path — the status engine moved without its ratchet"
+fi
+#  3. The probe does not answer it again. The verb-set gate above compares hostd's asks with the
+#     probe's arms, so a revived `git-status` arm passes it the moment someone adds the Swift side
+#     back — this names the arm itself.
+if grep -q '"git-status"' "${RUST_PROBE_MAIN}" 2> /dev/null; then
+  fail "slopdesk-probe answers git-status again — the status engine is rust/slopdesk-git, linked (docs/DECISIONS.md)"
+fi
+# And the porcelain PAIR is spelled once, in the crate that reads it off libgit2's bitflags. The old
+# probe's table lived beside a parser that is gone; a second copy of it anywhere is a wire contract
+# with two masters.
+porcelain_copies=$(grep -rln 'status_nibble\|pack_status' rust/ --exclude-dir=target 2> /dev/null || true)
+if [[ -n "${porcelain_copies}" ]]; then
+  printf '%s\n' "${porcelain_copies}" >&2
+  fail "the porcelain nibble table is back outside slopdesk-git::porcelain — one table, one crate"
+fi
+
+# ── 16c. The pointer tables are one table, and the raw value crosses unparsed ────────────────────
+# `slopdesk_terminal::pointer` owns both of libghostty's pointer actions. This one is pinned harder
+# than its size suggests, because EVERY way it breaks is silent: a resize handle showing a hand, or a
+# pointer hidden with no gesture that brings it back. Nothing fails to compile, nothing crashes, and
+# `check-macos.sh` is the only thing that would ever have noticed.
+for face in Sources/SlopDeskWorkspaceCore/Terminal/PointerShapeMapping.swift \
+  Sources/SlopDeskWorkspaceCore/Terminal/MouseVisibilityMapping.swift; do
+  if ! grep -q 'slopdesk_pointer_' "${face}" 2> /dev/null; then
+    fail "${face} stopped asking the door — a pointer table decided in Swift is a second table (docs/56, increment 50)"
+  fi
+done
+# The mirror that was deleted, by name. `OSCPointerShape` (34 cases) and `MouseVisibility` existed
+# only so a Swift `switch` had something to switch over, which made three copies of one declaration
+# order — libghostty's header, the mirror, the table — where any two could drift while compiling.
+# The raw `int32_t` travels now. A revived mirror reads like tidying and restores the drift.
+pointer_mirrors=$(grep -rln 'enum OSCPointerShape\|enum MouseVisibility[^M]' \
+  Sources/ Tests/ ThirdParty/ 2> /dev/null || true)
+if [[ -n "${pointer_mirrors}" ]]; then
+  printf '%s\n' "${pointer_mirrors}" >&2
+  fail "a Swift mirror of a libghostty pointer enum is back — the raw int crosses (docs/56, increment 50)"
+fi
+# `PointerShapeToken`'s discriminants ARE the wire, so they are spelled with explicit raw values on
+# both sides and asserted THROUGH the door. A case reordered under implicit numbering is a cursor
+# swapped for another cursor with nothing to notice it.
+if ! grep -q 'case arrow = 0' Sources/SlopDeskWorkspaceCore/Terminal/PointerShapeMapping.swift; then
+  fail "PointerShapeToken stopped pinning its raw values — its discriminants are the wire (docs/56, increment 50)"
+fi
+if ! grep -q 'the_supported_shapes_cross_as_the_discriminants_swift_is_pinned_to' \
+  rust/slopdesk-ffi/src/pointer_shape.rs; then
+  fail "the door's discriminant test is gone — Swift's enum and Rust's can now renumber apart"
+fi
+printf 'check-supervisor: one pointer table, and the raw libghostty value crosses unparsed.\n'
 
 # ── The `slopdesk` CLI is one implementation ────────────────────────────────────────────────────
 # These faces DOCUMENT the rules they no longer implement — a doc comment naming the XDG path or an
@@ -3740,7 +3846,7 @@ printf 'check-supervisor: one badge ladder for a tab row.\n'
 # lines of Swift beside the Rust that owns it now. This one carries IDENTITY: the order a palette
 # shows IS the product, so a second scorer does not fail a test, it just starts ranking differently
 # and nobody can say which copy the person is looking at. Every search field asks the same door.
-SWIFT_FUZZY=Sources/SlopDeskClientUI/Palette/FuzzyMatcher.swift
+SWIFT_FUZZY=Sources/SlopDeskClientCore/Palette/FuzzyMatcher.swift
 scorer_revived=$(among_deleted '(let|var|func|case) *(bonusBoundary|bonusCamel123|bonusConsecutive|scoreGapStart|scoreGapExtension|bonusMatrix|bonusFor|backtrace)\b')
 if [[ -n "${scorer_revived}" ]]; then
   printf '%s\n' "${scorer_revived}" >&2
@@ -3890,13 +3996,26 @@ printf 'check-supervisor: one VT grammar for styled text, and the clipboard dest
 # now; what this pins is that neither Swift face grows rules of its own, and that the four dangers
 # keep the same bit numbering on both sides — the mask crosses as itself, so a renumbering here
 # would silently relabel every warning the sheet prints.
+#
+# The SENTENCES are pinned the same way, and for the same reason. A line describing a danger is as
+# much the guard as the bit that trips it: a renderer that spelled its own would be a second guard
+# saying something slightly different, and a fifth danger would reach the user as a blank bullet.
 SWIFT_PASTE=Sources/SlopDeskWorkspaceCore/Terminal/PasteSafetyAnalyzer.swift
+SWIFT_PASTE_SHEET=Sources/SlopDeskMacUI/Terminal/PasteProtectionSheet.swift
 if hit=$(spells 'containsElevationToken|isSeparator|unicodeScalars' "${SWIFT_PASTE}"); then
   fail "${hit} classifies a paste in Swift again — slopdesk-terminal::paste owns the four dangers"
 fi
-for entry in 'slopdesk_paste_dangers' 'slopdesk_paste_should_warn'; do
+for entry in 'slopdesk_paste_dangers' 'slopdesk_paste_should_warn' 'slopdesk_paste_danger_description' 'slopdesk_paste_preview'; do
   if ! spells "${entry}" "${SWIFT_PASTE}" > /dev/null; then
     fail "${SWIFT_PASTE} no longer asks ${entry} — the guard is one implementation"
+  fi
+done
+if hit=$(spells 'previewLimit|messageText = "|Paste Anyway|OSC 52' "${SWIFT_PASTE_SHEET}"); then
+  fail "${hit} spells the confirmation's own words — slopdesk-terminal::paste owns every sentence"
+fi
+for law in 'pub fn descriptions' 'pub fn preview' 'pub enum Ask'; do
+  if ! spells "${law}" rust/slopdesk-terminal/src/paste.rs > /dev/null; then
+    fail "rust/slopdesk-terminal/src/paste.rs lost ${law} — the sheet's words live beside its rules"
   fi
 done
 for bit in 'MULTI_LINE: u32 = 1 << 0' 'TRAILING_NEWLINE: u32 = 1 << 1' 'SUDO_OR_SU: u32 = 1 << 2' 'CONTROL_CHARS: u32 = 1 << 3'; do
@@ -4040,7 +4159,7 @@ printf 'check-supervisor: one encoder for the screend frame, and both its ends i
 # whose own comment admitted it copied the buffer remainder on every message. Stage 17's rule puts a
 # protocol's client end in the crate that owns the protocol, and `slopdesk-androidd` owns scrcpy's
 # dialect. Nothing here may grow a second reader of that wire.
-SWIFT_ANDROID_STREAM=Sources/SlopDeskClientUI/Android/AndroidStreamProtocol.swift
+SWIFT_ANDROID_STREAM=Sources/SlopDeskDevicePanels/Android/AndroidStreamProtocol.swift
 if hit=$(spells 'func readUInt32|private mutating func take|maximumPacketSize|headerSize = |sessionFlag|keyFrameFlag' "${SWIFT_ANDROID_STREAM}"); then
   fail "${hit} frames the scrcpy stream in Swift again — slopdesk-androidd owns the framing"
 fi
@@ -4075,7 +4194,7 @@ printf 'check-supervisor: one reader for the scrcpy stream, and one walk over An
 # scrcpy publishes no wire specification — its own documentation says the protocol is defined by the
 # unit tests on both sides — so every layout was transcribed by hand, and the Swift copy laid each
 # field out with a local `appendBigEndian`: the same idiom already banned for the screend frame.
-SWIFT_ANDROID_CONTROL=Sources/SlopDeskClientUI/Android/AndroidControlMessage.swift
+SWIFT_ANDROID_CONTROL=Sources/SlopDeskDevicePanels/Android/AndroidControlMessage.swift
 if hit=$(spells 'mutating func appendBigEndian|appendPosition|truncatingIfNeeded:|func truncateUTF8|FixedPoint\(' "${SWIFT_ANDROID_CONTROL}"); then
   fail "${hit} lays out a scrcpy control message in Swift again — slopdesk-androidd owns every layout"
 fi
@@ -4110,7 +4229,7 @@ printf 'check-supervisor: one writer for the scrcpy control channel, and no repl
 # grapheme cluster, and both built four `String`s a row out of a `String` the row was a slice of.
 # They were also the SAME parser twice: four fields, the same verbatim fallback, one field name
 # apart. `slopdesk-devicelog` owns both grammars and one `DeviceLogLine` carries both consoles' rows.
-SWIFT_DEVICE_LOG=Sources/SlopDeskClientUI/DevicePanel/DeviceLogLine.swift
+SWIFT_DEVICE_LOG=Sources/SlopDeskDevicePanels/Shared/DeviceLogLine.swift
 if hit=$(spells 'func isDate|func isTime|func isPriority|func isSeverityToken|isNumber|isUppercase|allSatisfy|firstIndex\(of:|drop\(while:' "${SWIFT_DEVICE_LOG}"); then
   fail "${hit} walks a device log line in Swift again — slopdesk-devicelog owns both grammars"
 fi
@@ -4122,8 +4241,10 @@ done
 # The two structs are gone and must stay gone: they were one type spelled twice, and a second one
 # would immediately grow a second parse to fill it.
 for revived in 'struct AndroidLogLine' 'struct SimulatorLogLine'; do
-  if hit=$(spells "${revived}" Sources/SlopDeskClientUI/Android/*.swift \
-    Sources/SlopDeskClientUI/Simulator/*.swift Sources/SlopDeskClientUI/DevicePanel/*.swift); then
+  if hit=$(spells "${revived}" Sources/SlopDeskDevicePanels/Android/*.swift \
+    Sources/SlopDeskDevicePanels/Simulator/*.swift Sources/SlopDeskDevicePanels/Shared/*.swift \
+    Sources/SlopDeskClientUI/Android/*.swift Sources/SlopDeskClientUI/Simulator/*.swift \
+    Sources/SlopDeskClientUI/DevicePanel/*.swift); then
     fail "${hit} brought back ${revived} — one console row serves both device panels"
   fi
 done
@@ -4443,6 +4564,1046 @@ if [[ -n "${reads}" ]]; then
 fi
 printf 'check-supervisor: one write(2) and one read-exactly, and drop-or-report stays with the caller.\n'
 
+# ── One drop-zone shape, drawn and hit-tested ─────────────────────────────────────────────────
+# The overlay DRAWS the five blobs and the receiver HIT-TESTS against them. A second copy of the
+# proportions anywhere lets the hit region slide off the blob, and the drop lands in a zone the user
+# was not pointing at — silently, because both halves still look right on screen. So `PaneDropZone-
+# Layout` may only forward, and the fractions live once in `slopdesk_workspace::drop_zone`.
+for door in slopdesk_drop_zone_shape slopdesk_drop_zone_at; do
+  if ! grep -q "${door}" Sources/SlopDeskWorkspaceCore/Workspace/Domain/Drop/PaneDropZoneLayout.swift; then
+    fail "PaneDropZoneLayout stopped calling ${door} — a drop lands where it is not drawn"
+  fi
+done
+# shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
+drop_dupes=$(spells '0\.46|0\.72|0\.26' $(repo_files 'Sources/SlopDeskClientUI/Pane/PaneDrop*.swift') 2> /dev/null || true)
+if [[ -n "${drop_dupes}" ]]; then
+  printf '%s\n' "${drop_dupes}" >&2
+  fail "a drop-zone proportion grew back in the overlay — rust/slopdesk-workspace/src/drop_zone.rs owns them"
+fi
+printf 'check-supervisor: the drop overlay draws and hit-tests one shape.\n'
+
+# ── One dwell, and the top edge stays the remote's ────────────────────────────────────────────
+# The dwell that decides who owns the top edge in borderless fullscreen lives in
+# `slopdesk_workspace::chrome`. A Swift copy of the phase machine would be a second answer to "may
+# the local menu bar take this click", and the wrong one steals a click from the remote menu bar —
+# which reads as a dropped click, not as a policy bug.
+if ! grep -q 'slopdesk_ws_dwell_update' Sources/SlopDeskClientCore/App/BorderlessDwellGate.swift; then
+  fail "BorderlessDwellGate stopped calling slopdesk_ws_dwell_update — the top edge has two owners"
+fi
+if spells 'dwellSeconds *[:=] *0\.5|revealZonePoints *[:=] *2\b' Sources/SlopDeskClientCore/App/BorderlessDwellGate.swift > /dev/null 2>&1; then
+  fail "a dwell distance grew back in Swift — rust/slopdesk-workspace/src/chrome.rs owns them"
+fi
+printf 'check-supervisor: one dwell decides who owns the top edge.\n'
+
+# ── One pixel→weight conversion, and the seam owns it ─────────────────────────────────────────
+# `Δweight = Δpixel / parent_span * flex_sum` is the inverse of the partition the solver tiles with,
+# so it can only be right against the seam's OWN span and flex sum. Written out anywhere else it
+# takes those from whatever is in scope — which is how the seam came to trail the cursor at half
+# speed. It lives on `SplitDividerHandle` now, sourced from `slopdesk_workspace::split_layout`, and
+# nothing else — not a view, not a test helper — may spell the formula again.
+if ! grep -q 'slopdesk_ws_divider_weight_delta' Sources/SlopDeskWorkspaceModel/Domain/Tree/SplitLayoutSolver.swift; then
+  fail "SplitDividerHandle stopped calling slopdesk_ws_divider_weight_delta — the seam trails the cursor"
+fi
+if ! grep -q 'slopdesk_ws_divider_percents' Sources/SlopDeskWorkspaceModel/Domain/Tree/SplitLayoutSolver.swift; then
+  fail "SplitDividerHandle stopped calling slopdesk_ws_divider_percents — the ratio readout has two answers"
+fi
+# shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
+drag_dupes=$(spells 'Double\(span\)|/ *Double\(.*[Ss]pan\)|axisSpan|PaneMath' \
+  $(repo_files 'Sources/**/*.swift' 'Tests/**/*.swift') 2> /dev/null || true)
+if [[ -n "${drag_dupes}" ]]; then
+  printf '%s\n' "${drag_dupes}" >&2
+  fail "the pixel→weight conversion grew back in Swift — SplitDividerHandle.weightDelta is the one"
+fi
+printf 'check-supervisor: one pixel-to-weight conversion, and the seam owns it.\n'
+
+# ── One cheat sheet, two layouts ──────────────────────────────────────────────────────────────
+# docs/56 stage D's first surface: the Mac's ⌘/ sheet is an `NSPanel` and the phone's is a native
+# `.sheet`, and neither is allowed to know the other exists. What they may not do is each spell out
+# the table — so the rows, the glyph gating and the column deal are `CheatSheetContent`, over
+# `slopdesk_cheat_sheet_columns`. Two ways this decays, and the gate catches both: a half that stops
+# reading the shared source (a second table, drifting from the dispatcher's chords), and the shared
+# SwiftUI host mounting the card again (the Mac would then show it twice, over its own panel).
+if ! grep -q 'slopdesk_cheat_sheet_columns' Sources/SlopDeskClientCore/Overlays/CheatSheetContent.swift; then
+  fail "CheatSheetContent stopped calling slopdesk_cheat_sheet_columns — the column deal has two answers"
+fi
+for half in Sources/SlopDeskMacUI/Overlays/MacCheatSheetPanel.swift \
+  Sources/SlopDeskClientUI/Overlays/KeyboardCheatSheetView.swift; do
+  if ! grep -q 'CheatSheetContent' "${half}"; then
+    fail "${half} stopped rendering CheatSheetContent — the cheat sheet has two tables"
+  fi
+  if grep -q 'WorkspaceBindingRegistry' "${half}"; then
+    fail "${half} reached past CheatSheetContent to the registry — the glyph gating lives in ONE place"
+  fi
+done
+if grep -q 'KeyboardCheatSheetView' Sources/SlopDeskClientUI/Overlays/OverlayHostView.swift; then
+  fail "the shared overlay host mounts the cheat sheet again — the Mac would draw it over its own panel"
+fi
+printf 'check-supervisor: one cheat sheet, drawn twice and spelled once.\n'
+
+# ── One notification card, two corners ────────────────────────────────────────────────────────
+# docs/56 stage D's second surface, and the one that took the last ALWAYS-MOUNTED SwiftUI layer off
+# the macOS window root. The Mac's corner is an `NSPanel` sized to the column, the phone's is an
+# overlay on its own root, and what a card SAYS belongs to neither: the headline (over
+# `slopdesk_ws_notify_toast_headline`), the spine budget, the mark's rung/glyph and the dwell are
+# `ToastPresentation`. Three ways this decays, and the gate catches all three.
+if ! grep -q 'slopdesk_ws_notify_toast_headline' Sources/SlopDeskClientCore/Overlays/ToastPresentation.swift; then
+  fail "ToastPresentation stopped calling slopdesk_ws_notify_toast_headline — the headline has two answers"
+fi
+for half in Sources/SlopDeskMacUI/Overlays/MacToastStack.swift \
+  Sources/SlopDeskClientUI/Overlays/ToastStackView.swift; do
+  if ! grep -q 'ToastPresentation' "${half}"; then
+    fail "${half} stopped reading ToastPresentation — a notification says two different things"
+  fi
+  # The fusion bug `TabBadgeResolver` had: a half that re-derives the phrase from the pair keys on
+  # flavour alone sooner or later, and announces a finished `make` as an agent turn.
+  if grep -q 'toast.source, toast.flavor' "${half}"; then
+    fail "${half} re-derives the headline from (source, flavour) — that pair is resolved ONCE, in Rust"
+  fi
+done
+# The shared host must not mount the column again: the Mac would draw a SwiftUI stack over its own
+# panel, and the full-bleed host is exactly the hit-claiming mount stage D removed.
+if grep -q 'ToastStackView(' Sources/SlopDeskClientUI/Overlays/OverlayHostView.swift; then
+  fail "the shared overlay host mounts the toast column again — that mount claims every hit over the split"
+fi
+printf 'check-supervisor: one notification card, drawn twice and spelled once.\n'
+
+# ── The shared overlay host presents modals and nothing else ──────────────────────────────────
+# docs/56 stage D's dividend, and the reason it is a gate: an ALWAYS-MOUNTED full-bleed SwiftUI
+# layer claims every hit inside its bounds over the AppKit split, and the only way to survive that
+# is a hit-testing flag someone has to keep honest. Both ambient tenants are their own windows now —
+# the toasts and the ⌃⇥ readout — so the host holds modals alone, and neither may come back. The
+# switcher's SwiftUI half was deleted rather than kept: the phone has no modifier stream to open the
+# gesture with, so a second half could never render.
+# Comment lines are stripped first: the file's header is where the departure is RECORDED, and it has to
+# be free to name what left without the gate reading its own history as a regression.
+if sed -E 's#^[[:space:]]*//.*##' Sources/SlopDeskClientUI/Overlays/OverlayHostView.swift |
+  grep -qE '(PaneSwitcherOverlay|allowsHitTesting)'; then
+  fail "the shared overlay host grew an ambient layer again — an always-mounted host eats the split's clicks"
+fi
+if [[ -e Sources/SlopDeskClientUI/Overlays/PaneSwitcherOverlay.swift ]]; then
+  fail "PaneSwitcherOverlay.swift is back — the ⌃⇥ readout is AppKit only (SlopDeskMacUI/Overlays/MacPaneSwitcher.swift)"
+fi
+for shared in PaneSwitcherRowsBuilder PaneSwitcherMetrics; do
+  if ! grep -q "${shared}" Sources/SlopDeskMacUI/Overlays/MacPaneSwitcher.swift; then
+    fail "MacPaneSwitcher stopped reading ${shared} — the readout's rows and measurements live below the view"
+  fi
+done
+printf 'check-supervisor: the overlay host presents modals and nothing else.\n'
+
+# ── One palette, two frameworks ───────────────────────────────────────────────────────────────
+# docs/56 stage D's first MODAL surface: the Mac's ⌘⇧P is an `NSPanel` and the phone's is a paper
+# card, and what a palette IS belongs to neither. `PalettePresentation`/`PaletteMetrics` carry the
+# card's measurements, the pairing of ranked rows with the keyboard's index, the ✓ predicate and the
+# WORKING DIRECTORY badge — the last over `slopdesk_ws_cwd_badge_path`, so a home is collapsed by ONE
+# rule and never against the client's own `$HOME` (the path came off the remote host).
+if ! grep -q 'slopdesk_ws_cwd_badge_path' Sources/SlopDeskWorkspaceModel/Domain/PaneSpec.swift; then
+  fail "PaneSpec stopped calling slopdesk_ws_cwd_badge_path — the badge's home collapse has two answers"
+fi
+for half in Sources/SlopDeskMacUI/Overlays/MacPalette.swift \
+  Sources/SlopDeskClientUI/Overlays/PaletteView.swift; do
+  if ! grep -q 'PalettePresentation' "${half}"; then
+    fail "${half} stopped reading PalettePresentation — the two palettes would drift on the first section header"
+  fi
+  # The pairing is the one every half gets one off by hand: a separator takes a LINE but not a
+  # selection, so a view that counted rows itself would highlight the wrong one under any header.
+  if grep -q 'isSeparator ? nil' "${half}"; then
+    fail "${half} re-pairs the ranked rows with the keyboard's index — that pairing is spelled ONCE"
+  fi
+done
+# The Mac must DROP each ported card from the shared host's `draws` set, or it draws the card twice —
+# once in SwiftUI over the workspace and once in its own panel.
+if grep -A4 'draws:' Sources/SlopDeskMacUI/App/MacWorkspaceRootView.swift | grep -q '\.palette'; then
+  fail "MacWorkspaceRootView still lets the shared host draw the palette — the Mac would show two"
+fi
+printf 'check-supervisor: one palette, drawn twice and spelled once.\n'
+
+# ── One peek card, two frameworks ─────────────────────────────────────────────────────────────
+# docs/56 stage D's second MODAL surface, and the first whose CONTENT moves under it: a reply
+# advances the queue and the card is re-cut for the next blocked pane. The two halves may arrange it
+# differently and must not word it differently — `PeekReplyPresentation` owns the header caption, the
+# "N of M" counter, the stand-in note for a pane with no reported question and the zero-state line,
+# and `AgentReadout` owns the status→glyph→ink reading both halves draw.
+for half in Sources/SlopDeskMacUI/Overlays/MacPeekReply.swift \
+  Sources/SlopDeskClientUI/Overlays/PeekReplyOverlay.swift; do
+  if ! grep -q 'PeekReplyPresentation' "${half}"; then
+    fail "${half} stopped reading PeekReplyPresentation — the two peek cards would drift on the first copy change"
+  fi
+  # The caption's join is the piece that looks too small to share and is not: the scent goes LAST so
+  # a tail truncation eats the prose first and the status word never.
+  #
+  # Comments are stripped first: both halves' headers NAME the copy they no longer spell, and a gate
+  # that read its own rationale as a regression would make the departure undocumentable.
+  if sed -E 's#^[[:space:]]*//.*##' "${half}" |
+    grep -qE '\\\(label\) · |"Peek & Reply"|The agent is waiting for your input'; then
+    fail "${half} respells a peek-card string — every one of them is PeekReplyPresentation's"
+  fi
+done
+# The status glyph crossed as a design-system LEAF (`MacAgentGlyphView`), which is only allowed
+# because the decision under it did not: a status becomes a reading and an ink in `AgentReadout`, and
+# each framework does the ladder lookup alone (`Slate.agentInk` / `Slate.Native.agentInk`).
+if ! grep -q 'AgentReadout' Sources/SlopDeskMacUI/Overlays/MacPeekReply.swift; then
+  fail "the Mac's peek header stopped reading AgentReadout — two spellings of one pane's state"
+fi
+if grep -A4 'draws:' Sources/SlopDeskMacUI/App/MacWorkspaceRootView.swift | grep -q '\.peekReply'; then
+  fail "MacWorkspaceRootView still lets the shared host draw the peek card — the Mac would show two"
+fi
+printf 'check-supervisor: one peek card, drawn twice and spelled once.\n'
+
+# ── The paste-as-keystrokes table and the peek RULES are Rust's, and only Rust's ───────────────
+# `KeystrokeReplay` and `PeekReply` crossed in docs/56 §4. What is left in Swift is marshalling and
+# the vocabulary types; the US-QWERTY table, the grapheme rule, the pane scan and the queue
+# arithmetic are `slopdesk_workspace::{keystroke_replay, peek_reply}` and `slopdesk_agent::attention`.
+for face in Sources/SlopDeskWorkspaceCore/Video/KeystrokeReplay.swift \
+  Sources/SlopDeskWorkspaceCore/Workspace/Domain/PeekReply.swift; do
+  if ! grep -q 'slopdesk_' "${face}"; then
+    fail "${face} stopped asking the door — a rule decided in Swift is the second implementation (docs/56 §4)"
+  fi
+done
+# ⚠️ THE UNIT IS A GRAPHEME CLUSTER, AND THE FIELD SHOWS DOTS. Walked as scalars, a decomposed `é`
+# types a bare `e` and reports one skip — a DIFFERENT password, accepted, with nothing on screen to
+# say so. `unicode-segmentation` is what makes the cluster the unit, and it is not an optimisation
+# anyone may drop as unused.
+if ! grep -q '^unicode-segmentation' rust/slopdesk-workspace/Cargo.toml; then
+  fail "slopdesk-workspace dropped unicode-segmentation — chars() would type a decomposed é as a bare e"
+fi
+if ! grep -q 'UnicodeSegmentation' rust/slopdesk-workspace/src/keystroke_replay.rs; then
+  fail "the keystroke table stopped walking graphemes — see the ⚠️ in its module header"
+fi
+# The cap is ONE number. Swift reads the `#define`; the crate exports the same constant and a test
+# asserts they agree, because a Swift-side copy that drifted LOW would silently truncate a password.
+if ! grep -q 'Int(SLOPDESK_KEYSTROKE_MAX_LENGTH)' Sources/SlopDeskWorkspaceCore/Video/KeystrokeReplay.swift; then
+  fail "KeystrokeReplay.maxLength stopped reading the header define — a drifting cap truncates a password"
+fi
+printf 'check-supervisor: the keystroke table and the peek rules are Rust'"'"'s, graphemes and all.\n'
+
+# ── One global search, two frameworks ─────────────────────────────────────────────────────────
+# docs/56 stage D's third MODAL surface. What the two halves must not re-derive is not copy this
+# time so much as READING: `GlobalSearchPresentation.excerptSlices` cuts a hit's excerpt around a
+# UTF-16 highlight range that can land inside a surrogate pair, and the rule for that case — degrade
+# to a flat excerpt, never trap, never guess a run — has to be one rule or the half that re-wrote it
+# indexes out of bounds on the first scrollback line containing an emoji.
+for half in Sources/SlopDeskMacUI/Overlays/MacGlobalSearch.swift \
+  Sources/SlopDeskClientUI/Overlays/GlobalSearchView.swift; do
+  if ! grep -q 'GlobalSearchPresentation' "${half}"; then
+    fail "${half} stopped reading GlobalSearchPresentation — two cuts of one excerpt, one of them wrong"
+  fi
+  # Comments are stripped first, for the peek gate's reason: both headers NAME what they no longer
+  # spell. The two zero-state lines and a hand-rolled UTF-16 walk are the regressions.
+  if sed -E 's#^[[:space:]]*//.*##' "${half}" |
+    grep -qE 'No results\.|scrollback\.”|samePosition\(in:'; then
+    fail "${half} respells a global-search string or re-derives the excerpt cut — both are GlobalSearchPresentation's"
+  fi
+  # The mode pills are a VALUE both surfaces read, which is the only way the locked "the find bar and
+  # the global-search query bar render the pills IDENTICALLY" invariant survives one of them
+  # becoming an NSView.
+  if ! grep -q 'FindModePill' "${half}"; then
+    fail "${half} stopped reading FindModePill — the find bar's chips and this bar's would drift"
+  fi
+done
+if sed -E 's#^[[:space:]]*//.*##' Sources/SlopDeskClientUI/Pane/TerminalFindBar.swift |
+  grep -qE '"Case sensitive"|"Whole word"|"Regex \(ICU\)"'; then
+  fail "TerminalFindBar respells a mode pill — the labels and help are FindModePill's, for all three surfaces"
+fi
+if grep -A4 'draws:' Sources/SlopDeskMacUI/App/MacWorkspaceRootView.swift | grep -q '\.globalSearch'; then
+  fail "MacWorkspaceRootView still lets the shared host draw global search — the Mac would show two"
+fi
+printf 'check-supervisor: one global search, drawn twice and read once.\n'
+
+# ── One picker, two frameworks, and an empty ledger ───────────────────────────────────────────
+# docs/56 stage D's LAST modal surface. The verb table is the piece that must not be written twice:
+# unlike a copy string it does not fail loudly when it drifts — one half quietly grows an action the
+# other has not got, and nothing is red until a user notices their phone's picker is different.
+for half in Sources/SlopDeskMacUI/Overlays/MacOpenQuickly.swift \
+  Sources/SlopDeskClientUI/Overlays/OpenQuicklyView.swift; do
+  for spelling in OpenQuicklyPresentation OpenQuicklyActions OpenQuicklyMetrics; do
+    if ! grep -q "${spelling}" "${half}"; then
+      fail "${half} stopped reading ${spelling} — two pickers, and the drift would be silent"
+    fi
+  done
+  # Comments are stripped first, for the peek gate's reason: both headers NAME what they no longer
+  # spell. A verb title, a footer hint or a zero-state line in code is the regression.
+  if sed -E 's#^[[:space:]]*//.*##' "${half}" |
+    grep -qE '"Split Right"|"Reopen Tab"|"Copy Session ID"|"No matches"|"Quick Select"|"Change Directory"'; then
+    fail "${half} respells a picker verb or hint — every one of them is OpenQuicklyPresentation's or OpenQuicklyActions's"
+  fi
+done
+# The fzf mark is cut in ONE place for all four surfaces that draw one (the palette and the picker,
+# each drawn twice). A half walking `titleRanges` itself is a fifth cut waiting to disagree.
+for half in Sources/SlopDeskMacUI/Overlays/MacPalette.swift \
+  Sources/SlopDeskMacUI/Overlays/MacOpenQuickly.swift \
+  Sources/SlopDeskClientUI/Overlays/PaletteView.swift \
+  Sources/SlopDeskClientUI/Overlays/OpenQuicklyView.swift; do
+  if ! grep -q 'FuzzyMatcher.runs(' "${half}"; then
+    fail "${half} stopped reading FuzzyMatcher.runs — a fifth spelling of one fzf mark"
+  fi
+done
+# THE LEDGER IS GONE, which is what stage D was counting to. `draws` let the Mac drop the shared
+# host's cards one at a time; with the last one moved it must not come back, and the host's card
+# machinery is the phone's alone.
+if sed -E 's#^[[:space:]]*//.*##' Sources/SlopDeskClientUI/Overlays/OverlayHostView.swift |
+  grep -q 'draws'; then
+  fail "the transitional \`draws\` ledger is back in OverlayHostView — every card has left the Mac"
+fi
+# NOTHING SWIFTUI FLOATS OVER THE MAC's SPLIT. The shared host is the PHONE's whole overlay layer
+# now — the Mac's last two tenants, the Connect FORM and the close-confirmation ALERT, are AppKit
+# sheets driven from the scene. Re-mounting the host here is not a cosmetic regression: an
+# `NSHostingView` claims every hit inside its own bounds, so an always-mounted SwiftUI layer over the
+# split makes the window click-dead everywhere its ink is not (docs/56 §3.5, measured 2026-08-17).
+if grep -q 'OverlayHostView' Sources/SlopDeskMacUI/App/MacWorkspaceRootView.swift; then
+  fail "MacWorkspaceRootView mounts the shared host again — an NSHostingView over the split eats the clicks"
+fi
+# The two surfaces that were never cards exist on the Mac and are DRIVEN. Each defaults to doing
+# nothing when nobody reconciles it, which is exactly the failure that reads as "the flag never
+# flipped": a Connect chord that opens no window, a parked close that never asks.
+for pair in \
+  "MacConnectSheet:the Connect form" \
+  "MacCloseConfirmation:the close confirmation"; do
+  if ! grep -q "${pair%%:*}" Sources/SlopDeskMacUI/Overlays/MacOverlayPanels.swift; then
+    fail "${pair#*:} is not reconciled by MacOverlayPanels — the Mac would never raise it"
+  fi
+done
+# ONE WORDING for the confirmation, and it is `CloseConfirmationCopy`. Which line a park deserves is
+# three branches and a join; a half that respells any of them drifts silently, because a dialog that
+# says the wrong true-sounding thing looks exactly like one that says the right thing.
+for half in Sources/SlopDeskMacUI/Overlays/MacCloseConfirmation.swift \
+  Sources/SlopDeskClientUI/Overlays/OverlayHostView.swift; do
+  if ! grep -q 'CloseConfirmationCopy' "${half}"; then
+    fail "${half} stopped reading CloseConfirmationCopy — two dialogs, and the drift would be silent"
+  fi
+  if sed -E 's#^[[:space:]]*//.*##' "${half}" |
+    grep -qE '"A process is still running|"This window has multiple tabs|Closing it will close the project'; then
+    fail "${half} respells the close-confirmation copy — every line of it is CloseConfirmationCopy's"
+  fi
+done
+printf 'check-supervisor: one picker, drawn twice, and the stage-D ledger is empty.\n'
+
+# ── One navigator, one row reading, one git dialect (docs/56 stage D) ───────────────────────────
+# The NAVIGATOR is the column stage D names as Mac-shaped, and the one whose halves could disagree
+# in the most ways: forty rows, each with a hover swap, a drop ring, a context menu, an inline field
+# and a mark that ticks at display rate. Everything the two frameworks could argue about was lifted
+# to `SlopDeskClientCore` FIRST — the row's whole appearance (`SidebarRowReading`), the git dialect
+# (`SidebarGitLine`), the sectioning (`SidebarSections`), the menu's verb table (`SidebarRowMenu`)
+# and the select path (`SidebarSelection`) — so what is left in either column is drawing and events.
+# This gate is what keeps that true.
+#
+# `SlateTabRow.swift` must stay DELETED. It was the shared SwiftUI row both platforms drew; the Mac's
+# row is `MacSidebarRowView` and the phone's is `IOSSidebarLiveRow`, and a third would be the
+# cross-language mirror CLAUDE.md's one-implementation rule bans.
+if [[ -e Sources/SlopDeskClientUI/Chrome/SlateTabRow.swift ]]; then
+  fail "SlateTabRow.swift is back — the navigator row is MacSidebarRowView (AppKit) or IOSSidebarLiveRow (phone)"
+fi
+if grep -rqE '(struct|final class) SlateTabRow\b' Sources/ 2> /dev/null; then
+  fail "SlateTabRow is back under another path — one row per platform, both reading SidebarRowReading"
+fi
+# The SwiftUI navigator is the PHONE's now. Without the platform gate the Mac would build two.
+if ! grep -q '#if os(iOS)' Sources/SlopDeskClientUI/Columns/NavigatorColumn.swift; then
+  fail "NavigatorColumn stopped being iOS-only — the Mac's navigator is MacNavigatorColumn"
+fi
+for spelling in SidebarRowPresentation SidebarRowMenu; do
+  if ! grep -q "${spelling}" Sources/SlopDeskClientUI/Columns/NavigatorColumn.swift; then
+    fail "the phone's navigator stopped reading ${spelling} — two rows, and the drift would be silent"
+  fi
+done
+for spelling in SidebarRowPresentation SidebarRowMenu SidebarSections; do
+  if ! grep -rq "${spelling}" Sources/SlopDeskMacUI/Columns/; then
+    fail "the Mac's navigator stopped reading ${spelling} — two rows, and the drift would be silent"
+  fi
+done
+# The GIT DIALECT is cut once. A half that spells a sigil itself is a second dialect: the sigils are
+# a language a git prompt already taught the eye, and two spellings of it read as two repos.
+if ! grep -rq 'SidebarGitLine' Sources/SlopDeskMacUI/Columns/MacSidebarHeader.swift; then
+  fail "MacSidebarHeader stopped reading SidebarGitLine — the git dialect is ClientCore's, cut once"
+fi
+for half in Sources/SlopDeskMacUI/Columns/MacSidebarHeader.swift \
+  Sources/SlopDeskMacUI/Columns/MacSidebarRow.swift \
+  Sources/SlopDeskClientUI/Columns/NavigatorColumn.swift; do
+  # Comments stripped first — the headers NAME the sigils they no longer spell.
+  if sed -E 's#^[[:space:]]*//.*##;s#^[[:space:]]*///.*##' "${half}" |
+    grep -qE '"↑\\\(|"↓\\\(|"\+\\\(|"!\\\(|"\?\\\(|"~\\\(|"\$\\\('; then
+    fail "${half} spells a git sigil — every one of them is SidebarGitLine.segments's"
+  fi
+done
+# The ATTENTION ROLES are ranked once (`TabBadgeReading.rollup`), because a collapsed group's count
+# has to pick a loudest hidden state and both halves must pick the same one.
+if ! grep -rq 'TabBadgeReading' Sources/SlopDeskSlate/StatusPresentation.swift; then
+  fail "StatusPresentation stopped delegating to TabBadgeReading — the attention ranking is cut once"
+fi
+printf 'check-supervisor: one navigator per platform, one row reading, one git dialect.\n'
+
+# ── One titlebar band, one connection reading (docs/56 stage D) ─────────────────────────────────
+# The window runs `.hiddenTitleBar`, so the BAND is the chrome — and being the chrome, it is always
+# mounted, which is the same recurring cost that moved the navigator. Both its halves crossed:
+# `MacTabStrip` for the tabs and `MacConnectionIsland` for the status.
+#
+# The two SwiftUI originals must stay DELETED. `SlateTitlebar` was a full-bleed overlay that had to
+# be handed `allowsHitTesting` back a layer at a time to stop claiming the terminal's clicks — the
+# exact hazard an `NSView` sibling does not have — and `WorkspaceTabStrip` was the tab list it
+# carried. Neither has a phone mount to come back for: the phone has no titlebar at all.
+for gone in Sources/SlopDeskClientUI/Chrome/SlateTitlebar.swift \
+  Sources/SlopDeskClientUI/Chrome/WorkspaceTabStrip.swift; do
+  if [[ -e "${gone}" ]]; then
+    fail "${gone} is back — the Mac's titlebar chrome is MacTitlebarBand + MacTabStrip (AppKit)"
+  fi
+done
+if grep -rqE '(struct|final class) (SlateTitlebar|WorkspaceTabStrip|TabStripChip)\b' Sources/ 2> /dev/null; then
+  fail "a SwiftUI titlebar/tab-strip type is back — the band is MacTitlebarBand, the strip MacTabStrip"
+fi
+# The CONNECTION READING is cut once, in ClientCore, and BOTH surfaces must read it: the Mac's island
+# in its two layouts, and the phone's one-line pill. What the halves could disagree about is not the
+# palette — it is which readings may CLIMB at all (the link on its round trip, memory on the kernel's
+# pressure verdict, disk on an absolute byte floor; CPU never), and a second answer to that is an
+# instrument that cries wolf on one platform and stays silent on the other.
+for half in Sources/SlopDeskMacUI/Chrome/MacConnectionIsland.swift \
+  Sources/SlopDeskClientUI/Chrome/ConnectionPill.swift; do
+  if ! grep -q 'ConnectionReading' "${half}"; then
+    fail "${half} stopped reading ConnectionReading — the alarm ladder is ClientCore's, cut once"
+  fi
+done
+# The strip's chip is the navigator row's reading, NOT a second one. Its inputs are a strict subset,
+# and only one of the strip and the column is ever mounted, so there is nothing to buy by cutting a
+# `TabChipReading` and one more place for "what is this pane called" to drift.
+if ! grep -q 'SidebarRowPresentation' Sources/SlopDeskMacUI/Chrome/MacTabStrip.swift; then
+  fail "MacTabStrip stopped reading SidebarRowPresentation — the chip is the row's reading, cut once"
+fi
+# The band is a PASS-THROUGH: it spans the column so its ends can anchor to the window's, and every
+# click in its empty middle belongs to the terminal under it. Without the refusal it is the
+# full-bleed hit-claimer the port removed.
+if ! grep -q 'override func hitTest' Sources/SlopDeskMacUI/Chrome/MacTitlebarBand.swift; then
+  fail "MacTitlebarBand stopped refusing hits — its empty centre is the terminal island's moat"
+fi
+printf 'check-supervisor: one titlebar band, one connection reading.\n'
+
+# ── One panel chrome, one tab reading (docs/56 stage D) ─────────────────────────────────────────
+# The right panel's CHROME crossed whole: the strip over the surfaces, the rail the collapsed panel
+# leaves behind, and the four tabs both of them draw. The SURFACES stayed SwiftUI on purpose (three
+# of the four are already AppKit under a thin wrapper, and the phone will want them on its own
+# layout) — which is exactly why the chrome had to move: a strip that reloads a surface must outlive
+# the view that draws it.
+#
+# The two SwiftUI originals must stay DELETED. `PanelRail` was the collapsed panel's stand-in and
+# `AndroidRobotMark` the one mark no icon set ships; the mark is a `CGPath` in ClientCore now, so a
+# SwiftUI copy would be a second drawing of the same head.
+for gone in Sources/SlopDeskClientUI/Chrome/PanelRail.swift \
+  Sources/SlopDeskClientUI/DesignSystem/AndroidRobotMark.swift; do
+  if [[ -e "${gone}" ]]; then
+    fail "${gone} is back — the panel's chrome is MacPanelStrip + MacPanelRail (AppKit)"
+  fi
+done
+if grep -rqE '(struct|final class) (PanelRail|PanelTabPlate|AndroidRobotMark)\b' Sources/ 2> /dev/null; then
+  fail "a SwiftUI panel-chrome type is back — the tabs are MacPanelTabPlate, the mark AndroidMarkPath"
+fi
+# The four TABS are one list, in ClientCore, because they were written twice — once across the strip
+# and once down the rail — and the two had to agree on the mark, the word AND the help of every
+# surface. The WIDTH LADDER lives with them as arithmetic rather than a `ViewThatFits`, so a test can
+# ask it what a width affords without mounting anything.
+for half in Sources/SlopDeskMacUI/Panel/MacPanelStrip.swift \
+  Sources/SlopDeskMacUI/Panel/MacPanelTabGroup.swift \
+  Sources/SlopDeskClientUI/Panel/PhonePanelSheet.swift; do
+  if ! grep -q 'PanelTabs' "${half}"; then
+    fail "${half} stopped reading PanelTabs — the panel's four tabs are ClientCore's, cut once"
+  fi
+done
+# THE PHONE'S PANEL IS A LAYOUT, NOT A SECOND PANEL. Its bar is its own (a cover has no split item to
+# hide, so it closes instead), but everything under the bar is the Mac's: the same four surfaces, the
+# same shared `codeSidebarCollapsed` flag driving the presentation — which is what makes
+# `revealCodeSidebar()` reach the phone at all — and the same drawn robot.
+for reading in "Sources/SlopDeskClientUI/Panel/PhonePanelSheet.swift:CodePanelSurfaces(" \
+  "Sources/SlopDeskClientUI/Panel/PhonePanelSheet.swift:AndroidMarkPath" \
+  "Sources/SlopDeskClientUI/WorkspaceRootView.swift:codeSidebarCollapsed"; do
+  if ! grep -qF "${reading#*:}" "${reading%%:*}"; then
+    fail "${reading%%:*} stopped reading ${reading#*:} — the phone's panel is a LAYOUT, not a second panel"
+  fi
+done
+if ! grep -q 'AndroidMarkPath' Sources/SlopDeskMacUI/Panel/MacPanelTabPlate.swift; then
+  fail "MacPanelTabPlate stopped drawing AndroidMarkPath — the head's proportions are cut once"
+fi
+# NOTHING IN THE RAIL IS A TURNED VIEW. `frameCenterRotation` pivots a layer-backed view about its
+# layer's ANCHOR POINT — the frame's corner — which threw every rail tab out of the rail; and a
+# turned view's frame is still its unturned box, so its hit area would lie across both neighbours.
+# The tab stands in its footprint and turns its CONTENT.
+# Comments stripped first — the headers NAME the API they exist to warn about.
+if sed -E 's#^[[:space:]]*//.*##;s#^[[:space:]]*///.*##' Sources/SlopDeskMacUI/Panel/*.swift |
+  grep -q 'frameCenterRotation'; then
+  fail "a panel tab turns its VIEW again — turn the content, or the rail's hit areas overlap"
+fi
+printf 'check-supervisor: one panel chrome, one tab reading.\n'
+
+# ---------------------------------------------------------------------------
+# THE DEVICE-PANEL FLOOR IS PLATFORM-NEUTRAL.
+#
+# Every file in `SlopDeskDevicePanels` was once wrapped whole in `#if os(macOS)` — inherited from the
+# days the panels were a Mac-only surface, never from a Mac-only dependency. The module imports
+# Foundation, CoreGraphics, CoreMedia and Network; the phone has all four. The gates cost nothing to
+# add and hid the whole parity gap behind a green build, because forty-one EMPTY files compile fine.
+#
+# So no platform gate goes back in. `SimulatorKeyMap` is the one that will tempt someone — its table
+# is keyed on macOS virtual key codes — and its answer is `AndroidKeyMap`'s: spell the numbers, pin
+# them against the SDK in a macOS-only TEST, and leave the shared floor buildable everywhere.
+if grep -rn '^#if.*os(macOS)' Sources/SlopDeskDevicePanels/ 2> /dev/null; then
+  fail "a platform gate is back in SlopDeskDevicePanels — the panel floor is the phone's too"
+fi
+if grep -rq 'import Carbon' Sources/SlopDeskDevicePanels/ 2> /dev/null; then
+  fail "SlopDeskDevicePanels imports Carbon — that module does not exist on the iOS triple"
+fi
+printf 'check-supervisor: the device-panel floor builds for the phone.\n'
+
+# ---------------------------------------------------------------------------
+# BOTH DEVICE PANELS DRAW ON BOTH PLATFORMS.
+#
+# The simulator and Android surfaces are the phone's too (docs/56 stage D). Fifteen of their
+# seventeen files are plain SwiftUI and carry NO gate at all; the two that host a video stage carry
+# both halves in one file, `#if os(macOS)` … `#elseif os(iOS)`. A bare `#if os(macOS)` anywhere in
+# those directories is the old Mac-only shape coming back — it compiles to an empty file on the
+# phone, which is a green build over a missing feature.
+for surface in Sources/SlopDeskClientUI/Simulator/*.swift Sources/SlopDeskClientUI/Android/*.swift; do
+  if grep -q '^#if os(macOS)' "${surface}" && ! grep -q '^#elseif os(iOS)' "${surface}"; then
+    fail "${surface} is macOS-only again — both device panels draw on the phone too"
+  fi
+done
+for stage in Sources/SlopDeskClientUI/Simulator/SimulatorScreenView.swift \
+  Sources/SlopDeskClientUI/Android/AndroidScreenView.swift; do
+  if ! grep -q 'UIViewRepresentable' "${stage}"; then
+    fail "${stage} lost its UIKit half — the phone's device stage is a UIViewRepresentable"
+  fi
+done
+# ONE VOCABULARY, TWO NUMBERINGS. A Mac reports a virtual key code and an iPad a USB HID usage; the
+# NAMES they resolve to, and every rule about what to do with them, are cut once in the shared floor.
+# A UI half that grew its own name table would be the same product implemented twice.
+for domain in byHIDUsage hidFunctionalKeys; do
+  if ! grep -rq "${domain}" Sources/SlopDeskDevicePanels/; then
+    fail "the ${domain} table is gone — an iPad keyboard numbers its keys as HID usages"
+  fi
+done
+# Comments stripped first — the tables' docs NAME the UIKit type they exist to stay away from.
+if sed -E 's#^[[:space:]]*//.*##;s#^[[:space:]]*///.*##' Sources/SlopDeskDevicePanels/*/*.swift |
+  grep -q 'UIKeyboardHIDUsage'; then
+  fail "SlopDeskDevicePanels names UIKeyboardHIDUsage — that is UIKit, and the floor is not"
+fi
+printf 'check-supervisor: both device panels draw on both platforms.\n'
+
+# ---------------------------------------------------------------------------
+# THE CODE PANEL CROSSES, AND ONLY ITS KEYBOARD STAYS BEHIND.
+#
+# `CodeSidebarWebView.swift` was a thousand lines of which the larger half was a first-responder
+# duel — a focused embedded VS Code and a focused terminal fighting over one AppKit window. That duel
+# has no iOS analogue at all (no app-level event monitor, no menu bar, no shared field editor), and
+# for as long as it sat in the same file as the pool, the whole code surface was Mac-only.
+#
+# Five files now, across THREE targets, and the split is the rule. Below both UI halves, in
+# `SlopDeskClientCore`: the DECISIONS in `CodeSidebarFocusPolicy` (pure, and the only place a focus
+# rule may be written), the POOL in `CodeSidebarWebViewPool` (projects and their warm pages — one
+# law, and as of docs/56 increment 43 not one platform gate), and the PAGE in `CodeSidebarPage` (the
+# mint, and the Mac's responder-seam subclass — a `WKWebView` is the platform's view class, not a
+# drawn surface). The MOUNT is per-half and always was: a clipping container that lays out and reads
+# a design token, so increment 51 split it in two — `CodeSidebarWebView` is the phone's
+# representable, `SlopDeskMacUI/MacCodeWorkbenchView` is an `NSView` doing the same four calls with
+# no `View` above it to justify a wrapper. And one target up in `SlopDeskMacUI`: the keyboard DUEL in
+# `CodeSidebar/MacCodeSidebarKeyboard.swift`. Increments 42, 43, 45 and 51 are the four moves.
+for piece in \
+  "Sources/SlopDeskClientUI/CodeSidebar/CodeSidebarWebView.swift:UIViewRepresentable" \
+  "Sources/SlopDeskMacUI/Panel/MacCodeWorkbenchView.swift:noteRemount" \
+  "Sources/SlopDeskClientCore/CodeSidebar/CodeSidebarWebViewPool.swift:func noteRemount"; do
+  if ! grep -qF "${piece#*:}" "${piece%%:*}"; then
+    fail "${piece%%:*} lost ${piece#*:} — the code panel mounts on both platforms (docs/56)"
+  fi
+done
+# The webview SUBCLASS is the responder seam and nothing else, so it exists only where a responder
+# duel does. The phone mints a plain `WKWebView`; a `CodeSidebarWKWebView` named anywhere outside the
+# two files that own it — or reached from the phone's half — is that seam leaking back out.
+# Comments stripped first: the seam is DOC-linked from the policy and the pure state it drives, and a
+# doc link is exactly the reference that is allowed to cross.
+while IFS= read -r file; do
+  [[ -z "${file}" ]] && continue
+  [[ "${file}" =~ CodeSidebar/CodeSidebarPage\.swift$ ]] && continue
+  if sed -E 's#^[[:space:]]*//.*##' "${file}" | grep -q 'CodeSidebarWKWebView'; then
+    fail "${file} names CodeSidebarWKWebView — it is the Mac's responder seam, not an API"
+  fi
+done < <(grep -rl 'CodeSidebarWKWebView' Sources/ || true)
+# The four code-panel files below carry NO WHOLE-FILE gate. `CodeSidebarProxy` and
+# `CodeSidebarFontSchemeHandler` were gated for no reason at all — Network is Network and WebKit is
+# WebKit — and `CodePanelSurfaces` was gated because of what it mounted, which has since crossed.
+# A gate INSIDE one of them is fine, and the pool now has NONE — not an `#if`, not an AppKit/UIKit
+# import. The keyboard machine went up to `SlopDeskMacUI/CodeSidebar/MacCodeSidebarKeyboard.swift`
+# and the MINT (subclass-vs-plain, base-canvas kill) went sideways into `CodeSidebarPage.swift`,
+# which is two per-platform halves on purpose — docs/56 increments 42, 43 and 45 name the moves. The
+# import went with it: the one platform member the pool still touches is `window`, inherited from the
+# view class WebKit already brings into scope. What is banned is the wrapper that makes the file
+# compile to nothing on the phone, and that shape is exactly "the first line of code is
+# `#if os(macOS)`".
+for crossed in Sources/SlopDeskClientUI/CodeSidebar/CodePanelSurfaces.swift \
+  Sources/SlopDeskClientCore/CodeSidebar/CodeSidebarWebViewPool.swift \
+  Sources/SlopDeskClientCore/CodeSidebar/CodeSidebarProxy.swift \
+  Sources/SlopDeskClientCore/CodeSidebar/CodeSidebarFontSchemeHandler.swift; do
+  first=$(grep -vE '^[[:space:]]*(//.*)?$' "${crossed}" | head -n 1 || true)
+  if [[ "${first}" == '#if os(macOS)' ]]; then
+    fail "${crossed} is wrapped in a macOS gate again — the code panel is the phone's too"
+  fi
+done
+# THE POOL CARRIES NO GATE AT ALL, which is stronger than the four above and is the point of
+# increments 42-43. Its subject is projects and their warm pages — one law on both halves — so every
+# platform-shaped thing it used to hold has left: the keyboard duel went UP to `SlopDeskMacUI`, the
+# page mint went ACROSS to `CodeSidebarPage.swift`, which has halves on purpose. A gate reappearing
+# here is not a gate problem; it is the signal that whatever it guards belongs in one of those two
+# files instead, and a comment saying so is not a pin.
+if grep -qE '^\s*#if os\(' Sources/SlopDeskClientCore/CodeSidebar/CodeSidebarWebViewPool.swift; then
+  grep -nE '^\s*#if os\(' Sources/SlopDeskClientCore/CodeSidebar/CodeSidebarWebViewPool.swift >&2
+  fail "the code-page pool grew a platform gate — it manages pages, it does not draw them"
+fi
+# AND THE POOL IS BELOW BOTH UI HALVES, which is what the gate removal bought (increment 45). It is a
+# RESOURCE manager, not a view: no `some View`, no design token, and the only reason it ever sat in
+# the phone's draining target was the mint it used to carry. `SlopDeskMacUI` reaching it through
+# `SlopDeskClientUI` is the import stage D exists to delete, so the ascent is pinned shut here.
+if [[ -e Sources/SlopDeskClientUI/CodeSidebar/CodeSidebarWebViewPool.swift ]]; then
+  fail "the code-page pool climbed back into the UI target — it manages pages, it does not draw them"
+fi
+# A focus RULE lives in the policy, which is pure and testable; the seam only calls it. The three
+# spellings below are the ones that were inline before the split and would be inline again first.
+# shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
+focus_rules=$(spells 'func shouldAcceptFocus|func isReservedAppChord|func evictionVictim' \
+  $(repo_files 'Sources/SlopDeskClientUI/**/*.swift' | grep -v 'CodeSidebarFocusPolicy.swift') \
+  2> /dev/null || true)
+if [[ -n "${focus_rules}" ]]; then
+  printf '%s\n' "${focus_rules}" >&2
+  fail "a code-panel focus rule grew back outside CodeSidebarFocusPolicy — it is pure on purpose"
+fi
+printf 'check-supervisor: the code panel crosses; only its keyboard stayed behind.\n'
+
+# ---------------------------------------------------------------------------
+# THE PHONE'S KEY PATH IS RUST, AND ITS SWIFT IS A MARSHALLER.
+#
+# Four Swift files used to hold it — a C0 fold, an arrow table, a routing switch, a threshold and a
+# travel accumulator — and every one of them was a rule about bytes with no view in it. They are
+# `slopdesk_workspace::phone_key` now, reached through `slopdesk_phone_*`, and `PhoneKey.swift` is
+# what is left: the vocabulary the responder builds a press in, and the crossing.
+#
+# The four names below must stay gone. A file that spells one again is the second implementation
+# the one-implementation rule exists to refuse — and this particular second implementation is the
+# one that would drift silently, because both halves would keep passing their own tests.
+for gone in KeyEncoding InputRouting FloatingCursorMapping KeyboardAccessoryDecision; do
+  if [[ -e "Sources/SlopDeskWorkspaceCore/iOS/${gone}.swift" ]]; then
+    fail "Sources/SlopDeskWorkspaceCore/iOS/${gone}.swift is back — the phone's key rules are Rust (docs/55)"
+  fi
+done
+# The rules themselves, by the shapes they take in Swift. A C0 fold is `& 0x1F` or `- 0x60`; an
+# arrow table is the four private-use scalars; the accumulator is a threshold loop. None of them may
+# appear in the module that used to own them — the marshaller passes bytes through, it makes none.
+# shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
+key_rules=$(spells '0x4F : 0x5B|0x5B : 0x4F|& 0x1F|u\{F70[0-3]\}' \
+  $(repo_files 'Sources/SlopDeskWorkspaceCore/**/*.swift') 2> /dev/null || true)
+if [[ -n "${key_rules}" ]]; then
+  printf '%s\n' "${key_rules}" >&2
+  fail "a phone key RULE grew back in Swift — the fold, the introducer and the arrows are Rust"
+fi
+# The RESPONDER is the other place a rule would grow, and the likelier one: it is the file holding a
+# live `UIKey`, so a table there would look local rather than duplicated. It must spell no escape
+# sequence and no HID number — `UIKeyboardHIDUsage`'s own cases are the only spelling of a usage
+# allowed, and what each one MEANS is `slopdesk_workspace::phone_key`'s alone.
+host_swift=Sources/SlopDeskClientUI/Pane/TerminalInputHost.swift
+if [[ ! -e "${host_swift}" ]]; then
+  fail "${host_swift} is gone — without it the phone's terminal cannot receive a keystroke (docs/56 §16)"
+fi
+host_rules=$(spells '0x1B|0x5B|0x4F|u\{1B\}|\\u\{F70|& 0x1F|hidUsage: [0-9]' "${host_swift}" 2> /dev/null || true)
+if [[ -n "${host_rules}" ]]; then
+  printf '%s\n' "${host_rules}" >&2
+  fail "the phone's responder spelled a key RULE — it reads a UIKey and asks PhoneKey, it decides nothing"
+fi
+for call in PhoneKey.routesToKeyEncoding PhoneKey.encode PhoneKey.keyChord PhoneKey.foldArmedControl \
+  PhoneKey.showsAccessoryBar; do
+  if ! grep -qF "${call}" "${host_swift}"; then
+    fail "${host_swift} stopped asking ${call} — a question it answers itself is a rule written twice"
+  fi
+done
+# And the marshaller must actually call the doors it claims to. A `PhoneKey` that quietly answered
+# from Swift again would pass every test above.
+for door in slopdesk_phone_key_routes_to_encoding slopdesk_phone_key_encode slopdesk_phone_key_chord \
+  slopdesk_phone_key_fold_control slopdesk_phone_shows_accessory_bar slopdesk_phone_floating_cursor_feed; do
+  if ! grep -qF "${door}" Sources/SlopDeskWorkspaceCore/iOS/PhoneKey.swift; then
+    fail "PhoneKey.swift stopped calling ${door} — a rule it answers itself is a rule written twice"
+  fi
+  if ! grep -qF "${door}" rust/slopdesk-ffi/include/slopdesk_ffi.h; then
+    fail "${door} is missing from slopdesk_ffi.h — Swift cannot reach a door the header does not name"
+  fi
+done
+# The chord's modifier word crosses UNTRANSLATED, so the two numberings must be the same four bits.
+# The Rust side pins its own half against `KeyChord.Modifiers` in `slopdesk-ffi`; this pins the Swift
+# half, which is the one a future OptionSet reorder would break without a compile error anywhere.
+for bit in "shift = Self(rawValue: 1 << 0)" "control = Self(rawValue: 1 << 1)" \
+  "option = Self(rawValue: 1 << 2)" "command = Self(rawValue: 1 << 3)"; do
+  if ! grep -qF "${bit}" Sources/SlopDeskWorkspaceCore/Workspace/Domain/KeyChord.swift; then
+    fail "KeyChord.Modifiers renumbered (${bit}) — the phone's flag word crosses as those exact bits"
+  fi
+done
+printf 'check-supervisor: the phone key path is Rust; PhoneKey.swift only carries it across.\n'
+
+# ── What Settings OFFERS is one table, not one per framework ──────────────────────────────────
+# The choices, their labels, their honest captions, the taxonomy and the ladders' stops and readouts
+# are `slopdesk_workspace::settings_catalog`. They were already lifted once, out of view bodies into
+# a Swift catalog, and the argument for lifting them did not stop at the view boundary: the table has
+# no framework in it, and the two halves of the UI split were about to read it from two.
+#
+# The two Swift files that held it must stay gone. A card grid has no "…", so a group that drifted
+# between the two languages would render a DIFFERENT set of choices per platform with nothing on
+# screen saying so, and both halves would keep passing their own tests.
+for gone in SettingsOption SettingsOptionCatalog; do
+  if [[ -e "Sources/SlopDeskClientCore/Settings/${gone}.swift" ]]; then
+    fail "Sources/SlopDeskClientCore/Settings/${gone}.swift is back — the settings catalog is Rust (docs/56)"
+  fi
+done
+catalog_swift=Sources/SlopDeskClientCore/Settings/SettingsCatalog.swift
+if [[ ! -e "${catalog_swift}" ]]; then
+  fail "${catalog_swift} is gone — without it no settings control has any choices to offer (docs/56)"
+fi
+# The marshaller must actually call the doors. A `SettingsCatalog` that answered from a Swift array
+# again would pass every test above, because the tests read it rather than the boundary.
+for door in slopdesk_settings_option_count slopdesk_settings_option_token slopdesk_settings_option_label \
+  slopdesk_settings_option_caption slopdesk_settings_option_menu_label slopdesk_settings_density_token \
+  slopdesk_settings_section_count slopdesk_settings_section_id slopdesk_settings_section_title \
+  slopdesk_settings_section_symbol slopdesk_settings_timing_label \
+  slopdesk_settings_timing_symbol slopdesk_settings_ladder slopdesk_settings_ladder_preset_count \
+  slopdesk_settings_ladder_preset_value slopdesk_settings_ladder_preset_label slopdesk_settings_ladder_readout; do
+  if ! grep -qF "${door}" "${catalog_swift}"; then
+    fail "${catalog_swift} stopped calling ${door} — an answer it holds itself is a table written twice"
+  fi
+  if ! grep -qF "${door}" rust/slopdesk-ffi/include/slopdesk_ffi.h; then
+    fail "${door} is missing from slopdesk_ffi.h — Swift cannot reach a door the header does not name"
+  fi
+done
+# And no settings VIEW may spell a choice's own words. A label typed into a card is the second table:
+# it renders, it looks right, and it is unreachable from the pin that would have caught it.
+# shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
+settings_words=$(spells 'SettingsOption\(\.|"Applies (now|on reconnect)"|"(Copy or paste|Left only|Right only)"' \
+  $(repo_files 'Sources/SlopDeskClientUI/Settings/*.swift') $(repo_files 'Sources/SlopDeskMacUI/**/*.swift') \
+  2> /dev/null || true)
+if [[ -n "${settings_words}" ]]; then
+  printf '%s\n' "${settings_words}" >&2
+  fail "a settings view spelled a CHOICE — the words are settings_catalog's, the view only draws them"
+fi
+printf 'check-supervisor: what Settings offers is one Rust table; SettingsCatalog.swift only reads it.\n'
+
+# ── A setting is NAMED once ───────────────────────────────────────────────────────────────────
+# The row table — every key with its label, its one-line description, its default and where it is
+# edited — is `slopdesk_workspace::settings_rows`. `AllSettingsCatalog.swift` is the near side, and it
+# must stay a marshaller: a Swift array of rows would pass every test that reads it.
+rows_swift=Sources/SlopDeskWorkspaceCore/Workspace/Store/AllSettingsCatalog.swift
+if [[ ! -e "${rows_swift}" ]]; then
+  fail "${rows_swift} is gone — nothing would advertise a setting to the all-settings list (docs/56)"
+fi
+for door in slopdesk_settings_row_count slopdesk_settings_row_key slopdesk_settings_row_label \
+  slopdesk_settings_row_description slopdesk_settings_row_default_text slopdesk_settings_row_keywords \
+  slopdesk_settings_row_target_section slopdesk_settings_row_bucket slopdesk_settings_row_is_inline_editable \
+  slopdesk_settings_row_index slopdesk_settings_row_matches; do
+  if ! grep -qF "${door}" "${rows_swift}"; then
+    fail "${rows_swift} stopped calling ${door} — a row it describes itself is a table written twice"
+  fi
+  if ! grep -qF "${door}" rust/slopdesk-ffi/include/slopdesk_ffi.h; then
+    fail "${door} is missing from slopdesk_ffi.h — Swift cannot reach a door the header does not name"
+  fi
+done
+# And no view may TYPE a row's label. A setting is named on the page where it is set and again in the
+# searchable list, and those are the same words for the same job — they were two strings, and two was
+# already one too many ("Hide Mouse While Typing" vs "…When Typing", "Long-Command Notification" vs
+# "…Completion"). The labels are read out of the Rust table here and grepped for verbatim, so a
+# re-typed one fails by its own text. The DESCRIPTION is deliberately not covered: an index blurb and
+# an in-context subtitle are two registers, and docs/56 §18 says so.
+row_labels=$(sed -n 's/^        label: "\(.*\)",$/\1/p' rust/slopdesk-workspace/src/settings_rows.rs)
+if [[ -z "${row_labels}" ]]; then
+  fail "no row labels parsed out of settings_rows.rs — the ratchet below would pass by reading nothing"
+fi
+# Comments are STRIPPED first, exactly as `spells()` does it: the note above `settingLabel` cites the
+# two spellings that drifted, and a gate that cannot quote the bug it prevents is a gate nobody may
+# document.
+# shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
+settings_view_code=$(awk '{ line = $0; sub(/\/\/.*/, "", line); printf "%s:%d:%s\n", FILENAME, FNR, line }' \
+  $(repo_files 'Sources/SlopDeskClientUI/Settings/*.swift') \
+  $(repo_files 'Sources/SlopDeskMacUI/**/*.swift') 2> /dev/null || true)
+typed_labels=$(printf '%s\n' "${row_labels}" | while IFS= read -r label; do
+  [[ -z "${label}" ]] && continue
+  grep -F "\"${label}\"" <<< "${settings_view_code}" || true
+done)
+if [[ -n "${typed_labels}" ]]; then
+  printf '%s\n' "${typed_labels}" >&2
+  fail "a settings view TYPED a row's label — ask settingLabel(key); the words are settings_rows'"
+fi
+printf 'check-supervisor: a setting is named once — %s rows, and no view spells one.\n' \
+  "$(printf '%s\n' "${row_labels}" | grep -c .)"
+
+# ── A platform gate on a settings page is DATA ────────────────────────────────────────────────
+# Which groups a page shows, in what order, and which platform each belongs to is
+# `slopdesk_workspace::settings_layout`. `SettingsLayout.swift` is the near side.
+layout_swift=Sources/SlopDeskClientCore/Settings/SettingsLayout.swift
+if [[ ! -e "${layout_swift}" ]]; then
+  fail "${layout_swift} is gone — a settings page would have to spell its own shape again (docs/56)"
+fi
+for door in slopdesk_settings_layout_group_count slopdesk_settings_layout_group_title \
+  slopdesk_settings_layout_group_timing slopdesk_settings_layout_row_count \
+  slopdesk_settings_layout_row_key slopdesk_settings_layout_row_subtitle \
+  slopdesk_settings_layout_row_glyph slopdesk_settings_layout_row_bespoke_id \
+  slopdesk_settings_layout_row_control slopdesk_settings_layout_row_control_argument; do
+  if ! grep -qF "${door}" "${layout_swift}"; then
+    fail "${layout_swift} stopped calling ${door} — a page shape it holds itself is a table written twice"
+  fi
+  if ! grep -qF "${door}" rust/slopdesk-ffi/include/slopdesk_ffi.h; then
+    fail "${door} is missing from slopdesk_ffi.h — Swift cannot reach a door the header does not name"
+  fi
+done
+# The point of the table is that a gate became a VALUE, so the gate must not grow back. Exactly one
+# `#if os(` may remain across the settings pages per page that has not been ported yet, and the ONE
+# in `SettingsControls.swift` — `SettingsLayout.Half.current` — is the shared target's single
+# admission that it still renders both halves. It dies when `SlopDeskMacUI` takes Settings.
+# Counted from the comment-stripped source: the note above the helper explains what it replaced by
+# quoting `#if os(macOS)`, and a gate nobody may document is a gate nobody will understand.
+half_gate=$(grep -c '^Sources/SlopDeskClientUI/Settings/SettingsControls.swift:[0-9]*:.*#if os(' \
+  <<< "${settings_view_code}" || true)
+if [[ "${half_gate}" -ne 1 ]]; then
+  fail "SettingsControls.swift carries ${half_gate} platform gates — Half.current is meant to be the only one"
+fi
+if ! grep -q 'static var current' Sources/SlopDeskClientUI/Settings/SettingsControls.swift; then
+  fail "SettingsLayout.Half.current is gone — a settings page has no way to say which half it is"
+fi
+# A ported page renders from the table, so it may not name a group header it draws.
+layout_titles=$(sed -n 's/^        title: "\(.*\)",$/\1/p' rust/slopdesk-workspace/src/settings_layout.rs)
+if [[ -z "${layout_titles}" ]]; then
+  fail "no group titles parsed out of settings_layout.rs — the ratchet below would pass by reading nothing"
+fi
+typed_titles=$(printf '%s\n' "${layout_titles}" | while IFS= read -r title; do
+  [[ -z "${title}" ]] && continue
+  grep -F "slateFormSection(\"${title}\")" <<< "${settings_view_code}" || true
+done)
+if [[ -n "${typed_titles}" ]]; then
+  printf '%s\n' "${typed_titles}" >&2
+  fail "a settings view TYPED a group header the layout table already holds — render it from the table"
+fi
+printf 'check-supervisor: a settings page is SHAPED once — %s groups crossed, one gate names the half.\n' \
+  "$(printf '%s\n' "${layout_titles}" | grep -c .)"
+
+# ── One chord editor, drawn twice ─────────────────────────────────────────────────────────────
+# Key Bindings is `Platform::Both`, so it is the one BESPOKE group the Mac draws itself rather than
+# hosting: its recorder is an `NSEvent` monitor scoped to the Settings window, and a monitor is not a
+# view. Two drawings over one registry is fine; two answers to "what did the user just press" or "does
+# this row match the search" is not, and neither fails loudly — a second capture table just quietly
+# records a chord the dispatcher will never fire.
+for half in Sources/SlopDeskMacUI/Settings/MacKeybindingsEditor.swift \
+  Sources/SlopDeskClientUI/Settings/KeybindingsEditorView.swift; do
+  for spelling in WorkspaceBindingRegistry KeybindingsEditorModel; do
+    if ! grep -q "${spelling}" "${half}"; then
+      fail "${half} stopped reading ${spelling} — two chord editors, and the drift would be silent"
+    fi
+  done
+done
+# BOTH halves record, and neither owns a capture table. The Mac reads an `NSEvent` and asks
+# `KeybindingCapture` (`slopdesk_video::key_naming`, off a macOS virtual key code); the phone reads a
+# `UIKey` and asks `PhoneKey.captureOutcome` (`slopdesk_workspace::phone_key`, off its HID usage). The
+# two tables live in crates that cannot see each other, so their agreement is a test in `slopdesk-ffi`,
+# which can — and that test is what stops a phone rebind from being written under a spelling the Mac's
+# lookup never builds. A half that decided a verdict ITSELF would pass every editor test above.
+if ! grep -q 'PhoneKey.captureOutcome' Sources/SlopDeskClientUI/Settings/KeybindingsEditorView.swift; then
+  fail "the phone's chord editor stopped asking PhoneKey.captureOutcome — a second capture table is silent"
+fi
+if ! grep -q 'KeybindingCapture.outcome' Sources/SlopDeskMacUI/Settings/MacKeybindingsEditor.swift; then
+  fail "the Mac's chord editor stopped asking KeybindingCapture — a chord it records may never fire"
+fi
+if ! grep -q 'the_two_recorders_agree_on_every_key_both_can_name' rust/slopdesk-ffi/src/phone_key.rs; then
+  fail "the recorders' agreement test is gone — the two capture tables can now drift silently"
+fi
+# The two override writers PRESERVE `textBindings` / `unbinds`. Rebuilding the model as
+# `KeybindingPreferences(overrides:)` defaults both to empty, so a single rebind in Settings silently
+# wipes every config.toml literal-byte binding — the audit bug, and it looks like nothing at all.
+# (`KeybindingPreferences()` with no arguments is the GLOBAL reset and is meant to clear everything.)
+if spells 'KeybindingPreferences\(overrides:' Sources/SlopDeskMacUI/Settings/MacKeybindingsEditor.swift \
+  Sources/SlopDeskClientUI/Settings/KeybindingsEditorView.swift > /dev/null; then
+  fail "a chord editor rebuilt KeybindingPreferences — that wipes the config.toml literal-byte bindings"
+fi
+printf 'check-supervisor: one chord editor, drawn twice, and both halves record from one table.\n'
+
+# ── One bespoke settings surface, drawn twice and spelled once ─────────────────────────────────
+# `Control.bespoke(id)` is the layout table admitting a group is not a list of settings, so those
+# groups carry the settings words that the table cannot: an empty page stating its own emptiness, a
+# card writing `~/.claude/settings.json`, a caret preview, a font specimen, the searchable index.
+# They had ONE renderer until increment 49, which is how every word in them came to have a single
+# speller BY ACCIDENT. There are two now, and the accident does not survive a second drawing.
+for pair in \
+  "Sources/SlopDeskClientUI/Settings/SettingsBespokeSurfaces.swift:SettingsBespokePresentation" \
+  "Sources/SlopDeskMacUI/Settings/MacSettingsBespokeSurfaces.swift:SettingsBespokePresentation" \
+  "Sources/SlopDeskClientUI/Settings/AllSettingsListView.swift:SettingsIndexPresentation" \
+  "Sources/SlopDeskMacUI/Settings/MacAllSettingsIndex.swift:SettingsIndexPresentation" \
+  "Sources/SlopDeskClientUI/Settings/CursorPreviewView.swift:CursorColorHex" \
+  "Sources/SlopDeskMacUI/Settings/MacCursorPreviewSurface.swift:CursorColorHex"; do
+  half="${pair%%:*}"
+  face="${pair##*:}"
+  if ! grep -q "${face}" "${half}" 2> /dev/null; then
+    fail "${half} stopped reading ${face} — a bespoke surface deciding for itself is the second speller (docs/56, increment 49)"
+  fi
+done
+# The index's option lists are the CATALOG's. Thirteen were typed at the SwiftUI control as
+# `Text(…).tag(…)` before increment 49 and FOUR had drifted — "Context Menu" against the catalog's
+# "Context menu", "Home" against "Home Directory". Naming the group is what makes a fourteenth list
+# impossible to type, so both index renderers must ask for a group rather than build one.
+for index in Sources/SlopDeskClientUI/Settings/AllSettingsListView.swift \
+  Sources/SlopDeskMacUI/Settings/MacAllSettingsIndex.swift; do
+  if ! grep -q 'SettingsIndexPresentation.optionGroup' "${index}"; then
+    fail "${index} stopped asking optionGroup — an option list typed at a control is how four labels drifted"
+  fi
+done
+# And the on-launch pair, which is the drift increment 49 found rather than prevented: the checklist
+# spelled "Restore Last Session" while Settings → General read ON_LAUNCH and said "Restore session".
+if ! grep -q 'SettingsCatalog.label(.onLaunch' Sources/SlopDeskClientCore/FirstLaunch/FirstLaunchStepPresentation.swift; then
+  fail "OnLaunchBehavior.title stopped reading ON_LAUNCH — the checklist and Settings named one choice twice before"
+fi
+# One hex parser under the two colour wells. A second one keeps passing both halves' tests while
+# rounding a channel differently, and the value it writes is a libghostty `cursor-color` string.
+hex_parsers=$(grep -rln 'radix: 16' Sources/SlopDeskClientUI/Settings Sources/SlopDeskMacUI/Settings 2> /dev/null || true)
+if [[ -n "${hex_parsers}" ]]; then
+  printf '%s\n' "${hex_parsers}" >&2
+  fail "a settings surface parses or prints hex itself — CursorColorHex is the bridge (docs/56, increment 49)"
+fi
+printf 'check-supervisor: one bespoke settings surface, drawn twice and spelled once.\n'
+
+# ── One panel vocabulary, four surfaces, two renderers ────────────────────────────────────────
+# The right panel's four surfaces are drawn twice since increment 51 — `MacCodePanelSurfaces` in
+# AppKit, `CodePanelSurfaces` (`#if os(iOS)`) in SwiftUI — off ONE `CodePanelPresentation` in
+# `SlopDeskClientCore`. What a surface says and which state it is in are decisions; only the drawing
+# is per-half.
+for pair in \
+  "Sources/SlopDeskClientUI/CodeSidebar/CodePanelSurfaces.swift:CodePanelPresentation" \
+  "Sources/SlopDeskMacUI/Panel/MacCodePanelSurfaces.swift:CodePanelPresentation" \
+  "Sources/SlopDeskClientUI/CodeSidebar/CodePanelSurfaces.swift:CodeOpenGateReading" \
+  "Sources/SlopDeskMacUI/Panel/MacPanelEmptyStates.swift:CodeOpenGateReading"; do
+  half="${pair%%:*}"
+  face="${pair##*:}"
+  if ! grep -q "${face}" "${half}" 2> /dev/null; then
+    fail "${half} stopped reading ${face} — a panel surface wording itself is the second speller (docs/56, increment 51)"
+  fi
+done
+# The FOLD, not just the words. Gate outranks root outranks awaited-key outranks placeholder, and
+# that ordering had already drifted between the two halves before it descended: the Mac deferred the
+# poll behind the open gate and the phone did not. Both must ask for the state rather than switch.
+for renderer in Sources/SlopDeskClientUI/CodeSidebar/CodePanelSurfaces.swift \
+  Sources/SlopDeskMacUI/Panel/MacCodePanelSurfaces.swift; do
+  if ! grep -q 'CodePanelPresentation.workbench(' "${renderer}"; then
+    fail "${renderer} folds the workbench phase itself — the four states are one switch, one floor down"
+  fi
+done
+# ONE poll task, outside the state switch. The first draft of the phone's renderer hung a
+# `.task(id:)` on three of the four branches, which reads correctly and cancels the poll on every
+# transition the poll itself caused. Three is the bug's signature; one is the fix.
+poll_tasks=$(grep -c '\.task(id: pollKey)' Sources/SlopDeskClientUI/CodeSidebar/CodePanelSurfaces.swift || true)
+if [[ "${poll_tasks}" != "1" ]]; then
+  fail "the phone's code poll is attached ${poll_tasks} times — a task per branch restarts the loop it caused"
+fi
+# The macOS half of the webview mount stays deleted: it is `MacCodeWorkbenchView`, an `NSView`, and a
+# representable in the phone's target would be the second mount racing the same pooled page.
+if grep -rq 'NSViewRepresentable' Sources/SlopDeskClientUI/CodeSidebar/ 2> /dev/null; then
+  fail "a CodeSidebar representable came back — the Mac mounts the pooled webview in AppKit (docs/56, increment 51)"
+fi
+# And the clip is measured once. Two `static let`s carrying one measurement is how the phone kept
+# clipping 30pt after the workbench moved its title bar.
+clip_owners=$(grep -rl 'let clippedTitleBarHeight' Sources/ 2> /dev/null || true)
+if [[ "${clip_owners}" != "Sources/SlopDeskClientCore/CodeSidebar/CodePanelPresentation.swift" ]]; then
+  fail "the clipped title-bar height is declared outside CodePanelPresentation — one measurement, one owner"
+fi
+printf 'check-supervisor: one panel vocabulary, four surfaces, two renderers.\n'
+
+# ── Two device panels, drawn twice and spelled once ───────────────────────────────────────────
+# Increment 52. Each panel has an AppKit renderer in `SlopDeskMacUI/Panel/<Device>/` and a SwiftUI one
+# in `SlopDeskClientUI/<Device>/`, off one `*Presentation` in `SlopDeskDevicePanels`.
+for pair in \
+  "Sources/SlopDeskMacUI/Panel/Simulator/MacSimulatorSurface.swift:SimulatorSidebarModel" \
+  "Sources/SlopDeskMacUI/Panel/Android/MacAndroidSurface.swift:AndroidSidebarModel" \
+  "Sources/SlopDeskClientUI/Simulator/SimulatorDeviceList.swift:SimulatorPresentation" \
+  "Sources/SlopDeskMacUI/Panel/Simulator/MacSimulatorDeviceList.swift:SimulatorPresentation" \
+  "Sources/SlopDeskClientUI/Android/AndroidDeviceList.swift:AndroidPresentation" \
+  "Sources/SlopDeskMacUI/Panel/Android/MacAndroidDeviceList.swift:AndroidPresentation"; do
+  half="${pair%%:*}"
+  face="${pair##*:}"
+  if ! grep -q "${face}" "${half}" 2> /dev/null; then
+    fail "${half} stopped reading ${face} — a device panel wording itself is the second speller (docs/56, increment 52)"
+  fi
+done
+# The phone's fifteen are the PHONE's. A macOS caller reaching back into them is the AppKit half
+# half-ported, which compiles perfectly well and ships two renderers for one surface.
+ungated=$(grep -rLn '#if os(iOS)' Sources/SlopDeskClientUI/Simulator/ Sources/SlopDeskClientUI/Android/ 2> /dev/null || true)
+if [[ -n "${ungated}" ]]; then
+  printf '%s\n' "${ungated}" >&2
+  fail "a device-panel view lost its iOS gate — the Mac draws these in AppKit now (docs/56, increment 52)"
+fi
+# The two display-layer views are the floor's, and NOT because they are shared: they are `NSView`s
+# with no design token and no layout decision in them, which is what kind 2 means. A representable
+# back in the phone's target would be a second mount racing the same layer.
+for moved in Sources/SlopDeskDevicePanels/Simulator/SimulatorScreenSurface.swift \
+  Sources/SlopDeskDevicePanels/Android/AndroidScreenNSView.swift; do
+  if ! grep -q 'NSView' "${moved}" 2> /dev/null; then
+    fail "${moved} is gone or no longer holds the display-layer NSView (docs/56, increment 52)"
+  fi
+done
+# Comments STRIPPED first: both files' headers name the representable they lost, and a gate that
+# cannot quote the rule it guards is a gate nobody may document.
+device_code=$(awk '{ line = $0; sub(/\/\/.*/, "", line); printf "%s:%d:%s\n", FILENAME, FNR, line }' \
+  Sources/SlopDeskClientUI/Simulator/*.swift Sources/SlopDeskClientUI/Android/*.swift)
+if grep -q 'NSViewRepresentable' <<< "${device_code}"; then
+  fail "a device screen representable came back — the Mac mounts the NSView directly (docs/56, increment 52)"
+fi
+# ⚠️ ONE MODIFIER FOLD, WITHIN THE PANELS. `AndroidScreenNSView` carried a private six-line copy for
+# exactly one increment, because the shared one sat one target UP while the view was still in the
+# phone's half. Both are in the floor now; a second walk in either panel target is that copy back.
+#
+# Scoped to the two panel targets on purpose. `SlopDeskVideoHost/InputInjector` and
+# `SlopDeskVideoClient/VideoWindowView` fold the same flags for the GUI-video path, which is a
+# different direction over a different wire — naming them here would be pinning a coincidence.
+folds=$(grep -rln 'contains(.capsLock)' Sources/SlopDeskDevicePanels/ Sources/SlopDeskClientUI/ \
+  Sources/SlopDeskMacUI/ 2> /dev/null || true)
+if [[ "${folds}" != "Sources/SlopDeskDevicePanels/Input/DeviceKeyEvent.swift" ]]; then
+  printf '%s\n' "${folds}" >&2
+  fail "the panels' modifier fold is spelled outside DeviceKeyEvent — one fold, one file, both frameworks"
+fi
+printf 'check-supervisor: two device panels, drawn twice and spelled once.\n'
+
+# ── One design floor, two renderers ───────────────────────────────────────────────────────────
+# `SlopDeskSlate` is the layer BOTH halves stand on: the token ladder in its `NSColor`/`UIColor`
+# spelling and its `Color` one, the status mark's geometry and its wandering tempo, the vector
+# artwork, the nerd splice and the chrome field's configuration. It exists because the draining
+# target is the PHONE's at the end of stage D, and an AppKit target importing the phone's would be
+# the common view ancestor docs/56 §3 forbids.
+#
+# The line it holds is "a value, never a drawing". Let one `some View` in and the next mark to be
+# ported has somewhere to be written that both halves can see, which is how two renderers become one
+# renderer plus a fallback — and nothing goes red: a hosted SwiftUI view compiles perfectly well
+# inside an AppKit window.
+# Comments are STRIPPED first: the floor's own headers NAME the boundary they hold, and a gate that
+# cannot quote the rule it guards is a gate nobody may document.
+# shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
+slate_code=$(awk '{ line = $0; sub(/\/\/.*/, "", line); printf "%s:%d:%s\n", FILENAME, FNR, line }' \
+  $(repo_files 'Sources/SlopDeskSlate/*.swift'))
+slate_views=$(grep -n ': View\|some View\|NSViewRepresentable\|UIViewRepresentable\|: Shape' \
+  <<< "${slate_code}" || true)
+if [[ -n "${slate_views}" ]]; then
+  printf '%s
+' "${slate_views}" >&2
+  fail "the design floor grew a VIEW — it holds values both renderers read, never a drawing either owns"
+fi
+# Every mark with two renderers keeps them one floor up, one per framework, off the shared value.
+for pair in 'Sources/SlopDeskClientUI/DesignSystem/StatusDotView.swift:AgentSpinner' 'Sources/SlopDeskMacUI/Overlays/MacAgentGlyph.swift:AgentSpinner' 'Sources/SlopDeskClientUI/DesignSystem/VectorIconView.swift:SVGPath' 'Sources/SlopDeskMacUI/Columns/MacSidebarRow.swift:SVGPath'; do
+  half="${pair%%:*}"
+  spelling="${pair##*:}"
+  if ! grep -q "${spelling}" "${half}"; then
+    fail "${half} stopped reading ${spelling} — a renderer that re-derives the mark drifts silently"
+  fi
+done
+# The floor may not climb: it is below both UI halves, so importing either would make a cycle of the
+# layering and hand the phone's views to the Mac through the back door.
+slate_climb=$(grep -rn '^import SlopDeskClientUI\|^import SlopDeskMacUI\|^import SlopDeskPhoneUI' Sources/SlopDeskSlate || true)
+if [[ -n "${slate_climb}" ]]; then
+  printf '%s
+' "${slate_climb}" >&2
+  fail "the design floor imported a UI target — it is BELOW both halves, and the layering says so"
+fi
+# The Mac reads the ladder from the floor, not from the draining target. This is the whole point of
+# the move: `SlopDeskClientUI` is renamed `SlopDeskPhoneUI` when stage D lands, and every token read
+# that still went through it would have to move on that day instead of on this one.
+if ! grep -rq '^import SlopDeskSlate' Sources/SlopDeskMacUI; then
+  fail "SlopDeskMacUI stopped naming SlopDeskSlate — the Mac reads the ladder from the floor"
+fi
+printf 'check-supervisor: one design floor, two renderers, and the floor never draws.\n'
+
 # ── One device-panel law, two device protocols ────────────────────────────────────────────────
 # The simulator panel and the Android panel differ in almost everything and should — one rotates on
 # the client and the other on the device, one sends touches in the fitted rect's space and the other
@@ -4452,14 +5613,19 @@ printf 'check-supervisor: one write(2) and one read-exactly, and drop-or-report 
 # `DevicePanelSampleBuffer`; only `formatDescription` is genuinely per-panel (avcC record vs Annex-B).
 # shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
 panel_dupes=$(spells 'bounds.width / contentSize.width|CMBlockBufferCreateWithMemoryBlock|2\.0\.squareRoot' \
-  $(repo_files 'Sources/SlopDeskClientUI/**/*.swift' | grep -v '/DevicePanel/') 2> /dev/null || true)
+  $(repo_files 'Sources/SlopDeskClientUI/**/*.swift' 'Sources/SlopDeskDevicePanels/**/*.swift' |
+    grep -v 'SlopDeskDevicePanels/Shared/') 2> /dev/null || true)
 if [[ -n "${panel_dupes}" ]]; then
   printf '%s\n' "${panel_dupes}" >&2
-  fail "a device-panel law grew back outside Sources/SlopDeskClientUI/DevicePanel — it is shared"
+  fail "a device-panel law grew back outside Sources/SlopDeskDevicePanels/Shared — it is shared"
 fi
-# The panels' aspect fit is the video client's, through the door — not a fourth spelling of it.
-if ! grep -q 'AspectFit.displayedVideoRect' Sources/SlopDeskClientUI/DevicePanel/DevicePanelGeometry.swift; then
-  fail "the device panels stopped using geometry::displayed_video_rect — a click lands where it is drawn"
+# The panels' aspect fit is the video client's, and the law itself is Rust now: the Swift side calls
+# one door, and that door's crate reaches `displayed_video_rect` rather than fitting a frame again.
+if ! grep -q 'slopdesk_panel_fitted_rect' Sources/SlopDeskDevicePanels/Shared/DevicePanelGeometry.swift; then
+  fail "the device panels stopped calling slopdesk_panel_fitted_rect — a click lands where it is drawn"
+fi
+if ! grep -q 'displayed_video_rect' rust/slopdesk-devicepanel/src/geometry.rs; then
+  fail "slopdesk-devicepanel stopped using geometry::displayed_video_rect — a click lands where it is drawn"
 fi
 # The same holds for what the panels DRAW. The empty stage, its caption, the empty-list notice and
 # the loading-veil asymmetry are one design decision each, recorded in the singular in
@@ -4473,8 +5639,8 @@ declare -a panel_shares=(
   "Sources/SlopDeskClientUI/Simulator/SimulatorStageView.swift:DevicePanelChrome.veil"
   "Sources/SlopDeskClientUI/Android/AndroidDeviceList.swift:DevicePanelChrome.notice"
   "Sources/SlopDeskClientUI/Simulator/SimulatorDeviceList.swift:DevicePanelChrome.notice"
-  "Sources/SlopDeskClientUI/Android/AndroidVideoFormat.swift:DevicePanelSampleBuffer.dimensions"
-  "Sources/SlopDeskClientUI/Simulator/SimulatorVideoFormat.swift:DevicePanelSampleBuffer.dimensions"
+  "Sources/SlopDeskDevicePanels/Android/AndroidVideoFormat.swift:DevicePanelSampleBuffer.dimensions"
+  "Sources/SlopDeskDevicePanels/Simulator/SimulatorVideoFormat.swift:DevicePanelSampleBuffer.dimensions"
 )
 for share in "${panel_shares[@]}"; do
   if ! spells "${share#*:}" "${share%%:*}" > /dev/null 2>&1; then
@@ -4496,10 +5662,13 @@ if [[ -n "${pasteboard}" ]]; then
   printf '%s\n' "${pasteboard}" >&2
   fail "a second client pasteboard write grew back — ClientPasteboard.write is the only one"
 fi
-# And the two device panels' image write is that same funnel, not a third `writeObjects` pair.
+# And the two device panels' capture write is that same funnel, not a third `writeObjects` pair.
+# It is `writeImage`, which answers a `Bool` rather than the decoded image — that return type is what
+# lets a panel MODEL say "copy this frame" without naming a platform image type, and is why the two
+# models could leave the view target at all (docs/56).
 declare -a pasteboard_shares=(
-  "Sources/SlopDeskClientUI/Android/AndroidPasteboard.swift:ClientPasteboard.write(image:"
-  "Sources/SlopDeskClientUI/Simulator/SimulatorChromeAssets.swift:ClientPasteboard.write(image:"
+  "Sources/SlopDeskDevicePanels/Android/AndroidSidebarModel.swift:ClientPasteboard.writeImage("
+  "Sources/SlopDeskDevicePanels/Simulator/SimulatorSidebarModel.swift:ClientPasteboard.writeImage("
 )
 for share in "${pasteboard_shares[@]}"; do
   if ! grep -qF "${share#*:}" "${share%%:*}"; then
@@ -4535,9 +5704,10 @@ fi
 # purpose for three lines of CoreFoundation.
 # shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
 smalls=$(spells 'obj\["method"\] as\? String|kCMSampleAttachmentKey_DisplayImmediately' \
-  $(repo_files 'Sources/SlopDeskClientUI/**/*.swift' 'Sources/SlopDeskHost/**/*.swift' \
-    'Sources/SlopDeskWorkspaceCore/**/*.swift' 'Sources/SlopDeskProtocol/**/*.swift' |
-    grep -vE 'SlopDeskProtocol/ControlLine.swift|SlopDeskClientUI/DevicePanel/') 2> /dev/null || true)
+  $(repo_files 'Sources/SlopDeskClientUI/**/*.swift' 'Sources/SlopDeskDevicePanels/**/*.swift' \
+    'Sources/SlopDeskHost/**/*.swift' 'Sources/SlopDeskWorkspaceCore/**/*.swift' \
+    'Sources/SlopDeskProtocol/**/*.swift' |
+    grep -vE 'SlopDeskProtocol/ControlLine.swift|SlopDeskDevicePanels/Shared/') 2> /dev/null || true)
 if [[ -n "${smalls}" ]]; then
   printf '%s\n' "${smalls}" >&2
   fail "an NDJSON control-line or CoreMedia rule grew back — ControlLine / DevicePanelSampleBuffer own them"
@@ -4552,6 +5722,143 @@ if [[ -n "${modes}" ]]; then
   fail "a second TerminalModeEvent mapping grew back — it belongs on the enum"
 fi
 printf 'check-supervisor: the small rules are spelled once — control line, sample buffer, mode event, pong.\n'
+
+# ── The UI split holds its shape (docs/56 §3) ───────────────────────────────────────────────────
+# Three boundaries, and each fails silently rather than loudly if it slips.
+#
+# A UI TARGET HOLDS VIEWS ONLY. A file in one that names no view framework compiles perfectly well
+# — it is simply logic sitting where only one of the two halves can reach it, which is how the same
+# model ends up written twice (the failure `CLAUDE.md` bans by name and this whole split exists to
+# prevent). The test is textual and deliberately blunt: import SwiftUI, AppKit or UIKit, or belong
+# in `SlopDeskClientCore`.
+ui_targets=(SlopDeskClientUI SlopDeskMacUI SlopDeskPhoneUI)
+frameworkless=""
+for target in "${ui_targets[@]}"; do
+  while IFS= read -r file; do
+    [[ -z "${file}" ]] && continue
+    grep -qE '^import (SwiftUI|AppKit|UIKit)$' "${file}" || frameworkless+="${file}"$'\n'
+  done < <(repo_files "Sources/${target}/*.swift" "Sources/${target}/**/*.swift")
+done
+if [[ -n "${frameworkless}" ]]; then
+  printf '%s' "${frameworkless}" >&2
+  fail "a UI target holds views only — a frameworkless file belongs in SlopDeskClientCore (docs/56 §3)"
+fi
+
+# A PLATFORM GATE IN A PLATFORM TARGET means the file is in the wrong target. `SlopDeskMacUI` is the
+# Mac's and nothing else builds it, so every `#if os(...)` in it is dead text that reads as a live
+# rule. The ONE allowed gate is `SlopDeskPhoneUI`'s whole-file `#if os(iOS)`, which is how an
+# iOS-only view declares itself to `swift build` (SwiftPM compiles every target on the host triple).
+# shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
+mac_gates=$(spells '#if os\(' \
+  $(repo_files 'Sources/SlopDeskMacUI/*.swift' 'Sources/SlopDeskMacUI/**/*.swift') 2> /dev/null || true)
+if [[ -n "${mac_gates}" ]]; then
+  printf '%s\n' "${mac_gates}" >&2
+  fail "a platform gate in the macOS UI target — the file is in the wrong target (docs/56 §3)"
+fi
+# shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
+phone_gates=$(spells '#if (os\((macOS|watchOS|tvOS)\)|canImport\(AppKit\))' \
+  $(repo_files 'Sources/SlopDeskPhoneUI/*.swift' 'Sources/SlopDeskPhoneUI/**/*.swift') 2> /dev/null || true)
+if [[ -n "${phone_gates}" ]]; then
+  printf '%s\n' "${phone_gates}" >&2
+  fail "the phone UI target gates on a platform it never builds for (docs/56 §3)"
+fi
+
+# NEITHER HALF IMPORTS THE OTHER, and the draining floor never imports upward. `Package.swift`
+# already makes the first two a link error; this catches the edit that would ADD the dependency
+# there, which is the moment a shared view ancestor becomes possible.
+declare -a ui_edges=(
+  "Sources/SlopDeskMacUI:import SlopDeskPhoneUI"
+  "Sources/SlopDeskPhoneUI:import SlopDeskMacUI"
+  "Sources/SlopDeskClientUI:import SlopDeskMacUI"
+  "Sources/SlopDeskClientUI:import SlopDeskPhoneUI"
+)
+for edge in "${ui_edges[@]}"; do
+  # shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
+  crossing=$(spells "${edge#*:}" \
+    $(repo_files "${edge%%:*}/*.swift" "${edge%%:*}/**/*.swift") 2> /dev/null || true)
+  if [[ -n "${crossing}" ]]; then
+    printf '%s\n' "${crossing}" >&2
+    fail "${edge%%:*} reached for ${edge#*import }: the two halves share no view ancestor (docs/56 §3)"
+  fi
+done
+# A COORDINATOR HOOK BOUND ON ONE PLATFORM IS A DEAD ROW ON THE OTHER, and it dies quietly: every
+# actuator on `OverlayCoordinator` defaults to an empty closure, so a palette row whose hook nobody
+# bound looks exactly like a row that ran and had nothing to do. Three of them were bound only by the
+# Mac's root — the two panel toggles and the code-panel focus — which meant the phone's palette
+# listed View actions that did nothing at all. Both roots bind all three now.
+#
+# `togglePinWindow` is deliberately NOT here: a phone has one window and no window level, which the
+# palette row itself records. An action that is absent on a platform is fine; an action that is
+# listed and inert is not.
+for hook in toggleSidebar toggleCodeSidebar focusCodePanel; do
+  for root in Sources/SlopDeskMacUI/App/MacWorkspaceRootView.swift \
+    Sources/SlopDeskClientUI/WorkspaceRootView.swift; do
+    if ! grep -qF "overlay.${hook} =" "${root}"; then
+      fail "${root} stopped binding overlay.${hook} — an unbound hook is a palette row that lies"
+    fi
+  done
+done
+# A PALETTE ROW DECLARES ITS PLATFORM, and it declares it exactly once. The three window verbs the
+# phone cannot run — the satellite pair and the window level — used to be listed there anyway: one
+# hook no phone root binds, and one run arm that is a macOS-only `#if` with nothing in the else.
+# Both are invisible from the row, and both answer a keystroke by doing nothing.
+#
+# `slopdesk_workspace::palette_rows` is where that fact lives now, and it can only close the hole if
+# it names the SAME verbs the catalog serves. An id on one side only is the failure: a Swift row the
+# table never heard of is listed unconditionally (the far side fails OPEN on purpose, so a typo
+# cannot delete a verb in silence), and a Rust row no catalog serves is a rule about nothing.
+SWIFT_PALETTE=Sources/SlopDeskClientCore/Palette/PaletteDataSource.swift
+RUST_PALETTE=rust/slopdesk-workspace/src/palette_rows.rs
+palette_swift_ids=$(grep -oE 'id: "action\.[A-Za-z]+"' "${SWIFT_PALETTE}" |
+  grep -oE 'action\.[A-Za-z]+' | sort -u || true)
+palette_rust_ids=$(grep -oE 'row\("action\.[A-Za-z]+"' "${RUST_PALETTE}" |
+  grep -oE 'action\.[A-Za-z]+' | sort -u || true)
+if [[ "${palette_swift_ids}" != "${palette_rust_ids}" ]]; then
+  diff <(printf '%s\n' "${palette_swift_ids}") <(printf '%s\n' "${palette_rust_ids}") >&2 || true
+  fail "the palette catalog and its platform table name different verbs (< Swift only, > Rust only)"
+fi
+# AND THE GATE DOES NOT COME BACK. A row whose platform is data has no business branching on one:
+# `detachPane`'s run arm carried the `#if` this table replaced, and re-adding one anywhere in the
+# catalog would make a row half-listed again.
+if grep -qE '^\s*#if os\(' "${SWIFT_PALETTE}"; then
+  grep -nE '^\s*#if os\(' "${SWIFT_PALETTE}" >&2
+  fail "a platform gate is back in the palette catalog — a row's platform is DATA (palette_rows.rs)"
+fi
+printf 'check-supervisor: a palette verb names its platform once — %s verbs, no gate in the catalog.\n' \
+  "$(printf '%s\n' "${palette_rust_ids}" | wc -l | tr -d ' ')"
+
+# ── …and a KEYBINDING names its platform once, in the other id space ────────────────────────────
+# The registry is four surfaces at once — cheat sheet, keybindings editor, `ctl` verb list, and the
+# CHORD TABLE. That last one is why a listed-and-inert binding is worse than a listed-and-inert
+# palette row: a bound chord does not reach the terminal, so ⌥⌘P was taken from the PTY to run a
+# macOS-only `#if` with nothing in its else. Same pin as the palette's, over `binding_rows.rs`.
+#
+# The nine generated `pane.select.N` slots are minted by a loop and are deliberately undeclared (they
+# are `Both`, and the table declares the ONE collapsed representative `pane.selectN`), so they are
+# excluded here BY NAME rather than by the grep quietly not matching them.
+SWIFT_BINDINGS=Sources/SlopDeskWorkspaceCore/Workspace/Domain/WorkspaceBindingRegistry.swift
+RUST_BINDINGS=rust/slopdesk-workspace/src/binding_rows.rs
+binding_swift_ids=$(grep -oE 'id: "[a-z]+\.[A-Za-z0-9]+"' "${SWIFT_BINDINGS}" |
+  grep -oE '[a-z]+\.[A-Za-z0-9]+' | sort -u || true)
+binding_rust_ids=$(grep -oE 'row\("[a-z]+\.[A-Za-z0-9]+"' "${RUST_BINDINGS}" |
+  grep -oE '[a-z]+\.[A-Za-z0-9]+' | sort -u || true)
+if [[ "${binding_swift_ids}" != "${binding_rust_ids}" ]]; then
+  diff <(printf '%s\n' "${binding_swift_ids}") <(printf '%s\n' "${binding_rust_ids}") >&2 || true
+  fail "the binding registry and its platform table name different rows (< Swift only, > Rust only)"
+fi
+# AND THE GATE DOES NOT COME BACK, in either the table or its routing. `.detachPane`'s routing arm
+# carried the `#if` this table replaced; re-adding one would make a chord half-bound again.
+BINDING_ROUTING=Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceBindingRouting.swift
+for gated in "${SWIFT_BINDINGS}" "${BINDING_ROUTING}"; do
+  if grep -qE '^\s*#if os\(' "${gated}"; then
+    grep -nE '^\s*#if os\(' "${gated}" >&2
+    fail "a platform gate is back in the binding layer — a row's platform is DATA (binding_rows.rs)"
+  fi
+done
+printf 'check-supervisor: a keybinding names its platform once — %s rows, no gate in the registry or its routing.\n' \
+  "$(printf '%s\n' "${binding_rust_ids}" | wc -l | tr -d ' ')"
+
+printf 'check-supervisor: the UI split holds — views only, no dead gates, no ancestor between the halves, no palette row that lies.\n'
 
 # ── A pane's master is decided once, and it is OWNED ────────────────────────────────────────────
 # superd used to answer `spawn` by inserting the pane and then asking the map for its master fd by
@@ -4643,9 +5950,9 @@ done <<< "$(grep -lF 'Task { [weak self] in' \
 declare -a latch_shares=(
   "Sources/SlopDeskWorkspaceCore/Terminal/TerminalViewModel.swift:reflowDeadline.arm"
   "Sources/SlopDeskWorkspaceCore/Video/RemoteWindowModel.swift:reflowDeadline.arm"
-  "Sources/SlopDeskClientUI/Android/AndroidSidebarModel.swift:noticeClear.arm"
-  "Sources/SlopDeskClientUI/Simulator/SimulatorSidebarModel.swift:noticeClear.arm"
-  "Sources/SlopDeskClientUI/Android/AndroidSidebarModel.swift:reattempt.arm"
+  "Sources/SlopDeskDevicePanels/Android/AndroidSidebarModel.swift:noticeClear.arm"
+  "Sources/SlopDeskDevicePanels/Simulator/SimulatorSidebarModel.swift:noticeClear.arm"
+  "Sources/SlopDeskDevicePanels/Android/AndroidSidebarModel.swift:reattempt.arm"
   "Sources/SlopDeskClientUI/Pane/PaneDragCoordinator.swift:springLoadTask.arm"
 )
 for share in "${latch_shares[@]}"; do

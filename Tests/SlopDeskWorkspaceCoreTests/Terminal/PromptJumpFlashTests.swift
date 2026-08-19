@@ -54,7 +54,6 @@ final class PromptJumpFlashTests: XCTestCase {
     func testJumpToBlockArmsTheActivePaneModel() throws {
         let store = WorkspaceStore(
             restoringTree: .defaultWorkspace(),
-            liveModel: .tree,
             makeSession: { seed in RecordingTerminalPaneSession(seed.spec) },
             liveVideoCap: 2,
         )

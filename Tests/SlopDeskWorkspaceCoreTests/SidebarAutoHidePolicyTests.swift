@@ -2,10 +2,9 @@ import Foundation
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// Pins the PURE vertical-sidebar single-tab auto-hide decision (``SidebarAutoHidePolicy``) + the
-/// ``AutoHideTabsPanelMode`` enum and its persisted-`Defaults` round-trip / repair. Headless: the policy is
-/// the tested unit; the view-side glue that conditionally drives `chrome.sidebarCollapsed` reads this
-/// same decision. No `NSWindow`/view instantiation.
+/// Pins the auto-hide CROSSING (``SidebarAutoHidePolicy``) plus the ``AutoHideTabsPanelMode`` enum's
+/// persisted-`Defaults` round-trip and repair, which stay on this side because they are what the
+/// stored config string decodes through. No `NSWindow`/view instantiation.
 @MainActor
 final class SidebarAutoHidePolicyTests: XCTestCase {
     private let autoHideKey = SettingsKey.autoHideTabsPanelKey
@@ -13,31 +12,15 @@ final class SidebarAutoHidePolicyTests: XCTestCase {
     override func setUp() { SettingsKey.store.removeObject(forKey: autoHideKey) }
     override func tearDown() { SettingsKey.store.removeObject(forKey: autoHideKey) }
 
-    // MARK: desiredCollapsed
-
-    /// `.auto` collapses the sidebar when there is ≤1 tab and reveals it when there is more than one — the
-    /// sidebar is only useful for switching between tabs, so it hides itself when there is nothing to switch
-    /// between. Asserts against an INDEPENDENT truth table, not the function's own derivation.
-    func testAutoCollapsesAtOrBelowOneTab() {
-        XCTAssertEqual(SidebarAutoHidePolicy.desiredCollapsed(mode: .auto, tabCount: 0), true, "0 tabs → collapse")
-        XCTAssertEqual(SidebarAutoHidePolicy.desiredCollapsed(mode: .auto, tabCount: 1), true, "1 tab → collapse")
-        XCTAssertEqual(SidebarAutoHidePolicy.desiredCollapsed(mode: .auto, tabCount: 2), false, "2 tabs → reveal")
-        XCTAssertEqual(SidebarAutoHidePolicy.desiredCollapsed(mode: .auto, tabCount: 7), false, ">1 tab → reveal")
-    }
-
-    /// `.default` / `.always` have NO opinion (`nil`) for EVERY count — the wiring leaves a manual ⌘⇧L
-    /// collapse alone outside `.auto`. (In the vertical-tabs-only clone the two non-`auto` modes both mean
-    /// "never auto-hide".)
-    func testDefaultAndAlwaysHaveNoOpinion() {
+    /// Each mode reaches its own case index, and the door's `-1` — the no-opinion rung the two
+    /// non-`auto` modes answer with — reads back as `nil` rather than as either boolean. The rule is
+    /// `slopdesk_workspace::chrome::desired_collapsed`'s.
+    func testTheNoOpinionRungReadsBackAsNilForBothNonAutoModes() {
+        XCTAssertEqual(SidebarAutoHidePolicy.desiredCollapsed(mode: .auto, tabCount: 1), true)
+        XCTAssertEqual(SidebarAutoHidePolicy.desiredCollapsed(mode: .auto, tabCount: 2), false)
         for count in [0, 1, 2, 99] {
-            XCTAssertNil(
-                SidebarAutoHidePolicy.desiredCollapsed(mode: .default, tabCount: count),
-                ".default has no opinion at tabCount \(count)",
-            )
-            XCTAssertNil(
-                SidebarAutoHidePolicy.desiredCollapsed(mode: .always, tabCount: count),
-                ".always has no opinion at tabCount \(count)",
-            )
+            XCTAssertNil(SidebarAutoHidePolicy.desiredCollapsed(mode: .default, tabCount: count))
+            XCTAssertNil(SidebarAutoHidePolicy.desiredCollapsed(mode: .always, tabCount: count))
         }
     }
 

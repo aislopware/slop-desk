@@ -3,6 +3,7 @@
 // WebKit-only and deliberately unreachable here (hang-safety: no WKWebView in unit tests).
 
 import XCTest
+@testable import SlopDeskClientCore
 @testable import SlopDeskClientUI
 
 final class CodeSidebarPageDressingTests: XCTestCase {

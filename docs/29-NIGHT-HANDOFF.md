@@ -207,8 +207,11 @@ current custom encoder that bypasses libghostty):
   `FloatingCursorMapping.bytes(for:applicationCursorKeys:)` emit SS3 when set). The future iOS view layer
   just threads `model.isCursorKeysApplication` through; routing via `surface.key()` stays the canonical
   end-state for the trio.
-- **#7 nav keys dropped** (Home/End/PageUp/PageDown/Insert/Fn/Delete-forward) — `IMEProxyTextView.isSpecial`
-  whitelist omits them → swallowed by IME proxy. Add to `isSpecial` + `specialBytes`, or route via libghostty.
+- **#7 nav keys dropped** (Home/End/PageUp/PageDown/Insert/Fn/Delete-forward) — ✅ **FIXED headlessly
+  2026-08-18** (docs/56 §Increment 16). It was never a whitelist bug: keying a key's IDENTITY off what it
+  COMMITTED cannot name a key that commits nothing. `slopdesk_workspace::phone_key` reads `UIKey.keyCode`
+  — the USB HID usage — instead, so all nineteen are one table row each, and `SlopDeskClientUI.TerminalInputHost`
+  is the responder that finally mounts.
 - **#8 Option-as-Meta** drops Meta on special keys + derives the meta byte from a layout-dependent string —
   `TerminalInputHost.encode`. Prefix ESC + layout-independent base, or route via libghostty.
 - **#10/#11/#12/#13/#19 iOS touch/UX**: long-press selection + edit-menu (#10/#6), soft-kbd `ctrl` dead for

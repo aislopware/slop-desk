@@ -15,7 +15,7 @@
 //   `devicePreferences` is `public private(set)`, so that setter is the ONLY way a write from this module
 //   can land at all — which is what makes the setter's own "resuming follow drops the device-local
 //   overlay" rule (pinned in `FollowSessionFocusTests`) apply to the row for free;
-// - both settings hosts (the macOS `SlopDeskSettingsScene`, the iOS `SettingsSheet`) retain the store,
+// - both settings hosts (the macOS `MacSettingsWindowController`, the iOS `SettingsSheet`) retain the store,
 //   and the environment slot the wiring rides defaults nil.
 
 #if canImport(SwiftUI)
@@ -48,7 +48,6 @@ final class SharedFocusSettingTests: XCTestCase {
     /// A store whose device-local facts persist to THIS test's own `device-prefs.json` (never the real one).
     private func makeWorkspaceStore() -> WorkspaceStore {
         WorkspaceStore(
-            liveModel: .tree,
             makeSession: { seed in MountTestPaneSession(seed.spec) },
             devicePreferences: DevicePreferencesStore(fileURL: fileURL),
         )

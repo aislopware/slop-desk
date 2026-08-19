@@ -15,6 +15,7 @@
 // `Slate.*` tokens only; hit-transparent; no libghostty / Metal touched (CLAUDE.md rule #6).
 
 #if canImport(SwiftUI)
+import SlopDeskSlate
 import SlopDeskTerminal
 import SlopDeskWorkspaceCore
 import SwiftUI

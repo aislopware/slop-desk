@@ -1,7 +1,12 @@
-// ToastStackView — the transient in-app notification host. Renders the live ``OverlayCoordinator/toasts``
+// ToastStackView — the PHONE's transient notification host. Renders the live ``OverlayCoordinator/toasts``
 // stack as a bottom-trailing column (newest last, flush to the corner), the in-app surface for the
 // background events that ALSO fire a macOS notification (long-command finished, agent-needs-input, pane
 // events) — so a user watching the workspace sees them without leaving the window.
+//
+// The Mac's half is an `NSPanel` sized to the column (``SlopDeskMacUI/MacToastStack``, docs/56 stage D),
+// and the two meet BELOW the view layer at ``ToastPresentation`` — the headline, the spine budget, the
+// mark and the dwell. Nothing here may re-decide any of those; what is here is the phone's LAYOUT and
+// the SwiftUI view of the ink ladder.
 //
 // A notification is A PANE SPEAKING FROM OFF-SCREEN. Every push site is gated on the source pane NOT being
 // focused, so a card always names a place the user is not looking at — which is what the design answers:
@@ -12,7 +17,8 @@
 //     plate — and it was rejected wholesale the same week the form cards shed their caps-mono titles: four
 //     hues of engraving stacked in a corner read as an instrument panel, not as an app speaking. The words
 //     the eyebrow carried didn't die, they became the HEADLINE — a sentence-case event phrase ("Claude
-//     needs input", "make check failed") resolved from source + flavour by ``headline(for:)``.
+//     needs input", "make check failed") resolved from source + flavour by
+//     ``ToastPresentation/headline(for:)``.
 //   * The LEADING MARK speaks the system's enclosed-status idiom: the `*.circle.fill` two-layer form in
 //     one hue — glyph at full strength on its own disc at the hierarchical layer opacity — with the
 //     SF Symbols 7 gradient for dimension, drawn as its two symbol layers so the glyph is CENTRED on the
@@ -24,14 +30,15 @@
 //     one weight — NOT the mixed-family outline quartet an earlier round cut. A routine notice's mark is
 //     NEUTRAL — cyan on every OSC notice was chrome pretending to be signal. The surface itself is never
 //     tinted by flavour and there is no coloured rail.
-//   * The CARD IS A DOOR. Tapping it jumps to the pane it names (``Toast/paneKey`` → the mount site's
-//     `jumpToPaneTree`, the same seam `ConnectionAlertChip` uses, breadcrumb cue included). A notification
-//     about somewhere else that cannot take you there is a dead end.
+//   * The CARD IS A DOOR. Tapping it jumps to the pane it names (``Toast/paneKey`` →
+//     ``WorkspaceStore/jumpToPaneNamedByNotification(_:)``, the same seam `ConnectionAlertChip` uses,
+//     breadcrumb cue included). A notification about somewhere else that cannot take you there is a
+//     dead end.
 //   * The DWELL PAUSES ON HOVER — a pointer resting on a card freezes its clock, so a notification can no
 //     longer be yanked away mid-read. Nothing DRAWS the remaining time: a depleting hairline along the
 //     bottom edge was built and cut for reading as ornament. The fix for "it vanished while I was reading"
 //     is that it stops, not that it announces how long it has left.
-//   * The SPINE. Only the newest ``ToastStackLayout/expandedCount`` cards carry a detail line; older ones
+//   * The SPINE. Only the newest ``ToastPresentation/expandedCount`` cards carry a detail line; older ones
 //     collapse to the headline row alone, so four simultaneous notifications cost a third of the
 //     corner instead of blanketing the prompt. Hovering a collapsed row expands just it, and a row is
 //     promoted as the cards below it expire — no information is stranded on any platform.
@@ -46,30 +53,14 @@
 // empty) so an arriving toast animates in without a parent re-mount.
 //
 // `Slate.*` tokens ONLY (raw font/radius/height literals fail `scripts/check-ds-leaks.sh`); no springs
-// anywhere (`Slate.Anim` is cubic-bezier only). Shared `SlopDeskClientUI` view —
-// compiles for iOS too (no AppKit / `NSEvent` here; `.onHover` simply never fires there, which is why the
-// X is unconditional on a sticky card).
+// anywhere (`Slate.Anim` is cubic-bezier only). No AppKit / `NSEvent` here, so `.onHover` simply never
+// fires on the phone — which is why the ✕ is unconditional on a sticky card.
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
+import SlopDeskClientCore
+import SlopDeskSlate
 import SwiftUI
-
-// MARK: - Stack layout (the pure spine rule)
-
-/// How many of the stack's cards speak in full and how many collapse to the spine. Pure + `static` so the
-/// rule is unit-pinnable without rendering.
-enum ToastStackLayout {
-    /// The newest N cards render with their detail line. TWO, not one: the common burst is a pair
-    /// (a command finishes in one pane while an agent asks a question in another) and both deserve to be
-    /// readable at a glance; beyond that the corner is more valuable than the third body.
-    static let expandedCount = 2
-
-    /// Whether the card at `index` of a `count`-deep stack speaks in full. The stack is newest-LAST, so
-    /// the expanded ones are at the END — the cards flush to the corner the eye already goes to.
-    static func isExpanded(index: Int, count: Int) -> Bool {
-        index >= count - expandedCount
-    }
-}
 
 // MARK: - Host
 
@@ -86,7 +77,7 @@ struct ToastStackView: View {
             ForEach(Array(coordinator.toasts.enumerated()), id: \.element.id) { index, toast in
                 ToastCardView(
                     toast: toast,
-                    expanded: ToastStackLayout.isExpanded(index: index, count: coordinator.toasts.count),
+                    expanded: ToastPresentation.isExpanded(index: index, count: coordinator.toasts.count),
                     onDismiss: { coordinator.dismissToast(toast.id) },
                     onJump: jumpAction(for: toast),
                 )
@@ -116,51 +107,27 @@ struct ToastStackView: View {
         return { onJump(key) }
     }
 
-    // MARK: - Flavour tint
+    // MARK: - The mark's ink
 
-    /// The status mark's ink for a toast flavour: success → OK, error → error, attention → WARN,
-    /// default → info (the card itself renders a default-flavour mark NEUTRAL — see `markTint`).
+    /// The rung → ink map, in the SwiftUI view of the ONE ladder. WHICH rung a flavour takes is decided
+    /// once, below both platforms, in ``ToastPresentation/mark(for:)``; this is only which of `Slate`'s
+    /// colours that rung names here, and the Mac's `NSPanel` spells the same four lines in `NSColor`.
     ///
-    /// `.attention` is AMBER, not the theme accent. Two reasons, and the first is parity: the rail already
-    /// fixed this mapping — "green = an unread finish, **amber = a question waiting**, red = failed"
-    /// (``StatusDot``) — so an agent waiting on a human must be the same colour here as it is on its own
-    /// sidebar row, or the app contradicts itself about what amber means. The second is that the accent was
-    /// not even distinguishable: every FOUNDRY seed sets `info == accent`, so `.attention` (needs input, the
-    /// highest-signal event) and `.default` (a routine OSC notice) rendered in the SAME cyan, which is the
-    /// one pair that most needs to differ. Amber also leaves the accent free for its single job — active
-    /// state — and spends the status quartet's unused fourth rung on the case it was minted for.
+    /// `.warn` is AMBER, not the theme accent, and that decision lives with the rung (see
+    /// ``ToastMarkRung/warn``): the rail already fixed "amber = a question waiting", and every FOUNDRY
+    /// seed sets `info == accent`, so the accent would have drawn needs-input in the same cyan as a
+    /// routine notice.
     ///
-    /// Pure + `static` so it can be pinned by a unit test without instantiating the view. `@MainActor`
-    /// because the `Slate.*` token accessors are main-actor isolated.
+    /// `@MainActor` because the `Slate.*` token accessors are main-actor isolated.
     @MainActor
-    static func tint(for flavor: Toast.Flavor) -> Color {
-        switch flavor {
-        case .success: Slate.Status.ok
-        case .error: Slate.Status.err
-        case .attention: Slate.Status.warn
-        case .default: Slate.Status.info
-        }
-    }
-
-    /// The HEADLINE — the sentence-case event phrase that leads the card, resolved from ``Toast/source``
-    /// and ``Toast/flavor`` TOGETHER. Flavour alone cannot decide it: `.success` is "the agent finished
-    /// its turn" for an agent and "the command exited 0" for a command, and those are two different
-    /// speakers saying two different words. A toast may carry its own ``Toast/headline`` override when it
-    /// knows a truer phrase than this derivation can reach. Pure + `static` for the same reason as
-    /// ``tint(for:)``.
-    static func headline(for toast: Toast) -> String {
-        if let explicit = toast.headline, !explicit.isEmpty { return explicit }
-        switch (toast.source, toast.flavor) {
-        case (.agent, .attention): return "\(toast.title) needs input"
-        case (.agent, .success): return "\(toast.title) is done"
-        case (.agent, .error): return "\(toast.title) failed"
-        case (.agent, .default): return "\(toast.title) is working"
-        case (.command, .success): return "\(toast.title) finished"
-        case (.command, .error): return "\(toast.title) failed"
-        // A notice/advisory speaks its own words — the title IS the message (an OSC 9 program line, a
-        // cwd advisory), and prefixing an event verb onto someone else's sentence garbles it.
-        case (.command, .default),
-             (.command, .attention): return toast.title
+    static func ink(for rung: ToastMarkRung) -> Color {
+        switch rung {
+        case .ok: Slate.Status.ok
+        case .warn: Slate.Status.warn
+        case .err: Slate.Status.err
+        // Status hues keep their meaning; a routine notice stays NEUTRAL — the old cyan on every OSC
+        // notice was chrome pretending to be signal.
+        case .neutral: SlateOverlayInk.secondary
         }
     }
 }
@@ -203,13 +170,8 @@ struct ToastCardView: View {
         _hovering = State(initialValue: hovering)
     }
 
-    /// The dwell SAMPLE interval — the granularity at which a hover can freeze the countdown. 10 Hz is
-    /// imperceptible as a rounding error on a 4s dwell and costs nothing; it only runs while a card is
-    /// actually on screen.
-    private static let tick: Double = 0.1
-
     /// The whole dwell in seconds; 0 for a sticky card (no timer at all).
-    private var total: Double { toast.autoDismiss.map(Self.seconds) ?? 0 }
+    private var total: Double { ToastPresentation.dwellSeconds(toast) }
 
     /// A collapsed card shows only its title; hovering it reveals the body it was holding back.
     private var showsBody: Bool { expanded || hovering }
@@ -250,9 +212,11 @@ struct ToastCardView: View {
                 spent = 0
                 guard total > 0 else { return }
                 while spent < total {
-                    do { try await Task.sleep(for: .seconds(Self.tick)) } catch { return }
+                    do {
+                        try await Task.sleep(for: .seconds(ToastPresentation.dwellTick))
+                    } catch { return }
                     guard !hovering else { continue }
-                    spent = min(total, spent + Self.tick)
+                    spent = min(total, spent + ToastPresentation.dwellTick)
                 }
                 onDismiss()
             }
@@ -267,7 +231,7 @@ struct ToastCardView: View {
                 HStack(alignment: .firstTextBaseline, spacing: Slate.Metric.space2) {
                     // The HEADLINE speaks the event as a sentence-case phrase in the floating family's
                     // reading ink — hierarchy by size and weight in ONE voice, like every card title.
-                    Text(ToastStackView.headline(for: toast))
+                    Text(ToastPresentation.headline(for: toast))
                         .font(.system(size: Slate.Typeface.body, weight: .semibold))
                         .foregroundStyle(SlateOverlayInk.primary)
                         .lineLimit(1)
@@ -294,12 +258,6 @@ struct ToastCardView: View {
     /// The disc a mark sits on — sized off the grid, a shade taller than the headline's cap height.
     private var discSize: CGFloat { Slate.Metric.space4 + Slate.Metric.space1 }
 
-    /// The disc layer's share of the mark's hue — matched to what HIERARCHICAL rendering gives the
-    /// enclosure layer of the system's own `*.circle.fill` status symbols (0.30, measured off a rendered
-    /// `info.circle.fill`), so the composed mark below is indistinguishable from the native idiom. Not a
-    /// taste knob: drift it and the mark stops matching the system's status marks.
-    private static let discLayerOpacity = 0.30
-
     /// The card's one point of colour: the system's enclosed-status idiom — a `*.circle.fill` in
     /// hierarchical rendering with the SF Symbols 7 gradient — drawn as its two layers, a `circle.fill`
     /// disc under the bare glyph, instead of the fused symbol. Composed for CENTRING: the fused
@@ -312,10 +270,10 @@ struct ToastCardView: View {
         ZStack {
             Image(systemSymbol: .circleFill)
                 .font(.system(size: discSize))
-                .foregroundStyle(markTint.opacity(Self.discLayerOpacity))
+                .foregroundStyle(markTint.opacity(ToastPresentation.discLayerOpacity))
             // `footnote`/medium puts the glyph at ~0.55 of the disc — the proportion the fused symbol
             // draws its inner layer at (measured 0.58) — where the old bold `small` glyph floated lost.
-            Image(systemSymbol: markSymbol)
+            Image(systemName: mark.symbolName)
                 .font(.system(size: Slate.Typeface.footnote, weight: .medium))
                 .foregroundStyle(markTint)
         }
@@ -328,23 +286,13 @@ struct ToastCardView: View {
 
     /// One family of BARE glyphs, one weight — never the mixed-family quartet the old design cut. The
     /// disc supplies the enclosure, so the glyphs themselves stay unenclosed.
-    private var markSymbol: SFSymbol {
-        switch toast.flavor {
-        case .success: .checkmark
-        case .error: .xmark
-        case .attention: .exclamationmark
-        case .default: .info
-        }
-    }
+    ///
+    /// Named below both platforms (``ToastPresentation/mark(for:)``) so the Mac's panel draws the same
+    /// glyph in the same rung — a symbol NAME rather than an `SFSymbol` case, because only one of the
+    /// two halves is SwiftUI.
+    private var mark: ToastMark { ToastPresentation.mark(for: toast.flavor) }
 
-    /// Status hues keep their meaning (green finish / amber question / red failure); a routine notice
-    /// stays NEUTRAL — the old cyan on every OSC notice was chrome pretending to be signal.
-    private var markTint: Color {
-        switch toast.flavor {
-        case .default: SlateOverlayInk.secondary
-        default: ToastStackView.tint(for: toast.flavor)
-        }
-    }
+    private var markTint: Color { ToastStackView.ink(for: mark.rung) }
 
     private var closeButton: some View {
         // A comfortable square target, sized off the 8pt grid rather than the glyph so it stays a
@@ -362,12 +310,6 @@ struct ToastCardView: View {
         // Hidden ⇒ not a target, so a stray click in the corner cannot silently kill a card the user
         // never saw a ✕ on.
         .allowsHitTesting(showsClose)
-    }
-
-    /// `Duration` → seconds as a `Double`. Manual (no `TimeInterval` bridge) because `Duration` exposes
-    /// only the component pair.
-    private static func seconds(_ d: Duration) -> Double {
-        Double(d.components.seconds) + Double(d.components.attoseconds) / 1e18
     }
 }
 

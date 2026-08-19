@@ -313,7 +313,6 @@ public enum SettingsKey {
     /// `copy`). Default empty. **The behaviour lives elsewhere.**
     public static let hintPatternActions = "controls.hintPatternActions" // [String]
     // Features / advanced
-    public static let autoSwitchLayouts = "features.autoSwitchLayouts"
     public static let redactSecrets = "features.redactSecrets"
     public static let recordClipboardHistory = "features.recordClipboardHistory"
     // The host-side auto-progress prefix list and the agent-control IPC guards used to carry CLIENT keys
@@ -464,7 +463,6 @@ public enum SettingsKey {
 
     /// Whether a layout with a trigger app auto-switches when that app launches on the host (default
     /// ON — assigning a trigger is itself the opt-in). Read at fire-time.
-    public static var autoSwitchLayoutsEnabled: Bool { Defaults[.autoSwitchLayouts] }
 
     /// Whether explicit OSC 9/777 notifications should post (default ON). Read at fire-time.
     public static var oscNotificationsEnabled: Bool { Defaults[.oscNotifications] }
@@ -891,7 +889,6 @@ public extension Defaults.Keys {
     static let tabBadgeOnCommandFail = Key<Bool>(slopDesk: SettingsKey.tabBadgeOnCommandFail, default: true)
     static let tabBadgeOnCommandAwaitInput = Key<Bool>(slopDesk: SettingsKey.tabBadgeOnCommandAwaitInput, default: true)
     static let tabBadgeBusyDelaySeconds = Key<Double>(slopDesk: SettingsKey.tabBadgeBusyDelaySeconds, default: 1)
-    static let autoSwitchLayouts = Key<Bool>(slopDesk: SettingsKey.autoSwitchLayouts, default: true)
     static let redactSecrets = Key<Bool>(slopDesk: SettingsKey.redactSecrets, default: true)
     static let paneSwitcherPreview = Key<Bool>(slopDesk: SettingsKey.paneSwitcherPreview, default: true)
     static let recordClipboardHistory = Key<Bool>(slopDesk: SettingsKey.recordClipboardHistory, default: true)

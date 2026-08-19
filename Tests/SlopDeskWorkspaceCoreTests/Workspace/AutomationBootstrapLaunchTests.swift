@@ -31,7 +31,6 @@ final class AutomationBootstrapLaunchTests: XCTestCase {
     private func makeStore(_ log: Materializations) -> WorkspaceStore {
         WorkspaceStore(
             restoringTree: nil,
-            liveModel: .tree,
             makeSession: { seed in
                 log.panes.append(seed.id)
                 return FakePaneSession(seed.spec)

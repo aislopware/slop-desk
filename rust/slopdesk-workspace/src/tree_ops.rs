@@ -546,10 +546,6 @@ fn prune_leaf_from_tab(session: &mut Session, source: PaneId, index: usize) {
 // ---------------------------------------------------------------------------------------------- //
 
 /// The algorithmic re-tile arrangements, in the order [`cycle_layout`] steps through them.
-///
-/// Named `TileLayout` rather than the Swift `LayoutPreset` because a
-/// [`LayoutPreset`](crate::canvas::LayoutPreset) already exists and means something else entirely:
-/// a SAVED canvas the person built, not an algorithm that rebuilds a tree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum TileLayout {
     /// Every leaf side by side in one row.

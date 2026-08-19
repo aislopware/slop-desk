@@ -286,8 +286,8 @@ def main() -> int:
         print("check-shared-constants: FAIL — a constant is spelled in both languages\n")
         print("\n".join(sorted(findings)))
         print(
-            "\nAsk for it through a `CSlopDeskFFI` door (see `slopdesk_ws_canvas_metric` for the\n"
-            "indexed shape), or — if the two ends are separate BINARIES — ratchet the pair in\n"
+            "\nAsk for it through a `CSlopDeskFFI` door (see `slopdesk_ws_min_weight` for the\n"
+            "shape), or — if the two ends are separate BINARIES — ratchet the pair in\n"
             "scripts/check-supervisor.sh. A genuine name collision goes in this script's HOMONYMS\n"
             "with the reason the two laws are unrelated."
         )

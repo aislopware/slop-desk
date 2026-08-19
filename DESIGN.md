@@ -337,8 +337,11 @@ boundary is exactly one edge in the whole window — the island's.
   2026-08-07 polish round — both user-directed 2026-08-08). Do not reintroduce either.
   Rows are one 32pt register: title, marks, and the trailing glyph slot — the round-14
   instrument readouts (cwd second line, turn clock, ages) left with the chrome revert.
-- **Titlebar** — a transparent overlay on the content column's top strip (`SlateTitlebar`): while
-  the sidebar is hidden it carries that column's tab list turned horizontal, and nothing else.
+- **Titlebar** — the band across the content column's top strip (`MacTitlebarBand`, an AppKit sibling
+  of the hosted canvas): while the sidebar is hidden it carries that column's tab list turned
+  horizontal on the leading side and the connection island on the trailing one, and nothing else —
+  the centre is the terminal island's top moat. Both halves fill in from their own edges as the
+  column leaves, and the band claims a point only where a control actually stands.
   The hover-reveal reopen plates it used to hold are both gone (user-directed 2026-08-09) — the
   navigator's toggle is a permanent window-level control and the panel leaves a rail behind — so no
   chrome object has to appear, or has to stand on the glass. No bar, no material: the chrome is the
@@ -392,7 +395,7 @@ info status. Everything else interactive is the system's.
   STRIP band standing on the ground, closed by a `Line.divider` hairline. Its chips are ghost at rest, the hover wash under the
   pointer, and the SELECTED chip is a COMPACT ISLAND (island fill + hairline, ink on the glass) —
   the SAME chip the sidebar tab rows wear, because both are tabs answering the same question.
-  **Collapsing it does not delete it — it narrows it to a RAIL** (`PanelRail`, user-directed
+  **Collapsing it does not delete it — it narrows it to a RAIL** (`MacPanelRail`, user-directed
   2026-08-09): one plate wide, carrying the toggle at the band's control line (at exactly the x the
   open panel's own hide toggle stands at, so the target never moves) and the four surface tabs under
   it, turned a quarter turn to run down the rail. Same tabs, same selection, same plate — only the

@@ -19,6 +19,11 @@
 //! - [`paste`] — what a clipboard payload would DO at a prompt, and the states in which it provably
 //!   cannot run, which is the difference between a confirmation worth reading and one worth
 //!   dismissing.
+//! - [`pointer`] — what the far side asked the POINTER to look like: the `OSC 22` shape libghostty
+//!   parsed, and whether `mouse-hide-while-typing` wants it on screen at all.
+//! - [`surface`] — what a gesture MEANS before anything is sent: which clicks and keys the embedder
+//!   takes for itself, and the two facts — who owns the pointer, who owns the screen — that make it
+//!   step aside.
 //!
 //! ## What is guaranteed
 //! - **No `unsafe`.** `#![forbid(unsafe_code)]`, so not even a downstream `allow` reintroduces it.
@@ -38,8 +43,11 @@ pub mod dedup;
 pub mod inputbox;
 pub mod keybind;
 pub mod link;
+pub mod link_action;
 pub mod mode;
 pub mod paste;
+pub mod pointer;
+pub mod surface;
 pub mod tracker;
 pub mod vimotion;
 
@@ -47,5 +55,6 @@ pub use blocks::{BlockNavigatorFilter, BlockRing, BlockStatus, CommandBlock, Out
 pub use dedup::InputDedupRing;
 pub use inputbox::{Ingested, InputAffordance, InputBoxModel};
 pub use link::{DetectedLink, DetectedLinkKind, LinkSchemePolicy};
+pub use link_action::{CmdClick, CmdShiftClick, LinkAction, LinkConfig, LinkTarget, LinkTrigger};
 pub use mode::{TerminalMode, TerminalModeEvent};
 pub use tracker::TerminalModeTracker;

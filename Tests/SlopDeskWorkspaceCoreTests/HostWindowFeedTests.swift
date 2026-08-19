@@ -13,6 +13,26 @@ final class HostWindowFeedTests: XCTestCase {
         super.tearDown()
     }
 
+    /// Wait for a condition the LOOP will reach, rather than for a duration it usually needs.
+    ///
+    /// ⚠️ A fixed `Task.sleep` in a loop test is a bet that one scheduler hop beats a wall clock, and
+    /// on a loaded machine it loses: the loop is mid-`sleep(for: 5ms)` when the gate flips, and the
+    /// 40 ms the test allowed for it to notice was spent by everything else on the box. The interval
+    /// is not the thing under test — the transition is — so the test polls for the transition and
+    /// only the DEADLINE is generous. It fails as loudly as before when the loop genuinely never
+    /// gets there, and it stops failing when the machine is merely busy.
+    private func until(
+        _ reached: () -> Bool, within limit: Duration = .seconds(2),
+        _ what: String, file: StaticString = #filePath, line: UInt = #line,
+    ) async {
+        let deadline = ContinuousClock.now + limit
+        while ContinuousClock.now < deadline {
+            if reached() { return }
+            try? await Task.sleep(for: .milliseconds(2))
+        }
+        XCTFail("never \(what) within \(limit)", file: file, line: line)
+    }
+
     private func window(
         id: UInt32,
         app: String = "Ghostty",
@@ -144,20 +164,21 @@ final class HostWindowFeedTests: XCTestCase {
     func testLoopHoldsOneLinkRenewsAndReceivesPushes() async {
         let tracker = LinkTracker()
         HostWindowFeedQuery.openLink = { _, _, _, onAnswer in tracker.open(onAnswer: onAnswer) }
-        // Deterministic despite wall-clock sleeps: every send is auto-acked `.current` by the
-        // tracker, so a stall-induced staleness dim self-heals within the SAME loop iteration
-        // (send → synchronous ack → live again), and a cancelled sleep no longer runs the
-        // staleness check at all (run() treats early wake-up as "no interval elapsed" — the old
-        // trailing check was this test's flake: teardown timed an interval that never ran).
+        // Every send is auto-acked `.current` by the tracker, so a stall-induced staleness dim
+        // self-heals within the SAME loop iteration (send → synchronous ack → live again), and a
+        // cancelled sleep no longer runs the staleness check at all (run() treats early wake-up as
+        // "no interval elapsed" — the old trailing check was one of this test's two flakes). The
+        // other was the sleeps themselves, and `until` is what replaced them.
         let f = feed()
         let task = Task { await f.run() }
-        try? await Task.sleep(for: .milliseconds(40))
+        await until({ tracker.opened == 1 }, "opened the lane")
         // The host answers the renewal…
         tracker.push(.snapshot(generation: 7, windows: [window(id: 1)]))
-        try? await Task.sleep(for: .milliseconds(20))
+        await until({ f.knownGeneration == 7 }, "folded the renewal answer")
         // …and later PUSHES a bump between renewals (Phase 2) — no send required.
         tracker.push(.snapshot(generation: 8, windows: [window(id: 1), window(id: 2)]))
-        try? await Task.sleep(for: .milliseconds(20))
+        await until({ f.knownGeneration == 8 }, "folded the unsolicited push")
+        await until({ tracker.sends >= 2 }, "sent a second renewal on the gap cadence")
         task.cancel()
         _ = await task.value
         XCTAssertEqual(tracker.opened, 1, "ONE persistent lane per active stretch, never per renewal")
@@ -176,11 +197,13 @@ final class HostWindowFeedTests: XCTestCase {
             renewalGap: .milliseconds(5), firstAnswerGap: .milliseconds(5), idleGap: .milliseconds(5),
         )
         let task = Task { await f.run() }
-        try? await Task.sleep(for: .milliseconds(30))
+        await until({ tracker.opened == 1 }, "opened the lane")
         tracker.push(.snapshot(generation: 1, windows: [window(id: 1)]))
-        try? await Task.sleep(for: .milliseconds(20))
+        await until({ f.hasEverLoaded }, "folded the first snapshot")
         gate.open = false
-        try? await Task.sleep(for: .milliseconds(40))
+        // The loop is mid-sleep on a 5 ms gap; what the test asserts is that it takes the closed
+        // branch when it wakes, not that it wakes inside any particular millisecond.
+        await until({ tracker.closed == 1 }, "released the lane after the gates closed")
         task.cancel()
         _ = await task.value
         XCTAssertTrue(f.hasEverLoaded)

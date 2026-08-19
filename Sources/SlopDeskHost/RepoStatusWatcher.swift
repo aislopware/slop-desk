@@ -180,14 +180,18 @@ final class RepoStatusWatcher: @unchecked Sendable {
 
     // MARK: - Production closures (the seam defaults)
 
-    /// The production probe: one `slopdesk-probe git-status` run AT the repo root, folded host-side by
-    /// the shared porcelain fold. It goes through ``HostProbe`` directly rather than through a pane's
+    /// The production probe: one ``HostGitStatus`` read AT the repo root, folded host-side by the
+    /// shared porcelain fold. It goes through that face directly rather than through a pane's
     /// ``HostMetadataProbe`` because there is no pane here — the fd-less `-1, -1` this used to
     /// construct was a stand-in for a PTY the git questions never touched. `repoRoot` is pinned to the
     /// WATCH key — the canonical toplevel the type-34 resolver latched — so the client's section
     /// lookup matches byte-for-byte.
+    ///
+    /// It is no longer a subprocess at all. Every comment below that calls this a "probe" or a
+    /// "subprocess" is about the DISPATCH, which still stands: the read is a filesystem walk over
+    /// someone's worktree, and a wedged mount must not be able to freeze the control queue.
     static func probeProjectGitStatus(root: String) -> WireMessage.ProjectGitStatus? {
-        let payload = HostProbe.gitStatus(cwd: root)
+        let payload = HostGitStatus.of(cwd: root)
         guard payload.hasRepo else { return nil }
         let counts = payload.foldedCounts
         return WireMessage.ProjectGitStatus(

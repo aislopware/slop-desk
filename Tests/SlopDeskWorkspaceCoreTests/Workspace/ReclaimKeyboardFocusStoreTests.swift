@@ -18,7 +18,7 @@ import XCTest
 final class ReclaimKeyboardFocusStoreTests: XCTestCase {
     private func makeRecordingStore() -> WorkspaceStore {
         let store = WorkspaceStore(
-            restoringTree: .defaultWorkspace(), liveModel: .tree,
+            restoringTree: .defaultWorkspace(),
             makeSession: { seed in RecordingTerminalPaneSession(seed.spec) }, liveVideoCap: 2,
         )
         store.attachLoopbackWorkspaceDocument()
@@ -66,7 +66,7 @@ final class ReclaimKeyboardFocusStoreTests: XCTestCase {
     /// host calls this on EVERY card dismissal, so it must never depend on the active pane being a terminal.
     func testReclaimIsANoOpWithoutALiveTerminalModel() {
         let store = WorkspaceStore(
-            restoringTree: .defaultWorkspace(), liveModel: .tree,
+            restoringTree: .defaultWorkspace(),
             makeSession: { seed in FakePaneSession(seed.spec) }, liveVideoCap: 2,
         )
         store.attachLoopbackWorkspaceDocument()

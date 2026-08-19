@@ -3,12 +3,10 @@
 /// The routing half of the single-source-of-truth registry (docs/42 §W6): dispatches a pure
 /// ``WorkspaceAction`` to the matching ``WorkspaceStore`` mutation. Menu bar, ⌘⇧P palette, hardware-keyboard
 /// dispatcher, and routing tests ALL funnel through here — the chord → action → mutation chain in one
-/// auditable place (mirroring the canvas ``apply(_:to:)``).
+/// auditable place.
 ///
-/// **Live-model aware.** ``WorkspaceStore/LiveModel/tree`` (live IDE shell) → every action lands on a TREE
-/// op; ``WorkspaceStore/LiveModel/canvas`` (retained-but-dead) → tree-only actions fall back to the nearest
-/// canvas equivalent via ``apply(_:to:)`` so the canvas tests stay green. View-layer overlays (palette /
-/// cheat sheet) are not store state, so their toggles are passed in as closures (defaulted `nil`).
+/// View-layer overlays (palette / cheat sheet) are not store state, so their toggles are passed in as
+/// closures (defaulted `nil`).
 
 /// Bundles the view-owned overlay-toggle closures passed to ``WorkspaceBindingRegistry/route(_:to:)``.
 /// One value keeps the private dispatch helpers within SwiftLint's parameter-count limit.
@@ -84,13 +82,10 @@ public extension WorkspaceBindingRegistry {
             openQuickly: openQuickly, pinWindow: togglePinWindow,
             closeWindow: closeWindow,
         )
-        switch store.liveModel {
-        case .tree: routeTree(action, to: store, toggles: toggles)
-        case .canvas: routeCanvas(action, to: store, toggles: toggles)
-        }
+        routeTree(action, to: store, toggles: toggles)
     }
 
-    /// The TREE dispatch (the live path): each action → the matching ``WorkspaceStore`` tree op.
+    /// The dispatch: each action → the matching ``WorkspaceStore`` tree op.
     @MainActor
     private static func routeTree(
         _ action: WorkspaceAction,
@@ -116,13 +111,12 @@ public extension WorkspaceBindingRegistry {
         case .renamePane: store.requestRenameActivePane()
         case .breakPaneToTab: store.breakActivePaneToTab()
         // Detach / reattach (own-window satellites): NON-destructive by design — never routed through
-        // the close-confirmation surface (detach isn't a close; the session survives). macOS-only
-        // actuation: iOS has no satellite NSWindow, so detaching there would strand the pane out of
-        // every tab with nothing rendering it (documented no-op, like `.pinWindow`).
-        case .detachPane:
-            #if os(macOS)
-            store.detachActivePane()
-            #endif
+        // the close-confirmation surface (detach isn't a close; the session survives). The gate these
+        // two arms used to carry is now the ROW's platform (`slopdesk_workspace::binding_rows`): a
+        // shell with no satellite `NSWindow` does not list the binding, so it has no chord to
+        // dispatch and no editor row to rebind, rather than binding ⌥⌘P away from the PTY to run an
+        // empty `#else`.
+        case .detachPane: store.detachActivePane()
         case .reattachAllPanes: store.reattachAllPanes()
         // Move pane (swap with the geometric neighbour, against the reported layout)
         case .movePaneLeft: store.swapActivePaneInDirection(.left)
@@ -307,163 +301,6 @@ public extension WorkspaceBindingRegistry {
         // pane (mirrors the `.find` fallback to `requestFindInActivePane()`), so ⌘⇧J does something useful.
         case .peekAndReply:
             if let p = toggles.peekReply { p() } else { store.jumpToOldestAttentionPane() }
-        }
-    }
-
-    /// The CANVAS fallback (retained-but-dead path): the tree-only verbs map to the nearest canvas command
-    /// so a `.canvas` store still responds (and the canvas suites stay green). Split → new pane; tabs /
-    /// sessions have no canvas analogue and are graceful no-ops there.
-    @MainActor
-    private static func routeCanvas(
-        _ action: WorkspaceAction,
-        to store: WorkspaceStore,
-        toggles: RouteToggles,
-    ) {
-        switch action {
-        case .splitRight,
-             .splitDown,
-             .splitLeft, // canvas has no split tree; a split mints a new pane (the canvas analogue)
-             .splitUp,
-             .newTab:
-            apply(.newPaneDefault, to: store)
-        // The remote desktop is a tree-shell feature (a detached OS window — video never lives in
-        // the workspace); the dead canvas has no detached set, so the chord is a graceful no-op.
-        case .newDesktopTab: break
-        case .closePane: apply(.closePane, to: store)
-        // Reopen the last closed pane: the canvas has its own retained single-slot reopen (distinct from the
-        // tree shell's LIFO stack) — route to it so the canvas path still responds.
-        case .reopenClosed: apply(.reopenClosedPane, to: store)
-        case .renamePane: apply(.renamePane, to: store)
-        case .breakPaneToTab,
-             .detachPane, // detach/reattach are tree-shell features — no canvas analogue
-             .reattachAllPanes:
-            break
-        // Tree-only pane management (move / resize / balance) — the flat canvas has no split tree to act on.
-        case .movePaneLeft,
-             .movePaneRight,
-             .movePaneUp,
-             .movePaneDown,
-             .resizePaneLeft,
-             .resizePaneRight,
-             .resizePaneUp,
-             .resizePaneDown,
-             .balancePanes,
-             .cycleLayout,
-             .applyLayout:
-            break // no canvas analogue (tiled-split only)
-        case .focusLeft: apply(.focus(.left), to: store)
-        case .focusRight: apply(.focus(.right), to: store)
-        case .focusUp: apply(.focus(.up), to: store)
-        case .focusDown: apply(.focus(.down), to: store)
-        // Sequential pane cycle on the canvas maps to its existing whole-canvas focus cycle (⌘]/⌘[ analogue).
-        case .cyclePaneNext: apply(.cycleFocus(forward: true), to: store)
-        case .cyclePanePrev: apply(.cycleFocus(forward: false), to: store)
-        case .toggleZoom: apply(.toggleZoom, to: store)
-        case .commandPalette: toggles.palette?()
-        // Cheat sheet / vi key hints: same CONTEXTUAL `⌘/` as the tree path — in vi /
-        // copy-mode (the canvas also arms it via `.toggleCopyMode`) the chord toggles the pane's vi key-hint
-        // bar; otherwise it forwards to the view-owned cheat-sheet toggle.
-        case .cheatSheet:
-            if store.activeTerminalModel?.isCopyMode == true {
-                store.toggleViKeyHintsInActivePane()
-            } else {
-                toggles.cheatSheet?()
-            }
-        case .find: toggles.find?() // canvas path: find is view-overlay only (no tree active-pane store hook)
-        // Find Next / Previous: the canvas path resolves the active pane via canvas focus, so the same store
-        // hooks open + advance the find bar there too (a graceful no-op for a non-terminal / empty canvas).
-        case .findNext: store.requestFindNextInActivePane()
-        case .findPrev: store.requestFindPrevInActivePane()
-        // Global Search is a view overlay (tree-shell chrome); the canvas path still toggles it via the closure.
-        case .globalSearch: toggles.globalSearch?()
-        // Jump-To: a view overlay; the canvas path still toggles it via the closure (a graceful
-        // no-op when none is supplied, like the palette / global search).
-        case .jumpTo: toggles.jumpTo?()
-        // Hint Mode: the canvas path resolves the active pane via canvas focus, so the same model
-        // seam arms hints there too (a no-op for a non-terminal active pane / empty shell / alt-screen TUI).
-        // Focus the terminal after arming so Escape reaches `keyDown` → `cancelHintMode()` — same fix as tree.
-        case .hintToOpen:
-            store.activeTerminalModel?.beginHint(.open)
-            store.activeTerminalModel?.onRequestFocus?()
-        case .hintToCopy:
-            store.activeTerminalModel?.beginHint(.copy)
-            store.activeTerminalModel?.onRequestFocus?()
-        case .hintToReveal:
-            store.activeTerminalModel?.beginHint(.reveal)
-            store.activeTerminalModel?.onRequestFocus?()
-        // Copy Mode: the canvas path resolves the active pane via canvas focus, so the same store hook
-        // arms copy-mode there too (a no-op for a non-terminal active pane / empty shell). Focus the terminal
-        // after arming so Escape reaches `keyDown` → `exitCopyMode()`.
-        case .toggleCopyMode:
-            store.requestCopyModeInActivePane()
-            store.activeTerminalModel?.onRequestFocus?()
-        // Vi Mode Key Hints: the canvas path uses the SAME store seam as the tree path to
-        // toggle the active pane's vi key-hint bar (a no-op for a non-terminal / empty active pane).
-        case .toggleViKeyHints: store.toggleViKeyHintsInActivePane()
-        // Read-Only: the canvas path resolves the active pane via canvas focus, so the same
-        // store seam toggles the input gate there too (a no-op for a non-terminal active pane / empty shell).
-        case .toggleReadOnly: store.toggleReadOnlyInActivePane()
-        // Secure Keyboard Entry: the canvas path resolves the active pane via canvas focus, so
-        // the same store seam toggles manual secure input there too (a no-op for a non-terminal / empty shell).
-        case .secureKeyboardEntry: store.toggleSecureKeyboardEntryInActivePane()
-        // Release Stuck Input: the same store seam fires the active remote-GUI pane's synthetic-release
-        // escape hatch on the canvas path too (a no-op for a non-video / empty / read-only active pane).
-        case .releaseStuckInput: store.releaseStuckInputInActivePane()
-        // Lock Viewport Position: the same store seam toggles the active remote-GUI pane's edge-pan
-        // freeze on the canvas path too (a no-op for a non-video / empty / not-streaming active pane).
-        case .toggleViewportLock: store.toggleViewportLockInActivePane()
-        // Fit to Pane / Actual Size: the same store seam on the canvas path too (a no-op for a
-        // non-video / empty / not-streaming / locked active pane).
-        case .fitViewportToPane: store.fitViewportToPaneInActivePane()
-        case .resetViewportZoom: store.resetViewportZoomInActivePane()
-        // Paste as Keystrokes: the same store seam types the local clipboard into the active remote-GUI
-        // pane on the canvas path too (a no-op for a non-video / empty / read-only pane or empty clipboard).
-        case .pasteAsKeystrokes: store.pasteAsKeystrokesInActivePane()
-        // Sidebar is the tree-shell chrome; the canvas path still toggles it via the closure (the live macOS
-        // app wires `chrome.toggleSidebar`). `nil` (the canvas test default) is a graceful no-op.
-        case .toggleSidebar: toggles.sidebar?()
-        // The right code panel is chrome on both paths — same closure, same graceful no-op default.
-        case .toggleCodeSidebar: toggles.codeSidebar?()
-        case .focusCodePanel: toggles.focusCodePanel?()
-        // Pin Window is a window-level concern (the live macOS app flips `WorkspaceChromeState.pinned`); the
-        // canvas path forwards it via the closure too — a graceful no-op when none is supplied, never a dead chord.
-        case .pinWindow: toggles.pinWindow?()
-        // Blocks (WB2): the canvas path is retained-but-dead; route through the same store hooks (they
-        // resolve the active pane via the canvas focus, so the navigator/jump still work there).
-        case .commandNavigator: store.requestBlockNavigatorInActivePane()
-        case .jumpPreviousBlock: store.jumpToBlockInActivePane(delta: -1)
-        case .jumpNextBlock: store.jumpToBlockInActivePane(delta: 1)
-        case .reRunLastCommand: store.reRunLastCommandInActivePane()
-        case .jumpPreviousFailed: store.jumpToFailedBlockInActivePane(forward: false)
-        case .jumpNextFailed: store.jumpToFailedBlockInActivePane(forward: true)
-        // Scroll / font / command-jump: route through the SAME active-pane store hooks (they resolve the
-        // active pane via the canvas focus, so they no-op gracefully for a non-terminal / empty canvas).
-        case .scrollPageUp: store.scrollActivePane(.pageUp)
-        case .scrollPageDown: store.scrollActivePane(.pageDown)
-        case .scrollToTop: store.scrollActivePane(.top)
-        case .scrollToBottom: store.scrollActivePane(.bottom)
-        case .commandJumpPrev: store.jumpToBlockInActivePane(delta: -1)
-        case .commandJumpNext: store.jumpToBlockInActivePane(delta: 1)
-        case .increaseFontSize: store.increaseFontInActivePane()
-        case .decreaseFontSize: store.decreaseFontInActivePane()
-        case .resetFontSize: store.resetFontInActivePane()
-        // Open Quickly is a view overlay (the tree-shell picker); the canvas path still toggles it via the
-        // closure (a graceful no-op when none is supplied, like the palette / global search / jump-to).
-        case .openQuickly: toggles.openQuickly?()
-        case .nextTab,
-             .prevTab,
-             .selectPane,
-             .paneSwitcher,
-             .closeTab: break // no canvas tab model (the tree shell owns sessions)
-        // Close Window: a window-level `NSWindow.performClose` concern (not a model op),
-        // so the canvas path forwards the SAME actuator closure as the tree path — a graceful no-op when none
-        // is supplied (the canvas test default), never a dead chord.
-        case .closeWindow: toggles.closeWindow?()
-        case .toggleSyncInput: break // no canvas analogue (tab-scoped, tree-only)
-        case .jumpToAttention: break // tree-only (no canvas attention rollup)
-        // Peek & Reply is a view overlay; the canvas path still toggles it (the overlay's own selector
-        // returns nil under .canvas, where there is no attention rollup, so it opens read-only / no-ops).
-        case .peekAndReply: toggles.peekReply?()
         }
     }
 }

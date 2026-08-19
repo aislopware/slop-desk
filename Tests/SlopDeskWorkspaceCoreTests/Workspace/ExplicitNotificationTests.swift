@@ -8,12 +8,22 @@ import XCTest
 ///   title; OSC 9 (no title) falls back to the pane title; with no title anywhere the body is
 ///   promoted so the alert is never blank.
 /// - ``WorkspaceStore/handlePaneNotification(id:paneTitle:title:body:)`` forwards to the app poster
-///   hook with the right pane id + content; ``WorkspaceStore/revealPane(_:)`` /
-///   ``revealPane(byIDString:)`` focus + centre the originating pane (no-op when it is gone).
+///   hook with the right pane id + content; ``WorkspaceStore/revealPane(byIDString:)`` teleports to the
+///   originating pane (no-op when its id is unparseable or gone).
 @MainActor
 final class ExplicitNotificationTests: XCTestCase {
-    private func makeStore(restoring: Workspace? = nil) -> WorkspaceStore {
-        WorkspaceStore(restoring: restoring, makeSession: { seed in FakePaneSession(seed.spec) })
+    private func makeStore() -> WorkspaceStore {
+        let store = WorkspaceStore(
+            restoringTree: .defaultWorkspace(),
+            makeSession: { seed in FakePaneSession(seed.spec) },
+        )
+        store.attachLoopbackWorkspaceDocument()
+        return store
+    }
+
+    /// The one leaf of the default tree — every routing assertion below names it.
+    private func onlyPane(_ store: WorkspaceStore) throws -> PaneID {
+        try XCTUnwrap(store.tree.allPaneIDs().first)
     }
 
     // MARK: - Content policy
@@ -40,7 +50,7 @@ final class ExplicitNotificationTests: XCTestCase {
 
     func testHandlePaneNotificationForwardsToHook() throws {
         let store = makeStore()
-        let paneID = try XCTUnwrap(store.focusedPane)
+        let paneID = try onlyPane(store)
         var received: (PaneID, String, String, String)?
         store.onPaneNotification = { id, paneTitle, title, body in received = (id, paneTitle, title, body) }
 
@@ -52,55 +62,29 @@ final class ExplicitNotificationTests: XCTestCase {
         XCTAssertEqual(received?.3, "green")
     }
 
-    func testRevealPaneFocusesAndCenters() {
-        let a = PaneID(), b = PaneID()
-        let items = [
-            CanvasItem(
-                id: a,
-                spec: PaneSpec(kind: .terminal, title: "A"),
-                frame: CGRect(x: 0, y: 0, width: 480, height: 320),
-                z: 0,
-            ),
-            CanvasItem(
-                id: b,
-                spec: PaneSpec(kind: .terminal, title: "B"),
-                frame: CGRect(x: 3000, y: 2000, width: 480, height: 320),
-                z: 1,
-            ),
-        ]
-        let store = makeStore(restoring: Workspace(canvas: Canvas(items: items), focusedPane: a))
-
-        store.revealPane(b)
-
-        XCTAssertEqual(store.focusedPane, b)
-        let expected = store.workspace.canvas.centered(on: b, viewport: CGSize(width: 1280, height: 800)).camera.origin
-        XCTAssertEqual(store.workspace.canvas.camera.origin, expected)
-    }
-
+    /// A notification click is a TELEPORT: the id string round-trips through
+    /// ``WorkspaceStore/revealPane(byIDString:)`` onto the tree focus path, and a garbage / unknown id is
+    /// a no-op rather than a trap.
     func testRevealPaneByIDStringRoundTrips() throws {
         let store = makeStore()
-        let id = try XCTUnwrap(store.focusedPane)
-        // A valid id string reveals; an unknown/garbage id is a no-op (must not trap).
+        let id = try onlyPane(store)
+
         store.revealPane(byIDString: id.raw.uuidString)
-        XCTAssertEqual(store.focusedPane, id)
+        XCTAssertEqual(store.tree.activeSession?.activeTab?.activePane, id)
+
         store.revealPane(byIDString: "not-a-uuid")
         store.revealPane(byIDString: UUID().uuidString) // valid shape, unknown pane
-        XCTAssertEqual(store.focusedPane, id, "unknown ids leave focus untouched")
-    }
-
-    func testRevealGonePaneIsNoop() throws {
-        let store = makeStore()
-        let id = try XCTUnwrap(store.focusedPane)
-        store.closePane(id)
-        store.revealPane(id) // must not trap; nothing to focus
-        XCTAssertNil(store.focusedPane)
+        XCTAssertEqual(
+            store.tree.activeSession?.activeTab?.activePane, id,
+            "an unparseable or unknown id leaves focus untouched",
+        )
     }
 
     // MARK: - Event plumbing (client Event → store hook)
 
     func testNotificationEventReachesTheHookViaTheConnection() throws {
         let store = makeStore()
-        let paneID = try XCTUnwrap(store.focusedPane)
+        let paneID = try onlyPane(store)
         var received: (String, String, String)?
         store.onPaneNotification = { _, paneTitle, title, body in received = (paneTitle, title, body) }
 

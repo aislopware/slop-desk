@@ -218,7 +218,7 @@ extension WorkspaceStore {
     /// leaves would tear down every live pane and rebuild it from the snapshot a moment later, so a
     /// reconnect would dismantle every terminal on screen and replay it back.
     func reconcileTreeFromDocument() {
-        guard liveModel == .tree, !isReconcilingTree, workspaceMirror.topology != nil else { return }
+        guard !isReconcilingTree, workspaceMirror.topology != nil else { return }
         // …and so does an ARMED BOOTSTRAP. That is a layout this client was told at launch to publish
         // and has not yet had a channel to say it on, and the frame that arrives first is the host's
         // own first-run default. Materializing it would tear down the pane the window is already
@@ -246,11 +246,10 @@ extension WorkspaceStore {
         reconcileTree(acknowledgingFocus: false)
     }
 
-    /// Updates the spec for `id` in whichever live model is active: the tree's side table when
-    /// ``WorkspaceStore/liveModel`` is ``WorkspaceStore/LiveModel/tree``, else the canvas. Used by the
-    /// shared pane-rebind wiring so a committed endpoint persists into the right model.
+    /// Updates the spec for `id` in the tree's side table. Used by the pane-rebind wiring so a committed
+    /// endpoint persists.
     ///
-    /// On the tree path the spec belongs to the document, so the transform is run against the current
+    /// The spec belongs to the document, so the transform is run against the current
     /// value and the RESULT is expressed as an intent. Two spec fields have one: an AUTHORED title
     /// (`renamePane`, which writes the `userRenamed` flag that is what "authored" means) and the VIDEO
     /// BINDING (`setPaneVideoTarget` — the pane-rebind sink's whole job, since a display switch or a
@@ -261,29 +260,24 @@ extension WorkspaceStore {
     /// make the NEXT re-pick unable to update it. Anything else a transform touches is named in the
     /// debug log rather than dropped silently, because a spec field with no intent behind it is a fact
     /// this client cannot publish and the next host frame will erase.
-    func updateSpecLive(_ id: PaneID, _ transform: @escaping (inout PaneSpec) -> Void) {
-        switch liveModel {
-        case .tree:
-            guard var spec = tree.spec(for: id) else { return }
-            let before = spec
-            transform(&spec)
-            guard spec != before else { return }
-            if spec.video != before.video {
-                guard stage(.setPaneVideoTarget, WorkspaceIntentArgs.encode(
-                    pane: id, video: spec.video,
-                )) else { return }
-                reconcileTree()
-                return
-            }
-            guard spec.userRenamed, spec.title != before.title || !before.userRenamed else {
-                logIntentRefusal(.renamePane, "spec change with no intent for pane \(id.raw)")
-                return
-            }
-            guard stage(.renamePane, WorkspaceIntentArgs.encode(id: id.raw, name: spec.title)) else { return }
+    func updateSpecLive(_ id: PaneID, _ transform: (inout PaneSpec) -> Void) {
+        guard var spec = tree.spec(for: id) else { return }
+        let before = spec
+        transform(&spec)
+        guard spec != before else { return }
+        if spec.video != before.video {
+            guard stage(.setPaneVideoTarget, WorkspaceIntentArgs.encode(
+                pane: id, video: spec.video,
+            )) else { return }
             reconcileTree()
-        case .canvas:
-            updateSpec(id, transform)
+            return
         }
+        guard spec.userRenamed, spec.title != before.title || !before.userRenamed else {
+            logIntentRefusal(.renamePane, "spec change with no intent for pane \(id.raw)")
+            return
+        }
+        guard stage(.renamePane, WorkspaceIntentArgs.encode(id: id.raw, name: spec.title)) else { return }
+        reconcileTree()
     }
 
     // MARK: - Presence
@@ -347,7 +341,7 @@ extension WorkspaceStore {
     /// Reads the FRESHNESS-GATED ``liveProgramTitle(for:)`` rather than raw `pane/liveTitle`: a banner
     /// naming the program that ran BEFORE this command is worse than one naming the folder.
     func completionNotificationTitle(for id: PaneID) -> String {
-        let paneSpec = tree.spec(for: id) ?? workspace.canvas.spec(for: id)
+        let paneSpec = tree.spec(for: id)
         return PaneLabel.completionNotificationTitle(
             title: paneSpec?.title ?? "",
             cwd: paneCwd(for: id),

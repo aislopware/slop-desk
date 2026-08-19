@@ -1,4 +1,5 @@
 import Foundation
+import SlopDeskWorkspaceModel
 
 // MARK: - The pure Jump-To panel model (⌘J)
 
@@ -113,8 +114,8 @@ public struct JumpToItem: Identifiable, Equatable, Hashable, Sendable {
 /// ## Why a pure enum
 /// Assembly is a deterministic map over the already-pure ``DetectedLink`` (from ``TerminalLinkDetector``)
 /// and the per-pane block index — no host round-trip, no SwiftUI. The view feeds it `viewportTextRows()` /
-/// scrollback + `navigatorBlocks`, ranks via ``FuzzyMatcher`` (which lives in the view module,
-/// so it is INJECTED into ``filtered(_:query:score:)`` rather than imported here), and renders the rows.
+/// scrollback + `navigatorBlocks` and renders the rows; the ranking is
+/// `slopdesk_workspace::search_rank`, the one every search field in the app asks for.
 public enum JumpToModel {
     /// The cap on how many distinct LINK rows are assembled — a long scrollback can detect thousands of
     /// repeated paths, so the deduped link set is bounded (validate-then-bound, the CLAUDE.md §3 habit
@@ -169,27 +170,10 @@ public enum JumpToModel {
         }
     }
 
-    /// Fuzzy-filter + rank `items` by `query` using the INJECTED `score` closure (the view passes
-    /// `FuzzyMatcher.rank(_:_:)`; the headless tests pass a deterministic scorer). An EMPTY query
-    /// returns `items` unchanged (the zero-state list). A non-empty query drops every item the scorer
-    /// rejects (`nil`) and orders the survivors by score DESCENDING, breaking ties by original order
-    /// (a STABLE sort, so equal-score rows keep the assembly order — links before commands).
-    ///
-    /// Integer scores only (no float), so the `>` / `<` comparisons are ordered + total — no NaN hazard.
-    public static func filtered(
-        _ items: [JumpToItem],
-        query: String,
-        score: (_ query: String, _ haystack: String) -> Int?,
-    ) -> [JumpToItem] {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return items }
-        let scored: [(score: Int, order: Int, item: JumpToItem)] = items.enumerated().compactMap { offset, item in
-            guard let s = score(trimmed, item.searchText) else { return nil }
-            return (s, offset, item)
-        }
-        return scored.sorted { lhs, rhs in
-            if lhs.score != rhs.score { return lhs.score > rhs.score }
-            return lhs.order < rhs.order
-        }.map(\.item)
+    /// Fuzzy-filter + rank `items` by `query`. An EMPTY query returns `items` unchanged (the
+    /// zero-state list). A non-empty query drops every item the matcher rejects and orders the
+    /// survivors best-first, with the assembly order — links before commands — breaking ties.
+    public static func filtered(_ items: [JumpToItem], query: String) -> [JumpToItem] {
+        wsSearchRanked(items, query: query) { $0.searchText }
     }
 }

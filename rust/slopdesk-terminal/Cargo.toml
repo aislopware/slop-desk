@@ -45,6 +45,12 @@ path = "src/lib.rs"
 # already there, and this is one of those.
 slopdesk-sanitize = { path = "../slopdesk-sanitize" }
 
+# `shell_quoting::single_quoted`, which the "Change Directory Here" line quotes both of its operands
+# with. The domain crate owns that idiom — `zoxide`'s, and the one every `cd` this app types uses —
+# and a second spelling of it here would be a second escape bug waiting for a path with an
+# apostrophe in it. Same edge, same reason, as `slopdesk-wire` taking this crate.
+slopdesk-workspace = { path = "../slopdesk-workspace" }
+
 # Every byte of terminal output passes through the tracker, so this is a hot-path library — the same
 # shape as the wire crate rather than the hook's startup-tuned profile.
 [profile.release]

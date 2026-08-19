@@ -17,6 +17,8 @@
 #if canImport(SwiftUI)
 import Defaults // observe the Auto-Secure-Input / indicator defaults so the toggle is LIVE.
 import Foundation
+import SlopDeskClientCore
+import SlopDeskSlate
 import SlopDeskTerminal // TerminalViewportSnapshotting — the iOS letterbox reads the live cell advance.
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel // PaneID — the autotype seam's task key.
@@ -100,7 +102,8 @@ struct TerminalLeafView: View {
                 .padding(Slate.Metric.space2)
             // NO per-pane status strip on a TERMINAL pane (issue: the user judged the terminal pane footer
             // low-value and asked to drop it). The cwd / exit / progress cues are low-value; host + connection status now
-            // live ONCE in the sidebar footer (`NavigatorColumn` → `ConnectionCluster`; titlebar trailing when collapsed), not per pane. The
+            // live ONCE in the connection island (the sidebar's foot, or the titlebar band while the
+            // column is collapsed), not per pane. The
             // GUI/window pane keeps a bottom bar, but as a CONTROL bar (resize / lock / zoom), not a status strip.
         }
         .background(NativePaneColor.terminalBackground)
@@ -142,6 +145,18 @@ struct TerminalLeafView: View {
     private var terminalSurface: some View {
         ZStack(alignment: .topLeading) {
             if let model = live?.terminalModel {
+                // The phone's KEY responder, under the pixels and behind every overlay. On macOS
+                // the renderer is the first responder and this does not exist; on iOS the renderer
+                // is a Metal layer that answers no key event, so without this mount the pane cannot
+                // receive a keystroke at all. Zero-sized and touch-transparent — it holds first
+                // responder, the accessory row and the press handlers, nothing visual.
+                #if os(iOS)
+                if !staticMirror, let live {
+                    TerminalInputHost(live: live, focusCoordinator: store.focusCoordinator)
+                        .frame(width: 0, height: 0)
+                        .allowsHitTesting(false)
+                }
+                #endif
                 letterboxed(model: model) {
                     if TerminalRendererFactory.shared != nil {
                         TerminalRendererFactory.make(model: model, isFocused: isFocused)

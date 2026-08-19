@@ -45,9 +45,18 @@
 // belongs on the rectangle, where `SimulatorStageView` now puts a proper indicator. And it had no
 // end: it was drawn from "no frames yet", a condition that never expires, so a stream that would
 // never start left the word up forever. Both are fixed at the source; this header is facts again.
+//
+// iOS-ONLY since docs/56 increment 52a; the Mac draws the same band in `MacSimulatorDeviceHeader`.
+// WHICH facts are present and in what order is ``SimulatorPresentation/facts(device:resolution:orientation:pinnedLocation:)``'s
+// — that was the half a second renderer would have re-derived from this file's prose and got subtly
+// wrong, exactly as increment 51 recorded for the workbench. What stays here is the DRAWING, plus the
+// four lines that turn a role into a hue, which cannot descend: `SlopDeskSlate` depends on the target
+// the fold lives in.
 
-#if os(macOS)
+#if os(iOS)
 import SFSafeSymbols
+import SlopDeskDevicePanels
+import SlopDeskSlate
 import SwiftUI
 
 struct SimulatorDeviceHeader<Actions: View>: View {
@@ -64,7 +73,7 @@ struct SimulatorDeviceHeader<Actions: View>: View {
     var body: some View {
         HStack(spacing: Slate.Metric.space2) {
             PlateIconButton(symbol: .chevronLeft) { onBack() }
-                .help("All Devices")
+                .help(SimulatorPresentation.backHelp)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: Slate.Metric.space1) {
                     Text(device.name)
@@ -108,66 +117,49 @@ struct SimulatorDeviceHeader<Actions: View>: View {
         .background(Slate.Surface.field)
     }
 
-    /// Ordered by how often it is the thing being checked: the pixel size, then the short UDID,
-    /// which is what every other tool wants pasted into it. Orientation and position appear only
-    /// when they have something to say — a portrait device and a device using live GPS are the
-    /// ordinary case, and printing them would spend the line's width on the absence of news.
+    /// The line's CONTENT is the shared fold's; drawing it is this half's. Which facts are present,
+    /// their order, which of them hide their label and what Copy hands over are all recorded at
+    /// ``SimulatorPresentation/facts(device:resolution:orientation:pinnedLocation:)``.
     private var facts: [SlateFact] {
-        // The runtime is NOT here — it sits beside the name, where it names the device.
-        var facts: [SlateFact] = []
-        if let resolution {
-            facts.append(SlateFact(
-                "Resolution", Self.pixels(resolution),
-                tint: Slate.Text.secondary, isMeasured: true,
-            ))
-        }
-        if orientation != .portrait {
-            // Unlabelled: "Landscape Left" names itself, and it prints at all only because the
-            // device is not upright.
-            facts.append(SlateFact(
-                "Orientation", Self.title(for: orientation), copies: orientation.wireValue,
-                tint: Slate.Text.tertiary, showsLabel: false,
-            ))
-        }
-        if let pinnedLocation {
-            // NOT accented. It appears only when a position is pinned, so its presence already says
-            // the device is lying about where it is, and the toolbar plate that pinned it is latched
-            // in the accent six points below — two accents for one state inside one band is the
-            // colour noise this header just lost its status dot over.
-            // "Simulated Location" is three words wide in a column that has none to spare, and the
-            // shorter label the toolbar plate already uses does the naming.
-            facts.append(SlateFact(
-                "Simulated Location", pinnedLocation.readout,
-                tint: Slate.Text.secondary, isMeasured: true, showsLabel: false,
-            ))
-        }
-        // The UDID last and SHORT: the full value is 36 characters and would own the line, but the
-        // leading block is enough to tell two devices apart, and Copy hands over the whole thing.
-        facts.append(SlateFact(
-            "UDID", Self.shortened(device.udid), copies: device.udid,
-            tint: Slate.Text.tertiary, isMeasured: true,
-        ))
-        return facts
+        SimulatorPresentation.facts(
+            device: device, resolution: resolution, orientation: orientation,
+            pinnedLocation: pinnedLocation,
+        ).map(SlateFact.init)
     }
+}
 
-    /// `1206 × 2622`. The MULTIPLICATION SIGN, not a lowercase x — this sits in a row of measured
-    /// figures and a letter standing in for an operator is the detail that makes a panel look
-    /// improvised.
-    static func pixels(_ size: CGSize) -> String {
-        "\(Int(size.width.rounded())) × \(Int(size.height.rounded()))"
+extension SlateFact {
+    /// A shared fact, drawn on this half's ladder.
+    ///
+    /// The BRIDGE is the whole of what a hue costs: `SlopDeskSlate` depends on `SlopDeskDevicePanels`,
+    /// so a token cannot descend to where the fold lives, and a ROLE comes up instead. Four lines here,
+    /// four in `MacSimulatorInk`, and no third place either can drift from.
+    ///
+    /// `@MainActor` rides along with the hue it reads — see ``SimulatorInk/slateColor``.
+    @MainActor
+    init(_ fact: SimulatorFact) {
+        self.init(
+            fact.label, fact.text, copies: fact.copies, tint: fact.ink.slateColor,
+            isMeasured: fact.isMeasured, showsLabel: fact.showsLabel,
+        )
     }
+}
 
-    /// The leading block of a UDID, which is what a person reads to tell two devices apart.
-    static func shortened(_ udid: String) -> String {
-        String(udid.prefix(8))
-    }
-
-    static func title(for orientation: SimulatorOrientation) -> String {
-        switch orientation {
-        case .portrait: "Portrait"
-        case .landscapeLeft: "Landscape Left"
-        case .landscapeRight: "Landscape Right"
-        case .portraitUpsideDown: "Upside Down"
+extension SimulatorInk {
+    /// The phone's resolution of the panel's one ink vocabulary. ``SimulatorInk/alarm`` is the ONLY
+    /// colour this panel has — see the enum's own note for the three surfaces that each broke that rule
+    /// independently before 2026-08-04.
+    ///
+    /// `@MainActor` for the reason the Android twin records: `Slate.Text` is main-actor state, and a
+    /// computed property on a `Sendable` enum is nonisolated by default, so without it this reads as a
+    /// background thread asking for the theme's current hue.
+    @MainActor
+    var slateColor: Color {
+        switch self {
+        case .primary: Slate.Text.primary
+        case .secondary: Slate.Text.secondary
+        case .tertiary: Slate.Text.tertiary
+        case .alarm: Slate.StatusInk.err
         }
     }
 }

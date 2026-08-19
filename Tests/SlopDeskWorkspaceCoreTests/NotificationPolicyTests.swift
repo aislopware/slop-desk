@@ -2,10 +2,11 @@ import SlopDeskProtocol
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// The PURE notification-delivery decision — the Notify-While-Foreground tri-state gate + the
-/// per-event toggles. `UN`-free + headless (the macOS poster is the thin actuator), so the whole truth
-/// table is asserted against an INDEPENDENT expectation, never the output's own derivation. Guarantees
-/// the foreground gate ACTUALLY gates, as a pure unit.
+/// The notification-delivery decision as this side sees it — the Notify-While-Foreground tri-state
+/// gate + the per-event toggles. The truth table is `slopdesk_workspace::notify`'s, which pins it
+/// against an independent expectation; what these add is the CROSSING, so a settings field wired to
+/// the wrong flag or a case index that drifted from the crate's enum order fails here rather than in
+/// a banner nobody saw. `UN`-free — the macOS poster is the thin actuator.
 final class NotificationPolicyTests: XCTestCase {
     /// The shipped baseline (`NotificationSettings()`) matches the notification-setting.png defaults.
     /// Revert-to-confirm-fail: flipping any default below breaks this pin.

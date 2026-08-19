@@ -109,14 +109,12 @@ public struct CommandBadgeGates: Equatable, Sendable {
 
 // MARK: - Source-aware tab-badge gating (the ONE production gating entry point)
 
-/// The SOURCE-AWARE gating policy that fuses the live signals into one tab badge while honouring BOTH the
-/// agent (``AgentBadgeGates``) and command (``CommandBadgeGates``) toggles. It masks the ``TabBadgeResolver``
-/// INPUTS by source — so the (pure, precedence-pinned) resolver is untouched — and the program-progress
-/// signals (`isBusy` / OSC 9;4 spinner / OSC 9;4;2 error) are NEVER masked (they have no opt-out per the
-/// spec) — otherwise turning off the agent spinner would also hide a program's own OSC 9;4 progress badge.
+/// The ONE production entry point for a row's badge: the signal ladder with the user's toggles
+/// applied. Both live in `slopdesk-agent::badge`, which masks each signal by SOURCE before the
+/// (unchanged, precedence-pinned) ladder runs — so a silenced agent still lets the program speak,
+/// because `isBusy` and the OSC 9;4 mirror are never masked. This forwards; it decides nothing.
 public enum TabBadgeGating {
-    /// Resolve the gated badge for a pane. The agent gates suppress only their own agent signal; the command
-    /// gates suppress only the matching COMMAND-exit badge; everything else flows through the resolver as-is.
+    /// Resolve the gated badge for a pane.
     public static func resolve(
         agent: ClaudeStatus,
         completion: PaneCompletionBadge?,
@@ -128,33 +126,16 @@ public enum TabBadgeGating {
         agentGates: AgentBadgeGates,
         commandGates: CommandBadgeGates,
     ) -> TabBadgeKind? {
-        // Mask AGENT inputs: each Claude badge toggle drops ONLY its own agent signal (→ `.idle`, which the
-        // resolver treats as no contribution). A program signal still surfaces because `isBusy` / `progress`
-        // are left untouched below — so e.g. the agent spinner can be off while a program's OSC 9;4 spinner
-        // still shows.
-        var maskedAgent = agent
-        switch agent {
-        case .working where !agentGates.badgeWhileProcessing: maskedAgent = .idle
-        case .done where !agentGates.badgeWhenComplete: maskedAgent = .idle
-        case .needsPermission where !agentGates.badgeWhenAwaitingInput: maskedAgent = .idle
-        default: break
-        }
-        // Mask the COMMAND-exit completion badge. The OSC 9;4;2 PROGRESS error rides `progress` separately and
-        // is NOT gated (no opt-out). `whenCommandAwaitsInput` has no plain-command signal to mask yet (the host
-        // quiescence detector is a deferred ceiling — DECISIONS.md), so it is inert until that lands.
-        var maskedCompletion = completion
-        if completion == .success, !commandGates.whenCommandFinishes { maskedCompletion = nil }
-        if completion == .failure, !commandGates.whenCommandFails { maskedCompletion = nil }
-        return TabBadgeResolver.badge(
-            agent: maskedAgent,
-            completion: maskedCompletion,
+        TabBadgeResolver.badge(
+            agent: agent,
+            completion: completion,
             isBusy: isBusy,
             foregroundProcess: foregroundProcess,
             completionFreshness: completionFreshness,
             progress: progress,
-            // The unread agent-finish latch is the same AGENT-completion family as `.done`, so the
-            // same "Badge when complete" toggle silences it.
-            unseenAgentDone: unseenAgentDone && agentGates.badgeWhenComplete,
+            unseenAgentDone: unseenAgentDone,
+            agentGates: agentGates,
+            commandGates: commandGates,
         )
     }
 }

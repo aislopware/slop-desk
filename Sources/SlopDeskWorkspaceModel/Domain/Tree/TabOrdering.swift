@@ -116,21 +116,29 @@ public enum TabOrderingEngine {
     /// Sections are (key, elements) PAIRS keyed on `String?`, not a dictionary behind a stand-in string for
     /// the keyless case: a sentinel here would be a second literal that merely LOOKS coupled to the rail's
     /// "Other" collapse key, and the two answer different questions. `nil` is its own section, natively.
-    /// Linear section lookup is right at these counts (sections in the tens).
+    ///
+    /// The bucketing itself is `slopdesk_workspace::rail_list::plan`, which answers in the caller's
+    /// own indices; this walks the answer back into the (key, elements) shape Swift reads. The
+    /// elements never cross — a rail row is half a dozen strings and a selection flag, none of which
+    /// decides which section it is in.
     public static func bucketedByProject<Element>(
         _ elements: [Element],
         projectKey: (Element) -> String?,
     ) -> [(key: String?, elements: [Element])] {
+        let keys = elements.map(projectKey)
+        // A list with no tab order of its own IS its own order, so arrival is the rank.
         var sections: [(key: String?, elements: [Element])] = []
-        for element in elements {
-            let bucket = normalizedProjectKey(projectKey(element))
-            if let index = sections.firstIndex(where: { $0.key == bucket }) {
-                sections[index].elements.append(element)
+        for place in wsRailPlan(keys: keys, tabRanks: Array(elements.indices)) {
+            guard elements.indices.contains(place.element) else { continue }
+            if place.section == sections.count - 1 {
+                sections[place.section].elements.append(elements[place.element])
             } else {
-                sections.append((bucket, [element]))
+                sections.append((
+                    normalizedProjectKey(keys[place.element]), [elements[place.element]],
+                ))
             }
         }
-        return sections.sorted { sectionPrecedes($0.key, $1.key) }
+        return sections
     }
 
     /// The SECTION order: named projects A→Z by the header the sidebar actually shows, the keyless
@@ -219,19 +227,5 @@ public enum TabOrderingEngine {
             }
         }
         return found ? TabID(ffi: answer) : nil
-    }
-
-    /// Reads a `(out, cap) -> needed` answer that has no input to lend, with the retry docs/55 §4
-    /// describes. `nil` is "no answer", which is not the empty answer: an absent project key and a
-    /// blank one are different facts about a pane.
-    private static func wsAnswer(_ call: (UnsafeMutablePointer<UInt8>?, Int) -> Int) -> String? {
-        var out = [UInt8](repeating: 0, count: 256)
-        var needed = out.withUnsafeMutableBufferPointer { call($0.baseAddress, $0.count) }
-        if needed > out.count {
-            out = [UInt8](repeating: 0, count: needed)
-            needed = out.withUnsafeMutableBufferPointer { call($0.baseAddress, $0.count) }
-        }
-        guard needed > 0, needed <= out.count else { return nil }
-        return String(bytes: out[0..<needed], encoding: .utf8)
     }
 }

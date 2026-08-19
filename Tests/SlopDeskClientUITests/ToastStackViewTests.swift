@@ -1,109 +1,51 @@
-// ToastStackViewTests — pins the toast host's view-level behaviour (the model-level de-dupe /
-// cap / dismiss is pinned by `OverlayCoordinatorMountTests`). Two things this view owns that the coordinator
-// does not: the flavour → tint mapping (the status mark's colour) and the headline derivation — plus that
-// the card stack renders headlessly.
+// ToastStackViewTests — pins what the PHONE's toast column owns, which is now exactly two things: the
+// rung → `Color` map (its view of the one ink ladder) and that the card stack renders headlessly.
+//
+// The headline, the spine budget, the mark's rung and glyph, and the dwell length left this file with
+// the surface split (docs/56 stage D): they are the same on the Mac's `NSPanel`, so they are pinned
+// below both in `ToastPresentationTests`. The model-level de-dupe / cap / dismiss stays in
+// `OverlayCoordinatorMountTests`.
 //
 // Headless-only (per the hang-safety rule): no SCStream/VT/Metal — `ImageRenderer` of a pure SwiftUI view is
 // CPU rasterisation (the same `SlateSnapshotRender` pattern the repo already uses in this target).
 
 #if canImport(SwiftUI) && canImport(AppKit)
 import AppKit
+import SlopDeskSlate
 import SwiftUI
 import XCTest
+@testable import SlopDeskClientCore
 @testable import SlopDeskClientUI
 
 @MainActor
 final class ToastStackViewTests: XCTestCase {
-    // MARK: - Flavour tint mapping (the status mark's colour role)
+    // MARK: - Rung → ink (this half's view of the one ladder)
 
-    /// The mark's ink per flavour: success → OK, error → error, default → info, attention → WARN.
-    /// `.attention` is AMBER for rail parity — ``StatusDot`` already fixed "amber = a question waiting" — and
-    /// the view + this test read the SAME `tint(for:)`, so the rendered colour cannot drift from the pin.
-    func testToastFlavorTintMapping() {
-        XCTAssertEqual(ToastStackView.tint(for: .success), Slate.Status.ok, "success → OK status tint")
-        XCTAssertEqual(ToastStackView.tint(for: .error), Slate.Status.err, "error → error status tint")
-        XCTAssertEqual(ToastStackView.tint(for: .default), Slate.Status.info, "default → info status tint")
+    /// The four rungs must resolve to four DISTINCT `Color`s. Which rung a flavour takes is pinned once,
+    /// below both platforms (`ToastPresentationTests`); what this pins is that the SwiftUI half does not
+    /// collapse two of them back together on the way to the screen — the exact failure the old
+    /// `.attention → accent` mapping had, where every seed's `info == accent` drew needs-input and a
+    /// routine notice in the same cyan.
+    func testEveryRungResolvesToItsOwnInk() {
+        let rungs: [ToastMarkRung] = [.neutral, .ok, .warn, .err]
+        for (index, a) in rungs.enumerated() {
+            for b in rungs.dropFirst(index + 1) {
+                XCTAssertNotEqual(
+                    ToastStackView.ink(for: a), ToastStackView.ink(for: b),
+                    "\(a) and \(b) must read as different inks",
+                )
+            }
+        }
+        XCTAssertEqual(ToastStackView.ink(for: .ok), Slate.Status.ok)
+        XCTAssertEqual(ToastStackView.ink(for: .err), Slate.Status.err)
         XCTAssertEqual(
-            ToastStackView.tint(for: .attention), Slate.Status.warn,
-            "attention → WARN (amber), matching the rail's 'a question waiting'; NOT the theme accent",
+            ToastStackView.ink(for: .warn), Slate.Status.warn,
+            "amber, matching the rail's 'a question waiting'; NOT the theme accent",
         )
-    }
-
-    /// All FOUR flavours must be pairwise distinct inks. This is the real invariant behind a flavour — a
-    /// flavour that cannot be told apart from another conveys nothing — and it is the assertion the previous
-    /// pin deliberately WITHHELD: `.attention` used to resolve to `Slate.State.accent`, and every built-in
-    /// seed sets `info == accent`, so needs-input and a routine notice rendered in the same hue. Routing
-    /// `.attention` to the status quartet's unused amber rung is what makes this hold.
-    func testEveryFlavorInkIsDistinct() {
-        let flavors: [Toast.Flavor] = [.default, .success, .error, .attention]
-        for (i, a) in flavors.enumerated() {
-            for b in flavors.dropFirst(i + 1) {
-                XCTAssertNotEqual(
-                    ToastStackView.tint(for: a), ToastStackView.tint(for: b),
-                    "\(a.rawValue) and \(b.rawValue) must read as different inks",
-                )
-            }
-        }
-    }
-
-    // MARK: - Headline (WHO is speaking, said as a sentence-case phrase)
-
-    /// The headline is resolved from ``Toast/source`` and ``Toast/flavor`` TOGETHER, and this pins why: a
-    /// `.success` toast says "is done" when an agent finished its turn but "finished" when a command
-    /// exited 0. Flavour alone cannot tell those apart, so a resolver that keyed on it would announce a
-    /// finished `make` as an agent turn — the same fusion bug `TabBadgeResolver` had (round 21).
-    func testHeadlineSplitsAgentFromCommand() {
-        func headline(_ source: Toast.Source, _ flavor: Toast.Flavor, _ title: String = "t") -> String {
-            ToastStackView.headline(for: Toast(id: "x", flavor: flavor, source: source, title: title))
-        }
-        // Same flavour, two speakers, two DIFFERENT sentences — the whole point of carrying `source`.
-        XCTAssertEqual(headline(.agent, .success, "Claude"), "Claude is done")
-        XCTAssertEqual(headline(.command, .success, "make check"), "make check finished")
-        XCTAssertNotEqual(
-            headline(.agent, .success), headline(.command, .success),
-            "an agent's finished turn and a command's clean exit must not read as the same event",
+        XCTAssertEqual(
+            ToastStackView.ink(for: .neutral), SlateOverlayInk.secondary,
+            "a routine notice wears the reading ink, never a hue",
         )
-        XCTAssertEqual(headline(.agent, .attention, "Claude"), "Claude needs input")
-        // A notice/advisory speaks its own words — the title IS the message, passed through untouched.
-        XCTAssertEqual(headline(.command, .default, "npm run dev"), "npm run dev")
-        XCTAssertEqual(headline(.command, .attention, "cd'd on host"), "cd'd on host")
-        // Every derived headline is a phrase, never the caps-mono register the old eyebrow spoke.
-        for source in [Toast.Source.agent, .command] {
-            for flavor in [Toast.Flavor.default, .success, .error, .attention] {
-                let label = headline(source, flavor, "subject")
-                XCTAssertFalse(label.isEmpty, "every (source, flavour) pair must name an event")
-                XCTAssertNotEqual(
-                    label, label.uppercased(),
-                    "\(label) must stay sentence-case — the caps register left the floating family",
-                )
-            }
-        }
-    }
-
-    /// A toast may carry its OWN headline when it knows a truer phrase than the derivation can reach — the
-    /// reconnect verdict is "Session reattached", which no flavour+title suffix encodes. An explicit
-    /// headline must WIN over the derived one, and an empty one must fall back rather than render a blank.
-    func testExplicitHeadlineOverridesTheDerivedOne() {
-        let explicit = Toast(
-            id: "x", flavor: .success, source: .command, title: "t", headline: "Session reattached",
-        )
-        XCTAssertEqual(ToastStackView.headline(for: explicit), "Session reattached")
-        let blank = Toast(id: "x", flavor: .success, source: .command, title: "t", headline: "")
-        XCTAssertEqual(ToastStackView.headline(for: blank), "t finished", "an empty headline falls back")
-    }
-
-    // MARK: - Stack spine (which cards speak in full)
-
-    /// Only the NEWEST `expandedCount` cards carry a body + dwell track; older ones collapse to the
-    /// one-line spine. Newest is LAST, so the expanded ones are at the END of the array.
-    func testOnlyTheNewestCardsExpand() {
-        XCTAssertTrue(ToastStackLayout.isExpanded(index: 3, count: 4), "the newest card speaks in full")
-        XCTAssertTrue(ToastStackLayout.isExpanded(index: 2, count: 4), "so does the one before it")
-        XCTAssertFalse(ToastStackLayout.isExpanded(index: 1, count: 4), "older cards collapse to the spine")
-        XCTAssertFalse(ToastStackLayout.isExpanded(index: 0, count: 4), "the oldest most of all")
-        // A stack shallower than the budget expands everything — no lone card is ever collapsed.
-        XCTAssertTrue(ToastStackLayout.isExpanded(index: 0, count: 1))
-        XCTAssertTrue(ToastStackLayout.isExpanded(index: 0, count: 2))
     }
 
     // MARK: - Dwell epoch (a same-id re-push must RESTART the dwell)

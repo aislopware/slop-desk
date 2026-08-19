@@ -1,6 +1,11 @@
-// PaneGitSummaryTests — pins the compact git line the sidebar tab row renders (the app's ONE git
-// surface now that the inspector tab / auxiliary Git window are removed): the branch / ahead / behind /
-// changed-count fold from the wire payload and every `compactLine` shape. Pure value — headless.
+// PaneGitSummaryTests — pins the WIRE FOLD: the branch / ahead / behind / stash carry-over and the
+// porcelain breakdown derived from the packed `XY` status codes. Pure value — headless.
+//
+// It used to pin a `compactLine` renderer too, and that renderer is gone (docs/56 increment 45): the
+// rail's git line is `SidebarGitLine.segments`, which spells a conflict `~` where the dead one spelled
+// it `=`. Twelve assertions were the ONLY thing keeping the wrong spelling compiling — a second
+// renderer for one surface, kept alive by its own tests. What is left here is the fold, which is
+// what every renderer reads.
 
 import SlopDeskProtocol
 import XCTest
@@ -15,48 +20,6 @@ final class PaneGitSummaryTests: XCTestCase {
             hasRepo: hasRepo, branch: branch, ahead: ahead, behind: behind, changedCount: changed,
             staged: staged, modified: modified, untracked: untracked, conflicted: conflicted, stash: stash,
         )
-    }
-
-    /// A clean, tracking branch renders as JUST the branch name — no noise.
-    func testCleanRepoIsJustTheBranch() {
-        XCTAssertEqual(summary().compactLine, "main")
-    }
-
-    /// Ahead/behind deltas append as `↑a ↓b` (each only when non-zero).
-    func testAheadBehindDeltas() {
-        XCTAssertEqual(summary(ahead: 2).compactLine, "main ↑2")
-        XCTAssertEqual(summary(behind: 3).compactLine, "main ↓3")
-        XCTAssertEqual(summary(ahead: 1, behind: 4).compactLine, "main ↑1 ↓4")
-    }
-
-    /// Each worktree state is a SINGLE sigil + count: `+`staged `!`modified `?`untracked `=`conflicts.
-    func testWorktreeSigils() {
-        XCTAssertEqual(summary(staged: 2).compactLine, "main +2")
-        XCTAssertEqual(summary(modified: 3).compactLine, "main !3")
-        XCTAssertEqual(summary(untracked: 1).compactLine, "main ?1")
-        XCTAssertEqual(summary(conflicted: 2).compactLine, "main =2")
-        // Full order: branch, ↑, ↓, +, !, ?, =, $.
-        XCTAssertEqual(
-            summary(ahead: 1, behind: 2, staged: 3, modified: 4, untracked: 5, conflicted: 6, stash: 7)
-                .compactLine,
-            "main ↑1 ↓2 +3 !4 ?5 =6 $7",
-        )
-    }
-
-    /// The stash depth appends as `$N` (repo-global) — present even on an otherwise clean worktree.
-    func testStashSigil() {
-        XCTAssertEqual(summary(stash: 1).compactLine, "main $1")
-        XCTAssertEqual(summary(modified: 2, stash: 3).compactLine, "main !2 $3")
-    }
-
-    /// A detached HEAD (empty branch) reads "detached", never a blank leading token.
-    func testDetachedHead() {
-        XCTAssertEqual(summary(branch: "", modified: 1).compactLine, "detached !1")
-    }
-
-    /// A non-repo cwd renders NOTHING (`nil`) — the rail then falls back to the plain cwd subtitle.
-    func testNoRepoRendersNil() {
-        XCTAssertNil(summary(hasRepo: false, branch: "").compactLine)
     }
 
     /// The wire-payload fold derives the porcelain breakdown from the packed `XY` status codes: `0x01`
@@ -74,11 +37,18 @@ final class PaneGitSummaryTests: XCTestCase {
                 MetadataCodec.GitFileChange(statusCode: 0x66, path: "d.swift"), // "UU" conflict
             ],
         )
-        let folded = PaneGitSummary(payload: payload)
-        XCTAssertEqual(folded, summary(
+        XCTAssertEqual(PaneGitSummary(payload: payload), summary(
             branch: "feat/x", ahead: 2, behind: 1, changed: 4,
             staged: 1, modified: 2, untracked: 1, conflicted: 1, stash: 5,
         ))
-        XCTAssertEqual(folded.compactLine, "feat/x ↑2 ↓1 +1 !2 ?1 =1 $5")
+    }
+
+    /// A non-repo cwd folds to `hasRepo: false` — every renderer keys its fallback off that flag.
+    func testNoRepoFoldsToNoRepo() {
+        let payload = MetadataCodec.GitStatusPayload(
+            hasRepo: false, branch: "", remoteURL: "", repoRoot: "",
+            ahead: 0, behind: 0, stashCount: 0, files: [],
+        )
+        XCTAssertFalse(PaneGitSummary(payload: payload).hasRepo)
     }
 }

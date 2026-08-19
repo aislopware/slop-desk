@@ -13,7 +13,7 @@ final class BackgroundCompletionWiringTests: XCTestCase {
     private let longMS: UInt32 = CommandNotificationPolicy.longRunningThresholdMS // 10_000
 
     private func makeStore() -> WorkspaceStore {
-        let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in FakePaneSession(seed.spec) })
+        let store = WorkspaceStore(makeSession: { seed in FakePaneSession(seed.spec) })
         store.attachLoopbackWorkspaceDocument()
         return store
     }

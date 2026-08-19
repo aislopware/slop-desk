@@ -1,7 +1,7 @@
 // SimulatorStageView — the whole streaming surface: what device this is, the device itself, what you
 // can do to it, and what it is saying.
 //
-// Split out of `CodeSidebarColumn` when the panel grew past a screen and two buttons. The column now
+// Split out of `CodePanelSurfaces` when the panel grew past a screen and two buttons. The column now
 // picks a surface; this file owns everything inside the Simulators one, which is what keeps the
 // column readable as a switch rather than as a device panel with a code panel attached.
 //
@@ -38,9 +38,19 @@
 // DROP TO INSTALL. The server routes a dropped file by extension — an `.app`/`.ipa` is installed, an
 // image or video lands in Photos — so this side deliberately accepts any file and lets the server
 // classify it. Getting that taxonomy wrong locally would reject the one build someone wanted.
+//
+// iOS-ONLY since docs/56 increment 52a; the Mac draws the same three bands in `MacSimulatorStageView`.
+// What descended is the stage's THREE STATES and the order they are asked in
+// (``SimulatorPresentation/stage(isSelected:showsLoading:isAwaitingStream:hasVideo:)``), the veil's
+// measured delay, the toolbar's readings and the drop's one failure sentence. The ORDER is the part
+// worth naming: asked in any other sequence the stage prints "no video" for the 90 ms before the first
+// keyframe of every single selection, and that is precisely the kind of rule two renderers each derive
+// from prose and one of them gets wrong.
 
-#if os(macOS)
+#if os(iOS)
 import SFSafeSymbols
+import SlopDeskDevicePanels
+import SlopDeskSlate
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -109,9 +119,10 @@ struct SimulatorStageView: View {
         return model.devices.first { $0.udid == udid }
     }
 
-    /// The stream is over waiting and there is still no video. Distinct from "loading" by the model's
-    /// deadline and from "streaming" by ``SimulatorSidebarModel/hasVideo``, so the stage always
-    /// resolves into one of three definite things rather than into an indicator with no end.
+    /// The ANIMATION's key, and only that — which of the three states is drawn is the shared fold's
+    /// (``stageState``). A `Bool` here because the beat has to be opened by a value that changes when
+    /// the stall does, and `SimulatorStageState` carries a caption that would key an animation on a
+    /// string.
     ///
     /// `hasVideo` and not the frames themselves: the seed does not count (a seed-only stream is a
     /// photograph of a device nobody is driving), and the frames no longer pass through this view at
@@ -125,7 +136,7 @@ struct SimulatorStageView: View {
 
     private var device: some View {
         Group {
-            if let chrome = model.chrome {
+            if let bundle = model.chrome, let chrome = SimulatorChromeDecoder.assets(for: bundle) {
                 SimulatorBezelView(
                     assets: chrome, frames: model.frames, orientation: model.orientation,
                     send: { model.send($0) }, onContentSize: { model.observed(resolution: $0) },
@@ -170,21 +181,29 @@ struct SimulatorStageView: View {
     private var trays: some View {
         HStack(spacing: Slate.Metric.space2) {
             SlatePlateGroup {
-                PlateIconButton(symbol: .rotateLeft) { Task { await model.rotate(.left) } }
-                    .help("Rotate Left")
-                PlateIconButton(symbol: .rotateRight) { Task { await model.rotate(.right) } }
-                    .help("Rotate Right")
+                PlateIconButton(symbol: SimulatorPresentation.Toolbar.rotateLeft.symbol) {
+                    Task { await model.rotate(.left) }
+                }
+                .help(SimulatorPresentation.Toolbar.rotateLeft.help)
+                PlateIconButton(symbol: SimulatorPresentation.Toolbar.rotateRight.symbol) {
+                    Task { await model.rotate(.right) }
+                }
+                .help(SimulatorPresentation.Toolbar.rotateRight.help)
             }
             SlatePlateGroup {
-                PlateIconButton(symbol: .house) { model.send(.button("home")) }
-                    .help("Home")
+                PlateIconButton(symbol: SimulatorPresentation.Toolbar.home.symbol) {
+                    model.send(.button("home"))
+                }
+                .help(SimulatorPresentation.Toolbar.home.help)
                 // A TOGGLE, and the tooltip says so. Measured 2026-08-04 against a booted device:
                 // the verb is the swipe-up-and-hold gesture, so it opens the card stack from an app
                 // or the home screen and DISMISSES it when the stack is already up — and on a device
                 // with nothing backgrounded it does nothing visible, exactly like the hardware.
                 // `swipe-to-app-switcher` behaves identically; neither is an idempotent "show".
-                PlateIconButton(symbol: .squareOnSquare) { model.send(.button("app-switcher")) }
-                    .help("App Switcher — press again to dismiss")
+                PlateIconButton(symbol: SimulatorPresentation.Toolbar.appSwitcher.symbol) {
+                    model.send(.button("app-switcher"))
+                }
+                .help(SimulatorPresentation.Toolbar.appSwitcher.help)
                 // NOTIFICATION CENTRE AND LOCK ARE GONE (user-directed 2026-08-04). Both were here
                 // because the server offers the verb, which is not a reason: nobody driving an app
                 // reaches for the shade or the lock screen, and both are DESTRUCTIVE to the thing
@@ -195,14 +214,16 @@ struct SimulatorStageView: View {
                 // upstream changed, only what this panel puts under the pointer.
             }
             SlatePlateGroup {
-                PlateIconButton(symbol: .cameraViewfinder) { Task { await model.copyScreenshot() } }
-                    .help("Copy Screenshot")
-                PlateIconButton(symbol: .clock, active: model.isStatusBarOverridden) {
+                PlateIconButton(symbol: SimulatorPresentation.Toolbar.screenshot.symbol) {
+                    Task { await model.copyScreenshot() }
+                }
+                .help(SimulatorPresentation.Toolbar.screenshot.help)
+                PlateIconButton(
+                    symbol: statusBarPlate.symbol, active: model.isStatusBarOverridden,
+                ) {
                     Task { await model.toggleStatusBarOverride() }
                 }
-                .help(model.isStatusBarOverridden
-                    ? "Restore the real status bar"
-                    : "Demo status bar (9:41)")
+                .help(statusBarPlate.help)
             }
         }
     }
@@ -217,16 +238,13 @@ struct SimulatorStageView: View {
                     .transition(.opacity)
             }
             location
-            // A ruled list, not a terminal prompt: this opens a READER over the device's output, and
-            // the `>_` glyph promises a place to type. (`.terminal` is also the Terminal.app icon and
-            // deprecated at this target.)
-            PlateIconButton(symbol: .listBulletRectangle, active: model.isConsoleOpen) {
+            PlateIconButton(symbol: consolePlate.symbol, active: model.isConsoleOpen) {
                 // The drawer's own `.transition` has always been a move from the bottom edge; until
                 // this transaction it had no animation to ride, so it arrived in one frame and took
                 // the device's height with it.
                 withAnimation(Slate.Anim.standard) { model.toggleConsole() }
             }
-            .help(model.isConsoleOpen ? "Hide the device log" : "Show the device log")
+            .help(consolePlate.help)
         }
         .animation(Slate.Anim.smallFade, value: model.isSendingFile)
     }
@@ -235,15 +253,32 @@ struct SimulatorStageView: View {
     /// anyone opening the popover to find out. The header carries the actual coordinate; this is the
     /// glance.
     private var location: some View {
-        PlateIconButton(symbol: .location, active: model.pinnedLocation != nil) {
+        PlateIconButton(symbol: locationPlate.symbol, active: model.pinnedLocation != nil) {
             isLocationOpen.toggle()
         }
-        .help(model.pinnedLocation == nil ? "Simulate a location" : "Simulated location")
+        .help(locationPlate.help)
         .popover(isPresented: $isLocationOpen, arrowEdge: .bottom) {
             SimulatorLocationPopover(pinned: model.pinnedLocation) { coordinate in
                 Task { await model.pin(coordinate) }
             }
         }
+    }
+
+    /// The three LATCHING plates' readings, each a fold over the state it latches on. Held as
+    /// properties rather than spelled inline so the symbol and the tooltip are read from one value —
+    /// a plate whose glyph and words came from two calls is a plate that can disagree with itself.
+    private var statusBarPlate: SimulatorPlateReading {
+        SimulatorPresentation.Toolbar.statusBar(isOverridden: model.isStatusBarOverridden)
+    }
+
+    private var locationPlate: SimulatorPlateReading {
+        SimulatorPresentation.Toolbar.location(isPinned: model.pinnedLocation != nil)
+    }
+
+    /// A ruled list, not a terminal prompt: this opens a READER over the device's output, and the `>_`
+    /// glyph promises a place to type.
+    private var consolePlate: SimulatorPlateReading {
+        SimulatorPresentation.Toolbar.console(isOpen: model.isConsoleOpen)
     }
 
     // MARK: Output
@@ -270,14 +305,20 @@ struct SimulatorStageView: View {
     /// 2026-08-04 — a load with no end and no exit was the reported bug).
     @ViewBuilder
     private var stageState: some View {
-        if showsLoading {
+        switch SimulatorPresentation.stage(
+            isSelected: model.selection != nil, showsLoading: showsLoading,
+            isAwaitingStream: model.isAwaitingStream, hasVideo: model.hasVideo,
+        ) {
+        case .live:
+            EmptyView()
+        case let .starting(words):
             veil {
                 WorkingSpinner()
-                caption("Starting the stream…")
+                caption(words)
             }
-        } else if isStalled {
+        case let .stalled(words):
             veil {
-                caption("No video from this device.")
+                caption(words)
                 retry
             }
         }
@@ -294,7 +335,7 @@ struct SimulatorStageView: View {
     /// own "key going down" spelled on a wider shape.
     private var retry: some View {
         Button { model.retry() } label: {
-            Text("Try Again")
+            Text(SimulatorPresentation.retryTitle)
                 .font(.system(size: Slate.Typeface.footnote, weight: .medium))
                 .foregroundStyle(Slate.Text.primary)
                 .padding(.horizontal, Slate.Metric.space3)
@@ -318,18 +359,16 @@ struct SimulatorStageView: View {
         DevicePanelChrome.caption(text)
     }
 
-    /// How long the model may be loading before the veil admits it. MEASURED: a booted device's first
-    /// keyframe lands 0.09 s after the socket opens, so a veil with no delay would flash grey over the
-    /// bezel on every single selection — the whole failure being drawn onto the ordinary case. This
-    /// delay is the entire reason the view keeps its own copy of the loading state.
-    private static let veilDelay: Duration = .milliseconds(400)
-
     /// Mirror the model's loading state into ``showsLoading``, late on the way up and immediate on the
     /// way down. `.task(id:)` cancels this when the model's state flips, which is what makes the
     /// pending veil for a stream that arrived in time never appear at all.
+    ///
+    /// The DELAY and the asymmetry are ``SimulatorPresentation/loadingVeil(isAwaiting:)``'s: 400 ms was
+    /// measured against this server's 0.09 s first keyframe, and the same shape over the bridge's own
+    /// 0.83 s is a different number, which is why the two panels share the rule and not the figure.
     private func followLoading() async {
-        guard let state = await DevicePanelChrome.loadingVeilState(
-            isAwaiting: model.isAwaitingStream, after: Self.veilDelay,
+        guard let state = await SimulatorPresentation.loadingVeil(
+            isAwaiting: model.isAwaitingStream,
         ) else { return }
         showsLoading = state
     }
@@ -341,7 +380,7 @@ struct SimulatorStageView: View {
     // has exactly one thing for reporting an event, and one that read as an alert from some other
     // application. Every report now leaves through the app's notification card; the announcement lives
     // on the surface that outlives both the stage and the list (see
-    // ``CodeSidebarColumn/announce(_:isFailure:)``).
+    // ``CodePanelSurfaces/announce(_:isFailure:)``).
     //
     // What stays here is the STATE, which a notification cannot carry: a stream with no video is
     // drawn on the stage itself, where the ambiguous empty rectangle is, with the retry beside it.
@@ -380,7 +419,7 @@ struct SimulatorStageView: View {
             let scoped = url.startAccessingSecurityScopedResource()
             defer { if scoped { url.stopAccessingSecurityScopedResource() } }
             guard let contents = try? Data(contentsOf: url, options: .mappedIfSafe) else {
-                model.report("Could not read \(url.lastPathComponent).")
+                model.report(SimulatorPresentation.unreadableDrop(url.lastPathComponent))
                 return
             }
             await model.send(file: url, contents: contents)

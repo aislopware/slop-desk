@@ -17,7 +17,6 @@ final class WorkspaceStoreTreeHardeningTests: XCTestCase {
     private func makeTreeStore(restoringTree: TreeWorkspace = .defaultWorkspace()) -> WorkspaceStore {
         let store = WorkspaceStore(
             restoringTree: restoringTree,
-            liveModel: .tree,
             makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: 5,
         )
@@ -127,21 +126,10 @@ final class WorkspaceStoreTreeHardeningTests: XCTestCase {
         XCTAssertFalse(store.tree.contains(leaf), "the idle leaf closed immediately")
     }
 
-    /// AppLaunchMonitor side: `liveLayoutPresets` resolves from the TREE under `.tree`, and
-    /// `presetForLaunchedApp` matches against it — so a tree-carried trigger preset is reachable while a
-    /// canvas one is dead. A regression here has the monitor read `workspace.layoutPresets` (the dead canvas's, empty).
-    func testLiveLayoutPresetsAreEmptyOnTheTreeShell() {
-        let store = makeTreeStore()
-
-        XCTAssertTrue(store.liveLayoutPresets.isEmpty, "a LayoutPreset embeds a Canvas the tree shell never renders")
-        XCTAssertNil(store.presetForLaunchedApp("grafana"), "so the app-launch trigger scan finds nothing to switch to")
-    }
-
     // MARK: - ⌘⇧R renames the active TAB (was a dead-end on .tree)
 
-    /// Routing `.renamePane` on a `.tree` store records the active TAB as the pending rename target (the
-    /// `TabBarView` inline field opens) — NOT `pendingRename` (the canvas pane rename, which no tree view
-    /// observes). A regression here sets `pendingRename` to a PaneID that nothing on the tree shell consumes.
+    /// Routing `.renamePane` records the active TAB as the pending rename target (the `TabBarView` inline
+    /// field opens) and mutates nothing else — the rename request is a command-layer UI nudge.
     func testRenameActionTargetsActiveTabOnTree() throws {
         let store = makeTreeStore()
         let activeTab = try XCTUnwrap(store.tree.activeSession?.activeTab?.id)
@@ -150,7 +138,6 @@ final class WorkspaceStoreTreeHardeningTests: XCTestCase {
         WorkspaceBindingRegistry.route(.renamePane, to: store)
 
         XCTAssertEqual(store.pendingTabRename, activeTab, "the active tab is the pending tab-rename target")
-        XCTAssertNil(store.pendingRename, "the dead canvas pane-rename request is NOT set on the tree shell")
         XCTAssertEqual(store.tree, treeBefore, "the rename request never mutates the tree")
     }
 

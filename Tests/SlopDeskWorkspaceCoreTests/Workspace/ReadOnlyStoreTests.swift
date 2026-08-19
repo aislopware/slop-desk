@@ -18,7 +18,7 @@ final class ReadOnlyStoreTests: XCTestCase {
     /// A `.tree`-live store whose panes carry a REAL terminal model (so `setPaneReadOnly` drives a gate).
     private func makeRecordingStore() -> WorkspaceStore {
         let store = WorkspaceStore(
-            restoringTree: .defaultWorkspace(), liveModel: .tree,
+            restoringTree: .defaultWorkspace(),
             makeSession: { seed in RecordingTerminalPaneSession(seed.spec) }, liveVideoCap: 2,
         )
         store.attachLoopbackWorkspaceDocument()
@@ -28,7 +28,7 @@ final class ReadOnlyStoreTests: XCTestCase {
     /// A `.tree`-live store backed by `FakePaneSession` (no terminal model) — the set-only convergence path.
     private func makeFakeStore() -> WorkspaceStore {
         let store = WorkspaceStore(
-            restoringTree: .defaultWorkspace(), liveModel: .tree,
+            restoringTree: .defaultWorkspace(),
             makeSession: { seed in FakePaneSession(seed.spec) }, liveVideoCap: 2,
         )
         store.attachLoopbackWorkspaceDocument()

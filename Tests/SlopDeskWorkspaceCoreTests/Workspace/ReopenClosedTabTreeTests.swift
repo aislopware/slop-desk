@@ -3,9 +3,7 @@ import XCTest
 @testable import SlopDeskWorkspaceCore
 
 /// Pins the TREE shell's "Reopen Closed Tab" LIFO — the ⇧⌘T chord that brings back the
-/// most recently closed tab (its split tree + every pane's spec + the owning session), distinct from the
-/// canvas single-slot ``WorkspaceStore/reopenClosedPane()`` (which is a separate, retained-but-dead
-/// mechanism on the infinite-canvas path).
+/// most recently closed tab (its split tree + every pane's spec + the owning session).
 ///
 /// Captured before any TAB-removing close — both the explicit ``WorkspaceStore/closeTab(_:)`` and the
 /// implicit sole-leaf ``WorkspaceStore/closePaneTree(_:)`` cascade — and popped LIFO into the active
@@ -21,7 +19,6 @@ final class ReopenClosedTabTreeTests: XCTestCase {
     private func makeTreeStore(restoringTree: TreeWorkspace) -> WorkspaceStore {
         let store = WorkspaceStore(
             restoringTree: restoringTree,
-            liveModel: .tree,
             makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: 2,
         )

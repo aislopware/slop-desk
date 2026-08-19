@@ -222,6 +222,20 @@ public enum TerminalLinkDetector {
         }
     }
 
+    /// The `SLOPDESK_LINK_KIND_*` code for a kind — ``kind(of:)`` read backwards, for the doors the
+    /// client CALLS with a link it already holds (the click-actions table). Total: every kind the
+    /// scan can report has a code, which is why this direction needs no `nil`.
+    static func code(of kind: DetectedLinkKind) -> UInt32 {
+        switch kind {
+        case .absolutePath: SLOPDESK_LINK_KIND_ABSOLUTE_PATH
+        case .tildePath: SLOPDESK_LINK_KIND_TILDE_PATH
+        case .relativePath: SLOPDESK_LINK_KIND_RELATIVE_PATH
+        case .pathLineCol: SLOPDESK_LINK_KIND_PATH_LINE_COL
+        case .url: SLOPDESK_LINK_KIND_URL
+        case .fileURL: SLOPDESK_LINK_KIND_FILE_URL
+        }
+    }
+
     /// Concatenates `values` into one UTF-8 buffer and the byte length of each — the boundary's
     /// list-of-strings form, one allocation instead of one per element.
     ///

@@ -17,6 +17,8 @@
 //   - TODO(L5): the per-pane agent footer coordinator + overflow context menu.
 
 #if canImport(SwiftUI)
+import SlopDeskClientCore
+import SlopDeskSlate
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 import SwiftUI

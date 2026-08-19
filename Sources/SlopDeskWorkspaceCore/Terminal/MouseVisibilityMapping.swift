@@ -1,30 +1,22 @@
+import CSlopDeskFFI
+
 // MARK: - mouse-hide-while-typing visibility mapping
 
-/// Swift mirror of libghostty's `ghostty_action_mouse_visibility_e` C enum (`apprt.action.MouseVisibility`,
-/// `CGhostty/ghostty.h:709-713`). The raw values are pinned to the C enum's declaration order so an `Int32`
-/// delivered by a `GHOSTTY_ACTION_MOUSE_VISIBILITY` action maps 1:1 WITHOUT importing `CGhostty` into this
-/// headless, AppKit-free module — keeping the visibility decision unit-testable.
+/// The mouse-visibility face.
 ///
-/// `mouse-hide-while-typing = true` (default ON) only makes libghostty DECIDE to hide the pointer;
-/// it then delegates the actual hide/show to the embedder via this action (`Surface.zig` `hideMouse`/
-/// `showMouse` → `performAction(.mouse_visibility, .hidden/.visible)`). The GUI surface
-/// (`GhosttyTerminalView`, compile-only behind `#if canImport(CGhostty)`) reads the raw int and asks
-/// ``MouseVisibilityMapping`` whether the pointer should be visible, then drives `NSCursor`.
-public enum MouseVisibility: Int32, CaseIterable, Sendable, Equatable {
-    case visible = 0
-    case hidden = 1
-}
-
-/// The PURE, headless mouse-visibility decision. Reads the raw `ghostty_action_mouse_visibility_e`
-/// value the C `action_cb` hands across as an `Int32` and resolves whether the pointer should be VISIBLE.
+/// `mouse-hide-while-typing = true` (default ON) only makes libghostty DECIDE to hide the pointer; it
+/// then delegates the hide/show to the embedder via `GHOSTTY_ACTION_MOUSE_VISIBILITY` (`Surface.zig`
+/// `hideMouse`/`showMouse`). The GUI surface (`GhosttyTerminalView`, compile-only behind
+/// `#if canImport(CGhostty)`) reads the raw `ghostty_action_mouse_visibility_e` and asks here.
 public enum MouseVisibilityMapping {
-    /// Resolve a raw `ghostty_action_mouse_visibility_e` value to whether the pointer should be VISIBLE.
+    /// Whether the pointer should be VISIBLE.
     ///
-    /// Reads the enum EXPLICITLY (compares against the `hidden` case) rather than assuming a `{0,1}` layout:
-    /// ONLY the explicit `hidden` value hides; every other value — `visible` AND any unknown / corrupt /
-    /// future int — resolves to VISIBLE. That is the safe default (validate-then-drop): a bad value can never
-    /// strand the pointer permanently hidden, only fail-safe to shown.
+    /// Only the explicit hidden value hides — every other input, including any unknown, corrupt or
+    /// future one, shows the pointer. The two failures are not symmetrical: a pointer wrongly shown is
+    /// a cosmetic miss during typing, and a pointer wrongly hidden is a person moving a mouse they
+    /// cannot see, with no gesture that brings it back. The rule lives in
+    /// `slopdesk_terminal::pointer`, next to the shape table that arrives through the same callback.
     public static func isVisible(forRawValue raw: Int32) -> Bool {
-        MouseVisibility(rawValue: raw) != .hidden
+        slopdesk_pointer_mouse_visible(raw)
     }
 }

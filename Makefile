@@ -264,7 +264,7 @@ lint-swift-analyze: ## SwiftLint analyzer rules (full rebuild + analyze; minutes
 
 # ---------------------------------------------------------------------------- #
 # Full gate
-.PHONY: check quick check-ios check-ios-tests build test test-touched golden ffi ffi-test hook hook-test ctl ctl-test posix-test superd superd-test superd-install screend screend-test screend-install dropd dropd-test androidd androidd-test inspectord inspectord-test wire wire-test altscreen-test fuzzy-test devicelog-test superwire-test hookevent-test rowscan-test video video-test gfsimd-test miri workspace workspace-test agent agent-test terminal terminal-test cli cli-test sidecars-test codeseed codeseed-test probe probe-test host host-restart host-status
+.PHONY: check quick check-ios check-ios-tests build test test-touched golden ffi ffi-test hook hook-test ctl ctl-test posix-test superd superd-test superd-install screend screend-test screend-install dropd dropd-test androidd androidd-test inspectord inspectord-test wire wire-test altscreen-test fuzzy-test devicelog-test devicepanel-test superwire-test hookevent-test rowscan-test video video-test gfsimd-test miri workspace workspace-test agent agent-test terminal terminal-test cli cli-test sidecars-test codeseed codeseed-test probe probe-test git-test host host-restart host-status
 check: lint build test miri golden check-ios ## lint + build + test + the unsafe memory audit + golden pin + the iOS triple (full local gate)
 
 # THE INNER LOOP. Run this after every edit; run `check` once before pushing.
@@ -415,6 +415,13 @@ posix-test: ## cargo test for the isolated unsafe surface (rust/slopdesk-posix)
 ffi-test: ## cargo test for the C ABI Swift calls (rust/slopdesk-ffi)
 	cd rust/slopdesk-ffi && cargo test
 
+# The git engine. Its suite builds REAL repositories under the temp directory and compares every
+# answer with the `git` binary's own — the parity that let the four subprocesses be deleted. It is a
+# separate workspace because it vendors libgit2, which the fork-per-event root workspace must not
+# link (see the crate's manifest).
+git-test: ## cargo test for the in-process git status (rust/slopdesk-git)
+	cd rust/slopdesk-git && cargo test
+
 superd-install: ## Build + (re)install the com.slopdesk.superd LaunchAgent — RESTARTS superd
 	bash scripts/install-superd.sh
 
@@ -502,6 +509,13 @@ fuzzy-test: ## cargo test for the fuzzy matcher (rust/slopdesk-fuzzy)
 # `opt-level = 3` where the daemons want `"z"`, and only half of it is Android's.
 devicelog-test: ## cargo test for the device console grammars (rust/slopdesk-devicelog)
 	cd rust/slopdesk-devicelog && cargo test
+
+# The two device panels' shared decisions — what one ensure round means, how soon to ask again, and
+# what to do about a selection with no video yet. The Android and simulator models each held a
+# byte-identical copy; its own crate because it reads `slopdesk-wire`'s `ServiceState`, and
+# `slopdesk-wire` already depends on `slopdesk-workspace`, where the client's other broad rules live.
+devicepanel-test: ## cargo test for the device panel decisions (rust/slopdesk-devicepanel)
+	cd rust/slopdesk-devicepanel && cargo test
 
 # The superd control socket's framing — tags, lengths and the two packed bodies. Its own crate for
 # `slopdesk-screenwire`'s reason: superd writes these frames and hostd reads them, and the layout
@@ -639,7 +653,7 @@ host-status: ## Report the running hostd (pid, port, flags) and superd's child c
 # any more (docs/51), so every test that needs a real pty boots a private daemon and SKIPS without
 # the binary (`SuperdFixture`). A bare `swift test` on a clean checkout still works and still never
 # sees cargo — it just reports those tests skipped, by name.
-test: ffi hook-test ctl-test probe-test posix-test ffi-test superd-test screend-test dropd-test androidd-test inspectord-test wire-test altscreen-test fuzzy-test devicelog-test superwire-test hookevent-test rowscan-test video-test gfsimd-test workspace-test agent-test terminal-test cli-test sidecars-test codeseed-test ctl superd screend dropd androidd inspectord ## cargo test (relay + agent CLI + metadata probe + the unsafe surface + the C ABI + custodian + screen engine + file drop + android bridge + inspector + wire codec + alt-screen cut scanner + fuzzy matcher + device console grammars + superd framing + hook bodies + row scans + FEC codec + SIMD kernels + workspace rules + agent detection + terminal input + CLI core + sidecar versions + code-server profile) + swift test with the green-tree cache
+test: ffi hook-test ctl-test probe-test posix-test ffi-test git-test superd-test screend-test dropd-test androidd-test inspectord-test wire-test altscreen-test fuzzy-test devicelog-test devicepanel-test superwire-test hookevent-test rowscan-test video-test gfsimd-test workspace-test agent-test terminal-test cli-test sidecars-test codeseed-test ctl superd screend dropd androidd inspectord ## cargo test (relay + agent CLI + metadata probe + the unsafe surface + the C ABI + the git engine + custodian + screen engine + file drop + android bridge + inspector + wire codec + alt-screen cut scanner + fuzzy matcher + device console grammars + device panel decisions + superd framing + hook bodies + row scans + FEC codec + SIMD kernels + workspace rules + agent detection + terminal input + CLI core + sidecar versions + code-server profile) + swift test with the green-tree cache
 	bash scripts/pre-push-test.sh
 
 # `superd` for the same load-bearing reason as `test:` above, and it matters MORE here: this is the

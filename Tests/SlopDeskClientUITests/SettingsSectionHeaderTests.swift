@@ -7,6 +7,7 @@
 // refactor can't silently regress the header back to the raw Title-Case title.
 
 #if canImport(SwiftUI)
+import SlopDeskSlate
 import XCTest
 @testable import SlopDeskClientUI
 
@@ -18,7 +19,7 @@ final class SettingsSectionHeaderTests: XCTestCase {
         XCTAssertEqual(SlateSettingsSectionHeader.label("Secure Input"), "SECURE INPUT")
         XCTAssertEqual(SlateSettingsSectionHeader.label("Tab Badge"), "TAB BADGE")
         // Through a real Settings-page section constant, proving live titles are re-cased.
-        XCTAssertEqual(SlateSettingsSectionHeader.label(GeneralSettingsLayout.closeConfirmation), "CLOSE CONFIRMATION")
+        XCTAssertEqual(SlateSettingsSectionHeader.label("Close Confirmation"), "CLOSE CONFIRMATION")
     }
 
     /// The revert-to-confirm-fail guard: the header must NOT pass the raw Title-Case title through (which is

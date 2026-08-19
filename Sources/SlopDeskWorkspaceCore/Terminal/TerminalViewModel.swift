@@ -212,11 +212,12 @@ public final class TerminalViewModel {
 
     /// Synchronized-input tap (tmux `synchronize-panes`). When set, every OUT chunk this pane sends (macOS
     /// surface keystrokes AND iOS input-bar submits both funnel through ``sendInput(_:)``) is also offered here
-    /// so the store can MIRROR it into the other broadcast panes. The store's closure decides whether broadcast
-    /// is armed and which siblings receive it (and guards re-entry, so mirroring into a sibling does not loop
-    /// back). Local delivery via ``inputSink`` is unchanged. `@ObservationIgnored`: wiring, not view state. Nil
+    /// so the store can MIRROR it into the tab's other panes. The store's closure decides whether sync is
+    /// armed for the tab and which siblings receive it (and guards re-entry, so mirroring into a sibling does
+    /// not loop back). Local delivery via ``inputSink`` is unchanged. `@ObservationIgnored`: wiring, not view
+    /// state. Nil
     /// for headless/preview callers (never invoked).
-    @ObservationIgnored public var broadcastTap: ((Data) -> Void)?
+    @ObservationIgnored public var syncInputTap: ((Data) -> Void)?
 
     /// The terminal right-click menu's "Split Right / Split Down" item — the renderer's `menu(for:)`
     /// calls this with the chosen axis; the leaf wires it to `store.splitPaneTree(paneID, …)`. `true` =
@@ -1701,7 +1702,7 @@ public final class TerminalViewModel {
         // READ-ONLY gate: this is the SINGLE outbound ingress seam — every key/paste/IME-commit/
         // mouse-report/click-to-move byte libghostty encodes funnels here via `onWrite`, plus the iOS
         // input-bar submit, the Ctrl+C0 raw fast-path, and the synchronized-input broadcast. Dropping at the
-        // top (before `inputSink`/`broadcastTap`, before any echo-probe / glitch-caret bookkeeping) blocks
+        // top (before `inputSink`/`syncInputTap`, before any echo-probe / glitch-caret bookkeeping) blocks
         // EVERY input path with one check, so neither the local host nor the broadcast siblings see the bytes.
         // A blocked input rings the rate-limited beep once, not per byte. Output ingest (`ingestBatch`/
         // `ingestPass`) is intentionally NOT gated — read-only never blocks inbound.
@@ -1714,7 +1715,7 @@ public final class TerminalViewModel {
         inputSink?(data)
         // Synchronized input: offer the SAME bytes to the broadcast fan-out (no-op when disarmed). After the
         // local send so the source pane echoes first; the store skips the source and guards re-entry.
-        broadcastTap?(data)
+        syncInputTap?(data)
     }
 
     // MARK: Glitch caret (predictive-echo v1 — docs/12 §B → docs/17 §2.4, docs/31 #3)

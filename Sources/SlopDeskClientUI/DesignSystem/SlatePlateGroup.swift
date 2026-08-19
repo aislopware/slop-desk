@@ -19,6 +19,7 @@
 // call site has to remember to say where its button is sitting.
 
 #if canImport(SwiftUI)
+import SlopDeskSlate
 import SwiftUI
 
 /// Several plate controls on one tray — a single fill, a single corner, no gaps between members.

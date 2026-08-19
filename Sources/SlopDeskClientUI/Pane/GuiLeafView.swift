@@ -24,6 +24,8 @@
 #if canImport(SwiftUI)
 import Defaults
 import SFSafeSymbols
+import SlopDeskClientCore
+import SlopDeskSlate
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 import SwiftUI
@@ -58,19 +60,21 @@ struct GuiLeafView: View {
     /// state is all stream, with the corner chip as the way in. Per-pane view state — resets on
     /// remount, like `showStats`.
     @State private var controlsExpanded = false
-    #if os(macOS)
     /// Whether a file drag is hovering a live desktop pane (drives the drop-target highlight). Set only
     /// when the pane actually accepts uploads, so a window/dialog pane never flashes the border.
     @State private var isDropTargeted = false
-    #endif
-    #if os(macOS)
-    /// IMMERSIVE capture (system keys → host): the CGEventTap owner. Engaged while the toggle is ON —
-    /// focus/app/window/read-only edges only SUSPEND swallowing (capture resumes by itself), so the
-    /// toggle never silently flakes off. One controller per pane VIEW (the tap must die with its
-    /// mount) — the toggle's on/off state itself lives on ``RemoteWindowModel/immersiveDesired`` so a
-    /// detach/reattach remount re-engages instead of silently dropping the mode.
-    @State private var systemKeyCapture = SystemKeyCaptureController()
-    #endif
+    /// IMMERSIVE capture (system keys → host). Engaged while the toggle is ON — focus/app/window and
+    /// read-only edges only SUSPEND swallowing (capture resumes by itself), so the toggle never
+    /// silently flakes off. One per pane VIEW: the tap must die with its mount, while the toggle's
+    /// on/off state lives on ``RemoteWindowModel/immersiveDesired`` so a detach/reattach remount
+    /// re-engages instead of silently dropping the mode.
+    ///
+    /// UNGATED on purpose. The CGEventTap underneath is macOS-only and always will be, but that gate
+    /// is spelled exactly once — inside ``PaneImmersiveCapture``, whose phone half is a no-op and
+    /// whose ``PaneImmersiveCapture/isSupported`` is what keeps the footer from drawing a chip that
+    /// would do nothing. Seven gates through this view were seven places to write an invisible
+    /// `#else`.
+    @State private var immersiveCapture = PaneImmersiveCapture()
 
     /// The pane's remote-window model (picker/open/close/keyInjector). `nil` for a non-video handle.
     private var model: RemoteWindowModel? { live?.remoteWindow }
@@ -127,7 +131,7 @@ struct GuiLeafView: View {
                         fpsCapSelection: fpsCapSelection,
                         bitrateCapMbpsSelection: bitrateCapMbpsSelection,
                         immersiveOn: immersiveActive,
-                        onToggleImmersive: { toggleImmersive() },
+                        onToggleImmersive: { immersiveCapture.toggle(model: model) },
                         onCollapse: { controlsExpanded = false },
                     )
                     .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -188,11 +192,18 @@ struct GuiLeafView: View {
                 }
             }
             .animation(Slate.Anim.reveal, value: showStats)
-        #if os(macOS)
-            // DRAG-DROP FILE UPLOAD (desktop panes): a file dragged from Finder onto the remote
-            // desktop uploads over the DEDICATED PATH-4 connection (never the terminal/video paths).
-            // The drop is accepted only for a live desktop pane; a window/dialog pane rejects it (the
-            // existing `PaneDropReceiver` path-inject still covers terminal panes elsewhere).
+            // DRAG-DROP FILE UPLOAD (desktop panes): a file dragged from Finder — or, on iPad, from
+            // Files.app or any app that vends a file URL — onto the remote desktop uploads over the
+            // DEDICATED PATH-4 connection (never the terminal/video paths). The drop is accepted only
+            // for a live desktop pane; a window/dialog pane rejects it (the existing
+            // `PaneDropReceiver` path-inject still covers terminal panes elsewhere).
+            //
+            // NOT platform-gated, and it used to be. Nothing in the path is macOS's: the coordinator
+            // is Foundation over the Network-backed transfer client, `.dropDestination` is SwiftUI's
+            // on both, and the security-scoped grant an iOS drop needs is taken in
+            // `FileUploadCoordinator` where it can outlive this callback. What differs is only what a
+            // device can drag FROM — an iPhone has no cross-app drag, so the destination simply never
+            // lights there; an iPad has, and now uploads.
             .dropDestination(for: URL.self) { urls, _ in
                 handleFileDrop(urls)
             } isTargeted: { targeted in
@@ -217,7 +228,6 @@ struct GuiLeafView: View {
                 }
             }
             .animation(Slate.Anim.reveal, value: model?.activeUploads ?? [])
-        #endif
             // CAP ADMISSION: request a slot when ON-SCREEN, on appear AND whenever a sibling
             // frees one (`videoPromotionGeneration` bumps); `.task(id:)` cancels+restarts on either. Gated on
             // `isVisible` so a background-tab / zoom-hidden pane does NOT claim a `liveVideoCap` slot (else the
@@ -227,12 +237,10 @@ struct GuiLeafView: View {
             .task(id: activationKey) {
                 guard !staticMirror, model != nil, isVisible else { return }
                 _ = store.activateVideo(paneID)
-                #if os(macOS)
                 // A remount (detach/reattach) may find the model's sinks ALREADY live — then neither
                 // `canInjectSystemKeys` nor `isFocused` fires an onChange edge, so the mount itself must
                 // attempt the immersive re-engage.
-                maybeAutoEngageImmersive()
-                #endif
+                immersiveCapture.autoEngage(model: model, isFocused: isFocused)
             }
             // VISIBILITY-DRIVEN LIFECYCLE: under keep-all-mounted a hidden tab's leaf is never
             // unmounted, so `onDisappear` does NOT fire on a tab switch — driving (de)activation off `isVisible`
@@ -244,14 +252,10 @@ struct GuiLeafView: View {
             // Belt-and-braces: a genuine unmount (pane close before reconcile teardown) also frees the slot.
             .onDisappear {
                 guard !staticMirror else { return }
-                #if os(macOS)
                 // An unmounted pane must never keep swallowing the keyboard — but an unmount must NOT
                 // clear the model's immersive WISH either (a detach/reattach remount re-engages from it),
-                // so drop the onDisengage mirror-sync before tearing the tap down. The wish clears only
-                // on the manual toggle-off / the ⌃⌥⌘E escape chord.
-                systemKeyCapture.onDisengage = nil
-                systemKeyCapture.disengage()
-                #endif
+                // which is the distinction ``PaneImmersiveCapture/teardown()`` carries.
+                immersiveCapture.teardown()
                 // RELOCATION GUARD (detach/reattach): this leaf unmounts while the pane is STILL desired —
                 // in the tree (just reattached) or detached (just popped out) — and ANOTHER hosting root is
                 // mounting the same PaneID. Deactivating here would close the model mid-handoff and race the
@@ -260,110 +264,35 @@ struct GuiLeafView: View {
                 guard !store.tree.contains(paneID), !store.tree.isDetached(paneID) else { return }
                 store.deactivateVideo(paneID)
             }
-        #if os(macOS)
             // IMMERSIVE SAFETY: capture follows pane focus + injectability — but as a SUSPENSION, never a
             // tear-down. Losing workspace focus (or the satellite window's key state, which drives `isFocused`
             // there) pauses swallowing; a read-only flip withholds the sink → `canInjectSystemKeys` flips false →
             // pause too. Either gate re-opening resumes capture by itself — the user's toggle survives (the old
             // disengage-on-every-edge design made it silently flake off on any popover/focus blip). The
-            // controller's own app/window observers cover the app-level edges the same way; only the toggle,
-            // the ⌃⌥⌘E escape chord, and unmount fully disengage, and `onDisengage` keeps the toggle honest.
+            // capture's own app/window observers cover the app-level edges the same way; only the toggle,
+            // the ⌃⌥⌘E escape chord, and unmount fully disengage.
             .onChange(of: isFocused) { _, focused in
-                systemKeyCapture.setSuspended(!focused || model?.canInjectSystemKeys != true)
-                maybeAutoEngageImmersive()
+                immersiveCapture.setSuspended(!focused || model?.canInjectSystemKeys != true)
+                immersiveCapture.autoEngage(model: model, isFocused: focused)
             }
             .onChange(of: model?.canInjectSystemKeys ?? false) { _, can in
-                systemKeyCapture.setSuspended(!can || !isFocused)
-                maybeAutoEngageImmersive()
+                immersiveCapture.setSuspended(!can || !isFocused)
+                immersiveCapture.autoEngage(model: model, isFocused: isFocused)
             }
             // WISH SYNC: the model's EFFECTIVE wish (latched toggle OR the fullscreen auto-arm) can
             // change UNDER a mounted view — a re-target re-seeds the latch, and the window
-            // entering/leaving native fullscreen flips the override. Keep the tap truthful both
-            // ways: wish OFF tears an engaged tap down (dropping onDisengage first — it would only
-            // re-clear the already-off wish), wish ON re-engages through the usual gates.
+            // entering/leaving native fullscreen flips the override.
             .onChange(of: model?.immersiveEffective ?? false) { _, wish in
-                if wish {
-                    maybeAutoEngageImmersive()
-                } else if systemKeyCapture.isEngaged {
-                    systemKeyCapture.onDisengage = nil
-                    systemKeyCapture.disengage()
-                }
+                immersiveCapture.wishChanged(to: wish, model: model, isFocused: isFocused)
             }
-        #endif
     }
 
-    /// Whether immersive capture is ON for the footer toggle/chip tint (macOS; constant `false`
-    /// elsewhere — no CGEventTap). This is the model's WISH — like a suspension, a not-yet-re-engaged
-    /// remount still shows the latched tint so the mode never silently reads as off.
-    private var immersiveActive: Bool {
-        #if os(macOS)
-        model?.immersiveEffective == true
-        #else
-        false
-        #endif
-    }
+    /// Whether immersive capture is ON for the footer toggle/chip tint. This is the model's WISH —
+    /// like a suspension, a not-yet-re-engaged remount still shows the latched tint so the mode never
+    /// silently reads as off. Constant `false` on a half with no capture, because nothing there ever
+    /// sets the wish and ``PaneImmersiveCapture/isSupported`` keeps the chip off the bar entirely.
+    private var immersiveActive: Bool { model?.immersiveEffective == true }
 
-    /// Flips immersive system-key capture for this pane. Engaging requires a live, writable pane
-    /// (`canInjectSystemKeys`) and Accessibility trust — an untrusted first attempt surfaces the system
-    /// prompt instead (the user flips the toggle again once granted). The forward closure re-reads the
-    /// LIVE sink per event (mirrors `pasteAsKeystrokes`), so a read-only flip mid-capture stops
-    /// forwarding instantly even before the auto-disengage lands.
-    private func toggleImmersive() {
-        #if os(macOS)
-        if systemKeyCapture.isEngaged {
-            systemKeyCapture.disengage() // onDisengage clears the model's wish
-            return
-        }
-        // Toggling OFF a wish whose tap never re-engaged (e.g. Accessibility trust revoked since the
-        // relaunch that restored it) — nothing to disengage, just drop the wish (latched AND the
-        // fullscreen auto-arm — `setImmersiveDesired(false)` clears both) so the tint is honest.
-        if model?.immersiveEffective == true {
-            model?.setImmersiveDesired(false)
-            return
-        }
-        guard model?.canInjectSystemKeys == true else { return }
-        guard SystemKeyCaptureController.isTrusted else {
-            SystemKeyCaptureController.promptForTrust()
-            return
-        }
-        if engageImmersiveTap() { model?.setImmersiveDesired(true) }
-        #endif
-    }
-
-    #if os(macOS)
-    /// Arms `onDisengage` (the wish's mirror-sync) and engages the tap against the CURRENT key window.
-    /// The toggle click / focused remount happened in this pane's window, so it IS the key window right
-    /// now — arming the controller's window-key suspend/resume on it matters because another window of
-    /// the SAME app going key (Settings, a second satellite) keeps the app active and the pane focused,
-    /// so neither the app-active observer nor the focus onChange would pause the swallowed keyboard.
-    @discardableResult
-    private func engageImmersiveTap() -> Bool {
-        guard let m = model else { return false }
-        systemKeyCapture.onDisengage = { [weak m] in m?.setImmersiveDesired(false) }
-        return systemKeyCapture.engage(
-            forward: { [weak m] keyCode, flags, isDown in
-                m?.systemKeyInjector?(keyCode, flags, isDown)
-            },
-            keyWindow: NSApp.keyWindow,
-        )
-    }
-
-    /// RE-ENGAGE from the model's remembered wish — the detach/reattach (and relaunch-restore) path,
-    /// where this fresh view's controller starts disengaged while ``RemoteWindowModel/immersiveDesired``
-    /// is still ON. Engages only once the pane is focused (its window is key — the right window for the
-    /// suspend/resume observers) and injectable; a missing Accessibility trust leaves the wish latched
-    /// but the tap down (no prompt from a passive remount — the user re-toggles to get one).
-    private func maybeAutoEngageImmersive() {
-        guard model?.immersiveEffective == true,
-              !systemKeyCapture.isEngaged,
-              isFocused,
-              model?.canInjectSystemKeys == true,
-              SystemKeyCaptureController.isTrusted else { return }
-        engageImmersiveTap()
-    }
-    #endif
-
-    #if os(macOS)
     /// Whether this is a LIVE desktop pane that accepts drag-drop uploads (the gesture is "drop onto
     /// the remote desktop"; a window/dialog pane is not a drop target).
     private var isDesktopUploadTarget: Bool {
@@ -377,7 +306,6 @@ struct GuiLeafView: View {
         FileUploadCoordinator.upload(files: urls, host: endpoint.host, port: endpoint.port, into: model)
         return true
     }
-    #endif
 
     /// The `.task` identity: re-run admission when THIS session changes (mount), a sibling frees a slot, OR
     /// visibility flips (so a pane returning to screen re-requests its slot immediately).
@@ -628,9 +556,12 @@ private struct GuiPaneControlBar: View {
     /// group is gated as a whole so an all-absent state leaves no stray double gap in the bar's rhythm.
     private var showsModeToggles: Bool {
         var any = model?.canControlViewport == true
-        #if os(macOS)
-        any = any || immersiveOn || model?.canInjectSystemKeys == true
-        #endif
+        // The immersive chip only exists on a half that HAS a CGEventTap — capability as data
+        // (``PaneImmersiveCapture/isSupported``), never a gate here. A chip drawn where the tap is a
+        // no-op would be the listed-and-inert defect the palette and binding tables closed.
+        if PaneImmersiveCapture.isSupported {
+            any = any || immersiveOn || model?.canInjectSystemKeys == true
+        }
         return any
     }
 
@@ -656,15 +587,18 @@ private struct GuiPaneControlBar: View {
                 // DETACH ⇄ REATTACH: pop this pane out into its own OS window (the live stream survives —
                 // only the view remounts), or fold a satellite back into its tab. Mirrors ⌥⌘P / the menu.
                 // The icon flips with placement but never latches an accent — a placement command, not a
-                // mode. macOS-only: iOS has no satellite NSWindow.
-                #if os(macOS)
-                SlatePlateButton(
-                    symbol: isDetached ? .macwindowAndPointerArrow : .macwindowOnRectangle,
-                    help: isDetached ? "Reattach as a pane" : "Detach into its own window (⌥⌘P)",
-                ) {
-                    if isDetached { store.reattachPane(paneID) } else { store.detachPaneToWindow(paneID) }
+                // mode. Present only where the satellite window exists — and that capability is DATA,
+                // read from the SAME declaration (`slopdesk_workspace::binding_rows`) that decides
+                // whether ⌥⌘P is bound and whether the palette lists the verb. This button is that
+                // verb's fourth surface; a `#if` here would be a fourth place for the answer to drift.
+                if BindingRowPlatform.lists("pane.detach") {
+                    SlatePlateButton(
+                        symbol: isDetached ? .macwindowAndPointerArrow : .macwindowOnRectangle,
+                        help: isDetached ? "Reattach as a pane" : "Detach into its own window (⌥⌘P)",
+                    ) {
+                        if isDetached { store.reattachPane(paneID) } else { store.detachPaneToWindow(paneID) }
+                    }
                 }
-                #endif
             }
             // ── VIEWPORT COMMANDS (pure client compositor): fit, then the magnifier trio − / 1× / +.
             if let model, model.canControlViewport {
@@ -762,8 +696,9 @@ private struct GuiPaneControlBar: View {
                     // IMMERSIVE (system keys → host): macOS CGEventTap capture; the engaged state also
                     // shows while the sink is withheld so the user can always turn it OFF. The ⌘ glyph —
                     // immersive routes the SYSTEM chords (⌘Tab, ⌘Space…) to the host.
-                    #if os(macOS)
-                    if let model, model.canInjectSystemKeys || immersiveOn {
+                    if PaneImmersiveCapture.isSupported, let model,
+                       model.canInjectSystemKeys || immersiveOn
+                    {
                         SlatePlateButton(
                             symbol: .command,
                             help: immersiveOn
@@ -772,7 +707,6 @@ private struct GuiPaneControlBar: View {
                             tint: immersiveOn ? Slate.State.accent : Slate.Text.icon,
                         ) { onToggleImmersive() }
                     }
-                    #endif
                     // LOCK: the model owns the on/off state (``RemoteWindowModel/viewportLocked``) so this
                     // icon, the ⌥⌘L chord, and the menu row can never drift.
                     if let model, model.canControlViewport {

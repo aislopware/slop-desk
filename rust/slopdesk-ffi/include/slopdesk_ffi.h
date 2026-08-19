@@ -33,6 +33,7 @@
 #ifndef SLOPDESK_FFI_H
 #define SLOPDESK_FFI_H
 
+#include <TargetConditionals.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -99,6 +100,42 @@ uint32_t slopdesk_paste_dangers(const uint8_t *text, size_t len);
 bool slopdesk_paste_should_warn(const uint8_t *text, size_t len, bool protection_on,
                                 bool bracketed_safe, bool program_advertised_bracketed,
                                 bool is_alternate_screen);
+// The confirmation's whole text. `ask` is 0 unsafe paste, 1 OSC-52 read, 2 OSC-52 write. The
+// bullets are the mask SAID OUT LOUD, in bit order; the reason is what the body prints when the
+// mask is empty, so only the two OSC asks have one. The preview caps the payload and renders every
+// control character in caret notation, so the escape being warned about cannot run in the warning.
+size_t slopdesk_paste_danger_count(uint32_t mask);
+size_t slopdesk_paste_danger_description(uint32_t mask, size_t index, uint8_t *out, size_t cap);
+size_t slopdesk_paste_ask_title(uint8_t ask, uint8_t *out, size_t cap);
+size_t slopdesk_paste_ask_affirmative(uint8_t ask, uint8_t *out, size_t cap);
+size_t slopdesk_paste_ask_reason(uint8_t ask, uint8_t *out, size_t cap);
+size_t slopdesk_paste_preview(const uint8_t *text, size_t len, uint8_t *out, size_t cap);
+
+/* ---- what a gesture at the terminal surface MEANS, before anything is sent ----------------
+ * Every answer is a boolean, a case index or a count, so none of these takes the (out, cap)
+ * shape and none can come up short. Two facts run through all of them: a mouse-reporting
+ * program owns the pointer, and a full-screen program owns the screen — where either holds,
+ * the local rule steps aside.                                                                */
+
+// 0 write it now · 1 confirm first (`clipboard-write = ask`) · 2 nothing to write.
+uint8_t slopdesk_term_clipboard_write(bool confirm_requested, const uint8_t *payload,
+                                      size_t payload_len);
+// 0 nothing selected · 1 copy only · 2 copy and delete.
+uint8_t slopdesk_term_cut_action(bool has_selection, bool alternate_screen, bool prompt_zone);
+// How many DEL bytes the delete half sends; 0 degrades the cut to a copy.
+size_t slopdesk_term_cut_delete_count(const uint8_t *selection, size_t selection_len,
+                                      bool selection_ends_at_cursor);
+bool slopdesk_term_focus_follows_mouse(bool setting, bool already_focused);
+// Whether a key event's characters may be handed to the encoder as text. The text itself is
+// never written back: it is the caller's own input, byte for byte.
+bool slopdesk_term_forwards_encoder_text(const uint8_t *characters, size_t characters_len);
+// The byte an undo/redo gesture sends, or -1 for none. A one-byte answer is 0..=255, so the
+// sentinel is outside the range by construction.
+int32_t slopdesk_term_prompt_edit_byte(bool undo, bool redo, bool in_prompt_zone);
+// `action` is the CONFIG TOKEN ("paste", "copy-or-paste", …), the spelling the config file
+// carries, so there is no second vocabulary. An unrecognised token does not intercept.
+bool slopdesk_term_right_click_intercepts_as_paste(const uint8_t *action, size_t action_len,
+                                                   bool has_selection, bool mouse_captured);
 
 typedef struct SlopDeskReplay SlopDeskReplay;
 
@@ -207,12 +244,65 @@ bool    slopdesk_agent_kind_is_generic(const uint8_t *bytes, size_t len);
 size_t  slopdesk_agent_process_basename(const uint8_t *bytes, size_t len, uint8_t *out, size_t cap);
 size_t  slopdesk_agent_canonical_name(const uint8_t *bytes, size_t len, uint8_t *out, size_t cap);
 bool    slopdesk_agent_is_sensitive(const uint8_t *bytes, size_t len);
+// The five gates are the user's badge toggles, true = shown, and each silences ONLY its own
+// family's signal: an agent's spinner/finish/hand, or a plain command's clean/failed exit. A
+// program's own busy bit and its OSC 9;4 progress have no opt-out and are never masked, so a
+// silenced agent still lets the shell speak. All five true is the ungated ladder exactly.
 int8_t  slopdesk_agent_tab_badge(uint8_t agent, int8_t completion, bool is_busy,
                                  const uint8_t *foreground, size_t foreground_len, bool fresh,
-                                 int8_t progress, bool unseen_agent_done);
+                                 int8_t progress, bool unseen_agent_done,
+                                 bool agent_while_processing, bool agent_when_complete,
+                                 bool agent_when_awaiting_input, bool command_when_finishes,
+                                 bool command_when_fails);
 bool    slopdesk_agent_badge_needs_attention(uint8_t badge);
 bool    slopdesk_agent_badge_is_busy_tier(uint8_t badge);
 uint8_t slopdesk_agent_status_rollup(const uint8_t *statuses, size_t len);
+// Which pane is asking for the human. The two EDGE rules take the state last NOTIFIED for, not the
+// last state seen, so re-entering a state already announced is not news; `completion` is the
+// hook-less finish (an active state settling to plain idle), which `Done -> Idle` is NOT.
+bool    slopdesk_agent_is_attention(uint8_t status);
+bool    slopdesk_agent_attention_edge(uint8_t previous, uint8_t current);
+bool    slopdesk_agent_attention_completion(uint8_t previous, uint8_t current);
+// The POSITION of the oldest pane needing attention in the caller's own order, or -1 for none:
+// blocked outranks finished wherever it sits, and within a bucket the earliest pane has waited
+// longest. A position, not an identity — the caller holds the panes.
+ptrdiff_t slopdesk_agent_attention_oldest(const uint8_t *statuses, size_t len);
+// One press of the jump walk over a queue of `len` entries, `visited` flagging the ones already
+// stepped onto: >= 0 advance to that position, -1 pop back to the origin, -2 nowhere to pop to.
+ptrdiff_t slopdesk_agent_attention_walk(const bool *visited, size_t len, bool origin_is_live);
+
+// ---- Peek & Reply: the same ordering with one clause in front of it -------------
+//
+// The card ANSWERS a blocked pane in place instead of jumping to it, so a focused pane that is
+// itself blocked is taken first. `answered` is the advance-to-next exclusion: a pane replied to a
+// moment ago keeps reporting blocked until the host re-reports, so without it the card would hand
+// back the pane it had only just finished with.
+
+// `is_focused` names the FOCUSED pane rather than a position, because that pane need not appear in
+// `statuses` at all. `present == false` is "nothing waiting", which is not position 0.
+typedef struct {
+    bool   present;
+    bool   is_focused;
+    size_t position;
+} SlopDeskPeekTarget;
+
+// `present == false` is "no queue worth counting" — a total under two, where the calm static
+// caption stays. Never a sentinel: "1 of 1" and "no queue" are different things to draw.
+typedef struct {
+    bool     present;
+    uint32_t position;
+    uint32_t total;
+} SlopDeskPeekQueue;
+
+SlopDeskPeekTarget slopdesk_agent_peek_target(bool has_focused, uint8_t focused_status,
+                                              bool focused_answered, const uint8_t *statuses,
+                                              const bool *answered, size_t len);
+// `answered_count` is how many panes this run has already advanced past, and is NOT counted out of
+// `answered`: a pane can be answered and then closed, which takes it out of the list without taking
+// back the fact that it was answered — a total counted from the flags would shrink as it was worked.
+SlopDeskPeekQueue  slopdesk_agent_peek_queue(const uint8_t *statuses, const bool *answered,
+                                             size_t len, size_t answered_count);
+
 // The rollup RANK — the wire's type-27 state byte — which is deliberately not the case order:
 // none(0) < idle(1) < done(2) < working(3) < needsPermission(4). from_urgency degrades unknown to
 // none, so a newer host's datagram cannot trap an older client.
@@ -350,6 +440,10 @@ int32_t slopdesk_agent_job_identify(SlopDeskAgentJob *handle,
                                     slopdesk_agent_resolve_fn resolve, void *context);
 size_t  slopdesk_agent_job_answer(SlopDeskAgentJob *handle, uint8_t *out, size_t cap);
 
+// Whether the host should be holding a system-sleep assertion right now — the WHOLE state, asked on
+// every fold, so the daemon's create⇄release stays balanced against the answer rather than an edge.
+bool    slopdesk_agent_should_prevent_sleep(bool any_agent_working, bool enabled);
+
 // MARK: - The workspace document's solvers (`rust/slopdesk-workspace`)
 //
 // The document's VALUE TYPES stay in Swift — 262 files import them, and a `SplitNode` is what
@@ -398,8 +492,45 @@ bool   slopdesk_ws_looks_secret(const uint8_t *bytes, size_t len);
 // for "no name to show" — an absent, blank or all-slashes path — which a real name can never be.
 bool   slopdesk_ws_transient_plugin_cwd(const uint8_t *bytes, size_t len);
 size_t slopdesk_ws_cwd_display_name(const uint8_t *bytes, size_t len, uint8_t *out, size_t cap);
+// The WHOLE directory, as a badge prints it: a `/Users/<name>` or `/home/<name>` prefix collapsed to
+// `~`, and a trailing `/` marking it a directory. Matched by SHAPE, never against this machine's own
+// home — the path came off the remote host. `0` here means the path was empty.
+size_t slopdesk_ws_cwd_badge_path(const uint8_t *bytes, size_t len, uint8_t *out, size_t cap);
 uint8_t slopdesk_ws_paste_risk(const uint8_t *bytes, size_t len, bool target_is_secure,
                                size_t max_length);
+
+// ---- A clipboard as the KEYS that type it --------------------------------------
+//
+// macOS drops synthetic UNICODE events at a secure field, and takes synthetic KEY events, so the
+// only paste a `sudo` prompt accepts is the text spelled back out as US-QWERTY presses. The unit
+// walked is the grapheme CLUSTER, never the scalar: a decomposed "é" walked as scalars would type
+// a bare "e" into a password field and report one skip, which is a DIFFERENT password accepted
+// with nothing on screen to say so.
+
+// The largest clipboard, in CLUSTERS, that will be replayed. Also the ceiling
+// `slopdesk_ws_paste_risk` refuses past — one number, asked for at both sites.
+#define SLOPDESK_KEYSTROKE_MAX_LENGTH 4096
+
+// `[u32 BE skipped][u32 BE count]` then `count` × `[u16 BE key_code][u8 shift]`. Never 0: an empty
+// clipboard is the eight header bytes with both counts zero, which is not §4's refusal. `skipped`
+// counts a cluster with no key AND every cluster past the cap — in both cases the field will not
+// hold what the clipboard did, and the caller has one banner to say so with.
+size_t slopdesk_keystroke_replay(const uint8_t *text, size_t text_len, uint8_t *out, size_t cap);
+
+// ---- Peek & Reply: what the card sends, and the tail it shows -------------------
+//
+// Which PANE it answers is `slopdesk_agent_peek_*` above. Every reply carries its own single
+// trailing newline; `0` means send NOTHING, which is an empty, whitespace-only or bare-`!` field.
+size_t slopdesk_ws_peek_reply_text(const uint8_t *field, size_t field_len, uint8_t *out, size_t cap);
+// A quick-answer digit typed into an empty field. `0` for anything outside 1–9.
+size_t slopdesk_ws_peek_quick_answer(int32_t digit, uint8_t *out, size_t cap);
+// The `limit` newest blocks as one line each, oldest-first, from two PARALLEL flat blobs under one
+// count. `[u32 BE lines]`, then that many `[u32 BE length]` words, then the bytes back to back —
+// the count leads so "this pane has no blocks yet" is not §4's "ask again".
+size_t slopdesk_ws_peek_recent_lines(const uint8_t *commands, size_t commands_len,
+                                     const size_t *command_lengths, const uint8_t *statuses,
+                                     size_t statuses_len, const size_t *status_lengths,
+                                     size_t count, size_t limit, uint8_t *out, size_t cap);
 
 // What a preset or a template types into the pane it just opened: a literal `cd` line when a
 // directory is set, then the command through the token parser. A null or empty `cwd` is "no
@@ -438,155 +569,694 @@ bool slopdesk_ws_successor_after_close(SlopDeskWsUuid closing,
                                        const SlopDeskWsUuid *history, size_t history_count,
                                        SlopDeskWsUuid *answer);
 
-SlopDeskWsRect  slopdesk_ws_sanitize(SlopDeskWsRect frame);
-// A camera's origin has no extent to floor, so it is its own door rather than a rect with a size
-// the caller would have to invent and then discard.
-SlopDeskWsPoint slopdesk_ws_sanitize_camera(SlopDeskWsPoint origin);
-double          slopdesk_ws_coordinate_bound(void);
-// A canvas or split metric a Rust routine here ENFORCES: 0 cascade step, 1 cull margin,
-// 2 placement overlap threshold, 3 minimum flex weight. Unknown index answers 0, which is
-// outside every one of their bands.
-double          slopdesk_ws_canvas_metric(uint8_t index);
-SlopDeskWsRect  slopdesk_ws_screen_rect(SlopDeskWsRect frame, SlopDeskWsPoint camera);
-SlopDeskWsPoint slopdesk_ws_canvas_point(SlopDeskWsPoint point, SlopDeskWsPoint camera);
+// What a pane is CALLED, in the one precedence every surface that names one shares — the rail row,
+// the tab strip, the pane switcher, the window title. Each `0` below is documented per door: for
+// the name and mark doors it is "no answer, keep your own rung"; for the two TITLE doors it
+// is the EMPTY title, which the at-root idle shell yields on purpose so the live chain can speak.
+size_t slopdesk_ws_slot_process_name(const uint8_t *bytes, size_t len, bool present,
+                                     uint8_t *out, size_t cap);
+size_t slopdesk_ws_process_display_name(const uint8_t *bytes, size_t len, bool present,
+                                        uint8_t *out, size_t cap);
+bool   slopdesk_ws_slot_label_is_command(const uint8_t *bytes, size_t len, bool present);
+bool   slopdesk_ws_is_agent_session(bool has_agent_status, const uint8_t *bytes, size_t len,
+                                    bool present);
+// Asked for rather than transcribed: a copy pinned to a different presentation would draw a
+// different glyph beside the same rows.
+size_t slopdesk_ws_agent_title_mark(uint8_t *out, size_t cap);
+uint32_t slopdesk_ws_command_title_min_duration_ms(void);
+size_t slopdesk_ws_agent_marked_title(const uint8_t *bytes, size_t len, uint8_t *out, size_t cap);
+size_t slopdesk_ws_normalized_program_title(const uint8_t *bytes, size_t len, bool present,
+                                            uint8_t *out, size_t cap);
 
-// The canvas SOLVERS. A body is a pane or a whole group moving as one; `kind == 1` is a group and
-// anything else a pane, because a body wrongly read as a pane moves alone where one wrongly read as
-// a group drags its neighbours with it.
+// The two composite inputs. Every string is a span into the ONE `strings` blob passed alongside —
+// one pointer, one lifetime, one scope, where a `(ptr, len)` per field would mean seven nested
+// borrows per row per frame. `kind` is a PaneKind byte: 0 terminal, 1 desktop.
 typedef struct {
     uint8_t        kind;
-    SlopDeskWsUuid id;
-} SlopDeskWsBodyRef;
+    SlopDeskWsSpan spec_title;
+    bool           user_renamed;
+    SlopDeskWsSpan cwd;
+    SlopDeskWsSpan live_title;
+    SlopDeskWsSpan process_label;
+    SlopDeskWsSpan project_key;
+} SlopDeskWsRowTitle;
+
+// Line two. `spec_title` absent is a pane with no spec, which has no second line at all;
+// `project_key` absent is a surface with no section headers, where the full path is the only place
+// the location can be shown.
+typedef struct {
+    uint8_t        kind;
+    SlopDeskWsSpan spec_title;
+    bool           video_present;
+    SlopDeskWsSpan video_app_name;
+    SlopDeskWsSpan video_title;
+    SlopDeskWsSpan cwd;
+    SlopDeskWsSpan live_title;
+    SlopDeskWsSpan project_key;
+} SlopDeskWsSubtitle;
 
 typedef struct {
-    SlopDeskWsBodyRef id;
-    SlopDeskWsRect    rect;
-} SlopDeskWsBody;
+    SlopDeskWsSpan structural_title;
+    bool           user_renamed;
+    bool           is_agent;
+    SlopDeskWsSpan intent;
+    SlopDeskWsSpan running_command;
+    SlopDeskWsSpan program_title;
+    SlopDeskWsSpan process_title;
+    uint8_t        kind;
+    SlopDeskWsSpan cwd_title;
+    SlopDeskWsSpan fallback;
+} SlopDeskWsLiveRowTitle;
+
+// `has_duration == false` is a block still RUNNING, which is a different fact from one that
+// finished instantly — the title rule skips both, but for different reasons.
+typedef struct {
+    SlopDeskWsSpan text;
+    bool           has_duration;
+    uint32_t       duration_ms;
+} SlopDeskWsCommandTitleBlock;
+
+size_t slopdesk_ws_row_title(SlopDeskWsRowTitle inputs, const uint8_t *strings,
+                             size_t strings_len, uint8_t *out, size_t cap);
+// `0` = no second line, which is a single-line row.
+size_t slopdesk_ws_pane_subtitle(SlopDeskWsSubtitle inputs, const uint8_t *strings,
+                                 size_t strings_len, uint8_t *out, size_t cap);
+size_t slopdesk_ws_last_command_title(const SlopDeskWsCommandTitleBlock *blocks, size_t count,
+                                      const uint8_t *strings, size_t strings_len,
+                                      uint8_t *out, size_t cap);
+size_t slopdesk_ws_live_row_title(SlopDeskWsLiveRowTitle inputs,
+                                  const SlopDeskWsCommandTitleBlock *blocks, size_t count,
+                                  const uint8_t *strings, size_t strings_len,
+                                  uint8_t *out, size_t cap);
+
+// ---- The one ranking every search field asks for ----
+//
+// A candidate's fields ride as spans into the strings blob, `stride` of them per candidate in
+// PRIORITY order, so one searchable field and three are the same door with a different number. The
+// first field that matches decides both the score and the tier, and a lower tier always wins: the
+// row CALLED Read Only outranks the row that merely mentions locking, whatever they scored.
 
 typedef struct {
-    double   gutter;
-    double   skin;
-    uint32_t max_slide_passes;
-    uint32_t max_relax_iterations;
-    double   insert_coverage;
-    bool     enabled;
-} SlopDeskWsNonOverlap;
-
-// The tuning both languages start from — exported, not transcribed.
-SlopDeskWsNonOverlap slopdesk_ws_non_overlap_default(void);
-
-SlopDeskWsRect slopdesk_ws_slide(SlopDeskWsRect snapped, SlopDeskWsPoint from,
-                                 const SlopDeskWsBody *bodies, size_t count,
-                                 SlopDeskWsNonOverlap config);
-// The answer INCLUDES the pinned body at its target, so one write commits the arrangement.
-size_t slopdesk_ws_separate(SlopDeskWsBodyRef pinned, SlopDeskWsRect pinned_rect,
-                            const SlopDeskWsBody *bodies, size_t count,
-                            SlopDeskWsNonOverlap config, SlopDeskWsBody *out, size_t cap);
-// SIZE_MAX = intent did not fire, which is not the same as a commit of zero bodies.
-size_t slopdesk_ws_make_space(SlopDeskWsRect target, SlopDeskWsBodyRef dragged,
-                              const SlopDeskWsBody *bodies, size_t count,
-                              SlopDeskWsNonOverlap config, SlopDeskWsBody *out, size_t cap);
-// Anchor: 0 top-left · 1 top · 2 top-right · 3 left · 4 right · 5 bottom-left · 6 bottom ·
-// 7 bottom-right.
-SlopDeskWsRect slopdesk_ws_clamp_resize(SlopDeskWsRect frame, uint8_t anchor,
-                                        const SlopDeskWsBody *bodies, size_t count,
-                                        double min_width, double min_height,
-                                        SlopDeskWsNonOverlap config);
-bool slopdesk_ws_separation(SlopDeskWsRect a, SlopDeskWsRect b, double gutter,
-                            double *dx, double *dy);
+    size_t candidate_count;
+    size_t stride;              // fields per candidate; 0 answers nothing
+    bool   positions_wanted;    // false skips every backtrace
+    size_t positions_tier;      // the ONE field the caller underlines
+} SlopDeskWsSearchRankInputs;
 
 typedef struct {
-    double engage;
-    double release;
-    double gutter;
-    double grid_spacing;
-    double grid_engage;
-    double grid_release;
-    bool   snaps_to_panes;
-    bool   snaps_to_grid;
-} SlopDeskWsSnap;
+    size_t  candidate;
+    size_t  tier;
+    int32_t score;
+    size_t  position_offset;    // into the `positions` array
+    size_t  position_count;     // 0 for a row nothing underlines
+} SlopDeskWsSearchRanked;
 
-// A held stick crosses in BOTH directions: the caller hands back what it got last frame, and that is
-// what makes the hold asymmetric rather than re-decided from scratch every frame.
-typedef struct {
-    bool    present;
-    uint8_t own_edge;  // 0 min · 1 mid · 2 max
-    double  target;
-    bool    is_grid;
-} SlopDeskWsStick;
+// Returns how many rows matched. A `cap` or `positions_cap` too small leaves BOTH buffers untouched
+// and still reports both sizes, so one retry with the two numbers is always enough.
+size_t slopdesk_ws_search_rank(SlopDeskWsSearchRankInputs inputs, const SlopDeskWsSpan *fields,
+                               const uint8_t *strings, size_t strings_len,
+                               const uint8_t *query, size_t query_len,
+                               SlopDeskWsSearchRanked *out, size_t cap,
+                               uint32_t *positions, size_t positions_cap,
+                               size_t *positions_needed);
+// Asked for rather than transcribed: a drifted copy lets one surface build rows the one beside it
+// capped away.
+size_t slopdesk_ws_max_search_results(void);
 
-typedef struct {
-    uint8_t orientation;  // 0 vertical · 1 horizontal
-    double  position;
-    double  start;
-    double  end;
-    uint8_t kind;  // 0 gutter · 1 edge · 2 centre · 3 viewport
-} SlopDeskWsGuide;
-
-// Always written, even when the guide buffer was too small — a commit never has to size one.
-typedef struct {
-    SlopDeskWsRect  frame;
-    SlopDeskWsStick stick_x;
-    SlopDeskWsStick stick_y;
-} SlopDeskWsSnapAnswer;
-
-SlopDeskWsSnap slopdesk_ws_snap_default(void);
-
-// Both return the guide count the answer HAS.
-size_t slopdesk_ws_snap_move(SlopDeskWsRect proposed, const SlopDeskWsRect *others, size_t count,
-                             SlopDeskWsRect viewport, bool has_viewport, SlopDeskWsSnap config,
-                             SlopDeskWsStick previous_x, SlopDeskWsStick previous_y,
-                             SlopDeskWsSnapAnswer *answer,
-                             SlopDeskWsGuide *guides, size_t guides_cap);
-size_t slopdesk_ws_snap_resize(SlopDeskWsRect proposed, uint8_t anchor,
-                               const SlopDeskWsRect *others, size_t count,
-                               SlopDeskWsRect viewport, bool has_viewport,
-                               double min_width, double min_height, SlopDeskWsSnap config,
-                               SlopDeskWsStick previous_x, SlopDeskWsStick previous_y,
-                               SlopDeskWsSnapAnswer *answer,
-                               SlopDeskWsGuide *guides, size_t guides_cap);
-
-// A pane as the geometry rules see it: three facts, not a whole `CanvasItem`. None of these rules
-// consults a pane's spec, group or z, so what crosses is the projection rather than the document.
-typedef struct {
-    SlopDeskWsUuid id;
-    SlopDeskWsRect rect;
-    bool           is_video;
-} SlopDeskWsPlaced;
+// ---- When the app is allowed to SPEAK ----
+//
+// Both enums cross as their CASE INDEX. A byte neither map below names reads as the quiet case —
+// the system's own foreground behaviour, no cue — so a disagreement costs a notification rather
+// than producing one nobody asked for.
 
 typedef struct {
-    SlopDeskWsUuid id;
-    SlopDeskWsRect rect;
-} SlopDeskWsCard;
+    uint8_t kind;         // 0 explicit OSC · 1 command finish · 2 watch finish
+                          // · 3 agent task complete · 4 agent await input
+    int32_t exit;         // the code, when `kind` is a command finish
+    bool    exit_present; // false reads as a clean exit, whatever `exit` holds
+} SlopDeskWsNotifyEvent;
 
 typedef struct {
-    SlopDeskWsUuid  id;
-    SlopDeskWsPoint screen_point;
-    uint8_t         edge;  // 0 top · 1 bottom · 2 left · 3 right
-} SlopDeskWsBeacon;
+    bool    app_notifications_enabled;
+    bool    notify_on_finish;
+    bool    notify_on_error;
+    bool    notify_on_watch_finish;
+    uint8_t foreground;   // 0 off · 1 always · 2 only while the source tab is unfocused
+    bool    agent_notify_task_complete;
+    bool    agent_notify_await_input;
+} SlopDeskWsNotifySettings;
 
-SlopDeskWsRect slopdesk_ws_resizing(SlopDeskWsRect frame, uint8_t anchor,
-                                    double delta_width, double delta_height,
-                                    double min_width, double min_height);
-SlopDeskWsRect slopdesk_ws_placement(SlopDeskWsRect near, bool has_near,
-                                     const SlopDeskWsRect *existing, size_t count,
-                                     SlopDeskWsRect viewport, double width, double height,
-                                     double cascade);
-bool slopdesk_ws_pane_visible(SlopDeskWsPlaced pane, SlopDeskWsPoint camera,
-                              double viewport_width, double viewport_height,
-                              SlopDeskWsUuid focused, bool has_focused, double margin);
-// Deliberately not the same question as visibility: terminals held mounted must not pollute the
-// video-cap membership set.
-bool slopdesk_ws_pane_in_viewport(SlopDeskWsRect rect, SlopDeskWsPoint camera,
-                                  double viewport_width, double viewport_height);
-// `scale` is written whenever non-null, even when the cards did not fit.
-size_t slopdesk_ws_overview_layout(const SlopDeskWsPlaced *panes, size_t count,
-                                   double viewport_width, double viewport_height, double padding,
-                                   double *scale, SlopDeskWsCard *out, size_t cap);
-size_t slopdesk_ws_offscreen_beacons(const SlopDeskWsPlaced *panes, size_t count,
-                                     SlopDeskWsPoint camera,
-                                     double viewport_width, double viewport_height, double inset,
-                                     SlopDeskWsBeacon *out, size_t cap);
+// A token bucket, crossing by value in both directions.
+typedef struct {
+    double capacity;
+    double refill_per_second;
+    double tokens;
+    double last_refill;
+} SlopDeskWsNotifyRateLimiter;
+
+bool     slopdesk_ws_notify_should_deliver(SlopDeskWsNotifyEvent event, bool app_active,
+                                           bool source_pane_visible,
+                                           SlopDeskWsNotifySettings settings);
+uint32_t slopdesk_ws_notify_long_threshold_ms(void);
+bool     slopdesk_ws_notify_is_long_running(uint32_t duration_ms);
+// 0 no badge · 1 success · 2 failure
+uint8_t  slopdesk_ws_notify_badge(int32_t exit, bool exit_present, uint32_t duration_ms,
+                                  bool pane_focused, uint32_t long_threshold_ms);
+bool     slopdesk_ws_notify_should_notify_completion(uint32_t duration_ms, bool pane_focused,
+                                                     bool enabled, uint32_t long_threshold_ms);
+// 0 silence · 1 task complete · 2 awaiting input
+uint8_t  slopdesk_ws_notify_agent_sound(bool needs_input, bool sound_task_complete,
+                                        bool sound_await_input);
+bool     slopdesk_ws_notify_should_ring_bell(bool sound_shell_controlled);
+bool     slopdesk_ws_notify_should_beep_on_error(int32_t exit, bool exit_present,
+                                                 bool sound_on_error);
+// The banner's title and body, written back to back; `title_len` says where the split is, so a
+// title that contains any byte a separator could use is still read back whole.
+size_t   slopdesk_ws_notify_explicit_content(const uint8_t *pane_title, size_t pane_title_len,
+                                             const uint8_t *explicit_title, size_t explicit_title_len,
+                                             const uint8_t *body, size_t body_len,
+                                             uint8_t *out, size_t cap, size_t *title_len);
+// The phrase an in-app card leads with, resolved from WHO spoke and WHAT happened together — the
+// same flavour is "is done" for an agent and "finished" for a command.
+// speaker: 0 agent · 1 command      flavour: 0 notice · 1 success · 2 failure · 3 attention
+// A command's notice and its attention are returned VERBATIM: those two already carry their own
+// wording, and an unrecognised byte on either axis lands on that pair.
+size_t   slopdesk_ws_notify_toast_headline(uint8_t speaker, uint8_t flavour,
+                                           const uint8_t *subject, size_t subject_len,
+                                           uint8_t *out, size_t cap);
+// Spends a token if there is one, writing the refilled bucket back through `limiter`.
+bool     slopdesk_ws_notify_rate_limit_allow(SlopDeskWsNotifyRateLimiter *limiter, double now);
+
+// ---- What the window's CHROME shows around the panes ----
+//
+// Two of these have a rung that means NO OPINION, and each says so in the way its own answer allows:
+// the sidebar's is -1 beside the booleans 0 and 1, the Dock's is a `present` flag beside its
+// fraction. A refusal has to sit outside the range of every real answer, or it is read as one.
+// Every enum here crosses as a case index, and an unrecognised byte reads as the quiet case.
+
+typedef struct {
+    bool collapsed;
+    bool manual_override;    // the user's own ⌘⇧L or swipe put it where it is
+    bool last_auto;          // read only when `last_auto_present`
+    bool last_auto_present;  // false is the first application — which counts as a regime edge
+} SlopDeskWsSidebarState;
+
+typedef struct {
+    bool   tinted;
+    bool   animates;
+    double fraction;         // read only when `fraction_present`
+    bool   fraction_present; // false is the indeterminate spinner
+} SlopDeskWsDockTile;
+
+// `mode` is 0 never auto-hide · 1 always shown · 2 auto. 1 collapse · 0 reveal · -1 no opinion.
+int32_t slopdesk_ws_sidebar_desired_collapsed(uint8_t mode, size_t tab_count);
+// The flags the chrome should hold afterwards. Actuation is gated on the 1↔>1 tab-count EDGE, so a
+// manual collapse survives an unrelated tab opening within the same regime.
+SlopDeskWsSidebarState slopdesk_ws_sidebar_apply_auto_hide(uint8_t mode, size_t tab_count,
+                                                           SlopDeskWsSidebarState state);
+// `policy` is 0 while a process runs · 1 always · 2 more than one tab.
+bool slopdesk_ws_close_should_confirm(uint8_t policy, bool is_busy, size_t tab_count);
+// `rollup` is the WIRE's own OSC 9;4 discriminant — 1 in progress · 2 error · 3 indeterminate;
+// 0 (clear) and anything else is the absence of a rollup.
+SlopDeskWsDockTile slopdesk_ws_dock_tile(uint8_t rollup, uint8_t percent, bool any_failure,
+                                         bool animate_enabled, bool error_badge_enabled);
+
+/* Who owns the TOP EDGE in borderless fullscreen — the dwell-gated Parallels model, recorded in
+ * docs/DECISIONS.md 2026-07-22. In a fullscreen remote desktop the pointer at the very top must
+ * reach the REMOTE menu bar first, but macOS's own auto-hide reveals the LOCAL one on a bare touch
+ * and steals the click. So a passing touch stays remote; holding the edge for the dwell is the
+ * deliberate "I want my Mac's menu bar" gesture.
+ *
+ * The gate crosses BY VALUE both ways: it is five numbers with no interior, and a fold that returns
+ * the next gate cannot leave a stale one behind for a later pointer move to read. `pointer_y_from_
+ * top` is DISTANCE FROM THE SCREEN'S TOP EDGE in points (0 = pressed against it), so the one
+ * coordinate flip stays with the window layer that owns the screen; the clock is an argument, so
+ * nothing behind the door reads one.
+ *
+ * Fold on every pointer move AND once at `slopdesk_ws_dwell_deadline` — a motionless pointer emits
+ * no further moves, so the dwell can only complete on a timer re-feeding the last position.        */
+#define SLOPDESK_WS_DWELL_HIDDEN   0u
+#define SLOPDESK_WS_DWELL_ARMING   1u
+#define SLOPDESK_WS_DWELL_REVEALED 2u
+
+typedef struct {
+    uint8_t phase;                // one of SLOPDESK_WS_DWELL_*
+    double  since;                // when the running dwell started — read only while ARMING
+    double  dwell_seconds;        // the hold this gate demands
+    double  reveal_zone_points;   // the arming zone, from the top edge
+    double  conceal_zone_points;  // the conceal zone — wider, so the revealed bar does not flicker
+} SlopDeskWsDwellGate;
+
+SlopDeskWsDwellGate slopdesk_ws_dwell_gate(void);
+SlopDeskWsDwellGate slopdesk_ws_dwell_update(SlopDeskWsDwellGate gate, double pointer_y_from_top,
+                                             double now);
+// False means nothing is arming — no timer to schedule — and then `*out` is untouched.
+bool slopdesk_ws_dwell_deadline(SlopDeskWsDwellGate gate, double *out);
+
+// ---- What the sidebar SHOWS, in what order, under which labels ----
+//
+// Both list doors answer in the CALLER's indices: a rail row is an id, a kind, a badge, a selection
+// flag and half a dozen strings, almost none of which decides where it goes, so the answer names
+// rows and the near side reorders the array it already holds.
+
+typedef struct {
+    SlopDeskWsSpan title;
+    SlopDeskWsSpan subtitle;
+    // Never drawn, always searchable: a git-repo row shows its git line where its path would be, so
+    // without the raw cwd it could not be found by path at all.
+    SlopDeskWsSpan cwd;
+    SlopDeskWsSpan process_label;
+} SlopDeskWsRailRowFields;
+
+// `tab_rank` is where the row's tab sits in the display order; SIZE_MAX for a tab absent from it,
+// which sorts last without dropping the row.
+typedef struct {
+    SlopDeskWsSpan project_key;
+    size_t         tab_rank;
+} SlopDeskWsRailPlanRow;
+
+typedef struct {
+    size_t row_index;
+    size_t section;
+} SlopDeskWsRailPlacement;
+
+// A label that may collide with an identical one, and the path it was derived from — a row's title
+// and its cwd, or a section's header and its project key. ONE rule breaks both.
+typedef struct {
+    SlopDeskWsSpan text;
+    SlopDeskWsSpan source;
+} SlopDeskWsRailLabel;
+
+bool slopdesk_ws_rail_row_matches(SlopDeskWsRailRowFields fields, const uint8_t *strings,
+                                  size_t strings_len, const uint8_t *query, size_t query_len);
+// Returns how many placements there ARE, which is always `count`. A short `cap` writes nothing and
+// returns the same number, so the retry is §4's.
+size_t slopdesk_ws_rail_plan(const SlopDeskWsRailPlanRow *rows, size_t count,
+                             const uint8_t *strings, size_t strings_len,
+                             SlopDeskWsRailPlacement *out, size_t cap);
+// `0` = keep the label you have. A qualified label is never empty, so the two never collide.
+size_t slopdesk_ws_rail_disambiguated_label(const SlopDeskWsRailLabel *items, size_t count,
+                                            const uint8_t *strings, size_t strings_len,
+                                            size_t index, uint8_t *out, size_t cap);
+
+// The minimum flex weight a divider may take, from the crate that enforces it — `repaired()`
+// clamps to this number, so a transcribed copy would describe a rule the client does not share.
+double slopdesk_ws_min_weight(void);
+
+// ---- The project header's git DIALECT — `slopdesk_workspace::git_line` ----
+//
+// `main ↑2 ↓1 +3 !4 ?5 ~1 $2` is a language, not a label: the branch first, then only the NON-ZERO
+// sigils in a fixed order, each with a role that decides its ink and its weight, and a shedding
+// ladder for the widths a real sidebar column actually offers.
+//
+// No TEXT crosses. A run is a role, one glyph and a number, so the near side spells `↑` beside `2`
+// where it is already laying out glyphs — but it never CHOOSES the glyph. A dead second Swift
+// renderer once spelled a conflict `=` against this dialect's `~`, and both compiled for months.
+//
+// The branch is the one run with no sigil: it is a NAME, which is why it truncates rather than
+// compacting, and why its text is the caller's own string. `detached` on that run says the far side
+// had no branch to name.
+
+// The most runs one line can have — the branch plus one per non-zero count.
+#define SLOPDESK_GIT_MAX_RUNS 8
+#define SLOPDESK_GIT_INK_BRANCH 0
+#define SLOPDESK_GIT_INK_DIVERGENCE 1
+#define SLOPDESK_GIT_INK_STAGED 2
+#define SLOPDESK_GIT_INK_MODIFIED 3
+#define SLOPDESK_GIT_INK_UNTRACKED 4
+#define SLOPDESK_GIT_INK_CONFLICTED 5
+#define SLOPDESK_GIT_INK_STASH 6
+#define SLOPDESK_GIT_WEIGHT_REGULAR 0
+#define SLOPDESK_GIT_WEIGHT_SEMIBOLD 1
+#define SLOPDESK_GIT_WEIGHT_BOLD 2
+// What `sigil` holds for the branch. Tested BEFORE any decode: NUL is a scalar like any other, so a
+// `UnicodeScalar(0)` is a real character and would spell the branch as a blank.
+#define SLOPDESK_GIT_NO_SIGIL 0
+
+typedef struct {
+    bool     has_repo;
+    bool     detached;
+    uint32_t ahead;
+    uint32_t behind;
+    uint32_t staged;
+    uint32_t modified;
+    uint32_t untracked;
+    uint32_t conflicted;
+    uint32_t stash;
+} SlopDeskGitCounts;
+
+typedef struct {
+    uint8_t  ink;
+    // Carried alongside the role so a caller laying out one run never asks twice about it.
+    uint8_t  weight;
+    uint32_t sigil;
+    uint32_t count;
+    bool     detached;
+} SlopDeskGitRun;
+
+// Both doors write at most `cap` runs and return how many the line HAS — §4's protocol at a size
+// that never needs the retry, since `SLOPDESK_GIT_MAX_RUNS` bounds it structurally.
+size_t slopdesk_git_line_runs(const SlopDeskGitCounts *counts, SlopDeskGitRun *out, size_t cap);
+// The READOUT alone — the branch dropped — after giving up `level` rungs of the shed ladder. Folded
+// from the same counts rather than from a run array handed back: the counts are three words the
+// caller already holds, and a returned array would have to be validated field by field to be
+// trusted.
+size_t slopdesk_git_line_shed(const SlopDeskGitCounts *counts, size_t level, SlopDeskGitRun *out,
+                              size_t cap);
+
+// ---- Where the highlight goes — `slopdesk_workspace::list_nav` ----
+//
+// The rows never cross: each rule reads a COUNT and answers an INDEX into the list the caller
+// already holds. Three overlays — the picker, the command navigator and the palette — each carried
+// their own copy of the clamp, which is why it is one door.
+//
+// A LIST clamps and a RING wraps: arrowing past the last row leaves the highlight there, the way
+// every macOS list behaves, while Tab through the filter pills comes back around because a ring has
+// no ends to sit against.
+
+// Moved by `delta`, clamped to [0, count - 1]. Any count <= 0 answers 0 — the index every one of
+// those surfaces stores while it has nothing selected. The add saturates, so a page key over a
+// two-row list, and an i64 extreme from a caller, both stay indices.
+int64_t slopdesk_list_clamped_selection(int64_t current, int64_t delta, int64_t count);
+// The 0-based row a ⌘1–9 chord names. -1 for ⌘0 (a filter chord, never a pick), for a chord above
+// nine, and for a chord past the rows on screen.
+int64_t slopdesk_list_quick_pick(int64_t one_based, size_t row_count);
+// `delta` steps around a ring of `count`, wrapping at both ends. -1 for an empty ring, and for a
+// starting index that is not in it — there is nothing to step from, and inventing a first entry
+// would move a selection nobody asked to move.
+int64_t slopdesk_list_wrapped_index(size_t index, int64_t delta, size_t count);
+
+// ---- Which projection the app draws, and where a new pane starts ----
+//
+// `window_width` is read only when `window_width_present`: the outer window and the detail column
+// are compared against DIFFERENT thresholds, so an absent window is not a window of the detail's
+// width. Collapse the two and the macOS floor window resolves compact for one frame on every launch.
+bool slopdesk_ws_is_compact(bool size_class_compact, double detail_width,
+                            double window_width, bool window_width_present);
+// 0 phone · 1 pad · 2 mac. A compact size class forces the phone tier even on a pad idiom.
+uint8_t slopdesk_ws_video_device_class(bool is_mac, bool size_class_compact, bool idiom_pad);
+// How many live video panes that class decodes at once. An unrecognised class is the phone floor.
+size_t slopdesk_ws_video_cap(uint8_t device_class);
+
+// The `working-directory` config: 0 inherit · 1 home · 2 a path, with the TRIMMED path written to
+// `(out, cap)` and its length reported in `needed`. The kind is the return because two of the three
+// answers name no path at all, which §4's `0` could not tell apart from a refusal.
+uint8_t slopdesk_ws_workdir_parse(const uint8_t *raw, size_t len,
+                                  uint8_t *out, size_t cap, size_t *needed);
+// The parse door's inverse: the stored config string for kind 0 or 1, `0` for kind 2 — a path's
+// config string is the path the caller already holds. The keywords live on one side only.
+size_t slopdesk_ws_workdir_keyword(uint8_t kind, uint8_t *out, size_t cap);
+// Which string the new pane's cwd comes from: 0 neither · 1 the configured path · 2 the active
+// pane's cwd. `kind` is the parse door's answer; anything else reads as home, which names no
+// directory. Nothing is copied back — every caller already holds both strings.
+uint8_t slopdesk_ws_workdir_source(uint8_t kind, bool active_cwd_known);
+
+// ---- What Settings offers ----
+//
+// A settings page is two things stacked: a control, which is a view and belongs to whichever
+// framework is drawing, and the ANSWER to "what can this be set to, what is each choice called,
+// what does the number read as" — which is the same on a phone as on a Mac and is not a view at
+// all. Every door here is the second thing.
+//
+// The list idiom is a COUNT plus indexed accessors. A page renders once per open, so the call count
+// is not what to optimise; being able to add an option without touching a struct layout is.
+//
+// EVERY OPTION CROSSES AS THE VALUE THE STORE PERSISTS, never as a case index. The near side
+// rebuilds its own enum from the token with the `RawRepresentable` init it already has, so
+// inserting a case in either language cannot silently re-point a row at a different value.
+
+// The GROUPS, in case-index order. One control's worth of choices each.
+#define SLOPDESK_SETTINGS_GROUP_CURSOR_STYLE           ((uint8_t)0)
+#define SLOPDESK_SETTINGS_GROUP_NEW_TAB_POSITION       ((uint8_t)1)
+#define SLOPDESK_SETTINGS_GROUP_DENSITY                ((uint8_t)2)
+#define SLOPDESK_SETTINGS_GROUP_WINDOW_SIZE            ((uint8_t)3)
+#define SLOPDESK_SETTINGS_GROUP_DESKTOP_PRESENTATION   ((uint8_t)4)
+#define SLOPDESK_SETTINGS_GROUP_OPTION_AS_ALT          ((uint8_t)5)
+#define SLOPDESK_SETTINGS_GROUP_RIGHT_CLICK_ACTION     ((uint8_t)6)
+#define SLOPDESK_SETTINGS_GROUP_ON_LAUNCH              ((uint8_t)7)
+#define SLOPDESK_SETTINGS_GROUP_CLOSE_CONFIRMATION     ((uint8_t)8)
+#define SLOPDESK_SETTINGS_GROUP_CLOSE_CONFIRMATION_TAB ((uint8_t)9)
+
+// The LADDERS — sliders with magnitude stops on them.
+#define SLOPDESK_SETTINGS_LADDER_SCROLLBACK        ((uint8_t)0)
+#define SLOPDESK_SETTINGS_LADDER_SCROLL_MULTIPLIER ((uint8_t)1)
+#define SLOPDESK_SETTINGS_LADDER_BUSY_DELAY        ((uint8_t)2)
+
+// When a setting takes effect, as a DATA attribute so the distinction can be a chip not prose.
+#define SLOPDESK_SETTINGS_TIMING_LIVE      ((uint8_t)0)
+#define SLOPDESK_SETTINGS_TIMING_RECONNECT ((uint8_t)1)
+
+// How many choices a group offers; `0` for a group index no group has.
+size_t slopdesk_settings_option_count(uint8_t group);
+// One choice's three strings. The token is what the store PERSISTS; the caption is the honesty
+// channel and is `0` for a choice that needs no caveat — which reads the same as a missing row,
+// deliberately, since a caller that got here already learned the row exists from the count.
+size_t slopdesk_settings_option_token(uint8_t group, size_t index, uint8_t *out, size_t cap);
+size_t slopdesk_settings_option_label(uint8_t group, size_t index, uint8_t *out, size_t cap);
+size_t slopdesk_settings_option_caption(uint8_t group, size_t index, uint8_t *out, size_t cap);
+// The one-line form a MENU shows: the label with the caveat folded in after an en dash. Its own door
+// because the fold is a rule, and a rule re-concatenated on the near side is two rules.
+size_t slopdesk_settings_option_menu_label(uint8_t group, size_t index, uint8_t *out, size_t cap);
+// The DENSITY group's two tokens, by name. It is the one group the store persists as a bare string
+// rather than through an enum, so without this the near side would spell `"compact"` itself.
+size_t slopdesk_settings_density_token(bool compact, uint8_t *out, size_t cap);
+
+// The 8-section taxonomy — one row in the Mac's navigator, one row in the phone's list, one order.
+size_t slopdesk_settings_section_count(void);
+size_t slopdesk_settings_section_id(size_t index, uint8_t *out, size_t cap);
+size_t slopdesk_settings_section_title(size_t index, uint8_t *out, size_t cap);
+size_t slopdesk_settings_section_symbol(size_t index, uint8_t *out, size_t cap);
+
+// The apply-timing chip.
+size_t slopdesk_settings_timing_label(uint8_t timing, uint8_t *out, size_t cap);
+size_t slopdesk_settings_timing_symbol(uint8_t timing, uint8_t *out, size_t cap);
+
+// A ladder's range and granularity. `known` false leaves the three numbers at zero.
+typedef struct {
+    double min;
+    double max;
+    double step;
+    bool   known;
+} SlopDeskSettingsLadder;
+SlopDeskSettingsLadder slopdesk_settings_ladder(uint8_t ladder);
+// Its magnitude stops — the values a user actually picks, not an even subdivision of the range. A
+// stop that does not exist reports NaN rather than zero, because zero IS a legitimate stop.
+size_t slopdesk_settings_ladder_preset_count(uint8_t ladder);
+double slopdesk_settings_ladder_preset_value(uint8_t ladder, size_t index);
+size_t slopdesk_settings_ladder_preset_label(uint8_t ladder, size_t index, uint8_t *out, size_t cap);
+// What the slider's current value reads as. Each ladder's readout is about its own unit: scrollback
+// is thousands-grouped with a NARROW NO-BREAK SPACE (never a locale comma — the readout is
+// monospaced digits, where a comma reads as a decimal point in half the world), the multiplier
+// carries two decimals to match its own step, and the delay says `Instant` at zero because that is
+// the BEHAVIOUR changing rather than a delay that happens to be short.
+size_t slopdesk_settings_ladder_readout(uint8_t ladder, double value, uint8_t *out, size_t cap);
+
+// A stepper range's ends and granularity — the ladder's sibling, for a value whose useful settings
+// are not a handful of magnitudes but any literal count in the range. `known` false leaves the three
+// numbers at zero. The pixel step is fifty because one pixel at a time across sixteen thousand is a
+// control that cannot reach its own far end.
+typedef struct {
+    int64_t min;
+    int64_t max;
+    int64_t step;
+    bool    known;
+} SlopDeskSettingsStepper;
+SlopDeskSettingsStepper slopdesk_settings_stepper(uint8_t stepper);
+// What FOLLOWS the number in the readout — empty for cells and points, ` px` for pixels. The unit
+// crosses rather than the finished readout because the near side does not always hold an integer:
+// font size is a double a raw edit may set to 13.5, and a reader handed only the readout of 13 would
+// print a number the model does not hold.
+size_t slopdesk_settings_stepper_unit(uint8_t stepper, uint8_t *out, size_t cap);
+
+// ---- Every setting as a ROW ----
+//
+// The other half of the same page: one entry per configuration key, carrying the one label and the
+// one description that key uses wherever it appears — in the searchable all-settings list AND in the
+// section control that edits it. Those were two byte-identical copies in two targets before this.
+//
+// The KEY is what the near side holds (they are `Defaults.Key` names), so a row is reached by key as
+// often as by position — `slopdesk_settings_row_index` turns one into the other.
+
+#define SLOPDESK_SETTINGS_ROW_BUCKET_ADVANCED_ONLY 0
+#define SLOPDESK_SETTINGS_ROW_BUCKET_HAS_DEDICATED_TAB 1
+// What `slopdesk_settings_row_index` answers for a key no row has. A sentinel rather than a zero,
+// because zero is a real row.
+#define SLOPDESK_SETTINGS_ROW_NONE SIZE_MAX
+
+size_t slopdesk_settings_row_count(void);
+size_t slopdesk_settings_row_key(size_t index, uint8_t *out, size_t cap);
+size_t slopdesk_settings_row_label(size_t index, uint8_t *out, size_t cap);
+size_t slopdesk_settings_row_description(size_t index, uint8_t *out, size_t cap);
+size_t slopdesk_settings_row_default_text(size_t index, uint8_t *out, size_t cap);
+size_t slopdesk_settings_row_keywords(size_t index, uint8_t *out, size_t cap);
+// The section a row jumps to, or `0` for one edited in place.
+size_t slopdesk_settings_row_target_section(size_t index, uint8_t *out, size_t cap);
+uint8_t slopdesk_settings_row_bucket(size_t index);
+bool slopdesk_settings_row_is_inline_editable(size_t index);
+size_t slopdesk_settings_row_index(const uint8_t *key, size_t key_len);
+// The positions a query matched, under the same retry protocol as the string doors: a return larger
+// than `cap` means nothing was written — ask again at that size.
+size_t slopdesk_settings_row_matches(const uint8_t *query, size_t query_len, size_t *out, size_t cap);
+// The label a settings PAGE shows — the page register where the row has one, the index register
+// otherwise, so a caller never has to know which rows carry an override.
+size_t slopdesk_settings_row_page_label(size_t index, uint8_t *out, size_t cap);
+
+// ---- Which half lists a command-palette VERB ----
+//
+// The same "a platform gate is DATA" rule as the settings table below, applied to the one surface
+// whose whole job is to tell the user what the app can do. Every actuator on the palette's
+// coordinator defaults to an empty closure and a `.store` row's run arm may be a macOS-only `#if`
+// with nothing in the else, so a row that is listed and INERT is indistinguishable from one that ran
+// and had nothing to do. Three of the phone's rows were exactly that.
+//
+// `shown` rather than `platform` on purpose: the near side already knows which slice it is, and what
+// it must never do is turn that back into an `#if` around a row. The count/index pair exists so a
+// test can walk this table and prove it names the same verbs the Swift catalog does — an id declared
+// on only one side is the failure that would put the hole back.
+//
+// An id no row declares is SHOWN. A typo must not delete a row without a word;
+// `scripts/check-supervisor.sh` is what makes an undeclared id impossible.
+bool slopdesk_palette_row_shown(const uint8_t *id, size_t len, bool mac);
+size_t slopdesk_palette_row_count(void);
+size_t slopdesk_palette_row_id(size_t index, uint8_t *out, size_t cap);
+
+// ---- Which half lists a KEYBINDING ----
+//
+// The same rule one surface further in. The registry behind these rows is not one list — it is the
+// cheat sheet, the keybindings editor, the `ctl` verb list, and the CHORD TABLE the dispatcher
+// resolves against. That last one is why a listed-and-inert binding is worse than a listed-and-inert
+// palette row: a bound chord does not reach the terminal, so ⌥⌘P was taken away from the PTY to run
+// a macOS-only `#if` with nothing in its else. Dropping the row drops the chord, and the key falls
+// through to the pane the way an unbound chord should.
+//
+// A SECOND table rather than a shared one because these are two id spaces over two vocabularies with
+// partial overlap in both directions (`pane.detach` here is `action.detachPane` there; ~45 rows here
+// have no palette entry at all). Each table is complete over its own space and pinned to its own
+// Swift list; a shared one would be a join maintained by hand.
+//
+// An id no row declares is SHOWN, for the same reason as above.
+bool slopdesk_binding_row_shown(const uint8_t *id, size_t len, bool mac);
+size_t slopdesk_binding_row_count(void);
+size_t slopdesk_binding_row_id(size_t index, uint8_t *out, size_t cap);
+
+// ---- The SHAPE of a settings page ----
+//
+// Which groups a page shows, in what order, what each row is, and — the reason this table exists —
+// which platform each of those belongs to. A platform gate is DATA here: the Mac renderer asks with
+// `mac = true` and the phone with `mac = false`, and NEITHER carries an `#if`.
+//
+// `mac` is an argument rather than the compiled slice on purpose. The xcframework is built per
+// slice, so the table could have been filtered by `cfg!` — but then "which groups does the phone
+// show" would be unanswerable on a Mac, and that is exactly what the tests on both sides ask.
+//
+// Addressing is POSITIONAL WITHIN THE FILTER: a group index selects within the page's filtered
+// list, a row index within that group's filtered rows. A phone asking for group 4 of General gets
+// its own fourth group, never a hole where a macOS-only group was.
+//
+// Control kinds, as `slopdesk_settings_layout_row_control` returns them.
+#define SLOPDESK_SETTINGS_CONTROL_TOGGLE  0
+#define SLOPDESK_SETTINGS_CONTROL_MENU    1
+#define SLOPDESK_SETTINGS_CONTROL_CARDS   2
+#define SLOPDESK_SETTINGS_CONTROL_SLIDER  3
+#define SLOPDESK_SETTINGS_CONTROL_STEPPER 4
+#define SLOPDESK_SETTINGS_CONTROL_TEXT    5
+// Prose belonging to the group rather than to a setting; its words are the row's subtitle.
+#define SLOPDESK_SETTINGS_CONTROL_NOTE    6
+#define SLOPDESK_SETTINGS_CONTROL_BESPOKE 7
+// What every `uint8_t` door here answers for a position that names nothing.
+#define SLOPDESK_SETTINGS_LAYOUT_NONE ((uint8_t)0xFF)
+size_t slopdesk_settings_layout_group_count(uint8_t section_index, bool mac);
+size_t slopdesk_settings_layout_group_title(uint8_t section_index, bool mac, size_t group_index,
+                                            uint8_t *out, size_t cap);
+uint8_t slopdesk_settings_layout_group_timing(uint8_t section_index, bool mac, size_t group_index);
+size_t slopdesk_settings_layout_row_count(uint8_t section_index, bool mac, size_t group_index);
+size_t slopdesk_settings_layout_row_key(uint8_t section_index, bool mac, size_t group_index,
+                                        size_t row_index, uint8_t *out, size_t cap);
+size_t slopdesk_settings_layout_row_subtitle(uint8_t section_index, bool mac, size_t group_index,
+                                             size_t row_index, uint8_t *out, size_t cap);
+size_t slopdesk_settings_layout_row_glyph(uint8_t section_index, bool mac, size_t group_index,
+                                          size_t row_index, uint8_t *out, size_t cap);
+size_t slopdesk_settings_layout_row_bespoke_id(uint8_t section_index, bool mac, size_t group_index,
+                                               size_t row_index, uint8_t *out, size_t cap);
+uint8_t slopdesk_settings_layout_row_control(uint8_t section_index, bool mac, size_t group_index,
+                                             size_t row_index);
+// The option group, scalar ladder or stepper range the control draws over; which of the three
+// follows from the kind the caller has necessarily already read.
+uint8_t slopdesk_settings_layout_row_control_argument(uint8_t section_index, bool mac,
+                                                      size_t group_index, size_t row_index);
+
+// ---- What the phone's keyboard sends ----
+//
+// A touch device is forced to split physical input in two: the keys a terminal needs raw, and
+// anything a multi-stage composition could be part of. Every door below is one side or the other of
+// that split, and none of them holds the terminal's mode — the caller reads that off the live model
+// per press, because the program that set it is on the far side of the PTY.
+//
+// The flag word IS `KeyChord.Modifiers`' own bits 0-3, so a chord's modifiers cross back out
+// untranslated. There is no fifth bit: which keys are special is a rule, and it is answered on the
+// far side from `hid_usage`.
+#define SLOPDESK_PHONE_KEY_SHIFT   (1u << 0)
+#define SLOPDESK_PHONE_KEY_CONTROL (1u << 1)
+#define SLOPDESK_PHONE_KEY_OPTION  (1u << 2)
+#define SLOPDESK_PHONE_KEY_COMMAND (1u << 3)
+// The `named` a chord writes when its key is the printable scalar in `character` instead.
+#define SLOPDESK_PHONE_KEY_NAMED_NONE ((uint8_t)0xFF)
+// What capturing one press in the Settings chord recorder means — the SAME four answers, in the same
+// order, that `slopdesk_key_capture_outcome` gives the Mac's recorder. Both write one override map.
+#define SLOPDESK_PHONE_KEY_CAPTURE_CANCEL ((uint8_t)0)
+#define SLOPDESK_PHONE_KEY_CAPTURE_CLEAR  ((uint8_t)1)
+#define SLOPDESK_PHONE_KEY_CAPTURE_IGNORE ((uint8_t)2)
+#define SLOPDESK_PHONE_KEY_CAPTURE_BIND   ((uint8_t)3)
+
+// One `UIKey`: which key (`UIKey.keyCode`, a USB HID keyboard usage — the only signal that means the
+// same thing under every layout and input method) and what that key produces under this layout
+// (`base` = `charactersIgnoringModifiers`, which is what a ⌃ fold and a binding lookup are about).
+// What the key COMMITTED is deliberately absent — for a special key it is noise, and for a printable
+// one the proxy inserts it.
+typedef struct {
+    const uint8_t *base;
+    size_t         base_len;
+    uint16_t       hid_usage;  // 0 = none
+    uint32_t       flags;      // SLOPDESK_PHONE_KEY_*
+} SlopDeskPhoneKeyPress;
+
+// Whether this press is encoded here rather than passed on to the text input path. A special key — every key
+// with no printable output, Esc/Tab/Return/Delete and the whole nav and function block — or any of
+// ⌃⌥⌘ is encoded; everything else is typing, ⇧ and a bare space included.
+bool slopdesk_phone_key_routes_to_encoding(const SlopDeskPhoneKeyPress *press);
+// The bytes this press sends, through `(out, cap)`. `0` means it sends nothing — bare typing, which
+// is the proxy's, or a ⌘ combination, which is an app shortcut. No key this encoder resolves sends
+// zero bytes, so the length is unambiguous. `application_cursor_keys` is the live DECCKM bit, which
+// picks SS3 over CSI for the cursor block (the four arrows, Home and End) and nothing else.
+size_t slopdesk_phone_key_encode(const SlopDeskPhoneKeyPress *press, bool application_cursor_keys,
+                                 uint8_t *out, size_t cap);
+// The chord this press makes, for the SAME user-overridable binding table the Mac's dispatcher
+// reads. `named` is a `KeyChord.Key` case index or SLOPDESK_PHONE_KEY_NAMED_NONE, `character` the
+// printable scalar in that case, `modifiers` bits 0-3. `false` leaves all three untouched: every
+// field of a chord is a legitimate zero, so a length could not have said "not a chord".
+bool slopdesk_phone_key_chord(const SlopDeskPhoneKeyPress *press, uint8_t *named,
+                              uint32_t *character, uint8_t *modifiers);
+// What this press does to the binding being RECORDED — one of SLOPDESK_PHONE_KEY_CAPTURE_*. Only a
+// bind writes through, and it writes the chord exactly as `slopdesk_phone_key_chord` would. Stricter
+// than that door in the two ways the Mac's recorder is stricter than its dispatcher: the space bar
+// is no key here, and a base the chord grammar cannot spell back is refused rather than stored.
+uint8_t slopdesk_phone_key_capture(const SlopDeskPhoneKeyPress *press, uint8_t *named,
+                                   uint32_t *character, uint8_t *modifiers);
+// The accessory bar's armed ⌃ folding a soft-keyboard commit: the first scalar's control byte
+// through `code`, the byte offset its remainder starts at through `rest`. `false` for empty text.
+bool slopdesk_phone_key_fold_control(const uint8_t *text, size_t len, uint8_t *code, size_t *rest);
+
+// The keyboard height at which the on-screen keyboard is the SOFTWARE one — a hardware keyboard
+// leaves only a thin shortcut bar, and the ⌃/Esc/Tab/arrow row is only worth its space above this.
+double slopdesk_phone_accessory_threshold(void);
+bool slopdesk_phone_shows_accessory_bar(double keyboard_height, double threshold);
+
+// The floating cursor: long-pressing the space bar and dragging, which on a phone with no hardware
+// keyboard is the ONLY way to move the terminal cursor. `accumulated` is read AND written — the
+// sub-threshold remainder is what makes a slow drag of many small deltas total correctly.
+double slopdesk_phone_floating_cursor_threshold(void);
+size_t slopdesk_phone_floating_cursor_feed(double *accumulated, double threshold, double delta_x,
+                                           bool application_cursor_keys, uint8_t *out, size_t cap);
 
 // The tiled tree, as its PRE-ORDER walk rather than as its persisted JSON. Both languages already
 // agree on that JSON, and reusing it here would have been two lines — but `solve` runs on every
@@ -605,24 +1275,55 @@ typedef struct {
     double         weight;  // this node's share WITHIN its parent; the root's is ignored
 } SlopDeskWsTreeNode;
 
-// One child's share, for the partition that does not need the subtrees under it.
+// One child's share, as the weights codec reads and writes it.
 typedef struct {
     bool   is_fixed;
     double value;
 } SlopDeskWsShare;
 
-// The default floor on a solved leaf, and the size a new pane opens at, as (width, height).
+// The default floor on a solved leaf, as (width, height).
 SlopDeskWsPoint slopdesk_ws_min_leaf(void);
-SlopDeskWsPoint slopdesk_ws_default_leaf(void);
 
 // 0 = a tree the walk could not rebuild, which is the same answer an empty tree gives.
 size_t slopdesk_ws_solve_layout(const SlopDeskWsTreeNode *nodes, size_t count,
                                 SlopDeskWsRect rect, double min_width, double min_height,
                                 SlopDeskWsFrame *out, size_t cap);
-// Exported separately from the solve because the divider handles sit on the seams the tiles land
-// on, and a second copy of this partition would put a handle a pixel off the edge it drags.
-size_t slopdesk_ws_extents(const SlopDeskWsShare *shares, size_t count, double total,
-                           double *out, size_t cap);
+// One draggable seam. The rect is what is drawn and hit; everything after it is what a DRAG needs
+// — the span it converts pixels against, the flex sum it converts them into, and the pair of
+// weights it moves between. A `0` weight is a FIXED child, which is not draggable at all.
+typedef struct {
+    SlopDeskWsUuid split;
+    uint32_t       child_index;  // the LEADING child: the seam is between it and the next
+    uint8_t        axis;         // 0 horizontal (a column seam, dragged left/right) · 1 vertical
+    SlopDeskWsRect rect;
+    double         parent_span;  // a NESTED split's own length, so the drag tracks the cursor 1:1
+    double         flex_sum;
+    double         leading_weight;
+    double         trailing_weight;
+} SlopDeskWsDivider;
+
+// The band a seam is drawn and hit with — wide enough to grab, so the drawn hairline can be thinner.
+double slopdesk_ws_divider_thickness(void);
+// Every seam of the tree, in pre-order. 0 = a tree the walk could not rebuild, which is the same
+// answer a lone leaf gives: nothing to drag.
+size_t slopdesk_ws_dividers(const SlopDeskWsTreeNode *nodes, size_t count, SlopDeskWsRect rect,
+                            double thickness, SlopDeskWsDivider *out, size_t cap);
+// The hover cursor's one-way-vs-two-way answer, from the same pixel floor the drag clamps at — so
+// the arrow the person sees and the seam they get can never disagree.
+bool   slopdesk_ws_divider_can_move(SlopDeskWsDivider handle, bool toward_leading);
+// A live drag's proposed leading weight, clamped so BOTH panes keep that floor. Sum-preserving,
+// and a pair too tight for two floors can only be dragged toward balance.
+double slopdesk_ws_divider_clamped_weight(SlopDeskWsDivider handle, double proposed);
+// One incremental pixel drag along the seam's axis, as the weight delta to offset from:
+// `Δpixel / parent_span * flex_sum`, the inverse of a flex child's `extent = weight/flex_sum*span`.
+// The span and the flex sum come out of the HANDLE, so one split's span can never be paired with
+// another's partition — drop the flex-sum factor and a 50/50 seam trails the cursor at half speed.
+// A handle without geometry answers 0, and the drag then sends nothing.
+double slopdesk_ws_divider_weight_delta(SlopDeskWsDivider handle, double pixel_increment);
+// The live drag's ratio readout, as whole percentages that sum to exactly 100. False is a
+// degenerate pair — a fixed side reports weight 0 — and then neither out-param is touched: the cue
+// is ABSENT rather than wrong. Both numbers cross, so no caller rounds the complement itself.
+bool   slopdesk_ws_divider_percents(SlopDeskWsDivider handle, uint32_t *leading, uint32_t *trailing);
 
 // MARK: The split tree's own operations
 //
@@ -673,30 +1374,6 @@ bool slopdesk_ws_tree_first_leaf(const SlopDeskWsTreeNode *nodes, size_t count,
                                  SlopDeskWsUuid *answer);
 bool slopdesk_ws_tree_structurally_equal(const SlopDeskWsTreeNode *left, size_t left_count,
                                          const SlopDeskWsTreeNode *right, size_t right_count);
-
-
-// MARK: The arrange commands
-//
-// Each reads `(id, frame)` pairs and answers only the frames that MOVED, so a caller applies the
-// answer by lookup and a pane nobody named is untouched by construction. `edge` is AlignEdge's case
-// index: left, right, top, bottom, centerHorizontal, centerVertical.
-
-size_t slopdesk_ws_align(const SlopDeskWsFrame *targets, size_t count, uint8_t edge,
-                         SlopDeskWsFrame *out, size_t cap);
-size_t slopdesk_ws_distribute(const SlopDeskWsFrame *targets, size_t count, bool horizontal,
-                              SlopDeskWsFrame *out, size_t cap);
-size_t slopdesk_ws_tidy(const SlopDeskWsFrame *items, size_t count, double gutter,
-                        SlopDeskWsFrame *out, size_t cap);
-// `targets` is the group's members and nothing else — the box they currently occupy is derived from
-// them, so there is no second box to compute and get wrong. `proposed` is floored at the minimum
-// pane size and every member is clamped back inside it: the non-overlap solver moves a group as one
-// rigid body from that box, and a member outside it corrupts the sweep.
-size_t slopdesk_ws_resize_group(const SlopDeskWsFrame *targets, size_t count, SlopDeskWsRect proposed,
-                                SlopDeskWsFrame *out, size_t cap);
-double slopdesk_ws_tidy_gutter(void);
-// False for no frames at all: an empty plane has no box, which is a different answer from a box at
-// the origin.
-bool slopdesk_ws_bounding_box(const SlopDeskWsRect *frames, size_t count, SlopDeskWsRect *answer);
 
 
 // MARK: The re-tile layouts
@@ -1501,6 +2178,11 @@ bool slopdesk_keybind_is_valid(const uint8_t *line, size_t line_len);
 size_t slopdesk_keybind_canonical_key(const uint8_t *key, size_t key_len, uint8_t *out, size_t cap);
 size_t slopdesk_keybind_canonical_chord(const uint8_t *key, size_t key_len, bool command, bool shift,
                                         bool option, bool control, uint8_t *out, size_t cap);
+/* The same chord written for a HUMAN: the modifier glyphs in the platform's own order (⌃⌥⇧⌘) then
+ * the key — a named key's printed symbol, or the key itself upper-cased, because a chord is stored
+ * lower-cased with the shift in the modifiers and a menu prints ⌘D. */
+size_t slopdesk_keybind_glyph(const uint8_t *key, size_t key_len, bool command, bool shift,
+                              bool option, bool control, uint8_t *out, size_t cap);
 
 /* The libghostty config text one set of terminal preferences spells. Two dozen strings and a dozen
  * switches, so rather than two dozen (ptr, len) pairs they cross as ONE record of named
@@ -1647,6 +2329,11 @@ size_t slopdesk_cli_version_summary(const uint8_t *version, size_t version_len,
 #define SLOPDESK_FOLDER_WEIGHT_MONTH 3u
 #define SLOPDESK_FOLDER_WEIGHT_STALE 4u
 
+/* The store's limits, for `slopdesk_folder_limit`: the ceiling on stored entries, and the longest
+ * storable path in Unicode scalars. An unknown code answers 0. */
+#define SLOPDESK_FOLDER_LIMIT_MAX_ENTRIES 0u
+#define SLOPDESK_FOLDER_LIMIT_PATH_SCALARS 1u
+
 /* One folder record: a path naming bytes in the arena lent alongside, plus the two scored terms. */
 typedef struct {
   SlopDeskByteSpan path;
@@ -1668,6 +2355,11 @@ int64_t slopdesk_folder_score(int64_t access_count, double last_access, double n
 size_t slopdesk_folder_ranked(const SlopDeskFolderEntry *entries, size_t count,
                               const uint8_t *arena, size_t arena_len, double now, int64_t limit,
                               uint32_t *order, size_t order_cap);
+size_t slopdesk_folder_limit(uint32_t limit);
+bool slopdesk_folder_path_is_valid(const uint8_t *path, size_t len);
+size_t slopdesk_folder_sanitized(const SlopDeskFolderEntry *entries, size_t count,
+                                 const uint8_t *arena, size_t arena_len, size_t max_entries,
+                                 uint32_t *order, size_t order_cap);
 size_t slopdesk_jump_resolve(const uint8_t *query, size_t query_len,
                              const SlopDeskFolderEntry *entries, size_t count,
                              const uint8_t *entry_arena, size_t entry_arena_len, double now,
@@ -1719,6 +2411,9 @@ size_t slopdesk_osc_notification_bytes(const uint8_t *message, size_t message_le
 size_t slopdesk_watch_finish_notification_bytes(const uint8_t *message, size_t message_len,
                                                 uint8_t *out, size_t cap);
 size_t slopdesk_watch_notification_marker(uint8_t *out, size_t cap);
+// The parse-back of the builder above: whether a notification's title IS that sentinel, which is
+// what routes the banner to the watch toggle rather than the master switch.
+bool   slopdesk_watch_notification_is_marked(const uint8_t *title, size_t title_len);
 size_t slopdesk_watch_finish_message(const SlopDeskByteSpan *command, size_t count,
                                      const uint8_t *arena, size_t arena_len, int32_t exit_code,
                                      uint8_t *out, size_t cap);
@@ -2063,6 +2758,104 @@ SlopDeskDetectedLink slopdesk_link_scan_link(SlopDeskLinkScan *handle, size_t in
 size_t slopdesk_link_scan_take_arena(SlopDeskLinkScan *handle, uint8_t *out, size_t cap);
 size_t slopdesk_link_scalar_cells(uint32_t scalar);
 size_t slopdesk_link_text_cells(const uint8_t *bytes, size_t len);
+
+/* ---- What a gesture DOES to a link ------------------------------------------------------
+ * The scan above says what a span IS; this says what happens to it. One table for all four
+ * actuators (⌘click, ⌘⇧click, the context menu, hint-to-open / the jump row's return), because
+ * per-actuator copies drift and each one looks right on its own.
+ *
+ * The answer has two halves — the verb and what it acts on — so the verb is the RETURN and the
+ * payload rides the usual (out, cap) pair with `needed` carrying the retry number. A verb with an
+ * empty payload is a real answer, which is why the length cannot double as the verb.
+ */
+#define SLOPDESK_LINK_TRIGGER_PLAIN_CLICK 0u
+#define SLOPDESK_LINK_TRIGGER_COMMAND_CLICK 1u
+#define SLOPDESK_LINK_TRIGGER_COMMAND_SHIFT_CLICK 2u
+#define SLOPDESK_LINK_TRIGGER_OPEN 3u
+#define SLOPDESK_LINK_TRIGGER_COPY_PATH 4u
+#define SLOPDESK_LINK_TRIGGER_REVEAL_IN_FINDER 5u
+#define SLOPDESK_LINK_TRIGGER_CHANGE_DIRECTORY 6u
+
+#define SLOPDESK_LINK_CMD_CLICK_OPEN 0u
+#define SLOPDESK_LINK_CMD_CLICK_COPY 1u
+#define SLOPDESK_LINK_CMD_CLICK_NOTHING 2u
+
+#define SLOPDESK_LINK_CMD_SHIFT_CLICK_REVEAL_FINDER 0u
+#define SLOPDESK_LINK_CMD_SHIFT_CLICK_OPEN_SYSTEM_DEFAULT 1u
+
+/* Each verb names WHERE it actuates: the file is on the host, the pasteboard and a URL are the
+ * client's. An actuator routes on this without re-deriving intent. */
+#define SLOPDESK_LINK_ACTION_NOTHING 0u
+#define SLOPDESK_LINK_ACTION_COPY_PATH_CLIENT 1u
+#define SLOPDESK_LINK_ACTION_CHANGE_DIRECTORY_PTY 2u
+#define SLOPDESK_LINK_ACTION_OPEN_CODE_HOST 3u
+#define SLOPDESK_LINK_ACTION_OPEN_HOST 4u
+#define SLOPDESK_LINK_ACTION_REVEAL_HOST 5u
+#define SLOPDESK_LINK_ACTION_OPEN_URL_CLIENT 6u
+
+uint8_t slopdesk_link_action(uint8_t trigger, uint8_t cmd_click, uint8_t cmd_shift_click,
+                             uint32_t kind, const uint8_t *raw, size_t raw_len,
+                             const uint8_t *resolved, size_t resolved_len, bool resolved_present,
+                             uint8_t *out, size_t cap, size_t *needed);
+size_t slopdesk_link_code_open_target(const uint8_t *raw, size_t raw_len,
+                                      const uint8_t *resolved, size_t resolved_len,
+                                      bool resolved_present, uint8_t *out, size_t cap);
+size_t slopdesk_link_line_col_suffix(const uint8_t *text, size_t len, uint8_t *out, size_t cap);
+size_t slopdesk_link_posix_parent(const uint8_t *text, size_t len, uint8_t *out, size_t cap);
+size_t slopdesk_link_cd_command_line(const uint8_t *text, size_t len, uint8_t *out, size_t cap);
+
+/* ---- What a DROP does, once the pasteboard is classified and a zone is under the pointer ----
+ * The same two-part answer as the link table above, for the same reason: an action with an empty
+ * payload is a real answer, so the length cannot double as the verb. A dead cell answers NOTHING,
+ * and the overlay reads that same answer to render the zone muted — what is offered and what would
+ * happen are one number, so they cannot drift. The split side rides the VERB rather than a
+ * companion flag. Nothing here can mint a video pane: that comes from the picker alone.          */
+#define SLOPDESK_DROP_ZONE_NEW_TAB       0u
+#define SLOPDESK_DROP_ZONE_INSERT_PATH   1u
+#define SLOPDESK_DROP_ZONE_OPEN_IN_PLACE 2u
+#define SLOPDESK_DROP_ZONE_SPLIT_LEFT    3u
+#define SLOPDESK_DROP_ZONE_SPLIT_RIGHT   4u
+
+#define SLOPDESK_DROP_CONTENT_FOLDER 0u
+#define SLOPDESK_DROP_CONTENT_FILE   1u
+#define SLOPDESK_DROP_CONTENT_URL    2u
+#define SLOPDESK_DROP_CONTENT_TEXT   3u
+
+#define SLOPDESK_DROP_ACTION_NOTHING        0u
+#define SLOPDESK_DROP_ACTION_INJECT_TEXT    1u
+#define SLOPDESK_DROP_ACTION_NEW_TAB_CD     2u
+#define SLOPDESK_DROP_ACTION_HOST_OPEN      3u
+#define SLOPDESK_DROP_ACTION_SPLIT_LEADING  4u
+#define SLOPDESK_DROP_ACTION_SPLIT_TRAILING 5u
+
+uint8_t slopdesk_drop_action(uint8_t zone, uint8_t content_kind, const uint8_t *value,
+                             size_t value_len, uint8_t *out, size_t cap, size_t *needed);
+
+/* WHERE the five zones are, on the same codes. The overlay asks for a zone's ellipse to draw it and
+ * the receiver asks which zone a point is in, so the drawn blob and the hit region are one function
+ * and a `.contentShape`-after-`.position` mistake cannot move one without the other.
+ *
+ * Every number inside is a fraction of the pane box, so a sidebar-sized pane and a full-screen one
+ * get the same layout. `slopdesk_drop_zone_at` answers a code plus a presence flag rather than a
+ * sentinel code: `0` is a real zone (New Tab), and a point in the gap between the blobs is a real
+ * answer. A miss leaves `*out` untouched.                                                        */
+typedef struct { SlopDeskWsPoint center; double radius_x, radius_y; } SlopDeskDropZoneShape;
+
+SlopDeskDropZoneShape slopdesk_drop_zone_shape(uint8_t zone, double width, double height);
+bool slopdesk_drop_zone_at(SlopDeskWsPoint point, double width, double height, uint8_t *out);
+
+/* ---- The keyboard reference sheet: which column each run of shortcuts belongs in ----------
+ * Balanced by RENDERED HEIGHT (a section costs its rows plus its own header line), not by section
+ * count — three short categories beside one long one is the case that makes a halve-the-list split
+ * look broken. Greedy: each section joins whichever column is currently shortest, so the registry's
+ * declared order still reads down the page.
+ *
+ * Row COUNTS in, column INDICES out, against the caller's own section order — nothing about a
+ * binding or a glyph crosses, which is why the Mac's two-column panel and the phone's single column
+ * are the same rule asked twice. §4's plain shape at the width of a `uint32_t`: the return is how
+ * many indices the answer NEEDS (always `count`), and nothing is written unless they all fit.     */
+size_t slopdesk_cheat_sheet_columns(const uint32_t *row_counts, size_t count, uint32_t columns,
+                                    uint32_t *out, size_t cap);
 
 /* ---- Hint Mode: every span in the viewport a two-letter label can pin to -----------------
  * The same handle-over-arena shape as the link scan above, because the answer is the same shape:
@@ -3641,6 +4434,84 @@ SlopDeskWindowPlacement slopdesk_window_placement(double window_width, double wi
                                                   double display_width, double display_height);
 bool slopdesk_window_fits(double width, double height, double bounds_width, double bounds_height);
 
+/* Whether launch hygiene should move a window a CRASHED daemon left parked back to the frame that
+ * run recorded for it. A clean shutdown un-parks everything, so this only ever reads a sidecar a
+ * SIGKILL left behind — and the sidecar naming a window is not evidence it is still lost. Two
+ * things say nothing is wrong, and either one alone stops the move: the window already sits at the
+ * recorded origin (within two points of AX drift), or it overlaps a display that exists, so somebody
+ * can see it. An EMPTY list is the CG enumeration having FAILED, not "on no display", and answers
+ * false — every uncertainty resolves to leaving the window alone.
+ *
+ * `displays` is 4 * display_count doubles: x, y, width, height per display, in the same global
+ * top-left space as the window frame (`CGDisplayBounds` / `CGWindowBounds`, both standardised). */
+bool slopdesk_window_should_restore(double current_x, double current_y,
+                                    double current_width, double current_height,
+                                    double original_x, double original_y,
+                                    const double *displays, size_t display_count);
+
+/* ---- What content size a window OPENS at, and where it lands ----------------------------
+ * The sibling of the placement above, for the client's own window rather than a remoted one.
+ * Numbers in, numbers out — the only pointer is the saved descriptor's text.
+ *
+ * Two disciplines: validate-then-clamp (a persisted 0 / negative / five-figure value can never
+ * become a 0x0 or off-screen-gigantic window, and a corrupt descriptor yields NO answer rather
+ * than a degenerate rect), and ORDERED comparisons (a NaN font size or extent propagates instead
+ * of being swallowed by a NaN-ignoring minimum — the same spelling as the placement above).
+ *
+ * A rectangle arrives as the four scalars the caller derived from it, never as a rect: `CGRect`
+ * standardises its extents and `CGSize` does not, and that asymmetry stays with those types.   */
+
+#define SLOPDESK_WINDOW_SIZE_MODE_REMEMBER 0u
+#define SLOPDESK_WINDOW_SIZE_MODE_GRID     1u
+#define SLOPDESK_WINDOW_SIZE_MODE_FRAME    2u
+
+typedef struct { double width, height; } SlopDeskWindowExtent;
+typedef struct { double width, height; bool present; } SlopDeskWindowContentSize;
+typedef struct { double x, y; } SlopDeskWindowUnitPoint;
+
+typedef struct {
+  int32_t min_cells, max_cells;               /* the column / row band */
+  int32_t min_px, max_px;                     /* the pixel band */
+  double  min_content_width, min_content_height;
+  double  fallback_cell_width_ratio, fallback_cell_height_ratio;
+  double  min_font_point_size, max_font_point_size;
+} SlopDeskWindowSizeLimits;
+
+typedef struct {
+  uint8_t mode;                 /* SLOPDESK_WINDOW_SIZE_MODE_*; an unknown code sizes nothing */
+  int32_t cols, rows;           /* persisted counts, UNCLAMPED — the far side clamps */
+  int32_t width_px, height_px;  /* persisted pixels, UNCLAMPED */
+  double  cell_width, cell_height;         /* the live per-cell advance */
+  double  visible_width, visible_height;   /* the screen's visible extent, already standardised */
+  double  chrome_inset_width, chrome_inset_height;       /* out-of-content: title bar, borders */
+  double  chrome_overhead_width, chrome_overhead_height; /* in-content: sidebar, inspector, inset */
+} SlopDeskWindowSizeInputs;
+
+typedef struct {
+  double frame_x, frame_y, frame_width, frame_height;
+  double screen_x, screen_y, screen_width, screen_height;
+  bool   present;               /* false leaves every field zero — nothing may be sized from it */
+} SlopDeskWindowFrameDescriptor;
+
+SlopDeskWindowSizeLimits slopdesk_window_size_limits(void);
+int32_t slopdesk_window_size_clamp_cells(int32_t raw);
+int32_t slopdesk_window_size_clamp_px(int32_t raw);
+SlopDeskWindowExtent slopdesk_window_size_fallback_cell(double font_point_size);
+SlopDeskWindowExtent slopdesk_window_size_grid(int32_t cols, int32_t rows,
+                                               double cell_width, double cell_height);
+SlopDeskWindowExtent slopdesk_window_size_clamp_to_screen(double width, double height,
+                                                          double visible_width,
+                                                          double visible_height,
+                                                          double chrome_width,
+                                                          double chrome_height);
+SlopDeskWindowContentSize slopdesk_window_size_resolved(SlopDeskWindowSizeInputs inputs);
+SlopDeskWindowUnitPoint slopdesk_window_size_unit_position(double frame_min_x, double frame_max_y,
+                                                           double frame_width, double frame_height,
+                                                           double screen_min_x, double screen_max_y,
+                                                           double screen_width,
+                                                           double screen_height);
+SlopDeskWindowFrameDescriptor slopdesk_window_size_parse_frame(const uint8_t *text, size_t len);
+
 /* The off-screen window rescue, driven one step at a time: every effect it needs suspends on the
  * near side, and no C ABI can call back into that and wait. `step` is both what to do next and
  * where the rescue is — no two stages ask for the same step, so nothing else has to cross. No
@@ -4561,6 +5432,41 @@ size_t slopdesk_channel_table_state_count(SlopDeskChannelTable *handle);
 
 size_t slopdesk_channel_table_live(SlopDeskChannelTable *handle, unsigned int *out, size_t cap);
 
+// ---- The DEMUX RULE itself, not just the table it reads ----
+//
+// One frame in, one verdict out, with the table advanced exactly as the frame
+// requires. `kind` is the mux envelope's own type byte (1 open, 2 openAck,
+// 3 data, 4 close, 5 windowAdjust); `accepted` is read for the open-ack alone.
+//
+// The PAYLOAD never crosses. A verdict names a channel and the bytes stay with
+// whoever decoded them.
+//
+// A C enum with a payload is not a thing, so the discriminant and every field a
+// verdict could carry travel together and the caller reads the ones its verdict
+// names. `state` is meaningful for LIFECYCLE, `reason` for DROP.
+//
+// Both refusals FAIL CLOSED — a type byte no kind claims, and a null handle,
+// each drop as unknown. That is the opposite default from this header's platform
+// tables, and deliberately: with no table there is no channel, and delivering
+// bytes to one nobody described is what this rule exists to prevent.
+
+#define SLOPDESK_MUX_VERDICT_DELIVER 0u
+#define SLOPDESK_MUX_VERDICT_LIFECYCLE 1u
+#define SLOPDESK_MUX_VERDICT_DROP 2u
+
+#define SLOPDESK_MUX_DROP_NON_OPEN 0u
+#define SLOPDESK_MUX_DROP_UNKNOWN 1u
+
+typedef struct SlopDeskMuxRouting {
+  unsigned int verdict;
+  unsigned int channel_id;
+  unsigned int state;
+  unsigned int reason;
+} SlopDeskMuxRouting;
+
+SlopDeskMuxRouting slopdesk_channel_table_route(
+    SlopDeskChannelTable *handle, unsigned char kind, unsigned int id, bool accepted);
+
 // ---------------------------------------------------------------------------
 // The host metadata RPC's payloads (rust/slopdesk-ffi/src/metadata.rs).
 //
@@ -5316,6 +6222,58 @@ uint64_t slopdesk_modifier_latch_note(uint64_t latched, uint16_t key_code, bool 
 size_t slopdesk_modifier_latch_capacity(void);
 size_t slopdesk_modifier_latch_drain(uint64_t *latched, uint16_t *out, size_t capacity);
 
+/* ---- what the immersive tap does with one key ------------------------------------------------
+ * `CGEventFlags` stops at this boundary: `modifiers` is the WIRE's own six-bit mask — shift 1,
+ * control 2, option 4, command 8, caps lock 16, fn 32 — the same one every other input door
+ * speaks, so Apple's numbers stay on the side with a header for them.
+ * `kind` is 0 key down · 1 key up · 2 flags changed; anything else is an event with no rule, and
+ * passes through. Swallowing the unknown is what turns an engaged pane into a keyboard trap.     */
+
+// 0 forward and swallow · 1 pass through · 2 disengage.
+uint8_t slopdesk_key_capture_decision(uint16_t key_code, uint8_t modifiers, uint8_t kind);
+bool    slopdesk_key_capture_is_down(uint16_t key_code, uint8_t modifiers, uint8_t kind);
+// The modifier bit a keycode drives, or -1 for a keycode that is not a modifier key.
+int32_t slopdesk_key_capture_modifier_bit(uint16_t key_code);
+// The cancel key, for the local monitors a transient gesture installs over the whole window.
+bool    slopdesk_key_capture_is_escape(uint16_t key_code);
+// Whether that monitor's window should close: a PLAIN Escape, and no chord recorder holding a claim
+// on it. `modifiers` is the same six-bit mask above — which of them disqualify a dismiss (and which
+// are a state the user is merely in, like a stuck caps lock) is the crate's decision, not the tap's.
+bool    slopdesk_escape_dismisses_window(uint16_t key_code, uint8_t modifiers,
+                                         bool chord_capture_armed);
+
+/* ---- What a key event is CALLED, for the two surfaces that key bindings on it ----
+ *
+ * The dispatcher resolves a live keystroke against the binding table and the Settings recorder
+ * captures one to persist; both must land on the same name or a rebind never matches. One table,
+ * therefore, and it answers a SUM: a named key, a printable character, or nothing.
+ *
+ * The named-key indices are 0 return · 1 tab · 2 space · 3 left · 4 right · 5 up · 6 down ·
+ * 7 pageup · 8 pagedown · 9 home · 10 end. Return covers the keypad's Enter — one intent, one name.
+ */
+typedef struct {
+  uint8_t kind;   /* 0 nothing to key on · 1 a named key · 2 a printable character */
+  uint8_t named;  /* the index above, read only when kind == 1 */
+  size_t  length; /* the UTF-8 bytes written to (out, cap), read only when kind == 2 */
+} SlopDeskKeyBase;
+
+// `non_shift_modifier_held` decides the space bar and nothing else: bare and ⇧-only Space is typing
+// the terminal must receive; ⌃/⌥/⌘ Space is the Vi-mode chord.
+SlopDeskKeyBase slopdesk_key_chord_base(uint16_t key_code, const uint8_t *chars, size_t chars_len,
+                                        bool non_shift_modifier_held, uint8_t *out, size_t cap);
+// The recorder's verdict: 0 cancel · 1 clear the binding · 2 keep recording · 3 bind, with the base
+// key's canonical text in (out, cap) and its length in `needed`. Only a bind writes anything. The
+// clear keys are answered BEFORE the characters are read — Backspace reports the DEL scalar, which
+// a base-key-first recorder stored as a junk chord instead of clearing the binding.
+uint8_t slopdesk_key_capture_outcome(uint16_t key_code, const uint8_t *chars, size_t chars_len,
+                                     uint8_t *out, size_t cap, size_t *needed);
+// The two token doors: a named key's canonical SPELLING by case index, and the index a spelling
+// names (-1 for a single character, an alias the grammar folds, or a token nothing produces). A
+// caller with the same eleven cases needs the text to key a stored binding by, and asking for it is
+// what keeps a rebind from being persisted under a spelling the grammar reads back as another key.
+size_t  slopdesk_key_named_canonical(uint8_t index, uint8_t *out, size_t cap);  // 0 = no such case
+int32_t slopdesk_key_named_index(const uint8_t *text, size_t len);
+
 /* The cursor-shape self-heal. Two lists of UNBOUNDED length — the ids whose bitmap arrived, and the
  * asks still outstanding — so the tracker rides in and out through lent buffers rather than as a
  * fixed record. `send` is only an answer when both counts fit: a call that could not write is not a
@@ -5511,6 +6469,143 @@ bool slopdesk_unified_log_parse(const unsigned char *line, size_t len,
                                 SlopDeskDeviceLogLine *out);
 
 // ---------------------------------------------------------------------------
+// The two device panels' shared decisions — `slopdesk_devicepanel`.
+//
+// The Android panel and the simulator panel poll the same kind of host ENSURE
+// verb, turn its answer into the same four phases, and back off on the same
+// rule. Both Swift models held a byte-identical copy of that ladder; this is
+// the one it collapsed onto.
+//
+// Every answer is a KIND. The host string and the device row it is about stay
+// on the caller's side — the panel already holds both, and handing one back
+// would be a copy made only to be compared with the one it came from.
+
+// No answer at all (no pane channel, or a host too old for the verb), or a
+// service that says ready with nothing dialable. Keep polling.
+#define SLOPDESK_DEVICE_PANEL_OFFLINE 0
+// The host is bringing the service up — spinner, keep polling.
+#define SLOPDESK_DEVICE_PANEL_STARTING 1
+// The tool is not installed on the host — the install hint. Polled slowly.
+#define SLOPDESK_DEVICE_PANEL_UNAVAILABLE 2
+// Reachable. Everything else the panel does hangs off this.
+#define SLOPDESK_DEVICE_PANEL_READY 3
+
+// `has_endpoint` is false for a round that got no answer. `host`/`host_len` is
+// the address the panel would dial; null or empty is the same non-answer as a
+// port of 0, which is why the emptiness test is inside rather than at the call
+// site. `state_byte` is the RAW wire byte — an unknown one reads as STARTING,
+// the wire's own forward-tolerant rule, not a second copy of it.
+uint8_t slopdesk_device_panel_phase(bool has_endpoint, uint8_t state_byte,
+                                    uint16_t port, const unsigned char *host,
+                                    size_t host_len);
+
+// How many poll intervals that phase waits before asking again — 0 stops the
+// loop. An unknown byte takes the slow tier.
+uint32_t slopdesk_device_panel_poll_backoff(uint8_t phase_byte);
+
+// A selection with no video yet, given what the device list just said.
+#define SLOPDESK_DEVICE_PANEL_CONNECT 0
+#define SLOPDESK_DEVICE_PANEL_WAIT 1
+#define SLOPDESK_DEVICE_PANEL_GONE 2
+#define SLOPDESK_DEVICE_PANEL_STALLED 3
+#define SLOPDESK_DEVICE_PANEL_NEVER_READY 4
+
+// `is_listed` false — the device left the list — is GONE whatever the clock
+// says, and is the one answer that reads neither other argument.
+uint8_t slopdesk_device_panel_stream_verdict(bool is_listed, bool is_running,
+                                             bool within_grace);
+
+// Whether an arriving frame has anything to tell the observable layer. Called
+// on EVERY frame, so it is what keeps a per-frame assignment — and the whole
+// invalidation behind it — off the video path.
+bool slopdesk_device_panel_video_is_news(bool has_video,
+                                         bool is_awaiting_stream);
+
+// ---------------------------------------------------------------------------
+// Where a device panel's frame sits, and what a point in it means —
+// `slopdesk_devicepanel::geometry`.
+//
+// The other half that was written twice, and the half that fails QUIETLY: both
+// Swift files said "this is the part that can be wrong in a way nobody notices
+// until a tap lands two rows off", in the two places where it could be wrong
+// two different ways.
+//
+// The vocabulary is `SlopDeskVideoPoint`/`Size`/`Rect` above, because the fit
+// here IS `slopdesk_geometry_displayed_video_rect` — a panel with its own
+// aspect fit is how a click ends up beside the pixel it was drawn for.
+
+// The numbers both panels are written against, for `slopdesk_panel_metric`. An
+// unknown code answers 0, which is not one of them.
+#define SLOPDESK_PANEL_METRIC_EDGE_MARGIN 0u
+#define SLOPDESK_PANEL_METRIC_POINTS_PER_LINE 1u
+#define SLOPDESK_PANEL_METRIC_BOTTOM_BAND 2u
+#define SLOPDESK_PANEL_METRIC_TOP_BAND 3u
+
+// Which system-gesture band a contact starts in, for `slopdesk_panel_system_edge`.
+#define SLOPDESK_PANEL_EDGE_NONE 0u
+#define SLOPDESK_PANEL_EDGE_BOTTOM 1u
+#define SLOPDESK_PANEL_EDGE_TOP 2u
+
+// A pinch's two contacts, which are only ever produced together.
+typedef struct {
+  SlopDeskVideoPoint first;
+  SlopDeskVideoPoint second;
+} SlopDeskPinchPair;
+
+double slopdesk_panel_metric(uint32_t metric);
+
+// Aspect-fit, centred, on whole points; the ZERO rect for a degenerate input,
+// which the view reads as "nothing to draw yet".
+SlopDeskVideoRect slopdesk_panel_fitted_rect(SlopDeskVideoSize content,
+                                             SlopDeskVideoSize bounds);
+
+// A panel-space point in the frame's own space. False — and `out` untouched —
+// for a click on the bars beside the frame, which is not a tap on its edge.
+bool slopdesk_panel_device_point(SlopDeskVideoPoint point,
+                                 SlopDeskVideoRect fitted,
+                                 SlopDeskVideoPoint *out);
+
+// The same for a point that left the frame MID-DRAG: clamped to the last
+// addressable point rather than dropped, so a shade-pull still finishes.
+SlopDeskVideoPoint slopdesk_panel_clamped_device_point(SlopDeskVideoPoint point,
+                                                       SlopDeskVideoRect fitted);
+
+// A point in the fitted rect's space, in the grid the stream says it is
+// encoding — the only grid scrcpy's PositionMapper will accept.
+SlopDeskVideoPoint slopdesk_panel_video_pixels(SlopDeskVideoPoint point,
+                                               SlopDeskVideoRect fitted,
+                                               SlopDeskVideoSize video);
+bool slopdesk_panel_surface_is_usable(SlopDeskVideoRect fitted,
+                                      SlopDeskVideoSize video);
+
+// A scroll delta as finger travel: scaled for a wheel, pass-through for a
+// trackpad, and never re-signed. `unrotated` is the quarter turn the
+// simulator's never-rotating framebuffer needs undone; the Android lane rotates
+// on the device and does not call it.
+SlopDeskVideoSize slopdesk_panel_scroll_vector(SlopDeskVideoSize delta,
+                                               bool is_precise);
+SlopDeskVideoSize slopdesk_panel_unrotated(SlopDeskVideoSize vector, double angle);
+
+SlopDeskPinchPair slopdesk_panel_pinch_fingers(SlopDeskVideoPoint centre, double spread,
+                                               SlopDeskVideoRect fitted);
+
+// Where a synthetic finger may be planted, and where it replants after running
+// out of screen — what makes a long scroll one gesture rather than a series of
+// unrelated flicks.
+SlopDeskVideoPoint slopdesk_panel_planted(SlopDeskVideoPoint point,
+                                          SlopDeskVideoRect fitted);
+SlopDeskVideoPoint slopdesk_panel_regrip(SlopDeskVideoSize travel,
+                                         SlopDeskVideoRect fitted);
+
+uint32_t slopdesk_panel_system_edge(SlopDeskVideoPoint point, SlopDeskVideoRect fitted,
+                                    bool is_upside_down);
+
+// The wire's geometry fields, saturating rather than wrapping: 16 bits, and a
+// size past 65535 would wrap and place every touch at the origin.
+uint16_t slopdesk_panel_clamp_u16(double value);
+int32_t slopdesk_panel_clamp_i32(double value);
+
+// ---------------------------------------------------------------------------
 // The superd control socket's framing — `slopdesk_superwire`.
 //
 //     <1 byte tag> <4 bytes big-endian length> <length bytes body>
@@ -5593,6 +6688,56 @@ size_t slopdesk_sidecar_version_banner(const uint8_t *banner, size_t len, uint8_
 size_t slopdesk_sidecar_upgrade_plan(const uint8_t *previous, size_t previous_len,
                                      const uint8_t *current, size_t current_len, uint8_t *out,
                                      size_t cap);
+
+// ---- The pointer libghostty hands to the embedder --------------------------------
+//
+// Two actions, both one raw C enum value in and one scalar out. The RAW value
+// crosses because the C callback already holds it; parsing it Swift-side first
+// would need a Swift mirror of the C enum, which is the third copy of a table
+// whose first two already have to agree.
+
+// KEEP the cursor the pointer is already wearing — the answer for the nineteen
+// shapes macOS has no native cursor for AND for any value no libghostty emits.
+#define SLOPDESK_POINTER_TOKEN_NONE (-1)
+
+// The cursor a `ghostty_action_mouse_shape_e` asks for, as a PointerShapeToken
+// discriminant, or SLOPDESK_POINTER_TOKEN_NONE.
+int32_t slopdesk_pointer_shape_token(int32_t raw);
+
+// Whether the pointer should be VISIBLE, from a
+// `ghostty_action_mouse_visibility_e`. Only the explicit hidden value hides:
+// a pointer wrongly shown is a cosmetic miss, one wrongly hidden is a person
+// moving a mouse they cannot see.
+bool slopdesk_pointer_mouse_visible(int32_t raw);
+
+// ---- The repository behind a pane's cwd — MACOS ONLY ----------------------------
+//
+// Everything between the MACOS-ONLY markers is declared on macOS and NOWHERE else,
+// and the markers are read by `scripts/build-ffi.sh`: it requires these symbols on
+// the macOS slice and requires them ABSENT from the two iOS slices, so the guard
+// here and the `cfg(target_os = "macos")` in `src/lib.rs` cannot drift apart.
+//
+// Behind the door is a vendored `libgit2`. Only hostd asks — a client on either
+// platform RECEIVES the git status as a metadata reply and never computes it — so
+// compiling that library into the phone slices would cost every phone build and
+// every phone archive for a door nothing on the phone can reach.
+//
+// MACOS-ONLY BEGIN
+#if TARGET_OS_OSX
+
+// The git status of `path`'s repository, already encoded as the metadata reply's
+// own payload (the layout `slopdesk_metadata_decode_git_status` reads). It crosses
+// encoded rather than as a record and an arena because hostd's responder forwards
+// it verbatim; unpacking it here would only mean packing it again there.
+//
+// A path outside a repository, an unreadable repository and a repository that
+// vanished mid-answer all give the one-byte "no repo" payload — the same degraded
+// rendering, which is the right one for all three. 0 means only that `path` was
+// not UTF-8.
+size_t slopdesk_git_status(const uint8_t *path, size_t len, uint8_t *out, size_t cap);
+
+#endif /* TARGET_OS_OSX */
+// MACOS-ONLY END
 
 #ifdef __cplusplus
 }

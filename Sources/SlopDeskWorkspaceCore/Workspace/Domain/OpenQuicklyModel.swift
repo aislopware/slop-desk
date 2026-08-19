@@ -254,14 +254,17 @@ public struct OpenQuicklySection: Identifiable, Equatable, Sendable {
 /// testable.
 ///
 /// ### Reuse
-/// - Ranking takes an INJECTED `score` closure (the view passes `FuzzyMatcher.rank(_:_:)`; the tests
-///   pass a deterministic subsequence scorer) — the same contract as ``JumpToModel/filtered(_:query:score:)``.
-///   Scores are `Int` (no float / FMA / NaN hazard — CLAUDE.md §2).
+/// - Ranking is `slopdesk_workspace::search_rank`, the one every search field in the app asks for —
+///   the same call as ``JumpToModel/filtered(_:query:)``.
 /// - The **Current** source is the existing ``JumpToModel`` output, wrapped 1:1 via ``currentItems(from:)``.
+/// - What a row is CALLED comes from the rules the rail reads — ``PaneSpec/cwdDisplayName(_:)`` for a
+///   folder's name and ``PaneLabel/railSubtitle(kind:title:video:cwd:liveTitle:projectKey:)`` for a
+///   pane's second line. A switcher and a sidebar naming the same pane two different things reads as
+///   two panes, so the picker asks rather than re-deriving.
 public enum OpenQuicklyModel {
     // MARK: - Sectioning + ranking
 
-    /// Build the picker sections for `filter`, ranking each source against `query` with the injected `score`.
+    /// Build the picker sections for `filter`, ranking each source against `query`.
     ///
     /// - `.all`: one section per source in ``OpenQuicklyFilter/sectionOrder``, EMPTY sources omitted (no
     ///   stray header) — the merged-with-headers list.
@@ -271,37 +274,22 @@ public enum OpenQuicklyModel {
         sources: [OpenQuicklyFilter: [OpenQuicklyItem]],
         filter: OpenQuicklyFilter,
         query: String,
-        score: (_ query: String, _ haystack: String) -> Int?,
     ) -> [OpenQuicklySection] {
         if filter == .all {
             return OpenQuicklyFilter.sectionOrder.compactMap { source in
-                let ranked = rank(sources[source] ?? [], query: query, score: score)
+                let ranked = rank(sources[source] ?? [], query: query)
                 guard !ranked.isEmpty else { return nil }
                 return OpenQuicklySection(filter: source, items: ranked)
             }
         }
-        let ranked = rank(sources[filter] ?? [], query: query, score: score)
-        return [OpenQuicklySection(filter: filter, items: ranked)]
+        return [OpenQuicklySection(filter: filter, items: rank(sources[filter] ?? [], query: query))]
     }
 
-    /// Fuzzy-filter + rank `items` by `query`. An EMPTY query returns `items` unchanged (the zero-state). A
-    /// non-empty query drops every item the scorer rejects (`nil`) and orders survivors by score DESCENDING,
-    /// breaking ties by original order (a STABLE sort). Integer scores only — the `>`/`<` are ordered + total.
-    static func rank(
-        _ items: [OpenQuicklyItem],
-        query: String,
-        score: (_ query: String, _ haystack: String) -> Int?,
-    ) -> [OpenQuicklyItem] {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return items }
-        let scored: [(score: Int, order: Int, item: OpenQuicklyItem)] = items.enumerated().compactMap { offset, item in
-            guard let s = score(trimmed, item.searchText) else { return nil }
-            return (s, offset, item)
-        }
-        return scored.sorted { lhs, rhs in
-            if lhs.score != rhs.score { return lhs.score > rhs.score }
-            return lhs.order < rhs.order
-        }.map(\.item)
+    /// Fuzzy-filter + rank `items` by `query`. An EMPTY query returns `items` unchanged (the
+    /// zero-state); a non-empty one drops the misses and orders the survivors best-first, with the
+    /// source's own order breaking ties.
+    static func rank(_ items: [OpenQuicklyItem], query: String) -> [OpenQuicklyItem] {
+        wsSearchRanked(items, query: query) { $0.searchText }
     }
 
     /// The flattened, navigable row list (sections concatenated; headers are NOT rows). The basis for
@@ -310,45 +298,23 @@ public enum OpenQuicklyModel {
         sections.flatMap(\.items)
     }
 
-    /// Map a 1-based `⌘1–9` quick-pick chord onto a 0-based index into the visible `rows`. Returns `nil` for
-    /// `⌘0` (the All-pill chord, not a pick), a chord above 9, or an index past the visible rows.
+    /// Map a 1-based `⌘1–9` quick-pick chord onto a 0-based index into the visible `rows` —
+    /// ``ListNavigation/quickPickIndex(_:rowCount:)``, over the rows this picker happens to be
+    /// showing. `nil` for `⌘0` (the All-pill chord, not a pick), a chord above 9, or an index past
+    /// the visible rows.
     public static func quickPickIndex(_ oneBased: Int, in rows: [OpenQuicklyItem]) -> Int? {
-        guard (1...9).contains(oneBased) else { return nil }
-        let index = oneBased - 1
-        guard rows.indices.contains(index) else { return nil }
-        return index
+        ListNavigation.quickPickIndex(oneBased, rowCount: rows.count)
     }
 
-    /// Move a selection index by `delta`, clamped to `[0, count-1]` — the SHARED contract for the picker's
-    /// arrow (`±1`), page (`±pageStep`) and Home/End (`±count`) navigation. An empty list (`count <= 0`)
-    /// clamps to `0`. Pure so PageUp/PageDown/Home/End paging is headlessly testable (the view passes
-    /// `selectableRows.count` and the page step). The `max`/`min` are ordered integer comparisons (no float).
-    public static func clampedSelection(current: Int, delta: Int, count: Int) -> Int {
-        guard count > 0 else { return 0 }
-        return max(0, min(count - 1, current + delta))
-    }
-
-    /// Fuzzy-filter + rank a list of titled actions by `query` — the `⌘K` Actions popover search. Generic
-    /// over the action type via a `title` projection so the view can reuse the SAME injected `score` contract
-    /// (and ordering) the row ranker uses. An EMPTY query returns `actions` unchanged; a non-empty query drops
-    /// every action the scorer rejects (`nil`), orders survivors by score DESCENDING, breaking ties by original
-    /// order (a STABLE sort). Integer scores only — the `>`/`<` are ordered + total (CLAUDE.md §2).
+    /// Fuzzy-filter + rank a list of titled actions by `query` — the `⌘K` Actions popover search.
+    /// Generic over the action type via a `title` projection, so the popover and the row ranker
+    /// differ in what they are found BY and in nothing else.
     public static func rankActions<Action>(
         _ actions: [Action],
         query: String,
         title: (Action) -> String,
-        score: (_ query: String, _ haystack: String) -> Int?,
     ) -> [Action] {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return actions }
-        let scored: [(score: Int, order: Int, action: Action)] = actions.enumerated().compactMap { offset, action in
-            guard let s = score(trimmed, title(action)) else { return nil }
-            return (s, offset, action)
-        }
-        return scored.sorted { lhs, rhs in
-            if lhs.score != rhs.score { return lhs.score > rhs.score }
-            return lhs.order < rhs.order
-        }.map(\.action)
+        wsSearchRanked(actions, query: query, searchText: title)
     }
 
     // MARK: - Filter cycling (Tab / ⇧Tab)
@@ -363,12 +329,15 @@ public enum OpenQuicklyModel {
         cycle(from: current, by: -1)
     }
 
+    /// The pills are a RING rather than a list, so the step wraps —
+    /// ``ListNavigation/wrappedIndex(_:delta:count:)``. A pill that is not in the ring has nothing
+    /// to step from and stays where it is.
     private static func cycle(from current: OpenQuicklyFilter, by delta: Int) -> OpenQuicklyFilter {
         let pills = OpenQuicklyFilter.pickerPills
-        guard !pills.isEmpty, let index = pills.firstIndex(of: current) else { return current }
-        let count = pills.count
-        // `((i + delta) % n + n) % n` keeps the index in range for a negative delta (no underflow / trap).
-        let wrapped = ((index + delta) % count + count) % count
+        guard let index = pills.firstIndex(of: current),
+              let wrapped = ListNavigation.wrappedIndex(index, delta: delta, count: pills.count),
+              pills.indices.contains(wrapped)
+        else { return current }
         return pills[wrapped]
     }
 
@@ -437,41 +406,31 @@ public enum OpenQuicklyModel {
     /// `paneKind` differentiates a VIDEO pane (`.desktop`) so the row reads as its
     /// stream target (glyph + badge + host subtitle) while ``Act`` stays the kind-generic
     /// `.focusPane`. Defaults to `.terminal`, so every existing caller and non-video pane keeps "Pane" chrome.
+    ///
+    /// LINE TWO is ``PaneLabel/railSubtitle(kind:title:video:cwd:liveTitle:projectKey:)`` — the rail's
+    /// own rule, not a second one: a terminal says where it is, a video pane says which host APP it
+    /// streams unless line one already said it. The picker draws no section headers, so it passes no
+    /// project key and gets the whole path.
     public static func paneItem(
         paneID: PaneID,
         title: String,
         cwd: String?,
         paneKind: PaneKind = .terminal,
-        appName: String? = nil,
+        video: VideoEndpoint? = nil,
     ) -> OpenQuicklyItem {
         let haystack = [title, cwd ?? ""].filter { !$0.isEmpty }.joined(separator: " ")
         return OpenQuicklyItem(
             id: "pane:\(paneID.raw.uuidString)",
             kind: .pane,
             title: title,
-            subtitle: paneRowSubtitle(cwd: cwd, title: title, paneKind: paneKind, appName: appName),
+            subtitle: PaneLabel.railSubtitle(
+                kind: paneKind, title: title, video: video, cwd: cwd, liveTitle: title, projectKey: nil,
+            ),
             timestamp: nil,
             searchText: haystack,
             act: .focusPane(paneID),
             paneKind: paneKind,
         )
-    }
-
-    /// The subtitle for an Opened pane row. A terminal pane shows its cwd (or nothing when unknown —
-    /// never a blank line). A VIDEO pane (`.desktop`) has no shell cwd, so the host target's
-    /// owning APP name (`appName`) stands in — mirroring the sidebar's ``PaneSpec/railSubtitle`` discipline
-    /// (window title on line 1, host app on line 2) so the row never echoes its title on both lines. It falls
-    /// back to the window ``title`` only when `appName` is empty (a manual-id binding), keeping the row a
-    /// labelled window (glyph + badge + subtitle) not a bare line. A real cwd always wins (never silently
-    /// dropped).
-    private static func paneRowSubtitle(cwd: String?, title: String, paneKind: PaneKind, appName: String?) -> String? {
-        if let cwd = nonEmpty(cwd) { return cwd }
-        guard paneKind.isVideo else { return nil }
-        // EMPTY HOST-TITLE PARITY: surface the host app on line 2 only when it is NOT already line 1. An empty
-        // streamed-window title makes line 1 fall back to the app name, so an app-name subtitle would echo it
-        // on both lines — drop to a single line (the window-title fallback is likewise an echo of line 1).
-        if let app = nonEmpty(appName), app != title { return app }
-        return nil
     }
 
     /// Build one **Recent** row for a recently-closed tab at LIFO `index` (0 = most-recently closed). `↩`
@@ -519,10 +478,9 @@ public enum OpenQuicklyModel {
                         // `.terminal` when the spec side-table is momentarily missing (the gap
                         // ``paneDisplayTitle`` also tolerates) — a spec-less pane stays a generic "Pane".
                         paneKind: spec?.kind ?? .terminal,
-                        // Thread the host-side app name (same `VideoEndpoint.appName` the rail's
-                        // `railSubtitle` reads) so a video row's subtitle is the host app, not an echo
-                        // of the line-1 target title. Falls back to the title when absent.
-                        appName: spec?.video?.appName,
+                        // Thread the streamed window so the row's line two is the rail's own subtitle
+                        // rule: the host app, never an echo of the line-1 target title.
+                        video: spec?.video,
                     ))
                 }
             }
@@ -578,13 +536,11 @@ public enum OpenQuicklyModel {
         return s
     }
 
-    /// The last path component for a folder's display title. Tolerates a trailing slash (`/var/log/` → `log`)
-    /// and the root (`/` → `/`); never blanks. No force-unwrap (CLAUDE.md §3).
+    /// The last path component for a folder's display title — ``PaneSpec/cwdDisplayName(_:)``, the
+    /// same folder name the sidebar row, the tab strip and the project sections derive, so one
+    /// directory is never called two things. A path with no name to show (blank) reads as itself
+    /// rather than blanking the row.
     static func folderDisplayName(_ path: String) -> String {
-        let trimmed = (path.count > 1 && path.hasSuffix("/")) ? String(path.dropLast()) : path
-        if let last = trimmed.split(separator: "/").last, !last.isEmpty {
-            return String(last)
-        }
-        return trimmed
+        PaneSpec.cwdDisplayName(path) ?? path
     }
 }

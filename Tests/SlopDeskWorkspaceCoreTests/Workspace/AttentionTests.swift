@@ -22,7 +22,6 @@ final class AttentionTests: XCTestCase {
     private func makeTreeStore(restoringTree: TreeWorkspace = .defaultWorkspace()) -> WorkspaceStore {
         let store = WorkspaceStore(
             restoringTree: restoringTree,
-            liveModel: .tree,
             makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: 2,
         )
@@ -65,129 +64,72 @@ final class AttentionTests: XCTestCase {
         }
     }
 
-    // MARK: - AttentionEdge.shouldNotify (pure edge rule)
+    // MARK: - The three attention rules
 
-    /// A transition INTO needsPermission / done from a DIFFERENT state is an attention edge.
-    func testEdgeFiresEnteringAttentionStates() {
-        XCTAssertTrue(AttentionEdge.shouldNotify(prev: .working, current: .needsPermission))
+    // The rules are `slopdesk-agent::attention`; what is tested here is that each Swift entry point
+    // reaches the one it names — a status crossing as its own byte, a pane list answering with the
+    // right IDENTITY for the position it gets back, and a visited set that is read in queue order.
+
+    func testEachEdgeEntryPointReachesItsOwnRule() {
         XCTAssertTrue(AttentionEdge.shouldNotify(prev: .working, current: .done))
-        XCTAssertTrue(AttentionEdge.shouldNotify(prev: .idle, current: .needsPermission))
-        XCTAssertTrue(AttentionEdge.shouldNotify(prev: .none, current: .done))
-        // done → needsPermission is a real escalation edge (now blocked, was merely finished).
-        XCTAssertTrue(AttentionEdge.shouldNotify(prev: .done, current: .needsPermission))
-    }
-
-    /// Staying in the same attention state (no transition) is NOT an edge — the coalesce guard.
-    func testEdgeDoesNotFireOnSameState() {
-        XCTAssertFalse(AttentionEdge.shouldNotify(prev: .needsPermission, current: .needsPermission))
         XCTAssertFalse(AttentionEdge.shouldNotify(prev: .done, current: .done))
-    }
-
-    /// Transitions INTO non-attention states (working / idle / none) never notify.
-    func testEdgeDoesNotFireEnteringQuietStates() {
-        XCTAssertFalse(AttentionEdge.shouldNotify(prev: .needsPermission, current: .working))
-        XCTAssertFalse(AttentionEdge.shouldNotify(prev: .done, current: .idle))
-        XCTAssertFalse(AttentionEdge.shouldNotify(prev: .working, current: .none))
-    }
-
-    // MARK: - AttentionEdge.isCompletion (the hook-less finish edge)
-
-    /// `working|needsPermission → idle` is a COMPLETION (herdr `Working|Blocked → Idle`) — the
-    /// hook-free agent's finish, which never mints `.done`.
-    func testCompletionFiresLeavingActiveStatesForIdle() {
         XCTAssertTrue(AttentionEdge.isCompletion(prev: .working, current: .idle))
-        XCTAssertTrue(AttentionEdge.isCompletion(prev: .needsPermission, current: .idle))
-    }
-
-    /// `.done → .idle` is the decay of an ALREADY-notified finish; `.none → .idle` is presence
-    /// appearing; `idle → idle` cannot occur past the store's idempotency guard but is still false.
-    func testCompletionSilentOnDecayPresenceAndNonIdleTargets() {
         XCTAssertFalse(AttentionEdge.isCompletion(prev: .done, current: .idle))
-        XCTAssertFalse(AttentionEdge.isCompletion(prev: .none, current: .idle))
-        XCTAssertFalse(AttentionEdge.isCompletion(prev: .idle, current: .idle))
-        // Non-idle targets are the shouldNotify edge's business, never a completion.
-        XCTAssertFalse(AttentionEdge.isCompletion(prev: .working, current: .done))
-        XCTAssertFalse(AttentionEdge.isCompletion(prev: .working, current: .needsPermission))
-        XCTAssertFalse(AttentionEdge.isCompletion(prev: .working, current: .none))
-    }
-
-    /// `isAttention` is the level predicate the ring/glow read.
-    func testIsAttentionLevelPredicate() {
         XCTAssertTrue(AttentionEdge.isAttention(.needsPermission))
-        XCTAssertTrue(AttentionEdge.isAttention(.done))
         XCTAssertFalse(AttentionEdge.isAttention(.working))
-        XCTAssertFalse(AttentionEdge.isAttention(.idle))
-        XCTAssertFalse(AttentionEdge.isAttention(.none))
     }
 
-    // MARK: - AttentionJump.oldestPane (pure ordering)
-
-    /// needsPermission ALWAYS wins over done, regardless of position (blocked is the most urgent).
-    func testJumpBlockedBeforeDone() {
-        let a = PaneID(), b = PaneID(), c = PaneID()
-        let status: [PaneID: ClaudeStatus] = [a: .done, b: .needsPermission, c: .done]
-        // `b` is blocked even though `a` (done) comes first — blocked wins.
-        XCTAssertEqual(AttentionJump.oldestPane(in: [a, b, c]) { status[$0] ?? .none }, b)
+    /// Every status must cross as ITSELF: a transposed byte would make one state's rule answer for
+    /// another, which no single-case assertion above would catch.
+    func testEveryStatusCrossesAsItself() {
+        let attention: Set<ClaudeStatus> = [.needsPermission, .done]
+        for status in [ClaudeStatus.none, .idle, .working, .done, .needsPermission] {
+            XCTAssertEqual(AttentionEdge.isAttention(status), attention.contains(status), "\(status)")
+            XCTAssertEqual(
+                AttentionEdge.isCompletion(prev: status, current: .idle),
+                status == .working || status == .needsPermission,
+                "\(status) → idle",
+            )
+        }
     }
 
-    /// Within a bucket the FIRST in traversal order (the oldest/top-most) wins.
-    func testJumpOldestWithinBucket() {
-        let a = PaneID(), b = PaneID(), c = PaneID()
-        let status: [PaneID: ClaudeStatus] = [a: .needsPermission, b: .needsPermission, c: .done]
-        XCTAssertEqual(AttentionJump.oldestPane(in: [a, b, c]) { status[$0] ?? .none }, a)
+    /// The door answers a POSITION; the pane it names must be the one at that position.
+    func testTheOldestPaneIsTheIdentityAtThePositionTheRuleNames() {
+        let quiet = PaneID(), done = PaneID(), blocked = PaneID()
+        let statuses: [PaneID: ClaudeStatus] = [quiet: .idle, done: .done, blocked: .needsPermission]
+        let pick = { (panes: [PaneID]) in
+            AttentionJump.oldestPane(in: panes, status: { statuses[$0] ?? .none })
+        }
+        XCTAssertEqual(pick([quiet, done, blocked]), blocked, "blocked outranks a finish before it")
+        XCTAssertEqual(pick([quiet, done]), done)
+        XCTAssertNil(pick([quiet]))
+        XCTAssertNil(pick([]), "an empty list lends no buffer")
     }
 
-    /// With no blocked pane, the first DONE pane wins.
-    func testJumpFallsBackToDone() {
-        let a = PaneID(), b = PaneID(), c = PaneID()
-        let status: [PaneID: ClaudeStatus] = [a: .working, b: .done, c: .done]
-        XCTAssertEqual(AttentionJump.oldestPane(in: [a, b, c]) { status[$0] ?? .none }, b)
-    }
-
-    /// All idle/working/none → nil (nothing to jump to).
-    func testJumpNilWhenNoAttention() {
-        let a = PaneID(), b = PaneID()
-        let status: [PaneID: ClaudeStatus] = [a: .working, b: .idle]
-        XCTAssertNil(AttentionJump.oldestPane(in: [a, b]) { status[$0] ?? .none })
-        XCTAssertNil(AttentionJump.oldestPane(in: [PaneID]()) { _ in .none })
-    }
-
-    // MARK: - AttentionWalk.step (pure walk-vs-pop-home decision)
-
-    /// A press with unvisited queue entries advances to the FIRST one — the queue is already
-    /// rank-then-since sorted by the caller (``WorkspaceStore/unseenAttentionPanes``), so `step` itself is
-    /// just "first not yet visited".
-    func testWalkStepAdvancesToFirstUnvisitedInQueue() {
-        let a = PaneID(), b = PaneID()
+    /// The visited flags are read in QUEUE order, and each of the three outcomes maps back to the
+    /// pane the caller holds.
+    func testTheWalkMapsEveryOutcomeBackToACallerPane() {
+        let first = PaneID(), second = PaneID(), origin = PaneID()
         XCTAssertEqual(
-            AttentionWalk.step(queue: [a, b], visited: [a], origin: a, isPaneLive: { _ in true }),
-            .advance(to: b),
+            AttentionWalk.step(
+                queue: [first, second], visited: [first], origin: origin, isPaneLive: { _ in true },
+            ),
+            .advance(to: second),
         )
-    }
-
-    /// Termination is VISITED-SET exhaustion, not queue emptiness: once every queue entry has been
-    /// visited, the next press pops back to the recorded origin.
-    func testWalkStepPopsHomeWhenQueueFullyVisited() {
-        let a = PaneID(), b = PaneID(), origin = PaneID()
         XCTAssertEqual(
-            AttentionWalk.step(queue: [a, b], visited: [a, b], origin: origin, isPaneLive: { _ in true }),
+            AttentionWalk.step(
+                queue: [first, second], visited: [first, second], origin: origin,
+                isPaneLive: { _ in true },
+            ),
             .popHome(to: origin),
         )
-    }
-
-    /// An origin closed mid-triage pops to `nil` (the caller treats this as a silent no-op) rather than
-    /// resurrecting a dead pane id.
-    func testWalkStepPopHomeTargetIsNilWhenOriginClosed() {
-        let a = PaneID(), origin = PaneID()
         XCTAssertEqual(
-            AttentionWalk.step(queue: [a], visited: [a], origin: origin, isPaneLive: { _ in false }),
+            AttentionWalk.step(
+                queue: [first], visited: [first], origin: origin, isPaneLive: { _ in false },
+            ),
             .popHome(to: nil),
+            "a closed origin is not a pane to pop to",
         )
-    }
-
-    /// A cold chord (never started, nothing pending) is the pre-existing single-shot no-op — expressed as
-    /// the same nil-target pop-home the caller already no-ops on.
-    func testWalkStepPopHomeTargetIsNilWhenNeverStarted() {
         XCTAssertEqual(
             AttentionWalk.step(queue: [], visited: [], origin: nil, isPaneLive: { _ in true }),
             .popHome(to: nil),

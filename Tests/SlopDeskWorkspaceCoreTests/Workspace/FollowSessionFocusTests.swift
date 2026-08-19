@@ -51,7 +51,6 @@ final class FollowSessionFocusTests: XCTestCase {
     private func makeStore(_ tree: TreeWorkspace, following: Bool) -> WorkspaceStore {
         let store = WorkspaceStore(
             restoringTree: tree,
-            liveModel: .tree,
             makeSession: { FakePaneSession($0.spec) },
             liveVideoCap: 2,
         )
@@ -154,7 +153,6 @@ final class FollowSessionFocusTests: XCTestCase {
         let seed = seed()
         let store = WorkspaceStore(
             restoringTree: seed.workspace,
-            liveModel: .tree,
             makeSession: { FakePaneSession($0.spec) },
             liveVideoCap: 2,
         )
@@ -182,7 +180,6 @@ final class FollowSessionFocusTests: XCTestCase {
         let seed = seed()
         let store = WorkspaceStore(
             restoringTree: seed.workspace,
-            liveModel: .tree,
             makeSession: { FakePaneSession($0.spec) },
             liveVideoCap: 2,
         )

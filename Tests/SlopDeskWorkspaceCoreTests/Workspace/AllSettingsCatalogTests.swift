@@ -89,7 +89,7 @@ final class AllSettingsCatalogTests: XCTestCase {
             // Appearance (New Tab Position — tab-setting.png — + density)
             SettingsKey.newTabPositionKey, SettingsKey.density,
             // Agents
-            SettingsKey.autoSwitchLayouts, SettingsKey.recordClipboardHistory,
+            SettingsKey.recordClipboardHistory,
         ]
         let present = Set(AllSettingsCatalog.entries.map(\.key))
         for key in required {
@@ -113,7 +113,7 @@ final class AllSettingsCatalogTests: XCTestCase {
             AllSettingsCatalog.entries.first { $0.key == key }?.bucket
         }
         for key in [
-            SettingsKey.autoSwitchLayouts, SettingsKey.recordClipboardHistory,
+            SettingsKey.recordClipboardHistory,
             SettingsKey.copyOnSelect, SettingsKey.scrollMultiplier,
         ] {
             XCTAssertEqual(bucket(key), .advancedOnly, "'\(key)' should be advancedOnly (inline)")
@@ -194,7 +194,7 @@ final class AllSettingsCatalogTests: XCTestCase {
     /// font and keybinding choices intact."
     ///
     /// Revert-to-fail: before the data-loss fix, `resetAdvancedOnly()` reset the ENTIRE global toggle set, so
-    /// `copyOnSelect` / `oscNotifications` / `autoSwitchLayouts` were wrongly cleared — the
+    /// `copyOnSelect` / `oscNotifications` / `recordClipboardHistory` were wrongly cleared — the
     /// four `…Enabled` "preserved" asserts below fail on the un-fixed code.
     func testResetAdvancedOnlyPreservesAppearanceFontKeybindings() {
         let store = PreferencesStore(defaults: makeIsolatedDefaults(), sidecarURL: nil, applyOnInit: false)
@@ -208,10 +208,10 @@ final class AllSettingsCatalogTests: XCTestCase {
         // These are NON-default values that a Reset-Advanced-Only must NOT destroy.
         SettingsKey.store.set(true, forKey: SettingsKey.copyOnSelect) // Controls (default Off)
         SettingsKey.store.set(false, forKey: SettingsKey.oscNotifications) // Shell (default On)
-        SettingsKey.store.set(false, forKey: SettingsKey.autoSwitchLayouts) // Agents (default On)
+        SettingsKey.store.set(false, forKey: SettingsKey.recordClipboardHistory) // Advanced (default On)
         XCTAssertTrue(SettingsKey.copyOnSelectEnabled)
         XCTAssertFalse(SettingsKey.oscNotificationsEnabled)
-        XCTAssertFalse(SettingsKey.autoSwitchLayoutsEnabled)
+        XCTAssertFalse(SettingsKey.recordClipboardHistoryEnabled)
 
         store.resetAdvancedOnly()
 
@@ -226,25 +226,25 @@ final class AllSettingsCatalogTests: XCTestCase {
         // Tab-reachable toggles PRESERVED — the data-loss fix. None of these is advanced-only.
         XCTAssertTrue(SettingsKey.copyOnSelectEnabled, "Controls toggle survives Reset-Advanced-Only")
         XCTAssertFalse(SettingsKey.oscNotificationsEnabled, "Shell toggle survives Reset-Advanced-Only")
-        XCTAssertFalse(SettingsKey.autoSwitchLayoutsEnabled, "Agents toggle survives Reset-Advanced-Only")
+        XCTAssertFalse(SettingsKey.recordClipboardHistoryEnabled, "Advanced toggle survives Reset-Advanced-Only")
     }
 
     /// "Reset All Settings" returns EVERYTHING to defaults — the typed models AND a flipped global
-    /// `Defaults.Keys` toggle (`autoSwitchLayouts`, default ON). Revert-to-fail: before `resetAll()` was
+    /// `Defaults.Keys` toggle (`recordClipboardHistory`, default ON). Revert-to-fail: before `resetAll()` was
     /// extended to cover them, the `Defaults.Keys` toggle survived a reset.
     func testResetAllRestoresOrphanToggleToDefault() {
         let store = PreferencesStore(defaults: makeIsolatedDefaults(), sidecarURL: nil, applyOnInit: false)
         store.terminal = TerminalPreferences(fontSize: 18)
         store.appearance = AppearancePreferences(density: "compact")
-        SettingsKey.store.set(false, forKey: SettingsKey.autoSwitchLayouts) // flip OFF the default-ON toggle
-        XCTAssertFalse(SettingsKey.autoSwitchLayoutsEnabled)
+        SettingsKey.store.set(false, forKey: SettingsKey.recordClipboardHistory) // flip OFF the default-ON toggle
+        XCTAssertFalse(SettingsKey.recordClipboardHistoryEnabled)
 
         store.resetAll()
 
         XCTAssertEqual(store.terminal, TerminalPreferences())
         XCTAssertEqual(store.appearance, AppearancePreferences())
         XCTAssertTrue(store.rawOverrides.isEmpty)
-        XCTAssertTrue(SettingsKey.autoSwitchLayoutsEnabled, "Reset All restores the toggle to its default")
+        XCTAssertTrue(SettingsKey.recordClipboardHistoryEnabled, "Reset All restores the toggle to its default")
     }
 
     /// "Reset All Settings" returns the keys the old 23-entry hand-list MISSED — the ~35 advanced + Controls +
@@ -395,7 +395,7 @@ final class AllSettingsCatalogTests: XCTestCase {
     /// reading "Off" beside its own `· Default: On` with nothing left to say the reset had missed it.
     func testResetEverySettingRestoresTheDeviceLocalRows() {
         let preferences = PreferencesStore(defaults: makeIsolatedDefaults(), sidecarURL: nil, applyOnInit: false)
-        let workspace = WorkspaceStore(liveModel: .tree, makeSession: { FakePaneSession($0.spec) })
+        let workspace = WorkspaceStore(makeSession: { FakePaneSession($0.spec) })
         let flipped = !DevicePreferences.platformDefaultFollowSessionFocus
         workspace.setFollowSessionFocus(flipped)
         XCTAssertEqual(workspace.devicePreferences.followSessionFocus, flipped, "precondition: it is off default")
@@ -406,6 +406,23 @@ final class AllSettingsCatalogTests: XCTestCase {
             workspace.devicePreferences.followSessionFocus,
             DevicePreferences.platformDefaultFollowSessionFocus,
             "Reset All left an advertised row at the value the user set",
+        )
+    }
+
+    /// The `· Default: …` the shared-focus row PRINTS is the default the reset actually RESTORES.
+    ///
+    /// This one row's default is the only one that differs per platform — a Mac follows the session,
+    /// a phone does not (docs/45 §8.2) — and the two sides decide it separately: Swift on `#if
+    /// os(iOS)`, `slopdesk_workspace::settings_rows` on `cfg!(target_os = "ios")`. They agree only
+    /// because the xcframework is built per SLICE, so this is the assertion that the slice Swift
+    /// linked is the slice Swift was compiled for. A mismatch is invisible to every compile-time
+    /// check on either side and prints a row whose stated default is the other platform's.
+    func testTheSharedFocusRowPrintsTheDefaultTheResetRestores() {
+        let row = AllSettingsCatalog.entries.first { $0.key == AllSettingsCatalog.followSessionFocusKey }
+        XCTAssertEqual(
+            row?.defaultText,
+            DevicePreferences.platformDefaultFollowSessionFocus ? "On" : "Off",
+            "the FFI slice's default disagrees with this platform's — the linked artifact is another platform's",
         )
     }
 

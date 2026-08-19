@@ -1,16 +1,23 @@
-// PaneGitSummary — the compact per-pane git state the sidebar tab row renders as its SECOND LINE
-// (branch + ahead/behind + changed-file count), folded from the E4 `gitStatus` metadata RPC. The full
-// Git details surfaces (the inspector tab, then the auxiliary Git window) are REMOVED — this one-line
-// summary in the rail is the git surface now, so it lives as a pure domain value (headlessly pinnable)
-// and the store keeps a per-pane mirror refreshed on command completion / cwd change / connect.
+// PaneGitSummary — the per-pane git state the sidebar tab row renders as its SECOND LINE (branch +
+// ahead/behind + the porcelain breakdown), folded from the E4 `gitStatus` metadata RPC. The full Git
+// details surfaces (the inspector tab, then the auxiliary Git window) are REMOVED — the one line in
+// the rail is the git surface now, so this lives as a pure domain value (headlessly pinnable) and the
+// store keeps a per-pane mirror refreshed on command completion / cwd change / connect.
+//
+// A VALUE, NOT A RENDERING. It used to carry a `compactLine` that folded itself into one string, and
+// that was a SECOND renderer for the one surface: `SidebarGitLine.segments` is what the rail actually
+// draws, it emits per-segment ink rather than a flat string, and the two disagreed on a sigil (`~` vs
+// `=` for a conflict) for as long as both compiled. Nothing outside its own tests ever called it, so
+// the tests were the only thing keeping the wrong spelling alive — both are gone (docs/56 increment
+// 45). Anything that needs a git line reads the counts here and renders them where it draws.
 
 import SlopDeskProtocol
 
 /// The folded git state of one pane's working directory. A pure value — `Equatable` so the store's
 /// mirror write is dirty-guarded (no `@Observable` churn when nothing changed).
 public struct PaneGitSummary: Equatable, Sendable {
-    /// Whether the pane's cwd is inside a git repository. `false` ⇒ ``compactLine`` is `nil` and the
-    /// rail falls back to the plain cwd subtitle.
+    /// Whether the pane's cwd is inside a git repository. `false` ⇒ the rail falls back to the plain
+    /// cwd subtitle instead of drawing a git line.
     public var hasRepo: Bool
     /// The current branch name (empty = detached HEAD).
     public var branch: String
@@ -18,7 +25,7 @@ public struct PaneGitSummary: Equatable, Sendable {
     public var ahead: Int
     public var behind: Int
     /// Changed files (the porcelain line count — staged + worktree + untracked). Kept as the aggregate
-    /// dirty count (search / "is this repo dirty" at a glance); the breakdown below drives the compact line.
+    /// dirty count (search / "is this repo dirty" at a glance); the breakdown below drives the rail's line.
     public var changedCount: Int
     /// The porcelain breakdown, derived from the per-file `XY` status codes (each counts INDEPENDENTLY —
     /// a `MM` file is BOTH staged and modified). `staged` = index has a change (X ≠ space, not untracked/
@@ -90,22 +97,5 @@ public struct PaneGitSummary: Equatable, Sendable {
             conflicted: Int(status.conflicted),
             stash: Int(status.stashCount),
         )
-    }
-
-    /// The rail's one-line rendering, each state a SINGLE sigil + count (oh-my-zsh vocabulary), space-
-    /// separated and only present when non-zero: `↑`ahead `↓`behind `+`staged `!`modified `?`untracked
-    /// `=`conflicts `$`stash. A clean tracking branch is JUST the branch (e.g. `main`); a busy one reads
-    /// `main ↑1 +2 !3 ?1 $1`. `nil` when the cwd is not a repo — the row falls back to the plain cwd path.
-    public var compactLine: String? {
-        guard hasRepo else { return nil }
-        var parts: [String] = [branch.isEmpty ? "detached" : branch]
-        if ahead > 0 { parts.append("↑\(ahead)") }
-        if behind > 0 { parts.append("↓\(behind)") }
-        if staged > 0 { parts.append("+\(staged)") }
-        if modified > 0 { parts.append("!\(modified)") }
-        if untracked > 0 { parts.append("?\(untracked)") }
-        if conflicted > 0 { parts.append("=\(conflicted)") }
-        if stash > 0 { parts.append("$\(stash)") }
-        return parts.joined(separator: " ")
     }
 }

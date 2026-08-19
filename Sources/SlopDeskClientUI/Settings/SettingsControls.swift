@@ -42,40 +42,230 @@
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
+import SlopDeskClientCore
+import SlopDeskSlate
+import SlopDeskWorkspaceCore
 import SwiftUI
 
-// MARK: - SettingsOption (the pure option descriptor)
+// MARK: - Which half is asking
 
-/// One choice in a ``SettingsOptionCards`` group or a ``SettingsOptionMenuRow``: the value it writes, its
-/// label, and an optional one-line caption. Pure data: declaring the options as a LIST (rather than inline
-/// `Text(…).tag(…)` children) is what lets a test pin the labels, captions, and order of a section's choices
-/// without rendering it (`SettingsOptionCatalogTests`).
-///
-/// `Sendable` (over a `Sendable` value) because the catalog holds these as top-level `static let` lists: pure,
-/// immutable option data, reachable from any isolation without a `@MainActor` hop.
-struct SettingsOption<Value: Hashable & Sendable>: Identifiable, Sendable {
-    let value: Value
-    let label: String
-    /// A short qualifier on the label — where a choice needs to be honest about a caveat ("same as End
-    /// today", "only if busy"). `nil` for the common case.
-    let caption: String?
-
-    var id: Value { value }
-
-    init(_ value: Value, _ label: String, caption: String? = nil) {
-        self.value = value
-        self.label = label
-        self.caption = caption
-    }
-
-    /// The one-line form a `.menu` `Picker` shows: the label, with the caveat folded in after an en dash
-    /// (a menu item has no second line to hang a caption on, and dropping the caption would drop the
-    /// honesty it carries).
-    var menuLabel: String {
-        guard let caption, !caption.isEmpty else { return label }
-        return "\(label) — \(caption)"
+extension SettingsLayout.Half {
+    /// The half THIS build renders.
+    ///
+    /// ONE platform gate, in ONE place, standing in for the thirty-seven that used to be threaded
+    /// through the settings pages — and it is temporary by construction: it exists only while a single
+    /// target still renders both halves. `SlopDeskMacUI` names `.mac` and `SlopDeskPhoneUI` names
+    /// `.phone`, each with no gate at all, which is the rule docs/56 §3 ratchets.
+    static var current: Self {
+        #if os(macOS)
+        .mac
+        #else
+        .phone
+        #endif
     }
 }
+
+/// The leading SF Symbol a schema row asks for, as this half's symbol type.
+///
+/// The NAME is the table's (`eye.slash`); resolving it to a drawable is the renderer's, which is why
+/// this is here and not at the boundary — `SFSafeSymbols` is a Swift package and an `NSImage` is not a
+/// string. A row that carries no glyph falls back to a neutral dot rather than leaving a hole in the
+/// group's icon rail.
+func glyph(_ row: SettingsLayout.Row) -> SFSymbol {
+    row.control.glyphName.map(SFSymbol.init(rawValue:)) ?? .circle
+}
+
+extension SettingsLayout.Control {
+    /// The glyph name this control carries, if it carries one.
+    var glyphName: String? {
+        switch self {
+        case let .toggle(glyph): glyph
+        case let .menu(_, glyph): glyph
+        case let .text(glyph): glyph
+        case .cards,
+             .slider,
+             .stepper,
+             .note,
+             .bespoke: nil
+        }
+    }
+}
+
+/// When a setting takes effect — surfaced as a chip so the deferred/live distinction is a DATA
+/// attribute, not prose. The two cases and their words are ``SettingsCatalog/ApplyTiming``; only the
+/// tint below is a view decision.
+typealias ApplyTiming = SettingsCatalog.ApplyTiming
+
+/// A small inline timing chip (symbol + label). The tint is resolved in the view body rather than on the
+/// nonisolated `ApplyTiming` enum.
+struct TimingChip: View {
+    let timing: ApplyTiming
+    var body: some View {
+        HStack(spacing: Slate.Metric.space1) {
+            Image(systemName: timing.symbol)
+            Text(timing.label)
+        }
+        .font(SettingsType.caption)
+        .foregroundStyle(tint)
+    }
+
+    private var tint: Color {
+        switch timing {
+        case .live: SettingsInk.ok
+        case .reconnect: SettingsInk.warn
+        }
+    }
+}
+
+/// A right-aligned timing chip used as a section footer so each section's apply timing is visible
+/// inline. Lives beside ``settingsGroup(_:row:)``, which is what places it under every group.
+func timingFooter(_ timing: ApplyTiming) -> some View {
+    HStack {
+        Spacer()
+        TimingChip(timing: timing)
+    }
+}
+
+/// One schema group as a form section: the header, the rows the asking half draws, and the chip that
+/// says when an edit here takes effect.
+///
+/// A group that ``SettingsLayout/Group/drawsItsOwnHeader`` is placed BARE — it is a whole surface
+/// (the font specimen, the live cursor preview) rather than a list of rows, so wrapping it would nest
+/// a section inside a section and print a header it already drew.
+///
+/// The chip appears only where some row EDITS a setting. "Applies immediately" answers a question a
+/// list of controls raises; under a surface that draws itself — the chord editor, the flat index, the
+/// reserved Editor page's empty state — it either states nothing or contradicts what that surface says
+/// about itself.
+@ViewBuilder
+func settingsGroup(
+    _ group: SettingsLayout.Group,
+    @ViewBuilder row: @escaping (SettingsLayout.Row) -> some View,
+) -> some View {
+    if group.drawsItsOwnHeader {
+        ForEach(group.rows) { row($0) }
+    } else {
+        slateFormSection(group.title) {
+            ForEach(group.rows) { row($0) }
+            if group.editsASetting { timingFooter(group.timing) }
+        }
+    }
+}
+
+// MARK: - LineHeightChoice (a menu tag for the associated-value LineHeightMode)
+
+/// A flat mirror of ``LineHeightMode``'s four cases, for a control that has to TAG its choices: the
+/// model enum carries a `Double` on `.custom`, so it cannot be a tag itself.
+///
+/// The raw values are the catalog's tokens, which is what makes this readable from
+/// `SettingsCatalog.options(.lineHeight, as:)` rather than from four inline `Text(…).tag(…)` children
+/// — the shape that had let the four choices drift out of reach of any test.
+enum LineHeightChoice: String, Hashable, Sendable {
+    case `default`
+    case compact
+    case loose
+    case custom
+}
+
+/// A ``SettingsLayout/Control/note`` row: prose belonging to the GROUP rather than to any setting,
+/// set in the same gray as a row's subtitle so it reads as a footnote and not as a control that lost
+/// its widget. The words are the row's subtitle, because a note has nothing else to say.
+func settingsNote(_ row: SettingsLayout.Row) -> some View {
+    Text(row.subtitle)
+        .font(SettingsType.subtitle)
+        .foregroundStyle(SettingsInk.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+}
+
+// MARK: - The stepper, over an integer or a double
+
+/// A schema stepper row: the row's own label, the value in the range's readout, and the range's ends
+/// and granularity — none of the four typed here.
+@ViewBuilder
+func settingsStepper(_ row: SettingsLayout.Row, _ value: Binding<Int>) -> some View {
+    if case let .stepper(range) = row.control {
+        Stepper(
+            "\(row.label): \(range.readout(value.wrappedValue))",
+            value: value,
+            in: range.range,
+            step: range.step,
+        )
+    }
+}
+
+/// The same row over a field the model holds as a `Double` — the terminal font size, which the flat
+/// index's raw editor may set to a fractional point value the clicks then move a whole point at a
+/// time. Reading the `Double` back is what keeps a `13.5` from displaying as a number nothing holds.
+@ViewBuilder
+func settingsStepper(_ row: SettingsLayout.Row, _ value: Binding<Double>) -> some View {
+    if case let .stepper(range) = row.control {
+        Stepper(
+            "\(row.label): \(range.readout(value.wrappedValue))",
+            value: value,
+            in: range.doubleRange,
+            step: Double(range.step),
+        )
+    }
+}
+
+/// The bold-label / gray-subtext stack every settings row leads with.
+///
+/// Was `private` on three separate settings pages, byte for byte, which is exactly the duplication a
+/// row's WORDS have now stopped being — the shape they are set in had no reason to stay behind.
+func rowLabel(_ title: String, _ subtitle: String?) -> some View {
+    VStack(alignment: .leading, spacing: Slate.Metric.space1) {
+        Text(title)
+        if let subtitle, !subtitle.isEmpty {
+            Text(subtitle)
+                .font(SettingsType.subtitle)
+                .foregroundStyle(SettingsInk.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+/// ``rowLabel(_:_:)`` with the leading glyph that runs a group's icon rail through the row.
+func glyphLabel(_ symbol: SFSymbol, _ title: String, _ subtitle: String?) -> some View {
+    HStack(alignment: .top, spacing: Slate.Metric.space2) {
+        Image(systemSymbol: symbol)
+            .font(SettingsType.label)
+            .foregroundStyle(SettingsInk.icon)
+            .frame(width: Slate.Metric.iconSize)
+            .padding(.top, Slate.Metric.space1 / 2)
+        rowLabel(title, subtitle)
+    }
+}
+
+// MARK: - What a row is CALLED
+
+/// The label the setting `key` carries — read from the one row table
+/// (`slopdesk_workspace::settings_rows`) rather than typed at the control.
+///
+/// A setting is named in two places: on the section page where it is set, and in the searchable
+/// all-settings list. Those are the same words doing the same job, so they are one string. They were
+/// two, and two was already visibly one too many — the same row was spelled "Hide Mouse While Typing"
+/// in one place and "Hide Mouse When Typing" in the other, and "Long-Command Notification" against
+/// "Long-Command Completion", with nothing anywhere that would notice.
+///
+/// The DESCRIPTION deliberately does NOT come from here, and that is not an oversight. A row in a flat
+/// index of fifty-seven keys has to stand alone ("The UI density tier."); the same row under a THEME
+/// header on the Appearance page has the header's context already and can say the useful thing instead
+/// ("How much air each sidebar row gets."). Twenty-two of the thirty-one shared rows differ that way.
+/// Two registers, two sentences, one name.
+///
+/// The LABEL reaches for the same distinction in the minority of rows where it needs to, which is why
+/// this reads `pageLabel` rather than `label`: under a `Close Confirmation` header the row is
+/// "Closing a tab", while the same row in a headerless list of fifty-seven keys has to say
+/// "Close Confirmation · Tab" or name nothing. The boundary folds the fallback, so most rows return
+/// the one string they have and no caller here knows which are which.
+///
+/// An unknown key answers with the key itself, which is visible on screen rather than silent — a
+/// blank row label would look like a layout bug instead of a missing table entry.
+///
+/// Forwards to ``SettingsLayout/label(for:)`` since increment 49: the same lookup was typed out at three
+/// call sites — here, the row table, and the Mac's cursor surface, which draws two settings a row table
+/// does not describe and still has to call them what the table would have.
+func settingLabel(_ key: String) -> String { SettingsLayout.label(for: key) }
 
 // MARK: - SettingsOptionMenuRow (the same list, as a native dropdown)
 

@@ -107,6 +107,14 @@
 //!   to list through to who gets pushed to and how often.
 //! - [`recovery_routing`] — the host's side of the DEDICATED recovery channel, the still-screen
 //!   re-encode timer, and the scheduler that puts each finished message on its own channel.
+//! - [`key_capture`] — what the immersive tap does with one key, and the two chords that must stay
+//!   reachable no matter what the rest of it says.
+//! - [`escape_monitor`] — what a window-scoped local monitor does with an Escape, and which of the
+//!   surfaces claiming that key outranks the others.
+//! - [`key_naming`] — what one key event is CALLED, so the chord the dispatcher builds and the
+//!   chord the recorder persists are the same chord.
+//! - [`window_restore`] — which window a crashed daemon left stranded, and may therefore be moved
+//!   back on the next launch; every uncertainty resolves to leaving it where it is.
 //! - [`input_routing`] — what happens to an input datagram between the socket and the injector: the
 //!   raise rule, the motion coalescer, the button and modifier ledger, and the metered scroll
 //!   accumulator — every one of them there because injection itself is synchronous and expensive.
@@ -155,6 +163,7 @@ pub mod cursor;
 pub mod cursor_overlay;
 pub mod decode_admission;
 pub mod error;
+pub mod escape_monitor;
 pub mod fec;
 pub mod fps_governor;
 pub mod fragment;
@@ -168,6 +177,8 @@ pub mod input_event;
 pub mod input_routing;
 pub mod interleaver;
 pub mod keepalive;
+pub mod key_capture;
+pub mod key_naming;
 pub mod live_bitrate;
 pub mod ltr;
 pub mod mint_rescue;
@@ -205,6 +216,7 @@ pub mod window_feed;
 pub mod window_feed_host;
 pub mod window_geometry;
 pub mod window_placement;
+pub mod window_restore;
 pub mod ycbcr;
 
 pub use adaptive_fec::TierState;

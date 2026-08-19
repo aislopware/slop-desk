@@ -3,17 +3,22 @@ import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// Pins the P4 "Peek & Reply" pure logic + store wiring (answer a blocked agent INLINE, ⌘⇧J):
+/// Pins the P4 "Peek & Reply" CROSSING + store wiring (answer a blocked agent INLINE, ⌘⌥J).
 ///
-/// - ``PeekReplyTarget/select`` — focused-blocked-first, then the oldest-attention order, with the
-///   advance-to-next exclusion.
-/// - ``PeekReplyFormatter/reply(for:)`` / ``PeekReplyFormatter/quickAnswer(_:)`` — newline-terminated
-///   plain / bang-shell / digit replies.
-/// - ``PeekContent/recentLines(from:limit:)`` — the cheap "last N lines" stand-in off the block mirror.
-/// - The ⌘⌥J chord is registered, maps to `.peekAndReply`, and is UNIQUE (no collision). (E10 re-pointed it
-///   off ⌘⇧J, which Hint Mode's "Hint to Open" now owns — the carryover binding "E10 OWNS ⌘⇧J for Hint Mode".)
-/// - The store glue: `peekReplyTargetPane`, `sendPeekReply` (reaches a NON-focused pane), `peekContent`,
-///   and the advance-to-next exclusion.
+/// The selection order, the counter's predicate, the reply shapes and the transcript-tail fold are
+/// `slopdesk_agent::attention` and `slopdesk_workspace::peek_reply`, and asserted there. What is left
+/// here is what only this side can be wrong about:
+///
+/// - a POSITION answer maps back to the right ``PaneID``, and the focused answer comes back as the
+///   focused pane rather than as a position into a list it need not be in;
+/// - the counter arrives as a pair, and its absence as `nil` rather than as a zero;
+/// - a reply and a quick answer arrive as text, and "nothing to send" as `nil`;
+/// - the tail's multi-byte punctuation survives the length words it crosses under.
+///
+/// Plus the parts that were never a rule: the ⌘⌥J chord is registered, maps to `.peekAndReply`, and is
+/// UNIQUE (E10 re-pointed it off ⌘⇧J, which Hint Mode's "Hint to Open" now owns), and the store glue —
+/// `peekReplyTargetPane`, `sendPeekReply` (reaches a NON-focused pane), `peekContent`, and the
+/// advance-to-next exclusion.
 ///
 /// All tests are hang-safe: no `GhosttySurface`, no `NWConnection`, no `VideoToolbox` — the pane handles
 /// are recording doubles (``FakePaneSession`` / ``RecordingTerminalPaneSession``).
@@ -24,7 +29,6 @@ final class PeekReplyTests: XCTestCase {
     private func makeTreeStore() -> WorkspaceStore {
         let store = WorkspaceStore(
             restoringTree: .defaultWorkspace(),
-            liveModel: .tree,
             makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: 2,
         )
@@ -36,7 +40,6 @@ final class PeekReplyTests: XCTestCase {
     private func makeTerminalStore() -> WorkspaceStore {
         let store = WorkspaceStore(
             restoringTree: .defaultWorkspace(),
-            liveModel: .tree,
             makeSession: { seed in RecordingTerminalPaneSession(seed.spec) },
             liveVideoCap: 2,
         )
@@ -56,31 +59,11 @@ final class PeekReplyTests: XCTestCase {
         }
     }
 
-    // MARK: - PeekReplyTarget.select (pure selection)
+    // MARK: - The crossing: a position, a flag, or nothing
 
-    /// A FOCUSED pane that is itself blocked is answered FIRST (you are already on it), even when an older
-    /// blocked pane exists earlier in traversal order.
-    func testSelectFocusedBlockedWinsOverOlder() {
-        let a = PaneID(), b = PaneID()
-        let status: [PaneID: ClaudeStatus] = [a: .needsPermission, b: .needsPermission]
-        // `a` is older, but `b` is focused + blocked → `b` wins.
-        XCTAssertEqual(
-            PeekReplyTarget.select(focused: b, status: { status[$0] ?? .none }, panes: [a, b]), b,
-        )
-    }
-
-    /// A focused pane that is NOT blocked does not pre-empt the oldest-attention order.
-    func testSelectFallsBackToOldestWhenFocusedNotBlocked() {
-        let a = PaneID(), b = PaneID()
-        let status: [PaneID: ClaudeStatus] = [a: .needsPermission, b: .working]
-        // `b` is focused but only working → fall back to the oldest blocked (`a`).
-        XCTAssertEqual(
-            PeekReplyTarget.select(focused: b, status: { status[$0] ?? .none }, panes: [a, b]), a,
-        )
-    }
-
-    /// With no focused-blocked pane, the selection IS the AttentionJump order (needsPermission before done).
-    func testSelectMatchesAttentionJumpOrdering() {
+    /// A pane picked out of the list comes back as the PaneID that list holds — the answer is a
+    /// position, and mapping it wrong is the one failure this side owns.
+    func testAPositionAnswerMapsBackToItsPane() {
         let a = PaneID(), b = PaneID(), c = PaneID()
         let status: [PaneID: ClaudeStatus] = [a: .done, b: .needsPermission, c: .done]
         XCTAssertEqual(
@@ -88,25 +71,33 @@ final class PeekReplyTests: XCTestCase {
         )
     }
 
-    /// `nil` when nothing needs attention.
-    func testSelectNilWhenNothingNeedsAttention() {
+    /// The focused pane crosses as a FLAG, not a position — it need not be in `panes` at all, and a
+    /// position would have to name some other pane.
+    func testTheFocusedAnswerIsTheFocusedPaneEvenWhenItIsNotInTheList() {
+        let a = PaneID(), offscreen = PaneID()
+        let status: [PaneID: ClaudeStatus] = [a: .needsPermission, offscreen: .needsPermission]
+        XCTAssertEqual(
+            PeekReplyTarget.select(focused: offscreen, status: { status[$0] ?? .none }, panes: [a]),
+            offscreen,
+        )
+    }
+
+    /// Nothing waiting crosses as absent, which must not read as position zero.
+    func testNothingWaitingCrossesAsNil() {
         let a = PaneID(), b = PaneID()
         let status: [PaneID: ClaudeStatus] = [a: .working, b: .idle]
         XCTAssertNil(PeekReplyTarget.select(focused: a, status: { status[$0] ?? .none }, panes: [a, b]))
     }
 
-    /// The advance-to-next exclusion drops the just-answered pane from BOTH the focused-first clause and the
-    /// candidate set — so even a focused, still-reported-blocked pane is skipped to the NEXT one.
-    func testSelectExcludesAnsweredPaneOnAdvance() {
+    /// The exclusion set crosses as one flag per pane, so the advance lands the NEXT pane.
+    func testTheExclusionSetCrossesAsFlags() {
         let a = PaneID(), b = PaneID()
         let status: [PaneID: ClaudeStatus] = [a: .needsPermission, b: .needsPermission]
-        // `a` is focused + blocked but just answered → advance to `b`.
         XCTAssertEqual(
             PeekReplyTarget.select(
                 focused: a, status: { status[$0] ?? .none }, panes: [a, b], excluding: [a],
             ), b,
         )
-        // Exclude both → nothing left.
         XCTAssertNil(
             PeekReplyTarget.select(
                 focused: a, status: { status[$0] ?? .none }, panes: [a, b], excluding: [a, b],
@@ -114,138 +105,52 @@ final class PeekReplyTests: XCTestCase {
         )
     }
 
-    // MARK: - PeekReplyTarget.queuePosition (pure "N of M" counter)
-
-    /// Two blocked panes, none yet answered: position 1 of 2.
-    func testQueuePositionStartsAtOneOfTotal() {
-        let a = PaneID(), b = PaneID()
-        let status: [PaneID: ClaudeStatus] = [a: .needsPermission, b: .needsPermission]
-        let result = PeekReplyTarget.queuePosition(
-            status: { status[$0] ?? .none }, panes: [a, b], excluding: [],
-        )
-        XCTAssertEqual(result?.position, 1)
-        XCTAssertEqual(result?.total, 2)
-    }
-
-    /// Answering one advances the position but keeps the total fixed (answered + remaining is stable).
-    func testQueuePositionAdvancesWithExcluding() {
+    /// The counter comes back as a pair, and its absence as `nil` — never as `(0, 0)`.
+    func testTheCounterCrossesAsAPairOrAsNil() {
         let a = PaneID(), b = PaneID(), c = PaneID()
         let status: [PaneID: ClaudeStatus] = [a: .needsPermission, b: .needsPermission, c: .done]
         let result = PeekReplyTarget.queuePosition(
             status: { status[$0] ?? .none }, panes: [a, b, c], excluding: [a],
         )
-        XCTAssertEqual(result?.position, 2, "one answered ⇒ position 2")
+        XCTAssertEqual(result?.position, 2)
         XCTAssertEqual(result?.total, 3)
-    }
-
-    /// `.done` panes count toward the total exactly like `.needsPermission` — the SAME predicate
-    /// `AttentionJump.oldestPane` orders by, so the counter and the chain can never disagree.
-    func testQueuePositionCountsDonePanesToo() {
-        let a = PaneID(), b = PaneID()
-        let status: [PaneID: ClaudeStatus] = [a: .needsPermission, b: .done]
-        let result = PeekReplyTarget.queuePosition(
-            status: { status[$0] ?? .none }, panes: [a, b], excluding: [],
-        )
-        XCTAssertEqual(result?.total, 2)
-    }
-
-    /// `.idle`/`.working`/`.none` panes never inflate the total — only the attention predicate counts.
-    func testQueuePositionIgnoresNonAttentionStatuses() {
-        let a = PaneID(), b = PaneID(), c = PaneID()
-        let status: [PaneID: ClaudeStatus] = [a: .needsPermission, b: .working, c: .idle]
-        let result = PeekReplyTarget.queuePosition(
-            status: { status[$0] ?? .none }, panes: [a, b, c], excluding: [],
-        )
-        XCTAssertNil(result, "only ONE attention pane ⇒ total 1 ⇒ not a queue")
-    }
-
-    /// A queue of exactly one is `nil` — the calm static caption stays, not "1 of 1".
-    func testQueuePositionNilBelowTwo() {
-        let a = PaneID()
-        let status: [PaneID: ClaudeStatus] = [a: .needsPermission]
         XCTAssertNil(
             PeekReplyTarget.queuePosition(status: { status[$0] ?? .none }, panes: [a], excluding: []),
-        )
-        // Zero also nils.
-        XCTAssertNil(
-            PeekReplyTarget.queuePosition(
-                status: { _ in ClaudeStatus.none }, panes: [PaneID](), excluding: [],
-            ),
+            "one waiting pane is not a queue",
         )
     }
 
-    /// Excluding EVERY attention pane still counts them toward the total (they were answered, not erased)
-    /// — the position lands past the total only when the overlay is about to close (M of M answered).
-    func testQueuePositionAllAnsweredLandsAtTotal() {
-        let a = PaneID(), b = PaneID()
-        let status: [PaneID: ClaudeStatus] = [a: .needsPermission, b: .needsPermission]
-        let result = PeekReplyTarget.queuePosition(
-            status: { status[$0] ?? .none }, panes: [a, b], excluding: [a, b],
-        )
-        XCTAssertEqual(result?.position, 3, "both answered ⇒ position is answered+1, one past the total")
-        XCTAssertEqual(result?.total, 2)
-    }
+    // MARK: - The crossing: text out
 
-    // MARK: - PeekReplyFormatter (pure formatting)
-
-    /// A plain line gets a single trailing newline; whitespace around the whole field is trimmed.
-    func testFormatPlainReply() {
-        XCTAssertEqual(PeekReplyFormatter.reply(for: "yes"), "yes\n")
+    /// Each reply shape arrives as text, and "nothing to send" as `nil` rather than as `""`.
+    func testTheReplyShapesCrossAsTextAndNothingCrossesAsNil() {
         XCTAssertEqual(PeekReplyFormatter.reply(for: "  approve the edit  "), "approve the edit\n")
-    }
-
-    /// A `!`-prefixed line strips the bang → a shell line + newline (just bytes to the same PTY).
-    func testFormatBangShellReply() {
-        XCTAssertEqual(PeekReplyFormatter.reply(for: "!ls -la"), "ls -la\n")
         XCTAssertEqual(PeekReplyFormatter.reply(for: "  ! git status "), "git status\n")
-    }
-
-    /// An empty / whitespace-only / bare-bang field sends nothing.
-    func testFormatEmptyReplyIsNil() {
-        XCTAssertNil(PeekReplyFormatter.reply(for: ""))
+        XCTAssertEqual(PeekReplyFormatter.quickAnswer(7), "7\n")
         XCTAssertNil(PeekReplyFormatter.reply(for: "   "))
-        XCTAssertNil(PeekReplyFormatter.reply(for: "!"))
-        XCTAssertNil(PeekReplyFormatter.reply(for: "  !  "))
-    }
-
-    /// A quick-answer digit (1–9) sends "<n>\n"; out-of-range is nil.
-    func testFormatQuickAnswer() {
-        XCTAssertEqual(PeekReplyFormatter.quickAnswer(1), "1\n")
-        XCTAssertEqual(PeekReplyFormatter.quickAnswer(9), "9\n")
         XCTAssertNil(PeekReplyFormatter.quickAnswer(0))
-        XCTAssertNil(PeekReplyFormatter.quickAnswer(10))
     }
 
-    // MARK: - PeekContent.recentLines (pure recent-output builder)
+    // MARK: - The crossing: the transcript tail
 
     private struct StubBlock: PeekBlockLine {
         let commandText: String
         let statusLabel: String
     }
 
-    /// Renders the NEWEST `limit` blocks as "<command> · <status>", oldest-first within the kept window.
-    func testRecentLinesKeepsNewestInOrder() {
+    /// The tail crosses as two parallel blobs and comes back under length WORDS: the separator and
+    /// the ellipsis are multi-byte, so a length counted in characters would cut both.
+    func testTheTailCrossesWithItsMultiBytePunctuationIntact() {
         let blocks = [
             StubBlock(commandText: "make", statusLabel: "exit 0"),
             StubBlock(commandText: "swift build", statusLabel: "exit 1"),
             StubBlock(commandText: "swift test", statusLabel: "running…"),
         ]
-        let lines = PeekContent.recentLines(from: blocks, limit: 2)
-        XCTAssertEqual(lines, ["swift build · exit 1", "swift test · running…"])
-    }
-
-    /// A block with an empty command line renders its status alone (no leading " · ").
-    func testRecentLinesEmptyCommandShowsStatusOnly() {
-        let blocks = [StubBlock(commandText: "   ", statusLabel: "running…")]
-        XCTAssertEqual(PeekContent.recentLines(from: blocks, limit: 4), ["running…"])
-    }
-
-    /// No blocks / zero limit → empty (the view then shows the "no recent output" note).
-    func testRecentLinesEmpty() {
-        XCTAssertTrue(PeekContent.recentLines(from: [StubBlock](), limit: 4).isEmpty)
-        XCTAssertTrue(
-            PeekContent.recentLines(from: [StubBlock(commandText: "x", statusLabel: "exit 0")], limit: 0).isEmpty,
+        XCTAssertEqual(
+            PeekContent.recentLines(from: blocks, limit: 2),
+            ["swift build · exit 1", "swift test · running…"],
         )
+        XCTAssertTrue(PeekContent.recentLines(from: [StubBlock](), limit: 4).isEmpty)
     }
 
     // MARK: - Chord (⌘⇧J registered, mapped, unique)

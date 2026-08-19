@@ -74,7 +74,7 @@ public enum SplitWeight: Codable, Sendable, Equatable {
     /// The floor every `.flex` share is clamped to — a pane always keeps a sliver of the axis even when
     /// a hostile / corrupt file set its weight to 0, a negative, or NaN. Asked of the crate that
     /// clamps to it: a floor restated here can drift from the clamp it is supposed to name.
-    public static var minWeight: Double { slopdesk_ws_canvas_metric(3) }
+    public static var minWeight: Double { slopdesk_ws_min_weight() }
 
     /// This weight with any non-finite / sub-floor magnitude repaired:
     /// `.flex` clamps to ``minWeight``; `.fixed` clamps a non-finite / negative extent to 0 (a fixed

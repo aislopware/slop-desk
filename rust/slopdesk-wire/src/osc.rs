@@ -160,6 +160,16 @@ pub fn notification_bytes(message: &str) -> Vec<u8> {
 /// and carrying no `;` so the OSC-777 field split preserves it intact as a single title.
 pub const WATCH_NOTIFICATION_MARKER: &str = "\u{1F}slopdesk:watch-finish\u{1F}";
 
+/// Whether a notification's TITLE is the watch sentinel — the parse-back of
+/// [`watch_finish_notification_bytes`].
+///
+/// The marker is the WHOLE title rather than a prefix, so recognising it is the same comparison in
+/// both directions and a banner routed by it has no title text left to show.
+#[must_use]
+pub fn is_watch_notification(title: &str) -> bool {
+    title == WATCH_NOTIFICATION_MARKER
+}
+
 /// The watch-FINISH banner: `ESC ] 777 ; notify ; <marker> ; <message> BEL`.
 ///
 /// The host parses this into an ordinary notification whose title is the marker — no new wire — and

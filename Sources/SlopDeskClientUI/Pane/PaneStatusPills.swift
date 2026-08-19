@@ -14,6 +14,7 @@
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
+import SlopDeskSlate
 import SwiftUI
 
 /// The `🔒 READ ONLY ×` pill — shown in the pane's top-trailing overlay while the pane's
@@ -105,7 +106,7 @@ struct ReadOnlyPill: View {
 struct SecureInputPill: View {
     /// The pill's FIXED fill — the theme-INDEPENDENT security-blue `Slate.Status.secureInput` (#2D6FE8), NOT
     /// the theme-derived `Slate.Status.info`. Exposed as a single source so the view and its colour test read
-    /// the SAME token (mirroring `ToastStackView.tint(for:)`): a regression that re-routed the fill back through
+    /// the SAME token (mirroring `ToastStackView.ink(for:)`): a regression that re-routed the fill back through
     /// the theme accent fails the test that pins this against the fixed token and asserts it ≠ the theme accent.
     static var fillColor: Color { Slate.Status.secureInput }
 

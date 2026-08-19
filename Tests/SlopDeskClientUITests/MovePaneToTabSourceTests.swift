@@ -8,13 +8,14 @@
 // Metal — hang-safety).
 
 import XCTest
+@testable import SlopDeskClientCore
 @testable import SlopDeskClientUI
 @testable import SlopDeskWorkspaceCore
 
 @MainActor
 final class MovePaneToTabSourceTests: XCTestCase {
     private func makeStore() -> WorkspaceStore {
-        let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in MountTestPaneSession(seed.spec) })
+        let store = WorkspaceStore(makeSession: { seed in MountTestPaneSession(seed.spec) })
         store.attachLoopbackWorkspaceDocument()
         return store
     }

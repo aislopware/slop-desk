@@ -14,9 +14,17 @@
 // a second opinion about layout that goes wrong in exactly the burst conditions a console is for.
 // An explicit latch is what Console.app and Xcode both offer, it is legible at rest, and it cannot
 // disagree with reality.
+//
+// iOS-ONLY since docs/56 increment 52a; the Mac draws the same drawer in `MacSimulatorConsoleView`.
+// Every word, the three empty sentences and their ORDER, the plain-text join and the severity's ink are
+// ``SimulatorPresentation/Console``'s — the ordering in particular, because "the filter hid them" and
+// "nothing connected" are the two failures this drawer exists to tell apart and a renderer asking them
+// the other way round reports a narrowed console as a dead one.
 
-#if os(macOS)
+#if os(iOS)
 import SFSafeSymbols
+import SlopDeskDevicePanels
+import SlopDeskSlate
 import SlopDeskWorkspaceCore
 import SwiftUI
 
@@ -56,26 +64,33 @@ struct SimulatorConsoleView: View {
     /// reads as lit against the panel's own tone.
     private var strip: some View {
         HStack(spacing: Slate.Metric.space2) {
-            Text("Console")
+            Text(SimulatorPresentation.Console.title)
                 .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .semibold))
                 .tracking(Slate.Typeface.instrumentTracking)
                 .foregroundStyle(Slate.State.header)
                 .fixedSize()
             level
-            SlateSearchField(placeholder: "Filter", text: $filter)
-            PlateIconButton(symbol: .arrowDownToLine, active: isFollowing) {
+            SlateSearchField(
+                placeholder: SimulatorPresentation.Console.filterPlaceholder, text: $filter,
+            )
+            PlateIconButton(
+                symbol: SimulatorPresentation.Console.follow(isFollowing: isFollowing).symbol,
+                active: isFollowing,
+            ) {
                 isFollowing.toggle()
             }
-            .help(isFollowing ? "Following new output" : "Follow new output")
+            .help(SimulatorPresentation.Console.follow(isFollowing: isFollowing).help)
             SlatePlateGroup {
-                PlateIconButton(symbol: .trash) { model.clearLog() }
-                    .help("Clear Console")
+                PlateIconButton(symbol: SimulatorPresentation.Console.clear.symbol) {
+                    model.clearLog()
+                }
+                .help(SimulatorPresentation.Console.clear.help)
                 // Closes through the same transaction the toolbar plate opens with, so the drawer
                 // leaves the way it arrived rather than vanishing from under the pointer.
-                PlateIconButton(symbol: .xmark) {
+                PlateIconButton(symbol: SimulatorPresentation.Console.hide.symbol) {
                     withAnimation(Slate.Anim.standard) { model.toggleConsole() }
                 }
-                .help("Hide Console")
+                .help(SimulatorPresentation.Console.hide.help)
             }
         }
         .padding(.horizontal, Slate.Metric.space2)
@@ -108,7 +123,7 @@ struct SimulatorConsoleView: View {
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
-        .help("Minimum log level — changing it re-subscribes")
+        .help(SimulatorPresentation.Console.levelHelp)
     }
 
     // MARK: Rows
@@ -170,7 +185,8 @@ struct SimulatorConsoleView: View {
             VStack(alignment: .leading, spacing: 0) {
                 if !line.name.isEmpty {
                     Text(line.name)
-                        .foregroundStyle(Self.tint(for: line.severity))
+                        .foregroundStyle(SimulatorPresentation.Console.ink(for: line.severity)
+                            .slateColor)
                 }
                 Text(line.message)
                     .foregroundStyle(Slate.Text.secondary)
@@ -183,8 +199,12 @@ struct SimulatorConsoleView: View {
         .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .regular))
         .padding(.vertical, Slate.Metric.hairline)
         .contextMenu {
-            Button("Copy Line") { copy(Self.plain(line)) }
-            Button("Copy Console") { copy(visible.map(Self.plain).joined(separator: "\n")) }
+            Button(SimulatorPresentation.Console.copyLine) {
+                copy(SimulatorPresentation.Console.plain(line))
+            }
+            Button(SimulatorPresentation.Console.copyConsole) {
+                copy(visible.map(SimulatorPresentation.Console.plain).joined(separator: "\n"))
+            }
         }
     }
 
@@ -205,41 +225,13 @@ struct SimulatorConsoleView: View {
         }
     }
 
-    /// Three states, three sentences. "Nothing here" over a console that never connected is the
-    /// failure this exists to distinguish.
+    /// Three states, three sentences, in ``SimulatorPresentation/Console/empty(hasLines:isStarted:level:filter:)``'s
+    /// order — a non-empty history with nothing visible is the FILTER's doing and must be said first.
     private var emptyMessage: String {
-        if !model.logLines.isEmpty { return "Nothing matches “\(filter)”." }
-        return model.isLogStarted
-            ? "Waiting for output at \(model.logLevel.title.lowercased()) level…"
-            : "Connecting to the device log…"
-    }
-
-    static func plain(_ line: DeviceLogLine) -> String {
-        [line.time, line.name, line.message]
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
-    }
-
-    /// The process name's ink. COLOUR ONLY FOR A FAULT — everything healthy is a grey, and the only
-    /// difference between the greys is how far back they sit.
-    ///
-    /// Info used to be green (user-directed 2026-08-04). Info is the ordinary case: a busy device
-    /// emits hundreds of info lines a second, so the rule spent the console's one alarm colour on the
-    /// state of nothing being wrong, and a wall half-green made the handful of red lines it exists to
-    /// surface no easier to find. Debug still recedes, because a debug line IS lower-value than the
-    /// default and luminance is the channel for that.
-    static func tint(for severity: DeviceLogSeverity) -> Color {
-        switch severity {
-        case .fatal,
-             .error: Slate.StatusInk.err
-        case .debug: Slate.Text.tertiary
-        // `warning` is `logcat`'s bucket and the unified log never answers it — it is here so this
-        // switch stays exhaustive over one shared ink scale rather than over an alphabet only the
-        // simulator has.
-        case .info,
-             .warning,
-             .plain: Slate.Text.secondary
-        }
+        SimulatorPresentation.Console.empty(
+            hasLines: !model.logLines.isEmpty, isStarted: model.isLogStarted,
+            level: model.logLevel, filter: filter,
+        )
     }
 
     private static let bottomAnchor = "console.bottom"

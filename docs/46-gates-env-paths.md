@@ -35,7 +35,7 @@ It is cheap because nothing in it re-does work whose inputs did not move:
 
 The one thing to remember: `quick`'s speed is entirely a claim that a stamp is honest. When a verdict looks wrong, `build-ffi.sh --force` / `check-ios.sh --force` re-run unconditionally, and `make check` is always the answer of record.
 
-Ratchets inside `make lint`: `check-ds-leaks.sh` (Slate tokens live in `Sources/SlopDeskClientUI/DesignSystem/SlateDesign.swift`), `check-menu-shortcutless.sh` (no `.keyboardShortcut` in `WorkspaceCommands.swift`), `check-supervisor.sh` (row above).
+Ratchets inside `make lint`: `check-ds-leaks.sh` (Slate tokens live in `Sources/SlopDeskSlate/SlateDesign.swift`), `check-menu-shortcutless.sh` (no `.keyboardShortcut` in `WorkspaceCommands.swift`), `check-supervisor.sh` (row above).
 
 SIMD detail: the frame hash is scalar (`rust/slopdesk-video/src/frame_hash.rs`), **not** NEON — only the GF(2⁸) multiply kernel has one, and it lives alone in `rust/slopdesk-gfsimd`, the third `unsafe` crate. Two suites pin it: `rust/slopdesk-gfsimd/tests/differential.rs` for kernel ≡ scalar twin, and the cross-region cases in `rust/slopdesk-video/src/gf256.rs` for the seam the kernel cannot see on its own — a region whose tail straddles a 16-byte chunk.
 
@@ -110,7 +110,7 @@ The right panel's surfaces stand on programs this repo does not build. They are 
 
 **Not vendorable, and not attempted:** iOS simulator runtimes and `simctl` (inside Xcode, Apple's licence — `baguette` is the vendorable half), and the Android emulator with its system images (`sdkmanager`, licence-gated, gigabytes per API level — `adb` is the vendorable half). Both keep their existing host-discovery path and report unavailable when the host has none.
 
-**Bumping a pin has a tail.** For `code-server` specifically: re-measure `CodeSidebarWebView.clippedTitleBarHeight` against the new workbench (the title bar the client clips off — 35px on Code 1.112, 30px on 1.131; it is inline geometry, not a greppable CSS constant, so measure `getBoundingClientRect()` on `#workbench.parts.titlebar`), re-check `slopdesk-codeseed`'s `resources/settings.json` against the new settings schema (only registered keys may be seeded, and the shipped extension set moves between releases), and run `scripts/measure-code-server-start.sh` — the daemon prewarms this child at boot (docs/DECISIONS 2026-08-07), so a spawn→listen regression lands on every hostd restart, not just on panel opens.
+**Bumping a pin has a tail.** For `code-server` specifically: re-measure `CodePanelPresentation.clippedTitleBarHeight` against the new workbench (the title bar the client clips off — 35px on Code 1.112, 30px on 1.131; it is inline geometry, not a greppable CSS constant, so measure `getBoundingClientRect()` on `#workbench.parts.titlebar`), re-check `slopdesk-codeseed`'s `resources/settings.json` against the new settings schema (only registered keys may be seeded, and the shipped extension set moves between releases), and run `scripts/measure-code-server-start.sh` — the daemon prewarms this child at boot (docs/DECISIONS 2026-08-07), so a spawn→listen regression lands on every hostd restart, not just on panel opens.
 
 ## Wire golden vectors — the long version
 

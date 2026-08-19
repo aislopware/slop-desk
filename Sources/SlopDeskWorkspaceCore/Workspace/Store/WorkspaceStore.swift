@@ -32,32 +32,10 @@ import SlopDeskWorkspaceModel
 @MainActor
 @Observable
 public final class WorkspaceStore {
-    // MARK: Live model (which tree of intent drives the live loop)
-
-    /// Which model is the LIVE source of truth — the one `init` reconciles, the one a debounced save
-    /// persists, the one the views bind (docs/42 §"W5 — IDE shell CUTOVER").
-    public enum LiveModel: Sendable, Equatable {
-        /// The retained-but-dead infinite ``Canvas`` path: `init` reconciles `workspace`, a save persists
-        /// `workspace`. The DEFAULT, so the canvas `WorkspaceStoreReconcileTests` + the dormant-tree
-        /// `WorkspaceStoreTreeReconcileTests` drive it without opting in.
-        case canvas
-        /// The LIVE IDE-shell path: `init` reconciles ``tree``, a save persists ``tree``, and the
-        /// `SplitWorkspaceView` shell binds it. The production app passes this.
-        case tree
-    }
-
-    /// Which model drives the live loop. Exactly ONE of the two trees ever drives a given store.
-    public let liveModel: LiveModel
-
     // MARK: State
 
-    /// The pure tree of intent — the single source of truth. `private(set)`: only the mutation
-    /// methods change it (each then reconciles), so the registry can never drift from the tree.
-    public private(set) var workspace: Workspace
-
     /// The `Session → Tab → Pane` split tree (``TreeWorkspace``, docs/42 §"W4 — Store retarget") — a
-    /// PROJECTION of the workspace document (docs/45 §7.2), live under ``LiveModel/tree`` and dormant
-    /// under ``LiveModel/canvas``.
+    /// PROJECTION of the workspace document (docs/45 §7.2), and the store's SINGLE source of truth.
     ///
     /// Nothing assigns to it. The tree-mutation methods below stage an INTENT
     /// (``WorkspaceStore/stage(_:_:)``), the channel folds the host's own applier into the optimistic
@@ -244,48 +222,19 @@ public final class WorkspaceStore {
     /// never churns the view. Pure MainActor `Int` bookkeeping (no new concurrency / Sendable surface).
     public private(set) var videoPromotionGeneration: Int = 0
 
-    /// The pane whose sidebar row should open its inline rename field — set by the ⌘R / menu /
-    /// palette "Rename" entry points, CONSUMED by the sidebar (``clearRenameRequest()``) once the
-    /// field is open. A pending ID rather than a counter nudge: when the sidebar column is collapsed the
-    /// root view observes this to REVEAL the column first, and the just-mounted sidebar acts on the
-    /// still-pending value — a fired-and-missed counter could not be replayed safely, so ⌘R would silently
-    /// no-op on a collapsed sidebar.
-    public private(set) var pendingRename: PaneID?
-
-    /// Requests the sidebar open the inline rename on the focused pane (the command-layer entry point
-    /// for "Rename"). No-op when no pane is focused. See ``pendingRename``.
-    public func requestRenameFocusedPane() {
-        guard let focused = workspace.focusedPane else { return }
-        pendingRename = focused
-    }
-
     /// The TAB whose sidebar row should open its inline rename field — set by the ⌘R / palette "Rename Pane"
     /// + the sidebar row context-menu "Rename" entry on the LIVE tree shell, CONSUMED by the rail row
     /// (``RailRowsBuilder`` lights `isEditing` on that tab's representative pane row; the field commits via
-    /// ``renamePane(_:to:)`` and clears through ``clearTabRenameRequest()``). A pending ID (mirrors
-    /// ``pendingRename``) so a not-yet-mounted row acts on the still-pending value rather than a fired-and-missed
-    /// counter.
+    /// ``renamePane(_:to:)`` and clears through ``clearTabRenameRequest()``). A pending ID rather than a
+    /// fired-and-missed counter, so a not-yet-mounted row still acts on the pending value.
     public private(set) var pendingTabRename: TabID?
 
-    /// Requests the inline rename on the ACTIVE entity in whichever live model is current:
-    /// under ``LiveModel/tree`` the ⌘R chord renames the active TAB (the sidebar rail row's inline-rename
-    /// field, set via ``pendingTabRename``); under ``LiveModel/canvas`` it
-    /// keeps the sidebar pane rename (``pendingRename``, the field the `PaneSidebarView` row opens). No-op
-    /// without an active tab / pane. This is the command-layer "Rename" entry the binding registry routes to.
+    /// Requests the inline rename on the ACTIVE TAB — the ⌘R chord's target (the sidebar rail row's
+    /// inline-rename field, set via ``pendingTabRename``). No-op without an active tab. This is the
+    /// command-layer "Rename" entry the binding registry routes to.
     public func requestRenameActivePane() {
-        switch liveModel {
-        case .tree:
-            guard let tabID = tree.activeSession?.activeTab?.id else { return }
-            pendingTabRename = tabID
-        case .canvas:
-            requestRenameFocusedPane()
-        }
-    }
-
-    /// The sidebar consumed the rename request (its inline field is open) — or the request became
-    /// moot (pane gone).
-    public func clearRenameRequest() {
-        pendingRename = nil
+        guard let tabID = tree.activeSession?.activeTab?.id else { return }
+        pendingTabRename = tabID
     }
 
     /// The tab strip consumed the tab-rename request (its inline field is open) — or it became moot.
@@ -397,7 +346,8 @@ public final class WorkspaceStore {
     /// a direct store `await`; so the store holds the slot for this bounded settle past `teardown()` to cover
     /// the dismantle→stop lag. Injectable; DEFAULT `.zero` frees the slot immediately, so the OFF /
     /// terminal-only paths never enter this gate. The PRODUCTION app opts in with a small window
-    /// (``SlopDeskClientApp``). The real dismantle→stop lag is not hardware-measured.
+    /// (``ClientComposition``, the composition root). The real dismantle→stop lag is not
+    /// hardware-measured.
     private let videoTeardownSettle: Duration
 
     /// The pending debounced-save task. Cancelled + replaced on each mutation so only the last
@@ -474,39 +424,6 @@ public final class WorkspaceStore {
     /// move-pane resolution) before the first solved-layout report. `nil` until the view reports one.
     private var lastContainerBounds: CGRect?
 
-    /// The last viewport size the canvas view reported (docs/30 §5.3). Used by new-pane placement, the
-    /// in-view guarantee, and the centre/tidy camera ops so the store can position panes without the
-    /// view passing a size into every mutation. A nominal desktop default until the view reports one.
-    private var lastViewport: CGSize = .init(width: 1280, height: 800)
-
-    /// The set of pane ids the canvas view currently reports as INSIDE the viewport (no margin). Pure
-    /// view-derived state; never reconciles. Drives ``isPaneVisible(_:)`` (the video-cap "on screen"
-    /// signal).
-    private var paneIDsInViewport: Set<PaneID> = []
-
-    /// Whether the canvas view has reported viewport membership at least once since it last appeared.
-    /// Distinguishes "no report yet" (compact carousel / pre-first-layout → fall back to
-    /// ``isPaneOnCanvas(_:)``) from "reported, and it is genuinely empty" (panned into the void →
-    /// nothing is visible, so an off-screen video pane SHOULD release its slot). Reset by
-    /// ``clearViewportMembership()`` when the canvas disappears (a regular→compact flip) so the compact
-    /// path falls back correctly instead of inheriting a stale set.
-    private var hasReportedViewport = false
-
-    /// VISUAL-ONLY live scroll-pan offset (screen-space) — the scroll counterpart of `CanvasView`'s
-    /// `livePan` @State for a background DRAG. A trackpad/wheel scroll over background OR a pane (via
-    /// ``scrollPan(by:)``) accumulates here; the camera is committed ONCE ~110 ms after the scroll settles
-    /// (``commitScrollPan()``). A per-step ``commitCamera(_:)`` is avoided because it mutates
-    /// `workspace.canvas` → fires the `.onChange(of: canvas)` → `report()` cascade (viewport / membership /
-    /// solved-layout) → a full-canvas SwiftUI re-render that BLOCKS the main thread, starving the Metal video
-    /// render + cursor overlay (the freeze gaps are all main-actor; cursor RX stays clean — proven on-device).
-    /// Accumulating here touches ONLY `CanvasView` (panes diff unchanged, NO `report()`), so the pan stays
-    /// smooth. Not persisted; folded into the real camera on commit with NO visual jump (the committed offset
-    /// equals the live offset).
-    public private(set) var liveCameraOffset: CGSize = .zero
-    /// Debounce handle: cancelled + rescheduled on each ``scrollPan(by:)`` so the single commit fires only
-    /// after the scroll (incl. trackpad momentum) settles.
-    private var scrollCommitTask: Task<Void, Never>?
-
     /// The single-focus arbiter for the iOS multi-visible (iPad-regular) input path (docs/22 §7). One per
     /// workspace. The regular `PaneTreeView` leaves route their `TerminalInputHost` first-responder through
     /// this so a stale async `becomeFirstResponder` callback can never win (resign-before-become + generation
@@ -514,17 +431,24 @@ public final class WorkspaceStore {
     /// are `#if os(iOS)`). Exposed so the view layer can drive `focus(_:)` on a focus change.
     public let focusCoordinator = PaneFocusCoordinator()
 
+    /// The per-pane block-bookmark persistence seam + the per-pane jump-to-failed cursor, bundled into
+    /// one stored holder (``BlockBookmarkSeam``) so the store body stays under the lint ceiling. The seam's
+    /// `load`/`save` are wired by the app to the ``PreferencesStore`` (`settings.blockBookmarks.v1`), keyed
+    /// by `bookmarkScopeKey` — the per-MATERIALIZATION token, NOT the stable `PaneID`. A relaunch mints a
+    /// fresh segmenter that re-numbers blocks from 0, so keying by pane id re-applied a prior run's raw
+    /// indices onto unrelated commands; the scope key deliberately starts a relaunch with NO stars, while
+    /// staying stable across a transport reconnect within one launch.
+    /// Left default (tests / previews) bookmarks are in-memory only. The `jumpCursor` records the block
+    /// index the last jump-to-failed landed on so a repeated ⌃⌘⇧[ / ⌃⌘⇧] walks every failure in order.
+    /// `@ObservationIgnored`: wiring, not view state. `internal` so the WorkspaceStore+Blocks extension
+    /// reaches it (extensions can't add stored state).
+    @ObservationIgnored var blockBookmarks = BlockBookmarkSeam()
+
     // MARK: Init
 
     /// - Parameters:
-    ///   - restoring: a decoded workspace to restore (SHAPE + INTENT only — sessions start idle,
-    ///     docs/22 §6). `nil` ⇒ ``Workspace/defaultWorkspace()`` (one terminal tab).
-    ///   - restoringTree: a decoded ``TreeWorkspace`` to seed the tree path. `nil` ⇒
-    ///     ``TreeWorkspace/defaultWorkspace()`` (one terminal pane). With ``LiveModel/canvas`` (the
-    ///     default) the tree stays DORMANT (init reconciles the canvas, so seeding it is behavior-neutral);
-    ///     with ``LiveModel/tree`` (the app) the tree IS the live source — init reconciles it.
-    ///   - liveModel: which model drives the live loop. Default ``LiveModel/canvas``; the production app
-    ///     passes ``LiveModel/tree``.
+    ///   - restoringTree: a decoded ``TreeWorkspace`` to restore (SHAPE + INTENT only — sessions start
+    ///     idle, docs/22 §6). `nil` ⇒ ``TreeWorkspace/defaultWorkspace()`` (one terminal pane).
     ///   - makeSession: the session factory seam (production: `LivePaneSession.make`; tests:
     ///     `{ FakePaneSession($0) }`).
     ///   - liveVideoCap: concurrent live-video ceiling (default 2).
@@ -540,9 +464,7 @@ public final class WorkspaceStore {
     ///   - saveDebounce: the mutation-coalescing window before a write (default 600ms).
     @preconcurrency
     public init(
-        restoring: Workspace? = nil,
         restoringTree: TreeWorkspace? = nil,
-        liveModel: LiveModel = .canvas,
         makeSession: @escaping @MainActor (PaneMaterialization) -> any PaneSessionHandle,
         liveVideoCap: Int = 2,
         persistence: WorkspacePersistence? = nil,
@@ -552,8 +474,6 @@ public final class WorkspaceStore {
         saveDebounce: Duration = .milliseconds(600),
         videoTeardownSettle: Duration = .zero,
     ) {
-        self.liveModel = liveModel
-        workspace = restoring ?? .defaultWorkspace()
         self.makeSession = makeSession
         self.liveVideoCap = liveVideoCap
         self.persistence = persistence
@@ -610,14 +530,10 @@ public final class WorkspaceStore {
         // (``runArmedLaunchAdoptIfPossible()``). The SEEDED TOPOLOGY, so the offer carries each pane's
         // spawn directory as well as its place in the tree — the cache is the only thing that still
         // knows it, and the host's own first frame replaces these entries before the offer goes out.
-        if liveModel == .tree { pendingLaunchAdopt = seededTopology }
-        // The live model picks the init reconcile. `.canvas` materializes the canvas panes (the
-        // retained-but-dead path); `.tree` (the app) materializes the tree's leaves through the SAME
-        // registry diff — exactly one of the two trees ever drives a given store.
-        switch liveModel {
-        case .canvas: reconcile()
-        case .tree: reconcileTree()
-        }
+        pendingLaunchAdopt = seededTopology
+        // The init reconcile materializes the tree's leaves through the registry diff every later
+        // mutation goes through, so a restored layout and a live one take the exact same path.
+        reconcileTree()
         savingEnabled = true // arm debounced saves only AFTER the restore reconcile
     }
 
@@ -674,24 +590,6 @@ public final class WorkspaceStore {
     /// derive it from the tree's `allLeafIDs()`.
     public var allSessions: [any PaneSessionHandle] { Array(registry.values) }
 
-    /// The focused pane id, or `nil` when the canvas is empty (a pure passthrough).
-    public var focusedPane: PaneID? { workspace.focusedPane }
-
-    /// Whether `id` is the focused pane (the view's focus-ring decision).
-    public func isFocused(_ id: PaneID) -> Bool { workspace.focusedPane == id }
-
-    /// Whether `id` is a pane on the single canvas — i.e. genuinely on-screen (all panes live on the
-    /// one always-mounted canvas). A reliable visibility signal for the video teardown decision,
-    /// unlike SwiftUI's `.onDisappear`, which fires spuriously during the initial NavigationSplitView
-    /// layout settle even though the pane stays on screen (the autoconnect connect bug). The debounced
-    /// teardown re-checks this so a spurious disappear (pane still on the canvas) is ignored.
-    public func isPaneOnCanvas(_ id: PaneID) -> Bool { workspace.canvas.contains(id) }
-
-    /// All pane ids on the canvas (the reconcile diff domain), in canonical z-order.
-    private func allLeafIDs() -> [PaneID] {
-        workspace.canvas.allIDs()
-    }
-
     // MARK: - Layout reporting (for geometric focus move)
 
     /// The view reports the layout it just solved for the active tab so the store can resolve
@@ -709,159 +607,9 @@ public final class WorkspaceStore {
         lastContainerBounds = bounds
     }
 
-    // MARK: - Group mutations (pure op → reconcile; groups are metadata, so reconcile only persists)
-
-    /// Creates a new empty group named `name`, returning its id so the caller can immediately assign
-    /// panes. Groups are pure sidebar/box metadata — the leaf set is unchanged, so reconcile is a
-    /// registry no-op (it only persists).
-    @discardableResult
-    public func addGroup(name: String) -> PaneGroupID {
-        let (next, id) = workspace.addingGroup(name: name)
-        workspace = next
-        reconcile()
-        return id
-    }
-
-    /// Renames group `id`. No-op if absent.
-    public func renameGroup(_ id: PaneGroupID, _ name: String) {
-        workspace = workspace.renamingGroup(id, to: name)
-        reconcile()
-    }
-
-    /// Deletes group `id`: its member panes survive as UNGROUPED (a group is metadata — deleting it
-    /// never closes a pane).
-    public func removeGroup(_ id: PaneGroupID) {
-        workspace = workspace.removingGroup(id)
-        reconcile()
-    }
-
-    /// Assigns pane `paneID` to group `groupID` (or ungroups it when `groupID` is `nil`). Disjoint:
-    /// a pane is in at most one group, so this MOVES it between groups.
-    public func assignPane(_ paneID: PaneID, toGroup groupID: PaneGroupID?) {
-        workspace = workspace.assigning(pane: paneID, toGroup: groupID)
-        reconcile()
-    }
-
-    /// Turns the current multi-selection into a NEW group in one mutation — the "Group Selected Panes"
-    /// action (⌥⌘G, and ⌃⌘G when ≥1 pane is selected). The alternative — create an EMPTY group, then
-    /// Move-to-Group N times — leaves an invisible dead-end on the canvas in between (an empty group has no
-    /// bounding box). Members are assigned in deterministic canvas order; the transient pane-selection is
-    /// cleared (the panes read as a group instead). Returns the new group id, or
-    /// `nil` when nothing is selected (a no-op — the caller falls back to an empty group if it wants one).
-    @discardableResult
-    public func groupSelection(name: String = "Group") -> PaneGroupID? {
-        let ids = workspace.canvas.allIDs().filter { selectedPanes.contains($0) }
-        guard !ids.isEmpty else { return nil }
-        var next = workspace
-        let (afterAdd, gid) = next.addingGroup(name: name)
-        next = afterAdd
-        for id in ids { next = next.assigning(pane: id, toGroup: gid) }
-        workspace = next
-        clearSelection()
-        reconcile()
-        return gid
-    }
-
-    /// Reorders groups (sidebar `onMove`). Pure reorder; leaf set unchanged.
-    public func moveGroup(from source: IndexSet, to destination: Int) {
-        workspace = workspace.movingGroup(from: source, to: destination)
-        reconcile()
-    }
-
     // MARK: - Pane mutations (pure op → reconcile)
 
-    /// Adds a new pane of `kind` to the canvas, placed near (cascaded off) the focused pane — or, when
-    /// `group` is given, near that group's panes so it lands inside the cluster — then focuses + raises
-    /// it, assigns it to `group` (if any), and guarantees it is in view. Reconcile materializes the one
-    /// new session.
-    ///
-    /// All terminal/Claude panes open a channel on the ONE app-global connection (docs/31), so a new
-    /// pane carries no per-pane endpoint — it just rides the app target.
-    public func addPane(kind: PaneKind, inGroup group: PaneGroupID? = nil) {
-        let newSpec = PaneSpec(kind: kind, title: defaultTitle(for: kind))
-        let viewport = lastViewport
-        // Cascade off the group's last pane when adding into a group (so it appears within the cluster),
-        // else off the focused pane.
-        let near = group.flatMap { workspace.canvas.ids(inGroup: $0).last } ?? workspace.focusedPane
-        let (canvas, id) = workspace.canvas.adding(newSpec, near: near, viewport: viewport)
-        workspace.canvas = canvas
-        focusOnPlacement(id)
-        // A new pane exits any maximize (the canvas layout changed).
-        if workspace.maximizedPane != nil { workspace.maximizedPane = nil }
-        if let group { workspace.canvas = workspace.canvas.assigning(id, toGroup: group) }
-        // In-view guarantee: a new pane that lands off (or barely clipping) the current viewport would be
-        // invisible — pan the camera to centre it unless its CENTRE is already inside the viewport.
-        recenterIfOffscreen(id, viewport: viewport)
-        reconcile()
-    }
-
-    /// Closes pane `id`. Focus re-points to a surviving neighbour; closing the LAST pane leaves an empty
-    /// canvas (the "Add a pane" empty state). Reconcile tears down the removed session.
-    public func closePane(_ id: PaneID) {
-        guard workspace.canvas.contains(id) else { return }
-        // Record the close for "Reopen Closed Pane" — spec + exact frame + group, but NOT the id (a
-        // reopen mints a fresh pane; the session is necessarily new).
-        if let item = workspace.canvas.item(id) {
-            recentlyClosed = RecentlyClosedPane(spec: item.spec, frame: item.frame, group: item.groupID)
-        }
-        if pendingClose == id { pendingClose = nil }
-        pruneFocusHistory(id) // a closed pane must never be a quick-switch target
-        // Capture a geometric neighbour BEFORE the close (so refocus follows what the user saw).
-        let refocus = neighbourForRefocus(of: id)
-        if let newCanvas = workspace.canvas.removing(id) {
-            workspace.canvas = newCanvas
-            if workspace.focusedPane == id {
-                workspace.focusedPane = refocus ?? newCanvas.allIDs().first
-            }
-        } else {
-            // Removed the last pane → empty canvas, no focus (keep the camera so a re-add lands in place).
-            workspace.canvas = Canvas(items: [], camera: workspace.canvas.camera)
-            workspace.focusedPane = nil
-        }
-        if workspace.maximizedPane == id { workspace.maximizedPane = nil }
-        reconcile()
-    }
-
-    /// Duplicates pane `id`: a NEW pane with a COPY of its spec — title, kind, and a committed video
-    /// endpoint all come along, so duplicating a bound remote-window pane yields a second pane
-    /// pre-bound to the same host window (admission still flows through ``liveVideoCap`` at
-    /// activation) — cascaded beside the original at the SAME size, in the same group, focused.
-    /// Returns the new id.
-    @discardableResult
-    public func duplicatePane(_ id: PaneID) -> PaneID? {
-        guard let item = workspace.canvas.item(id) else { return nil }
-        let (canvas, newID) = workspace.canvas.adding(
-            item.spec, near: id, viewport: lastViewport, size: item.frame.size,
-        )
-        workspace.canvas = canvas
-        focusOnPlacement(newID)
-        if workspace.maximizedPane != nil { workspace.maximizedPane = nil }
-        if let group = item.groupID {
-            workspace.canvas = workspace.canvas.assigning(newID, toGroup: group)
-        }
-        // In-view guarantee, mirroring addPane.
-        recenterIfOffscreen(newID, viewport: lastViewport)
-        reconcile()
-        return newID
-    }
-
     // MARK: - Close undo (single slot) + busy-shell close guard
-
-    /// Everything needed to bring the most recently closed pane back as it was: its spec (incl. a
-    /// committed video endpoint, so a reopened remote-window pane re-streams), its exact frame, and
-    /// its group. Deliberately NOT the ``PaneID`` — reopen mints a fresh pane (see
-    /// ``Canvas/restoring(_:frame:group:)``).
-    public struct RecentlyClosedPane: Equatable, Sendable {
-        public let spec: PaneSpec
-        public let frame: CGRect
-        public let group: PaneGroupID?
-    }
-
-    /// The single-slot "Reopen Closed Pane" record — the last non-ephemeral close. In-memory only
-    /// (deliberately not persisted: across a relaunch the layout file already restores every pane
-    /// that mattered). Single-slot is the honest scope: the menu item says "Reopen Closed Pane",
-    /// not "Undo History".
-    public private(set) var recentlyClosed: RecentlyClosedPane?
 
     /// The pane awaiting close CONFIRMATION — because its shell reported a running command (⌘W on a
     /// busy shell — killing the session would kill the command), or because it is its project's LAST
@@ -887,22 +635,8 @@ public final class WorkspaceStore {
     /// to decide whether to block the NSWindow close while the confirmation dialog resolves. In-memory only.
     public private(set) var pendingWindowClose: SessionID?
 
-    /// The close entry point for every user-facing close affordance (⌘W, the pill menu, the sidebar
-    /// context menu): closes immediately when the pane's shell is idle, parks the close behind a
-    /// confirmation (``pendingClose``) when ``PaneSessionHandle/isShellBusy`` says a command is still
-    /// running. Direct ``closePane(_:)`` stays public for the auto-managed paths (the system-dialog
-    /// monitor) and tests — the guard is a UX gate, not an invariant.
-    public func requestClosePane(_ id: PaneID) {
-        guard workspace.canvas.contains(id) else { return }
-        if registry[id]?.isShellBusy == true {
-            parkPaneClose(id)
-        } else {
-            closePane(id)
-        }
-    }
-
-    /// The TREE busy-shell close guard: the IDE-shell counterpart of ``requestClosePane(_:)``
-    /// — an idle leaf closes immediately (cascading the tab/session), a leaf mid-command parks behind the
+    /// The TREE busy-shell close guard — an idle leaf closes immediately (cascading the tab/session),
+    /// a leaf mid-command parks behind the
     /// ``pendingClose`` confirmation. A leaf that is its By-Project section's LAST pane
     /// (``projectClosed(byRemoving:)``) parks too, whatever the policy says: closing it closes the whole
     /// project, and the dialog warns before the rail section silently disappears. The chrome close
@@ -990,53 +724,6 @@ public final class WorkspaceStore {
         pendingWindowClose = nil
     }
 
-    /// Reopens the most recently closed pane at its exact former frame (frontmost, focused, back in
-    /// its group when that group still exists), guaranteed in view. The session is NEW by
-    /// construction — scrollback does not survive a close; the spec (incl. a committed video
-    /// endpoint) is what comes back. Single-shot: consumes the slot. Returns the new id, or `nil`
-    /// when there is nothing to reopen.
-    @discardableResult
-    public func reopenClosedPane() -> PaneID? {
-        guard let record = recentlyClosed else { return nil }
-        recentlyClosed = nil
-        // Rejoin the group only if it still exists — restoring a dangling groupID would strand the
-        // pane outside both the group views and the "ungrouped" listing.
-        let group = record.group.flatMap { gid in
-            workspace.groups.contains { $0.id == gid } ? gid : nil
-        }
-        let (canvas, id) = workspace.canvas.restoring(record.spec, frame: record.frame, group: group)
-        workspace.canvas = canvas
-        focusOnPlacement(id)
-        if workspace.maximizedPane != nil { workspace.maximizedPane = nil }
-        // In-view guarantee, mirroring addPane: the pane may have been closed far off-viewport.
-        recenterIfOffscreen(id, viewport: lastViewport)
-        reconcile()
-        return id
-    }
-
-    /// Focuses pane `id` (a pure focus change; leaf set unchanged). Maximize follows focus.
-    ///
-    /// A click on a GUI pane runs `mouseDown → onActivate → focus(id)`. Without the guard below, clicking the
-    /// ALREADY-focused pane would still reassign the whole `@Observable workspace` (struct assignment
-    /// notifies regardless of equality) → a full-canvas SwiftUI re-render that blocks the main thread → the
-    /// Metal video + cursor overlay freeze on EVERY click. Re-focusing the already-focused pane is a genuine
-    /// no-op, so skip it entirely — no reassignment, no re-render, no freeze.
-    public func focus(_ id: PaneID) {
-        focus(id, recordVisit: true)
-    }
-
-    /// Focuses `id`. `recordVisit` distinguishes a USER focus (click / directional move / palette jump —
-    /// moves the pane to the front of the focus-history MRU) from a quick-switch WALK
-    /// (``switchToRecentPane(forward:)``), which must NOT reorder the ring (browser back/forward).
-    private func focus(_ id: PaneID, recordVisit: Bool) {
-        guard workspace.focusedPane != id else { return }
-        if recordVisit { recordFocusVisit(id) }
-        workspace = workspace.focusing(id)
-        // Seeing a pane dismisses its attention bell badge (the badge only shows on unfocused panes).
-        registry[id]?.clearBell()
-        reconcile()
-    }
-
     // MARK: - Pane switcher (⌃⇥ press-and-hold, MRU-ordered)
 
     /// The live ⌃⇥ switcher, or `nil` while it is closed. Set by ``openOrStepPaneSwitcher(forward:armedByModifier:)``,
@@ -1107,506 +794,7 @@ public final class WorkspaceStore {
 
     // MARK: - Recent-pane MRU (quick-switch to the previously-focused pane)
 
-    /// Panes in most-recently-FOCUSED order (front = current), deduped, capped at ``focusHistoryCap``,
-    /// pruned when a pane closes. Session state (not persisted). Backs ``switchToRecentPane(forward:)`` —
-    /// the "go to last pane" idiom. Mirrors the ``recentCommands`` ring discipline.
-    public private(set) var focusHistory: [PaneID] = []
-    public static let focusHistoryCap = 16
-
-    /// Records a user focus visit. The pane we're LEAVING is fronted first, THEN the incoming pane — so
-    /// "go to last pane" returns to where you actually were, even when a quick-switch walk (which does not
-    /// record) had left the focus on the outgoing pane. Dedups + caps. (Also seeds the ring after a
-    /// restore, where the outgoing pane was never recorded via a `focus()` call.)
-    private func recordFocusVisit(_ id: PaneID) {
-        if let outgoing = workspace.focusedPane, outgoing != id { frontFocusHistory(outgoing) }
-        frontFocusHistory(id)
-        if focusHistory.count > Self.focusHistoryCap {
-            focusHistory.removeLast(focusHistory.count - Self.focusHistoryCap)
-        }
-    }
-
-    private func frontFocusHistory(_ id: PaneID) {
-        focusHistory.removeAll { $0 == id }
-        focusHistory.insert(id, at: 0)
-    }
-
-    /// Makes `id` the focused pane via a CREATION/RAISE path (which sets the focus DIRECTLY rather than
-    /// through `focus(_:)`, the existing-pane re-render path) AND records the visit in the quick-switch
-    /// MRU ring. Without recording here, opening/raising panes would never populate `focusHistory`, so
-    /// quick-switch (⌥⌘;) would stay dead until the user happened to CLICK between panes (the only other
-    /// `focus()` caller). Records OUTGOING-then-incoming so "go to last pane" returns to where you actually were.
-    /// Ephemeral system-dialog panes deliberately do NOT use this (they must not pollute the ring).
-    private func focusOnPlacement(_ id: PaneID) {
-        recordFocusVisit(id)
-        workspace.focusedPane = id
-    }
-
-    /// The pane a quick-switch step would land on, or `nil` when the step is a no-op (fewer than two panes
-    /// in the ring, or already at the end in that direction). Pure (no focus side-effect) so the
-    /// no-op guard is unit-testable in isolation. Position is DERIVED from the focused pane's index in the
-    /// ring each call (no persistent cursor); a focused pane absent from the ring (e.g. just after a
-    /// close-refocus) starts the walk at the front.
-    func recentPaneTarget(forward: Bool) -> PaneID? {
-        guard focusHistory.count > 1 else { return nil }
-        let current = workspace.focusedPane.flatMap { focusHistory.firstIndex(of: $0) } ?? 0
-        let next = forward ? current - 1 : current + 1
-        guard next >= 0, next < focusHistory.count else { return nil }
-        return focusHistory[next]
-    }
-
-    /// Quick-switch through the focus-history MRU WITHOUT reordering it (browser back/forward): `forward:
-    /// false` steps toward an OLDER pane (the "go to the previous pane" primary action), `forward: true`
-    /// steps back toward newer. Walks without recording, so a sequence of steps walks the ring. A whole-
-    /// canvas swap re-seeds the ring (``reseedFocusHistory()``) so a walk never targets a re-minted id.
-    public func switchToRecentPane(forward: Bool) {
-        if let target = recentPaneTarget(forward: forward) { focus(target, recordVisit: false) }
-    }
-
-    /// Drops `id` from the focus-history MRU (a pane closed) so it can never be a quick-switch target.
-    private func pruneFocusHistory(_ id: PaneID) {
-        focusHistory.removeAll { $0 == id }
-    }
-
-    /// Resets the focus-history MRU to just the current focused pane — for a WHOLE-CANVAS SWAP (layout-
-    /// preset switch / replace-import) that re-mints every pane id, leaving every prior ring entry a dead
-    /// id. Without this the quick-switch (⌥⌘;) would silently no-op post-swap (every walked-to id fails the
-    /// `canvas.contains` guard in `focusing`). Seeding with the new focused pane (not emptying) keeps the
-    /// ring honest as the user starts navigating the new layout.
-    private func reseedFocusHistory() {
-        focusHistory = workspace.focusedPane.map { [$0] } ?? []
-    }
-
-    /// Moves focus in `dir`, resolved geometrically against the last solved layout (docs/22 §2.1).
-    /// `.next`/`.previous` fall back to the canonical ``Canvas/allIDs()`` cycle when no layout has been
-    /// reported yet (e.g. compact mode), so cycling always works.
-    public func move(_ dir: FocusDirection) {
-        guard let focused = workspace.focusedPane else { return }
-        let target: PaneID?
-        switch dir {
-        case .next,
-             .previous:
-            if let solved = lastSolvedLayout, solved.frames[focused] != nil {
-                target = FocusResolver.neighbor(of: focused, dir, in: solved)
-            } else {
-                target = FocusResolver.cycle(workspace.canvas.allIDs(), from: focused, forward: dir == .next)
-            }
-        case .left,
-             .right,
-             .up,
-             .down:
-            guard let solved = lastSolvedLayout else { return }
-            target = FocusResolver.neighbor(of: focused, dir, in: solved)
-        }
-        guard let target, target != focused else { return }
-        focus(target)
-    }
-
-    /// Cycles focus through ONLY the panes in the focused pane's group (the companion to the whole-canvas
-    /// ``move(_:)`` cycle), so a cluster is navigable in isolation. An ungrouped focused pane cycles the
-    /// ungrouped "bucket" (`groupID == nil`). A no-op when the bucket has fewer than two panes. Members are
-    /// taken in the canonical ``Canvas/ids(inGroup:)`` reading order, fed to the same ``FocusResolver/cycle``.
-    public func cycleFocusInGroup(forward: Bool) {
-        if let target = inGroupCycleTarget(forward: forward) { focus(target) }
-    }
-
-    /// The pane an in-group cycle would focus, or `nil` when it is a no-op (no focused pane, or the
-    /// focused pane's group/ungrouped-bucket has fewer than two members). Pure so the `count > 1` guard is
-    /// unit-testable in isolation (the cycle itself returns the SAME pane for a singleton, so only this
-    /// guard distinguishes "cycle" from "stay put").
-    func inGroupCycleTarget(forward: Bool) -> PaneID? {
-        guard let focused = workspace.focusedPane else { return nil }
-        let members = workspace.canvas.ids(inGroup: workspace.canvas.item(focused)?.groupID)
-        guard members.count > 1 else { return nil }
-        return FocusResolver.cycle(members, from: focused, forward: forward)
-    }
-
-    /// Toggles maximize on the focused pane (a presentation flag — no model surgery, registry untouched,
-    /// docs/30 §1). Renders the one pane full-viewport (ignoring the camera / other panes).
-    public func toggleZoom() {
-        guard let focused = workspace.focusedPane else { return }
-        workspace.maximizedPane = (workspace.maximizedPane == focused) ? nil : focused
-        reconcile()
-    }
-
-    // MARK: - Canvas mutations (move / resize / raise / camera / arrange)
-
-    /// Translates pane `id` by `delta` (the chrome drag-to-move commit), raising it to front and
-    /// focusing it. Item SET unchanged → reconcile is a registry no-op (it only persists).
-    public func movePane(_ id: PaneID, by delta: CGSize) {
-        guard workspace.canvas.contains(id) else { return }
-        workspace.canvas = workspace.canvas.moving(id, by: delta).raising(id)
-        focusOnPlacement(id)
-        reconcile()
-    }
-
-    /// Sets pane `id`'s frame (the corner/edge resize commit). The VIEW frame change drives the
-    /// terminal host's `layout()` → reflow (the existing path; no new resize API). Item set unchanged.
-    public func resizePane(_ id: PaneID, to frame: CGRect) {
-        guard workspace.canvas.contains(id) else { return }
-        workspace.canvas = workspace.canvas.resizing(id, to: frame)
-        reconcile()
-    }
-
-    /// The canvas-space region the non-overlap solver gathers collision bodies from: the visible
-    /// viewport (committed camera less any uncommitted live scroll, matching the view's solve-time
-    /// reading) expanded by the snap margin so almost-visible neighbours still participate.
-    private var collisionRegion: CGRect {
-        let camera = workspace.canvas.camera
-        let origin = CGPoint(
-            x: camera.origin.x - liveCameraOffset.width,
-            y: camera.origin.y - liveCameraOffset.height,
-        )
-        return CGRect(origin: origin, size: lastViewport).insetBy(dx: -200, dy: -200)
-    }
-
-    /// Drag-to-move commit under the non-overlap layout (``CanvasNonOverlap``): the dragged pane slides
-    /// flush to `snapped` (never overlapping a neighbour / group box), and if the drop shows insert-intent
-    /// the surrounded neighbours part to admit it — both committed in ONE canvas mutation (one persistence
-    /// write, one reconcile). `snapped` is the CanvasSnap output (the gesture's snapped target). A disabled
-    /// `config` (⌘ / setting off) degrades to a plain move-to, so the call site stays uniform.
-    public func movePaneNonOverlapping(_ id: PaneID, snapped: CGRect, config: CanvasNonOverlap.Config) {
-        guard let current = workspace.canvas.frame(of: id) else { return }
-        guard config.enabled else {
-            workspace.canvas = workspace.canvas.moving(id, to: snapped.origin).raising(id)
-            focusOnPlacement(id)
-            reconcile()
-            return
-        }
-        let groupID = workspace.canvas.item(id)?.groupID
-        let bodies = workspace.canvas.collisionBodies(
-            excludingPane: id, excludingGroup: groupID, region: collisionRegion, groups: workspace.groups,
-        )
-        if let result = CanvasNonOverlap.makeSpace(
-            target: snapped,
-            draggedID: .pane(id),
-            bodies: bodies,
-            config: config,
-        ) {
-            // Insert-intent: pin the pane at the drop and part the surrounded neighbours around it.
-            workspace.canvas = workspace.canvas.applying(result, groups: workspace.groups).raising(id)
-        } else {
-            // Rest flush: slide the pane to its non-overlapping position; nobody else moves.
-            let slid = CanvasNonOverlap.slide(snapped, from: current.origin, bodies: bodies, config: config).frame
-            workspace.canvas = workspace.canvas.moving(id, to: slid.origin).raising(id)
-        }
-        // Keep the pane's own group members non-overlapping (the top-level solve treated the dragged
-        // pane's group as one excluded body, so a sibling overlap is resolved here).
-        if let groupID { workspace.canvas = reflowedWithinGroup(
-            workspace.canvas,
-            movedPane: id,
-            groupID: groupID,
-            config: config,
-        ) }
-        focusOnPlacement(id)
-        reconcile()
-    }
-
-    /// Keeps the members of `groupID` non-overlapping after one of them moved/resized: pins the changed
-    /// pane and separates its siblings around it (the within-group reflow — members shouldn't overlap each
-    /// other any more than top-level windows do).
-    private func reflowedWithinGroup(
-        _ canvas: Canvas,
-        movedPane: PaneID,
-        groupID: PaneGroupID,
-        config: CanvasNonOverlap.Config,
-    ) -> Canvas {
-        guard config.enabled, let pinned = canvas.frame(of: movedPane) else { return canvas }
-        let siblings = canvas.items
-            .filter { $0.groupID == groupID && $0.id != movedPane }
-            .map { CanvasNonOverlap.Body(id: .pane($0.id), rect: $0.frame) }
-        guard !siblings.isEmpty else { return canvas }
-        let result = CanvasNonOverlap.separate(
-            pinnedID: .pane(movedPane),
-            pinnedRect: pinned,
-            bodies: siblings,
-            config: config,
-        )
-        return canvas.applying(result, groups: workspace.groups)
-    }
-
-    /// Group-handle drag-to-move commit: the whole group slides as one rigid body to `snappedBox` (never
-    /// overlapping another group / ungrouped pane), and if the drop shows insert-intent the surrounded
-    /// bodies part to admit it — its members move rigidly to follow. A disabled config degrades to a plain
-    /// rigid move. `snappedBox` is the group's (unpadded) bounding-box target.
-    public func moveGroupNonOverlapping(_ groupID: PaneGroupID, snappedBox: CGRect, config: CanvasNonOverlap.Config) {
-        guard let oldBox = workspace.canvas.groupBoundingBox(groupID) else { return }
-        guard config.enabled else {
-            workspace.canvas = workspace.canvas.movingGroup(
-                groupID, by: CGSize(width: snappedBox.minX - oldBox.minX, height: snappedBox.minY - oldBox.minY),
-            )
-            reconcile()
-            return
-        }
-        let bodies = workspace.canvas.collisionBodies(
-            excludingPane: nil, excludingGroup: groupID, region: collisionRegion, groups: workspace.groups,
-        )
-        if let result = CanvasNonOverlap.makeSpace(
-            target: snappedBox,
-            draggedID: .group(groupID),
-            bodies: bodies,
-            config: config,
-        ) {
-            workspace.canvas = workspace.canvas.applying(result, groups: workspace.groups)
-        } else {
-            let slid = CanvasNonOverlap.slide(snappedBox, from: oldBox.origin, bodies: bodies, config: config).frame
-            workspace.canvas = workspace.canvas.movingGroup(
-                groupID, by: CGSize(width: slid.minX - oldBox.minX, height: slid.minY - oldBox.minY),
-            )
-        }
-        reconcile()
-    }
-
-    /// Group-handle resize commit: the group's members are affinely remapped into `newBox` (its new
-    /// footprint), then any OTHER group / ungrouped pane the grown box now overlaps is shoved clear
-    /// (gate-free separation — a resize must never leave an overlap). `newBox` is the group's new
-    /// (unpadded) bounding box.
-    public func resizeGroupNonOverlapping(_ groupID: PaneGroupID, newBox: CGRect, config: CanvasNonOverlap.Config) {
-        var canvas = workspace.canvas.resizingGroup(groupID, toBox: newBox)
-        // A heavy SHRINK floors several members at minItemSize while their origins were placed for the
-        // smaller scaled sizes → internal overlap. Reflow the members (pinning the top-leading one) so
-        // they spread back out gutter-clear before the box is used to push other groups.
-        if config.enabled, let anchor = topLeadingMember(of: groupID, in: canvas) {
-            canvas = reflowedWithinGroup(canvas, movedPane: anchor, groupID: groupID, config: config)
-        }
-        if config.enabled, let grown = canvas.groupBoundingBox(groupID) {
-            let bodies = canvas.collisionBodies(
-                excludingPane: nil, excludingGroup: groupID, region: collisionRegion, groups: workspace.groups,
-            )
-            let result = CanvasNonOverlap.separate(
-                pinnedID: .group(groupID),
-                pinnedRect: grown,
-                bodies: bodies,
-                config: config,
-            )
-            canvas = canvas.applying(result, groups: workspace.groups)
-        }
-        workspace.canvas = canvas
-        reconcile()
-    }
-
-    /// The spatial top-leading member of `groupID` (min Y, ties by min X) — the stable pin for a
-    /// within-group reflow where every member moved (a group resize).
-    private func topLeadingMember(of groupID: PaneGroupID, in canvas: Canvas) -> PaneID? {
-        canvas.items
-            .filter { $0.groupID == groupID }
-            .min { a, b in a.frame.minY != b.frame.minY ? a.frame.minY < b.frame.minY : a.frame.minX < b.frame.minX }?
-            .id
-    }
-
-    /// 1:1 SNAP (remote-GUI panes): resizes pane `id` by the VIDEO-CONTENT delta `target − current` so its
-    /// stream renders pixel-for-pixel — the pane chrome (header + divider) is a constant additive inset, so
-    /// adjusting the FRAME by the CONTENT delta needs no chrome-height constant and survives a chrome change.
-    /// The origin stays pinned (grows right/down, no jump under the cursor). Skipped while maximized (its
-    /// on-screen size is the viewport override — mutating the frame would surprise the restore) and for
-    /// sub-half-point deltas (layout noise; not worth a canvas mutation + persistence write).
-    public func snapPaneToContentSize(_ id: PaneID, target: CGSize, current: CGSize) {
-        guard workspace.maximizedPane != id,
-              let frame = workspace.canvas.frame(of: id) else { return }
-        let dw = target.width - current.width
-        let dh = target.height - current.height
-        // Cache the FRAME size at which this pane renders the stream 1:1, so "Resize to Native Stream
-        // Size" can restore it after the user has manually resized away. nativeFrame = currentFrame +
-        // (nativeContent − currentContent); the chrome inset rides along (constant), no constant needed.
-        nativeFrameSize[id] = CGSize(width: frame.width + dw, height: frame.height + dh)
-        guard abs(dw) >= 0.5 || abs(dh) >= 0.5 else { return }
-        let snapped = CGRect(
-            origin: frame.origin,
-            size: CGSize(width: frame.width + dw, height: frame.height + dh),
-        )
-        workspace.canvas = workspace.canvas.resizing(id, to: snapped)
-        reconcile()
-    }
-
-    /// The per-pane block-bookmark persistence seam + the per-pane jump-to-failed cursor, bundled into
-    /// one stored holder (``BlockBookmarkSeam``) so the store body stays under the lint ceiling. The seam's
-    /// `load`/`save` are wired by the app to the ``PreferencesStore`` (`settings.blockBookmarks.v1`), keyed
-    /// by `bookmarkScopeKey` — the per-MATERIALIZATION token, NOT the stable `PaneID`. A relaunch mints a
-    /// fresh segmenter that re-numbers blocks from 0, so keying by pane id re-applied a prior run's raw
-    /// indices onto unrelated commands; the scope key deliberately starts a relaunch with NO stars, while
-    /// staying stable across a transport reconnect within one launch. (This doc claimed stable-`PaneID`
-    /// keying until 2026-07-26 — `WorkspaceStore+Blocks.swift` has always been the truth.)
-    /// Left default (tests / previews) bookmarks are in-memory only. The `jumpCursor` records the block
-    /// index the last jump-to-failed landed on so a repeated ⌃⌘⇧[ / ⌃⌘⇧] walks every failure in order.
-    /// `@ObservationIgnored`: wiring, not view state. `internal` so the WorkspaceStore+Blocks extension
-    /// reaches it (extensions can't add stored state).
-    @ObservationIgnored var blockBookmarks = BlockBookmarkSeam()
-
-    /// The pane frame size at which each video pane renders its stream pixel-for-pixel, cached
-    /// from the last ``snapPaneToContentSize`` report. Drives "Resize to Native Stream Size".
-    private var nativeFrameSize: [PaneID: CGSize] = [:]
-
-    /// Whether a native stream size is known for pane `id` (the menu item's enabled state).
-    public func hasNativeSize(_ id: PaneID) -> Bool { nativeFrameSize[id] != nil }
-
-    /// Resizes pane `id` to the cached native stream frame size (origin pinned), so a manually-resized
-    /// remote pane snaps back to a crisp 1:1 render. No-op if no native size is known or it's maximized.
-    public func resizeToNativeSize(_ id: PaneID) {
-        guard workspace.maximizedPane != id,
-              let size = nativeFrameSize[id],
-              let frame = workspace.canvas.frame(of: id) else { return }
-        workspace.canvas = workspace.canvas.resizing(id, to: CGRect(origin: frame.origin, size: size))
-        reconcile()
-    }
-
-    /// Brings pane `id` to the front and focuses it (on focus / drag-start). Item set unchanged.
-    public func raisePane(_ id: PaneID) {
-        guard workspace.canvas.contains(id) else { return }
-        workspace.canvas = workspace.canvas.raising(id)
-        focusOnPlacement(id)
-        reconcile()
-    }
-
-    /// Commits a pan (the `.onEnded` of a canvas drag / a scroll-wheel step). Per-frame *live* pan is
-    /// view `@State` and never touches the store (mirrors the `@GestureState` discipline); only the
-    /// committed camera lands here and rides the existing save debounce.
-    public func commitCamera(_ camera: CanvasCamera) {
-        workspace.canvas = workspace.canvas.camera(camera)
-        reconcile()
-    }
-
-    /// Live scroll-pan step (macOS trackpad/wheel — over the background OR over a pane). Accumulates the
-    /// camera `delta` as a VISUAL-only offset (``liveCameraOffset``) and debounces a SINGLE
-    /// ``commitScrollPan()`` once scrolling settles — a per-step ``commitCamera(_:)`` would thrash the canvas
-    /// re-render + `report()` cascade and freeze the video/cursor. `delta` is the camera delta
-    /// `camera.translated(by:)` takes; the visual offset moves OPPOSITE it (the content follows the camera),
-    /// matching the committed `.offset` math a canvas renderer applies. NOTE: the free-form canvas view that
-    /// read ``liveCameraOffset`` is gone — the rule survives here, pinned by `CanvasScrollPanTests`, with no
-    /// production reader.
-    public func scrollPan(by delta: CGSize) {
-        liveCameraOffset.width -= delta.width
-        liveCameraOffset.height -= delta.height
-        if Self.wsDbgEnabled {
-            FileHandle.standardError
-                .write(
-                    Data(
-                        "SlopDesk[workspace]: scrollPan d=(\(Int(delta.width)),\(Int(delta.height))) liveOff=(\(Int(liveCameraOffset.width)),\(Int(liveCameraOffset.height))) camOrigin=(\(Int(workspace.canvas.camera.origin.x)),\(Int(workspace.canvas.camera.origin.y)))\n"
-                            .utf8,
-                    ),
-                )
-        }
-        scrollCommitTask?.cancel()
-        scrollCommitTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(110))
-            guard let self, !Task.isCancelled else { return }
-            commitScrollPan()
-        }
-    }
-
-    /// Env-gated (`SLOPDESK_VIDEO_DEBUG`) stderr probe for the scroll-pan path (the "pan stops at the GUI
-    /// edge" symptom): shows whether a scroll over a GUI pane actually moves the camera, vs the visual offset
-    /// not being applied / the events not reaching here.
-    static let wsDbgEnabled = ProcessInfo.processInfo.environment["SLOPDESK_VIDEO_DEBUG"] != nil
-
-    /// Folds the accumulated live scroll offset into the real camera in ONE ``commitCamera(_:)`` (so the
-    /// pan persists + viewport membership / solved-layout refresh exactly once), then clears the visual
-    /// offset. The committed camera equals the live state, so there is NO visual jump (Observation batches
-    /// the two synchronous mutations into one render). No-op when nothing is pending. Public so an explicit
-    /// camera op or a quit-save can flush a still-pending pan first.
-    public func commitScrollPan() {
-        scrollCommitTask?.cancel()
-        scrollCommitTask = nil
-        let off = liveCameraOffset
-        guard off != .zero else { return }
-        let before = workspace.canvas.camera.origin
-        liveCameraOffset = .zero
-        // cameraDelta = sum of all scroll steps = -(accumulated visual offset).
-        commitCamera(workspace.canvas.camera.translated(by: CGSize(width: -off.width, height: -off.height)))
-        if Self.wsDbgEnabled {
-            let after = workspace.canvas.camera.origin
-            FileHandle.standardError
-                .write(
-                    Data(
-                        "SlopDesk[workspace]: commitScrollPan camOrigin (\(Int(before.x)),\(Int(before.y)))→(\(Int(after.x)),\(Int(after.y))) foldedOff=(\(Int(off.width)),\(Int(off.height)))\n"
-                            .utf8,
-                    ),
-                )
-        }
-    }
-
-    /// Drops any pending live scroll offset WITHOUT committing — used by an ABSOLUTE camera op (recenter /
-    /// center-on / tidy) that sets the camera outright, so a late ``commitScrollPan()`` can't add a stale
-    /// relative delta on top of the new absolute position.
-    private func discardLiveScroll() {
-        scrollCommitTask?.cancel()
-        scrollCommitTask = nil
-        liveCameraOffset = .zero
-    }
-
-    /// In-view guarantee shared by every placement path (add / remote-window / duplicate / reopen /
-    /// system-dialog): if the just-placed pane's CENTRE falls outside the current viewport, pan the camera
-    /// to centre it. ``centered(on:viewport:)`` is an ABSOLUTE camera set, so it first discards any pending
-    /// live scroll (mirroring ``centerOnPane(_:)`` / ``centerOnAll()``) — else a late ``commitScrollPan()``
-    /// would fold a stale relative scroll delta on top of the freshly-centred camera, nudging the new pane
-    /// back off-centre and persisting the wrong camera.
-    private func recenterIfOffscreen(_ id: PaneID, viewport: CGSize) {
-        let visible = CGRect(origin: workspace.canvas.camera.origin, size: viewport)
-        guard let f = workspace.canvas.frame(of: id),
-              !visible.contains(CGPoint(x: f.midX, y: f.midY)) else { return }
-        discardLiveScroll()
-        workspace.canvas = workspace.canvas.centered(on: id, viewport: viewport)
-    }
-
-    /// Centres the camera on pane `id` ("Center on Pane" + the off-screen-focus reveal).
-    public func centerOnPane(_ id: PaneID) {
-        guard workspace.canvas.contains(id) else { return }
-        discardLiveScroll()
-        workspace.canvas = workspace.canvas.centered(on: id, viewport: lastViewport)
-        reconcile()
-    }
-
-    /// Centres the camera on the bounding box of group `id`'s panes (the sidebar "jump to group" / a tap
-    /// on the group header). No-op if the group has no members.
-    public func centerOnGroup(_ id: PaneGroupID) {
-        guard let box = workspace.canvas.groupBoundingBox(id) else { return }
-        let camera = CanvasCamera(origin: CGPoint(
-            x: box.midX - lastViewport.width / 2,
-            y: box.midY - lastViewport.height / 2,
-        ))
-        discardLiveScroll()
-        workspace.canvas = workspace.canvas.camera(camera)
-        reconcile()
-    }
-
-    /// Centres the camera on the bounding box of ALL panes ("Center on All" — NOT "Fit"; there is no
-    /// scale, so it centres but cannot shrink).
-    public func centerOnAll() {
-        discardLiveScroll()
-        workspace.canvas = workspace.canvas.centeredOnAll(viewport: lastViewport)
-        reconcile()
-    }
-
-    /// Packs every pane into a uniform grid and recentres ("Tidy").
-    public func tidyCanvas() {
-        discardLiveScroll()
-        workspace.canvas = workspace.canvas.tidied(viewport: lastViewport)
-        reconcile()
-    }
-
-    /// The panes an Arrange (align / distribute) op targets: the multi-selection when ≥2 are selected,
-    /// else every pane on the canvas (so "Align Left" with no selection tidies the whole canvas edge).
-    func arrangeTargets() -> [PaneID] {
-        if selectedPanes.count >= 2 { return workspace.canvas.allIDs().filter { selectedPanes.contains($0) } }
-        return workspace.canvas.allIDs()
-    }
-
-    /// Aligns the Arrange targets to a shared edge/centre (the Pane ▸ Arrange menu).
-    public func alignPanes(to edge: AlignEdge) {
-        workspace.canvas = workspace.canvas.aligning(arrangeTargets(), to: edge)
-        reconcile()
-    }
-
-    /// Distributes the Arrange targets with equal gaps along an axis.
-    public func distributePanes(horizontal: Bool) {
-        workspace.canvas = workspace.canvas.distributing(arrangeTargets(), horizontal: horizontal)
-        reconcile()
-    }
-
-    // MARK: - Broadcast / synchronized input (tmux synchronize-panes)
-
-    /// Whether broadcast input is ARMED: a submit in the focused pane's input bar is fanned to every
-    /// ``broadcastTargets()`` pane instead of only the focused one. Transient view state — never persisted
-    /// (a synchronized-typing mode should not survive a relaunch and surprise you).
-    public private(set) var broadcastActive: Bool = false
+    // MARK: - Synchronized input (tmux synchronize-panes)
 
     /// The set of tab IDs for which per-tab synchronized input is ON (Zellij `ToggleActiveSyncTab`): every
     /// keystroke typed in the focused pane of a sync-armed tab is ALSO sent to every OTHER pane in that
@@ -1621,73 +809,11 @@ public final class WorkspaceStore {
         return workspaceMirror.topology?.syncInputTabs ?? []
     }
 
-    /// Arms / disarms broadcast input (⇧⌘B / Pane ▸ Broadcast Input).
-    public func toggleBroadcast() { broadcastActive.toggle() }
-
-    /// Sets broadcast mode explicitly (e.g. auto-disarm). Idempotent.
-    public func setBroadcast(_ active: Bool) { broadcastActive = active }
-
-    /// The panes a broadcast targets — resolved like ``arrangeTargets()`` but restricted to the kinds with
-    /// a text funnel (``PaneKind/canReceiveText``; the video panes have no input bar and are skipped): the
-    /// multi-selection when ≥2 are selected, else the focused pane's GROUP when it is grouped, else just
-    /// the focused pane. Deterministic canvas order. Pure — no mutation.
-    public func broadcastTargets() -> [PaneID] {
-        func textCapable(_ id: PaneID) -> Bool { workspace.canvas.spec(for: id)?.kind.canReceiveText == true }
-        if selectedPanes.count >= 2 {
-            return workspace.canvas.allIDs().filter { selectedPanes.contains($0) && textCapable($0) }
-        }
-        if let focused = workspace.focusedPane, let group = workspace.canvas.item(focused)?.groupID {
-            return workspace.canvas.ids(inGroup: group).filter(textCapable)
-        }
-        return workspace.focusedPane.flatMap { textCapable($0) ? [$0] : [] } ?? []
-    }
-
-    /// Types `text` into every broadcast target's shell (the synchronized-input fan-out — type a command
-    /// once, run it on every pane in the group). Returns how many panes it reached. Pure routing over the
-    /// live registry: no canvas mutation, no reconcile.
-    @discardableResult
-    public func broadcastText(_ text: String) -> Int {
-        let targets = broadcastTargets()
-        for id in targets { registry[id]?.sendText(text) }
-        return targets.count
-    }
-
-    /// Reentrancy guard for ``fanBroadcastInput(from:_:)``: when a fan-out mirrors bytes into a SIBLING
-    /// target, that sibling's own `TerminalViewModel.sendInput` re-fires the broadcast tap — without this
+    /// Reentrancy guard for ``fanSyncInput(from:_:)``: when a fan-out mirrors bytes into a SIBLING
+    /// target, that sibling's own `TerminalViewModel.sendInput` re-fires the sync tap — without this
     /// guard each keystroke would cross-multiply across the group (N panes → N² sends → a feedback storm).
     /// Set only for the synchronous duration of one fan-out (all on the main actor, so a flag suffices).
-    private var isFanningBroadcast = false
-
-    /// The live synchronized-input fan-out (tmux `synchronize-panes`): the SOURCE pane's terminal calls
-    /// this from ``TerminalViewModel/sendInput(_:)`` with the bytes it just sent to its own shell; when
-    /// broadcast is armed AND the source is part of the current target group, the SAME bytes are mirrored
-    /// into every OTHER target's shell — so a keystroke (macOS surface) or a composed line (iOS input bar),
-    /// both of which funnel through `sendInput`, types on every grouped pane at once.
-    ///
-    /// The source pane is intentionally skipped (it already delivered the bytes locally via its own
-    /// `inputSink`); siblings receive via ``PaneSessionHandle/sendBytes(_:)`` (→ their input funnel → their
-    /// `sendInput`), and the reentrancy guard keeps that re-entry from re-fanning. A no-op when disarmed,
-    /// when the source is not a target (you are typing in a non-broadcast pane), or when re-entered.
-    /// Returns the number of SIBLINGS reached (0 when it did nothing). Pure registry routing — no mutation.
-    @discardableResult
-    public func fanBroadcastInput(from sourceID: PaneID, _ data: Data) -> Int {
-        guard broadcastActive, !isFanningBroadcast, !data.isEmpty else { return 0 }
-        let targets = broadcastTargets()
-        guard targets.contains(sourceID), targets.count > 1 else { return 0 }
-        // KEYBOARD-ONLY mirror (see ``SyncInputByteFilter``): the tap rides `sendInput`, which also
-        // carries the terminal's query replies and mouse/focus reports — mirroring those types garbage
-        // into shells that never asked.
-        let bytes = Array(SyncInputByteFilter.keyboardOnly(data))
-        guard !bytes.isEmpty else { return 0 }
-        isFanningBroadcast = true
-        defer { isFanningBroadcast = false }
-        var reached = 0
-        for id in targets where id != sourceID {
-            registry[id]?.sendBytes(bytes)
-            reached += 1
-        }
-        return reached
-    }
+    private var isFanningSyncInput = false
 
     /// Toggles per-tab synchronized input for `tabID` (Zellij `ToggleActiveSyncTab`). When ON, every
     /// keystroke typed in any pane of the tab is also mirrored into the tab's other panes via
@@ -1719,14 +845,14 @@ public final class WorkspaceStore {
     /// source pane just sent to its own shell into every OTHER pane in the same tab, when sync is armed for
     /// that tab. The source pane is intentionally SKIPPED (it already delivered locally via `inputSink`);
     /// sibling delivery is through ``PaneSessionHandle/sendBytes(_:)`` (→ their input funnel). The existing
-    /// ``isFanningBroadcast`` guard doubles as the sync-input re-entry guard (both run on the same
-    /// `@MainActor` flat flag): a sibling's `sendInput` re-fires `broadcastTap`, which would call
+    /// ``isFanningSyncInput`` guard (a `@MainActor` flat flag) is the re-entry guard: a sibling's
+    /// `sendInput` re-fires `syncInputTap`, which would call
     /// `fanSyncInput` again — the guard collapses the re-entrant call to a no-op, preventing a fan-storm.
     /// Returns the number of siblings reached (0 when disarmed, single-pane tab, or re-entrant).
     @discardableResult
     public func fanSyncInput(from sourceID: PaneID, _ data: Data) -> Int {
-        guard !data.isEmpty, !isFanningBroadcast else { return 0 }
-        // Resolve the containing tab by scanning sessions (tree-only; no canvas analogue).
+        guard !data.isEmpty, !isFanningSyncInput else { return 0 }
+        // Resolve the containing tab by scanning sessions.
         guard let (_, tabID) = tree.tab(containing: sourceID) else { return 0 }
         guard syncInputTabs.contains(tabID) else { return 0 }
         // Find the Tab value to enumerate siblings.
@@ -1745,8 +871,8 @@ public final class WorkspaceStore {
         // and a later mirrored `↩` executes it. Strip everything that is not a key/paste byte.
         let bytes = Array(SyncInputByteFilter.keyboardOnly(data))
         guard !bytes.isEmpty else { return 0 }
-        isFanningBroadcast = true
-        defer { isFanningBroadcast = false }
+        isFanningSyncInput = true
+        defer { isFanningSyncInput = false }
         var reached = 0
         for id in siblings {
             registry[id]?.sendBytes(bytes)
@@ -1757,18 +883,22 @@ public final class WorkspaceStore {
 
     // MARK: - Command palette recents
 
-    /// The most-recently-run palette COMMANDS, most-recent-first (non-persisted session state). The
-    /// ⌘K palette surfaces these at the top when the query is empty, so the verbs you use most are one
-    /// keystroke away. Only true command verbs are tracked (not pane/group/window jumps — those are
-    /// covered by their own always-present sections).
-    public private(set) var recentCommands: [WorkspaceCommand] = []
+    /// The most-recently-run palette COMMANDS, most-recent-first (non-persisted session state), held as
+    /// the palette CATALOG IDs (`"action.newTerminalTab"`, …). The ⌘K palette surfaces these at the top
+    /// when the query is empty, so the verbs you use most are one keystroke away. Only true command verbs
+    /// are recorded (not pane/tab/window jumps — those have their own always-present sections).
+    ///
+    /// The id, not a command enum: the ring's ONLY consumer looks the row back up in
+    /// ``ActionsPaletteSource/catalog``, so anything richer than the key it looks up by is a second
+    /// spelling of the catalog that can drift from it.
+    public private(set) var recentCommands: [String] = []
     /// How many recents to keep.
     public static let recentCommandsCap = 5
 
-    /// Records a run command at the front of the recents ring (dedup-to-front, capped).
-    public func recordRecentCommand(_ command: WorkspaceCommand) {
-        recentCommands.removeAll { $0 == command }
-        recentCommands.insert(command, at: 0)
+    /// Records a run command's catalog id at the front of the recents ring (dedup-to-front, capped).
+    public func recordRecentCommand(_ catalogID: String) {
+        recentCommands.removeAll { $0 == catalogID }
+        recentCommands.insert(catalogID, at: 0)
         if recentCommands.count > Self.recentCommandsCap {
             recentCommands.removeLast(recentCommands.count - Self.recentCommandsCap)
         }
@@ -1819,106 +949,6 @@ public final class WorkspaceStore {
 
     /// Clears the clipboard history (a privacy affordance).
     public func clearClipboardRing() { clipboardRing = [] }
-
-    // MARK: - Multi-selection (shift-click to select several panes)
-
-    /// The set of panes in the multi-selection (besides the single focused pane) — pure view state,
-    /// never reconciles or persists. Drives the Arrange ops' target set and a group move-together drag.
-    /// Empty = single-focus mode. Always a subset of the live canvas.
-    public private(set) var selectedPanes: Set<PaneID> = []
-
-    /// Toggles `id` in the multi-selection (shift-click on a pill). Toggling the SOLE selected pane off
-    /// clears the set. Ignores ids not on the canvas.
-    public func toggleSelection(_ id: PaneID) {
-        guard workspace.canvas.contains(id) else { return }
-        if selectedPanes.contains(id) { selectedPanes.remove(id) } else { selectedPanes.insert(id) }
-    }
-
-    /// Replaces the selection with exactly `ids` (clamped to live panes). `[]` clears it.
-    public func setSelection(_ ids: Set<PaneID>) {
-        selectedPanes = ids.filter { workspace.canvas.contains($0) }
-    }
-
-    /// Clears the multi-selection (a background click / Esc).
-    public func clearSelection() {
-        if !selectedPanes.isEmpty { selectedPanes = [] }
-    }
-
-    /// Selects EVERY pane on the canvas (⌥⌘A) — the standard "select all" for then aligning /
-    /// distributing / grouping / broadcasting to the whole set at once. A no-op visual when the canvas
-    /// is empty (selects nothing).
-    public func selectAllPanes() {
-        setSelection(Set(workspace.canvas.allIDs()))
-    }
-
-    /// Whether `id` is in the multi-selection (the pill's selected cue).
-    public func isSelected(_ id: PaneID) -> Bool { selectedPanes.contains(id) }
-
-    /// The LIVE group-drag offset broadcast by the dragged anchor so the OTHER selected panes follow it
-    /// in real time (view-only state, like ``liveCameraOffset`` — never reconciles/persists). `nil`
-    /// between drags. Only selected panes read it, so a group drag re-renders just the cohort.
-    public struct GroupDragState: Equatable, Sendable { public let anchor: PaneID
-        public let delta: CGSize
-    }
-
-    public private(set) var groupDragLive: GroupDragState?
-
-    /// The anchor broadcasts its live raw translation each gesture frame. Cleared (and ignored) unless
-    /// the anchor is in a multi-selection of ≥2.
-    public func updateGroupDrag(anchor: PaneID, delta: CGSize) {
-        guard selectedPanes.contains(anchor), selectedPanes.count > 1 else { groupDragLive = nil
-            return
-        }
-        groupDragLive = GroupDragState(anchor: anchor, delta: delta)
-    }
-
-    /// Ends the live group drag (the gesture committed or cancelled).
-    public func endGroupDragLive() { groupDragLive = nil }
-
-    /// The live screen offset a NON-anchor selected pane should render at during a group drag (`.zero`
-    /// when no group drag, or for the anchor itself — its own gesture preview already moves it).
-    public func groupDragOffset(for id: PaneID) -> CGSize {
-        guard let gd = groupDragLive, gd.anchor != id, selectedPanes.contains(id) else { return .zero }
-        return gd.delta
-    }
-
-    /// Moves EVERY selected pane by `delta` (a group drag-to-move-together commit), raising the dragged
-    /// `anchor`. No-op when the selection is empty or `anchor` isn't selected (fall back to a single move).
-    public func moveSelection(by delta: CGSize, anchor: PaneID) {
-        guard selectedPanes.contains(anchor), selectedPanes.count > 1 else { return }
-        var canvas = workspace.canvas
-        for id in selectedPanes where canvas.contains(id) {
-            canvas = canvas.moving(id, by: delta)
-        }
-        workspace.canvas = canvas.raising(anchor)
-        focusOnPlacement(anchor)
-        reconcile()
-    }
-
-    // MARK: - Overview (fit-all peek)
-
-    /// Whether the temporary "see every pane at once" overview is showing (⌘\). Pure view-presentation
-    /// state — never reconciles, never persisted. Renders static pane cards over the dimmed canvas;
-    /// clicking a card jumps to that pane and exits.
-    public private(set) var overviewActive = false
-
-    /// Toggles the overview. A no-op (stays off) on an empty canvas — nothing to overview. Exiting a
-    /// maximize first if one is active (the two full-canvas modes are mutually exclusive).
-    public func toggleOverview() {
-        if overviewActive {
-            overviewActive = false
-        } else {
-            guard !workspace.canvas.items.isEmpty else { return }
-            if workspace.maximizedPane != nil { workspace.maximizedPane = nil }
-            overviewActive = true
-        }
-    }
-
-    /// A card tap in the overview: jump to that pane (focus + centre) and exit the overview.
-    public func selectFromOverview(_ id: PaneID) {
-        overviewActive = false
-        revealPane(id)
-    }
 
     // MARK: - Explicit pane notifications (OSC 9 / OSC 777)
 
@@ -1994,240 +1024,15 @@ public final class WorkspaceStore {
         onPaneNotification?(id, paneTitle, title, body)
     }
 
-    /// Focuses + centres pane `id` (the notification-click reveal, and any "jump to this pane" caller).
-    /// A no-op if the pane is gone (it was closed before the click).
-    public func revealPane(_ id: PaneID) {
-        guard workspace.canvas.contains(id) else { return }
-        focus(id)
-        centerOnPane(id)
-    }
-
     /// Reveals the pane whose id string (`PaneID.raw.uuidString`) matches — the entry point for the
     /// notification-click handler, which only carries the string from `userInfo`. No-op on an
     /// unparseable / unknown id (the pane was closed).
     ///
-    /// LIVE-MODEL aware: the canvas ``revealPane(_:)`` guards `canvas.contains` + centres, which
-    /// is a NO-OP on the live TREE shell — so a clicked notification (long-command / OSC / agent-attention)
-    /// would silently do nothing. Route to the tree focus path when ``liveModel`` is ``LiveModel/tree`` so
-    /// the click actually switches session+tab+pane to the originating pane.
+    /// A notification click is a TELEPORT: ``jumpToPaneTree(_:)`` switches session + tab + pane to the
+    /// originating pane and leaves a breadcrumb on the tab it crossed.
     public func revealPane(byIDString idString: String) {
         guard let uuid = UUID(uuidString: idString) else { return }
-        let id = PaneID(raw: uuid)
-        switch liveModel {
-        case .tree: jumpToPaneTree(id) // a notification click is a teleport — breadcrumb on a crossed tab
-        case .canvas: revealPane(id)
-        }
-    }
-
-    // MARK: - Named layout presets (save / switch canvas contexts)
-
-    /// The saved layout presets in whichever live model is current. A ``LayoutPreset`` embeds a whole
-    /// ``Canvas``, which only the canvas model renders — so the tree shell has NONE, and the app-launch
-    /// monitor's trigger scan (which reads THIS) finds nothing to switch to there. Named session
-    /// templates are the tree shell's equivalent feature.
-    public var liveLayoutPresets: [LayoutPreset] {
-        switch liveModel {
-        case .tree: []
-        case .canvas: workspace.layoutPresets
-        }
-    }
-
-    /// The saved layout names, in saved order — for the palette / menu listing.
-    public var layoutPresetNames: [String] { workspace.layoutPresets.map(\.name) }
-
-    /// Set when the user picks "Save Current Layout…"; the root view observes it to present a
-    /// name-entry alert, then calls ``saveLayoutPreset(name:)`` and ``clearSaveLayoutRequest()``.
-    public private(set) var pendingSaveLayout = false
-    /// Requests the save-layout name prompt (the command-layer entry point).
-    public func requestSaveLayout() { pendingSaveLayout = true }
-    /// The root view consumed the request (presented / dismissed the prompt).
-    public func clearSaveLayoutRequest() { pendingSaveLayout = false }
-
-    /// Snapshots the CURRENT canvas (panes + groups + focus, ephemeral dialog panes stripped) under
-    /// `name`. A re-save of an existing name OVERWRITES it (so "save monitoring" updates the layout you
-    /// already have). The video bindings travel in each pane's spec, so a restored remote pane
-    /// re-streams (or degrades to the picker if its window is gone). Metadata-only mutation → reconcile
-    /// just persists.
-    public func saveLayoutPreset(name: String, triggerAppName: String? = nil) {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        let trigger = (triggerAppName?.trimmingCharacters(in: .whitespacesAndNewlines))
-            .flatMap { $0.isEmpty ? nil : $0 }
-        let snapshotCanvas = workspace.canvas
-        let focus = snapshotCanvas.contains(workspace.focusedPane ?? PaneID()) ? workspace.focusedPane : snapshotCanvas
-            .allIDs().first
-        if let i = workspace.layoutPresets.firstIndex(where: { $0.name == trimmed }) {
-            workspace.layoutPresets[i] = LayoutPreset(
-                id: workspace.layoutPresets[i].id, name: trimmed,
-                canvas: snapshotCanvas, groups: workspace.groups, focusedPane: focus, triggerAppName: trigger,
-            )
-        } else {
-            workspace.layoutPresets.append(LayoutPreset(
-                name: trimmed, canvas: snapshotCanvas, groups: workspace.groups,
-                focusedPane: focus, triggerAppName: trigger,
-            ))
-        }
-        reconcile() // metadata-only — persists the new preset list
-    }
-
-    /// The preset whose `triggerAppName` matches `appName` (case-insensitive), or `nil`. Pure — the
-    /// app-launch matcher. Resolves from the LIVE model's presets.
-    func presetForLaunchedApp(_ appName: String) -> LayoutPreset? {
-        let lower = appName.lowercased()
-        return liveLayoutPresets.first { $0.triggerAppName?.lowercased() == lower }
-    }
-
-    /// The app name whose trigger last auto-switched a layout, so the same launch (still present in the
-    /// host window list across polls) doesn't re-switch every tick.
-    private var lastAutoSwitchedApp: String?
-
-    /// Auto-switches to the layout triggered by `appName` if one exists and we didn't already switch for
-    /// it. Returns whether a switch happened. The monitor calls this for each NEWLY-appeared host app.
-    @discardableResult
-    public func autoSwitchForLaunchedApp(_ appName: String) -> Bool {
-        guard lastAutoSwitchedApp?.lowercased() != appName.lowercased(),
-              let preset = presetForLaunchedApp(appName) else { return false }
-        lastAutoSwitchedApp = appName
-        switchToLayoutPreset(name: preset.name)
-        return true
-    }
-
-    /// Clears the auto-switch latch (e.g. when the triggering app's windows all close host-side), so a
-    /// later relaunch can auto-switch again.
-    public func clearAutoSwitchLatch(forAbsentApps absent: Set<String>) {
-        if let last = lastAutoSwitchedApp, absent.contains(where: { $0.lowercased() == last.lowercased() }) {
-            lastAutoSwitchedApp = nil
-        }
-    }
-
-    /// Switches the live canvas to saved layout `name`: replaces the panes + groups + focus with the
-    /// snapshot (KEEPING the app connection + the saved presets), then reconciles — tearing down every
-    /// current session and materializing the snapshot's. The snapshot's items get FRESH ids here so a
-    /// back-and-forth switch can't collide a re-used id with the live registry mid-teardown (same rule as
-    /// reopen/restore). No-op for an unknown name.
-    public func switchToLayoutPreset(name: String) {
-        guard let preset = workspace.layoutPresets.first(where: { $0.name == name }) else { return }
-        // The preset's camera is set ABSOLUTELY below, so drop any in-flight live scroll first — else a
-        // late commitScrollPan() would fold a stale relative delta onto the restored camera, jumping the
-        // viewport away from the saved layout (mirrors the centerOnPane/centerOnAll/recenterIfOffscreen
-        // contract; pinned by LayoutPresetTests).
-        discardLiveScroll()
-        // Re-mint pane ids so a switch can't collide a snapshot id with a still-tearing-down live
-        // session of the same id (the async-teardown race). Group ids are kept (groups carry no session).
-        var idMap: [PaneID: PaneID] = [:]
-        let remintedItems = preset.canvas.items.map { item -> CanvasItem in
-            let fresh = PaneID()
-            idMap[item.id] = fresh
-            return CanvasItem(id: fresh, spec: item.spec, frame: item.frame, z: item.z, groupID: item.groupID)
-        }
-        workspace.canvas = Canvas(items: remintedItems, camera: preset.canvas.camera)
-        workspace.groups = preset.groups
-        workspace.focusedPane = preset.focusedPane.flatMap { idMap[$0] } ?? remintedItems.first?.id
-        workspace.maximizedPane = nil
-        // Viewport bookmarks (⇧⌘1–9) are workspace-GLOBAL and anchor to the OUTGOING layout's panes +
-        // coordinate frame — the preset carries none. After a context swap they all dangle (their pane
-        // ids are gone AND their saved camera origins are in the outgoing frame), so recall would jump to a
-        // stale coordinate. Clear them rather than mis-jump.
-        workspace.bookmarks = [:]
-        overviewActive = false
-        // Disarm broadcast and forget the close-undo across a whole-canvas swap — a synchronized-typing
-        // mode and a "reopen the pane from the OLD workspace" both make no sense in the new layout.
-        setBroadcast(false)
-        recentlyClosed = nil
-        reseedFocusHistory() // every old pane id is re-minted — drop the now-dead quick-switch ring
-        // Every outgoing pane id is orphaned — clear any pending request keyed to one (else a busy-close
-        // confirmation or rename targeting a now-gone pane lingers as a phantom dialog, the closePane
-        // contract at the top of this type). Reconcile tears the outgoing sessions down.
-        pendingClose = nil
-        pendingTabCloseID = nil // the parked tab-close id belongs to the OUTGOING workspace
-        pendingWindowClose = nil // the parked window-close session id belongs to the OUTGOING workspace
-        pendingRename = nil
-        reconcile()
-    }
-
-    /// Deletes saved layout `name`. No-op if absent.
-    public func deleteLayoutPreset(name: String) {
-        guard workspace.layoutPresets.contains(where: { $0.name == name }) else { return }
-        workspace.layoutPresets.removeAll { $0.name == name }
-        reconcile()
-    }
-
-    // MARK: - Viewport bookmarks (⇧⌘1–9 save, ⌘1–9 recall)
-
-    /// Saves the current viewport into bookmark `slot` (1–9), named after the focused pane. The
-    /// in-flight scroll pan is committed FIRST so the saved camera is what the user actually sees,
-    /// not the last committed position. Records the focused pane as the recall anchor (see
-    /// ``CanvasBookmark``).
-    public func saveBookmark(_ slot: Int) {
-        guard (1...9).contains(slot) else { return }
-        commitScrollPan()
-        // The LIVE shell title (OSC 0/2 when set) names the bookmark — the same source the pill and
-        // sidebar show; the static spec.title is stale the moment the shell speaks.
-        let name = workspace.focusedPane
-            .flatMap { id -> String? in
-                guard let spec = workspace.canvas.spec(for: id) else { return nil }
-                return PanePresentation.displayTitle(handle(for: id), spec: spec)
-            }
-            ?? "Bookmark \(slot)"
-        workspace.bookmarks[slot] = CanvasBookmark(
-            pane: workspace.focusedPane,
-            cameraOrigin: workspace.canvas.camera.origin,
-            name: name,
-        )
-        reconcile() // metadata-only (leaf set unchanged) — reconcile just persists
-    }
-
-    /// Recalls bookmark `slot`: when its anchor pane is still on the canvas, FOLLOW it (focus +
-    /// centre — live panes relocate; the raw coordinate goes stale); otherwise restore the saved
-    /// camera origin. No-op for an empty slot.
-    public func recallBookmark(_ slot: Int) {
-        guard let bookmark = workspace.bookmarks[slot] else { return }
-        if let pane = bookmark.pane, workspace.canvas.contains(pane) {
-            focus(pane)
-            centerOnPane(pane)
-        } else {
-            discardLiveScroll()
-            workspace.canvas = workspace.canvas.camera(CanvasCamera(origin: bookmark.cameraOrigin))
-            reconcile()
-        }
-    }
-
-    // MARK: - Viewport reporting (for placement / centring / video-cap visibility)
-
-    /// The canvas view reports its current viewport size so the store can place / centre / tidy panes
-    /// without the view threading a size into every mutation. View-only state — never reconciles.
-    public func updateViewport(_ size: CGSize) {
-        guard size.width > 0, size.height > 0 else { return }
-        lastViewport = size
-    }
-
-    /// The canvas view reports which panes currently intersect the viewport (no margin). View-only
-    /// state — never reconciles. Feeds ``isPaneVisible(_:)`` (the video-cap "on screen" signal). Marks
-    /// membership as reported, so a subsequently EMPTY set means "panned to the void" (release), not
-    /// "no report yet" (keep).
-    public func updateViewportMembership(_ ids: Set<PaneID>) {
-        paneIDsInViewport = ids
-        hasReportedViewport = true
-    }
-
-    /// Clears viewport membership and the reported flag — called when the canvas view DISAPPEARS (a
-    /// regular→compact projection flip). Without this the compact carousel would inherit the canvas's
-    /// last (stale) membership set and make wrong video-teardown decisions; clearing the flag restores
-    /// the documented compact fallback to ``isPaneOnCanvas(_:)``.
-    public func clearViewportMembership() {
-        paneIDsInViewport = []
-        hasReportedViewport = false
-    }
-
-    /// Whether pane `id` is on the active tab AND currently inside the reported viewport — the signal
-    /// the video-teardown / activation decision uses INSTEAD of ``isPaneOnCanvas(_:)`` (docs/30 §5.3).
-    /// On a canvas an off-viewport pane is still "on the canvas", so the bare on-canvas guard would never
-    /// free its `liveVideoCap` slot; this one does. When membership has NOT been reported (the compact
-    /// carousel / pre-first-layout paths) it falls back to ``isPaneOnCanvas(_:)`` so those paths are
-    /// byte-identical; once reported, an empty set means genuinely-nothing-on-screen (release).
-    public func isPaneVisible(_ id: PaneID) -> Bool {
-        guard isPaneOnCanvas(id) else { return false }
-        return hasReportedViewport ? paneIDsInViewport.contains(id) : true
+        jumpToPaneTree(PaneID(raw: uuid))
     }
 
     // MARK: - Reconnect (palette / recovery)
@@ -2268,16 +1073,6 @@ public final class WorkspaceStore {
     }
 
     // MARK: - Spec mutation (rename / fill endpoint)
-
-    /// Transforms the spec of leaf `id` in place (rename, fill in an endpoint, …). The leaf set is
-    /// unchanged so reconcile is a no-op — but the session already exists; re-materialization is NOT
-    /// triggered by a spec edit (a live session is not rebuilt under the user). To re-point a live
-    /// connection at a new endpoint, the view drives the session's connect form directly.
-    public func updateSpec(_ id: PaneID, _ transform: @escaping (inout PaneSpec) -> Void) {
-        guard workspace.canvas.contains(id) else { return }
-        workspace.canvas = workspace.canvas.updatingSpec(id, transform)
-        reconcile()
-    }
 
     // MARK: - Video activation (cap-enforced)
 
@@ -2416,52 +1211,14 @@ public final class WorkspaceStore {
         tearingDownVideo.removeAll()
     }
 
-    // MARK: - Bootstrap from environment, canvas half
-
-    /// The retained-but-dead canvas model's automation bootstrap. It lives here, alongside the tree
-    /// half in `WorkspaceStore+Bootstrap.swift`, only because `workspace` and ``reconcile()`` are
-    /// private to this file — the canvas owns its own workspace value and has no document to ask.
-    func bootstrapCanvas(from env: [String: String]) {
-        guard canMutate else {
-            armedBootstrapEnvironment = env
-            return
-        }
-        armedBootstrapEnvironment = nil
-        pendingLaunchAdopt = nil
-        refreshPaneDialGate()
-        if let target = Self.terminalTarget(from: env) {
-            workspace = Self.singleLeafWorkspace(
-                spec: PaneSpec(kind: .terminal, title: "Terminal"), connection: target,
-            )
-        } else {
-            workspace = .defaultWorkspace()
-        }
-        reconcile()
-    }
-
-    /// A one-pane workspace from `spec` (the bootstrap shape) with the app `connection` target. The pane
-    /// id is minted fresh; the item sits at the canvas origin at the default size, focused, ungrouped.
-    private static func singleLeafWorkspace(spec: PaneSpec, connection: ConnectionTarget? = nil) -> Workspace {
-        let paneID = PaneID()
-        let item = CanvasItem(
-            id: paneID,
-            spec: spec,
-            frame: CGRect(origin: .zero, size: Canvas.defaultItemSize),
-            z: 0,
-        )
-        return Workspace(canvas: Canvas(items: [item]), focusedPane: paneID, connection: connection)
-    }
-
     // MARK: - Tree-path mutations (delegate to WorkspaceTreeOps, then reconcileTree)
 
-    /// The tree-of-intent mutation surface (docs/42), alongside the canvas methods. Each method applies a
-    /// **pure** ``WorkspaceTreeOps`` transform (returns a new ``TreeWorkspace``) and then calls
-    /// ``reconcileTree()`` to materialize/orphan the registry — the exact shape of the canvas mutations,
-    /// driven by the tree model. They keep the **specs == leafIDs invariant** (the ops do). They belong to
-    /// the ``LiveModel/tree`` path ONLY: on a canvas-driven store they would orphan its canvas panes. The
-    /// kind is taken EXPLICITLY (`kind:`) — these methods do NOT resolve a settings default; it
-    /// is the CALLER (the command routing, as for `addPane`) that resolves the user's default before
-    /// invoking them.
+    /// The tree-of-intent mutation surface (docs/42) — the store's ONLY mutation surface. Each method
+    /// applies a **pure** ``WorkspaceTreeOps`` transform (returns a new ``TreeWorkspace``) and then calls
+    /// ``reconcileTree()`` to materialize/orphan the registry. They keep the **specs == leafIDs invariant**
+    /// (the ops do). The kind is taken EXPLICITLY (`kind:`) — these methods do NOT resolve a settings
+    /// default; it is the CALLER (the command routing) that resolves the user's default before invoking
+    /// them.
 
     /// Splits the active pane along `axis`, inserting a new leaf of `kind` (focused). `leading == true`
     /// places the new leaf on the LEADING side of the active pane (left of a `.horizontal` split / above a
@@ -3736,12 +2493,11 @@ public final class WorkspaceStore {
             // no-ops inside the session.
             (registry[id] as? LivePaneSession)?.reestablishInspectorOnReconnect()
         }
-        // SYNC-INPUT (tree path, Zellij ToggleActiveSyncTab): when the per-tab sync flag is on, mirror this
-        // pane's keystrokes into every other pane in its tab via the same broadcastTap seam the canvas
-        // broadcast path uses. The `fanSyncInput` guard (shared `isFanningBroadcast` flag) prevents a
-        // sibling's re-entrant sendInput from looping back into another fan-out. A no-op while disarmed.
+        // SYNC-INPUT (Zellij ToggleActiveSyncTab): when the per-tab sync flag is on, mirror this pane's
+        // keystrokes into every other pane in its tab. The `isFanningSyncInput` guard prevents a sibling's
+        // re-entrant sendInput from looping back into another fan-out. A no-op while disarmed.
         let terminal = (handle as? LivePaneSession)?.terminalModel
-        terminal?.broadcastTap = { [weak self] data in self?.fanSyncInput(from: id, data) }
+        terminal?.syncInputTap = { [weak self] data in self?.fanSyncInput(from: id, data) }
         // TILING from the terminal surface: the renderer's right-click "Split Right/Down" fires
         // `onContextMenuSplit` (the rebindable ⌘D/⌘⇧D flows through `wireKeyInterceptor` → the shared
         // `route(...)`, not here). A split MINTS a pane, so it offers the pane-type chooser (terminal / remote
@@ -3813,7 +2569,7 @@ public final class WorkspaceStore {
     /// share an immersive-mode latch. Default-normalized to a removed entry + dirty-guarded (a redundant
     /// fire never churns a write). A still-unbound pane (no endpoint yet) has no key to file under.
     private func persistVideoModes(_ modes: VideoPaneModes, for id: PaneID) {
-        guard let spec = tree.spec(for: id) ?? spec(for: id),
+        guard let spec = tree.spec(for: id),
               let key = spec.video?.modesKey else { return }
         let normalized: VideoPaneModes? = modes.isDefault ? nil : modes
         guard devicePreferences.videoModesByTarget[key] != normalized else { return }
@@ -3847,17 +2603,7 @@ public final class WorkspaceStore {
     ) {
         let leafSet = Set(desiredLeafIDs)
 
-        // 1. Prune the multi-selection to live panes (a closed/switched-away pane drops out) so the Arrange
-        //    ops and the group drag never reference a ghost. Cheap small-set intersection.
-        if !selectedPanes.isEmpty, !selectedPanes.isSubset(of: leafSet) {
-            selectedPanes.formIntersection(leafSet)
-        }
-        // Evict cached native sizes for panes that are gone (else the dict leaks across a long session of
-        // open/close).
-        if !nativeFrameSize.isEmpty {
-            nativeFrameSize = nativeFrameSize.filter { leafSet.contains($0.key) }
-        }
-        // Prune the per-pane mirrors below to the live leaf set in lockstep — a closed pane must drop out so
+        // 1. Prune the per-pane mirrors below to the live leaf set in lockstep — a closed pane must drop out so
         // the dict can't grow unbounded and no stale entry surfaces in a rollup / on a recycled id.
         // Agent status (absent key reads `.none`):
         if !paneAgentStatus.isEmpty {
@@ -4019,181 +2765,17 @@ public final class WorkspaceStore {
         }
     }
 
-    // MARK: - reconcile (the single canvas diff seam)
-
-    /// The load-bearing diff (docs/22 §2.3). Idempotent. After it runs:
-    ///
-    ///   `Set(registry.keys) == Set(workspace.canvas.allIDs())`
-    ///
-    /// Steps, in order:
-    /// 1. **Orphan removal (synchronous) + teardown (async, launched not awaited)** — for every
-    ///    registry key NOT in the current leaf set, the entry is removed from the registry
-    ///    SYNCHRONOUSLY (so the invariant `keys == leafIDs` holds the instant reconcile returns), and
-    ///    its `teardown()` (proven `ConnectionViewModel` disconnect order + inspector close + video
-    ///    stop) is LAUNCHED in an ordered, tracked `Task` that completes shortly AFTER materialize — it
-    ///    is **not** awaited before materialization. The task is awaitable via ``quiesce()`` but never
-    ///    awaited inline (reconcile is synchronous; see below).
-    /// 2. **Materialize new leaves** — for every leaf id NOT yet in the registry, build the session
-    ///    via `makeSession(spec)`, `adopt(id:)` so its identity is the leaf's, and register it. New
-    ///    sessions are IDLE (lazy connect; video not activated — the cap is enforced at activation).
-    ///
-    /// A projection flip (compact ↔ regular) does NOT call this — it is a view-only change; the tree
-    /// (hence the leaf set) is unchanged, so even if called it would be a no-op (docs/22 §4, §9.9).
-    ///
-    /// NOTE — same-tick close+reopen and the video ceiling: step-1 teardown is launched (not
-    /// awaited) before step-2 materialize, so a same-tick close+open of two video panes would
-    /// transiently overlap their live video stacks. The ceiling IS still protected without making reconcile
-    /// `async`: step-1 records an orphan whose `isVideoActive` was true into `tearingDownVideo` (reading the
-    /// flag BEFORE teardown nils it), the teardown task removes it after the `await`, and ``activateVideo(_:)``
-    /// counts `tearingDownVideo.count` as occupied — so a new pane can't be admitted until the orphan's UDP /
-    /// VTDecompression / CVDisplayLink stack actually releases. reconcile staying synchronous is deliberate
-    /// (called inline by every mutation and from `init`) — awaiting teardown before materialize would ripple
-    /// `async` through the whole mutation surface.
-    private func reconcile() {
-        // SAFETY: when the LIVE model is the tree, the canvas is retained-but-dead and its `reconcile()`
-        // must NEVER run — it diffs the SAME registry against the (default, dead) canvas leaf set, which
-        // would orphan + tear down every TREE-materialized handle. Any remaining caller of a canvas
-        // mutation (the system-dialog monitor / notification reveal) therefore no-ops on the tree shell
-        // rather than corrupting the live registry; the tree path uses `reconcileTree()`. (On a `.canvas`
-        // store this guard is a pure passthrough.)
-        guard liveModel == .canvas else { return }
-        // Steps 1+2 (cache pruning, orphan-remove-then-teardown, materialize) are the shared, leaf-source
-        // agnostic core. The canvas path supplies its leaf source + spec lookup, and wires every NEW leaf
-        // via `onMaterialize` (pane-rebind + OSC-9). The canvas-ONLY side effects (autotype target / focus
-        // coordinator / debounced save) stay below, so reconcile's observable behavior is unchanged.
-        reconcileRegistry(
-            desiredLeafIDs: allLeafIDs(),
-            spec: { spec(for: $0) },
-            onMaterialize: { [weak self] id, handle in
-                guard let self else { return }
-                // PANE REBIND: persist every committed video endpoint into the pane's spec — else a picked
-                // window lives only in the RemoteWindowModel (spec `video: nil`) and a relaunch re-shows the
-                // picker; a REBOUND endpoint (stale CGWindowID re-resolved by app+title) must overwrite the
-                // stale id. The leaf set is unchanged by `updateSpec`, so the nested reconcile is a no-op +
-                // save. The TITLE follows the binding only while it was tracking the previous binding (or
-                // was never bound) — a user rename survives re-picks.
-                if let model = (handle as? LivePaneSession)?.remoteWindow {
-                    model.onEndpointCommitted = { [weak self] endpoint in
-                        self?.updateSpec(id) { spec in
-                            if spec.video == nil || spec.title == spec.video?.title {
-                                spec.title = endpoint.title
-                            }
-                            spec.video = endpoint
-                        }
-                    }
-                    // LATCHED-MODE PERSISTENCE (canvas path): same target-keyed persist as
-                    // `wireMaterializedLeaf` — see the tree-path comment. (No seed here: the canvas
-                    // shell is the legacy/test path and persists the canvas value, not the tree.)
-                    model.onModesChanged = { [weak self] modes in
-                        self?.persistVideoModes(modes, for: id)
-                    }
-                }
-                // EXPLICIT NOTIFICATIONS (OSC 9 / OSC 777): route a terminal pane's child-requested
-                // notification to the app poster, tagged with this pane id so a click reveals it.
-                let connection = (handle as? LivePaneSession)?.connection
-                connection?.onExplicitNotification = { [weak self] paneTitle, title, body in
-                    self?.handlePaneNotification(id: id, paneTitle: paneTitle, title: title, body: body)
-                }
-                // CLAUDE AUTO-DETECT: same agent-signal fold as the tree path's `wireMaterializedLeaf`.
-                connection?.onAgentSignal = { [weak self] event in
-                    self?.handleAgentSignal(id: id, event: event)
-                }
-                // COMMAND-START STALE-BADGE CLEAR: same command-start badge reset as the tree path.
-                connection?.onCommandStarted = { [weak self] in
-                    self?.handleCommandStarted(id: id)
-                }
-                // BACKGROUND-PANE COMMAND-COMPLETION: same focus-gated completion route as the tree path.
-                connection?.onCommandCompleted = { [weak self] exitCode, durationMS in
-                    guard let self else { return }
-                    // Same live-title preference as the tree path.
-                    let title = completionNotificationTitle(for: id)
-                    handleCommandCompleted(id: id, exitCode: exitCode, durationMS: durationMS, paneTitle: title)
-                }
-                connection?.onWorkingDirectoryChanged = { [weak self] cwd in
-                    self?.setLastKnownCwd(cwd, for: id)
-                }
-                // HOST-computed By-Project key (canvas path): same guarded persist as wireMaterializedLeaf.
-                connection?.onProjectKeyChanged = { [weak self] key in
-                    self?.setProjectKey(key, for: id)
-                }
-                // HOST-latched agent-session intent (canvas path): same mirror as wireMaterializedLeaf.
-                connection?.onAgentIntentChanged = { [weak self] intent in
-                    self?.setAgentIntent(intent, for: id)
-                }
-                // LIVE TITLE (canvas path): same `pane/liveTitle` fold as wireMaterializedLeaf.
-                connection?.onTitleChanged = { [weak self] title in
-                    self?.noteTitlePushed(title, for: id)
-                }
-            },
-        )
-
-        // 3. Mark the `SLOPDESK_AUTOTYPE` target (docs/22 §7): the first pane on the canvas. The store owns
-        //    the tree, so it is the authority on "pane0"; the terminal leaf reads this flag after connect
-        //    to fire the OUT-path proof. Recomputed every reconcile so the flag follows the canvas (a
-        //    reshape never strands it on a stale pane).
-        let autotypeTarget = workspace.canvas.allIDs().first
-        for (id, handle) in registry {
-            (handle as? LivePaneSession)?.isAutotypeTarget = (id == autotypeTarget)
-        }
-
-        // 4. Keep the iOS first-responder arbiter's intent tracking the active tab's focused pane
-        //    (docs/22 §7). Every mutation funnels through reconcile, so this is the single site that
-        //    drives `focus(_:)`. The coordinator resolves it against whatever host is currently
-        //    registered (a not-yet-mounted host re-claims itself in `register`), and rejects stale
-        //    async callbacks by generation. A no-op on the compact single-host path / macOS.
-        syncFocusCoordinator()
-
-        // 5. Debounced persistence of the value tree (docs/22 §6). Every mutation funnels through
-        //    reconcile, so this single site coalesces a burst of mutations into one write.
-        scheduleSave()
-    }
-
-    /// Points the ``focusCoordinator`` at the focused pane. Called at the end of every reconcile so the
-    /// iPad-regular input focus follows the tree's intent. Guarded — only re-mints a generation when the
-    /// target actually changed, so a no-op reconcile (resize / move) does not churn. On a single
-    /// always-mounted canvas a pane's host never unmounts/re-registers, so no tab-switch `reassertFocus`
-    /// is needed.
-    private func syncFocusCoordinator() {
-        guard let focused = workspace.focusedPane else { return }
-        if focusCoordinator.focusedPane != focused {
-            focusCoordinator.focus(focused)
-        }
-    }
-
     // MARK: - Persistence (debounced; cancel-safe)
 
-    /// The value snapshot the debounced/immediate save writes — the v10 ``TreeWorkspace`` when
-    /// ``liveModel`` is ``LiveModel/tree`` (the live app), else the retained-but-dead canvas
-    /// ``workspace``. Captured as an enum so the one off-main write path stays a single
-    /// `persistence.save(...)` (an overload resolves the type). Both are value types (Sendable).
-    private enum SaveSnapshot {
-        case canvas(Workspace)
-        case tree(TreeWorkspace)
-    }
-
-    /// The PERSISTABLE snapshot of the live model right now, or `nil` when there is nothing to write.
+    /// The PERSISTABLE snapshot of the live tree right now, or `nil` when there is nothing to write.
     ///
-    /// On the tree path ``tree`` is a PROJECTION: with no document it is a workspace of zero sessions —
-    /// the absence of a layout, not an empty one. Writing that out would replace the only copy of what
-    /// the next launch restores from, and the client is in exactly that state on the way to every
-    /// re-subscribe (``WorkspaceChannelClient/stop()`` resets the mirror before ``start()``) and for as
-    /// long as a host that does not serve the channel keeps refusing it.
-    private func persistableSnapshot() -> SaveSnapshot? {
-        switch liveModel {
-        case .tree:
-            guard workspaceMirror.topology != nil else { return nil }
-            return .tree(tree)
-        case .canvas:
-            return .canvas(workspace)
-        }
-    }
-
-    /// Writes a snapshot through the model-appropriate ``WorkspacePersistence`` overload.
-    private static func write(_ snapshot: SaveSnapshot, to persistence: WorkspacePersistence) throws {
-        switch snapshot {
-        case let .canvas(w): try persistence.save(w)
-        case let .tree(t): try persistence.save(t)
-        }
+    /// ``tree`` is a PROJECTION: with no document it is a workspace of zero sessions — the absence of a
+    /// layout, not an empty one. Writing that out would replace the only copy of what the next launch
+    /// restores from, and the client is in exactly that state on the way to every re-subscribe
+    /// (``WorkspaceChannelClient/stop()`` resets the mirror before ``start()``) and for as long as a host
+    /// that does not serve the channel keeps refusing it.
+    private func persistableSnapshot() -> TreeWorkspace? {
+        workspaceMirror.topology == nil ? nil : tree
     }
 
     /// Schedules a debounced save of the value tree (docs/22 §6): cancels any pending save and starts a
@@ -4205,8 +2787,7 @@ public final class WorkspaceStore {
     private func scheduleSave() {
         guard savingEnabled, let persistence else { return }
         saveTask?.cancel()
-        // Snapshot the (Sendable, value-typed) PERSISTABLE live model now (ephemeral dialog panes stripped
-        // on the canvas path) so the write reflects this mutation.
+        // Snapshot the (Sendable, value-typed) PERSISTABLE tree now, so the write reflects this mutation.
         guard let snapshot = persistableSnapshot() else { return }
         let debounce = saveDebounce
         saveGeneration &+= 1
@@ -4229,13 +2810,13 @@ public final class WorkspaceStore {
             await MainActor.run { [weak self] in
                 guard let self, isCurrentSaveGeneration(generation) else { return }
                 // A failed save keeps the previous good file (best-effort).
-                try? Self.write(snapshot, to: persistence)
+                try? persistence.save(snapshot)
                 saveTask = nil
             }
         }
     }
 
-    /// Writes `workspace` synchronously NOW (the scenePhase-background path — docs/22 §6), cancelling
+    /// Writes the live tree synchronously NOW (the scenePhase-background path — docs/22 §6), cancelling
     /// any in-flight debounced save first so the two never race. Best-effort: a thrown error is
     /// swallowed (the previous good file is kept). A no-op when no `persistence` is configured.
     public func saveImmediately() {
@@ -4247,7 +2828,7 @@ public final class WorkspaceStore {
         saveTask?.cancel()
         saveTask = nil
         guard let snapshot = persistableSnapshot() else { return }
-        try? Self.write(snapshot, to: persistence)
+        try? persistence.save(snapshot)
     }
 
     // MARK: - Document cache (docs/45 §7.3)
@@ -4282,19 +2863,14 @@ public final class WorkspaceStore {
         guard let documentCache else { return }
         documentCacheSaveTask?.cancel()
         documentCacheSaveTask = nil
-        // The facts are scoped to the live leaves, and on the tree path those come from the projection —
-        // so with no document there are no facts to write, only the absence of them. Same rule as
+        // The facts are scoped to the live leaves, and those come from the projection — so with no
+        // document there are no facts to write, only the absence of them. Same rule as
         // ``persistableSnapshot()``, for the same window.
-        guard liveModel == .canvas || workspaceMirror.topology != nil else { return }
+        guard workspaceMirror.topology != nil else { return }
         try? documentCache.save(documentFactsSnapshot(), hostKey: documentCacheHostKey)
     }
 
     // MARK: - Tree lookups
-
-    /// The spec for pane `id` on the canvas, or `nil`.
-    private func spec(for id: PaneID) -> PaneSpec? {
-        workspace.canvas.spec(for: id)
-    }
 
     /// Whether the app-global connection is up — set by the app shell after construction so the store can
     /// gate the scene-level "Reconnect Pane" command before the first connect (else ⇧⌘R would build the
@@ -4318,52 +2894,27 @@ public final class WorkspaceStore {
     /// Records the app-global connection ``ConnectionTarget`` (called by ``AppConnection/onTargetCommitted``
     /// on a successful connect).
     ///
-    /// On the tree shell the target is DEVICE-LOCAL: it is filed in ``DevicePreferences/connectionByHostKey``
-    /// under `host:port`, so re-dialling a known host restores the video ports it was reached on, and the
-    /// layout — which every attached client shares — carries no host association at all. The canvas branch
-    /// still writes the retired ``Workspace/connection``.
+    /// The target is DEVICE-LOCAL: it is filed in ``DevicePreferences/connectionByHostKey`` under
+    /// `host:port`, so re-dialling a known host restores the video ports it was reached on, and the
+    /// layout — which every attached client shares — carries no host association at all.
     public func commitConnectionTarget(_ target: ConnectionTarget) {
         let previousHostKey = attachedHostKey
         committedConnectionTarget = target
-        switch liveModel {
-        case .canvas:
-            guard workspace.connection != target else { return }
-            workspace.connection = target
-            scheduleSave()
-        case .tree:
-            let key = DevicePreferences.hostKey(for: target)
-            // The cache is a picture of ONE host. A connect to a different one than this run was
-            // seeded from leaves the mirror holding facts about two machines, so it stops being
-            // written rather than filing one host's folders under the other's name.
-            documentCacheHostKey = key == documentCacheSeedHostKey ? key : ""
-            // …and so is the LAYOUT. This is the one place that can see the document being projected
-            // belongs to a machine other than the one now being dialled, and it runs BEFORE the
-            // connection reports up (``AppConnection`` commits the target first), so the hold is in
-            // place by the time the establish fan-out asks every pane to dial.
-            if key != previousHostKey {
-                paneDialHoldExpired = false // a new host is a new hold, with its own full window
-                refreshPaneDialGate()
-            }
-            guard devicePreferences.connectionByHostKey[key] != target else { return }
-            mutateDevicePreferences { $0.connectionByHostKey[key] = target }
+        let key = DevicePreferences.hostKey(for: target)
+        // The cache is a picture of ONE host. A connect to a different one than this run was
+        // seeded from leaves the mirror holding facts about two machines, so it stops being
+        // written rather than filing one host's folders under the other's name.
+        documentCacheHostKey = key == documentCacheSeedHostKey ? key : ""
+        // …and so is the LAYOUT. This is the one place that can see the document being projected
+        // belongs to a machine other than the one now being dialled, and it runs BEFORE the
+        // connection reports up (``AppConnection`` commits the target first), so the hold is in
+        // place by the time the establish fan-out asks every pane to dial.
+        if key != previousHostKey {
+            paneDialHoldExpired = false // a new host is a new hold, with its own full window
+            refreshPaneDialGate()
         }
-    }
-
-    /// A neighbour to refocus on after closing `id`, resolved geometrically against the last solved
-    /// layout if available, else the predecessor/successor in canonical ``Canvas/allIDs()`` order.
-    /// Best-effort.
-    private func neighbourForRefocus(of id: PaneID) -> PaneID? {
-        if let solved = lastSolvedLayout, solved.frames[id] != nil {
-            // Prefer a real geometric neighbour (right, then left, then any reading-order sibling).
-            for dir in [FocusDirection.right, .left, .down, .up] {
-                if let n = FocusResolver.neighbor(of: id, dir, in: solved), n != id { return n }
-            }
-        }
-        let ids = workspace.canvas.allIDs()
-        guard let i = ids.firstIndex(of: id) else { return nil }
-        if i + 1 < ids.count { return ids[i + 1] }
-        if i - 1 >= 0 { return ids[i - 1] }
-        return nil
+        guard devicePreferences.connectionByHostKey[key] != target else { return }
+        mutateDevicePreferences { $0.connectionByHostKey[key] = target }
     }
 
     // MARK: - Titles
@@ -4819,103 +3370,6 @@ public extension WorkspaceStore {
     }
 }
 
-// MARK: - Command application
-
-/// Dispatches a pure ``WorkspaceCommand`` to the matching store mutation (docs/22 §5). The keyboard layer
-/// (macOS `Commands`, iPad `UIKeyCommand`) and the compact on-screen affordances all funnel intent through
-/// this one free function, keeping the chord → command → mutation chain in one place.
-///
-/// Commands that act on "the focused pane" read it from the store's current `workspace.focusedPane`;
-/// a command with no valid target (no focused pane) is a graceful no-op.
-@preconcurrency
-@MainActor
-public func apply(_ command: WorkspaceCommand, to store: WorkspaceStore) {
-    // Record action verbs into the palette recents from the ONE chokepoint every path funnels through
-    // (palette, menu bar, keyboard shortcut) — so a command you run by ⌘-key, not just from the
-    // palette, floats to the top next time. Navigation/transient verbs are excluded (isRecentsWorthy).
-    //
-    // ⌘N (.newPaneDefault) opens a pane of the user's default kind; the catalog has no .newPaneDefault
-    // entry (only the explicit .newPane(kind) items), so recording it verbatim would silently drop it from
-    // the recents block AND waste a ring slot. Record the RESOLVED kind instead — it resolves in the
-    // catalog and names what was actually created.
-    let recordable: WorkspaceCommand = (command == .newPaneDefault) ? .newPane(.terminal) : command
-    if recordable.isRecentsWorthy { store.recordRecentCommand(recordable) }
-    switch command {
-    case .newPaneDefault:
-        store.addPane(kind: .terminal)
-    case let .newPane(kind):
-        store.addPane(kind: kind)
-    case .duplicatePane:
-        if let pane = store.focusedPane {
-            store.duplicatePane(pane)
-        }
-    case .tidy:
-        store.tidyCanvas()
-    case .centerFocusedPane:
-        if let pane = store.focusedPane {
-            store.centerOnPane(pane)
-        }
-    case .centerAll:
-        store.centerOnAll()
-    case .closePane:
-        // Routed through the busy-shell guard: an idle pane closes immediately; a pane mid-command
-        // parks behind the confirmation dialog (`pendingClose`) the root view hosts.
-        if let pane = store.focusedPane {
-            store.requestClosePane(pane)
-        }
-    case .reopenClosedPane:
-        store.reopenClosedPane()
-    case .newGroup:
-        // Context-sensitive: a multi-selection becomes a group (the common intent — no more invisible
-        // empty-group dead-end); with nothing selected, make an empty group to populate later.
-        if store.selectedPanes.isEmpty {
-            store.addGroup(name: "Group")
-        } else {
-            store.groupSelection(name: "Group")
-        }
-    case .groupSelection:
-        // Explicit "Group Selected Panes" — a no-op when nothing is selected.
-        store.groupSelection(name: "Group")
-    case let .focus(direction):
-        store.move(direction)
-    case let .cycleFocus(forward):
-        store.move(forward ? .next : .previous)
-    case let .switchRecentPane(forward):
-        store.switchToRecentPane(forward: forward)
-    case let .cycleFocusInGroup(forward):
-        store.cycleFocusInGroup(forward: forward)
-    case .toggleZoom:
-        store.toggleZoom()
-    case .toggleOverview:
-        store.toggleOverview()
-    case .toggleBroadcast:
-        store.toggleBroadcast()
-    case .renamePane:
-        // The rename UI is an inline text field (view `@State` in PaneSidebarView), so the command layer
-        // cannot open it directly — it nudges `renameRequest`, which the sidebar observes via `.onChange`
-        // to begin renaming the focused pane's row.
-        store.requestRenameFocusedPane()
-    case .reconnectPane:
-        // Re-dial the focused pane (recovers a `.failed` / `.unreachable` / dropped pane). A no-op when
-        // there is no focused pane or it has no live connection (e.g. a video pane / faked handle).
-        if let pane = store.focusedPane {
-            store.reconnect(pane)
-        }
-    case let .saveBookmark(slot):
-        store.saveBookmark(slot)
-    case let .recallBookmark(slot):
-        store.recallBookmark(slot)
-    case let .align(edge):
-        store.alignPanes(to: edge)
-    case let .distribute(horizontal):
-        store.distributePanes(horizontal: horizontal)
-    case .saveLayout:
-        store.requestSaveLayout()
-    case .selectAllPanes:
-        store.selectAllPanes()
-    }
-}
-
 // MARK: - New-pane gesture (direct terminal mint)
 
 /// Factored into a same-file extension (like `splitFromContextMenu`) so the new-pane entry point stays
@@ -5130,7 +3584,7 @@ public extension WorkspaceStore {
 
     /// Pane `id`'s HOST-pushed key alone (guarded like ``paneProjectKey(_:)``'s first leg), `nil`
     /// while the pane is still on its cwd fallback — the alias-booking eligibility test above, and
-    /// the code panel's ensure gate (`CodeSidebarColumn`): ensuring on the transient pre-push cwd
+    /// the code panel's ensure gate (`MacCodePanelColumn`): ensuring on the transient pre-push cwd
     /// would spawn a stranded code-server for a root the project does not actually have.
     func hostPushedProjectKey(_ id: PaneID) -> String? {
         guard let key = projectKey(for: id), !key.isEmpty,
@@ -5234,14 +3688,10 @@ public extension WorkspaceStore {
         return now.timeIntervalSince(fetchedAt) > window
     }
 
-    /// Whether `key` is the FOCUSED pane's project — the tree's active tab's active pane, or the
-    /// canvas focus. Drives the tighter active-project staleness window.
+    /// Whether `key` is the FOCUSED pane's project — the active session's active tab's active pane.
+    /// Drives the tighter active-project staleness window.
     func isActiveProject(_ key: String) -> Bool {
-        let focused: PaneID? =
-            switch liveModel {
-            case .tree: tree.activeSession?.activeTab?.activePane
-            case .canvas: workspace.focusedPane
-            }
-        return focused.flatMap { effectiveGitProjectKey($0) } == key
+        guard let focused = tree.activeSession?.activeTab?.activePane else { return false }
+        return effectiveGitProjectKey(focused) == key
     }
 }

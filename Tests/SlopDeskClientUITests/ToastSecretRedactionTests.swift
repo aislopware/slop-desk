@@ -11,6 +11,7 @@
 
 import SlopDeskWorkspaceCore
 import XCTest
+@testable import SlopDeskClientCore
 @testable import SlopDeskClientUI
 
 final class ToastSecretRedactionTests: XCTestCase {
@@ -117,6 +118,6 @@ final class ToastSecretRedactionTests: XCTestCase {
         SettingsKey.store.set(true, forKey: SettingsKey.redactSecrets)
         let toast = Toast.longCommand(paneIDKey: UUID().uuidString, paneTitle: "", exitCode: 0, durationMS: 10000)
         XCTAssertEqual(toast.title, "Command")
-        XCTAssertEqual(ToastStackView.headline(for: toast), "Command finished")
+        XCTAssertEqual(ToastPresentation.headline(for: toast), "Command finished")
     }
 }

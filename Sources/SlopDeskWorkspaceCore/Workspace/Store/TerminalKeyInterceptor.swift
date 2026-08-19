@@ -4,7 +4,8 @@
 //
 //   • B4/B5  GhosttyLayerBackedView.keyDown   (the libghostty terminal surface — NOT in `swift build`)
 //   • B6     MetalLayerBackedView.keyDown      (the remote-video surface — gated SlopDeskVideoClient)
-//   • B7     the iOS UIKit pressesBegan path   (InputRouting/KeyEncoding — never type-checked by macOS build)
+//   • B7     the iOS UIKit pressesBegan path   (`TerminalInputHost` → `PhoneKey.keyChord`; the rules are in Rust, the
+//            marshalling compiles and is tested on macOS, so this arm is not a blind spot)
 //
 // The app-level `WorkspaceKeyDispatcher` (B3) is the PRIMARY interceptor (its `.keyDown` monitor fires
 // BEFORE any first responder). This type is the belt-and-suspenders layer for when one of those views IS the

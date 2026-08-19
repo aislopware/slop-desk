@@ -3,10 +3,11 @@
 # This project.yml is the SOURCE OF TRUTH; the generated `.xcodeproj` is gitignored
 # (regenerate with: `xcodegen generate --spec Apps/ClientApp-iOS/project.yml`).
 #
-# The app target depends on the LOCAL SwiftPM package product `SlopDeskClientUI`, which carries
+# The app target depends on the LOCAL SwiftPM package product `SlopDeskPhoneUI` — the iOS APP SHELL
+# (docs/56 §2). It links no other UI product, and never the Mac's. It carries
 # the iOS UIKit native-feel table-stakes (KeyRepeater / IMEProxyTextView /
 # FloatingCursorController / KeyboardAccessoryBar — doc 17 §2.5). The `@main` entry is
-# `Apps/Shared/AppMain.swift` → `SlopDeskClientApp`.
+# `AppMain.swift` beside this spec → `SlopDeskPhoneApp`.
 #
 # The libghostty `GhosttyTerminalView` is added once the xcframework exists; until then the
 # BUILD-STATUS placeholder renders (libghostty-only policy, no fallback VT engine).
@@ -26,7 +27,9 @@ targets:
     type: application
     platform: iOS
     sources:
-      - path: ../Shared
+      # The iOS `@main` shell (`AppMain.swift`) beside this spec, and the shared asset catalogue.
+      - path: AppMain.swift
+      - path: ../Shared/Assets.xcassets
       # Brand: the Slopcat app icon as an Icon Composer bundle (canonical copy in
       # docs/brand — one source, three targets). actool compiles it for iOS 26's
       # layered/tinted icon variants; pairs with ASSETCATALOG_COMPILER_APPICON_NAME.
@@ -37,10 +40,10 @@ targets:
       # app target so `import CGhostty` resolves and `#if canImport(CGhostty)` flips true.
       - path: ../../ThirdParty/ghostty/integration/GhosttySurface
     dependencies:
-      # The rebuilt SwiftUI scene (L2): AppMain launches `SlopDeskClientApp` from this product, which
-      # transitively pulls in SlopDeskWorkspaceCore (logic + seam types) + SlopDeskDesignSystem (tokens).
+      # The iOS app shell: AppMain launches `SlopDeskPhoneApp` from this product, which transitively
+      # pulls in the view layer, `SlopDeskClientCore` and `SlopDeskWorkspaceCore` (logic + seam types).
       - package: SlopDesk
-        product: SlopDeskClientUI
+        product: SlopDeskPhoneUI
       # PATH 2 (GUI video path): links the client decode/render/cursor pipeline so
       # AppMain can register VideoWindowFactory.shared with the real VideoWindowView.
       # Carries VideoToolbox/Metal — never instantiated in tests, only at GUI launch.

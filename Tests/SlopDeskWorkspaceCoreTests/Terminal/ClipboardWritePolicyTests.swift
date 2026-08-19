@@ -1,32 +1,22 @@
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// The clipboard-write "Ask" gate decision engine. libghostty enforces `deny` / `allow`
-/// itself and DELEGATES `ask` to the embedder via `write_clipboard_cb`'s `confirm` flag; a callback that
-/// ignores that flag and writes unconditionally makes "Ask" silently behave like "Allow". These pin the pure
-/// decision the callback consults — confirm honored, empty payload dropped.
+/// Pins the CROSSING behind the clipboard-write "Ask" gate: the payload reaches the door as bytes, and the
+/// three case indexes come back as the three cases the callback switches on. The rule — and why a callback
+/// that ignored `confirm` would make "Ask" behave as "Allow" — is
+/// `slopdesk_terminal::surface::clipboard_write`'s, and is tested there.
 final class ClipboardWritePolicyTests: XCTestCase {
-    /// `clipboard-write = ask` (libghostty `confirm == true`) on a real payload ⇒ require confirmation.
-    func testConfirmRequestedWithTextAsksForConfirmation() {
-        XCTAssertEqual(
-            ClipboardWritePolicy.decide(confirmRequested: true, text: "secret"),
-            .confirm,
-            "an Ask gate must NOT silently write — it routes to the confirmation sheet",
-        )
-    }
-
-    /// `clipboard-write = allow` (libghostty `confirm == false`) on a real payload ⇒ write directly.
-    func testNoConfirmWithTextWritesDirectly() {
-        XCTAssertEqual(
-            ClipboardWritePolicy.decide(confirmRequested: false, text: "hello"),
-            .write,
-        )
-    }
-
-    /// An empty payload is a no-op whether or not confirmation was requested (validate-then-drop) — there
-    /// is nothing to write and nothing to ask about.
-    func testEmptyPayloadDrops() {
+    /// All three answers, each distinguishable from the others: an Ask gate must never come back as
+    /// ``ClipboardWriteDecision/write``, and an empty payload must never come back as a question.
+    func testEachCaseIndexDecodesToItsOwnDecision() {
+        XCTAssertEqual(ClipboardWritePolicy.decide(confirmRequested: true, text: "secret"), .confirm)
+        XCTAssertEqual(ClipboardWritePolicy.decide(confirmRequested: false, text: "secret"), .write)
         XCTAssertEqual(ClipboardWritePolicy.decide(confirmRequested: true, text: ""), .drop)
-        XCTAssertEqual(ClipboardWritePolicy.decide(confirmRequested: false, text: ""), .drop)
+    }
+
+    /// The payload crosses as UTF-8 bytes, so a multi-byte one is still a payload — an emptiness test that
+    /// looked at the byte count of something mis-encoded would drop this write.
+    func testANonASCIIPayloadIsNotMistakenForAnEmptyOne() {
+        XCTAssertEqual(ClipboardWritePolicy.decide(confirmRequested: false, text: "việt 🇻🇳"), .write)
     }
 }

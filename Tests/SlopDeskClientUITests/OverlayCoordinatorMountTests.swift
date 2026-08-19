@@ -10,6 +10,7 @@
 import SlopDeskAgentDetect
 import SlopDeskWorkspaceModel
 import XCTest
+@testable import SlopDeskClientCore
 @testable import SlopDeskClientUI
 @testable import SlopDeskWorkspaceCore
 
@@ -18,7 +19,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
     /// Builds the coordinator the way the app does: headless tree-model store, `connectionTarget` seam
     /// injected. No socket, no video — the fake session never opens one.
     private func makeCoordinator() -> (OverlayCoordinator, WorkspaceStore) {
-        let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in MountTestPaneSession(seed.spec) })
+        let store = WorkspaceStore(makeSession: { seed in MountTestPaneSession(seed.spec) })
         store.attachLoopbackWorkspaceDocument()
         let overlay = OverlayCoordinator(store: store)
         overlay.connectionTarget = { store.committedConnectionTarget ?? .default }
@@ -53,7 +54,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
     /// Opening the palette EAGERLY resolves the focused pane's cwd so the WORKING DIRECTORY
     /// header's cwd pill populates even on a fresh prompt (no OSC 133;D completion yet) with the Details/Info
     /// tab closed — the case the two lazy `lastKnownCwd` writers left blank. The app binds
-    /// `overlay.resolveActiveCwd` (in `WorkspaceRootView`) to the live `cwd()` RPC → `store.setLastKnownCwd`.
+    /// `overlay.resolveActiveCwd` (in each shell's root view) to the live `cwd()` RPC → `store.setLastKnownCwd`.
     /// Pin that `openPalette()` AND the ⌘⇧P toggle's open path BOTH fire it. REVERT-TO-CONFIRM-FAIL: drop the
     /// `resolveActiveCwd()` call from `openPalette()` and `fired` stays 0.
     func testOpenPaletteFiresActiveCwdResolution() {
@@ -129,8 +130,8 @@ final class OverlayCoordinatorMountTests: XCTestCase {
     func testZeroStateRowIDsUniqueWithRecents() {
         let (overlay, store) = makeCoordinator()
         // Populate the recents ring the way the store chokepoint does when these verbs run.
-        store.recordRecentCommand(.closePane)
-        store.recordRecentCommand(.newPane(.terminal))
+        store.recordRecentCommand("action.closePane")
+        store.recordRecentCommand("action.newTerminalTab")
         overlay.openPalette()
 
         let ids = overlay.rankedResults.map(\.id)
@@ -153,7 +154,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
     /// recents row is no longer index 0; locate it and pin that running it performs the New-Tab action.
     func testNamespacedRecentRowStillRunsCatalogAction() throws {
         let (overlay, store) = makeCoordinator()
-        store.recordRecentCommand(.newPane(.terminal))
+        store.recordRecentCommand("action.newTerminalTab")
         overlay.openPalette()
 
         let recentIndex = try XCTUnwrap(
@@ -670,7 +671,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
 
     // MARK: - The pill onTap / openConnect() route opens the connect overlay
 
-    /// `WorkspaceRootView.openConnect()` (the iOS pill `onTap`) calls `overlay.openConnect()`. Pin the flag.
+    /// The phone root's `openConnect()` (the connection pill `onTap`) calls `overlay.openConnect()`. Pin the flag.
     func testOpenConnectShowsConnectOverlay() {
         let (overlay, _) = makeCoordinator()
         XCTAssertFalse(overlay.connectVisible)
@@ -960,13 +961,13 @@ final class OverlayCoordinatorMountTests: XCTestCase {
     // MARK: - The host's toggled-state predicate reflects live chrome
 
     #if canImport(SwiftUI)
-    /// `OverlayHostView.toggledState(for:)` is the pure predicate the host hands the palette so the ✓ gutter
+    /// `PalettePresentation.toggledState(chrome:store:)` is the pure predicate the host hands the palette so the ✓ gutter
     /// tracks the real panel visibility. Pin that the Toggle-Tabs-Panel row shows ✓ exactly when the sidebar is
     /// visible (`!sidebarCollapsed`), and a non-toggle row never does — test the predicate, not the view.
     func testToggledStateTracksSidebarVisibility() throws {
         let (_, store) = makeCoordinator()
         let chrome = WorkspaceChromeState()
-        let predicate = OverlayHostView.toggledState(for: chrome, store: store)
+        let predicate = PalettePresentation.toggledState(chrome: chrome, store: store)
         let sidebarRow = try XCTUnwrap(
             ActionsPaletteSource.catalog.first { $0.id == "action.toggleSidebar" },
             "the catalog has the Toggle Tabs Panel row",
@@ -986,7 +987,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
 
     /// The CLOSED loop (the gap the predicate-only test above leaves): RUNNING the "Toggle Tabs Panel" row
     /// through the coordinator must flip the SAME `chrome.sidebarCollapsed` the ✓ predicate reads.
-    /// Wires `toggleSidebar` to the live chrome exactly as `WorkspaceRootView` does, then asserts the
+    /// Wires `toggleSidebar` to the live chrome exactly as `MacWorkspaceRootView` does, then asserts the
     /// predicate flips after `run`. FAILS on the old wiring (the row ran `store.toggleSidebarCollapsed()`, a
     /// dead flag the ✓ never reads — the predicate would never move).
     func testRunningToggleSidebarRowFlipsTheLiveChromeTheCheckmarkReads() throws {
@@ -994,7 +995,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         let chrome = WorkspaceChromeState()
         // Bound the way the root view binds it (`overlay.toggleSidebar = { chrome.toggleSidebar() }`).
         overlay.toggleSidebar = { [chrome] in chrome.toggleSidebar() }
-        let predicate = OverlayHostView.toggledState(for: chrome, store: store)
+        let predicate = PalettePresentation.toggledState(chrome: chrome, store: store)
         let sidebarRow = try XCTUnwrap(
             ActionsPaletteSource.catalog.first { $0.id == "action.toggleSidebar" },
             "the catalog has the Toggle Tabs Panel row",

@@ -21,8 +21,10 @@
 
 #if canImport(SwiftUI) && canImport(AppKit)
 import AppKit
+import SlopDeskSlate
 import SwiftUI
 import XCTest
+@testable import SlopDeskClientCore
 @testable import SlopDeskClientUI
 
 @MainActor

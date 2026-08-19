@@ -77,7 +77,7 @@ import SlopDeskWorkspaceCore  // TerminalRenderingView, TerminalViewModel, Termi
 import CGhostty            // the clang module over ghostty.h (link "ghostty")
 
 #if os(macOS)
-import SlopDeskClientUI    // PasteProtectionSheet (the macOS paste-protection confirmation surface, E8 WI-4)
+import SlopDeskMacUI      // PasteProtectionSheet (the macOS paste-protection confirmation surface, E8 WI-4)
 import AppKit
 import Carbon              // TIS keyboard-layout id (IME input-source-switch guard; framework already linked)
 #elseif os(iOS)
@@ -144,7 +144,7 @@ func slopdeskConfirmUnsafePaste(
     }
 
     PasteProtectionSheet.present(
-        kind: .unsafePaste,
+        ask: .unsafePaste,
         preview: text,
         dangers: dangers,
         in: NSApp.keyWindow
@@ -164,7 +164,7 @@ func slopdeskConfirmUnsafePaste(
 /// tmux, an SSH session running inside the hosted PTY) asked to READ the system clipboard. It honours the
 /// LIVE `clipboard-read` access setting (Allow / Ask / Deny, default Ask — the riskier direction),
 /// reusing the paste-protection surface with the OSC-52 "Allow this program to read the clipboard?" copy
-/// (``PasteProtectionSheet.Kind.clipboardRead``).
+/// (``PasteSafetyAnalyzer/Ask/clipboardRead``).
 ///
 /// RECURSION-SAFETY — the read contract differs from a paste's: `completeClipboardReadOSC52` checks
 /// `clipboard_read == .ask and !confirmed` BEFORE any empty-data short-circuit (verified in ghostty-src
@@ -189,7 +189,7 @@ func slopdeskConfirmClipboardRead(
     // Ask → surface the confirmation; the user's verdict maps to allow (text) / deny ("") — BOTH
     // confirmed:true so neither completion re-trips the read gate (the recursion hazard above).
     PasteProtectionSheet.present(
-        kind: .clipboardRead,
+        ask: .clipboardRead,
         preview: text,
         dangers: [],
         in: NSApp.keyWindow
@@ -570,7 +570,7 @@ final class GhosttyApp {
                     // `clipboard-write = ask`: present the "a program wants to set your clipboard" sheet;
                     // write ONLY on approve, drop on cancel. Mirrors the OSC-52 READ-ask plumbing (WI-6).
                     PasteProtectionSheet.present(
-                        kind: .clipboardWrite,
+                        ask: .clipboardWrite,
                         preview: text,
                         dangers: [],
                         in: NSApp.keyWindow,
@@ -2311,7 +2311,7 @@ final class GhosttyLayerBackedView: NSView {
             surface.performBindingAction(bindingAction)   // libghostty applies bracketed-paste
         case let .confirm(dangers):
             PasteProtectionSheet.present(
-                kind: .unsafePaste,
+                ask: .unsafePaste,
                 preview: clipboard,
                 dangers: dangers,
                 in: window,
@@ -2865,10 +2865,13 @@ struct GhosttyMetalLayerView: UIViewRepresentable {
 
 /// A `UIView` whose `layerClass` is `CAMetalLayer`, owning the `GhosttySurface`.
 ///
-/// Physical-key + IME text forwarding on iOS is handled by the existing UIKit
-/// table-stakes host (`SlopDeskClientUI.TerminalInputHost` — doc 17 §2.5), which already
-/// routes presses/IME to `SlopDeskClient.sendInput`. This view focuses on hosting the
-/// Metal layer + surface; the input-host integration is the documented follow-up seam.
+/// Physical-key and IME text forwarding are NOT here, on purpose. A `CAMetalLayer` view answers no
+/// key event; the pane's responder is `SlopDeskClientUI.TerminalInputHost`, mounted beside this one
+/// by `TerminalLeafView` and holding first responder for the pane. It reads a `UIKey` into a
+/// `PhoneKey.Press` and asks `SlopDeskWorkspaceCore.PhoneKey` — which of the two input paths the
+/// press takes, the bytes it sends under the live cursor-key mode, the chord it makes for the shared
+/// binding table — all of which is `slopdesk_workspace::phone_key`. This view hosts the Metal layer
+/// and the surface, and nothing about input.
 final class GhosttyLayerBackedView: UIView {
     override class var layerClass: AnyClass { CAMetalLayer.self }
     var metalLayer: CAMetalLayer { layer as! CAMetalLayer }

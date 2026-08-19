@@ -1,12 +1,12 @@
+import CSlopDeskFFI
 import SlopDeskWorkspaceModel
 
 // MARK: - WorkspaceAction (the tree-native command intent)
 
 /// A tree-native workspace action — the intent the IDE-shell keyboard / menu / palette / cheat sheet
 /// produce, routed to the matching ``WorkspaceStore`` TREE op by ``WorkspaceBindingRegistry`` (docs/42
-/// §W6). The `Session → Tab → Pane` redesign's command vocabulary; distinct from the retained-but-dead
-/// canvas ``WorkspaceCommand`` (still routed in `.canvas` mode) — the tree has split-right/down, tabs,
-/// and sessions the flat canvas never had.
+/// §W6). The `Session → Tab → Pane` redesign's command vocabulary, and the ONLY one — the flat canvas
+/// command enum it replaced is deleted, along with the canvas model itself.
 ///
 /// A pure value enum (no SwiftUI / store import) so the chord → action mapping is unit-testable with no
 /// view.
@@ -18,7 +18,7 @@ public enum WorkspaceAction: Hashable, Sendable {
     case splitUp // ⌘⌥⇧D — split the active pane, inserting the new pane on the LEADING (top) side
     case closePane // ⌘W  — close the active pane (cascades the tab/session)
     case renamePane // no default chord — renames the active TAB on the tree shell (inline tab-strip
-    // field), or the active pane on the retained-but-dead canvas path. Title menu / context menu / palette only.
+    // field). Title menu / context menu / palette only.
     case breakPaneToTab // ⌃⌘T — eject the active pane into a new tab
     case detachPane // ⌥⌘P — pop the active pane out into its OWN macOS window (session survives; the
     // satellite window's close reattaches it). macOS only — a no-op routing on iOS (no NSWindow).
@@ -191,7 +191,7 @@ public extension WorkspaceAction {
     }
 
     /// Whether running this action requires an active pane (so the palette can omit it on an empty shell,
-    /// and the menu can grey it out) — mirrors ``WorkspaceCommand/requiresFocusedPane``.
+    /// and the menu can grey it out).
     var requiresActivePane: Bool {
         switch self {
         case .splitRight,
@@ -347,12 +347,26 @@ public struct WorkspaceBinding: Sendable, Equatable {
 /// ⌘⇧L toggle Tabs panel, ⌃⌘T break-pane-to-tab, ⌘⇧P palette,
 /// ⌘/ cheat sheet. Rename has no default chord — menu / palette / context-menu only (`chord: nil`).
 public enum WorkspaceBindingRegistry {
-    /// The shipped binding table, in cheat-sheet / palette display order (panes, tabs, focus,
-    /// view). `.selectPane(n)` for n=1…9 is generated (one chord each) but is NOT listed here — it is
-    /// expanded by ``selectPaneBindings`` so the table stays readable; the cheat sheet collapses the nine
-    /// slots to the one representative row ``selectPaneRepresentative``, appended by ``groupedForDisplay``
-    /// (the menu builds its own "Select Pane" submenu, the palette catalog omits the digits).
-    public static let bindings: [WorkspaceBinding] = [
+    /// The shipped binding table for THIS half — ``declared`` minus the rows
+    /// `slopdesk_workspace::binding_rows` says this platform does not list.
+    ///
+    /// Filtering here rather than at each display surface is deliberate, and the chord table is why.
+    /// Every surface downstream reads from this one array, ``allBindings`` or ``groupedForDisplay``,
+    /// and ``chordTable`` is one of them: a row kept on a half that cannot run it takes its chord away
+    /// from the terminal to do nothing. Dropping the row drops the chord, so the key falls through to
+    /// the pane the way an unbound chord should.
+    public static let bindings: [WorkspaceBinding] = declared.filter { BindingRowPlatform.lists($0.id) }
+
+    /// Every binding the registry DECLARES, before the platform filter, in cheat-sheet / palette
+    /// display order (panes, tabs, focus, view). `.selectPane(n)` for n=1…9 is generated (one chord
+    /// each) but is NOT listed here — it is expanded by ``selectPaneBindings`` so the table stays
+    /// readable; the cheat sheet collapses the nine slots to the one representative row
+    /// ``selectPaneRepresentative``, appended by ``groupedForDisplay`` (the menu builds its own
+    /// "Select Pane" submenu, the palette catalog omits the digits).
+    ///
+    /// Private because a caller that wanted this one rather than ``bindings`` would be asking for the
+    /// rows this half cannot run — which is the defect ``BindingRowPlatform`` exists to close.
+    private static let declared: [WorkspaceBinding] = [
         // Panes
         WorkspaceBinding(
             id: "pane.splitRight", action: .splitRight, title: "Split Right",
@@ -999,18 +1013,33 @@ public enum WorkspaceBindingRegistry {
 
     // MARK: - Glyph rendering (chord → human string) — the cheat sheet / palette display
 
-    /// Renders a ``KeyChord`` in native modifier-glyph order (⌃⌥⇧⌘ + key) — the same form the canvas
-    /// palette uses, kept here as the registry's own pure renderer so the menu/palette/cheat sheet read
-    /// ONE place. `nonisolated` (no view / actor) so it composes from any context.
+    /// Renders a ``KeyChord`` as a human reads it, asked of `slopdesk_terminal::keybind` — the same
+    /// module that writes the chord's canonical config text, so the menu, the palette and the cheat
+    /// sheet all print what one rule says a chord is called. `nonisolated` (no view / actor) so it
+    /// composes from any context.
     public nonisolated static func glyph(_ chord: KeyChord) -> String {
-        var out = ""
-        if chord.modifiers.contains(.control) { out += "⌃" }
-        if chord.modifiers.contains(.option) { out += "⌥" }
-        if chord.modifiers.contains(.shift) { out += "⇧" }
-        if chord.modifiers.contains(.command) { out += "⌘" }
-        out += keyGlyph(chord.key)
-        return out
+        var token = chord.key.canonicalToken
+        var out = [UInt8](repeating: 0, count: glyphCapacity)
+        let written = token.withUTF8 { key in
+            out.withUnsafeMutableBufferPointer { rendered in
+                slopdesk_keybind_glyph(
+                    key.baseAddress,
+                    key.count,
+                    chord.modifiers.contains(.command),
+                    chord.modifiers.contains(.shift),
+                    chord.modifiers.contains(.option),
+                    chord.modifiers.contains(.control),
+                    rendered.baseAddress,
+                    rendered.count,
+                )
+            }
+        }
+        return String(bytes: out.prefix(max(0, written)), encoding: .utf8) ?? ""
     }
+
+    /// Four modifier glyphs at three bytes each plus a key: a token that needed more than this is
+    /// not a chord anyone typed, and the door reports the size rather than writing a torn one.
+    private nonisolated static let glyphCapacity = 32
 
     /// The display glyph for `action`'s default binding, or `nil` when it has none. `public` so the
     /// rebuilt ClientUI palette derives its row hints from the SAME registry the keyboard bank registers
@@ -1018,24 +1047,6 @@ public enum WorkspaceBindingRegistry {
     public nonisolated static func glyph(for action: WorkspaceAction) -> String? {
         guard let binding = binding(for: action) else { return nil }
         return binding.chord.map(glyph)
-    }
-
-    private nonisolated static func keyGlyph(_ key: KeyChord.Key) -> String {
-        switch key {
-        case let .character(c): c.uppercased()
-        case .tab: "⇥"
-        case .return: "↩"
-        case .space: "␣"
-        case .leftArrow: "←"
-        case .rightArrow: "→"
-        case .upArrow: "↑"
-        case .downArrow: "↓"
-        // Named navigation keys — the macOS-native menu glyphs (⇞ PageUp, ⇟ PageDown, ↖ Home, ↘ End).
-        case .pageUp: "⇞"
-        case .pageDown: "⇟"
-        case .home: "↖"
-        case .end: "↘"
-        }
     }
 
     // MARK: - Grouped display (the cheat sheet sections + palette catalog order)

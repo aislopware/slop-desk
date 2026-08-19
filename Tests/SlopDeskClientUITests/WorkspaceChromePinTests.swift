@@ -10,6 +10,7 @@
 
 import Defaults
 import XCTest
+@testable import SlopDeskClientCore
 @testable import SlopDeskClientUI
 @testable import SlopDeskWorkspaceCore
 
@@ -89,7 +90,7 @@ final class WorkspaceChromePinTests: XCTestCase {
         XCTAssertFalse(chrome.pinned, "a second togglePin() un-pins it")
     }
 
-    /// The `OverlayCoordinator.togglePinWindow` seam — bound by `WorkspaceRootView.wireChromeToggles()` to
+    /// The `OverlayCoordinator.togglePinWindow` seam — bound by `MacWorkspaceRootView.wireChromeToggles()` to
     /// `chrome.togglePin()` so the palette / any command surface flips the SAME live `chrome.pinned` the menu
     /// Button + the `NSWindow.level` glue read. Pins the wiring contract the app depends on. REVERT-TO-
     /// CONFIRM-FAIL: drop the `overlay.togglePinWindow = { chrome.togglePin() }` line from `wireChromeToggles`
@@ -111,13 +112,13 @@ final class WorkspaceChromePinTests: XCTestCase {
         overlay.togglePinWindow() // no binding ⇒ the default `{}` runs, no crash
     }
 
-    /// The palette ✓ gutter tracks the pinned state. `OverlayHostView.toggledState(for:)`
+    /// The palette ✓ gutter tracks the pinned state. `PalettePresentation.toggledState(chrome:store:)`
     /// resolves the "action.pinWindow" row to `chrome.pinned`, so the palette lights the checkmark while
     /// pinned and clears it when unpinned — the checkable Pin Window row. REVERT-TO-CONFIRM-FAIL:
     /// drop the `case "action.pinWindow": chrome.pinned` arm and the resolver falls to the `default: false`,
     /// so the ✓ never lights and `pinned == true` below fails.
     func testToggledStateLightsPinRowWhenPinned() {
-        let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in MountTestPaneSession(seed.spec) })
+        let store = WorkspaceStore(makeSession: { seed in MountTestPaneSession(seed.spec) })
         store.attachLoopbackWorkspaceDocument()
         let chrome = WorkspaceChromeState()
         let pinItem = PaletteItem(
@@ -125,11 +126,11 @@ final class WorkspaceChromePinTests: XCTestCase {
             subtitle: nil, shortcut: nil, filter: .actions, category: .window, action: .togglePinWindow,
         )
 
-        let unpinnedResolver = OverlayHostView.toggledState(for: chrome, store: store)
+        let unpinnedResolver = PalettePresentation.toggledState(chrome: chrome, store: store)
         XCTAssertFalse(unpinnedResolver(pinItem), "an unpinned window shows no ✓ on the Pin Window row")
 
         chrome.togglePin() // pin it
-        let pinnedResolver = OverlayHostView.toggledState(for: chrome, store: store)
+        let pinnedResolver = PalettePresentation.toggledState(chrome: chrome, store: store)
         XCTAssertTrue(pinnedResolver(pinItem), "a pinned window lights the ✓ on the Pin Window row")
     }
 }

@@ -2,9 +2,9 @@
 //!
 //! ## What crosses here, and what deliberately does not
 //! `SlopDeskWorkspaceModel` is the app's DOCUMENT — 262 files import its value types, and a
-//! `SplitNode` or a `Canvas` is what `SwiftUI` diffs to decide what to redraw. Those types stay in
-//! Swift for the same reason `ClaudeStatus` did (docs/55 §6): a case list a `switch` reads is a
-//! vocabulary, not an implementation. What crosses is the half that DECIDES — which neighbour
+//! `SplitNode` or a `TreeWorkspace` is what `SwiftUI` diffs to decide what to redraw. Those types
+//! stay in Swift for the same reason `ClaudeStatus` did (docs/55 §6): a case list a `switch` reads
+//! is a vocabulary, not an implementation. What crosses is the half that DECIDES — which neighbour
 //! "move focus left" lands on, what order the sidebar's sections come in, which tab takes focus
 //! after a close.
 //!
@@ -28,19 +28,13 @@
 //! normalises on the way through.
 
 use core::ffi::c_uchar;
-use std::collections::BTreeMap;
 
-use slopdesk_workspace::canvas::{AlignEdge, CanvasBodyId};
-use slopdesk_workspace::canvas_geometry::{BeaconEdge, PlacedPane};
-use slopdesk_workspace::canvas_snap::{GuideOrientation, OwnEdge, Resolution};
 use slopdesk_workspace::identity::{IdSource, SessionId};
 use slopdesk_workspace::tree_ops::{self, TileLayout};
 use slopdesk_workspace::{
-    Body, BodyId, Camera, FocusDirection, Guide, GuideKind, NonOverlapConfig, PaneGroupId, PaneId, PaneSpec,
-    Point, Rect, ResizeAnchor, Size, SnapConfig, SolvedLayout, SplitAxis, SplitNode, SplitNodeId,
-    SplitWeight, Stick, TabId, WeightedChild, canvas, canvas_arrange, canvas_geometry, canvas_non_overlap,
-    canvas_snap, focus, geometry, listen, secrets, send_keys, shell_quoting, split_layout, split_tree,
-    state_codec, tab_ordering, templates,
+    FocusDirection, PaneId, PaneKind, PaneSpec, Rect, Size, SolvedLayout, SplitAxis, SplitNode, SplitNodeId,
+    SplitWeight, TabId, WeightedChild, focus, geometry, listen, rail_title, secrets, send_keys,
+    shell_quoting, split_layout, split_tree, state_codec, tab_ordering, templates,
 };
 
 use crate::{borrow, deliver};
@@ -420,6 +414,35 @@ pub unsafe extern "C" fn slopdesk_ws_cwd_display_name(
     unsafe { deliver(name.as_bytes(), out, cap) }
 }
 
+/// The same directory as a BADGE prints it — home collapsed to `~`, a trailing `/` marking it a
+/// directory — for the command palette's WORKING DIRECTORY pill.
+///
+/// `0` means the path was empty, and an empty badge is the honest answer to an empty path: unlike
+/// the leaf above, this one prints the WHOLE path, so there is no such thing as a path with nothing
+/// to show.
+///
+/// # Safety
+/// `bytes` must be null or point to `len` live bytes; `out` null or writable for `cap` bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_ws_cwd_badge_path(
+    bytes: *const c_uchar,
+    len: usize,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligations, restated above; `borrow` and `deliver` state their own.
+    let raw = unsafe { borrow(bytes, len) };
+    let badge = core::str::from_utf8(raw)
+        .map(PaneSpec::cwd_badge_path)
+        .unwrap_or_default();
+    // SAFETY: the caller's obligation, restated above.
+    unsafe { deliver(badge.as_bytes(), out, cap) }
+}
+
 /// The risk of typing `bytes` into a field, as a `PasteRisk` discriminant.
 ///
 /// # Safety
@@ -768,1013 +791,439 @@ pub unsafe extern "C" fn slopdesk_ws_successor_after_close(
     }
 }
 
-// MARK: The plane's coordinates
-
-/// The sanitation every coordinate passes before it can reach a bounding-box union: NaN and the
-/// infinities become finite, and an extent gets its floor.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub extern "C" fn slopdesk_ws_sanitize(frame: CRect) -> CRect {
-    CRect::of(geometry::sanitize(frame.resolve()))
-}
-
-/// The same sanitation for a camera's origin, which has no extent to floor.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub extern "C" fn slopdesk_ws_sanitize_camera(origin: CPoint) -> CPoint {
-    let sanitized = camera_at(origin).sanitized();
-    CPoint {
-        x: sanitized.origin.x,
-        y: sanitized.origin.y,
-    }
-}
-
-/// The bound every coordinate is clamped to, exported rather than transcribed — a caller that
-/// asserts against it must read the same number the clamp used.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub const extern "C" fn slopdesk_ws_coordinate_bound() -> f64 {
-    geometry::COORDINATE_BOUND
-}
-
-/// One of the canvas and split metrics, by index: `0` the cascade step, `1` the cull margin, `2`
-/// the placement overlap threshold, `3` the minimum flex weight.
-///
-/// Each of these is a number some Rust routine here already ENFORCES — the cascade loop steps by
-/// it, the placement scan compares against it, `repaired()` clamps to it — so a client that draws
-/// or asserts against a transcribed copy is describing a rule it does not share. An unknown index
-/// answers 0, which is outside every one of their bands and so cannot pass for a metric.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub const extern "C" fn slopdesk_ws_canvas_metric(index: c_uchar) -> f64 {
-    match index {
-        0 => geometry::CASCADE_STEP,
-        1 => geometry::CULL_MARGIN,
-        2 => canvas_geometry::OVERLAP_THRESHOLD,
-        3 => split_tree::MIN_WEIGHT,
-        _ => 0.0,
-    }
-}
-
-/// The size a brand-new pane opens at, from the crate that opens it.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub const extern "C" fn slopdesk_ws_default_leaf() -> CPoint {
-    let size = geometry::DEFAULT_ITEM_SIZE;
-    CPoint {
-        x: size.width,
-        y: size.height,
-    }
-}
-
-/// A canvas rect in screen coordinates, under the pan-only camera.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub const extern "C" fn slopdesk_ws_screen_rect(frame: CRect, camera: CPoint) -> CRect {
-    CRect::of(geometry::screen_rect(frame.resolve(), camera_at(camera)))
-}
-
-/// A screen point back in canvas coordinates.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub const extern "C" fn slopdesk_ws_canvas_point(point: CPoint, camera: CPoint) -> CPoint {
-    let resolved = geometry::canvas_point(Point::new(point.x, point.y), camera_at(camera));
-    CPoint {
-        x: resolved.x,
-        y: resolved.y,
-    }
-}
-
-/// The camera at an origin. Pan-only, so its origin is the whole of it.
-const fn camera_at(origin: CPoint) -> Camera {
-    Camera {
-        origin: Point::new(origin.x, origin.y),
-    }
-}
-
-// MARK: Where a pane goes
+// MARK: What a pane is called
 //
-// A PANE here is `(id, rect, is_video)` — the three facts the placement, culling and overview rules
-// read. A `CanvasItem` carries far more (its spec, its group, its z), none of which any of these
-// rules consults, so what crosses is the projection rather than the document.
+// Every surface that names a pane — the rail row, the tab strip, the pane switcher, the window
+// title — reads the SAME precedence, and the reason it is one rule rather than four is that two
+// surfaces disagreeing about a pane's name read as two panes. The rules are
+// `slopdesk_workspace::rail_title`; what is here is the marshalling, and the two composite inputs
+// arrive as spans into one blob for the reason the module docs give: one pointer, one lifetime, one
+// scope, where a `(ptr, len)` per string would mean seven nested borrows per row per frame.
 
-/// One pane as the geometry rules see it.
+/// The structural title's inputs, each string spanning the blob passed alongside.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
-pub struct Placed {
-    /// Which pane.
-    pub id: Uuid,
-    /// Where it is, in canvas coordinates.
-    pub rect: CRect,
-    /// Whether it costs a decode slot, which is the whole of why culling is asymmetric.
-    pub is_video: bool,
-}
-
-impl Placed {
-    const fn resolve(self) -> PlacedPane<[u8; 16]> {
-        PlacedPane {
-            id: self.id.bytes,
-            frame: self.rect.resolve(),
-            is_video: self.is_video,
-        }
-    }
-}
-
-/// The new frame while dragging `anchor` by `delta`.
-///
-/// The anchored edges move and the opposite ones stay pinned, with the extents floored — clamping
-/// pushes the MOVED edge back, so the pinned edge never shifts.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub extern "C" fn slopdesk_ws_resizing(
-    frame: CRect,
-    anchor: u8,
-    delta_width: f64,
-    delta_height: f64,
-    min_width: f64,
-    min_height: f64,
-) -> CRect {
-    CRect::of(canvas_geometry::resizing(
-        frame.resolve(),
-        anchor_from(anchor),
-        Size::new(delta_width, delta_height),
-        Size::new(min_width, min_height),
-    ))
-}
-
-/// A clean frame for a NEW pane.
-///
-/// Cascaded off `near` when there is one, else centred in the viewport, then stepped until it no
-/// longer stacks on anything — with a bounded grid scan behind the step cap, so this terminates
-/// rather than merely usually terminating.
-///
-/// # Safety
-/// `existing` must be null or point to `count` live [`CRect`]s for the call.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub unsafe extern "C" fn slopdesk_ws_placement(
-    near: CRect,
-    has_near: bool,
-    existing: *const CRect,
-    count: usize,
-    viewport: CRect,
-    width: f64,
-    height: f64,
-    cascade: f64,
-) -> CRect {
-    // SAFETY: the caller's obligation, restated above; `borrow_array` states its own.
-    let rects: Vec<Rect> = unsafe { borrow_array(existing, count) }
-        .iter()
-        .map(|rect| rect.resolve())
-        .collect();
-    CRect::of(canvas_geometry::placement(
-        has_near.then(|| near.resolve()),
-        &rects,
-        viewport.resolve(),
-        Size::new(width, height),
-        cascade,
-    ))
-}
-
-/// Whether a pane stays mounted.
-///
-/// A terminal always does — the compositor occludes it cheaply anyway — and a video pane only while
-/// it is near the viewport, because culling one frees a decode slot. The focused pane is never
-/// culled whatever its kind.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub extern "C" fn slopdesk_ws_pane_visible(
-    pane: Placed,
-    camera: CPoint,
-    viewport_width: f64,
-    viewport_height: f64,
-    focused: Uuid,
-    has_focused: bool,
-    margin: f64,
-) -> bool {
-    canvas_geometry::is_visible(
-        &pane.resolve(),
-        camera_at(camera),
-        Size::new(viewport_width, viewport_height),
-        has_focused.then_some(&focused.bytes),
-        margin,
-    )
-}
-
-/// Whether a pane's frame touches the viewport at all — no margin, no kind filter.
-///
-/// Deliberately separate from [`slopdesk_ws_pane_visible`]: this is the video-cap "on screen"
-/// signal, and terminals being held mounted must not pollute that membership set.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub const extern "C" fn slopdesk_ws_pane_in_viewport(
-    rect: CRect,
-    camera: CPoint,
-    viewport_width: f64,
-    viewport_height: f64,
-) -> bool {
-    let viewport = camera_at(camera).viewport_rect(Size::new(viewport_width, viewport_height));
-    rect.resolve().intersects(viewport)
-}
-
-/// One pane's card in the fit-everything overview.
-#[repr(C)]
-#[derive(Clone, Copy, Debug)]
-pub struct Card {
-    /// Which pane.
-    pub id: Uuid,
-    /// Its SCREEN-space rect under the uniform scale.
-    pub rect: CRect,
-}
-
-/// The overview: the uniform scale that fits every pane into the viewport — never magnified past 1×
-/// — and each pane's card under it, with the scaled bounding box centred.
-///
-/// Returns the card count NEEDED. `scale` is written whenever the pointer is non-null, even when
-/// the cards did not fit, so a caller can size its buffer from the first call without losing the
-/// scale.
-///
-/// # Safety
-/// `panes` must be null or point to `count` live [`Placed`]s; `scale` null or writable for one
-/// `double`; `out` null or writable for `cap` [`Card`]s.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub unsafe extern "C" fn slopdesk_ws_overview_layout(
-    panes: *const Placed,
-    count: usize,
-    viewport_width: f64,
-    viewport_height: f64,
-    padding: f64,
-    scale: *mut f64,
-    out: *mut Card,
-    cap: usize,
-) -> usize {
-    // SAFETY: the caller's obligations, restated above; `borrow_array` states its own.
-    let placed: Vec<PlacedPane<[u8; 16]>> = unsafe { borrow_array(panes, count) }
-        .iter()
-        .map(|pane| pane.resolve())
-        .collect();
-    let layout =
-        canvas_geometry::overview_layout(&placed, Size::new(viewport_width, viewport_height), padding);
-    if !scale.is_null() {
-        // SAFETY: non-null and, by the caller's obligation, writable for one `f64` for this call.
-        unsafe { *scale = layout.scale };
-    }
-    if layout.cards.len() > cap || out.is_null() {
-        return layout.cards.len();
-    }
-    for (index, card) in layout.cards.iter().enumerate() {
-        // SAFETY: `index < cards.len() <= cap`, and `out` is writable for `cap` by the obligation.
-        unsafe {
-            out.add(index).write(Card {
-                id: Uuid { bytes: card.id },
-                rect: CRect::of(card.rect),
-            });
-        }
-    }
-    layout.cards.len()
-}
-
-/// A pill on the viewport border saying "a pane is over there".
-#[repr(C)]
-#[derive(Clone, Copy, Debug)]
-pub struct Beacon {
-    /// Which pane it points at.
-    pub id: Uuid,
-    /// Where to centre the pill, in viewport coordinates, already inset from every edge.
-    pub screen_point: CPoint,
-    /// 0 top · 1 bottom · 2 left · 3 right.
-    pub edge: u8,
-}
-
-/// Every pane that does NOT touch the viewport, projected onto its border.
-///
-/// The DOMINANT overflow picks the edge, so a pane far up and slightly right reads as "above"
-/// rather than flickering between the two. Returns the count NEEDED.
-///
-/// # Safety
-/// `panes` must be null or point to `count` live [`Placed`]s; `out` null or writable for `cap`
-/// [`Beacon`]s.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub unsafe extern "C" fn slopdesk_ws_offscreen_beacons(
-    panes: *const Placed,
-    count: usize,
-    camera: CPoint,
-    viewport_width: f64,
-    viewport_height: f64,
-    inset: f64,
-    out: *mut Beacon,
-    cap: usize,
-) -> usize {
-    // SAFETY: the caller's obligations, restated above; `borrow_array` states its own.
-    let placed: Vec<PlacedPane<[u8; 16]>> = unsafe { borrow_array(panes, count) }
-        .iter()
-        .map(|pane| pane.resolve())
-        .collect();
-    let beacons = canvas_geometry::offscreen_beacons(
-        &placed,
-        camera_at(camera),
-        Size::new(viewport_width, viewport_height),
-        inset,
-    );
-    if beacons.len() > cap || out.is_null() {
-        return beacons.len();
-    }
-    for (index, beacon) in beacons.iter().enumerate() {
-        // SAFETY: `index < beacons.len() <= cap`, and `out` is writable for `cap` by the obligation.
-        unsafe {
-            out.add(index).write(Beacon {
-                id: Uuid { bytes: beacon.id },
-                screen_point: CPoint {
-                    x: beacon.screen_point.x,
-                    y: beacon.screen_point.y,
-                },
-                edge: match beacon.edge {
-                    BeaconEdge::Top => 0,
-                    BeaconEdge::Bottom => 1,
-                    BeaconEdge::Left => 2,
-                    BeaconEdge::Right => 3,
-                },
-            });
-        }
-    }
-    beacons.len()
-}
-
-// MARK: Non-overlap
-//
-// Three rules over one config. A BODY is a pane or a whole group moving as one, which is why its id
-// carries a kind byte rather than being a bare pane id: a group and a pane may share sixteen bytes
-// without being the same body.
-
-/// The tuning the caller has decided on. `enabled == false` is the whole feature off, and every
-/// rule below then answers its input unchanged.
-#[repr(C)]
-#[derive(Clone, Copy, Debug)]
-pub struct NonOverlap {
-    /// The gap kept between two bodies.
-    pub gutter: f64,
-    /// How far a body may be pushed before the pass gives up on it.
-    pub skin: f64,
-    /// The sweep's iteration ceiling.
-    pub max_slide_passes: u32,
-    /// The relaxation's iteration ceiling.
-    pub max_relax_iterations: u32,
-    /// How much of an insert's target must be covered before it reads as an insert.
-    pub insert_coverage: f64,
-    /// Whether any of it runs.
-    pub enabled: bool,
-}
-
-impl NonOverlap {
-    const fn resolve(self) -> NonOverlapConfig {
-        NonOverlapConfig {
-            gutter: self.gutter,
-            skin: self.skin,
-            max_slide_passes: self.max_slide_passes,
-            max_relax_iterations: self.max_relax_iterations,
-            insert_coverage: self.insert_coverage,
-            enabled: self.enabled,
-        }
-    }
-}
-
-/// A body's id: `kind == 1` is a group, anything else a pane.
-///
-/// Total on the kind byte rather than refusing an unknown one, because a pane is the conservative
-/// reading: a body wrongly treated as a pane moves alone, where one wrongly treated as a group
-/// would drag its neighbours with it.
-#[repr(C)]
-#[derive(Clone, Copy, Debug)]
-pub struct BodyRef {
-    /// 0 pane · 1 group.
+pub struct CRowTitle {
+    /// A `PaneKind` byte: 0 terminal, 1 desktop.
     pub kind: u8,
-    /// The sixteen bytes naming it within that namespace.
-    pub id: Uuid,
+    /// The title on the pane's spec; absent when there is no spec at all.
+    pub spec_title: Span,
+    /// Whether that title was typed by the user.
+    pub user_renamed: bool,
+    /// The pane's working directory.
+    pub cwd: Span,
+    /// The title the running program last asserted.
+    pub live_title: Span,
+    /// The host-reported foreground process.
+    pub process_label: Span,
+    /// The project section the pane is drawn under.
+    pub project_key: Span,
 }
 
-impl BodyRef {
-    const fn resolve(self) -> CanvasBodyId {
-        if self.kind == 1 {
-            BodyId::Group(PaneGroupId::from_bytes(self.id.bytes))
-        } else {
-            BodyId::Pane(PaneId::from_bytes(self.id.bytes))
-        }
-    }
-
-    const fn of(id: CanvasBodyId) -> Self {
-        match id {
-            BodyId::Pane(pane) => {
-                Self {
-                    kind: 0,
-                    id: Uuid { bytes: pane.bytes() },
-                }
-            },
-            BodyId::Group(group) => {
-                Self {
-                    kind: 1,
-                    id: Uuid { bytes: group.bytes() },
-                }
-            },
-        }
-    }
-}
-
-/// One body the solvers move around, and — on the way back — where it ended up.
+/// Line two's inputs, each string spanning the blob passed alongside.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
-pub struct CBody {
-    /// Which body.
-    pub id: BodyRef,
-    /// Its rectangle.
-    pub rect: CRect,
+pub struct CSubtitle {
+    /// A `PaneKind` byte: 0 terminal, 1 desktop.
+    pub kind: u8,
+    /// The title on the pane's spec; absent when there is no spec at all, which is what decides
+    /// whether the pane has a second line to write.
+    pub spec_title: Span,
+    /// Whether the two video fields below mean anything.
+    pub video_present: bool,
+    /// The owning application of the streamed host window.
+    pub video_app_name: Span,
+    /// That window's own title.
+    pub video_title: Span,
+    /// The pane's working directory.
+    pub cwd: Span,
+    /// The title the running program last asserted.
+    pub live_title: Span,
+    /// The project section the pane is drawn under; absent on a surface with no section headers.
+    pub project_key: Span,
 }
 
-/// Borrows a caller's body array as the crate's own.
-///
-/// # Safety
-/// `bodies` must be null, or point to `count` initialised [`CBody`]s live for the call.
-#[expect(
-    unsafe_code,
-    reason = "this IS the boundary: a C array pointer becoming a slice"
-)]
-unsafe fn borrow_bodies(bodies: *const CBody, count: usize) -> Vec<Body<CanvasBodyId>> {
-    // SAFETY: the caller's obligation, restated above; `borrow_array` states its own.
-    unsafe { borrow_array(bodies, count) }
+/// The live title's inputs, each string spanning the blob passed alongside.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct CLiveRowTitle {
+    /// What the structural rule answered.
+    pub structural_title: Span,
+    /// Whether that answer is a rename the user typed.
+    pub user_renamed: bool,
+    /// Whether the pane is an agent session.
+    pub is_agent: bool,
+    /// The agent's latched session intent.
+    pub intent: Span,
+    /// The command line running right now.
+    pub running_command: Span,
+    /// The normalised title the running program asserted.
+    pub program_title: Span,
+    /// The foreground-process title, so a structural rung can be recognised as one.
+    pub process_title: Span,
+    /// A `PaneKind` byte: 0 terminal, 1 desktop.
+    pub kind: u8,
+    /// The pane's folder name.
+    pub cwd_title: Span,
+    /// The kind-generic name.
+    pub fallback: Span,
+}
+
+/// One command block, in the two fields a title reads.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct CCommandTitleBlock {
+    /// What was typed, spanning the blob passed alongside.
+    pub text: Span,
+    /// Whether `duration_ms` means anything — false is a block still running, which is a different
+    /// fact from one that finished instantly.
+    pub has_duration: bool,
+    /// Host-measured wall clock; read only when `has_duration`.
+    pub duration_ms: u32,
+}
+
+/// Reads the blocks a title rule scans, each text spanning `blob`.
+fn command_blocks<'a>(
+    blocks: &'a [CCommandTitleBlock],
+    blob: &'a [u8],
+) -> Vec<rail_title::CommandTitleBlock<'a>> {
+    blocks
         .iter()
-        .map(|body| {
-            Body {
-                id: body.id.resolve(),
-                rect: body.rect.resolve(),
+        .map(|block| {
+            rail_title::CommandTitleBlock {
+                command_text: text_of(block.text, blob).unwrap_or_default(),
+                duration_ms: block.has_duration.then_some(block.duration_ms),
             }
         })
         .collect()
 }
 
-/// Writes a committed arrangement under §4's convention.
-///
-/// The order is the map's — by kind, then by id bytes — so the array a caller reads on a retry is
-/// the one the sizing call measured.
+/// The foreground process as the metadata slot shows it. `0` is "nothing to show", which a real
+/// name never is.
 ///
 /// # Safety
-/// `out` must be null, or writable for `cap` [`CBody`]s for the call.
-#[expect(
-    unsafe_code,
-    reason = "this IS the boundary: writing through a caller's pointer"
-)]
-unsafe fn deliver_commit(frames: &BTreeMap<CanvasBodyId, Rect>, out: *mut CBody, cap: usize) -> usize {
-    if frames.len() > cap || out.is_null() {
-        return frames.len();
-    }
-    for (index, (id, rect)) in frames.iter().enumerate() {
-        // SAFETY: `index < frames.len() <= cap`, and `out` is writable for `cap` elements by the
-        // caller's obligation.
-        unsafe {
-            out.add(index).write(CBody {
-                id: BodyRef::of(*id),
-                rect: CRect::of(*rect),
-            });
-        }
-    }
-    frames.len()
-}
-
-/// The tuning both languages start from.
-///
-/// Exported rather than transcribed: six numbers repeated in Swift would be six chances for the
-/// gutter the snapper uses and the gutter the slide keeps to drift apart, and the whole reason they
-/// share a value is that a gutter-snapped box must already be at the non-overlap boundary.
+/// `bytes` must be null or point to `len` initialised bytes; `out` null or writable for `cap`.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
     reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
 )]
-pub extern "C" fn slopdesk_ws_non_overlap_default() -> NonOverlap {
-    let config = NonOverlapConfig::default();
-    NonOverlap {
-        gutter: config.gutter,
-        skin: config.skin,
-        max_slide_passes: config.max_slide_passes,
-        max_relax_iterations: config.max_relax_iterations,
-        insert_coverage: config.insert_coverage,
-        enabled: config.enabled,
-    }
-}
-
-/// The swept slide that runs after the snapper: where a dragged rect ends up once it may not
-/// overlap anyone.
-///
-/// `from` is the body's PERSISTED origin, so the whole sweep replays from there every frame and the
-/// answer never depends on the path taken to get here.
-///
-/// # Safety
-/// `bodies` must be null or point to `count` live [`CBody`]s for the call.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub unsafe extern "C" fn slopdesk_ws_slide(
-    snapped: CRect,
-    from: CPoint,
-    bodies: *const CBody,
-    count: usize,
-    config: NonOverlap,
-) -> CRect {
-    // SAFETY: the caller's obligation, restated above; `borrow_bodies` states its own.
-    let bodies = unsafe { borrow_bodies(bodies, count) };
-    CRect::of(canvas_non_overlap::slide(
-        snapped.resolve(),
-        Point::new(from.x, from.y),
-        &bodies,
-        &config.resolve(),
-    ))
-}
-
-/// The separation pass around a pinned body: everyone else moves, it does not. The answer INCLUDES
-/// the pinned body at its target, so one write commits the whole arrangement.
-///
-/// # Safety
-/// `bodies` must be null or point to `count` live [`CBody`]s; `out` must be null or writable for
-/// `cap` [`CBody`]s.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub unsafe extern "C" fn slopdesk_ws_separate(
-    pinned: BodyRef,
-    pinned_rect: CRect,
-    bodies: *const CBody,
-    count: usize,
-    config: NonOverlap,
-    out: *mut CBody,
+pub unsafe extern "C" fn slopdesk_ws_slot_process_name(
+    bytes: *const c_uchar,
+    len: usize,
+    present: bool,
+    out: *mut c_uchar,
     cap: usize,
 ) -> usize {
     // SAFETY: the caller's obligations, restated above; the helpers state their own.
     unsafe {
-        let bodies = borrow_bodies(bodies, count);
-        let frames = canvas_non_overlap::separate(
-            &pinned.resolve(),
-            pinned_rect.resolve(),
-            &bodies,
-            &config.resolve(),
-        );
-        deliver_commit(&frames, out, cap)
-    }
-}
-
-/// The make-space relaxation that parts the neighbours on an insert.
-///
-/// [`usize::MAX`] means intent did NOT fire — the box is merely resting against a boundary — and
-/// the caller then commits the slid frame with nothing else moved. That is a different answer from
-/// a commit of zero bodies, which is why it is not 0.
-///
-/// # Safety
-/// As [`slopdesk_ws_separate`].
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub unsafe extern "C" fn slopdesk_ws_make_space(
-    target: CRect,
-    dragged: BodyRef,
-    bodies: *const CBody,
-    count: usize,
-    config: NonOverlap,
-    out: *mut CBody,
-    cap: usize,
-) -> usize {
-    // SAFETY: the caller's obligations, restated above; the helpers state their own.
-    unsafe {
-        let bodies = borrow_bodies(bodies, count);
-        let Some(frames) =
-            canvas_non_overlap::make_space(target.resolve(), &dragged.resolve(), &bodies, &config.resolve())
-        else {
-            return usize::MAX;
+        let Some(name) = rail_title::slot_process_name(optional_str(bytes, len, present)) else {
+            return 0;
         };
-        deliver_commit(&frames, out, cap)
+        deliver(name.as_bytes(), out, cap)
     }
 }
 
-/// A resize clamped off its neighbours: only the edges the anchor MOVES are pushed back, so the
-/// pinned edge never creeps.
+/// The foreground process as a pane TITLE — the same cleanup with a bare shell suppressed. `0` is
+/// "skip this rung".
 ///
 /// # Safety
-/// `bodies` must be null or point to `count` live [`CBody`]s for the call.
+/// As [`slopdesk_ws_slot_process_name`].
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
     reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
 )]
-pub unsafe extern "C" fn slopdesk_ws_clamp_resize(
-    frame: CRect,
-    anchor: u8,
-    bodies: *const CBody,
-    count: usize,
-    min_width: f64,
-    min_height: f64,
-    config: NonOverlap,
-) -> CRect {
-    // SAFETY: the caller's obligation, restated above; `borrow_bodies` states its own.
-    let bodies = unsafe { borrow_bodies(bodies, count) };
-    CRect::of(canvas_non_overlap::clamp_resize(
-        frame.resolve(),
-        anchor_from(anchor),
-        &bodies,
-        Size::new(min_width, min_height),
-        &config.resolve(),
-    ))
+pub unsafe extern "C" fn slopdesk_ws_process_display_name(
+    bytes: *const c_uchar,
+    len: usize,
+    present: bool,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligations, restated above; the helpers state their own.
+    unsafe {
+        let Some(name) = rail_title::process_display_name(optional_str(bytes, len, present)) else {
+            return 0;
+        };
+        deliver(name.as_bytes(), out, cap)
+    }
 }
 
-/// The minimum push that would part two rects by a gutter, or false when they already are.
+/// Whether a slot label names a command rather than the shell the pane is idling in.
 ///
 /// # Safety
-/// `dx` and `dy` must each be null or writable for one `double` for the call.
+/// `bytes` must be null or point to `len` initialised bytes live for the call.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
     reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
 )]
-pub unsafe extern "C" fn slopdesk_ws_separation(
-    a: CRect,
-    b: CRect,
-    gutter: f64,
-    dx: *mut f64,
-    dy: *mut f64,
+pub unsafe extern "C" fn slopdesk_ws_slot_label_is_command(
+    bytes: *const c_uchar,
+    len: usize,
+    present: bool,
 ) -> bool {
-    let Some(separation) = canvas_non_overlap::separation(a.resolve(), b.resolve(), gutter) else {
-        return false;
-    };
-    if !dx.is_null() {
-        // SAFETY: non-null and, by the caller's obligation, writable for one `f64` for this call.
-        unsafe { *dx = separation.dx };
-    }
-    if !dy.is_null() {
-        // SAFETY: as above.
-        unsafe { *dy = separation.dy };
-    }
-    true
+    // SAFETY: the caller's obligation, restated above; `optional_str` states its own.
+    unsafe { rail_title::slot_label_is_command(optional_str(bytes, len, present)) }
 }
 
-/// A `ResizeAnchor` discriminant. Total, defaulting to the bottom-right corner — the anchor a plain
-/// drag-to-grow uses.
+/// Whether a pane is an agent session: any status verdict, or a known agent CLI in the foreground.
 ///
-/// The map is `ResizeAnchor::ALL`'s order, stated once there rather than a second time here.
-fn anchor_from(byte: u8) -> ResizeAnchor {
-    ResizeAnchor::from_index(byte).unwrap_or(ResizeAnchor::BottomRight)
-}
-
-// MARK: Snapping
-
-/// The snapper's tuning. Its two thresholds are asymmetric on purpose — a stick engages closer than
-/// it releases — which is what keeps a drag from chattering at the boundary.
-#[repr(C)]
-#[derive(Clone, Copy, Debug)]
-pub struct Snap {
-    /// How near an edge must come to engage a stick.
-    pub engage: f64,
-    /// How far it must travel to release one.
-    pub release: f64,
-    /// The gap a pane-to-pane snap leaves.
-    pub gutter: f64,
-    /// The grid's pitch.
-    pub grid_spacing: f64,
-    /// The grid's engage threshold.
-    pub grid_engage: f64,
-    /// The grid's release threshold.
-    pub grid_release: f64,
-    /// Whether panes attract.
-    pub snaps_to_panes: bool,
-    /// Whether the grid does.
-    pub snaps_to_grid: bool,
-}
-
-impl Snap {
-    const fn resolve(self) -> SnapConfig {
-        SnapConfig {
-            engage: self.engage,
-            release: self.release,
-            gutter: self.gutter,
-            grid_spacing: self.grid_spacing,
-            grid_engage: self.grid_engage,
-            grid_release: self.grid_release,
-            snaps_to_panes: self.snaps_to_panes,
-            snaps_to_grid: self.snaps_to_grid,
-        }
-    }
-}
-
-/// The snapper's tuning, from the crate rather than transcribed — see
-/// [`slopdesk_ws_non_overlap_default`] for why.
+/// # Safety
+/// As [`slopdesk_ws_slot_label_is_command`].
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
     reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
 )]
-pub extern "C" fn slopdesk_ws_snap_default() -> Snap {
-    let config = SnapConfig::default();
-    Snap {
-        engage: config.engage,
-        release: config.release,
-        gutter: config.gutter,
-        grid_spacing: config.grid_spacing,
-        grid_engage: config.grid_engage,
-        grid_release: config.grid_release,
-        snaps_to_panes: config.snaps_to_panes,
-        snaps_to_grid: config.snaps_to_grid,
-    }
+pub unsafe extern "C" fn slopdesk_ws_is_agent_session(
+    has_agent_status: bool,
+    bytes: *const c_uchar,
+    len: usize,
+    present: bool,
+) -> bool {
+    // SAFETY: the caller's obligation, restated above; `optional_str` states its own.
+    unsafe { rail_title::is_agent_session(has_agent_status, optional_str(bytes, len, present)) }
 }
 
-/// A held stick, crossing in BOTH directions: the caller hands back what it got last frame, and
-/// that is what makes the hold asymmetric rather than re-decided from scratch every frame.
-#[repr(C)]
-#[derive(Clone, Copy, Debug)]
-pub struct CStick {
-    /// Whether there is a stick at all.
-    pub present: bool,
-    /// 0 min · 1 mid · 2 max.
-    pub own_edge: u8,
-    /// The coordinate it is held to.
-    pub target: f64,
-    /// Whether it came from the grid rather than a neighbour, which uses the tighter release and
-    /// draws no guide.
-    pub is_grid: bool,
-}
-
-impl CStick {
-    const fn resolve(self) -> Option<Stick> {
-        if !self.present {
-            return None;
-        }
-        Some(Stick {
-            own_edge: match self.own_edge {
-                1 => OwnEdge::Mid,
-                2 => OwnEdge::Max,
-                _ => OwnEdge::Min,
-            },
-            target: self.target,
-            is_grid: self.is_grid,
-        })
-    }
-
-    const fn of(stick: Option<Stick>) -> Self {
-        match stick {
-            None => {
-                Self {
-                    present: false,
-                    own_edge: 0,
-                    target: 0.0,
-                    is_grid: false,
-                }
-            },
-            Some(held) => {
-                Self {
-                    present: true,
-                    own_edge: match held.own_edge {
-                        OwnEdge::Min => 0,
-                        OwnEdge::Mid => 1,
-                        OwnEdge::Max => 2,
-                    },
-                    target: held.target,
-                    is_grid: held.is_grid,
-                }
-            },
-        }
-    }
-}
-
-/// One alignment line the view draws while a pane-derived snap is active.
-#[repr(C)]
-#[derive(Clone, Copy, Debug)]
-pub struct CGuide {
-    /// 0 vertical · 1 horizontal.
-    pub orientation: u8,
-    /// Its position on the snapped axis.
-    pub position: f64,
-    /// Where the drawn segment starts on the other axis.
-    pub start: f64,
-    /// Where it ends.
-    pub end: f64,
-    /// The strongest class that contributed to it: 0 gutter · 1 edge · 2 centre · 3 viewport.
-    pub kind: u8,
-}
-
-impl CGuide {
-    const fn of(guide: Guide) -> Self {
-        Self {
-            orientation: match guide.orientation {
-                GuideOrientation::Vertical => 0,
-                GuideOrientation::Horizontal => 1,
-            },
-            position: guide.position,
-            start: guide.start,
-            end: guide.end,
-            kind: match guide.kind {
-                GuideKind::Gutter => 0,
-                GuideKind::Edge => 1,
-                GuideKind::Center => 2,
-                GuideKind::ViewportEdge => 3,
-            },
-        }
-    }
-}
-
-/// The fixed-size half of a snap answer: where the rect goes, and what is held.
-///
-/// Separated from the guides because it is always written, even when the guide buffer was too
-/// small. A caller that only draws the pane — a commit, rather than a live drag — never needs to
-/// size a guide buffer at all.
-#[repr(C)]
-#[derive(Clone, Copy, Debug)]
-pub struct SnapAnswer {
-    /// Where the dragged rect goes.
-    pub frame: CRect,
-    /// The horizontal hold.
-    pub stick_x: CStick,
-    /// The vertical one.
-    pub stick_y: CStick,
-}
-
-/// Writes a resolution's two halves, and reports how many guides it HAS.
+/// The canonical agent mark, asked for rather than transcribed: a copy pinned to a different
+/// presentation would draw a different glyph beside the same rows.
 ///
 /// # Safety
-/// `answer` must be null or writable for one [`SnapAnswer`]; `guides` null or writable for
-/// `guides_cap` [`CGuide`]s.
-#[expect(
-    unsafe_code,
-    reason = "this IS the boundary: writing through a caller's pointers"
-)]
-unsafe fn deliver_resolution(
-    resolution: &Resolution,
-    answer: *mut SnapAnswer,
-    guides: *mut CGuide,
-    guides_cap: usize,
-) -> usize {
-    if !answer.is_null() {
-        // SAFETY: non-null and, by the caller's obligation, writable for one `SnapAnswer`.
-        unsafe {
-            *answer = SnapAnswer {
-                frame: CRect::of(resolution.frame),
-                stick_x: CStick::of(resolution.stick_x),
-                stick_y: CStick::of(resolution.stick_y),
-            };
-        }
-    }
-    if resolution.guides.len() > guides_cap || guides.is_null() {
-        return resolution.guides.len();
-    }
-    for (index, guide) in resolution.guides.iter().enumerate() {
-        // SAFETY: `index < guides.len() <= guides_cap`, and `guides` is writable for that many by
-        // the caller's obligation.
-        unsafe { guides.add(index).write(CGuide::of(*guide)) };
-    }
-    resolution.guides.len()
-}
-
-/// The previous frame's holds, as the resolution the solver reads them out of. Only the sticks are
-/// read, so the frame and the guides here are placeholders and never reach an answer.
-const fn previous_holds(stick_x: CStick, stick_y: CStick) -> Resolution {
-    Resolution {
-        frame: Rect::xywh(0.0, 0.0, 0.0, 0.0),
-        guides: Vec::new(),
-        stick_x: stick_x.resolve(),
-        stick_y: stick_y.resolve(),
-    }
-}
-
-/// Snaps a MOVE drag. The size never changes; each axis resolves independently.
-///
-/// `proposed` must be the UNSNAPPED translation of the gesture's start, never a previously snapped
-/// frame, or the snap drifts. Returns the guide count the answer HAS.
-///
-/// # Safety
-/// `others` must be null or point to `count` live [`CRect`]s; `answer` and `guides` as
-/// [`deliver_resolution`] requires. All live for the call.
+/// `out` must be null or writable for `cap` bytes for the call.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
     reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
 )]
-pub unsafe extern "C" fn slopdesk_ws_snap_move(
-    proposed: CRect,
-    others: *const CRect,
-    count: usize,
-    viewport: CRect,
-    has_viewport: bool,
-    config: Snap,
-    previous_x: CStick,
-    previous_y: CStick,
-    answer: *mut SnapAnswer,
-    guides: *mut CGuide,
-    guides_cap: usize,
+pub const unsafe extern "C" fn slopdesk_ws_agent_title_mark(out: *mut c_uchar, cap: usize) -> usize {
+    // SAFETY: the caller's obligation, restated above; `deliver` states its own.
+    unsafe { deliver(rail_title::AGENT_TITLE_MARK.as_bytes(), out, cap) }
+}
+
+/// How long a finished command must have run to title the pane it ran in.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_ws_command_title_min_duration_ms() -> u32 {
+    rail_title::COMMAND_TITLE_MIN_DURATION_MS
+}
+
+/// `title` led with the agent mark, unless it already leads with one.
+///
+/// # Safety
+/// `bytes` must be null or point to `len` initialised bytes; `out` null or writable for `cap`.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_ws_agent_marked_title(
+    bytes: *const c_uchar,
+    len: usize,
+    out: *mut c_uchar,
+    cap: usize,
 ) -> usize {
     // SAFETY: the caller's obligations, restated above; the helpers state their own.
     unsafe {
-        let rects: Vec<Rect> = borrow_array(others, count)
-            .iter()
-            .map(|rect| rect.resolve())
-            .collect();
-        let previous = previous_holds(previous_x, previous_y);
-        let resolved = canvas_snap::snap_move(
-            proposed.resolve(),
-            &rects,
-            has_viewport.then(|| viewport.resolve()),
-            &config.resolve(),
-            Some(&previous),
-        );
-        deliver_resolution(&resolved, answer, guides, guides_cap)
+        let title = core::str::from_utf8(borrow(bytes, len)).unwrap_or_default();
+        deliver(rail_title::agent_marked_title(title).as_bytes(), out, cap)
     }
 }
 
-/// Snaps a RESIZE drag.
-///
-/// Only the edges the anchor MOVES are magnetic, and centres are skipped entirely: a resize aligns
-/// edges, not centres. A candidate that would push the pane below its floor is DISCARDED rather
-/// than clamped, so every guide the view draws is a true statement.
+/// A program-set title with any activity-spinner frame folded onto the one static mark. `0` is
+/// "nothing left to show", so the caller's chain falls through.
 ///
 /// # Safety
-/// As [`slopdesk_ws_snap_move`].
+/// As [`slopdesk_ws_slot_process_name`].
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
     reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
 )]
-pub unsafe extern "C" fn slopdesk_ws_snap_resize(
-    proposed: CRect,
-    anchor: u8,
-    others: *const CRect,
-    count: usize,
-    viewport: CRect,
-    has_viewport: bool,
-    min_width: f64,
-    min_height: f64,
-    config: Snap,
-    previous_x: CStick,
-    previous_y: CStick,
-    answer: *mut SnapAnswer,
-    guides: *mut CGuide,
-    guides_cap: usize,
+pub unsafe extern "C" fn slopdesk_ws_normalized_program_title(
+    bytes: *const c_uchar,
+    len: usize,
+    present: bool,
+    out: *mut c_uchar,
+    cap: usize,
 ) -> usize {
     // SAFETY: the caller's obligations, restated above; the helpers state their own.
     unsafe {
-        let rects: Vec<Rect> = borrow_array(others, count)
-            .iter()
-            .map(|rect| rect.resolve())
-            .collect();
-        let previous = previous_holds(previous_x, previous_y);
-        let resolved = canvas_snap::snap_resize(
-            proposed.resolve(),
-            anchor_from(anchor),
-            &rects,
-            has_viewport.then(|| viewport.resolve()),
-            Size::new(min_width, min_height),
-            &config.resolve(),
-            Some(&previous),
-        );
-        deliver_resolution(&resolved, answer, guides, guides_cap)
+        let Some(title) = rail_title::normalized_program_title(optional_str(bytes, len, present)) else {
+            return 0;
+        };
+        deliver(title.as_bytes(), out, cap)
     }
+}
+
+/// The pane's STRUCTURAL title — the identity it keeps between events.
+///
+/// `0` is the EMPTY title here rather than "no answer": the at-root idle shell yields deliberately,
+/// so the live chain below can speak for it.
+///
+/// # Safety
+/// `strings` must be null or point to `strings_len` initialised bytes; `out` null or writable for
+/// `cap` bytes. Both live for the call, and every span in `inputs` is bounds-checked against
+/// `strings` rather than trusted.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_ws_row_title(
+    inputs: CRowTitle,
+    strings: *const c_uchar,
+    strings_len: usize,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligations, restated above; the helpers state their own.
+    unsafe {
+        let blob = borrow(strings, strings_len);
+        let title = rail_title::row_title(rail_title::RowTitle {
+            kind: PaneKind::from_byte(inputs.kind),
+            spec_title: text_of(inputs.spec_title, blob),
+            user_renamed: inputs.user_renamed,
+            cwd: text_of(inputs.cwd, blob),
+            live_title: text_of(inputs.live_title, blob),
+            process_label: text_of(inputs.process_label, blob),
+            project_key: text_of(inputs.project_key, blob),
+        });
+        deliver(title.as_bytes(), out, cap)
+    }
+}
+
+/// What LINE TWO says. `0` is "no second line", which is a single-line row.
+///
+/// # Safety
+/// `strings` must be null or point to `strings_len` initialised bytes; `out` null or writable for
+/// `cap` bytes. Both live for the call, and every span in `inputs` is bounds-checked against
+/// `strings` rather than trusted.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_ws_pane_subtitle(
+    inputs: CSubtitle,
+    strings: *const c_uchar,
+    strings_len: usize,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligations, restated above; the helpers state their own.
+    unsafe {
+        let blob = borrow(strings, strings_len);
+        let Some(line) = rail_title::pane_subtitle(rail_title::Subtitle {
+            kind: PaneKind::from_byte(inputs.kind),
+            spec_title: text_of(inputs.spec_title, blob),
+            video: inputs.video_present.then(|| {
+                rail_title::SubtitleVideo {
+                    app_name: text_of(inputs.video_app_name, blob),
+                    title: text_of(inputs.video_title, blob),
+                }
+            }),
+            cwd: text_of(inputs.cwd, blob),
+            live_title: text_of(inputs.live_title, blob),
+            project_key: text_of(inputs.project_key, blob),
+        }) else {
+            return 0;
+        };
+        deliver(line.as_bytes(), out, cap)
+    }
+}
+
+/// The idle shell's last-command title. `0` is "no block qualified", so the caller keeps its own
+/// rung.
+///
+/// # Safety
+/// `blocks` must be null or point to `count` live [`CCommandTitleBlock`]s; `strings` to
+/// `strings_len` bytes; `out` null or writable for `cap`. All live for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_ws_last_command_title(
+    blocks: *const CCommandTitleBlock,
+    count: usize,
+    strings: *const c_uchar,
+    strings_len: usize,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligations, restated above; the helpers state their own.
+    unsafe {
+        let blob = borrow(strings, strings_len);
+        let held = command_blocks(borrow_array(blocks, count), blob);
+        let Some(title) = rail_title::last_command_title(&held) else {
+            return 0;
+        };
+        deliver(title.as_bytes(), out, cap)
+    }
+}
+
+/// What a surface actually SHOWS for this pane right now.
+///
+/// `0` is the empty title, for the reason [`slopdesk_ws_row_title`] gives.
+///
+/// # Safety
+/// As [`slopdesk_ws_last_command_title`], plus: every span in `inputs` indexes the same `strings`
+/// blob and is bounds-checked against it.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_ws_live_row_title(
+    inputs: CLiveRowTitle,
+    blocks: *const CCommandTitleBlock,
+    count: usize,
+    strings: *const c_uchar,
+    strings_len: usize,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligations, restated above; the helpers state their own.
+    unsafe {
+        let blob = borrow(strings, strings_len);
+        let held = command_blocks(borrow_array(blocks, count), blob);
+        let title = rail_title::live_row_title(
+            rail_title::LiveRowTitle {
+                structural_title: text_of(inputs.structural_title, blob).unwrap_or_default(),
+                user_renamed: inputs.user_renamed,
+                is_agent: inputs.is_agent,
+                intent: text_of(inputs.intent, blob),
+                running_command: text_of(inputs.running_command, blob),
+                program_title: text_of(inputs.program_title, blob),
+                process_title: text_of(inputs.process_title, blob),
+                kind: PaneKind::from_byte(inputs.kind),
+                cwd_title: text_of(inputs.cwd_title, blob),
+                fallback: text_of(inputs.fallback, blob).unwrap_or_default(),
+            },
+            &held,
+        );
+        deliver(title.as_bytes(), out, cap)
+    }
+}
+
+// MARK: The split tree's one shared metric
+
+/// The minimum flex weight a divider may take, from the crate that enforces it.
+///
+/// `repaired()` clamps to this number, so a client that drew or asserted against a transcribed
+/// copy would be describing a rule it does not share.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_ws_min_weight() -> f64 {
+    split_tree::MIN_WEIGHT
 }
 
 // MARK: The tiled tree
@@ -1949,53 +1398,192 @@ const unsafe fn deliver_frames(frames: &[Frame], out: *mut Frame, cap: usize) ->
     frames.len()
 }
 
-/// The point-extent of each child along the split's axis within `total`.
+/// One draggable seam, flat.
 ///
-/// Fixed children are reserved first against a RUNNING budget — so the fixed sum never exceeds the
-/// bound and no two bands overlap — and the flex children divide what is left in proportion. An
-/// all-zero-flex tree falls back to an equal split, so no pane ever vanishes.
-///
-/// Exported separately from the solve because the divider handles are placed on the same seams the
-/// tiles land on, and a second copy of this partition would put the handle a pixel off the edge it
-/// is supposed to drag.
-///
-/// # Safety
-/// `shares` must be null or point to `count` live [`Share`]s; `out` null or writable for `cap`
-/// `double`s.
+/// The rect is where the handle is drawn and hit; everything after it is what a DRAG needs — the
+/// span it converts pixels against, the flex sum it converts them into, and the pair of weights it
+/// moves between. They ride the same struct because the two predicates below are answered from
+/// them alone, so a caller that has a handle never has to reassemble one.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct DividerHandle {
+    /// The split that owns the seam.
+    pub split: Uuid,
+    /// The LEADING child's index: the seam is between it and the next child.
+    pub child_index: u32,
+    /// 0 horizontal (a column seam, dragged left/right) · 1 vertical.
+    pub axis: u8,
+    /// The handle's band.
+    pub rect: CRect,
+    /// The owning split's axis length — a NESTED split's own, not the container's.
+    pub parent_span: f64,
+    /// The owning split's flex-weight sum.
+    pub flex_sum: f64,
+    /// The leading child's flex weight; `0` for a fixed child, which is not draggable.
+    pub leading_weight: f64,
+    /// The trailing child's flex weight; `0` fixed.
+    pub trailing_weight: f64,
+}
+
+impl DividerHandle {
+    const fn of(divider: &split_layout::Divider) -> Self {
+        Self {
+            split: Uuid {
+                bytes: divider.split.bytes(),
+            },
+            #[expect(
+                clippy::cast_possible_truncation,
+                reason = "a child index counts siblings of one split; the decoder caps a tree far below 2^32"
+            )]
+            child_index: divider.child_index as u32,
+            axis: if matches!(divider.axis, SplitAxis::Vertical) {
+                1
+            } else {
+                0
+            },
+            rect: CRect::of(divider.rect),
+            parent_span: divider.parent_span,
+            flex_sum: divider.flex_sum,
+            leading_weight: divider.leading_weight,
+            trailing_weight: divider.trailing_weight,
+        }
+    }
+
+    /// The rule's own shape again, so the two predicates read one implementation.
+    const fn resolve(self) -> split_layout::Divider {
+        split_layout::Divider {
+            split: SplitNodeId::from_bytes(self.split.bytes),
+            child_index: self.child_index as usize,
+            axis: axis_from(self.axis),
+            rect: self.rect.resolve(),
+            parent_span: self.parent_span,
+            flex_sum: self.flex_sum,
+            leading_weight: self.leading_weight,
+            trailing_weight: self.trailing_weight,
+        }
+    }
+}
+
+/// The band thickness a seam is drawn and hit with.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
     reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
 )]
-pub unsafe extern "C" fn slopdesk_ws_extents(
-    shares: *const Share,
+pub const extern "C" fn slopdesk_ws_divider_thickness() -> f64 {
+    split_layout::DIVIDER_THICKNESS
+}
+
+/// Every seam of `nodes` solved into `rect`, in pre-order.
+///
+/// Returns the seam count NEEDED, or 0 for a tree the walk could not rebuild — the same answer a
+/// single leaf gives, and the right one either way: nothing to drag.
+///
+/// # Safety
+/// `nodes` must be null or point to `count` live [`TreeNode`]s; `out` null or writable for `cap`
+/// [`DividerHandle`]s.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_ws_dividers(
+    nodes: *const TreeNode,
     count: usize,
-    total: f64,
-    out: *mut f64,
+    rect: CRect,
+    thickness: f64,
+    out: *mut DividerHandle,
     cap: usize,
 ) -> usize {
-    // SAFETY: the caller's obligations, restated above; `borrow_array` states its own.
-    let children: Vec<WeightedChild> = unsafe { borrow_array(shares, count) }
-        .iter()
-        .map(|share| {
-            let weight = if share.is_fixed {
-                SplitWeight::Fixed(share.value)
-            } else {
-                SplitWeight::Flex(share.value)
-            };
-            // The subtree is never read by the partition — only the shares are — so a placeholder
-            // leaf is the honest stand-in rather than a cost the caller pays to encode.
-            WeightedChild::new(weight, SplitNode::Leaf(PaneId::from_bytes([0; 16])))
-        })
-        .collect();
-    let extents = split_layout::extents(&children, total);
-    if extents.len() > cap || out.is_null() {
-        return extents.len();
+    // SAFETY: the caller's obligations, restated above; the helpers state their own.
+    unsafe {
+        let Some(root) = borrow_tree(nodes, count) else {
+            return 0;
+        };
+        let handles: Vec<DividerHandle> = split_layout::dividers(&root, rect.resolve(), thickness)
+            .iter()
+            .map(DividerHandle::of)
+            .collect();
+        if handles.len() > cap || out.is_null() {
+            return handles.len();
+        }
+        // SAFETY: `handles.len() <= cap`, `out` is writable for `cap` by the caller's obligation,
+        // and `handles` was allocated inside this call so it cannot overlap.
+        core::ptr::copy_nonoverlapping(handles.as_ptr(), out, handles.len());
+        handles.len()
     }
-    // SAFETY: `extents.len() <= cap`, `out` is writable for `cap` by the caller's obligation, and
-    // `extents` was allocated inside this call.
-    unsafe { core::ptr::copy_nonoverlapping(extents.as_ptr(), out, extents.len()) };
-    extents.len()
+}
+
+/// Whether `handle` can still be dragged toward one of its children — the hover cursor's one-way
+/// versus two-way answer, from the same floor the drag clamps at.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_ws_divider_can_move(handle: DividerHandle, toward_leading: bool) -> bool {
+    let divider = handle.resolve();
+    if toward_leading {
+        divider.can_move_toward_leading()
+    } else {
+        divider.can_move_toward_trailing()
+    }
+}
+
+/// A live drag's proposed leading weight, clamped so both panes keep their pixel floor.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_ws_divider_clamped_weight(handle: DividerHandle, proposed: f64) -> f64 {
+    handle.resolve().clamped_leading_weight(proposed)
+}
+
+/// One incremental pixel drag along `handle`'s axis, as the flex-weight delta to offset from.
+///
+/// The seam's own span and flex sum are already inside the handle, so a caller cannot pair one
+/// split's span with another's partition. A handle without geometry answers `0`.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_ws_divider_weight_delta(handle: DividerHandle, pixel_increment: f64) -> f64 {
+    handle.resolve().weight_delta(pixel_increment)
+}
+
+/// The live drag's ratio readout: the pair as whole percentages that sum to exactly 100.
+///
+/// `false` is a degenerate pair — a fixed side, or float residue — and then neither out-param is
+/// touched: the readout is ABSENT rather than wrong. The two percentages cross as two numbers
+/// rather than one plus a complement, so no caller can round the second one itself.
+///
+/// # Safety
+/// `leading` and `trailing` must each be null or point to one writable `u32`, live for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_ws_divider_percents(
+    handle: DividerHandle,
+    leading: *mut u32,
+    trailing: *mut u32,
+) -> bool {
+    let Some((lead, trail)) = handle.resolve().split_percents() else {
+        return false;
+    };
+    // SAFETY: the caller's obligations, restated above.
+    unsafe {
+        if !leading.is_null() {
+            leading.write(lead);
+        }
+        if !trailing.is_null() {
+            trailing.write(trail);
+        }
+    }
+    true
 }
 
 // MARK: The tree's own operations
@@ -2461,210 +2049,6 @@ pub unsafe extern "C" fn slopdesk_ws_tree_structurally_equal(
         return false;
     };
     lhs.is_structurally_equal(&rhs)
-}
-
-// MARK: The arrange commands
-//
-// Align, distribute and tidy read `(id, frame)` and write `(id, frame)`, so what crosses is the
-// same `Frame` pair the layout solver already answers in. The plane itself never crosses: a
-// `Canvas` carries specs, groups and z-order that none of these rules consults, and it is what
-// SwiftUI diffs.
-
-/// Reads the `(id, frame)` pairs an arrange command is given.
-///
-/// # Safety
-/// `targets` must be null or point to `count` live [`Frame`]s.
-#[expect(
-    unsafe_code,
-    reason = "this IS the boundary: reading through a caller's pointer"
-)]
-unsafe fn borrow_targets(targets: *const Frame, count: usize) -> Vec<(PaneId, Rect)> {
-    if targets.is_null() || count == 0 {
-        return Vec::new();
-    }
-    // SAFETY: non-null and, by the caller's obligation, `count` live `Frame`s for the call.
-    let slice = unsafe { core::slice::from_raw_parts(targets, count) };
-    slice
-        .iter()
-        .map(|frame| (PaneId::from_bytes(frame.id.bytes), frame.rect.resolve()))
-        .collect()
-}
-
-/// Writes the frames an arrange command moved, under §4's convention.
-///
-/// # Safety
-/// `out` must be null, or writable for `cap` [`Frame`]s for the call.
-#[expect(
-    unsafe_code,
-    reason = "this IS the boundary: writing through a caller's pointer"
-)]
-unsafe fn deliver_moved(moved: &BTreeMap<PaneId, Rect>, out: *mut Frame, cap: usize) -> usize {
-    let answers: Vec<Frame> = moved
-        .iter()
-        .map(|(id, rect)| {
-            Frame {
-                id: Uuid { bytes: id.bytes() },
-                rect: CRect::of(*rect),
-            }
-        })
-        .collect();
-    // SAFETY: the caller's obligation, restated; `deliver` states its own.
-    unsafe { deliver_frames(&answers, out, cap) }
-}
-
-/// The named panes flush to one edge or centre of THEIR bounding box.
-///
-/// Answers only the panes that MOVED, so a caller applies it by lookup and a pane nobody named is
-/// untouched by construction rather than by a copy that happened to reproduce it.
-///
-/// # Safety
-/// `targets` must be null or point to `count` live [`Frame`]s; `out` null or writable for `cap`.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub unsafe extern "C" fn slopdesk_ws_align(
-    targets: *const Frame,
-    count: usize,
-    edge: u8,
-    out: *mut Frame,
-    cap: usize,
-) -> usize {
-    // An unknown byte aligns LEFT rather than panicking — this is a boundary, and a caller that
-    // sends a case this build has never heard of must not take the process down. The mapping itself
-    // is `AlignEdge::ALL`'s order and is not restated here: a hand-written match ending in
-    // `_ => Left` would silently swallow a seventh edge as a left-align.
-    let edge = AlignEdge::from_index(edge).unwrap_or(AlignEdge::Left);
-    // SAFETY: the caller's obligations, restated above; the helpers state their own.
-    unsafe {
-        let pairs = borrow_targets(targets, count);
-        deliver_moved(&canvas_arrange::aligned(&pairs, edge), out, cap)
-    }
-}
-
-/// The named panes spread so the gaps between adjacent ones are equal.
-///
-/// # Safety
-/// As [`slopdesk_ws_align`].
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub unsafe extern "C" fn slopdesk_ws_distribute(
-    targets: *const Frame,
-    count: usize,
-    horizontal: bool,
-    out: *mut Frame,
-    cap: usize,
-) -> usize {
-    // SAFETY: the caller's obligations, restated above; the helpers state their own.
-    unsafe {
-        let pairs = borrow_targets(targets, count);
-        deliver_moved(&canvas_arrange::distributed(&pairs, horizontal), out, cap)
-    }
-}
-
-/// A group's members affinely remapped from their own bounding box into `proposed`.
-///
-/// `targets` is the group's members and nothing else — the old box is derived from them here, so
-/// there is no second box for a caller to compute and get wrong. The proposed box is floored at the
-/// minimum pane size and every member is clamped back inside it, because the non-overlap solver
-/// moves a group as one rigid body from that box and a member outside it corrupts the sweep.
-///
-/// # Safety
-/// As [`slopdesk_ws_align`].
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub unsafe extern "C" fn slopdesk_ws_resize_group(
-    targets: *const Frame,
-    count: usize,
-    proposed: CRect,
-    out: *mut Frame,
-    cap: usize,
-) -> usize {
-    // SAFETY: the caller's obligations, restated above; the helpers state their own.
-    unsafe {
-        let pairs = borrow_targets(targets, count);
-        deliver_moved(
-            &canvas_arrange::resized_group(&pairs, proposed.resolve()),
-            out,
-            cap,
-        )
-    }
-}
-
-/// Every pane packed into a square grid at the plane's origin, in the order given.
-///
-/// The camera is deliberately NOT this call's business — re-centring afterwards is a separate
-/// decision, and one the caller may not want.
-///
-/// # Safety
-/// As [`slopdesk_ws_align`].
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub unsafe extern "C" fn slopdesk_ws_tidy(
-    items: *const Frame,
-    count: usize,
-    gutter: f64,
-    out: *mut Frame,
-    cap: usize,
-) -> usize {
-    // SAFETY: the caller's obligations, restated above; the helpers state their own.
-    unsafe {
-        let pairs = borrow_targets(items, count);
-        deliver_moved(&canvas_arrange::tidied(&pairs, gutter), out, cap)
-    }
-}
-
-/// The tidy gutter and the default item size, exported rather than transcribed.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub const extern "C" fn slopdesk_ws_tidy_gutter() -> f64 {
-    canvas::TIDY_GUTTER
-}
-
-/// The box containing every frame given. False for none — an empty plane has no box, which is a
-/// different answer from a box at the origin.
-///
-/// # Safety
-/// `frames` must be null or point to `count` live [`CRect`]s; `answer` null or writable for one.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub unsafe extern "C" fn slopdesk_ws_bounding_box(
-    frames: *const CRect,
-    count: usize,
-    answer: *mut CRect,
-) -> bool {
-    if frames.is_null() || count == 0 {
-        return false;
-    }
-    // SAFETY: non-null and, by the caller's obligation, `count` live `CRect`s for the call.
-    let rects: Vec<Rect> = unsafe { core::slice::from_raw_parts(frames, count) }
-        .iter()
-        .map(|rect| rect.resolve())
-        .collect();
-    let Some(box_rect) = canvas_arrange::bounding_box(&rects) else {
-        return false;
-    };
-    if !answer.is_null() {
-        // SAFETY: non-null and, by the caller's obligation, writable for one `CRect`.
-        unsafe { *answer = CRect::of(box_rect) };
-    }
-    true
 }
 
 // MARK: The re-tile layouts
@@ -3766,12 +3150,14 @@ mod tests {
     use slopdesk_workspace::{PaneId, SplitAxis, SplitNode, SplitNodeId, SplitWeight, WeightedChild};
 
     use super::{
-        CPoint, CRect, CVideoTarget, Frame, KeyedTab, Share, Span, TreeNode, Uuid, decode_tree, encode_tree,
-        slopdesk_ws_canvas_point, slopdesk_ws_decode_video_target, slopdesk_ws_encode_video_target,
-        slopdesk_ws_extents, slopdesk_ws_focus_cycle, slopdesk_ws_focus_neighbor, slopdesk_ws_project_key,
-        slopdesk_ws_resize_group, slopdesk_ws_sanitize, slopdesk_ws_screen_rect, slopdesk_ws_section_header,
-        slopdesk_ws_section_precedes, slopdesk_ws_send_keys, slopdesk_ws_solve_layout,
-        slopdesk_ws_successor_after_close, slopdesk_ws_tree_removing, slopdesk_ws_tree_splitting,
+        CRect, CVideoTarget, DividerHandle, Frame, KeyedTab, Span, TreeNode, Uuid, decode_tree, encode_tree,
+        slopdesk_ws_cwd_badge_path, slopdesk_ws_decode_video_target, slopdesk_ws_divider_can_move,
+        slopdesk_ws_divider_clamped_weight, slopdesk_ws_divider_percents, slopdesk_ws_divider_thickness,
+        slopdesk_ws_divider_weight_delta, slopdesk_ws_dividers, slopdesk_ws_encode_video_target,
+        slopdesk_ws_focus_cycle, slopdesk_ws_focus_neighbor, slopdesk_ws_project_key,
+        slopdesk_ws_section_header, slopdesk_ws_section_precedes, slopdesk_ws_send_keys,
+        slopdesk_ws_solve_layout, slopdesk_ws_successor_after_close, slopdesk_ws_tree_removing,
+        slopdesk_ws_tree_splitting,
     };
 
     const fn id(byte: u8) -> Uuid {
@@ -3889,6 +3275,39 @@ mod tests {
             unsafe { slopdesk_ws_project_key(core::ptr::null(), 0, false, core::ptr::null_mut(), 0) },
             0
         );
+    }
+
+    #[test]
+    fn the_badge_door_carries_the_collapse_and_the_directory_marker_across() {
+        let badge = |text| {
+            transform(
+                |bytes, len, out, cap| unsafe { slopdesk_ws_cwd_badge_path(bytes, len, out, cap) },
+                text,
+            )
+        };
+        assert_eq!(badge("/Users/me/slop-desk"), "~/slop-desk/");
+        assert_eq!(badge("/etc"), "/etc/");
+        assert!(
+            badge("").is_empty(),
+            "an empty path has an empty badge, not a slash"
+        );
+    }
+
+    #[test]
+    fn a_short_badge_buffer_is_told_the_length_it_should_have_lent() {
+        let path = b"/Users/me/slop-desk";
+        let needed =
+            unsafe { slopdesk_ws_cwd_badge_path(path.as_ptr(), path.len(), core::ptr::null_mut(), 0) };
+        assert_eq!(needed, "~/slop-desk/".len());
+        let mut cramped = [0_u8; 4];
+        assert_eq!(
+            unsafe {
+                slopdesk_ws_cwd_badge_path(path.as_ptr(), path.len(), cramped.as_mut_ptr(), cramped.len())
+            },
+            needed,
+            "the answer is the length NEEDED, and nothing is written",
+        );
+        assert_eq!(cramped, [0; 4]);
     }
 
     #[test]
@@ -4046,46 +3465,77 @@ mod tests {
         assert!(out.iter().take(2).all(|frame| frame.rect.height == 200.0));
     }
 
-    /// The group-handle resize, across the boundary the way `Canvas+Ops.resizingGroup` calls it.
-    ///
-    /// The box the members currently occupy is derived on the far side rather than passed in, so
-    /// what this proves is that a `CRect` handed BY VALUE arrives intact: every other arrange door
-    /// takes only pointers, and a struct-by-value argument that the header and the crate disagreed
-    /// about would misread the box rather than fail to link.
     #[test]
-    fn a_group_resize_scales_its_members_and_keeps_them_inside_the_new_box() {
-        let members = [
-            Frame {
-                id: id(1),
-                rect: rect(0.0, 0.0, 400.0, 400.0),
+    fn the_same_walk_answers_the_seams_between_those_tiles() {
+        let nodes = [
+            TreeNode {
+                kind: 1,
+                id: id(9),
+                axis: 0,
+                weight_is_fixed: false,
+                child_count: 2,
+                weight: 1.0,
             },
-            Frame {
-                id: id(2),
-                rect: rect(400.0, 0.0, 400.0, 400.0),
-            },
+            leaf(1),
+            leaf(2),
         ];
-        let mut out = [Frame {
-            id: id(0),
+        let bound = rect(0.0, 0.0, 400.0, 200.0);
+        let needed = unsafe {
+            slopdesk_ws_dividers(nodes.as_ptr(), nodes.len(), bound, 16.0, core::ptr::null_mut(), 0)
+        };
+        assert_eq!(needed, 1, "two columns share one seam");
+        let mut out = [DividerHandle {
+            split: id(0),
+            child_index: 0,
+            axis: 0,
             rect: rect(0.0, 0.0, 0.0, 0.0),
-        }; 4];
-        let count = unsafe {
-            slopdesk_ws_resize_group(
-                members.as_ptr(),
-                members.len(),
-                rect(0.0, 0.0, 1600.0, 400.0),
+            parent_span: 0.0,
+            flex_sum: 0.0,
+            leading_weight: 0.0,
+            trailing_weight: 0.0,
+        }; 2];
+        let written = unsafe {
+            slopdesk_ws_dividers(
+                nodes.as_ptr(),
+                nodes.len(),
+                bound,
+                16.0,
                 out.as_mut_ptr(),
                 out.len(),
             )
         };
-        assert_eq!(count, 2);
-        let widths: Vec<f64> = out.iter().take(2).map(|frame| frame.rect.width).collect();
-        assert_eq!(
-            widths,
-            vec![800.0, 800.0],
-            "a doubled box doubles each member exactly"
-        );
-        let xs: Vec<f64> = out.iter().take(2).map(|frame| frame.rect.x).collect();
-        assert_eq!(xs, vec![0.0, 800.0], "the internal layout survives the remap");
+        assert_eq!(written, 1);
+        let seam = out[0];
+        assert_eq!(seam.split, id(9), "the seam names the split that owns it");
+        assert_eq!(seam.axis, 0);
+        assert_eq!(seam.rect.x, 200.0 - 8.0, "the band is centred on the cut");
+        assert_eq!(seam.rect.width, 16.0);
+        assert_eq!(seam.parent_span, 400.0);
+        assert_eq!((seam.leading_weight, seam.trailing_weight), (1.0, 1.0));
+        assert!(slopdesk_ws_divider_can_move(seam, true));
+        assert!(slopdesk_ws_divider_can_move(seam, false));
+        // Span 400 at a flex sum of 2: the 160 pt column floor is weight 0.8, either side.
+        assert_eq!(slopdesk_ws_divider_clamped_weight(seam, 0.0), 0.8);
+        assert_eq!(slopdesk_ws_divider_clamped_weight(seam, 9.0), 1.2);
+        assert_eq!(slopdesk_ws_divider_thickness(), 16.0);
+        // The drag reads the seam's OWN span and flex sum out of the handle it was given: 120 px
+        // over 400 pt at a flex sum of 2 is 0.6 of weight, which renders as 120 pt of movement.
+        assert_eq!(slopdesk_ws_divider_weight_delta(seam, 120.0), 0.6);
+
+        let (mut lead, mut trail) = (0, 0);
+        // SAFETY: two live local u32s, borrowed for the duration of the call.
+        let readable = unsafe { slopdesk_ws_divider_percents(seam, &raw mut lead, &raw mut trail) };
+        assert!(readable);
+        assert_eq!((lead, trail), (50, 50));
+
+        let fixed_side = DividerHandle {
+            leading_weight: 0.0,
+            ..seam
+        };
+        // SAFETY: the same two locals, still live.
+        let absent = unsafe { slopdesk_ws_divider_percents(fixed_side, &raw mut lead, &raw mut trail) };
+        assert!(!absent, "a fixed side has no ratio to read");
+        assert_eq!((lead, trail), (50, 50), "a refusal writes nothing");
     }
 
     #[test]
@@ -4127,53 +3577,6 @@ mod tests {
             };
             assert_eq!(count, 0, "a tree that cannot be rebuilt draws nothing");
         }
-    }
-
-    #[test]
-    fn fixed_children_are_reserved_before_the_flex_ones_divide_the_rest() {
-        let shares = [
-            Share {
-                is_fixed: true,
-                value: 100.0,
-            },
-            Share {
-                is_fixed: false,
-                value: 1.0,
-            },
-            Share {
-                is_fixed: false,
-                value: 1.0,
-            },
-        ];
-        let mut out = [0.0_f64; 3];
-        let count =
-            unsafe { slopdesk_ws_extents(shares.as_ptr(), shares.len(), 500.0, out.as_mut_ptr(), out.len()) };
-        assert_eq!(count, 3);
-        assert_eq!(out, [100.0, 200.0, 200.0]);
-    }
-
-    #[test]
-    fn a_nan_coordinate_becomes_a_number_before_it_can_poison_a_union() {
-        let sanitized = slopdesk_ws_sanitize(rect(f64::NAN, f64::INFINITY, -5.0, f64::NAN));
-        assert!(sanitized.x.is_finite() && sanitized.y.is_finite());
-        assert!(sanitized.width > 0.0 && sanitized.height > 0.0);
-    }
-
-    #[test]
-    fn the_camera_round_trips_a_point_through_the_screen() {
-        let camera = CPoint { x: 30.0, y: -12.0 };
-        let screen = slopdesk_ws_screen_rect(rect(100.0, 50.0, 10.0, 10.0), camera);
-        let back = slopdesk_ws_canvas_point(
-            CPoint {
-                x: screen.x,
-                y: screen.y,
-            },
-            camera,
-        );
-        assert!(
-            (back.x - 100.0).abs() < f64::EPSILON && (back.y - 50.0).abs() < f64::EPSILON,
-            "the camera is a translation, so it inverts exactly"
-        );
     }
 
     /// The round trip is the whole safety of the tree ops: every one of them reads a walk and

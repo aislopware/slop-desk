@@ -16,13 +16,14 @@
 
 import SlopDeskWorkspaceModel
 import XCTest
+@testable import SlopDeskClientCore
 @testable import SlopDeskClientUI
 @testable import SlopDeskWorkspaceCore
 
 @MainActor
 final class RailRowsMemoTests: XCTestCase {
     private func makeStore() -> WorkspaceStore {
-        let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in MountTestPaneSession(seed.spec) })
+        let store = WorkspaceStore(makeSession: { seed in MountTestPaneSession(seed.spec) })
         store.attachLoopbackWorkspaceDocument()
         return store
     }
@@ -256,7 +257,8 @@ final class RailRowsMemoTests: XCTestCase {
     // MARK: - Search path (perf audit follow-up: an active query must NOT bypass the memo)
 
     /// The sidebar's search path composes `filtered`/`sectionedByProject(query:)` over the MEMOIZED rows
-    /// (`NavigatorColumn.renderedRows` no longer falls back to a direct `RailRowsBuilder.rows(for:)` while
+    /// (neither navigator — AppKit's `MacNavigatorColumn` nor the phone's `NavigatorColumn` — falls back to
+    /// a direct `RailRowsBuilder.rows(for:)` while
     /// a query is active — that re-registered every volatile dict on the body and re-ran the full O(panes)
     /// build per tick). Two pins: (1) a volatile tick while a query is up stays a cache HIT (`buildCount`
     /// frozen, same array snapshot), and (2) a structural change while searching still rebuilds and the
@@ -371,8 +373,8 @@ final class RailRowsMemoTests: XCTestCase {
 
     // MARK: - `RailStructureKey.titledByProcess`
 
-    /// Pins the pure escape-order guard shared by the memo AND the titlebar / window-title reads
-    /// (``SlateTitlebar``'s `activeTitle`, `WorkspaceRootView.windowTitle(for:)`): only a terminal pane with
+    /// Pins the pure escape-order guard shared by the memo AND the window-title read
+    /// (``WorkspaceChromePolicy/windowTitle(for:)``): only a terminal pane with
     /// a spec, no cwd folder name, and no non-empty user rename would actually resolve its title from the
     /// foreground-process dict — every OTHER shape must return `false` so those call sites can skip the
     /// dict read entirely without changing what the user sees.

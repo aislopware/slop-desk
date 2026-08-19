@@ -65,24 +65,159 @@ public enum SplitLayoutSolver {
         return frames
     }
 
-    /// The point-extent of each child along the split axis within `total` points.
+    /// The band a divider is drawn and hit with. Wide enough to grab on a trackpad; the hairline
+    /// drawn inside it can be thinner.
+    public static let dividerThickness = CGFloat(slopdesk_ws_divider_thickness())
+
+    /// Every draggable seam of `root` solved into `rect`, in pre-order.
     ///
-    /// `public` (not private) so ``SplitTreeRenderModel`` — which lives one module up in
-    /// `SlopDeskWorkspaceCore` — reuses the EXACT partition the solver tiles to, and its divider
-    /// handles land on the seams rather than a pixel off them.
-    public static func extents(for children: [WeightedChild], total: CGFloat) -> [CGFloat] {
-        var shares = children.map(\.weight.ffi)
-        return shares.withUnsafeMutableBufferPointer { buffer -> [CGFloat] in
-            var out = [Double](repeating: 0, count: buffer.count)
-            let needed = out.withUnsafeMutableBufferPointer { answer in
-                slopdesk_ws_extents(buffer.baseAddress, buffer.count, total, answer.baseAddress, answer.count)
+    /// The same walk the solve crosses as, answered by the same partition — a seam placed by a
+    /// second copy of that partition would sit a pixel off the edge it is supposed to drag.
+    public static func dividers(
+        _ root: SplitNode,
+        in rect: CGRect,
+        thickness: CGFloat = Self.dividerThickness,
+    ) -> [SplitDividerHandle] {
+        var walk = WsTree.walk(root)
+        return walk.withUnsafeMutableBufferPointer { nodes -> [SplitDividerHandle] in
+            let ask = { (out: inout UnsafeMutableBufferPointer<SlopDeskWsDivider>) in
+                slopdesk_ws_dividers(
+                    nodes.baseAddress, nodes.count, SlopDeskWsRect(rect), thickness,
+                    out.baseAddress, out.count,
+                )
             }
-            // One extent per child, always — a mismatch would mean the two sides disagree about how
-            // many children there are, and silently returning a short array would misplace a divider.
-            guard needed == out.count else { return [] }
-            return out.map { CGFloat($0) }
+            let empty = SlopDeskWsDivider()
+            var out = [SlopDeskWsDivider](repeating: empty, count: max(4, nodes.count))
+            var needed = out.withUnsafeMutableBufferPointer(ask)
+            if needed > out.count {
+                out = [SlopDeskWsDivider](repeating: empty, count: needed)
+                needed = out.withUnsafeMutableBufferPointer(ask)
+            }
+            guard needed <= out.count else { return [] }
+            return out[0..<needed].map(SplitDividerHandle.init(ffi:))
         }
     }
+}
+
+// MARK: - A draggable seam
+
+/// One seam between two adjacent siblings of a split: where the handle is drawn, and everything a
+/// DRAG on it needs.
+///
+/// ``parentSpan`` is the OWNING split's axis length — for a nested split its own rect, not the
+/// container's — so the pixel→weight conversion moves the seam 1:1 with the cursor wherever it
+/// sits. ``leadingWeight`` is the anchor a live drag reads once at drag start and offsets from;
+/// ``trailingWeight`` is the other half of the pair the clamp brackets. A `0` weight is a `.fixed`
+/// child, which is not draggable at all.
+///
+/// The three answers below — both directions' movability and the clamp — are the crate's
+/// (`rust/slopdesk-workspace`'s `split_layout`), so the arrow the hover cursor shows and the seam
+/// the gesture actually produces read one rule rather than two.
+public struct SplitDividerHandle: Equatable, Sendable {
+    public let splitID: SplitNodeID
+    /// The LEADING child: the seam sits between it and `childIndex + 1`, matching
+    /// ``WorkspaceTreeOps/resizeDivider(splitID:leadingChildIndex:delta:in:)``.
+    public let childIndex: Int
+    /// The owning split's axis: a `.horizontal` split (columns) yields a seam dragged left/right.
+    public let axis: SplitAxis
+    public let rect: CGRect
+    public let parentSpan: CGFloat
+    public let flexSum: CGFloat
+    public let leadingWeight: Double
+    public let trailingWeight: Double
+
+    public init(
+        splitID: SplitNodeID,
+        childIndex: Int,
+        axis: SplitAxis,
+        rect: CGRect,
+        parentSpan: CGFloat = 0,
+        flexSum: CGFloat = 1,
+        leadingWeight: Double = 0,
+        trailingWeight: Double = 0,
+    ) {
+        self.splitID = splitID
+        self.childIndex = childIndex
+        self.axis = axis
+        self.rect = rect
+        self.parentSpan = parentSpan
+        self.flexSum = flexSum
+        self.leadingWeight = leadingWeight
+        self.trailingWeight = trailingWeight
+    }
+
+    init(ffi: SlopDeskWsDivider) {
+        self.init(
+            splitID: SplitNodeID(ffi: ffi.split),
+            childIndex: Int(ffi.child_index),
+            axis: ffi.axis == 1 ? .vertical : .horizontal,
+            rect: ffi.rect.rect,
+            parentSpan: ffi.parent_span,
+            flexSum: ffi.flex_sum,
+            leadingWeight: ffi.leading_weight,
+            trailingWeight: ffi.trailing_weight,
+        )
+    }
+
+    private var ffi: SlopDeskWsDivider {
+        SlopDeskWsDivider(
+            split: splitID.ffi,
+            child_index: UInt32(clamping: childIndex),
+            axis: axis == .vertical ? 1 : 0,
+            rect: SlopDeskWsRect(rect),
+            parent_span: parentSpan,
+            flex_sum: flexSum,
+            leading_weight: leadingWeight,
+            trailing_weight: trailingWeight,
+        )
+    }
+
+    /// Whether the seam can still move TOWARD the leading child — shrinking it, growing its
+    /// neighbour. Dead once that child sits at the solver's pixel floor, which is exactly where
+    /// ``clampedLeadingWeight(_:)`` stops a live drag.
+    public var canMoveTowardLeading: Bool { slopdesk_ws_divider_can_move(ffi, true) }
+
+    /// The mirror: movable toward the TRAILING child.
+    public var canMoveTowardTrailing: Bool { slopdesk_ws_divider_can_move(ffi, false) }
+
+    /// A live drag's proposed leading weight, clamped so BOTH panes keep that pixel floor.
+    public func clampedLeadingWeight(_ proposed: Double) -> Double {
+        slopdesk_ws_divider_clamped_weight(ffi, proposed)
+    }
+
+    /// One incremental pixel drag along this seam's axis, as the weight delta to offset from:
+    /// `Δpixel / parentSpan * flexSum`, the inverse of a flex child's `extent = weight/flexSum·span`.
+    /// The seam's own span and flex sum come from the handle, so the seam tracks the cursor 1:1 in a
+    /// nested split as well as a top-level one. A handle without geometry answers 0.
+    public func weightDelta(pixelIncrement: CGFloat) -> Double {
+        slopdesk_ws_divider_weight_delta(ffi, Double(pixelIncrement))
+    }
+
+    /// The live drag's ratio readout (`62 · 38`): the pair as whole percentages summing to exactly
+    /// 100, or `nil` for a degenerate pair (a `.fixed` side reports weight 0) — the cue is then
+    /// absent, never wrong.
+    public var splitPercents: (leading: Int, trailing: Int)? {
+        var leading: UInt32 = 0
+        var trailing: UInt32 = 0
+        guard slopdesk_ws_divider_percents(ffi, &leading, &trailing) else { return nil }
+        return (Int(leading), Int(trailing))
+    }
+
+    /// A **stable** SwiftUI identity for the handle — its STRUCTURAL position in the tree,
+    /// INDEPENDENT of the live `rect`/`leadingWeight`. A `ForEach` rendering the dividers MUST key
+    /// on this, NOT `\.self`: the synthesized `==` includes `rect`+`leadingWeight`, which change on
+    /// EVERY live-drag frame, so a `\.self` id changes every frame → SwiftUI tears down + recreates
+    /// the divider view mid-drag and CANCELS the in-flight resize gesture (the drag stalls partway
+    /// and fires its release early, so the final reflow never lands). There is at most one seam per
+    /// `(split, leading-index)`, so this is unique per layout.
+    public struct Key: Hashable, Sendable {
+        public let splitID: SplitNodeID
+        public let childIndex: Int
+        public let axis: SplitAxis
+    }
+
+    /// The stable identity key (see ``Key``). Use this for `ForEach`/`id:` — never `\.self`.
+    public var key: Key { Key(splitID: splitID, childIndex: childIndex, axis: axis) }
 }
 
 extension SplitWeight {
@@ -100,5 +235,6 @@ extension SplitWeight {
         }
     }
 
+    /// The flat pair the weights codec writes a dragged split's shares as.
     var ffi: SlopDeskWsShare { SlopDeskWsShare(is_fixed: isFixed, value: magnitude) }
 }

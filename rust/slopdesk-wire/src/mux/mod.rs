@@ -30,7 +30,7 @@ pub mod decoder;
 pub mod envelope;
 pub mod flow;
 
-pub use channels::{ChannelState, ChannelTable};
+pub use channels::{ChannelState, ChannelTable, DropReason, FrameKind, RoutingDecision};
 pub use decoder::MuxFrameDecoder;
 pub use envelope::{MIN_MUX_FRAME_LENGTH, MuxCloseReason, MuxFrame, MuxFrameType, PREFIX_LENGTH};
 pub use flow::{

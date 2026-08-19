@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import SlopDeskAgentDetect
 import SlopDeskWorkspaceModel
 
@@ -24,14 +25,7 @@ public enum AttentionEdge {
     /// into the attention state, not a repeat of the state we are already in). `.idle` / `.working` /
     /// `.none` are never notify-worthy targets (working is in-flight; idle/none recede).
     public static func shouldNotify(prev: ClaudeStatus, current: ClaudeStatus) -> Bool {
-        guard prev != current else { return false }
-        switch current {
-        case .needsPermission,
-             .done: return true
-        case .none,
-             .idle,
-             .working: return false
-        }
+        slopdesk_agent_attention_edge(prev.ffiByte, current.ffiByte)
     }
 
     /// Whether `prev → current` is a HOOK-LESS COMPLETION edge: the agent left an active state
@@ -42,27 +36,14 @@ public enum AttentionEdge {
     /// of an already-notified finish, never a completion; `.none → .idle` is presence appearing,
     /// not a finish.
     public static func isCompletion(prev: ClaudeStatus, current: ClaudeStatus) -> Bool {
-        guard current == .idle else { return false }
-        switch prev {
-        case .working,
-             .needsPermission: return true
-        case .none,
-             .idle,
-             .done: return false
-        }
+        slopdesk_agent_attention_completion(prev.ffiByte, current.ffiByte)
     }
 
     /// Whether `status` is an ATTENTION state — the level predicate the ring / tab-glow read (a pure
     /// function of the CURRENT status; no history). `needsPermission` (blocked, the most urgent) and
     /// `done` (finished, waiting to be seen) draw the attention chrome; everything else is quiet.
     public static func isAttention(_ status: ClaudeStatus) -> Bool {
-        switch status {
-        case .needsPermission,
-             .done: true
-        case .none,
-             .idle,
-             .working: false
-        }
+        slopdesk_agent_is_attention(status.ffiByte)
     }
 }
 
@@ -81,26 +62,19 @@ public enum AttentionJump {
     ///
     /// Priority: a `.needsPermission` pane ALWAYS wins over a `.done` pane regardless of position
     /// (blocked is the most urgent — get unblocked first); within a bucket the FIRST pane in `panes`
-    /// (the oldest in traversal order) wins. A single pass keeps the two candidates.
+    /// (the oldest in traversal order) wins. The ranking is `slopdesk-agent::attention`, which answers
+    /// a POSITION in the list it was handed — the pane identities never leave Swift.
     public static func oldestPane(
         in panes: some Sequence<PaneID>,
         status: (PaneID) -> ClaudeStatus,
     ) -> PaneID? {
-        var firstBlocked: PaneID?
-        var firstDone: PaneID?
-        for id in panes {
-            switch status(id) {
-            case .needsPermission:
-                if firstBlocked == nil { firstBlocked = id }
-            case .done:
-                if firstDone == nil { firstDone = id }
-            case .none,
-                 .idle,
-                 .working:
-                continue
-            }
+        let ordered = Array(panes)
+        let statuses = ordered.map { status($0).ffiByte }
+        let position = statuses.withUnsafeBufferPointer {
+            slopdesk_agent_attention_oldest($0.baseAddress, $0.count)
         }
-        return firstBlocked ?? firstDone
+        guard position >= 0, position < ordered.count else { return nil }
+        return ordered[position]
     }
 }
 
@@ -136,18 +110,21 @@ public enum AttentionWalk {
     /// - `visited`: every pane this walk has already stepped onto.
     /// - `origin`: the pane the walk started from, `nil` before the first step.
     /// - `isPaneLive`: whether a pane id still exists in the tree (a closed origin pops to `nil`).
+    ///
+    /// The rule is `slopdesk-agent::attention`: the visited set crosses as one flag per queue entry
+    /// and the answer comes back as a POSITION, so a pane id is never anything but Swift's.
     public static func step(
         queue: [PaneID],
         visited: Set<PaneID>,
         origin: PaneID?,
         isPaneLive: (PaneID) -> Bool,
     ) -> Step {
-        if let next = queue.first(where: { !visited.contains($0) }) {
-            return .advance(to: next)
+        let home = origin.flatMap { isPaneLive($0) ? $0 : nil }
+        let seen = queue.map { visited.contains($0) }
+        let outcome = seen.withUnsafeBufferPointer {
+            slopdesk_agent_attention_walk($0.baseAddress, $0.count, home != nil)
         }
-        if let origin, isPaneLive(origin) {
-            return .popHome(to: origin)
-        }
-        return .popHome(to: nil)
+        guard outcome >= 0, outcome < queue.count else { return .popHome(to: home) }
+        return .advance(to: queue[outcome])
     }
 }

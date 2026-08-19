@@ -79,6 +79,19 @@ impl InputModifiers {
     pub const fn union(self, other: Self) -> Self {
         Self(self.0 | other.0)
     }
+
+    /// The modifiers set in BOTH masks — "does this event carry any of these?", which
+    /// [`contains`](Self::contains) cannot ask because it wants all of them.
+    #[must_use]
+    pub const fn intersection(self, other: Self) -> Self {
+        Self(self.0 & other.0)
+    }
+
+    /// Whether no modifier at all is set.
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
 }
 
 /// Which mouse button an event concerns.

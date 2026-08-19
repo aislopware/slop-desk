@@ -44,39 +44,19 @@
 // sorts the list without competing with the names (user-directed 2026-08-04).
 //
 // The CONTEXT MENU carries what a sidebar row has no width for — the UDID, and the destructive verb.
+//
+// iOS-ONLY since docs/56 increment 52a; the Mac draws the same list in `MacSimulatorDeviceList`. The
+// grouping was ALREADY shared (``SimulatorDeviceSections``); what descended with this increment is the
+// words, the row's subtitle suppression and the context menu's verb order — the suppression in
+// particular, because "a transition outranks the heading" is a rule a second renderer re-derives from
+// the paragraph above and gets backwards for exactly the row worth watching.
 
-#if os(macOS)
+#if os(iOS)
 import SFSafeSymbols
+import SlopDeskDevicePanels
+import SlopDeskSlate
 import SlopDeskWorkspaceCore
 import SwiftUI
-
-/// One group of the list: a heading and its devices.
-///
-/// A SECTION rather than a flat sequence of heading-or-device entries, and the identity trap that
-/// shape existed to dodge is now structural. A device's udid alone is stable across a boot — right
-/// for "is this the same device", wrong for "is this the same row", since the row's whole content is
-/// a function of the state that just changed. The earlier fix qualified each row's id by its section;
-/// this one gives every section its own container, so a device that boots is removed from one grid
-/// and inserted into another and cannot carry a stale view across. Families hold only shut-down
-/// devices, so a row can no longer change state without also changing container.
-struct SimulatorListSection: Identifiable {
-    let title: String
-    /// The runtime every member reports, or `nil` when they do not all agree.
-    let runtime: String?
-    let devices: [SimulatorDevice]
-
-    var id: String { title }
-
-    /// The group of what is up — drawn as cards, and the only group not cut by family.
-    var isRunning: Bool { title == SimulatorDeviceList.runningTitle }
-
-    /// A device prints its own runtime only where the heading has not already said it.
-    func showsRuntime(_ device: SimulatorDevice) -> Bool { device.runtime != runtime }
-
-    /// This section's rows, named by section — the value the list's reflow watches. Section-qualified
-    /// because the move a boot makes IS between sections, and a plain list of udids would not see it.
-    var rowIdentities: [String] { devices.map { "\(title)/\($0.udid)" } }
-}
 
 /// The device family as a SHAPE, so the kind of machine is answered without reading a word
 /// (user-directed 2026-08-04). Shared by the rows and the cards so one device reads the same in both.
@@ -120,54 +100,13 @@ struct SimulatorDeviceList: View {
         }
     }
 
-    /// The whole list as sections. Running first, then the families in the enum's own rank order
-    /// rather than in encounter order, so the headings do not reshuffle because the host's device set
-    /// was edited.
-    static func sections(for devices: [SimulatorDevice]) -> [SimulatorListSection] {
-        var sections: [SimulatorListSection] = []
-        let booted = devices.filter(\.isBooted)
-        // Running comes first and is NOT split by family: what is up is one short list, and cutting
-        // three booted devices into three headed groups is ceremony over content.
-        if !booted.isEmpty {
-            sections.append(section(runningTitle, booted))
-        }
-        let families = Dictionary(grouping: devices.filter { !$0.isBooted }) {
-            SimulatorDeviceKind.infer(from: $0.name)
-        }
-        for (kind, members) in families.sorted(by: { $0.key.rank < $1.key.rank }) {
-            sections.append(section(kind.groupTitle, members))
-        }
-        return sections
-    }
-
-    /// One heading and its devices, with the runtime LIFTED into the heading when every member shares
-    /// it. A device set is a dozen devices on one installed runtime, so the per-row runtime was the
-    /// same eight characters printed down the whole column — weight with no information in it, and
-    /// the single loudest reason the list read as a spreadsheet. Said once at the top it is still
-    /// answered at a glance; a row whose runtime differs from its neighbours keeps its own and is now
-    /// the ONLY row carrying one, which is exactly the row worth noticing.
-    static func section(_ title: String, _ members: [SimulatorDevice]) -> SimulatorListSection {
-        SimulatorListSection(title: title, runtime: sharedRuntime(of: members), devices: members)
-    }
-
-    /// The runtime every member reports, or `nil` if they disagree. An EMPTY runtime string counts as
-    /// a disagreement rather than as a shared value — a heading reading `IPHONE ·` would be the panel
-    /// lifting the absence of a fact into the place it prints facts.
-    static func sharedRuntime(of members: [SimulatorDevice]) -> String? {
-        guard let first = members.first?.runtime, !first.isEmpty,
-              members.allSatisfy({ $0.runtime == first }) else { return nil }
-        return first
-    }
-
-    static let runningTitle = "Running"
-
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             searchBar
             if model.devices.isEmpty {
-                message("No simulator devices on the host.")
+                message(SimulatorPresentation.noDevices)
             } else if matches.isEmpty {
-                message("No devices match “\(query)”.")
+                message(SimulatorPresentation.noMatches(query))
             } else {
                 list
             }
@@ -187,7 +126,7 @@ struct SimulatorDeviceList: View {
             Image(systemSymbol: .magnifyingglass)
                 .font(.system(size: Slate.Typeface.footnote))
                 .foregroundStyle(Slate.Text.icon)
-            SlateSearchField(placeholder: "Search devices", text: $query)
+            SlateSearchField(placeholder: SimulatorPresentation.searchPlaceholder, text: $query)
             if !query.isEmpty {
                 Button { query = "" } label: {
                     Image(systemSymbol: .xmarkCircleFill)
@@ -213,7 +152,7 @@ struct SimulatorDeviceList: View {
     // MARK: List
 
     private var list: some View {
-        let sections = Self.sections(for: matches)
+        let sections = SimulatorDeviceSections.sections(for: matches)
         return ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 ForEach(sections) { section in
@@ -297,7 +236,7 @@ struct SimulatorDeviceList: View {
             if section.isRunning, section.devices.count > 1 {
                 SlatePlateButton(
                     symbol: .stopCircle,
-                    help: "Shut down all \(section.devices.count) running devices",
+                    help: SimulatorPresentation.shutdownAllHelp(section.devices.count),
                     size: Slate.Typeface.footnote,
                     plate: Slate.Metric.heightControl,
                     tint: Slate.Text.tertiary,
@@ -329,7 +268,9 @@ struct SimulatorDeviceList: View {
             // the button over the runtime and drew a play glyph through the word "iOS".
             titleTrailing: { hovering in
                 HStack(spacing: Slate.Metric.space1) {
-                    if let subtitle = subtitle(for: device, showsRuntime: showsRuntime) {
+                    if let subtitle = SimulatorPresentation.rowSubtitle(
+                        device, showsRuntime: showsRuntime,
+                    ) {
                         Text(subtitle)
                             .font(.system(size: Slate.Typeface.footnote))
                             .foregroundStyle(Slate.Text.tertiary)
@@ -342,18 +283,6 @@ struct SimulatorDeviceList: View {
             trailingOverlay: { _ in EmptyView() },
         )
         .contextMenu { menu(for: device) }
-    }
-
-    /// The trailing text: the live state while the device is CHANGING, the runtime when it is not and
-    /// the heading has not already said it, and nothing at all otherwise. A device spends seconds in
-    /// `Booting`, and showing its runtime through that is the panel claiming nothing is happening
-    /// while something is — so a transition always outranks the suppression above it.
-    private func subtitle(for device: SimulatorDevice, showsRuntime: Bool) -> String? {
-        let settled = device.state.isEmpty
-            || device.isBooted
-            || device.state.caseInsensitiveCompare("Shutdown") == .orderedSame
-        if !settled { return device.state }
-        return showsRuntime && !device.runtime.isEmpty ? device.runtime : nil
     }
 
     /// The one verb that applies, at REST but quiet: a small solid glyph in the tertiary ink, which
@@ -377,7 +306,7 @@ struct SimulatorDeviceList: View {
             } else {
                 SlatePlateButton(
                     symbol: .playFill,
-                    help: "Boot \(device.name)",
+                    help: SimulatorPresentation.bootHelp(device),
                     size: Slate.Typeface.footnote,
                     plate: Slate.Metric.heightControl,
                     tint: hovering ? Slate.Text.primary : Slate.Text.tertiary,
@@ -399,29 +328,30 @@ struct SimulatorDeviceList: View {
 
     /// The selection write rides ONE `withAnimation` transaction, which is what carries the drill —
     /// the panel's transition vocabulary lives on the surface that owns both depths
-    /// (``CodeSidebarColumn``), and the views themselves declare no animation for it. Same shape as
+    /// (``CodePanelSurfaces``), and the views themselves declare no animation for it. Same shape as
     /// the tab strip's `selectSurface`: the caller opens the beat, the transitions ride it.
     private func enter(_ udid: String) {
         withAnimation(Slate.Anim.standard) { model.select(udid) }
     }
 
-    @ViewBuilder
+    /// The VERBS and their order are ``SimulatorPresentation/menu(for:)``'s, so the two halves' menus
+    /// cannot come apart; what is here is the wiring from a verb to the model call behind it.
     private func menu(for device: SimulatorDevice) -> some View {
-        if device.isBooted {
-            Button("Open Screen") { enter(device.udid) }
+        ForEach(SimulatorPresentation.menu(for: device), id: \.self) { verb in
+            switch verb {
+            case .openScreen: Button(verb.title ?? "") { enter(device.udid) }
             // The panel can already put a capture on the pasteboard, and a running device's screen is
             // often worth a picture without being worth opening — a card is a hundred points tall, so
             // the reader can see there is something to grab from here.
-            Button("Copy Screenshot") { Task { await model.copyScreenshot(of: device.udid) } }
-            Button("Shut Down") { Task { await model.shutdown(device.udid) } }
-        } else {
-            Button("Boot") { Task { await model.boot(device.udid) } }
+            case .copyScreenshot:
+                Button(verb.title ?? "") { Task { await model.copyScreenshot(of: device.udid) } }
+            case .shutdown: Button(verb.title ?? "") { Task { await model.shutdown(device.udid) } }
+            case .boot: Button(verb.title ?? "") { Task { await model.boot(device.udid) } }
+            case .separator: Divider()
+            case .copyUDID: Button(verb.title ?? "") { ClientPasteboard.write(device.udid) }
+            case .copyName: Button(verb.title ?? "") { ClientPasteboard.write(device.name) }
+            }
         }
-        Divider()
-        // The UDID is what every other tool wants — `xcrun simctl`, a test invocation, a bug report —
-        // and it is far too long to put in a sidebar row.
-        Button("Copy UDID") { ClientPasteboard.write(device.udid) }
-        Button("Copy Name") { ClientPasteboard.write(device.name) }
     }
 
     // MARK: Notices

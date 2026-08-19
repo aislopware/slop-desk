@@ -503,7 +503,7 @@ final class InspectorGlueTests: XCTestCase {
     func testStoreReconnectHookReSubscribesInspectorWhileClaudeActive() async throws {
         var hostSides: [InspectorFeed] = []
         var makeInspectorCalls = 0
-        let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in
+        let store = WorkspaceStore(makeSession: { seed in
             LivePaneSession.make(
                 paneID: seed.id, spec: seed.spec, spawnCwd: seed.spawnCwd,
                 makeClient: { _ in makeUnconnectedClient() },

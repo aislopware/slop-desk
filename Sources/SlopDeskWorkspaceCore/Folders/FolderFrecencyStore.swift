@@ -9,8 +9,9 @@ import Observation
 /// `forget(path:)` backs the per-row "Forget This Folder" action.
 ///
 /// ### Discipline (CLAUDE.md)
-/// - **Bounded.** A ``maxEntries`` entry cap (evicting the least-frecent / oldest on overflow) and a
-///   ``maxPathLength`` path-length cap keep the sidecar from growing without limit on hostile/runaway input.
+/// - **Bounded.** An entry cap (evicting the least-frecent / oldest on overflow) and a path-length cap keep
+///   the sidecar from growing without limit on hostile/runaway input. Both limits, and the rules that read
+///   them, are the crate's — see ``FolderFrecency``.
 /// - **Validate-then-store.** `record` rejects an empty / whitespace-only / over-long path rather than
 ///   storing it; `load` drops any such entry a hand-edited file might contain. No force-unwrap anywhere.
 /// - **Schema-versioned, decode-fail-to-default.** The JSON sidecar (`folders-frecency.json` in Application
@@ -32,10 +33,6 @@ public final class FolderFrecencyStore {
 
     /// The persisted sidecar schema version. Bumping it makes any older/newer file decode-fail to empty.
     public static let currentSchemaVersion = 1
-    /// Default ceiling on stored folder entries (the least-frecent are evicted past this). Injectable for tests.
-    public static let defaultMaxEntries = 200
-    /// The maximum accepted path length (chars) — a longer cwd is rejected by `record` and dropped by `load`.
-    public static let maxPathLength = 4096
 
     // MARK: Observed state
 
@@ -53,12 +50,13 @@ public final class FolderFrecencyStore {
     ///   - fileURL: where to persist. Defaults to ``defaultFileURL(using:)`` (`folders-frecency.json`).
     ///   - now: the clock used to timestamp visits + score ranking. Inject a fixed clock in tests.
     ///   - fileManager: injected for tests (point at a temp dir). Defaults to `.default`.
-    ///   - maxEntries: the entry cap. Defaults to ``defaultMaxEntries`` (lowered in tests to keep IO small).
+    ///   - maxEntries: the entry cap. Defaults to ``FolderFrecency/defaultMaxEntries`` (lowered in tests to
+    ///     keep IO small).
     public init(
         fileURL: URL? = nil,
         now: @escaping () -> Date = Date.init,
         fileManager: FileManager = .default,
-        maxEntries: Int = FolderFrecencyStore.defaultMaxEntries,
+        maxEntries: Int = FolderFrecency.defaultMaxEntries,
     ) {
         self.fileManager = fileManager
         clock = now
@@ -74,7 +72,7 @@ public final class FolderFrecencyStore {
     /// a fresh entry (`count = 1`). Validate-then-store — an empty / whitespace-only / over-long path is
     /// dropped. Enforces the entry cap and persists best-effort. Safe to call on every cwd change.
     public func record(cwd: String) {
-        guard Self.isValidPath(cwd) else { return } // validate-then-store
+        guard FolderFrecency.isValidPath(cwd) else { return } // validate-then-store
         let timestamp = clock()
         if let index = entries.firstIndex(where: { $0.path == cwd }) {
             entries[index].accessCount += 1
@@ -108,16 +106,6 @@ public final class FolderFrecencyStore {
         entries = FolderFrecency.ranked(entries: entries, now: now, limit: maxEntries)
     }
 
-    // MARK: Validation
-
-    /// A path is storable iff it is non-empty after trimming surrounding whitespace/newlines AND within the
-    /// length cap. Keeps the cwd verbatim otherwise (no normalization — the store keys on the path as given).
-    static func isValidPath(_ path: String) -> Bool {
-        guard !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
-        guard path.count <= maxPathLength else { return false }
-        return true
-    }
-
     // MARK: Persistence
 
     /// The on-disk shape: a schema version + the flat entry list.
@@ -143,17 +131,14 @@ public final class FolderFrecencyStore {
     private static func makeEncoder() -> JSONEncoder { SidecarJSON.encoder() }
 
     /// Reads + decodes the sidecar, returning an empty default on ANY failure (missing file, corrupt JSON, a
-    /// mismatched/future `schemaVersion`). A structurally-valid file is sanitized: invalid (empty / over-long
-    /// path, negative count) entries are dropped, and an over-cap file is trimmed to the ``maxEntries`` most
-    /// recently accessed — so even a hand-edited file can never push the live store past its bounds.
+    /// mismatched/future `schemaVersion`). What survives decoding is repaired by
+    /// ``FolderFrecency/sanitized(entries:maxEntries:)`` — this side owns the IO and the schema gate, the
+    /// crate owns which entries a hand-edited file keeps.
     private static func load(from url: URL, maxEntries: Int) -> [FolderEntry] {
         guard let data = try? Data(contentsOf: url) else { return [] } // missing file = first launch
         guard let decoded = try? JSONDecoder().decode(Persisted.self, from: data) else { return [] } // corrupt
         guard decoded.schemaVersion == currentSchemaVersion else { return [] } // unreadable version → empty
-        let valid = decoded.entries.filter { isValidPath($0.path) && $0.accessCount >= 0 }
-        guard valid.count > maxEntries else { return valid }
-        // Over-cap hand-edited file: keep the most-recently-accessed `maxEntries` (a now-independent bound).
-        return Array(valid.sorted { $0.lastAccess > $1.lastAccess }.prefix(maxEntries))
+        return FolderFrecency.sanitized(entries: decoded.entries, maxEntries: maxEntries)
     }
 
     /// Encodes the current entries and writes them atomically, creating the parent directory if needed.

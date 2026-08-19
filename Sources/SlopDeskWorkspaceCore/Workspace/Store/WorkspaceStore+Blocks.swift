@@ -169,15 +169,9 @@ public extension WorkspaceStore {
         (handle(for: id) as? TerminalModelProviding)?.terminalModel?.blocks.blocks ?? []
     }
 
-    /// The active pane's id in WHICHEVER live model is active — the tree's active pane on the IDE shell, the
-    /// canvas focus on the retained-but-dead path. `nil` for an empty shell. Shared by the block ops that
-    /// need the id (the jump-to-failed CURSOR is keyed by it).
-    internal var activePaneID: PaneID? {
-        switch liveModel {
-        case .tree: tree.activeSession?.activeTab?.activePane
-        case .canvas: focusedPane
-        }
-    }
+    /// The active pane's id — the tree's active session's active tab's active pane. `nil` for an empty
+    /// shell. Shared by the block ops that need the id (the jump-to-failed CURSOR is keyed by it).
+    internal var activePaneID: PaneID? { tree.activeSession?.activeTab?.activePane }
 
     /// The active pane's live terminal model in WHICHEVER live model is active: the tree's active pane
     /// on the IDE shell, the canvas focus on the retained-but-dead path. `nil` for a non-terminal active

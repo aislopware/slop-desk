@@ -1,37 +1,24 @@
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// Pins the pure ``MouseVisibilityMapping`` decision that the GUI surface
-/// (`GhosttyTerminalView`, compile-only behind `#if canImport(CGhostty)`) uses to actuate
-/// `mouse-hide-while-typing`. libghostty's `mouse-hide-while-typing` config only DECIDES to hide the
-/// pointer; it delegates the hide/show to the embedder via a `GHOSTTY_ACTION_MOUSE_VISIBILITY` action, so
-/// the embedder MUST read that action's enum and drive `NSCursor`. This pins the load-bearing enum read.
+/// Pins that the mouse-visibility face reaches the rule, and that the rule's ANSWER is the safe one.
 ///
-/// None of these assertions is tautological — they encode the `ghostty_action_mouse_visibility_e` C enum's
-/// raw ordering and the explicit (non-`{0,1}`-assuming) read, not the function's own derivation.
+/// The rule lives in `slopdesk_terminal::pointer` and is tested there and through the door. What is
+/// asserted here is the crossing itself: `mouse-hide-while-typing` is actuated by the embedder, so a face
+/// that returned a constant, or inverted the bool on the way back, would hide a pointer forever with
+/// every Rust test still green.
 final class MouseVisibilityMappingTests: XCTestCase {
-    /// The raw values MUST match the `ghostty_action_mouse_visibility_e` declaration order
-    /// (`CGhostty/ghostty.h:709-713`), because the GUI hands us the C enum's integer payload directly.
-    func testRawValuesMatchCEnumDeclarationOrder() {
-        XCTAssertEqual(MouseVisibility.visible.rawValue, 0)
-        XCTAssertEqual(MouseVisibility.hidden.rawValue, 1)
-        // The C enum has exactly two cases; a new one must be added deliberately.
-        XCTAssertEqual(MouseVisibility.allCases.count, 2)
-    }
-
-    /// The explicit `hidden` value hides; the explicit `visible` value shows.
-    func testKnownValuesResolve() {
+    /// The explicit values, in the direction that is easy to invert.
+    func testTheExplicitValuesCrossUnflipped() {
         XCTAssertFalse(MouseVisibilityMapping.isVisible(forRawValue: 1)) // hidden
         XCTAssertTrue(MouseVisibilityMapping.isVisible(forRawValue: 0)) // visible
     }
 
-    /// {0,1}-ASSUMPTION GUARD (the core of this fix): the read compares against the `hidden` case, so any
-    /// unknown / corrupt / future raw int FAILS SAFE to VISIBLE — a bad value can never strand the pointer
-    /// permanently hidden. A naive `raw != 0` ("anything non-zero is hidden") read would FAIL these.
+    /// Any unknown, corrupt or future value fails safe to VISIBLE. A `raw != 0` reading — "anything
+    /// non-zero is hidden" — passes the two assertions above and fails every one of these.
     func testUnknownValuesFailSafeToVisible() {
-        XCTAssertTrue(MouseVisibilityMapping.isVisible(forRawValue: 2))
-        XCTAssertTrue(MouseVisibilityMapping.isVisible(forRawValue: 7))
-        XCTAssertTrue(MouseVisibilityMapping.isVisible(forRawValue: -1))
-        XCTAssertTrue(MouseVisibilityMapping.isVisible(forRawValue: 9999))
+        for raw: Int32 in [2, 7, -1, 9999, .min, .max] {
+            XCTAssertTrue(MouseVisibilityMapping.isVisible(forRawValue: raw), "raw \(raw)")
+        }
     }
 }

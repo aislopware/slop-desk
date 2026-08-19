@@ -9,13 +9,14 @@
 // `WorkspaceStore` over the tiny `MountTestPaneSession` double (defined in `OverlayCoordinatorMountTests`).
 
 import XCTest
+@testable import SlopDeskClientCore
 @testable import SlopDeskClientUI
 @testable import SlopDeskWorkspaceCore
 
 @MainActor
 final class PaletteContentAndReachTests: XCTestCase {
     private func makeStore() -> WorkspaceStore {
-        let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in MountTestPaneSession(seed.spec) })
+        let store = WorkspaceStore(makeSession: { seed in MountTestPaneSession(seed.spec) })
         store.attachLoopbackWorkspaceDocument()
         return store
     }
@@ -136,14 +137,14 @@ final class PaletteContentAndReachTests: XCTestCase {
 
     // MARK: - Finding 3: Read Only lights the ✓ gutter when the active pane is read-only
 
-    /// `OverlayHostView.toggledState(for:store:)` now resolves the Read Only ✓ off the live `store` + active
+    /// `PalettePresentation.toggledState(chrome:store:)` now resolves the Read Only ✓ off the live `store` + active
     /// pane (the convergent `paneReadOnly` set), so the gutter tracks the real input gate. REVERT-TO-CONFIRM-
     /// FAIL: the un-fixed predicate had no `action.toggleReadOnly` case → `default: false` → the post-toggle
     /// assertion (✓ shown) trips. A non-toggle row never shows ✓ (control).
     func testToggledStateTracksActivePaneReadOnly() throws {
         let store = makeStore()
         let chrome = WorkspaceChromeState()
-        let predicate = OverlayHostView.toggledState(for: chrome, store: store)
+        let predicate = PalettePresentation.toggledState(chrome: chrome, store: store)
         let readOnlyRow = try row("action.toggleReadOnly")
         let plainRow = try row("action.newTerminalTab")
 
@@ -165,7 +166,7 @@ final class PaletteContentAndReachTests: XCTestCase {
     /// than a hardcoded value (and never lights spuriously).
     func testToggledStateSecureEntryReadsModelFlag() throws {
         let store = makeStore()
-        let predicate = OverlayHostView.toggledState(for: WorkspaceChromeState(), store: store)
+        let predicate = PalettePresentation.toggledState(chrome: WorkspaceChromeState(), store: store)
         let secureRow = try row("action.secureKeyboardEntry")
         XCTAssertFalse(
             predicate(secureRow),

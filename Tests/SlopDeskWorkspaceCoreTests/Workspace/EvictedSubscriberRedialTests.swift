@@ -118,7 +118,6 @@ final class EvictedSubscriberRedialTests: XCTestCase {
         )
         let store = WorkspaceStore(
             restoringTree: tree,
-            liveModel: .tree,
             makeSession: { seed in
                 LivePaneSession.make(
                     paneID: seed.id, spec: seed.spec, spawnCwd: seed.spawnCwd,

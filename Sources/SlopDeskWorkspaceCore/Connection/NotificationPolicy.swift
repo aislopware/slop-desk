@@ -1,6 +1,7 @@
+import CSlopDeskFFI
 import SlopDeskProtocol
 
-// MARK: - NotificationPolicy (the PURE "should this notification be delivered" decision)
+// MARK: - NotificationPolicy (the face over "should this notification be delivered")
 
 /// The **Notify While Foreground** tri-state (`notification-while-foreground`) — how a system
 /// notification banner behaves while slopdesk is the FRONTMOST app. macOS otherwise suppresses banners
@@ -25,6 +26,16 @@ public enum NotifyWhileForeground: String, CaseIterable, Sendable, Equatable {
         case .tabUnfocused: "Only when source tab is unfocused"
         }
     }
+
+    /// The CASE index — the crate's `ForegroundPolicy` order. A byte the crate does not recognise
+    /// reads as `off`, so a disagreement costs a banner rather than producing one.
+    var ffiByte: UInt8 {
+        switch self {
+        case .off: 0
+        case .always: 1
+        case .tabUnfocused: 2
+        }
+    }
 }
 
 /// The notification-bearing events the policy gates. Each maps to exactly ONE per-event toggle (so a key
@@ -44,20 +55,39 @@ public enum NotificationEvent: Sendable, Equatable {
     /// A code agent is awaiting approval / input.
     case agentAwaitInput
 
+    /// The flat `(case index, exit)` the crate reads — the crate's `Event` order.
+    var ffi: SlopDeskWsNotifyEvent {
+        switch self {
+        case .explicitOSC:
+            SlopDeskWsNotifyEvent(kind: 0, exit: 0, exit_present: false)
+        case let .commandFinish(exit):
+            SlopDeskWsNotifyEvent(kind: 1, exit: exit ?? 0, exit_present: exit != nil)
+        case .watchFinish:
+            SlopDeskWsNotifyEvent(kind: 2, exit: 0, exit_present: false)
+        case .agentTaskComplete:
+            SlopDeskWsNotifyEvent(kind: 3, exit: 0, exit_present: false)
+        case .agentAwaitInput:
+            SlopDeskWsNotifyEvent(kind: 4, exit: 0, exit_present: false)
+        }
+    }
+
     /// Classify an EXPLICIT child notification (the host's `.notification(title:body:)` — OSC 9 / 777 / 99) into
     /// the gating event + the user-visible title. An `slopdesk watch` finish banner carries the private
     /// ``WatchNotificationMarker/title`` sentinel in its title; it routes to ``watchFinish`` (gated by the
     /// dedicated "Notify on Watch Finish" toggle) with the sentinel STRIPPED, so the banner shows just the
     /// message. Any other notification rides ``explicitOSC`` (the master "Allow App Notifications" switch),
-    /// unchanged. Pure — the single source of the watch-vs-generic routing decision, exercised by the app's
-    /// `onPaneNotification` dispatch and pinned by `NotificationPolicyTests`.
+    /// unchanged.
+    ///
+    /// The sentinel is `rust/slopdesk-wire`'s, and so is the reading of it: this is the parse-back of the
+    /// builder that put it there, which is why the two sit in one crate rather than agreeing by hand.
     public static func classifyExplicit(
         title: String, body _: String,
     ) -> (event: Self, displayTitle: String) {
-        if title == WatchNotificationMarker.title {
-            return (.watchFinish, "")
+        var title = title
+        let isWatch = title.withUTF8 { text in
+            slopdesk_watch_notification_is_marked(text.baseAddress, text.count)
         }
-        return (.explicitOSC, title)
+        return isWatch ? (.watchFinish, "") : (.explicitOSC, title)
     }
 }
 
@@ -98,17 +128,25 @@ public struct NotificationSettings: Sendable, Equatable {
         self.agentNotifyTaskComplete = agentNotifyTaskComplete
         self.agentNotifyAwaitInput = agentNotifyAwaitInput
     }
+
+    var ffi: SlopDeskWsNotifySettings {
+        SlopDeskWsNotifySettings(
+            app_notifications_enabled: appNotificationsEnabled,
+            notify_on_finish: notifyOnFinish,
+            notify_on_error: notifyOnError,
+            notify_on_watch_finish: notifyOnWatchFinish,
+            foreground: notifyWhileForeground.ffiByte,
+            agent_notify_task_complete: agentNotifyTaskComplete,
+            agent_notify_await_input: agentNotifyAwaitInput,
+        )
+    }
 }
 
-/// The PURE decision "should this notification be delivered as a system banner". Headless + `UN`-free so the
-/// whole truth table is unit-tested without `UNUserNotificationCenter` (the macOS poster
-/// ``CommandCompletionNotifier`` is the thin actuator that calls this). Two stages, both must pass:
-///  1. the per-event toggle (``eventEnabled(_:settings:)``) — each event has exactly one toggle;
-///  2. the Notify-While-Foreground gate (``foregroundGate(appActive:sourcePaneVisible:policy:)``) — only
-///     relevant while the app is frontmost; when the app is backgrounded the OS shows the banner normally,
-///     so the gate is a pass-through.
+/// The decision "should this notification be delivered as a system banner". The rule is
+/// `slopdesk_workspace::notify`, which states the two stages and why the second one is a
+/// pass-through whenever the app is backgrounded; this is the call.
 ///
-/// The foreground gate must ACTUALLY gate — kept as a pure function so the invariant is directly testable.
+/// The macOS poster ``CommandCompletionNotifier`` is the thin actuator that asks it.
 public enum NotificationPolicy {
     /// Whether `event` is delivered given the live focus/app-active state and the resolved `settings`.
     /// `sourcePaneVisible` = the user can SEE the source pane right now — it sits in the active
@@ -121,44 +159,6 @@ public enum NotificationPolicy {
         sourcePaneVisible: Bool,
         settings: NotificationSettings,
     ) -> Bool {
-        guard eventEnabled(event, settings: settings) else { return false }
-        return foregroundGate(
-            appActive: appActive, sourcePaneVisible: sourcePaneVisible, policy: settings.notifyWhileForeground,
-        )
-    }
-
-    /// Stage 1 — the per-event toggle. Each event maps to exactly one toggle (no double-gating): explicit
-    /// OSC rides the master "Allow App Notifications", a command finish splits on exit (Finish vs Error),
-    /// watch/agent each ride their own toggle.
-    static func eventEnabled(_ event: NotificationEvent, settings: NotificationSettings) -> Bool {
-        switch event {
-        case .explicitOSC:
-            settings.appNotificationsEnabled
-        case let .commandFinish(exit):
-            // `exit == nil` (a completion carrying no code) is treated as a clean exit 0, matching the
-            // BackgroundCompletionPolicy badge convention.
-            (exit ?? 0) == 0 ? settings.notifyOnFinish : settings.notifyOnError
-        case .watchFinish:
-            settings.notifyOnWatchFinish
-        case .agentTaskComplete:
-            settings.agentNotifyTaskComplete
-        case .agentAwaitInput:
-            settings.agentNotifyAwaitInput
-        }
-    }
-
-    /// Stage 2 — the Notify-While-Foreground gate. When the app is NOT active the OS shows the banner
-    /// normally, so this is always a pass. While the app IS active the tri-state decides: `.off` suppresses,
-    /// `.always` shows, `.tabUnfocused` shows only when the source pane is NOT visible (its tab is not
-    /// the active one — honouring the setting's "source tab" label; a visible split needs no banner).
-    static func foregroundGate(
-        appActive: Bool, sourcePaneVisible: Bool, policy: NotifyWhileForeground,
-    ) -> Bool {
-        guard appActive else { return true }
-        switch policy {
-        case .off: return false
-        case .always: return true
-        case .tabUnfocused: return !sourcePaneVisible
-        }
+        slopdesk_ws_notify_should_deliver(event.ffi, appActive, sourcePaneVisible, settings.ffi)
     }
 }

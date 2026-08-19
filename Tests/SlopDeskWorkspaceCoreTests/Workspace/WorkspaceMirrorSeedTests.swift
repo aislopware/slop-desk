@@ -46,7 +46,6 @@ final class WorkspaceMirrorSeedTests: XCTestCase {
         let (tree, panes, tabs, sessionID) = threePaneTree()
         let store = WorkspaceStore(
             restoringTree: tree,
-            liveModel: .tree,
             makeSession: { seed in FakePaneSession(seed.spec) },
         )
         store.attachLoopbackWorkspaceDocument()
@@ -76,7 +75,7 @@ final class WorkspaceMirrorSeedTests: XCTestCase {
 
     /// The default (no `restoringTree:`) launch seeds too — a fresh workspace is still a workspace.
     func testTheDefaultTreeIsSeededToo() {
-        let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in FakePaneSession(seed.spec) })
+        let store = WorkspaceStore(makeSession: { seed in FakePaneSession(seed.spec) })
         store.attachLoopbackWorkspaceDocument()
         guard let seeded = store.workspaceMirror.topology else {
             XCTFail("the default launch left the mirror empty")

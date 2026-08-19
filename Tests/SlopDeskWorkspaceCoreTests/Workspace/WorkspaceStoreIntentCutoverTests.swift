@@ -53,9 +53,7 @@ final class WorkspaceStoreIntentCutoverTests: XCTestCase {
 
     private func makeStore(_ tree: TreeWorkspace) -> WorkspaceStore {
         let store = WorkspaceStore(
-            restoring: Workspace(canvas: Canvas(items: []), focusedPane: nil),
             restoringTree: tree,
-            liveModel: .tree,
             makeSession: { FakePaneSession($0.spec) },
         )
         store.attachLoopbackWorkspaceDocument()
@@ -111,9 +109,7 @@ final class WorkspaceStoreIntentCutoverTests: XCTestCase {
     /// state worth pinning by name, because it is what a client against a flag-off host looks like.
     func testAStoreWithNoDocumentRendersNothing() {
         let store = WorkspaceStore(
-            restoring: Workspace(canvas: Canvas(items: []), focusedPane: nil),
             restoringTree: seed().workspace,
-            liveModel: .tree,
             makeSession: { FakePaneSession($0.spec) },
         )
         store.workspaceMirror.reset()

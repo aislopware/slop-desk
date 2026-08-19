@@ -371,9 +371,7 @@ final class DetachPaneTests: XCTestCase {
     @MainActor
     private func makeTreeStore(restoringTree: TreeWorkspace) -> WorkspaceStore {
         let store = WorkspaceStore(
-            restoring: Workspace(canvas: Canvas(items: []), focusedPane: nil),
             restoringTree: restoringTree,
-            liveModel: .tree,
             makeSession: { seed in FakePaneSession(seed.spec) },
         )
         store.attachLoopbackWorkspaceDocument()

@@ -167,8 +167,9 @@ is not `size_t`; a scalar door that wants a refusal has to say so in its own typ
 The same matcher also has `slopdesk_fuzzy_score`, which is §4-shaped because it answers a score AND a
 variable number of matched positions. Two doors over one implementation is not two answers — the
 score is bit-identical, and `rust/slopdesk-fuzzy` pins that in a test — it is one implementation told
-whether the caller will underline anything. Most callers will not: a filtered list ranks every row
-and highlights only the handful it draws.
+whether the caller will underline anything. Most rows will not be: a filtered list ranks every row
+and highlights only the handful it draws, which is why the list door below asks for positions BY
+TIER rather than for all of them.
 
 ### The scalar answer whose refusal is not a refusal
 
@@ -222,6 +223,25 @@ lets the *caller's* unit win. The surface that highlights a match indexes in UTF
 unit would be converted on the way out — by a second walk over the same line, in Swift, per match.
 Counting them inside the scan is a pass over a prefix it already has in hand.
 
+### Two answers in one call, and the second size that makes it retryable
+
+`slopdesk_ws_search_rank` fills TWO buffers: where each candidate placed, and one flat run of the
+scalar offsets the placements point into. They are one call because they are one pass — the matcher
+backtraces while its alignment matrix is still filled, so asking for the underline afterwards would
+mean scoring every title a second time on every keystroke, which is the cost this door exists to
+avoid.
+
+Two buffers need two sizes, and §4's return can only carry one. The return carries the row count,
+because that is what a caller loops over; the run's size comes back through a `size_t *needed`
+out-param. A short buffer of EITHER kind leaves both untouched and still reports both numbers, so the
+retry stays the one docs/55 §4 describes rather than becoming a two-step negotiation. In practice
+neither retry is travelled: no more rows can match than were offered, and a match carries exactly one
+offset per query scalar, so the caller's first guess is the arithmetic bound rather than an estimate.
+
+The ranking itself answers in the CALLER's indices. A palette row is an id, an icon, a shortcut and a
+closure, almost none of which decides where it goes, so the answer names rows and the near side
+reorders the array it already holds.
+
 ### The header is written by hand
 
 cbindgen would have to run *somewhere*, and "somewhere" is either inside `swift build` (forbidden)
@@ -257,6 +277,44 @@ breath, and two handles could be reset in either order.
 `RecoveryIdrPolicy` is the smallest of them: a token bucket, a four-entry keyframe ring and a latch.
 It earns a handle the way `VideoPacketizer` does, by being state that must not be copied — but it is
 also where the rule below was written down.
+
+`ChannelTable` is the mux's, and it is the one that shows what a handle is *for* beyond avoiding a
+copy. It crossed first as storage — allocate, open, reject, close, read a state — while the rule that
+decides what to do with a frame stayed in Swift as `MuxRoutingCore.route`. That worked and was
+wrong: every branch of the decision reads a state and then writes one, so the rule was six crossings
+per frame *and* a rule kept apart from the state it reasons about, which is the arrangement that
+lets one of them be edited alone. `slopdesk_channel_table_route` moved the decision to the table,
+and the crossing went from six calls to one.
+
+**A verdict flattens; a payload does not travel.** A C enum with a payload is not a thing, so
+`SlopDeskMuxRouting` carries the discriminant plus every field any verdict could want, and the
+caller reads the ones its verdict names. The frame's bytes stay on the near side — a decision says
+WHERE they go, and copying a chunk across a boundary to be told its channel id would be the whole
+cost of the mux for nothing. Both refusals fail CLOSED (an unknown type byte, a null handle), which
+is the opposite default from the platform tables in §4: those fail open because a missing row means
+"nobody said otherwise", and here a missing table means "there is no channel", so delivering would
+be the defect.
+
+**A glyph is not text.** `slopdesk_git_line_runs` answers the project header's git dialect — `main ↑2
+↓1 +3 !4 ?5 ~1 $2` — as an array of fixed records, with no arena and no spans, though every other
+list door in the crate hands its records' strings over through a blob. The reason is that a git run
+is not made of text: it is a role, ONE glyph and a number. The glyph crosses as a Unicode scalar, so
+the near side puts `↑` next to `2` where it is already laying out glyphs, and the whole answer is
+`(role, weight, scalar, count)` × at most eight. The one string in the line is the BRANCH, which
+never crosses at all — it is the caller's own, and the rule reads only the one bit it needs from it
+(was there a name), which is why the branch run carries `detached` and no text.
+
+What that split has to survive is the obvious objection: if the near side does the writing, has the
+dialect really moved? It has, and the boundary is exactly where the disagreement can live.
+Concatenating a glyph with a number is not a choice; CHOOSING `~` over `=` for a conflict is, and
+that one had already been got wrong — a dead second Swift renderer spelled it `=` beside a live one
+spelling `~`, and both compiled until the copy was deleted. `scripts/check-supervisor.sh` bans a
+sigil literal in the Swift face for that reason, which is a cheaper pin than any test: a second
+dialect cannot be born without typing one of those glyphs.
+
+The buffer is the caller's for the same structural reason the walk in §4d is not: a line is at most
+eight runs and the ceiling is a property of the dialect, not of a repo. Both doors write at most
+`cap` and answer the true length, which is §4's retry protocol at a size that never needs the retry.
 
 ### What picks the convention is the FAR side
 
@@ -458,6 +516,30 @@ read, and the rules that decide a pane's status (`AskUserQuestion` is a BLOCK, a
 FINISHED TURN, the idle nudge is not a raised hand) lived nowhere near the case they governed. One
 crate holds both halves now, and `scripts/check-supervisor.sh` fails if a second reading appears —
 including a Swift file that reaches for a standalone parse door again.
+
+### The door only one platform has
+
+Every other entry point is on every slice. `slopdesk_git_status` is not: it is declared inside a
+`TARGET_OS_OSX` region of `slopdesk_ffi.h`, compiled behind `cfg(target_os = "macos")`, and its
+crate is a target-gated dependency. Behind it is a vendored `libgit2` — a C library the size of the
+rest of the archive — and the only caller is hostd, because a client on either platform RECEIVES
+the git status as a metadata reply and never computes one. Building that library into the two iOS
+slices would cost every phone build the compile and every phone archive the bytes for a door
+nothing on that platform can reach.
+
+The hazard a platform gate introduces is that it is spelled THREE times — the header's `#if`, the
+module's `cfg`, and the manifest's `[target.'cfg(…)'.dependencies]` — and two of the three can stop
+agreeing without any compiler noticing. `build-ffi.sh` closes that: it reads the symbols out of the
+region's `MACOS-ONLY BEGIN`/`END` markers and requires them PRESENT on the macOS slice and ABSENT
+from the other two. A `cfg` that stops matching the header fails whichever direction it drifted —
+a phone archive that quietly grew a C library, or a macOS door Swift can no longer link.
+
+What a platform-gated door does NOT buy is isolation from its C library's linker needs. A Rust
+staticlib is one object per crate, so the object holding this door also holds every other
+`slopdesk_*` entry point: any executable calling any of them pulls libgit2's members in and needs
+`iconv`, `Security` and `CoreFoundation` at link time. `Package.swift` says that once as
+`ffiCLibraries` and every `CSlopDeskFFI` dependent carries it. Weigh that before linking the next C
+library through this boundary — the gate keeps the BYTES off the phone, not the flags off the graph.
 
 ### The answer that is a NESTED shape, walked once
 

@@ -48,8 +48,8 @@ pub enum FocusDirection {
 impl FocusDirection {
     /// Every direction, in the order whose POSITION is the byte that crosses the ABI.
     ///
-    /// Stated once, here, for the reason [`crate::canvas::AlignEdge::ALL`] gives: the shim used to
-    /// restate this order as a hand-written `match`, and `check-supervisor` only counts the cases
+    /// Stated once, here: the shim used to restate this order as a hand-written `match`, and
+    /// `check-supervisor` only counts the cases
     /// on each side. A count cannot see a seventh direction added everywhere except that
     /// decoder — and this decoder's fallback was `Next`, so the new direction would not have
     /// failed, it would have CYCLED.

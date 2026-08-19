@@ -1,4 +1,5 @@
 import Foundation
+import SlopDeskWorkspaceModel
 
 // MARK: - The pure Command Navigator filter (⌃⌘O / view.commandNavigator)
 
@@ -12,33 +13,17 @@ import Foundation
 /// ``WorkspaceStore/jumpToNavigatorBlockInActivePane(index:)`` (the shared ``BlockJump`` re-anchor engine — so
 /// the delta math is never re-derived in the view).
 ///
-/// `FuzzyMatcher` lives in the view module, so it is INJECTED into ``filtered(_:query:score:)``
-/// rather than imported here — keeping the model + its tests headless (mirrors ``JumpToModel/filtered``).
+/// What a block is found BY is the only thing decided here; how well it matches is
+/// `slopdesk_workspace::search_rank`, the one ranking every search field in the app asks for.
 public enum CommandNavigatorModel {
-    /// Fuzzy-filter + rank `blocks` by `query` using the INJECTED `score` closure (the view passes
-    /// `FuzzyMatcher.rank(_:_:)`; the headless tests pass a deterministic scorer). An EMPTY query
-    /// returns `blocks` unchanged (the zero-state list — caller-ordered, i.e. newest-first). A non-empty
-    /// query drops every block the scorer rejects (`nil`) AND every still-forming block (empty `commandText`,
-    /// which can never match a real query), then orders the survivors by score DESCENDING, breaking ties by
-    /// original order (a STABLE sort, so equal-score blocks keep the caller's newest-first order).
+    /// Fuzzy-filter + rank `blocks` by `query`. An EMPTY query returns `blocks` unchanged (the
+    /// zero-state list — caller-ordered, i.e. newest-first). A non-empty query drops every block the
+    /// matcher rejects, then orders the survivors best-first with the caller's newest-first order
+    /// breaking ties.
     ///
-    /// Integer scores only — the `>` / `<` comparisons are ordered + total (no float, so no NaN hazard; the
-    /// codebase's ordered-compare convention applies to float, and this is integer arithmetic).
-    public static func filtered(
-        _ blocks: [CommandBlock],
-        query: String,
-        score: (_ query: String, _ haystack: String) -> Int?,
-    ) -> [CommandBlock] {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return blocks }
-        let scored: [(score: Int, order: Int, block: CommandBlock)] = blocks.enumerated()
-            .compactMap { offset, block in
-                guard !block.commandText.isEmpty, let s = score(trimmed, block.commandText) else { return nil }
-                return (s, offset, block)
-            }
-        return scored.sorted { lhs, rhs in
-            if lhs.score != rhs.score { return lhs.score > rhs.score }
-            return lhs.order < rhs.order
-        }.map(\.block)
+    /// A still-forming block has no command text yet, so it is offered as the empty string: no real
+    /// query can match it, and the zero state still lists it where it stands.
+    public static func filtered(_ blocks: [CommandBlock], query: String) -> [CommandBlock] {
+        wsSearchRanked(blocks, query: query) { $0.commandText }
     }
 }

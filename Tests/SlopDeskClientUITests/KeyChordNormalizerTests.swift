@@ -8,6 +8,7 @@
 #if os(macOS)
 import SlopDeskWorkspaceCore
 import XCTest
+@testable import SlopDeskClientCore
 @testable import SlopDeskClientUI
 
 @MainActor

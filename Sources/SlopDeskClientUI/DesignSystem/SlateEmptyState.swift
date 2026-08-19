@@ -10,6 +10,7 @@
 // only chrome is the action's raised plate — which IS the action, not decoration.
 
 #if canImport(SwiftUI)
+import SlopDeskSlate
 import SwiftUI
 
 struct SlateEmptyState: View {

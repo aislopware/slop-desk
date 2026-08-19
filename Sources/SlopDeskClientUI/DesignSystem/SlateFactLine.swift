@@ -30,6 +30,7 @@
 // spend.
 
 #if canImport(SwiftUI)
+import SlopDeskSlate
 import SlopDeskWorkspaceCore
 import SwiftUI
 

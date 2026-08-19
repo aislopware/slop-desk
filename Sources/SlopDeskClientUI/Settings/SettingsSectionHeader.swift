@@ -11,6 +11,7 @@
 // content closure is unchanged, so no layout in the section body moves.
 
 #if canImport(SwiftUI)
+import SlopDeskSlate
 import SwiftUI
 
 /// Pure, testable transform for the section-header label — UPPERCASE. Extracted so the casing is pinned

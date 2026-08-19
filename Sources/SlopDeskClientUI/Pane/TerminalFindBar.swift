@@ -39,6 +39,8 @@
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
+import SlopDeskClientCore
+import SlopDeskSlate
 import SlopDeskWorkspaceCore
 import SwiftUI
 
@@ -260,24 +262,16 @@ struct TerminalFindBar: View {
             // find.png's THREE individually-outlined mode chips: case (`Aa`), whole-word (underlined `ab`),
             // and regex (`.*`), in that order. ``FindTogglePillTray`` lays them out identically to global-search.
             FindTogglePillTray {
-                FindTogglePill(
-                    label: "Aa",
-                    isOn: model.controller.caseSensitive,
-                    help: "Case sensitive",
-                    plate: plate,
-                ) {
+                FindTogglePill(mode: .caseSensitive, isOn: model.controller.caseSensitive, plate: plate) {
                     model.toggleCaseSensitive()
                 }
-                FindTogglePill(
-                    label: "ab",
-                    isOn: model.controller.wholeWord,
-                    help: "Whole word",
-                    plate: plate,
-                    underlined: true, // the whole-word chip's glyph is drawn underlined (find.png)
-                ) {
+                // The whole-word chip is the IN-PANE bar's alone — it is not in
+                // ``FindModePill/globalSearch``, because the cross-tab search runs over the scrollback
+                // mirror rather than libghostty's buffer and the two disagree about a word boundary.
+                FindTogglePill(mode: .wholeWord, isOn: model.controller.wholeWord, plate: plate) {
                     model.toggleWholeWord()
                 }
-                FindTogglePill(label: ".*", isOn: model.controller.isRegex, help: "Regex (ICU)", plate: plate) {
+                FindTogglePill(mode: .regex, isOn: model.controller.isRegex, plate: plate) {
                     model.toggleRegex()
                 }
             }
@@ -320,14 +314,7 @@ struct TerminalFindBar: View {
             model.previous()
             return .handled
         }
-        #if os(macOS)
-        .onExitCommand { model.close() }
-        #else
-        .onKeyPress(.escape, phases: .down) { _ in
-            model.close()
-            return .handled
-        }
-        #endif
+        .slateCancelKey { model.close() }
     }
 
     // MARK: - Query field
@@ -428,21 +415,22 @@ struct FindTogglePillTray<Content: View>: View {
 /// held); on → accent text on an `accentMuted` wash + an accent hairline ring. No shared backing tray.
 /// Factored to file scope (internal) so the GlobalSearch surface reuses the EXACT pill. `Slate.*` tokens
 /// only.
+///
+/// WHAT the chip says is a ``FindModePill``, not three parameters: the glyph, the help and the underline
+/// travel together, and the Mac's AppKit results panel (``SlopDeskMacUI/MacFindTogglePillView``) draws the
+/// same value. A pill spelled at a call site could only stay identical across three surfaces by luck.
 struct FindTogglePill: View {
-    let label: String
+    let mode: FindModePill
     let isOn: Bool
-    var help: String?
     var plate: CGFloat = Slate.Metric.plate
-    /// Underline the glyph (the whole-word `ab` chip draws underlined; `Aa` / `.*` pass `false`).
-    var underlined: Bool = false
     let action: () -> Void
 
     @State private var hovering = false
 
     var body: some View {
         Button(action: action) {
-            Text(label)
-                .underline(underlined)
+            Text(mode.label)
+                .underline(mode.underlined)
                 .font(.system(size: Slate.Typeface.footnote, weight: .semibold, design: .monospaced))
                 .foregroundStyle(isOn ? Slate.State.accent : Slate.Text.secondary)
                 .frame(minWidth: plate, minHeight: plate)
@@ -465,7 +453,7 @@ struct FindTogglePill: View {
                 .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .slateHelp(help)
+        .slateHelp(mode.help)
         .onHover { hovering = $0 }
         .animation(Slate.Anim.smallFade, value: hovering)
     }

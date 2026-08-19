@@ -1,133 +1,57 @@
+import CSlopDeskFFI
+
 // MARK: - OSC-22 pointer-shape mapping
 
-/// Swift mirror of libghostty's `ghostty_action_mouse_shape_e` C enum (`terminal.MouseShape`,
-/// `CGhostty/ghostty.h:672-707`). The raw values are pinned to the C enum's declaration order so an
-/// `Int32` delivered by a `GHOSTTY_ACTION_MOUSE_SHAPE` action maps 1:1 WITHOUT importing `CGhostty`
-/// into this headless, AppKit-free module — keeping the shape→cursor table unit-testable.
-///
-/// A terminal program selects the pointer shape with the CSS-named OSC 22 sequence
-/// (`OSC 22 ; <name> ST`); libghostty parses it and emits a `GHOSTTY_ACTION_MOUSE_SHAPE` action whose
-/// payload is one of these. The GUI surface (`GhosttyTerminalView`, compile-only behind
-/// `#if canImport(CGhostty)`) reads the raw int and asks ``PointerShapeMapping`` to resolve a
-/// ``PointerShapeToken`` it can turn into an `NSCursor`.
-public enum OSCPointerShape: Int32, CaseIterable, Sendable, Equatable {
-    case `default` = 0
-    case contextMenu = 1
-    case help = 2
-    case pointer = 3
-    case progress = 4
-    case wait = 5
-    case cell = 6
-    case crosshair = 7
-    case text = 8
-    case verticalText = 9
-    case alias = 10
-    case copy = 11
-    case move = 12
-    case noDrop = 13
-    case notAllowed = 14
-    case grab = 15
-    case grabbing = 16
-    case allScroll = 17
-    case colResize = 18
-    case rowResize = 19
-    case nResize = 20
-    case eResize = 21
-    case sResize = 22
-    case wResize = 23
-    case neResize = 24
-    case nwResize = 25
-    case seResize = 26
-    case swResize = 27
-    case ewResize = 28
-    case nsResize = 29
-    case neswResize = 30
-    case nwseResize = 31
-    case zoomIn = 32
-    case zoomOut = 33
-}
-
-/// A stable, AppKit-free token naming the cursor the GUI should adopt for a given ``OSCPointerShape``.
+/// A stable, AppKit-free token naming the cursor the GUI should adopt.
 ///
 /// The cases mirror ghostty's macOS `CursorStyle` (`Helpers/Cursor.swift`) so the resolution is faithful
 /// to upstream; the GUI surface owns the single `PointerShapeToken → NSCursor` switch (with the macOS-15
-/// `columnResize`/`rowResize` availability handling), which is why this layer can stay headless and pinned.
-public enum PointerShapeToken: String, CaseIterable, Sendable, Equatable {
-    case arrow
-    case text
-    case verticalText
-    case pointer
-    case grab
-    case grabbing
-    case contextMenu
-    case crosshair
-    case notAllowed
-    case resizeLeft
-    case resizeRight
-    case resizeUp
-    case resizeDown
-    case resizeUpDown
-    case resizeLeftRight
+/// `columnResize`/`rowResize` availability handling), which is why this layer stays headless.
+///
+/// **The raw values are the wire.** They are the discriminants `slopdesk_pointer_shape_token` returns,
+/// pinned to `slopdesk_terminal::pointer::PointerToken`. A case reordered here is a cursor swapped for
+/// another cursor, with nothing to notice it — which is why the door's own suite asserts every one of
+/// the fifteen numbers rather than the mapping alone.
+public enum PointerShapeToken: Int32, CaseIterable, Sendable, Equatable {
+    case arrow = 0
+    case text = 1
+    case verticalText = 2
+    case pointer = 3
+    case grab = 4
+    case grabbing = 5
+    case contextMenu = 6
+    case crosshair = 7
+    case notAllowed = 8
+    case resizeLeft = 9
+    case resizeRight = 10
+    case resizeUp = 11
+    case resizeDown = 12
+    case resizeUpDown = 13
+    case resizeLeftRight = 14
 }
 
-/// The PURE, headless OSC-22 pointer-shape → cursor-token table.
+/// The OSC-22 pointer-shape → cursor-token face.
 ///
-/// It mirrors ghostty's macOS `setCursorShape` (`SurfaceView_AppKit.swift:505-556`) EXACTLY for the shapes
-/// macOS has a native `NSCursor` for, and returns `nil` for every shape upstream "ignores" — there is no
-/// native `NSCursor` for help / progress / wait / cell / alias / copy / move / no-drop / all-scroll /
-/// {col,row,diagonal}-resize / zoom, so the faithful behaviour is to KEEP the current cursor (a `nil` the
-/// GUI treats as "no change") rather than invent a substitute. `GHOSTTY_MOUSE_SHAPE_DEFAULT` maps to
-/// ``PointerShapeToken/arrow`` — resetting to arrow on default handles a program leaving a custom shape,
-/// e.g. `btop`/`yazi` exiting back to the shell, re-emitting the default.
+/// A terminal program selects the pointer shape with the CSS-named OSC 22 sequence
+/// (`OSC 22 ; <name> ST`); libghostty parses it and emits a `GHOSTTY_ACTION_MOUSE_SHAPE` action whose
+/// payload is a `ghostty_action_mouse_shape_e`. That raw `Int32` crosses to
+/// `slopdesk_terminal::pointer`, which owns the table — including which shapes macOS has no native
+/// cursor for and therefore leaves alone.
+///
+/// ## Why the raw value crosses unparsed
+/// This file used to hold `OSCPointerShape`, a 34-case Swift enum mirroring the C one, purely so the
+/// table below could switch over it. That made THREE copies of one declaration order — libghostty's
+/// header, the Swift mirror, and the table — of which any two could drift while still compiling. The
+/// raw int now travels and the crate that owns the meaning validates it (`docs/55`, §4).
 public enum PointerShapeMapping {
-    /// Resolve a parsed ``OSCPointerShape`` to the cursor token the GUI should adopt, or `nil` to keep the
-    /// current cursor (shapes with no native `NSCursor`, mirroring upstream's "ignore unknown shapes").
-    public static func token(for shape: OSCPointerShape) -> PointerShapeToken? {
-        switch shape {
-        case .default: .arrow
-        case .text: .text
-        case .verticalText: .verticalText
-        case .pointer: .pointer
-        case .grab: .grab
-        case .grabbing: .grabbing
-        case .contextMenu: .contextMenu
-        case .crosshair: .crosshair
-        case .notAllowed: .notAllowed
-        case .wResize: .resizeLeft
-        case .eResize: .resizeRight
-        case .nResize: .resizeUp
-        case .sResize: .resizeDown
-        case .nsResize: .resizeUpDown
-        case .ewResize: .resizeLeftRight
-        // No native NSCursor — upstream `setCursorShape` keeps the current cursor for all of these.
-        case .help,
-             .progress,
-             .wait,
-             .cell,
-             .alias,
-             .copy,
-             .move,
-             .noDrop,
-             .allScroll,
-             .colResize,
-             .rowResize,
-             .neResize,
-             .nwResize,
-             .seResize,
-             .swResize,
-             .neswResize,
-             .nwseResize,
-             .zoomIn,
-             .zoomOut:
-            nil
-        }
-    }
-
-    /// Convenience for the C `action_cb`: validate a raw `ghostty_action_mouse_shape_e` value (read as an
-    /// `Int32`) and resolve it. An out-of-range / unknown raw int (a future or corrupt enum value) returns
-    /// `nil` — validate-then-drop: the surface keeps its current cursor rather than trapping on a bad value.
+    /// Resolve a raw `ghostty_action_mouse_shape_e` to the cursor token the GUI should adopt, or `nil`
+    /// to KEEP the current cursor.
+    ///
+    /// `nil` covers a shape macOS has no native `NSCursor` for (help / progress / wait / cell / alias /
+    /// copy / move / no-drop / all-scroll / {col,row,diagonal}-resize / zoom, which upstream ignores)
+    /// AND an out-of-range value from a newer or corrupt libghostty. The two behave identically on
+    /// purpose: keeping the cursor a person is already looking at beats inventing a substitute.
     public static func token(forRawValue raw: Int32) -> PointerShapeToken? {
-        guard let shape = OSCPointerShape(rawValue: raw) else { return nil }
-        return token(for: shape)
+        PointerShapeToken(rawValue: slopdesk_pointer_shape_token(raw))
     }
 }

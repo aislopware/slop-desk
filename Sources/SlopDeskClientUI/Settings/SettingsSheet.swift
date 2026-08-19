@@ -1,23 +1,23 @@
 // SettingsSheet — the iOS settings host.
 //
 // iOS has no `Settings` scene (⌘, opens a separate, system-chromed window only on macOS), so the client's
-// settings surface on iOS is an in-app SHEET, presented from the `WorkspaceRootView` toolbar gear. The
+// settings surface on iOS is an in-app SHEET, presented from the phone root's toolbar gear. The
 // macOS two-column navigator (`SettingsView`'s search pill + icon/label rows + content pane) does not map to
 // compact width, so this wraps the
 // SAME per-section structs in a `NavigationStack` + `List`-of-sections (the standard iOS Settings idiom):
 // each section is a `NavigationLink` row that pushes its `SettingsSectionContent` body.
 //
-// SECTION SET: the iOS list shows only the CROSS-PLATFORM sections (`SettingsSection.isMacOSOnly` filter) —
-// today that drops **Keybindings**, whose chord CAPTURE is a macOS `NSEvent` monitor with no iOS UI. The
-// Advanced section IS shown, but its macOS-host-only ROWS (the raw `SLOPDESK_*` editor + the Video host
-// flags) are gated inside `AdvancedSettingsTab` with `#if os(macOS)`, so the iOS Advanced page shows the
-// pure-SwiftUI All-Settings list only.
+// SECTION SET: EVERY section, the same eight the Mac's navigator lists. Keybindings used to be dropped
+// here — its chord recorder was said to need an `NSEvent` monitor — and it is not dropped any more, because
+// the phone records with `KeybindingCaptureHost` off the same Rust tables (docs/56 increment 30). What still
+// differs by half is the GROUPS inside a page (the raw `SLOPDESK_*` editor, the Video host flags), and those
+// are gated by the layout table's `Platform` as data, so the All-Settings index still reaches every setting.
 //
 // The single live `PreferencesStore` is handed in by `WorkspaceRootView` (read there from
 // `\.preferencesStore`).
 //
 // The app-owned `AgentHooksController` is THREADED in here and injected
-// onto the section content via `.agentHooksController(_:)`, mirroring the macOS `SlopDeskSettingsScene`.
+// onto the section content via `.agentHooksController(_:)`, mirroring the macOS settings window.
 // Without it the Agents card was permanently `.disconnected` and the entire Agent-Behaviour toggle block was
 // greyed out on iOS (the controller's `@Environment` resolved nil). The app-owned `WorkspaceStore` rides the
 // same seam (`.workspaceStore(_:)`) for the DEVICE-LOCAL rows — General → Shared Focus, whose default is OFF
@@ -26,7 +26,7 @@
 // CROSS-PLATFORM COMPILE: although this is only ever PRESENTED on iOS, the struct compiles on every platform
 // (the lone iOS-only modifier `.navigationBarTitleDisplayMode` is abstracted behind `inlineNavTitle()`) so
 // the iOS settings host is unit-testable on the headless macOS `swift test` host — iOS view code otherwise
-// rots silently (CLAUDE.md). It is referenced only inside `WorkspaceRootView`'s `#if os(iOS)` branch.
+// rots silently (CLAUDE.md). It is referenced only from the iOS-only `WorkspaceRootView`.
 //
 // Colour + type: `SettingsInk` / `SettingsType` (SYSTEM semantics — not the terminal theme); geometry
 // rides `Slate.Metric` (raw font/radius/height literals fail `scripts/check-ds-leaks.sh`).
@@ -45,7 +45,7 @@ struct SettingsSheet: View {
 
     /// The app-owned Agents install-hooks controller, threaded from `SlopDeskClientApp` (held as
     /// `@State` on every platform) so the iOS Agents card's Install/Uninstall/Status round-trips AND the
-    /// gated Agent-Behaviour toggles are LIVE — mirrors the macOS `SlopDeskSettingsScene` injection. `nil`
+    /// gated Agent-Behaviour toggles are LIVE — mirrors the macOS settings window's injection. `nil`
     /// (a preview / no scene) → the card renders the disabled "Connect a session" state rather than crashing.
     let agentHooks: AgentHooksController?
 
@@ -75,7 +75,7 @@ struct SettingsSheet: View {
     var body: some View {
         NavigationStack {
             List {
-                ForEach(SettingsSection.allCases.filter { !$0.isMacOSOnly }) { section in
+                ForEach(SettingsSection.ordered) { section in
                     NavigationLink {
                         SettingsSectionContent(
                             section: section, store: store, selectedSection: $selectedSection,

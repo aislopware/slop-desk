@@ -137,6 +137,25 @@ impl VideoRect {
         let iy = 0.0_f64.max(self.max_y().min(other.max_y()) - self.min_y().max(other.min_y()));
         ix * iy
     }
+
+    /// Whether this rect OVERLAPS `other` — `CGRect.intersects` for standardised rects.
+    ///
+    /// Touching edges do not overlap, and an empty rect overlaps nothing, which is what makes this
+    /// "can a person reach this window on that display" rather than "is it adjacent to it". The
+    /// ordered compares are spelled out instead of routed through
+    /// [`intersection_area`](Self::intersection_area): that one uses NaN-ignoring min/max for the
+    /// screen pick, where a NaN here must answer "no overlap" the way `CGRect` does.
+    #[must_use]
+    pub fn intersects(&self, other: &Self) -> bool {
+        self.size.width > 0.0
+            && self.size.height > 0.0
+            && other.size.width > 0.0
+            && other.size.height > 0.0
+            && self.min_x() < other.max_x()
+            && other.min_x() < self.max_x()
+            && self.min_y() < other.max_y()
+            && other.min_y() < self.max_y()
+    }
 }
 
 /// How the decoded video is scaled into the on-screen layer (doc 17 §3.7).
@@ -408,5 +427,20 @@ mod tests {
             2500.0
         );
         assert_eq!(a.intersection_area(&a), 10_000.0);
+    }
+
+    #[test]
+    fn touching_is_not_overlapping_and_empty_overlaps_nothing() {
+        let a = VideoRect::xywh(0.0, 0.0, 100.0, 100.0);
+        assert!(a.intersects(&VideoRect::xywh(50.0, 50.0, 100.0, 100.0)));
+        assert!(
+            !a.intersects(&VideoRect::xywh(100.0, 0.0, 10.0, 10.0)),
+            "edge-touching"
+        );
+        assert!(!a.intersects(&VideoRect::xywh(200.0, 200.0, 10.0, 10.0)));
+        assert!(
+            !a.intersects(&VideoRect::xywh(50.0, 50.0, 0.0, 10.0)),
+            "a zero-width rect is nowhere"
+        );
     }
 }
