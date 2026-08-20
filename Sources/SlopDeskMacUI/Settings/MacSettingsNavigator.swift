@@ -62,10 +62,30 @@ final class MacSettingsNavigatorController: NSViewController, NSTableViewDataSou
         view = root
     }
 
-    /// Select a section by id — used once at open to land on the first page.
+    /// Select a section by id — at open, to land on the first page, and every time the All-Settings
+    /// index's ✎ names the page that owns a key.
+    ///
+    /// ⚠️ IT CLEARS THE QUERY WHEN IT HAS TO. The rows this searched used to be ``shown`` — the
+    /// FILTERED array — so a jump whose target the live query excluded fell straight through the
+    /// guard and did nothing at all: no page change, no selection move, no complaint. That is the
+    /// exact case the ✎ is for, because the index it is pressed in is the surface people reach FOR
+    /// by searching. A jump is an explicit instruction to go somewhere, which outranks a filter the
+    /// reader typed to find it; so an unshown target drops the query rather than losing the request.
+    /// The alternative — jumping without clearing — would leave the source list showing rows that no
+    /// longer contain the selected one, which is the state ``searchChanged`` already refuses to
+    /// create.
     func select(_ id: String) {
+        if !shown.contains(where: { $0.id == id }) {
+            guard SettingsCatalog.sections.contains(where: { $0.id == id }) else { return }
+            search.stringValue = ""
+            shown = SettingsCatalog.sections
+            table.reloadData()
+        }
         guard let row = shown.firstIndex(where: { $0.id == id }) else { return }
         table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        // A selection below the fold is not a selection anybody can see. The list is short enough
+        // that this only bites on a short window, which is exactly when it is hardest to notice.
+        table.scrollRowToVisible(row)
     }
 
     @objc
