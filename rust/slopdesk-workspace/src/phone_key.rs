@@ -763,8 +763,7 @@ pub const FLOATING_CURSOR_ARROW_BYTES: usize = 3;
 /// A caller sizing a buffer for [`floating_cursor_run`] asks for THIS rather than multiplying the
 /// two constants itself: a product spelled at a call site is the same number written twice, and the
 /// second spelling is the one nobody updates.
-pub const MAX_FLOATING_CURSOR_RUN_BYTES: usize =
-    MAX_FLOATING_CURSOR_ARROWS * FLOATING_CURSOR_ARROW_BYTES;
+pub const MAX_FLOATING_CURSOR_RUN_BYTES: usize = MAX_FLOATING_CURSOR_ARROWS * FLOATING_CURSOR_ARROW_BYTES;
 
 /// The direction one floating-cursor step moves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
