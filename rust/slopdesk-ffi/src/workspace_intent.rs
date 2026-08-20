@@ -800,4 +800,21 @@ mod tests {
             Some(b"titled".as_slice()),
         );
     }
+
+    #[test]
+    fn the_two_crates_key_widths_are_one_number() {
+        // 18 = kind + 16 id bytes + field, and it is written down TWICE: `slopdesk-wire`'s
+        // `WorkspaceKey::ENCODED_SIZE` (which this door hands Swift, and which Swift sizes its
+        // buffer from) and `slopdesk-workspace`'s `state_codec::KEY_SIZE` (which `encode_key`
+        // actually writes with, reached through a DIFFERENT door). Neither crate depends on the
+        // other — that separation is deliberate — so neither can reference the other's constant,
+        // and this crate is the only place that sees both. Without this line the two agree by
+        // convention alone, and the failure would be Swift sizing a buffer for a key width the
+        // encoder no longer uses: a silent truncation on every cell, not a compile error.
+        assert_eq!(
+            WorkspaceKey::ENCODED_SIZE,
+            slopdesk_workspace::state_codec::KEY_SIZE,
+            "the wire's key width and the codec's must be one number",
+        );
+    }
 }

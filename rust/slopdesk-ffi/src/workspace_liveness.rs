@@ -502,27 +502,6 @@ pub unsafe extern "C" fn slopdesk_ws_reconcile_panes(
     unsafe { answer(&state, moved, changed, out, cap) }
 }
 
-/// The liveness byte one state carries, by [`PaneLivenessState`]'s own arm order: attached,
-/// detached, dead.
-///
-/// Exported rather than transcribed for the reason every wire byte here is: these numbers ride in
-/// `pane/liveness` cells and are therefore golden-pinned, and a caller that spelled
-/// `case detached = 1` beside this would be a second copy of a frozen number. An index naming no
-/// state answers the DEAD byte, which is the safe degrade this half already picks everywhere else.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub const extern "C" fn slopdesk_ws_pane_liveness_state(index: c_uchar) -> c_uchar {
-    let state = match index {
-        0 => PaneLivenessState::Attached,
-        1 => PaneLivenessState::Detached,
-        _ => PaneLivenessState::Dead,
-    };
-    state.as_byte()
-}
-
 #[cfg(test)]
 mod tests {
     #![expect(
@@ -542,8 +521,7 @@ mod tests {
 
     use super::{
         CPaneLiveness, slopdesk_ws_mark_pane_dead, slopdesk_ws_merge_pane_liveness,
-        slopdesk_ws_pane_liveness_entries, slopdesk_ws_pane_liveness_read, slopdesk_ws_pane_liveness_state,
-        slopdesk_ws_reconcile_panes,
+        slopdesk_ws_pane_liveness_entries, slopdesk_ws_pane_liveness_read, slopdesk_ws_reconcile_panes,
     };
     use crate::workspace::{CEntry, Span, Uuid};
 
@@ -951,28 +929,6 @@ mod tests {
         assert_eq!(
             read(&snapshot_of(&bytes), PANE).map(|record| record.liveness),
             Some(PaneLivenessState::Dead),
-        );
-    }
-
-    #[test]
-    fn the_exported_liveness_bytes_are_the_ones_the_states_carry() {
-        for (index, state) in [
-            PaneLivenessState::Attached,
-            PaneLivenessState::Detached,
-            PaneLivenessState::Dead,
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            assert_eq!(
-                slopdesk_ws_pane_liveness_state(u8::try_from(index).unwrap_or(u8::MAX)),
-                state.as_byte(),
-            );
-        }
-        assert_eq!(
-            slopdesk_ws_pane_liveness_state(200),
-            PaneLivenessState::Dead.as_byte(),
-            "an index naming no state degrades to the safe side",
         );
     }
 

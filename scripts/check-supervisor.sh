@@ -7542,7 +7542,35 @@ if [[ "$(printf '%s\n' "${cache_markers}" | sort -u | grep -c .)" -ne 1 ]]; then
   fail "pre-push-test.sh and test-touched.sh do not name the same green-tree markers"
 fi
 
-printf 'check-supervisor: one deadline latch, one clipboard clip, one sidecar encoder, one channel tag, no dangling doc link, no doc citing a file that is gone, no gate that dies quietly, one meaning for the green-tree marker.\n'
+# ── The liveness bytes, which no door can pin ──────────────────────────────────────────────────
+# `pane/liveness` carries a frozen byte per state, and BOTH languages spell the three arms:
+# `slopdesk-wire`'s `PaneLivenessState` and `SlopDeskWorkspaceModel`'s enum of the same name.
+#
+# A door was tried for exactly this and could not work, which is why the check is here instead. It
+# exported "the byte for arm N" so the Swift side would never transcribe a frozen number — but a
+# Swift enum's raw values must be COMPILE-TIME constants, so no call can supply them. The door was
+# uncallable by construction, sat dead behind `check-ffi-doors.py`, and the transcription it was
+# written to prevent happened anyway one file over. A ratchet can do what the door could not:
+# compare the two arm lists as TEXT, before either is compiled.
+rust_liveness=$(
+  sed -n '/^pub enum PaneLivenessState {/,/^}/p' rust/slopdesk-wire/src/document/fields.rs |
+    grep -oE '^\s+(Attached|Detached|Dead) = [0-9]+,' |
+    tr -d ' ,' | tr '[:upper:]' '[:lower:]' | paste -sd, -
+) || true
+swift_liveness=$(
+  sed -n '/^public enum PaneLivenessState/,/^}/p' Sources/SlopDeskWorkspaceModel/State/WorkspaceFields.swift |
+    grep -oE '^\s+case (attached|detached|dead) = [0-9]+' |
+    sed 's/^ *case //' | tr -d ' ' | paste -sd, -
+) || true
+if [[ -z "${rust_liveness}" || -z "${swift_liveness}" ]]; then
+  fail "PaneLivenessState could not be read from one of its two halves — this gate has gone stale"
+fi
+if [[ "${rust_liveness}" != "${swift_liveness}" ]]; then
+  printf 'rust:  %s\nswift: %s\n' "${rust_liveness}" "${swift_liveness}" >&2
+  fail "the two PaneLivenessState enums disagree — these bytes ride in pane/liveness cells and are frozen"
+fi
+
+printf 'check-supervisor: one deadline latch, one clipboard clip, one sidecar encoder, one channel tag, no dangling doc link, no doc citing a file that is gone, no gate that dies quietly, one meaning for the green-tree marker, one liveness byte per arm.\n'
 
 # The token bans live in Python, and this is where their status joins the count. Each of them is
 # "this spelling must not appear in code", which in shell is a `grep` — and three separate silent

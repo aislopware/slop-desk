@@ -1617,12 +1617,6 @@ typedef struct {
     bool     has_grid;
 } SlopDeskWsPaneLiveness;
 
-// The liveness byte a state carries, by arm order: 0 attached, 1 detached, 2 dead. Exported because
-// these numbers ride in `pane/liveness` cells and are therefore golden-pinned. An index naming no
-// state answers the DEAD byte, which is the degrade this half picks everywhere: rendering a live
-// pane stale is cosmetic, rendering a dead one live is the bug the document exists to prevent.
-uint8_t slopdesk_ws_pane_liveness_state(uint8_t index);
-
 // One record's cells, as an encoded snapshot. The PROJECTION rule, not a serialization: a field is
 // emitted only when it carries a non-default value, with exactly one exception — the liveness state
 // is always emitted, so a pane's presence in the document is never ambiguous. Never 0 for a record
