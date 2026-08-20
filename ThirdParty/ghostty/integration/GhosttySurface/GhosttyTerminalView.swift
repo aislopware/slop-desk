@@ -83,6 +83,7 @@ import AppKit
 import Carbon              // TIS keyboard-layout id (IME input-source-switch guard; framework already linked)
 #elseif os(iOS)
 import UIKit
+import UniformTypeIdentifiers  // UTType.item — the "Paste File Base64-Encoded…" document picker's content type
 #endif
 
 // MARK: - Process-wide libghostty app handle
@@ -3090,9 +3091,24 @@ final class GhosttyLayerBackedView: UIView {
         isUserInteractionEnabled = true   // a passive renderer may default this off
         let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePanToScroll(_:)))
         pan.maximumNumberOfTouches = 2    // 1- or 2-finger drag scrolls; matches a trackpad scroll
+        // The pan YIELDS to a live selection drag (see `gestureRecognizerShouldBegin`): once the long
+        // press has armed a selection, a finger moving across the grid EXTENDS that selection and must
+        // not also scroll the viewport out from under it. A state flag rather than `require(toFail:)` on
+        // purpose — making every scroll wait `TerminalTouchSelection.longPressDuration` for the press to
+        // fail would put 0.4s of lag on this pane's most common gesture to buy an arbitration the flag
+        // settles for free, and the two gestures are already disjoint in practice (a finger that has
+        // travelled far enough to pan has cancelled the press long before it is recognized).
+        pan.delegate = self
         addGestureRecognizer(pan)
         panRecognizer = pan
     }
+
+    /// The packed `ghostty_input_scroll_mods_t` every touch-driven scroll on this view sends: bit0 =
+    /// PRECISION (a finger is a high-precision device), momentum bits 0 (`.none` — no momentum phase is
+    /// modelled). One constant so the pan-to-scroll and the selection-drag edge autoscroll below can never
+    /// come to describe the same finger differently. Per `Ghostty.Input.swift:438-465` (upstream) and the
+    /// macOS `scrollWheel` override above.
+    private static let kPrecisionScrollMods: ghostty_input_scroll_mods_t = 0b0000_0001
 
     /// Translates a finger drag → libghostty scroll delta. Mirrors the macOS `scrollWheel`
     /// override (same file): build the packed `ghostty_input_scroll_mods_t` and feed small
@@ -3128,12 +3144,10 @@ final class GhosttyLayerBackedView: UIView {
             // iOS is TOP-LEFT origin → NO y-flip (matching `handleTap`, unlike the macOS `surfacePoint`).
             let p = gesture.location(in: self)
             surface?.sendMousePos(x: Double(p.x), y: Double(p.y), mods: GHOSTTY_MODS_NONE)
-            // Packed scroll mods (Int32: bit0 = precision, bits1-3 = momentum), per the macOS
-            // override + `Ghostty.Input.swift:438-465`. Touch is HIGH-PRECISION → set bit0. A
-            // finger-driven pan carries no momentum phase here → momentum bits = 0 (.none), which
-            // is fine for v1 (a future round could map the end-velocity to a momentum phase).
-            let packed: ghostty_input_scroll_mods_t = 0b0000_0001   // precision; momentum = none
-            surface?.sendMouseScroll(deltaX: 0, deltaY: Double(deltaY), mods: packed)
+            // Packed scroll mods (Int32: bit0 = precision, bits1-3 = momentum) — see
+            // `kPrecisionScrollMods`. A finger-driven pan carries no momentum phase here, which is fine
+            // for v1 (a future round could map the end-velocity to a momentum phase).
+            surface?.sendMouseScroll(deltaX: 0, deltaY: Double(deltaY), mods: Self.kPrecisionScrollMods)
             // With the gated tick, scrollback frames must ARM their own present — on iOS
             // the tick is the only present pump (no macOS-style backing-layer display path).
             requestPresent(2)
@@ -3177,6 +3191,16 @@ final class GhosttyLayerBackedView: UIView {
     /// flip. libghostty applies `contentScale` itself (points, not pixels), matching `sendMousePos`.
     @objc private func handleTap(_ recognizer: UITapGestureRecognizer) {
         guard recognizer.state == .ended else { return }
+        // A tap that lands while a touch SELECTION is live (or in the same event cycle as the release that
+        // ended one) is that gesture's own touch-up, not a click: UIKit does not guarantee a tap fails just
+        // because the finger rested long enough for the long press to fire, and forwarding a press+release
+        // here would make libghostty clear the selection the user just made and drop the edit menu with it.
+        // `touchSelectionActive` outlives the release by one runloop turn precisely to cover that cycle.
+        guard !touchSelectionActive else { return }
+        // A tap OUTSIDE the selection clears it — which is the Mac's behaviour and libghostty's own: the
+        // press below lands at a fresh cell with click-count 1, which drops the standing selection. All we
+        // owe is taking the menu down with it, since the thing it was offered for is about to be gone.
+        editMenuInteraction?.dismissMenu()
         // FOCUS-ON-TAP: this gesture recognizer consumes the body tap that the SwiftUI leaf used to
         // drive workspace focus (`PaneTreeView .onTapGesture { store.focus(id) }`), so transfer focus
         // here exactly as the macOS `mouseDown` does (line ~706). `onRequestFocus` is wired
@@ -3191,6 +3215,362 @@ final class GhosttyLayerBackedView: UIView {
         // With the gated tick, gesture-driven content (selection clear / click report
         // redraw) must ARM its own present — on iOS the tick is the only present pump.
         requestPresent(2)
+    }
+
+    // MARK: Long-press-to-select (touch text selection + the edit menu)
+    //
+    // LONG PRESS → SELECT — the iOS counterpart of the macOS `mouseDown`/`mouseDragged`/`mouseUp` drag
+    // selection and the `menu(for:)` context menu above. It is the SAME triple of libghostty calls: a
+    // PRESS at the cell under the finger opens a selection, `sendMousePos` while the button is held
+    // extends its head, and the RELEASE leaves it standing. libghostty owns everything that follows —
+    // the selection state, its native painting, the granularity, and `readSelection()` — exactly as on
+    // the Mac, where the AppKit view also only forwards. What differs is the ARMING, because a touch is
+    // ambiguous until it has lasted long enough to say what it is; the numbers that resolve that
+    // ambiguity are `SlopDeskClientCore.TerminalTouchSelection`, not literals typed in here.
+    //
+    // GRANULARITY: this anchors at the CELL under the finger, not at the word around it. libghostty
+    // exposes no word-select door — the fork's slim delta
+    // (`ThirdParty/ghostty/slopdesk-libghostty-on-v1.3.1.patch`) adds `set_selection` / `clear_selection`
+    // / `viewport_info` / `line_range` and no word range, and `ghostty_surface_mouse_button` carries no
+    // click count — so a word snap here would have to re-walk the row's cells, which is a second copy of
+    // the walk `slopdesk_terminal::vimotion` already owns (`SlopDeskWorkspaceCore.ViLineMotion`, whose
+    // `prev_word_start`/`word_end` doors are exactly the two this wants; they are `internal` today). A
+    // DOUBLE TAP should already word-select without any of that — libghostty counts clicks from the
+    // press TIMINGS on its own side (which is how a double-CLICK word-selects on the Mac through the
+    // same forward-only path) and the tap recognizer above forwards a real press/release pair per tap —
+    // but that is upstream behaviour read off the source, not something measured on this half.
+    private var longPressRecognizer: UILongPressGestureRecognizer?
+
+    /// The system edit menu (iOS 16+; this app's floor is iOS 26 — `Apps/ClientApp-iOS/project.yml`).
+    /// It renders the SAME `TerminalContextMenu` table the Mac's `NSMenu` renders, with the same
+    /// per-item enablement, so the two menus cannot come to offer different things.
+    private var editMenuInteraction: UIEditMenuInteraction?
+
+    /// Whether a long-press selection is live — set when the press is RECOGNIZED and cleared one runloop
+    /// turn AFTER it ends. The trailing turn is what `handleTap` reads: the tap that fires from the same
+    /// touch-up must not be forwarded as a click (see there). It also gates the pan
+    /// (`gestureRecognizerShouldBegin`) so a selection drag never scrolls the viewport as well.
+    private var touchSelectionActive = false
+
+    /// Whether a left-button PRESS was forwarded for the live gesture and is still unmatched. The
+    /// press/release balance guard this whole file keeps: a RELEASE that was never opened by a PRESS
+    /// injects an unpaired report into a mouse-reporting TUI.
+    private var selectionPressForwarded = false
+
+    /// Bumped on every recognized long press, so the deferred `touchSelectionActive` clear can tell
+    /// whether it is still clearing its OWN gesture (a newer press must not be un-armed by an older
+    /// gesture's trailing hop).
+    private var selectionGeneration = 0
+
+    /// The last touch point of the live selection drag, view-local POINTS. Re-sent from `renderTick`
+    /// while the edge autoscroll runs, so the selection head re-resolves against the content that
+    /// scrolled under a finger that is holding still.
+    private var selectionDragPoint: CGPoint = .zero
+
+    /// Points of scroll to feed per display tick while the selection drag sits in an edge band; `0` when
+    /// the finger is in the middle and nothing should scroll. Decided by
+    /// ``TerminalTouchSelection/autoScrollDelta(y:viewHeight:)``.
+    private var selectionAutoScroll: Double = 0
+
+    /// Installs the long-press selection recognizer and the edit-menu interaction. Idempotent, like the
+    /// pan/tap installers above, so the idempotent `attach()` never stacks duplicates.
+    private func installLongPressToSelectIfNeeded() {
+        guard longPressRecognizer == nil else { return }
+        isUserInteractionEnabled = true
+        let press = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPressToSelect(_:)))
+        press.minimumPressDuration = TerminalTouchSelection.longPressDuration
+        press.allowableMovement = CGFloat(TerminalTouchSelection.longPressAllowableMovement)
+        press.numberOfTouchesRequired = 1
+        addGestureRecognizer(press)
+        longPressRecognizer = press
+        if editMenuInteraction == nil {
+            let interaction = UIEditMenuInteraction(delegate: self)
+            addInteraction(interaction)
+            editMenuInteraction = interaction
+        }
+    }
+
+    /// Translates the long press + its drag into libghostty's press / move / release selection triple.
+    ///
+    /// COORDINATES: view-local POINTS with a TOP-LEFT origin, passed straight through with NO y-flip —
+    /// iOS is already top-left, unlike the macOS `surfacePoint` path. libghostty applies `contentScale`
+    /// and resolves the cell itself, so there is no grid arithmetic on this path.
+    @objc private func handleLongPressToSelect(_ gesture: UILongPressGestureRecognizer) {
+        let point = gesture.location(in: self)
+        switch gesture.state {
+        case .began:
+            // Same focus transfer the tap and the macOS `mouseDown` do: a gesture that lands in this
+            // pane's body claims the pane. Idempotent, so it does not fight the reactive path.
+            model?.onRequestFocus?()
+            editMenuInteraction?.dismissMenu()   // a second press replaces the first menu, never stacks it
+            selectionGeneration += 1
+            touchSelectionActive = true
+            selectionPressForwarded = true
+            selectionDragPoint = point
+            selectionAutoScroll = 0
+            surface?.sendMousePos(x: Double(point.x), y: Double(point.y), mods: GHOSTTY_MODS_NONE)
+            _ = surface?.sendMouseButton(state: GHOSTTY_MOUSE_PRESS, button: GHOSTTY_MOUSE_LEFT, mods: GHOSTTY_MODS_NONE)
+            // The one thing a phone owes that a pointer does not: the moment a press stops being a click
+            // and becomes a selection is invisible, so it is felt instead. The system selection haptic is
+            // the same one a text view fires at its own selection start.
+            UISelectionFeedbackGenerator().selectionChanged()
+            requestPresent(2)
+        case .changed:
+            selectionDragPoint = point
+            // Edge autoscroll is ARMED here and PUMPED by `renderTick`: a finger held still at the edge
+            // produces no further `.changed` events, so the tick is the only thing that can keep the
+            // viewport moving under it.
+            selectionAutoScroll = TerminalTouchSelection.autoScrollDelta(
+                y: Double(point.y),
+                viewHeight: Double(bounds.height),
+            )
+            surface?.sendMousePos(x: Double(point.x), y: Double(point.y), mods: GHOSTTY_MODS_NONE)
+            requestPresent(2)
+        case .ended,
+             .cancelled,
+             .failed:
+            selectionAutoScroll = 0
+            // Balance: forward the RELEASE only when this gesture actually forwarded the PRESS.
+            if selectionPressForwarded {
+                selectionPressForwarded = false
+                _ = surface?.sendMouseButton(state: GHOSTTY_MOUSE_RELEASE, button: GHOSTTY_MOUSE_LEFT, mods: GHOSTTY_MODS_NONE)
+                requestPresent(2)
+            }
+            // A cancelled gesture (a system gesture took the touch) is not a request for a menu.
+            if gesture.state == .ended,
+               TerminalTouchSelection.presentsMenuOnRelease(mouseCaptured: surface?.mouseCaptured ?? false) {
+                editMenuInteraction?.presentEditMenu(with: UIEditMenuConfiguration(identifier: nil, sourcePoint: point))
+            }
+            // Hold the flag across the current event cycle so the tap that UIKit may deliver from this
+            // same touch-up is suppressed (see `handleTap`), then release it — but only if no NEWER press
+            // has armed in the meantime.
+            let generation = selectionGeneration
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.selectionGeneration == generation else { return }
+                touchSelectionActive = false
+            }
+        default:
+            break
+        }
+    }
+
+    // MARK: The edit menu's items (the SAME table the Mac's `menu(for:)` renders)
+
+    /// The menu, built from the PURE ``TerminalContextMenu`` — same items, same order, same enablement
+    /// rule, same SF Symbols. The Mac renders this table as an `NSMenu`; this renders it as a `UIMenu`.
+    /// The system's `suggestedActions` are deliberately DROPPED: they are the responder chain's
+    /// Copy/Paste over a `UITextInput` this view is not, and offering both would put two Copies with
+    /// different meanings in one menu.
+    private func terminalMenuElements() -> [UIMenuElement] {
+        let ctx = TerminalContextMenu.Context(
+            hasSelection: surface?.hasSelection() ?? false,
+            clipboardHasText: !(ClientPasteboard.text()?.isEmpty ?? true),
+            paneConnected: true,
+            // WB2: "Copy Command Output" is enabled when this pane has at least one completed block.
+            hasCommandOutput: model?.blocks.latest?.complete ?? false,
+        )
+        // `Item.separatorBefore` opens a new GROUP; UIKit draws a group as an inline submenu, which is
+        // the rule an `NSMenuItem.separator()` draws on the Mac. Same table, each framework's own rule.
+        var groups: [[UIMenuElement]] = [[]]
+        for item in TerminalContextMenu.items {
+            if item.separatorBefore { groups.append([]) }
+            groups[groups.count - 1].append(menuAction(for: item, context: ctx))
+            // The "Paste as…" submenu sits directly below Paste, exactly where the Mac's NSMenu puts it.
+            if item == .paste {
+                let variants = TerminalContextMenu.pasteAsItems.map { menuAction(for: $0, context: ctx) }
+                groups[groups.count - 1].append(
+                    UIMenu(
+                        title: TerminalContextMenu.pasteAsSubmenuTitle,
+                        image: UIImage(systemName: TerminalContextMenu.Item.paste.symbol),
+                        children: variants,
+                    ),
+                )
+            }
+        }
+        return groups.filter { !$0.isEmpty }.map { UIMenu(title: "", options: .displayInline, children: $0) }
+    }
+
+    /// One item as a `UIAction`, greyed by the SAME unit-tested rule the Mac greys by
+    /// (`TerminalContextMenu.isEnabled`) rather than by anything this view knows.
+    private func menuAction(for item: TerminalContextMenu.Item, context: TerminalContextMenu.Context) -> UIAction {
+        let enabled = TerminalContextMenu.isEnabled(item, context: context)
+        return UIAction(
+            title: item.title,
+            image: UIImage(systemName: item.symbol),
+            attributes: enabled ? [] : .disabled,
+        ) { [weak self] _ in
+            self?.performContextMenuItem(item)
+        }
+    }
+
+    /// Actuates a chosen item — the iOS twin of the macOS `contextMenuAction(_:)`. The two switches are
+    /// the same shape over the same enum because the ACTUATION is what differs between the halves and
+    /// nothing else: a binding action is a binding action, but a clipboard is `UIPasteboard` here and an
+    /// `NSPasteboard` there, and a file is picked with a `UIDocumentPickerViewController` rather than an
+    /// `NSOpenPanel`. The clipboard reads/writes go through ``ClientPasteboard`` — the one funnel that
+    /// already knows which board to touch on each platform (and under XCTest).
+    private func performContextMenuItem(_ item: TerminalContextMenu.Item) {
+        switch item {
+        case .copy: surface?.performBindingAction("copy_to_clipboard")
+        case .cut: performCut()   // copy the selection + (editable prompt only) delete it
+        case .paste: requestPaste()   // paste-protection pre-check, then libghostty's bracketed paste
+        case .pasteAsKeystrokes:
+            // Type the pasteboard string as raw keystrokes (no bracketed-paste) — the "paste literally"
+            // affordance for TUIs that swallow bracketed paste.
+            if let text = ClientPasteboard.text(), !text.isEmpty { surface?.text(text) }
+        case .pasteSelection:
+            // X11 middle-click convention: type the current SELECTION rather than the clipboard.
+            if let selection = surface?.readSelection(), !selection.isEmpty { surface?.text(selection) }
+        case .pasteFileBase64:
+            pasteFileAsBase64()
+        case .pasteEscaped:
+            if let text = ClientPasteboard.text(), !text.isEmpty { surface?.text(PasteTransform.shellEscaped(text)) }
+        case .pasteBracketed:
+            if let text = ClientPasteboard.text(), !text.isEmpty { surface?.text(PasteTransform.bracketed(text)) }
+        case .selectAll: surface?.performBindingAction("select_all")
+        case .clear: surface?.performBindingAction("clear_screen")
+        case .copyOutput:
+            // WB2: copy the LATEST completed command block's output. The model requests it (wire type 15),
+            // strips VT control sequences, and resolves an empty/unavailable reply as a graceful no-op.
+            if let index = model?.blocks.latest?.index {
+                model?.copyBlockOutput(index: index) { text in
+                    guard let text, !text.isEmpty else { return }
+                    ClientPasteboard.write(text)
+                }
+            }
+        case .splitRight: model?.onContextMenuSplit?(true)
+        case .splitDown: model?.onContextMenuSplit?(false)
+        case .find: model?.onRequestFind?()
+        }
+        // Every arm above either repaints the grid (a cleared selection, a cleared screen, typed bytes)
+        // or does not — arming a present unconditionally is cheaper than getting the list wrong, and on
+        // iOS the gated tick is the only present pump.
+        requestPresent(3)
+    }
+
+    /// Cut — the iOS twin of the macOS `performCut()`, over the SAME pure ``CutSelectionPolicy``: always
+    /// copy the selection, and delete it only at an editable prompt. The delete half carries the same
+    /// GEOMETRY CEILING as the Mac's (`selectionEndsAtCursor: false` against the pinned fork ⇒ a 0 DEL
+    /// count ⇒ the cut degrades to copy-only) rather than risk deleting the wrong characters.
+    private func performCut() {
+        guard let surface else { return }
+        let action = CutSelectionPolicy.action(
+            hasSelection: surface.hasSelection(),
+            isAlternateScreen: model?.isAlternateScreen ?? false,
+            isPromptZone: (model?.connectionStatus.isLive ?? false)
+                && model?.shellActivity == .idle
+                && !(model?.isAlternateScreen ?? false),
+        )
+        guard action != .none else { return }
+        surface.performBindingAction("copy_to_clipboard")
+        guard action == .copyAndDelete else { return }
+        let count = CutSelectionPolicy.deleteCount(
+            selection: surface.readSelection() ?? "",
+            selectionEndsAtCursor: false,
+        )
+        if count > 0 { model?.sendInput(Data(repeating: 0x7F, count: count)) }
+    }
+
+    /// Paste — the iOS twin of the macOS `requestPaste()`. It runs the paste-protection pre-check BEFORE
+    /// handing the bytes to libghostty, because libghostty's own `isSafe` gate is NARROWER than this
+    /// pre-check's four dangers: a single-line `sudo`, an ESC-laced control-char paste or a bare-`\r`
+    /// paste would otherwise reach the shell silently. On a danger the question goes to the human through
+    /// ``slopdeskPresentClipboardConfirm`` — the ONE platform seam in the clipboard gates, which on this
+    /// half files into `ClipboardConfirmRequests` for the mounted card to drain. Only on approve do we
+    /// paste, with the one-shot `allow_unsafe` flags so libghostty's own gate is not re-tripped into a
+    /// SECOND dialog; a safe payload pastes straight through, still bracketed by libghostty.
+    private func requestPaste() {
+        guard let surface else { return }
+        let clipboard = ClientPasteboard.text() ?? ""
+        let decision = PastePrecheck.decide(
+            clipboard: clipboard,
+            protectionOn: SettingsKey.pasteProtectionEnabled,
+            // The REAL alt-screen flag (DECSET 1049/47/1047 via the client `TerminalModeTracker`), not the
+            // `.running` proxy: a single-line `sudo` pasted into a non-TUI foreground command must trip.
+            isAlternateScreen: model?.isAlternateScreen ?? false,
+            bracketedSafe: SettingsKey.pasteBracketedSafeEnabled,
+            programAdvertisedBracketed: model?.isBracketedPasteActive ?? false,
+        )
+        switch decision {
+        case .pasteDirect:
+            surface.performBindingAction("paste_from_clipboard")   // libghostty applies bracketed-paste
+        case let .confirm(dangers):
+            slopdeskPresentClipboardConfirm(ask: .unsafePaste, preview: clipboard, dangers: dangers) { [weak self] pasteAnyway in
+                guard pasteAnyway, let self, let surface = self.surface else { return }
+                // Capture the REVIEWED text so the read returns the exact snapshot the user approved (not
+                // a fresh — and possibly swapped — pasteboard read). Both flags are cleared right after
+                // the SYNCHRONOUS binding-action read so they can never leak into a later one.
+                surface.pasteApprovedOnce = true
+                surface.approvedPasteText = clipboard
+                surface.performBindingAction("paste_from_clipboard")
+                surface.pasteApprovedOnce = false
+                surface.approvedPasteText = nil
+                requestPresent(3)
+            }
+        }
+        requestPresent(3)
+    }
+
+    /// "Paste File Base64-Encoded…" — the iOS twin of the macOS `pasteFileAsBase64()`. Reads the bytes
+    /// DEFENSIVELY (a cancelled picker, a missing URL or an unreadable file is a silent no-op, never a
+    /// crash) and encodes them with the same unit-tested `PasteTransform.base64`. `asCopy: true` hands
+    /// back a URL inside this app's own container, so there is no security-scoped resource to balance.
+    private func pasteFileAsBase64() {
+        guard let presenter = nearestViewController() else { return }
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: true)
+        picker.allowsMultipleSelection = false
+        picker.delegate = self
+        presenter.present(picker, animated: true)
+    }
+
+    /// The nearest view controller up the responder chain — what UIKit needs to present anything from a
+    /// view that is hosted inside a SwiftUI tree and owns no controller of its own.
+    private func nearestViewController() -> UIViewController? {
+        var responder: UIResponder? = next
+        while let current = responder {
+            if let controller = current as? UIViewController { return controller }
+            responder = current.next
+        }
+        return nil
+    }
+
+    // MARK: Keyboard-focus reclaim (the iOS half of `onReclaimKeyboardFocus`)
+
+    /// Re-take the pane's keyboard after a surface that stole it closed (the ⌘F find bar, an overlay).
+    ///
+    /// The Mac calls `makeFirstResponder(self)` because on that half the renderer IS the key responder.
+    /// Here it is not: the pane's responder is `SlopDeskPhoneUI.TerminalInputHostView`, a zero-sized
+    /// sibling mounted beside this view by `TerminalLeafView` (doc 17 §2.5). It conforms to the PUBLIC
+    /// ``PaneFocusCoordinator/FocusableInputHost``, which is how this view re-claims without importing
+    /// the phone's UI target — and the search is deliberately the SMALLEST ancestor subtree that holds
+    /// exactly ONE host, so on iPad-regular (several panes mounted at once) it can only ever find its
+    /// own pane's, and an ambiguous level yields nothing rather than stealing another pane's keyboard.
+    ///
+    /// The RIGHT call is `PaneFocusCoordinator.reassertFocus(_:)` — a fresh generation, resign-before-
+    /// become, the whole arbitration — but it is keyed by `PaneID`, and neither this view nor
+    /// ``TerminalViewModel`` carries one. Binding it belongs where the pane's id and the store are both
+    /// in hand (`SlopDeskClientCore/Pane/TerminalPaneWiring.swift`); this is the local re-claim until
+    /// then, and it is a RE-take of a focus this pane already holds, so it crosses no other pane.
+    private func reclaimPaneKeyboardFocus() {
+        paneInputHost()?.becomeFocus()
+    }
+
+    private func paneInputHost() -> PaneFocusCoordinator.FocusableInputHost? {
+        var ancestor: UIView? = superview
+        while let view = ancestor {
+            let hosts = Self.focusableInputHosts(in: view)
+            if hosts.count > 1 { return nil }   // this level already spans other panes — never steal
+            if let host = hosts.first { return host }
+            ancestor = view.superview
+        }
+        return nil
+    }
+
+    private static func focusableInputHosts(in view: UIView) -> [PaneFocusCoordinator.FocusableInputHost] {
+        var found: [PaneFocusCoordinator.FocusableInputHost] = []
+        if let host = view as? PaneFocusCoordinator.FocusableInputHost { found.append(host) }
+        for subview in view.subviews { found.append(contentsOf: focusableInputHosts(in: subview)) }
+        return found
     }
 
     /// The surface is created ONLY once the view is in a real window — never for SwiftUI's off-window
@@ -3217,6 +3597,7 @@ final class GhosttyLayerBackedView: UIView {
         guard window != nil else { return }   // never spawn a surface for the off-window probe view
         installPanToScrollIfNeeded()
         installTapIfNeeded()
+        installLongPressToSelectIfNeeded()
         if surface == nil {
             let scale = window?.screen.scale ?? UIScreen.main.scale
             let s = GhosttySurface(
@@ -3239,6 +3620,15 @@ final class GhosttyLayerBackedView: UIView {
             // Dirty signal → gated tick (the macOS wiring, previously MISSING on iOS:
             // feed's content signal was dropped and only the free-running tick presented).
             s.onContentChanged = { [weak self] in self?.requestPresent() }
+            // A landed Copy / OSC-52 STANDARD-clipboard write → the pane's transient `COPIED · N` receipt
+            // chip, which the phone draws in its island (`SlopDeskPhoneUI/Overlays/IslandChipStack.swift`)
+            // and which stayed dark on this half only because nothing observed the write. libghostty owns
+            // the write; this is the one point that sees the text.
+            s.onClipboardWrite = { [weak model] text in model?.noteClipboardCopy(text) }
+            // The libghostty-INITIATED paste backstop (`slopdeskConfirmUnsafePaste`) reads the REAL
+            // alt-screen flag through this hook, so it suppresses inside a true full-screen TUI exactly as
+            // the menu's own `requestPaste` pre-check does. Unset, it read a hardcoded `false` here.
+            s.isAlternateScreen = { [weak model] in model?.isAlternateScreen ?? false }
             self.surface = s
             // A BRAND-NEW surface must get its first real layout — drop the same-size cache.
             lastAppliedLayout = nil
@@ -3256,6 +3646,22 @@ final class GhosttyLayerBackedView: UIView {
         // Seed `lastForwardedFocus` so the coalesced `forwardRenderFocus` dedupes against the value set here.
         lastForwardedFocus = isFocusedPane
         surface?.setFocus(isFocusedPane)
+        // Resize-END → present the REFLOWED frame. The macOS sibling binds this at line ~1066 and this
+        // half did not, so a pane resize could settle on an unpainted frame: the final layout pass often
+        // hits the same-size guard and arms NO present at all, and libghostty's own reflow produces no
+        // bytes, so nothing repainted until the next output byte arrived. Unlike the Mac this needs no
+        // settle BURST — the macOS burst exists because its async present path is size-discarded, while
+        // here `renderTick`'s `drawNow` is size-unconditional and the host's late SIGWINCH redraw bytes
+        // arm their own present through `onContentChanged`. 8 ticks covers the renderer thread finishing
+        // the reflow (~130ms), which is the one frame that has no other pump. Set on the MODEL each
+        // attach; a stale prior view's `[weak self]` closure no-ops once overwritten.
+        model.onResizeSettled = { [weak self] in self?.requestPresent(8) }
+        // The find bar / an overlay closing tears down a focused field WITHOUT a workspace-focus change,
+        // so none of the pane's own focus paths fire and the pane stays deaf. Its two live callers are
+        // `SlopDeskPhoneUI/Overlays/OverlayHostView.swift` and
+        // `SlopDeskClientCore/Pane/TerminalFindBarModel.swift`, both of which reach `reclaimKeyboardFocus()`
+        // on the model; on this half the responder is the input host beside us, not this view.
+        model.onReclaimKeyboardFocus = { [weak self] in self?.reclaimPaneKeyboardFocus() }
         requestPresent(8)   // prime the initial glyph flush / flush the replay (mirrors macOS)
     }
 
@@ -3271,6 +3677,21 @@ final class GhosttyLayerBackedView: UIView {
     }
 
     @objc private func renderTick() {
+        // EDGE AUTOSCROLL for a live selection drag. It is pumped HERE rather than from the gesture
+        // because a finger held at the edge produces no further `.changed` events — the tick is the only
+        // thing still running. Same call the pan-to-scroll uses, so libghostty decides what a scroll
+        // means exactly as it does there; the `sendMousePos` after it re-resolves the selection head
+        // against the content that just moved under a stationary finger. The `requestPresent` keeps the
+        // link un-paused for as long as the drag holds an edge, and the drag ending zeroes the delta.
+        if selectionAutoScroll != 0, let surface {
+            surface.sendMouseScroll(deltaX: 0, deltaY: selectionAutoScroll, mods: Self.kPrecisionScrollMods)
+            surface.sendMousePos(
+                x: Double(selectionDragPoint.x),
+                y: Double(selectionDragPoint.y),
+                mods: GHOSTTY_MODS_NONE,
+            )
+            requestPresent(2)
+        }
         #if targetEnvironment(simulator)
         // Simulator: keep the free-run — the renderer thread's libxev wakeup pump is
         // unreliable there (patch 0001 forensics) and the steady drawNow papers over it.
@@ -3306,6 +3727,21 @@ final class GhosttyLayerBackedView: UIView {
             removeGestureRecognizer(tap)
             tapRecognizer = nil
         }
+        // Remove the long-press selection recognizer + the edit-menu interaction (symmetric with
+        // `installLongPressToSelectIfNeeded`), and drop the gesture's own state so a re-attached view can
+        // never forward a RELEASE for a PRESS the previous life sent.
+        if let press = longPressRecognizer {
+            removeGestureRecognizer(press)
+            longPressRecognizer = nil
+        }
+        if let interaction = editMenuInteraction {
+            interaction.dismissMenu()
+            removeInteraction(interaction)
+            editMenuInteraction = nil
+        }
+        touchSelectionActive = false
+        selectionPressForwarded = false
+        selectionAutoScroll = 0
         let detaching = surface
         surface = nil
         detaching?.close()
@@ -3313,7 +3749,19 @@ final class GhosttyLayerBackedView: UIView {
         // the live surface the model is still feeding. A surface-LESS view (an off-window probe that
         // never attached) makes NO call at all — `detachSurface(nil)` takes the unconditional
         // else-branch and clears the LIVE pane's surface, freezing the visible terminal.
-        if let detaching { model?.detachSurface(detaching) }
+        if let detaching {
+            model?.detachSurface(detaching)
+            // The two sinks bound in `attach` come down under the SAME identity gate, one level further
+            // on: `detachSurface` clears `model.surface` only when the surface it held was OURS, so a nil
+            // surface here proves no newer view has taken this pane over and the closures are still this
+            // view's to clear. Clearing them unconditionally would strand a LIVE pane deaf whenever
+            // SwiftUI mounts the replacement before dismantling us — the same stale-duplicate hazard the
+            // gate above exists for. (Both are `[weak self]`, so one left standing is inert either way.)
+            if model?.surface == nil {
+                model?.onResizeSettled = nil
+                model?.onReclaimKeyboardFocus = nil
+            }
+        }
     }
 
     /// The last (bounds.size, scale) actually APPLIED to a live surface — the iOS mirror of
@@ -3359,6 +3807,45 @@ final class GhosttyLayerBackedView: UIView {
         if surface != nil {
             lastAppliedLayout = (bounds.size, scale)
         }
+    }
+}
+
+// MARK: - Gesture arbitration (the pan yields to a live selection)
+
+extension GhosttyLayerBackedView: UIGestureRecognizerDelegate {
+    /// The pan-to-scroll recognizer may NOT begin while a long-press selection is live: a finger moving
+    /// across the grid then means "extend the selection", and scrolling the viewport under it as well
+    /// would drag the selection head across content that is itself moving. Every other recognizer is
+    /// untouched — this delegate answers only for the pan it is installed on.
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard gestureRecognizer === panRecognizer else { return true }
+        return !touchSelectionActive
+    }
+}
+
+// MARK: - The edit menu
+
+extension GhosttyLayerBackedView: UIEditMenuInteractionDelegate {
+    func editMenuInteraction(
+        _ interaction: UIEditMenuInteraction,
+        menuFor configuration: UIEditMenuConfiguration,
+        suggestedActions: [UIMenuElement],
+    ) -> UIMenu? {
+        UIMenu(title: "", children: terminalMenuElements())
+    }
+}
+
+// MARK: - "Paste File Base64-Encoded…"
+
+extension GhosttyLayerBackedView: UIDocumentPickerDelegate {
+    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+        // DEFENSIVE, like the macOS `NSOpenPanel` twin: no URL, or bytes that will not read, is a silent
+        // no-op rather than a crash. The encoding is the unit-tested `PasteTransform.base64`.
+        guard let url = urls.first, let bytes = try? Data(contentsOf: url) else { return }
+        let encoded = PasteTransform.base64(ofFileBytes: bytes)
+        guard !encoded.isEmpty else { return }
+        surface?.text(encoded)
+        requestPresent(3)
     }
 }
 

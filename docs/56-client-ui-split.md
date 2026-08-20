@@ -3070,6 +3070,51 @@ SILENCED, so the audible half of a beep is the half a phone throws away. `.rigid
 hard tap, because the cue is a REFUSAL — survives the ring switch and needs no audio session the
 terminal does not own.
 
+### Increment 72 — the phone could read the terminal and take nothing out of it
+
+Selecting text is the oldest thing a terminal does, and the phone could not do it. The Mac's path is
+a press, a motion and a release forwarded to libghostty, which owns the selection state, its
+painting, its granularity and the extraction — the AppKit view only forwards. A phone has none of
+those events, because a touch is ambiguous until it has lasted long enough to say what it is, so the
+long press synthesises the SAME triple: `.began` → `sendMousePos` + `PRESS`, `.changed` →
+`sendMousePos` (the head extends), `.ended` → `RELEASE` and the edit menu. Nothing on this path
+measures a cell: the touch point crosses as POINTS and libghostty resolves the cell, so there is no
+second copy of the grid geometry.
+
+Contention with the scroll pan is settled by a STATE FLAG, not `require(toFail:)` — the latter would
+put 0.4s on the pane's commonest gesture to buy an arbitration the flag settles for free, and the two
+are already disjoint (a finger that travelled far enough to pan cancelled the press long before
+recognition). The flag is held one runloop turn past the release, because UIKit does not guarantee a
+tap fails just because the finger rested, and a stray tap would send press+release and wipe the
+selection; a generation counter keeps an older gesture's deferred clear from un-arming a newer press.
+
+Edge autoscroll is armed in `.changed` and pumped from `renderTick`, since a finger held still at the
+edge produces no more events and the tick is the only thing left running. The ramp, the two
+thresholds and the "does a release present a menu" rule live in
+`Sources/SlopDeskClientCore/Pane/TerminalTouchSelection.swift` rather than in the UIKit view — pure,
+so the ramp is pinnable without a touch, and reachable the day a trackpad drag on an iPad runs
+through it.
+
+`UIEditMenuInteraction` is built from the SAME `TerminalContextMenu.items` + `isEnabled` the Mac's
+`menu(for:)` uses, with the same symbols, and every Mac item is carried: Cut through the same
+`CutSelectionPolicy`, Paste through the same `PastePrecheck` and the clipboard-confirm seam, "Paste
+File Base64-Encoded…" through a document picker into the same `PasteTransform.base64`. The system's
+`suggestedActions` are dropped deliberately — they are a `UITextInput`'s Copy/Paste, and two Copies
+with different meanings in one menu is worse than none. Two ceilings are honest ones: word-granularity
+snapping would need a second copy of `vimotion`'s word walk (the fork's delta carries no word range
+and no click count), and the LINK items need `detectedLink(at:)`, which still lives in the macOS
+block.
+
+Two sinks the audit sent this change after were bound on the way: `onResizeSettled` → a present, with
+NO settle burst (this half's `drawNow` is size-unconditional, unlike the Mac's async present, so the
+burst array would have been copied for nothing), and `onReclaimKeyboardFocus` → a pane-local re-claim
+over the smallest ancestor subtree holding exactly ONE focusable host. That last one contradicts the
+audit and is documented in the code as interim: `PaneFocusCoordinator.reassertFocus(_:)` is keyed by
+`PaneID`, and the renderer view carries none — the real home for the binding is
+`TerminalPaneWiring`, where `live.id` and the coordinator are both in hand. Two smaller gaps fell out
+of the same attach: `onClipboardWrite` was unbound, so the `COPIED · N` chip the phone DOES draw never
+lit, and `isAlternateScreen` read a hardcoded `false` in the paste backstop.
+
 ## Stage D ledger — what the rename actually costs
 
 `SlopDeskClientUI` cannot fold into `SlopDeskPhoneUI` while `SlopDeskMacUI` still imports it. That is
