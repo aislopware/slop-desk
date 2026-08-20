@@ -20,11 +20,13 @@
 // Privacy & New Panes group; Appearance → TABS is VERTICAL-TABS-ONLY by product decision (a horizontal
 // Tabs Top / Tabs Bottom LAYOUT selector is dropped, not missing) with Auto-Hide-Tabs-Panel + Window-Size
 // deferred. None of these are regressions; see the matching struct doc-comments in `SettingsView.swift`.
+//
+// docs/56: moved here whole in batch 2 of the draining-floor split, with ``SettingsSection`` itself —
+// the dispatch enum names no view framework, only `SettingsSectionContent`'s exhaustive `switch` over
+// it does, and that stayed in `SlopDeskClientUI/Settings/SettingsPages.swift`.
 
-#if canImport(SwiftUI)
 import XCTest
 @testable import SlopDeskClientCore
-@testable import SlopDeskClientUI
 
 final class SettingsSectionTaxonomyTests: XCTestCase {
     /// Every dispatch case has a catalog row, and every catalog row a dispatch case — the same set, in the
@@ -76,4 +78,3 @@ final class SettingsSectionTaxonomyTests: XCTestCase {
         )
     }
 }
-#endif

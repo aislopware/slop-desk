@@ -3138,6 +3138,10 @@ with the terminal leaf, and there is no later batch where it becomes cheaper to 
 
 ### The fold, concretely
 
+> **The numbers in this paragraph were wrong and are corrected below it (increment 62).** They were
+> counted once, early, and never recounted while the target drained from both ends. Read the boxed
+> census, not the prose.
+
 **F2 first, not last** — reconcile the two roots (`SlopDeskPhoneApp`'s `@main` keeps it,
 `WorkspaceRootView` becomes its scene root) so the tree has one root while 101 files move. Then **F1**,
 resolving 54 platform directives across 40 files — the macOS arm deleted, the `#else` promoted, six
@@ -3149,3 +3153,55 @@ resolves natively, which is why F3 no longer gates anything. Then **F4**, the mo
 is re-run against a deliberately broken tree afterwards** — a path rename is precisely how a gate
 becomes absent while staying green, which 56f, 57b and the `repo_files` ordering bug in the
 `decodeIfPresent` gate have now demonstrated three times.
+
+#### The recount (increment 62)
+
+**F2 is already done.** `SlopDeskPhoneApp` mounts `WorkspaceRootView` today and
+`Sources/SlopDeskClientUI/` declares no `App` and no `Scene`. The tree has one root already; F2 is a
+line to strike, not a step to take.
+
+**F1 is 148 directives across 94 files, not 54 across 40 — and 80 of those files are one line each.**
+The census, by bucket:
+
+| Bucket | Files | What the fold does to it |
+| --- | ---: | --- |
+| **A** — whole-file `#if canImport(SwiftUI)` | 56 | one line, top and bottom |
+| **B** — whole-file `#if os(iOS)` | 24 | already right |
+| **C** — whole-file macOS-only | **0** | — |
+| **D** — MIXED: an inner platform branch | **14** | **the whole of the real work** |
+| **E** — no directive at all | 4 | see below |
+| | 98 | 20,515 lines |
+
+**Bucket C is empty, so NOTHING deletes.** All 20,515 lines survive the move; the diff is wrapper
+normalisation plus fourteen files' inner-branch collapse. The plan's "the macOS arm deleted" describes
+bucket D and only bucket D.
+
+**Two of the fourteen declare the SAME TYPE TWICE**, once per arm — `SlateSearchField`
+(`NSViewRepresentable` vs `View`) and `PaneMoveEscapeMonitor` (`NSViewRepresentable` vs a `View`
+mounting `PaneMoveEscapeResponder`). Deleting only the `#if`/`#else`/`#endif` lines produces a
+redeclaration error; each needs the macOS arm's BODY removed. Three more sharp edges in the same
+fourteen: `SettingsInk.swift:156` is a three-arm `#if/#elseif canImport(UIKit)/#else` whose `#else`
+drops a `13` fallback; `NotificationPermissionRow.swift:77` is the tree's only `#elseif os(iOS)`, so
+the iOS body is the SECOND arm; and `ImageDecode.swift` is the only bucket-D file with no
+`canImport(SwiftUI)` wrapper, so its first directive is not the one you expect.
+
+**The four bucket-E files are the interesting finding, and they are not an oversight in the census.**
+`DevicePanelChrome`, `PreferencesEnvironment`, `OverlayEnvironment` and `PreferencesStoreBinding` carry
+no platform gate because they may hold no view — and §3's own rule says *a UI target holds views only;
+anything that would compile without a view framework belongs in the shared logic target*. A file with
+no directive in this target is therefore a question, not a leftover.
+
+**The consequence the plan did not price: normalising bucket A to `#if os(iOS)` takes the phone's
+tests out of `make check`.** Fifty-six files compile on the macOS triple today, because
+`canImport(SwiftUI)` is TRUE there — which is what lets `Tests/SlopDeskClientUITests` run under `swift
+test`. Make them `os(iOS)` and that suite can only run on a booted simulator
+(`scripts/check-ios-tests.sh`, deliberately NOT in `make check` because a headless gate cannot assume
+one). Thirty-two test files would leave the default gate silently, and a suite that still exists but
+no longer runs is worse than a deleted one.
+
+So F1 gains a prerequisite, **F0: drain the phone's test target downward before gating it.** By the
+same rule that governs the four bucket-E files — eighteen of those thirty-two files use no
+`SlopDeskClientUI` symbol at all (several carry a dead `@testable import`), six reach only a namespace
+`enum`, and four only a `static` member hung on a view type. Those belong below the UI split, where
+they keep running on every platform forever. What is left after the drain is the handful that truly
+build a view, and those are the ones the simulator gate is FOR.

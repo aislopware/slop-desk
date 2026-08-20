@@ -10,7 +10,6 @@
 #if canImport(SwiftUI)
 import SlopDeskClientCore
 import XCTest
-@testable import SlopDeskClientUI
 
 final class CursorColorHexTests: XCTestCase {
     // MARK: rgb(_:) — parse

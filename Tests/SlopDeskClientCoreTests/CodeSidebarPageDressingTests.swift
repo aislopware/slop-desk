@@ -4,7 +4,6 @@
 
 import XCTest
 @testable import SlopDeskClientCore
-@testable import SlopDeskClientUI
 
 final class CodeSidebarPageDressingTests: XCTestCase {
     // MARK: Style sheet

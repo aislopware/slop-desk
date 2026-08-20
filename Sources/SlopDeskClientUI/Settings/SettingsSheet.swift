@@ -32,6 +32,7 @@
 // rides `Slate.Metric` (raw font/radius/height literals fail `scripts/check-ds-leaks.sh`).
 
 #if canImport(SwiftUI)
+import SlopDeskClientCore // SettingsSection (docs/56: descended in batch 2)
 import SlopDeskWorkspaceCore
 import SwiftUI
 

@@ -11,7 +11,6 @@ import SlopDeskAgentDetect
 import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskClientCore
-@testable import SlopDeskClientUI
 @testable import SlopDeskWorkspaceCore
 
 @MainActor
@@ -19,7 +18,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
     /// Builds the coordinator the way the app does: headless tree-model store, `connectionTarget` seam
     /// injected. No socket, no video — the fake session never opens one.
     private func makeCoordinator() -> (OverlayCoordinator, WorkspaceStore) {
-        let store = WorkspaceStore(makeSession: { seed in MountTestPaneSession(seed.spec) })
+        let store = WorkspaceStore(makeSession: { seed in RecordingPaneSession(seed.spec) })
         store.attachLoopbackWorkspaceDocument()
         let overlay = OverlayCoordinator(store: store)
         overlay.connectionTarget = { store.committedConnectionTarget ?? .default }
@@ -1018,33 +1017,4 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         )
     }
     #endif
-}
-
-// MARK: - MountTestPaneSession (the headless store double for this suite)
-
-/// The tiniest `PaneSessionHandle` satisfying the store's `makeSession` seam without opening a socket or
-/// touching video — so a tree-model ``WorkspaceStore`` materializes for the coordinator tests. Mirrors
-/// `FakePaneSession` (in the WorkspaceCore test target, out of reach here) down to the `PaneSessionIDAdopting`
-/// adoption the reconcile invariant needs, and the explicit `@MainActor` conformance markers on
-/// `PaneSessionHandle` / `Identifiable`. Without those markers the `Identifiable.id` requirement is
-/// nonisolated while the `@MainActor` class's `id` getter is isolated, which Swift 6 strict concurrency flags
-/// as a data-race-crossing conformance (#ConformanceIsolation).
-@MainActor
-final class MountTestPaneSession: @MainActor PaneSessionHandle, @MainActor Identifiable, PaneSessionIDAdopting {
-    private(set) var id: PaneID
-    let kind: PaneKind
-    private(set) var isVideoActive = false
-
-    init(_ spec: PaneSpec) {
-        id = PaneID()
-        kind = spec.kind
-    }
-
-    func adopt(id: PaneID) { self.id = id }
-    func setVideoActive(_ active: Bool) { if kind.isVideo { isVideoActive = active } }
-    // Sync witnesses legally satisfy the `async` protocol requirements (same as the canonical
-    // `FakePaneSession`) and avoid the `async_without_await` strict-lint rule on the empty fake bodies.
-    func pause() {}
-    func resume() {}
-    func teardown() {}
 }

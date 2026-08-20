@@ -1,25 +1,23 @@
-// SettingsSectionHeader (Batch-5 UI fidelity) — the signature in-page Settings SECTION-header treatment.
+// SettingsSectionHeader (Batch-5 UI fidelity) — the DRAWING half of the signature in-page Settings
+// SECTION-header treatment.
 //
-// Settings section labels (`MOUSE` / `SECURE INPUT` in `mouse-option.png`, `NOTIFICATION` /
-// `TAB BADGE` in `notification-setting.png`, `ALL SETTINGS` in `all-settings.png`) render as UPPERCASE,
-// letter-TRACKED, secondary-gray small-caps headers — NOT macOS's default Title-Case dark `Section(_:)`
-// header. Earlier code used the native `Section("Title")` initializer, which renders Title-Case bold
-// dark on macOS grouped Forms (e.g. "Selection", "Copy & Paste"). This helper consolidates every grouped
+// Earlier code used the native `Section("Title")` initializer, which renders Title-Case bold dark on
+// macOS grouped Forms (e.g. "Selection", "Copy & Paste"). This helper consolidates every grouped
 // settings section onto ONE shared header style that matches both the design-spec screenshots AND this app's
 // own command-palette section headers (`PaletteView.sectionHeader` — the same three tokens), so the Settings
 // form and the palette no longer diverge. Call sites swap `Section("X") {` → `slateFormSection("X") {`; the
 // content closure is unchanged, so no layout in the section body moves.
+//
+// docs/56: the CASING transform itself — `title.uppercased()`, pinned as ``SlateSettingsSectionHeader`` —
+// named no view framework and descended to `SlopDeskClientCore/Settings/SlateSettingsSectionHeader.swift`
+// in batch 2 of the draining-floor split, along with its test. What is left here is the drawing: `Text`,
+// `Section`, the tracking and `SettingsInk.secondary` (a `Color`, which is why this half cannot follow —
+// the P6 rule keeps a `Color` at or above `SlopDeskSlate`).
 
 #if canImport(SwiftUI)
+import SlopDeskClientCore // SlateSettingsSectionHeader.label(_:)
 import SlopDeskSlate
 import SwiftUI
-
-/// Pure, testable transform for the section-header label — UPPERCASE. Extracted so the casing is pinned
-/// by `SettingsSectionHeaderTests` and can't silently regress to macOS's Title-Case default if the render
-/// helper is refactored.
-enum SlateSettingsSectionHeader {
-    static func label(_ title: String) -> String { title.uppercased() }
-}
 
 /// A grouped-`Form` section whose header carries the UPPERCASE / tracked / secondary-gray treatment
 /// (`SettingsType.sectionHeader` semibold · `SettingsInk.secondary`), instead of macOS's default Title-Case

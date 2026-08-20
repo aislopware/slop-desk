@@ -6,10 +6,8 @@
 // settable through `setFollowSessionFocus(_:)`, but NO control reached it: a device kept its platform
 // default forever.
 //
-// These pin the Settings row headlessly on the macOS `swift test` host (iOS view code rots silently —
-// CLAUDE.md):
-// - the pure `SharedFocusSetting` derivations map a nil store → the PLATFORM DEFAULT + not configurable
-//   (a preview must never claim a state no store holds, and must never write into nothing);
+// These pin the Settings row's SwiftUI-side wiring headlessly on the macOS `swift test` host (iOS view
+// code rots silently — CLAUDE.md):
 // - the row's binding WRITE reaches `WorkspaceStore.setFollowSessionFocus(_:)`, and the flag survives a
 //   round trip through `device-prefs.json` — a FRESH store reading the same file sees the choice.
 //   `devicePreferences` is `public private(set)`, so that setter is the ONLY way a write from this module
@@ -17,9 +15,16 @@
 //   overlay" rule (pinned in `FollowSessionFocusTests`) apply to the row for free;
 // - both settings hosts (the macOS `MacSettingsWindowController`, the iOS `SettingsSheet`) retain the store,
 //   and the environment slot the wiring rides defaults nil.
+//
+// docs/56: the PURE derivations (`isFollowing`, `isConfigurable`, `valueText`, `catalogKey`) moved to
+// `SlopDeskClientCore` in batch 2 of the draining-floor split — they name no view framework — and their
+// pins moved with them to `Tests/SlopDeskClientCoreTests/SharedFocusSettingTests.swift`. What is left
+// here is the half that needs SwiftUI itself: the `Binding`, the `@Entry` environment slot and the
+// sheet wiring.
 
 #if canImport(SwiftUI)
 import Foundation
+import SlopDeskClientCore
 import SlopDeskWorkspaceCore
 import SwiftUI
 import XCTest
@@ -58,40 +63,6 @@ final class SharedFocusSettingTests: XCTestCase {
         let defaults = UserDefaults(suiteName: suite)!
         defaults.removePersistentDomain(forName: suite)
         return PreferencesStore(defaults: defaults, sidecarURL: nil, applyOnInit: false)
-    }
-
-    // MARK: - The nil-store fallback (a preview / an un-injected host)
-
-    /// No store ⇒ the row states the PLATFORM DEFAULT and disables itself. It must never claim `On` on a
-    /// phone (whose default is OFF) nor `Off` on a Mac, because nothing would be backing the claim.
-    func testNilStoreShowsThePlatformDefaultAndIsNotConfigurable() {
-        XCTAssertEqual(
-            SharedFocusSetting.isFollowing(nil),
-            DevicePreferences.platformDefaultFollowSessionFocus,
-            "an un-injected row states the platform default, never a made-up state",
-        )
-        XCTAssertFalse(
-            SharedFocusSetting.isConfigurable(nil),
-            "an un-injected row is disabled — a write would land nowhere",
-        )
-        XCTAssertEqual(
-            SharedFocusSetting.valueText(nil),
-            DevicePreferences.platformDefaultFollowSessionFocus ? "On" : "Off",
-        )
-    }
-
-    /// A store ⇒ configurable, and the readout tracks the store rather than the platform default.
-    func testStoreBackedRowIsConfigurableAndReadsTheStore() {
-        let store = makeWorkspaceStore()
-        XCTAssertTrue(SharedFocusSetting.isConfigurable(store))
-
-        store.setFollowSessionFocus(true)
-        XCTAssertTrue(SharedFocusSetting.isFollowing(store))
-        XCTAssertEqual(SharedFocusSetting.valueText(store), "On")
-
-        store.setFollowSessionFocus(false)
-        XCTAssertFalse(SharedFocusSetting.isFollowing(store))
-        XCTAssertEqual(SharedFocusSetting.valueText(store), "Off")
     }
 
     // MARK: - The row reaches `setFollowSessionFocus` and persists
@@ -151,21 +122,6 @@ final class SharedFocusSettingTests: XCTestCase {
         let sheet = SettingsSheet(store: makePreferencesStore())
         XCTAssertNil(sheet.workspace)
         XCTAssertFalse(SharedFocusSetting.isConfigurable(sheet.workspace))
-    }
-
-    // MARK: - The searchable All-Settings row
-
-    /// The key is advertised in the searchable All-Settings list, jumps to the page that actually hosts
-    /// the control (General), and is findable by the words a user would type.
-    func testCatalogAdvertisesTheSharedFocusRowAndJumpsToGeneral() {
-        let entry = AllSettingsCatalog.entries.first { $0.key == SharedFocusSetting.catalogKey }
-        XCTAssertNotNil(entry, "the shared-focus row must be advertised in All Settings")
-        XCTAssertEqual(entry?.bucket, .hasDedicatedTab, "the real control lives on a page, not inline")
-        XCTAssertEqual(entry?.targetSection, SettingsSection.general.rawValue)
-        XCTAssertTrue(
-            AllSettingsCatalog.filter("focus").contains { $0.key == SharedFocusSetting.catalogKey },
-            "searching 'focus' must find the row",
-        )
     }
 }
 #endif

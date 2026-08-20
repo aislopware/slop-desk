@@ -6,12 +6,17 @@
 // `.disconnected` (Install/Uninstall impossible) and the whole behaviour block stayed greyed.
 //
 // These pin the FIX headlessly on the macOS `swift test` host (iOS view code rots silently — CLAUDE.md):
-// - `AgentSettingsCard` (the ONE nil-controller fallback) maps nil → `.disconnected` + behaviour-disabled,
-//   and an installed controller → `.installed` + behaviour-enabled;
 // - the iOS `SettingsSheet` RETAINS the controller threaded into it so the card it hands that controller
-//   resolves a LIVE state.
+//   resolves a LIVE state;
+// - the `@Entry` environment slot the wiring rides round-trips.
+//
+// docs/56: the ONE nil-controller fallback (`AgentSettingsCard.installState(_:)` / `.behaviourEnabled(_:)`)
+// moved to `SlopDeskClientCore` in batch 2 of the draining-floor split — it named no view framework — and
+// its own pin moved with it to `Tests/SlopDeskClientCoreTests/AgentSettingsCardTests.swift`. What is left
+// here is the half that genuinely needs a view: the sheet and the environment slot.
 
 #if canImport(SwiftUI)
+import SlopDeskClientCore
 import SlopDeskWorkspaceCore
 import SwiftUI
 import XCTest
@@ -34,30 +39,6 @@ final class AgentSettingsCardWiringTests: XCTestCase {
         let c = AgentHooksController(refreshStatus: { .init(installed: true, listenerActive: true) })
         await c.refresh()
         return c
-    }
-
-    // MARK: the nil-controller fallback (the iOS bug symptom)
-
-    func testNilControllerIsDisconnectedAndBehaviourDisabled() {
-        XCTAssertEqual(
-            AgentSettingsCard.installState(nil), .disconnected,
-            "no injected controller ⇒ the card is .disconnected (NEVER a false 'Not Installed')",
-        )
-        XCTAssertFalse(
-            AgentSettingsCard.behaviourEnabled(nil),
-            "no injected controller ⇒ the Agent-Behaviour toggles are greyed (the exact iOS rot)",
-        )
-    }
-
-    func testInstalledControllerIsLiveAndBehaviourEnabled() async {
-        let controller = await installedController()
-        XCTAssertEqual(controller.state, .installed)
-        XCTAssertEqual(AgentSettingsCard.installState(controller), .installed)
-        XCTAssertNotEqual(AgentSettingsCard.installState(controller), .disconnected)
-        XCTAssertTrue(
-            AgentSettingsCard.behaviourEnabled(controller),
-            "an installed controller ⇒ the behaviour toggles are configurable",
-        )
     }
 
     // MARK: the iOS settings sheet threads the controller

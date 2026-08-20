@@ -11,7 +11,6 @@
 import Defaults
 import XCTest
 @testable import SlopDeskClientCore
-@testable import SlopDeskClientUI
 @testable import SlopDeskWorkspaceCore
 
 @MainActor
@@ -118,7 +117,7 @@ final class WorkspaceChromePinTests: XCTestCase {
     /// drop the `case "action.pinWindow": chrome.pinned` arm and the resolver falls to the `default: false`,
     /// so the ✓ never lights and `pinned == true` below fails.
     func testToggledStateLightsPinRowWhenPinned() {
-        let store = WorkspaceStore(makeSession: { seed in MountTestPaneSession(seed.spec) })
+        let store = WorkspaceStore(makeSession: { seed in RecordingPaneSession(seed.spec) })
         store.attachLoopbackWorkspaceDocument()
         let chrome = WorkspaceChromeState()
         let pinItem = PaletteItem(

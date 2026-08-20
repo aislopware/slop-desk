@@ -11,19 +11,18 @@
 // SwiftUI render counts are not headlessly testable — the cache-hit `buildCount` assertions plus the
 // stale-cache-vs-fresh-chrome assertions are the invalidation-shape proxy.
 //
-// Headless: same `MountTestPaneSession` tree-model store as `RailRowBuilderTests` (no socket / video /
+// Headless: same `RecordingPaneSession` tree-model store as `RailRowBuilderTests` (no socket / video /
 // Metal).
 
 import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskClientCore
-@testable import SlopDeskClientUI
 @testable import SlopDeskWorkspaceCore
 
 @MainActor
 final class RailRowsMemoTests: XCTestCase {
     private func makeStore() -> WorkspaceStore {
-        let store = WorkspaceStore(makeSession: { seed in MountTestPaneSession(seed.spec) })
+        let store = WorkspaceStore(makeSession: { seed in RecordingPaneSession(seed.spec) })
         store.attachLoopbackWorkspaceDocument()
         return store
     }

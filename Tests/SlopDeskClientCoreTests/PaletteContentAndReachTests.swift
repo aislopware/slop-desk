@@ -6,17 +6,16 @@
 //   3. the Read Only / Secure Keyboard Entry rows never lit the ✓ gutter even when active.
 //
 // All headless — no view, no socket, no video (per the hang-safety rule), driven by a tree-model
-// `WorkspaceStore` over the tiny `MountTestPaneSession` double (defined in `OverlayCoordinatorMountTests`).
+// `WorkspaceStore` over the tiny `RecordingPaneSession` double.
 
 import XCTest
 @testable import SlopDeskClientCore
-@testable import SlopDeskClientUI
 @testable import SlopDeskWorkspaceCore
 
 @MainActor
 final class PaletteContentAndReachTests: XCTestCase {
     private func makeStore() -> WorkspaceStore {
-        let store = WorkspaceStore(makeSession: { seed in MountTestPaneSession(seed.spec) })
+        let store = WorkspaceStore(makeSession: { seed in RecordingPaneSession(seed.spec) })
         store.attachLoopbackWorkspaceDocument()
         return store
     }

@@ -10,7 +10,6 @@
 
 import XCTest
 @testable import SlopDeskClientCore
-@testable import SlopDeskClientUI
 
 @MainActor
 final class ConnectSheetGenerationGuardTests: XCTestCase {

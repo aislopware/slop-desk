@@ -12,7 +12,6 @@
 import SlopDeskWorkspaceCore
 import XCTest
 @testable import SlopDeskClientCore
-@testable import SlopDeskClientUI
 
 final class ToastSecretRedactionTests: XCTestCase {
     private var priorRedact: Any?

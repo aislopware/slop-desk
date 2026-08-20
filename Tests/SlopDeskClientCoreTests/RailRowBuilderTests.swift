@@ -2,7 +2,7 @@
 // tab shortcut number (`#N`), the host-reported foreground-process label, and the single fused status badge
 // from the pure `TabBadgeResolver`, in addition to the title/cwd-subtitle the filter narrows on.
 //
-// Headless: a tree-model `WorkspaceStore` over the tiny `MountTestPaneSession` fake (no socket, no video,
+// Headless: a tree-model `WorkspaceStore` over the tiny `RecordingPaneSession` fake (no socket, no video,
 // no Metal/SCStream — per the hang-safety rule). The badge inputs are seeded through the store's PUBLIC
 // mutators (`setAgentStatus` / `setCompletionBadge` / `setForegroundProcess`) so the test never touches a
 // real `LivePaneSession`. Each assertion fails on a `RailRow` that carries none of these
@@ -11,14 +11,13 @@
 import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskClientCore
-@testable import SlopDeskClientUI
 @testable import SlopDeskWorkspaceCore
 
 @MainActor
 final class RailRowBuilderTests: XCTestCase {
     /// A headless tree-model store over the fake session (mirrors `OverlayCoordinatorMountTests`).
     private func makeStore() -> WorkspaceStore {
-        let store = WorkspaceStore(makeSession: { seed in MountTestPaneSession(seed.spec) })
+        let store = WorkspaceStore(makeSession: { seed in RecordingPaneSession(seed.spec) })
         store.attachLoopbackWorkspaceDocument()
         return store
     }

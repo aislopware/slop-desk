@@ -2,14 +2,17 @@
 //
 // In-page Settings SECTION labels render UPPERCASE (`mouse-option.png` "MOUSE" / "SECURE INPUT",
 // `notification-setting.png` "NOTIFICATION" / "TAB BADGE", `all-settings.png` "ALL SETTINGS"). An earlier
-// build rendered them in macOS's native Title-Case via `Section("Title")`. `slateFormSection` now routes
-// the label through `SlateSettingsSectionHeader.label`, which UPPERCASES it. This pins that transform so a
-// refactor can't silently regress the header back to the raw Title-Case title.
+// build rendered them in macOS's native Title-Case via `Section("Title")`. `slateFormSection`
+// (`SlopDeskClientUI`) routes the label through `SlateSettingsSectionHeader.label`, which UPPERCASES it.
+// This pins that transform so a refactor can't silently regress the header back to the raw Title-Case
+// title.
+//
+// docs/56: moved out of `SlopDeskClientUITests` in batch 2 of the draining-floor split — the transform
+// under test names no view framework, so it descended to `SlopDeskClientCore` and the pin followed it.
+// `slateFormSection` itself, the drawing that calls this, is untested here on purpose; it stayed behind.
 
-#if canImport(SwiftUI)
-import SlopDeskSlate
 import XCTest
-@testable import SlopDeskClientUI
+@testable import SlopDeskClientCore
 
 final class SettingsSectionHeaderTests: XCTestCase {
     /// Mixed-case section titles from the live Settings pages map to all-UPPERCASE headers. The expectations
@@ -34,4 +37,3 @@ final class SettingsSectionHeaderTests: XCTestCase {
         }
     }
 }
-#endif

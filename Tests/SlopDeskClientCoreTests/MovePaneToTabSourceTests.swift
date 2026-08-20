@@ -4,18 +4,17 @@
 // (`moveLeafAcrossTabsTree` — PaneID-preserving; the destination tab becomes active with the moved
 // pane focused).
 //
-// Headless: a tree-model `WorkspaceStore` over the `MountTestPaneSession` fake (no socket / video /
+// Headless: a tree-model `WorkspaceStore` over the `RecordingPaneSession` fake (no socket / video /
 // Metal — hang-safety).
 
 import XCTest
 @testable import SlopDeskClientCore
-@testable import SlopDeskClientUI
 @testable import SlopDeskWorkspaceCore
 
 @MainActor
 final class MovePaneToTabSourceTests: XCTestCase {
     private func makeStore() -> WorkspaceStore {
-        let store = WorkspaceStore(makeSession: { seed in MountTestPaneSession(seed.spec) })
+        let store = WorkspaceStore(makeSession: { seed in RecordingPaneSession(seed.spec) })
         store.attachLoopbackWorkspaceDocument()
         return store
     }

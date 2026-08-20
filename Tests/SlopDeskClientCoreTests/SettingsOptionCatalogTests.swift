@@ -22,7 +22,6 @@ import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskClientCore
-@testable import SlopDeskClientUI
 
 final class SettingsOptionCatalogTests: XCTestCase {
     // MARK: - Exhaustiveness (the regression that a card grid cannot show)

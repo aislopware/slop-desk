@@ -13,11 +13,12 @@
 // `settings_layout` and names no section at all (`MacSettingsPage`), which is why there is no
 // `MacSettingsSection` enum beside it. The dispatch exists on this half because SwiftUI's page
 // bodies are types, and a type has to be named somewhere.
-
-#if canImport(SwiftUI)
-import SlopDeskClientCore
-import SlopDeskWorkspaceCore
-import SwiftUI
+//
+// docs/56: that "types have to be named somewhere" is exactly why the DISPATCH KEY itself lives here
+// rather than in `SlopDeskClientUI` — the enum names no view framework (a `String` rawValue,
+// `SettingsCatalog.Section`, no `View`), so batch 2 of the draining-floor split moved it down whole,
+// with `SettingsSectionTaxonomyTests`. `SettingsSectionContent`'s exhaustive `switch` over these
+// cases, which DOES need a `some View`, stayed behind in `SettingsPages.swift`.
 
 /// The settings taxonomy as a DISPATCH key: which section's body to build. It is an enum because that
 /// is what ``SettingsSectionContent``'s exhaustive `switch` needs — a section maps to a `some View`,
@@ -29,7 +30,7 @@ import SwiftUI
 /// no data of their own; ``ordered`` is the list to render, and `SettingsSectionTaxonomyTests` pins
 /// that it covers every case, which is what stops a case added here from being unreachable in both
 /// lists (the same exhaustiveness contract every option group holds).
-enum SettingsSection: String, CaseIterable, Identifiable {
+package enum SettingsSection: String, CaseIterable, Identifiable {
     case general
     case shell
     case controls
@@ -39,17 +40,17 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     case keybindings
     case advanced
 
-    var id: String { rawValue }
+    package var id: String { rawValue }
 
     /// The catalog row behind this case, or `nil` for a case the boundary does not name — which the
     /// taxonomy test is what rules out.
     private var row: SettingsCatalog.Section? { SettingsCatalog.section(rawValue) }
 
     /// The list row's title.
-    var title: String { row?.title ?? "" }
+    package var title: String { row?.title ?? "" }
 
     /// The list row's glyph (SF Symbol name).
-    var systemImage: String { row?.systemImage ?? "" }
+    package var systemImage: String { row?.systemImage ?? "" }
 
     /// The whole taxonomy IN THE CATALOG'S ORDER. Declaration order here is not the contract; the
     /// boundary's is, and `SettingsSectionTaxonomyTests` is what pins that every case is reachable.
@@ -57,6 +58,5 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     /// was the only section the phone dropped, and it dropped it over a recorder the phone has had
     /// since docs/56 increment 30. What still differs by half is the GROUPS inside a page, which the
     /// layout table gates as data.
-    static let ordered: [Self] = SettingsCatalog.sections.compactMap { Self(rawValue: $0.id) }
+    package static let ordered: [Self] = SettingsCatalog.sections.compactMap { Self(rawValue: $0.id) }
 }
-#endif

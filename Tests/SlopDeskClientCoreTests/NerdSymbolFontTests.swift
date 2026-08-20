@@ -4,7 +4,6 @@
 
 import XCTest
 @testable import SlopDeskClientCore
-@testable import SlopDeskClientUI
 
 final class NerdSymbolFontTests: XCTestCase {
     /// The TTF ships in the module bundle (Package.swift `resources: [.copy("Resources/Fonts")]`) and
@@ -15,7 +14,7 @@ final class NerdSymbolFontTests: XCTestCase {
             Bundle.module.url(
                 forResource: "SymbolsNerdFont-Regular", withExtension: "ttf", subdirectory: "Fonts",
             ),
-            "the Symbols Nerd Font TTF ships in the SlopDeskClientUI resource bundle",
+            "the Symbols Nerd Font TTF ships in the SlopDeskClientCore resource bundle",
         )
         XCTAssertTrue(NerdSymbolFont.registered, "the bundled face registers (or already was) with Core Text")
     }
