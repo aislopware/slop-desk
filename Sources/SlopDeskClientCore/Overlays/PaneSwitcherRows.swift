@@ -18,6 +18,15 @@
 //
 // Pure composers (`projectName` / `relativePath` / `note`) so the wording is unit-pinned without a view;
 // the one `@MainActor` entry is the store read.
+//
+// TWO HALVES READ THIS FILE, and the second one arrived late. The Mac draws the rows in an `NSPanel`
+// (`Sources/SlopDeskMacUI/Overlays/MacPaneSwitcher.swift`), the phone in a paper card
+// (`Sources/SlopDeskPhoneUI/Overlays/PaneSwitcherOverlay.swift`) — and for a while the phone drew
+// NOTHING, while the binding row that opens the gesture said `Platform::Both`. ⌃⇥ on an iPad therefore
+// veiled every pane (``PaneFocusPolicy/showsSwitcherRecede(switcherIsOpen:isFocused:)`` reads the same
+// store flag) behind a card that did not exist, with no way to step, commit or cancel. Everything the
+// phone needed that the Mac did not — its width rung, and what a TAP on a row means — is here rather
+// than in the view, for the same reason the rows and the measurements always were.
 
 import CoreGraphics
 import SlopDeskWorkspaceCore
@@ -84,6 +93,86 @@ package enum PaneSwitcherMetrics {
         guard container > 0 else { return .infinity }
         return container * heightFraction
     }
+
+    /// The width the card takes on a COMPACT screen — the phone's rung of the same measure.
+    ///
+    /// ⚠️ NEITHER BOUND ABOVE SURVIVES THE MOVE, and that is arithmetic rather than taste. The floor is
+    /// 400 and an iPhone's whole screen is 390, so the "a real command, untruncated" guarantee is not
+    /// available at any width here. The ceiling is worse: applied to a 390pt screen it answers with a
+    /// 257pt card — every row truncated, a third of the screen spent on ground whose only job is to be
+    /// not-the-card. Its premise is the workspace BEHIND (an overlay that eats two thirds of its host
+    /// has stopped reading as an overlay), and a phone screen has no behind; ``GlobalSearchMetrics``
+    /// records the same reading for the same reason one surface over.
+    ///
+    /// So the compact rung keeps exactly the one bound that was never about the window: past ~75
+    /// characters the eye loses the line, on any screen. The card takes the width it is offered, up to
+    /// ``maxWidth`` — which binds on an iPad and never on a phone. The margin between the card and the
+    /// screen edge is the presenter's, the same `Slate.Metric.space4` every phone card keeps.
+    ///
+    /// An unmeasured container (a first layout pass) yields the CAP rather than the floor: the phone's
+    /// frame is a `maxWidth`, so the enclosing padding still bounds it, where returning 400 would ask a
+    /// 390pt screen for a card wider than itself.
+    package static func compactWidth(container: CGFloat) -> CGFloat {
+        guard container > 0 else { return maxWidth }
+        return min(container, maxWidth)
+    }
+
+    /// How tall the ROWS stand: their true height, capped at the ceiling past which they scroll.
+    ///
+    /// The Mac asks a laid-out `NSStackView` for its `fittingSize` and takes the smaller of that and the
+    /// ceiling. SwiftUI cannot be asked: a `ScrollView` claims every point it is OFFERED along its axis,
+    /// so a two-row card left to the framework stands 70% of the screen tall with its two rows at the
+    /// top. The sum is exact rather than an estimate — the row is a fixed-height object in both halves
+    /// (`Slate.Metric.heightRowStacked`), which is what makes the list's rhythm a constant beat — so the
+    /// caller passes that height in and the arithmetic is pinned here rather than inlined in a view.
+    package static func listHeight(rows: Int, rowHeight: CGFloat, container: CGFloat) -> CGFloat {
+        min(CGFloat(rows) * rowHeight, maxHeight(container: container))
+    }
+}
+
+// MARK: - What a TAP is
+
+/// A walk around the frozen ring: how many single steps, and which way.
+///
+/// The unit is a STEP because that is the only verb the gesture has — see
+/// ``PaneSwitcherRowsBuilder/walk(from:to:count:)`` for why a tap is spelled in it rather than in a jump.
+package struct PaneSwitcherWalk: Equatable {
+    /// The direction each step takes, in ``PaneSwitcher/step(forward:)``'s own sense.
+    package let forward: Bool
+    /// How many of them. Zero when the highlight is already on the target.
+    package let steps: Int
+
+    package init(forward: Bool, steps: Int) {
+        self.forward = forward
+        self.steps = steps
+    }
+}
+
+/// The phone's WORDS for this surface. The Mac's readout has none — a card that lives for 200ms under a
+/// held ⌃ is titled by the hand holding it up — and the phone's cannot borrow that silence: it stays up
+/// with nothing held, in a family where every card names itself (``SlateCardTitle``).
+package enum PaneSwitcherCopy {
+    /// The card's title — the SAME words the palette row that opens it wears (`pane.switcher` in
+    /// ``WorkspaceBindingRegistry``, and the phone's only touch entry point into the gesture). Pinned
+    /// equal by `Tests/SlopDeskClientCoreTests/PaneSwitcherRowsTests.swift`: a surface and the command
+    /// that summons it may not come to have two names.
+    package static let title = "Pane Switcher"
+
+    /// The honest zero state. The ring is frozen at open and its panes can close under it, so the rows
+    /// CAN empty mid-gesture — and an empty card that still veils the workspace is the defect this
+    /// surface exists to answer, said a second time.
+    package static let noPanes = "No other panes"
+
+    /// The two step controls, for the reader who has no ⇥ to press. Named by what they MOVE, not by the
+    /// ring's direction: "forward" is a fact about the frozen order, and nobody is holding it.
+    package static let stepForward = "Next pane"
+    package static let stepBackward = "Previous pane"
+
+    /// The join between a row's two place halves. ``PaneSwitcherRowsBuilder/PaneIdentity/placeLine``
+    /// makes the same join for the surfaces that carry one subtitle slot; a half that draws the two
+    /// registers separately (the switcher rows do, so the project can go a shade heavier) still spells
+    /// the separator from here.
+    package static let placeSeparator = " › "
 }
 
 package enum PaneSwitcherRowsBuilder {
@@ -142,6 +231,46 @@ package enum PaneSwitcherRowsBuilder {
         }
     }
 
+    /// The WALK a tap is — the phone's commit rule, and the reason it is a walk rather than a jump.
+    ///
+    /// A Mac commits by releasing the ⌃ it is holding. A phone has no modifier to release, so the touch
+    /// gesture that picks a pane is a tap on its row. What that tap must NOT become is a SECOND COMMIT
+    /// DOOR: ``WorkspaceStore/commitPaneSwitcher()`` unwinds the follow-along preview before it stages
+    /// focus (so the reveal starts from the focus the gesture began with) and refuses a candidate whose
+    /// pane closed under the gesture, and a view reaching past it for
+    /// ``WorkspaceStore/revealPaneTree(_:)`` would have neither guard — the identical pair of bugs the
+    /// commit's own doc comment records. So a tap is spelled in the gesture's two existing verbs: STEP
+    /// until the highlight is the tapped row, then COMMIT. That is what a Mac user does with ⇥⇥⇥ and a
+    /// release; the phone just does it in one gesture.
+    ///
+    /// The direction is the SHORTER way round the ring, and that is not cosmetic: every step previews
+    /// its pane, so the count is the number of device-focus writes a single tap costs. They all land
+    /// inside one runloop turn — nothing renders between them, so no intermediate pane ever appears —
+    /// but half a ring of them is still half a ring more than the walk needs. A tie (the row exactly
+    /// opposite, on an even ring) goes FORWARD, the direction a bare ⇥ walks.
+    ///
+    /// ⚠️ CANDIDATE INDEX SPACE, NOT ROW SPACE. ``rows(for:store:)`` drops a candidate whose pane closed
+    /// under the held gesture, so the third ROW can be the fourth CANDIDATE — and the highlight
+    /// ``PaneSwitcher/step(forward:)`` moves is the candidate's. Pure.
+    package static func walk(from: Int, to: Int, count: Int) -> PaneSwitcherWalk {
+        guard count > 1 else { return PaneSwitcherWalk(forward: true, steps: 0) }
+        let ahead = ((to - from) % count + count) % count
+        guard ahead > 0 else { return PaneSwitcherWalk(forward: true, steps: 0) }
+        let behind = count - ahead
+        return ahead <= behind
+            ? PaneSwitcherWalk(forward: true, steps: ahead)
+            : PaneSwitcherWalk(forward: false, steps: behind)
+    }
+
+    /// The walk from the live highlight to `target`, over the ring `switcher` froze.
+    ///
+    /// `nil` when the ring no longer holds that pane — a row tapped in the same frame its pane closed
+    /// must be a no-op, never a walk toward nowhere.
+    package static func walk(to target: PaneID, in switcher: PaneSwitcher) -> PaneSwitcherWalk? {
+        guard let index = switcher.candidates.firstIndex(of: target) else { return nil }
+        return walk(from: switcher.highlightIndex, to: index, count: switcher.candidates.count)
+    }
+
     /// One pane's display identity — the (title, project, note) triple a ⌃⇥ row carries. Exposed so the
     /// OTHER surfaces that name a pane (the ⌘⇧P Panes jump rows) resolve through this SAME chain: a pane
     /// is named identically wherever it is named, and a fix to the chain reaches every surface at once.
@@ -153,7 +282,7 @@ package enum PaneSwitcherRowsBuilder {
         /// The place line the switcher stacks under the title, as ONE string (`project › note`) — for
         /// surfaces that carry a single subtitle slot. `nil` when the pane has neither half.
         package var placeLine: String? {
-            let joined = [project, note].compactMap(\.self).joined(separator: " › ")
+            let joined = [project, note].compactMap(\.self).joined(separator: PaneSwitcherCopy.placeSeparator)
             return joined.isEmpty ? nil : joined
         }
     }

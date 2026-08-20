@@ -24,10 +24,10 @@
 //
 // WHAT IT DOES NOT OWN is the content or the card's measurements: ``PaneSwitcherRowsBuilder`` builds
 // the rows and ``PaneSwitcherMetrics`` sizes the card against the window, both in `SlopDeskClientCore`,
-// exactly as they did when the view above them was SwiftUI. The phone never opens this gesture at all
-// (there is no ⌃⇥ without a hardware modifier stream), so unlike the cheat sheet and the toasts this
-// surface has ONE half rather than two — the SwiftUI original was deleted rather than kept as a view
-// that could never render.
+// exactly as they did when the view above them was SwiftUI. This surface DOES have two halves: the
+// phone's `PaneSwitcherOverlay` draws the same walk with taps for the three verbs a modifier release
+// performs here (step, commit, cancel), because the opening chord was never the only way in — the
+// binding row is `Platform::Both` and the palette carries it.
 
 import AppKit
 import SlopDeskClientCore
@@ -194,7 +194,13 @@ final class MacPaneSwitcherRowView: NSView {
         )
         guard let note = row.note else { return head }
         let spliced = NSMutableAttributedString(attributedString: head)
-        spliced.append(.slateNerdAware(" › \(note)", font: .systemFont(ofSize: size), color: ink))
+        spliced.append(
+            // The separator is the shared one the phone's row and `PaneIdentity.placeLine` spell from —
+            // three copies of a glyph is how two of them end up different.
+            .slateNerdAware(
+                "\(PaneSwitcherCopy.placeSeparator)\(note)", font: .systemFont(ofSize: size), color: ink,
+            ),
+        )
         return spliced
     }
 

@@ -339,4 +339,137 @@ final class PaneSwitcherRowsTests: XCTestCase {
         XCTAssertEqual(PaneSwitcherMetrics.width(container: 0), PaneSwitcherMetrics.minWidth)
         XCTAssertEqual(PaneSwitcherMetrics.maxHeight(container: 0), .infinity)
     }
+
+    // MARK: - The COMPACT rung (the phone's card, on a screen with no "behind")
+
+    /// ⚠️ THE PHONE TAKES THE WIDTH IT IS OFFERED. Both of the window band's bounds are unavailable
+    /// here: the 400 floor is wider than the whole screen, and the two-thirds ceiling — whose premise is
+    /// the workspace BEHIND the card — would answer a 390pt phone with a 257pt card, every row
+    /// truncated.
+    func testCompactWidthTakesTheWholeScreenOnAPhone() {
+        XCTAssertEqual(PaneSwitcherMetrics.compactWidth(container: 390), 390)
+        XCTAssertLessThan(PaneSwitcherMetrics.width(container: 390), PaneSwitcherMetrics.compactWidth(container: 390))
+    }
+
+    /// The ONE bound that was never about the window survives: past ~75 characters the eye loses the
+    /// line, so an iPad's card caps exactly where the Mac's does.
+    func testCompactWidthStillStopsAtTheMeasureCap() {
+        XCTAssertEqual(PaneSwitcherMetrics.compactWidth(container: 1024), PaneSwitcherMetrics.maxWidth)
+        XCTAssertEqual(PaneSwitcherMetrics.compactWidth(container: 640), PaneSwitcherMetrics.maxWidth)
+    }
+
+    /// An unmeasured container yields the CAP, not the floor: the phone's frame is a `maxWidth`, so the
+    /// enclosing margin still bounds it — where 400 would ask a 390pt screen for a card wider than
+    /// itself.
+    func testAnUnmeasuredCompactContainerFallsBackToTheCap() {
+        XCTAssertEqual(PaneSwitcherMetrics.compactWidth(container: 0), PaneSwitcherMetrics.maxWidth)
+    }
+
+    /// The rows stand at their TRUE height until the ceiling, which is what the Mac reads off a laid-out
+    /// stack and SwiftUI cannot be asked for — a `ScrollView` claims every point it is offered, so
+    /// without this a two-row card stands 70% of the screen tall.
+    func testListHeightIsTheRowsOwnHeightUntilTheCeiling() {
+        XCTAssertEqual(
+            PaneSwitcherMetrics.listHeight(rows: 3, rowHeight: 48, container: 900), 144, accuracy: 0.5,
+        )
+        XCTAssertEqual(
+            PaneSwitcherMetrics.listHeight(rows: 40, rowHeight: 48, container: 900),
+            PaneSwitcherMetrics.maxHeight(container: 900), accuracy: 0.5,
+        )
+    }
+
+    /// An unmeasured container has no ceiling to impose, so the rows keep their own height rather than
+    /// collapsing to nothing.
+    func testListHeightWithoutAContainerIsJustTheRows() {
+        XCTAssertEqual(
+            PaneSwitcherMetrics.listHeight(rows: 2, rowHeight: 48, container: 0), 96, accuracy: 0.5,
+        )
+    }
+
+    // MARK: - `walk` (what a TAP is, on a device with no modifier to release)
+
+    /// The short way round the frozen ring, in both directions — the count is the number of previews a
+    /// single tap costs, so walking the long way is not a neutral choice.
+    func testWalkTakesTheShorterWayRoundTheRing() {
+        XCTAssertEqual(
+            PaneSwitcherRowsBuilder.walk(from: 0, to: 1, count: 5), PaneSwitcherWalk(forward: true, steps: 1),
+        )
+        XCTAssertEqual(
+            PaneSwitcherRowsBuilder.walk(from: 0, to: 4, count: 5), PaneSwitcherWalk(forward: false, steps: 1),
+        )
+        XCTAssertEqual(
+            PaneSwitcherRowsBuilder.walk(from: 3, to: 0, count: 5), PaneSwitcherWalk(forward: true, steps: 2),
+        )
+    }
+
+    /// A tap on the row that is ALREADY highlighted is a bare commit — no step, so no preview write.
+    func testWalkToTheHighlightIsNoStepsAtAll() {
+        XCTAssertEqual(
+            PaneSwitcherRowsBuilder.walk(from: 2, to: 2, count: 5), PaneSwitcherWalk(forward: true, steps: 0),
+        )
+    }
+
+    /// The tie — the row exactly opposite on an even ring — goes FORWARD, the direction a bare ⇥ walks.
+    func testWalkBreaksTheEvenRingTieForward() {
+        XCTAssertEqual(
+            PaneSwitcherRowsBuilder.walk(from: 0, to: 2, count: 4), PaneSwitcherWalk(forward: true, steps: 2),
+        )
+    }
+
+    /// A ring that cannot be walked (one candidate, or none) answers with zero steps rather than a
+    /// modulo by zero.
+    func testWalkOnAnUnwalkableRingIsZeroSteps() {
+        XCTAssertEqual(
+            PaneSwitcherRowsBuilder.walk(from: 0, to: 0, count: 1), PaneSwitcherWalk(forward: true, steps: 0),
+        )
+        XCTAssertEqual(
+            PaneSwitcherRowsBuilder.walk(from: 0, to: 3, count: 0), PaneSwitcherWalk(forward: true, steps: 0),
+        )
+    }
+
+    /// ⚠️ THE WALK IS IN CANDIDATE SPACE. Over the live gesture it lands on the ring's index, which is
+    /// what ``PaneSwitcher/step(forward:)`` moves — the ROW index can differ, because a row whose pane
+    /// closed under the gesture is dropped from the drawn list and not from the frozen ring.
+    func testWalkOverTheLiveGestureCountsCandidatesNotRows() throws {
+        let store = makeStore()
+        store.newTab(kind: .terminal, launchGrace: .zero)
+        store.newTab(kind: .terminal, launchGrace: .zero)
+        store.openOrStepPaneSwitcher(forward: true, armedByModifier: true)
+        let switcher = try XCTUnwrap(store.paneSwitcher)
+        let target = switcher.candidates[2]
+
+        let walk = try XCTUnwrap(PaneSwitcherRowsBuilder.walk(to: target, in: switcher))
+        XCTAssertEqual(walk, PaneSwitcherRowsBuilder.walk(from: switcher.highlightIndex, to: 2, count: 3))
+    }
+
+    /// A pane the ring never held — a row tapped in the same frame its pane closed — is a no-op, never a
+    /// walk toward nowhere.
+    func testWalkToAPaneOutsideTheRingIsNil() throws {
+        let store = makeStore()
+        store.newTab(kind: .terminal, launchGrace: .zero)
+        store.openOrStepPaneSwitcher(forward: true, armedByModifier: true)
+        let switcher = try XCTUnwrap(store.paneSwitcher)
+        XCTAssertNil(PaneSwitcherRowsBuilder.walk(to: PaneID(), in: switcher))
+    }
+
+    // MARK: - The words
+
+    /// ⚠️ ONE NAME FOR THE SURFACE AND THE COMMAND THAT SUMMONS IT. The phone's card is titled (the Mac's
+    /// 200ms readout is not), and the palette row is the phone's only touch entry point into the
+    /// gesture — a card that called itself something else would be a second name for one thing.
+    func testTheCardIsTitledExactlyAsThePaletteRowThatOpensIt() {
+        XCTAssertEqual(
+            PaneSwitcherCopy.title,
+            WorkspaceBindingRegistry.binding(for: .paneSwitcher)?.title,
+        )
+    }
+
+    /// The place line's separator is spelled ONCE: the single-slot join and the two-register row read
+    /// the same token, so the two surfaces cannot drift to different punctuation.
+    func testThePlaceSeparatorIsTheOneUsedByTheJoinedLine() {
+        let identity = PaneSwitcherRowsBuilder.PaneIdentity(
+            title: "zsh", project: "slopdesk", note: "docs",
+        )
+        XCTAssertEqual(identity.placeLine, "slopdesk\(PaneSwitcherCopy.placeSeparator)docs")
+    }
 }

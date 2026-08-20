@@ -4848,28 +4848,44 @@ if grep -q 'ToastStackView(' Sources/SlopDeskPhoneUI/Overlays/OverlayHostView.sw
 fi
 printf 'check-supervisor: one notification card, drawn twice and spelled once.\n'
 
-# ── The shared overlay host presents modals and nothing else ──────────────────────────────────
+# ── The shared overlay host holds no AMBIENT layer, and the ⌃⇥ walk has two halves ────────────
 # docs/56 stage D's dividend, and the reason it is a gate: an ALWAYS-MOUNTED full-bleed SwiftUI
-# layer claims every hit inside its bounds over the AppKit split, and the only way to survive that
-# is a hit-testing flag someone has to keep honest. Both ambient tenants are their own windows now —
-# the toasts and the ⌃⇥ readout — so the host holds modals alone, and neither may come back. The
-# switcher's SwiftUI half was deleted rather than kept: the phone has no modifier stream to open the
-# gesture with, so a second half could never render.
-# Comment lines are stripped first: the file's header is where the departure is RECORDED, and it has to
-# be free to name what left without the gate reading its own history as a regression.
+# layer claims every hit inside its bounds, and the only way to survive that is a hit-testing flag
+# someone has to keep honest. That is what `allowsHitTesting` on this file means and why it stays
+# banned — a layer mounted only while its state is live needs no such flag.
+#
+# The ⌃⇥ CARD is NOT that hazard and is no longer forbidden here. It was, on the reading that "the
+# phone has no modifier stream to open the gesture with, so a second half could never render" — which
+# was about the OPENING CHORD and was never the only way in: the binding row is `Platform::Both`
+# (rust/slopdesk-workspace/src/binding_rows.rs) and the palette carries the same row. The phone opened
+# the gesture, `PaneRecedeScrim` veiled every pane off `store.paneSwitcher`, and nothing drew — a
+# veiled workspace with no way to step, commit or cancel. So the gate is inverted: the phone's half
+# must EXIST, and both halves must keep reading the shared row builder and measurements.
+# Comment lines are stripped first: the file's header is where the history is RECORDED, and it has to
+# be free to name what left (and what came back) without the gate reading prose as a regression.
 if sed -E 's#^[[:space:]]*//.*##' Sources/SlopDeskPhoneUI/Overlays/OverlayHostView.swift |
-  grep -qE '(PaneSwitcherOverlay|allowsHitTesting)'; then
+  grep -q 'allowsHitTesting'; then
   fail "the shared overlay host grew an ambient layer again — an always-mounted host eats the split's clicks"
 fi
-if [[ -e Sources/SlopDeskPhoneUI/Overlays/PaneSwitcherOverlay.swift ]]; then
-  fail "PaneSwitcherOverlay.swift is back — the ⌃⇥ readout is AppKit only (SlopDeskMacUI/Overlays/MacPaneSwitcher.swift)"
+if [[ ! -e Sources/SlopDeskPhoneUI/Overlays/PaneSwitcherOverlay.swift ]]; then
+  fail "the phone has no ⌃⇥ card — a gesture that veils every pane and draws nothing is a soft lockup"
 fi
-for shared in PaneSwitcherRowsBuilder PaneSwitcherMetrics; do
-  if ! grep -q "${shared}" Sources/SlopDeskMacUI/Overlays/MacPaneSwitcher.swift; then
-    fail "MacPaneSwitcher stopped reading ${shared} — the readout's rows and measurements live below the view"
-  fi
+# The phone's card may not grow a SECOND commit door. `commitPaneSwitcher()` unwinds the follow-along
+# preview before it stages focus and refuses a candidate whose pane closed under the gesture; a view
+# reaching past it for `revealPaneTree` has neither guard, and both failures are silent.
+if sed -E 's#^[[:space:]]*//.*##' Sources/SlopDeskPhoneUI/Overlays/PaneSwitcherOverlay.swift |
+  grep -q 'revealPaneTree'; then
+  fail "the phone's ⌃⇥ card commits past commitPaneSwitcher() — the preview unwind and the dead-pane refusal are its"
+fi
+for half in Sources/SlopDeskMacUI/Overlays/MacPaneSwitcher.swift \
+  Sources/SlopDeskPhoneUI/Overlays/PaneSwitcherOverlay.swift; do
+  for shared in PaneSwitcherRowsBuilder PaneSwitcherMetrics; do
+    if ! grep -q "${shared}" "${half}"; then
+      fail "${half} stopped reading ${shared} — the card's rows and measurements live below the view"
+    fi
+  done
 done
-printf 'check-supervisor: the overlay host presents modals and nothing else.\n'
+printf 'check-supervisor: the overlay host holds no ambient layer, and both halves draw the ⌃⇥ walk.\n'
 
 # ── One palette, two frameworks ───────────────────────────────────────────────────────────────
 # docs/56 stage D's first MODAL surface: the Mac's ⌘⇧P is an `NSPanel` and the phone's is a paper

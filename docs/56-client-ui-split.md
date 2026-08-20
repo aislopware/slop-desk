@@ -248,9 +248,9 @@ nothing is ever implemented twice. No stage copies a file: a surface either move
   during it belongs to the workspace — and it never becomes key, because stealing focus mid-gesture
   would break the `flagsChanged` release that COMMITS the switch. Its rows and its measurements were
   already below the view (`PaneSwitcherRowsBuilder`, `PaneSwitcherMetrics` in `SlopDeskClientCore`),
-  so the port is the drawing and nothing else. Unlike the cheat sheet and the toasts this surface has
-  ONE half rather than two: the phone has no modifier stream to open ⌃⇥ with, the SwiftUI overlay
-  could never render there, and it was deleted rather than kept as a cross-language mirror.
+  so the port is the drawing and nothing else. It read as ONE half rather than two for a while, on the
+  argument that the phone has no modifier stream to open ⌃⇥ with — see increment 74 for why that was
+  about the opening CHORD and never about the surface. Both halves exist.
 
   **The fourth is the ⌘⇧P palette, and it is the first MODAL surface across.** The three before it
   were a reference card and two readouts; none had a text field or a list you steer, and this one has
@@ -378,7 +378,8 @@ nothing is ever implemented twice. No stage copies a file: a surface either move
   ambient chain carrying `allowsHitTesting(false)` — which suppresses hits for *everything* composed
   into it, including overlays attached further down, so a modal hung off the same chain took no
   clicks at all — and the modal as its sibling. `check-supervisor.sh` gates the regression directly:
-  neither `PaneSwitcherOverlay` nor an `allowsHitTesting` may reappear in that file.
+  no `allowsHitTesting` may reappear in that file. (It banned `PaneSwitcherOverlay` by name too, until
+  increment 74 showed the ban was the reason the phone veiled its panes and drew nothing.)
   **The eighth is the NAVIGATOR COLUMN — the first COLUMN, and the first surface whose case rests on
   a cost that recurs rather than on a framework's shape.** A card is drawn once and dismissed; the
   sidebar is forty rows under a mouse, each carrying a hover swap, a drop ring, a context menu, an
@@ -3137,6 +3138,44 @@ the declaring file, since an `init` that stores the closure to `self` is a bindi
 calls it. Tests do not count, which is the whole point. It reads 75 sinks today and finds none
 unbound. This is the shape the two-headed client makes easy: a sink one half binds and the other does
 not looks alive from everywhere except the half that is silent.
+
+### Increment 74 — the phone veiled every pane and drew nothing over them
+
+⌃⇥ opened on the phone. `store.paneSwitcher` armed, `PaneRecedeScrim` veiled every pane, and the card
+that says WHICH pane you are walking towards did not exist — because `check-supervisor.sh` forbade
+it by name: "the ⌃⇥ readout is AppKit only". The ban's premise was that the phone has no modifier
+stream, so a SwiftUI half could never render. That is a statement about the opening CHORD, and the
+chord was never the only way in: the binding row is `Platform::Both` and the palette carries the same
+row, which the phone can now reach without a keyboard (increment 64). A veiled workspace with no way
+to step, commit or cancel is a soft lockup, and a gate was holding it in place.
+
+The gate is inverted rather than deleted. The phone's half must now EXIST, both halves must read
+`PaneSwitcherRowsBuilder`/`PaneSwitcherMetrics`, `allowsHitTesting` stays banned in the shared overlay
+host (that ban is about an always-mounted full-bleed layer eating the split's clicks, which a card
+mounted only while its state is live is not), and a new clause fails the build if the phone's card
+ever mentions `revealPaneTree` — because `commitPaneSwitcher()` unwinds the follow-along preview
+before it stages focus and refuses a candidate whose pane closed under the gesture, and a view
+reaching past it has neither guard, silently.
+
+The three verbs a modifier release performs on the Mac become touch: a row TAP commits (spelled
+walk → step ×N → `commitPaneSwitcher()`, measured against the LIVE switcher at tap time so a ⌃⇥
+arriving between draw and tap cannot land the commit N rows off), the backdrop CANCELS (every other
+phone card dismisses without acting on the floor, and a forward open highlights the PREVIOUS pane, so
+committing a stray tap would teleport the reader out of the pane they were in), and two chevrons in
+the title bar STEP — the same `SlatePlateButton` pair the find bar already steps matches with, not a
+new vocabulary.
+
+Three more measurements moved below the view, because neither window bound survives a phone: the 400
+floor exceeds a 390 pt screen and the 66% ceiling (whose premise is the workspace BEHIND) answers 390
+with a 257 pt card, so `compactWidth(container:)` keeps only the ceiling; `listHeight` exists because
+SwiftUI cannot be asked for a `fittingSize` and a `ScrollView` claims every point offered, which stood
+a two-row card at 70% of the screen. The walk itself is shared in CANDIDATE index space — rows drop
+closed panes, the ring does not.
+
+One gap stays open and is not papered over: on an iPad with a hardware keyboard, Esc/↩ while the card
+is up still reach the PTY, because nothing in `TerminalKeyInterceptor`/`WorkspaceBindingRouting`
+claims them for an open switcher the way `WorkspaceKeyDispatcher` does on the Mac. A focus-stealing
+`.onKeyPress` would have closed it by breaking the ⌃⇥ step path that works today.
 
 ## Stage D ledger — what the rename actually costs
 

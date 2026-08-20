@@ -67,12 +67,21 @@ package struct OverlayHostView: View {
     }
 
     package var body: some View {
-        // ⚠️ ONE LAYER, and that is the stage-D dividend. This used to be a ZStack of two: an AMBIENT
-        // chain (toasts, the ⌃⇥ readout) that had to carry `allowsHitTesting(false)` — which
-        // suppresses hits for everything composed into it, INCLUDING overlays attached further down,
-        // so a modal hung off the same chain took no clicks at all (measured: a palette row click ran
-        // nothing) — and the modal as its SIBLING. Both ambient tenants are their own surfaces now, so
-        // the host presents modals and nothing else, and the hit-testing hazard is gone with them.
+        // ⚠️ TWO LAYERS, AND NEITHER IS AMBIENT — which is the distinction the stage-D dividend was
+        // actually about. What had to go was the ALWAYS-MOUNTED chain (toasts, the ⌃⇥ readout) carrying
+        // `allowsHitTesting(false)`, because that flag suppresses hits for everything composed into it,
+        // INCLUDING overlays attached further down — so a modal hung off the same chain took no clicks
+        // at all (measured: a palette row click ran nothing). The toasts left for a panel of their own.
+        // The ⌃⇥ card is back, and it brings none of that back with it: it is mounted only while the
+        // gesture is live, it takes hits exactly then, and there is no hit-testing flag anywhere on this
+        // layer to keep honest. At rest both branches are empty and the host is as inert as it was.
+        //
+        // The switcher is here rather than in ``ActiveSheet`` because it is not one of the coordinator's
+        // flags — it is the STORE's live gesture, the way the close confirmation below is the store's
+        // parked request. It is also the one card in the set that nobody summoned as a picker, so it
+        // owns its own floor: a tap beside it CANCELS the walk rather than routing through
+        // `closeActiveSheet()`, and it sizes itself against the window rather than taking the shared
+        // card's measure (see ``PaneSwitcherOverlay``).
         //
         // The transient chip stack (copy receipt · notice · connection indicator) was never here: it
         // stands at the foot of the ISLAND (``IslandChipStack``, mounted by ``ContentColumn``).
@@ -94,44 +103,52 @@ package struct OverlayHostView: View {
         // The keyboard needs nothing from the sheet: it already yields on the COORDINATOR's flags
         // (`capturesKeyboardWhileVisible`), which is how a focused card here receives typing and its own
         // chords. Dismissal is the backdrop's job below.
-        modalOverlay
-            // The card's `.transition(.opacity)` needs a transaction to ride, and the flags are
-            // mutated outside a `withAnimation` — so the value-keyed animation is what drives the diff.
-            .animation(Slate.Anim.smallFade, value: activeSheet)
-            // CONNECT-TO-HOST is the ONE overlay presented as a real system sheet (user-directed
-            // 2026-08-08). It is the only surface in the set that is a FORM the user fills in and
-            // commits — every other card is a picker you summon, skim and dismiss in a second — and a
-            // form is exactly what the platform's own modal is for: it owns the window, it can't be
-            // dismissed by a stray click into the workspace mid-edit, and Esc/Return land on Cancel and
-            // Connect through the buttons' native roles rather than through a hand-rolled floor.
-            //
-            // The reasons the OTHER cards stay in-window (above) all still hold and none of them applied
-            // here: this card carries no glass, its corner is the family's own rather than the island's,
-            // and the depth cue a summoned picker gets from casting a shadow on the island is not what
-            // makes a modal form legible.
-            //
-            // `connectVisible` is `private(set)`, so the binding is one-way by construction: reads come
-            // from the coordinator, and any system dismissal routes back through `closeConnect()` — which
-            // also bumps `connectGeneration`, invalidating an in-flight connect Task exactly as Cancel does.
-            .sheet(isPresented: connectSheetBinding) {
-                ConnectHostView(connection: connection, coordinator: coordinator)
-            }
-            // The pane/tab CLOSE CONFIRMATION — the platform's own alert, off the store's two
-            // mutually-exclusive parks. The WORDING is ``CloseConfirmationCopy``, shared with the Mac's
-            // `NSAlert`: which line a park deserves is three branches and a join, and that is exactly
-            // the amount of logic that drifts when two halves each carry it.
-            .alert(
-                closeRequest.map(CloseConfirmationCopy.title) ?? "",
-                isPresented: closeAlertBinding,
-                actions: {
-                    // "Close" is the destructive action (it stops a running command / discards the pane/tab);
-                    // Cancel is the safe default. Native roles give the alert its standard button
-                    // placement + tinting.
-                    Button("Close", role: .destructive) { store.confirmPendingClose() }
-                    Button("Cancel", role: .cancel) { store.cancelPendingClose() }
-                },
-                message: { Text(closeRequest.map(CloseConfirmationCopy.message) ?? "") },
-            )
+        ZStack {
+            modalOverlay
+                // The card's `.transition(.opacity)` needs a transaction to ride, and the flags are
+                // mutated outside a `withAnimation` — so the value-keyed animation is what drives the diff.
+                .animation(Slate.Anim.smallFade, value: activeSheet)
+            paneSwitcherOverlay
+                // Keyed on PRESENCE, not on the gesture: the card fades in and out with the walk, while a
+                // STEP inside it moves the plate at once. A step is a question being re-asked and its
+                // answer has to be findable in 200ms; crossfading the whole card on each one would hide
+                // the very thing the reader is walking toward.
+                .animation(Slate.Anim.smallFade, value: store.paneSwitcher != nil)
+        }
+        // CONNECT-TO-HOST is the ONE overlay presented as a real system sheet (user-directed
+        // 2026-08-08). It is the only surface in the set that is a FORM the user fills in and
+        // commits — every other card is a picker you summon, skim and dismiss in a second — and a
+        // form is exactly what the platform's own modal is for: it owns the window, it can't be
+        // dismissed by a stray click into the workspace mid-edit, and Esc/Return land on Cancel and
+        // Connect through the buttons' native roles rather than through a hand-rolled floor.
+        //
+        // The reasons the OTHER cards stay in-window (above) all still hold and none of them applied
+        // here: this card carries no glass, its corner is the family's own rather than the island's,
+        // and the depth cue a summoned picker gets from casting a shadow on the island is not what
+        // makes a modal form legible.
+        //
+        // `connectVisible` is `private(set)`, so the binding is one-way by construction: reads come
+        // from the coordinator, and any system dismissal routes back through `closeConnect()` — which
+        // also bumps `connectGeneration`, invalidating an in-flight connect Task exactly as Cancel does.
+        .sheet(isPresented: connectSheetBinding) {
+            ConnectHostView(connection: connection, coordinator: coordinator)
+        }
+        // The pane/tab CLOSE CONFIRMATION — the platform's own alert, off the store's two
+        // mutually-exclusive parks. The WORDING is ``CloseConfirmationCopy``, shared with the Mac's
+        // `NSAlert`: which line a park deserves is three branches and a join, and that is exactly
+        // the amount of logic that drifts when two halves each carry it.
+        .alert(
+            closeRequest.map(CloseConfirmationCopy.title) ?? "",
+            isPresented: closeAlertBinding,
+            actions: {
+                // "Close" is the destructive action (it stops a running command / discards the pane/tab);
+                // Cancel is the safe default. Native roles give the alert its standard button
+                // placement + tinting.
+                Button("Close", role: .destructive) { store.confirmPendingClose() }
+                Button("Cancel", role: .cancel) { store.cancelPendingClose() }
+            },
+            message: { Text(closeRequest.map(CloseConfirmationCopy.message) ?? "") },
+        )
         // No tint override anywhere on this layer: the app's ONE neutral accent (the AccentColor
         // asset) already makes stock controls, focus rings and selection read graphite — here and in
         // the workspace beneath alike (see ``SlateOverlayInk``).
@@ -184,6 +201,22 @@ package struct OverlayHostView: View {
             // on a focus TRANSITION or a tap, and the workspace focus never changed. Same call the find
             // bar makes when it closes.
             .onDisappear { store.reclaimKeyboardFocusInActivePane() }
+        }
+    }
+
+    // MARK: - The ⌃⇥ walk (the store's gesture, not a coordinator flag)
+
+    /// The pane switcher's card, mounted for exactly as long as the gesture it draws.
+    ///
+    /// Unwrapped HERE so the layer is absent at rest: the card is a full-bleed floor plus a centred
+    /// surface, and a floor that exists while nothing is walking is the always-mounted host this file
+    /// spent stage D getting rid of. Everything the card decides is its own (``PaneSwitcherOverlay``) —
+    /// this is a mount point and a presence check.
+    @ViewBuilder
+    private var paneSwitcherOverlay: some View {
+        if let switcher = store.paneSwitcher {
+            PaneSwitcherOverlay(store: store, switcher: switcher)
+                .transition(.opacity)
         }
     }
 

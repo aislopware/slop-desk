@@ -7,8 +7,13 @@
 // (split/close) hover-reveal as a top overlay instead of a resting header bar. At REST focus is conveyed
 // by adding a mark to the subject (`PaneFocusCorner`), never by dimming its siblings — that was tried and
 // removed for washing out live content. The one exception is the ⌃⇥ walk, where the question changes on
-// every tap and the answer has to be findable in 200ms (`PaneRecedeScrim`); it lasts as long as the held
-// modifier and no longer. Tap anywhere focuses the pane via the store.
+// every tap and the answer has to be findable in 200ms (`PaneRecedeScrim`); it lasts exactly as long as
+// the walk, which on THIS platform is not the length of a held modifier — nothing is held here, so the
+// veil stands until the reader commits or cancels in the card
+// (`Sources/SlopDeskPhoneUI/Overlays/PaneSwitcherOverlay.swift`). That card is what makes the veil legible
+// rather than a lockup: the two read the same `store.paneSwitcher`, so for a while this pane dimmed for a
+// gesture the phone drew no surface for and offered no way out of. Tap anywhere focuses the pane via the
+// store.
 //
 // The whole pane is keyed `.id(PaneID)` by the SplitContainer so the surface/connection are never reused
 // across panes (identity hazard). SYSTEM colours/fonts only.
