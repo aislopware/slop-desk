@@ -150,7 +150,20 @@ struct PaneMoveHandle: View {
         case cancelled
     }
 
-    private var revealed: Bool { hovering || isDragging }
+    /// ``PaneGrabPill/isRevealed(input:hovering:isDragging:)``'s, not this view's, and the reason is
+    /// the reason it was worth moving: this used to read `hovering || isDragging`, with `.onHover` the
+    /// only writer of `hovering`, so on a phone the pill was never drawn and the move gesture had no
+    /// door. A rule that decides whether a control EXISTS is not ink, and the two AppKit strips ask
+    /// the same question from a target this one cannot see.
+    private var revealed: Bool {
+        PaneGrabPill.isRevealed(input: .touch, hovering: hovering, isDragging: isDragging)
+    }
+
+    /// How far the press must travel before it is a MOVE rather than a tap — and it is a FINGER's
+    /// slop, not a mouse's. ``PaneGrabPill/minimumDragDistance(_:)`` says why 2pt was the wrong number
+    /// on this half: a touch that lands and lifts wanders further than that, so the pointer's value
+    /// turned nearly every tap on this strip into a drag and left `onTap` unreachable in exchange.
+    private static let dragSlop = PaneGrabPill.minimumDragDistance(.touch)
 
     var body: some View {
         VStack(spacing: 0) {
@@ -191,10 +204,13 @@ struct PaneMoveHandle: View {
             height: Slate.GrabPill.stripHeight,
         )
         .contentShape(Rectangle())
+        // Still mounted, and not vestigially: an iPad with a trackpad keeps the hover GROWTH below,
+        // which is feedback rather than discovery. What it no longer decides is whether the pill is
+        // there at all — see ``revealed``.
         .onHover { hovering = $0 }
         .panePointer(isDragging ? .grabActive : .grabIdle)
         .gesture(
-            DragGesture(minimumDistance: 2, coordinateSpace: .named(PaneMoveSpace.name))
+            DragGesture(minimumDistance: Self.dragSlop, coordinateSpace: .named(PaneMoveSpace.name))
                 .updating($dragActive) { _, state, _ in state = true }
                 // The begin is the FIRST frame past `minimumDistance` — SwiftUI has no separate began
                 // callback — so it is spelled as the one `.idle` → `.dragging` transition, exactly the

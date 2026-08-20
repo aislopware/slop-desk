@@ -17,6 +17,66 @@
 import CoreGraphics
 import SlopDeskWorkspaceModel
 
+// MARK: - The grab strip: what reveals its pill, and what starts a drag from it
+
+/// What is driving a grab strip right now.
+///
+/// Deliberately NOT "which platform". The distinction that matters is the INPUT's shape: a cursor
+/// arrives over a control before it presses it, so it can be asked to reveal one; a finger arrives
+/// already pressed and produces no hover at all, so anything gated on hover is not merely subtle there
+/// but unreachable. An iPad canvas is `.touch` even with a trackpad attached, because the pane it is
+/// drawn over is touch-first and a control a finger cannot find is not improved by a pointer that can.
+package enum PaneGrabInput: Equatable {
+    /// A cursor that can hover the strip before pressing it.
+    case pointer
+    /// A finger. No hover, and a press that wanders a little is still a press.
+    case touch
+}
+
+/// The two facts a grab strip needs which are decisions rather than drawings — so neither of the three
+/// renderers that draw one (the canvas handle on each half, the satellite window's strip) may keep its
+/// own answer. ``Slate/GrabPill`` owns the strip's SHAPE for the same reason; this owns its BEHAVIOUR.
+///
+/// The phone's canvas handle used to spell `hovering || isDragging` inline, with `.onHover` the only
+/// writer of `hovering` — so on a phone the pill the drag starts from was never drawn at all, and the
+/// whole move gesture was unreachable. The drag machinery under it was fine; only its reveal condition
+/// was.
+package enum PaneGrabPill {
+    /// Whether the pill is DRAWN right now.
+    ///
+    /// Touch reveals it unconditionally, rather than on a long-press, and the choice is not a shrug.
+    /// A long-press over this strip would have to win against the recognisers the pane surface already
+    /// spends that gesture on (the terminal's own selection and edit menu), and an affordance whose
+    /// existence has to be guessed at by pressing is not an affordance. The platform agrees with
+    /// itself here: iPadOS draws its own window grabber and Split View pill permanently rather than
+    /// revealing them. The cost is one tertiary capsule, and it is bounded — the whole move layer is
+    /// mounted only where a move is possible, so a single-pane phone never sees one.
+    ///
+    /// A pointer keeps the hover reveal it always had, and on a mixed-input iPad it also keeps the
+    /// hover GROWTH, which is the renderer's own business: this answers whether the pill is there, not
+    /// how big it is.
+    package static func isRevealed(input: PaneGrabInput, hovering: Bool, isDragging: Bool) -> Bool {
+        switch input {
+        case .touch: true
+        case .pointer: hovering || isDragging
+        }
+    }
+
+    /// How far a press must travel before it is a MOVE rather than a tap on the strip (which focuses
+    /// the pane).
+    ///
+    /// A pointer's 2pt is a mouse's slop and always was. A finger's is not: a touch that lands and
+    /// lifts moves several points on the way, so 2pt there turns nearly every tap into a drag and the
+    /// tap-to-focus underneath becomes unreachable in the other direction. 10pt is the platform's own
+    /// panning slop, which is what a user's hand has already been calibrated against.
+    package static func minimumDragDistance(_ input: PaneGrabInput) -> CGFloat {
+        switch input {
+        case .pointer: 2
+        case .touch: 10
+        }
+    }
+}
+
 // MARK: - Where a drag came from, and what releasing it would do
 
 /// Where a live pane drag STARTED: a tiled tree leaf (the in-canvas grab handle) or a detached

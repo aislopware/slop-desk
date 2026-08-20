@@ -154,7 +154,12 @@ final class MacSatelliteDragStrip: NSView {
     private var dragging = false
     private var tracking: NSTrackingArea?
 
-    private var revealed: Bool { hovering || dragging }
+    /// ``PaneGrabPill/isRevealed(input:hovering:isDragging:)``'s — the same rule the canvas handles on
+    /// both halves read, for the reason ``Slate/GrabPill`` owns the shape: one affordance, three
+    /// drawings, and no compiler that can see two of them at once.
+    private var revealed: Bool {
+        PaneGrabPill.isRevealed(input: .pointer, hovering: hovering, isDragging: dragging)
+    }
 
     init(store: WorkspaceStore, paneID: PaneID, coordinator: PaneDragCoordinator) {
         self.store = store

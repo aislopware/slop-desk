@@ -475,7 +475,13 @@ final class MacPaneMoveHandle: NSView {
         placePill(animated: true)
     }
 
-    private var revealed: Bool { hovering || isDragging }
+    /// ``PaneGrabPill/isRevealed(input:hovering:isDragging:)``'s. The rule left this view when the
+    /// phone's strip turned out to be reading a hover a finger can never produce; a decision asked by
+    /// three renderers in two frameworks has nothing to compare itself against once each spells its
+    /// own, which is the whole reason the pill's GEOMETRY is ``Slate/GrabPill``'s already.
+    private var revealed: Bool {
+        PaneGrabPill.isRevealed(input: .pointer, hovering: hovering, isDragging: isDragging)
+    }
 
     private func spacePoint(_ event: NSEvent) -> CGPoint {
         let local = convert(event.locationInWindow, from: nil)
