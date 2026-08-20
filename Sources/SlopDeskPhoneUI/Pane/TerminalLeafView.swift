@@ -213,6 +213,20 @@ struct TerminalLeafView: View {
         // hides under nothing" from the same prose and being right by luck.
         .overlay(alignment: .topTrailing) {
             VStack(alignment: .trailing, spacing: Slate.Metric.space2) {
+                // SEND A FILE. The pane's only door for one on a phone: `PaneDropReceiver` is mounted
+                // under this leaf and reachable on an iPad in Split View, but an iPhone has no second
+                // app to drag OUT of, so the receiver has nothing to receive. Offered on the FOCUSED
+                // pane only — it is a control, not a status chip, and a workspace of them would be one
+                // per pane competing for the same corner. See ``PaneFileImporter``.
+                if isFocused, let live {
+                    PaneFileImportButton(
+                        paneID: live.id,
+                        store: store,
+                        terminalModel: live.terminalModel,
+                        overlayCoordinator: overlayCoordinator,
+                    )
+                    .transition(.opacity)
+                }
                 if PaneStatusPillPresentation.showsViModePill(pillConditions),
                    let model = live?.terminalModel
                 {
@@ -251,6 +265,9 @@ struct TerminalLeafView: View {
         // `WorkspaceStore.activePaneCopyReceipt()`.
         .animation(Slate.Anim.reveal, value: wiring.findBar.visible)
         .animation(Slate.Anim.reveal, value: visiblePills)
+        // The send-a-file plate fades with focus rather than snapping — same rung as the chips it
+        // shares the corner with, so a pane swap moves one piece of chrome, not two at two speeds.
+        .animation(Slate.Anim.reveal, value: isFocused)
         .animation(Slate.Anim.reveal, value: PaneStatusPillPresentation.showsViModePill(pillConditions))
         .animation(Slate.Anim.reveal, value: showViHintBar)
         .animation(Slate.Anim.reveal, value: wiring.navigatorChrome.isVisible)

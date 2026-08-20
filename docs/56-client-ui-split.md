@@ -3177,6 +3177,52 @@ is up still reach the PTY, because nothing in `TerminalKeyInterceptor`/`Workspac
 claims them for an open switcher the way `WorkspaceKeyDispatcher` does on the Mac. A focus-stealing
 `.onKeyPress` would have closed it by breaking the ⌃⇥ step path that works today.
 
+### Increment 75 — the clipboard ring the phone could see but never fill
+
+`SlopDeskPasteboard` was a whole-file `#if os(macOS)`, so `ClipboardMonitor` and `ClipboardSyncEngine`
+compiled to nothing on the phone and ⌥⌘V opened onto a permanent "No recent clips". The target is
+live on both triples now, over a `SystemPasteboard` shim that carries the board, its `changeCount`,
+its plain text, and one pure platform fact: `unattendedContentReadIsPermitted`.
+
+That fact is the honest part, and it is why this increment does NOT claim parity. Since iOS 16,
+reading `UIPasteboard.string` for content the app did not write, with no paste gesture behind it,
+raises a system "Allow Paste?" alert — so a one-second poll would put a modal on screen once per new
+clip, unprompted. `changeCount` does not prompt. What ships is therefore split by DIRECTION: the
+host→phone pull is whole (writing needs no permission), the phone's own clips reach the ring on the
+reads the user asked for (`currentLocalClipboard()` records what it reads, so ⌥⌘V, the palette and
+the paste plate all fill it), and the phone→host push is NOT on the timer. The monitor still runs on
+iOS and still consumes `changeCount` so the seen count stays honest; it snapshots content only where
+the platform fact permits it. The alternative was a poll that silently never fires, which reads like
+a feature.
+
+One pre-existing bug fell out: `GuiPastePlateMenu` calls `store.currentLocalClipboard()` from its
+`body`, so on iOS it already raised the paste alert on every render.
+
+`CodeFontSync.installedFontRatio` lost its `#if` the other way — it is CoreText now
+(`CTFontCreateWithName` + ascent/descent/leading), so the code editor's line height is computed from
+the real face on both platforms instead of a fallback constant. `CTFontCreateWithName` never fails
+(it substitutes), where `NSFont(name:)` returned nil, so a `resolves(_:to:)` probe compares the family
+AND the PostScript name; the ratios are bit-identical to the AppKit body on every case tested (Menlo
+`1.1640625`, Monaco `1.33349609375`, Courier `1.0`, nil for a face that is not installed).
+
+The pane's grab pill is REVEALED on touch rather than on hover, and the decision lives in
+`PaneDragVocabulary` as `PaneGrabPill.isRevealed(input:hovering:isDragging:)` so all three renderers
+read one rule. A long press over that strip would have to win against the gestures the pane surface
+already spends it on (selection, the edit menu), and an affordance you must guess at by pressing is
+not one; iPadOS draws its own grabber permanently for the same reason. The cost is bounded because
+the move layer only mounts where a move is possible. The second half of the same unreachability was
+`DragGesture(minimumDistance: 2)` — a mouse's slop, which on touch turned nearly every tap on the
+strip into a drag and left "tap to focus" unreachable from the other side; `minimumDragDistance` is
+10 for touch and stays 2 for the pointer. Still open, and flagged rather than guessed at:
+`Slate.GrabPill.stripHeight` is 14 pt against a 44 pt touch minimum, and the rung is shared with both
+AppKit strips.
+
+Last, a phone can send a file into a pane. `PaneFileImportPolicy` answers the one question a picker
+has that a drop does not — there is no zone — by choosing `DropZone.insertPath`, the only cell live
+for every content kind and the only one that does not commit something off a single tap: the path
+lands at the prompt, editable. From there it walks the SAME four steps `performDrop` does, so there
+is no second drop engine.
+
 ## Stage D ledger — what the rename actually costs
 
 `SlopDeskClientUI` cannot fold into `SlopDeskPhoneUI` while `SlopDeskMacUI` still imports it. That is
