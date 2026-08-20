@@ -1,6 +1,7 @@
 import CSlopDeskFFI
 import Foundation
 import SlopDeskWorkspaceModel
+import UserNotifications
 
 /// The PURE decision policy for "should a finished command raise a desktop notification".
 ///
@@ -125,9 +126,10 @@ public enum ExplicitNotificationContent {
 /// `paneIDKey` is present it embeds it under ``PaneNotificationRouter/paneIDUserInfoKey`` (so a click
 /// routes through the existing reveal path); a `nil` key yields an empty `userInfo` (no reveal target).
 ///
-/// `#if`-unguarded (a pure `[String: String]` derivation) so it compiles + tests on every platform; the
-/// key string is duplicated here as a `String` literal-free reference only on macOS where the router
-/// type exists, so the helper takes the key as a parameter to stay portable.
+/// A pure `[String: String]` derivation, so it compiles + tests on every platform. It takes the key as a
+/// PARAMETER rather than reading ``PaneNotificationRouter/paneIDUserInfoKey`` itself — the router used to
+/// be macOS-only and the helper had to survive without it. The router is portable now, but the parameter
+/// stays: it is what lets the helper be tested with no reference to a `UN*` type at all.
 public enum LongCommandNotificationUserInfo {
     /// `[paneIDUserInfoKey: paneIDKey]` when a key is supplied, else `[:]`.
     public static func make(paneIDUserInfoKey: String, paneIDKey: String?) -> [String: String] {
@@ -163,19 +165,21 @@ public struct NotificationRateLimiter: Sendable {
     }
 }
 
-#if os(macOS)
-import UserNotifications
-
-/// Posts a LOCAL macOS notification when a LONG-running command completes (OSC 133;D with a
+/// Posts a LOCAL notification when a LONG-running command completes (OSC 133;D with a
 /// duration ≥ ``CommandNotificationPolicy/longRunningThresholdMS``). Best-effort, lazy-auth:
 ///
 /// - **Lazy authorization:** `requestAuthorization` is called on the FIRST long-command
 ///   completion, not at launch, so a user who never runs a long command is never prompted.
 /// - **Best-effort:** if authorization is denied or unavailable we simply do nothing — the
 ///   in-app running indicator (the PRIMARY deliverable) is unaffected.
-/// - **macOS-only:** the whole type is `#if os(macOS)` and its sole call site is guarded too,
-///   so iOS still builds. (`UNUserNotificationCenter` exists on iOS, but this deliverable is
-///   scoped to the macOS workspace; dropping the guard later makes it portable.)
+/// - **BOTH triples.** `UserNotifications` is one framework with one API on macOS and iOS, so this is
+///   one poster, not a pair of them. It was `#if os(macOS)` until the UI split, on the reasoning that
+///   the deliverable was "the macOS workspace" — which shipped a phone that renders the whole
+///   Notifications settings group over nothing. The binding rule is that the two apps differ in LAYOUT,
+///   so the poster is portable and each platform entry point installs it into the composition's sinks.
+///   What is genuinely per-platform is the ACTUATION either side of it, and both of those are already
+///   injected seams rather than gates: ``bounceDock`` (a Dock tile is a Mac object; the phone leaves it
+///   at its `{}` default) and the sound (see `sound:` below).
 ///
 /// `@MainActor final class` because it caches authorization state across calls and is invoked
 /// from the `@MainActor` ``ConnectionViewModel`` events loop. (A class — not a struct — so the
@@ -195,8 +199,9 @@ public final class CommandCompletionNotifier {
 
     /// The dock-bounce seam: called when a notification is DELIVERED while the app is not
     /// active. The bounce rides the notification OSCs, NOT the bell — so it fires on every delivered
-    /// banner. The app wires this to `NSApp.requestUserAttention(.informationalRequest)` (gated by the
-    /// "Bounce Dock Icon" toggle); the default is a no-op so tests never bounce.
+    /// banner. The Mac wires this to `NSApp.requestUserAttention(.informationalRequest)` (gated by the
+    /// "Bounce Dock Icon" toggle); the default is a no-op so tests never bounce — and so the phone,
+    /// which has no Dock tile to bounce, binds nothing rather than being read past an `#if`.
     public var bounceDock: () -> Void = {}
 
     public init() {}
@@ -282,6 +287,12 @@ public final class CommandCompletionNotifier {
     /// + the Notify-While-Foreground tri-state) with the store-supplied `appActive` + `sourcePaneVisible`,
     /// then the anti-flood limiter. Lazy-auth + best-effort like the long-command path; resolves the title
     /// fallback via the pure ``ExplicitNotificationContent``.
+    ///
+    /// `sound` is the ``AgentSoundPolicy`` VERDICT, not a second policy: nil = stay silent (the toggle is
+    /// off), non-nil = ring. There is ONE decision and TWO presenters — the Mac plays the edge's own
+    /// `NSSound` at its binding site and passes nil here; the phone has no ambient audio path of its own,
+    /// so it hands the verdict to the banner and this poster attaches the sound to the request. See
+    /// ``bannerSound(for:)`` for why the phone's cue is the system default rather than Submarine/Glass.
     public func notifyExplicit(
         event: NotificationEvent,
         paneIDKey: String,
@@ -291,6 +302,7 @@ public final class CommandCompletionNotifier {
         appActive: Bool,
         sourcePaneVisible: Bool,
         settings: NotificationSettings,
+        sound: AgentSound? = nil,
     ) {
         // The per-event toggle (explicit OSC rides "Allow App Notifications"; an agent edge rides its
         // own toggle) + the Notify-While-Foreground gate. Checked FIRST so a suppressed notification neither
@@ -305,19 +317,24 @@ public final class CommandCompletionNotifier {
         bounceDockIfBackgrounded(appActive: appActive)
         let resolved = ExplicitNotificationContent.resolve(paneTitle: paneTitle, explicitTitle: title, body: body)
         if granted != nil {
-            postExplicit(paneIDKey: paneIDKey, title: resolved.title, body: resolved.body)
+            postExplicit(paneIDKey: paneIDKey, title: resolved.title, body: resolved.body, sound: sound)
         } else {
+            // `AgentSound` (a `String` enum) crosses into the `@Sendable` auth callback; a
+            // `UNNotificationSound` — an `NSObject` — could not, which is the other half of why the
+            // VERDICT travels and the sound object is built at the post site.
             UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { ok, _ in
                 Task { @MainActor [weak self] in
                     self?.granted = ok
-                    self?.postExplicit(paneIDKey: paneIDKey, title: resolved.title, body: resolved.body)
+                    self?.postExplicit(
+                        paneIDKey: paneIDKey, title: resolved.title, body: resolved.body, sound: sound,
+                    )
                 }
             }
         }
     }
 
     /// Adds the explicit-notification request — a no-op unless authorization was granted.
-    private func postExplicit(paneIDKey: String, title: String, body: String) {
+    private func postExplicit(paneIDKey: String, title: String, body: String, sound: AgentSound?) {
         guard granted == true else { return }
         let content = UNMutableNotificationContent()
         // The title/body originate from untrusted PTY output (OSC 9/777); mask any secret before it is
@@ -326,15 +343,26 @@ public final class CommandCompletionNotifier {
         content.title = redact ? SecretRedactor.redact(title) : title
         content.body = redact ? SecretRedactor.redact(body) : body
         content.userInfo = [PaneNotificationRouter.paneIDUserInfoKey: paneIDKey]
+        content.sound = sound.map(Self.bannerSound)
         let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
     }
+
+    /// The banner-attached cue for an ``AgentSound`` verdict: the SYSTEM DEFAULT alert, both edges.
+    ///
+    /// `AgentSound`'s two rawValues (`Submarine`, `Glass`) name files in macOS's `/System/Library/Sounds`,
+    /// which iOS does not ship and `UNNotificationSound(named:)` resolves against the app BUNDLE — so
+    /// naming them here would post a banner that silently falls back to the default anyway, while reading
+    /// as if the phone had the Mac's two-tone vocabulary. It does not, and bundling two audio files to
+    /// invent one is a second sound world, not the one this seam exists to avoid. What survives the trip
+    /// is the part the toggles control — ring or stay silent — decided once by ``AgentSoundPolicy``.
+    private static func bannerSound(for _: AgentSound) -> UNNotificationSound { .default }
 }
 
 /// Routes a clicked notification (its `userInfo` pane-id) to a reveal closure the app wires to the
-/// store (focus + centre the originating pane). The app installs it as the
-/// `UNUserNotificationCenterDelegate` at launch; the key + parsing live here so they are one source
-/// of truth shared with ``CommandCompletionNotifier``.
+/// store (focus + centre the originating pane). EACH app installs it as the
+/// `UNUserNotificationCenterDelegate` at launch — one router, two entry points — and the key + parsing
+/// live here so they are one source of truth shared with ``CommandCompletionNotifier``.
 @preconcurrency
 @MainActor
 public final class PaneNotificationRouter: NSObject, UNUserNotificationCenterDelegate {
@@ -372,4 +400,3 @@ public final class PaneNotificationRouter: NSObject, UNUserNotificationCenterDel
         completionHandler()
     }
 }
-#endif

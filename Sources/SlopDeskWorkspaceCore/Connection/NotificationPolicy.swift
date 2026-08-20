@@ -4,8 +4,10 @@ import SlopDeskProtocol
 // MARK: - NotificationPolicy (the face over "should this notification be delivered")
 
 /// The **Notify While Foreground** tri-state (`notification-while-foreground`) — how a system
-/// notification banner behaves while slopdesk is the FRONTMOST app. macOS otherwise suppresses banners
-/// for the foreground app; this overrides that policy. The rendered picker shows
+/// notification banner behaves while slopdesk is the FRONTMOST app. Both systems otherwise suppress
+/// banners for the foreground app; this overrides that policy, and it does so at the POLICY layer on
+/// both (``PaneNotificationRouter`` answers `willPresent` with `[.banner, .sound]` unconditionally,
+/// because an event that reached a request already passed this gate). The rendered picker shows
 /// the long human label for ``tabUnfocused``.
 public enum NotifyWhileForeground: String, CaseIterable, Sendable, Equatable {
     /// Default — let the system suppress the banner while the app is frontmost.
@@ -146,7 +148,8 @@ public struct NotificationSettings: Sendable, Equatable {
 /// `slopdesk_workspace::notify`, which states the two stages and why the second one is a
 /// pass-through whenever the app is backgrounded; this is the call.
 ///
-/// The macOS poster ``CommandCompletionNotifier`` is the thin actuator that asks it.
+/// The poster ``CommandCompletionNotifier`` — one type, installed by both app shells — is the thin
+/// actuator that asks it.
 public enum NotificationPolicy {
     /// Whether `event` is delivered given the live focus/app-active state and the resolved `settings`.
     /// `sourcePaneVisible` = the user can SEE the source pane right now — it sits in the active

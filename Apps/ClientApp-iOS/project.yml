@@ -78,6 +78,16 @@ targets:
     # default; the byte pipeline pauses on background + resumes byte-exact on foreground
     # (SlopDeskClient.pause()/resume()), so no persistent background mode is declared. No
     # custom entitlements needed for the standard client.
+    #
+    # LOCAL NOTIFICATIONS (the three sinks `SlopDeskPhoneApp` installs) need NOTHING here, and that
+    # is a fact about the platform rather than an omission: `UNUserNotificationCenter` gates on the
+    # user's runtime GRANT, which `requestAuthorization` asks for lazily on the first event that
+    # survives the toggles. There is no Info.plist usage-description key for it (unlike camera/mic)
+    # and no capability to enable — `aps-environment` belongs to REMOTE push, which this app does not
+    # do and which would need an Apple Developer account action. The one real limit is the lifecycle
+    # above: a backgrounded app has paused its connection, so an event arriving while the phone is
+    # locked is delivered on the next foreground rather than at the moment it happened. Closing that
+    # would take a push channel (a host-side APNs sender + that capability), not a plist key.
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.slopdesk.client.ios

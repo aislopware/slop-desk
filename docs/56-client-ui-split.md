@@ -2961,6 +2961,34 @@ libghostty upstream's `Helpers/Cursor.swift`, `Carbon/HIToolbox/Events.h`, a run
 `$XDG_CONFIG_HOME/slopdesk/config.toml` — is not in the tree and must not be, and a gate demanding
 otherwise would be demanding the comment lie.
 
+### Increment 68 — the phone had one notification surface because a `#if` said so
+
+`CommandCompletionNotifier` was `#if os(macOS)` from line 166 to the end of the file, and
+`ClientComposition`'s header called the three nil sinks on iOS "the honest statement that the in-app
+toast is its only notification surface". It was not honest, it was circular: the toast was the only
+surface because the poster refused to compile, and `UserNotifications` is the same framework on both
+triples. A phone is the device MOST likely to be face-down while a long build runs, which makes this
+the one platform where a banner is not a nicety.
+
+The gate is gone — the file now has zero preprocessor directives — and both entry points install all
+three sinks over one `CommandCompletionNotifier` and one `PaneNotificationRouter`. What differs is the
+ACTUATION inside the closures, which is what a sink is for: the Mac bounces its Dock tile and plays
+`NSSound(named:)`, and the phone attaches a `UNNotificationSound` to the request it is already
+building. `AgentSoundPolicy` is untouched — one decision, two presenters.
+
+`bannerSound` returns `.default` for BOTH agent edges, deliberately. `Submarine` and `Glass` are
+`/System/Library/Sounds` files iOS does not ship, and `UNNotificationSound(named:)` resolves against
+the app bundle, so naming them would fall back to the default anyway while READING as if the phone
+had the Mac's two-tone vocabulary. Bundling two audio files to invent one is a second sound world.
+What survives the trip is the part the two toggles actually control: ring, or stay silent.
+
+Nothing was needed in `Info.plist` and no capability was added. iOS local notifications require no
+entitlement — the runtime grant IS the capability, and the notifier's lazy `requestAuthorization`
+asks for it on the first event that survives the toggles. `aps-environment` belongs to remote push,
+which this app does not do. The real limitation is stated rather than hidden: `handleScenePhase`
+pauses the connection on background, so an event arriving while the phone is locked lands on the next
+foreground. Closing that gap needs a push channel, not a plist key.
+
 ## Stage D ledger — what the rename actually costs
 
 `SlopDeskClientUI` cannot fold into `SlopDeskPhoneUI` while `SlopDeskMacUI` still imports it. That is

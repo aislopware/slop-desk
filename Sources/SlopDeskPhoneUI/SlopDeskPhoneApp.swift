@@ -16,17 +16,29 @@
 //     macOS `scenePhase` tracks window visibility instead, so it cannot be the same code;
 //   * the settings SHEET, because `Settings` (⌘,) is a macOS scene and there is no menu bar here.
 //
-// What it deliberately does NOT install are the composition's three OS-notification sinks: the in-app
-// toast, pushed by the composition on both platforms, is this platform's only notification surface.
+// It DOES install all three of the composition's OS-notification sinks, over the same
+// `CommandCompletionNotifier` / `PaneNotificationRouter` the Mac installs — `UserNotifications` is one
+// framework with one API, so a long build finishing, a non-zero exit and an agent awaiting input reach
+// the phone as real local notifications rather than dying at a nil closure while Settings renders the
+// whole Notification group. The two apps differ in LAYOUT; they do not differ in which events exist.
+// What genuinely has no phone answer is the Dock bounce, and that is already an injected closure this
+// file simply leaves at its `{}` default.
 
 #if os(iOS)
+import Defaults // fire-time reads of the Code Agent sound toggles in the attention sink
 import SlopDeskClientCore
 import SlopDeskSlate
 import SlopDeskWorkspaceCore
 import SwiftUI
 import UIKit
+import UserNotifications // explicit OSC 9/777 + long-command + agent edges → local notifications
 
 public struct SlopDeskPhoneApp: App {
+    /// Retains the notification click-router (`UNUserNotificationCenter` holds its delegate weakly, so
+    /// nothing else in this process would). Static for the same reason the Mac's is: it is set from
+    /// `init()`, before any `@State` box is read, and there is exactly one app.
+    @MainActor static var notificationRouter: PaneNotificationRouter?
+
     /// THE COMPOSITION ROOT — what the app IS, built and wired once in `SlopDeskClientCore` so this
     /// shell and the Mac's can never grow two copies of it (docs/56 §2).
     @State private var app: ClientComposition
@@ -68,7 +80,71 @@ public struct SlopDeskPhoneApp: App {
         // The concurrent live-video ceiling, resolved ONCE at launch from the device idiom: an iPad in a
         // regular projection can hold two live streams, a phone one.
         let isPad = UIDevice.current.userInterfaceIdiom == .pad
-        _app = State(initialValue: ClientComposition(deviceClass: isPad ? .pad : .phone))
+        let app = ClientComposition(deviceClass: isPad ? .pad : .phone)
+        _app = State(initialValue: app)
+        Self.installNotificationSinks(app)
+    }
+
+    /// Installs the composition's three OS-notification sinks over ONE ``CommandCompletionNotifier`` and
+    /// ONE ``PaneNotificationRouter`` — the same pair the Mac shell installs, because they are the same
+    /// type: `UserNotifications` is cross-platform and the poster stopped being `#if os(macOS)` when the
+    /// phone stopped being a client that only whispers to itself.
+    ///
+    /// The toast half of each of these three fan-outs already fired inside the composition, on both
+    /// platforms; what is added here is the OS surface. `bounceDock` is deliberately left at its `{}`
+    /// default — there is no Dock tile on a phone, and that is the one asymmetry, expressed as an
+    /// unbound seam rather than as a gate.
+    ///
+    /// Authorization is LAZY inside the poster: the first event that survives the toggles prompts, so a
+    /// phone that never sees one never asks. Local notifications need no entitlement and no Info.plist
+    /// key — the grant IS the capability.
+    @MainActor
+    private static func installNotificationSinks(_ app: ClientComposition) {
+        let notifier = CommandCompletionNotifier()
+        let router = PaneNotificationRouter()
+        router.onReveal = { [weak store = app.store] idString in store?.revealPane(byIDString: idString) }
+        UNUserNotificationCenter.current().delegate = router
+        notificationRouter = router
+
+        app.backgroundNoticeSink = { notice in
+            notifier.notifyExplicit(
+                event: notice.event,
+                paneIDKey: notice.paneIDKey, paneTitle: notice.paneTitle,
+                title: notice.title, body: notice.body,
+                appActive: notice.appActive, sourcePaneVisible: notice.sourcePaneVisible,
+                settings: SettingsKey.notificationSettings,
+            )
+        }
+        // Notify on Finish (clean exit, default OFF) / Notify on Error Exit (non-zero, default ON) + the
+        // Notify-While-Foreground gate — the duration threshold is the notifier's own.
+        app.longCommandSink = { notice in
+            notifier.notifyIfLong(
+                paneTitle: notice.paneTitle, exitCode: notice.exitCode, durationMS: notice.durationMS,
+                paneIDKey: notice.paneIDKey,
+                appActive: notice.appActive, sourcePaneVisible: notice.sourcePaneVisible,
+                settings: SettingsKey.notificationSettings,
+            )
+        }
+        app.agentAttentionSink = { notice in
+            // ONE decision, TWO presenters: ``AgentSoundPolicy`` — which does NOT gate on focus (the
+            // TOAST is suppressed for a focused pane, the cue still rings) — says ring or stay silent,
+            // and the phone hands that verdict to the BANNER instead of opening a second audio path.
+            // Agent edges ride their OWN per-event toggles (awaiting-input vs task-complete), NOT the
+            // shell-app master switch, then the Notify-While-Foreground gate.
+            notifier.notifyExplicit(
+                event: notice.needsInput ? .agentAwaitInput : .agentTaskComplete,
+                paneIDKey: notice.paneIDKey, paneTitle: notice.name,
+                title: notice.name, body: notice.body,
+                appActive: notice.appActive, sourcePaneVisible: notice.sourcePaneVisible,
+                settings: SettingsKey.notificationSettings,
+                sound: AgentSoundPolicy.sound(
+                    needsInput: notice.needsInput,
+                    sourcePaneFocused: notice.sourcePaneFocused,
+                    soundTaskComplete: Defaults[.agentSoundTaskComplete],
+                    soundAwaitInput: Defaults[.agentSoundAwaitInput],
+                ),
+            )
+        }
     }
 
     public var body: some Scene {

@@ -11,11 +11,13 @@
 // `SlopDeskPhoneUI` each build a `ClientComposition`, hand it their own layout, and differ in nothing
 // else about what the app IS.
 //
-// THE PLATFORM SEAMS ARE SINKS, NOT `#if`s. There is no platform gate in this file. The three places
-// macOS does more than a phone — a `UNUserNotification` banner for a background event, one for a long
-// command, and the agent's sound cue + banner — are optional closures the platform entry point
-// installs after `init`. iOS leaves them nil, which is the honest statement that the in-app toast is
-// its only notification surface. The toast half of each fan-out is wired HERE and fires on both.
+// THE PLATFORM SEAMS ARE SINKS, NOT `#if`s. There is no platform gate in this file. The three OS
+// surfaces — a `UNUserNotification` banner for a background event, one for a long command, and the
+// agent edge's cue + banner — are optional closures the platform entry point installs after `init`.
+// BOTH entry points install all three now, over the one cross-platform `CommandCompletionNotifier`;
+// what still differs is the actuation inside them (the Mac bounces its Dock and plays `NSSound`, the
+// phone attaches a `UNNotificationSound` to the request). The toast half of each fan-out is wired HERE
+// and fires on both, independently of whether a sink is installed.
 
 import Defaults
 import Foundation
@@ -58,7 +60,7 @@ package struct LongCommandNotice: Sendable {
 }
 
 /// One agent attention edge (needs input / finished a turn), resolved for the platform's own surfaces:
-/// macOS plays the herdr-style cue and posts a banner, and both read the focus facts carried here.
+/// each platform rings its cue and posts a banner, and both read the focus facts carried here.
 package struct AgentAttentionNotice: Sendable {
     package let paneIDKey: String
     /// The agent's label (e.g. "Claude").
@@ -110,13 +112,15 @@ package final class ClientComposition {
     /// a throwaway E2E shape can never overwrite the developer's real files.
     package let isAutomation: Bool
 
-    // MARK: The platform sinks (nil = this platform has no such surface)
+    // MARK: The platform sinks (nil = this platform installed no OS surface)
 
-    /// The OS banner for a background pane event. macOS installs a `CommandCompletionNotifier` poster.
+    /// The OS banner for a background pane event. Both entry points install a `CommandCompletionNotifier`
+    /// poster; the sink stays optional because this layer must not depend on either of them existing.
     package var backgroundNoticeSink: ((BackgroundNotice) -> Void)?
     /// The OS banner for a finished long command.
     package var longCommandSink: ((LongCommandNotice) -> Void)?
-    /// The agent edge's platform surfaces (macOS: the sound cue + the banner).
+    /// The agent edge's platform surfaces: the banner on both, plus the cue — `NSSound` on the Mac, a
+    /// `UNNotificationSound` on the request on the phone, off the one `AgentSoundPolicy` verdict.
     package var agentAttentionSink: ((AgentAttentionNotice) -> Void)?
 
     // MARK: Build
@@ -299,10 +303,11 @@ package final class ClientComposition {
             // `.watchFinish` with the marker STRIPPED; every other explicit notification stays
             // `.explicitOSC` (the master switch).
             let (event, displayTitle) = NotificationEvent.classifyExplicit(title: title, body: body)
-            // SECURITY: the toast is in-app UI and — on iOS — the ONLY notification surface, so the
-            // secret redaction the macOS banner and the pane title apply must ALSO run here, or an
-            // OSC 9/777 title/body carrying a token is shown verbatim. Done once at the construction
-            // site (`Toast.explicitOSC`) so both platforms benefit.
+            // SECURITY: the toast is in-app UI, so the secret redaction the OS banner and the pane
+            // title apply must ALSO run here, or an OSC 9/777 title/body carrying a token is shown
+            // verbatim. Done once at the construction site (`Toast.explicitOSC`) so both platforms
+            // benefit — and it is a SEPARATE application from the banner's, because a toast can be
+            // pushed on a platform whose sink is unbound.
             if !store.isSourcePaneFocused(paneID) {
                 overlay.pushToast(Toast.explicitOSC(paneIDRaw: paneID.raw, title: displayTitle, body: body))
             }
@@ -363,7 +368,7 @@ package final class ClientComposition {
             // Agent-needs-input is the highest-signal background event → `.attention`; a finish is
             // `.success`. FOCUS-gated like the OSC toast: the agent pane the user is watching announces
             // its own edge on screen. The agent `detail` is host-provided (Claude label); mask any secret
-            // in it (and the name) — the toast is the only iOS notification surface.
+            // in it (and the name) — a card on screen archives a token as readily as a banner does.
             if !sourcePaneFocused {
                 overlay.pushToast(Toast(
                     id: "pane.\(paneIDKey)",

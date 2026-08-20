@@ -168,11 +168,12 @@ public enum SettingsKey {
     public static let agentNotifyTaskComplete = "notifications.agentTaskComplete"
     /// "Code Agent — Notify When Awaiting Input" — agent needs approval / input (default ON; Claude-only).
     public static let agentNotifyAwaitInput = "notifications.agentAwaitInput"
-    /// "Code Agent — Sound When Task Completes" — Submarine on a finished turn, focused pane included
-    /// (default ON; macOS-only). Read by ``AgentSoundPolicy``.
+    /// "Code Agent — Sound When Task Completes" — a cue on a finished turn, focused pane included
+    /// (default ON). Read by ``AgentSoundPolicy``, which decides RING or SILENT; the Mac spends the verdict
+    /// on `NSSound("Submarine")` and the phone on the banner's own sound.
     public static let agentSoundTaskComplete = "notifications.agentSoundTaskComplete"
-    /// "Code Agent — Sound When Awaiting Input" — Glass when the agent blocks on input, even for the
-    /// focused pane (default ON; macOS-only). Read by ``AgentSoundPolicy``.
+    /// "Code Agent — Sound When Awaiting Input" — a cue when the agent blocks on input, even for the
+    /// focused pane (default ON). Read by ``AgentSoundPolicy``; `Glass` on the Mac, the banner sound on the phone.
     public static let agentSoundAwaitInput = "notifications.agentSoundAwaitInput"
     // (agents__agents-overview.md "Agent Behaviour"). The three BADGE toggles — fire-time
     // `Defaults.Keys` flags, never folded into a typed prefs model → golden-safe. They gate which fused tab
@@ -554,7 +555,7 @@ public enum SettingsKey {
     }
 
     /// The resolved ``NotificationSettings`` bundle the pure ``NotificationPolicy`` consumes — the ONE seam
-    /// the macOS poster (``CommandCompletionNotifier``) reads so the notification toggles are applied in
+    /// the poster (``CommandCompletionNotifier``, on both triples) reads so the notification toggles are applied in
     /// exactly one place (mirrors ``linkSchemePolicy``). The master "Allow App Notifications" maps onto the
     /// existing ``oscNotifications`` key.
     public static var notificationSettings: NotificationSettings {

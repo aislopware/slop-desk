@@ -25,9 +25,13 @@ public enum ErrorSoundPolicy {
 
 // MARK: - Code-agent attention sounds
 
-/// Which macOS system sound announces an agent attention edge. The rawValue is the `NSSound(named:)`
-/// name resolved from `/System/Library/Sounds` — kept as a plain string here so the policy module stays
+/// Which cue announces an agent attention edge. The rawValue is the macOS `NSSound(named:)` name
+/// resolved from `/System/Library/Sounds` — kept as a plain string here so the policy module stays
 /// AppKit-free; the actuation site owns the `NSSound` call.
+///
+/// The phone spends the same verdict differently: iOS ships neither of these files, so
+/// ``CommandCompletionNotifier`` attaches the system default `UNNotificationSound` to the banner instead
+/// (see its `bannerSound(for:)`). One decision here, two presenters there — never two policies.
 public enum AgentSound: String, Sendable {
     /// The agent finished its task and went idle.
     case taskComplete = "Submarine"
