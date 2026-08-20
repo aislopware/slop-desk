@@ -23,10 +23,6 @@ import SlopDeskWorkspaceCore
 import SwiftUI
 
 struct CopyReceiptChip: View {
-    /// How long the chip dwells before expiring — long enough to read a short count at a glance,
-    /// short enough that the pane is ornament-free again before the next thought.
-    static let dwell: Duration = .seconds(1.5)
-
     let receipt: CopyReceipt
     /// Called when the dwell elapses — the owner clears its receipt (`clearCopyReceipt()`), unmounting
     /// the chip through the fade the mount site animates.
@@ -47,7 +43,7 @@ struct CopyReceiptChip: View {
             // A CANCELLED sleep must NOT expire — cancellation means either a newer receipt owns the chip
             // or the chip unmounted; calling `onExpire` then would kill the successor's dwell.
             .task(id: receipt) {
-                guard await (try? Task.sleep(for: Self.dwell)) != nil else { return }
+                guard await (try? Task.sleep(for: CopyReceipt.dwell)) != nil else { return }
                 onExpire()
             }
     }

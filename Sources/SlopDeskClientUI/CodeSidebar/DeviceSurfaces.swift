@@ -19,7 +19,7 @@
 // the outgoing list would squeeze the arriving device for the length of the fade.
 //
 // PHONE-ONLY SINCE INCREMENT 52. The Mac drew the same two depths through this file for exactly one
-// increment — the seam `WorkspaceColumnHosts` narrowed to before it closed — and now has
+// increment — the hosting seam narrowed to these two surfaces before it closed — and now has
 // ``SlopDeskMacUI/MacSimulatorSurface`` and ``SlopDeskMacUI/MacAndroidSurface``, which say the same
 // three things (drill, direction, both mounted mid-beat) in four constraints each. The prose above is
 // the shared decision; only the spelling of it is here.

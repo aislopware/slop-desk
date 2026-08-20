@@ -1,10 +1,13 @@
-// SlateEmptyState — the workspace empty-state voice (MERIDIAN C3). The pane area's "nothing here"
-// states share ONE quiet composition — a muted symbol, a short title, a one-line cause, and (when
-// there is one) the single next action — instead of the native `ContentUnavailableView`, whose voice
-// and metrics sit outside the Slate system. The CAUSE is typed: each cause carries its own pinned
-// copy + symbol (unit-tested), so call sites can't drift into ad-hoc wording, and the copy names the
-// actual reason ("Not Connected" vs "Connection Lost" vs "No Open Tabs") rather than one generic
-// "No Session" for all three.
+// SlateEmptyState — the workspace empty-state voice (MERIDIAN C3), PHONE HALF. The pane area's
+// "nothing here" states share ONE quiet composition — a muted symbol, a short title, a one-line cause,
+// and (when there is one) the single next action — instead of the native `ContentUnavailableView`,
+// whose voice and metrics sit outside the Slate system.
+//
+// THE COPY IS NOT HERE ANY MORE. Each cause carries its own symbol, title, caption and action label on
+// ``PaneEmptyCause`` itself (`SlopDeskClientCore`, pinned by `PaneEmptyCopyTests`), so this view and
+// ``SlopDeskMacUI/MacSlateEmptyState`` cannot say two different things about the same connection. The
+// four tables are `String`-valued, so they DESCENDED rather than being pinned as a cross-renderer pair
+// — docs/56 §3's P6: only a table with a `Color` in it is stuck above `SlopDeskSlate`.
 //
 // At-rest = zero ornament (the standing bar): plain text on the pane face, no card, no shadow; the
 // only chrome is the action's raised plate — which IS the action, not decoration.
@@ -25,61 +28,19 @@ struct SlateEmptyState: View {
 
     @State private var hover = false
 
-    // MARK: - Pinned copy (pure, unit-tested)
-
-    static func symbol(for cause: PaneEmptyCause) -> String {
-        switch cause {
-        case .neverConnected: "bolt.horizontal"
-        case .linkDown: "wifi.exclamationmark"
-        case .noTabs: "terminal"
-        case .connectFailed: "exclamationmark.triangle"
-        }
-    }
-
-    static func title(for cause: PaneEmptyCause) -> String {
-        switch cause {
-        case .neverConnected: "Not Connected"
-        case .linkDown: "Connection Lost"
-        case .noTabs: "No Open Tabs"
-        case .connectFailed: "Connect Failed"
-        }
-    }
-
-    static func caption(for cause: PaneEmptyCause) -> String {
-        switch cause {
-        case .neverConnected: "Connect to a host to open a terminal."
-        case let .linkDown(host): "Reconnecting to \(host)…"
-        case .noTabs: "Open a tab to get started."
-        case let .connectFailed(reason): reason
-        }
-    }
-
-    /// The single next action's label, or `nil` when the cause has no user action (link-down redials
-    /// itself — offering a button there would suggest the user must do something).
-    static func actionLabel(for cause: PaneEmptyCause) -> String? {
-        switch cause {
-        case .neverConnected: "Connect to Host…"
-        case .linkDown: nil
-        case .noTabs: "New Tab"
-        case .connectFailed: "Connect to Host…"
-        }
-    }
-
-    // MARK: - Body
-
     var body: some View {
         VStack(spacing: Slate.Metric.space2) {
-            Image(systemName: Self.symbol(for: cause))
+            Image(systemName: cause.symbolName)
                 .font(.system(size: Slate.Typeface.display, weight: .ultraLight))
                 .foregroundStyle(Slate.Text.tertiary)
                 .padding(.bottom, Slate.Metric.space1)
-            Text(Self.title(for: cause))
+            Text(cause.title)
                 .font(.system(size: Slate.Typeface.body, weight: .medium))
                 .foregroundStyle(Slate.Text.primary)
-            Text(Self.caption(for: cause))
+            Text(cause.caption)
                 .font(.system(size: Slate.Typeface.base))
                 .foregroundStyle(Slate.Text.secondary)
-            if let label = Self.actionLabel(for: cause) {
+            if let label = cause.actionLabel {
                 Button(action: onAction) {
                     Text(label)
                         .font(.system(size: Slate.Typeface.base, weight: .medium))

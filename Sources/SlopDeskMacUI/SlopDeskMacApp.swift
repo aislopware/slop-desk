@@ -351,9 +351,10 @@ public struct SlopDeskMacApp: App {
                 // left on this platform: every reader of all three keys is a PHONE view, and each has an
                 // AppKit twin the Mac mounts instead — `MacSettingsBespokeSurfaces` and
                 // `MacFirstLaunchSheet` take their controller as an INIT PARAMETER, and increment 56b
-                // did the same to `MacWorkspaceRootView`'s preferences. The canvas, which does still
-                // read `\.overlayCoordinator`, gets it from `WorkspaceColumnHosts` at its own hosting
-                // root — not from here, because an `NSHostingController` inherits no scene environment.
+                // did the same to `MacWorkspaceRootView`'s preferences. The canvas was the last reader
+                // of `\.overlayCoordinator` on this platform and took it from a hosting root of its
+                // own; R12 rewrote it in AppKit (``MacContentCanvas``), so the coordinator is an init
+                // parameter there too and there is no environment on this side at all.
                 //
                 // They were dead ONE-WAY: an injection nobody reads costs nothing at runtime and cannot
                 // fail a test, so it survives every rewrite that removes its readers. That is the same

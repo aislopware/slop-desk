@@ -291,8 +291,12 @@ final class MacAndroidStageView: NSView {
             consoleHeight?.animator().constant = open ? Slate.Metric.heightDrawer : 0
             layoutSubtreeIfNeeded()
         } completionHandler: { [weak self] in
-            guard let self, !open else { return }
-            for view in consoleSlot.subviews { view.removeFromSuperview() }
+            // `runAnimationGroup`'s completion is `@Sendable`; AppKit runs it on the main thread
+            // without annotating it as such.
+            MainActor.assumeIsolated {
+                guard let self, !open else { return }
+                for view in self.consoleSlot.subviews { view.removeFromSuperview() }
+            }
         }
     }
 

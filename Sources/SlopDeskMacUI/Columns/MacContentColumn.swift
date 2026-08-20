@@ -17,17 +17,19 @@
 // ``MacNavigatorColumn`` already spends on the sidebar list, and the reader is DELETED rather than
 // ported (see ``registerCanvas(_:)`` for the one thing the two halves genuinely answer differently).
 //
-// THE CANVAS INSIDE THE ISLAND STAYS SWIFTUI ON PURPOSE, and it is the next surface to cross rather
-// than an exception: it is `SplitContainer` and the twenty-odd files under it — a whole pane subtree,
-// and docs/56 §3.5's rule is that a surface is ported WHOLE. The band is a surface; the island is a
-// surface; "the island plus half the panes" is not.
+// AND THE CANVAS CROSSED IN R12. It stayed SwiftUI through stage F on the rule that a surface is
+// ported WHOLE — it was `SplitContainer` and the twenty-odd files under it, and "the island plus half
+// the panes" is not a surface. R11 wrote the pane tree (``MacSplitCanvasView``) and R12 wrote the three
+// things around it (``MacContentCanvas``: the empty state, the chip stack, the swap between them), so
+// the whole surface landed in one piece across two batches. There is no hosted view left in this
+// column, and `WorkspaceColumnHosts` — the factory seam that had narrowed to this one call — is gone
+// with it.
 //
 // The MODAL POINTER SHIELD is this controller's root and therefore covers BOTH children — the same
 // deal the navigator column keeps (``MacModalShield``).
 
 import AppKit
 import SlopDeskClientCore
-import SlopDeskClientUI // the hosted canvas factory
 import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
 import SlopDeskWorkspaceCore
 
@@ -73,15 +75,14 @@ final class MacContentColumn: NSViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        // The canvas: the pane grid and nothing around it. It fills the island edge to edge, so the
-        // hosted view's frame is the canvas's rect exactly — see ``registerCanvas(_:)``.
-        let canvas = WorkspaceColumnHosts.content(
+        // The canvas: the pane grid, the empty state behind it and the island's chip stack at its
+        // foot. It fills the island edge to edge, so its frame is the canvas's rect exactly — see
+        // ``registerCanvas(_:)``.
+        let canvas = MacContentCanvas(
             store: store, connection: connection, chrome: chrome, onConnect: onConnect,
             paneDrag: paneDrag, overlay: overlay,
         )
-        addChild(canvas)
-        canvas.view.translatesAutoresizingMaskIntoConstraints = false
-        island.addSubview(canvas.view)
+        island.addSubview(canvas)
         view.addSubview(island)
 
         let band = MacTitlebarBand(
@@ -100,10 +101,10 @@ final class MacContentColumn: NSViewController {
         islandTrailing = trailing
 
         NSLayoutConstraint.activate([
-            canvas.view.topAnchor.constraint(equalTo: island.topAnchor),
-            canvas.view.bottomAnchor.constraint(equalTo: island.bottomAnchor),
-            canvas.view.leadingAnchor.constraint(equalTo: island.leadingAnchor),
-            canvas.view.trailingAnchor.constraint(equalTo: island.trailingAnchor),
+            canvas.topAnchor.constraint(equalTo: island.topAnchor),
+            canvas.bottomAnchor.constraint(equalTo: island.bottomAnchor),
+            canvas.leadingAnchor.constraint(equalTo: island.leadingAnchor),
+            canvas.trailingAnchor.constraint(equalTo: island.trailingAnchor),
             top,
             trailing,
             island.leadingAnchor.constraint(
@@ -120,7 +121,7 @@ final class MacContentColumn: NSViewController {
             rail.topAnchor.constraint(equalTo: view.topAnchor),
             rail.trailingAnchor.constraint(equalTo: view.trailingAnchor),
         ])
-        registerCanvas(canvas.view)
+        registerCanvas(canvas)
         followChrome()
         paint()
     }

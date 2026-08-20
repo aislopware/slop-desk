@@ -12,7 +12,10 @@
 /// One clipboard-copy receipt: the counts of what was written, plus a monotonically-increasing `epoch`
 /// so a rapid re-copy reads as a NEW receipt (the chip's dwell timer restarts and the label hard-cuts
 /// to the new count — retarget, never a re-entrance animation).
-public struct CopyReceipt: Equatable, Sendable {
+/// `Hashable` over the same three fields it is `Equatable` over — the AppKit chip keys its dwell on the
+/// WHOLE receipt (a hand-off between the two owners can carry the same epoch), and an identity a view
+/// compares has to be one it can also box.
+public struct CopyReceipt: Hashable, Sendable {
     /// Grapheme-cluster count of the copied text — what a user would call "characters".
     public let charCount: Int
     /// Logical line count: newline-separated segments, with a single trailing newline NOT counted as an
@@ -20,6 +23,15 @@ public struct CopyReceipt: Equatable, Sendable {
     public let lineCount: Int
     /// Bumped per copy by the owner (pane model / overlay coordinator) — identity for the dwell timer.
     public let epoch: Int
+
+    /// How long the chip dwells before expiring — long enough to read a short count at a glance, short
+    /// enough that the pane is ornament-free again before the next thought.
+    ///
+    /// It is a CONSTANT rather than per-receipt, unlike `ChipNotice.dwell`, because every copy says the
+    /// same shape of thing; a notice may be offering an undo chord, which needs more reading time. It
+    /// lives on the value rather than on either chip so the two renderers cannot hold the receipt for
+    /// two different lengths of time.
+    public static let dwell: Duration = .seconds(1.5)
 
     public init(text: String, epoch: Int) {
         charCount = text.count

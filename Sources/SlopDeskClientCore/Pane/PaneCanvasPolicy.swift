@@ -91,12 +91,20 @@ package enum PaneCanvasMetrics {
 
 // MARK: - The empty canvas
 
-/// WHY the pane area is empty — each cause pins its own copy, symbol and single next action one floor
-/// up, in whichever framework is drawing the empty state.
+/// WHY the pane area is empty — and, since R12, WHAT IT SAYS: the symbol, the title, the caption and
+/// the single next action all hang off the cause itself.
 ///
 /// It is a reading of the CONNECTION, so it is not a fact about either drawing: "connected but no
 /// tabs" and "the link is down and the supervisor is redialing" are different sentences the user needs
 /// to hear, and a canvas rewritten in AppKit must say the same four things the SwiftUI one does.
+///
+/// ⚠️ THE COPY DESCENDED RATHER THAN BEING PINNED AS A PAIR, and the test for that is in docs/56 §3's
+/// P6: a table that returns a `Color` cannot come below `SlopDeskSlate` and must therefore be pinned
+/// as a cross-renderer pair, but a FRAMEWORKLESS value can just move to the floor where neither half
+/// can drift from it. These four return `String` — a symbol NAME, not an `Image`; a label, not a
+/// `Button` — so there is nothing to pin. They lived as `static func`s on `SlateEmptyState` (a
+/// `some View`), which is the same "a function spelled inside a type the other half cannot import"
+/// this file's header opens with.
 package enum PaneEmptyCause: Equatable, Sendable {
     /// No host connected (fresh launch / disconnected) — the next action is the Connect editor.
     case neverConnected
@@ -122,6 +130,51 @@ package enum PaneEmptyCause: Equatable, Sendable {
         case .disconnected,
              .connecting,
              .unreachable: .neverConnected
+        }
+    }
+
+    // MARK: The pinned copy (pure, unit-pinned by `PaneEmptyCopyTests`)
+
+    /// The muted SF Symbol above the title. A NAME, so the two renderers resolve it through their own
+    /// image type rather than sharing one they cannot both import.
+    package var symbolName: String {
+        switch self {
+        case .neverConnected: "bolt.horizontal"
+        case .linkDown: "wifi.exclamationmark"
+        case .noTabs: "terminal"
+        case .connectFailed: "exclamationmark.triangle"
+        }
+    }
+
+    /// The short headline. It names the ACTUAL reason ("Not Connected" vs "Connection Lost" vs "No Open
+    /// Tabs") rather than one generic "No Session" for all three.
+    package var title: String {
+        switch self {
+        case .neverConnected: "Not Connected"
+        case .linkDown: "Connection Lost"
+        case .noTabs: "No Open Tabs"
+        case .connectFailed: "Connect Failed"
+        }
+    }
+
+    /// The one-line cause under the title.
+    package var caption: String {
+        switch self {
+        case .neverConnected: "Connect to a host to open a terminal."
+        case let .linkDown(host): "Reconnecting to \(host)…"
+        case .noTabs: "Open a tab to get started."
+        case let .connectFailed(reason): reason
+        }
+    }
+
+    /// The single next action's label, or `nil` when the cause has none — link-down redials itself, and
+    /// offering a button there would suggest the user must do something.
+    package var actionLabel: String? {
+        switch self {
+        case .neverConnected: "Connect to Host…"
+        case .linkDown: nil
+        case .noTabs: "New Tab"
+        case .connectFailed: "Connect to Host…"
         }
     }
 }

@@ -6511,6 +6511,30 @@ if spells 'SatellitePaneHost' $(repo_files 'Sources/**/*.swift') > /dev/null 2>&
 fi
 printf 'check-supervisor: the Mac injects no environment at all — and the satellite seam it was for is gone.\n'
 
+# ── THE FOLD'S GATE CONDITION, ASSERTED WHOLE (docs/56, increment 61) ────────────────────────────
+# `SlopDeskClientUI` cannot be renamed `SlopDeskPhoneUI` while ANY `SlopDeskMacUI` file imports it.
+# That was a count for eleven increments — 13 files, then 2, then 0 — and each step got its own
+# per-file gate above (`MAC_WINDOW_ROOT`, `MAC_APP`), because naming the file was the only way to say
+# anything true while others still legitimately imported it.
+#
+# At zero the per-file form stops being the assertion. A gate that names three files is silent about
+# the fourth, and the fourth is exactly what a later agent adds: reaching for one `some View` from a
+# new AppKit surface is a one-line import that compiles, passes every test, and puts the fold back
+# behind a port. So the census is the TARGET, not a list — the three above stay for the history in
+# their comments, and this is the one that cannot be out of date.
+#
+# It reads the RAW import lines rather than `spells`: an import is never inside a doc comment, and the
+# ban has to survive a file whose header legitimately discusses the draining floor by name (several
+# do, including `MacContentColumn`'s account of what it stopped hosting).
+# shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
+mac_floor_imports=$(grep -lE '^import SlopDeskClientUI' $(repo_files 'Sources/SlopDeskMacUI/**/*.swift') \
+  2> /dev/null | sort || true)
+if [[ -n "${mac_floor_imports}" ]]; then
+  printf '%s\n' "${mac_floor_imports}" >&2
+  fail "a SlopDeskMacUI file imports the draining floor — the fold's gate condition was met in increment 61 and this un-meets it (docs/56)"
+fi
+printf 'check-supervisor: no Mac file imports the draining floor — the fold gate is met, target-wide.\n'
+
 # ── The drop chip is one chip, and the pill inks are a pair (docs/56 §3.5, increments 56c/56e) ──
 # THE DROP CHIP IS DRAWN TWICE AND BOTH CAN BE ON SCREEN AT ONCE, which is what makes it different
 # from every other "drawn twice" pair in this file. The canvas overlay's ghost chip is anchored to

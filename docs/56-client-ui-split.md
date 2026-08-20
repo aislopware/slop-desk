@@ -2625,16 +2625,71 @@ Anything reasoning about occlusion must take the areas down explicitly.
   cross-renderer divergence, in the one panel a developer reads when something is *already* broken. It
   is flagged at the file head instead, so it moves in one change or not at all.
 
+### Increment 61 — the GUI leaf, the canvas, and the last hosted view
+
+**R10, R11 and R12 landed, and with R12 there is no `NSHostingView` left anywhere in the workspace
+window.** The ledger's last two edges were the same edge reached two ways — the pane canvas, hosted in
+the content column and hosted in a satellite window — and both are closed: R11 wrote
+`MacSatellitePaneRootView` and deleted `SatellitePaneContent.swift` outright, R12 wrote
+`MacContentCanvas` and deleted `WorkspaceColumnHosts.swift`, the factory seam that had already narrowed
+to one call. `SlopDeskMacUI` no longer imports `SlopDeskClientUI` at all.
+
+**R12 was not in the plan, and the reason it had to exist is the rule that scheduled R11.** "A surface
+is ported WHOLE" put `SplitContainer` and the twenty-odd files under it in one batch — but the SwiftUI
+view that MOUNTED that container was `ContentColumn`, which is also three other things: the empty
+state, the island's chip stack, and the swap between them. R11 could port the panes and still not be
+mountable, because the thing that mounts them was not in it. The tell was visible before the batch ran
+(`MacContentColumn` still called the factory) and the honest split was to name the remainder rather
+than widen R11 — a batch that grows to swallow its own mounter is how "ported whole" stops meaning
+anything.
+
+**A frameworkless table descends; only a `Color` table pairs (P6, third application).** `SlateEmptyState`
+carried four `static func`s — symbol, title, caption, action label — spelled inside a `some View` the
+other renderer cannot import, which this repo's own `PaneCanvasPolicy` header already names as the tell
+that a rule never belonged to a view. They are `String`s, so they went to `PaneEmptyCause` in
+`SlopDeskClientCore` and the test moved with them (`SlateEmptyStateTests` → `PaneEmptyCopyTests`). Two
+renderers now read one table instead of two pinned halves, and there is nothing left for a ratchet to
+keep honest. `CopyReceiptChip.dwell` went the same way, onto `CopyReceipt` beside `ChipNotice.dwell`
+which was already there.
+
+- **THE HIT-TRANSPARENCY MISTAKE HAS A SECOND FACE IN APPKIT.** The SwiftUI chip stack's note says the
+  flag is per chip and never on the stack, because `allowsHitTesting(false)` on an ancestor deafens
+  everything composed into it — the connection chip's `Button` included. AppKit adds a failure the
+  SwiftUI half cannot have: a container whose `hitTest` returns SELF swallows every point inside its
+  bounds *even where no chip is drawn*, which over a terminal is a dead rectangle sitting at the prompt
+  line. So three separate statements replace one modifier — the stack answers `nil` for itself, each
+  paper capsule answers `nil` for itself, and only the alert chip answers with a view.
+- **A `Timer` block is `@Sendable`, and a bare closure is not — even inside a `@MainActor` class.** The
+  chip's dwell expiry could not be captured; it is a stored property reached back through `[weak self]`.
+  This is the same shape increment 60 recorded for `runAnimationGroup` completions (`@MainActor` classes
+  are implicitly `Sendable`, closures are not), arriving through a different API. Two APIs, one rule:
+  **hold the thing, do not capture the call.**
+- **A tracked read that only runs on one branch stops tracking.** `MacContentCanvas` resolves the empty
+  cause UNCONDITIONALLY inside `withObservationTracking`, not inside the `if` that decides whether the
+  empty state is shown. Reading it only on the empty branch would deregister the connection the moment a
+  tab exists, so the state would come back later still saying whatever it said last time. SwiftUI's
+  re-evaluated body has no such trap; every hand-rolled `withObservationTracking` in this target does.
+- **`isHidden` is still forbidden, and R12 is where it would have looked safe.** "No active tab" does
+  not mean "no mounted tabs" — the retained sessions' tabs are still mounted under the canvas, and
+  hiding it would stop `layout()` for all of them. The canvas fades to `alphaValue = 0`; only the empty
+  state, which owns no surface, may hide.
+- **The supervisor caught a doc link, again.** The chip-stack header named `MacPaperCapsuleView` for a
+  type that ships as `MacNoticeCapsuleView`. That is the second time in this wave a gate has caught a
+  file naming a symbol it guessed rather than one it declares (58's was `GuiUploadTint`'s row pointing
+  at the wrong file), and both times the guess was in prose, where nothing else in the build looks.
+
 ## Stage D ledger — what the rename actually costs
 
 `SlopDeskClientUI` cannot fold into `SlopDeskPhoneUI` while `SlopDeskMacUI` still imports it. That is
 the whole test, and it is countable — but see the boxed warning under kind 1 before reading any number
 on this page as a quantity of work, and step 5 before reading "fold" as a rename. The count is a
-gate condition, not a burndown. It was **13 files** when this ledger was written; it is **2** after
-increments 45, 46, 47, 49, 52, 54 and the 56/57 waves, and each one names what it takes in the comment
-on the import line. The two that remain are `MacContentColumn` and `SatellitePaneWindows` — both a
-mount of the pane canvas or of a column that hosts it, which is to say the fold now blocks on exactly
-one thing.
+gate condition, not a burndown. It was **13 files** when this ledger was written; it is **0** after
+increments 45, 46, 47, 49, 52, 54, the 56/57 waves and wave R, and each one named what it took in the
+comment on the import line. The last two were `MacContentColumn` and `SatellitePaneWindows` — both a
+mount of the pane canvas or of a column that hosts it, which is to say the fold blocked on exactly one
+thing, and R11/R12 closed both halves of it (increment 61). **The gate condition is met: nothing in
+`SlopDeskMacUI` imports `SlopDeskClientUI`.** What remains is the fold itself — F2 through F5 below —
+which is a rename plus 54 platform directives, not a port.
 
 Wave 56 took two of them (`SlopDeskSplitViewController`, `MacWorkspaceRootView`) and **neither cost an
 AppKit rewrite of anything the canvas depends on**: one was a stale import, one was a 47-line button no
@@ -2993,8 +3048,15 @@ finished, because a Mac part whose mounter is still SwiftUI has nowhere to be pu
 | **R7** | `PaneDropOverlay` + `PaneDropReceiver` | 285 | R11 | ✅ 58 |
 | **R8** | `PaneMoveAffordance` (the grab pill) | 449 | R11 | ✅ 58 |
 | **R9** | `TerminalLeafView` + `BuildStatusPlaceholderView` | 413 | R11 | ✅ 60 |
-| **R10** | `GuiLeafView` | 1,005 | R11 | |
-| **R11** | `SplitContainer` + `PaneContainer` + `SatellitePaneContent` | 754 | `MacContentColumn` | |
+| **R10** | `GuiLeafView` | 1,005 | R11 | ✅ 61 |
+| **R11** | `SplitContainer` + `PaneContainer` + `SatellitePaneContent` | 754 | R12 | ✅ 61 |
+| **R12** | `ContentColumn` + `SlateEmptyState` + `IslandChipStack` | 376 | `MacContentColumn` | ✅ 61 |
+
+**R12 was added while R11 was being scoped, and the table was wrong before it.** R11's "Mounted by"
+read `MacContentColumn`, which was true of the column and false of the mount: the column called a
+factory that mounted `ContentColumn`, and `ContentColumn` is what mounts `SplitContainer`. A ported
+canvas with an unported mounter is a batch that cannot land. See increment 61 for why naming the
+remainder beat widening R11 to swallow it.
 
 R1–R8 are fully parallel — no file in the left column names another, and the dependency arrows in
 `Pane/` that look like exceptions (`HintModeOverlay` "naming" `TerminalLeafView`, `PaneDivider`
