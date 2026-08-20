@@ -3276,6 +3276,86 @@ for every content kind and the only one that does not commit something off a sin
 lands at the prompt, editable. From there it walks the SAME four steps `performDrop` does, so there
 is no second drop engine.
 
+### Increment 76 — the one double implementation that stays, pinned instead of deleted
+
+`WorkspaceTopology.init(entries:)` and `slopdesk_wire::document::topology::from_document` read the
+same flat cells into the same shape in two languages. `CLAUDE.md` bans that outright, and every other
+instance in this repo was closed by deleting the Swift. This one is not, and the reason is on the
+record rather than in a preference:
+
+- **`entries()`/`init(entries:)` ARE the marshalling.** The topology crosses the boundary as the
+  document's own bytes (`docs/55` §4b). Deleting the Swift ingestion deletes the crossing, so the
+  "port it" move here is not a port — it is a redesign of every door that takes a workspace.
+- **The measured veto.** `WorkspaceMarshalBenchTests` times the shipped encoder and decoder on the
+  path a port would actually use: a realistic workspace (3 sessions × 5 tabs × 4 panes, 244 entries)
+  costs **~2.8 ms** to project, encode, decode and ingest, and a hoarder's (1,042 entries) costs
+  **~12.6 ms**. `WorkspaceStore.tree` re-ingests on every divider-drag frame, where the 120 Hz budget
+  is 8,333 µs. A third of a frame per gesture at the small size and a missed frame at the large one is
+  a *measured* regression, which `CLAUDE.md` names as the only thing that can veto a port.
+
+So the pair stays, and what is owed instead is the thing `docs/55` §7 step 6 asks for: a
+**differential**. `Tests/SlopDeskWorkspaceModelTests/WorkspaceTopologyIngestionDifferentialTests.swift`
+is the repo's third, after `TreeWorkspaceRepairDifferentialTests` and
+`SessionTemplateRepairDifferentialTests`, and the first written for a pair that is still double.
+
+Its shape is set by the fact that **there is no "ingest this document" door**. The applier is the only
+entry that takes cells, so the harness marshals RAW cells into `slopdesk_ws_apply_intent` and rides on
+one intent that must change nothing: `setSyncInput(armed: false)` on a tab the fixture never arms.
+Two consequences are load-bearing and each is asserted rather than assumed. First, a status byte
+carries two answers — the door returns `rejectedNotFound` for "no workspace here" *before* it reads
+the op, and `set_sync_input` returns the same byte for a tab that is gone — so the harness probes with
+an op byte no arm claims, **derived from `WorkspaceIntentOp.allCases`** so an op added tomorrow cannot
+silently turn the probe into a real intent. Second, the no-op needs a target, so one anchor session
+stays out of the blast radius; the walk skips its three objects, and a companion test asserts the
+anchor's field vocabulary is a SUBSET of what the walk still reaches, so the skip cannot quietly
+shrink coverage.
+
+Both sides are compared as **cells** — Swift's ingestion re-projected through `entries()`, the crate's
+answer already being its own projection. That is stronger than field-by-field, and it is sayable
+without either language's type vocabulary. Every ratchet in the file is a SHAPE, never a count or a
+name list: the corruption walk is derived from `entries()` itself, so a field added to the projection
+joins the corpus that day; the pane vocabulary is walked through `slopdesk_ws_pane_fields(0|1)` and
+the root exclusions through `slopdesk_ws_reserved_root_fields`, so the partition is asked for, not
+transcribed.
+
+What it covers: every cell the projection writes, corrupted four ways (missing, retired to zero
+length, one unparseable byte, forty bytes of noise); every structural cell truncated to *every* prefix
+of itself; every topology-half pane field broken the same four ways; every liveness field and every
+reserved root field asserted to reach neither ingestion; 47 hand-built degenerate documents (a tab with
+no `layoutStructure`, a weight cell of the wrong arity, zero and NaN weights, `activePaneID` and
+`zoomedPaneID` naming absent panes, a live closed-tab ring entry, a detached pane shadowed by a tree
+leaf, a closed tab with no back-pointer, a session whose every tab is unusable, a `hostDisplayName`
+that is not UTF-8, a document holding nothing but pane liveness); the nesting cap, where both layout
+decoders must refuse at the same level; and a string clamped at the scalar boundary.
+
+Four Rust tests were deleted, and only those — `a_weight_cell_of_the_wrong_arity_degrades_to_an_even_split`,
+`a_zero_weight_is_repaired_rather_than_trusted`, `a_session_whose_tabs_are_all_unusable_is_dropped_rather_than_invented`
+and `a_focus_naming_an_absent_pane_falls_back_to_the_first_leaf`. Each was the crate's half of a MIRROR
+FIXTURE: the same input written twice in two languages, which is the shape `docs/55` §8 records as the
+way every cross-language bug here was born. Their absolute assertions survive on the Swift side, where
+the value is the one a person sees. The fifteen Rust tests with no Swift counterpart stayed — the
+round-trip, the write rules (`a_topology_write_removes_what_the_new_value_no_longer_names`,
+`…_leaves_liveness_and_projects_alone`), the two vocabulary predicates, the project-key precedence and
+the caps — and a comment above `mod tests` says why re-adding one of the four re-creates the pair.
+
+Three things are **not** covered, and are written down rather than left to be rediscovered:
+
+1. **Two field codecs, only the frame pinned.** Swift's scalar decoders wrap
+   `slopdesk_workspace::state_codec`; the crate's ingestion uses `slopdesk_wire::document::codec`.
+   Only the snapshot FRAME is pinned between them (`rust/slopdesk-ffi/tests/snapshot_codec_parity.rs`).
+   This suite is therefore also a differential over the two codecs for layouts, weights, uuid lists,
+   detached panes and strings — but only at the inputs it happens to build.
+2. **A layout over 65,536 nodes.** `state_codec::decode_layout` bounds its walk at `MAX_ENTRY_COUNT`;
+   `wire::codec::decode_layout` has no such bound. Swift would refuse a layout the crate accepts. It is
+   deliberately unpinned: the fixture is ~1.2 MB and would collide with the answer snapshot's own entry
+   cap, so the test would be measuring the harness.
+3. **A document nested to `MAX_DEPTH + 1`.** Twelve splits over a leaf decodes and ingests on BOTH
+   sides — they agree — and then `apply::accept()` refuses every intent against it. The document
+   renders and can never be gestured on. The differential pins the agreement; the frozen state itself
+   is a real behaviour with no owner.
+
+The Rust half is green (`cargo test`: 354 + 11 passing; `cargo clippy -D clippy::pedantic` clean).
+
 ### Increment 78 — the footer asked the clipboard a question it could only answer with an alert
 
 Increment 75 flagged this on its way past and did not fix it: `GuiPastePlateMenu.canPasteCurrent` called
@@ -3324,6 +3404,59 @@ probe at least once, so "no content read" cannot be satisfied by a render that e
 included, in all four combinations. A `check-supervisor.sh` gate — no `currentLocalClipboard(` in a
 `SlopDeskPhoneUI` file outside a closure body — would be a real ratchet on top of these, and is left
 unwritten here only because another change owns that file.
+
+### Increment 79 — the phone could see a path in the terminal and had nothing to do with it
+
+Increment 72 gave the phone the long-press menu and named what it could not carry: "the LINK items need
+`detectedLink(at:)`, which still lives in the macOS block." It did. Right-clicking a path or a URL on the
+Mac prepends Open / Copy Path / Reveal in Finder / Change Directory Here above the standard menu; the
+phone's menu offered the standard items and nothing about the thing under the finger — not the wrong
+items, none. Everything else was already shared. The policy that says what each item does is pure and
+platform-free, the item list is one table both menus render, and the only thing on the Mac's side of the
+gate was the question *what is this point on*.
+
+**The gate was not lifted, because lifting it would have preserved the wrong thing.** The embedder's
+`detectedLink(at:)` carried its own copy of the cell arithmetic and its doc comment said so — it
+"mirrors" `TerminalViewModel.hoveredLinkPath(rows:cwd:schemes:metrics:pointX:pointY:)`, the pure version
+one floor down. A citation is not a shared implementation. Worse, the mirror had the two halves the wrong
+way round: the pure copy had no production caller at all (its status-bar consumer was removed increments
+ago and the renderer stopped calling it when the cache landed), so the copy that actually ran on every
+⌘-hover, ⌘click and right-click was the one inside a `#if os(macOS)` in a file no `Package.swift` target
+compiles — unreachable from the macOS test runner, and pinned only through a function nothing ran. So the
+arithmetic collapsed into `SlopDeskWorkspaceCore/Terminal/TerminalLinkHitTest.swift`, answering with the
+LINK rather than with a path (`resolvedAbsolute ?? raw` is the hover seam's own reading, at its one call
+site), `hoveredLinkPath` was deleted, and its test file was retargeted onto the function production runs.
+Four callers of one function now, where there were two functions serving three-and-a-half.
+
+What stayed in the embedder is the part that touches libghostty: the `(viewport rows → detected links)`
+snapshot, now `GhosttyLinkSnapshot` above the platform fork, one per view. It is the cache that makes a
+⌘-hover cost arithmetic instead of a full `viewportTextRows()` C-ABI re-read per mouseMoved, and it keys
+on the same three generations as before. The phone gains two invalidation sites the Mac's `scrollWheel`
+already had for exactly this reason — the pan, and the selection drag's edge autoscroll — because both
+move the viewport while bumping no key, and on this half the release that ends that very drag is what
+asks which link the menu is for.
+
+**The set is the Mac's, from `TerminalContextMenu.linkItems(for:)` unchanged**: a path offers Open, Copy
+Path, Reveal in Finder and Change Directory Here; a URL offers Open Link and Copy URL, because a URL has
+no Finder target and you cannot `cd` into one. The Mac separates them from the standard items with an
+`NSMenuItem` rule and the phone makes them the first inline group, which is the same rule in UIKit's
+spelling — layout differs, the offer does not. Actuation stopped being two switches at the same time: the
+renderer's `performLinkAction` is deleted and both halves dispatch through `LinkActionActuator`, whose
+`actuate` is now `public` rather than `package` for the reason the embedder always forces — it is compiled
+by the Xcode app targets and by no target in this package, so `package` is invisible to it. That is also
+why a `Slate` token could not have been the home for anything here. Two things fell out of the merge: a
+link copied from the terminal now lights the `COPIED · N` chip and goes through `ClientPasteboard` like
+every other copy in the app, neither of which the AppKit copy did.
+
+Last, **a fingertip is not a cursor**, and it gets ONE shot: no hover, no correction, the menu opens on
+release. A cell is about 8 × 17 points and a contact patch is tens of points across, so
+`TerminalTouchSelection.linkHitSlop` (10 pt) widens the phone's hit-test and the Mac passes nothing at
+all. It is beside the other touch numbers rather than in the design floor because it is a distance a
+FINGER is wrong by, not a measurement of a drawing — and it is deliberately narrower than
+`longPressAllowableMovement`: a press that held still enough to be recognised should not then be re-aimed
+further than it was allowed to drift. The exact-cell pass runs first for every caller, so a slop can only
+ever add an answer where there was none, and the pointer's reading is bit-for-bit what it was. The link is
+resolved at the RELEASE point, which is where the menu anchors and what the Mac's `menu(for:)` reads.
 
 ## Stage D ledger — what the rename actually costs
 

@@ -695,6 +695,18 @@ impl HostWorkspaceState {
     }
 }
 
+/// The MALFORMED half of this module is pinned ACROSS THE LANGUAGES, not here.
+///
+/// `Tests/SlopDeskWorkspaceModelTests/WorkspaceTopologyIngestionDifferentialTests.swift` feeds one
+/// corpus of degenerate documents to Swift's `WorkspaceTopology.init(entries:)` and to
+/// [`WorkspaceTopology::from_document`] through `slopdesk_ws_apply_intent`, and asserts they land
+/// on the same cells. Four tests that used to sit below — a tab with no layout, a focus naming an
+/// absent pane, a weight cell of the wrong arity, a starving weight — were the crate's half of a
+/// MIRROR FIXTURE: the same input written twice in two languages, which is the shape `CLAUDE.md`
+/// bans and `docs/55` §8 records as the way every cross-language bug here has been born. Their
+/// absolute assertions survive on the Swift side, where the value is the one a person sees; what
+/// this file owes is that the two readings agree, and a differential is the only thing that can say
+/// so. Re-adding one here re-creates the pair.
 #[cfg(test)]
 mod tests {
     #![expect(
@@ -710,7 +722,7 @@ mod tests {
     use slopdesk_workspace::workspace::TreeWorkspace;
 
     use super::super::codec;
-    use super::super::fields::{pane, project, root, split_node, tab as tab_field};
+    use super::super::fields::{pane, project, root, tab as tab_field};
     use super::super::liveness::{LIVENESS_FIELDS, TOPOLOGY_FIELDS};
     use super::super::state::{HostWorkspaceState, WorkspaceKey, WorkspaceObjectKind};
     use super::{
@@ -801,99 +813,8 @@ mod tests {
     }
 
     #[test]
-    fn a_weight_cell_of_the_wrong_arity_degrades_to_an_even_split() {
-        let before = split_tab();
-        let mut state = document(&before);
-        state.set(
-            WorkspaceKey::of(WorkspaceObjectKind::SplitNode, [9; 16], split_node::WEIGHT),
-            codec::encode_weights(&[SplitWeight::Flex(9.0)]),
-        );
-        let Some(after) = state.topology() else {
-            panic!("a document with a session decodes");
-        };
-        let Some(SplitNode::Split { children, .. }) = after
-            .tree
-            .sessions
-            .first()
-            .and_then(|s| s.tabs.first())
-            .map(|t| &t.root)
-        else {
-            panic!("a split root");
-        };
-        for child in children {
-            assert_eq!(child.weight, SplitWeight::Flex(1.0));
-        }
-    }
-
-    #[test]
-    fn a_zero_weight_is_repaired_rather_than_trusted() {
-        let before = split_tab();
-        let mut state = document(&before);
-        state.set(
-            WorkspaceKey::of(WorkspaceObjectKind::SplitNode, [9; 16], split_node::WEIGHT),
-            codec::encode_weights(&[SplitWeight::Flex(0.0), SplitWeight::Flex(f64::NAN)]),
-        );
-        let Some(after) = state.topology() else {
-            panic!("a document with a session decodes");
-        };
-        let Some(SplitNode::Split { children, .. }) = after
-            .tree
-            .sessions
-            .first()
-            .and_then(|s| s.tabs.first())
-            .map(|t| &t.root)
-        else {
-            panic!("a split root");
-        };
-        for child in children {
-            assert!(
-                child.weight.value() > 0.0,
-                "a pane that cannot be seen cannot be closed",
-            );
-        }
-    }
-
-    #[test]
     fn a_document_with_no_session_order_is_no_document() {
         assert!(HostWorkspaceState::new().topology().is_none());
-    }
-
-    #[test]
-    fn a_session_whose_tabs_are_all_unusable_is_dropped_rather_than_invented() {
-        let mut state = document(&one_pane());
-        state.set_or_clear(
-            WorkspaceKey::of(
-                WorkspaceObjectKind::Tab,
-                tab_id(1).bytes(),
-                tab_field::LAYOUT_STRUCTURE,
-            ),
-            None,
-        );
-        assert!(
-            state.topology().is_none(),
-            "a fabricated empty tab is a phantom every client would render",
-        );
-    }
-
-    #[test]
-    fn a_focus_naming_an_absent_pane_falls_back_to_the_first_leaf() {
-        let mut state = document(&split_tab());
-        state.set(
-            WorkspaceKey::of(
-                WorkspaceObjectKind::Tab,
-                tab_id(1).bytes(),
-                tab_field::ACTIVE_PANE_ID,
-            ),
-            codec::encode_uuid(&[0x90; 16]),
-        );
-        let Some(after) = state.topology() else {
-            panic!("a document with a session decodes");
-        };
-        let Some(tab) = after.tree.sessions.first().and_then(|s| s.tabs.first()) else {
-            panic!("one tab");
-        };
-        assert_eq!(tab.active_pane, Some(pane_id(1)));
-        assert_eq!(tab.zoomed_pane, None);
     }
 
     #[test]
