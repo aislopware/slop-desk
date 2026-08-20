@@ -54,19 +54,19 @@ import SlopDeskProtocol
 /// every call under its `replayLock`. That is not a nicety here — the Rust entry points take `&mut`
 /// through the handle, so two overlapping calls would be aliasing UB rather than a lost update.
 public final class ReplayBuffer: @unchecked Sendable {
-    /// Retained-byte ceiling: 256 MiB (4× ET `MAX_BACKUP_BYTES`).
-    public static let maxBackupBytes = 256 * 1024 * 1024
+    /// Retained-byte ceiling, as the buffer itself holds it (4× ET `MAX_BACKUP_BYTES`).
+    public static let maxBackupBytes = Int(slopdesk_replay_constant(0))
 
-    /// Offline buffering gate: 64 MiB. At/above this while offline, pause the PTY drain.
-    public static let offlineGateBytes = 64 * 1024 * 1024
+    /// Offline buffering gate. At/above this while offline, pause the PTY drain.
+    public static let offlineGateBytes = Int(slopdesk_replay_constant(1))
 
-    /// Default scrollback ring size: 64 MiB (override with `SLOPDESK_SCROLLBACK_BYTES`).
+    /// Default scrollback ring size (override with `SLOPDESK_SCROLLBACK_BYTES`).
     ///
     /// Retains ACKED entries (history) separately from the un-acked live tail, so a cold-reattach
     /// replay can deliver the full visible scrollback to a fresh terminal — like
     /// `tmux attach-session`. Bounded, evicted line-aligned so a replay never starts
     /// mid-escape-sequence. Disable entirely with `SLOPDESK_SCROLLBACK_PERSIST=0`.
-    public static let defaultScrollbackBytes = 64 * 1024 * 1024
+    public static let defaultScrollbackBytes = Int(slopdesk_replay_constant(2))
 
     /// Action signalled to the PTY relay as output is enqueued (ET's `BufferState`).
     public enum DrainState: Sendable, Equatable {

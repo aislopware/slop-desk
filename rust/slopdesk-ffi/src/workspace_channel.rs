@@ -694,8 +694,16 @@ pub unsafe extern "C" fn slopdesk_workspace_decode_roster(
 /// | 2 | the smallest a roster client record can be |
 /// | 3 | the smallest a roster pane record can be |
 /// | 4 | the exact size of a roster attachment record |
+/// | 5 | `subscribe`'s CONTRIBUTES-SIZE flag bit |
+/// | 6 | `subscribe`'s FOLLOWS-FOCUS flag bit |
 ///
-/// An unknown index answers `-1`, which is not a length any of these could be.
+/// The last two are a MASK rather than a length, and they are here for the reason the lengths are:
+/// the byte is on the wire, the near side ANDs against it, and it was spelled `1 << 0` on both sides
+/// two lines from a caller of this very door. A bit position a peer disagrees about is a client that
+/// silently stops contributing to the PTY size fold — no error, no decode failure, just a window
+/// that no longer counts.
+///
+/// An unknown index answers `-1`, which is neither a length nor a mask any of these could be.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -709,6 +717,8 @@ pub extern "C" fn slopdesk_workspace_constant(index: u32) -> i64 {
         2 => ROSTER_CLIENT_MIN_BYTES,
         3 => ROSTER_PANE_MIN_BYTES,
         4 => ROSTER_ATTACHMENT_BYTES,
+        5 => usize::from(WorkspaceSubscribe::FLAG_CONTRIBUTES_SIZE),
+        6 => usize::from(WorkspaceSubscribe::FLAG_FOLLOWS_FOCUS),
         _ => return -1,
     };
     i64::try_from(value).unwrap_or(i64::MAX)

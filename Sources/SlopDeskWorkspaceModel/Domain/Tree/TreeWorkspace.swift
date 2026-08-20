@@ -84,7 +84,11 @@ public struct TreeWorkspace: Codable, Sendable, Equatable {
     /// next autosave would rewrite it without the user's presets, templates and latched video modes —
     /// silently, with no `.corrupt` copy kept. A version this build does not speak resets aside
     /// instead, which keeps the old file recoverable.
-    public static let currentSchemaVersion = 12
+    ///
+    /// ASKED for rather than spelled: `slopdesk_workspace` writes this number into every snapshot it
+    /// encodes, so a second spelling here would be the two halves of one comparison, each free to
+    /// move without the other.
+    public static let currentSchemaVersion = Int(slopdesk_ws_schema_version())
 }
 
 // MARK: - Construction

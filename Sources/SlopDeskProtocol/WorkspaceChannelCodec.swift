@@ -72,10 +72,13 @@ public struct WorkspaceSubscribe: Equatable, Sendable {
     /// retain an arbitrarily long string per connection.
     public var label: String
 
-    /// b0 — this client's viewport participates in the PTY size fold (docs/45 §8.3).
-    public static let flagContributesSize: UInt8 = 1 << 0
+    /// b0 — this client's viewport participates in the PTY size fold (docs/45 §8.3). Read from the
+    /// crate that puts the byte on the wire, like ``maxLabelBytes`` two lines down: a bit spelled
+    /// here as well is a mask the two ends can stop agreeing about, and the symptom is a client that
+    /// quietly stops counting toward the fold rather than a decode that fails.
+    public static let flagContributesSize = UInt8(truncatingIfNeeded: slopdesk_workspace_constant(5))
     /// b1 — this client follows host focus rather than steering its own view (docs/45 §8.2).
-    public static let flagFollowsFocus: UInt8 = 1 << 1
+    public static let flagFollowsFocus = UInt8(truncatingIfNeeded: slopdesk_workspace_constant(6))
     /// The label cap, read from the crate that enforces it rather than respelled here.
     public static let maxLabelBytes = Int(slopdesk_workspace_constant(0))
 

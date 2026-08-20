@@ -434,11 +434,12 @@ pub extern "C" fn slopdesk_settings_stepper(stepper: u8) -> SlopDeskSettingsStep
     }
 }
 
-/// What follows the number in a stepper's readout — `" px"`, or nothing for a bare count.
+/// What a stepper's value reads as after the row's label — `80`, `1000 px`, `13.5`.
 ///
-/// The UNIT crosses rather than the finished readout because the near side does not always hold an
-/// integer: font size is a `Double`, and a reader given only `readout(13)` would print a number the
-/// model does not hold. Given the unit, either side composes the readout from its own value.
+/// The UNIT used to cross instead, on the argument that the near side does not always hold an
+/// integer — font size is a `Double` — so each side would compose from the value it actually has.
+/// Both then did, and the two compositions stopped agreeing: only one of them dropped the fraction
+/// off a whole value. The value is a `double` here for that reason, and the composition is one.
 ///
 /// # Safety
 /// `(out, cap)` must be writable for `cap` bytes.
@@ -447,12 +448,17 @@ pub extern "C" fn slopdesk_settings_stepper(stepper: u8) -> SlopDeskSettingsStep
     unsafe_code,
     reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
 )]
-pub unsafe extern "C" fn slopdesk_settings_stepper_unit(stepper: u8, out: *mut c_uchar, cap: usize) -> usize {
-    let Some(unit) = Stepper::from_index(stepper).map(Stepper::unit) else {
+pub unsafe extern "C" fn slopdesk_settings_stepper_readout(
+    stepper: u8,
+    value: f64,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    let Some(text) = Stepper::from_index(stepper).map(|stepper| stepper.readout(value)) else {
         return 0;
     };
     // SAFETY: the caller's obligation, restated above.
-    unsafe { deliver(unit.as_bytes(), out, cap) }
+    unsafe { deliver(text.as_bytes(), out, cap) }
 }
 
 #[cfg(test)]
@@ -587,6 +593,24 @@ mod tests {
         let unknown = slopdesk_settings_ladder(200);
         assert!(!unknown.known);
         assert_eq!(slopdesk_settings_ladder_preset_count(200), 0);
+    }
+
+    #[test]
+    fn a_stepper_readout_crosses_composed() {
+        let pixels = Stepper::WindowPixels.index();
+        // SAFETY: the buffer inside `read` is a live local.
+        let whole = read(|out, cap| unsafe { slopdesk_settings_stepper_readout(pixels, 1000.0, out, cap) });
+        assert_eq!(whole.as_deref(), Some("1000 px"));
+        // SAFETY: as above.
+        let fractional =
+            read(|out, cap| unsafe { slopdesk_settings_stepper_readout(Stepper::FontPoints.index(), 13.5, out, cap) });
+        assert_eq!(fractional.as_deref(), Some("13.5"));
+        // SAFETY: as above.
+        assert_eq!(
+            read(|out, cap| unsafe { slopdesk_settings_stepper_readout(200, 1.0, out, cap) }),
+            None,
+            "an unknown stepper is an answer rather than a crash",
+        );
     }
 
     #[test]

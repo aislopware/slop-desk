@@ -171,6 +171,28 @@ whether the caller will underline anything. Most rows will not be: a filtered li
 and highlights only the handful it draws, which is why the list door below asks for positions BY
 TIER rather than for all of them.
 
+### The door whose answer is a constant
+
+A number both languages have to name is not two constants; it is one constant and a door. Some get
+an entry of their own — `slopdesk_ws_schema_version`, `slopdesk_ws_max_string_bytes`,
+`slopdesk_phone_floating_cursor_run_capacity` — and some are INDEX-SHAPED, one door vending a small
+family that is read together: `slopdesk_workspace_constant`, `slopdesk_replay_constant`,
+`slopdesk_video_packetizer_flag`, `slopdesk_video_reassembler_frame_flag`. The index form exists so
+a family of five does not become five entry points, and it costs nothing a caller notices: every one
+of these is read once into a `static let`.
+
+An index nobody defined answers a value the family cannot hold — `-1` where the answers are lengths,
+`0` where they are bit masks — so a caller that asks for a constant that does not exist gets an
+answer it cannot mistake for one that does.
+
+The FLAG doors are the ones worth the entry twice over. A bit position is the worst thing in the
+codebase to transcribe: the word is ORed together on one side and ANDed apart on the other, nothing
+on the wire pins it, and a side that disagrees produces no error and no decode failure — just a
+keyframe encoded as a delta, or an LTR the client never acks. `scripts/check-shared-constants.py` is
+the gate that keeps a number from being spelled on both sides in the first place; it is birth
+control, not a drift check, which is exactly why the constant should live behind a door and not in
+its allowlist.
+
 ### The scalar answer whose refusal is not a refusal
 
 The nine `slopdesk_vi_*` doors answer an `intptr_t`, and `-1` on half of them means the copy-mode

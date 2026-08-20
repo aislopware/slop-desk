@@ -460,9 +460,13 @@ final class OpenQuicklyModelTests: XCTestCase {
         let items = OpenQuicklyModel.openedItems(from: tree, facts: facts)
         XCTAssertEqual(items.count, 2, "one Opened row per live pane across every session → tab")
         XCTAssertEqual(items.map(\.kind), [.pane, .pane])
-        XCTAssertEqual(items[0].title, "vim", "lastKnownTitle wins over the spec title")
+        // The rail's own LINE ONE: a terminal that knows where it is titles by its FOLDER, not by
+        // whatever its shell last asserted. The picker asks `rail_title::row_title` for this, so the
+        // sidebar and the switcher cannot call one pane two things — which they did while the
+        // picker re-derived a live-title-first precedence of its own.
+        XCTAssertEqual(items[0].title, "a", "a pane with a cwd titles by its folder, as the rail does")
         XCTAssertEqual(items[0].subtitle, "/work/a")
-        XCTAssertEqual(items[1].title, "bash", "no lastKnownTitle ⇒ the spec title")
+        XCTAssertEqual(items[1].title, "bash", "no cwd and no live title ⇒ the spec title")
         XCTAssertNil(items[1].subtitle, "an empty cwd is no subtitle, not a blank one")
         if case let .focusPane(id) = items[0].act {
             XCTAssertEqual(id, pidA, "↩ on an Opened row focuses that exact pane")

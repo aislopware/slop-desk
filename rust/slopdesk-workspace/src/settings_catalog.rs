@@ -856,10 +856,11 @@ impl Stepper {
 
     /// What follows the number in the readout — `" px"` for pixels, nothing for a bare count.
     ///
-    /// The unit is DATA rather than a formatted string because not every stepper's value is an
-    /// integer: font size is a `Double` a raw edit may set to `13.5`, and a reader handed only
-    /// `readout(13)` would have to print a number the model does not hold. Given the unit, either
-    /// side composes the readout from the value it actually has.
+    /// Internal to [`Self::readout`] now. It used to cross on its own, on the argument that not
+    /// every stepper's value is an integer — font size is a `Double` a raw edit may set to `13.5` —
+    /// so "either side composes the readout from the value it actually has". Both sides then did,
+    /// and the near side's composition grew a rule this one did not have (a whole value prints
+    /// without its fraction). Handing over a `f64` costs nothing and leaves one composition.
     #[must_use]
     pub const fn unit(self) -> &'static str {
         match self {
@@ -873,9 +874,27 @@ impl Stepper {
     }
 
     /// What the value reads as after the row's label — `80` for cells, `1000 px` for pixels.
+    ///
+    /// A WHOLE value prints as a whole number, so `13.0` reads `13`; a fractional one prints as it
+    /// is rather than rounding, so a size typed as `13.5` in the flat index does not read back as a
+    /// value nothing holds. Without a locale formatter on purpose: this is a number, not a
+    /// quantity, and it has to match the token the config bridge parses.
+    ///
+    /// A degenerate value reads as `0` rather than as `NaN`, for [`round_to_i64`]'s reason — a
+    /// readout is a label, and a label that says `nan` is a bug report the user cannot file.
     #[must_use]
-    pub fn readout(self, value: i64) -> String {
-        format!("{value}{}", self.unit())
+    pub fn readout(self, value: f64) -> String {
+        let unit = self.unit();
+        if !value.is_finite() {
+            return format!("0{unit}");
+        }
+        // Whole is an EXACT question, not a near one: `fract()` is zero for exactly the values that
+        // print without a fraction, so a tolerance would round a `13.0001` a raw edit really holds
+        // down to a readout nothing holds.
+        if value.fract() == 0.0 {
+            return format!("{}{unit}", round_to_i64(value));
+        }
+        format!("{value}{unit}")
     }
 }
 
@@ -1141,5 +1160,17 @@ mod tests {
     fn a_degenerate_value_reads_as_zero_rather_than_trapping() {
         assert_eq!(Ladder::Scrollback.readout(f64::NAN), "0 lines");
         assert_eq!(Ladder::Scrollback.readout(f64::INFINITY), "0 lines");
+        assert_eq!(Stepper::WindowPixels.readout(f64::NAN), "0 px");
+    }
+
+    /// A stepper's readout keeps its unit AND drops a fraction nobody typed. Both halves were
+    /// composed on the near side too until 2026-08-20, and the two spellings had already stopped
+    /// agreeing: only the Swift one knew that `13.0` must read `13`.
+    #[test]
+    fn a_stepper_reads_whole_where_it_is_whole_and_fractional_where_it_is_not() {
+        assert_eq!(Stepper::WindowCells.readout(80.0), "80");
+        assert_eq!(Stepper::WindowPixels.readout(1000.0), "1000 px");
+        assert_eq!(Stepper::FontPoints.readout(13.0), "13");
+        assert_eq!(Stepper::FontPoints.readout(13.5), "13.5");
     }
 }

@@ -466,6 +466,44 @@ public enum PaneLabel {
         liveTitle ?? PaneSpec.cwdDisplayName(cwd) ?? title
     }
 
+    /// A pane's LINE ONE — the STRUCTURAL title, the identity it keeps between events.
+    /// `slopdesk_workspace::rail_title::row_title`, which is where the precedence (rename, at-root
+    /// program, folder name, process, live-then-spec fallback) is decided and documented.
+    ///
+    /// It lives beside ``railSubtitle(kind:title:video:cwd:liveTitle:projectKey:)`` and not in the
+    /// rail, because the rail is not the only surface that names a pane: the Open-Quickly picker
+    /// names the same panes, and a switcher and a sidebar calling one pane two things read as two
+    /// panes. One marshalling, one rule, every surface.
+    ///
+    /// The empty answer is REAL — an at-root idle shell yields "" so a live chain can speak for it —
+    /// so a caller with no live chain supplies its own kind-generic name for that case.
+    ///
+    /// - Parameter specTitle: `nil` for a pane with NO spec at all, which is a different fact from a
+    ///   spec whose title is blank.
+    /// - Parameter projectKey: supplied only by a surface that DRAWS section headers, where the
+    ///   header already names the project. A surface without them passes `nil`.
+    public static func rowTitle(
+        kind: PaneKind, specTitle: String?, userRenamed: Bool = false, cwd: String? = nil,
+        liveTitle: String? = nil, processLabel: String? = nil, projectKey: String? = nil,
+    ) -> String {
+        var strings = WsStrings()
+        let inputs = SlopDeskWsRowTitle(
+            kind: kind.ffiByte,
+            spec_title: strings.span(specTitle),
+            user_renamed: userRenamed,
+            cwd: strings.span(cwd),
+            live_title: strings.span(liveTitle),
+            process_label: strings.span(processLabel),
+            project_key: strings.span(projectKey),
+        )
+        var blob = strings.bytes
+        return blob.withUnsafeMutableBufferPointer { text in
+            wsAnswer { out, cap in
+                slopdesk_ws_row_title(inputs, text.baseAddress, text.count, out, cap)
+            }
+        } ?? ""
+    }
+
     /// A pane's SECOND LINE — the single, kind-generic source of truth every surface that draws one
     /// binds to, so a video pane is a first-class peer of a terminal in the rail (carry-overs §0).
     /// `slopdesk_workspace::rail_title::pane_subtitle`, which is where the rule is decided and

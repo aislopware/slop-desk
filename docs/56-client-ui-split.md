@@ -2995,6 +2995,47 @@ which this app does not do. The real limitation is stated rather than hidden: `h
 pauses the connection on background, so an event arriving while the phone is locked lands on the next
 foreground. Closing that gap needs a push channel, not a plist key.
 
+### Increment 69 — the numbers both languages knew, and the gate that could not see them
+
+`check-shared-constants.py` is birth control: it stops a number being spelled on both sides in the
+first place, and says nothing the day one of the two spellings moves. That makes its BLIND SPOTS the
+interesting part, and they are now written down in the file's header rather than discovered one pair
+at a time — pairing is by normalised NAME, so a Swift default ARGUMENT (`HintLabelAssigner`'s bare
+`4096` against `link::MAX_SCAN_COLUMNS`) pairs with nothing; it fires only on EQUAL values, so a pair
+that has already drifted reads as two different constants; `SWIFT_BIT` sees only the
+`Self(rawValue: 1 << N)` form; the enum pass needs explicit discriminants on BOTH sides; strings are
+out of scope entirely. Two of the five were closed rather than just named: an expression evaluator
+(`int` literals, `*`, `+`, `<<` — no names, no parens, no `eval`) so that `15 * 1024 * 1024` is read
+as a number at all, and a HOMONYM allowlist re-keyed from the bare name to `(file, name)`.
+
+That re-keying is the finding, not the tidying. A name-keyed entry exempts every pair sharing that
+name in every file, forever — so `currentSchemaVersion`, written for three unrelated stores whose
+versions are 1, 1 and 3, was silently covering a FOURTH pair that was the real thing:
+`TreeWorkspace.currentSchemaVersion = 12` against `slopdesk_workspace::CURRENT_SCHEMA_VERSION = 12`,
+the two halves of the comparison that decides whether a saved workspace loads or is set aside.
+
+Seven doors were what the pairs it could finally see turned into: `slopdesk_ws_schema_version`,
+`slopdesk_ws_max_string_bytes`, `slopdesk_phone_floating_cursor_run_capacity`,
+`slopdesk_replay_constant`, `slopdesk_video_packetizer_flag`,
+`slopdesk_video_reassembler_frame_flag`, and two more indices on `slopdesk_workspace_constant`.
+Four of them are INDEX-SHAPED — one door vending a small family read together — because a family of
+five should not become five entry points, and an index nobody defined answers a value the family
+cannot hold (`-1` where the answers are lengths, `0` where they are bit masks). The flag doors earn
+their place twice over: a bit position is the worst thing in the tree to transcribe, because the word
+is ORed on one side and ANDed apart on the other, nothing on the wire pins it, and a side that
+disagrees produces no decode failure — just a keyframe encoded as a delta.
+`slopdesk_settings_stepper_unit` was deleted in the same change for
+`slopdesk_settings_stepper_readout(stepper, value, …)`: the unit crossed so that each side could
+compose the readout from the value it holds, both sides then did, and only one of them dropped a
+whole value's fraction.
+
+One latent bug fell out of the audit rather than out of a test. `FloatingCursor.feed` sized its
+output buffer by hand and had no retry, while `encode` beside it did — and the Rust door writes
+NOTHING when `needed > cap`. The buffer was large enough today, so the failure was not reachable
+yet; the day the arrow cap or the escape width moved, the phone would have shipped a run of NUL
+bytes to the PTY and no test would have said which side did it. The capacity is a door now, and the
+caller retries like its neighbour.
+
 ## Stage D ledger — what the rename actually costs
 
 `SlopDeskClientUI` cannot fold into `SlopDeskPhoneUI` while `SlopDeskMacUI` still imports it. That is

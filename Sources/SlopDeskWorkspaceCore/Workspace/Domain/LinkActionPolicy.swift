@@ -128,17 +128,11 @@ public enum LinkActionPolicy {
 
     // MARK: - Helpers
 
-    /// A pure URL (`scheme://…` or `mailto:`), as opposed to a filesystem path. A `file://` URL is a PATH
-    /// for action purposes — its filesystem target is what `Open` / `Reveal` / `Copy Path` act on.
-    ///
-    /// A field comparison, not a rule: the table that ACTS on it is the crate's. The menu's own labels
-    /// (`TerminalContextMenu.LinkItem.title(for:)`) ask the same question of the same field.
-    static func isURL(_ link: DetectedLink) -> Bool { link.kind == .url }
-
-    /// The best path string for a path-kind action: the purely-resolved absolute path when the detector
-    /// could derive one, else the raw matched text (the host expands `~`/cwd + validates). Never reads
-    /// the disk.
-    static func effectivePath(_ link: DetectedLink) -> String { link.resolvedAbsolute ?? link.raw }
+    // `isURL` and `effectivePath` were here, and both were second spellings of
+    // `slopdesk_terminal::link_action`'s `LinkTarget::is_url` / `LinkTarget::effective_path`. The
+    // first had no caller at all; the second was two lines re-growing the crate's fallback beside a
+    // door that already answers it — every action carrying a path carries the effective one, so
+    // `action(for: .copyPath, link:)` IS the question, asked once.
 
     /// The target string for an embedded-editor open (``LinkAction/openCodeHost(_:)``): the best path
     /// PLUS the detector's `:line[:col]` suffix when the match carried one (`resolvedAbsolute` drops

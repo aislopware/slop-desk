@@ -44,6 +44,37 @@ pub const FLAG_ACKED_ANCHORED: u32 = 1 << 3;
 /// `interleave` — run the burst-resilient transmit reorder.
 pub const FLAG_INTERLEAVE: u32 = 1 << 4;
 
+/// The `flags` bits [`slopdesk_video_packetizer_raw`] reads, by index, so no caller respells one.
+///
+/// | index | bit |
+/// | --- | --- |
+/// | 0 | `keyframe` |
+/// | 1 | `crisp` |
+/// | 2 | `isLTR` |
+/// | 3 | `ackedAnchored` |
+/// | 4 | `interleave` |
+///
+/// This word is a calling convention nothing else on the wire pins: the caller ORs bits together
+/// and this crate ANDs them apart, so a position the two disagree about is a keyframe encoded as a
+/// delta — no error, no decode failure, just a stream that never recovers. An unknown index answers
+/// `0`, which is no bit at all.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+#[must_use]
+pub const extern "C" fn slopdesk_video_packetizer_flag(index: u32) -> u32 {
+    match index {
+        0 => FLAG_KEYFRAME,
+        1 => FLAG_CRISP,
+        2 => FLAG_IS_LTR,
+        3 => FLAG_ACKED_ANCHORED,
+        4 => FLAG_INTERLEAVE,
+        _ => 0,
+    }
+}
+
 /// The opaque handle: the packetizer, plus the one slot its answer is read out of.
 #[derive(Debug)]
 pub struct SlopDeskVideoPacketizer {
@@ -341,5 +372,17 @@ mod tests {
     fn an_impossible_shape_is_refused_rather_than_panicked() {
         assert!(unsafe { slopdesk_video_packetizer_new(250, 250) }.is_null());
         assert!(unsafe { slopdesk_video_packetizer_new(0, 1) }.is_null());
+    }
+
+    /// The flag door answers the same bits `raw` takes apart, so the caller that ORs them never
+    /// respells a position.
+    #[test]
+    fn the_exported_flag_bits_are_the_ones_raw_reads() {
+        assert_eq!(slopdesk_video_packetizer_flag(0), FLAG_KEYFRAME);
+        assert_eq!(slopdesk_video_packetizer_flag(1), FLAG_CRISP);
+        assert_eq!(slopdesk_video_packetizer_flag(2), FLAG_IS_LTR);
+        assert_eq!(slopdesk_video_packetizer_flag(3), FLAG_ACKED_ANCHORED);
+        assert_eq!(slopdesk_video_packetizer_flag(4), FLAG_INTERLEAVE);
+        assert_eq!(slopdesk_video_packetizer_flag(5), 0, "an unknown index is no bit");
     }
 }

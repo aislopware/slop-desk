@@ -341,6 +341,10 @@ package enum RailRowsBuilder {
     /// `slopdesk_workspace::rail_title::row_title`, which is where the precedence (rename, at-root
     /// program, folder name, process, generic) is decided and documented.
     ///
+    /// The marshalling itself is ``PaneLabel/rowTitle(kind:specTitle:userRenamed:cwd:liveTitle:processLabel:projectKey:)``,
+    /// beside the subtitle's, because the rail is not the only surface that names a pane — the
+    /// Open-Quickly picker asks the same question of the same panes.
+    ///
     /// The empty answer is REAL here and the door says so: an at-root idle shell yields "" on
     /// purpose, so the live chain below can speak for it. `nil` from the marshaller is that empty
     /// title, not a missing one.
@@ -355,22 +359,10 @@ package enum RailRowsBuilder {
         kind: PaneKind, spec: PaneSpec?, cwd: String? = nil, liveTitle: String? = nil,
         processLabel: String? = nil, projectKey: String? = nil,
     ) -> String {
-        var strings = WsStrings()
-        let inputs = SlopDeskWsRowTitle(
-            kind: kind.ffiByte,
-            spec_title: strings.span(spec?.title),
-            user_renamed: spec?.userRenamed == true,
-            cwd: strings.span(cwd),
-            live_title: strings.span(liveTitle),
-            process_label: strings.span(processLabel),
-            project_key: strings.span(projectKey),
+        PaneLabel.rowTitle(
+            kind: kind, specTitle: spec.map(\.title), userRenamed: spec?.userRenamed == true,
+            cwd: cwd, liveTitle: liveTitle, processLabel: processLabel, projectKey: projectKey,
         )
-        var blob = strings.bytes
-        return blob.withUnsafeMutableBufferPointer { text in
-            wsAnswer { out, cap in
-                slopdesk_ws_row_title(inputs, text.baseAddress, text.count, out, cap)
-            }
-        } ?? ""
     }
 
     /// The host foreground-process name (wire type 26) as a pane-TITLE fallback, or `nil` to skip

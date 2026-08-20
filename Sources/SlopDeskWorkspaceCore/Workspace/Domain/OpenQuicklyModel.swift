@@ -257,10 +257,11 @@ public struct OpenQuicklySection: Identifiable, Equatable, Sendable {
 /// - Ranking is `slopdesk_workspace::search_rank`, the one every search field in the app asks for —
 ///   the same call as ``JumpToModel/filtered(_:query:)``.
 /// - The **Current** source is the existing ``JumpToModel`` output, wrapped 1:1 via ``currentItems(from:)``.
-/// - What a row is CALLED comes from the rules the rail reads — ``PaneSpec/cwdDisplayName(_:)`` for a
-///   folder's name and ``PaneLabel/railSubtitle(kind:title:video:cwd:liveTitle:projectKey:)`` for a
-///   pane's second line. A switcher and a sidebar naming the same pane two different things reads as
-///   two panes, so the picker asks rather than re-deriving.
+/// - What a row is CALLED comes from the rules the rail reads — ``PaneLabel/rowTitle(kind:specTitle:userRenamed:cwd:liveTitle:processLabel:projectKey:)``
+///   for line one, ``PaneSpec/cwdDisplayName(_:)`` for a folder's name and
+///   ``PaneLabel/railSubtitle(kind:title:video:cwd:liveTitle:projectKey:)`` for a pane's second line.
+///   A switcher and a sidebar naming the same pane two different things reads as two panes, so the
+///   picker asks rather than re-deriving.
 public enum OpenQuicklyModel {
     // MARK: - Sectioning + ranking
 
@@ -452,7 +453,7 @@ public enum OpenQuicklyModel {
 
     /// Build the **Opened** rows: one ``OpenQuicklyItem(.pane)`` per LIVE pane across every session → tab,
     /// in `tree` order (the vertical-rail "Opened" — no horizontal tab-bar concept). The display title is the
-    /// pane's live shell title (falling back to its spec `title`, then a generic "Pane"); the subtitle + extra
+    /// rail's own structural title for that pane (``paneDisplayTitle(_:liveTitle:cwd:)``); the subtitle + extra
     /// haystack is its cwd. `↩` focuses the pane. Pure so the view stays a thin renderer and the
     /// enumeration is headlessly testable.
     ///
@@ -471,7 +472,7 @@ public enum OpenQuicklyModel {
                     let fact = facts(paneID)
                     out.append(paneItem(
                         paneID: paneID,
-                        title: paneDisplayTitle(spec, liveTitle: fact.title),
+                        title: paneDisplayTitle(spec, liveTitle: fact.title, cwd: fact.cwd),
                         cwd: nonEmpty(fact.cwd),
                         // Thread the workspace pane kind so a `.desktop` row reads as its
                         // stream target (glyph + badge + host subtitle). Defaults to
@@ -507,26 +508,47 @@ public enum OpenQuicklyModel {
                 index: index,
                 title: recentDisplayTitle(
                     tabTitle: record.tab.title, activeSpec: activeSpec, liveTitle: fact.title,
+                    cwd: fact.cwd,
                 ),
                 cwd: nonEmpty(fact.cwd),
             )
         }
     }
 
-    /// The display title for an **Opened** pane row: the live shell title → spec `title` → generic "Pane".
-    static func paneDisplayTitle(_ spec: PaneSpec?, liveTitle: String?) -> String {
-        if let last = liveTitle, !last.isEmpty { return last }
-        if let spec, !spec.title.isEmpty { return spec.title }
-        return "Pane"
+    /// The display title for an **Opened** pane row — ``PaneLabel/rowTitle(kind:specTitle:userRenamed:cwd:liveTitle:processLabel:projectKey:)``,
+    /// the rail's own LINE ONE, with the picker's kind-generic name for the empty answer.
+    ///
+    /// ASKED rather than re-derived. The three rungs this used to spell — the rename, the live shell
+    /// title, the spec title — are `slopdesk_workspace::rail_title::row_title`'s, and it had lost a
+    /// rung the rail has: a pane in `/work/a` reads `a` in the sidebar and read its shell's `vim`
+    /// here, which is one pane wearing two names in two lists of the same panes. The picker draws no
+    /// section headers, so it passes no project key and the folder name stays the title.
+    ///
+    /// The empty answer is real (the crate's at-root idle shell), and this surface has no live chain
+    /// to hand it to — so "Pane" is what a row with nothing to say is called, never a blank.
+    static func paneDisplayTitle(_ spec: PaneSpec?, liveTitle: String?, cwd: String? = nil) -> String {
+        let title = PaneLabel.rowTitle(
+            kind: spec?.kind ?? .terminal, specTitle: spec.map(\.title),
+            userRenamed: spec?.userRenamed == true, cwd: cwd, liveTitle: liveTitle,
+        )
+        return title.isEmpty ? "Pane" : title
     }
 
-    /// The display title for a **Recent** tab row: the closed tab's title → its active pane's live shell
-    /// title → the generic "Tab".
-    static func recentDisplayTitle(tabTitle: String, activeSpec: PaneSpec?, liveTitle: String?) -> String {
+    /// The display title for a **Recent** tab row: the closed TAB's own title, else its active pane's
+    /// row title, else the generic "Tab".
+    ///
+    /// The tab title leads because a closed tab is what was closed — the crate's rail rule names a
+    /// PANE and has no notion of the tab above it. Everything below that rung is the pane's, and is
+    /// asked for rather than re-spelled.
+    static func recentDisplayTitle(
+        tabTitle: String, activeSpec: PaneSpec?, liveTitle: String?, cwd: String? = nil,
+    ) -> String {
         if !tabTitle.isEmpty { return tabTitle }
-        if let last = liveTitle, !last.isEmpty { return last }
-        if let activeSpec, !activeSpec.title.isEmpty { return activeSpec.title }
-        return "Tab"
+        let title = PaneLabel.rowTitle(
+            kind: activeSpec?.kind ?? .terminal, specTitle: activeSpec.map(\.title),
+            userRenamed: activeSpec?.userRenamed == true, cwd: cwd, liveTitle: liveTitle,
+        )
+        return title.isEmpty ? "Tab" : title
     }
 
     /// A non-empty trimmed-presence helper: `nil` for `nil`/empty, the string otherwise (so an empty cwd is no

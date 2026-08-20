@@ -1247,6 +1247,37 @@ pub const extern "C" fn slopdesk_ws_max_depth() -> usize {
     split_tree::MAX_DEPTH
 }
 
+/// The schema version the persisted workspace shape writes, from the crate that owns the shape.
+///
+/// It is the version a load COMPARES against, and there is no migration behind the comparison — a
+/// file carrying any other number is set aside. So the two spellings could not have been caught by
+/// a test: they agreed, and the day one of them was bumped alone the near side would either keep
+/// writing a version the far side calls stale, or set aside every file the far side just wrote.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_ws_schema_version() -> i64 {
+    slopdesk_workspace::CURRENT_SCHEMA_VERSION
+}
+
+/// The longest a string field may be, from the codec that clamps it.
+///
+/// `slopdesk_ws_encode_string` takes the bound as an argument, because a field's own limit is not
+/// always the protocol's — a `renameTab` name is clamped tighter than a title. A caller with no
+/// tighter limit of its own asks for the protocol's HERE rather than writing the number down: the
+/// number is a wire property, and a near side that disagreed about it would either refuse a value
+/// the far end accepts or offer one it drops.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_ws_max_string_bytes() -> usize {
+    state_codec::MAX_STRING_BYTES
+}
+
 // MARK: The tiled tree
 //
 // ## Why the tree crosses FLAT and not as its own JSON
@@ -3406,7 +3437,8 @@ mod tests {
         slopdesk_ws_divider_can_move, slopdesk_ws_divider_clamped_weight, slopdesk_ws_divider_percents,
         slopdesk_ws_divider_thickness, slopdesk_ws_divider_weight_delta, slopdesk_ws_dividers,
         slopdesk_ws_encode_video_target, slopdesk_ws_focus_cycle, slopdesk_ws_focus_neighbor,
-        slopdesk_ws_max_depth, slopdesk_ws_min_weight, slopdesk_ws_normalize,
+        slopdesk_ws_max_depth, slopdesk_ws_max_string_bytes, slopdesk_ws_min_weight, slopdesk_ws_normalize,
+        slopdesk_ws_schema_version,
         slopdesk_ws_normalize_minted_ids, slopdesk_ws_normalize_pass_count, slopdesk_ws_pane_kind_count,
         slopdesk_ws_pane_kind_is_video, slopdesk_ws_project_key, slopdesk_ws_section_header,
         slopdesk_ws_section_precedes, slopdesk_ws_send_keys, slopdesk_ws_solve_layout,
@@ -4161,6 +4193,22 @@ mod tests {
             slopdesk_workspace::split_tree::MIN_WEIGHT
         );
         assert_eq!(slopdesk_ws_max_depth(), slopdesk_workspace::split_tree::MAX_DEPTH);
+    }
+
+    #[test]
+    fn the_exported_schema_version_is_the_crates_own() {
+        assert_eq!(
+            slopdesk_ws_schema_version(),
+            slopdesk_workspace::CURRENT_SCHEMA_VERSION
+        );
+    }
+
+    #[test]
+    fn the_exported_string_bound_is_the_codecs_own() {
+        assert_eq!(
+            slopdesk_ws_max_string_bytes(),
+            slopdesk_workspace::state_codec::MAX_STRING_BYTES
+        );
     }
 
     #[test]

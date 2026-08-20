@@ -23,6 +23,32 @@ transcription. Those pairs are ratcheted here instead, letter for letter and in 
 So a pair is a finding here only when it is none of the three. The allowlist below is for HOMONYMS:
 names that collide by accident and describe unrelated laws, where folding them would be the bug.
 
+## What this gate CANNOT see, named precisely
+
+A ratchet that is trusted past its reach is worse than none, and every one of these has already let
+a real pair through at least once. They are structural — each would need a different instrument, not
+a bigger pattern — so they are written down rather than half-closed:
+
+  * **Pairing is by normalised NAME.** Two spellings of one law that were never given the same name
+    are invisible: `ReplayBuffer.offlineGateBytes` against `replay::OFFLINE_GATE_BYTES` pairs, and
+    `HintLabelAssigner`'s bare `4096` against `link::MAX_SCAN_COLUMNS` did not, because the Swift
+    side spelled it as a default ARGUMENT rather than as a named constant at all. A literal with no
+    name has nothing to pair with, and that is the commonest shape a transcription takes.
+  * **It fires only when the two values are EQUAL.** This is BIRTH CONTROL, not a drift check: it
+    stops a second spelling being born and says nothing the day one of them moves. A pair that has
+    already drifted reads here as "a different number is a different constant" and passes. The
+    instrument for drift is a differential test (`docs/55` §8), and this gate cannot become one.
+  * **`SWIFT_BIT` requires the `Self(rawValue: 1 << N)` form.** An `OptionSet` member written any
+    other way — a computed property, a `rawValue` built by a function, a bit named through a door on
+    one line and a literal on the next — is not read. The Rust side is equally shaped: only
+    `pub const NAME: Self = Self(1 << N)` is seen.
+  * **The enum pass needs EXPLICIT discriminants on both sides.** A Swift `enum` whose cases have no
+    `= n` and a Rust `enum` relying on implicit `0, 1, 2…` both read as no cases at all, so the pair
+    is skipped silently. Implicit numbering is exactly where a REORDER changes every byte.
+  * **Strings are out of scope.** A label, a socket path, a default title or a sigil spelled in both
+    languages is not a number and is not read here. `check-supervisor.sh` bans a few of those by
+    literal; nothing generalises it.
+
 Usage: scripts/check-shared-constants.py   (exit 1 on any finding)
 """
 
@@ -48,7 +74,7 @@ HOMONYM_ENUMS: set[str] = set()
 # `Int(slopdesk_ws_max_depth())` the entry stopped covering anything and nothing said so. Deleting
 # it changed no result, which is the definition of dead. So the allowlists are checked for deadness
 # on every run: an entry that suppressed nothing is a finding, exactly like the drift it permits.
-USED_HOMONYMS: set[str] = set()
+USED_HOMONYMS: set[tuple[str, str]] = set()
 USED_BIT_FILES: set[str] = set()
 
 # Swift OptionSets whose members share a name with a WIRE flag set without sharing its law. A bit
@@ -62,12 +88,23 @@ USED_BIT_FILES: set[str] = set()
 # is real — and it should be read then, not waved through by a note written before the divergence.
 HOMONYM_BIT_FILES: set[str] = set()
 
-HOMONYMS = {
-    # A kernel TCP keepalive probe interval on PATH 1, against the video path's application-level
-    # UDP keepalive that holds a NAT mapping open. Both happen to be 5 s.
-    "keepaliveIntervalSeconds",
-    # A workspace state FILE's schema version, against slopdesk-dropd's socket protocol version.
-    "currentSchemaVersion",
+# Keyed by (Swift file, name) rather than by the bare name, and that is not tidiness. A name-keyed
+# entry exempts EVERY pair sharing that name, in every file, forever — so ONE legitimate collision
+# buys silence for a real transcription nobody will ever be told about. `currentSchemaVersion` was
+# that entry: it named a homonym across three unrelated stores (a window-parking snapshot at 1, a
+# folder-frecency file at 1, a keybinding file at 3) and quietly covered a FOURTH pair that was the
+# real thing — `TreeWorkspace.currentSchemaVersion = 12` against
+# `slopdesk_workspace::CURRENT_SCHEMA_VERSION = 12`, the two halves of the comparison that decides
+# whether a saved workspace loads or is set aside. It has a door now
+# (`slopdesk_ws_schema_version`) and the entry is gone; the three homonyms it was written for never
+# needed one, because none of their values is 12 and this pass only fires on EQUAL values.
+#
+# Each entry's value is the reason the two laws are unrelated, which is the review.
+HOMONYMS: dict[tuple[str, str], str] = {
+    ("Sources/SlopDeskTransport/TransportParameters.swift", "keepaliveIntervalSeconds"): (
+        "a kernel TCP keepalive probe interval on PATH 1, against the video path's "
+        "application-level UDP keepalive that holds a NAT mapping open. Both happen to be 5 s."
+    ),
 }
 
 # A VOCABULARY is the one shared number a door cannot dissolve. A field byte is not a law anyone
@@ -111,16 +148,31 @@ SWIFT_SCOPE = re.compile(r"^public enum ([A-Za-z]+) \{$", re.MULTILINE)
 # reads neither of them, which is how four `slopdesk-screenwire` flags stayed unwatched.
 NUMBER = r"(0[xX][0-9a-fA-F_]+|0b[01_]+|[0-9][0-9_]*(?:\.[0-9]+)?)"
 
+# A size is rarely written as its digits. `256 * 1024 * 1024` and `15 * 1024 * 1024` are how a cap is
+# spelled where a reader has to see the megabytes, and a literal-only pattern reads NEITHER of them —
+# so the loudest constants in the tree, the ones a comment calls "the 15 MiB cap", were the ones this
+# gate could not see at all. The evaluator below is deliberately tiny: `int` literals, `*`, `+` and
+# `<<`, no names, no parentheses, no `eval`. Anything else answers "not a number I can compare",
+# which costs a pair this gate never had.
+EXPRESSION = (
+    r"("
+    + NUMBER.replace("(", "(?:", 1)
+    + r"(?:[ \t]*(?:\*|\+|<<)[ \t]*"
+    + NUMBER.replace("(", "(?:", 1)
+    + r")*)"
+)
+
 RUST_CONST = re.compile(
     # Indented, because a vocabulary declares its constants inside a `mod` — anchoring at column 0
     # hid every field byte in `slopdesk_wire::document::fields` from this gate until 2026-08-17.
     r"^[ \t]*pub const ([A-Z][A-Z_0-9]*): *"
-    r"(?:usize|u8|u16|u32|u64|i8|i16|i32|i64|f32|f64) *= *" + NUMBER + r"\s*;",
+    r"(?:usize|u8|u16|u32|u64|i8|i16|i32|i64|f32|f64) *= *" + EXPRESSION + r"[ \t]*;",
     re.MULTILINE,
 )
 SWIFT_CONST = re.compile(
-    r"^\s*(?:public |private |internal |fileprivate )?static let ([A-Za-z][A-Za-z0-9]*)"
-    r"(?: *: *[A-Za-z][A-Za-z0-9]*)? *= *" + NUMBER + r"\s*$",
+    r"^\s*(?:public |private |internal |fileprivate |package )?static let "
+    r"([A-Za-z][A-Za-z0-9]*)"
+    r"(?: *: *[A-Za-z][A-Za-z0-9]*)? *= *" + EXPRESSION + r"[ \t]*$",
     re.MULTILINE,
 )
 
@@ -155,10 +207,75 @@ def tracked(pattern: str) -> list[Path]:
     return [ROOT / line for line in out.stdout.split()]
 
 
-def numeric(text: str) -> float:
+def literal(text: str) -> float:
     """A literal's value, in whichever of the three notations it was written."""
     plain = text.replace("_", "")
     return float(int(plain, 0)) if plain[:2].lower() in {"0x", "0b"} else float(plain)
+
+
+def numeric(text: str) -> float | None:
+    """What a constant's right-hand side is WORTH, or `None` when this evaluator cannot say.
+
+    `int` literals joined by `*`, `+` and `<<`, folded left to right with `*` before `+`. Not `eval`:
+    this reads files nobody reviewed as code, and a gate that executes its input to compare two
+    numbers has traded the bug it catches for a worse one.
+
+    A `<<` mixed with either arithmetic operator answers `None` rather than a value, and that refusal
+    is the one judgement in here. Rust binds `*` and `+` TIGHTER than `<<`; Swift binds `<<` tighter
+    than both. So `1 << 2 + 3` is 32 in Rust and 7 in Swift, and any answer this function gave would
+    be right about one language and wrong about the other — which is the exact class of silent
+    disagreement it exists to report. No constant in the tree is written that way; the day one is,
+    the honest reading is that it should not be.
+    """
+    parts = re.split(r"[ \t]*(\*|\+|<<)[ \t]*", text.strip())
+    operators = parts[1::2]
+    try:
+        values = [literal(part) for part in parts[0::2]]
+    except ValueError:
+        return None
+    if not values:
+        return None
+    if "<<" in operators and any(op != "<<" for op in operators):
+        return None
+    if "<<" in operators:
+        shifted = values[0]
+        for places in values[1:]:
+            if shifted != int(shifted) or places != int(places) or not 0 <= places < 64:
+                return None
+            shifted = float(int(shifted) << int(places))
+        return shifted
+    # `*` binds tighter than `+` in both languages, so the products are folded first and summed.
+    terms = [values[0]]
+    for operator, value in zip(operators, values[1:], strict=True):
+        if operator == "*":
+            terms[-1] *= value
+        else:
+            terms.append(value)
+    return sum(terms)
+
+
+# Where the Swift tree ENDS, which `scripts/check-ffi-doors.py` had to answer too — and answered
+# differently, so a door counted a caller in `Apps/` that this gate could not see a constant in. The
+# roots agree now.
+#
+# A TEST is deliberately not audited, and that is a different question from the doors'. A door called
+# only from a test is still a door somebody reaches; a NUMBER spelled in a test is usually the pin
+# itself — the whole point of `XCTAssertEqual(field, 7)` is that 7 is written down where a refactor
+# cannot move it. Auditing those would report every golden expectation in the tree as a transcription
+# of the constant it exists to hold still. That is why the exclusion is a `Tests` PATH COMPONENT and
+# not the single top-level `Tests/` root: the iOS suite lives at `Apps/ClientApp-iOS/Tests/`, inside
+# a root this gate does audit.
+SWIFT_TREE = ("Sources/*.swift", "Apps/*.swift", "ThirdParty/ghostty/integration/*.swift")
+
+
+def swift_sources() -> list[Path]:
+    """Every git-tracked Swift file this gate audits, across all of the roots above, tests aside."""
+    return [
+        path
+        for root in SWIFT_TREE
+        for path in tracked(root)
+        if "Tests" not in path.relative_to(ROOT).parts
+    ]
 
 
 def scopes(
@@ -171,7 +288,11 @@ def scopes(
     ends = [start for _, start in starts[1:]] + [len(text)]
     bounds = [(name, at, end) for (name, at), end in zip(starts, ends, strict=True)]
     return {
-        name: {n.replace("_", "").lower(): numeric(v) for n, v in const.findall(text[at:end])}
+        name: {
+            n.replace("_", "").lower(): value
+            for n, v in const.findall(text[at:end])
+            if (value := numeric(v)) is not None
+        }
         for name, at, end in bounds
     }
 
@@ -216,7 +337,7 @@ def enum_findings() -> list[str]:
                 rust.setdefault(name, []).append((str(path.relative_to(ROOT)), cases))
 
     out: list[str] = []
-    for path in tracked("Sources/*.swift"):
+    for path in swift_sources():
         here_file = str(path.relative_to(ROOT))
         for name, here in scopes(path.read_text(), SWIFT_ENUM, SWIFT_CASE).items():
             if not here or name in HOMONYM_ENUMS:
@@ -246,7 +367,7 @@ def bit_findings() -> list[str]:
             rust.setdefault(key, []).append((str(path.relative_to(ROOT)), name, int(bit)))
 
     out: list[str] = []
-    for path in tracked("Sources/*.swift"):
+    for path in swift_sources():
         here_file = str(path.relative_to(ROOT))
         for name, bit in SWIFT_BIT.findall(path.read_text()):
             for there_file, there_name, there_bit in rust.get(name.lower(), []):
@@ -265,7 +386,10 @@ def main() -> int:
     rust: dict[str, list[tuple[Path, str, float]]] = {}
     for path in tracked("rust/*.rs"):
         for name, value in RUST_CONST.findall(path.read_text()):
-            rust.setdefault(name.replace("_", "").lower(), []).append((path, name, numeric(value)))
+            worth = numeric(value)
+            if worth is None:
+                continue
+            rust.setdefault(name.replace("_", "").lower(), []).append((path, name, worth))
 
     # A name a supervisor gate already compares is ratcheted, which is the sidecar answer.
     ratcheted = (ROOT / "scripts" / "check-supervisor.sh").read_text()
@@ -273,26 +397,30 @@ def main() -> int:
     vocabulary = {ROOT / swift for swift, _, _ in VOCABULARIES}
 
     findings: list[str] = []
-    for path in tracked("Sources/*.swift"):
+    for path in swift_sources():
         if path in vocabulary:
             continue  # ratcheted letter for letter below, which is stricter than this pass
+        here_file = str(path.relative_to(ROOT))
         for name, value in SWIFT_CONST.findall(path.read_text()):
+            worth = numeric(value)
+            if worth is None:
+                continue
             for rust_path, rust_name, rust_value in rust.get(name.lower(), []):
-                if numeric(value) != rust_value:
+                if worth != rust_value:
                     continue  # a different number is a different constant, or a gate's business
                 if name in ratcheted or rust_name in ratcheted:
                     continue
-                pair = (str(path.relative_to(ROOT)), str(rust_path.relative_to(ROOT)))
+                pair = (here_file, str(rust_path.relative_to(ROOT)))
                 if DERIVED_RATCHETS.get(pair, "\0") in ratcheted:
                     continue
                 # LAST, not first: an entry only counts as USED when it is the sole reason a real
                 # pair was let through. Checked before the ratchets it would have suppressed a pair
                 # something else already covers, and then looked alive forever.
-                if name in HOMONYMS:
-                    USED_HOMONYMS.add(name)
+                if (here_file, name) in HOMONYMS:
+                    USED_HOMONYMS.add((here_file, name))
                     continue
                 findings.append(
-                    f"  {path.relative_to(ROOT)}: `{name} = {value}` restates "
+                    f"  {here_file}: `{name} = {value}` restates "
                     f"`{rust_name}` in {rust_path.relative_to(ROOT)}"
                 )
 
@@ -309,7 +437,10 @@ def main() -> int:
 
     drifted = vocabulary_findings() + enum_findings() + bit_findings()
 
-    dead = [f"  HOMONYMS: `{n}` suppressed nothing" for n in sorted(HOMONYMS - USED_HOMONYMS)] + [
+    dead = [
+        f"  HOMONYMS: `{name}` in {file} suppressed nothing"
+        for file, name in sorted(set(HOMONYMS) - USED_HOMONYMS)
+    ] + [
         f"  HOMONYM_BIT_FILES: `{f}` suppressed nothing"
         for f in sorted(HOMONYM_BIT_FILES - USED_BIT_FILES)
     ]

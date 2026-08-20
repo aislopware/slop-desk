@@ -427,6 +427,11 @@ public enum WorkspaceStateCodec {
         }
     }
 
+    /// The longest a string field may be, ASKED for — it is a wire property, and a near side that
+    /// spelled it itself would either refuse a value the far end accepts or offer one it drops. A
+    /// field with a tighter limit of its own (a `renameTab` name) still passes that instead.
+    public static let maxStringBytes = Int(slopdesk_ws_max_string_bytes())
+
     /// A string field value: strict UTF-8, never lossy. Clamped at a Unicode SCALAR boundary so a
     /// truncated value stays valid UTF-8 (the type-35 idiom).
     ///
@@ -435,7 +440,7 @@ public enum WorkspaceStateCodec {
     /// SOCKET, and the strictness — a wrong-width value is a drop, never a lenient prefix read — is a
     /// property that has to hold identically on both ends or a mis-numbered field decodes into
     /// something plausible on one of them.
-    public static func encodeString(_ text: String, maxBytes: Int = 65535) -> Data {
+    public static func encodeString(_ text: String, maxBytes: Int = maxStringBytes) -> Data {
         Data(wsTransform(text) { bytes, len, out, cap in
             slopdesk_ws_encode_string(bytes, len, maxBytes, out, cap)
         } ?? [])

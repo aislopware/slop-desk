@@ -316,9 +316,13 @@ public final class VideoPacketizer: @unchecked Sendable {
     /// The `flags` bitfield ``slopdesk_video_packetizer_raw`` takes — the booleans of
     /// `PacketizeOptions` (`rust/slopdesk-video/src/packetizer.rs`) on the other side, packed so the
     /// entry point stays one line wide.
-    private static let flagKeyframe: UInt32 = 1 << 0
-    private static let flagCrisp: UInt32 = 1 << 1
-    private static let flagIsLTR: UInt32 = 1 << 2
-    private static let flagAckedAnchored: UInt32 = 1 << 3
-    private static let flagInterleave: UInt32 = 1 << 4
+    ///
+    /// Asked for, not transcribed: this word is a calling convention nothing on the wire pins, so a
+    /// bit position the two sides disagree about is a keyframe sent as a delta with no error
+    /// anywhere.
+    private static let flagKeyframe = slopdesk_video_packetizer_flag(0)
+    private static let flagCrisp = slopdesk_video_packetizer_flag(1)
+    private static let flagIsLTR = slopdesk_video_packetizer_flag(2)
+    private static let flagAckedAnchored = slopdesk_video_packetizer_flag(3)
+    private static let flagInterleave = slopdesk_video_packetizer_flag(4)
 }

@@ -58,6 +58,36 @@ pub const FRAME_IS_LTR: u32 = 1 << 3;
 /// The frame was encoded via `ForceLTRRefresh`, so it references only acked LTRs.
 pub const FRAME_ACKED_ANCHORED: u32 = 1 << 4;
 
+/// The bits [`slopdesk_video_reassembler_frame_flags`] packs, by index, so no caller respells one.
+///
+/// | index | bit |
+/// | --- | --- |
+/// | 0 | keyframe |
+/// | 1 | crisp |
+/// | 2 | recovered via FEC |
+/// | 3 | is LTR |
+/// | 4 | acked-anchored |
+///
+/// The word crosses as one `u32` and is taken apart on the far side, so a position the two sides
+/// disagree about is a decoded frame described wrongly — an LTR the client never acks, or a
+/// keyframe the pipeline treats as a delta. An unknown index answers `0`, which is no bit at all.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+#[must_use]
+pub const extern "C" fn slopdesk_video_reassembler_frame_flag(index: u32) -> u32 {
+    match index {
+        0 => FRAME_KEYFRAME,
+        1 => FRAME_CRISP,
+        2 => FRAME_RECOVERED_VIA_FEC,
+        3 => FRAME_IS_LTR,
+        4 => FRAME_ACKED_ANCHORED,
+        _ => 0,
+    }
+}
+
 /// The opaque handle: the reassembler, plus the slots its verdicts are read out of.
 #[derive(Debug)]
 pub struct SlopDeskVideoReassembler {
@@ -543,5 +573,21 @@ mod tests {
     fn an_impossible_shape_is_refused_rather_than_panicked() {
         assert!(unsafe { slopdesk_video_reassembler_new(250, 250, 2) }.is_null());
         assert!(unsafe { slopdesk_video_reassembler_new(0, 1, 2) }.is_null());
+    }
+
+    /// The flag door answers the same bits `frame_flags` packs, so the caller that takes the word
+    /// apart never respells a position.
+    #[test]
+    fn the_exported_flag_bits_are_the_ones_frame_flags_packs() {
+        assert_eq!(slopdesk_video_reassembler_frame_flag(0), FRAME_KEYFRAME);
+        assert_eq!(slopdesk_video_reassembler_frame_flag(1), FRAME_CRISP);
+        assert_eq!(slopdesk_video_reassembler_frame_flag(2), FRAME_RECOVERED_VIA_FEC);
+        assert_eq!(slopdesk_video_reassembler_frame_flag(3), FRAME_IS_LTR);
+        assert_eq!(slopdesk_video_reassembler_frame_flag(4), FRAME_ACKED_ANCHORED);
+        assert_eq!(
+            slopdesk_video_reassembler_frame_flag(5),
+            0,
+            "an unknown index is no bit"
+        );
     }
 }

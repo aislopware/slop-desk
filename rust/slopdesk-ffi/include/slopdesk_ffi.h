@@ -139,6 +139,11 @@ bool slopdesk_term_right_click_intercepts_as_paste(const uint8_t *action, size_t
 
 typedef struct SlopDeskReplay SlopDeskReplay;
 
+// The production caps `slopdesk_replay_new` takes, by index, so no caller respells one:
+// 0 the retained-byte ceiling, 1 the offline buffering gate, 2 the default scrollback ring size.
+// An unknown index answers -1.
+int64_t slopdesk_replay_constant(uint32_t index);
+
 // Lifecycle. Returns NULL only if allocation failed.
 //
 // The cold-replay scrollback cleaner is `rust/slopdesk-sanitize`, linked in — it used to be a
@@ -870,6 +875,16 @@ double slopdesk_ws_min_weight(void);
 // and the solver recursion both feed.
 size_t slopdesk_ws_max_depth(void);
 
+// The schema version the persisted workspace shape writes, and the one a load compares against.
+// There is no migration behind that comparison, so two spellings of it agree right up until one is
+// bumped alone — after which one side sets aside every file the other just wrote.
+int64_t slopdesk_ws_schema_version(void);
+
+// The longest a string field may be. `slopdesk_ws_encode_string` takes the bound as an argument,
+// because a field's own limit is not always the protocol's — a renameTab name is clamped tighter
+// than a title — so a caller with no tighter limit asks for the protocol's here.
+size_t slopdesk_ws_max_string_bytes(void);
+
 // ---- The project header's git DIALECT — `slopdesk_workspace::git_line` ----
 //
 // `main ↑2 ↓1 +3 !4 ?5 ~1 $2` is a language, not a label: the branch first, then only the NON-ZERO
@@ -1069,11 +1084,11 @@ typedef struct {
     bool    known;
 } SlopDeskSettingsStepper;
 SlopDeskSettingsStepper slopdesk_settings_stepper(uint8_t stepper);
-// What FOLLOWS the number in the readout — empty for cells and points, ` px` for pixels. The unit
-// crosses rather than the finished readout because the near side does not always hold an integer:
-// font size is a double a raw edit may set to 13.5, and a reader handed only the readout of 13 would
-// print a number the model does not hold.
-size_t slopdesk_settings_stepper_unit(uint8_t stepper, uint8_t *out, size_t cap);
+// What the value reads as after the row's label — `80`, `1000 px`, `13.5`. A whole value drops its
+// fraction; a fractional one prints as it is. The UNIT used to cross instead, so that each side
+// could compose from the value it holds — and both did, with only one of them dropping the
+// fraction. A double argument costs nothing and leaves one composition.
+size_t slopdesk_settings_stepper_readout(uint8_t stepper, double value, uint8_t *out, size_t cap);
 
 // ---- Every setting as a ROW ----
 //
@@ -1262,6 +1277,9 @@ bool slopdesk_phone_shows_accessory_bar(double keyboard_height, double threshold
 // keyboard is the ONLY way to move the terminal cursor. `accumulated` is read AND written — the
 // sub-threshold remainder is what makes a slow drag of many small deltas total correctly.
 double slopdesk_phone_floating_cursor_threshold(void);
+// The most bytes one feed can answer with — the arrow cap times the escape width, both of which are
+// this side's to tune. A caller sizes its buffer at this rather than multiplying them out itself.
+size_t slopdesk_phone_floating_cursor_run_capacity(void);
 size_t slopdesk_phone_floating_cursor_feed(double *accumulated, double threshold, double delta_x,
                                            bool application_cursor_keys, uint8_t *out, size_t cap);
 
@@ -5240,10 +5258,15 @@ void                     slopdesk_window_feed_reset(SlopDeskWindowFeed *handle);
  * The parked answer is a blob list in send order — data fragments then parity, or the interleaved
  * order when FLAG_INTERLEAVE was set — with every blob present.
  *
- * `flags` is a bitfield: 1 keyframe, 2 crisp, 4 isLTR, 8 ackedAnchored, 16 interleave.
+ * `flags` is a bitfield, and its bits are ASKED FOR rather than transcribed:
+ * `slopdesk_video_packetizer_flag` vends them by index — 0 keyframe, 1 crisp, 2 isLTR,
+ * 3 ackedAnchored, 4 interleave — because a position the two sides disagree about is a keyframe
+ * encoded as a delta, with no error anywhere. An unknown index answers 0, which is no bit at all.
  * `parity_count == 0` builds a packetizer with no FEC at all. `new` answers NULL for a shape the
  * code cannot exist in (k + m > 255, or a zero group size).
  * ---------------------------------------------------------------------------- */
+
+uint32_t slopdesk_video_packetizer_flag(uint32_t index);
 
 typedef struct SlopDeskVideoPacketizer SlopDeskVideoPacketizer;
 
@@ -5272,8 +5295,9 @@ size_t slopdesk_video_packetizer_answer(SlopDeskVideoPacketizer *handle, uint8_t
  * `ingest` answers one SLOPDESK_REASSEMBLE_* verdict, defined below rather than described here so
  * a caller switches on the same numbering the crate returns. The detail is parked —
  * `frame_id` / `frame_flags` / `frame_avcc` for a completed or dropped frame, held until the next
- * ingest completes another one. `frame_flags` is a bitfield: 1 keyframe, 2 crisp, 4 recoveredViaFEC,
- * 8 isLTR, 16 ackedAnchored.
+ * ingest completes another one. `frame_flags` is a bitfield whose bits are ASKED FOR rather than
+ * transcribed: `slopdesk_video_reassembler_frame_flag` vends them by index — 0 keyframe, 1 crisp,
+ * 2 recoveredViaFEC, 3 isLTR, 4 ackedAnchored. An unknown index answers 0, which is no bit at all.
  *
  * `next_needs_retransmit` parks a selective-ARQ request and answers how many fragments it names; 0
  * is the absence, since a request naming nothing is not one. `next_dropped_frame` writes through an
@@ -5285,6 +5309,8 @@ size_t slopdesk_video_packetizer_answer(SlopDeskVideoPacketizer *handle, uint8_t
 #define SLOPDESK_REASSEMBLE_COMPLETED 1u
 #define SLOPDESK_REASSEMBLE_DROPPED 2u
 #define SLOPDESK_REASSEMBLE_STALE 3u
+
+uint32_t slopdesk_video_reassembler_frame_flag(uint32_t index);
 
 typedef struct SlopDeskVideoReassembler SlopDeskVideoReassembler;
 
@@ -5957,7 +5983,11 @@ uint32_t slopdesk_workspace_decode_roster(const unsigned char *payload, size_t p
 
 // 0 the label cap, 1 the per-list record cap, 2 the smallest a roster client
 // record can be, 3 the smallest a roster pane record can be, 4 the exact size
-// of a roster attachment record. An unknown index answers -1.
+// of a roster attachment record, 5 subscribe's CONTRIBUTES-SIZE flag bit,
+// 6 its FOLLOWS-FOCUS bit. The last two are a MASK rather than a length, and
+// they cross for the same reason: a bit position a peer disagrees about is a
+// client that silently stops counting toward the PTY size fold.
+// An unknown index answers -1.
 int64_t slopdesk_workspace_constant(uint32_t index);
 
 

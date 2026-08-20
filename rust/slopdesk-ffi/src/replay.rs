@@ -120,6 +120,38 @@ const unsafe fn deliver_seqs(values: &[i64], out: *mut i64, cap: usize) -> usize
     needed
 }
 
+// MARK: Constants
+
+/// The buffer's production caps, by index, so no caller respells one.
+///
+/// | index | constant |
+/// | --- | --- |
+/// | 0 | the retained-byte ceiling |
+/// | 1 | the offline buffering gate |
+/// | 2 | the default scrollback ring size |
+///
+/// These are the three arguments [`slopdesk_replay_new`] takes, which is exactly why they are here:
+/// the caller that must name them is the caller that would otherwise transcribe them, and a cap
+/// spelled twice drifts into a host that pauses the PTY drain at a threshold the buffer does not
+/// hold.
+///
+/// An unknown index answers `-1`, which no byte cap could be.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+#[must_use]
+pub extern "C" fn slopdesk_replay_constant(index: u32) -> i64 {
+    let value = match index {
+        0 => ReplayBuffer::MAX_BACKUP_BYTES,
+        1 => ReplayBuffer::OFFLINE_GATE_BYTES,
+        2 => ReplayBuffer::DEFAULT_SCROLLBACK_BYTES,
+        _ => return -1,
+    };
+    i64::try_from(value).unwrap_or(i64::MAX)
+}
+
 // MARK: Lifecycle
 
 /// Creates a replay buffer at the given caps and returns its handle, or null if allocation failed.
@@ -768,11 +800,12 @@ pub unsafe extern "C" fn slopdesk_replay_seqs_copy(
 mod tests {
 
     use super::{
-        SlopDeskReplay, slopdesk_replay_ack, slopdesk_replay_acked_seq, slopdesk_replay_append,
-        slopdesk_replay_free, slopdesk_replay_highest_seq, slopdesk_replay_messages, slopdesk_replay_new,
-        slopdesk_replay_replay, slopdesk_replay_result_copy, slopdesk_replay_result_len,
-        slopdesk_replay_result_seq, slopdesk_replay_retained_bytes, slopdesk_replay_ring_bytes,
-        slopdesk_replay_ring_len, slopdesk_replay_set_client_online, slopdesk_replay_should_pause_drain,
+        ReplayBuffer, SlopDeskReplay, slopdesk_replay_ack, slopdesk_replay_acked_seq,
+        slopdesk_replay_append, slopdesk_replay_constant, slopdesk_replay_free,
+        slopdesk_replay_highest_seq, slopdesk_replay_messages, slopdesk_replay_new, slopdesk_replay_replay,
+        slopdesk_replay_result_copy, slopdesk_replay_result_len, slopdesk_replay_result_seq,
+        slopdesk_replay_retained_bytes, slopdesk_replay_ring_bytes, slopdesk_replay_ring_len,
+        slopdesk_replay_set_client_online, slopdesk_replay_should_pause_drain,
     };
 
     /// A handle at tiny caps, so the gates are reachable without allocating 256 MiB.
@@ -948,5 +981,23 @@ mod tests {
         );
         // SAFETY: exactly one free.
         unsafe { slopdesk_replay_free(handle) };
+    }
+
+    /// The caps door answers the buffer's own constants, so the caller of `new` never respells one.
+    #[test]
+    fn the_exported_caps_are_the_buffers_own() {
+        assert_eq!(
+            slopdesk_replay_constant(0),
+            i64::try_from(ReplayBuffer::MAX_BACKUP_BYTES).unwrap_or(i64::MAX),
+        );
+        assert_eq!(
+            slopdesk_replay_constant(1),
+            i64::try_from(ReplayBuffer::OFFLINE_GATE_BYTES).unwrap_or(i64::MAX),
+        );
+        assert_eq!(
+            slopdesk_replay_constant(2),
+            i64::try_from(ReplayBuffer::DEFAULT_SCROLLBACK_BYTES).unwrap_or(i64::MAX),
+        );
+        assert_eq!(slopdesk_replay_constant(3), -1, "an unknown index is refused");
     }
 }

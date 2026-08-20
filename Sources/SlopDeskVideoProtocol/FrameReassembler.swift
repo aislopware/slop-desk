@@ -196,12 +196,14 @@ public final class FrameReassembler {
     private static let verdictDropped = SLOPDESK_REASSEMBLE_DROPPED
     private static let verdictStale = SLOPDESK_REASSEMBLE_STALE
 
-    /// The latched wire bits ``slopdesk_video_reassembler_frame_flags`` packs.
-    private static let frameKeyframe: UInt32 = 1 << 0
-    private static let frameCrisp: UInt32 = 1 << 1
-    private static let frameRecoveredViaFEC: UInt32 = 1 << 2
-    private static let frameIsLTR: UInt32 = 1 << 3
-    private static let frameAckedAnchored: UInt32 = 1 << 4
+    /// The latched wire bits ``slopdesk_video_reassembler_frame_flags`` packs, asked for the way the
+    /// verdicts above are: a position restated here would keep compiling if the crate renumbered,
+    /// and describe a decoded frame wrongly rather than fail.
+    private static let frameKeyframe = slopdesk_video_reassembler_frame_flag(0)
+    private static let frameCrisp = slopdesk_video_reassembler_frame_flag(1)
+    private static let frameRecoveredViaFEC = slopdesk_video_reassembler_frame_flag(2)
+    private static let frameIsLTR = slopdesk_video_reassembler_frame_flag(3)
+    private static let frameAckedAnchored = slopdesk_video_reassembler_frame_flag(4)
 }
 
 public extension UInt32 {

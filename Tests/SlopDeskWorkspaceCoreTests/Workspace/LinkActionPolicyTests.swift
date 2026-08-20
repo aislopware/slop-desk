@@ -186,12 +186,15 @@ final class LinkActionPolicyTests: XCTestCase {
         )
     }
 
-    // MARK: - effectivePath fallback
+    // MARK: - The effective path fallback, asked of the DOOR
 
+    /// Asked through `Copy Path`, which carries the crate's `LinkTarget::effective_path` verbatim,
+    /// rather than of a Swift helper that re-grew the same fallback beside it. The helper is gone;
+    /// what it claimed is still pinned, against the only implementation there is.
     func testEffectivePathPrefersResolvedElseRaw() {
-        XCTAssertEqual(LinkActionPolicy.effectivePath(absolute), "/usr/local/bin")
-        XCTAssertEqual(LinkActionPolicy.effectivePath(tilde), "~/project/file.swift") // nil resolved → raw
-        XCTAssertEqual(LinkActionPolicy.effectivePath(fileURL), "/a/b.txt")
+        assertMenu(.copyPath, absolute, .copyPathClient("/usr/local/bin"))
+        assertMenu(.copyPath, tilde, .copyPathClient("~/project/file.swift")) // nil resolved → raw
+        assertMenu(.copyPath, fileURL, .copyPathClient("/a/b.txt"))
     }
 
     // MARK: - codeOpenTarget: the resolved path KEEPS the raw's `:line[:col]` suffix

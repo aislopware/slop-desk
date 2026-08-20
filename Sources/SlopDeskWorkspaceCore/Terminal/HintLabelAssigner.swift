@@ -180,13 +180,17 @@ public enum HintLabelAssigner {
     ///   - cwd: the pane's last-known working directory (OSC 7) — resolves relative detected paths.
     ///   - schemes: which `scheme://…` URLs are detected (`http(s)`/`file`/`mailto` always on).
     ///   - patterns: user `hint-pattern` regexes (+ their `{0}` action templates).
-    ///   - maxScanColumns: per-row cell-scan ceiling (the anti-hang bound).
+    ///   - maxScanColumns: per-row cell-scan ceiling (the anti-hang bound). The default is
+    ///     ``TerminalLinkDetector/maxScanColumnsDefault``, which is the one spelling of
+    ///     `link::MAX_SCAN_COLUMNS` on this side and the one `check-supervisor.sh` ratchets. A bare
+    ///     `4096` sat here instead until 2026-08-20 — a third copy of the bound, outside the gate's
+    ///     scope, free to stay behind a tuning of the other two.
     public static func targets(
         rows: [String],
         cwd: String?,
         schemes: LinkSchemePolicy,
         patterns: [HintPattern] = [],
-        maxScanColumns: Int = 4096,
+        maxScanColumns: Int = TerminalLinkDetector.maxScanColumnsDefault,
     ) -> [HintTarget] {
         guard maxScanColumns > 0 else { return [] }
 
