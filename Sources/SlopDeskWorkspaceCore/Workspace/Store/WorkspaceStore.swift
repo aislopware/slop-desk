@@ -176,9 +176,9 @@ public final class WorkspaceStore {
         workspaceMirrorRevision &+= 1
     }
 
-    /// The table of liveness: 1:1 with the leaves of whichever model is live — `workspace`'s on the canvas
-    /// path, ``tree``'s on the tree path. Both paths diff the SAME registry, but only ONE drives a given
-    /// store (``liveModel`` decides), so the two reconciles can never fight over it.
+    /// The table of liveness: 1:1 with ``tree``'s leaves. It used to be 1:1 with whichever of two models
+    /// was live, and a `liveModel` selector decided which reconcile drove it; the canvas model was deleted
+    /// in both languages, so there is one model, one reconcile, and nothing left to arbitrate.
     private var registry: [PaneID: any PaneSessionHandle] = [:]
 
     /// ⌘⇧U's walk memory (visited-set / origin / last-walk-focused) — see

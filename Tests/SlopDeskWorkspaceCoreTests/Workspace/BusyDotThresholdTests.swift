@@ -14,7 +14,7 @@ import XCTest
 /// arms `flashDecayScheduler(delay)` → `completionFlashTick` bump, the same idiom as the
 /// completion-flash decay.
 ///
-/// Built on the spec-only `FakePaneSession` seam (`liveModel: .tree`) — no SwiftUI, no client/host
+/// Built on the spec-only `FakePaneSession` seam — no SwiftUI, no client/host
 /// (the hang-safety rule). Settings overrides go through `SettingsKey.store` (the per-process test
 /// suite), never `UserDefaults.standard`.
 @MainActor

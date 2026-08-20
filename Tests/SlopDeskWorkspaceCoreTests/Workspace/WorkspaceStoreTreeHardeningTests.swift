@@ -8,7 +8,7 @@ import XCTest
 /// becomes a no-op): busy-pane close + confirm, system-dialog auto-panes + app-launch presets, chrome-close
 /// busy guard, ⌘⇧R tab rename, plus the parking-branch and live init-branch coverage.
 ///
-/// Built on the spec-only `FakePaneSession` seam with `liveModel: .tree` so init reconciles the TREE — no
+/// Built on the spec-only `FakePaneSession` seam, so init reconciles the tree — no
 /// SwiftUI view, no real client/host (the hang-safety rule).
 @MainActor
 final class WorkspaceStoreTreeHardeningTests: XCTestCase {
