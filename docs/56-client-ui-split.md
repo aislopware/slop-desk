@@ -2592,6 +2592,39 @@ knowledge is — in the per-gate vacuity floors that count their list before the
 reports and returns is not a floor if its caller runs on regardless**, which is what `fail` does here by
 design, and was the second half of this bug.
 
+### Increment 60 — the terminal leaf, and risk 3 was never about visibility
+
+**R9 landed, and risk 3 closes with it.** The row read "hide/collapse", and the hide half was already
+settled — `alphaValue = 0`, never `isHidden`, because a layer-hosting view sizes its `IOSurfaceLayer`
+frame and `contentsScale` in `layout()`, which does not run on a hidden subtree. The half that was
+actually open had nothing to do with visibility: **SwiftUI's `.allowsHitTesting(false)` suppresses a
+composed subtree, and AppKit has no equivalent, because `hitTest → nil` does nothing whatsoever to an
+`NSTrackingArea`.** Tracking areas are rect-based and keep firing however the view answers, so a hidden
+tab's terminal keeps one live over the visible tab's — presenting as a mouse-reporting TUI in a
+background tab that follows the cursor in the foreground one. The sweep walks the occluded leaf's
+descendants and takes their areas down, re-queued on the main queue so an area a descendant re-installs
+during the pass is gone again before it can fire once.
+
+**This is trap 4 from the platform ledger arriving a third time** (`963c25ff` was hover through a modal
+card; the pointer shield was the second). Each time it was found by a symptom rather than by looking,
+and each time the fix was local. The general form is worth stating once: **`NSTrackingArea` is the one
+piece of AppKit that does not participate in the view hierarchy's own answers about who is in front.**
+Anything reasoning about occlusion must take the areas down explicitly.
+
+- **A completion closure cannot cross into `runAnimationGroup`, and a view can.** The handler is
+  `@Sendable` while the whole leaf is main-actor, so a bare `(() -> Void)?` is a data race as far as the
+  compiler can see — correctly, since nothing in the closure's *type* promises the main thread even
+  though AppKit always delivers it there. An `NSView` crosses freely: `@MainActor` classes are
+  implicitly `Sendable`. Taking a view to retire rather than a closure to run is the shape
+  `MacPaneMoveAffordance`, `MacSimulatorSurface` and `MacSimulatorStageView` had each already reached
+  alone, which is usually the sign that the type system is describing the domain rather than obstructing
+  it.
+- **The placeholder is ported faithfully, including something that looks wrong.** It paints with the
+  CHROME ink ladder while sitting on the terminal's glass, which has an on-glass vocabulary of its own.
+  Changing it in the AppKit half alone would convert a debatable authoring choice into a genuine
+  cross-renderer divergence, in the one panel a developer reads when something is *already* broken. It
+  is flagged at the file head instead, so it moves in one change or not at all.
+
 ## Stage D ledger — what the rename actually costs
 
 `SlopDeskClientUI` cannot fold into `SlopDeskPhoneUI` while `SlopDeskMacUI` still imports it. That is
@@ -2898,7 +2931,7 @@ its siblings twice (57b caught two, this catches three), which is enough repetit
 an oversight: **a table that resolves to a `Color` is a pair the day it is written, and the ratchet
 belongs in the same commit as the table.**
 
-### The three risks, decided — 1 and 2 landed (increment 57d), 3 is wave R's
+### The three risks, decided — all three landed (1 and 2 in increment 57d, 3 in increment 60)
 
 1. **`DropTargetFrameReader`.** Resolved by P5's relocation, but the hazard changes shape rather than
    vanishing: SwiftUI's `GeometryReader` reports the *interpolated* rect every frame, while AppKit's
@@ -2959,7 +2992,7 @@ finished, because a Mac part whose mounter is still SwiftUI has nowhere to be pu
 | **R6** | `PaneDivider` | 152 | R11 | ✅ 58 |
 | **R7** | `PaneDropOverlay` + `PaneDropReceiver` | 285 | R11 | ✅ 58 |
 | **R8** | `PaneMoveAffordance` (the grab pill) | 449 | R11 | ✅ 58 |
-| **R9** | `TerminalLeafView` + `BuildStatusPlaceholderView` | 413 | R11 | |
+| **R9** | `TerminalLeafView` + `BuildStatusPlaceholderView` | 413 | R11 | ✅ 60 |
 | **R10** | `GuiLeafView` | 1,005 | R11 | |
 | **R11** | `SplitContainer` + `PaneContainer` + `SatellitePaneContent` | 754 | `MacContentColumn` | |
 
