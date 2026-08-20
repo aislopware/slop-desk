@@ -6618,6 +6618,29 @@ if printf '%s' "${mac_target_block}" | sed -E 's#^[[:space:]]*//.*##' | grep -q 
 fi
 printf 'check-supervisor: no Mac file imports the phone half, and the manifest edge is cut too.\n'
 
+# ── ONE TEST-LINT RELAXATION, TWO TEST TREES (docs/56 F4c) ──────────────────────────────────────
+# `Tests/.swiftlint.yml` turns off the nine rules that are idiomatic in a test and noise everywhere
+# else (force-unwrap a known-good fixture, `var sut: Foo!` in `setUp`, the assertion-style rules).
+# Increment 63 gave the repo a SECOND test tree — `Apps/ClientApp-iOS/Tests`, the iOS-triple bundle
+# that is now the only place a `SlopDeskPhoneUI` view suite can compile — and it needs the same nine.
+#
+# It gets them by SYMLINK, not by copy. A copy is two lists that drift, and the failure is silent in
+# the worst direction: one test tree quietly enforcing different rules than the other, discovered
+# whenever someone edits one list and not the other. This is the same defect as a gate that names its
+# symbols, one layer down, so it is pinned the same way — as a FACT (is it a link?) rather than as a
+# comparison anybody has to remember to re-run.
+ios_test_lint=Apps/ClientApp-iOS/Tests/.swiftlint.yml
+if [[ ! -L "${ios_test_lint}" ]]; then
+  fail "${ios_test_lint} is not a symlink — the test relaxations are spelled once, in Tests/.swiftlint.yml (docs/56)"
+fi
+if [[ ! -e "${ios_test_lint}" ]]; then
+  fail "${ios_test_lint} is a symlink that resolves to nothing — the iOS bundle would lint under the SOURCE rules"
+fi
+if ! diff -q "${ios_test_lint}" Tests/.swiftlint.yml > /dev/null; then
+  fail "${ios_test_lint} resolves somewhere other than Tests/.swiftlint.yml"
+fi
+printf 'check-supervisor: two test trees, one relaxation, and the second is a link rather than a copy.\n'
+
 # ── The drop chip is one chip, and the pill inks are a pair (docs/56 §3.5, increments 56c/56e) ──
 # THE DROP CHIP IS DRAWN TWICE AND BOTH CAN BE ON SCREEN AT ONCE, which is what makes it different
 # from every other "drawn twice" pair in this file. The canvas overlay's ghost chip is anchored to
