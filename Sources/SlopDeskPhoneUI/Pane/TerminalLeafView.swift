@@ -156,7 +156,7 @@ struct TerminalLeafView: View {
                 // receive a keystroke at all. Zero-sized and touch-transparent — it holds first
                 // responder, the accessory row and the press handlers, nothing visual.
                 if let live {
-                    TerminalInputHost(live: live, focusCoordinator: store.focusCoordinator)
+                    TerminalInputHost(live: live, store: store, focusCoordinator: store.focusCoordinator)
                         .frame(width: 0, height: 0)
                         .allowsHitTesting(false)
                 }

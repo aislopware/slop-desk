@@ -34,6 +34,26 @@ import UIKit
 // proxy. `TerminalViewModel.takeModalKey` is the seam, and the abstract keys it feeds are the SAME
 // ones the Mac's `keyDown` builds — the phone brings its own key identity and nothing else.
 //
+// ## A FOURTH path, above the mode: a workspace OVERLAY
+//
+// A mode belongs to a PANE. The ⌃⇥ pane switcher belongs to the WORKSPACE — it is drawn over every
+// pane at once and its state is `WorkspaceStore.paneSwitcher`, not any model's — so it is asked one
+// rung higher, off the store, and it is asked FIRST. That order is the Mac's: over there
+// `consumePaneSwitcher` runs in the app-level `NSEvent` monitor, which preempts the surface's
+// `keyDown` where copy mode lives, so an Esc under both an open walk and an armed copy mode peels
+// the walk. The phone has no monitor — this responder is the whole chain — so the same precedence
+// is spelled here, exactly as the mode's own chord precedence is.
+//
+// It is a SECOND predicate rather than a wider `takesModalKeys`, and deliberately: that flag is a
+// property of one pane's terminal model, and answering "does a workspace overlay own the keyboard"
+// through it would mean handing every `TerminalViewModel` a store it has no other use for. It is
+// also not the first member of a general "which overlay holds the keys" rung, because on this
+// device it is the only member there could be: every other summoned surface either IS a system
+// presentation (the cheat sheet, Connect, the close confirmation, Settings) or mounts a pre-focused
+// field that takes first responder away from this view (the palette, Open Quickly, Peek & Reply,
+// Global Search). The switcher is the one card drawn in-window that takes no keyboard focus — which
+// is what made it the one card whose keys reached the shell behind it.
+//
 // ## What is NOT here yet
 //
 // `UITextInput` — marked text and the floating cursor. iOS shows CJK candidates in the keyboard's
@@ -50,17 +70,20 @@ struct TerminalInputHost: UIViewRepresentable {
     /// The pane this types into. Held weakly by the view so a leaf that outlives its session cannot
     /// keep the session alive through a responder.
     let live: LivePaneSession
+    /// The workspace, for the one question no pane can answer: whether the ⌃⇥ walk is up, and which
+    /// of its verbs a press is. Also held weakly by the view.
+    let store: WorkspaceStore
     /// The coordinator that moves first responder between panes as the active pane changes.
     let focusCoordinator: PaneFocusCoordinator
 
     func makeUIView(context _: Context) -> TerminalInputHostView {
         let view = TerminalInputHostView()
-        view.attach(to: live, focusCoordinator: focusCoordinator)
+        view.attach(to: live, store: store, focusCoordinator: focusCoordinator)
         return view
     }
 
     func updateUIView(_ view: TerminalInputHostView, context _: Context) {
-        view.attach(to: live, focusCoordinator: focusCoordinator)
+        view.attach(to: live, store: store, focusCoordinator: focusCoordinator)
     }
 
     static func dismantleUIView(_ view: TerminalInputHostView, coordinator _: ()) {
@@ -73,6 +96,10 @@ final class TerminalInputHostView: UIView, UIKeyInput {
     /// The pane's session. Weak — the leaf owns the mount, the store owns the session, and a
     /// responder that outlived its dismantle must go inert rather than write to a dead pane.
     private weak var live: LivePaneSession?
+    /// The workspace, read for the ⌃⇥ walk. Weak for the same reason `live` is: the app root owns
+    /// the store for the process's life, and a responder that outlived its dismantle must go inert
+    /// rather than keep driving a workspace nothing is showing.
+    private weak var store: WorkspaceStore?
     private weak var focusCoordinator: PaneFocusCoordinator?
     private var paneID: PaneID?
 
@@ -132,9 +159,12 @@ final class TerminalInputHostView: UIView, UIKeyInput {
     /// Points this responder at `session`, registering with the coordinator under its pane. Idempotent
     /// — `updateUIView` calls it on every SwiftUI pass, and a re-register under the same id is what
     /// re-claims first responder after a projection flip re-creates the view.
-    func attach(to session: LivePaneSession, focusCoordinator: PaneFocusCoordinator) {
+    func attach(
+        to session: LivePaneSession, store: WorkspaceStore, focusCoordinator: PaneFocusCoordinator,
+    ) {
         let changed = live !== session || paneID != session.id
         live = session
+        self.store = store
         self.focusCoordinator = focusCoordinator
         guard changed else { return }
         if let previous = paneID, previous != session.id { focusCoordinator.unregister(previous) }
@@ -150,6 +180,7 @@ final class TerminalInputHostView: UIView, UIKeyInput {
         focusCoordinator?.unregister(host: self)
         paneID = nil
         live = nil
+        store = nil
         resignFirstResponder()
     }
 
@@ -185,8 +216,9 @@ final class TerminalInputHostView: UIView, UIKeyInput {
     /// reads its presses with too, so there is one answer to "which key is this".
     private static func read(_ key: UIKey) -> PhoneKey.Press { PhoneKey.Press(key) }
 
-    /// Takes the press, or reports that the chain should have it. `true` means handled — either
-    /// swallowed as a workspace chord or handed to the repeater, which writes it.
+    /// Takes the press, or reports that the chain should have it. `true` means handled — spent on the
+    /// ⌃⇥ walk, answered by an armed mode, swallowed as a workspace chord, or handed to the repeater,
+    /// which writes it.
     ///
     /// The bytes are asked for TWICE on a press that is taken: once here, discarded, to learn
     /// whether the press writes anything at all, and once inside the repeater's immediate fire. That
@@ -194,9 +226,13 @@ final class TerminalInputHostView: UIView, UIKeyInput {
     /// sends nothing never starts a 20 Hz repeat of nothing.
     @discardableResult
     private func handle(_ press: PhoneKey.Press) -> Bool {
+        // The ⌃⇥ walk owns the keyboard above every pane, so it is asked before the pane's own mode
+        // and long before the encoder (see "A FOURTH path" above). Nothing else on this device gets
+        // a rung here — every other overlay is answered by UIKit's own responder chain.
+        if takesPaneSwitcherKey(press) { return true }
         // A pane in Copy Mode or Hint Mode reads every press as a COMMAND, and this branch has to
-        // come FIRST: copy mode's vocabulary is mostly bare letters (`j`, `y`, `v`), and a bare
-        // letter is exactly what `routesToKeyEncoding` hands to the text-input proxy. Asked in the
+        // come ABOVE THE TWO-PATH SPLIT: copy mode's vocabulary is mostly bare letters (`j`, `y`,
+        // `v`), and a bare letter is exactly what `routesToKeyEncoding` hands to the proxy. Asked in the
         // other order the phone drew the VI pill and the hint card — `TerminalLeafView` mounts both
         // — over a dispatch with no caller, and every key went to the shell instead.
         //
@@ -218,6 +254,22 @@ final class TerminalInputHostView: UIView, UIKeyInput {
         guard encodedBytes(press) != nil else { return false }
         repeater.keyDown(press)
         return true
+    }
+
+    /// The ⌃⇥ switcher's key handling — the phone's twin of the Mac's
+    /// `WorkspaceKeyDispatcher.consumePaneSwitcher`, over a `PhoneKey.Press` instead of an
+    /// `NSEvent`. `true` means the press was consumed and must never reach the PTY.
+    ///
+    /// Both halves of the answer live below the view layer — ``PhoneKey/paneSwitcherKey(_:isOpen:)``
+    /// reads the press and ``WorkspaceStore/takePaneSwitcherKey(_:)`` spends it — so the macOS runner
+    /// can drive the whole thing and this stays what every other branch here is: a call and a verdict.
+    ///
+    /// NOT through the repeater, which is the one decision that is genuinely this file's. An unarmed
+    /// walk ends on Return or a tap rather than on a modifier release, so a held ⌃⇥ stepping twenty
+    /// times a second would race the card past the row the reader is reading — the same argument
+    /// ``swallowsAsWorkspaceChord(_:)`` makes for a held ⌘D. A phone steps with the card's own plates.
+    private func takesPaneSwitcherKey(_ press: PhoneKey.Press) -> Bool {
+        store?.takePaneSwitcherKey(press) ?? false
     }
 
     /// Whether the workspace's binding table claims this press. The SAME user-overridable table the

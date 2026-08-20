@@ -1,7 +1,9 @@
+import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// The phone's HARDWARE-keyboard road into Copy Mode and Hint Mode.
+/// The phone's HARDWARE-keyboard road into Copy Mode and Hint Mode — and, one rung above them, into the
+/// ⌃⇥ pane switcher.
 ///
 /// Both modes were already drawn on the phone — `TerminalLeafView` mounts the vi pill and the key-hint
 /// bar, and both bindings are `Platform::Both` in `rust/slopdesk-workspace/src/binding_rows.rs` — while
@@ -9,6 +11,12 @@ import XCTest
 /// engaged, said so, and swallowed everything. What is pinned here is the peer adapter and the seam the
 /// responder offers a press through, on the macOS runner, which is the whole point of both being
 /// un-gated: an adapter only the iOS triple compiles is an adapter nothing here can reach.
+///
+/// The switcher half below is the SAME defect one rung up, found the same way. ``PaneSwitcherOverlay``
+/// asserted in its own header that a hardware ⌃⇥ "already works" on an iPad; it resolved to no chord (the
+/// registry row is `chord: nil` on purpose), fell to the encoder and typed `0x09`, while the card's Esc,
+/// Return and arrows walked past it into the PTY. ``PhoneKey/paneSwitcherKey(_:isOpen:)`` is the rule the
+/// responder now asks first, and it is un-gated for exactly the reason the modal adapter is.
 @MainActor
 final class PhoneModalKeyTests: XCTestCase {
     // Usages as numbers rather than through `UIKeyboardHIDUsage`, because this suite runs on the macOS
@@ -151,5 +159,158 @@ final class PhoneModalKeyTests: XCTestCase {
             ClientPasteboard.text(), "mercury\nvenus",
             "…and the default write is a REAL one, through the cross-platform door",
         )
+    }
+
+    // MARK: The ⌃⇥ walk, one rung above the modes
+
+    /// A three-pane workspace, which is the smallest ring where ← and → are visibly different steps.
+    private func makeSwitcherStore() -> WorkspaceStore {
+        let store = WorkspaceStore(
+            restoringTree: .defaultWorkspace(),
+            makeSession: { seed in FakePaneSession(seed.spec) },
+            liveVideoCap: 2,
+        )
+        store.attachLoopbackWorkspaceDocument()
+        store.newTab(kind: .terminal)
+        store.newTab(kind: .terminal)
+        return store
+    }
+
+    private func tab(control: Bool, shift: Bool = false) -> PhoneKey.Press {
+        PhoneKey.Press(hidUsage: HID.tab, control: control, shift: shift)
+    }
+
+    /// THE DEFECT. ⌃⇥ resolved to nothing in the chord table (`pane.switcher` is `chord: nil` on
+    /// purpose), fell through to the encoder and typed a literal Tab into the shell — under a card the
+    /// app had already drawn. The encode assertion is the receipt: the bytes are still exactly what the
+    /// shell used to get, so what fixes this is the ORDER of the questions, not a changed byte rule.
+    func testControlTabOpensTheWalkRatherThanTypingATab() {
+        let store = makeSwitcherStore()
+        let press = tab(control: true)
+
+        XCTAssertNil(
+            WorkspaceBindingRegistry.resolvedChordTable[KeyChord(.tab, [.control])],
+            "the gesture has no table row, which is why the responder has to claim it above the table",
+        )
+        XCTAssertEqual(
+            PhoneKey.encode(press), [0x09],
+            "and the encoder below still answers Tab — the fix is the rung, not the byte",
+        )
+
+        XCTAssertEqual(
+            PhoneKey.paneSwitcherKey(press, isOpen: false), .openOrStep(forward: true),
+        )
+        XCTAssertTrue(store.takePaneSwitcherKey(press), "the walk took the press")
+        XCTAssertNotNil(store.paneSwitcher, "…and the card is up")
+    }
+
+    /// ⇧ arrives on the press itself (`UIKey.modifierFlags`), not as a distinct back-tab key, so it is
+    /// the only thing that separates the two directions.
+    func testShiftOnTheSamePressWalksTheOtherWay() {
+        XCTAssertEqual(
+            PhoneKey.paneSwitcherKey(tab(control: true, shift: true), isOpen: false),
+            .openOrStep(forward: false),
+        )
+    }
+
+    /// The boundary the Mac's `consumePaneSwitcher` defends, defended identically here: a bare ⇥ is shell
+    /// completion and ⇧⇥ is how Claude Code cycles permission modes. Neither carries ⌃, and with the walk
+    /// closed neither is ours.
+    func testABareTabIsStillTheShellsTab() {
+        XCTAssertNil(PhoneKey.paneSwitcherKey(tab(control: false), isOpen: false))
+        XCTAssertNil(PhoneKey.paneSwitcherKey(tab(control: false, shift: true), isOpen: false))
+        let store = makeSwitcherStore()
+        XCTAssertFalse(store.takePaneSwitcherKey(tab(control: false)))
+        XCTAssertNil(store.paneSwitcher, "nothing opened")
+    }
+
+    /// Esc CANCELS and sends nothing. It reaches this rung at all only because it is asked before the
+    /// encoder: Escape is deliberately chord-less (a bare Esc must always reach the TUI), so the chord
+    /// table could never have claimed it and `0x1B` went to the shell under an open card.
+    func testEscapeCancelsTheWalkAndSendsNothing() {
+        let store = makeSwitcherStore()
+        store.openOrStepPaneSwitcher(forward: true, armedByModifier: false)
+        XCTAssertNotNil(store.paneSwitcher, "precondition — a walk is up")
+        let press = PhoneKey.Press(hidUsage: HID.escape)
+
+        XCTAssertNil(PhoneKey.keyChord(for: press), "Escape resolves to no chord, by design")
+        XCTAssertEqual(PhoneKey.encode(press), [0x1B], "which is the byte that used to leak")
+
+        XCTAssertEqual(PhoneKey.paneSwitcherKey(press, isOpen: true), .cancel)
+        XCTAssertTrue(store.takePaneSwitcherKey(press))
+        XCTAssertNil(store.paneSwitcher, "the walk is abandoned")
+    }
+
+    /// Return COMMITS and sends nothing — the unarmed walk's only key commit, since a phone has no ⌃
+    /// release to end the gesture on.
+    func testReturnCommitsTheWalkAndSendsNothing() throws {
+        let store = makeSwitcherStore()
+        store.openOrStepPaneSwitcher(forward: true, armedByModifier: false)
+        let landing = try XCTUnwrap(store.paneSwitcher).highlighted
+        let press = PhoneKey.Press(hidUsage: HID.returnKey)
+
+        XCTAssertEqual(PhoneKey.encode(press), [0x0D], "the byte that used to leak instead")
+        XCTAssertEqual(PhoneKey.paneSwitcherKey(press, isOpen: true), .commit)
+        XCTAssertTrue(store.takePaneSwitcherKey(press))
+        XCTAssertNil(store.paneSwitcher)
+        XCTAssertEqual(
+            store.tree.activeSession?.activeTab?.activePane, landing,
+            "and the commit landed on the pane the card was marking",
+        )
+    }
+
+    /// ← / → step the highlight while the card is up. Asserted as OPPOSITES rather than against the
+    /// ring's arithmetic, which is ``PaneSwitcher``'s own and pinned where it lives.
+    func testTheArrowsStepTheHighlightWhileTheCardIsUp() throws {
+        let store = makeSwitcherStore()
+        store.openOrStepPaneSwitcher(forward: true, armedByModifier: false)
+        let opened = try XCTUnwrap(store.paneSwitcher).highlightIndex
+
+        XCTAssertTrue(store.takePaneSwitcherKey(PhoneKey.Press(hidUsage: HID.right)))
+        let stepped = try XCTUnwrap(store.paneSwitcher).highlightIndex
+        XCTAssertNotEqual(stepped, opened, "→ moved the mark")
+
+        XCTAssertTrue(store.takePaneSwitcherKey(PhoneKey.Press(hidUsage: HID.left)))
+        XCTAssertEqual(
+            try XCTUnwrap(store.paneSwitcher).highlightIndex, opened, "← undid exactly what → did",
+        )
+        XCTAssertNotNil(store.paneSwitcher, "a step never ends the walk")
+    }
+
+    /// The same four keys are the TERMINAL's until the card is up — the rung is gated on the gesture,
+    /// not on the platform. Without this an arrow key would step a switcher nobody opened.
+    func testTheWalksKeysBelongToTheTerminalUntilItIsOpen() {
+        for usage in [HID.escape, HID.returnKey, HID.keypadEnter, HID.left, HID.right] {
+            XCTAssertNil(
+                PhoneKey.paneSwitcherKey(PhoneKey.Press(hidUsage: usage), isOpen: false),
+                "usage \(usage) is the terminal's while nothing is walking",
+            )
+        }
+    }
+
+    /// A ⌘ combination falls through the walk exactly as it falls through copy mode — ⌘⇧P must still
+    /// reach the palette from under an open card, and ⌘1–9 must still reach the binding table.
+    func testACommandCombinationFallsThroughTheWalk() {
+        let store = makeSwitcherStore()
+        store.openOrStepPaneSwitcher(forward: true, armedByModifier: false)
+        let palette = PhoneKey.Press(charactersIgnoringModifiers: "p", command: true, shift: true)
+
+        XCTAssertNil(PhoneKey.paneSwitcherKey(palette, isOpen: true))
+        XCTAssertFalse(store.takePaneSwitcherKey(palette))
+        XCTAssertNotNil(store.paneSwitcher, "and it did not disturb the walk either")
+    }
+
+    /// A refusal is not a swallow. With one pane there is nothing to switch to, so ⌃⇥ must be reported
+    /// UNHANDLED and go on to be the shell's Tab — a chord swallowed into a gesture that cannot happen
+    /// is a dead key.
+    func testARefusedWalkHandsControlTabBack() {
+        let store = WorkspaceStore(
+            restoringTree: .defaultWorkspace(),
+            makeSession: { seed in FakePaneSession(seed.spec) },
+            liveVideoCap: 2,
+        )
+        store.attachLoopbackWorkspaceDocument()
+        XCTAssertFalse(store.takePaneSwitcherKey(tab(control: true)))
+        XCTAssertNil(store.paneSwitcher)
     }
 }

@@ -10,9 +10,16 @@ import Foundation
 // chain for UIKit's own text input to compose. `SlopDeskClientUI.TerminalInputHost` is the caller.
 //
 // The rules are `slopdesk_workspace::phone_key`. What is here is the vocabulary the responder builds
-// a press in, and the marshalling. Nothing decides anything: which keys are special at all, the C0
-// fold, the cursor block's introducer, the meta prefix, which presses are chords and what a
-// floating-cursor drag is worth all live on the other side of the door, tested there.
+// a press in, and the marshalling. Nothing about BYTES decides anything: which keys are special at
+// all, the C0 fold, the cursor block's introducer, the meta prefix, which presses are chords and
+// what a floating-cursor drag is worth all live on the other side of the door, tested there.
+//
+// The ONE rule spelled on this side is `paneSwitcherKey(_:isOpen:)`, and it is here because it is
+// not about bytes: it reads the WORKSPACE's live gesture, whose state is a Swift store's, and it
+// invents no key identity — ⇥ comes back from `keyChord(for:)` and Esc/Return/←→ from
+// `modalKey(_:)`, both of which are the Rust tables coming through. A door of its own would have to
+// carry the store's flag across the boundary and back for a two-line composition of two doors that
+// already exist.
 //
 // A press is a HID usage plus one string, because `UIKey.keyCode` is the only signal that names the
 // same key under every layout and input method. Keying a key's identity off what it COMMITTED — the
@@ -179,6 +186,74 @@ public enum PhoneKey {
         }
     }
 
+    /// One of the pane switcher's three verbs, as a press asks for it.
+    ///
+    /// Three, not four: OPEN and STEP are one case because they are one store call
+    /// (``WorkspaceStore/openOrStepPaneSwitcher(forward:armedByModifier:)``), which is where the
+    /// difference between them lives — a walk that is already up steps, and only a closed one
+    /// opens. Splitting them here would be this side holding an opinion the store already holds.
+    public enum PaneSwitcherKey: Sendable, Equatable {
+        /// Open the walk, or step an open one. `forward` is the ⇧-selected direction.
+        case openOrStep(forward: Bool)
+        /// Commit the highlighted pane and close the walk.
+        case commit
+        /// Abandon the walk, leaving the active pane where it was.
+        case cancel
+    }
+
+    /// What one press means to the ⌃⇥ PANE SWITCHER — the walk over recently-visited panes.
+    ///
+    /// The Mac's twin is `WorkspaceKeyDispatcher.consumePaneSwitcher`, and this answers the same
+    /// four questions off a ``Press`` rather than off an `NSEvent`. Like that one it must be asked
+    /// BEFORE the binding table and before the encoder, for the reason it documents: the gesture is
+    /// not expressible as a table row — one key means open, step or commit depending on whether the
+    /// walk is already up — and its cancel key resolves to no chord at all, precisely so a bare Esc
+    /// always reaches the TUI. Asked after the encoder instead, ⌃⇥ types `0x09` into the shell and
+    /// Esc and Return reach the PTY through an overlay that is drawn over them.
+    ///
+    /// THE BOUNDARY THIS FUNCTION DEFENDS, which is the Mac's word for word: a bare ⇥ is shell
+    /// completion and ⇧⇥ is how Claude Code cycles permission modes. Neither carries ⌃, and with the
+    /// walk closed neither is claimed here — both fall straight through to the PTY. Only ⌃⇥ opens
+    /// the gesture; only while it is open do Esc / Return / arrows / a bare ⇥ mean anything to us.
+    ///
+    /// COMPOSED OUT OF THE TWO DOORS THAT ALREADY EXIST rather than out of a third HID table: ⇥ is
+    /// the named chord ``keyChord(for:)`` builds, and Esc, Return and ←→ are ``modalKey(_:)``'s.
+    /// Nothing here names a usage, which is what keeps the HID page single.
+    ///
+    /// `isOpen` is the store's `paneSwitcher != nil`, THREADED rather than remembered — the walk can
+    /// end between two presses (a tap on the card commits it), and a remembered copy would answer
+    /// for a gesture that is over.
+    public static func paneSwitcherKey(_ press: Press, isOpen: Bool) -> PaneSwitcherKey? {
+        if let chord = keyChord(for: press), chord.key == .tab {
+            // Ours only when ⌃ is held (the gesture) or the walk is already up (a palette-opened one
+            // has no held modifier). Otherwise this is the terminal's Tab and must not be touched.
+            guard press.control || isOpen else { return nil }
+            // `unbind: ctrl+tab` gives the GESTURE back — the escape hatch a Neovim user needs once
+            // the Kitty protocol delivers ⌃⇥ to the PTY as `CSI 9 ; 5 u`. The SAME override map the
+            // Mac's dispatcher consults, so the unbind is made once and honoured on both. It gates
+            // OPENING only, and reclaims each chord INDIVIDUALLY — unbinding ⌃⇥ is no statement
+            // about ⌃⇧⇥ — because an open walk owns ⇥ regardless, or an unbind would strand a card
+            // with no way to step it.
+            if !isOpen, WorkspaceBindingRegistry.isUnbound(chord) { return nil }
+            // ⇧ picks the direction: ⌃⇥ walks toward less-recent, ⌃⇧⇥ walks back. iOS reports Tab's
+            // usage with and without ⇧ (`UIKey.modifierFlags` carries it), so the flag on the press
+            // is the whole signal — there is no distinct back-tab press to wait for.
+            return .openOrStep(forward: !press.shift)
+        }
+        // Everything below belongs to the terminal until the walk is up. Then, and only then, the
+        // card's four keys are the card's.
+        guard isOpen else { return nil }
+        // Keyed by USAGE alone, modifiers included, exactly as the Mac keys these four by `keyCode`
+        // alone: a stray ⌥ held over Escape is still the reader abandoning the walk.
+        return switch modalKey(press) {
+        case .escape: .cancel
+        case .enter: .commit
+        case .left: .openOrStep(forward: false)
+        case .right: .openOrStep(forward: true)
+        default: nil
+        }
+    }
+
     /// What this press does to the binding being RECORDED in Settings ▸ Key Bindings.
     ///
     /// The same four answers the Mac's recorder gets from ``KeybindingCapture/outcome(keyCode:charactersIgnoringModifiers:command:shift:option:control:)``,
@@ -319,5 +394,44 @@ public struct FloatingCursor: Sendable, Equatable {
     /// Clears the carried remainder — the drag ended.
     public mutating func reset() {
         accumulated = 0
+    }
+}
+
+// MARK: - Spending a switcher key on the workspace
+
+/// The other half of ``PhoneKey/paneSwitcherKey(_:isOpen:)``: turning its answer into the store's own
+/// verbs.
+///
+/// Here rather than in `WorkspaceStore+PaneSwitcher.swift` because it is the phone key path, not the
+/// gesture — it holds no opinion the switcher does not already hold, and every line of it is about a
+/// `PhoneKey.Press`. Here rather than in the responder because a responder the iOS triple compiles is a
+/// responder the macOS runner cannot drive, and that is precisely the blind spot this whole file is
+/// un-gated to close: the defect it fixes shipped green for exactly that reason.
+public extension WorkspaceStore {
+    /// Offers one phone press to the ⌃⇥ walk, answering whether the walk took it.
+    ///
+    /// `false` means the press is the terminal's and must go on down the responder's own path — the
+    /// press was not one of the walk's keys, or it was a ⌃⇥ the walk REFUSED (one pane leaves nothing to
+    /// switch to, and swallowing the chord into a gesture that cannot happen would make ⌃⇥ dead rather
+    /// than harmless).
+    @discardableResult
+    func takePaneSwitcherKey(_ press: PhoneKey.Press) -> Bool {
+        guard let key = PhoneKey.paneSwitcherKey(press, isOpen: paneSwitcher != nil) else {
+            return false
+        }
+        switch key {
+        case let .openOrStep(forward):
+            // `armedByModifier: false`, always. UIKit delivers no press for a bare modifier, so the ⌃
+            // key-up that COMMITS the Mac's gesture never arrives on a phone — arming would leave the
+            // walk waiting on a release that cannot come. This opens the same UNARMED switcher the
+            // palette row opens, whose endings are Return, Esc and a tap on the card.
+            openOrStepPaneSwitcher(forward: forward, armedByModifier: false)
+            return paneSwitcher != nil
+        case .commit:
+            commitPaneSwitcher()
+        case .cancel:
+            cancelPaneSwitcher()
+        }
+        return true
     }
 }

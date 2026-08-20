@@ -161,10 +161,13 @@ public enum WorkspaceAction: Hashable, Sendable {
     case prevTab // ⌘⇧[
     case selectPane(Int) // ⌘1…⌘9 (1-based, the session's flat pane order)
     case paneSwitcher // ⌃⇥ — the press-and-hold MRU switcher. CHORD-LESS in this table on purpose: the live
-    // gesture (open / step / commit-on-⌃-release) cannot be expressed as one chord row, so
-    // `WorkspaceKeyDispatcher` owns ⌃⇥ directly. This entry exists so the switcher is DISCOVERABLE in the
-    // palette / cheat sheet and openable without a keyboard; routing it opens an UNARMED switcher (Return
-    // commits, since no modifier is held to release).
+    // gesture (open / step / commit-on-⌃-release) cannot be expressed as one chord row, so each platform's
+    // key path claims ⌃⇥ directly, ABOVE the table — `WorkspaceKeyDispatcher.consumePaneSwitcher` on macOS,
+    // `TerminalInputHost.takesPaneSwitcherKey` on iOS (both spend `PhoneKey.paneSwitcherKey`'s / their own
+    // reading of the same four keys on the same store verbs). This entry exists so the switcher is
+    // DISCOVERABLE in the palette / cheat sheet and openable without a keyboard; routing it opens an UNARMED
+    // switcher (Return commits, since no modifier is held to release) — which is also what the phone's
+    // hardware ⌃⇥ opens, iOS having no press to report for a bare modifier's release.
     case closeTab // no default chord — closes the active tab (all its panes); reachable via the ⌘W
     // cascade + palette/menu (⌘⇧W is Close Window, so there's no Close-Tab chord)
     case closeWindow // ⌘⇧W — close the active window (→ Session); the close-confirmation surface gates it
@@ -524,9 +527,12 @@ public enum WorkspaceBindingRegistry {
         // cascades pane → tab → window, so a dedicated Close-Tab chord is unnecessary. `chord: nil` keeps the
         // row in the palette / menu; tab close stays reachable via the ⌘W cascade. Pinned chord-less by
         // `TreeCommandRoutingTests`; the ⌘⇧W assignment is explained in DECISIONS.md.
-        // The ⌃⇥ switcher. `chord: nil` — the ⌃⇥ gesture is dispatcher-owned (see the action's comment), and
-        // registering ⌃⇥ here would both misdescribe it (one row cannot mean open/step/commit) and put a
-        // ⌃-only chord in a table whose §5 invariant is "every chord carries ⌘ or ⌥". The glyph rides the
+        // The ⌃⇥ switcher. `chord: nil` — the ⌃⇥ gesture is RESPONDER-owned on both platforms (see the
+        // action's comment), and registering ⌃⇥ here would both misdescribe it (one row cannot mean
+        // open/step/commit, and the walk's Esc / Return / arrows have no row at all) and put a ⌃-only chord
+        // in a table whose §5 invariant is "every chord carries ⌘ or ⌥". A row would also cost the
+        // `unbind: ctrl+tab` escape hatch its meaning: that unbind hands the GESTURE back, which only works
+        // while the gesture is the thing above the table rather than a row inside it. The glyph rides the
         // keywords instead — the established idiom for a chord-less row whose key is worth advertising
         // (cf. `view.viKeyHints` carrying ⌘/).
         WorkspaceBinding(

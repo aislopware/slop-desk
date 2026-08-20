@@ -36,11 +36,23 @@
 //      of real `Button`s on purpose (see ``SlateClickTarget``), and a gesture recogniser here would be
 //      a vocabulary of one.
 //
-// THE HARDWARE KEYBOARD KEEPS THE PATH IT HAS. ⌃⇥ on an iPad reaches the focused terminal's interceptor,
-// resolves to `.paneSwitcher` and steps the store — that is what already works, and this card takes no
-// keyboard focus so it cannot take it away. Nothing here touches
-// ``WorkspaceStore/commitPaneSwitcherOnModifierRelease()``, which stays the Mac's commit and the iPad's
-// the day a modifier stream reaches it.
+// ⌨️ THE HARDWARE KEYBOARD'S PATH IS NOT THIS FILE'S, AND FOR A WHILE IT DID NOT EXIST. An earlier
+// revision of this header claimed ⌃⇥ on an iPad "reaches the focused terminal's interceptor, resolves to
+// `.paneSwitcher` and steps the store — that is what already works". It did not. `pane.switcher` is
+// `chord: nil` in ``WorkspaceBindingRegistry`` on purpose (one row cannot mean open/step/commit, and a
+// ⌃-only chord has no place in a table whose §5 invariant is "every chord carries ⌘ or ⌥"), so ⌃⇥ resolved
+// to nothing, fell through to the key encoder and typed a literal `0x09` into the shell — while Esc,
+// Return and the arrows walked past this card into the PTY behind it, because this card takes no keyboard
+// focus and nothing else was asking.
+//
+// It is `TerminalInputHost.takesPaneSwitcherKey` that claims those keys now, one rung above the pane's own
+// copy/hint mode, exactly as the Mac's `WorkspaceKeyDispatcher.consumePaneSwitcher` claims them above its
+// chord table. WHICH verb a press is is ``PhoneKey/paneSwitcherKey(_:isOpen:)``. The card still takes no
+// keyboard focus and still cannot take one away; what changed is that the responder that HAS focus now
+// knows this card is up. Nothing here touches ``WorkspaceStore/commitPaneSwitcherOnModifierRelease()``,
+// which stays the Mac's commit and the iPad's the day a modifier stream reaches it — the responder opens
+// an UNARMED walk precisely because UIKit delivers no press for a bare modifier, so there is no ⌃ release
+// to commit on.
 
 #if os(iOS)
 import SFSafeSymbols
