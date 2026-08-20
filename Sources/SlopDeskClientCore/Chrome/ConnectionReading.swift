@@ -16,6 +16,10 @@
 //     ABSOLUTE byte threshold (a percent lies in both directions — 2% of 4 TB still builds, 8% of
 //     128 GB does not). CPU never climbs: a build pegging the host is what the machine is FOR, and a
 //     readout that shouts every compile teaches the eye to ignore it.
+//   • WHICH runs a ONE-LINE mount may PROMOTE — ``ConnectionReading/promotedRuns(_:)``. A bedded
+//     island has a second line and draws all three at rest; a navigation toolbar has one line and
+//     can only afford the runs that have something to say. That is the SAME quiet/raised/loud ladder
+//     read as a gate rather than as ink, so no mount can invent its own idea of what an alarm is.
 //
 // What stays in each view layer is the INK and the GLYPH — an alarm rung resolved to a `Color` or an
 // `NSColor`, a metric role resolved to that framework's symbol — which is the same "one value, two
@@ -60,7 +64,7 @@ package enum ConnectionAlarm: Equatable, Sendable {
 /// Processor die, memory module, drive — Activity Monitor's own vocabulary, chosen so the three
 /// differ in SILHOUETTE (a square pinned on four edges, a wide module pinned on one, a slab with a
 /// spindle dot), which is the only difference that survives at the island's size.
-package enum ConnectionMetric: Equatable, Sendable, CaseIterable {
+package enum ConnectionMetric: Hashable, Sendable, CaseIterable {
     case cpu
     case memory
     case disk
@@ -243,6 +247,25 @@ package enum ConnectionReading {
             ))
         }
         return runs
+    }
+
+    /// Whether a run has earned a place on a mount with ONE line to spend. The ladder already draws
+    /// the boundary — `quiet` is the metadata grey a healthy reading rests in — so the gate is that
+    /// boundary read as a yes/no, not a second threshold anyone has to keep in step with the first.
+    package static func promotes(_ alarm: ConnectionAlarm) -> Bool { alarm != .quiet }
+
+    /// The pulse as a ONE-LINE mount draws it: the runs that are ``promotes(_:)``, in ``metricRuns``'
+    /// own order, and NOTHING at all while the host is calm.
+    ///
+    /// The phone's toolbar is one line, and the ambient question — how hard is the host working —
+    /// really is the desktop's: a mount that cannot afford three resting readings should not carry a
+    /// worse version of them. What it must never do is go SILENT on a state the bedded island
+    /// escalates, because a memory verdict of `critical` or a volume with no room left is not
+    /// ambient, it is the reason the next build will fail. So the calm runs stay behind and the
+    /// alarmed ones promote themselves — the reading appears exactly when there is something to see,
+    /// which is also what makes it worth looking at.
+    package static func promotedRuns(_ pulse: HostPulse?) -> [ConnectionMetricRun] {
+        metricRuns(pulse).filter { promotes($0.alarm) }
     }
 
     // MARK: - The words

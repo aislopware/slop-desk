@@ -171,6 +171,83 @@ final class ConnectionReadingTests: XCTestCase {
         }
     }
 
+    /// The ONE-LINE gate: a mount with a single row promotes exactly the runs that are not `quiet`.
+    /// The predicate is the ladder read as a yes/no, so there is no second threshold to keep in step.
+    func testPromotionIsTheAlarmLadderReadAsAGate() {
+        XCTAssertFalse(ConnectionReading.promotes(.quiet))
+        XCTAssertTrue(ConnectionReading.promotes(.raised))
+        XCTAssertTrue(ConnectionReading.promotes(.loud))
+    }
+
+    /// A CALM host adds nothing to a one-line mount — that half of the phone pill's old argument
+    /// stands: the ambient "how hard is the host working" is the desktop's question, and it has a
+    /// second line to answer it on.
+    func testACalmHostPromotesNothing() {
+        XCTAssertEqual(ConnectionReading.promotedRuns(nil), [], "no reading, nothing to promote")
+        XCTAssertEqual(
+            ConnectionReading.promotedRuns(
+                HostPulse(
+                    cpuPercent: 34, memoryPercent: 61, memoryPressure: .normal, diskFreeMiB: 245_760,
+                ),
+            ),
+            [],
+            "three healthy readings are three readings the row does not owe",
+        )
+    }
+
+    /// …and the half that did not: what the bedded island ESCALATES, a one-line mount must still be
+    /// able to say. A `critical` memory verdict and a volume with nothing left on it both promote,
+    /// carrying their own rung with them.
+    func testTheAlarmedRunsPromoteThemselvesCarryingTheirRung() {
+        let warned = ConnectionReading.promotedRuns(
+            HostPulse(cpuPercent: 34, memoryPercent: 88, memoryPressure: .warn, diskFreeMiB: 245_760),
+        )
+        XCTAssertEqual(warned.map(\.metric), [.memory])
+        XCTAssertEqual(warned.map(\.alarm), [.raised])
+        XCTAssertEqual(warned.map(\.value), ["88%"], "the promoted run is the drawn run, not a retelling")
+
+        let both = ConnectionReading.promotedRuns(
+            HostPulse(
+                cpuPercent: 99, memoryPercent: 97, memoryPressure: .critical, diskFreeMiB: 3072,
+            ),
+        )
+        XCTAssertEqual(both.map(\.metric), [.memory, .disk], "and in the island's own order")
+        XCTAssertEqual(both.map(\.alarm), [.loud, .loud])
+    }
+
+    /// CPU can never reach the row, and that is a CONSEQUENCE rather than a second rule: it is the one
+    /// metric whose alarm is pinned quiet, so the gate drops it without ever naming it. A phone that
+    /// lit up for every compile would teach its owner to stop looking.
+    func testCPUCanNeverPromoteHoweverHardTheHostIsWorking() {
+        for percent in [0, 34, 99, 100] {
+            XCTAssertFalse(
+                ConnectionReading.promotedRuns(
+                    HostPulse(cpuPercent: percent, memoryPercent: 61, memoryPressure: .normal),
+                ).contains { $0.metric == .cpu },
+                "cpu at \(percent)% is still just work",
+            )
+        }
+    }
+
+    /// A promoted run is a run the full line would have drawn — same order, same value, same rung. The
+    /// gate may only DROP; if it could ever produce a reading of its own the two mounts would be free
+    /// to disagree about what the host is doing.
+    func testPromotionOnlyEverDropsRunsFromTheDrawnLine() {
+        for pressure in [MetadataCodec.MemoryPressure.normal, .warn, .critical] {
+            for disk in [nil, UInt32(0), 3072, 15360, 245_760] {
+                let pulse = HostPulse(
+                    cpuPercent: 42, memoryPercent: 77, memoryPressure: pressure, diskFreeMiB: disk,
+                )
+                let full = ConnectionReading.metricRuns(pulse)
+                let promoted = ConnectionReading.promotedRuns(pulse)
+                XCTAssertEqual(
+                    promoted, full.filter { $0.alarm != .quiet },
+                    "the one line is a subsequence of the two, never a second reading",
+                )
+            }
+        }
+    }
+
     func testDiskLabelCoarsensWithScaleAndStaysFourCharacters() {
         // Two significant figures is the whole answer to "can I still work here", and a number that
         // only names round values cannot twitch between polls.
