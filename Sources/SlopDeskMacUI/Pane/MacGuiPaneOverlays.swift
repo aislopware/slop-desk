@@ -162,9 +162,15 @@ final class MacStreamStallCaption: NSView {
 /// the same reason: this is the one decoration in the file a click is *for*.
 @MainActor
 final class MacPasteFeedbackBanner: NSButton {
+    /// What this banner reports. Kept so the leaf can tell a NEW feedback from the one already on
+    /// screen — the copy is baked in at init, so a change means a new banner rather than an update,
+    /// and without this the leaf would rebuild it on every observation pass.
+    let feedback: RemoteWindowModel.PasteFeedback
+
     private let onDismiss: () -> Void
 
     init(feedback: RemoteWindowModel.PasteFeedback, onDismiss: @escaping () -> Void) {
+        self.feedback = feedback
         self.onDismiss = onDismiss
         super.init(frame: .zero)
         isBordered = false

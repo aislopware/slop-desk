@@ -6603,6 +6603,14 @@ printf 'check-supervisor: one drop chip drawn twice off one art file, and %s pil
 #
 # Field 1 is the enum's declaring file, 2 the enum, then every renderer that resolves it.
 #
+# THE GUESSED PATH WAS WRONG, and the gate is what caught it. This row was written ahead of the Mac
+# half naming `MacGuiLeafView.swift`, on the reasonable guess that the Mac twin of a 1005-line
+# `GuiLeafView.swift` would be one file too. R10 split it into three, and the upload overlay — the
+# only thing that resolves this table — landed in `MacGuiPaneOverlays.swift` with the rest of the
+# chrome. The row now names the file that HAS the switch. That is the failure mode a
+# written-ahead row is FOR: it went red the day the twin landed, on the file, instead of going
+# quietly green against a path that would never resolve anything.
+#
 # The last three rows are 57b's finding run again over the same shape, and the FIRST of them is not a
 # future risk the way every row above it is: `FindTogglePillAppearance` has BOTH halves shipping
 # today — `TerminalFindBar.swift`'s SwiftUI chips and `MacGlobalSearch.swift`'s `updateLayer` — and
@@ -6626,7 +6634,7 @@ printf 'check-supervisor: one drop chip drawn twice off one art file, and %s pil
 # that silently matched nothing would be a gate that reads as green while pinning air.
 declare -a named_ink_tables=(
   "Sources/SlopDeskClientCore/Pane/DropZonePresentation.swift:DropZoneInk:Sources/SlopDeskClientUI/Pane/PaneDropOverlay.swift:Sources/SlopDeskMacUI/Pane/MacPaneDropOverlay.swift"
-  "Sources/SlopDeskClientCore/Pane/GuiPaneReadout.swift:GuiUploadTint:Sources/SlopDeskClientUI/Pane/GuiLeafView.swift:Sources/SlopDeskMacUI/Pane/MacGuiLeafView.swift"
+  "Sources/SlopDeskClientCore/Pane/GuiPaneReadout.swift:GuiUploadTint:Sources/SlopDeskClientUI/Pane/GuiLeafView.swift:Sources/SlopDeskMacUI/Pane/MacGuiPaneOverlays.swift"
   "Sources/SlopDeskClientCore/Pane/FindBarPresentation.swift:FindTogglePillAppearance:Sources/SlopDeskClientUI/Pane/TerminalFindBar.swift:Sources/SlopDeskMacUI/Overlays/MacGlobalSearch.swift"
   "Sources/SlopDeskClientCore/Pane/PaneStatusPillPresentation.swift:PaneStatusPillFill:Sources/SlopDeskClientUI/Pane/PaneStatusPills.swift:Sources/SlopDeskMacUI/Pane/MacPaneStatusPills.swift"
   "Sources/SlopDeskClientCore/Pane/DropZonePresentation.swift:DropZoneLabelInk:Sources/SlopDeskClientUI/Pane/PaneDropOverlay.swift:Sources/SlopDeskMacUI/Pane/MacPaneDropOverlay.swift"

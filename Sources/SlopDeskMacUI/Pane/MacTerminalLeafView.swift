@@ -823,7 +823,12 @@ private enum MacLeafChipReveal {
             context.allowsImplicitAnimation = true
             body()
         } completionHandler: {
-            retiring?.removeFromSuperview()
+            // The handler is `@Sendable` and `removeFromSuperview` is main-actor isolated, which the
+            // compiler is right to flag: nothing in the handler's TYPE promises which thread runs it.
+            // AppKit always runs it on the main one and simply never annotated that, so the assertion
+            // is the honest spelling — and it traps rather than corrupting a view tree if that ever
+            // stops being true.
+            MainActor.assumeIsolated { retiring?.removeFromSuperview() }
         }
     }
 }
