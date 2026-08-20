@@ -18,7 +18,7 @@ Palette data layer + fuzzy matcher are built and tested. Missing link: the palet
 | **Command palette — files / conversations / repos sources** | partial | `PaletteDataSource.swift:218-228` — `EmptyPaletteSource` stub: protocol slot exists, filter chips register, but `candidates` always returns `[]`; TODO: "host directory-listing wire — logic-api §5.4" |
 | **Command palette — fuzzy matcher** | done | `Palette/FuzzyMatcher.swift` — vendored fzf `FuzzyMatchV2`, smart-case, produces scored `Match` + matched `Range<String.Index>` positions for highlight; verified faithful by `slopdesk-fuzzybench` (0/1387 inversions), goldens in `FuzzyMatcherTests` |
 | **Command palette — keyboard chord (⌘K)** | done | `WorkspaceBindingRegistry.swift:412-415` — `view.palette` binding, chord `⌘K`; routes via `WorkspaceBindingRouting.swift:96` `case .commandPalette: togglePalette?()` |
-| **Command palette — VIEW (SwiftUI overlay)** | missing | No `PaletteView.swift`/`CommandPaletteView.swift` in `Sources/SlopDeskClientUI/`. Old canvas `CommandPaletteView` deleted in L0; rebuild not yet written. |
+| **Command palette — VIEW (SwiftUI overlay)** | missing | No `PaletteView.swift`/`CommandPaletteView.swift` in `Sources/SlopDeskPhoneUI/`. Old canvas `CommandPaletteView` deleted in L0; rebuild not yet written. |
 | **Command palette — OverlayCoordinator mounted in scene** | missing | `SlopDeskClientApp.swift:195` — `WorkspaceKeyDispatcher(store: store)` with NO `togglePalette` closure; `overlayCoordinator(_:)` modifier never called on scene root; coordinator exists but unreachable at runtime |
 | **Command palette — zero-state / recents** | done (model) | `OverlayCoordinator.swift:143-164` — recents ring from `store.recentCommands`, matched back to catalog rows; zero-state shows recents then full catalog; all logic present, blocked by missing view |
 | **Find-in-terminal (⌘F) — pure engine** | done | `Terminal/TerminalSearchController.swift` — literal + regex, case-toggle, overlapping matches, next/prev/wrap, "N of M" label; fully unit-tested by `TerminalSearchControllerTests.swift` |
@@ -34,16 +34,16 @@ Palette data layer + fuzzy matcher are built and tested. Missing link: the palet
 
 ## Key files
 
-- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/Palette/PaletteModel.swift` — `PaletteItem`, `QueryFilter`, `PaletteAction`, `RankedRow`
-- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/Palette/PaletteDataSource.swift` — `ActionsPaletteSource`, `TabsPaletteSource`, `EmptyPaletteSource`, `SearchMixer`
-- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/Palette/FuzzyMatcher.swift` — vendored fzf FuzzyMatchV2
-- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/Overlays/OverlayCoordinator.swift` — palette/settings/toast/cheat-sheet/remote-picker state machine (all unmounted)
-- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/Overlays/OverlayEnvironment.swift` — `\.overlayCoordinator` environment key (never injected at runtime)
+- `/Users/dev/slop-desk/Sources/SlopDeskPhoneUI/Palette/PaletteModel.swift` — `PaletteItem`, `QueryFilter`, `PaletteAction`, `RankedRow`
+- `/Users/dev/slop-desk/Sources/SlopDeskPhoneUI/Palette/PaletteDataSource.swift` — `ActionsPaletteSource`, `TabsPaletteSource`, `EmptyPaletteSource`, `SearchMixer`
+- `/Users/dev/slop-desk/Sources/SlopDeskPhoneUI/Palette/FuzzyMatcher.swift` — vendored fzf FuzzyMatchV2
+- `/Users/dev/slop-desk/Sources/SlopDeskPhoneUI/Overlays/OverlayCoordinator.swift` — palette/settings/toast/cheat-sheet/remote-picker state machine (all unmounted)
+- `/Users/dev/slop-desk/Sources/SlopDeskPhoneUI/Overlays/OverlayEnvironment.swift` — `\.overlayCoordinator` environment key (never injected at runtime)
 - `/Users/dev/slop-desk/Sources/SlopDeskWorkspaceCore/Terminal/TerminalSearchController.swift` — pure ⌘F engine
 - `/Users/dev/slop-desk/Sources/SlopDeskWorkspaceCore/Workspace/Domain/WorkspaceBindingRegistry.swift` — `WorkspaceAction` enum, `WorkspaceBinding` table, glyph renderer
 - `/Users/dev/slop-desk/Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceBindingRouting.swift` — `route(_:to:togglePalette:toggleFind:...)` dispatch
-- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/Input/WorkspaceKeyDispatcher.swift` — app-level `NSEvent` monitor (wired with NO overlay closures)
-- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/SlopDeskClientApp.swift` — scene root; `WorkspaceKeyDispatcher(store: store)` at line 195 (missing togglePalette/toggleCheatSheet/toggleFind)
+- `/Users/dev/slop-desk/Sources/SlopDeskPhoneUI/Input/WorkspaceKeyDispatcher.swift` — app-level `NSEvent` monitor (wired with NO overlay closures)
+- `/Users/dev/slop-desk/Sources/SlopDeskPhoneUI/SlopDeskClientApp.swift` — scene root; `WorkspaceKeyDispatcher(store: store)` at line 195 (missing togglePalette/toggleCheatSheet/toggleFind)
 - `/Users/dev/slop-desk/ThirdParty/ghostty/integration/GhosttySurface/GhosttyTerminalView.swift:1169,1230` — `onRequestFind` wired from production renderer
 
 ---

@@ -258,8 +258,7 @@ final class MacViModePill: NSView {
     /// this is the net for the case where Esc lands in the PILL's chain instead — a click on the `×`
     /// leaves focus here — and it leaves through the SAME `onExit` seam the `×` fires.
     ///
-    /// `cancelOperation(_:)` is the AppKit half of ``View/slateCancelKey(perform:)``, and the reason
-    /// that helper exists: AppKit routes Esc AND ⌘. up the responder chain, so this fires from
+    /// `cancelOperation(_:)` is AppKit's spelling of what the phone spells ``View/slateCancelKey(perform:)``: AppKit routes Esc AND ⌘. up the responder chain, so this fires from
     /// anywhere at or below the pill without anyone tapping the event stream. Installing a local
     /// monitor here would be a second reader of the same key, and is banned in this directory.
     override func cancelOperation(_: Any?) {

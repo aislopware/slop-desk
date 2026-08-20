@@ -59,7 +59,6 @@ let package = Package(
         // SwiftUI half render one design instead of two.
         .library(name: "SlopDeskSlate", targets: ["SlopDeskSlate"]),
         // REBUILD-V2: thin SwiftUI layer over SlopDeskWorkspaceCore, over the `SlopDeskSlate` tokens.
-        .library(name: "SlopDeskClientUI", targets: ["SlopDeskClientUI"]),
         // docs/56 stage C: the two APP SHELLS. Each Xcode app target links exactly one of them, and
         // neither imports the other — the products exist so the two `@main`s can be linked apart.
         .library(name: "SlopDeskMacUI", targets: ["SlopDeskMacUI"]),
@@ -80,7 +79,7 @@ let package = Package(
         // No `slopdesk-ctl` product: the agent-control CLI is Rust (`rust/slopdesk-ctl`), built by
         // `make ctl` and shipped straight out of `rust/target/release`.
     ],
-    // External UI deps — attach ONLY to `SlopDeskClientUI` so the headless core + wire/codec/controller
+    // External UI deps — attach ONLY to the UI targets so the headless core + wire/codec/controller
     // targets stay dependency-free (`swift test` / golden never fetch). Trades "clean checkout builds
     // with no prerequisite" for SPM resolution; versions pinned in Package.resolved. KeyboardShortcuts
     // is macOS-only → platform-conditioned.
@@ -443,11 +442,11 @@ let package = Package(
             linkerSettings: ffiCLibraries,
         ),
 
-        // docs/56: the DESIGN FLOOR. `SlopDeskClientUI` is the DRAINING target — when the last macOS
-        // surface leaves it, what is left is the phone's and it is renamed `SlopDeskPhoneUI`. The
-        // token ladder cannot ride that rename: `SlopDeskMacUI` reads ~200 of these constants, and an
-        // AppKit target importing the phone's would be exactly the common view ancestor docs/56 §3
-        // forbids. So the floor is its own target, BELOW both halves.
+        // docs/56: the DESIGN FLOOR. It exists because `SlopDeskClientUI` was the DRAINING target and
+        // the token ladder could not ride its rename: `SlopDeskMacUI` reads ~200 of these constants,
+        // and an AppKit target importing the phone's would be exactly the common view ancestor
+        // docs/56 §3 forbids. So the floor is its own target, BELOW both halves. The rename landed in
+        // increment 63 and the floor did not move, which is the whole of why it was carved out.
         //
         // The line it holds is "a value, never a `some View`": `Slate` (the ladder, in `NSColor`/
         // `UIColor` AND in `Color`), `StatusDot`/`StatusMark`/`StatusDotStyle`, `AgentSpinner`'s
@@ -473,14 +472,25 @@ let package = Package(
             ],
         ),
 
-        // REBUILD-V2: `SlopDeskClientUI` — pure SwiftUI views over `SlopDeskWorkspaceCore`, STOCK
-        // SwiftUI + SYSTEM semantic colours/fonts (no custom token target — the old
-        // `SlopDeskDesignSystem` was deleted in L0). The app SCENE + native IDE shell land here; the
-        // pane/terminal/video content stays behind the `TerminalRendererFactory`/`VideoWindowFactory`
-        // seams (renders the headless placeholder in `swift build`/tests — NO libghostty/Metal/
-        // VideoToolbox). L0 ships a placeholder scene; L1+ rebuild the real shell.
+        // docs/56 stage C: the iOS APP SHELL, and THE FOLD LANDED HERE (increment 63). `Apps/ClientApp-iOS`
+        // links this and nothing else of the UI; it is the only target that carries an iOS `@main`.
+        //
+        // It used to be two targets. `SlopDeskClientUI` was the shared SwiftUI view layer both shells
+        // rendered, and `SlopDeskPhoneUI` was a five-line scene sitting on top of it. Stage D rewrote
+        // every macOS surface in AppKit and each one landed in `SlopDeskMacUI` as its SwiftUI original
+        // was deleted, so the shared target drained from both ends until nothing in it was shared —
+        // at which point "the phone's views" and "the phone's scene" were two names for one thing.
+        // Increment 61 cut the last dependency edge, 62 cut the last test edge, and this target is
+        // what the two of them collapsed into. There is no draining floor left to drain.
+        //
+        // The two shells ship the SAME product: every feature the Mac has, the phone and the iPad have,
+        // laid out for the device. What is NOT owed is the same arrangement.
+        //
+        // Every file is guarded `#if os(iOS)` — the ONE allowed platform gate (docs/56 §3), because
+        // `swift build` compiles every SwiftPM target on the host triple and this one has nothing to
+        // say there. Inside that guard there is no second gate.
         .target(
-            name: "SlopDeskClientUI",
+            name: "SlopDeskPhoneUI",
             dependencies: [
                 "SlopDeskWorkspaceCore",
                 // docs/56: the design floor both halves render.
@@ -557,7 +567,7 @@ let package = Package(
         // THE EDGE IS CUT IN THE MANIFEST, not just in the imports, and that is the difference between
         // a convention and a fact. A `check-supervisor` census of `import` lines is a good ratchet and
         // it is still there; a dependency the graph does not contain is a line that cannot compile. The
-        // fold (`SlopDeskClientUI` → `SlopDeskPhoneUI`) is now a rename with nothing above it.
+        // fold (`SlopDeskClientUI` → `SlopDeskPhoneUI`) landed in increment 63, unblocked by this.
         .target(
             name: "SlopDeskMacUI",
             dependencies: [
@@ -584,26 +594,6 @@ let package = Package(
                 // `SFSymbol`s by `StatusPresentation`, and an `NSImage(systemSymbolName:)` needs the
                 // name, not a stringly-typed guess at it.
                 .product(name: "SFSafeSymbols", package: "SFSafeSymbols"),
-            ],
-        ),
-
-        // docs/56 stage C: the iOS APP SHELL. `Apps/ClientApp-iOS` links this and nothing else of the
-        // UI; it is the only target that carries an iOS `@main`.
-        //
-        // The whole target is guarded `#if os(iOS)` — the ONE allowed platform gate, because `swift
-        // build` compiles every SwiftPM target on the host triple and this one has nothing to say
-        // there. Inside that guard there is no second gate.
-        //
-        // The two shells ship the SAME product: every feature the Mac has, the phone and the iPad have,
-        // laid out for the device. What is NOT owed is the same arrangement.
-        .target(
-            name: "SlopDeskPhoneUI",
-            dependencies: [
-                "SlopDeskClientUI",
-                "SlopDeskSlate",
-                "SlopDeskClientCore",
-                "SlopDeskWorkspaceCore",
-                "SlopDeskWorkspaceModel",
             ],
         ),
 
@@ -871,7 +861,7 @@ let package = Package(
         // FuzzyMatchV2 port behind the command palette) against the REAL `fzf --filter` binary and a
         // Bitap (Fuse-style) baseline on a shared corpus — reports ranking parity (match-set + top-K
         // agreement) and throughput. macOS dev instrument: shells out to `fzf` when present (skips that
-        // comparison otherwise), so it is NOT part of `swift test`. Depends on SlopDeskClientUI for
+        // comparison otherwise), so it is NOT part of `swift test`. Depends on SlopDeskClientCore for
         // `FuzzyMatcher`. `swift run -c release slopdesk-fuzzybench [scaleN]`.
         .executableTarget(name: "slopdesk-fuzzybench", dependencies: ["SlopDeskClientCore"]),
 
@@ -1012,21 +1002,20 @@ let package = Package(
                 "SlopDeskSlate", "SlopDeskClientCore", "SlopDeskAgentDetect", "SlopDeskWorkspaceCore",
             ],
         ),
-        // Client UI: view-logic tests for the rebuilt native-SwiftUI chrome. VIEW-MODEL level only —
-        // never instantiates Ghostty/VT/Metal/SCStream (the hang-safety rule); the renderer/video views
-        // stay behind the factory seams. L0 carries only a placeholder test (the old Warp-clone view +
-        // design-system tests were deleted with their views); L1+ re-add per-layer view-logic tests.
-        .testTarget(
-            name: "SlopDeskClientUITests",
-            // `TerminalGridFitTests` and `SlateSnapshotRender` name `SlopDeskTerminal`'s grid + surface
-            // types directly — declare the (already-transitive) module explicitly. `SlopDeskClientCore`
-            // for the same reason: ~10 files here read a presentation verdict, and increment 54 moved
-            // the driver they used to reach it through one target down.
-            dependencies: [
-                "SlopDeskClientUI", "SlopDeskSlate", "SlopDeskClientCore", "SlopDeskWorkspaceCore",
-                "SlopDeskProtocol", "SlopDeskTerminal",
-            ],
-        ),
+        // ⚠️ THERE IS NO `SlopDeskPhoneUITests` HERE, and its absence is a consequence, not an omission
+        // (docs/56, increment 63). `SlopDeskPhoneUI` is iOS-only — every file in it is inside the one
+        // allowed `#if os(iOS)` — and SwiftPM compiles every target on the HOST triple. So on macOS
+        // that module compiles to NOTHING, and a `@testable import` of it yields an empty module: a
+        // suite here could only ever be a set of files that either fail to compile or, once guarded to
+        // match, assert nothing. Neither is a test. The phone's suite lives in the iOS bundle that can
+        // actually run it — `Apps/ClientApp-iOS/Tests/`, driven by `make check-ios-tests` on a booted
+        // simulator — and that is the ONLY place a phone view is exercised.
+        //
+        // This is the same trap increment 62 found the first time: normalising the guard silently
+        // removes files from `make check` while every gate stays green, because a test that does not
+        // COMPILE INTO the run is indistinguishable from a test that ran and passed. The suite was
+        // drained deliberately rather than guarded in place, so that nothing is left claiming coverage
+        // it does not have.
         // docs/56 stage C: the macOS SHELL's own suite, moved out of `SlopDeskClientUITests` with the
         // code. All four are pure decisions the AppKit shims delegate to — should ⌘Q ask before
         // quitting, does the drain reply once and only once, does a `windowShouldClose` resolve, does
@@ -1034,13 +1023,15 @@ let package = Package(
         // (the key-window gate takes `AnyObject` for exactly that reason).
         .testTarget(
             name: "SlopDeskMacUITests",
-            // ⚠️ `SlopDeskClientUI` IS NOT NAMED, and the omission is the point (docs/56 fold, F3). It
+            // ⚠️ `SlopDeskPhoneUI` IS NOT NAMED, and the omission is the point (docs/56 fold, F3). It
             // used to be, for a chord suite that drove `WorkspaceKeyDispatcher` against seams the
             // shared view target owned — that dispatcher is `SlopDeskMacUI`'s now, and increment 62
             // paid the last two crossings (the two snapshot rigs, which drew the phone's project bed
             // and field plate). With the edge cut in the MANIFEST, a rig reaching back for one
             // `some View` is a compile error rather than a convention, the same way the source edge
-            // was made a fact in increment 61.
+            // was made a fact in increment 61. The target was called `SlopDeskClientUI` when that edge
+            // was cut; increment 63 renamed it, and the gate below follows the NAME rather than the
+            // history, or it would guard a target that no longer exists.
             dependencies: [
                 "SlopDeskMacUI", "SlopDeskSlate", "SlopDeskClientCore",
                 "SlopDeskWorkspaceCore",

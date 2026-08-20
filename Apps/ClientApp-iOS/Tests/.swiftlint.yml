@@ -1,0 +1,21 @@
+# Nested config for the iOS bundle's test tree — the same relaxations `Tests/.swiftlint.yml` grants
+# the SwiftPM test tree, for the same reason: a test SHOULD force-unwrap/try!/as! a known-good fixture
+# (you want it to crash loudly on an unexpected shape), and `var sut: Foo!` in setUp is the standard
+# pattern. The pure assertion-style rules are test-noise. Everything else (correctness, the bug rules)
+# stays on here too.
+#
+# It exists because this directory is a SECOND test tree: `Apps/ClientApp-iOS/Tests` holds the iOS-triple
+# XCTest bundle (`scripts/check-ios-tests.sh`), which since docs/56 F4c is where every `SlopDeskPhoneUI`
+# view suite lives — `SlopDeskPhoneUI` is `#if os(iOS)` end to end, so the macOS `swift test` host cannot
+# compile one. Without this file those suites would be linted under the SOURCE rules purely because of
+# which directory the split moved them to.
+disabled_rules:
+  - force_unwrapping
+  - force_try
+  - force_cast
+  - implicitly_unwrapped_optional
+  - xct_specific_matcher
+  - xctfail_message
+  - balanced_xctest_lifecycle
+  - single_test_class
+  - non_overridable_class_declaration

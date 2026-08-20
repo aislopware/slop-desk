@@ -114,26 +114,26 @@ All assessment is against the macOS path unless noted.
 
 ## Key files
 
-- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/SlopDeskClientApp.swift` — app scene, store/connection init, lifecycle
-- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/WorkspaceRootView.swift` — root SwiftUI view, iOS split view
-- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/App/SlopDeskSplitViewController.swift` — macOS 3-column AppKit shell
-- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/App/WorkspaceChromeState.swift` — sidebar/inspector collapse flags
-- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/Chrome/SlateTitlebar.swift` — hover-reveal titlebar + title menu
-- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/Chrome/SlateTabRow.swift` — sidebar tab row + sort hamburger
-- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/Chrome/InPaneChooserView.swift` — in-pane new-pane chooser
-- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/Columns/NavigatorColumn.swift` — left sidebar column
-- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/Columns/ContentColumn.swift` — centre content + titlebar overlay
-- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/Columns/InspectorColumn.swift` — right details panel
-- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/Pane/SplitContainer.swift` — absolute-rect pane compositor + drag drop zones
-- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/Pane/PaneContainer.swift` — per-leaf view (routing + resize scrim + focus dim)
-- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/Pane/PaneDivider.swift` — live-resize drag handle
-- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/Pane/PaneMoveAffordance.swift` — grab-pill + drag overlay + drop zones
-- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/Rail/RailRowsBuilder.swift` — pure store→rail row mapping (carries `ClaudeStatus`)
-- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/Overlays/OverlayCoordinator.swift` — palette/settings/toast/cheat-sheet state (unmounted)
-- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/Overlays/ContextMenuModel.swift` — pane/tab context menu item catalog (unrendered)
-- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/App/ConnectionStatusPill.swift` — connection status pill
-- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/App/StatusPresentation.swift` — connection + agent colour/label mapping
-- `/Users/dev/slop-desk/Sources/SlopDeskClientUI/Input/WorkspaceKeyDispatcher.swift` — NSEvent keybinding dispatcher
+- `/Users/dev/slop-desk/Sources/SlopDeskPhoneUI/SlopDeskClientApp.swift` — app scene, store/connection init, lifecycle
+- `/Users/dev/slop-desk/Sources/SlopDeskPhoneUI/WorkspaceRootView.swift` — root SwiftUI view, iOS split view
+- `/Users/dev/slop-desk/Sources/SlopDeskPhoneUI/App/SlopDeskSplitViewController.swift` — macOS 3-column AppKit shell
+- `/Users/dev/slop-desk/Sources/SlopDeskPhoneUI/App/WorkspaceChromeState.swift` — sidebar/inspector collapse flags
+- `/Users/dev/slop-desk/Sources/SlopDeskPhoneUI/Chrome/SlateTitlebar.swift` — hover-reveal titlebar + title menu
+- `/Users/dev/slop-desk/Sources/SlopDeskPhoneUI/Chrome/SlateTabRow.swift` — sidebar tab row + sort hamburger
+- `/Users/dev/slop-desk/Sources/SlopDeskPhoneUI/Chrome/InPaneChooserView.swift` — in-pane new-pane chooser
+- `/Users/dev/slop-desk/Sources/SlopDeskPhoneUI/Columns/NavigatorColumn.swift` — left sidebar column
+- `/Users/dev/slop-desk/Sources/SlopDeskPhoneUI/Columns/ContentColumn.swift` — centre content + titlebar overlay
+- `/Users/dev/slop-desk/Sources/SlopDeskPhoneUI/Columns/InspectorColumn.swift` — right details panel
+- `/Users/dev/slop-desk/Sources/SlopDeskPhoneUI/Pane/SplitContainer.swift` — absolute-rect pane compositor + drag drop zones
+- `/Users/dev/slop-desk/Sources/SlopDeskPhoneUI/Pane/PaneContainer.swift` — per-leaf view (routing + resize scrim + focus dim)
+- `/Users/dev/slop-desk/Sources/SlopDeskPhoneUI/Pane/PaneDivider.swift` — live-resize drag handle
+- `/Users/dev/slop-desk/Sources/SlopDeskPhoneUI/Pane/PaneMoveAffordance.swift` — grab-pill + drag overlay + drop zones
+- `/Users/dev/slop-desk/Sources/SlopDeskPhoneUI/Rail/RailRowsBuilder.swift` — pure store→rail row mapping (carries `ClaudeStatus`)
+- `/Users/dev/slop-desk/Sources/SlopDeskPhoneUI/Overlays/OverlayCoordinator.swift` — palette/settings/toast/cheat-sheet state (unmounted)
+- `/Users/dev/slop-desk/Sources/SlopDeskPhoneUI/Overlays/ContextMenuModel.swift` — pane/tab context menu item catalog (unrendered)
+- `/Users/dev/slop-desk/Sources/SlopDeskPhoneUI/App/ConnectionStatusPill.swift` — connection status pill
+- `/Users/dev/slop-desk/Sources/SlopDeskPhoneUI/App/StatusPresentation.swift` — connection + agent colour/label mapping
+- `/Users/dev/slop-desk/Sources/SlopDeskPhoneUI/Input/WorkspaceKeyDispatcher.swift` — NSEvent keybinding dispatcher
 - `/Users/dev/slop-desk/Sources/SlopDeskWorkspaceCore/Workspace/Domain/Tree/TreeWorkspace.swift` — top-level domain model
 - `/Users/dev/slop-desk/Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceBindingRouting.swift` — action → store-op dispatch (single source of truth)
 

@@ -6,7 +6,7 @@ web view.
 
 Everything below the fold is **measured**, not read from a spec: `baguette` publishes no wire
 document, so the dialect was recorded off a live `baguette serve` on 2026-08-04 and the byte-level
-claims here are what the fixtures in `Tests/SlopDeskClientUITests/Simulator*Tests.swift` pin. If the
+claims here are what the fixtures in `Tests/SlopDeskDevicePanelsTests/Simulator*Tests.swift` pin. If the
 Homebrew formula moves, re-measure before changing the decoder.
 
 ---

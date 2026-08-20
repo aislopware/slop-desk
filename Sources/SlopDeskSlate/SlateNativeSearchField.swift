@@ -1,9 +1,13 @@
 // SlateNativeSearchField — the FOOTNOTE-sized chrome input's AppKit configuration, in one place.
 //
-// The navigator's search bar is an `NSSearchField` the Mac's column owns outright (docs/56 stage D);
-// the device panels' filter rows are still a SwiftUI ``SlateSearchField`` wrapping the same class.
-// Both plates are the same input, so the jump-free configuration below is minted once and neither
-// half re-spells it.
+// TWO Mac surfaces spell this input — the navigator's search bar (``MacNavigatorColumn``) and the
+// device panels' filter rows (``MacDevicePanelParts``) — and they are the same plate, so the
+// jump-free configuration below is minted once and neither of them re-spells it.
+//
+// It is now AppKit's alone. The phone's ``SlateSearchField`` used to be an `NSViewRepresentable` over
+// this very class; increment 63 made `SlopDeskPhoneUI` iOS-only and that wrapper went with the arm,
+// leaving a plain SwiftUI `TextField` there. The measurement below is a macOS text-path fact, so
+// nothing was lost in the split — but do not read this file as one half of a pair any more.
 //
 // The macOS reason, in full. SwiftUI `TextField` is the wrong tool at this one size: at
 // `Slate.Typeface.footnote` (11pt) its text renders 1pt LOWER unfocused than focused, so

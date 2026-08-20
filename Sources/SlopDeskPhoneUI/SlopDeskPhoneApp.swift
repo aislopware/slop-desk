@@ -21,7 +21,6 @@
 
 #if os(iOS)
 import SlopDeskClientCore
-import SlopDeskClientUI
 import SlopDeskSlate
 import SlopDeskWorkspaceCore
 import SwiftUI

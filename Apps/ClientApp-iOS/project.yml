@@ -21,6 +21,13 @@ options:
 packages:
   SlopDesk:
     path: ../..
+  # Type-safe SF Symbols. Declared HERE only because the test bundle's render harness
+  # (`Tests/SlateSnapshotRender.swift`) redraws a mark's `StatusMark/systemSymbol` at magnified sizes and
+  # so names `Image(systemSymbol:)` itself. Same requirement as `Package.swift`'s, so SwiftPM resolves ONE
+  # copy for the whole graph.
+  SFSafeSymbols:
+    url: https://github.com/SFSafeSymbols/SFSafeSymbols.git
+    from: 7.0.0
 
 targets:
   ClientApp-iOS:
@@ -119,24 +126,48 @@ targets:
   # asserted against the WRONG branch there. A HOST-LESS logic bundle on purpose: it needs no app, no
   # window server and no libghostty, so `scripts/check-ios-tests.sh` can load it straight into the
   # simulator's `xctest` agent.
+  #
+  # docs/56 F4c: it is ALSO the home of every `SlopDeskPhoneUI` view test, because `SlopDeskPhoneUI` is
+  # `#if os(iOS)` end to end — the SwiftPM test target that used to hold them (`SlopDeskPhoneUITests`)
+  # could only ever compile against an EMPTY module on the macOS host, so it was deleted rather than
+  # left reading as a live rule. That includes the phone's opt-in PIXEL rigs (`SlateSnapshotRender`,
+  # `ToastStackViewTests`, `ToastStateGalleryTests`), which `XCTSkip` unless their `SLOPDESK_*` env var
+  # is set and so cost this gate compile coverage only. The Mac's rigs stay in `Tests/SlopDeskMacUITests`.
   ClientApp-iOSTests:
     type: bundle.unit-test
     platform: iOS
     sources:
       - path: Tests
+        # `Tests/.swiftlint.yml` is the nested lint config for this tree (the test relaxations the
+        # SwiftPM `Tests/` tree already gets), not a bundle resource — keep it out of the target.
+        excludes:
+          - ".swiftlint.yml"
       # The `makeSession` seam's test double, SHARED with `SlopDeskWorkspaceCoreTests` rather than
       # copied: a second `FakePaneSession` would drift from `PaneSessionHandle` and the iOS suite
-      # would start proving things about a conformance the store no longer has.
+      # which arrived with `SharedFocusSettingTests` in F4c, is a narrower double of the SAME seam and
+      # is now redundant against this one — see the ⚠️ in its own file.)
       - path: ../../Tests/SlopDeskWorkspaceCoreTests/Workspace/Support/FakePaneSession.swift
     dependencies:
       - package: SlopDesk
-        product: SlopDeskClientUI
+        product: SlopDeskPhoneUI
       - package: SlopDesk
         product: SlopDeskWorkspaceCore
       - package: SlopDesk
         product: SlopDeskTerminal
       - package: SlopDesk
         product: SlopDeskProtocol
+      # The view suites' two floors below the phone shell: the seam types + the toast/chip models
+      # (`SlopDeskClientCore`) and the design tokens every render stands on (`SlopDeskSlate`). Both are
+      # `@testable`-imported — this bundle is an Xcode target OUTSIDE the SwiftPM package, so a plain
+      # `import` cannot see a `package` declaration, which is what the whole `Slate` ladder is.
+      - package: SlopDesk
+        product: SlopDeskClientCore
+      - package: SlopDesk
+        product: SlopDeskSlate
+      # `SlateSnapshotRender` redraws a status mark's symbol at magnified sizes, so it names
+      # `Image(systemSymbol:)` directly rather than borrowing the shipping view's.
+      - package: SFSafeSymbols
+        product: SFSafeSymbols
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.slopdesk.client.ios.tests

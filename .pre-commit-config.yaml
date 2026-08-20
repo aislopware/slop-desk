@@ -173,9 +173,10 @@ repos:
       # `SlopDeskFFI.xcframework` — a push that only moves Rust would otherwise skip the Swift gate
       # entirely, which is the same blind spot the green-tree cache had inside the script until the
       # artifact stamp joined its key. `golden/` pins the wire, `Package.*` decides the graph, and
-      # `scripts/` is read off DISK at runtime by the gate-contract tests in `SlopDeskClientUITests`
-      # — `test-touched.sh` already attributes a scripts change to that target, so leaving it out
-      # here meant the fast inner loop knew about an input the push gate did not.
+      # `scripts/` is read off DISK at runtime by the gate-contract tests (`LaunchRestoreGateContract`
+      # in `SlopDeskWorkspaceCoreTests`, `GuiGateLaunchContract` in `SlopDeskClientCoreTests`) —
+      # `test-touched.sh` already attributes a scripts change to those targets, so leaving it out here
+      # meant the fast inner loop knew about an input the push gate did not.
       #
       # `make test`, NOT `bash scripts/pre-push-test.sh` directly. Eighteen suites boot a real
       # sidecar — superd, screend, dropd — and every one of them `XCTSkip`s by name when its binary

@@ -7,7 +7,7 @@ import XCTest
 /// The letterbox, at the geometry it exists for (docs/45 §8.3 rule 7).
 ///
 /// `TerminalLetterbox` is a pure value so its arithmetic can be tested anywhere, and
-/// `Tests/SlopDeskClientUITests/TerminalGridFitTests` does that. What only the iOS triple can say is
+/// `Tests/SlopDeskWorkspaceCoreTests/TerminalGridFitTests` does that. What only the iOS triple can say is
 /// that the numbers a PHONE actually feeds it produce a letterbox rather than a degenerate rect: the
 /// view that calls it, `TerminalLetterboxContainer`, is `#if os(iOS)` and is compiled by nothing else.
 final class TerminalLetterboxOnIOSTests: XCTestCase {

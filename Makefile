@@ -316,7 +316,7 @@ quick: ffi lint ## The INNER LOOP: lint + only the tests the change reaches + go
 	exit $$rc
 
 # `swift build` compiles the macOS slice ONLY — it never type-checks a `#if os(iOS)` source, so the
-# UIKit input host and the iOS components in Sources/SlopDeskClientUI/iOS/ compiled only in someone's
+# UIKit input host and the iOS components in Sources/SlopDeskPhoneUI/iOS/ compiled only in someone's
 # head. `scripts/check-ios.sh` has existed for exactly that and was reachable from no target, no
 # hook and no workflow. It was also RED: two xcframeworks each shipped `Headers/module.modulemap`,
 # Xcode copies both to `$BUILT_PRODUCTS_DIR/include/`, and neither app had built on either platform

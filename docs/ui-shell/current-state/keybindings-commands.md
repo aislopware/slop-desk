@@ -55,14 +55,14 @@ The keybinding/command-routing stack is **substantially complete** for the core 
 - `Sources/SlopDeskWorkspaceCore/Workspace/Domain/WorkspaceBindingRegistry.swift` — single source of truth: all `WorkspaceAction` cases, `WorkspaceBinding` rows, `chordTable`, `sequenceTable`, `glyph()` helpers
 - `Sources/SlopDeskWorkspaceCore/Workspace/Domain/WorkspaceBindingOverrides.swift` — W13 override layer: `resolvedChordTable`, `resolvedSequenceTable`, `resolvedChord(for:)`, `resolvedSequence(for:)`; `KeybindingPreferences.KeyChord/KeySequence → registry` mapping
 - `Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceBindingRouting.swift` — `route()` dispatcher: action → `WorkspaceStore` tree op
-- `Sources/SlopDeskClientUI/Input/WorkspaceKeyDispatcher.swift` — live NSEvent monitor + `PrefixStateMachine` wiring (macOS only)
+- `Sources/SlopDeskPhoneUI/Input/WorkspaceKeyDispatcher.swift` — live NSEvent monitor + `PrefixStateMachine` wiring (macOS only)
 - `Sources/SlopDeskWorkspaceCore/Workspace/Store/CommandInterpreter.swift:369` — `PrefixStateMachine` + `PrefixIntent` enum (pure, AppKit-free)
 - `Sources/SlopDeskWorkspaceCore/Workspace/Store/TerminalKeyInterceptor.swift` — per-surface fallback interceptor (libghostty surface `keyDown`)
 - `Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceStore+Keybinding.swift` — `wireKeyInterceptor()` wiring point
-- `Sources/SlopDeskClientUI/Overlays/OverlayCoordinator.swift` — overlay state machine (palette / cheat sheet / settings / connect / remote picker)
-- `Sources/SlopDeskClientUI/Palette/PaletteDataSource.swift` — `ActionsPaletteSource.catalog`, `TabsPaletteSource`, `SearchMixer`, `EmptyPaletteSource`
-- `Sources/SlopDeskClientUI/SlopDeskClientApp.swift:195,234` — dispatcher construction (missing toggle closures) + install
-- `Sources/SlopDeskClientUI/Settings/KeybindingsEditorView.swift` — Settings > Keybindings UI
+- `Sources/SlopDeskPhoneUI/Overlays/OverlayCoordinator.swift` — overlay state machine (palette / cheat sheet / settings / connect / remote picker)
+- `Sources/SlopDeskPhoneUI/Palette/PaletteDataSource.swift` — `ActionsPaletteSource.catalog`, `TabsPaletteSource`, `SearchMixer`, `EmptyPaletteSource`
+- `Sources/SlopDeskPhoneUI/SlopDeskClientApp.swift:195,234` — dispatcher construction (missing toggle closures) + install
+- `Sources/SlopDeskPhoneUI/Settings/KeybindingsEditorView.swift` — Settings > Keybindings UI
 - `Sources/SlopDeskVideoProtocol/Settings/KeybindingPreferences.swift` — serialisable override model
 - `Tests/SlopDeskWorkspaceCoreTests/Workspace/TreeCommandRoutingTests.swift` — routing correctness + chord-uniqueness pins
 - `Tests/SlopDeskWorkspaceCoreTests/Workspace/PrefixStateMachineTests.swift` — prefix machine unit tests

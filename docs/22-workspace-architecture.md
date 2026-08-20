@@ -13,7 +13,7 @@ Base design: **domain-model-first** (tree-of-intent vs table-of-liveness), pure 
 LOAD-BEARING facts, verified against the code:
 
 - `SlopDeskClient` is a concrete `public actor` (`Sources/SlopDeskClient/SlopDeskClient.swift:42`) with `init(ackInterval:)` — **no protocol seam**.
-- `ConnectionViewModel.makeClient` is `@Sendable () -> SlopDeskClient` — the *concrete* type (`Sources/SlopDeskClientUI/Connection/ConnectionViewModel.swift:54,82`). `InputBarModel.submit/sendRaw/sendText` also take the concrete type.
+- `ConnectionViewModel.makeClient` is `@Sendable () -> SlopDeskClient` — the *concrete* type (`Sources/SlopDeskPhoneUI/Connection/ConnectionViewModel.swift:54,82`). `InputBarModel.submit/sendRaw/sendText` also take the concrete type.
 - The only existing `ConnectionViewModel` test stands up a **real `HostServer`** — forbidden for new tests (it deadlocks the pool).
 - The only in-process no-network seam today is `LoopbackByteChannel.pair()` for the Inspector (`Sources/SlopDeskInspector/InspectorChannel.swift:145`).
 
@@ -73,7 +73,7 @@ The store **reconciles** the two: after every tree mutation, `reconcile()` diffs
 
 ## 2. Data model (full Swift sketches)
 
-All pure-domain types are `Sendable + Codable + Equatable`, no `import SwiftUI`, no `import SlopDeskClient`. They live under `Sources/SlopDeskClientUI/Workspace/Domain/`.
+All pure-domain types are `Sendable + Codable + Equatable`, no `import SwiftUI`, no `import SlopDeskClient`. They live under `Sources/SlopDeskPhoneUI/Workspace/Domain/`.
 
 ```swift
 // ---- Identity ----
@@ -413,7 +413,7 @@ Net: `swift build` + `swift test` (the existing suite + new pure/fake tests) + `
 
 ## 9. File-by-file map
 
-### Create — pure domain (`Sources/SlopDeskClientUI/Workspace/Domain/`)
+### Create — pure domain (`Sources/SlopDeskPhoneUI/Workspace/Domain/`)
 - `PaneNode.swift` — recursive enum + pure ops.
 - `PaneSpec.swift` — `PaneKind`, `Endpoint`, `VideoEndpoint`, `PaneSpec`.
 - `Tab.swift` — `Tab`, `TabID`, `PaneID`, `SplitAxis`, `FocusDirection`.
@@ -423,14 +423,14 @@ Net: `swift build` + `swift test` (the existing suite + new pure/fake tests) + `
 - `FocusResolver.swift` — geometric neighbor + cycle.
 - `CompactLayoutResolver.swift` — pages / selectedIndex / swipe focus.
 
-### Create — store + commands (`Sources/SlopDeskClientUI/Workspace/Store/`)
+### Create — store + commands (`Sources/SlopDeskPhoneUI/Workspace/Store/`)
 - `WorkspaceStore.swift` — store + registry + reconcile + bootstrapFromEnvironment.
 - `PaneSessionHandle.swift` — protocol + `LivePaneSession`.
 - `WorkspaceLayout.swift` — pure isCompact decision (size-class/width).
 - `WorkspacePersistence.swift` — debounced load/save.
 - `CommandInterpreter.swift` — pure command state machine + `WorkspaceCommand` + `apply`.
 
-### Create — views (`Sources/SlopDeskClientUI/Workspace/Views/`)
+### Create — views (`Sources/SlopDeskPhoneUI/Workspace/Views/`)
 - `WorkspaceRootView.swift` — `NavigationSplitView` shell + the one responsive switch.
 - `TabSidebarView.swift` — native source-list rail (add/close/reorder/rename/status/kind glyphs).
 - `PaneTreeView.swift` — recursive walker.
@@ -441,19 +441,19 @@ Net: `swift build` + `swift test` (the existing suite + new pure/fake tests) + `
 - `WorkspaceCommands.swift` — macOS/iPad `Commands` + `.keyboardShortcut`.
 - `FocusedValues+Workspace.swift` — `@FocusedValue` keys for store + focused pane.
 
-### Create — iOS glue (`Sources/SlopDeskClientUI/iOS/`, `#if os(iOS)`)
+### Create — iOS glue (`Sources/SlopDeskPhoneUI/iOS/`, `#if os(iOS)`)
 - `FocusGenerationGuard.swift` — pure guard value type (macOS-testable).
 - `PaneFocusCoordinator.swift` — single-focus owner (resign-before-become).
 
 ### Modify
-- `Sources/SlopDeskClientUI/SlopDeskClientApp.swift` — one `@State store`; scenePhase fan-out (awaited TaskGroup over `allSessions`); migrate `SLOPDESK_AUTOCONNECT_*`/`SLOPDESK_AUTOTYPE` to store pane-0.
-- `Sources/SlopDeskClientUI/Video/RemoteWindowPanel.swift` — add `showCloseButton: Bool = false` init param; gate the Close row on it.
-- `Sources/SlopDeskClientUI/ClientRootView.swift` — retire: role split into `PaneLeafView` + `WorkspaceRootView`; migrate `SLOPDESK_VIDEO_AUTOCONNECT_*` out. Keep as a thin shim or delete.
+- `Sources/SlopDeskPhoneUI/SlopDeskClientApp.swift` — one `@State store`; scenePhase fan-out (awaited TaskGroup over `allSessions`); migrate `SLOPDESK_AUTOCONNECT_*`/`SLOPDESK_AUTOTYPE` to store pane-0.
+- `Sources/SlopDeskPhoneUI/Video/RemoteWindowPanel.swift` — add `showCloseButton: Bool = false` init param; gate the Close row on it.
+- `Sources/SlopDeskPhoneUI/ClientRootView.swift` — retire: role split into `PaneLeafView` + `WorkspaceRootView`; migrate `SLOPDESK_VIDEO_AUTOCONNECT_*` out. Keep as a thin shim or delete.
 
 ### Unchanged (asserted)
 - `Apps/Shared/AppMain.swift` — factory registration stays the single launch-time site.
 
-### Tests (`Tests/SlopDeskClientUITests/Workspace/`)
+### Tests (`Tests/SlopDeskWorkspaceCoreTests/Workspace/`, `Tests/SlopDeskWorkspaceModelTests/`)
 - `PaneNodeTests.swift`, `LayoutSolverTests.swift`, `FocusResolverTests.swift`, `CompactLayoutResolverTests.swift`, `FractionTests.swift`, `WorkspaceTests.swift`, `WorkspacePersistenceTests.swift`, `CommandInterpreterTests.swift`, `FocusGenerationGuardTests.swift`, `WorkspaceStoreReconcileTests.swift`, `ScenePhaseFanOutTests.swift`, `LiveVideoCapTests.swift`, `Support/FakePaneSession.swift`.
 
 ---

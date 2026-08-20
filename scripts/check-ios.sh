@@ -4,9 +4,9 @@
 #
 # `swift build` on macOS compiles the macOS slice only — it NEVER type-checks the
 # `#if os(iOS)` sources (the UIKit input host + the four table-stakes components in
-# Sources/SlopDeskClientUI/iOS/). Without an iOS-triple build those compile only in someone's
+# Sources/SlopDeskPhoneUI/iOS/). Without an iOS-triple build those compile only in someone's
 # head and rot silently. This script is the explicit, repeatable command that compiles them:
-# an unsigned iOS-Simulator build of the iOS app, which links the SlopDeskClientUI package and so
+# an unsigned iOS-Simulator build of the iOS app, which links the SlopDeskPhoneUI package and so
 # forces the whole `#if os(iOS)` surface through the compiler. Non-zero exit ⇒ iOS code broke.
 #
 # ## Why it is stamped
@@ -80,19 +80,19 @@ xcodegen generate --spec "${SPEC}" > /dev/null
 
 # ONE scheme, and the second one's removal is measured rather than assumed.
 #
-# The app target links SlopDeskClientUI + SlopDeskVideoClient, so building it compiles the host and
-# every `#if os(iOS)` source it depends on. This script also built the `SlopDeskClientUI` scheme
+# The app target links SlopDeskPhoneUI + SlopDeskVideoClient, so building it compiles the host and
+# every `#if os(iOS)` source it depends on. This script also built the `SlopDeskPhoneUI` scheme
 # directly, "belt-and-suspenders … independent of the app target's other dependencies" — but the
 # build's OWN dependency dump says it is not independent of anything:
 #
 #     Target 'ClientApp-iOS' in project 'ClientApp-iOS'
-#         ➜ Explicit dependency on target 'SlopDeskClientUI' in project 'SlopDesk'
+#         ➜ Explicit dependency on target 'SlopDeskPhoneUI' in project 'SlopDesk'
 #         ➜ Explicit dependency on target 'SlopDeskVideoClient' in project 'SlopDesk'
 #
-# and `SlopDeskClientUI` in turn pulls in all seventeen library targets. The second scheme's graph
+# and `SlopDeskPhoneUI` in turn pulls in all seventeen library targets. The second scheme's graph
 # is a strict SUBSET of the first's, so it compiled nothing the first had not already compiled —
 # for ~85 s, on every Swift edit, forever. The one thing it would have caught (the app spec dropping
-# its SlopDeskClientUI dependency) cannot happen quietly: the app does not build without it.
+# its SlopDeskPhoneUI dependency) cannot happen quietly: the app does not build without it.
 #
 # `-derivedDataPath` under `.build/` rather than the shared `~/Library/Developer/Xcode/DerivedData`:
 # this gate's cache is then wiped by `make clean` with the rest of the derived state, and Xcode.app

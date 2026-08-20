@@ -59,19 +59,21 @@ Sources/SlopDeskClientCore       PRESENTATION LOGIC: palette, rail, — BOTH
 Sources/SlopDeskSlate            the DESIGN FLOOR: the token ladder — BOTH
                                  in both spellings, the status mark's
                                  geometry + cadence, the artwork
-Sources/SlopDeskClientUI         the DRAINING FLOOR (transitional)  — BOTH
 Sources/SlopDeskMacUI            AppKit + Metal + CoreAnimation     — macOS only
 Sources/SlopDeskPhoneUI          SwiftUI                            — iOS only
 ```
 
-The `SlopDeskClientUI` row is scaffolding with an end date, not a layer: it is what the old single
-target became once the two shells were lifted off it, and stage D drains it upward one surface at a
-time (§3.5). When the last macOS surface leaves it, what remains is the phone's, and the target is
-renamed rather than emptied.
+**There is no draining floor any more (increment 63).** For most of this document's life the stack
+carried a sixth row above `SlopDeskSlate` — `Sources/SlopDeskClientUI`, marked BOTH — which was
+scaffolding with an end date rather than a layer: what the old single target became once the two
+shells were lifted off it, drained upward one surface at a time by stage D (§3.5). The last macOS
+surface left in increment 61, what remained was the phone's, and the target was RENAMED rather than
+emptied. Read the two-renderer bottom of this stack as the finished shape; the increments below narrate
+how it got there and still name the old target throughout, because that is what it was called then.
 
-`SlopDeskSlate` is what that rename cannot take with it. The tokens lived inside the draining target
+`SlopDeskSlate` is what that rename could not take with it. The tokens lived inside the draining target
 for as long as there was one UI target to compile them into; the Mac reads ~200 of them, so on the day
-`SlopDeskClientUI` becomes `SlopDeskPhoneUI` an AppKit target would be importing the phone's — exactly
+`SlopDeskClientUI` became `SlopDeskPhoneUI` an AppKit target would have been importing the phone's — exactly
 the common view ancestor §3 forbids. The line the floor holds is **a value, never a drawing**: `Slate`
 in both its `NSColor`/`UIColor` and its `Color` spelling, `StatusDot`/`StatusMark`/`StatusDotStyle`,
 `AgentSpinner`'s wandering tempo and `BrailleCell`'s walk, `SVGPath`/`VectorIcon`/`OttyIcon`, the
@@ -170,7 +172,7 @@ nothing is ever implemented twice. No stage copies a file: a surface either move
   (`SlopDeskPhoneUI`) are two `@main` scenes with two app targets and no `#if os(...)` between them,
   where there used to be one scene with seventeen. The Mac's window actuators, termination drain,
   close gate and quit policy moved with it, and so did their tests (`Tests/SlopDeskMacUITests`).
-- **D — move the macOS surfaces (IN FLIGHT).** The floor came first: every colour token now has ONE
+- **D — move the macOS surfaces (DONE, increment 61; the fold that ended it landed in 63).** The floor came first: every colour token now has ONE
   value, `Slate.Native`, in the platform's own colour type, and the SwiftUI rung is a wrapper over it
   — an `NSView` fills with an `NSColor`, so without that the AppKit half would have grown a second
   palette, which is the duplicate implementation this whole doc exists to prevent. Then the ROOT, and
@@ -186,8 +188,8 @@ nothing is ever implemented twice. No stage copies a file: a surface either move
   reason. Each surface below them is then rewritten in AppKit inside `SlopDeskMacUI`
   and its SwiftUI original is DELETED in the same change — never a fallback, never a mirror. The 118
   `withAnimation`/`.animation(` sites and the 3 `matchedGeometryEffect` morphs are the real work.
-  When the last one moves, `SlopDeskClientUI` holds only what the phone renders and is renamed
-  `SlopDeskPhoneUI`.
+  The last one moved in increment 61, and increment 63 spent what that bought: `SlopDeskClientUI`
+  held only what the phone renders, and was renamed `SlopDeskPhoneUI` rather than emptied.
   **The order inside stage D is settled by a measurement, not by taste.** An `NSHostingView` claims
   every hit inside its own bounds — a full-bleed one over `Color.clear` returns ITSELF from
   `hitTest(_:)`, not `nil` (measured 2026-08-17 with a two-view window: the corner of an empty hosted
@@ -2732,6 +2734,85 @@ justification found in the same hour as the first two.
   move `SlateProjectIsland` down into `SlopDeskSlate` where both halves can see it — is exactly the
   "two renderers become one renderer plus a fallback" failure the floor gate was written for, and
   being unable to take it is what forced the better answer.
+
+### Increment 63 — the fold lands, and five gates that agreed for the wrong reason
+
+**`SlopDeskClientUI` is gone.** 98 files are `Sources/SlopDeskPhoneUI/`, the `.library(name:
+"SlopDeskClientUI")` product is deleted, the five-dependency `SlopDeskPhoneUI` stub target it was
+going to become is deleted, and every file in the target carries exactly one directive: the whole-file
+`#if os(iOS)` of §3. F1, F4, F4c and F5 landed together, because they had to — renaming the target is
+what ARMS the gate that forbids a macOS arm inside it, so the move could not be green on its own.
+
+**F1 came in at 80 + 14 + 4, and the recount's three buckets each behaved differently.** The 80 with a
+whole-file guard were one `perl` line. The 14 with inner arms were four agents split by directory, and
+every trap the recount predicted was real: `SlateSearchField` and `PaneMoveEscapeMonitor` each needed
+the macOS arm's BODY deleted (the iOS declaration survives with an identical name and signature, so
+their call sites never noticed); `SettingsInk.swift:156` dropped both the `NSFont` arm and the bare
+`13` fallback; `NotificationPermissionRow.swift:77`'s `#elseif os(iOS)` chain had no trailing `#else`,
+so nothing was lost promoting the second arm.
+
+**Bucket E's question had an answer, and it was neither of the two on offer.** The four
+directive-less files do not descend and did not stay as they were: every one of them is *typed* in
+SwiftUI — two are `EnvironmentValues` extensions, one vends a `Binding`, one is a `@MainActor enum` of
+`Color`s — so `SlopDeskClientCore` cannot name them and §3's "belongs in the shared logic target" does
+not apply. They needed the guard ADDED, and they needed it urgently rather than cosmetically: with the
+other 80 files gated to `os(iOS)`, an unguarded file still compiles on the macOS host triple, against
+types that no longer exist there. Left alone they would have broken `swift build` outright.
+
+**F0 was paid by dissolving the target, not by guarding it.** The recount priced normalising bucket A
+as "thirty-two test files leave the default gate silently"; increment 62 drained that to eleven, and
+this increment took the last step the drain implied. `Tests/SlopDeskPhoneUITests` is no longer a
+SwiftPM target at all. On the macOS triple `SlopDeskPhoneUI` now compiles to nothing, so `@testable
+import`ing it yields an EMPTY module — a suite over it can only be files that fail to compile or,
+guarded to match, assert nothing, and neither is a test. Six files moved to
+`Apps/ClientApp-iOS/Tests/`, where `make check-ios-tests` runs them on a booted simulator; three
+`ImageRenderer` visual rigs moved with them, ported AppKit → UIKit with every `SLOPDESK_*` env name,
+`XCTSkip` message and `print` line byte-identical, because those strings are the interface the
+pixel-verify recipes drive. Two were deleted: the `L0Placeholder` whose entire purpose was keeping an
+otherwise-empty target compiling, and `SlateSearchFieldCoordinatorTests`, which drove the AppKit arm
+this increment deleted.
+
+**FIVE GATES WENT ON PASSING WHILE THE THING THEY WATCHED MOVED OUT FROM UNDER THEM.** This is the
+increment's real finding, and it is the same failure as increment 62's ledger wearing five costumes.
+A rename does not break a gate; it makes the gate true about something else.
+
+| Gate | Still green because | What it now asserts |
+| --- | --- | --- |
+| `mac_target_block` / `mac_test_block` | the `awk` anchored on `name: "SlopDeskMacUI"` alone, which also matches the `.library(…)` PRODUCT line — so it read a second, spurious region starting in the products list. Increment 63 put `.library(name: "SlopDeskPhoneUI", …)` in exactly that gap | anchored on the `.target(` line, so it reads one target's own block |
+| `ui_edges` | a blanket rename turned two of its four entries into a duplicate and a SELF-edge (`PhoneUI` may not import `PhoneUI`) — a rule no file can break | two halves, two edges |
+| `ui_test_edges` | `[[ -d "${test_dir}" ]] \|\| continue` — the phone's `Tests/` directory ceased to exist and the ban went quiet | a missing directory is a stale ledger, and FAILS |
+| `SettingsControls.swift` "exactly one `#if os(`" | `Half.current`'s `#if os(macOS)` became a constant, and the whole-file guard took the slot. The count still read 1 | `Half.current` exists AND does not fork |
+| `test-touched.sh` scripts/ attribution | it named `SlopDeskPhoneUITests`, so a scripts-only edit would have attributed to a target that no longer exists and run clean | the two suites that actually own the gate-contract tests |
+
+All five, plus the two manifest edges, were re-run against a deliberately broken tree — F5's stated
+obligation, and the reason it is stated: **four of the five were caught by re-pointing, not by
+running.** A gate re-run without being re-aimed proves only that it still exits 0.
+
+**A rule stated as a COUNT cannot say which thing it counted.** The `SettingsControls` ratchet is the
+cleanest specimen: "exactly one `#if os(`" was written about `Half.current`, kept reading 1 after
+`Half.current` stopped having one, and would have gone on passing forever. It is replaced by a
+target-wide gate that names the SHAPE it wants — every file in `SlopDeskPhoneUI` carries exactly two
+directives, one `#if os(iOS)` at column 0 and one `#endif` — which also closes a hole the old
+platform ban never covered: an inner `#if os(iOS)`, always true in this target, sailed straight
+through a check that only forbade the platforms the phone does not build for.
+
+**Two duplicates the fold exposed, both now collapsed.** Deleting the AppKit arm of `slateCancelKey`
+left it byte-identical to the `.onKeyPress(.escape, phases: .down)` that `PaletteView`,
+`OpenQuicklyView` and `GlobalSearchView` each wrote inline — all three under a comment explaining that
+they were deliberately NOT using the modifier *because it exists to carry the macOS responder-chain
+half*. The reason was true when written and the code outlived it. Separately, `MountTestPaneSession`
+turned out to be byte-identical to `FakePaneSession` from `@MainActor` to its closing brace, and the
+iOS bundle already compiles the real one — so the phone's copy went with the move rather than through
+it. The Mac's copy stays: `SlopDeskMacUITests` genuinely cannot reach `FakePaneSession`.
+
+**A blanket rename across DATED records falsifies them.** The sweep that renamed the target also
+rewrote 30 night-handoff, plan and superseded-design documents, so a 2026 handoff came to cite
+`Sources/SlopDeskPhoneUI/Workspace/Views/PaneStatusIndicator.swift` — a path that did not exist on its
+date and does not exist now. This document was swept too, which turned F5's own instruction into
+"every gate naming `Sources/SlopDeskPhoneUI/…` re-points" — re-points to *what*? All 30 were restored
+to their committed text after proving, file by file, that every difference was a `ClientUI`/`PhoneUI`
+token and nothing else. **A record is a claim about a date. Only live reference docs get swept** —
+here that is 22, 30-ui-architecture, 46, 47, 48 and `ui-shell/current-state/`.
 
 ## Stage D ledger — what the rename actually costs
 

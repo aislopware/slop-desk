@@ -18,7 +18,7 @@
 #
 # ⚠️ The dependency graph cannot see SUBPROCESS SPAWNS or RUNTIME FILE READS; those edges
 # are hand-mapped in the python below (slopdesk-hostd / slopdesk-client → SlopDeskClientTests
-# for SubprocessE2ETests; scripts/ → SlopDeskClientUITests for the gate-contract tests).
+# for SubprocessE2ETests; scripts/ → SlopDeskPhoneUITests for the gate-contract tests).
 # A new test that spawns a built binary or reads a repo path outside its own target dir
 # MUST add its edge here, or its tests go silently unselected.
 #
@@ -100,8 +100,13 @@ for path in changed:
         continue
     if path.startswith("scripts/"):
         # GuiGateLaunchContractTests + LaunchRestoreGateContractTests read every
-        # scripts/*.sh (and scripts/fixtures/) off disk at runtime.
-        picked.add("SlopDeskClientUITests")
+        # scripts/*.sh (and scripts/fixtures/) off disk at runtime. They used to live in the
+        # shared UI suite; increment 63 dissolved it (SlopDeskPhoneUI is iOS-only, so a
+        # SwiftPM suite over it compiles to nothing), and they now sit in the two targets
+        # that actually own them. Naming a target that no longer exists would have made a
+        # scripts-only edit attribute to NOTHING and run clean.
+        picked.add("SlopDeskClientCoreTests")
+        picked.add("SlopDeskWorkspaceCoreTests")
         continue
     hit = next((t for p, t in by_path if path.startswith(p + "/")), None)
     if hit is None:

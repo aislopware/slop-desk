@@ -3,8 +3,8 @@
 //
 // WHY A MONITOR AND NOT THE CANCEL KEY EVERY OTHER SURFACE USES. The pane-move drag is a plain
 // `DragGesture`; it never takes keyboard focus (the terminal the grab started over still holds it), so
-// `.onExitCommand` / `.onKeyPress(.escape)` — ``View/slateCancelKey(perform:)``, this client's one spelling
-// of Esc — can never be delivered it. A local `NSEvent` monitor reads the key regardless of first-responder
+// `.onKeyPress(.escape)` — ``View/slateCancelKey(perform:)``, this client's one spelling of Esc — can never
+// be delivered it. A local `NSEvent` monitor reads the key regardless of first-responder
 // state, which is the same reason `MacKeybindingsEditor`'s chord recorder is one. The phone cannot use this
 // mechanism at all (UIKit has no local monitor) and takes first responder instead — `PaneMoveEscapeResponder`,
 // docs/56 increment 44. One behaviour, two mechanisms, and neither of them knows what cancelling MEANS: the

@@ -229,8 +229,7 @@ final class MacHintModeOverlay: NSView {
     /// `cancelHintMode()` once the terminal is first responder; this is the net for an Esc that lands
     /// in the OVERLAY's chain instead — a click on the `×` or on the dim plate leaves focus here.
     ///
-    /// `cancelOperation(_:)` is the AppKit half of ``View/slateCancelKey(perform:)`` and the reason
-    /// that helper exists: AppKit walks Esc (and ⌘.) up the responder chain, so this fires from
+    /// `cancelOperation(_:)` is AppKit's spelling of what the phone spells ``View/slateCancelKey(perform:)``: AppKit walks Esc (and ⌘.) up the responder chain, so this fires from
     /// anywhere at or below the overlay without anyone installing a monitor. A local event monitor
     /// here would be a second reader of a key the renderer already consumes, and is banned in this
     /// directory for exactly that.

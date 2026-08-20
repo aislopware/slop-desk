@@ -69,8 +69,9 @@ ffi_stamp=$(cat ThirdParty/slopdesk-ffi/sources.sha256 2> /dev/null || true)
 # `scripts/` is one of them and did not look like one: `LaunchRestoreGateContractTests` and
 # `GuiGateLaunchContractTests` open `scripts/*.sh` and `scripts/fixtures/` off DISK at run time, so a
 # scripts-only edit changes what the suite asserts while leaving every compiled input untouched.
-# `test-touched.sh` already attributes such an edit to `SlopDeskClientUITests`; this half of the
-# cache did not, and a green recorded over a dirty `scripts/` is a green about text nobody ran.
+# `test-touched.sh` already attributes such an edit to the two targets that own those tests; this
+# half of the cache did not, and a green recorded over a dirty `scripts/` is a green about text
+# nobody ran.
 tested_inputs_clean() {
   [[ -z "$(git status --porcelain -- Package.swift Sources Tests Apps golden scripts 2> /dev/null)" ]]
 }
