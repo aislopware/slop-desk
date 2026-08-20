@@ -23,7 +23,7 @@
 //
 // docs/56: moved here whole in batch 2 of the draining-floor split, with ``SettingsSection`` itself —
 // the dispatch enum names no view framework, only `SettingsSectionContent`'s exhaustive `switch` over
-// it does, and that stayed in `SlopDeskClientUI/Settings/SettingsPages.swift`.
+// it does, and that stayed in `Sources/SlopDeskPhoneUI/Settings/SettingsPages.swift`.
 
 import XCTest
 @testable import SlopDeskClientCore

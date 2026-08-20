@@ -6,7 +6,7 @@
 //  THIS FILE IS DELIBERATELY OUTSIDE THE DEFAULT `swift build` GRAPH.
 //  ─────────────────────────────────────────────────────────────────────────────
 //  It is the production `TerminalRenderingView` conformer named in
-//  `Sources/SlopDeskClientUI/Terminal/TerminalRenderingView.swift` (the documented
+//  `Sources/SlopDeskWorkspaceCore/Terminal/TerminalRenderingView.swift` (the documented
 //  extension point). Like its sibling `GhosttySurface.swift` (same directory) it is
 //  NOT a member of any target in `/Package.swift`; it compiles only inside the
 //  macOS/iOS GUI app target (WF-8) which (a) links `libghostty.xcframework` and
@@ -2966,7 +2966,7 @@ struct GhosttyMetalLayerView: UIViewRepresentable {
 /// A `UIView` whose `layerClass` is `CAMetalLayer`, owning the `GhosttySurface`.
 ///
 /// Physical-key and IME text forwarding are NOT here, on purpose. A `CAMetalLayer` view answers no
-/// key event; the pane's responder is `SlopDeskClientUI.TerminalInputHost`, mounted beside this one
+/// key event; the pane's responder is `SlopDeskPhoneUI.TerminalInputHost`, mounted beside this one
 /// by `TerminalLeafView` and holding first responder for the pane. It reads a `UIKey` into a
 /// `PhoneKey.Press` and asks `SlopDeskWorkspaceCore.PhoneKey` — which of the two input paths the
 /// press takes, the bytes it sends under the live cursor-key mode, the chord it makes for the shared

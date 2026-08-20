@@ -11,7 +11,7 @@
 // closure comes from the single mount in the canvas.
 //
 // WHY IT IS HERE, AND NOT IN THE VIEW FILE IT WAS WRITTEN IN. It was `PaneMoveEscapeMonitor`'s `Coordinator`
-// inside `SlopDeskClientUI/Pane/PaneMoveAffordance.swift` — an `NSViewRepresentable` whose `makeNSView`
+// inside the old shared SwiftUI target's `Pane/PaneMoveAffordance.swift` — an `NSViewRepresentable` whose `makeNSView`
 // returned a bare `NSView()`, because SwiftUI has no other way to hang a LIFETIME on something that is not a
 // drawing. That is the whole tell. docs/56 §3: *a framework call is not a view; a `some View` is* — and
 // increment 54's amendment to increment 40 says the rest of it, about this type's twin two files over:

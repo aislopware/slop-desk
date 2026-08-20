@@ -17,7 +17,7 @@
 //! of collecting the unsafe code in one crate is that its proofs travel with it.
 //!
 //! ## This pin used to be in Swift
-//! `Tests/SlopDeskHostTests/ForkExecWindowContractTests.swift` guarded the same window when hostd
+//! `SlopDeskHostTests`' `ForkExecWindowContractTests` guarded the same window when hostd
 //! forked its own panes. superd forks them now — through this crate — and the Swift copy of the
 //! window was deleted rather than kept in parallel: one window, one language, one contract.
 //!

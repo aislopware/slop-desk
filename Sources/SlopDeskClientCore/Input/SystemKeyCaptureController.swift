@@ -5,7 +5,7 @@
 // of triggering local macOS actions. Every DECISION is the pure ``SystemKeyCapturePolicy`` (unit-pinned
 // headlessly); this file is ONLY the tap/run-loop/observer lifecycle.
 //
-// It lived in `SlopDeskClientUI/Input/` and declared no `View` — the whole file is a CGEvent tap, a run loop
+// It lived in the old shared SwiftUI target's `Input/` and declared no `View` — the whole file is a CGEvent tap, a run loop
 // and four `NotificationCenter` observers, and its one import of a view framework was AppKit, named as an
 // ACTUATOR. docs/56 §3: *a framework call is not a view; a `some View` is.* The seam that made the move safe
 // was already cut — ``SystemKeyCapturePolicy`` is the decision table, and it has been in this target (and

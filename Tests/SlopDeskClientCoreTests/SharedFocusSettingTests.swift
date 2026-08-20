@@ -15,7 +15,7 @@
 // `isConfigurable`, `valueText` and `catalogKey` name no view framework, so they descended to
 // `SlopDeskClientCore` and the pins followed. `binding(_:)` — a SwiftUI `Binding<Bool>` — and the
 // environment-slot / `SettingsSheet` wiring stayed in
-// `Tests/SlopDeskClientUITests/SharedFocusSettingTests.swift`, which is what its own header now says.
+// `Apps/ClientApp-iOS/Tests/SharedFocusSettingTests.swift`, which is what its own header now says.
 
 import Foundation
 import SlopDeskWorkspaceCore

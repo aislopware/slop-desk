@@ -1,4 +1,4 @@
-//! Burst-resilient transmission order — `Sources/SlopDeskVideoProtocol/FragmentInterleaver.swift`.
+//! Burst-resilient transmission order — the deleted `SlopDeskVideoProtocol.FragmentInterleaver`.
 //!
 //! ## Why
 //!

@@ -19,7 +19,7 @@ import SlopDeskSupervisor
 ///
 /// It also means this file has no fork-window contract to keep. The pre-`execve` discipline — no
 /// allocator, no runtime, no panic between `fork` and `execve` — moved to
-/// `rust/slopdesk-superd/src/spawn.rs`, and its disassembly pin moved with it
+/// `rust/slopdesk-posix/src/pty.rs`, and its disassembly pin moved with it
 /// (`fork_window_contract.rs`). There is deliberately no second copy here to drift.
 ///
 /// ### What is still hostd's
@@ -741,7 +741,7 @@ public final class PTYProcess: @unchecked Sendable {
 // MARK: The fork-to-exec window
 
 //
-// GONE from Swift entirely (2026-08-11). It lives once, in `rust/slopdesk-superd/src/spawn.rs`,
+// GONE from Swift entirely (2026-08-11). It lives once, in `rust/slopdesk-posix/src/pty.rs`,
 // because superd is now the only process that forks a pane — and its disassembly pin went with it
 // (`fork_window_contract.rs`, which walks the child's path through `otool` and fails on any call
 // that is not async-signal-safe libc).

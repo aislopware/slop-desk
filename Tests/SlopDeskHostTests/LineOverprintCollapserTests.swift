@@ -3,7 +3,7 @@ import XCTest
 
 /// The overprint pass INSIDE ``ScrollbackReplayTransform``.
 ///
-/// The pass itself is `rust/slopdesk-screend/src/overprint.rs`, and its behaviour is pinned there
+/// The pass itself is `rust/slopdesk-sanitize/src/overprint.rs`, and its behaviour is pinned there
 /// — every revision-coverage rule, every verbatim bail-out, the carry cap, the compaction
 /// threshold, the differential against the screen model, and the 2000-stream fuzz all live in
 /// `rust/slopdesk-screend/tests/overprint.rs`. Re-asserting any of that here would be the

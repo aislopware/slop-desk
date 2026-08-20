@@ -1,6 +1,6 @@
 // MacCodeWorkbenchView — mounting the pooled workbench, in AppKit (docs/56 stage D, increment 51).
 //
-// It came from `SlopDeskClientUI/CodeSidebar/CodeSidebarWebView.swift`'s macOS half, which is now the
+// It came from the macOS half of what is now `Sources/SlopDeskPhoneUI/CodeSidebar/CodeSidebarWebView.swift`, which is
 // phone's file alone. The move is smaller than it looks, and that is the point: the representable was
 // never doing SwiftUI work. It made a clipping container, put the pooled `WKWebView` in it, wrote a
 // colour and told the pool it had remounted — four AppKit calls wearing an `NSViewRepresentable`

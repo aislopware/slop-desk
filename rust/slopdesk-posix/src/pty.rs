@@ -1,8 +1,8 @@
 //! `openpty` + `fork` + `execve` — the largest single obligation in this crate.
 //!
-//! Ported from `Sources/SlopDeskSupervisor/ForkExecWindow.swift`, whose contract this module
-//! inherits whole. Read that file's doc comment before changing anything here: the rule it encodes
-//! was paid for with ten `.ips` crash reports in a single day.
+//! Ported from the deleted `SlopDeskSupervisor.ForkExecWindow`, whose contract this module
+//! inherits whole. That file is gone, so the rule is restated in full below — it was paid for
+//! with ten `.ips` crash reports in a single day.
 //!
 //! ## Why the whole spawn is here and not a `fork` primitive
 //! `slopdesk-posix` admits a syscall only when its safety obligation is local (see the crate

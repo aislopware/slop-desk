@@ -11,7 +11,7 @@
 //
 // The representable is gone with it. AppKit callers mount this view directly
 // (``SlopDeskMacUI/MacSimulatorBezelView``), and the phone keeps its own `SimulatorScreenUIView` and
-// the `UIViewRepresentable` over it, in `SlopDeskClientUI` where a SwiftUI wrapper belongs.
+// the `UIViewRepresentable` over it, in `SlopDeskPhoneUI` where a SwiftUI wrapper belongs.
 //
 // The pixels land in an `AVSampleBufferDisplayLayer`: sample buffers go in, hardware decode and
 // display come out, and there is no pixel-buffer lifetime, pacer or compositor to own. The desktop

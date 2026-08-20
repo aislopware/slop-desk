@@ -6,12 +6,12 @@
 // 49 there are two wells, an `NSColorWell` on the Mac and a SwiftUI `ColorPicker` on the phone.
 //
 // So the conversion lives here, one floor under both halves, and each half keeps only its own colour type's
-// channel accessor: `Color.resolve(in:)` up in `SlopDeskClientUI`, `NSColor.usingColorSpace(.sRGB)` up in
+// channel accessor: `Color.resolve(in:)` up in `SlopDeskPhoneUI`, `NSColor.usingColorSpace(.sRGB)` up in
 // `SlopDeskMacUI`. The parse, the format, the clamp and the NaN rule are the DECISION and are spelled once
 // — a second hex parser is the kind of duplicate that keeps passing both halves' tests while rounding one
 // channel differently.
 //
-// It moved down from `SlopDeskClientUI/Settings/CursorPreviewView.swift` in increment 49 and is otherwise
+// It moved down from what is now `SlopDeskPhoneUI/Settings/CursorPreviewView.swift` in increment 49 and is otherwise
 // unchanged; `CursorColorHexTests` still pins it headlessly, which is why it was AppKit-free to begin with.
 
 import Foundation

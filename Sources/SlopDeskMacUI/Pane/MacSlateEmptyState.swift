@@ -8,7 +8,7 @@
 // ``PaneEmptyCause`` in `SlopDeskClientCore` (pinned by `PaneEmptyCopyTests`), which is where they
 // descended to in R12 — they are `String`s, and a frameworkless table goes to the floor both renderers
 // read instead of being pinned as a cross-renderer pair (docs/56 §3, P6). So this file and
-// ``SlopDeskClientUI/SlateEmptyState`` are two DRAWINGS of one sentence, and the sentence cannot drift.
+// ``SlopDeskPhoneUI/SlateEmptyState`` are two DRAWINGS of one sentence, and the sentence cannot drift.
 //
 // At-rest = zero ornament (the standing bar): plain text on the island's face, no card, no shadow. The
 // only chrome is the action's raised plate — which IS the action, not decoration.

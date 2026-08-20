@@ -247,7 +247,7 @@ package enum PaneSwitcherRowsBuilder {
     /// BOTH halves of that line count. The project is the obvious case (`slopdesk` over `slopdesk`), but
     /// the note's LAST component is the same stutter one level down: a shell sitting in
     /// `Sources/…/Overlays` titles itself by the folder-name rung, and the row then reads `Overlays`
-    /// over `slopdesk › Sources/SlopDeskClientUI/Overlays`. That was invisible while the path lived in a
+    /// over `slopdesk › Sources/SlopDeskClientCore/Overlays`. That was invisible while the path lived in a
     /// section header the row could not see; with the place on the row it is a line saying one word
     /// twice.
     package static func unrepeated(

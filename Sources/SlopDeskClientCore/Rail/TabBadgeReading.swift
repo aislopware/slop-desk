@@ -1,6 +1,6 @@
 // TabBadgeReading — what a fused ``TabBadgeKind`` SAYS, in words and in urgency, below either UI.
 //
-// The colours stay in the view layer (``SlopDeskClientUI/StatusPresentation`` resolves a role to an
+// The colours stay in the design floor (``SlopDeskSlate/StatusPresentation`` resolves a role to an
 // ink); what lives here is the part no palette can supply: the WORD each state is spoken with, and
 // which of the three attention roles it carries. Both are read by three surfaces — the Mac's AppKit
 // rows, the phone's SwiftUI rows and the collapsed-sidebar strip — and a word spelled twice is a
@@ -9,7 +9,7 @@
 import SlopDeskWorkspaceCore
 
 /// The three states that WAIT ON YOU, as roles rather than hues. The ink each takes is the view
-/// layer's answer (``SlopDeskClientUI/StatusPresentation/attentionInk(_:)``); the ORDER they rank in
+/// floor's answer (``SlopDeskSlate/StatusPresentation/attentionInk(_:)``); the ORDER they rank in
 /// is this file's, because the collapsed-group roll-up has to pick a loudest one and both halves
 /// must pick the same.
 package enum AttentionRole: Equatable, Sendable, CaseIterable {

@@ -163,7 +163,8 @@ public struct VideoMuxAcquisition: Sendable {
 @MainActor
 public enum VideoMuxInstaller {
     /// Installs the PRODUCTION shared-flow registry on the video pipeline — the one app-glue site
-    /// (called from `Apps/Shared/AppMain.swift`, the GUI target that links `SlopDeskVideoClient`). Every
+    /// (called from `Apps/ClientApp-macOS/AppMain.swift` and `Apps/ClientApp-iOS/AppMain.swift`, the two
+    /// GUI targets that link `SlopDeskVideoClient`). Every
     /// pane then vends its lane from this per-host shared UDP flow (one flow per host, N panes).
     /// Idempotent.
     ///

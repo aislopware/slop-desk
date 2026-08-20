@@ -31,7 +31,7 @@ import UIKit
 /// store's focus state (that stays in `WorkspaceStore`, which points this at the focused pane at the
 /// end of every reconcile — `WorkspaceStore.syncFocusCoordinator`).
 ///
-/// The producer is `SlopDeskClientUI.TerminalInputHostView`, which registers on attach and
+/// The producer is `SlopDeskPhoneUI.TerminalInputHostView`, which registers on attach and
 /// unregisters on dismantle (docs/56 §Increment 16). It was a seam with no producer for a long time
 /// — the responder this was written against was the old client UI's, deleted whole in `2682df50`,
 /// and the arbitration plus its generation guard survived only because they are pure and

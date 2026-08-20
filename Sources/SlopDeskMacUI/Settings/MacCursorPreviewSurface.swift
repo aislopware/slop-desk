@@ -299,7 +299,7 @@ final class MacCursorPromptView: NSView {
 // MARK: - The caret
 
 /// The terminal caret in one of the four styles — this half's drawing of the silhouette
-/// `SlopDeskClientUI/SettingsIllustrations`' `CursorCaret` draws in SwiftUI.
+/// `SlopDeskPhoneUI/Settings/SettingsIllustrations.swift`'s `CursorCaret` draws in SwiftUI.
 ///
 /// A drawing, drawn twice, is what docs/56 §3 asks for. What the two share is not the geometry but the
 /// STYLE ENUM behind it, which is `TerminalPreferences.CursorStyle` and has exactly four cases.

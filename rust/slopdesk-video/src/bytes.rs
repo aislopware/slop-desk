@@ -1,5 +1,5 @@
 //! Big-endian wire read/write helpers for the video path — the `Data.appendBE` family and
-//! `VideoByteReader` from `Sources/SlopDeskVideoProtocol/VideoWireBytes.swift`.
+//! `VideoByteReader` from the deleted `SlopDeskVideoProtocol.VideoWireBytes`.
 //!
 //! Every multi-byte integer on the wire is big-endian ("network byte order"). Assembly goes through
 //! `to_be_bytes` / `from_be_bytes` rather than a pointer cast, so the code is alignment-safe and

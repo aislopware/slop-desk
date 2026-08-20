@@ -443,6 +443,73 @@ def live_docs_cite_files_that_exist() -> Report:
     return found, "a doc CLAUDE.md sends readers to cites a path that is not in the tree"
 
 
+#: A backticked path is a SOURCE citation only when it ends in one of these — a comment saying
+#: "see `Foo/Bar.swift`" is making a checkable claim, whereas `Sources/SlopDeskMacUI/Pane` is a
+#: place and `SlopDeskError/badFrame` is a DocC symbol link that happens to carry a slash.
+_CITED_SUFFIXES = (".swift", ".rs", ".py", ".sh", ".h", ".toml", ".json", ".yml")
+_CITED_PATH = re.compile(r"`{1,2}([A-Za-z0-9_./+-]+/[A-Za-z0-9_+.-]+)`{1,2}")
+#: The roots a source citation may be written against. A comment cites either the full repo path
+#: or the tail of one (`SlopDeskPhoneUI/Settings/SettingsPages.swift`), and both must resolve.
+_CITED_ROOTS = ("Sources", "Tests", "Apps", "ThirdParty", "rust", "scripts", "docs", "golden")
+
+
+def _addressable_first_segments() -> set[str]:
+    """The directory names a citation may START with and still be a claim about THIS tree.
+
+    Without this the gate reads every `foo/bar.rs` in a comment as a repo path, and the ones that
+    are not are exactly the ones worth quoting: libghostty upstream (`Helpers/Cursor.swift`), a
+    system header (`Carbon/HIToolbox/Events.h`), a runtime file (`slopdesk/config.toml`). None of
+    them is in the tree and none of them should be — a gate that demanded they were would be
+    demanding the comment lie. So the addressable set is the repo roots plus whatever sits one
+    level inside the three source roots, which is derived, never listed.
+    """
+    segments = set(_CITED_ROOTS)
+    for root in ("Sources", "Tests", "Apps"):
+        directory = REPO / root
+        if directory.is_dir():
+            segments.update(child.name for child in directory.iterdir() if child.is_dir())
+    return segments
+
+
+def source_comments_cite_files_that_exist() -> Report:
+    """A comment that points at a file must point at a file that is there.
+
+    This is `live_docs_cite_files_that_exist` aimed at the OTHER half of the prose. The docs a
+    reader is sent to are gated; the ~40 000 lines of header comment that actually explain this
+    codebase were not, and a rename walks straight through them. Increment 63 folded the shared
+    SwiftUI target into `SlopDeskPhoneUI` and left nine live citations of
+    `SlopDeskClientUI/…/Foo.swift` behind — each one a sentence telling a reader where the other
+    half of a decision lives, and each one resolving to nothing. A DocC link into a deleted
+    module is worse than no link: it renders as prose and reads as a fact.
+
+    The rule is SHAPE, not a name list, which is why it cannot decay: a backticked token with a
+    slash in it and a source suffix on the end IS a path claim, so it must resolve — as a repo
+    path or as the tail of one. Names are not checked at all (a module name is not a path, and
+    history that says "it lived in the old shared target" is honest and stays legal).
+    """
+    known: dict[str, list[str]] = {}
+    for path in repo_files():
+        if path.suffix in _CITED_SUFFIXES:
+            known.setdefault(path.name, []).append(str(path.relative_to(REPO)))
+    addressable = _addressable_first_segments()
+    found: list[str] = []
+    for path in repo_files(*(f"{root}/**" for root in _CITED_ROOTS)):
+        if path.suffix not in (".swift", ".rs"):
+            continue
+        for number, line in enumerate(path.read_text(errors="ignore").split("\n"), 1):
+            for cited in _CITED_PATH.findall(line):
+                if not cited.endswith(_CITED_SUFFIXES):
+                    continue
+                tail = cited.lstrip("./")
+                if tail.split("/")[0] not in addressable:
+                    continue
+                if not any(real.endswith(tail) for real in known.get(Path(tail).name, [])):
+                    found.append(f"{path.relative_to(REPO)}:{number}: {cited}")
+    if not found:
+        return None
+    return found, "a comment cites a source path that is not in the tree — a rename walked past it"
+
+
 def every_shipped_sidecar_carries_its_own_version() -> Report:
     """A sidecar the pin has never heard of ships at whatever its Cargo.toml happened to say.
 
@@ -552,6 +619,7 @@ def the_formula_installs_every_binary_the_release_ships() -> Report:
 
 GATES = [
     live_docs_cite_files_that_exist,
+    source_comments_cite_files_that_exist,
     no_app_layer_crypto,
     no_swiftpm_build_plugin,
     no_fused_multiply_add,

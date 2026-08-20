@@ -26,7 +26,7 @@
 //! numbered its bytes.
 //!
 //! ## Not the scrollback journal
-//! The on-disk journal (`Sources/SlopDeskHost/ScrollbackJournal.swift`) is a different thing with a
+//! The on-disk journal (`SlopDeskHost`'s `ScrollbackJournal`) is a different thing with a
 //! different job — the transcript of a pane whose process is long gone, replayed above a *fresh*
 //! shell after a reboot. It stays where it is. This ring is the resume buffer for a pane that is
 //! still running, and it is memory-only for the same reason the offsets are.

@@ -22,7 +22,7 @@
 //!
 //! ## The region operations are free functions, not a trait
 //!
-//! The Swift original ([`GfRegion`] in `Sources/SlopDeskVideoProtocol/GF256.swift`) is a protocol
+//! The Swift original ([`GfRegion`] in the deleted `SlopDeskVideoProtocol.GF256`) is a protocol
 //! with two conformances: a scalar reference and `NeonGf`, which calls a C target through
 //! `UnsafeBufferPointer`. The trait exists ONLY to swap that kernel in. This crate forbids
 //! `unsafe`, so there is exactly one implementation and no seam for a second — and a trait with one

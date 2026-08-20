@@ -21,7 +21,7 @@
 //
 // ## Why it lives BELOW the view layer
 //
-// It was written in `SlopDeskClientUI/Pane/`, where its only import of SwiftUI was the whole-file
+// It was written in the old shared SwiftUI target's `Pane/`, where its only import of SwiftUI was the whole-file
 // `#if canImport(SwiftUI)` that satisfied the "a UI target holds views only" ratchet — the ratchet
 // firing BACKWARDS: a file with no `View` in it was dressed as one instead of being moved. Every
 // member's signature is view-framework-free (`isSupported`, `isEngaged`, `setSuspended(_:)`,

@@ -264,7 +264,7 @@ final class KeybindConfigLoaderTests: XCTestCase {
 
     // MARK: default config URL resolution
 
-    /// `XDG_CONFIG_HOME` wins; else `$HOME/.config`; the file is `slopdesk/config.toml`.
+    /// `XDG_CONFIG_HOME` wins; else `$HOME/.config`; the file is `$XDG_CONFIG_HOME/slopdesk/config.toml`.
     func testDefaultConfigURLHonoursXDGThenHome() {
         let xdg = KeybindConfigLoader.defaultConfigURL(environment: ["XDG_CONFIG_HOME": "/tmp/cfg"])
         XCTAssertEqual(xdg?.path, "/tmp/cfg/slopdesk/config.toml")

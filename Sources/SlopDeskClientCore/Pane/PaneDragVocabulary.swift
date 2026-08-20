@@ -6,7 +6,7 @@
 // below the view layer (docs/56 §3: a UI target holds views only) and each renderer is left with the
 // ink.
 //
-// It lived in `SlopDeskClientUI/Pane/PaneMoveAffordance.swift` and `.../PaneDragCoordinator.swift`
+// It lived in the old shared SwiftUI target's `Pane/PaneMoveAffordance.swift` and `.../PaneDragCoordinator.swift`
 // until the drag block was evacuated, and the cost of leaving it there was specific rather than
 // stylistic. ``PaneDropZone`` is the value the canvas overlay, the AppKit navigator rows and the
 // cross-window chip all switch over; on the day the canvas is rewritten in AppKit it would either

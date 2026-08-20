@@ -15,7 +15,7 @@
 // bodies are types, and a type has to be named somewhere.
 //
 // docs/56: that "types have to be named somewhere" is exactly why the DISPATCH KEY itself lives here
-// rather than in `SlopDeskClientUI` — the enum names no view framework (a `String` rawValue,
+// rather than in a view target — the enum names no view framework (a `String` rawValue,
 // `SettingsCatalog.Section`, no `View`), so batch 2 of the draining-floor split moved it down whole,
 // with `SettingsSectionTaxonomyTests`. `SettingsSectionContent`'s exhaustive `switch` over these
 // cases, which DOES need a `some View`, stayed behind in `SettingsPages.swift`.

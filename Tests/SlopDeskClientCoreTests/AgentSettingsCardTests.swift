@@ -4,7 +4,7 @@
 // split (it names no view framework — `AgentHooksController` is `SlopDeskWorkspaceCore`'s, and both
 // static funcs return a plain enum / `Bool`). This pins the fallback the split carried down. The
 // SwiftUI-side wiring — the `SettingsSheet` threading and the `@Entry` environment slot round trip —
-// stayed in `Tests/SlopDeskClientUITests/AgentSettingsCardWiringTests.swift`, which is what its own
+// stayed in `Apps/ClientApp-iOS/Tests/AgentSettingsCardWiringTests.swift`, which is what its own
 // header now says.
 
 import SlopDeskWorkspaceCore

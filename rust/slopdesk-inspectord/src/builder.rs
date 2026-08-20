@@ -23,7 +23,7 @@
 //! records go to the DETECTION path (`docs/50`), which is a different consumer with a different
 //! state machine, and hostd's inspector wiring passed hooks nowhere. A separate daemon cannot
 //! receive them at all, so the fold was dropped rather than ported as a limb nothing reaches.
-//! `Sources/SlopDeskInspector/HookIngest.swift` stays in Swift for the detection path it actually
+//! `SlopDeskInspector`'s `HookIngest` stays in Swift for the detection path it actually
 //! serves.
 
 use std::collections::{HashMap, HashSet, VecDeque};

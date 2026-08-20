@@ -12,14 +12,14 @@
 // rule `AgentSettingsCard` follows for a nil controller.
 //
 // Every derivation here is a pure function of an optional store, so `SharedFocusSettingTests` (split
-// across `SlopDeskClientCoreTests` and `SlopDeskClientUITests`, docs/56) pins the whole wiring —
+// across `SlopDeskClientCoreTests` and the phone app's own bundle, docs/56) pins the whole wiring —
 // including the `device-prefs.json` round trip — with NO view.
 //
-// docs/56: this is the half of the old `SlopDeskClientUI/Settings/SharedFocusSetting.swift` that names
+// docs/56: this is the half of the old shared `Settings/SharedFocusSetting.swift` that names
 // no view framework — `WorkspaceStore` is `SlopDeskWorkspaceCore`'s, and `Bool`/`String` are not
 // SwiftUI. It descended here in batch 2 of the draining-floor split. `binding(_:)` — which returns a
 // SwiftUI `Binding<V>` — and the `@Entry` environment slot both need SwiftUI itself, so they stayed in
-// `SlopDeskClientUI/Settings/SharedFocusSetting.swift`, which now carries only that half and reaches
+// `SlopDeskPhoneUI/Settings/SharedFocusSetting.swift`, which now carries only that half and reaches
 // this one the same way any other call site does.
 
 import SlopDeskWorkspaceCore
@@ -27,7 +27,7 @@ import SlopDeskWorkspaceCore
 // MARK: - The pure derivations behind the row
 
 /// The shared-focus row's state, derived from the (optional) injected ``WorkspaceStore``. `package`:
-/// read from `SlopDeskClientUI` (the `binding(_:)` extension, and the settings pages) across the
+/// read from `SlopDeskPhoneUI` (the `binding(_:)` extension, and the settings pages) across the
 /// module boundary, the way `SettingsCatalog` beside it is.
 package enum SharedFocusSetting {
     /// The config-style name the searchable All-Settings list files this row under — the catalog's own
@@ -37,7 +37,7 @@ package enum SharedFocusSetting {
     /// Whether this device follows the shared focus. With no store, the platform default — that IS what a
     /// fresh device would use, and it is the only honest answer when nothing is backing the row.
     ///
-    /// `@MainActor` because ``WorkspaceStore`` is: it also makes ``SlopDeskClientUI``'s `binding(_:)`
+    /// `@MainActor` because ``WorkspaceStore`` is: it also makes ``SlopDeskPhoneUI``'s `binding(_:)`
     /// closures inherit main-actor isolation, which is what lets a `Binding` reach the store synchronously.
     @MainActor
     package static func isFollowing(_ store: WorkspaceStore?) -> Bool {

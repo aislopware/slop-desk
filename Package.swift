@@ -1043,7 +1043,7 @@ let package = Package(
                 // The band rollup's pixel probe draws the sidebar toggle and the search plate as
                 // FOOTPRINTS (mounting the real ones would drag a store into a geometry fixture),
                 // and both are named glyphs. Already transitive through `SlopDeskMacUI`; named here
-                // for the same reason `SlopDeskClientUITests` names `SlopDeskTerminal`.
+                // for the same reason the phone app's own bundle names `SlopDeskTerminal`.
                 .product(name: "SFSafeSymbols", package: "SFSafeSymbols"),
             ],
         ),

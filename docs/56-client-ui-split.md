@@ -2936,6 +2936,31 @@ Two things the AppKit half had to answer that the SwiftUI half never did:
   pointer positions through it. The shield is process-wide either way, so the two questions can only
   be joined at the binding: `overlay.anyModalVisible || MacPaneCardShield.isPresenting`.
 
+### Increment 67 — the rename walked through forty thousand lines of comment
+
+Increment 63 folded the shared SwiftUI target into `SlopDeskPhoneUI`. The manifest was ratcheted, the
+imports were ratcheted, the tests moved — and the prose was not, because nothing had ever asked it a
+question. Nine live citations of `SlopDeskClientUI/…/Foo.swift` were left pointing at a target that no
+longer exists, each one a sentence telling a reader where the other half of a decision lives; a DocC
+link into a deleted module renders as prose and reads as a fact. Eleven more were already stale from
+earlier moves, including two `rust/slopdesk-superd/src/spawn.rs` (it is `slopdesk-posix/src/pty.rs`)
+and one `rust/slopdesk-screend/src/overprint.rs` (it is `slopdesk-sanitize`'s).
+
+`live_docs_cite_files_that_exist` had gated the sixteen documents `CLAUDE.md` sends a reader to since
+the day `docs/45` claimed a mitigation for a test that had moved to Rust. Its sibling,
+`source_comments_cite_files_that_exist`, does the same for the other half of the prose, and the rule is
+SHAPE so it cannot decay: a backticked token with a slash in it and a source suffix on the end IS a
+path claim, so it must resolve — as a repo path or as the tail of one. What it deliberately does not
+check is NAMES. A module name is not a path, and history that says "it descended from the old shared
+SwiftUI target" is honest and stays legal; what is not legal is sending someone to a file.
+
+The one judgement in it is `_addressable_first_segments`, and it is derived rather than listed: a
+citation is a claim about THIS tree only when its first segment is a repo root or a directory one
+level inside `Sources` / `Tests` / `Apps`. Everything else a comment legitimately quotes —
+libghostty upstream's `Helpers/Cursor.swift`, `Carbon/HIToolbox/Events.h`, a runtime
+`$XDG_CONFIG_HOME/slopdesk/config.toml` — is not in the tree and must not be, and a gate demanding
+otherwise would be demanding the comment lie.
+
 ## Stage D ledger — what the rename actually costs
 
 `SlopDeskClientUI` cannot fold into `SlopDeskPhoneUI` while `SlopDeskMacUI` still imports it. That is
