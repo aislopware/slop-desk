@@ -74,6 +74,7 @@ import SwiftUI
 import QuartzCore          // CAMetalLayer
 import SlopDeskTerminal       // TerminalSurface protocol
 import SlopDeskWorkspaceCore  // TerminalRenderingView, TerminalViewModel, TerminalRendererFactory (L0 home)
+import SlopDeskClientCore     // ClipboardConfirmPresentation — what the clipboard asks, on BOTH halves
 import CGhostty            // the clang module over ghostty.h (link "ghostty")
 
 #if os(macOS)
@@ -95,6 +96,43 @@ import UIKit
     location == GHOSTTY_CLIPBOARD_SELECTION
         ? NSPasteboard(name: NSPasteboard.Name("com.slopdesk.terminal.selection"))
         : .general
+}
+#endif
+
+/// THE ONE PLATFORM SEAM IN THE CLIPBOARD GATES, and the only one there should ever be.
+///
+/// The three questions below — an unsafe paste, an OSC-52 READ, an OSC-52 WRITE — are the SAME question
+/// on both platforms and are decided by the same shared reading (``ClipboardConfirmPresentation``). What
+/// differs is only how a framework puts a question to a person: AppKit has a presenter you can CALL from
+/// inside a C callback (`NSAlert.beginSheetModal(for:)`), SwiftUI has none, so the phone files the
+/// question into ``ClipboardConfirmRequests`` and the mounted `ClipboardConfirmCard` drains it.
+///
+/// ⚠️ EVERY ARM OF THIS FUNCTION ENDS AT A HUMAN. It used to have a third arm that did not: iOS
+/// auto-approved an unsafe paste and an OSC-52 read outright, and dropped an OSC-52 write it had been
+/// told to ASK about — so `clipboard-read = ask` behaved as Allow and `clipboard-write = ask` as Deny on
+/// a phone while both behaved correctly on the Mac, from the same settings page. `completion` runs
+/// exactly once, on the main actor, and only ever with the user's own answer.
+@MainActor
+func slopdeskPresentClipboardConfirm(
+    ask: PasteSafetyAnalyzer.Ask,
+    preview: String,
+    dangers: PasteSafetyAnalyzer.PasteDangers,
+    completion: @escaping (Bool) -> Void,
+) {
+    #if os(macOS)
+    PasteProtectionSheet.present(
+        ask: ask,
+        preview: preview,
+        dangers: dangers,
+        in: NSApp.keyWindow,
+        completion: completion,
+    )
+    #else
+    ClipboardConfirmRequests.shared.ask(
+        ClipboardConfirmPresentation.reading(ask: ask, preview: preview, dangers: dangers),
+        answer: completion,
+    )
+    #endif
 }
 
 /// E8 WI-4 (ES-E8-3): the embedder side of Paste Protection. Reached from
@@ -143,11 +181,10 @@ func slopdeskConfirmUnsafePaste(
         return
     }
 
-    PasteProtectionSheet.present(
+    slopdeskPresentClipboardConfirm(
         ask: .unsafePaste,
         preview: text,
         dangers: dangers,
-        in: NSApp.keyWindow
     ) { pasteAnyway in
         if pasteAnyway {
             surface.completeClipboardRead(text, state: state, confirmed: true)
@@ -188,16 +225,14 @@ func slopdeskConfirmClipboardRead(
     }
     // Ask → surface the confirmation; the user's verdict maps to allow (text) / deny ("") — BOTH
     // confirmed:true so neither completion re-trips the read gate (the recursion hazard above).
-    PasteProtectionSheet.present(
+    slopdeskPresentClipboardConfirm(
         ask: .clipboardRead,
         preview: text,
         dangers: [],
-        in: NSApp.keyWindow
     ) { allow in
         surface.completeClipboardRead(allow ? text : "", state: state, confirmed: true)
     }
 }
-#endif
 
 /// Performs the actual pasteboard WRITE libghostty requested (E8 WI-2, the clipboard-write actuation).
 /// HONORS `location`: STANDARD = the system clipboard; SELECTION = the PRIVATE selection pasteboard (so a
@@ -504,9 +539,14 @@ final class GhosttyApp {
             let str = cString.map { String(cString: $0) } ?? ""   // upstream uses String(cString:)
             MainActor.assumeIsolated {
                 let surface = Unmanaged<GhosttySurface>.fromOpaque(userdata).takeUnretainedValue()
-                #if os(macOS)
                 // Match the C enum by `==` (it imports as a RawRepresentable struct, not a Swift enum, so it
                 // is not `switch`-case-able); read it explicitly, never assuming a {0,1} layout.
+                //
+                // NO PLATFORM ARM HERE, and that is the point of the routing. The phone used to take an
+                // `#else` that auto-approved BOTH questions — an unsafe paste and an OSC-52 read — while
+                // Settings ▸ Controls showed it offering `clipboard-read = Ask`. Both halves route the
+                // same two ways now, and the framework difference is confined to
+                // ``slopdeskPresentClipboardConfirm``.
                 if request == GHOSTTY_CLIPBOARD_REQUEST_PASTE {
                     slopdeskConfirmUnsafePaste(surface: surface, text: str, state: state)
                 } else if request == GHOSTTY_CLIPBOARD_REQUEST_OSC_52_READ {
@@ -519,11 +559,6 @@ final class GhosttyApp {
                 } else {
                     surface.completeClipboardRead(str, state: state, confirmed: true)
                 }
-                #else
-                // iOS has no confirmation sheet — auto-approve (confirmed: true terminates the request once).
-                _ = request
-                surface.completeClipboardRead(str, state: state, confirmed: true)
-                #endif
             }
         }
 
@@ -568,26 +603,24 @@ final class GhosttyApp {
                     slopdeskWriteClipboard(text, location: location)
                     noteWrite()
                 case .confirm:
-                    #if os(macOS)
-                    // `clipboard-write = ask`: present the "a program wants to set your clipboard" sheet;
-                    // write ONLY on approve, drop on cancel. Mirrors the OSC-52 READ-ask plumbing (WI-6).
-                    PasteProtectionSheet.present(
+                    // `clipboard-write = ask`: present the "a program wants to set your clipboard"
+                    // confirmation; write ONLY on approve, drop on cancel. Mirrors the OSC-52 READ-ask
+                    // plumbing (WI-6).
+                    //
+                    // The phone used to take an `#else` here that DROPPED the write unpresented — the
+                    // conservative choice while there was no surface to present, and still a decision
+                    // made for the user: "Ask" behaved as Deny on the phone and as Ask on the Mac, from
+                    // one settings row. There is a surface now, so there is no arm.
+                    slopdeskPresentClipboardConfirm(
                         ask: .clipboardWrite,
                         preview: text,
                         dangers: [],
-                        in: NSApp.keyWindow,
                     ) { allow in
                         if allow {
                             slopdeskWriteClipboard(text, location: location)
                             noteWrite()
                         }
                     }
-                    #else
-                    // iOS has no confirmation sheet. An "Ask" we cannot present must NOT silently allow —
-                    // conservatively DROP the write (the user explicitly chose Ask; honoring it as Allow
-                    // would be the very inert-toggle bug this fix removes).
-                    break
-                    #endif
                 }
             }
         }

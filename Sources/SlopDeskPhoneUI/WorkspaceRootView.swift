@@ -132,6 +132,16 @@ public struct WorkspaceRootView: View {
             ToastStackView(coordinator: overlay, onJump: store.jumpToPaneNamedByNotification)
                 .allowsHitTesting(!overlay.toasts.isEmpty)
         }
+        // THE CLIPBOARD QUESTIONS — an unsafe paste, an OSC-52 read, an OSC-52 write — put to the user,
+        // where the Mac puts them in an `NSAlert` (``SlopDeskMacUI/PasteProtectionSheet``). TOPMOST on
+        // purpose: it is raised by a remote PROGRAM rather than summoned, so it may not be covered by a
+        // card the user opened, and it is an in-window layer rather than a `.sheet` for the same reason
+        // — the system's modal stack declines a second presentation, and a declined presentation here
+        // would leave libghostty holding the request forever. It renders nothing while the mailbox is
+        // empty, which is almost always. See ``ClipboardConfirmCard``.
+        .overlay {
+            ClipboardConfirmCard()
+        }
         // Wire the palette's cwd resolver + the per-pane hardware-keyboard interceptor's overlay toggles
         // (iPad has no app-level NSEvent monitor, so a focused terminal's ⌘⇧P / ⇧⌘F / ⌘⇧O / ⌘J / ⌘⌥J would
         // otherwise die at a nil toggle).

@@ -2866,6 +2866,42 @@ The reach test is asserted as a SHAPE, not a count — a new binding is reachabl
 declared. That is the lesson increment 63 paid for five times over: a gate stated as a number goes
 green about the wrong thing the moment its subject moves.
 
+### Increment 65 — three clipboard questions the phone answered on the user's behalf
+
+The same class as 64 and a worse instance of it: not a verb the phone could not reach, but a
+DECISION the phone made for you, silently, while showing you the switch that was supposed to make it.
+
+`GhosttyTerminalView`'s `confirm_read_clipboard_cb` had a `#else` arm that auto-approved both an
+unsafe paste and an OSC-52 clipboard READ — the second one ignoring `TerminalControls.clipboardRead`
+entirely — and `write_clipboard_cb`'s `.confirm` arm dropped the write. So on one account, on one
+mesh, `clipboard-read = ask` read as **Allow** and `clipboard-write = ask` as **Deny**, depending
+only on which device you picked up. Settings ▸ Controls offered all three on the phone.
+
+Every word the two halves say is still `slopdesk_terminal::paste`'s. What the halves were each
+deciding for themselves was the SHAPE — bullets or the ask's reason, whether the preview is shown at
+all, the bullet glyph, the caption — so that is what crossed, as `ClipboardConfirmPresentation` in
+`SlopDeskClientCore`, including `informativeText` (the single-string join an `NSAlert` needs, which
+is a serialisation and not a layout, so it is composed once rather than beside a dialog).
+
+Two things about the phone's renderer are departures from the overlay family, both on purpose:
+
+- **An in-window layer, not a `.sheet`.** Connect, Settings and First Launch are real sheets because
+  the user summons them. This one is raised by a remote PROGRAM at a time nobody chose, and the
+  system's modal stack silently declines a second presentation — behind an open sheet the
+  presentation would be dropped with libghostty still holding the request, which is a hang, not a
+  wrong answer.
+- **The floor absorbs and does not dismiss.** A tap beside the card is not an answer to "may this
+  program read your clipboard?", so it does nothing — exactly as an `NSAlert` has no click-away. The
+  floor is still a real control, so the terminal underneath cannot be typed into while the question
+  is up.
+
+`ClipboardConfirmRequests` is the seam the two frameworks force: `NSAlert.beginSheetModal(for:)` can
+be called from inside a C callback because the presenter IS a function, and SwiftUI has no such
+function. So the callback asks a mailbox and a mounted card drains it. Two rules live there rather
+than in the renderer, because both are about libghostty's state and not about drawing: a request is
+answered exactly once (the entry is removed BEFORE the completion runs), and a second question
+QUEUES rather than replacing — replacing would decide the older one, which is the whole gap.
+
 ## Stage D ledger — what the rename actually costs
 
 `SlopDeskClientUI` cannot fold into `SlopDeskPhoneUI` while `SlopDeskMacUI` still imports it. That is
