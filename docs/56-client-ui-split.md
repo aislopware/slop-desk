@@ -3276,6 +3276,55 @@ for every content kind and the only one that does not commit something off a sin
 lands at the prompt, editable. From there it walks the SAME four steps `performDrop` does, so there
 is no second drop engine.
 
+### Increment 78 — the footer asked the clipboard a question it could only answer with an alert
+
+Increment 75 flagged this on its way past and did not fix it: `GuiPastePlateMenu.canPasteCurrent` called
+`store.currentLocalClipboard()`, and it is read from `body` — `.disabled(!canPasteCurrent)` on "Paste as
+Keystrokes". Since iOS 16 a read of `UIPasteboard.string` for content the app did not write raises the
+modal "Allow Paste?" alert, so every render of a remote-GUI pane's footer could put that alert on screen
+unprompted. `SystemPasteboard`'s header exists to say precisely that, and the type it says it in had no
+way to ask anything else.
+
+So it does now. `SystemPasteboard.hasPlainText` is the PROBE — `availableType(from: [.string]) != nil` on
+AppKit, `hasStrings` on UIKit, the same two-spelling shape `plainText` already has one line up — and it is
+the `has*` half of the sentence the header always carried: it discloses nothing, so iOS answers it in
+silence. `ClientPasteboard.hasText()` forwards to it rather than forking a third time, which also puts the
+probe on the test-safe per-process board the reads already use.
+
+The distinction then lives in the headless model rather than in a view. `ClipboardPasteMenu.canPaste` now
+takes `clipboardHasText: Bool`, and the `String?` spelling is gone: an enablement predicate that CAN take
+content is one that will. The two ways to obtain that `Bool` are the two ways the two halves work.
+The Mac holds the content because it rebuilds its menu in `pasteMenu.onClick`, at menu OPEN, and reduces
+it through the new `isPastable(_:)`. SwiftUI has no equivalent moment — a `Menu`'s content is a
+`@ViewBuilder` evaluated WITH the body — so the phone asks `WorkspaceStore.localClipboardHasText()`, the
+enablement sibling of `currentLocalClipboard()`, and reads content only inside the Button's action, which
+is the tap the user made.
+
+The sibling's difficulty is the FALLBACK, not the probe. `currentLocalClipboard()` is
+`clipboardTextProvider?() ?? clipboardRing.first`, so a probe that consulted only the board would grey out
+a paste that would have worked off the ring head — on a headless store, or on a board the platform will
+not read. A `false` from the probe means the live read comes back `nil`, which is the same condition that
+hands the paste to the ring, so the ring is exactly where the probe looks next. One case stays looser than
+the paste and it is the price of not reading: a board holding only whitespace probes TRUE, because the
+platforms answer "has a string" rather than "has a string worth typing", so the item is lit and the tap's
+own `isPastable` guard makes it a no-op. A wasted tap, against an alert nobody asked for.
+
+The sweep for the same shape found no second instance. `ClientPasteboard.text()` has two other callers —
+the Android stage's paste verb and the composition's provider — and both are fire-time. The palette gates
+no row on the clipboard. `ClipboardPasteMenu.rows(store.clipboardRing)`, which stays where it is inside
+the plate's body, reads the app's OWN recorded history and not the board, so it cannot prompt; that is
+asserted now rather than assumed.
+
+What the tests pin is the SHAPE, not a count of call sites. `GuiPastePlateRenderTests` (iOS triple, since
+`SlopDeskPhoneUI` is `#if os(iOS)` end to end) injects both clipboard seams and drives the plate through
+the two levels of body evaluation a render performs — the plate's own, then `SlatePlateMenu`'s, which is
+where the `@ViewBuilder` finally runs — then asserts the content provider was called ZERO times and the
+probe at least once, so "no content read" cannot be satisfied by a render that evaluated nothing.
+`ClipboardRingTests` pins the probe's agreement with what a paste would actually find, ring fallback
+included, in all four combinations. A `check-supervisor.sh` gate — no `currentLocalClipboard(` in a
+`SlopDeskPhoneUI` file outside a closure body — would be a real ratchet on top of these, and is left
+unwritten here only because another change owns that file.
+
 ## Stage D ledger — what the rename actually costs
 
 `SlopDeskClientUI` cannot fold into `SlopDeskPhoneUI` while `SlopDeskMacUI` still imports it. That is

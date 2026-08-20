@@ -921,6 +921,17 @@ public final class WorkspaceStore {
     /// test default) ⇒ fall back to ``clipboardRing`` head via ``currentLocalClipboard()``.
     @ObservationIgnored public var clipboardTextProvider: (() -> String?)?
 
+    /// The PROBE twin of ``clipboardTextProvider``: does the local clipboard hold text, WITHOUT reading
+    /// it. Injected by the app (``ClientPasteboard/hasText()``), for the same reason its twin is — the
+    /// store stays platform-free. `nil` (the headless / test default) ⇒ ``localClipboardHasText()``
+    /// answers from the ``clipboardRing`` head alone, exactly as ``currentLocalClipboard()`` does.
+    ///
+    /// It exists because a renderer may not call the other one. On iOS a content read from a SwiftUI
+    /// `body` raises the modal "Allow Paste?" alert, so an affordance that greys itself out by asking
+    /// "is there anything to paste?" needs a question that discloses nothing
+    /// (``SystemPasteboard/hasPlainText``).
+    @ObservationIgnored public var clipboardHasTextProbe: (() -> Bool)?
+
     /// Brings a DETACHED pane's satellite `NSWindow` to the front, injected by the app (macOS:
     /// `SatelliteWindowsCoordinator`) so the pure store stays AppKit-free + testable. Returns `true` iff a
     /// satellite for `paneID` was found and revealed. `nil` (the headless / test default) or a `false`
@@ -942,6 +953,26 @@ public final class WorkspaceStore {
         guard let text = clipboardTextProvider?() else { return clipboardRing.first }
         recordClip(text)
         return text
+    }
+
+    /// Whether a paste-the-current-clipboard affordance has anything to type — WITHOUT reading the
+    /// clipboard. The ENABLEMENT sibling of ``currentLocalClipboard()``, and the only one of the pair a
+    /// renderer may call: on iOS the content read raises the modal "Allow Paste?" alert, so asking it
+    /// from a SwiftUI `body` puts that alert on screen once per render, unprompted.
+    ///
+    /// It mirrors its sibling's FALLBACK, which is the whole difficulty: `currentLocalClipboard()` is
+    /// `clipboardTextProvider?() ?? clipboardRing.first`, so a probe that consulted only the board would
+    /// grey the button out on a headless store / an unreadable board that would still have pasted the
+    /// ring head. A `false` from the probe means the live read would come back `nil` — the same
+    /// condition that hands the paste over to the ring — so the ring is exactly where this looks next.
+    ///
+    /// ONE case is looser than the paste, and it is the price of not reading: a board holding only
+    /// whitespace probes TRUE (the platforms answer "has a string", not "has a string worth typing"),
+    /// so the item is lit and the tap's own ``ClipboardPasteMenu/isPastable(_:)`` guard makes it a
+    /// no-op. A wasted tap, versus an alert nobody asked for.
+    public func localClipboardHasText() -> Bool {
+        if clipboardHasTextProbe?() == true { return true }
+        return ClipboardPasteMenu.isPastable(clipboardRing.first)
     }
 
     /// Records `text` at the front of the ring (deduped — a repeat moves to front), capped at

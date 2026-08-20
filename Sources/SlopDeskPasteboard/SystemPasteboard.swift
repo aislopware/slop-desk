@@ -22,6 +22,11 @@
 // read costs the user nothing. On iOS the content read happens instead on the paths the user asked for a
 // paste on — ``WorkspaceStore/currentLocalClipboard()`` — where the alert is the paste the user just
 // requested rather than an ambush.
+//
+// The probe half of that sentence is a MEMBER, not just a remark: ``hasPlainText`` answers "is there
+// text to paste" without the bytes, so a renderer that only needs to grey a button out has something to
+// ask that is not the content. It exists because the phone had nothing to ask and asked ``plainText``
+// from a SwiftUI `body` — one alert per footer render (increment 78).
 
 import Foundation
 #if canImport(AppKit)
@@ -50,6 +55,12 @@ public struct SystemPasteboard {
 
     /// The board's plain-text head, or `nil` when it holds something else.
     public var plainText: String? { board.string(forType: .string) }
+
+    /// Whether the board holds plain text AT ALL — a PROBE, not a read: it answers the ENABLEMENT
+    /// question ("would a paste have anything to type?") without the bytes ever crossing. AppKit:
+    /// `availableType(from:)` reports what the writer DECLARED, so no content is disclosed and none is
+    /// asked for. See the header for why the difference from ``plainText`` is worth a second member.
+    public var hasPlainText: Bool { board.availableType(from: [.string]) != nil }
     #elseif canImport(UIKit)
     /// The underlying board. Exposed for the same reasons the AppKit half exposes its own.
     public let board: UIPasteboard
@@ -65,6 +76,12 @@ public struct SystemPasteboard {
     /// The board's plain-text head, or `nil` when it holds something else. A CONTENT read: only call it
     /// where the user asked for a paste (see the header).
     public var plainText: String? { board.string }
+
+    /// Whether the board holds plain text AT ALL — a PROBE, not a read, and the ONE of the pair a
+    /// SwiftUI `body` may call. `hasStrings` is one of the `has*` probes the header names: it discloses
+    /// no content, so iOS answers it WITHOUT the modal "Allow Paste?" alert that ``plainText`` one line
+    /// up raises. Enablement asks THIS; the paste itself asks ``plainText``, on the tap the user made.
+    public var hasPlainText: Bool { board.hasStrings }
     #endif
 
     /// Advances on every write by anyone. The whole poll is this one integer read — and on iOS it is

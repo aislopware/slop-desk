@@ -75,6 +75,15 @@ public enum ClientPasteboard {
         #endif
     }
 
+    /// Whether the board holds text AT ALL, WITHOUT reading it — the question ENABLEMENT asks, on the
+    /// same board ``text()`` reads (so under XCTest, the per-process one).
+    ///
+    /// A forwarder, not a third fork: ``SystemPasteboard/hasPlainText`` is where the two framework
+    /// spellings live, and it is the one iOS answers without the modal "Allow Paste?" alert that
+    /// ``text()`` raises. Anything that decides whether a paste affordance is LIT calls this; only the
+    /// paste itself calls `text()`.
+    public static func hasText() -> Bool { board.hasPlainText }
+
     /// The same funnel for a captured FRAME: decode the bytes, then clear + write the image.
     ///
     /// Answers whether the write happened, so a caller can tell "those bytes were not an image" from

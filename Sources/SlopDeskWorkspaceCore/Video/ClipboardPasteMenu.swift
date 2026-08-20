@@ -68,10 +68,25 @@ public enum ClipboardPasteMenu {
     }
 
     /// Whether the "Paste as Keystrokes" item (types the CURRENT local clipboard) is enabled: the live
-    /// pane can type (`canPasteKeystrokes` — streaming + a live key sink, false while read-only) AND the
-    /// local clipboard holds non-whitespace text. Pure for tests.
-    public static func canPaste(canPasteKeystrokes: Bool, clipboard: String?) -> Bool {
-        guard canPasteKeystrokes, let clipboard else { return false }
+    /// pane can type (`canPasteKeystrokes` — streaming + a live key sink, false while read-only) AND
+    /// there is text to type. Pure for tests.
+    ///
+    /// ⚠️ `clipboardHasText` is a `Bool`, and that is the whole point: enablement must be answerable
+    /// WITHOUT the clipboard's content, because on iOS reading it from a renderer raises the modal
+    /// "Allow Paste?" alert (``SystemPasteboard``'s header). A caller that already holds the content
+    /// because it is about to paste — the Mac's menu, rebuilt at OPEN — reduces it through
+    /// ``isPastable(_:)``; a caller deciding at RENDER time asks a probe
+    /// (``WorkspaceStore/localClipboardHasText()``). There is deliberately no `String?` spelling of
+    /// this function: an enablement path that could take content is one that will.
+    public static func canPaste(canPasteKeystrokes: Bool, clipboardHasText: Bool) -> Bool {
+        canPasteKeystrokes && clipboardHasText
+    }
+
+    /// Whether `clipboard` — content already in hand — is worth typing: present, and not only
+    /// whitespace. Both the fire-time guard and the content-in-hand half of ``canPaste(canPasteKeystrokes:clipboardHasText:)``,
+    /// so "nothing to paste" is decided in ONE place whichever end asks it. Pure for tests.
+    public static func isPastable(_ clipboard: String?) -> Bool {
+        guard let clipboard else { return false }
         return !clipboard.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }

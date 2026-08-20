@@ -64,19 +64,32 @@ final class ClipboardPasteMenuTests: XCTestCase {
 
     // MARK: canPaste enablement
 
+    // ⚠️ `canPaste` takes a `Bool`, never the clipboard's TEXT, and the signature is the point. Enablement
+    // is evaluated at RENDER time on the phone, and reading `UIPasteboard` content from a SwiftUI `body`
+    // raises iOS's modal "Allow Paste?" alert — which is exactly what a `String?`-shaped enablement
+    // predicate invited, and what shipped (increment 78). The two ways to obtain that `Bool` are
+    // `isPastable(_:)` for a caller that already holds the content because it is about to paste (the Mac's
+    // menu, rebuilt at OPEN) and `WorkspaceStore.localClipboardHasText()` for one that must decide without
+    // reading (the phone's plate). There is deliberately no third.
+
     func testCanPasteRequiresBothALiveSinkAndNonEmptyClipboard() {
-        XCTAssertTrue(ClipboardPasteMenu.canPaste(canPasteKeystrokes: true, clipboard: "hi"))
+        XCTAssertTrue(ClipboardPasteMenu.canPaste(canPasteKeystrokes: true, clipboardHasText: true))
         XCTAssertFalse(
-            ClipboardPasteMenu.canPaste(canPasteKeystrokes: false, clipboard: "hi"),
+            ClipboardPasteMenu.canPaste(canPasteKeystrokes: false, clipboardHasText: true),
             "no live key sink (not streaming / read-only) ⇒ disabled",
         )
         XCTAssertFalse(
-            ClipboardPasteMenu.canPaste(canPasteKeystrokes: true, clipboard: nil),
-            "no clipboard ⇒ disabled",
+            ClipboardPasteMenu.canPaste(canPasteKeystrokes: true, clipboardHasText: false),
+            "nothing on the clipboard ⇒ disabled",
         )
-        XCTAssertFalse(
-            ClipboardPasteMenu.canPaste(canPasteKeystrokes: true, clipboard: "   \n\t "),
-            "a whitespace-only clipboard ⇒ disabled (nothing to type)",
-        )
+    }
+
+    /// The content-in-hand reduction the Mac's open-time menu feeds `canPaste` with, and the guard the
+    /// tap runs on both halves.
+    func testIsPastableRejectsMissingAndWhitespaceOnlyClips() {
+        XCTAssertTrue(ClipboardPasteMenu.isPastable("hi"))
+        XCTAssertFalse(ClipboardPasteMenu.isPastable(nil), "no clipboard ⇒ nothing to type")
+        XCTAssertFalse(ClipboardPasteMenu.isPastable(""), "an empty clipboard ⇒ nothing to type")
+        XCTAssertFalse(ClipboardPasteMenu.isPastable("   \n\t "), "whitespace only ⇒ nothing to type")
     }
 }

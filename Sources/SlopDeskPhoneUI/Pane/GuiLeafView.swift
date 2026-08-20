@@ -863,15 +863,29 @@ private struct GuiDisplaySwitcherMenu: View {
 /// local clipboard; the "Clipboard Ring" submenu lists recent clips with classifier-aware previews (secrets
 /// masked). Enablement + previews from the headless ``ClipboardPasteMenu`` model. Disabled while the pane
 /// can't type (not streaming / read-only). Mirrors the ⌥⌘V chord + palette command.
-private struct GuiPastePlateMenu: View {
+///
+/// Nothing in here reads the clipboard's CONTENT: enablement asks a probe (see ``canPasteCurrent``) and
+/// the ring submenu reads ``WorkspaceStore/clipboardRing``, which is the app's own recorded history and
+/// not the board at all. The one content read is inside the paste Button's ACTION.
+struct GuiPastePlateMenu: View {
     let model: RemoteWindowModel
     let store: WorkspaceStore
 
-    /// The CURRENT local clipboard (live reader, works even with clipboard-history recording off).
-    private var clipboard: String? { store.currentLocalClipboard() }
-    /// Whether "Paste as Keystrokes" (types the current clipboard) is enabled right now.
-    private var canPasteCurrent: Bool {
-        ClipboardPasteMenu.canPaste(canPasteKeystrokes: model.canPasteKeystrokes, clipboard: clipboard)
+    /// Whether "Paste as Keystrokes" (types the current clipboard) is enabled right now — from the
+    /// store's non-prompting PROBE, NEVER from a content read.
+    ///
+    /// ⚠️ THIS IS READ FROM `body`, and that is what makes the distinction load-bearing. On iOS a read
+    /// of the clipboard's CONTENT for text this app did not write raises a modal "Allow Paste?" alert;
+    /// this property used to call ``WorkspaceStore/currentLocalClipboard()``, so every render of the
+    /// footer put that alert on screen unprompted (increment 78). The Mac's twin
+    /// (`MacGuiPaneControls.pasteMenuItems`) can read content because it builds its menu in
+    /// `onClick` — at menu OPEN. SwiftUI has no such moment: a `Menu`'s content is a `@ViewBuilder`
+    /// evaluated WITH the body, not when the menu opens. So the phone asks a different question.
+    /// Internal, not private, so `GuiPastePlateRenderTests` can pin that it stays a probe.
+    var canPasteCurrent: Bool {
+        ClipboardPasteMenu.canPaste(
+            canPasteKeystrokes: model.canPasteKeystrokes, clipboardHasText: store.localClipboardHasText(),
+        )
     }
 
     var body: some View {
@@ -882,7 +896,12 @@ private struct GuiPastePlateMenu: View {
             help: GuiPaneReadout.Tooltip.paste,
         ) {
             Button("Paste as Keystrokes") {
-                if let text = clipboard { model.pasteAsKeystrokes(text) }
+                // The CONTENT read lives HERE, inside the action — the tap IS the paste the user asked
+                // for, which is the one moment iOS permits reading without ambushing anyone. It is also
+                // the read that fills the ring (`currentLocalClipboard()` records what it returns).
+                guard let text = store.currentLocalClipboard(),
+                      ClipboardPasteMenu.isPastable(text) else { return }
+                model.pasteAsKeystrokes(text)
             }
             .disabled(!canPasteCurrent)
 

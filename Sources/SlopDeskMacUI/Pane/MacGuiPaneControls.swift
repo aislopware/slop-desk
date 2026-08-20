@@ -426,8 +426,12 @@ final class MacGuiPaneControlBar: NSView {
             let menu = NSMenu()
             menu.addItem(macMenuItem(
                 "Paste as Keystrokes",
+                // Content in hand, so the enablement's `Bool` comes from the content itself — the
+                // phone's twin has to ask a probe instead, because it decides at RENDER time and a
+                // content read there raises iOS's "Allow Paste?" alert (increment 78).
                 enabled: ClipboardPasteMenu.canPaste(
-                    canPasteKeystrokes: model.canPasteKeystrokes, clipboard: clipboard,
+                    canPasteKeystrokes: model.canPasteKeystrokes,
+                    clipboardHasText: ClipboardPasteMenu.isPastable(clipboard),
                 ),
             ) { if let clipboard { model.pasteAsKeystrokes(clipboard) } })
 

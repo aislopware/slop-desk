@@ -85,7 +85,75 @@ final class ClipboardRingTests: XCTestCase {
         XCTAssertTrue(store.clipboardRing.isEmpty, "recording disabled → the read retains nothing")
     }
 
+    // MARK: - The PROBE: enablement without a content read
+
+    /// ``WorkspaceStore/localClipboardHasText()`` answers the enablement question WITHOUT ever calling
+    /// the content provider. This is the whole reason it exists: on iOS the content read raises the modal
+    /// "Allow Paste?" alert, and the paste plate asks this one from a SwiftUI `body` (increment 78).
+    func testProbeNeverReadsTheClipboardContent() {
+        let store = makeStore()
+        var contentReads = 0
+        store.clipboardTextProvider = {
+            contentReads += 1
+            return "live-clipboard"
+        }
+        store.clipboardHasTextProbe = { true }
+        XCTAssertTrue(store.localClipboardHasText())
+        XCTAssertEqual(contentReads, 0, "the probe must not read content — that read is the alert")
+        XCTAssertTrue(store.clipboardRing.isEmpty, "and so it records nothing either")
+    }
+
+    /// The probe answers TRUE in exactly the cases the paste would type something — RING FALLBACK
+    /// INCLUDED. `currentLocalClipboard()` falls back to the ring head when the live read comes back
+    /// `nil`, so a probe that consulted only the board would grey out a paste that would have worked.
+    func testProbeAgreesWithWhatThePasteWouldFind() {
+        let store = makeStore()
+        // No probe, no ring: nothing to paste, and nothing claims otherwise.
+        XCTAssertFalse(store.localClipboardHasText())
+        XCTAssertNil(store.currentLocalClipboard())
+        // Ring head only (a headless store, or a board the platform will not read): both say yes.
+        store.recordClip("ring-head")
+        XCTAssertTrue(store.localClipboardHasText(), "the ring head is what the paste would type")
+        XCTAssertEqual(store.currentLocalClipboard(), "ring-head")
+        // A live board with text: still yes, now from the probe.
+        store.clipboardHasTextProbe = { true }
+        store.clipboardTextProvider = { "live-clipboard" }
+        XCTAssertTrue(store.localClipboardHasText())
+        XCTAssertEqual(store.currentLocalClipboard(), "live-clipboard")
+        // An EMPTY board over a non-empty ring: the live read returns nil and the paste falls back to
+        // the ring — so the probe must not report the board's emptiness as "nothing to paste".
+        store.clipboardHasTextProbe = { false }
+        store.clipboardTextProvider = { nil }
+        XCTAssertTrue(store.localClipboardHasText(), "a false probe hands the question to the ring")
+        XCTAssertEqual(store.currentLocalClipboard(), "live-clipboard", "which is what the paste types")
+        // An empty board over an empty ring: nothing, on both sides.
+        store.clearClipboardRing()
+        XCTAssertFalse(store.localClipboardHasText())
+        XCTAssertNil(store.currentLocalClipboard())
+    }
+
+    /// A whitespace-only RING head is not "text to paste" — the ring's own recorder skips whitespace, so
+    /// this can only arrive through the probe's board, and the tap's `isPastable` guard is what catches it.
+    func testProbeTreatsAWhitespaceRingHeadAsNothingToPaste() {
+        let store = makeStore()
+        store.recordClip("   \n\t ")
+        XCTAssertTrue(store.clipboardRing.isEmpty, "the recorder never retained it in the first place")
+        XCTAssertFalse(store.localClipboardHasText())
+    }
+
     #if os(macOS)
+    /// The board-level probe itself: it reports the DECLARED type, and it is what the injected
+    /// `clipboardHasTextProbe` is wired to (`ClientPasteboard.hasText()`).
+    func testSystemPasteboardProbeSeesTextWithoutReadingIt() {
+        let pb = NSPasteboard(name: NSPasteboard.Name("slopdesk-test-\(UUID().uuidString)"))
+        defer { pb.releaseGlobally() }
+        pb.clearContents()
+        XCTAssertFalse(SystemPasteboard(pb).hasPlainText, "an empty board holds no text")
+        pb.setString("copied", forType: .string)
+        XCTAssertTrue(SystemPasteboard(pb).hasPlainText)
+        XCTAssertEqual(SystemPasteboard(pb).plainText, "copied", "the content read agrees with the probe")
+    }
+
     func testMonitorPollCapturesNewClipsOnly() {
         let store = makeStore()
         let pb = NSPasteboard(name: NSPasteboard.Name("slopdesk-test-\(UUID().uuidString)"))

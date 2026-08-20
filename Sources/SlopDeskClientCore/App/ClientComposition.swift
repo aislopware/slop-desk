@@ -288,6 +288,10 @@ package final class ClientComposition {
         // cross-platform door onto the same board `write(_:)` writes — under XCTest the per-process one,
         // so a test never reads the developer's clipboard.
         store.clipboardTextProvider = { ClientPasteboard.text() }
+        // The ENABLEMENT half of the same affordance, and NOT the same call: a renderer decides whether
+        // the paste item is lit on every frame, and on iOS a content read there raises the modal
+        // "Allow Paste?" alert. `hasText()` discloses nothing and so is answered silently.
+        store.clipboardHasTextProbe = { ClientPasteboard.hasText() }
     }
 
     /// The four background-event fan-outs. Each pushes the in-app toast HERE (both platforms) and hands
