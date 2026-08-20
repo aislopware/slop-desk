@@ -415,11 +415,38 @@ public final class OverlayCoordinator {
         guard let store else { return [] }
         var out: [PaletteItem] = []
         for id in store.recentCommands {
-            if let item = ActionsPaletteSource.catalog.first(where: { $0.id == id }) {
+            if let item = ActionsPaletteSource.allRows.first(where: { $0.id == id }) {
                 out.append(item.namespacedForRecents())
             }
         }
         return out
+    }
+
+    /// Run a REGISTRY verb the way the chord and the menu item run it — through the ONE
+    /// ``WorkspaceBindingRegistry/route(_:to:)`` dispatch, threading this coordinator's own overlay
+    /// switches so a summoning verb actually summons.
+    ///
+    /// This is the palette's half of the same wiring `WorkspaceStore/overlayKeyToggles` does for the
+    /// phone's hardware keyboard and `WorkspaceKeyDispatcher` does for the Mac's NSEvent monitor —
+    /// three callers, one dispatch. `toggleFind` is deliberately left `nil`: `route`'s own arm falls
+    /// back to `store.requestFindInActivePane()`, which is the pane-owned find bar, and there is no
+    /// coordinator-level find overlay to prefer over it.
+    private func routeBinding(_ action: WorkspaceAction) {
+        guard let store else { return }
+        WorkspaceBindingRegistry.route(
+            action, to: store,
+            togglePalette: { [weak self] in self?.togglePalette() },
+            toggleCheatSheet: { [weak self] in self?.toggleCheatSheet() },
+            togglePeekReply: { [weak self] in self?.togglePeekReply() },
+            toggleSidebar: toggleSidebar,
+            toggleCodeSidebar: toggleCodeSidebar,
+            toggleGlobalSearch: { [weak self] in self?.toggleGlobalSearch() },
+            toggleJumpTo: { [weak self] in self?.toggleOpenQuickly(filter: .current) },
+            openQuickly: { [weak self] in self?.toggleOpenQuickly() },
+            togglePinWindow: togglePinWindow,
+            closeWindow: closeWindow,
+            focusCodePanel: focusCodePanel,
+        )
     }
 
     /// The selectable rows (non-separators) of the current result list — keyboard nav target.
@@ -475,30 +502,26 @@ public final class OverlayCoordinator {
     /// `store.sidebarCollapsed`.
     public func run(_ item: PaletteItem, keepOpen: Bool = false) {
         guard !item.isSeparator else { return }
+        // Every accepted VERB is a recent — but a filter chip and a zero row are not verbs. This used
+        // to be five hand-picked `recordRecentCommand` calls buried in five run arms, which meant the
+        // MRU block answered "which verbs did someone remember to instrument", not "which verbs do you
+        // use". A Recents row is namespaced (`recent.<id>`) and re-running it must record the CATALOG
+        // id, or the ring fills with rows that resolve to nothing.
+        switch item.action {
+        case .selectFilter,
+             .noOp: break
+        default: store?.recordRecentCommand(item.catalogID)
+        }
         switch item.action {
         case let .store(closure):
             if let store { closure(store) }
             if !keepOpen { closePalette() }
-        case .toggleSidebar:
-            toggleSidebar()
+        case let .binding(action):
+            // Close FIRST: a verb that summons another overlay (Find, Global Search, Jump To, the
+            // cheat sheet, Peek & Reply) would otherwise open underneath the palette it was picked
+            // from. A mutation does not care about the order.
             if !keepOpen { closePalette() }
-        case .toggleCodeSidebar:
-            toggleCodeSidebar()
-            if !keepOpen { closePalette() }
-        case .focusCodePanel:
-            // Always close: the point of the row is to leave the keyboard somewhere else, which a
-            // palette left open would immediately take back.
-            closePalette()
-            focusCodePanel()
-        case .togglePinWindow:
-            togglePinWindow()
-            if !keepOpen { closePalette() }
-        case .closeWindow:
-            // The injected actuator (macOS `performClose` → close-confirmation gate) wins; `nil` (iOS / tests)
-            // falls back to the store's parked-confirmation request — the SAME fallback the ⌘⇧W arm uses.
-            // Always closes the palette (a window-scope action, not chainable).
-            if let closeWindow { closeWindow() } else { store?.requestCloseWindow() }
-            closePalette()
+            routeBinding(action)
         case let .selectFilter(filter):
             paletteFilter = filter
             paletteSelection = 0
@@ -508,9 +531,6 @@ public final class OverlayCoordinator {
         case .openConnect:
             closePalette()
             openConnect()
-        case .openCheatSheet:
-            closePalette()
-            openCheatSheet()
         case .noOp:
             break
         }

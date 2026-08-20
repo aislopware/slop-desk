@@ -2814,6 +2814,58 @@ to their committed text after proving, file by file, that every difference was a
 token and nothing else. **A record is a claim about a date. Only live reference docs get swept** —
 here that is 22, 30-ui-architecture, 46, 47, 48 and `ui-shell/current-state/`.
 
+### Increment 64 — the palette listed 33 of 77, and only a phone could tell
+
+The split was structurally done at 63. This is the first increment about what the split *promised*:
+the iOS app differs in LAYOUT, never in capability.
+
+`WorkspaceBindingRegistry` declares 77 rows and `ActionsPaletteSource` hand-wrote 33. On a Mac that
+gap is invisible — the menu bar reaches every binding, so the palette's job there is speed, not
+access. A phone has no menu bar. With no hardware keyboard attached the palette IS the command
+surface, so roughly 45 verbs — every focus move, every resize nudge, every scroll jump, Vi mode,
+hint mode, the block jumps, Release Stuck Input, Paste as Keystrokes — could not be said at all.
+`binding_rows.rs`'s own module doc had already written the number down ("~45 rows with no palette
+entry at all") as an argument for keeping two id spaces. It was right about the id spaces and the
+sentence was also a bug report.
+
+Two things landed, and the second is why the first is not a second catalog.
+
+**The rows are DERIVED.** `registryRows` reads `WorkspaceBindingRegistry.bindings` — already
+filtered by `binding_rows.rs`, so a half that cannot run a verb never sees a row for it and the new
+source carries no platform gate of its own. Two verbs are excluded, and that is the whole exclusion:
+`.commandPalette` (it opens the surface you are reading) and `.selectPane` (the nine ⌘1…⌘9 chords
+collapse to one display row whose TITLE promises a range, so answering Return by selecting pane 1
+would be a row that lies). Hint chips come from each verb's own chord, so a rebind moves the glyph.
+
+**And the join is derived too.** `coveredActions` is read off the catalog's own rows rather than
+listed beside them, which was only possible after the second half of the change: 24 catalog rows
+carried a `.store` closure that restated its `route` arm line for line, so every verb the palette
+and the keyboard share had two implementations. One had already drifted — `action.splitRight` called
+`splitActivePane(axis:kind:)` where `route` called `newTerminalPane(.split(axis:))`. They happen to
+agree today. Nothing said they had to.
+
+Those 24 rows are `.binding(_)` now, and six `PaletteAction` cases went with them (`openCheatSheet`,
+`toggleSidebar`, `toggleCodeSidebar`, `focusCodePanel`, `togglePinWindow`, `closeWindow`) — each of
+which named a registry verb and then re-implemented that verb's route arm inside the coordinator.
+`OverlayCoordinator.routeBinding` hands `route` the overlay switches it asks for, which makes it the
+third caller of the one dispatch, beside `WorkspaceKeyDispatcher` (the Mac's NSEvent monitor) and
+`WorkspaceStore.overlayKeyToggles` (the phone's per-pane interceptor).
+
+Two smaller consequences fell out. Recents used to be five hand-picked `recordRecentCommand` calls
+buried in five run arms, so the MRU block answered "which verbs did someone remember to instrument";
+every accepted verb is a recent now. And `PaletteCategory` gained `.focus`, because the registry has
+a Focus category and the palette had nowhere to put it.
+
+| Gate | Where | What it pins |
+| --- | --- | --- |
+| `PaletteReachesEveryBindingTests` | `Tests/SlopDeskClientCoreTests` | every binding runs from some row; no verb listed twice; no id collision; every derived row lands in a section `commandOrder` walks; every hint chip equals the registry glyph |
+| derivation shape | `check-supervisor.sh` | `registryRows` reads `WorkspaceBindingRegistry.bindings` and `coveredActions` reads `declared` — a transcribed list would go stale in silence |
+| no seventh case | `check-supervisor.sh` | the six deleted `PaletteAction` cases stay deleted; a row that names a registry verb IS that verb |
+
+The reach test is asserted as a SHAPE, not a count — a new binding is reachable the day it is
+declared. That is the lesson increment 63 paid for five times over: a gate stated as a number goes
+green about the wrong thing the moment its subject moves.
+
 ## Stage D ledger — what the rename actually costs
 
 `SlopDeskClientUI` cannot fold into `SlopDeskPhoneUI` while `SlopDeskMacUI` still imports it. That is

@@ -123,15 +123,20 @@ final class PaletteContentAndReachTests: XCTestCase {
     /// the audit flagged. Pin that running it fires the closure AND closes the palette. FAILS if the
     /// `.closeWindow` run arm dropped the injected actuator.
     func testRunningCloseWindowRowFiresInjectedActuatorAndCloses() throws {
-        let (overlay, _) = makeOverlay()
+        // The store is HELD across the run: the coordinator keeps it weakly and the row now routes
+        // through `WorkspaceBindingRegistry.route(_:to:)`, which needs one. Binding `_` let the store
+        // die between `makeOverlay()` and `run`, and the row then did nothing at all.
+        let (overlay, store) = makeOverlay()
         var fired = false
         overlay.closeWindow = { fired = true }
         overlay.openPalette()
         let item = try row("action.closeWindow")
 
         overlay.run(item)
-        XCTAssertTrue(fired, "the Close Window row fires the injected performClose actuator")
-        XCTAssertFalse(overlay.paletteVisible, "a window-scope action closes the palette")
+        withExtendedLifetime(store) {
+            XCTAssertTrue(fired, "the Close Window row fires the injected performClose actuator")
+            XCTAssertFalse(overlay.paletteVisible, "a window-scope action closes the palette")
+        }
     }
 
     // MARK: - Finding 3: Read Only lights the ✓ gutter when the active pane is read-only
@@ -199,5 +204,90 @@ final class PaletteContentAndReachTests: XCTestCase {
             searchIDs("layout").contains("action.layoutTiled"),
             "typing 'layout' surfaces the named presets in the palette snapshot",
         )
+    }
+}
+
+// MARK: - Every keybinding is REACHABLE without a keyboard
+
+/// The gap this closes, stated as a shape rather than a count.
+///
+/// The registry is the command surface — cheat sheet, keybindings editor, `ctl` verb list, chord
+/// table. The palette listed 33 of its rows and the registry declared 77, and on a Mac that gap was
+/// invisible: the menu bar reaches every binding, so the palette's job there is speed, not access. A
+/// phone has no menu bar. With no hardware keyboard attached the palette is the ONLY way to say a
+/// verb, so ~45 of them — every focus move, every resize nudge, every scroll jump, Vi mode, hint
+/// mode, the block jumps — could not be said at all. docs/56 §3: layout diverges, capability does not.
+///
+/// Asserted as REACH and not as a number: a new binding is reachable the day it is declared, because
+/// the rows are DERIVED from `WorkspaceBindingRegistry.bindings` rather than transcribed beside it.
+@MainActor
+final class PaletteReachesEveryBindingTests: XCTestCase {
+    /// Every verb the registry lists on this half is either carried by a hand-written catalog row or
+    /// minted as a registry row — with exactly two exclusions, each of which would be a row that lies.
+    func testEveryBindingIsReachableFromThePalette() {
+        var unreachable: [String] = []
+        for binding in WorkspaceBindingRegistry.bindings {
+            if case .selectPane = binding.action { continue }
+            if binding.action == .commandPalette { continue }
+            let reached = ActionsPaletteSource.allRows.contains { row in
+                guard case let .binding(action) = row.action else { return false }
+                return action == binding.action
+            }
+            if !reached { unreachable.append("\(binding.id) (\(binding.title))") }
+        }
+        XCTAssertEqual(
+            unreachable, [],
+            "a keybinding no palette row runs is unreachable on a phone with no keyboard attached",
+        )
+    }
+
+    /// The derived rows do not DUPLICATE the hand-written ones. `coveredActions` is read off the
+    /// catalog itself, so a row that starts carrying a registry verb stops being minted a second time
+    /// in the same breath — the join cannot rot, because there is no join to maintain.
+    func testNoVerbIsListedTwice() {
+        var seen: Set<WorkspaceAction> = []
+        var twice: [String] = []
+        for row in ActionsPaletteSource.allRows {
+            guard case let .binding(action) = row.action else { continue }
+            if !seen.insert(action).inserted { twice.append(row.id) }
+        }
+        XCTAssertEqual(twice, [], "these rows run a verb another row already runs")
+    }
+
+    /// A row id is a stable key (recents, tests, the platform table all file by it), so two rows may
+    /// never share one — and the derived rows live in their OWN namespace (`binding.*`) precisely so
+    /// they cannot collide with the catalog's `action.*`.
+    func testEveryRowIDIsUnique() {
+        var seen: Set<String> = []
+        let collisions = ActionsPaletteSource.allRows.filter { !seen.insert($0.id).inserted }
+        XCTAssertEqual(collisions.map(\.id), [], "duplicate palette row ids")
+    }
+
+    /// A derived row lands in a section, always — the two taxonomies meet at
+    /// ``PaletteCategory/init(_:)``, and `commandOrder` is what the zero-state and the mixer walk. A
+    /// category missing from that order would silently drop every row in it.
+    func testEveryDerivedRowLandsInASectionTheZeroStateWalks() {
+        for row in ActionsPaletteSource.registryRows {
+            let category = row.category
+            XCTAssertNotNil(category, "\(row.id) carries no category")
+            if let category {
+                XCTAssertTrue(
+                    PaletteCategory.commandOrder.contains(category),
+                    "\(row.id) is filed under \(category.label), which the palette never walks",
+                )
+            }
+        }
+    }
+
+    /// A hint chip is DERIVED from the verb's own chord, never transcribed — so a rebind moves the
+    /// glyph on the row in the same edit. A chord-less verb shows no chip, which is the truth.
+    func testHintChipsComeFromTheRegistryChord() {
+        for row in ActionsPaletteSource.registryRows {
+            guard case let .binding(action) = row.action else { continue }
+            XCTAssertEqual(
+                row.shortcut, WorkspaceBindingRegistry.glyph(for: action),
+                "\(row.id)'s hint chip disagrees with the chord the keyboard bank registers",
+            )
+        }
     }
 }

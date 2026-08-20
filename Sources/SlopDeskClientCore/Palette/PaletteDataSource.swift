@@ -75,79 +75,53 @@ public struct ActionsPaletteSource: PaletteDataSource {
                 store.noteLocalCopy(cwd)
             },
         ),
-        item(
+        verb(
             id: "action.newTerminalTab", icon: "plus.rectangle", title: "New Tab",
-            shortcut: glyph(.newTab), category: .tab,
-            run: { store in
-                store.newTab(kind: .terminal)
-                store.recordRecentCommand("action.newTerminalTab")
-            },
+            category: .tab, runs: .newTab,
         ),
         // "Remote Desktop" (⌥⌘N): the dedicated desktop WINDOW — reveal-or-mint, never a tab.
-        item(
+        verb(
             id: "action.newDesktopTab", icon: "display", title: "Remote Desktop",
-            shortcut: glyph(.newDesktopTab), category: .tab,
-            run: { store in
-                store.openDesktopWindow()
-                store.recordRecentCommand("action.newDesktopTab")
-            },
+            category: .tab, runs: .newDesktopTab,
         ),
-        item(
+        verb(
             id: "action.closeTab", icon: "xmark.rectangle", title: "Close Tab",
-            shortcut: glyph(.closeTab), category: .tab,
-            run: { store in store.closeActiveTab() },
+            category: .tab, runs: .closeTab,
         ),
-        item(
+        verb(
             id: "action.splitRight", icon: "rectangle.split.2x1", title: "Split Pane Right",
-            shortcut: glyph(.splitRight), category: .pane,
-            run: { store in
-                store.splitActivePane(axis: .horizontal, kind: .terminal)
-            },
+            category: .pane, runs: .splitRight,
         ),
-        item(
+        verb(
             id: "action.splitDown", icon: "rectangle.split.1x2", title: "Split Pane Down",
-            shortcut: glyph(.splitDown), category: .pane,
-            run: { store in
-                store.splitActivePane(axis: .vertical, kind: .terminal)
-            },
+            category: .pane, runs: .splitDown,
         ),
-        item(
+        verb(
             id: "action.closePane", icon: "xmark.square", title: "Close Pane",
-            shortcut: glyph(.closePane), category: .pane,
-            run: { store in
-                store.requestCloseActivePaneTree()
-                store.recordRecentCommand("action.closePane")
-            },
+            category: .pane, runs: .closePane,
         ),
-        item(
+        verb(
             id: "action.toggleZoom", icon: "arrow.up.left.and.arrow.down.right", title: "Toggle Maximize Pane",
-            shortcut: glyph(.toggleZoom), category: .pane,
-            run: { store in
-                store.toggleZoomActivePane()
-                store.recordRecentCommand("action.toggleZoom")
-            },
+            category: .pane, runs: .toggleZoom,
         ),
-        item(
+        verb(
             id: "action.renamePane", icon: "pencil", title: "Rename Pane",
-            shortcut: glyph(.renamePane), category: .pane,
-            run: { store in store.requestRenameActivePane() },
+            category: .pane, runs: .renamePane,
         ),
         // Detach / reattach (own-window satellites). Non-destructive: the pane's session survives the
         // move; closing the satellite window reattaches it.
-        item(
+        // The gate these two rows' run arms used to carry is now the row's PLATFORM
+        // (`slopdesk_workspace::palette_rows`): a shell with no satellite `NSWindow` does not list the
+        // verb at all, rather than listing it and answering with nothing.
+        verb(
             id: "action.detachPane", icon: "macwindow.on.rectangle", title: "Detach Pane into Window",
             keywords: "detach pop out float window satellite separate monitor",
-            shortcut: glyph(.detachPane), category: .pane,
-            // The gate this run arm used to carry is now the row's PLATFORM
-            // (`slopdesk_workspace::palette_rows`): a shell with no satellite `NSWindow` does not
-            // list the verb at all, rather than listing it and answering with nothing.
-            run: { store in store.detachActivePane() },
+            category: .pane, runs: .detachPane,
         ),
-        item(
+        verb(
             id: "action.reattachAllPanes", icon: "macwindow.and.cursorarrow", title: "Reattach All Panes",
             keywords: "reattach dock fold return window satellite",
-            shortcut: glyph(.reattachAllPanes), category: .pane,
-            run: { store in store.reattachAllPanes() },
+            category: .pane, runs: .reattachAllPanes,
         ),
         // "Move Pane to New Tab" — the keyboard twin of dropping a pane on the sidebar's New-Tab slot
         // (`breakPaneToTab`). PaneID-preserving, so the live session survives. Chord-less ⇒ no hint
@@ -156,11 +130,10 @@ public struct ActionsPaletteSource: PaletteDataSource {
         // "New Tab" verb for that query (section order beats score across sections). Its per-tab
         // siblings ("Move Pane to Tab N") are DYNAMIC rows the coordinator snapshots per palette open
         // (``MovePaneToTabSource``) — a fixed catalog can't enumerate tabs.
-        item(
+        verb(
             id: "action.movePaneToNewTab", icon: "plus.square.on.square", title: "Move Pane to New Tab",
             keywords: "move break pane new tab own separate split out",
-            shortcut: nil, category: .tab,
-            run: { store in store.breakActivePaneToTab() },
+            category: .tab, runs: .breakPaneToTab,
         ),
         // No registry chord exists for reconnect (the keyboard bank never registers one) ⇒ no hint chip.
         item(
@@ -170,71 +143,61 @@ public struct ActionsPaletteSource: PaletteDataSource {
                 if let pane = store.tree.activeSession?.activeTab?.activePane {
                     store.reconnect(pane)
                 }
-                store.recordRecentCommand("action.reconnect")
             },
         ),
         // "Toggle Tabs Panel" toggles the LIVE `WorkspaceChromeState.sidebarCollapsed` (the macOS split + the
         // palette ✓ both read it) via a typed action the overlay coordinator routes to the injected chrome
         // closure — NOT the legacy `store.sidebarCollapsed`, which nothing reads on macOS (running it there was
         // a visible no-op AND its ✓ could never flip from the palette). Same live flag the ⌘⇧L chord drives.
-        PaletteItem(
+        verb(
             id: "action.toggleSidebar", icon: "sidebar.left", title: "Toggle Tabs Panel",
-            subtitle: nil, shortcut: glyph(.toggleSidebar), filter: .actions, category: .view,
-            action: .toggleSidebar,
+            category: .view, runs: .toggleSidebar,
         ),
         // "Toggle Code Panel" — the RIGHT sidebar (project-scoped embedded VS Code). Routed through
         // the injected chrome closure like the Tabs panel, so the ⌘⇧R chord, the menu row, and this
         // row's ✓ all flip/read the same live `chrome.codeSidebarCollapsed`.
-        PaletteItem(
+        verb(
             id: "action.toggleCodeSidebar", icon: "sidebar.right", title: "Toggle Code Panel",
-            subtitle: nil, shortcut: glyph(.toggleCodeSidebar), filter: .actions, category: .view,
-            action: .toggleCodeSidebar,
+            category: .view, runs: .toggleCodeSidebar,
         ),
         // The keyboard's way into the embedded editor and back out. Sits beside the panel's own
         // toggle: one row decides whether the panel is THERE, this one decides who types into it.
-        PaletteItem(
+        verb(
             id: "action.focusCodePanel", icon: "keyboard", title: "Switch Editor / Terminal Focus",
-            subtitle: nil, shortcut: glyph(.focusCodePanel), filter: .actions, category: .view,
-            action: .focusCodePanel,
+            category: .view, runs: .focusCodePanel,
         ),
         // Read Only: toggle the active pane's input gate. Under the SHELL section as the
         // first shell verb in the catalog. The spec accepts
         // "read only" plus the synonyms `readonly` / `lock` / `freeze` / `view only` — folded into the row's
         // HIDDEN `keywords` so they search without being rendered. No registry chord is registered for this
         // verb ⇒ the glyph resolves to nil ⇒ no hint chip. Drives the store seam that converges with the pill `×` + menu.
-        item(
+        verb(
             id: "action.toggleReadOnly", icon: "lock", title: "Read Only",
             keywords: "readonly lock freeze view only locked viewer input gate protect",
-            shortcut: glyph(.toggleReadOnly), category: .shell,
-            run: { store in store.toggleReadOnlyInActivePane() },
+            category: .shell, runs: .toggleReadOnly,
         ),
         // Secure Keyboard Entry: the MANUAL toggle for macOS process-global secure event input
         // over the active pane. Under the SHELL section beside Read Only.
         // No registry chord is registered for this verb ⇒ the glyph resolves to nil ⇒ no hint chip. Drives the store
         // seam that flips the active model's manual flag (→ the pill + the leaf's controller).
-        item(
+        verb(
             id: "action.secureKeyboardEntry", icon: "lock.shield", title: "Secure Keyboard Entry",
             keywords: "secure input keyboard entry password sudo protect eavesdrop sniff secure event input",
-            shortcut: glyph(.secureKeyboardEntry), category: .shell,
-            run: { store in store.toggleSecureKeyboardEntryInActivePane() },
+            category: .shell, runs: .secureKeyboardEntry,
         ),
         // Reopen Closed Pane (⌘⇧T) — pops the tree shell's recently-closed LIFO. A graceful no-op when
         // the LIFO is empty. Glyph derives from the registry's `.reopenClosed` chord (no drift).
-        item(
+        verb(
             id: "action.reopenClosed", icon: "arrow.uturn.backward", title: "Reopen Closed Pane",
             keywords: "reopen closed tab pane restore undo recover",
-            shortcut: glyph(.reopenClosed), category: .tab,
-            run: { store in store.reopenLastClosedPane() },
+            category: .tab, runs: .reopenClosed,
         ),
         // Sync Input to All Panes (Zellij ToggleActiveSyncTab-style broadcast; ⌘⇧I) — mirror keystrokes to
         // every other pane in the active tab. A graceful no-op when there is no active tab.
-        item(
+        verb(
             id: "action.toggleSyncInput", icon: "rectangle.3.group", title: "Sync Input to All Panes",
             keywords: "sync broadcast send all panes input mirror simultaneous",
-            shortcut: glyph(.toggleSyncInput), category: .pane,
-            run: { store in
-                if let tabID = store.tree.activeSession?.activeTab?.id { store.toggleSyncInput(tabID: tabID) }
-            },
+            category: .pane, runs: .toggleSyncInput,
         ),
         // Named layout presets (tmux/zellij `select-layout`; registry comment: "menu/palette only — no
         // chord"). The registry tracks `.applyLayout(_)` as palette/menu-only but listed it on NEITHER surface
@@ -274,30 +237,27 @@ public struct ActionsPaletteSource: PaletteDataSource {
         // Close Window (⌘⇧W) — routes through the injected `closeWindow` closure
         // (macOS `NSWindow.performClose` → the close-confirmation gate), falling back to the store's parked
         // confirmation when no closure is installed (iOS / tests). The SAME actuation the ⌘⇧W chord + menu use.
-        PaletteItem(
+        verb(
             id: "action.closeWindow", icon: "xmark.square", title: "Close Window",
-            subtitle: nil, keywords: "close window quit session", shortcut: glyph(.closeWindow),
-            filter: .actions, category: .window, action: .closeWindow,
+            keywords: "close window quit session",
+            category: .window, runs: .closeWindow,
         ),
         // Font size (⌘= / ⌘- / ⌘0) — rescale the active pane's render font (the cell box resizes, so the
         // remote PTY grid REFLOWS). A graceful no-op off a terminal active pane.
-        item(
+        verb(
             id: "action.increaseFontSize", icon: "textformat.size.larger", title: "Increase Font Size",
             keywords: "font size bigger increase larger zoom in text",
-            shortcut: glyph(.increaseFontSize), category: .view,
-            run: { store in store.increaseFontInActivePane() },
+            category: .view, runs: .increaseFontSize,
         ),
-        item(
+        verb(
             id: "action.decreaseFontSize", icon: "textformat.size.smaller", title: "Decrease Font Size",
             keywords: "font size smaller decrease zoom out text",
-            shortcut: glyph(.decreaseFontSize), category: .view,
-            run: { store in store.decreaseFontInActivePane() },
+            category: .view, runs: .decreaseFontSize,
         ),
-        item(
+        verb(
             id: "action.resetFontSize", icon: "textformat.size", title: "Reset Font Size",
             keywords: "font size reset default actual zoom text",
-            shortcut: glyph(.resetFontSize), category: .view,
-            run: { store in store.resetFontInActivePane() },
+            category: .view, runs: .resetFontSize,
         ),
         // Connect to a (possibly non-default) host — the only entry point to the host/port editor besides
         // the top-bar status pill. No registry chord ⇒ no hint chip.
@@ -310,9 +270,9 @@ public struct ActionsPaletteSource: PaletteDataSource {
         // CHORD-LESS (no registry chord is registered) ⇒ `shortcut: nil` ⇒ no hint chip; routed by the coordinator to the
         // injected `togglePinWindow` closure (the SAME live `chrome.pinned` the View menu + the `NSWindow.level`
         // glue read). macOS-meaningful (iOS has no window level — a documented no-op).
-        PaletteItem(
+        verb(
             id: "action.pinWindow", icon: "pin", title: "Pin Window",
-            subtitle: nil, shortcut: nil, filter: .actions, category: .window, action: .togglePinWindow,
+            category: .window, runs: .pinWindow,
         ),
         PaletteItem(
             id: "action.openSettings", icon: "slider.horizontal.3", title: "Open Settings",
@@ -320,17 +280,65 @@ public struct ActionsPaletteSource: PaletteDataSource {
         ),
         // The cheat sheet is also reachable by ⌘/; surfacing it here means the keyboard reference is
         // discoverable without knowing the chord. Its hint derives from the registry (no drift).
-        PaletteItem(
+        verb(
             id: "action.cheatSheet", icon: "keyboard", title: "Keyboard Shortcuts",
-            subtitle: nil, shortcut: glyph(.cheatSheet), filter: .actions, category: .settings,
-            action: .openCheatSheet,
+            category: .settings, runs: .cheatSheet,
         ),
     ]
 
-    /// The catalog rows in `category`, preserving catalog order — the verbs-only command palette groups by
-    /// these (one section header per non-empty category).
+    /// The registry verbs the hand-written catalog above ALREADY carries, derived from the rows
+    /// themselves rather than listed a second time.
+    ///
+    /// Read from ``declared`` and not from ``catalog``: a row this half does not list is still a row
+    /// the catalog SPEAKS FOR, and the registry drops the same verb on the same half anyway
+    /// (`slopdesk_workspace::binding_rows`), so filtering first would only make the two tables argue.
+    static let coveredActions: Set<WorkspaceAction> = Set(declared.compactMap { item in
+        guard case let .binding(action) = item.action else { return nil }
+        return action
+    })
+
+    /// Two verbs no registry-derived row is minted for, and the whole of that exclusion.
+    ///
+    /// `.commandPalette` opens the surface the row is being read on. `.selectPane` is the nine
+    /// generated ⌘1…⌘9 chords collapsed to one display row whose TITLE promises a range — a row that
+    /// answered Return by selecting pane 1 would be lying about what it does, and the ⌘-digit that
+    /// tells the truth is already registered.
+    private static func isUnlistable(_ action: WorkspaceAction) -> Bool {
+        if case .selectPane = action { return true }
+        return action == .commandPalette
+    }
+
+    /// Every KEYBINDING the catalog does not already carry, as a palette row.
+    ///
+    /// The registry is not a second catalog — it is the same catalog, one surface further in, and
+    /// until this existed the palette listed 33 of its 77 rows. On a Mac that gap was invisible
+    /// (the menu bar reaches every binding); on a phone with no hardware keyboard the palette IS the
+    /// command surface, so ~45 verbs — every focus move, every resize nudge, every scroll jump, Vi
+    /// mode, hint mode, the block jumps — were simply unreachable. docs/56 §3: layout diverges,
+    /// capability does not.
+    ///
+    /// Platform-correct without a gate of its own: ``WorkspaceBindingRegistry/bindings`` is already
+    /// filtered by `slopdesk_workspace::binding_rows`, so a half that cannot run a verb never sees a
+    /// row for it here either.
+    static let registryRows: [PaletteItem] = WorkspaceBindingRegistry.bindings
+        .filter { !coveredActions.contains($0.action) && !isUnlistable($0.action) }
+        .map { binding in
+            PaletteItem(
+                id: "binding.\(binding.id)", icon: binding.symbol, title: binding.title,
+                keywords: binding.keywords, shortcut: WorkspaceBindingRegistry.glyph(for: binding.action),
+                filter: .actions, category: PaletteCategory(binding.category),
+                action: .binding(binding.action),
+            )
+        }
+
+    /// Every row the ⌘⇧P palette can list, catalog first — the lookup the Recents block resolves its
+    /// ids against, so a registry-derived verb can be a recent too.
+    public static let allRows: [PaletteItem] = catalog + registryRows
+
+    /// The rows in `category`, hand-written catalog first and then the registry-derived ones — the
+    /// verbs-only command palette groups by these (one section header per non-empty category).
     public static func items(in category: PaletteCategory) -> [PaletteItem] {
-        catalog.filter { $0.category == category }
+        allRows.filter { $0.category == category }
     }
 
     /// One ``PaletteDataSource`` per non-empty category, in ``PaletteCategory/commandOrder`` — the verbs-only
@@ -356,7 +364,22 @@ public struct ActionsPaletteSource: PaletteDataSource {
         WorkspaceBindingRegistry.glyph(for: action)
     }
 
-    /// Build a `.store` action row in a category.
+    /// Build a row that runs the REGISTRY verb `action` — the same dispatch the chord and the menu
+    /// item resolve to, so the row cannot drift from them. The hint chip derives from that verb's own
+    /// chord (nil when it has none), which is why this helper takes no `shortcut:`.
+    private static func verb(
+        id: String, icon: String, title: String, keywords: String? = nil,
+        category: PaletteCategory, runs action: WorkspaceAction,
+    ) -> PaletteItem {
+        PaletteItem(
+            id: id, icon: icon, title: title, keywords: keywords, shortcut: glyph(action),
+            filter: .actions, category: category, action: .binding(action),
+        )
+    }
+
+    /// Build a `.store` action row in a category — for the verbs the registry has NO binding for
+    /// (Copy Path, Reconnect Pane, the named layout presets, Connect to Host…, Open Settings). A row
+    /// whose verb the registry DOES carry belongs in ``verb(id:icon:title:keywords:category:runs:)``.
     private static func item(
         id: String, icon: String, title: String, keywords: String? = nil, shortcut: String? = nil,
         category: PaletteCategory,

@@ -122,7 +122,7 @@ final class WorkspaceChromePinTests: XCTestCase {
         let chrome = WorkspaceChromeState()
         let pinItem = PaletteItem(
             id: "action.pinWindow", icon: "pin", title: "Pin Window",
-            subtitle: nil, shortcut: nil, filter: .actions, category: .window, action: .togglePinWindow,
+            subtitle: nil, shortcut: nil, filter: .actions, category: .window, action: .binding(.pinWindow),
         )
 
         let unpinnedResolver = PalettePresentation.toggledState(chrome: chrome, store: store)

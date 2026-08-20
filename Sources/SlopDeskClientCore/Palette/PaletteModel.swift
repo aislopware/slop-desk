@@ -57,6 +57,7 @@ public enum PaletteCategory: String, CaseIterable, Sendable, Hashable {
     case workingDirectory = "Working Directory"
     case window = "Window"
     case pane = "Pane"
+    case focus = "Focus"
     case tab = "Tab"
     case view = "View"
     case shell = "Shell"
@@ -69,8 +70,23 @@ public enum PaletteCategory: String, CaseIterable, Sendable, Hashable {
     /// screenshot), then the remaining verb groups. An empty category is skipped by the mixer / zero-state, so it
     /// never renders an empty header. (Shell carries the "Read Only" verb.)
     public static let commandOrder: [Self] = [
-        .workingDirectory, .window, .pane, .tab, .view, .shell, .settings,
+        .workingDirectory, .window, .pane, .focus, .tab, .view, .shell, .settings,
     ]
+
+    /// The palette section a REGISTRY row groups under.
+    ///
+    /// The two taxonomies exist because the palette has three sections the registry has no word for
+    /// (Working Directory, Shell, Settings — none of which is a chord's home). Every registry
+    /// category does have a palette twin, so this is total in the direction that matters: a keybinding
+    /// always lands in a section, and the palette never grows a section a keybinding cannot reach.
+    public init(_ registry: WorkspaceAction.Category) {
+        switch registry {
+        case .panes: self = .pane
+        case .tabs: self = .tab
+        case .focus: self = .focus
+        case .view: self = .view
+        }
+    }
 }
 
 // MARK: - Palette action (the typed intent a row runs)
@@ -82,42 +98,30 @@ public enum PaletteCategory: String, CaseIterable, Sendable, Hashable {
 public enum PaletteAction: Sendable {
     /// Run a closure against the store (the common case — a tree mutation / navigation).
     case store(@MainActor @Sendable (WorkspaceStore) -> Void)
+    /// Run a REGISTRY verb through ``WorkspaceBindingRegistry/route(_:to:)`` — the same single dispatch
+    /// the chord, the menu item and the cheat sheet resolve to.
+    ///
+    /// This case exists because the alternative was two implementations of every verb the palette and
+    /// the keyboard share. Twenty-four catalog rows used to carry a `.store` closure that restated its
+    /// `route` arm line for line, and one of them had already drifted into a second spelling of the
+    /// split. A row that names its ACTION cannot drift from the chord that names the same one — and
+    /// it is also what lets the palette list the ~45 registry verbs (every focus move, every resize
+    /// nudge, every scroll jump) it never had a hand-written row for, which is the whole of a phone's
+    /// reach when no hardware keyboard is attached.
+    case binding(WorkspaceAction)
     /// Open the command palette in a fresh filter (a filter chip → re-query) — handled by the palette view.
     case selectFilter(QueryFilter)
     /// Open the Settings overlay (handled by the overlay coordinator).
     case openSettings
     /// Open the Connect-to-Host overlay (the host/port editor — handled by the overlay coordinator).
     case openConnect
-    /// Open the keyboard cheat sheet overlay (handled by the overlay coordinator).
-    case openCheatSheet
-    /// Toggle the left navigator / Tabs panel — routed by the overlay coordinator to the LIVE
-    /// ``WorkspaceChromeState`` (the macOS split + the palette's ✓ both read `chrome.sidebarCollapsed`), NOT
-    /// the legacy `store.sidebarCollapsed` the native shell never reads. Same live flag the ⌘⇧L chord + the
-    /// titlebar button drive, so the run path, the chord, the button, and the ✓ stay in lockstep.
-    case toggleSidebar
-    /// Toggle the RIGHT code panel (the project-scoped embedded VS Code) — routed by the overlay
-    /// coordinator to the injected ``OverlayCoordinator/toggleCodeSidebar`` closure (bound to the SAME
-    /// live `chrome.codeSidebarCollapsed` the ⌘⇧R chord + the macOS split read), so the row, the
-    /// chord, the menu, and the ✓ stay in lockstep.
-    case toggleCodeSidebar
-    /// Move the keyboard into the code panel's embedded editor, or hand it back to the pane that had
-    /// it (⌥⌘R) — routed by the overlay coordinator to the injected
-    /// ``OverlayCoordinator/focusCodePanel`` closure, the same sink the chord uses. Not a checkable
-    /// toggle: it moves first responder, which the ✓ gutter has no business mirroring.
-    case focusCodePanel
-    /// Toggle "Pin Window" (keep the window floating above all other apps).
-    /// Routed by the overlay coordinator to the injected ``OverlayCoordinator/togglePinWindow`` closure (bound
-    /// to the SAME live ``WorkspaceChromeState`` `pinned` flag the menu Button + the `NSWindow.level` glue
-    /// read), so the palette row's ✓ gutter (resolved in ``PalettePresentation/toggledState(chrome:store:)``) tracks the
-    /// real pinned state. A checkable toggle; a documented no-op on iOS (no window level).
-    case togglePinWindow
-    /// Close the active window. Routed by the overlay coordinator to the injected
-    /// ``OverlayCoordinator/closeWindow`` closure (bound on macOS to `NSWindow.performClose(nil)` → the native
-    /// `windowShouldClose` close-confirmation gate, preserving the configured ``CloseConfirmationPolicy``).
-    /// `nil` (iOS / tests / a pre-`onAppear` scene) falls back to ``WorkspaceStore/requestCloseWindow()`` so
-    /// the row PARKS the confirmation rather than trapping — the SAME fallback the ⌘⇧W route arm uses, never a
-    /// dead control.
-    case closeWindow
+    // ⚠️ Six cases used to live here — `openCheatSheet`, `toggleSidebar`, `toggleCodeSidebar`,
+    // `focusCodePanel`, `togglePinWindow`, `closeWindow` — and their ABSENCE is the point. Each named
+    // a registry verb (`.cheatSheet`, `.toggleSidebar`, …) and then re-implemented that verb's `route`
+    // arm here, so the palette and the chord actuated one feature down two paths. They are `.binding`
+    // rows now, and the coordinator hands `route` the overlay switches it asks for. Do not add a
+    // seventh: if a row names a registry verb, it IS that verb.
+
     /// A non-interactable separator/zero row.
     case noOp
 }
@@ -175,6 +179,16 @@ public struct PaletteItem: Identifiable, Sendable {
         self.isSeparator = isSeparator
     }
 
+    /// The namespace a Recents copy of a row is re-`id`'d into — see ``namespacedForRecents()``.
+    public static let recentsPrefix = "recent."
+
+    /// The id this row is FILED under, with the Recents namespace stripped. A Recents copy and its
+    /// catalog original are the same verb, so re-running either must record the same id; a bare
+    /// `item.id` would push `recent.action.closePane` into the ring, which resolves to no row.
+    public var catalogID: String {
+        id.hasPrefix(Self.recentsPrefix) ? String(id.dropFirst(Self.recentsPrefix.count)) : id
+    }
+
     /// A section separator row (header label, no action).
     public static func separator(_ label: String, filter: QueryFilter) -> Self {
         Self(
@@ -194,7 +208,7 @@ public struct PaletteItem: Identifiable, Sendable {
     /// else (icon/title/shortcut/`action`) is preserved verbatim so accept still runs the catalog verb.
     public func namespacedForRecents() -> Self {
         Self(
-            id: "recent.\(id)",
+            id: "\(Self.recentsPrefix)\(id)",
             icon: icon,
             title: title,
             subtitle: subtitle,

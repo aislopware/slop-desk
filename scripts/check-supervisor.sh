@@ -6893,6 +6893,37 @@ fi
 printf 'check-supervisor: a palette verb names its platform once — %s verbs, no gate in the catalog.\n' \
   "$(printf '%s\n' "${palette_rust_ids}" | wc -l | tr -d ' ')"
 
+# ── …AND EVERY KEYBINDING IS REACHABLE FROM IT, without a keyboard ──────────────────────────────
+# The palette listed 33 verbs; the registry declares 77. On a Mac the gap is invisible — the menu bar
+# reaches every binding — so it survived. A phone has no menu bar, so with no hardware keyboard
+# attached the palette IS the command surface and ~45 verbs could not be said at all.
+#
+# The fix is a DERIVATION, not a second catalog, and that is what this pins. `registryRows` reads
+# `WorkspaceBindingRegistry.bindings` (already platform-filtered, so no gate of its own), and
+# `coveredActions` is read off the catalog's own rows — so the join between the two id spaces cannot
+# rot, because there is no join anyone maintains. Written out as a literal set, it would go stale the
+# first time a row changed hands and nothing would say so.
+#
+# The REACH itself (every binding runs from some row) is `PaletteReachesEveryBindingTests`, which can
+# ask the types. This checks the SHAPE that keeps that test cheap to satisfy honestly.
+for derived in \
+  'static let registryRows: \[PaletteItem\] = WorkspaceBindingRegistry\.bindings' \
+  'static let coveredActions: Set<WorkspaceAction> = Set\(declared\.compactMap'; do
+  if ! spells "${derived}" "${SWIFT_PALETTE}" > /dev/null; then
+    fail "${SWIFT_PALETTE} no longer DERIVES the registry rows — a transcribed list goes stale in silence (docs/56 §3.6)"
+  fi
+done
+# A row that names a registry verb must RUN that verb, not a second spelling of it. Twenty-four rows
+# used to carry a `.store` closure restating their `route` arm line for line, and one had already
+# drifted into a different split call. `PaletteAction` is where that was possible; keep it shut.
+for revived in 'case toggleSidebar' 'case toggleCodeSidebar' 'case focusCodePanel' \
+  'case togglePinWindow' 'case closeWindow' 'case openCheatSheet'; do
+  if hit=$(spells "${revived}" Sources/SlopDeskClientCore/Palette/PaletteModel.swift); then
+    fail "${hit} re-implements a registry verb as its own PaletteAction — the row IS the verb (\`.binding\`)"
+  fi
+done
+printf 'check-supervisor: every keybinding is reachable from the palette, by derivation and not by list.\n'
+
 # ── …and a KEYBINDING names its platform once, in the other id space ────────────────────────────
 # The registry is four surfaces at once — cheat sheet, keybindings editor, `ctl` verb list, and the
 # CHORD TABLE. That last one is why a listed-and-inert binding is worse than a listed-and-inert
