@@ -63,6 +63,20 @@ package struct SidebarRowReading: Equatable, Sendable {
     /// The hover tooltip — the full cwd, the untruncated readout, the last command, the other
     /// clients looking at or holding this pane.
     package let tooltip: String?
+    /// The MULTICLIENT lines ALONE — "Also open on <device>", "Held by <device>" — for a surface with
+    /// no pointer to hang a tooltip off.
+    ///
+    /// It is a CUT of the tooltip and not a second reading: ``SidebarRowTooltip/presenceLines(viewers:holders:)``
+    /// writes those two lines once, and the tooltip splices the SAME array in, so the phone's row and
+    /// the Mac's hover can never name one fan-out two ways. The cut exists because the rest of the
+    /// tooltip is overflow RECOVERY (the untruncated cwd, the clipped readout) — facts the row already
+    /// shows, worth a hover and not worth a line — while this pair is the only thing in there that is
+    /// not on screen anywhere else. On the device most likely to BE the second client, that made the
+    /// one genuinely new fact the one fact it could not reach.
+    ///
+    /// Joined with ` · ` rather than the tooltip's newline: this lands in ONE line under a row title,
+    /// where the tooltip has a popover's worth of rows to spend.
+    package let presence: String?
 
     /// The RUNG the title's ink comes off, as a role — the palette is each framework's answer, the
     /// ladder is not.
@@ -163,6 +177,11 @@ package enum SidebarRowPresentation {
             badge: chrome.badge, status: chrome.status,
             unseenDone: store.paneUnseenDone.contains(row.id),
         )
+        // Read ONCE and spliced into both cuts below — the tooltip and the phone's presence line are
+        // the same two facts written by the same helper, so a fan-out cannot read differently on the
+        // two halves.
+        let viewers = store.paneViewers(for: row.id)
+        let holders = store.paneHolders(for: row.id)
         let working = chrome.status == .working
         let detail = RailRowReadout.resolve(
             question: chrome.question,
@@ -204,9 +223,10 @@ package enum SidebarRowPresentation {
                 detail: detail,
                 lastCommand: blocks.last(where: { $0.complete || $0.durationMS != nil })
                     .flatMap(SidebarRowTooltip.commandLine),
-                viewers: store.paneViewers(for: row.id),
-                holders: store.paneHolders(for: row.id),
+                viewers: viewers,
+                holders: holders,
             ),
+            presence: SidebarRowTooltip.presence(viewers: viewers, holders: holders),
         )
     }
 
@@ -234,17 +254,40 @@ package enum SidebarRowTooltip {
         cwd: String?, detail: String?, lastCommand: String?, viewers: [String] = [],
         holders: [String] = [],
     ) -> String? {
-        // Who ELSE has this pane ON SCREEN (``WorkspaceStore/paneViewers(for:)``) and who else holds
-        // a CHANNEL on its PTY (``WorkspaceStore/paneHolders(for:)``). Two different facts, both
-        // useful: a client can be looking at a pane it does not hold, and holding one it is not
-        // showing. Viewing first — it is the softer claim.
-        let alsoOpen = viewers.isEmpty ? nil : "Also open on \(viewers.joined(separator: ", "))"
-        let heldBy = holders.isEmpty ? nil : "Held by \(holders.joined(separator: ", "))"
-        let parts = [cwd, detail, lastCommand, alsoOpen, heldBy].compactMap { part -> String? in
+        let written = [cwd, detail, lastCommand].compactMap { part -> String? in
             guard let part, !part.isEmpty else { return nil }
             return part
         }
+        // The presence lines are appended rather than interleaved: they are written non-empty or not
+        // at all, so they need none of the unwrap-and-drop above.
+        let parts = written + presenceLines(viewers: viewers, holders: holders)
         return parts.isEmpty ? nil : parts.joined(separator: "\n")
+    }
+
+    /// Who ELSE is on this pane, as the lines that say so: who has it ON SCREEN
+    /// (``WorkspaceStore/paneViewers(for:)``) and who holds a CHANNEL on its PTY
+    /// (``WorkspaceStore/paneHolders(for:)``). Two different facts, both useful — a client can be
+    /// looking at a pane it does not hold, and holding one it is not showing. Viewing first: it is the
+    /// softer claim.
+    ///
+    /// Written HERE rather than inside the tooltip because two surfaces spend them differently — the
+    /// Mac splices them into a hover, the phone prints them under the row title
+    /// (``SidebarRowReading/presence``) — and a fan-out named "Held by" on one half and something else
+    /// on the other is a disagreement about the WORKSPACE, not about a layout.
+    package static func presenceLines(viewers: [String], holders: [String]) -> [String] {
+        let lines: [String?] = [
+            viewers.isEmpty ? nil : "Also open on \(viewers.joined(separator: ", "))",
+            holders.isEmpty ? nil : "Held by \(holders.joined(separator: ", "))",
+        ]
+        return lines.compactMap(\.self)
+    }
+
+    /// The presence lines as ONE line — ``SidebarRowReading/presence``'s value. `nil` for the common
+    /// case (this client alone), so a row with nothing to report grows no second line rather than an
+    /// empty one.
+    package static func presence(viewers: [String], holders: [String]) -> String? {
+        let lines = presenceLines(viewers: viewers, holders: holders)
+        return lines.isEmpty ? nil : lines.joined(separator: " · ")
     }
 
     /// The tooltip's last-command line from a finished block: `command · duration · exit N` (parts
