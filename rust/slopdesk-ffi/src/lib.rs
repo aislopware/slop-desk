@@ -150,6 +150,7 @@ pub mod workspace;
 pub mod workspace_channel;
 pub mod workspace_intent;
 pub mod workspace_state_file;
+pub mod workspace_templates;
 
 use std::ffi::c_uchar;
 

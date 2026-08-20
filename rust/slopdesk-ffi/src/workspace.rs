@@ -1215,7 +1215,7 @@ pub unsafe extern "C" fn slopdesk_ws_live_row_title(
     }
 }
 
-// MARK: The split tree's one shared metric
+// MARK: The split tree's two shared metrics
 
 /// The minimum flex weight a divider may take, from the crate that enforces it.
 ///
@@ -1228,6 +1228,23 @@ pub unsafe extern "C" fn slopdesk_ws_live_row_title(
 )]
 pub const extern "C" fn slopdesk_ws_min_weight() -> f64 {
     split_tree::MIN_WEIGHT
+}
+
+/// The deepest nesting a layout may KEEP, from the crate that caps it.
+///
+/// It sat beside [`slopdesk_ws_min_weight`] as a transcribed `12` on the Swift side until
+/// 2026-08-20, and `docs/55` §8 named the pair as the anti-pattern it is: two numbers with one
+/// meaning, one asked for through a door and one written down again, where the second is only
+/// right until somebody tunes the first. Three separate rules clamp to it — the persisted split
+/// tree's decode, the template layout's repair, and the solver recursion both of them feed — so a
+/// caller that disagreed about it would build a tree the crate refuses to walk.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_ws_max_depth() -> usize {
+    split_tree::MAX_DEPTH
 }
 
 // MARK: The tiled tree
@@ -3389,11 +3406,11 @@ mod tests {
         slopdesk_ws_divider_can_move, slopdesk_ws_divider_clamped_weight, slopdesk_ws_divider_percents,
         slopdesk_ws_divider_thickness, slopdesk_ws_divider_weight_delta, slopdesk_ws_dividers,
         slopdesk_ws_encode_video_target, slopdesk_ws_focus_cycle, slopdesk_ws_focus_neighbor,
-        slopdesk_ws_normalize, slopdesk_ws_normalize_minted_ids, slopdesk_ws_normalize_pass_count,
-        slopdesk_ws_pane_kind_count, slopdesk_ws_pane_kind_is_video, slopdesk_ws_project_key,
-        slopdesk_ws_section_header, slopdesk_ws_section_precedes, slopdesk_ws_send_keys,
-        slopdesk_ws_solve_layout, slopdesk_ws_successor_after_close, slopdesk_ws_tree_removing,
-        slopdesk_ws_tree_splitting,
+        slopdesk_ws_max_depth, slopdesk_ws_min_weight, slopdesk_ws_normalize,
+        slopdesk_ws_normalize_minted_ids, slopdesk_ws_normalize_pass_count, slopdesk_ws_pane_kind_count,
+        slopdesk_ws_pane_kind_is_video, slopdesk_ws_project_key, slopdesk_ws_section_header,
+        slopdesk_ws_section_precedes, slopdesk_ws_send_keys, slopdesk_ws_solve_layout,
+        slopdesk_ws_successor_after_close, slopdesk_ws_tree_removing, slopdesk_ws_tree_splitting,
     };
 
     const fn id(byte: u8) -> Uuid {
@@ -4135,6 +4152,15 @@ mod tests {
             slopdesk_ws_normalize_minted_ids(3, 5),
             slopdesk_workspace::tree_ops::RepairPass::minted_ids(3, 5),
         );
+    }
+
+    #[test]
+    fn the_two_split_tree_metrics_are_the_crates_own() {
+        assert_eq!(
+            slopdesk_ws_min_weight(),
+            slopdesk_workspace::split_tree::MIN_WEIGHT
+        );
+        assert_eq!(slopdesk_ws_max_depth(), slopdesk_workspace::split_tree::MAX_DEPTH);
     }
 
     #[test]

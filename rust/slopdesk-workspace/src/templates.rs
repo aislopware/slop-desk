@@ -10,6 +10,21 @@
 //! PTY is live. Nothing here opens a socket or spawns a process, so the whole expansion is testable
 //! against its bytes.
 //!
+//! ## What in here a client actually reaches
+//!
+//! Not all of it, and the split is worth knowing before assuming a change here is load-bearing.
+//! [`keystrokes`] crosses as `slopdesk_ws_launch_keystrokes` and is the SINGLE implementation of
+//! the rule below — the Swift face is a wrapper with no logic in it. [`TemplateNode::repaired`],
+//! [`built_in_session_templates`] and [`built_in_launch_presets`] cross too (2026-08-20), but as a
+//! PIN rather than as the only implementation: Swift still holds its own copy of each, because
+//! `SessionTemplate` is `Codable` and is what the device-preferences file is made of, so
+//! `SessionTemplateRepairDifferentialTests` drives both sides and asserts they agree.
+//!
+//! [`plan`] and [`TemplatePane::keystrokes`] have no caller. They are deliberately still here and
+//! deliberately still unported: `plan` copies three fields of a preset into two pane specs and
+//! defers the one actual rule to [`keystrokes`], which already crosses, so a door for it would
+//! marshal a whole preset to compare two spellings of an assignment. Porting it would be motion.
+//!
 //! ## A path is not shell input
 //!
 //! The `cd` line a plan emits is built from LITERAL bytes and never goes through
@@ -300,6 +315,23 @@ impl TemplateNode {
     /// trapping. A split with one child collapses into it, a childless split becomes a plain
     /// terminal, and anything nested past [`MAX_DEPTH`] collapses to its first pane — which is what
     /// keeps the tree the template later builds inside the tree's own depth bound.
+    ///
+    /// ## It is written twice, and the twin is pinned rather than trusted
+    ///
+    /// Swift's `TemplateNode.init(from: Decoder)` is the other implementation, and it cannot be
+    /// deleted: `SessionTemplate` is `Codable` and is the currency of the device-preferences file,
+    /// so that decoder is how a person's saved layouts actually come back. `docs/55` §7 step 6 is
+    /// exactly that case and asks for a differential instead —
+    /// `Tests/SlopDeskWorkspaceModelTests/SessionTemplateRepairDifferentialTests.swift`, which
+    /// reaches this function through `slopdesk_ws_template_repair` and drives both sides over every
+    /// degenerate shape there is.
+    ///
+    /// The two agree case for case, and did before the suite existed; what disagreed was the
+    /// PROSE. Swift's comment called the depth cap a rejection where this one calls it a repair,
+    /// which described a parser beside a repairer — `docs/55` §8's exact signature for a pair about
+    /// to go wrong — over two implementations that were doing the same thing. Both comments say the
+    /// same true thing now, and the suite is what keeps that from being a claim with no gate behind
+    /// it.
     #[must_use]
     pub fn repaired(&self) -> Self {
         let repaired = match self {

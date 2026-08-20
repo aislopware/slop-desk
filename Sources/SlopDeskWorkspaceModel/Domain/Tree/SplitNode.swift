@@ -130,7 +130,14 @@ public indirect enum SplitNode: Sendable, Equatable {
     /// The maximum nesting depth the decoder will keep — a corrupt / hostile file nested past this is
     /// capped (the over-deep tail collapses to its first leaf) so decode is bounded and the render /
     /// solver recursion can never stack-overflow. Far above any real layout (a human nests a handful).
-    public static let maxDepth = 12
+    ///
+    /// **Asked for, not written down.** It was a bare `12` here until 2026-08-20, sitting one file
+    /// away from ``SplitWeight/minWeight``, which has always come through `slopdesk_ws_min_weight` —
+    /// and `docs/55` §8 named that pair as the anti-pattern it is: two numbers with one meaning,
+    /// where the transcribed one is right only until somebody tunes the other. Three rules clamp to
+    /// this: the split tree's decode here, ``TemplateNode``'s repair, and the solver recursion both
+    /// of them feed.
+    public static let maxDepth = Int(slopdesk_ws_max_depth())
 }
 
 // MARK: - Pure queries (DFS helpers the ops + solver + store read)

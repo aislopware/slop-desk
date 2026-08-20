@@ -803,11 +803,31 @@ today and are held together by nothing but the week they were written in:
 | `persist::decode_raw_node` id-less splits | Swift | two dividers moving as one |
 | `TreeWorkspace.normalized` vs `workspace::normalized` | — | launch-time and gesture-time repair disagree — **ported 2026-08-20** |
 | the 15 MiB opaque cap, spelled **three** times | — | a silently truncated `git diff` rendered as complete |
-| `templates.rs` vs `SessionTemplate`/`LaunchPreset` | — | agrees today; a security rule written twice |
+| `templates::repaired` vs `TemplateNode+Codable`, and the two built-in tables | — | agrees today — **pinned 2026-08-20**; the row said "a security rule written twice" and was wrong |
 | `persist::derived_split_id` vs `SplitNodeID()` | Rust | divider weights reset on every relaunch |
 | `detectionText` vs `detect::detection_text` | Rust | dead Swift, plus a third spelling of the join |
 | `PaneSpec+Codable` `userRenamed` vs `decode_spec` | Rust | **the entire workspace**, to a non-boolean flag |
 | `VideoEndpoint`'s synthesized `Codable` vs `decode_video` | Rust | **the entire workspace**, to a hand-edited window id |
+
+**The template row was stale in both directions, and how it was stale is itself the lesson.** It
+named a *security* rule — the literal `cd` line that must never reach the token parser — and that
+rule has not been doubled since `templates::keystrokes` crossed as `slopdesk_ws_launch_keystrokes`;
+`LaunchPresetEngine.keystrokes` is a wrapper with no logic in it, and its own doc comment says so.
+Meanwhile the things that WERE doubled went unnamed: the layout repair (`TemplateNode::repaired`
+against `TemplateNode.init(from:)`) and the two built-in tables, whose fixed UUIDs exist precisely so
+a re-seed matches an existing row rather than appending a second copy of it — sixteen bytes per row,
+in two languages, which nothing in this repo could have compared. A row in this table is a claim with
+no gate behind it, exactly like the comments the last bullet of this section warns about, and it
+decayed the same way: the port moved and the row did not.
+
+Both halves are now pinned by `SessionTemplateRepairDifferentialTests` (below). What is deliberately
+NOT ported, so the next reader does not have to re-derive it: `templates::plan` and
+`TemplatePane::keystrokes` still have no caller and stay that way. `plan` copies three fields of a
+preset into two pane specs and defers its one real rule to `keystrokes`, which already crosses — a
+door for it would marshal a whole preset to compare two spellings of an assignment. The Swift
+`SessionTemplate` decoder is likewise staying: it is `Codable` and it is what the device-preferences
+file is made of, so this is `docs/55` §7 step 6's case rather than an unfinished port, and the
+differential is the whole of what is owed.
 
 **The direction is not consistent ACROSS families, and that is the point.** Rust is right in most
 rows and Swift in one. So this is not "the port is behind" — it is drift in both directions between
@@ -871,13 +891,41 @@ A door with no caller is how the second half gets lost: `slopdesk_ws_normalize_p
 and `make lint-ffi-doors` caught it, which is the ratchet doing exactly its job. **A differential suite
 is not finished until every door it justified is one the suite calls.**
 
+**The second one (2026-08-20): `SessionTemplateRepairDifferentialTests`.** It is the first written for
+a pair that is still DOUBLE — the precedent pins two doors onto one Rust rule after the Swift copy was
+deleted; this pins two languages, because `SessionTemplate` is `Codable` and its decoder is how a
+person's saved layouts come back. Three doors were cut for it and all three are called from it:
+`slopdesk_ws_template_repair`, `slopdesk_ws_built_in_templates`, `slopdesk_ws_built_in_launch_presets`.
+Two things it adds to the shape:
+
+- **A layout crosses as a PRE-ORDER byte stream** — tag, payload, children — because a `TemplateNode`
+  has no `#[repr(C)]` flattening and no JSON in this graph to borrow. It is `slopdesk_ws_solve_layout`'s
+  encoding a second time, and the grammar is written down ONCE in `slopdesk_ffi.h`, with both encoders
+  written against that paragraph rather than against each other: a codec whose only proof is its own
+  round trip agrees with itself however both halves are wrong. Its lengths are `u32` rather than the
+  wire's `u16` for one reason worth carrying to the next such door — `put_length_prefixed_str` CLAMPS at
+  64 KiB, and a differential that passes because both sides truncated the same title is worse than none.
+- **The convergence property is the two LANGUAGES, in both orders.** Repair-here-then-there against
+  repair-there-then-here, over a corpus that is deliberately almost all malformed: empty splits,
+  one-child splits, nesting past the cap, and combinations. Two rules that disagree anywhere cannot
+  commute everywhere, so it fails on a divergence a pairwise assertion could only see input by input.
+
+It also settled the `MIN_WEIGHT`/`MAX_DEPTH` anti-pattern named below: `slopdesk_ws_max_depth` exists
+now and `SplitNode.maxDepth` asks for it, so the two numbers that had one meaning are one number. And
+it settled a recorded divergence that turned out to be **prose only** — Swift's comment called the depth
+cap a rejection where the crate's called it a repair, which described a parser beside a repairer over
+two implementations that agree case for case. Both comments say the same true thing now, and the suite
+is what says it rather than either comment.
+
 Two anti-patterns this class has already produced, both worth recognising on sight:
 
 - **A constant transcribed where a door already exists.** `WorkspaceIntent.swift:99` asks
   `slopdesk_ws_intent_limit(0)` rather than restating 512 — that is the idiom. The 15 MiB cap is
   spelled three times in two languages and holds a load-bearing *inequality* across the boundary (the
-  probe must read `cap + 1` so the builder's truncation signal survives). `MIN_WEIGHT` is asked
-  through a door; `MAX_DEPTH` sitting beside it is transcribed. One of those two is wrong.
+  probe must read `cap + 1` so the builder's truncation signal survives). `MIN_WEIGHT` was asked
+  through a door while `MAX_DEPTH` sat beside it transcribed as a bare `12` — one of those two was
+  wrong, and it was fixed on 2026-08-20: `slopdesk_ws_max_depth` exists and `SplitNode.maxDepth`
+  asks for it. The 15 MiB cap is still spelled three times.
 - **A comment that names the other language's behaviour, and goes stale.** These are the
   highest-signal artifacts in the repo — `put_blob`'s comment is how the first defect was found — and
   they are also the most dangerous when wrong, because they tell the next reader the pair agrees. A

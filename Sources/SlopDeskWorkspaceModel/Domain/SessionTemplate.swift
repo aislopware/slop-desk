@@ -68,9 +68,19 @@ public struct TemplatePane: Codable, Sendable, Equatable {
 /// divider positions).
 ///
 /// **Validate-then-repair decode** (the untrusted-persisted-data contract, mirroring ``SplitNode``): a
-/// `.split` with < 2 children collapses to its single child (or is dropped entirely when childless); a
-/// layout nested past ``SplitNode/maxDepth`` is rejected (the over-deep tail collapses to its first
-/// pane). Decode never traps on a hand-edited / hostile file.
+/// one-child `.split` collapses into that child, a childless one becomes a plain terminal pane rather
+/// than nothing at all, and a layout nested past ``SplitNode/maxDepth`` collapses to its first pane.
+/// Decode never traps on a hand-edited / hostile file.
+///
+/// **REPAIRED, never rejected — and this comment said the opposite until 2026-08-20.** It described
+/// the depth cap as a rejection and the childless split as a drop, which are two different rules
+/// from the ones above: a rejection throws (and `WorkspacePersistence.load()` then loses the WHOLE
+/// file to a `.corrupt` sidecar) and a drop leaves a layout with no leaf in it. Neither ever
+/// happened here. It matters beyond tidiness because `slopdesk_workspace::templates`'s twin of this
+/// decode says "repaired, never rejected" in its own doc comment, so the pair read as a
+/// parser-versus-repairer disagreement — `docs/55` §8's whole thesis about which pairs go wrong —
+/// when in fact the two agree case for case. Nothing but the words differed, and
+/// `SessionTemplateRepairDifferentialTests` is now what says so rather than either comment.
 public indirect enum TemplateNode: Codable, Sendable, Equatable {
     case pane(TemplatePane)
     case split(axis: SplitAxis, children: [Self])
@@ -108,11 +118,18 @@ public extension TemplateNode {
 // MARK: - TemplateNode validate-then-repair Codable
 
 /// A hand-written `Codable` that ENFORCES the layout invariants on decode (validate-then-repair, the
-/// CLAUDE.md untrusted-persisted-data contract): a `.split` with < 2 children collapses to its lone child
-/// (or is dropped when childless) and an over-deep layout is capped at ``SplitNode/maxDepth`` (the
-/// over-deep tail collapses to its first pane). A degenerate / hostile file therefore decodes to a SOUND
-/// layout instead of trapping. Encoding is straightforward (the stable on-disk shape `workspace.json`
-/// stores).
+/// CLAUDE.md untrusted-persisted-data contract): a one-child `.split` collapses to that child, a
+/// childless one becomes a default terminal pane, and an over-deep layout is capped at
+/// ``SplitNode/maxDepth`` (the over-deep tail collapses to its first pane). A degenerate / hostile file
+/// therefore decodes to a SOUND layout instead of trapping. Encoding is straightforward (the stable
+/// on-disk shape `workspace.json` stores).
+///
+/// **This rule exists in two languages and `SessionTemplateRepairDifferentialTests` is what holds them
+/// together.** `slopdesk_workspace::templates::TemplateNode::repaired` is the other one, reached through
+/// `slopdesk_ws_template_repair`; the suite drives both over every degenerate shape and asserts they
+/// converge. Editing anything below is an obligation to read that suite, because the crate's copy will
+/// not stop compiling when this one changes its mind — it will simply start answering a different tree
+/// on the inputs nobody generates by hand.
 extension TemplateNode {
     private enum Discriminator: String, Codable { case pane, split }
     private enum CodingKeys: String, CodingKey { case kind, pane, axis, children }

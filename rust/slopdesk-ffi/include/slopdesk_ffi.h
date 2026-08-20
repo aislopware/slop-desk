@@ -863,6 +863,13 @@ size_t slopdesk_ws_rail_disambiguated_label(const SlopDeskWsRailLabel *items, si
 // clamps to this number, so a transcribed copy would describe a rule the client does not share.
 double slopdesk_ws_min_weight(void);
 
+// The deepest nesting a layout may KEEP. Its neighbour above was asked for through a door while
+// this one was written down again on the Swift side as a bare 12, which docs/55 §8 names as the
+// anti-pattern it is: two numbers with one meaning, the second right only until somebody tunes the
+// first. Three rules clamp to it — the persisted split tree's decode, the template layout's repair,
+// and the solver recursion both feed.
+size_t slopdesk_ws_max_depth(void);
+
 // ---- The project header's git DIALECT — `slopdesk_workspace::git_line` ----
 //
 // `main ↑2 ↓1 +3 !4 ?5 ~1 $2` is a language, not a label: the branch first, then only the NON-ZERO
@@ -1564,6 +1571,54 @@ size_t slopdesk_ws_pane_kind_count(void);
 // default this crate stopped producing, and the fresh-workspace shape test IS that comparison.
 size_t slopdesk_ws_default_pane_title(uint8_t *out, size_t cap);
 size_t slopdesk_ws_default_session_name(uint8_t *out, size_t cap);
+
+
+// MARK: The things that SPAWN panes — a template's layout, and the shipped tables
+//
+// These are the one family here whose Swift original could NOT be deleted in the same change.
+// `SessionTemplate` is `Codable` and is the currency of the device-preferences file, so its Swift
+// decoder is how a person's saved layouts actually come back; deleting it would delete the store's
+// ability to read its own file. docs/55 §7 step 6 names that case and says what is owed instead —
+// PIN it: same inputs to both sides, assert the same output. These doors exist so
+// `SessionTemplateRepairDifferentialTests` can, and they are the whole reason
+// `slopdesk_workspace::templates` stopped being thirteen unit tests with no caller.
+//
+// A layout crosses as a PRE-ORDER byte stream, the shape `slopdesk_ws_solve_layout` already uses
+// for the split tree — a tag, its payload, then its children. The encoding, written down once:
+//
+//   text     := u32 BE length, then that many UTF-8 bytes
+//   opt-text := u8 present (0 or 1), then text when present
+//   uuid     := 16 bytes, canonical UUID order
+//   node     := 0x00 u8:kind text:title opt-text:cwd opt-text:command      -- a pane
+//             | 0x01 u8:axis u32:child_count  node × child_count           -- a split, visual order
+//   template := uuid:id text:name text:symbol u8:is_built_in node:layout
+//   preset   := uuid:id text:name text:command opt-text:working_directory
+//               u8:has_split [u8:axis text:secondary_command when has_split]
+//               text:symbol u8:is_built_in
+//   table    := u32 BE count, then that many records
+//
+// The lengths are u32 rather than the wire's u16 because `put_length_prefixed_str` CLAMPS at 64 KiB,
+// and a differential that agrees because both sides truncated the same title is worse than none.
+// A present empty string and an absent one are different answers, §4b's presence rule per field.
+//
+// The walk is the contract: nothing is seekable, the reader goes forward once, and a stream it
+// cannot consume EXACTLY — truncated, with a trailing byte, with a tag or presence byte that is
+// neither of its two values — answers 0. That refusal is a shape disagreement between two encoders,
+// never a degenerate template: a degenerate template has a defined repair and always answers one.
+
+// The repair a persisted layout runs: a childless split becomes a plain terminal, a one-child split
+// collapses into its child, and anything nested past `slopdesk_ws_max_depth` collapses to its first
+// pane. Repaired, never rejected — the input is a file a person can edit. `0` is the stream refusal
+// above and nothing else; the shortest layout there is encodes to seven bytes.
+size_t slopdesk_ws_template_repair(const uint8_t *layout, size_t len, uint8_t *out, size_t cap);
+
+// The tables a fresh workspace ships with. They cross because a shipped row's IDENTITY is fixed
+// rather than minted — so that a re-seed or a settings reset MATCHES the existing row instead of
+// appending a second copy of it — which makes each table a set of constants written in two
+// languages, where a drift of one byte in sixteen surfaces as a duplicated menu row weeks later
+// with nothing in any log.
+size_t slopdesk_ws_built_in_templates(uint8_t *out, size_t cap);
+size_t slopdesk_ws_built_in_launch_presets(uint8_t *out, size_t cap);
 
 
 // MARK: The workspace state FILE
