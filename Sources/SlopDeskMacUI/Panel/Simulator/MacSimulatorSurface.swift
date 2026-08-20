@@ -130,7 +130,10 @@ final class MacSimulatorSurface: NSViewController {
             outgoing?.animator().alphaValue = 0
             view.layoutSubtreeIfNeeded()
         } completionHandler: {
-            outgoing?.removeFromSuperview()
+            // Main-actor isolated inside a `@Sendable` handler AppKit always runs on the main thread
+            // without having annotated it — the assertion is the honest spelling, and it traps rather
+            // than corrupting a view tree if that ever stops holding.
+            MainActor.assumeIsolated { outgoing?.removeFromSuperview() }
         }
     }
 }

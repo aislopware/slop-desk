@@ -491,7 +491,7 @@ final class MacPaneMoveHandle: NSView {
 /// The radius follows the HEIGHT rather than being a rung, which is what a capsule is: the pill grows
 /// on hover and has to stay the same shape at both sizes.
 @MainActor
-private final class MacGrabPillCapsule: NSView {
+final class MacGrabPillCapsule: NSView {
     var fill = NSColor.clear {
         didSet {
             guard fill != oldValue else { return }
@@ -667,7 +667,10 @@ final class MacPaneMoveOverlay: NSView {
             leaving?.animator().alphaValue = 0
             arriving?.animator().alphaValue = 1
         } completionHandler: {
-            leaving?.removeFromSuperview()
+            // Main-actor isolated inside a `@Sendable` handler AppKit always runs on the main thread
+            // without having annotated it — the assertion is the honest spelling, and it traps rather
+            // than corrupting a view tree if that ever stops holding.
+            MainActor.assumeIsolated { leaving?.removeFromSuperview() }
         }
     }
 }

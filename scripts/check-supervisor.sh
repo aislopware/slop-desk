@@ -6435,12 +6435,19 @@ if [[ -n "${ring_respelled}" ]]; then
   printf '%s\n' "${ring_respelled}" >&2
   fail "the accent ring's alpha is a literal again in a file that reads the token beside it (docs/56 stage F, P6)"
 fi
-# THE GRAB PILL, WHOSE TWO DRAWINGS ARE COMPARED INSIDE ONE GESTURE — merging a satellite home means
+# THE GRAB PILL, WHOSE DRAWINGS ARE COMPARED INSIDE ONE GESTURE — merging a satellite home means
 # grabbing the pill in the detached window, crossing, and releasing on the leaf whose own pill is the
 # target. A 44 that became a 42 does not read as two files disagreeing; it reads as the thing in the
-# user's hand changing size. Wave R adds a third drawing, which is why this is pinned before it.
+# user's hand changing size.
+#
+# FOUR DRAWINGS NOW, not two, and the row that moved is the point: this list was written when the
+# satellite's pill was SwiftUI in `SatellitePaneContent.swift`, with the note "wave R adds a third
+# drawing, which is why this is pinned before it". R11 landed the Mac halves of BOTH — the canvas
+# handle and the satellite strip — and deleted the SwiftUI satellite, so the Mac path replaces its row
+# rather than joining beside it. The two SwiftUI rows that remain are the phone's.
 for drawing in Sources/SlopDeskClientUI/Pane/PaneMoveAffordance.swift \
-  Sources/SlopDeskClientUI/Pane/SatellitePaneContent.swift; do
+  Sources/SlopDeskMacUI/Pane/MacPaneMoveAffordance.swift \
+  Sources/SlopDeskMacUI/Pane/MacSatellitePaneContent.swift; do
   if ! grep -qF 'Slate.GrabPill' "${drawing}"; then
     fail "${drawing} draws the grab pill from its own numbers again — the two pills are compared across a SINGLE drag (docs/56 stage F, P6)"
   fi
@@ -6483,18 +6490,26 @@ if grep -qE '^import SlopDeskClientUI' "${MAC_APP}"; then
   grep -nE '^import SlopDeskClientUI' "${MAC_APP}" >&2
   fail "${MAC_APP} imports the draining floor again — its last symbol left in 57a (docs/56 §3.5)"
 fi
-# The satellite's hosted root applies EXACTLY the one key its subtree reads, and it applies it in the
-# target that DECLARES the key. A second one creeping back is the same failure one scope down, and it
-# is invisible for the same reason.
-# `grep -o | wc -l` counts OCCURRENCES, not matching lines — two keys chained on one line is precisely
-# the shape a line count would wave through.
+# AND THE SATELLITE'S SEAM IS GONE, which is the outcome the paragraph above predicted: the sentence
+# "it dies with increment 62, when the satellite's content is AppKit" was written when the count-of-one
+# gate below it was the live assertion. R11 landed that content, so `SatellitePaneContent.swift` — the
+# `SatellitePaneHost.contentView` seam AND the `SatellitePaneRootView` it hosted — was deleted rather
+# than left mounted by nothing.
+#
+# The assertion INVERTS rather than retiring, for the `staticMirror` reason: a seam whose whole job was
+# to carry a SwiftUI view across a target boundary is exactly the thing a later agent re-creates while
+# porting something adjacent, and it would compile. There is no environment left for it to inject into
+# — the satellite's content is an `NSView` the window target constructs directly — so the file coming
+# back means the split un-happened for one window class and nothing else would say so.
 SATELLITE_HOST=Sources/SlopDeskClientUI/Pane/SatellitePaneContent.swift
-sat_keys="$(sed -n '/package static func contentView/,/^    }/p' "${SATELLITE_HOST}" |
-  grep -oE '\.(preferencesStore|agentHooksController|overlayCoordinator)\(' | wc -l | tr -d ' ' || true)"
-if [[ "${sat_keys}" != "1" ]]; then
-  fail "SatellitePaneHost.contentView applies ${sat_keys} environment keys, not the 1 PaneContainer reads (docs/56 §3.5)"
+if [[ -e "${SATELLITE_HOST}" ]]; then
+  fail "${SATELLITE_HOST} is back — the satellite's content is AppKit, so its hosting seam has no job (docs/56 §3.5)"
 fi
-printf 'check-supervisor: the Mac injects no environment at all — the satellite'"'"'s 1 key is applied where it is declared.\n'
+# shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
+if spells 'SatellitePaneHost' $(repo_files 'Sources/**/*.swift') > /dev/null 2>&1; then
+  fail "SatellitePaneHost is named again — the seam it spelled was deleted with R11 (docs/56 §3.5)"
+fi
+printf 'check-supervisor: the Mac injects no environment at all — and the satellite seam it was for is gone.\n'
 
 # ── The drop chip is one chip, and the pill inks are a pair (docs/56 §3.5, increments 56c/56e) ──
 # THE DROP CHIP IS DRAWN TWICE AND BOTH CAN BE ON SCREEN AT ONCE, which is what makes it different

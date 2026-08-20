@@ -72,7 +72,7 @@ final class PaneChromeArtTests: XCTestCase {
         }
     }
 
-    /// THE SATELLITE'S OWN WIDTH IS THAT CEILING. `SatelliteDragStrip` names `stripWidthMax` directly
+    /// THE SATELLITE'S OWN WIDTH IS THAT CEILING. The satellite's strip names `stripWidthMax` directly
     /// instead of asking the clamp, and this is the assertion that keeps the shortcut honest: the two
     /// spellings must resolve to one number, because the drag that starts on one pill ends on the
     /// other and the user sees both.

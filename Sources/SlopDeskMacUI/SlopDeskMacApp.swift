@@ -361,13 +361,14 @@ public struct SlopDeskMacApp: App {
                 // which stopped being true, and reads to the next person as evidence it still is.
                 //
                 // AND THE SATELLITE'S ONE LIVE INJECTION LEFT TOO (increment 57a) — not because it was
-                // dead, but because it was in the wrong file. `\.overlayCoordinator` is declared in
-                // `SlopDeskClientUI` and read by `PaneContainer`, also in `SlopDeskClientUI`; this scene
-                // was passing a `decorate:` closure down purely so it could SPELL the modifier, which
-                // cost the whole target an `import SlopDeskClientUI` for five lines that name no AppKit.
-                // `SatellitePaneHost.contentView` applies it now and takes the coordinator as a plain
-                // `SlopDeskClientCore` value, so nothing about the hosting-root trap changed — only who
-                // answers it. That was the last symbol holding this file's import to the draining floor.
+                // dead, but because it was in the wrong file. `\.overlayCoordinator` was declared in
+                // `SlopDeskClientUI` and read by `PaneContainer`, also there; this scene was passing a
+                // `decorate:` closure down purely so it could SPELL the modifier, which cost the whole
+                // target an `import SlopDeskClientUI` for five lines that name no AppKit. It moved to
+                // the hosted root, which was the last symbol holding this file's import to the draining
+                // floor. R11 then removed the question: the satellite's content is AppKit in THIS
+                // target, so the coordinator is an init parameter and there is no environment left to
+                // inject into at all.
                 // The guided first-launch checklist — On-Launch / Default-Terminal / Install-CLI /
                 // Install-Claude-hooks. Presents once on a fresh install (the `hasCompletedFirstLaunch`
                 // Defaults flag) and never under automation (it would steal the autoconnect focus).

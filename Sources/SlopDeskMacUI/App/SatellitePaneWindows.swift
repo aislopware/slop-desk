@@ -5,8 +5,8 @@
 // state as real windows: ``SatelliteWindowsCoordinator`` diffs one plain-AppKit `NSWindowController` per
 // detached pane into existence/away, each hosting the SAME leaf UI the split tree mounts — so the
 // terminal ring-replays into a fresh surface and a video pane re-hellos, while the PTY / host session
-// never dies. The content itself is still SwiftUI and comes over the ``SatellitePaneHost`` seam, the
-// way the split shell's columns do.
+// never dies. The content is ``MacSatellitePaneRootView`` — AppKit, in this target, since docs/56's
+// R11; the `SatellitePaneHost` seam that used to carry it across a target boundary is gone with it.
 //
 // Deliberately PURE AppKit (never a second SwiftUI `WindowGroup`): the app's chord dispatcher /
 // close-gate / pin actuator are single-window singletons keyed to the ONE workspace window captured via
@@ -21,7 +21,6 @@
 
 import AppKit
 import SlopDeskClientCore
-import SlopDeskClientUI // SatellitePaneHost — the hosted pane content, until the leaf UI is AppKit
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 
@@ -51,8 +50,8 @@ final class SatellitePaneWindow: NSWindow {
 
 // MARK: - Per-pane window controller
 
-/// One satellite window: a titled/closable/resizable `NSWindow` whose content is an `NSHostingView`
-/// over ``SatellitePaneRootView``. Close (X / ⌘W via menu) REATTACHES — `windowShouldClose` runs the
+/// One satellite window: a titled/closable/resizable `NSWindow` whose content view IS
+/// ``MacSatellitePaneRootView`` — no hosting view between them since R11. Close (X / ⌘W via menu) REATTACHES — `windowShouldClose` runs the
 /// store op and returns `false`; the coordinator's diff (observing ``WorkspaceStore/detachedPanes``)
 /// then closes the window for real, keeping ONE teardown path for every exit (reattach, pane close,
 /// session close).
@@ -61,6 +60,11 @@ final class SatellitePaneWindowController: NSWindowController, NSWindowDelegate 
     let paneID: PaneID
     private weak var store: WorkspaceStore?
     private let keyState = SatelliteWindowKeyState()
+    /// The window's content. Held so ``closeFromCoordinator()`` can tear the pane's RENDERER down —
+    /// the one real teardown path, and the only one entitled to: a satellite's `windowShouldClose`
+    /// vetoes every user close and folds the pane back into its tab instead, where the canvas mounts
+    /// the same `PaneID` again and the session must still be alive.
+    private var satelliteContent: MacSatellitePaneRootView?
     /// `true` while the coordinator itself is closing the window (the pane already left
     /// `detachedPanes`) — `windowShouldClose` must let THAT close pass instead of re-running reattach.
     private var closingFromCoordinator = false
@@ -99,9 +103,16 @@ final class SatellitePaneWindowController: NSWindowController, NSWindowDelegate 
         // The workspace window must survive every satellite: an `NSWindowController`-owned window
         // released on close mid-diff double-frees; the coordinator owns the lifetime instead.
         window.isReleasedWhenClosed = false
-        window.contentView = SatellitePaneHost.contentView(
-            store: store, paneID: paneID, keyState: keyState, paneDrag: paneDrag, overlay: overlay,
+        // `chrome: nil` PRESERVES today's behaviour rather than skipping a wiring: the SwiftUI root
+        // this replaces never put a `WorkspaceChromeState` in the satellite's environment either, so a
+        // detached terminal's open-in-code-panel has always been a no-op out here. Passing one would be
+        // a feature, and it would reveal the main window's code panel from a window that is not it.
+        let content = MacSatellitePaneRootView(
+            store: store, paneID: paneID, keyState: keyState, paneDrag: paneDrag,
+            overlay: overlay, chrome: nil,
         )
+        satelliteContent = content
+        window.contentView = content
         super.init(window: window)
         window.delegate = self
         window.center()
@@ -115,6 +126,15 @@ final class SatellitePaneWindowController: NSWindowController, NSWindowDelegate 
     func closeFromCoordinator() {
         closingFromCoordinator = true
         close()
+        // AFTER the close, and this is the ONE place it may happen. What comes down is the RENDERER —
+        // libghostty's surface, or the video decode stack — and that is correct on BOTH paths into
+        // here, including a reattach: the pane is about to remount in the canvas, where the terminal
+        // ring-replays into a fresh surface and a video pane re-hellos. What must NOT come down is the
+        // session, and it does not, because it is the registry's rather than this window's. The cap
+        // slot follows the same rule from inside the leaf, which frees it only for a pane that has left
+        // the tree AND the detached set.
+        satelliteContent?.teardown()
+        satelliteContent = nil
     }
 
     // MARK: NSWindowDelegate
@@ -298,11 +318,10 @@ final class SatelliteWindowsCoordinator {
             .contains { (env[$0]?.isEmpty == false) }
     }
 
-    /// One sync pass. `overlay` is handed through to each window's hosted root, which is where the ONE
-    /// environment key that subtree reads gets applied (``SatellitePaneHost/contentView(store:paneID:
-    /// keyState:paneDrag:overlay:)``) — an `NSHostingView` root inherits NOTHING from the main scene, and
-    /// the key is declared in the same target as the view that reads it, so the injection was moved to
-    /// that side of the seam in increment 57a. What crosses here is a plain `SlopDeskClientCore` value.
+    /// One sync pass. `overlay` is handed to each window's root as a plain value — it used to be an
+    /// environment key an `NSHostingView` root could not inherit from the main scene, which is what the
+    /// old seam existed to work around; with the content in AppKit there is no environment left to
+    /// inject into and it is simply an init parameter.
     /// `paneDrag` (optional) wires the grab strip into each satellite AND supplies the tear-off drop
     /// point: a pane detached by DRAGGING it out of the main window opens under the cursor, not in the
     /// centre-cascade.
