@@ -547,16 +547,20 @@ let package = Package(
         // windows, the menu bar — and NOT ONE `#if os(...)`. That absence is the point: a platform gate
         // inside a platform target means the file is in the wrong target (docs/56 §3).
         //
-        // It sits ABOVE `SlopDeskClientUI` rather than beside it. Stage D rewrites the macOS surfaces in
-        // AppKit and each one lands HERE as its SwiftUI original is deleted, so `SlopDeskClientUI`
-        // drains from both ends: its macOS half moves up into this target, and what is left when the
-        // last one goes is the phone's, which is then renamed `SlopDeskPhoneUI`. Until that day the two
-        // shells share the SwiftUI view layer instead of each carrying a copy of it.
+        // IT SAT ABOVE `SlopDeskClientUI` UNTIL INCREMENT 61, AND NOW IT DOES NOT DEPEND ON IT AT ALL.
+        // Stage D rewrote the macOS surfaces in AppKit and each one landed HERE as its SwiftUI original
+        // was deleted, so `SlopDeskClientUI` drained from both ends: its macOS half moved up into this
+        // target, and what is left is the phone's. The last edge was the pane canvas, reached two ways
+        // — hosted in the content column and hosted in a satellite window — and wave R's R11 and R12
+        // closed both.
+        //
+        // THE EDGE IS CUT IN THE MANIFEST, not just in the imports, and that is the difference between
+        // a convention and a fact. A `check-supervisor` census of `import` lines is a good ratchet and
+        // it is still there; a dependency the graph does not contain is a line that cannot compile. The
+        // fold (`SlopDeskClientUI` → `SlopDeskPhoneUI`) is now a rename with nothing above it.
         .target(
             name: "SlopDeskMacUI",
             dependencies: [
-                // The SwiftUI view layer both shells still stand on (Stage D drains it upward).
-                "SlopDeskClientUI",
                 // The design floor — the ONE ladder, in its native (NSColor/NSFont) spelling.
                 "SlopDeskSlate",
                 // `ClientComposition` — what the app IS, built once for both shells.

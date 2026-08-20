@@ -2687,9 +2687,12 @@ gate condition, not a burndown. It was **13 files** when this ledger was written
 increments 45, 46, 47, 49, 52, 54, the 56/57 waves and wave R, and each one named what it took in the
 comment on the import line. The last two were `MacContentColumn` and `SatellitePaneWindows` — both a
 mount of the pane canvas or of a column that hosts it, which is to say the fold blocked on exactly one
-thing, and R11/R12 closed both halves of it (increment 61). **The gate condition is met: nothing in
-`SlopDeskMacUI` imports `SlopDeskClientUI`.** What remains is the fold itself — F2 through F5 below —
-which is a rename plus 54 platform directives, not a port.
+thing, and R11/R12 closed both halves of it (increment 61). **The gate condition is met, and the edge is cut in the
+manifest rather than only in the imports: `SlopDeskMacUI` no longer *depends on* `SlopDeskClientUI`
+at all.** That distinction is the whole difference between a convention and a fact — a dependency the
+graph still contains is an import one keystroke away and a build that will not complain. Both halves
+are ratcheted, because they fail at different moments. What remains is the fold itself — F2 through F5
+below — which is a rename plus the platform directives, not a port.
 
 Wave 56 took two of them (`SlopDeskSplitViewController`, `MacWorkspaceRootView`) and **neither cost an
 AppKit rewrite of anything the canvas depends on**: one was a stale import, one was a 47-line button no

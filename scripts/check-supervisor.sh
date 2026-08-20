@@ -6533,7 +6533,25 @@ if [[ -n "${mac_floor_imports}" ]]; then
   printf '%s\n' "${mac_floor_imports}" >&2
   fail "a SlopDeskMacUI file imports the draining floor — the fold's gate condition was met in increment 61 and this un-meets it (docs/56)"
 fi
-printf 'check-supervisor: no Mac file imports the draining floor — the fold gate is met, target-wide.\n'
+# AND THE EDGE IS CUT IN THE MANIFEST, which is the half an import census cannot assert. A dependency
+# the graph still contains is an import one keystroke away and a build that will not complain; a
+# dependency it does not contain is a compile error at the first `import`. Both halves are gates
+# because they fail at different moments — the manifest one is what makes re-adding the import a
+# BUILD failure rather than a lint failure, and this one is what says why when it happens.
+#
+# Read from the `SlopDeskMacUI` target's own `dependencies:` block, bounded by the next `.target(`, so
+# a mention of the floor anywhere else in the manifest (the phone target legitimately names it, and so
+# do a dozen comments) cannot answer for this one.
+mac_target_block=$(awk '
+  /\.target\(/ { inside = 0 }
+  /name: "SlopDeskMacUI"/ { inside = 1 }
+  inside { print }
+' Package.swift)
+if printf '%s' "${mac_target_block}" | sed -E 's#^[[:space:]]*//.*##' | grep -q 'SlopDeskClientUI'; then
+  printf '%s\n' "${mac_target_block}" | grep -n 'SlopDeskClientUI' >&2
+  fail "the SlopDeskMacUI target depends on the draining floor again — increment 61 cut that edge in Package.swift, not only in the imports (docs/56)"
+fi
+printf 'check-supervisor: no Mac file imports the draining floor, and the manifest edge is cut too.\n'
 
 # ── The drop chip is one chip, and the pill inks are a pair (docs/56 §3.5, increments 56c/56e) ──
 # THE DROP CHIP IS DRAWN TWICE AND BOTH CAN BE ON SCREEN AT ONCE, which is what makes it different
