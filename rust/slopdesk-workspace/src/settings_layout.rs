@@ -459,8 +459,12 @@ pub const GROUPS: &[LayoutGroup] = &[
             },
         ],
     },
-    // Claude-only, and IPC-driven, so it needs no shell integration. The SOUND halves are macOS-only
-    // (`NSSound` plus the system-sound library); iOS omits them rather than showing dead toggles.
+    // Claude-only, and IPC-driven, so it needs no shell integration. The SOUND halves were filed
+    // macOS-only on the grounds that they name `NSSound` files iOS does not ship. What the toggles
+    // decide is not the FILE, it is ring or stay silent — `AgentSoundPolicy` says which, once, and
+    // the two halves spend that verdict differently: macOS plays Submarine/Glass, the phone attaches
+    // the default `UNNotificationSound` to the banner (`CommandCompletionNotifier.bannerSound(for:)`
+    // carries why it refuses to invent a second sound world). Both toggles are live on both.
     LayoutGroup {
         section: Section::Shell,
         title: "Code Agent",
@@ -485,7 +489,7 @@ pub const GROUPS: &[LayoutGroup] = &[
                 control: Control::Toggle {
                     glyph: "speaker.wave.2",
                 },
-                platform: Platform::Mac,
+                platform: Platform::Both,
             },
             LayoutRow {
                 key: "notifications.agentSoundAwaitInput",
@@ -493,7 +497,7 @@ pub const GROUPS: &[LayoutGroup] = &[
                 control: Control::Toggle {
                     glyph: "speaker.wave.3",
                 },
-                platform: Platform::Mac,
+                platform: Platform::Both,
             },
         ],
     },
@@ -806,7 +810,9 @@ pub const GROUPS: &[LayoutGroup] = &[
         ],
     },
     // macOS-only: `EnableSecureEventInput` is process-global and has no iOS form. The keys still
-    // compile and round-trip on both, so the all-settings list advertises them either way.
+    // compile and round-trip on both — which is why they stay keys, not why they stay listed: the
+    // all-settings index DERIVES its platform from this gate (`settings_rows::shown`), so withdrawing
+    // the group here is what stops the phone offering a ✎ into a page that has no such group.
     LayoutGroup {
         section: Section::Controls,
         title: "Secure Input",

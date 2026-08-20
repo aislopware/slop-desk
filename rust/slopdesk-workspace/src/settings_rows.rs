@@ -29,6 +29,9 @@
 //! section: this table names where to jump, and the near side's dispatch enum is what turns an id
 //! into a view.
 //!
+//! The PLATFORM is not a column either, and that one is worth a paragraph of its own — see
+//! [`shown`].
+//!
 //! ## The one row whose default is not a constant
 //!
 //! `follow-session-focus` defaults ON for a desktop and OFF for a phone (docs/45 §8.2) — a phone
@@ -623,9 +626,10 @@ pub const ROWS: &[SettingRow] = &[
         keywords: "cursor click move prompt arrow keys soft wrap",
         inline_editable: true,
     },
-    // macOS-only in the UI (`EnableSecureEventInput` is process-global and has no iOS form), but the
-    // keys compile and round-trip on both, so both are advertised — the LIST is a key index, not a
-    // second copy of the page's platform rules.
+    // `EnableSecureEventInput` is process-global and has no iOS form, so the Controls page draws this
+    // pair on the Mac alone — and [`shown`] therefore withholds both rows from the phone's index.
+    // They used to be advertised on both, on the grounds that the keys still compile and round-trip
+    // there; what that shipped was a ✎ pointing at a Secure Input group the phone does not draw.
     SettingRow {
         key: "controls.autoSecureInput",
         label: "Secure Input · Automatic",
@@ -1234,6 +1238,50 @@ pub fn row_at(index: usize) -> Option<&'static SettingRow> {
     ROWS.get(index)
 }
 
+/// Whether the half that identifies as `mac` ADVERTISES the row filed under `key`.
+///
+/// ## Why this is derived and not a column
+///
+/// Which half can edit a setting is already decided, once, in
+/// [`settings_layout`](crate::settings_layout): a group carries a `Platform` and so does each row
+/// inside it. A `platform` field here would be that answer written down a second time, in a table
+/// nothing joins to the first — the `MIN_WEIGHT`/`MAX_DEPTH` shape (docs/55 §8), one register down,
+/// where two spellings of one meaning agree right up until somebody moves a group between pages. So
+/// the index asks the page instead: **a row is advertised on the half that draws its control.**
+///
+/// That reading is also what the list is FOR. The flat index used to advertise every key on both
+/// halves on the grounds that a key still compiles and round-trips on iOS — true, and beside the
+/// point, because what the phone rendered was not a key, it was a live switch over `bounceDock`
+/// that no Dock reads and a ✎ that jumped to an Appearance page with no Dock Icon group on it. A
+/// row that is LISTED and inert is the defect [`crate::palette_rows`] exists to close; a key index
+/// is no exception to it.
+///
+/// ## The rows no page describes
+///
+/// A key the layout names NOWHERE is advertised on both halves. Those are the ones a
+/// `Control::Bespoke` surface edits — the font families, the caret — and a bespoke group names no
+/// keys, so the table genuinely cannot answer for them. Failing OPEN is the default
+/// [`crate::palette_rows`] and [`crate::binding_rows`] take, for the same reason: withholding a row
+/// on a guess is silent, while advertising one is visible and is what the test below can bound.
+#[must_use]
+pub fn shown(key: &str, mac: bool) -> bool {
+    crate::settings_layout::GROUPS
+        .iter()
+        .flat_map(|group| group.rows.iter().map(move |row| (group, row)))
+        .find(|(_, row)| row.key == key)
+        .is_none_or(|(group, row)| group.platform.shown_on(mac) && row.platform.shown_on(mac))
+}
+
+/// The same question by POSITION — what the boundary asks, since the near side walks indices.
+///
+/// An index past the end names no row, so there is nothing to advertise: `false` rather than
+/// [`shown`]'s fail-open, because that answer is about a row that does not exist rather than about
+/// a row the page does not describe.
+#[must_use]
+pub fn shown_at(index: usize, mac: bool) -> bool {
+    row_at(index).is_some_and(|row| shown(row.key, mac))
+}
+
 /// The rows a query matches, as POSITIONS in [`ROWS`].
 ///
 /// A case-insensitive SUBSTRING match over the key, the label, the description and the keywords —
@@ -1479,5 +1527,91 @@ mod tests {
                 "{key} is restored by name but advertised by nobody"
             );
         }
+    }
+
+    /// Every key some page describes, whichever half draws it.
+    fn described_keys() -> Vec<&'static str> {
+        crate::settings_layout::GROUPS
+            .iter()
+            .flat_map(|group| group.rows)
+            .map(|row| row.key)
+            .filter(|key| !key.is_empty())
+            .collect()
+    }
+
+    /// The index advertises exactly the rows the half in question draws a control for.
+    ///
+    /// [`shown`] folds over `GROUPS` directly; this reads the FILTERED accessors the renderers
+    /// themselves call — `groups(section, mac)` then `rows(group, mac)` — so the two paths to one
+    /// fact have to agree. It is deliberately NOT the pin that the platforms are right: they are
+    /// derived, so that cannot go wrong. What it catches is the derivation drifting from what a
+    /// renderer actually walks — a group whose section the navigator does not list, a filter that
+    /// stops agreeing with the fold — which is the only way the index and the page could still
+    /// disagree.
+    #[test]
+    fn the_index_advertises_exactly_the_rows_a_half_can_edit() {
+        let described = described_keys();
+        for mac in [true, false] {
+            let drawn: Vec<&str> = crate::settings_catalog::Section::ALL
+                .iter()
+                .flat_map(|section| crate::settings_layout::groups(*section, mac))
+                .flat_map(|group| crate::settings_layout::rows(group, mac))
+                .map(|row| row.key)
+                .filter(|key| !key.is_empty())
+                .collect();
+            for row in ROWS {
+                let editable_here = drawn.contains(&row.key);
+                let expected = !described.contains(&row.key) || editable_here;
+                assert_eq!(
+                    shown(row.key, mac),
+                    expected,
+                    "{} is advertised on {} but its control is not",
+                    row.key,
+                    if mac { "macOS" } else { "iOS" },
+                );
+            }
+        }
+    }
+
+    /// A row no page describes DEFERS to the surface that edits it — it is never an inline editor.
+    ///
+    /// [`shown`] advertises those on both halves because a `Control::Bespoke` group names no key,
+    /// so the layout cannot answer for them. That allowance is only safe while such a row
+    /// cannot become a live control: a ✎ landing on a page whose bespoke surface this half
+    /// happens not to draw costs a tap, but an inline toggle over a value this half does not
+    /// back is a switch writing into nothing — which is the whole defect the platform
+    /// derivation exists to end. Stated over the SHAPE, so a new bespoke-edited row has to
+    /// declare a jump rather than be added to a list.
+    #[test]
+    fn a_row_no_page_describes_defers_to_the_surface_that_edits_it() {
+        let described = described_keys();
+        for row in ROWS.iter().filter(|row| !described.contains(&row.key)) {
+            assert_eq!(
+                row.bucket,
+                Bucket::HasDedicatedTab,
+                "{} is described by no page, so it is edited by a bespoke surface and must jump to it",
+                row.key,
+            );
+            assert!(
+                shown(row.key, true) && shown(row.key, false),
+                "{} is described by no page, so neither half can be told it has no control",
+                row.key,
+            );
+        }
+    }
+
+    /// A position resolves the same way the key does, and one past the end advertises nothing.
+    #[test]
+    fn a_position_answers_for_the_row_it_names_and_stops_at_the_end() {
+        for mac in [true, false] {
+            for (index, row) in ROWS.iter().enumerate() {
+                assert_eq!(shown_at(index, mac), shown(row.key, mac), "{}", row.key);
+            }
+            assert!(!shown_at(ROWS.len(), mac), "past the end names no row");
+        }
+        assert!(
+            shown("no.such.setting", true) && shown("no.such.setting", false),
+            "a key no page describes falls open, exactly as an undeclared row does",
+        );
     }
 }

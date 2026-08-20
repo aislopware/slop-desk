@@ -100,11 +100,16 @@ struct AllSettingsListView: View {
     // (Shell) above — the All-Settings list mirrors them inline so every `.advancedOnly` row is editable here
     // rather than falling to a dead default-value label (the rows are kept in
     // `AllSettingsCatalog.inlineEditableKeys`).
+    // The Dock bounce is absent from this list on purpose, and its binding with it: it wants a Dock,
+    // so the Shell page draws it on the Mac alone and `AllSettingsCatalog` — which derives what it
+    // advertises from that same page table — no longer hands this switch a row for it. A case kept
+    // here would be a control nobody can reach; the toggle it used to draw wrote a value nothing on
+    // this device reads. The two agent SOUNDS below stay: they decide ring-or-silent, which the
+    // phone spends on the banner's default cue rather than on `NSSound`.
     @Default(.notifyOnFinish) private var notifyOnFinish
     @Default(.notifyOnError) private var notifyOnError
     @Default(.notifyOnWatchFinish) private var notifyOnWatchFinish
     @Default(.notifyWhileForeground) private var notifyWhileForeground
-    @Default(.bounceDockIcon) private var bounceDockIcon
     @Default(.soundShellControlled) private var soundShellControlled
     @Default(.soundOnErrorExit) private var soundOnErrorExit
     @Default(.agentNotifyTaskComplete) private var agentNotifyTaskComplete
@@ -285,7 +290,6 @@ struct AllSettingsListView: View {
         case SettingsKey.notifyOnFinish: boolControl($notifyOnFinish)
         case SettingsKey.notifyOnError: boolControl($notifyOnError)
         case SettingsKey.notifyOnWatchFinish: boolControl($notifyOnWatchFinish)
-        case SettingsKey.bounceDockIcon: boolControl($bounceDockIcon)
         case SettingsKey.soundShellControlled: boolControl($soundShellControlled)
         case SettingsKey.soundOnErrorExit: boolControl($soundOnErrorExit)
         case SettingsKey.agentNotifyTaskComplete: boolControl($agentNotifyTaskComplete)

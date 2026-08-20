@@ -54,10 +54,11 @@ const fn row(id: &'static str, platform: Platform) -> BindingRow {
 
 /// Every row the registry writes out, in registry order.
 ///
-/// The three `Mac` entries are the same feature the palette's three are: an own-window satellite
-/// and a window level. Everything else is `Both`, including rows a phone reaches through a gesture
-/// rather than a chord — docs/56 §3 is explicit that layout diverges and capability does not, and a
-/// row here is a CAPABILITY even when the phone has no keyboard attached to fire it.
+/// The `Mac` entries are the same features the palette's are, in this table's spelling: an
+/// own-window satellite, a window level, the `AppKit` secure-input call and the window close.
+/// Everything else is `Both`, including rows a phone reaches through a gesture rather than a chord
+/// — docs/56 §3 is explicit that layout diverges and capability does not, and a row here is a
+/// CAPABILITY even when the phone has no keyboard attached to fire it.
 pub const ROWS: [BindingRow; 77] = [
     // Panes
     row("pane.splitRight", Platform::Both),
@@ -92,7 +93,12 @@ pub const ROWS: [BindingRow; 77] = [
     row("tab.prev", Platform::Both),
     row("pane.switcher", Platform::Both),
     row("tab.close", Platform::Both),
-    row("window.close", Platform::Both),
+    // ⌘⇧W, and the palette's `action.closeWindow`. Its routing arm is not an empty closure but a
+    // FALLBACK — `WorkspaceStore.requestCloseWindow()`, which parks `pendingWindowClose` for the
+    // Mac's `windowShouldClose` gate to resolve. The phone's close-confirmation alert reads the pane
+    // and tab parks only, so on that half the chord either parked a flag nothing observes or cleared
+    // it and returned. Dropping the row hands ⌘⇧W back to the pane.
+    row("window.close", Platform::Mac),
     row("tab.reopenClosed", Platform::Both),
     row("tab.syncInput", Platform::Both),
     row("view.jumpToAttention", Platform::Both),
@@ -115,7 +121,12 @@ pub const ROWS: [BindingRow; 77] = [
     row("view.copyMode", Platform::Both),
     row("view.viKeyHints", Platform::Both),
     row("view.readOnly", Platform::Both),
-    row("view.secureKeyboardEntry", Platform::Both),
+    // `action.secureKeyboardEntry` in the palette's spelling. `EnableSecureEventInput` is `AppKit`'s
+    // and process-global; `TerminalViewModel.refreshSecureInput()` is `let value = false` off macOS,
+    // so on a phone this flipped a flag whose only listener is a `nil` closure and left the SECURE
+    // INPUT pill dark. This row is chord-LESS, so what it cost the phone was not a key: it was a
+    // cheat-sheet line and a keybindings editor offering to bind a chord onto it.
+    row("view.secureKeyboardEntry", Platform::Mac),
     row("view.releaseStuckInput", Platform::Both),
     row("view.lockViewport", Platform::Both),
     row("view.fitViewportToPane", Platform::Both),
@@ -196,13 +207,19 @@ mod tests {
     }
 
     #[test]
-    fn the_satellite_pair_and_the_window_level_are_the_only_mac_rows() {
+    fn only_the_rows_with_an_appkit_backing_are_the_macs_alone() {
         let mac: Vec<&str> = ROWS
             .iter()
             .filter(|row| row.platform == Platform::Mac)
             .map(|row| row.id)
             .collect();
-        assert_eq!(mac, vec!["pane.detach", "pane.reattachAll", "view.pinWindow"]);
+        assert_eq!(mac, vec![
+            "pane.detach",
+            "pane.reattachAll",
+            "window.close",
+            "view.secureKeyboardEntry",
+            "view.pinWindow"
+        ]);
         assert!(
             !ROWS.iter().any(|row| row.platform == Platform::Phone),
             "no binding is the phone's alone — a smaller screen is not a smaller product",
@@ -217,6 +234,8 @@ mod tests {
         for (binding, verb) in [
             ("pane.detach", "action.detachPane"),
             ("pane.reattachAll", "action.reattachAllPanes"),
+            ("window.close", "action.closeWindow"),
+            ("view.secureKeyboardEntry", "action.secureKeyboardEntry"),
             ("view.pinWindow", "action.pinWindow"),
         ] {
             for mac in [true, false] {

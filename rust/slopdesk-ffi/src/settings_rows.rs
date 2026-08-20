@@ -178,6 +178,20 @@ pub extern "C" fn slopdesk_settings_row_is_inline_editable(index: usize) -> bool
     settings_rows::row_at(index).is_some_and(|row| row.inline_editable)
 }
 
+/// Whether the half that identifies as `mac` advertises the row at `index`.
+///
+/// `shown` rather than `platform`, for the reason [`crate::palette_rows`] states: the near side
+/// already knows which slice it is, and what it must never do is turn that back into a `#if` around
+/// a row. `false` past the end — an index no row has advertises nothing.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_settings_row_shown(index: usize, mac: bool) -> bool {
+    settings_rows::shown_at(index, mac)
+}
+
 /// One field of one row, delivered.
 ///
 /// # Safety
@@ -352,6 +366,22 @@ mod tests {
             tiny[0],
             usize::MAX,
             "an overflow leaves the caller's buffer alone"
+        );
+    }
+
+    #[test]
+    fn a_row_whose_control_is_the_macs_alone_crosses_as_hidden_from_the_phone() {
+        let dock = index_of("appearance.dockIconErrorBadge");
+        assert!(slopdesk_settings_row_shown(dock, true));
+        assert!(
+            !slopdesk_settings_row_shown(dock, false),
+            "a ✎ into an Appearance page with no Dock Icon group on it",
+        );
+        let both = index_of("controls.copyOnSelect");
+        assert!(slopdesk_settings_row_shown(both, true) && slopdesk_settings_row_shown(both, false));
+        assert!(
+            !slopdesk_settings_row_shown(slopdesk_settings_row_count(), true),
+            "past the end names no row, so there is nothing to advertise",
         );
     }
 

@@ -24,6 +24,13 @@ import SlopDeskWorkspaceModel
 /// every advertised key must be a surfaced ``SettingsKey`` and every surfaced key must have a row —
 /// and it stays a Swift test because it needs the Swift namespace to say so.
 ///
+/// THE LIST IS THIS HALF'S. A row is advertised on the half that draws a control for it, which the
+/// far side derives from the page table (`slopdesk_settings_row_shown`) rather than declaring twice.
+/// Before that, the index advertised everything on both halves on the grounds that a key still
+/// round-trips on iOS — and what the phone rendered was a live switch over `notifications.bounceDock`
+/// that no Dock reads and a ✎ into an Appearance page with no Dock Icon group on it. One gate, in one
+/// place: ``isMac``, below, and nothing else here branches on a platform.
+///
 /// GOLDEN-SAFE: metadata only. Nothing here reads or writes a value, touches a wire codec, or looks
 /// at the env overlay.
 public enum AllSettingsCatalog {
@@ -137,16 +144,39 @@ public enum AllSettingsCatalog {
         SettingsKey.density,
     ]
 
-    /// Every client-side configuration key, in the reading order the list renders.
-    public static let entries: [SettingEntry] = (0..<slopdesk_settings_row_count()).map(entry(at:))
+    /// Which half this binary IS.
+    ///
+    /// The xcframework is built per slice, so the far side could have answered this with a `cfg!` —
+    /// but then the table could not be asked what the OTHER half advertises, which is exactly what
+    /// `AllSettingsCatalogTests` asks (every suite here runs on a Mac, where every row is real). So
+    /// the flag crosses and the gate stays here, once. Same shape as ``BindingRowPlatform``'s.
+    private static let isMac: Bool = {
+        #if os(macOS)
+        true
+        #else
+        false
+        #endif
+    }()
+
+    /// Every client-side configuration key THIS half advertises, in the reading order the list
+    /// renders.
+    public static let entries: [SettingEntry] = entries(mac: isMac)
+
+    /// The same list as a named half sees it — what a test on one platform uses to read the other's.
+    public static func entries(mac: Bool) -> [SettingEntry] {
+        (0..<slopdesk_settings_row_count()).filter { slopdesk_settings_row_shown($0, mac) }.map(entry(at:))
+    }
 
     /// The `.advancedOnly` keys the list renders with a real INLINE editor — the contract
     /// `AllSettingsListView`'s `inlineControl(for:)` switch must cover. A key here with no case falls
     /// to that switch's default arm, which is a dead value label with no control;
     /// `AllSettingsCatalogTests.testEveryAdvancedOnlyRowHasInlineControl` pins the coverage.
+    ///
+    /// Filtered to this half for the other side of that same contract: a key the half never lists is
+    /// a case the switch would hold for a row it never draws.
     public static let inlineEditableKeys: Set<String> = Set(
         (0..<slopdesk_settings_row_count())
-            .filter { slopdesk_settings_row_is_inline_editable($0) }
+            .filter { slopdesk_settings_row_is_inline_editable($0) && slopdesk_settings_row_shown($0, isMac) }
             .compactMap { index in string { slopdesk_settings_row_key(index, $0, $1) } },
     )
 
@@ -156,7 +186,13 @@ public enum AllSettingsCatalog {
     /// narrow to the cursor rows rather than order all of them by how cursor-ish they are. An empty
     /// query returns everything in order; a no-match query returns `[]`.
     public static func filter(_ query: String) -> [SettingEntry] {
-        matchedPositions(query).map(entry(at:))
+        filter(query, mac: isMac)
+    }
+
+    /// The same search as a named half sees it. The platform gate runs AFTER the match, so a query
+    /// that names a macOS-only key on a phone returns nothing rather than a row it cannot edit.
+    public static func filter(_ query: String, mac: Bool) -> [SettingEntry] {
+        matchedPositions(query).filter { slopdesk_settings_row_shown($0, mac) }.map(entry(at:))
     }
 
     // MARK: The crossing

@@ -31,9 +31,17 @@ final class BindingRowPlatformTests: XCTestCase {
         XCTAssertEqual(served, declared)
     }
 
-    /// The three window verbs the phone cannot run are the three the phone is not offered.
+    /// The bindings whose BACKING is AppKit's, in this table's spelling — a second `NSWindow`, a
+    /// window level, a window close and the process-global secure-input call. Nothing else may join
+    /// this set: see the test below.
+    private static let appKitBacked: Set = [
+        "pane.detach", "pane.reattachAll", "view.pinWindow",
+        "window.close", "view.secureKeyboardEntry",
+    ]
+
+    /// The verbs the phone cannot run are the ones the phone is not offered.
     func testThePhoneIsNotOfferedTheWindowBindingsItCannotRun() {
-        for id in ["pane.detach", "pane.reattachAll", "view.pinWindow"] {
+        for id in Self.appKitBacked {
             XCTAssertTrue(BindingRowPlatform.lists(id, mac: true), "\(id) left the Mac's registry")
             XCTAssertFalse(BindingRowPlatform.lists(id, mac: false), "\(id) is listed and inert")
         }
@@ -42,8 +50,7 @@ final class BindingRowPlatformTests: XCTestCase {
     /// …and NOTHING else is withheld. docs/56 §3: layout diverges, capability does not. A binding
     /// hidden for any reason other than a missing backing API is this test failing.
     func testNoOtherBindingIsWithheldFromEitherHalf() {
-        let windowRows: Set = ["pane.detach", "pane.reattachAll", "view.pinWindow"]
-        for id in BindingRowPlatform.declaredIDs where !windowRows.contains(id) {
+        for id in BindingRowPlatform.declaredIDs where !Self.appKitBacked.contains(id) {
             XCTAssertTrue(BindingRowPlatform.lists(id, mac: true), "\(id) left the Mac")
             XCTAssertTrue(BindingRowPlatform.lists(id, mac: false), "\(id) left the phone")
         }

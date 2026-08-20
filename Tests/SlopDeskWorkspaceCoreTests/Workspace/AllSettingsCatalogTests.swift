@@ -175,6 +175,97 @@ final class AllSettingsCatalogTests: XCTestCase {
         }
     }
 
+    // MARK: - Which half advertises the row
+
+    /// Rows this half lists that the phone does not, spelled out rather than derived.
+    ///
+    /// The derivation itself is pinned in Rust (`settings_rows::tests`), where the page table is in
+    /// scope; what this list is for is the other direction — that the derived answer matches what a
+    /// reader would call macOS-only. Every one of these was advertised to the phone before: the Dock
+    /// bounce as a working inline switch over a value no iOS device reads, the four below it as a ✎
+    /// that jumped to a page carrying no such group at all. `autoSecureInput` and its indicator are
+    /// read by the phone's leaf and still belong here — `TerminalViewModel.refreshSecureInput()` is a
+    /// literal `false` off macOS, so the state they feed can never engage.
+    private static let macOnlyKeys: [String] = [
+        SettingsKey.bounceDockIcon,
+        SettingsKey.dockIconAnimateProgress, SettingsKey.dockIconErrorBadge,
+        SettingsKey.autoSecureInput, SettingsKey.secureInputIndicator,
+    ]
+
+    /// The rows the same audit called macOS-only and that are NOT — kept here so the correction
+    /// cannot be quietly undone by whoever reads the `NSSound` names in ``AgentSound`` next.
+    ///
+    /// The toggles decide ring-or-silent, not which FILE rings: ``AgentSoundPolicy`` says which,
+    /// once, and the phone spends that verdict on the banner's default cue
+    /// (``CommandCompletionNotifier`` `bannerSound(for:)`) rather than on `/System/Library/Sounds`.
+    private static let bothHalvesKeys: [String] = [
+        SettingsKey.agentSoundTaskComplete, SettingsKey.agentSoundAwaitInput,
+    ]
+
+    /// A row with one decision and two presenters is listed by BOTH halves.
+    func testARowSpentDifferentlyOnEachHalfIsStillListedByBoth() {
+        let phone = Set(AllSettingsCatalog.entries(mac: false).map(\.key))
+        let mac = Set(AllSettingsCatalog.entries(mac: true).map(\.key))
+        for key in Self.bothHalvesKeys {
+            XCTAssertTrue(mac.contains(key), "'\(key)' left the Mac's list")
+            XCTAssertTrue(phone.contains(key), "'\(key)' is withheld from a half that acts on it")
+        }
+    }
+
+    /// The rows the phone cannot edit are the rows the phone is not offered — and the Mac keeps them.
+    func testThePhoneIsNotOfferedTheRowsItCannotEdit() {
+        let mac = Set(AllSettingsCatalog.entries(mac: true).map(\.key))
+        let phone = Set(AllSettingsCatalog.entries(mac: false).map(\.key))
+        for key in Self.macOnlyKeys {
+            XCTAssertTrue(mac.contains(key), "'\(key)' left the Mac's list")
+            XCTAssertFalse(phone.contains(key), "'\(key)' is listed on a half that cannot edit it")
+        }
+    }
+
+    /// The phone's list is the Mac's MINUS what it withholds, never a list of its own.
+    ///
+    /// A key advertised on the phone and not on the Mac would be a row the far side derived from a
+    /// `Platform::Phone` group — legal in the table, and a shape nothing in this product has. The
+    /// non-empty difference is what says the gate is wired at all rather than passing everything.
+    func testThePhonesListIsTheMacsMinusWhatItWithholds() {
+        let mac = Set(AllSettingsCatalog.entries(mac: true).map(\.key))
+        let phone = Set(AllSettingsCatalog.entries(mac: false).map(\.key))
+        XCTAssertTrue(phone.isSubset(of: mac), "the phone advertises a row the Mac does not")
+        XCTAssertFalse(phone.isEmpty, "the table crossed empty")
+        XCTAssertFalse(mac.subtracting(phone).isEmpty, "no row is withheld — the platform gate is not wired")
+    }
+
+    /// The compiled slice asks the table about ITSELF — the one place ``AllSettingsCatalog``'s `#if`
+    /// could be wired backwards without another assertion here noticing, since every suite in this
+    /// target runs on a Mac where the unfiltered list is also the right one.
+    func testTheCompiledSliceAsksTheTableAboutItself() {
+        #if os(macOS)
+        let mine = true
+        #else
+        let mine = false
+        #endif
+        XCTAssertEqual(AllSettingsCatalog.entries.map(\.key), AllSettingsCatalog.entries(mac: mine).map(\.key))
+        XCTAssertEqual(AllSettingsCatalog.filter("s").map(\.key), AllSettingsCatalog.filter("s", mac: mine).map(\.key))
+    }
+
+    /// A search never lands on a row this half does not list. The gate runs AFTER the match, so a
+    /// query that names a withheld key returns nothing on the phone rather than a row whose ✎ leads
+    /// to a page with no such group — which is the defect one register in, reached by typing.
+    func testASearchNeverLandsOnARowThisHalfDoesNotList() {
+        let phone = Set(AllSettingsCatalog.entries(mac: false).map(\.key))
+        XCTAssertEqual(Set(AllSettingsCatalog.filter("", mac: false).map(\.key)), phone)
+        for key in Self.macOnlyKeys {
+            XCTAssertFalse(
+                AllSettingsCatalog.filter(key, mac: false).contains { $0.key == key },
+                "searching '\(key)' on a phone found the row the list withholds",
+            )
+            XCTAssertTrue(
+                AllSettingsCatalog.filter(key, mac: true).contains { $0.key == key },
+                "searching '\(key)' on a Mac lost the row",
+            )
+        }
+    }
+
     // MARK: - PreferencesStore reset behaviour (the panel's Reset buttons)
 
     /// An isolated `UserDefaults` suite for the injected store models (the global `Defaults.Keys` are still

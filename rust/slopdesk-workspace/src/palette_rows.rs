@@ -51,10 +51,11 @@ const fn row(id: &'static str, platform: Platform) -> PaletteRow {
 
 /// Every row in the verb catalog, in catalog order.
 ///
-/// The three `Mac` entries are the satellite-window pair and the window level. Each is macOS-only
-/// because the BACKING is: an iOS shell has no second `NSWindow` to strand a pane in, and no window
-/// level to float above other apps. Everything else is `Both` — including the ones a phone reaches
-/// rarely, because docs/56 §3 is explicit that layout diverges and capability does not.
+/// Each `Mac` entry is macOS-only because the BACKING is, and the backings are of three kinds: an
+/// `NSWindow` an iOS shell has no second of, a window LEVEL it has no z-order for, and an `AppKit`
+/// process-global call (`EnableSecureEventInput`) with no iOS form at all. Everything else is
+/// `Both` — including the ones a phone reaches rarely, because docs/56 §3 is explicit that layout
+/// diverges and capability does not.
 pub const ROWS: [PaletteRow; 33] = [
     row("action.copyPath", Platform::Both),
     row("action.newTerminalTab", Platform::Both),
@@ -77,7 +78,11 @@ pub const ROWS: [PaletteRow; 33] = [
     row("action.toggleCodeSidebar", Platform::Both),
     row("action.focusCodePanel", Platform::Both),
     row("action.toggleReadOnly", Platform::Both),
-    row("action.secureKeyboardEntry", Platform::Both),
+    // `EnableSecureEventInput` is AppKit's, process-global, and has no iOS form. The near side says
+    // so outright — `TerminalViewModel.refreshSecureInput()` is `let value = false` off macOS — so on
+    // a phone this verb flipped a flag whose only reader is a `nil` closure and left the SECURE INPUT
+    // pill dark. Listed and inert, which is the row above's distinction from an absent action.
+    row("action.secureKeyboardEntry", Platform::Mac),
     row("action.reopenClosed", Platform::Both),
     row("action.toggleSyncInput", Platform::Both),
     row("action.layoutEvenHorizontal", Platform::Both),
@@ -85,7 +90,13 @@ pub const ROWS: [PaletteRow; 33] = [
     row("action.layoutMainVertical", Platform::Both),
     row("action.layoutMainHorizontal", Platform::Both),
     row("action.layoutTiled", Platform::Both),
-    row("action.closeWindow", Platform::Both),
+    // Close Window is `NSWindow`'s too, and it is the one row here whose FALLBACK is what made it
+    // inert rather than an empty closure. With no actuator the route lands on
+    // `WorkspaceStore.requestCloseWindow()`, which parks `pendingWindowClose` — and the only reader
+    // of that park is the Mac's `windowShouldClose` gate. The phone's alert answers the PANE and TAB
+    // parks and has no arm for this one, so ⌘⇧W either parked a flag nothing could resolve or
+    // cleared it and did nothing.
+    row("action.closeWindow", Platform::Mac),
     row("action.increaseFontSize", Platform::Both),
     row("action.decreaseFontSize", Platform::Both),
     row("action.resetFontSize", Platform::Both),
@@ -136,7 +147,7 @@ mod tests {
     }
 
     #[test]
-    fn the_satellite_pair_and_the_window_level_are_the_only_mac_rows() {
+    fn only_the_rows_with_an_appkit_backing_are_the_macs_alone() {
         let mac: Vec<&str> = ROWS
             .iter()
             .filter(|row| row.platform == Platform::Mac)
@@ -145,6 +156,8 @@ mod tests {
         assert_eq!(mac, vec![
             "action.detachPane",
             "action.reattachAllPanes",
+            "action.secureKeyboardEntry",
+            "action.closeWindow",
             "action.pinWindow"
         ],);
         assert!(

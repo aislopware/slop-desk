@@ -3071,6 +3071,59 @@ SILENCED, so the audible half of a beep is the half a phone throws away. `.rigid
 hard tap, because the cue is a REFUSAL — survives the ring switch and needs no audio session the
 terminal does not own.
 
+### Increment 71 — the settings index advertised every key on both halves
+
+Increment 64 gave a palette verb a platform and increment 65 gave a keybinding one. The FLAT INDEX
+behind Advanced → All Settings still had none, and it is the surface where a listed row does the most
+damage, because a row there is not a menu line that does nothing when pressed — it is either a live
+control or a ✎ into a page. The phone rendered a working switch over `notifications.bounceDock`,
+writing a `UserDefaults` value no Dock on that device will ever read, and four rows — the two
+Dock-icon flags and the two secure-input flags — rendered a ✎ that jumped to Appearance and Controls
+pages carrying no such group at all. Every one of those decisions was already made, once, in
+`settings_layout`: the enclosing group is `Platform::Mac`, and has been since the layout table
+landed.
+
+So the index does not get a `platform` column. It ASKS the page table — a row is advertised on the
+half that draws a control for it. A column would have been the same answer written down a second
+time in a table nothing joins to the first, which is the `MIN_WEIGHT`/`MAX_DEPTH` shape docs/55 §8
+names one register up: two spellings of one meaning, agreeing right until somebody moves a group
+between pages. The counter-argument for keeping every key listed was that a key still compiles and
+round-trips on iOS. True, and beside the point — what the phone rendered was not a key.
+
+Eight keys are named by no layout row at all, because a `Control::Bespoke` group names no keys: the
+five font families, the auto-match flag and the two cursor fields, each edited by a hand-built
+surface. Those fail OPEN, the same default `palette_rows` and `binding_rows` take, for the same
+reason: withholding a row on a guess is silent, while advertising one is visible and is what a test
+can bound. The Rust gate walks `Section::ALL` → `groups(section, mac)` → `rows(group, mac)` — the
+same walk a renderer makes — and asserts the index matches it, so the derivation cannot drift from
+what is actually drawn; a second gate pins that every undescribed key is a `HasDedicatedTab` jump
+rather than an inline control nobody can reach. `slopdesk_settings_row_shown(index, mac)` is the
+door, `mac` rather than a far-side `cfg!` for `BindingRowPlatform`'s reason: the flag has to cross so
+a Mac can ask what the phone lists, which is the only place the answer is interesting.
+
+Two rows in the older tables were wrong in the same way and were flipped with them.
+`action.secureKeyboardEntry` / `view.secureKeyboardEntry` toggle a process-global `AppKit` call, and
+`TerminalViewModel.refreshSecureInput()` is a literal `false` off macOS — that row is chord-LESS, so
+what it cost the phone was a cheat-sheet line and a keybindings editor offering to bind a chord onto
+it, not a stolen key. `action.closeWindow` / `window.close` is subtler, and the audit that found it
+had the chord wrong (⌘⇧W, not ⌘W): its routing arm is not an empty closure but a FALLBACK to
+`WorkspaceStore.requestCloseWindow()`, which parks `pendingWindowClose` — and the only reader of that
+park is the Mac's `windowShouldClose` gate. The phone's close confirmation answers the pane and tab
+parks and has no arm for this one, so there was no phone-side meaning to preserve. Downstream, the
+phone's `AllSettingsListView` lost the Dock-bounce case and its `@Default` binding: a case kept for a
+row the list withholds is a control nobody reaches, which is the defect this increment closes, one
+register in.
+
+Making the index derive its platform also settled a claim the layout had been making unchecked, and
+it was wrong. `notifications.agentSoundTaskComplete` and `notifications.agentSoundAwaitInput` were
+`Platform::Mac` on the stated grounds that they name `NSSound` files iOS does not ship. What the two
+toggles decide is not the FILE, it is ring or stay silent — `AgentSoundPolicy` decides that once and
+each half spends the verdict its own way, macOS on Submarine/Glass and the phone on the default
+`UNNotificationSound` attached to the banner, which `CommandCompletionNotifier.bannerSound(for:)`
+already documents at length. Both rows are `Both` now, and the phone's Shell page had been carrying
+their bindings all along, unreachable behind a gate that should not have been there. The audit
+reported them as inert phone toggles; they were the one thing on its list that worked.
+
 ### Increment 72 — the phone could read the terminal and take nothing out of it
 
 Selecting text is the oldest thing a terminal does, and the phone could not do it. The Mac's path is

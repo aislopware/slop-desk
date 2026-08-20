@@ -1115,6 +1115,16 @@ size_t slopdesk_settings_row_keywords(size_t index, uint8_t *out, size_t cap);
 size_t slopdesk_settings_row_target_section(size_t index, uint8_t *out, size_t cap);
 uint8_t slopdesk_settings_row_bucket(size_t index);
 bool slopdesk_settings_row_is_inline_editable(size_t index);
+// Whether the half that identifies as `mac` advertises this row. DERIVED from the page table below,
+// never declared here: which half can edit a setting is already a `Platform` on a group and on a
+// row, and a second spelling of it would agree until somebody moved a group. A row the page table
+// names nowhere — one a bespoke surface edits — is advertised on both. `false` past the end.
+//
+// The index used to advertise every key on both halves, on the grounds that a key still round-trips
+// on iOS. What that shipped was a live switch over `notifications.bounceDock` that no Dock reads and
+// a ✎ into an Appearance page with no Dock Icon group on it. `shown` rather than `platform` here for
+// the palette table's reason: the near side must not turn its own slice back into an `#if`.
+bool slopdesk_settings_row_shown(size_t index, bool mac);
 size_t slopdesk_settings_row_index(const uint8_t *key, size_t key_len);
 // The positions a query matched, under the same retry protocol as the string doors: a return larger
 // than `cap` means nothing was written — ask again at that size.

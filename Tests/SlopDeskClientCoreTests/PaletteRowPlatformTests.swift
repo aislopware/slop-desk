@@ -27,9 +27,23 @@ final class PaletteRowPlatformTests: XCTestCase {
         }
     }
 
-    /// The three window verbs the phone cannot run are the three the phone is not offered.
+    /// The verbs whose BACKING is AppKit's — a second `NSWindow`, a window level, a window close and
+    /// the process-global secure-input call. Nothing else may join this set: see the test below.
+    private static let appKitBacked: Set = [
+        "action.detachPane", "action.reattachAllPanes", "action.pinWindow",
+        "action.closeWindow", "action.secureKeyboardEntry",
+    ]
+
+    /// The verbs the phone cannot run are the ones the phone is not offered.
+    ///
+    /// Two of these were found by reading the near side rather than the table. `secureKeyboardEntry`
+    /// toggles a flag whose only listener is `nil` off macOS, and whose pill mirror is a literal
+    /// `false` there. `closeWindow` is subtler still: its routing arm is not an empty closure but a
+    /// FALLBACK to `WorkspaceStore.requestCloseWindow()`, which parks `pendingWindowClose` — and the
+    /// only reader of that park is the Mac's `windowShouldClose` gate. The phone's own close
+    /// confirmation answers the pane and tab parks and has no arm for this one.
     func testThePhoneIsNotOfferedTheWindowVerbsItCannotRun() {
-        for verb in ["action.detachPane", "action.reattachAllPanes", "action.pinWindow"] {
+        for verb in Self.appKitBacked {
             XCTAssertTrue(PaletteRowPlatform.lists(verb, mac: true), "\(verb) left the Mac's palette")
             XCTAssertFalse(PaletteRowPlatform.lists(verb, mac: false), "\(verb) is listed and inert")
         }
@@ -39,10 +53,7 @@ final class PaletteRowPlatformTests: XCTestCase {
     /// diverges and capability does not, so a verb hidden for any reason other than a missing backing
     /// API is this test failing, whichever direction it drifts.
     func testNoOtherVerbIsWithheldFromEitherHalf() {
-        let windowVerbs: Set = [
-            "action.detachPane", "action.reattachAllPanes", "action.pinWindow",
-        ]
-        for id in PaletteRowPlatform.declaredIDs where !windowVerbs.contains(id) {
+        for id in PaletteRowPlatform.declaredIDs where !Self.appKitBacked.contains(id) {
             XCTAssertTrue(PaletteRowPlatform.lists(id, mac: true), "\(id) left the Mac")
             XCTAssertTrue(PaletteRowPlatform.lists(id, mac: false), "\(id) left the phone")
         }
