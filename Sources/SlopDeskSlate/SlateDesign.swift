@@ -521,6 +521,60 @@ package enum Slate {
             }
         }
 
+        /// The connection alarm's ink — the native view of ``Slate/connectionAlarmInk(_:)``. One step
+        /// up the text ladder per rung, tertiary → secondary → primary. NO hue: a row of metric digits
+        /// has nothing to hang a palette on, and an instrument that lights a different colour per fault
+        /// asks the eye to learn one before it can read a number.
+        package static func connectionAlarmInk(_ alarm: ConnectionAlarm) -> SlateNativeColor {
+            switch alarm {
+            case .quiet: Text.tertiary
+            case .raised: Text.secondary
+            case .loud: Text.primary
+            }
+        }
+
+        /// The connection alarm's weight — the native view of ``Slate/connectionAlarmWeight(_:)``, the
+        /// second channel carrying the same rungs. A brightness step alone is easy to lose beside a
+        /// hostname; the weight step is what makes a raised reading findable without looking for it.
+        ///
+        /// A separate switch from the SwiftUI spelling rather than one shared body — ``Font/Weight``
+        /// and ``SlateNativeFont/Weight`` are different types on the two frameworks, the same split
+        /// ``Slate/PaneStatusPillArt`` leaves a pill's glyph weight in (one name below, one line per
+        /// framework), so there is nothing here for a shared body to be written ON.
+        package static func connectionAlarmWeight(_ alarm: ConnectionAlarm) -> SlateNativeFont.Weight {
+            switch alarm {
+            case .quiet: .regular
+            case .raised: .semibold
+            case .loud: .bold
+            }
+        }
+
+        /// The pane status pill's fill — the native view of ``Slate/paneStatusPillFill(_:)``. The
+        /// vivid tones are theme-INDEPENDENT on purpose (the shipped themes have `info == accent`, so a
+        /// palette-derived security badge would be invisible against the accent — `secure-input.png` is
+        /// the green-accent Paper theme yet the pill is the same royal blue), and only a NAME can say
+        /// that — ``PaneStatusPillInk`` is that name, one floor down and colour-free.
+        package static func paneStatusPillFill(_ ink: PaneStatusPillInk) -> SlateNativeColor {
+            switch ink {
+            case .security: Status.secureInput
+            case .sync: Status.syncInput
+            }
+        }
+
+        /// One TOAST rung, as ink — the native view of ``Slate/toastMarkInk(for:)``. `.warn` is AMBER,
+        /// not the theme accent (see ``ToastMarkRung/warn``): the rail already fixed "amber = a
+        /// question waiting", and every FOUNDRY seed sets `info == accent`, so the accent would have
+        /// drawn needs-input in the same cyan as a routine notice. `.neutral` stays the family's own
+        /// reading ink — status hues keep their meaning, and a routine notice stays NEUTRAL.
+        package static func toastMarkInk(for rung: ToastMarkRung) -> SlateNativeColor {
+            switch rung {
+            case .ok: Status.ok
+            case .warn: Status.warn
+            case .err: Status.err
+            case .neutral: Overlay.secondary
+            }
+        }
+
         /// The project BEDS, natively — the same five sources at the same alpha the SwiftUI side
         /// composites, reached by the index a ``Slate/ProjectTint/Deal`` dealt.
         ///
@@ -1119,6 +1173,49 @@ package enum Slate {
         Color(slateNative: Native.agentInk(ink))
     }
 
+    /// The connection alarm's ink: one step up the text ladder per rung, tertiary → secondary →
+    /// primary — the SwiftUI view of ``Slate/Native/connectionAlarmInk(_:)``. NO hue: a row of digits
+    /// has nothing to hang a palette on, and an instrument that lights a different colour per fault
+    /// asks the eye to learn one before it can read a number.
+    @MainActor
+    package static func connectionAlarmInk(_ alarm: ConnectionAlarm) -> Color {
+        Color(slateNative: Native.connectionAlarmInk(alarm))
+    }
+
+    /// The connection alarm's weight — the second channel, carrying the same rungs. At small type
+    /// sizes a brightness step alone is easy to lose beside surrounding text; the weight step is what
+    /// makes a raised reading findable without looking for it.
+    ///
+    /// A separate switch from the native spelling — see ``Slate/Native/connectionAlarmWeight(_:)`` for
+    /// why the two cannot share one body.
+    package static func connectionAlarmWeight(_ alarm: ConnectionAlarm) -> Font.Weight {
+        switch alarm {
+        case .quiet: .regular
+        case .raised: .semibold
+        case .loud: .bold
+        }
+    }
+
+    /// The pane status pill's fill — the SwiftUI view of ``Slate/Native/paneStatusPillFill(_:)``. THE
+    /// two vivid tones are theme-INDEPENDENT on purpose (the shipped themes have `info == accent`, so
+    /// a palette-derived security badge would be invisible against the accent — `secure-input.png` is
+    /// the green-accent Paper theme yet the pill is the same royal blue), and only a NAME can say
+    /// that — ``PaneStatusPillInk`` is that name, one floor down and colour-free.
+    @MainActor
+    package static func paneStatusPillFill(_ ink: PaneStatusPillInk) -> Color {
+        Color(slateNative: Native.paneStatusPillFill(ink))
+    }
+
+    /// One TOAST rung, as ink — the SwiftUI view of ``Slate/Native/toastMarkInk(for:)``. `.warn` is
+    /// AMBER, not the theme accent (see ``ToastMarkRung/warn``): the rail already fixed "amber = a
+    /// question waiting", and every FOUNDRY seed sets `info == accent`, so the accent would have drawn
+    /// needs-input in the same cyan as a routine notice. `.neutral` stays the floating family's own
+    /// reading ink — status hues keep their meaning, and a routine notice stays NEUTRAL.
+    @MainActor
+    package static func toastMarkInk(for rung: ToastMarkRung) -> Color {
+        Color(slateNative: Native.toastMarkInk(for: rung))
+    }
+
     /// Geometry — theme-independent. Radii + the 8pt grid + chrome dimensions.
     package enum Metric {
         // MARK: The ONE-ISLAND geometry (law 3)
@@ -1659,6 +1756,36 @@ package enum Slate {
         /// never used on live chrome (the at-rest-motion purge stands).
         package static let pulse = Motion.pulse.animation.repeatForever(autoreverses: true)
     }
+}
+
+// MARK: - The floating family's neutral ink
+
+/// The floating (overlay) family's palette: system-semantic, neutral, theme-INDEPENDENT — the switcher,
+/// the palette, Open Quickly, global search, the cheat sheet, Connect, peek-reply and the toast stack.
+///
+/// Every value derives from the platform label colour or the system accent, so it is a true grey on both
+/// appearances and repoints itself when the appearance changes — without ever reaching into `Slate.theme`,
+/// which is the terminal's filter and belongs to the workspace.
+///
+/// Relocated here from `SlopDeskClientUI` (docs/56 batch 3): the rungs themselves have always lived in
+/// ``Slate/Native/Overlay``, one floor below both renderers, and this SwiftUI view of them was the one
+/// piece of that pair still sitting above the design floor — reachable by the phone's cards, unreachable
+/// by the Mac's `NSView`-built cheat sheet and toast panel, which read ``Slate/Native/Overlay`` directly.
+/// A pure `Color`-wrapper table with no `View` conformance belongs beside the token it wraps, not above it.
+@MainActor
+package enum SlateOverlayInk {
+    /// The thing being read.
+    package static let primary = Color(slateNative: Slate.Native.Overlay.primary)
+    /// A supporting label.
+    package static let secondary = Color(slateNative: Slate.Native.Overlay.secondary)
+    /// A caption, a section header, a resting keycap.
+    package static let tertiary = Color(slateNative: Slate.Native.Overlay.tertiary)
+    /// The plate a selected row rises onto, and the keycap's face.
+    package static let plate = Color(slateNative: Slate.Native.Overlay.plate)
+    /// A hairline: a plate's edge, the card's one internal rule.
+    package static let hairline = Color(slateNative: Slate.Native.Overlay.hairline)
+    /// The ground an editable field sinks into — the opposite direction from ``plate``.
+    package static let well = Color(slateNative: Slate.Native.Overlay.well)
 }
 
 package extension Color {

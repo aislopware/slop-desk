@@ -75,27 +75,14 @@ struct StatusDotView: View {
 /// that is the difference between a ring that looks broken and a ring that looks made of parts.
 ///
 /// The dot size scales with the rect, so a magnified still is a true redraw rather than a blown-up
-/// 10pt bitmap — the same lesson ``AgentSpinner`` learned about `scaleEffect`.
+/// 10pt bitmap — the same lesson ``AgentSpinner`` learned about `scaleEffect`. The geometry itself is
+/// ``StatusDot/ringDotFrame(_:in:)``'s (docs/56 batch 3), one floor down and shared with the Mac's
+/// `MacStatusMarkView.drawRing`; this `Shape` only turns those frames into a `Path`.
 struct DottedRing: Shape {
     func path(in rect: CGRect) -> Path {
-        let side = min(rect.width, rect.height)
-        let radius = side / 2
-        // The dots ride ON the circle and spill half their width outside it, exactly as the stroke
-        // they replace did — so the ring's visual diameter, matched by eye to a 12pt
-        // `checkmark.circle.fill`, does not change with the cut.
-        let dot = StatusDot.ringDotDiameter * (side / StatusDot.ringDiameter)
         var path = Path()
         for index in 0..<StatusDot.ringDotCount {
-            let turn = 2 * Double.pi * Double(index) / Double(StatusDot.ringDotCount) - .pi / 2
-            let centre = CGPoint(
-                x: rect.midX + radius * CGFloat(cos(turn)),
-                y: rect.midY + radius * CGFloat(sin(turn)),
-            )
-            path.addEllipse(
-                in: CGRect(
-                    x: centre.x - dot / 2, y: centre.y - dot / 2, width: dot, height: dot,
-                ),
-            )
+            path.addEllipse(in: StatusDot.ringDotFrame(index, in: rect))
         }
         return path
     }

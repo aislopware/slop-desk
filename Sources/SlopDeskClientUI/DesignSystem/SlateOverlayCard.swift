@@ -51,34 +51,6 @@
 import SlopDeskSlate
 import SwiftUI
 
-// MARK: - The neutral ink
-
-/// The floating family's palette: system-semantic, neutral, theme-INDEPENDENT.
-///
-/// Every value derives from the platform label colour or the system accent, so it is a true grey on both
-/// appearances and repoints itself when the appearance changes — without ever reaching into `Slate.theme`,
-/// which is the terminal's filter and belongs to the workspace.
-///
-/// The rungs themselves live in ``Slate/Native/Overlay``, and this is the SwiftUI view of them. The Mac's
-/// cheat sheet is an `NSView` now (docs/56 stage D) and an `NSView` cannot fill with a `Color`; re-deriving
-/// the ladder in AppKit terms would be the duplicate implementation `CLAUDE.md` forbids, so there is one
-/// value with two views of it — the same arrangement the surface and text ladders already use.
-@MainActor
-enum SlateOverlayInk {
-    /// The thing being read.
-    static let primary = Color(slateNative: Slate.Native.Overlay.primary)
-    /// A supporting label.
-    static let secondary = Color(slateNative: Slate.Native.Overlay.secondary)
-    /// A caption, a section header, a resting keycap.
-    static let tertiary = Color(slateNative: Slate.Native.Overlay.tertiary)
-    /// The plate a selected row rises onto, and the keycap's face.
-    static let plate = Color(slateNative: Slate.Native.Overlay.plate)
-    /// A hairline: a plate's edge, the card's one internal rule.
-    static let hairline = Color(slateNative: Slate.Native.Overlay.hairline)
-    /// The ground an editable field sinks into — the opposite direction from ``plate``.
-    static let well = Color(slateNative: Slate.Native.Overlay.well)
-}
-
 // MARK: - The card surface
 
 /// The floating card's SURFACE: PAPER — the ground's cream, opaque, at the floating family's own corner,

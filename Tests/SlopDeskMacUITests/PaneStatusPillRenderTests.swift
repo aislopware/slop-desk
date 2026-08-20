@@ -1,24 +1,26 @@
 // PaneStatusPillRenderTests proves the AppKit pane status chip (docs/56 wave R, batch R2) keeps the
-// four promises its SwiftUI half makes that a compiler cannot check.
+// three promises its SwiftUI half makes that a compiler cannot check.
 //
-// 1. THE TWO RENDERERS INK THE VIVID PILLS IDENTICALLY. `PaneStatusPillInk` is a NAME in
-//    `SlopDeskClientCore` precisely because its resolution is a colour and the token floor sits ABOVE
-//    the logic floor — so the table is spelled twice, once per framework, and `check-supervisor.sh`
-//    can only check that both halves ANSWER every case. It cannot check that they answer the SAME.
-//    This does, in resolved sRGB, which is the half of the pair the ratchet structurally cannot see.
-//
-// 2. THE VIVID INKS ARE NOT THE THEME ACCENT. That is the whole argument for a fixed tone: the
+// 1. THE VIVID INKS ARE NOT THE THEME ACCENT. That is the whole argument for a fixed tone: the
 //    shipped themes have `info == accent`, so a security badge derived from the palette goes
 //    invisible against the accent it is warning on top of. A regression that "simplified" either
 //    fill into `Slate.Native.accent` would compile, run, and look fine on the default theme.
 //
-// 3. THE `×` IS EXACTLY WHERE `dismissHelp` SAYS. Secure input carries none, and that is a decision
+// 2. THE `×` IS EXACTLY WHERE `dismissHelp` SAYS. Secure input carries none, and that is a decision
 //    rather than an omission — it is a SAFETY indicator the user does not dismiss with a click, and
 //    a `×` there would offer to turn off something the chip does not own. The plate is also the one
 //    thing on the chip that DOES anything, so the press has to reach `onDismiss`.
 //
-// 4. THE COPY IS READ, NOT RESTATED. The label, the VoiceOver line and the hint are the shared
+// 3. THE COPY IS READ, NOT RESTATED. The label, the VoiceOver line and the hint are the shared
 //    value's; a port that retyped "Read only" would drift from the SwiftUI half one edit later.
+//
+// ⚠️ A FOURTH promise — that the two renderers ink the vivid pills IDENTICALLY — used to live here,
+// because `PaneStatusPillView.fillColor` and `MacPaneStatusPillView.fillColor` were two independently
+// maintained tables and nothing but a cross-renderer colour comparison could prove they agreed (which
+// a UI half's own tests may not run, docs/56 §3.5 step 5). Docs/56 batch 3 removed the question rather
+// than answering it here: `Slate.paneStatusPillFill(_:)` / `Slate.Native.paneStatusPillFill(_:)` are
+// now the ONE switch both chips call (`SlateSharedInkTests`, `SlopDeskSlateTests`), so there is no
+// second table left to drift from the first.
 //
 // Headless: an `NSView`'s layer, its accessibility attributes and `accessibilityPerformPress()` need
 // no window (the hang-safety rule forbids an `NSWindow` in a test), so nothing here mounts one.
@@ -32,34 +34,19 @@ import XCTest
 
 @MainActor
 final class PaneStatusPillRenderTests: XCTestCase {
-    // MARK: - The pair
-
-    // WHERE THE CROSS-RENDERER INK CHECK WENT, and why it is not here. The obvious test — resolve the
-    // AppKit `NSColor` and the SwiftUI `Color` for each ink and compare the pixels — has to name BOTH
-    // UI halves in one file, and a UI half's tests may not name the other half (docs/56 §3.5 step 5;
-    // the ban carries exactly two tracked exceptions and did not want a third for a five-line check).
-    //
-    // So it is stated in two places that each stay on their own side. `check-supervisor.sh` pins that
-    // the two tables name CORRESPONDING RUNGS — `.security` to `Slate.Status.secureInput` here and to
-    // `Slate.Native.Status.secureInput` there — and `SlateNativeTokenTests` pins, from inside the
-    // floor, that a corresponding rung resolves to the same colour in both appearances. Neither says
-    // it alone; together they say all of it, and the gap they close is one the ink RATCHET
-    // structurally could not see: "both halves answer every case" is satisfied by two tables that
-    // answer every case differently.
-
-    /// A fixed tone, never the palette's — see the file header, promise 2.
+    /// A fixed tone, never the palette's — see the file header, promise 1.
     func testTheVividInksNeverCollapseIntoTheThemeAccent() {
         for appearance in [NSAppearance.Name.aqua, .darkAqua] {
             guard let resolved = NSAppearance(named: appearance) else { continue }
             resolved.performAsCurrentDrawingAppearance {
                 let accent = Slate.Native.accent.cgColor
                 XCTAssertNotEqual(
-                    MacPaneStatusPillView.fillColor(.security).cgColor, accent,
+                    Slate.Native.paneStatusPillFill(.security).cgColor, accent,
                     "the secure-input pill has become the theme accent — it is invisible on a theme "
                         + "whose info tone IS the accent, which is why the ink is a name",
                 )
                 XCTAssertNotEqual(
-                    MacPaneStatusPillView.fillColor(.sync).cgColor, accent,
+                    Slate.Native.paneStatusPillFill(.sync).cgColor, accent,
                     "the sync-input pill has become the theme accent — a mode this dangerous never "
                         + "blends with the chrome",
                 )

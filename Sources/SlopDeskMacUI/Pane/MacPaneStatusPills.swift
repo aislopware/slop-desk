@@ -176,39 +176,15 @@ final class MacPaneStatusPillView: NSView {
 
     // MARK: - This renderer's ink ladder
 
-    /// The fixed tones, resolved. TWO LINES, one per named ink — the ``ToastPresentation`` idiom, and
-    /// the reason ``PaneStatusPillFill`` is a kind rather than a colour: the two vivid tones are
-    /// theme-INDEPENDENT on purpose (the shipped themes have `info == accent`, so a palette-derived
-    /// security badge would be invisible against the accent — `secure-input.png` is the green-accent
-    /// Paper theme yet the pill is the same royal blue), and only a NAME can say that.
-    ///
-    /// THIS TABLE CANNOT DESCEND, and the reason is the layering rather than a judgement call. The
-    /// tokens are `SlopDeskSlate`'s and Slate sits ABOVE `SlopDeskClientCore` — a token pushed down
-    /// to meet the ink enum would make the floor import the ladder standing on it. So the ink stays a
-    /// NAME below (``PaneStatusPillInk``) and each renderer keeps its own two lines: the SwiftUI
-    /// half's to `Color`, this one to `NSColor` off ``Slate/Native/Status``.
-    ///
-    /// The two halves are RATCHETED AS A PAIR in `scripts/check-supervisor.sh`, which reads the ink
-    /// cases out of the shared enum and fails if either half stops naming one. A third ink added
-    /// below is then red in BOTH renderers until both resolve it, which is the only way a "one value,
-    /// two views" split does not decay into one view that quietly knows about a role the other has
-    /// never heard of.
-    ///
-    /// `static` and internal so the colour test reads the SAME source the view fills with: a
-    /// regression that re-routed a fill through the theme accent fails the test that pins it against
-    /// the fixed token.
-    static func fillColor(_ ink: PaneStatusPillInk) -> NSColor {
-        switch ink {
-        case .security: Slate.Native.Status.secureInput
-        case .sync: Slate.Native.Status.syncInput
-        }
-    }
-
-    /// The chip's plate.
+    /// The chip's plate. The two vivid tones are ``Slate/Native/paneStatusPillFill(_:)``'s (docs/56
+    /// batch 3) — theme-INDEPENDENT on purpose (the shipped themes have `info == accent`, so a
+    /// palette-derived security badge would be invisible against the accent — `secure-input.png` is
+    /// the green-accent Paper theme yet the pill is the same royal blue), and only a NAME can say
+    /// that, which is why ``PaneStatusPillFill`` is a kind rather than a colour in the first place.
     private var plate: NSColor {
         switch pill.fill {
         case .chrome: Slate.Native.Surface.raised
-        case let .fixed(ink): Self.fillColor(ink)
+        case let .fixed(ink): Slate.Native.paneStatusPillFill(ink)
         }
     }
 

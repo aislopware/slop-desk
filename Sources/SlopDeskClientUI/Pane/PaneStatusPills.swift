@@ -74,40 +74,15 @@ struct PaneStatusPillView: View {
 
     // MARK: - This renderer's ink ladder
 
-    /// The fixed tones, resolved. THREE LINES, one per named ink — the ``ToastPresentation`` idiom, and
-    /// the reason ``PaneStatusPillFill`` is a kind rather than a `Color`: the two vivid tones are
+    /// The chip's plate. The two vivid tones are ``Slate/paneStatusPillFill(_:)``'s (docs/56 batch 3) —
     /// theme-INDEPENDENT on purpose (the shipped themes have `info == accent`, so a palette-derived
     /// security badge would be invisible against the accent — `secure-input.png` is the green-accent
-    /// Paper theme yet the pill is the same royal blue), and only a NAME can say that.
-    ///
-    /// It is `static` and internal so the colour test reads the SAME source the view fills with: a
-    /// regression that re-routed a fill through the theme accent fails the test that pins it against the
-    /// fixed token.
-    ///
-    /// THIS TABLE CANNOT DESCEND, and the reason is the layering rather than a judgement call. It
-    /// returns a `Color`, `Color` is `SlopDeskSlate`'s, and `SlopDeskSlate` sits ABOVE
-    /// `SlopDeskClientCore` — a token pushed down to meet it would make the floor import the ladder
-    /// standing on it. So the ink stays a NAME below (``PaneStatusPillInk``) and each renderer keeps
-    /// its own four lines: this one to `Color`, the Mac's to `NSColor` off `Slate.Native.Status`.
-    ///
-    /// That is the ``ToastPresentation`` deal exactly, and it comes with the same obligation: the two
-    /// halves are RATCHETED AS A PAIR in `scripts/check-supervisor.sh`, which reads the ink cases out
-    /// of the shared enum and fails if either half stops naming one. A third ink added below is then
-    /// red in both renderers until both resolve it, which is the only way a "one value, two views"
-    /// split does not decay into one view that quietly knows about a role the other has never heard
-    /// of.
-    static func fillColor(_ ink: PaneStatusPillInk) -> Color {
-        switch ink {
-        case .security: Slate.Status.secureInput
-        case .sync: Slate.Status.syncInput
-        }
-    }
-
-    /// The chip's plate.
+    /// Paper theme yet the pill is the same royal blue), and only a NAME can say that, which is why
+    /// ``PaneStatusPillFill`` is a kind rather than a `Color` in the first place.
     private var plate: Color {
         switch pill.fill {
         case .chrome: Slate.Surface.raised
-        case let .fixed(ink): Self.fillColor(ink)
+        case let .fixed(ink): Slate.paneStatusPillFill(ink)
         }
     }
 

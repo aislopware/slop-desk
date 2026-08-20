@@ -1,40 +1,19 @@
-// ConnectionPillTests — the SwiftUI half of the connection surface: the ALARM LADDER's palette, and
-// the video model's kbps dirty-guard behind the tooltip's bitrate.
+// ConnectionPillTests — the SwiftUI half of the connection surface: the video model's kbps dirty-guard
+// behind the tooltip's bitrate.
 //
 // Everything the pill SAYS is pinned one floor down (`ConnectionReadingTests`, SlopDeskClientCore),
-// where the Mac's AppKit island reads it too. What is left here is the part that is genuinely this
-// framework's: which `Color` and which `Font.Weight` an alarm rung resolves to.
+// where the Mac's AppKit island reads it too. The alarm ladder's `Color` / `Font.Weight` left with
+// docs/56 batch 3: `ConnectionPill.alarmInk`/`.alarmWeight` were a per-renderer table resolving a name
+// both halves already agreed on, and that resolution is now `Slate.connectionAlarmInk(_:)` /
+// `Slate.connectionAlarmWeight(_:)` themselves (`SlateSharedInkTests`, `SlopDeskSlateTests`) — a shared
+// function has nothing left for a UI half's test to pin.
 
-import SlopDeskClientCore
-import SlopDeskSlate
 import XCTest
 @testable import SlopDeskClientUI
 @testable import SlopDeskWorkspaceCore
 
 @MainActor
 final class ConnectionPillTests: XCTestCase {
-    /// The island spends BRIGHTNESS and WEIGHT, never hue: `quiet` is the metadata grey every healthy
-    /// reading rests in, `raised` steps up to the body-secondary ink at semibold, `loud` to the primary
-    /// ink at bold. Three distinct rungs on BOTH channels — a rung that only moved one of them would be
-    /// invisible on a theme whose greys sit close, or on a line already full of medium-weight type.
-    func testAlarmLadderClimbsBrightnessAndWeightTogether() {
-        XCTAssertEqual(ConnectionPill.alarmInk(.quiet), Slate.Text.tertiary)
-        XCTAssertEqual(ConnectionPill.alarmInk(.raised), Slate.Text.secondary)
-        XCTAssertEqual(ConnectionPill.alarmInk(.loud), Slate.Text.primary)
-        XCTAssertEqual(ConnectionPill.alarmWeight(.quiet), .regular)
-        XCTAssertEqual(ConnectionPill.alarmWeight(.raised), .semibold)
-        XCTAssertEqual(ConnectionPill.alarmWeight(.loud), .bold)
-        let inks = [ConnectionAlarm.quiet, .raised, .loud].map(ConnectionPill.alarmInk)
-        XCTAssertEqual(Set(inks).count, 3, "every rung is its own ink — no two states paint the same")
-        for alarm in [ConnectionAlarm.quiet, .raised, .loud] {
-            XCTAssertNotEqual(
-                ConnectionPill.alarmInk(alarm), Slate.StatusInk.warn,
-                "the island has no hue register — \(alarm) must not reach for a status colour",
-            )
-            XCTAssertNotEqual(ConnectionPill.alarmInk(alarm), Slate.StatusInk.err)
-        }
-    }
-
     func testNoteStreamKbpsKeepsZeroAndDropsNegative() {
         let model = RemoteWindowModel()
         XCTAssertNil(model.streamKbps)

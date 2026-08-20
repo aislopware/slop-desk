@@ -48,14 +48,16 @@ final class SlateNativeTokenTests: XCTestCase {
             assertSame(NSColor(Slate.Text.tertiary), Slate.Native.Text.tertiary, dark: dark, "text/tertiary")
             assertSame(NSColor(Slate.StatusInk.err), Slate.Native.StatusInk.err, dark: dark, "statusInk/err")
             assertSame(NSColor(Slate.Line.overlayRim), Slate.Native.Line.overlayRim, dark: dark, "line/overlayRim")
-            // The two PANE STATUS PILL fills, here because they are the colour half of a cross-renderer
-            // invariant that nothing else can state. `PaneStatusPillInk` is ratcheted as a pair — both
-            // renderers must ANSWER every case — but a ratchet reading two files structurally cannot see
-            // whether they answer the SAME, and the obvious test for that (compare the SwiftUI table's
-            // `Color` against the AppKit table's `NSColor`) has to name both UI halves at once, which is
-            // the one thing a UI half's tests may not do. Split in two instead: the supervisor pins that
-            // the two tables name CORRESPONDING RUNGS, and this pins that a corresponding rung IS the
-            // same colour. Together they say what the cross-half test wanted to, from inside the floor.
+            // The two PANE STATUS PILL fills. `PaneStatusPillInk` used to be resolved by two
+            // independently-maintained tables, one per renderer, which is why this pinned them against
+            // each other from inside the floor — a cross-half test naming both UI halves at once is the
+            // one thing a UI half's own tests may not do. Docs/56 batch 3 collapsed the pair into one
+            // switch (``Slate/paneStatusPillFill(_:)`` / ``Slate/Native/paneStatusPillFill(_:)``), so
+            // `NSColor(Slate.Status.secureInput)` and `Slate.Native.Status.secureInput` are no longer
+            // two tables' answers to compare — they are the same literal token, wrapped and unwrapped.
+            // Kept here anyway: it is still the rung `Slate.paneStatusPillFill` and
+            // `Slate.Native.paneStatusPillFill` both resolve to, and this is where every rung's bridge
+            // is pinned.
             assertSame(
                 NSColor(Slate.Status.secureInput),
                 Slate.Native.Status.secureInput,

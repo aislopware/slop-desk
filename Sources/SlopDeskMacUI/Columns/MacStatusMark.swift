@@ -124,21 +124,19 @@ final class MacStatusMarkView: NSView {
 
     /// The agent-presence ring — ``StatusDot/ringDotCount`` dots spaced evenly round a circle, the
     /// first at 12 o'clock, each spilling half its width outside the circle exactly as the stroke it
-    /// replaced did.
+    /// replaced did. The geometry is ``StatusDot/ringDotFrame(_:in:)``'s (docs/56 batch 3), one floor
+    /// down and shared with the phone's `DottedRing`; this only turns those frames into ovals. The
+    /// ring is drawn CENTRED in `bounds` (the mark's 14×14 column) rather than in a `ringDiameter`-
+    /// sized rect, which is why the frame function's diameter scaling is a no-op here — this view is
+    /// always mounted at its native size.
     private func drawRing(ink: NSColor) {
-        let side = StatusDot.ringDiameter
-        let radius = side / 2
-        let dot = StatusDot.ringDotDiameter
+        let box = CGRect(
+            x: bounds.midX - StatusDot.ringDiameter / 2, y: bounds.midY - StatusDot.ringDiameter / 2,
+            width: StatusDot.ringDiameter, height: StatusDot.ringDiameter,
+        )
         let path = NSBezierPath()
         for index in 0..<StatusDot.ringDotCount {
-            let turn = 2 * Double.pi * Double(index) / Double(StatusDot.ringDotCount) - .pi / 2
-            let centre = CGPoint(
-                x: bounds.midX + radius * CGFloat(cos(turn)),
-                y: bounds.midY + radius * CGFloat(sin(turn)),
-            )
-            path.appendOval(in: CGRect(
-                x: centre.x - dot / 2, y: centre.y - dot / 2, width: dot, height: dot,
-            ))
+            path.appendOval(in: StatusDot.ringDotFrame(index, in: box))
         }
         ink.setFill()
         path.fill()

@@ -16,10 +16,11 @@
 //
 // ⚠️ The Mac's two mounts are AppKit now (``SlopDeskMacUI/MacConnectionIsland``, docs/56 stage D).
 // That is not the banned duplicate: every WORD, every threshold and every alarm rung both halves read
-// is ``ConnectionReading``'s, one floor down, and what each side spells for itself is the palette its
-// framework needs — the same "one value, two views" split ``Slate/Native`` and ``AgentReadout``
-// already are. What is NOT allowed is a second answer to what the ping says or when a reading climbs;
-// there is no such answer in this file.
+// is ``ConnectionReading``'s, one floor down, and the ALARM'S PALETTE (docs/56 batch 3) is
+// ``Slate/connectionAlarmInk(_:)`` / ``Slate/connectionAlarmWeight(_:)`` — one shared switch each
+// framework reads its own spelling of, the same "one value, two views" split ``Slate/Native`` and
+// ``AgentReadout`` already are. What is NOT allowed is a second answer to what the ping says or when a
+// reading climbs; there is no such answer in this file.
 //
 // The visible metric is the ping alone. Appending fps/kbps made the trailing text long enough to
 // truncate the hostname out of its own row — the identity lost to telemetry. Those (and the exact
@@ -47,27 +48,6 @@ struct ConnectionPill: View {
     /// Short hostname the chrome speaks ("congs-mac-studio"); raw target only while unresolved.
     private var displayHost: String { connection.hostDisplayName ?? host }
     private var isConnected: Bool { if case .connected = status { true } else { false } }
-
-    /// The alarm's ink: one step up the text ladder per rung, tertiary → secondary → primary — the
-    /// SwiftUI half of ``ConnectionAlarm``, whose rungs are the value.
-    static func alarmInk(_ alarm: ConnectionAlarm) -> Color {
-        switch alarm {
-        case .quiet: Slate.Text.tertiary
-        case .raised: Slate.Text.secondary
-        case .loud: Slate.Text.primary
-        }
-    }
-
-    /// The alarm's weight — the second channel, carrying the same rungs. At 10 pt a brightness step
-    /// alone is easy to lose beside a hostname; the weight step is what makes a raised reading
-    /// findable without looking for it.
-    static func alarmWeight(_ alarm: ConnectionAlarm) -> Font.Weight {
-        switch alarm {
-        case .quiet: .regular
-        case .raised: .semibold
-        case .loud: .bold
-        }
-    }
 
     /// Metric digits: flat metadata grey while the link is healthy, climbing the ladder as it degrades.
     private var metricAlarm: ConnectionAlarm {
@@ -140,10 +120,12 @@ struct ConnectionPill: View {
             Text(trailing.text)
                 .font(
                     trailing.isMetric
-                        ? Slate.Typeface.instrument(Slate.Typeface.small, weight: Self.alarmWeight(alarm))
+                        ? Slate.Typeface.instrument(
+                            Slate.Typeface.small, weight: Slate.connectionAlarmWeight(alarm),
+                        )
                         : .system(size: Slate.Typeface.small),
                 )
-                .foregroundStyle(Self.alarmInk(alarm))
+                .foregroundStyle(Slate.connectionAlarmInk(alarm))
                 .lineLimit(1)
                 .transition(.opacity.animation(isConnected ? Slate.Anim.needle.delay(0.08) : nil))
                 // Ideal width always — squeezing a short readout into `…` would defeat the

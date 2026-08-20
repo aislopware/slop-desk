@@ -475,6 +475,34 @@ final class StatusDotTests: XCTestCase {
         )
     }
 
+    /// The dots ride ON the ring's circle at even turns from 12 o'clock, so the mark keeps the
+    /// four-fold symmetry that makes eight small shapes read as one circle. Moved down from
+    /// `StatusMarkShapeTests` (docs/56 batch 3) — that file pinned this through `DottedRing`'s
+    /// `Shape` conformance, which was drawing to prove a VALUE: the bounding box of the eight frames
+    /// ``StatusDot/ringDotFrame(_:in:)`` hands out, not a rendered `Path`. Union'd by hand here rather
+    /// than through `Path.boundingRect`, so the assertion is pure arithmetic over the shared function
+    /// both renderers loop over, with no `Shape` in the loop at all.
+    func testTheRingDotsSitOnTheCircleStartingAtTwelveOClock() {
+        let side = StatusDot.ringDiameter
+        let box = CGRect(origin: .zero, size: CGSize(width: side, height: side))
+        var bounds: CGRect?
+        for index in 0..<StatusDot.ringDotCount {
+            let frame = StatusDot.ringDotFrame(index, in: box)
+            bounds = bounds?.union(frame) ?? frame
+        }
+        guard let bounds else {
+            XCTFail("no dots")
+            return
+        }
+        // Eight dots on a Ø10 circle, each spilling half its width outside it — exactly as the
+        // stroke they replaced did, so the ring's visual diameter is unchanged.
+        let spread = side + StatusDot.ringDotDiameter
+        XCTAssertEqual(bounds.width, spread, accuracy: 0.001, "dots at 3 and 9 o'clock set the width")
+        XCTAssertEqual(bounds.height, spread, accuracy: 0.001, "dots at 12 and 6 set the height")
+        XCTAssertEqual(bounds.midX, box.midX, accuracy: 0.001, "the ring is centred in its box")
+        XCTAssertEqual(bounds.midY, box.midY, accuracy: 0.001, "the ring is centred in its box")
+    }
+
     /// ⚠️ The column is sized to otty's OWN badge box (14pt), and every mark is drawn to fit inside
     /// it. The previous port squeezed these same silhouettes into 8pt and they read as fussy detail
     /// — the fix was the size and the fidelity, not the idea (docs/DECISIONS.md rounds 19–21, 23).

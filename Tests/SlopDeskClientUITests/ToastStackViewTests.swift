@@ -1,5 +1,10 @@
-// ToastStackViewTests — pins what the PHONE's toast column owns, which is now exactly two things: the
-// rung → `Color` map (its view of the one ink ladder) and that the card stack renders headlessly.
+// ToastStackViewTests — pins what the PHONE's toast column owns, which is now that the card stack
+// renders headlessly.
+//
+// The rung → `Color` map left with docs/56 batch 3: `ToastStackView.ink(for:)` was a per-renderer
+// table that resolved a name to a fixed token both halves already agreed on, and that resolution is
+// now `Slate.toastMarkInk(for:)` itself (`SlateSharedInkTests`, `SlopDeskSlateTests`) — a shared
+// function has nothing left for a UI half's test to pin.
 //
 // The headline, the spine budget, the mark's rung and glyph, and the dwell length left this file with
 // the surface split (docs/56 stage D): they are the same on the Mac's `NSPanel`, so they are pinned
@@ -19,35 +24,6 @@ import XCTest
 
 @MainActor
 final class ToastStackViewTests: XCTestCase {
-    // MARK: - Rung → ink (this half's view of the one ladder)
-
-    /// The four rungs must resolve to four DISTINCT `Color`s. Which rung a flavour takes is pinned once,
-    /// below both platforms (`ToastPresentationTests`); what this pins is that the SwiftUI half does not
-    /// collapse two of them back together on the way to the screen — the exact failure the old
-    /// `.attention → accent` mapping had, where every seed's `info == accent` drew needs-input and a
-    /// routine notice in the same cyan.
-    func testEveryRungResolvesToItsOwnInk() {
-        let rungs: [ToastMarkRung] = [.neutral, .ok, .warn, .err]
-        for (index, a) in rungs.enumerated() {
-            for b in rungs.dropFirst(index + 1) {
-                XCTAssertNotEqual(
-                    ToastStackView.ink(for: a), ToastStackView.ink(for: b),
-                    "\(a) and \(b) must read as different inks",
-                )
-            }
-        }
-        XCTAssertEqual(ToastStackView.ink(for: .ok), Slate.Status.ok)
-        XCTAssertEqual(ToastStackView.ink(for: .err), Slate.Status.err)
-        XCTAssertEqual(
-            ToastStackView.ink(for: .warn), Slate.Status.warn,
-            "amber, matching the rail's 'a question waiting'; NOT the theme accent",
-        )
-        XCTAssertEqual(
-            ToastStackView.ink(for: .neutral), SlateOverlayInk.secondary,
-            "a routine notice wears the reading ink, never a hue",
-        )
-    }
-
     // MARK: - Dwell epoch (a same-id re-push must RESTART the dwell)
 
     /// A newer toast with the same id REPLACES the old one and takes a FRESH epoch. The card's dwell timer

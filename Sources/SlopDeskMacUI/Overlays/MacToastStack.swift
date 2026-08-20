@@ -394,27 +394,16 @@ final class MacToastMarkView: NSView {
 
     private var glyphConfiguration = NSImage.SymbolConfiguration()
 
-    /// Draws `mark` — the flavour's bare glyph, in the flavour's rung.
+    /// Draws `mark` — the flavour's bare glyph, in the flavour's rung. The rung → ink map is
+    /// ``Slate/Native/toastMarkInk(for:)``'s (docs/56 batch 3) — the RUNG is decided once, in
+    /// ``ToastPresentation/mark(for:)``, and the colour lookup is now the one line every renderer
+    /// calls rather than a table kept twice.
     func show(_ mark: ToastMark) {
         glyph.image = NSImage(systemSymbolName: mark.symbolName, accessibilityDescription: nil)?
             .withSymbolConfiguration(glyphConfiguration)
-        let ink = Self.ink(mark.rung)
+        let ink = Slate.Native.toastMarkInk(for: mark.rung)
         glyph.contentTintColor = ink
         disc.contentTintColor = ink.withAlphaComponent(ToastPresentation.discLayerOpacity)
-    }
-
-    /// The rung → ink map, in the AppKit view of the ONE ladder. The RUNG is decided once, in
-    /// ``ToastPresentation/mark(for:)``; this is only which of `Slate`'s colours that rung names here,
-    /// and the phone's column spells the same four lines in `Color`.
-    private static func ink(_ rung: ToastMarkRung) -> NSColor {
-        switch rung {
-        case .ok: Slate.Native.Status.ok
-        case .warn: Slate.Native.Status.warn
-        case .err: Slate.Native.Status.err
-        // Status hues keep their meaning; a routine notice stays NEUTRAL — the old cyan on every OSC
-        // notice was chrome pretending to be signal.
-        case .neutral: Slate.Native.Overlay.secondary
-        }
     }
 }
 

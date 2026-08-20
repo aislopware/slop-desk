@@ -75,6 +75,29 @@ package enum StatusDot {
         .pi * ringDiameter / CGFloat(ringDotCount) - ringDotDiameter
     }
 
+    /// One dot's frame on the agent-presence ring, in `rect`'s own coordinate space — the shared
+    /// geometry both renderers loop over (``DottedRing`` in SwiftUI, `MacStatusMarkView.drawRing` in
+    /// AppKit, docs/56 batch 3). The dots ride ON the circle and spill half their width outside it,
+    /// exactly as the stroke they replaced did, and `index` 0 sits at 12 o'clock with the rest running
+    /// clockwise.
+    ///
+    /// The dot's diameter SCALES with `rect`'s own side relative to ``ringDiameter`` — a magnified
+    /// rect (a preview zoom, a differently-sized mount) draws a true redraw rather than a blown-up
+    /// token-sized dot, the same lesson ``AgentSpinner`` learned about `scaleEffect`. At the token's
+    /// own `ringDiameter × ringDiameter` box — every shipping mount, on both platforms — the scale
+    /// factor is exactly 1 and the dot is ``ringDotDiameter`` verbatim.
+    package static func ringDotFrame(_ index: Int, in rect: CGRect) -> CGRect {
+        let side = min(rect.width, rect.height)
+        let radius = side / 2
+        let dot = ringDotDiameter * (side / ringDiameter)
+        let turn = 2 * Double.pi * Double(index) / Double(ringDotCount) - .pi / 2
+        let centre = CGPoint(
+            x: rect.midX + radius * CGFloat(cos(turn)),
+            y: rect.midY + radius * CGFloat(sin(turn)),
+        )
+        return CGRect(x: centre.x - dot / 2, y: centre.y - dot / 2, width: dot, height: dot)
+    }
+
     // MARK: - otty's badge sizes
 
     /// The finish mark's point size. ⚠️ 13, user-directed 2026-08-10 — otty configures

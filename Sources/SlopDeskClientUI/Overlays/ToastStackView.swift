@@ -106,30 +106,6 @@ struct ToastStackView: View {
         guard let key = toast.paneKey, let onJump else { return nil }
         return { onJump(key) }
     }
-
-    // MARK: - The mark's ink
-
-    /// The rung → ink map, in the SwiftUI view of the ONE ladder. WHICH rung a flavour takes is decided
-    /// once, below both platforms, in ``ToastPresentation/mark(for:)``; this is only which of `Slate`'s
-    /// colours that rung names here, and the Mac's `NSPanel` spells the same four lines in `NSColor`.
-    ///
-    /// `.warn` is AMBER, not the theme accent, and that decision lives with the rung (see
-    /// ``ToastMarkRung/warn``): the rail already fixed "amber = a question waiting", and every FOUNDRY
-    /// seed sets `info == accent`, so the accent would have drawn needs-input in the same cyan as a
-    /// routine notice.
-    ///
-    /// `@MainActor` because the `Slate.*` token accessors are main-actor isolated.
-    @MainActor
-    static func ink(for rung: ToastMarkRung) -> Color {
-        switch rung {
-        case .ok: Slate.Status.ok
-        case .warn: Slate.Status.warn
-        case .err: Slate.Status.err
-        // Status hues keep their meaning; a routine notice stays NEUTRAL — the old cyan on every OSC
-        // notice was chrome pretending to be signal.
-        case .neutral: SlateOverlayInk.secondary
-        }
-    }
 }
 
 // MARK: - Card
@@ -292,7 +268,7 @@ struct ToastCardView: View {
     /// two halves is SwiftUI.
     private var mark: ToastMark { ToastPresentation.mark(for: toast.flavor) }
 
-    private var markTint: Color { ToastStackView.ink(for: mark.rung) }
+    private var markTint: Color { Slate.toastMarkInk(for: mark.rung) }
 
     private var closeButton: some View {
         // A comfortable square target, sized off the 8pt grid rather than the glyph so it stays a

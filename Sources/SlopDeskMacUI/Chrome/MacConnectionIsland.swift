@@ -18,8 +18,10 @@
 //
 // WHAT THIS FILE OWNS is drawing and events. Every WORD, every threshold and every alarm rung is
 // ``ConnectionReading``'s, one floor down — including which readings may climb at all (the link on its
-// round trip, memory on the kernel's pressure verdict, disk on an absolute byte floor; CPU never).
-// All this half adds is the palette the rungs resolve to and the symbol each metric role draws.
+// round trip, memory on the kernel's pressure verdict, disk on an absolute byte floor; CPU never). The
+// alarm's PALETTE is `SlopDeskSlate`'s (``Slate/Native/connectionAlarmInk(_:)`` /
+// ``Slate/Native/connectionAlarmWeight(_:)``, docs/56 batch 3) — one shared switch, not this file's own.
+// All this half adds is the symbol each metric role draws.
 //
 // The telemetry is read HERE, at leaf scope, and that is load-bearing: `ConnectionTelemetry.pingMS`
 // walks the live pane sessions, so resolving it in the navigator's or the band's own refresh would
@@ -318,28 +320,6 @@ final class MacConnectionIsland: NSView {
         updateLayer()
     }
 
-    /// The alarm's INK: one step up the text ladder per rung, tertiary → secondary → primary. NO hue —
-    /// a row of digits has nothing to hang a palette on, and an instrument that lights a different
-    /// colour per fault asks the eye to learn one before it can read a number.
-    static func ink(_ alarm: ConnectionAlarm) -> NSColor {
-        switch alarm {
-        case .quiet: Slate.Native.Text.tertiary
-        case .raised: Slate.Native.Text.secondary
-        case .loud: Slate.Native.Text.primary
-        }
-    }
-
-    /// The alarm's WEIGHT — the second channel, carrying the same rungs. At the island's 10 pt a
-    /// brightness step alone is easy to lose against a hostname on the line above; the weight step is
-    /// what makes the raised reading findable without looking for it.
-    static func weight(_ alarm: ConnectionAlarm) -> NSFont.Weight {
-        switch alarm {
-        case .quiet: .regular
-        case .raised: .semibold
-        case .loud: .bold
-        }
-    }
-
     // MARK: Paint
 
     override var wantsUpdateLayer: Bool { true }
@@ -365,9 +345,11 @@ final class MacConnectionIsland: NSView {
                 detail: painted.detail.map { ($0, painted.detailIsMetric) }, led: painted.led,
             )
             detail.font = painted.detailIsMetric
-                ? Slate.Typeface.instrumentNative(Slate.Typeface.small, weight: Self.weight(alarm))
+                ? Slate.Typeface.instrumentNative(
+                    Slate.Typeface.small, weight: Slate.Native.connectionAlarmWeight(alarm),
+                )
                 : .systemFont(ofSize: Slate.Typeface.small)
-            detail.textColor = Self.ink(alarm)
+            detail.textColor = Slate.Native.connectionAlarmInk(alarm)
         }
         for run in runs.values { run.repaint() }
         retry.image = NSImage(
@@ -472,8 +454,8 @@ private final class MacMetricRun: NSView {
     }
 
     func repaint() {
-        let weight = MacConnectionIsland.weight(alarm)
-        let ink = MacConnectionIsland.ink(alarm)
+        let weight = Slate.Native.connectionAlarmWeight(alarm)
+        let ink = Slate.Native.connectionAlarmInk(alarm)
         value.font = Slate.Typeface.instrumentNative(Slate.Typeface.small, weight: weight)
         value.textColor = ink
         // Processor die, memory module, drive — the three differ in SILHOUETTE (a square pinned on

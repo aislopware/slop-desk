@@ -6585,12 +6585,18 @@ for half in Sources/SlopDeskClientUI/Pane/PaneMoveAffordance.swift \
     fail "${half} switches on a PaneDropRegister.Mark — the mark→artwork table is ${DROP_CHIP_ART}'s alone"
   fi
 done
-# THE PILL INKS ARE A PAIR, and unlike the chip this one CANNOT be spelled once: `fillColor` returns a
-# `Color`, `Color` belongs to `SlopDeskSlate`, and Slate sits ABOVE `SlopDeskClientCore` — pushing the
-# token down to meet the ink enum would make the floor import the ladder standing on it. So the ink
-# stays a NAME below (`PaneStatusPillInk`) and each renderer resolves it. The cases are read out of the
-# enum rather than listed here, so a THIRD ink is red in both halves until both answer it.
+# THE PILL FILL IS ONE SWITCH NOW, NOT A PAIR (docs/56 batch 3). `PaneStatusPillView.fillColor` and
+# `MacPaneStatusPillView.fillColor` used to be two independently-maintained tables, spelled once per
+# renderer on the reasoning that `Color` (`SlopDeskSlate`'s) could not be pushed DOWN to meet the ink
+# enum (`SlopDeskClientCore`'s) without the floor importing the ladder standing on it. `Slate/agentInk`
+# already crosses that same edge the other way — the enum read UP into Slate, never a token pushed down
+# — which is what a shared switch here is too. `Slate.paneStatusPillFill` / `Slate.Native.paneStatusPillFill`
+# now hold the ONE switch (`SlateDesign.swift`); each renderer only CALLS it, so a case dropped from
+# either resolution is a Swift compile error at the switch itself, not a bash regex someone has to run.
 PILL_INK_SRC=Sources/SlopDeskClientCore/Pane/PaneStatusPillPresentation.swift
+if [[ ! -e "${PILL_INK_SRC}" ]]; then
+  fail "${PILL_INK_SRC} is gone — PaneStatusPillInk is the name Slate's one switch reads (docs/56 §3.5)"
+fi
 # `|| true`: a grep miss exits 1, and under `set -e` that would kill the run instead of reporting —
 # the empty result is caught explicitly below, which is the reportable failure.
 pill_inks="$(sed -n '/^package enum PaneStatusPillInk/,/^}/p' "${PILL_INK_SRC}" |
@@ -6598,47 +6604,35 @@ pill_inks="$(sed -n '/^package enum PaneStatusPillInk/,/^}/p' "${PILL_INK_SRC}" 
 if [[ -z "${pill_inks}" ]]; then
   fail "no ink cases parsed out of ${PILL_INK_SRC} — this gate would pass vacuously (docs/56 §3.5)"
 fi
-# The Mac twin does not exist yet (the pane canvas is the last kind-1 rewrite). Pin whichever halves
-# ARE present, so the day the twin lands it is already obliged to resolve the same roles rather than
-# inventing its own — a ratchet written after the second renderer is a ratchet written too late.
+SLATE_DESIGN=Sources/SlopDeskSlate/SlateDesign.swift
+if [[ "$(grep -c 'static func paneStatusPillFill' "${SLATE_DESIGN}" || true)" -lt 2 ]]; then
+  fail "${SLATE_DESIGN} does not hold BOTH paneStatusPillFill spellings (Color + Native) — the one switch split back into a pair (docs/56 §3.5)"
+fi
+# The Mac twin does not exist yet in every pane surface (the pane canvas is the last kind-1 rewrite).
+# Pin whichever halves ARE present, so the day a twin lands it is already obliged to call the shared
+# switch rather than growing its own — a ratchet written after the second renderer is written too late.
 for half in Sources/SlopDeskClientUI/Pane/PaneStatusPills.swift \
   Sources/SlopDeskMacUI/Pane/MacPaneStatusPills.swift; do
   [[ -e "${half}" ]] || continue
-  for ink in ${pill_inks}; do
-    if ! grep -qE "case \.${ink}\b" "${half}"; then
-      fail "${half} does not resolve the .${ink} pill ink — the two renderers would answer differently (docs/56 §3.5)"
-    fi
-  done
+  if ! grep -q 'paneStatusPillFill' "${half}"; then
+    fail "${half} stopped calling Slate's paneStatusPillFill — a re-derived table is exactly how the pair this replaced grows back (docs/56 §3.5)"
+  fi
+  # THE REGRESSION THIS GUARDS: a renderer switching on PaneStatusPillInk ITSELF, rather than handing
+  # the ink straight to the shared function, is the old per-renderer table creeping back one case at a
+  # time. Comments stripped first, so a file whose header still NAMES `case .security:` in prose (as
+  # this one now does) is not read as the code it is warning against.
+  #
+  # ⚠️ THE CASE NAMES ARE READ OUT OF THE ENUM, never spelled here. This gate shipped for an hour with
+  # `case \.(security|sync):` written inline, which is the same defect increment 62 caught in the
+  # `Tests/` allowlist one register up: a check that NAMES the symbols it watches goes quietly blind
+  # the day one is renamed, and nothing re-reads a regex. `pill_inks` is already parsed above (and
+  # already fails loudly when it parses empty), so the alternation is built from it.
+  pill_case_pattern="case \\.($(printf '%s' "${pill_inks}" | paste -sd '|' -)):"
+  if sed -E 's#^[[:space:]]*//.*##' "${half}" | grep -qE "${pill_case_pattern}"; then
+    fail "${half} switches on PaneStatusPillInk directly — that switch is Slate.paneStatusPillFill's alone now (docs/56 §3.5)"
+  fi
 done
-# AND THEY RESOLVE TO THE SAME RUNG, which is the half of this the loop above structurally CANNOT see.
-# "Both renderers answer every case" is satisfied by two tables that answer every case DIFFERENTLY —
-# `.security` to `Slate.Status.secureInput` on one side and to `Slate.Native.Status.syncInput` on the
-# other passes every check written before this one, and ships two colours for one role. The obvious
-# test for it — compare the `Color` against the `NSColor` — has to name both UI halves in one file,
-# which is exactly what a UI half's tests may not do (that ban has two tracked exceptions and did not
-# want a third). So it splits: this pins that the two tables name CORRESPONDING RUNGS, and
-# `SlateNativeTokenTests` pins that a corresponding rung is the same colour. Neither half alone says
-# it; together they say all of it, and neither reaches across the split to do so.
-#
-# The correspondence is textual and exact — `Slate.<tail>` here, `Slate.Native.<tail>` there — because
-# that IS the naming convention the whole `Native` mirror is built on.
-PILL_SWIFTUI=Sources/SlopDeskClientUI/Pane/PaneStatusPills.swift
-PILL_APPKIT=Sources/SlopDeskMacUI/Pane/MacPaneStatusPills.swift
-if [[ -e "${PILL_SWIFTUI}" && -e "${PILL_APPKIT}" ]]; then
-  for ink in ${pill_inks}; do
-    # `|| true` on both: a case the grep cannot find is reported below as an empty tail, not by
-    # killing the run under `set -e`.
-    swiftui_rung=$(grep -E "case \.${ink}:" "${PILL_SWIFTUI}" | grep -oE 'Slate\.[A-Za-z.]+' | head -1 | sed 's/^Slate\.//' || true)
-    appkit_rung=$(grep -E "case \.${ink}:" "${PILL_APPKIT}" | grep -oE 'Slate\.Native\.[A-Za-z.]+' | head -1 | sed 's/^Slate\.Native\.//' || true)
-    if [[ -z "${swiftui_rung}" || -z "${appkit_rung}" ]]; then
-      fail "could not read the rung both halves give .${ink} — one of them stopped naming a \`Slate.\` token and this gate went blind (docs/56 stage F, R2)"
-    fi
-    if [[ "${swiftui_rung}" != "${appkit_rung}" ]]; then
-      fail "the .${ink} pill ink resolves to Slate.${swiftui_rung} in SwiftUI and Slate.Native.${appkit_rung} in AppKit — one role, two colours (docs/56 stage F, R2)"
-    fi
-  done
-fi
-printf 'check-supervisor: one drop chip drawn twice off one art file, and %s pill inks resolved to the SAME rung by every renderer present.\n' \
+printf 'check-supervisor: one drop chip drawn twice off one art file, and %s pill inks resolved by ONE shared switch every renderer present calls.\n' \
   "$(printf '%s\n' "${pill_inks}" | wc -l | tr -d ' ')"
 
 # AND THE PILL INKS WERE NOT THE ONLY PAIR OF THAT SHAPE — increment 56c ratcheted one of three and
