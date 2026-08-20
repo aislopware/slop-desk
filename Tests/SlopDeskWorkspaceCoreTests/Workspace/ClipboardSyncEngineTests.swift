@@ -1,5 +1,6 @@
 #if os(macOS)
 import AppKit
+import SlopDeskPasteboard
 import SlopDeskProtocol
 import XCTest
 @testable import SlopDeskWorkspaceCore
@@ -39,7 +40,7 @@ final class ClipboardSyncEngineTests: XCTestCase {
 
     private func makeEngine() -> ClipboardSyncEngine {
         ClipboardSyncEngine(
-            pasteboard: pasteboard,
+            pasteboard: SystemPasteboard(pasteboard),
             push: { [weak self] clip in
                 guard let self else { return false }
                 pushed.append(clip)
@@ -112,7 +113,7 @@ final class ClipboardSyncEngineTests: XCTestCase {
         let engine = makeEngine()
         pasteboard.clearContents()
         pasteboard.setString("hunter2", forType: .string)
-        pasteboard.setString("1", forType: ClipboardSyncEngine.concealedType)
+        pasteboard.setString("1", forType: PasteboardClip.concealedType)
         await engine.tick()
         XCTAssertEqual(pushed, [], "password-manager clips stay local")
     }

@@ -1,14 +1,18 @@
-#if os(macOS)
-import AppKit
 import Foundation
 import SlopDeskProtocol
+#if canImport(AppKit)
+import AppKit
+#elseif canImport(UIKit)
+import UIKit
+import UniformTypeIdentifiers // the UTIs AppKit spells as `NSPasteboard.PasteboardType` constants
+#endif
 
-/// The conversion between an `NSPasteboard` and a ``MetadataCodec/ClipboardClip`` — both directions,
+/// The conversion between a system pasteboard and a ``MetadataCodec/ClipboardClip`` — both directions,
 /// once.
 ///
 /// Clipboard sync has two ends and each had its own copy of this: `HostClipboardPerformer` on the
-/// host, `ClipboardSyncEngine` on the client. Same three-way preference (PNG as-is → TIFF transcoded
-/// → non-empty text), same cap check, same TIFF transcode, same PNG-plus-TIFF-twin write. They are
+/// host, `ClipboardSyncEngine` on the client. Same three-way preference (PNG as-is → an image
+/// transcoded → non-empty text), same cap check, same transcode, same write. They are
 /// the two halves of ONE wire contract, so a drift in either is a drift in the protocol — precisely
 /// the shape of the `process::basename` bug `docs/55` §6 records, where two implementations
 /// disagreed for a month and neither side could see it.
@@ -25,10 +29,51 @@ import SlopDeskProtocol
 /// Its own target because the two callers cannot see each other: `SlopDeskHost` is the daemon graph
 /// and `SlopDeskWorkspaceCore` is the client graph, and neither depends on the other. The only thing
 /// below both is `SlopDeskProtocol`, which is the WIRE and has no business importing AppKit. So this
-/// is a leaf: AppKit + the clip type, nothing else, and hostd links what it already linked.
+/// is a leaf: the platform pasteboard + the clip type, nothing else, and hostd links what it already
+/// linked.
+///
+/// **The THIRD end is the phone, and it is in this file for the reason the other two are.** The client
+/// half stopped being macOS-only when the phone stopped shipping a "Paste Recent" menu with nothing
+/// behind it, and a `UIPasteboard` conversion written anywhere else would be a fourth body of the same
+/// wire contract, free to drift exactly the way the first two already had. So the UIKit refusals are
+/// the AppKit refusals, spelled against the same UTIs: a concealed clip stays on the device, a file
+/// copy means nothing on the other machine, an over-cap clip is dropped, and the board is left
+/// untouched in every skip case.
 public enum PasteboardClip {
-    /// The concealed-clip marker password managers set (the nspasteboard.org convention).
-    public static let concealedType = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
+    /// The concealed-clip marker password managers set (the nspasteboard.org convention), as the raw
+    /// UTI so BOTH halves can name it — AppKit wraps it in an `NSPasteboard.PasteboardType`, UIKit
+    /// compares it against `UIPasteboard.types` as-is.
+    public static let concealedTypeIdentifier = "org.nspasteboard.ConcealedType"
+
+    // MARK: - The client's door: a `SystemPasteboard`, whichever framework backs it
+
+    /// The board's current shippable clip, or `nil` when there is nothing to ship.
+    ///
+    /// Dispatches on the board's TYPE, so there is no gate here: ``SystemPasteboard/board`` is an
+    /// `NSPasteboard` on one half and a `UIPasteboard` on the other, and each resolves to its own
+    /// overload below.
+    ///
+    /// ⚠️ A CONTENT read. On iOS that is permitted only where the user asked for a paste — see
+    /// ``SystemPasteboard/unattendedContentReadIsPermitted``.
+    public static func read(
+        _ pasteboard: SystemPasteboard, skippingConcealed: Bool,
+    ) -> MetadataCodec.ClipboardClip? {
+        read(pasteboard.board, skippingConcealed: skippingConcealed)
+    }
+
+    /// Writes `clip` onto `pasteboard`; `false` — board UNTOUCHED — for content that will not decode.
+    /// Writing asks no permission on either platform, which is why the host → client direction of
+    /// clipboard sync is whole on a phone while the client → host direction is not.
+    @discardableResult
+    public static func write(
+        _ clip: MetadataCodec.ClipboardClip, to pasteboard: SystemPasteboard,
+    ) -> Bool {
+        write(clip, to: pasteboard.board)
+    }
+
+    #if canImport(AppKit)
+    /// The concealed-clip marker password managers set, as AppKit names it.
+    public static let concealedType = NSPasteboard.PasteboardType(concealedTypeIdentifier)
 
     /// The pasteboard's current shippable clip, or `nil` when there is nothing to ship.
     ///
@@ -99,5 +144,56 @@ public enum PasteboardClip {
         else { return nil }
         return rep.representation(using: .png, properties: [:])
     }
+    #elseif canImport(UIKit)
+    /// The pasteboard's current shippable clip, in the same three-way preference and with the same
+    /// refusals the AppKit half takes — see that half's docs; this is one contract, two spellings.
+    public static func read(
+        _ pasteboard: UIPasteboard, skippingConcealed: Bool,
+    ) -> MetadataCodec.ClipboardClip? {
+        let types = pasteboard.types
+        if skippingConcealed, types.contains(concealedTypeIdentifier) { return nil }
+        guard !types.contains(UTType.fileURL.identifier) else { return nil }
+        let raw = pasteboard.data(forPasteboardType: UTType.png.identifier)
+        if let png = raw ?? transcodedImage(pasteboard) {
+            guard png.count <= MetadataCodec.maxClipboardContentBytes else { return nil }
+            return MetadataCodec.ClipboardClip(kind: .imagePNG, bytes: png)
+        }
+        if let text = pasteboard.string, !text.isEmpty {
+            let bytes = Data(text.utf8)
+            guard bytes.count <= MetadataCodec.maxClipboardContentBytes else { return nil }
+            return MetadataCodec.ClipboardClip(kind: .text, bytes: bytes)
+        }
+        return nil
+    }
+
+    /// Writes `clip` onto `pasteboard`, validate-then-write for the AppKit half's reason: the decode
+    /// happens BEFORE anything is set, so a garbage clip off the wire cannot destroy the clip already
+    /// on the board.
+    ///
+    /// No TIFF twin here — `UIPasteboard` resolves `public.png` for every image consumer on the
+    /// platform, and `setData` replaces the board's item outright, so the AppKit `clearContents` pair
+    /// has no counterpart to spell.
+    @discardableResult
+    public static func write(_ clip: MetadataCodec.ClipboardClip, to pasteboard: UIPasteboard) -> Bool {
+        switch clip.kind {
+        case .text:
+            guard let text = String(data: clip.bytes, encoding: .utf8), !text.isEmpty else {
+                return false
+            }
+            pasteboard.string = text
+        case .imagePNG:
+            guard UIImage(data: clip.bytes) != nil else { return false }
+            pasteboard.setData(clip.bytes, forPasteboardType: UTType.png.identifier)
+        case nil:
+            return false // unknown future kind — refuse, never guess
+        }
+        return true
+    }
+
+    /// The pasteboard's image flavor transcoded to PNG (a copy may declare only `public.jpeg` or a
+    /// private image type); `nil` when there is no image or it will not encode.
+    private static func transcodedImage(_ pasteboard: UIPasteboard) -> Data? {
+        pasteboard.image?.pngData()
+    }
+    #endif
 }
-#endif

@@ -1,3 +1,4 @@
+import SlopDeskPasteboard
 import XCTest
 @testable import SlopDeskWorkspaceCore
 #if os(macOS)
@@ -59,6 +60,31 @@ final class ClipboardRingTests: XCTestCase {
     // a static on the deleted SwiftUI pane menu view. (SecretRedactor itself is still tested directly in
     // SecretRedactorTests.) The rebuilt pane menu (L3) re-pins its own preview redaction.
 
+    // MARK: - The live read IS the recording (the only door the phone has)
+
+    /// A read through ``WorkspaceStore/currentLocalClipboard()`` records what it read. This is what
+    /// gives iOS a clipboard history at all: an unattended poll may not read `UIPasteboard` content
+    /// there, so the ring is filled by the paste the user actually asked for.
+    func testLiveClipboardReadRecordsIntoTheRing() {
+        let store = makeStore()
+        store.clipboardTextProvider = { "read-live" }
+        XCTAssertEqual(store.currentLocalClipboard(), "read-live")
+        XCTAssertEqual(store.clipboardRing, ["read-live"], "the read the user asked for fills the ring")
+        _ = store.currentLocalClipboard()
+        XCTAssertEqual(store.clipboardRing, ["read-live"], "re-reading the same clip does not duplicate it")
+    }
+
+    /// The privacy toggle still owns the ring: a live read pastes, and retains nothing.
+    func testLiveClipboardReadRespectsTheHistoryToggle() {
+        let store = makeStore()
+        let key = SettingsKey.recordClipboardHistory
+        SettingsKey.store.set(false, forKey: key)
+        defer { SettingsKey.store.removeObject(forKey: key) }
+        store.clipboardTextProvider = { "a copied secret" }
+        XCTAssertEqual(store.currentLocalClipboard(), "a copied secret", "the paste still works")
+        XCTAssertTrue(store.clipboardRing.isEmpty, "recording disabled → the read retains nothing")
+    }
+
     #if os(macOS)
     func testMonitorPollCapturesNewClipsOnly() {
         let store = makeStore()
@@ -66,7 +92,7 @@ final class ClipboardRingTests: XCTestCase {
         defer { pb.releaseGlobally() }
         pb.clearContents()
         pb.setString("seed", forType: .string)
-        let monitor = ClipboardMonitor(store: store, pasteboard: pb)
+        let monitor = ClipboardMonitor(store: store, pasteboard: SystemPasteboard(pb))
         // The seed predates the monitor → not retro-captured.
         monitor.poll()
         XCTAssertTrue(store.clipboardRing.isEmpty, "the clip present at init is not retro-captured")

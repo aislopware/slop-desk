@@ -907,8 +907,9 @@ public final class WorkspaceStore {
     // MARK: - Clipboard history ring
 
     /// Recent clipboard texts, most-recent-first (non-persisted session state — clipboard history is
-    /// transient and often sensitive). Fed by the macOS clipboard monitor and by every paste-as-
-    /// keystrokes; the pill's "Paste Recent" submenu replays any entry into a remote pane.
+    /// transient and often sensitive). Fed by the polling ``ClipboardMonitor`` where the platform
+    /// permits an unattended read, and by every live read through ``currentLocalClipboard()`` — which
+    /// is what fills it on iOS. The pill's "Paste Recent" submenu replays any entry into a remote pane.
     public private(set) var clipboardRing: [String] = []
     /// How many clips to keep.
     public static let clipboardRingCap = 20
@@ -929,8 +930,18 @@ public final class WorkspaceStore {
 
     /// The current local clipboard text: the injected ``clipboardTextProvider`` if wired, else the most
     /// recent recorded clip (``clipboardRing`` head). `nil`/empty ⇒ nothing to paste.
+    ///
+    /// A LIVE read is also a RECORDING, and that is what gives the phone a clipboard history at all.
+    /// Every caller of this is a paste the user asked for — the ⌥⌘V chord, the palette command, the
+    /// remote-GUI pane's paste plate — which on iOS is the only moment the system permits reading
+    /// pasteboard content without ambushing the user with an "Allow Paste?" alert (see
+    /// ``SystemPasteboard/unattendedContentReadIsPermitted``). On macOS the polling
+    /// ``ClipboardMonitor`` has usually recorded the same clip a tick earlier and ``recordClip(_:)``
+    /// dedups it to a no-op, so this is one behaviour on both halves rather than a phone special case.
     public func currentLocalClipboard() -> String? {
-        clipboardTextProvider?() ?? clipboardRing.first
+        guard let text = clipboardTextProvider?() else { return clipboardRing.first }
+        recordClip(text)
+        return text
     }
 
     /// Records `text` at the front of the ring (deduped — a repeat moves to front), capped at

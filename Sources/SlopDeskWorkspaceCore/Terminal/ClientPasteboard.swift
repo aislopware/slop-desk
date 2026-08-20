@@ -1,4 +1,5 @@
 import Foundation
+import SlopDeskPasteboard
 #if canImport(AppKit)
 import AppKit
 #elseif canImport(UIKit)
@@ -31,6 +32,17 @@ public enum ClientPasteboard {
         return suite
     }()
     #endif
+
+    /// The same board, as the cross-platform ``SystemPasteboard`` the clipboard MONITOR and the
+    /// clipboard SYNC engine tick against. One door, so the phone's clipboard reads land on the very
+    /// board this type's `write`/`text` already use — under XCTest the per-process one on AppKit.
+    public static var board: SystemPasteboard {
+        #if canImport(AppKit)
+        SystemPasteboard(pasteboard)
+        #elseif canImport(UIKit)
+        SystemPasteboard(.general)
+        #endif
+    }
 
     /// The one client-side "copy" funnel — clear + write, the platform Copy idiom.
     ///

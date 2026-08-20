@@ -48,6 +48,15 @@ public struct SlopDeskPhoneApp: App {
     @State private var lifecycleTask: Task<Void, Never>?
     /// Whether the first-launch sheet is up — set true once at launch when ``FirstLaunchModel/shouldPresent``.
     @State private var presentFirstLaunch = false
+    /// The clipboard-history poller, the same type the Mac shell runs. On this platform it consumes the
+    /// board's `changeCount` and records nothing: iOS refuses an unattended CONTENT read, so the ring is
+    /// filled by ``WorkspaceStore/currentLocalClipboard()`` on the paths the user asked to paste on.
+    /// Running it anyway is what keeps the seen count honest across the session.
+    @State private var clipboardMonitor: ClipboardMonitor
+    /// Cross-device clipboard sync, the same engine the Mac shell runs. The PULL half is whole here —
+    /// a copy on the host lands on the phone's pasteboard within a tick, which needs no permission —
+    /// and the push half is gated by the same iOS rule the monitor states.
+    @State private var clipboardSync: ClipboardSyncEngine
 
     // MARK: The composition's parts, read straight through
 
@@ -82,6 +91,21 @@ public struct SlopDeskPhoneApp: App {
         let isPad = UIDevice.current.userInterfaceIdiom == .pad
         let app = ClientComposition(deviceClass: isPad ? .pad : .phone)
         _app = State(initialValue: app)
+        _clipboardMonitor = State(initialValue: ClipboardMonitor(store: app.store))
+        // CLIPBOARD SYNC, wired exactly as `SlopDeskMacApp` wires it: routed through whichever pane
+        // carries a live channel, resolved at call time (the same idiom as the Agents card / hostInfo
+        // fetcher). A phone differs from the Mac in LAYOUT, not in which features exist — docs/56 §3 —
+        // and this one is a phone's best case: copy on the host, paste on the device in your hand.
+        _clipboardSync = State(initialValue: ClipboardSyncEngine(
+            push: { [weak store = app.store] clip in
+                guard let store, let client = store.firstConnectedMetadataClient else { return false }
+                return await client.setClipboard(clip)
+            },
+            pull: { [weak store = app.store] lastSeen in
+                guard let store, let client = store.firstConnectedMetadataClient else { return nil }
+                return await client.readClipboard(lastSeenChangeCount: lastSeen)
+            },
+        ))
         Self.installNotificationSinks(app)
     }
 
@@ -174,6 +198,17 @@ public struct SlopDeskPhoneApp: App {
                 )
             }
             .onChange(of: scenePhase) { _, phase in handleScenePhase(phase) }
+            // Clipboard-history poll. Skipped under automation like the Mac's: an E2E run must not
+            // mirror the developer's real pasteboard onto the test host (or vice versa).
+            .task {
+                guard !app.isAutomation else { return }
+                await clipboardMonitor.run()
+            }
+            // Clipboard-sync poll loop (pull host copies onto this device; push what iOS lets us read).
+            .task {
+                guard !app.isAutomation else { return }
+                await clipboardSync.run()
+            }
             // AUTOMATION ONLY (env-gated): auto-connect so an autoconnect launch goes live without a
             // manual tap.
             .task {

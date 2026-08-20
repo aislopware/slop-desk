@@ -1,5 +1,4 @@
-#if os(macOS)
-import AppKit
+import Foundation
 import SlopDeskPasteboard
 import SlopDeskProtocol
 
@@ -8,10 +7,11 @@ import SlopDeskProtocol
 /// ``ClipboardMonitor`` pattern: the scene owns a `.task { await engine.run() }`, one tick per second,
 /// the loop ends on cancel.
 ///
-/// **Push (copy on the client → paste on the host).** Each tick compares `NSPasteboard.changeCount`
-/// (one integer read); on a new LOCAL clip it snapshots the content (image preferred — PNG as-is or
-/// TIFF transcoded — else non-empty text) and pushes it to the host, which writes its general
-/// pasteboard. This is what makes Claude Code's Ctrl+V see a client-copied image, and a plain ⌘V
+/// **Push (copy on the client → paste on the host).** Each tick compares
+/// ``SystemPasteboard/changeCount`` (one integer read); on a new LOCAL clip it snapshots the content
+/// (image preferred — PNG as-is or TIFF transcoded — else non-empty text) and pushes it to the host,
+/// which writes its general pasteboard. This is what makes Claude Code's Ctrl+V see a client-copied
+/// image, and a plain ⌘V
 /// inside a remote-desktop pane paste client content with no manual step. A failed push (host down,
 /// no connected pane) stays PENDING and retries every tick until a newer local clip replaces it.
 ///
@@ -32,9 +32,18 @@ import SlopDeskProtocol
 /// the other machine) and over-cap clips (> ``MetadataCodec/maxClipboardContentBytes``) are skipped;
 /// the pasteboard is left untouched in every skip case.
 ///
-/// `#if os(macOS)` — `NSPasteboard`; the iOS client does not run the engine yet (its paste paths read
-/// the local `UIPasteboard` directly). Seams (`push`/`pull` closures + injected pasteboard) keep the
-/// tick logic unit-testable against a NAMED pasteboard with no live socket.
+/// **The one direction the phone cannot have on a timer, and why.** The engine used to carry a
+/// whole-file `#if os(macOS)`; the board is ``SystemPasteboard`` now and both halves run the same tick.
+/// PULL is whole on iOS — writing `UIPasteboard` asks no permission, so a copy on the host lands on the
+/// phone within a tick, which is the direction a phone actually wants. PUSH is not, and that IS
+/// necessity rather than scope: since iOS 16, reading pasteboard content the app did not write, with no
+/// system paste gesture behind it, raises a modal "Allow Paste?" alert, and this tick runs once a
+/// second. So ``captureLocalChange()`` consumes the count on every platform and snapshots the CONTENT
+/// only where ``SystemPasteboard/unattendedContentReadIsPermitted``. On iOS the local clip reaches the
+/// host through the paths the user asked to paste on instead of through the timer.
+///
+/// Seams (`push`/`pull` closures + injected pasteboard) keep the tick logic unit-testable against a
+/// NAMED pasteboard with no live socket.
 @preconcurrency
 @MainActor
 public final class ClipboardSyncEngine {
@@ -48,11 +57,7 @@ public final class ClipboardSyncEngine {
         changeCount: Int64, clip: MetadataCodec.ClipboardClip?,
     )?
 
-    /// The concealed-clip marker password managers set (nspasteboard.org convention) — never PUSHED.
-    /// The reader owns the marker; this is the name the engine's own tests use.
-    static let concealedType = PasteboardClip.concealedType
-
-    private let pasteboard: NSPasteboard
+    private let pasteboard: SystemPasteboard
     private let pollGap: Duration
     private let push: Push
     private let pull: Pull
@@ -68,7 +73,7 @@ public final class ClipboardSyncEngine {
     private var hostLastSeen: Int64 = MetadataCodec.clipboardBaselineProbe
 
     public init(
-        pasteboard: NSPasteboard = ClientPasteboard.pasteboard,
+        pasteboard: SystemPasteboard = ClientPasteboard.board,
         pollGap: Duration = .seconds(1),
         push: @escaping Push,
         pull: @escaping Pull,
@@ -106,6 +111,10 @@ public final class ClipboardSyncEngine {
         let count = pasteboard.changeCount
         guard count != lastChangeCount else { return }
         lastChangeCount = count
+        // The count is consumed on EVERY platform — a tick that skipped the bookkeeping would leave
+        // the seen count stale. Only the CONTENT snapshot is conditional: see the type docs for the
+        // iOS paste alert this refuses to raise once a second.
+        guard SystemPasteboard.unattendedContentReadIsPermitted else { return }
         guard let clip = Self.currentClip(pasteboard), clip != lastSynced else { return }
         pendingPush = clip
     }
@@ -146,11 +155,10 @@ public final class ClipboardSyncEngine {
         lastChangeCount = pasteboard.changeCount
     }
 
-    /// The pasteboard's current syncable clip: PNG as-is, else TIFF transcoded to PNG, else a
+    /// The pasteboard's current syncable clip: PNG as-is, else an image transcoded to PNG, else a
     /// non-empty string. `nil` for concealed (password-manager) clips, file copies, over-cap
     /// content, an untranscodable image, or an empty board.
-    static func currentClip(_ pasteboard: NSPasteboard) -> MetadataCodec.ClipboardClip? {
+    static func currentClip(_ pasteboard: SystemPasteboard) -> MetadataCodec.ClipboardClip? {
         PasteboardClip.read(pasteboard, skippingConcealed: true)
     }
 }
-#endif

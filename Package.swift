@@ -130,12 +130,13 @@ let package = Package(
             linkerSettings: ffiCLibraries,
         ),
 
-        // The `NSPasteboard` ↔ `MetadataCodec.ClipboardClip` conversion, both directions. Clipboard
+        // The system pasteboard ↔ `MetadataCodec.ClipboardClip` conversion, both directions. Clipboard
         // sync has two ends — `HostClipboardPerformer` (daemon graph) and `ClipboardSyncEngine`
         // (client graph) — and neither target can see the other, so the shared reading of the WIRE's
         // own clip type had been written twice and had already drifted. The only thing below both is
         // SlopDeskProtocol, which is the wire and has no business importing AppKit; hence a leaf of
-        // its own. macOS-only content behind `#if os(macOS)`, so the iOS client compiles it empty.
+        // its own. It answers for a `UIPasteboard` too now — the phone's client runs the same engine,
+        // so the target is live on both triples rather than compiling empty on one.
         .target(name: "SlopDeskPasteboard", dependencies: ["SlopDeskProtocol"]),
 
         // The Rust logic the Swift clients call in-process, as three arm64 static slices.
