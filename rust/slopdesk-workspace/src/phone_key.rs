@@ -263,6 +263,84 @@ pub const fn special_key(hid_usage: u16) -> Option<SpecialKey> {
     Some(key)
 }
 
+/// A key a MODE reads as a command rather than as input.
+///
+/// Copy mode and Hint mode are the two places a press is not typing: while either is armed the pane
+/// answers keys instead of forwarding them, and the six rows here are every press whose meaning is
+/// its KEY rather than its character — leave, confirm, undo a letter, and the four motions. A key
+/// that types is deliberately absent: its meaning IS its character, and the mode's own vocabulary
+/// (`TerminalViewModel.handleCopyModeKey` / `handleHintKey`) is what reads it.
+///
+/// A projection of [`special_key`], never a second HID table. The modes want six of the twenty-six
+/// special keys, and a table that listed the usages again would be the row that drifts the first
+/// time the HID page grows one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModalKey {
+    /// Esc — peel one modal layer.
+    Escape,
+    /// Return, and the keypad's Enter with it — confirm.
+    Enter,
+    /// Backspace — undo the last typed label letter (Hint mode's only editing key).
+    Backspace,
+    /// ↑.
+    Up,
+    /// ↓.
+    Down,
+    /// ←.
+    Left,
+    /// →.
+    Right,
+}
+
+impl ModalKey {
+    /// Every modal key, in case-index order.
+    pub const ALL: [Self; 7] = [
+        Self::Escape,
+        Self::Enter,
+        Self::Backspace,
+        Self::Up,
+        Self::Down,
+        Self::Left,
+        Self::Right,
+    ];
+
+    /// The case index the boundary carries, so a caller that already has its own enum can rebuild
+    /// one without the text.
+    #[must_use]
+    pub const fn index(self) -> u8 {
+        match self {
+            Self::Escape => 0,
+            Self::Enter => 1,
+            Self::Backspace => 2,
+            Self::Up => 3,
+            Self::Down => 4,
+            Self::Left => 5,
+            Self::Right => 6,
+        }
+    }
+}
+
+/// The modal key a HID usage is, or `None` for a press a mode reads as its character.
+///
+/// Tab, the editing block, the page keys and the function block are special keys that no mode
+/// binds, so they answer `None` and reach the mode as an unmatched character — which both modes
+/// already swallow. That is the same shape the Mac's adapter has: its `default` arm collapses every
+/// unrecognised key onto a character, and the mode's `default` swallows it.
+#[must_use]
+pub const fn modal_key(hid_usage: u16) -> Option<ModalKey> {
+    let key = match special_key(hid_usage) {
+        Some(SpecialKey::Escape) => ModalKey::Escape,
+        Some(SpecialKey::Return) => ModalKey::Enter,
+        Some(SpecialKey::Backspace) => ModalKey::Backspace,
+        Some(SpecialKey::Up) => ModalKey::Up,
+        Some(SpecialKey::Down) => ModalKey::Down,
+        Some(SpecialKey::Left) => ModalKey::Left,
+        Some(SpecialKey::Right) => ModalKey::Right,
+        _ => return None,
+    };
+    Some(key)
+}
+
 /// `UIKeyboardHIDUsage.keyboardReturnOrEnter`.
 pub const HID_RETURN: u16 = 40;
 /// `UIKeyboardHIDUsage.keyboardEscape`.
@@ -676,6 +754,18 @@ pub const FLOATING_CURSOR_THRESHOLD: f64 = 5.0;
 /// would otherwise be worth more arrows than the process has time to send.
 pub const MAX_FLOATING_CURSOR_ARROWS: usize = 256;
 
+/// The bytes one arrow sends — the width of [`floating_cursor_bytes`]' answer, which is declared in
+/// terms of this so the two cannot disagree.
+pub const FLOATING_CURSOR_ARROW_BYTES: usize = 3;
+
+/// The most bytes one [`FloatingCursor::feed`] can be worth.
+///
+/// A caller sizing a buffer for [`floating_cursor_run`] asks for THIS rather than multiplying the
+/// two constants itself: a product spelled at a call site is the same number written twice, and the
+/// second spelling is the one nobody updates.
+pub const MAX_FLOATING_CURSOR_RUN_BYTES: usize =
+    MAX_FLOATING_CURSOR_ARROWS * FLOATING_CURSOR_ARROW_BYTES;
+
 /// The direction one floating-cursor step moves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Arrow {
@@ -774,9 +864,12 @@ impl FloatingCursor {
     }
 }
 
-/// The three bytes one floating-cursor arrow sends, under the live cursor-key mode.
+/// The bytes one floating-cursor arrow sends, under the live cursor-key mode.
 #[must_use]
-pub const fn floating_cursor_bytes(arrow: Arrow, application_cursor_keys: bool) -> [u8; 3] {
+pub const fn floating_cursor_bytes(
+    arrow: Arrow,
+    application_cursor_keys: bool,
+) -> [u8; FLOATING_CURSOR_ARROW_BYTES] {
     let final_byte = match arrow {
         Arrow::Right => b'C',
         Arrow::Left => b'D',
@@ -787,7 +880,7 @@ pub const fn floating_cursor_bytes(arrow: Arrow, application_cursor_keys: bool) 
 /// A run of arrows as one buffer, for one write to the pane.
 #[must_use]
 pub fn floating_cursor_run(arrows: &[Arrow], application_cursor_keys: bool) -> Vec<u8> {
-    let mut out = Vec::with_capacity(arrows.len() * 3);
+    let mut out = Vec::with_capacity(arrows.len() * FLOATING_CURSOR_ARROW_BYTES);
     for arrow in arrows {
         out.extend_from_slice(&floating_cursor_bytes(*arrow, application_cursor_keys));
     }
@@ -1248,5 +1341,58 @@ mod tests {
             0x1B, 0x4F, b'D', 0x1B, 0x4F, b'C'
         ]);
         assert!(floating_cursor_run(&[], false).is_empty());
+    }
+
+    /// The six keys a mode reads as commands, off the SAME usages the encoder resolves — so a
+    /// keyboard whose Escape reaches the encoder cannot fail to reach copy mode's Escape.
+    #[test]
+    fn a_mode_reads_six_keys_as_commands() {
+        assert_eq!(modal_key(HID_ESCAPE), Some(ModalKey::Escape));
+        assert_eq!(modal_key(HID_RETURN), Some(ModalKey::Enter));
+        assert_eq!(modal_key(HID_KEYPAD_ENTER), Some(ModalKey::Enter));
+        assert_eq!(modal_key(HID_BACKSPACE), Some(ModalKey::Backspace));
+        assert_eq!(modal_key(HID_UP), Some(ModalKey::Up));
+        assert_eq!(modal_key(HID_DOWN), Some(ModalKey::Down));
+        assert_eq!(modal_key(HID_LEFT), Some(ModalKey::Left));
+        assert_eq!(modal_key(HID_RIGHT), Some(ModalKey::Right));
+    }
+
+    /// Everything else reaches the mode as its character — a key that types, and equally a special
+    /// key no mode binds. Tab is the one that would be tempting to fold onto something; it is not.
+    #[test]
+    fn every_other_key_reaches_the_mode_as_its_character() {
+        assert_eq!(modal_key(HID_NONE), None);
+        assert_eq!(modal_key(HID_TAB), None);
+        assert_eq!(modal_key(HID_FORWARD_DELETE), None);
+        assert_eq!(modal_key(HID_PAGE_UP), None);
+        assert_eq!(modal_key(HID_F1), None);
+        assert_eq!(modal_key(HID_SPACE), None);
+    }
+
+    /// The case indices the boundary carries are a permutation of `ALL` — the near side rebuilds
+    /// its own enum from one, so a duplicated or skipped index is a key that silently reads as
+    /// another.
+    #[test]
+    fn every_modal_index_is_its_own() {
+        let mut seen = std::collections::BTreeSet::new();
+        for key in ModalKey::ALL {
+            assert!(seen.insert(key.index()), "{key:?} repeats an index");
+        }
+        assert_eq!(seen.len(), ModalKey::ALL.len());
+        assert!(seen.iter().all(|index| *index < 0xFF));
+    }
+
+    /// The number a caller sizes its buffer at is the number the worst feed actually produces. A
+    /// caller that multiplied the two constants itself would be spelling this product a second
+    /// time, in another language, where nothing could compare them.
+    #[test]
+    fn the_advertised_run_capacity_holds_the_longest_run() {
+        let mut cursor = FloatingCursor::default();
+        let arrows = cursor.feed(f64::MAX);
+        assert_eq!(arrows.len(), MAX_FLOATING_CURSOR_ARROWS);
+        assert_eq!(
+            floating_cursor_run(&arrows, false).len(),
+            MAX_FLOATING_CURSOR_RUN_BYTES
+        );
     }
 }

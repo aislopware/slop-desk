@@ -1229,6 +1229,18 @@ uint8_t slopdesk_settings_layout_row_control_argument(uint8_t section_index, boo
 #define SLOPDESK_PHONE_KEY_CAPTURE_CLEAR  ((uint8_t)1)
 #define SLOPDESK_PHONE_KEY_CAPTURE_IGNORE ((uint8_t)2)
 #define SLOPDESK_PHONE_KEY_CAPTURE_BIND   ((uint8_t)3)
+// A key a MODE reads as a command rather than as input — Copy Mode and Hint Mode, the two places a
+// pane answers keys instead of forwarding them. Six of the twenty-six special keys carry a meaning
+// there; everything else, special or not, reaches the mode as its CHARACTER, which is what
+// SLOPDESK_PHONE_MODAL_NONE says.
+#define SLOPDESK_PHONE_MODAL_ESCAPE    ((uint8_t)0)
+#define SLOPDESK_PHONE_MODAL_ENTER     ((uint8_t)1)
+#define SLOPDESK_PHONE_MODAL_BACKSPACE ((uint8_t)2)
+#define SLOPDESK_PHONE_MODAL_UP        ((uint8_t)3)
+#define SLOPDESK_PHONE_MODAL_DOWN      ((uint8_t)4)
+#define SLOPDESK_PHONE_MODAL_LEFT      ((uint8_t)5)
+#define SLOPDESK_PHONE_MODAL_RIGHT     ((uint8_t)6)
+#define SLOPDESK_PHONE_MODAL_NONE      ((uint8_t)0xFF)
 
 // One `UIKey`: which key (`UIKey.keyCode`, a USB HID keyboard usage — the only signal that means the
 // same thing under every layout and input method) and what that key produces under this layout
@@ -1264,6 +1276,11 @@ bool slopdesk_phone_key_chord(const SlopDeskPhoneKeyPress *press, uint8_t *named
 // is no key here, and a base the chord grammar cannot spell back is refused rather than stored.
 uint8_t slopdesk_phone_key_capture(const SlopDeskPhoneKeyPress *press, uint8_t *named,
                                    uint32_t *character, uint8_t *modifiers);
+// The modal key one HID usage is — a SLOPDESK_PHONE_MODAL_* value. A USAGE rather than a whole
+// press, because nothing about this answer reads the layout or the modifiers: `⌃v` in copy mode is
+// the visual-block key, not an Escape, so the modes take the modifier state off the press
+// themselves and ask this only "which key is it".
+uint8_t slopdesk_phone_modal_key(uint16_t hid_usage);
 // The accessory bar's armed ⌃ folding a soft-keyboard commit: the first scalar's control byte
 // through `code`, the byte offset its remainder starts at through `rest`. `false` for empty text.
 bool slopdesk_phone_key_fold_control(const uint8_t *text, size_t len, uint8_t *code, size_t *rest);

@@ -5,6 +5,8 @@ import SlopDeskProtocol
 import SlopDeskTerminal
 #if canImport(AppKit)
 import AppKit
+#elseif canImport(UIKit)
+import UIKit
 #endif
 
 /// The per-pane OSC 9;4 PROGRESS mirror read by the tab badge resolver, macOS Dock aggregate, and
@@ -444,13 +446,17 @@ public final class TerminalViewModel {
         DebugTrace.blocks.write("flash", message())
     }
 
-    /// The AppKit pasteboard write, injected so ``handleCopyModeKey`` stays PURE of AppKit (unit-testable
-    /// without a pasteboard). Default writes to the general `NSPasteboard` on macOS (no-op elsewhere); tests
-    /// override with a capturing closure. `@ObservationIgnored`: wiring, not view state.
+    /// The pasteboard write, injected so ``handleCopyModeKey`` stays PURE of any framework
+    /// (unit-testable without a pasteboard). Tests override with a capturing closure.
+    /// `@ObservationIgnored`: wiring, not view state.
+    ///
+    /// Deliberately NOT platform-gated. It used to be `#if canImport(AppKit)` around the one line,
+    /// which on the phone made this an EMPTY closure — and every caller then raised the "COPIED"
+    /// receipt anyway (``noteClipboardCopy``), so a phone yank reported a copy that had reached no
+    /// pasteboard at all. ``ClientPasteboard/write(_:)`` is the cross-platform door and always was;
+    /// the gate was scope, never necessity.
     @ObservationIgnored public var copyToPasteboard: (String) -> Void = { text in
-        #if canImport(AppKit)
         ClientPasteboard.write(text)
-        #endif
     }
 
     // MARK: Vi/copy-mode repeat-count + visual-mode (pure, NSEvent-free)
@@ -651,6 +657,69 @@ public final class TerminalViewModel {
         return .char(char, control: control, shift: shift)
     }
     #endif
+
+    /// The PHONE peer of ``makeCopyModeKey(event:)`` — one `UIKey`, already read into the
+    /// framework-neutral ``PhoneKey/Press``, as the same abstract ``CopyModeKey``.
+    ///
+    /// Deliberately NOT gated on the iOS triple, and it takes a `Press` rather than a `UIKey` for the
+    /// reason ``PhoneKey`` itself is un-gated: a mapping only the iOS build compiles is a mapping the
+    /// macOS test runner never touches, and this whole path spent a release drawing its pill over a
+    /// dispatch that had no caller.
+    ///
+    /// Which key is Escape / Enter / an arrow is ``PhoneKey/modalKey(_:)`` — one projection of the
+    /// ONE HID table, on the far side of the door. What is left here is the same collapse the Mac's
+    /// adapter ends on: everything else becomes a `.char` carrying the layout base plus ⌃/⇧, and the
+    /// pure dispatch reads its meaning. Both adapters are three lines of platform identity over one
+    /// vocabulary, which is the only shape that keeps the vocabulary singular.
+    public static func makeCopyModeKey(_ press: PhoneKey.Press) -> CopyModeKey {
+        switch PhoneKey.modalKey(press) {
+        case .escape: .escape
+        case .enter: .enter
+        case .up: .up
+        case .down: .down
+        case .left: .left
+        case .right: .right
+        // Backspace binds nothing in copy mode, so it takes the same road as a letter and the
+        // dispatch's own `default` swallows it — the Mac's adapter reaches the identical answer, by
+        // never naming its key code at all.
+        default:
+            .char(
+                press.charactersIgnoringModifiers.first ?? "\u{0}",
+                control: press.control,
+                shift: press.shift,
+            )
+        }
+    }
+
+    /// Whether this pane is in a mode that reads keys as COMMANDS — Hint Mode or Copy Mode.
+    ///
+    /// The phone's responder asks this BEFORE it asks which of its two input paths a press takes:
+    /// copy mode's vocabulary is mostly bare letters, and bare letters are exactly what
+    /// ``PhoneKey/routesToKeyEncoding(_:)`` hands to the text-input proxy. Asked in the other order,
+    /// `j` composes into the shell while the pill says VI.
+    public var takesModalKeys: Bool { hintMode != nil || isCopyMode }
+
+    /// Offers one phone press to whichever mode is armed, answering whether a mode took it.
+    ///
+    /// The layer ORDER is the Mac's, and for the Mac's reason (`GhosttyTerminalView.keyDown`): hint
+    /// mode can be armed ON TOP of copy mode — copy-mode `f` is one of the ways in — so it is the
+    /// topmost layer and is asked first. Asked second, copy mode would swallow every label letter
+    /// and its Esc would tear down the bottom layer first.
+    ///
+    /// A ⌘ combination is never taken. On macOS the app's own dispatcher intercepts those before the
+    /// surface ever sees them; on iOS every press reaches the responder, so the exemption has to be
+    /// stated here or the palette chord would resolve as two hint letters.
+    @discardableResult
+    public func takeModalKey(_ press: PhoneKey.Press) -> Bool {
+        guard !press.command else { return false }
+        if hintMode != nil {
+            handleHintKey(Self.makeHintKey(press))
+            return true
+        }
+        guard isCopyMode else { return false }
+        handleCopyModeKey(Self.makeCopyModeKey(press))
+        return true
+    }
 
     /// The PURE copy-mode dispatch: maps an abstract ``CopyModeKey`` to a navigation /
     /// repeat-count / visual-mode / search / copy / exit intent, driving the active surface's
@@ -1303,13 +1372,23 @@ public final class TerminalViewModel {
     /// read). `@ObservationIgnored`: wiring, not view state. Nil for headless / preview callers (never invoked).
     @ObservationIgnored public var onReadOnlyChanged: ((Bool) -> Void)?
 
-    /// The injected system-beep seam — the read-only "blocked input" cue. Default rings the AppKit system beep
-    /// on macOS (no-op on iOS / non-AppKit); tests override with a counting closure (the ``copyToPasteboard``
-    /// idiom) so ``rateLimitedBeep`` is unit-testable without a real `NSSound`. `@ObservationIgnored`: wiring,
-    /// not view state.
+    /// The injected blocked-input cue — what a READ-ONLY pane answers a keystroke with. Tests override with a
+    /// counting closure (the ``copyToPasteboard`` idiom) so ``rateLimitedBeep`` is unit-testable without a
+    /// real `NSSound` / Taptic Engine. `@ObservationIgnored`: wiring, not view state.
+    ///
+    /// The Mac rings the system beep. The phone taps, and the tap — not a sound — is the honest analogue:
+    /// a Mac is a machine whose speaker is on, while a phone is usually SILENCED, so the audible half of a
+    /// beep is exactly the half a phone throws away. A haptic is the same message on the channel a phone
+    /// actually has: it survives the ring switch, it needs no audio session (which the terminal does not own
+    /// and must not take from whatever is playing), and it is the platform's own "that did nothing" report.
+    /// `.rigid` because the cue is a REFUSAL — a short hard tap, not the soft one a success uses.
     @ObservationIgnored public var beep: () -> Void = {
         #if canImport(AppKit)
         NSSound.beep()
+        #elseif canImport(UIKit)
+        // The only caller is ``rateLimitedBeep``, which is main-actor like the rest of this type; the
+        // closure's own type cannot say so, which is what this states instead.
+        MainActor.assumeIsolated { UIImpactFeedbackGenerator(style: .rigid).impactOccurred() }
         #endif
     }
 
@@ -1588,6 +1667,21 @@ public final class TerminalViewModel {
         return .character(char)
     }
     #endif
+
+    /// The PHONE peer of ``makeHintKey(event:)`` — the same abstract ``HintKey`` off a
+    /// ``PhoneKey/Press``. Un-gated for the reason ``makeCopyModeKey(_:)`` is: a mapping only the iOS
+    /// triple compiles is a mapping no test on this runner can reach.
+    ///
+    /// Esc and Backspace come from ``PhoneKey/modalKey(_:)``, the one HID table; every other press —
+    /// a label letter, and equally an arrow, which hint mode does not bind — collapses to its
+    /// character, and ``handleHintKey(_:)`` ignores the ones that match no label.
+    public static func makeHintKey(_ press: PhoneKey.Press) -> HintKey {
+        switch PhoneKey.modalKey(press) {
+        case .escape: .escape
+        case .backspace: .delete
+        default: .character(press.charactersIgnoringModifiers.first ?? "\u{0}")
+        }
+    }
 
     /// PURE Hint Mode dispatch: accumulate the typed label, dim via ``HintLabelAssigner/filter(typed:labels:)``,
     /// and fire ``onHintConfirmed`` the instant a 2-letter label fully matches (no Enter). `Esc` cancels;

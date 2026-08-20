@@ -139,6 +139,46 @@ public enum PhoneKey {
         }
     }
 
+    /// A key a MODE reads as a command rather than as input.
+    ///
+    /// Copy Mode and Hint Mode are the two places a press is not typing: while either is armed the
+    /// pane ANSWERS keys instead of forwarding them. These six are every press whose meaning is its
+    /// KEY rather than its character; anything else — a letter, a digit, and equally a special key
+    /// no mode binds — reaches the mode as its character, which is why there is no case for it.
+    ///
+    /// The rows are `slopdesk_workspace::phone_key::ModalKey`, projected off the SAME usage table
+    /// the encoder resolves. Nothing here decides; this is the case index coming back.
+    public enum ModalKey: Sendable, Equatable {
+        /// Esc — peel one modal layer.
+        case escape
+        /// Return, and the keypad's Enter with it — confirm.
+        case enter
+        /// Backspace — undo the last typed label letter.
+        case backspace
+        case up
+        case down
+        case left
+        case right
+    }
+
+    /// The modal key this press is, or `nil` for one a mode reads as its character.
+    ///
+    /// Keyed off the USAGE alone. The modifiers are deliberately not consulted: `⌃v` in copy mode is
+    /// the visual-block key and `⌃d` is the half-page, so a mode takes the modifier state off the
+    /// press itself and asks this only "which key is it".
+    public static func modalKey(_ press: Press) -> ModalKey? {
+        switch slopdesk_phone_modal_key(press.hidUsage) {
+        case UInt8(SLOPDESK_PHONE_MODAL_ESCAPE): .escape
+        case UInt8(SLOPDESK_PHONE_MODAL_ENTER): .enter
+        case UInt8(SLOPDESK_PHONE_MODAL_BACKSPACE): .backspace
+        case UInt8(SLOPDESK_PHONE_MODAL_UP): .up
+        case UInt8(SLOPDESK_PHONE_MODAL_DOWN): .down
+        case UInt8(SLOPDESK_PHONE_MODAL_LEFT): .left
+        case UInt8(SLOPDESK_PHONE_MODAL_RIGHT): .right
+        default: nil
+        }
+    }
+
     /// What this press does to the binding being RECORDED in Settings ▸ Key Bindings.
     ///
     /// The same four answers the Mac's recorder gets from ``KeybindingCapture/outcome(keyCode:charactersIgnoringModifiers:command:shift:option:control:)``,
@@ -245,25 +285,39 @@ public struct FloatingCursor: Sendable, Equatable {
     /// `applicationCursorKeys` is the live DECCKM state: reset gives the CSI form every line editor
     /// reads as a cursor move, set gives the SS3 form vim, less and htop ask for.
     public mutating func feed(deltaX: Double, applicationCursorKeys: Bool = false) -> [UInt8] {
-        var out = [UInt8](repeating: 0, count: Self.runCapacity)
+        // The capacity is the door's, not a product of the arrow cap and the escape width spelled
+        // here — the same number in two languages is the one this boundary exists to remove.
+        var out = [UInt8](repeating: 0, count: slopdesk_phone_floating_cursor_run_capacity())
         // The remainder is lent to the door through a LOCAL rather than through `self.accumulated`:
         // the buffer closure already holds an exclusive access, and a second one to a property of
         // the same value would overlap it.
-        var carried = accumulated
-        let written = out.withUnsafeMutableBufferPointer { buffer in
+        let start = accumulated
+        var carried = start
+        var written = out.withUnsafeMutableBufferPointer { buffer in
             slopdesk_phone_floating_cursor_feed(
                 &carried, threshold, deltaX, applicationCursorKeys, buffer.baseAddress, buffer.count,
             )
         }
+        // A run longer than the advertised capacity: the door reported the size and wrote NOTHING,
+        // so taking a prefix here would send that many NUL bytes to the PTY. Ask again with the
+        // size it named, resuming from the remainder the FIRST call started at — the door consumes
+        // `deltaX` on every call, so retrying from the answer would spend the delta twice.
+        if written > out.count {
+            out = [UInt8](repeating: 0, count: written)
+            carried = start
+            written = out.withUnsafeMutableBufferPointer { buffer in
+                slopdesk_phone_floating_cursor_feed(
+                    &carried, threshold, deltaX, applicationCursorKeys, buffer.baseAddress, buffer.count,
+                )
+            }
+        }
         accumulated = carried
-        return Array(out.prefix(min(written, out.count)))
+        guard written > 0, written <= out.count else { return [] }
+        return Array(out.prefix(written))
     }
 
     /// Clears the carried remainder — the drag ended.
     public mutating func reset() {
         accumulated = 0
     }
-
-    /// Three bytes per arrow, for the longest run one delta may earn.
-    private static let runCapacity = 256 * 3
 }

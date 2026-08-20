@@ -259,6 +259,27 @@ const fn named_index(key: NamedChordKey) -> u8 {
     }
 }
 
+/// The modal key one HID usage is — a `PHONE_MODAL_*` index, or [`PHONE_MODAL_NONE`].
+///
+/// A usage rather than a whole press, because nothing about this answer reads the layout: a mode
+/// asks "is this key a command", and every press it says no to reaches the mode as its character,
+/// which the caller already holds. Passing the record would have made the door look like it read
+/// the modifiers, which it must not — `⌃v` in copy mode is the visual-block key, not an Escape.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_phone_modal_key(hid_usage: u16) -> u8 {
+    match phone_key::modal_key(hid_usage) {
+        Some(key) => key.index(),
+        None => PHONE_MODAL_NONE,
+    }
+}
+
+/// The answer for a press no mode reads as a command — it reaches the mode as its character.
+pub const PHONE_MODAL_NONE: u8 = 0xFF;
+
 /// The accessory bar's ⌃ fold: the first scalar's control byte through `code`, and the byte offset
 /// its remainder starts at through `rest`. `false` for empty text — send it as it came.
 ///
@@ -323,6 +344,20 @@ pub extern "C" fn slopdesk_phone_shows_accessory_bar(keyboard_height: f64, thres
 )]
 pub const extern "C" fn slopdesk_phone_floating_cursor_threshold() -> f64 {
     phone_key::FLOATING_CURSOR_THRESHOLD
+}
+
+/// The most bytes one [`slopdesk_phone_floating_cursor_feed`] can answer with.
+///
+/// A caller sizes its buffer at this and never travels the retry. It is a door rather than a number
+/// the near side multiplies out because the product is the arrow cap times the escape width, and
+/// both are the far side's to tune.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_phone_floating_cursor_run_capacity() -> usize {
+    phone_key::MAX_FLOATING_CURSOR_RUN_BYTES
 }
 
 /// Feeds one floating-cursor delta and writes the arrow bytes it earned through `(out, cap)`.

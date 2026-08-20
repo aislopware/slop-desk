@@ -3036,6 +3036,40 @@ yet; the day the arrow cap or the escape width moved, the phone would have shipp
 bytes to the PTY and no test would have said which side did it. The capacity is a door now, and the
 caller retries like its neighbour.
 
+### Increment 70 — the phone drew a VI pill over a dispatch with no caller
+
+Copy Mode and Hint Mode were reachable on the phone — the chord armed, the pill drew — and no key
+ever reached either dispatch. The audit's premise was that the copy-mode vocabulary lived in the
+`NSEvent` adapter and had to be lifted; it did not. `handleCopyModeKey` and `handleHintKey` were
+already pure and already shared, over an abstract `CopyModeKey` / `HintKey`. What was missing was the
+phone's three-line adapter INTO them, and a responder that asked the mode before it asked the text
+proxy.
+
+The ORDER is the whole bug in one line. Copy mode's vocabulary is mostly bare letters, and bare
+letters are exactly what `PhoneKey.routesToKeyEncoding(_:)` hands to the text-input proxy — so asked
+in the other order, `j` composes into the shell while the pill says VI. `takesModalKeys` is now
+checked first in `TerminalInputHost`, routed through the same `KeyRepeater` as everything else, and
+`insertText` is covered too so the on-screen keyboard works and not only a hardware one. Inside the
+mode, hint is asked before copy (hint can be armed ON TOP of copy — `f` is one of the ways in), and a
+⌘ combination is never taken: on macOS the app's dispatcher intercepts those before the surface sees
+them, and on iOS every press reaches the responder, so the exemption has to be stated. ⌃⇧Space stays
+a workspace chord inside vi mode for the same reason.
+
+`slopdesk_phone_modal_key(hid_usage)` is the door — a projection of the ONE HID table that
+`special_key()` already reads, not a second table, and it takes a USAGE rather than a whole press
+because nothing about the answer reads the layout or the modifiers (`⌃v` in copy mode is the
+visual-block key, not an Escape). Seven values, six keys and a NONE; everything else, special or not,
+reaches the mode as its CHARACTER, which is the same collapse the Mac's adapter ends on.
+
+Two `#if canImport(AppKit)` gates came off in the same change, and each was hiding a live defect
+rather than a platform difference. `copyToPasteboard` was an EMPTY closure on the phone while every
+caller raised the `COPIED` receipt anyway — a yank that reported a copy that had reached no
+pasteboard, over `ClientPasteboard.write(_:)`, which is cross-platform and always was. `beep` was a
+no-op, and the honest phone analogue is not a sound: a Mac's speaker is on, a phone is usually
+SILENCED, so the audible half of a beep is the half a phone throws away. `.rigid` haptic — a short
+hard tap, because the cue is a REFUSAL — survives the ring switch and needs no audio session the
+terminal does not own.
+
 ## Stage D ledger — what the rename actually costs
 
 `SlopDeskClientUI` cannot fold into `SlopDeskPhoneUI` while `SlopDeskMacUI` still imports it. That is

@@ -26,6 +26,14 @@ import UIKit
 // worse one: the order between them is UIKit's rather than ours, which is how a half-composed
 // candidate ends up on the wire.
 //
+// ## A third path, above both: a MODE
+//
+// While Copy Mode or Hint Mode is armed the pane ANSWERS keys instead of forwarding them, and that
+// question is asked before the two-path split rather than inside it. It has to be: copy mode's
+// vocabulary is mostly bare letters, and a bare letter is exactly what `PhoneKey.route` hands to the
+// proxy. `TerminalViewModel.takeModalKey` is the seam, and the abstract keys it feeds are the SAME
+// ones the Mac's `keyDown` builds — the phone brings its own key identity and nothing else.
+//
 // ## What is NOT here yet
 //
 // `UITextInput` — marked text and the floating cursor. iOS shows CJK candidates in the keyboard's
@@ -186,18 +194,41 @@ final class TerminalInputHostView: UIView, UIKeyInput {
     /// sends nothing never starts a 20 Hz repeat of nothing.
     @discardableResult
     private func handle(_ press: PhoneKey.Press) -> Bool {
-        guard PhoneKey.routesToKeyEncoding(press) else { return false }
-        // The SAME user-overridable table the Mac's dispatcher resolves against, so a rebind made
-        // once fires on both. A bound chord is swallowed here — it never reaches the PTY, and it
-        // does not repeat: a split that fired twenty times a second is not what holding ⌘D means.
-        if let chord = PhoneKey.keyChord(for: press),
-           let interceptor = live?.terminalModel?.keyInterceptor,
-           case .swallow = interceptor.intercept(chord)
-        {
+        // A pane in Copy Mode or Hint Mode reads every press as a COMMAND, and this branch has to
+        // come FIRST: copy mode's vocabulary is mostly bare letters (`j`, `y`, `v`), and a bare
+        // letter is exactly what `routesToKeyEncoding` hands to the text-input proxy. Asked in the
+        // other order the phone drew the VI pill and the hint card — `TerminalLeafView` mounts both
+        // — over a dispatch with no caller, and every key went to the shell instead.
+        //
+        // Through the REPEATER, not straight to the model, so a held `j` walks the scrollback the
+        // way it does on macOS, where `keyDown` repeats for free.
+        if live?.terminalModel?.takesModalKeys == true, !press.command {
+            // A bound workspace chord still wins while a mode is up. On macOS the app-level
+            // `WorkspaceKeyDispatcher` monitor runs BEFORE the surface's `keyDown`, so ⌃⇧Space
+            // leaves vi mode from outside the mode's own dispatch; the phone has no monitor — this
+            // responder is the whole chain — so the same precedence is spelled here. Only a press
+            // that already bypasses the text proxy is offered: a bare letter is the mode's
+            // vocabulary, never a chord.
+            if PhoneKey.routesToKeyEncoding(press), swallowsAsWorkspaceChord(press) { return true }
+            repeater.keyDown(press)
             return true
         }
+        guard PhoneKey.routesToKeyEncoding(press) else { return false }
+        if swallowsAsWorkspaceChord(press) { return true }
         guard encodedBytes(press) != nil else { return false }
         repeater.keyDown(press)
+        return true
+    }
+
+    /// Whether the workspace's binding table claims this press. The SAME user-overridable table the
+    /// Mac's dispatcher resolves against, so a rebind made once fires on both. A bound chord is
+    /// swallowed — it never reaches the PTY, and it does not repeat: a split that fired twenty times
+    /// a second is not what holding ⌘D means.
+    private func swallowsAsWorkspaceChord(_ press: PhoneKey.Press) -> Bool {
+        guard let chord = PhoneKey.keyChord(for: press),
+              let interceptor = live?.terminalModel?.keyInterceptor,
+              case .swallow = interceptor.intercept(chord)
+        else { return false }
         return true
     }
 
@@ -212,10 +243,17 @@ final class TerminalInputHostView: UIView, UIKeyInput {
         )
     }
 
-    /// Writes one press to the pane. A press that sends nothing is a no-op — a ⌘ combination that
-    /// matched no binding is a shortcut that missed, not terminal input.
+    /// Writes one press to the pane, or hands it to the armed mode. A press that sends nothing is a
+    /// no-op — a ⌘ combination that matched no binding is a shortcut that missed, not terminal input.
+    ///
+    /// The mode is asked per FIRE rather than once at key-down, because a mode can END inside one:
+    /// copy mode's `y` yanks and exits, and every repeat after it has to find the mode gone. It then
+    /// falls through to the encoder, which is what the Mac does too — a bare letter encodes to
+    /// nothing, so the tail of a held yank writes nothing to the PTY.
     private func send(_ press: PhoneKey.Press) {
-        guard let live, let bytes = encodedBytes(press) else { return }
+        guard let live else { return }
+        if live.terminalModel?.takeModalKey(press) == true { return }
+        guard let bytes = encodedBytes(press) else { return }
         live.sendBytes(bytes)
     }
 
@@ -227,6 +265,23 @@ final class TerminalInputHostView: UIView, UIKeyInput {
     /// on after however many keystrokes it needed.
     func insertText(_ text: String) {
         guard let live else { return }
+        // A pane in Copy Mode or Hint Mode reads a SOFT-keyboard commit as commands too. Without
+        // this the modes would work only for the minority of phones with a keyboard attached: the
+        // on-screen keyboard commits through here, never through `pressesBegan`, so a tapped `j`
+        // went to the shell while the pill said VI. The accessory row's armed ⌃ rides along on the
+        // FIRST character exactly as it does below, which is what makes ⌃d half-page with no
+        // hardware keyboard at all.
+        if let model = live.terminalModel, model.takesModalKeys {
+            let armed = controlArmed
+            controlArmed = false
+            for (index, character) in text.enumerated() {
+                model.takeModalKey(PhoneKey.Press(
+                    charactersIgnoringModifiers: String(character),
+                    control: armed && index == 0,
+                ))
+            }
+            return
+        }
         // An ARMED ⌃ folds the commit's first scalar to its control byte, which must go RAW because
         // a PTY never echoes one; the rest is ordinary text on the recorded path so the input bar
         // can dedupe the echo.
