@@ -622,6 +622,33 @@ escape skipper, a hand-rolled SGR decoder and a hand-rolled string-sequence scan
 stream is how a sequence one side skips and the other prints becomes a bug nobody can localise. All
 45 tests written against the deleted Swift passed unchanged the first time the door was wired in.
 
+### The fold whose answer is a whole document, and the reply that is deliberately empty
+
+The pane LIVENESS half (`rust/slopdesk-ffi/src/workspace_liveness.rs`) is the first family here
+where the input and the output are the SAME shape: a document goes in as flat
+`(SlopDeskWsEntry, blob)` pairs, a policy runs over it, and the next document comes back as an
+encoded snapshot the caller reads with `slopdesk_ws_decode_snapshot`. Three doors fold that way —
+`slopdesk_ws_merge_pane_liveness`, `slopdesk_ws_mark_pane_dead`, `slopdesk_ws_reconcile_panes` —
+and the other two read one record (`slopdesk_ws_pane_liveness_entries`,
+`slopdesk_ws_pane_liveness_read`).
+
+Two things about it are worth stating as convention rather than as detail.
+
+**The record crosses as a `#[repr(C)]` struct, not as its own encoding.** A liveness record is 26
+fields of which 7 are strings, and encoding it would have put a SECOND codec beside the document's
+own — the drift class §8 is about. So the strings ride as §6 spans into the same blob the cells
+already occupy (one pointer per tick, not one per string), and every `Option` scalar carries the
+presence flag §4b requires rather than a sentinel. The struct's field order is widest-first, so the
+layout has no padding for the hand-written header to transcribe.
+
+**A fold that did not move the document answers `0`, and does not encode.** This is §4's "no
+answer" used for its literal meaning: there is no NEW document, and the caller — which reads
+`changed` before the bytes, because that is the only correct order — was going to discard them. It
+is not a micro-optimisation. Reconcile runs on a 500 ms backstop whose usual outcome is "nothing
+happened", so the alternative is encoding a whole workspace twice a second in order to throw it
+away. `folded()` in the module's own tests asserts the empty reply, so the contract is pinned on
+the side that can see it.
+
 ## 4c. What the boundary costs, measured
 
 A/B against the deleted Swift implementation, release build, 32 KiB chunks, 64 MiB ring
@@ -664,6 +691,31 @@ whose arguments are two short byte spans and whose answer is a scalar or twelve 
 worth noting *why* the door beats the Swift it replaced rather than merely matching it: the DP is
 `i32` in a flat `Vec` against Swift's `Int` in an `Array` with retain/release on the closure captures,
 and the score-only path deletes fzf's phase 4 outright.
+
+### The whole-document fold, measured
+
+The liveness fold re-encodes and re-decodes the entire document on every call, which is the one
+thing about that family worth measuring rather than asserting. Scratch release benchmark of
+`slopdesk_ws_reconcile_panes`, NOT in the tree, on an M-series host — a document of N panes each
+carrying its topology half and a fully-populated liveness half, reconciled against a capture of the
+same N panes:
+
+| panes | cells | settled (answers `0`) | moved (encodes) |
+| --- | --- | --- | --- |
+| 1 | 20 | 2.6 µs | 3.3 µs |
+| 8 | 160 | 21.4 µs | 26.4 µs |
+| 24 | 480 | 69.5 µs | 84.3 µs |
+| 64 | 1280 | 216.6 µs | 261.5 µs |
+
+The caller's cadence is a 500 ms backstop plus discrete session and agent-status events, coalesced
+at depth 1. A 24-pane workspace therefore spends ~0.014% of a core on the settled path, and the
+decode of the input cells — not the encode of the answer — is the bulk of it: the encode is the
+~15 µs difference between the two columns, which is exactly what answering `0` saves.
+
+One caller-side note the numbers do not show: `wsBytes` probes with a 4 KiB buffer, and a moved
+24-pane answer is 16 KiB, so the MOVED path runs the door twice. That is the §4 retry working as
+designed and it is still ~170 µs, but it is the first place to look if this ever shows up in a
+trace.
 
 ## 4d. The descriptor convention, tried and rejected
 
@@ -751,6 +803,17 @@ gated:
 The case lists are then a CONTRACT, because what crosses is a discriminant. `check-supervisor.sh`
 compares the Swift case counts against `AgentKind::ALL` and `ClaudeStatus::ALL`, so an enum that
 grows or reorders a case fails the build rather than reporting `working` for `blocked`.
+
+`PaneLiveness` is the same line drawn one level up, and it is worth naming because nothing was
+deleted and the port is still complete. The Swift `struct` stays: it is what `PaneLiveness+Capture`
+builds off a live `MuxChannelSession`, what `HostWorkspaceMirror` publishes and what a view reads —
+a vocabulary by the rule above. What went is every BODY behind it. `entries()`, `init?(paneID:)`,
+`merge(paneLiveness:)`, `markPaneDead(_:)` and `reconcile(captured:)` are now argument marshalling
+around `slopdesk-wire`'s `document::liveness`, and the ~25-line classify-and-reap loop that used to
+live in `HostWorkspaceDocument` is gone with them. Every public signature is unchanged, so
+`LoopbackWorkspaceDocument` and the ~25 `merge(paneLiveness:)` call sites in the host tests did not
+move — which is the same "a diff a reviewer can check" property, in a port whose file count is
+unchanged.
 
 ### Two shapes the agent module added
 
@@ -865,11 +928,22 @@ make a mistake here" — it is *"were these two written to answer the same quest
 and a repairer agree on every well-formed input and disagree on every malformed one, which is exactly
 the input class no test covers and every hand-edited file eventually produces.
 
-Three sites in that sweep have **no Rust counterpart yet** — `Session.activeTabIndex`, `specs`,
-`detached` — because `persist.rs` stops at the spec and the node. Swift now answers them the way a
-repair pass would, and the comments there say so, so the obligation is visible from the Rust side when
-`persist.rs` grows to the session and file level. It inherits three answers it did not choose; better
-that it inherits them knowingly than re-derives them differently.
+Three sites in that sweep had **no Rust counterpart** when this was written — `Session.activeTabIndex`,
+`specs`, `detached` — because `persist.rs` stopped at the spec and the node. Swift answered them the
+way a repair pass would, and the comments there said so, so that the obligation would be visible from
+the Rust side when `persist.rs` grew to the session and file level.
+
+**It has since grown to exactly there, and it did inherit them.** `persist.rs` now owns the session and
+the whole file; `Sources/SlopDeskWorkspaceModel/Codec/WorkspaceFile.swift` asks through
+`slopdesk_ws_workspace_file_{encode,decode,status,minted_ids,max_panes}` and the Swift `Codable` decoders
+those three sites lived in are deleted. The three answers were inherited rather than re-derived, which
+is what this paragraph was for.
+
+⚠️ **This paragraph was itself the anti-pattern above.** It is a comment in one language's docs naming
+the *other* language's behaviour, and it went stale the moment that behaviour changed — silently, the
+way every pair in this section goes stale. It is kept, rewritten, rather than deleted: a section
+cataloguing drift that had quietly drifted is the cheapest possible demonstration that the catalogue
+needs the same discipline as the code. The rule it argues for is unchanged; the example is now its own.
 
 One limit of the ratchet worth stating, because it was found the hard way: the gate bans the **pairing**
 `decodeIfPresent(…) ?? default`, since `decodeIfPresent` is correct where absence and unreadability are

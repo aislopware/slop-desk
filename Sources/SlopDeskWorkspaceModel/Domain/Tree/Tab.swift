@@ -1,7 +1,7 @@
 // MARK: - Tab (one tiled split tree within a session)
 
 /// One tiled split tree within a ``Session`` (docs/42 §Domain model). A pure
-/// `Identifiable`/`Codable`/`Equatable`/`Sendable` value with **no SwiftUI / transport import** so it
+/// `Identifiable`/`Equatable`/`Sendable` value with **no SwiftUI / transport import** so it
 /// unit-tests headless. A `Tab` owns:
 ///
 /// - ``root`` — the recursive n-ary ``SplitNode`` tree of ``PaneID``s. **Never empty for a live tab** (a
@@ -15,10 +15,10 @@
 /// A pane's ``PaneSpec`` is **not** stored here — the split tree holds only identity/geometry; specs live
 /// in the owning ``Session/specs`` side table (so a rename never churns a tree diff).
 ///
-/// A stale `floatingPanes` key from an older persisted file (the floating-pane feature no longer exists)
-/// is simply not a stored property → decode-ignored; the ids it named are then dropped as orphan specs by
-/// ``TreeWorkspace/normalizingSpecs()`` (the tiled tree survives intact).
-public struct Tab: Identifiable, Codable, Sendable, Equatable {
+/// A stale `floatingPanes` key from an older persisted file (the floating-pane feature no longer
+/// exists) is a key `persist::decode_tab` does not read → ignored; the ids it named are then dropped
+/// as orphan specs by ``TreeWorkspace/normalizingSpecs()`` (the tiled tree survives intact).
+public struct Tab: Identifiable, Sendable, Equatable {
     public let id: TabID
     /// `""` = derive the displayed title from the active pane's OSC title at render time.
     public var title: String

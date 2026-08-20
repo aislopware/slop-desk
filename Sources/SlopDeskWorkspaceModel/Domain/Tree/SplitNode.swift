@@ -62,12 +62,13 @@ public enum PaneDropEdge: String, Sendable, Equatable, CaseIterable {
 /// A child's share of its parent split along the split axis (docs/42 §Domain model).
 ///
 /// - ``flex(_:)``: a proportional share, normalized against its siblings at layout time (the default is
-///   `.flex(1)` = an equal share). Always clamped to ``minWeight`` on decode so a zero / negative /
-///   non-finite value can never starve a pane to nothing.
+///   `.flex(1)` = an equal share). Always clamped to ``minWeight`` when a weight is read off a
+///   persisted or pushed document, so a zero / negative / non-finite value can never starve a pane to
+///   nothing.
 /// - ``fixed(_:)``: a fixed number of points along the parent axis, subtracted from the bound *before*
 ///   the flex children divide the remainder. Schema-reserved for fixed sidebars; the W1 solver supports
 ///   it but the MVP tree only mints `.flex`.
-public enum SplitWeight: Codable, Sendable, Equatable {
+public enum SplitWeight: Sendable, Equatable {
     case flex(Double)
     case fixed(Double)
 
@@ -96,7 +97,7 @@ public enum SplitWeight: Codable, Sendable, Equatable {
 
 /// One child slot of a ``SplitNode/split(id:axis:children:)`` — a subtree plus its share of the parent
 /// axis. A pure value (docs/42 §Domain model).
-public struct WeightedChild: Codable, Sendable, Equatable {
+public struct WeightedChild: Sendable, Equatable {
     public var weight: SplitWeight
     public var node: SplitNode
     public init(weight: SplitWeight, node: SplitNode) {
@@ -108,16 +109,23 @@ public struct WeightedChild: Codable, Sendable, Equatable {
 // MARK: - The recursive split tree
 
 /// The recursive, **n-ary** tiled split tree of a ``Tab`` (docs/42 §Decisions.1, Zellij model). A pure
-/// `Codable`/`Equatable`/`Sendable` value with **no SwiftUI / transport import** — it stores only
-/// ``PaneID``s (identity/geometry), never a live object; a pane's ``PaneSpec`` lives in the owning
-/// session's side table.
+/// `Equatable`/`Sendable` value with **no SwiftUI / transport import** — it stores only ``PaneID``s
+/// (identity/geometry), never a live object; a pane's ``PaneSpec`` lives in the owning session's side
+/// table.
 ///
 /// - ``leaf(_:)`` is a single pane.
 /// - ``split(id:axis:children:)`` partitions its bound along `axis` among `children` by their weights.
 ///   N-ary (not binary) so closing the Nth sibling redistributes flex equally among the survivors with
 ///   no redundant intermediary nodes.
 ///
-/// **Invariants** (enforced by the decoder in `SplitNode+Codable.swift`, validate-then-repair): a
+/// **It is not `Codable`, and that is the shape of the rule rather than an omission.** A tree reaches
+/// this process two ways — off a host's push, and off the client's `workspace.json` — and both are
+/// decoded by `rust/slopdesk-workspace` (``WorkspaceStateCodec`` and ``WorkspaceFile``). A `Codable`
+/// here would be a third decoder for the same bytes, which is exactly what it used to be: the
+/// deleted `SplitNode+Codable.swift` named an id-less split a fresh uuid where the crate derives a
+/// stable one, and every persisted divider position was orphaned on each launch.
+///
+/// **Invariants** (enforced by that decoder, validate-then-repair): a
 /// `.split` always has ≥ 2 children (a 1-child split collapses into its child, a 0-child split is
 /// dropped); no `.split` child shares its parent's axis (same-axis children are flattened — the Zellij
 /// merge); every ``PaneID`` is unique (duplicates re-minted); every weight is finite and ≥

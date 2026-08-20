@@ -307,25 +307,24 @@ final class DetachPaneTests: XCTestCase {
         XCTAssertNil(out.spec(for: right))
     }
 
-    // MARK: - Persistence (additive Codable + normalizing repairs + launch re-dock)
+    // MARK: - Persistence (the additive field + normalizing repairs + launch re-dock)
 
-    func testSessionDetachedRoundTripsAndOldFilesDecodeEmpty() throws {
+    func testSessionDetachedRoundTripsAndOldFilesLoadEmpty() throws {
         let (ws, _, right) = twoPaneWorkspace()
         let detached = TreeIntent.detachPane(right, in: ws)
 
-        let data = try JSONEncoder().encode(detached.sessions[0])
-        let decoded = try JSONDecoder().decode(Session.self, from: data)
-        XCTAssertEqual(decoded.detached, detached.sessions[0].detached, "detached list round-trips")
-        XCTAssertEqual(decoded.specs[right], detached.sessions[0].specs[right])
+        let loaded = try WorkspaceFile.decode(WorkspaceFile.encode(detached))
+        XCTAssertEqual(loaded.sessions[0].detached, detached.sessions[0].detached, "detached list round-trips")
+        XCTAssertEqual(loaded.sessions[0].specs[right], detached.sessions[0].specs[right])
 
-        // A pre-feature file (no `detached` key) decodes to an empty list — additive tolerance.
-        let plain = try JSONEncoder().encode(ws.sessions[0])
+        // A pre-feature file (no `detached` key) loads as an empty list — additive tolerance, and
+        // the key is not WRITTEN by a detach-free session either, so such a file stays byte-stable.
+        let plain = WorkspaceFile.encode(ws)
         XCTAssertFalse(
             (String(bytes: plain, encoding: .utf8) ?? "").contains("\"detached\""),
-            "a detach-free session encodes NO detached key (byte-stable with pre-feature files)",
+            "a detach-free session writes NO detached key (byte-stable with pre-feature files)",
         )
-        let decodedPlain = try JSONDecoder().decode(Session.self, from: plain)
-        XCTAssertEqual(decodedPlain.detached, [])
+        XCTAssertEqual(try WorkspaceFile.decode(plain).sessions[0].detached, [])
     }
 
     func testNormalizingSpecsRepairsDetachedList() {

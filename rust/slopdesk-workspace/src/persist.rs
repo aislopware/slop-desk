@@ -26,10 +26,13 @@
 //! workspace plus the old file kept aside. Repairing it would mean inventing a layout and claiming
 //! it was restored.
 
-use crate::identity::{PaneId, SplitNodeId};
-use crate::json::{Json, JsonError, Result, object};
-use crate::session::{PaneKind, PaneSpec, VideoEndpoint};
+use std::collections::BTreeMap;
+
+use crate::identity::{IdSource, PaneId, SessionId, SplitNodeId, TabId};
+use crate::json::{Json, JsonError, Result, object, parse, to_pretty_string};
+use crate::session::{DetachedPane, PaneKind, PaneSpec, Session, Tab, VideoEndpoint};
 use crate::split_tree::{SplitAxis, SplitNode, SplitWeight, WeightedChild};
+use crate::workspace::{CURRENT_SCHEMA_VERSION, TreeWorkspace};
 
 /// The retired pane-kind discriminators an older file may still carry.
 ///
@@ -346,22 +349,21 @@ fn fold_all(hash: u128, bytes: impl IntoIterator<Item = u8>) -> u128 {
 /// The version and variant nibbles are zeroed, which no v4 uuid the runtime mints ever has, so a
 /// derived id cannot collide with a minted one.
 ///
-/// ## Owed
+/// ## Settled, 2026-08-20
 ///
-/// This crate and Swift now disagree about the SECOND property, and the disagreement is scheduled
-/// rather than settled. `SplitNodeID.init` defaults to `UUID()`
-/// (`Sources/SlopDeskWorkspaceModel/Domain/Tree/TreeIdentity.swift`), so Swift's `?? SplitNodeID()`
-/// fill is RANDOM: one file decoded twice names the same seam two different things. Every load
-/// renames every unnamed split, so a `splitNode/<id>/weight` cell written before a relaunch is
-/// orphaned after it — the user drags a divider, quits, reopens, and it is back at the default,
-/// with no `.corrupt` sidecar to explain it because nothing failed. It bites exactly the two kinds
-/// of file whose splits carry no id: a hand-edited one, and one written before the id existed.
+/// This crate and Swift used to disagree about the SECOND property, and the user paid for it every
+/// time they quit. `SplitNodeID.init` defaults to `UUID()`, so Swift's `?? SplitNodeID()` fill was
+/// RANDOM: one file decoded twice named the same seam two different things. Every load renamed
+/// every unnamed split, so a `splitNode/<id>/weight` cell written before a relaunch was orphaned
+/// after it — drag a divider, quit, reopen, and it is back at the default, with no `.corrupt`
+/// sidecar to explain it because nothing failed. It bit exactly the two kinds of file whose splits
+/// carry no id: a hand-edited one, and one written before the id existed.
 ///
-/// What is owed is not a second minting rule written in Swift. It is THIS one behind a door: this
-/// function published as a `slopdesk_ws_*` entry point and put where `?? SplitNodeID()` stands
-/// today. At that point `SplitNode+Codable.swift`'s repair pass does nothing this module does not
-/// already do — `persist.rs` is a complete decoder — so it goes entirely, which is the
-/// one-implementation rule finishing rather than a fix bolted onto the second copy.
+/// What closed it was not a second minting rule written in Swift. It was [`decode_file`] — this
+/// module grown to the whole document and published as `slopdesk_ws_workspace_file_decode` — after
+/// which `SplitNode+Codable.swift` did nothing this module does not already do, so it went
+/// entirely. That is the one-implementation rule finishing, rather than a fix bolted onto the
+/// second copy.
 fn derived_split_id(path: u128, axis: SplitAxis, children: &[WeightedChild]) -> SplitNodeId {
     let mut hash = fold(path, match axis {
         SplitAxis::Horizontal => 0,
@@ -419,6 +421,348 @@ fn decode_raw_node(value: &Json, path: u128) -> Result<SplitNode> {
     Ok(SplitNode::Split { id, axis, children })
 }
 
+// ---------------------------------------------------------------------------------------------- //
+// The file
+// ---------------------------------------------------------------------------------------------- //
+
+/// Why a workspace file would not load.
+///
+/// Three arms because the caller's answer differs across them, and the numbering lives HERE rather
+/// than in the shim that exports it: a door that invented these bytes would be `docs/55` §5's "no
+/// error mapped to a different error", and it would be the second place the taxonomy is written
+/// down. The same shape [`slopdesk_wire::document::state_file::FileError`] already has for the
+/// host's half of the pair, deliberately, so a reader of one recognises the other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileError {
+    /// The bytes are not the file this build writes — not UTF-8, not JSON, or JSON with no
+    /// workspace shape in it. The caller mints the default and keeps the old file aside.
+    Malformed,
+    /// The file is from a different shape of this document. Not migrated: the standing rule is that
+    /// stale data degrades to the default rather than being carried forward.
+    VersionMismatch(i64),
+    /// More panes than a launch will materialize.
+    ///
+    /// Its own arm rather than a silent truncation: the store allocates one session per pane on the
+    /// main actor, so a file claiming a hundred thousand of them is a freeze at launch — and half a
+    /// workspace restored is a workspace whose missing half nobody can name.
+    TooManyPanes,
+}
+
+/// The byte a load that WORKED reports, so a caller reading the status has one value for "nothing
+/// refused" rather than an absence it has to infer.
+pub const NO_REFUSAL: u8 = 0;
+
+impl FileError {
+    /// The byte this refusal crosses a C boundary as.
+    #[must_use]
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::Malformed => 1,
+            Self::VersionMismatch(_) => 2,
+            Self::TooManyPanes => 3,
+        }
+    }
+
+    /// The version the file CLAIMED, for the one arm that names one.
+    ///
+    /// An `Option` rather than a number with a reserved absence: every `i64` is a version somebody
+    /// could have typed into the file by hand, including `0`, so no in-band value could have meant
+    /// "this refusal is not about a version".
+    #[must_use]
+    pub const fn claimed_version(self) -> Option<i64> {
+        match self {
+            Self::VersionMismatch(version) => Some(version),
+            _ => None,
+        }
+    }
+}
+
+/// The most panes a file may describe.
+///
+/// A file naming more is refused rather than trimmed. The store materializes one session PER pane
+/// on the main actor at launch, so an enormous list is a freeze rather than a big workspace, and
+/// real ones are dozens.
+pub const MAX_PANES: usize = 1024;
+
+/// The identities a re-seed spends on a workspace with nothing in it: a session, its tab, its pane.
+const EMPTY_WORKSPACE_IDS: usize = 3;
+
+/// The identities a re-seed spends on a session the file left with no tab: the tab and its pane.
+const TABLESS_SESSION_IDS: usize = 2;
+
+/// A pane the person pulled out into its own window.
+fn encode_detached(entry: DetachedPane) -> Json {
+    let mut members = vec![("pane".to_owned(), encode_id(entry.pane.bytes()))];
+    // Absent rather than `null` when there is no origin tab, which is what Swift's synthesized
+    // encoder wrote for an optional.
+    if let Some(origin) = entry.origin_tab {
+        members.push(("originTab".to_owned(), encode_id(origin.bytes())));
+    }
+    Json::Object(members.into_iter().collect())
+}
+
+fn decode_detached(value: &Json) -> Result<DetachedPane> {
+    Ok(DetachedPane {
+        pane: PaneId::from_bytes(decode_id(value, "pane")?),
+        origin_tab: decode_optional_id(value, "originTab").map(TabId::from_bytes),
+    })
+}
+
+/// One tab: its identity, its title and its tree.
+fn encode_tab(tab: &Tab) -> Json {
+    let mut members = vec![
+        ("id".to_owned(), encode_id(tab.id.bytes())),
+        ("title".to_owned(), Json::String(tab.title.clone())),
+        ("root".to_owned(), encode_split_node(&tab.root)),
+    ];
+    if let Some(active) = tab.active_pane {
+        members.push(("activePane".to_owned(), encode_id(active.bytes())));
+    }
+    if let Some(zoomed) = tab.zoomed_pane {
+        members.push(("zoomedPane".to_owned(), encode_id(zoomed.bytes())));
+    }
+    Json::Object(members.into_iter().collect())
+}
+
+/// One tab, repaired.
+///
+/// The focus and the zoom are FILLED from absence rather than refused, including when the file
+/// spells one as something that is not an id: both name a pane, and a selection nobody can read is
+/// a selection nobody made. [`TreeWorkspace::normalizing_active`] then drops either that does not
+/// name a leaf this tab holds, so nothing here has to know the tree it is reading.
+///
+/// # Errors
+/// [`JsonError`] for a missing id or title, or a `root` that is not a split tree.
+fn decode_tab(value: &Json, mint: &mut impl IdSource) -> Result<Tab> {
+    let id = TabId::from_bytes(decode_id(value, "id")?);
+    let title = text(value, "title")?;
+    let root = decode_split_node(field(value, "root")?, &mut || mint.pane())?;
+    Ok(Tab {
+        id,
+        title,
+        root,
+        active_pane: decode_optional_id(value, "activePane").map(PaneId::from_bytes),
+        zoomed_pane: decode_optional_id(value, "zoomedPane").map(PaneId::from_bytes),
+    })
+}
+
+/// One session, with its spec side table written as a sorted array of `{pane, spec}` rows.
+///
+/// An array rather than an object keyed by uuid, because that is the shape already on disk: Swift's
+/// `[PaneID: PaneSpec]` could not be a JSON object without a `CodingKey` conformance nobody wrote.
+/// The order is the map's own, which is the ids' byte order — and byte order over a uuid is the
+/// same order as over its uppercase text, so the rows land exactly where Swift's
+/// `sorted { $0.pane.raw.uuidString < … }` put them.
+fn encode_session(session: &Session) -> Json {
+    let specs = session
+        .specs
+        .iter()
+        .map(|(pane, spec)| object([("pane", encode_id(pane.bytes())), ("spec", encode_spec(spec))]))
+        .collect();
+    let mut members = vec![
+        ("id".to_owned(), encode_id(session.id.bytes())),
+        ("name".to_owned(), Json::String(session.name.clone())),
+        (
+            "tabs".to_owned(),
+            Json::Array(session.tabs.iter().map(encode_tab).collect()),
+        ),
+        (
+            "activeTabIndex".to_owned(),
+            Json::Integer(i64::try_from(session.active_tab_index).unwrap_or(0)),
+        ),
+        ("specs".to_owned(), Json::Array(specs)),
+    ];
+    // Only when non-empty, so a detach-free session's bytes stay identical to a file from before
+    // the field existed.
+    if !session.detached.is_empty() {
+        members.push((
+            "detached".to_owned(),
+            Json::Array(session.detached.iter().copied().map(encode_detached).collect()),
+        ));
+    }
+    Json::Object(members.into_iter().collect())
+}
+
+/// A persisted list: a TOLERANT container around STRICT elements.
+///
+/// The container is tolerant because a value the type refuses — `"specs": 5`, `"detached": {}` —
+/// named no panes to begin with, so reading it as no list loses nothing the file still described.
+/// The elements are not, because a `try?` per row would drop one pane out of an arrangement the
+/// rest of which decoded and report success: a `desktop` pane coming back as a blank terminal is
+/// worse than a load that visibly refuses.
+fn tolerant_array<'a>(value: &'a Json, key: &str) -> &'a [Json] {
+    value.get(key).and_then(Json::array).unwrap_or_default()
+}
+
+/// One session, repaired.
+///
+/// `activeTabIndex` is FILLED to `0` from anything unreadable, which is the same answer the field's
+/// own normalizer already gives an out-of-range one — and a value of the wrong type carries
+/// strictly less information than `900` does.
+///
+/// # Errors
+/// [`JsonError`] for a missing id or name, a `tabs` key that is not an array, or a malformed tab,
+/// spec row or detached record.
+fn decode_session(value: &Json, mint: &mut impl IdSource) -> Result<Session> {
+    let id = SessionId::from_bytes(decode_id(value, "id")?);
+    let name = text(value, "name")?;
+    // The tab list is the ARRANGEMENT, not a side table: a session whose tabs cannot be read is not
+    // a session with fewer tabs, so this list is strict where `specs` and `detached` are not.
+    let rows = field(value, "tabs")?
+        .array()
+        .ok_or_else(|| malformed("a session's tabs are not an array"))?;
+    let mut tabs = Vec::with_capacity(rows.len());
+    for row in rows {
+        tabs.push(decode_tab(row, mint)?);
+    }
+    let mut specs = BTreeMap::new();
+    for row in tolerant_array(value, "specs") {
+        specs.insert(
+            PaneId::from_bytes(decode_id(row, "pane")?),
+            decode_spec(field(row, "spec")?)?,
+        );
+    }
+    let mut detached = Vec::new();
+    for row in tolerant_array(value, "detached") {
+        detached.push(decode_detached(row)?);
+    }
+    Ok(Session {
+        id,
+        name,
+        tabs,
+        active_tab_index: value
+            .get("activeTabIndex")
+            .and_then(Json::integer)
+            .and_then(|index| usize::try_from(index).ok())
+            .unwrap_or(0),
+        specs,
+        detached,
+    })
+}
+
+/// The whole workspace as the file's own JSON, ending in a newline.
+///
+/// The version written is the VALUE's, not this build's, so a caller that means to re-stamp a file
+/// says so by setting it — an encoder that quietly claimed the current shape would make the
+/// no-migration rule a lie told by the writer.
+#[must_use]
+pub fn encode_file(workspace: &TreeWorkspace) -> String {
+    let mut members = vec![
+        (
+            "schemaVersion".to_owned(),
+            Json::Integer(workspace.schema_version),
+        ),
+        (
+            "sessions".to_owned(),
+            Json::Array(workspace.sessions.iter().map(encode_session).collect()),
+        ),
+    ];
+    if let Some(active) = workspace.active_session_id {
+        members.push(("activeSessionID".to_owned(), encode_id(active.bytes())));
+    }
+    to_pretty_string(&Json::Object(members.into_iter().collect()))
+}
+
+/// The whole workspace from a file's bytes, repaired, or the one refusal that stopped it.
+///
+/// The repair runs HERE rather than in the caller, because it is what makes the answer sayable at
+/// all: a decoded file can hold a session with no tab and a leaf with no spec, and neither is a
+/// shape the document's cell encoding — the way this answer crosses to Swift — can spell. So the
+/// decode ends where [`TreeWorkspace::normalized`] ends, which is also where the launch path
+/// already ended.
+///
+/// `mint` supplies the identities a re-seed needs; [`minted_ids_for`] sizes the pool from the same
+/// bytes. The ids it hands out must be FRESH rather than derived, and that is the opposite ruling
+/// from [`derived_split_id`] one section up: a re-seeded pane is a pane the file did not contain,
+/// so no persisted cell is keyed by it and a stable name has nothing to keep pointing at — while a
+/// `PaneId` IS the join to the registry that owns a process, so a name derived from the file's own
+/// contents is one two launches, or two clients reading one document, could both produce.
+///
+/// # Errors
+/// [`FileError`] for bytes that are not this file, a version this build does not speak, or a file
+/// naming more than [`MAX_PANES`] panes.
+pub fn decode_file(bytes: &[u8], mint: &mut impl IdSource) -> core::result::Result<TreeWorkspace, FileError> {
+    let Ok(text) = core::str::from_utf8(bytes) else {
+        return Err(FileError::Malformed);
+    };
+    let Ok(value) = parse(text) else {
+        return Err(FileError::Malformed);
+    };
+    // The version is read BEFORE anything else is believed. A file from another shape decodes
+    // "successfully" against the keys this shape still recognises, and the next autosave would then
+    // rewrite it without whatever the old shape carried.
+    let Some(version) = value.get("schemaVersion").and_then(Json::integer) else {
+        return Err(FileError::Malformed);
+    };
+    if version != CURRENT_SCHEMA_VERSION {
+        return Err(FileError::VersionMismatch(version));
+    }
+    let Some(rows) = value.get("sessions").and_then(Json::array) else {
+        return Err(FileError::Malformed);
+    };
+    let mut sessions = Vec::with_capacity(rows.len());
+    for row in rows {
+        let Ok(session) = decode_session(row, mint) else {
+            return Err(FileError::Malformed);
+        };
+        sessions.push(session);
+    }
+    let workspace = TreeWorkspace::new(
+        sessions,
+        decode_optional_id(&value, "activeSessionID").map(SessionId::from_bytes),
+    );
+    // Counted before the repair, so the bound is on what the FILE claimed rather than on what a
+    // re-seed happened to add to it.
+    if workspace.all_pane_ids().len() > MAX_PANES {
+        return Err(FileError::TooManyPanes);
+    }
+    Ok(workspace.normalized(mint))
+}
+
+/// How many identities a [`decode_file`] of these bytes can spend.
+///
+/// Asked rather than guessed, because a pool one short does not fail — it REPEATS an identity, and
+/// two panes sharing one is a pane that reattaches to a process it never opened. The count is exact
+/// rather than a bound off the byte length: every id is attributable to something the file names,
+/// so it costs one parse of a file that is read once per launch and answers a number a reader can
+/// check against the passes that spend it.
+///
+/// Bytes that are not a file answer the re-seed's own three, which is what the caller will need if
+/// it decides to mint the default itself.
+#[must_use]
+pub fn minted_ids_for(bytes: &[u8]) -> usize {
+    let Ok(text) = core::str::from_utf8(bytes) else {
+        return EMPTY_WORKSPACE_IDS;
+    };
+    let Ok(value) = parse(text) else {
+        return EMPTY_WORKSPACE_IDS;
+    };
+    let mut needed = EMPTY_WORKSPACE_IDS;
+    for session in tolerant_array(&value, "sessions") {
+        needed = needed.saturating_add(TABLESS_SESSION_IDS);
+        for tab in tolerant_array(session, "tabs") {
+            // One for a tree that repairs away to nothing, and one per leaf, since every leaf can
+            // be the duplicate of an earlier one.
+            let leaves = tab.get("root").map_or(0, leaf_count);
+            needed = needed.saturating_add(leaves.saturating_add(1));
+        }
+    }
+    needed
+}
+
+/// How many leaves a raw node describes, before any repair.
+fn leaf_count(node: &Json) -> usize {
+    if node.get("leaf").is_some() {
+        return 1;
+    }
+    node.get("split")
+        .map(|split| tolerant_array(split, "children"))
+        .unwrap_or_default()
+        .iter()
+        .map(|child| child.get("node").map_or(0, leaf_count))
+        .sum()
+}
+
 #[cfg(test)]
 mod tests {
     #![expect(
@@ -426,14 +770,18 @@ mod tests {
         reason = "a refused decode in a round-trip test has nothing to return"
     )]
 
+    use std::collections::BTreeSet;
+
     use super::{
-        decode_pane_kind, decode_spec, decode_split_node, decode_weight, encode_spec, encode_split_node,
-        encode_weight,
+        EMPTY_WORKSPACE_IDS, FileError, MAX_PANES, NO_REFUSAL, decode_file, decode_pane_kind, decode_spec,
+        decode_split_node, decode_weight, encode_file, encode_spec, encode_split_node, encode_weight,
+        minted_ids_for,
     };
-    use crate::identity::{PaneId, SplitNodeId};
+    use crate::identity::{IdSource, PaneId, SessionId, SplitNodeId, TabId};
     use crate::json::{Json, object, parse, to_pretty_string};
-    use crate::session::{PaneKind, PaneSpec, VideoEndpoint};
+    use crate::session::{DetachedPane, PaneKind, PaneSpec, Session, Tab, VideoEndpoint};
     use crate::split_tree::{MAX_DEPTH, MIN_WEIGHT, SplitAxis, SplitNode, SplitWeight, WeightedChild};
+    use crate::workspace::{CURRENT_SCHEMA_VERSION, TreeWorkspace};
 
     fn pane(byte: u8) -> PaneId {
         PaneId::from_bytes([byte; 16])
@@ -738,5 +1086,323 @@ mod tests {
             panic!("it parses")
         };
         assert_eq!(decode_spec(&parsed), Ok(original));
+    }
+
+    // ------------------------------------------------------------------------------------------ //
+    // The file
+    // ------------------------------------------------------------------------------------------ //
+
+    /// A deterministic stand-in for the runtime's entropy, at every kind. The repair only needs the
+    /// ids to be FRESH, and a counter is fresh enough while staying replayable.
+    struct Counter(u8);
+
+    impl Counter {
+        fn take(&mut self) -> [u8; 16] {
+            self.0 = self.0.wrapping_add(1);
+            [self.0; 16]
+        }
+    }
+
+    impl IdSource for Counter {
+        fn pane(&mut self) -> PaneId {
+            PaneId::from_bytes(self.take())
+        }
+
+        fn tab(&mut self) -> TabId {
+            TabId::from_bytes(self.take())
+        }
+
+        fn session(&mut self) -> SessionId {
+            SessionId::from_bytes(self.take())
+        }
+
+        fn split(&mut self) -> SplitNodeId {
+            SplitNodeId::from_bytes(self.take())
+        }
+    }
+
+    fn ids() -> Counter {
+        Counter(200)
+    }
+
+    fn workspace() -> TreeWorkspace {
+        let mut session = Session::single_pane(
+            SessionId::from_bytes([1; 16]),
+            "work",
+            TabId::from_bytes([2; 16]),
+            pane(4),
+            spec(),
+        );
+        session.tabs.push(Tab::new(TabId::from_bytes([3; 16]), tree()));
+        for leaf in [pane(1), pane(2), pane(3)] {
+            session.specs.insert(leaf, spec());
+        }
+        TreeWorkspace::new(vec![session], Some(SessionId::from_bytes([1; 16])))
+    }
+
+    fn read(text: &str) -> Result<TreeWorkspace, FileError> {
+        decode_file(text.as_bytes(), &mut ids())
+    }
+
+    #[test]
+    fn a_healthy_file_round_trips_and_re_encodes_to_the_same_bytes() {
+        let original = workspace();
+        let text = encode_file(&original);
+        let Ok(back) = read(&text) else {
+            panic!("what this module wrote, this module reads");
+        };
+        assert_eq!(back, original);
+        assert_eq!(encode_file(&back), text, "the round trip is stable");
+    }
+
+    #[test]
+    fn the_file_is_written_in_the_shape_already_on_disk() {
+        let text = encode_file(&workspace());
+        for spelling in [
+            "\"schemaVersion\" : 12",
+            "\"sessions\"",
+            "\"activeSessionID\"",
+            "\"activeTabIndex\" : 0",
+            "\"specs\"",
+            "\"raw\"",
+        ] {
+            assert!(text.contains(spelling), "{spelling} is missing from: {text}");
+        }
+        assert!(
+            !text.contains("\"detached\""),
+            "a detach-free session writes no list at all"
+        );
+    }
+
+    #[test]
+    fn a_detached_pane_survives_the_round_trip_with_its_origin() {
+        let mut original = workspace();
+        let detached = pane(9);
+        if let Some(session) = original.sessions.first_mut() {
+            session.specs.insert(detached, spec());
+            session.detached.push(DetachedPane {
+                pane: detached,
+                origin_tab: Some(TabId::from_bytes([2; 16])),
+            });
+        }
+        let Ok(back) = read(&encode_file(&original)) else {
+            panic!("a detached pane is part of the arrangement");
+        };
+        assert_eq!(back, original);
+    }
+
+    /// A whole file whose one split carries no `id` — a hand-written layout, or one from a build
+    /// that predates the id. The schema version is spelled out because a file that claimed another
+    /// one would never reach the tree at all.
+    const UNNAMED_SPLIT_FILE: &str = r#"{
+      "schemaVersion": 12,
+      "sessions": [
+        {
+          "id": { "raw": "0A0A0A0A-0A0A-0A0A-0A0A-0A0A0A0A0A0A" },
+          "name": "work",
+          "activeTabIndex": 0,
+          "tabs": [
+            {
+              "id": { "raw": "0B0B0B0B-0B0B-0B0B-0B0B-0B0B0B0B0B0B" },
+              "title": "",
+              "root": { "split": {
+                "axis": "horizontal",
+                "children": [
+                  { "node": { "leaf": { "raw": "01010101-0101-0101-0101-010101010101" } } },
+                  { "node": { "leaf": { "raw": "02020202-0202-0202-0202-020202020202" } } }
+                ]
+              } }
+            }
+          ],
+          "specs": [
+            { "pane": { "raw": "01010101-0101-0101-0101-010101010101" },
+              "spec": { "kind": "terminal", "title": "one" } },
+            { "pane": { "raw": "02020202-0202-0202-0202-020202020202" },
+              "spec": { "kind": "terminal", "title": "two" } }
+          ]
+        }
+      ]
+    }"#;
+
+    /// **The defect this whole port exists to close.** Swift's `?? SplitNodeID()` minted a fresh
+    /// uuid per unnamed split, so one file read twice named the same seam two different things —
+    /// and a `splitNode/<id>/weight` cell written before a relaunch was orphaned after it. The
+    /// derivation is a function of the FILE, so two reads agree.
+    #[test]
+    fn the_same_file_names_the_same_dividers_on_every_load() {
+        let (Ok(first), Ok(second)) = (read(UNNAMED_SPLIT_FILE), read(UNNAMED_SPLIT_FILE)) else {
+            panic!("both reads decode");
+        };
+        let seams = |workspace: &TreeWorkspace| -> Vec<SplitNodeId> {
+            workspace
+                .sessions
+                .iter()
+                .flat_map(|session| session.tabs.iter().flat_map(|tab| split_ids(&tab.root)))
+                .collect()
+        };
+        assert!(!seams(&first).is_empty(), "the fixture has a divider in it");
+        assert_eq!(
+            seams(&first),
+            seams(&second),
+            "a divider's name is a function of the file, not of when it was read",
+        );
+    }
+
+    #[test]
+    fn a_version_this_build_does_not_speak_names_itself_in_the_refusal() {
+        let text = encode_file(&workspace()).replace("\"schemaVersion\" : 12", "\"schemaVersion\" : 99");
+        assert_eq!(read(&text), Err(FileError::VersionMismatch(99)));
+        assert_eq!(
+            FileError::VersionMismatch(99).claimed_version(),
+            Some(99),
+            "the caller cannot log a shape it was not told"
+        );
+        assert_eq!(FileError::Malformed.claimed_version(), None);
+    }
+
+    #[test]
+    fn bytes_that_are_not_a_file_refuse_rather_than_decode_to_nothing() {
+        for hostile in ["", "not json", "{}", "[]", "{\"schemaVersion\" : 12}"] {
+            assert_eq!(read(hostile), Err(FileError::Malformed), "{hostile:?}");
+        }
+        assert_eq!(
+            decode_file(&[0xFF, 0xFE], &mut ids()),
+            Err(FileError::Malformed),
+            "bytes that are not UTF-8 are not a file either",
+        );
+    }
+
+    #[test]
+    fn a_file_naming_more_panes_than_a_launch_can_hold_is_refused_whole() {
+        let mut session = Session::single_pane(
+            SessionId::from_bytes([1; 16]),
+            "work",
+            TabId::from_bytes([2; 16]),
+            pane(1),
+            spec(),
+        );
+        // One tab per pane, so the count is the panes rather than one enormous tree.
+        for step in 0..=MAX_PANES {
+            let ordinal = u128::from(u64::try_from(step).unwrap_or(0));
+            let leaf = PaneId::from_bytes(ordinal.to_be_bytes());
+            session.tabs.push(Tab::new(
+                TabId::from_bytes((ordinal | (1 << 120)).to_be_bytes()),
+                SplitNode::Leaf(leaf),
+            ));
+            session.specs.insert(leaf, spec());
+        }
+        let text = encode_file(&TreeWorkspace::new(vec![session], None));
+        assert_eq!(read(&text), Err(FileError::TooManyPanes));
+    }
+
+    #[test]
+    fn every_refusal_has_a_byte_of_its_own_and_none_of_them_is_the_load_that_worked() {
+        let codes = [
+            FileError::Malformed.code(),
+            FileError::VersionMismatch(0).code(),
+            FileError::TooManyPanes.code(),
+        ];
+        assert!(!codes.contains(&NO_REFUSAL), "a refusal reads as a load");
+        let distinct: BTreeSet<u8> = codes.iter().copied().collect();
+        assert_eq!(distinct.len(), codes.len(), "two refusals share a byte");
+    }
+
+    /// A session the file left with no tab keeps its NAME and gets a tab, where the document's own
+    /// ingest would have dropped it. This is the repair that could not cross as cells, which is why
+    /// it happens on this side of the boundary.
+    #[test]
+    fn a_session_with_no_tab_is_re_seeded_rather_than_dropped() {
+        let text = format!(
+            "{{\"schemaVersion\" : {CURRENT_SCHEMA_VERSION}, \"sessions\" : [{{\"id\" : {{\"raw\" : \
+             \"01010101-0101-0101-0101-010101010101\"}}, \"name\" : \"kept\", \"tabs\" : [], \"specs\" : \
+             []}}]}}"
+        );
+        let Ok(back) = read(&text) else {
+            panic!("an empty session is a repair, not a fault");
+        };
+        assert_eq!(back.sessions.len(), 1);
+        let Some(session) = back.sessions.first() else {
+            panic!("the session survives");
+        };
+        assert_eq!(session.name, "kept", "the name is the part worth keeping");
+        assert_eq!(session.tabs.len(), 1, "and it is given somewhere to live");
+        assert_eq!(session.specs.len(), 1, "the re-seeded leaf carries a spec");
+    }
+
+    #[test]
+    fn a_side_table_that_is_not_a_list_costs_the_titles_and_not_the_arrangement() {
+        let text = encode_file(&workspace()).replace("\"specs\" : [", "\"specs\" : 5, \"unused\" : [");
+        let Ok(back) = read(&text) else {
+            panic!("a value that named no pane is not a fault");
+        };
+        assert_eq!(
+            back.all_pane_ids().len(),
+            workspace().all_pane_ids().len(),
+            "every pane the file still described is where the file left it",
+        );
+        assert!(
+            back.invariant_holds(),
+            "the repair re-seeds a default spec for every leaf"
+        );
+    }
+
+    #[test]
+    fn a_spec_row_with_no_spec_is_still_a_fault() {
+        let text = encode_file(&workspace()).replacen("\"spec\" : {", "\"nospec\" : {", 1);
+        assert_eq!(
+            read(&text),
+            Err(FileError::Malformed),
+            "a pane quietly turning into a different pane is worse than a refusal",
+        );
+    }
+
+    #[test]
+    fn a_tabs_key_that_is_not_a_list_is_a_fault_where_a_side_table_is_not() {
+        let text = encode_file(&workspace()).replace("\"tabs\" : [", "\"tabs\" : 5, \"unused\" : [");
+        assert_eq!(read(&text), Err(FileError::Malformed));
+    }
+
+    /// The pool must be big enough for every repair the file can force. A pool one short does not
+    /// fail — it repeats an identity — so this asserts the COUNT against a decode that records what
+    /// it actually spent.
+    #[test]
+    fn the_pool_is_sized_for_every_identity_a_decode_can_spend() {
+        // A file whose every leaf is the same pane: every repair path at once, in one document.
+        let text = encode_file(&workspace()).replace(
+            "02020202-0202-0202-0202-020202020202",
+            "01010101-0101-0101-0101-010101010101",
+        );
+        let mut counter = Counter(0);
+        let Ok(_) = decode_file(text.as_bytes(), &mut counter) else {
+            panic!("a duplicated leaf is a repair");
+        };
+        assert!(
+            usize::from(counter.0) <= minted_ids_for(text.as_bytes()),
+            "the decode spent {} identities and the pool was sized for {}",
+            counter.0,
+            minted_ids_for(text.as_bytes()),
+        );
+        assert!(
+            minted_ids_for(b"not a file") >= EMPTY_WORKSPACE_IDS,
+            "bytes that are not a file still cost the default's own three"
+        );
+    }
+
+    #[test]
+    fn a_duplicate_leaf_across_two_tabs_is_re_minted_from_the_pool() {
+        let text = encode_file(&workspace()).replace(
+            "02020202-0202-0202-0202-020202020202",
+            "01010101-0101-0101-0101-010101010101",
+        );
+        let Ok(back) = read(&text) else {
+            panic!("a duplicate is repaired, not refused");
+        };
+        let panes = back.all_pane_ids();
+        let unique: BTreeSet<PaneId> = panes.iter().copied().collect();
+        assert_eq!(
+            panes.len(),
+            unique.len(),
+            "the registry is keyed one-to-one by pane id"
+        );
     }
 }

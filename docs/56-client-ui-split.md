@@ -3356,6 +3356,86 @@ Three things are **not** covered, and are written down rather than left to be re
 
 The Rust half is green (`cargo test`: 354 + 11 passing; `cargo clippy -D clippy::pedantic` clean).
 
+### Increment 77 — every divider you dragged was renamed on the next launch
+
+`rust/slopdesk-workspace/src/persist.rs` was the client's `workspace.json` ported from the pane up —
+kinds, specs, weights, split nodes — with **no caller**: `lib.rs` re-exported four functions, no door
+reached them, and `check-invariants.py` carried the module in `STRANDED_RUST_MODULES` as registered
+debt. What it did NOT have was the wrapper those pieces live in: sessions, tabs, the schema version,
+the refusals. So the file was still read and written end to end by `SplitNode+Codable.swift` and the
+`Codable` conformances beside it — two implementations, which is the one thing `CLAUDE.md` forbids
+outright. The interesting part is not that there were two. It is that they had already stopped
+agreeing, in the way a stranded port always eventually does: nobody was diffing them, because one of
+them never ran. Finishing it was therefore two jobs, not one — grow the module to the whole document,
+then put it behind doors — and only the second was what the audit that found this had scoped.
+
+**The disagreement is one line and a person feels it every launch.** A `{"split": {…}}` object with
+no `id` — what a hand-edited file, or a file written before ids existed, carries — was named in
+Swift by `?? SplitNodeID()`: a fresh UUID, per load. The crate DERIVES it from the seam's place in the
+tree (`persist::derived_split_id(path, axis, children)`), so two loads of one file name the same
+divider the same way. Divider drags persist as `splitNode/<id>/weight`. Under the Swift decoder
+every drag a person had ever made was orphaned on the next launch and every seam snapped back to its
+default — no crash, no log, no failing test, and no way to tell it from "the app forgot", which is
+what it was.
+
+**Four doors, `docs/55` §4 shape, and one of them is not the name the audit proposed.** `_encode`
+takes the document's own cells plus its blob and answers file bytes; `_decode` takes bytes, a
+pre-minted id pool and two out-params (a refusal byte, a claimed version) and answers an encoded
+snapshot; `_status` exports the refusal table by arm order, exactly as
+`slopdesk_ws_state_file_status` does, so no arm is transcribed on the Swift side. The fourth was
+going to be "which ids did the decode mint", and it is instead
+**`slopdesk_ws_workspace_file_minted_ids(bytes, len) -> usize`**, which answers the POOL SIZE. The
+audit's version had no work to do: the snapshot the decode returns already carries every id the
+repair minted, so asking again is asking the answer about itself. What Swift genuinely cannot know
+is how many identities the parse will spend, and it cannot know it because knowing needs the parse.
+That matters more than it sounds: the crate holds no entropy on purpose, and a pool that runs dry
+REPEATS its last entry — two panes with one id, re-minted apart on every load, which is the divider
+defect again wearing the pane's clothes. The size is asked of the file, and `check-supervisor.sh`
+pins that it stays asked.
+
+**The asymmetry the port makes explicit**: a SplitNodeId is DERIVED because it names a seam inside
+the file, and a PaneId is MINTED because it joins to a live process registry the file knows nothing
+about. The tree crosses as the document's own cells for the reason increment 76 gives — there is no
+`#[repr(C)]` flattening of a split tree that is not a second grammar to keep in step — so
+`Codec/WorkspaceFile.swift` is the fourth file of that shape and decides nothing: no version check,
+no tolerance rule, no repair. The repair runs INSIDE the door, which is forced rather than chosen,
+because the cells cannot spell the two shapes a file can hold and a document cannot (a session with
+no tab, a leaf with no spec).
+
+**Deleted: 273 lines of `SplitNode+Codable.swift`, and 262 more across six files** — `Session`'s
+hand-written `init(from:)`/`encode(to:)` pair and its `SpecEntry`, `TreeWorkspace`'s `CodingKeys`
+and decoder, `PaneSpec`'s extension, `VideoEndpoint`'s, and `Codable` off `PaneID`, `SessionID`,
+`TabID`, `SplitNodeID`, `SplitWeight`, `WeightedChild`, `DetachedPane`, `Tab`. `PaneKind` and
+`SplitAxis` KEEP theirs: they are vocabulary values inside the device-prefs templates, which
+`docs/55` §8 puts outside this boundary. `WorkspacePersistence` lost its encoder, its `maxItems`
+(the cap is `persist::MAX_PANES`) and its normalize-on-load guard, and is now three lines of read,
+three of write. 568 lines of Swift out under `Sources/`, 159 in — and the 159 are a marshaller.
+
+**The two decode-repair suites were re-pointed, not deleted and not mirrored.** Every case that
+asserted a repair through the Swift decoder now asserts it through the door, which is the same
+coverage against the implementation that runs. What did NOT survive is the half of
+`SplitNodeCodableTests` that re-asserted repairs the crate's own `split_tree` tests already own —
+the empty-split drop, the single-child collapse, the same-axis flatten, the duplicate re-mint, the
+weight clamp. Writing those in Swift again would have produced exactly the cross-language mirror
+fixture `docs/55` §8 names as how every cross-language bug in this repo was born. The file is
+`WorkspaceFileRoundTripTests` now and says only what this side can say: a real arrangement survives
+whole, two saves are byte-identical, garbage and a foreign `schemaVersion` fail soft. The defect
+itself is pinned three times, once per layer —
+`persist::the_same_file_names_the_same_dividers_on_every_load`, `slopdesk-ffi`'s
+`two_loads_of_one_file_name_its_dividers_the_same_way` (two loads, two DIFFERENT pools, identical
+seam ids), and `SplitNodeDecodeRepairTests.testTheSameFileNamesTheSameDividersOnEveryLoad`.
+
+Two things are owed rather than done. **The first save after this lands rewrites the whole file**:
+Foundation escaped `/` as `\/` and wrote no trailing newline, and `slopdesk_workspace::json` does
+the opposite — the same one-time diff the state-file port took, and it changes no value. And the
+decode is now **sharper** than the code it replaces in one place: a detached entry with no spec is
+dropped rather than carried, so a file holding one loses that satellite instead of loading a pane
+nothing can draw. That is the repair's existing rule applied where Swift had not been applying it,
+and the round-trip fixture that used to omit the spec row now carries one.
+
+`cargo test` is green (698 + 4 in `slopdesk-ffi`, 551 in `slopdesk-workspace`), clippy and nightly
+rustfmt clean, `check-invariants` down one stranded module.
+
 ### Increment 78 — the footer asked the clipboard a question it could only answer with an alert
 
 Increment 75 flagged this on its way past and did not fix it: `GuiPastePlateMenu.canPasteCurrent` called

@@ -25,6 +25,8 @@
 //! [`PaneLiveness::from_document`]. One round-trippable value beats an encoder and a decoder
 //! maintained apart, and it buys a round-trip test with no PTY in sight.
 
+use std::collections::BTreeSet;
+
 use super::codec;
 use super::fields::{PaneLivenessState, pane};
 use super::state::{HostWorkspaceState, WorkspaceEntry, WorkspaceKey, WorkspaceObjectKind};
@@ -325,6 +327,63 @@ pub fn mark_pane_dead(state: &mut HostWorkspaceState, pane_id: RawUuid) -> bool 
     merge_pane_liveness(state, &record)
 }
 
+/// Every pane the document holds, and the subset of them the TOPOLOGY half still names.
+///
+/// One walk rather than two, because both answers are read off the same keys and a second pass
+/// would be a second chance for the two to disagree about what a pane is.
+fn pane_inventory(state: &HostWorkspaceState) -> (BTreeSet<RawUuid>, BTreeSet<RawUuid>) {
+    let mut known = BTreeSet::new();
+    let mut arranged = BTreeSet::new();
+    for key in state.keys() {
+        if key.kind != WorkspaceObjectKind::Pane.as_byte() {
+            continue;
+        }
+        known.insert(key.object_id);
+        if TOPOLOGY_FIELDS.contains(&key.field) {
+            arranged.insert(key.object_id);
+        }
+    }
+    (known, arranged)
+}
+
+/// One reconciler pass: fold in what was captured, and decide what the rest of the panes are.
+///
+/// This is the decision the naive "reap whatever was not captured" rule gets wrong the moment
+/// topology lives in the same document. A pane the host restored from disk has NO process — that is
+/// the whole point of a restart — but it is still a real pane in a real tab, and deleting it would
+/// erase the person's layout on every restart, silently, with a version bump as the only trace. So
+/// the rule is three-way:
+///
+/// - **captured** — its liveness is whatever the capture says, and it is not a reap candidate at
+///   all. That includes a pane the topology has never heard of: a pane spawned between the last
+///   topology write and this tick would otherwise be deleted by the tick that first saw it.
+/// - **in the topology, not captured** — [`mark_pane_dead`], so it renders STALE rather than
+///   fake-live, keeping only the two fields that describe a PLACE rather than a process.
+/// - **in neither** — reaped whole, because nothing owns it. That is a pane whose channel closed
+///   and whose tab entry is already gone, which is the case the two-way rule was actually for.
+///
+/// Returns whether anything changed, for the reason [`merge_pane_liveness`] does: this runs on a
+/// backstop timer, every bump costs every subscriber a frame, and a settled host has to be silent.
+pub fn reconcile(state: &mut HostWorkspaceState, captured: &[PaneLiveness]) -> bool {
+    let mut changed = false;
+    for record in captured {
+        changed |= merge_pane_liveness(state, record);
+    }
+    let alive: BTreeSet<RawUuid> = captured.iter().map(|record| record.pane_id).collect();
+    let (known, arranged) = pane_inventory(state);
+    for pane_id in known.difference(&alive).copied() {
+        if arranged.contains(&pane_id) {
+            changed |= mark_pane_dead(state, pane_id);
+        } else {
+            // Every id here came out of a key, so the object has cells and removing it always
+            // changes the document — there is no "removed nothing" arm to report.
+            state.remove_object(WorkspaceObjectKind::Pane.as_byte(), pane_id);
+            changed = true;
+        }
+    }
+    changed
+}
+
 #[cfg(test)]
 mod tests {
     #![expect(
@@ -334,7 +393,7 @@ mod tests {
 
     use super::{
         AgentState, Grid, LIVENESS_FIELDS, PaneLiveness, PaneLivenessState, Progress, TOPOLOGY_FIELDS,
-        mark_pane_dead, merge_pane_liveness,
+        mark_pane_dead, merge_pane_liveness, reconcile,
     };
     use crate::document::codec;
     use crate::document::fields::pane;
@@ -489,6 +548,145 @@ mod tests {
         assert_eq!(read.running_command, None);
         assert_eq!(read.agent_state, None);
         assert!(!read.command_running);
+    }
+
+    /// A pane the person ARRANGED: one topology cell is all the reap rule reads, and writing a
+    /// whole tab here would test the topology projection rather than this decision.
+    fn arranged(state: &mut HostWorkspaceState, pane_id: RawUuid) {
+        state.set(
+            WorkspaceKey::of(WorkspaceObjectKind::Pane, pane_id, pane::TITLE),
+            codec::encode_string("nvim", codec::MAX_STRING_BYTES),
+        );
+    }
+
+    const OTHER: RawUuid = [9; 16];
+
+    #[test]
+    fn a_restart_that_captures_nothing_keeps_every_pane_in_the_layout() {
+        // The whole reason the rule is three-way. A host that has just restarted has a full layout
+        // and not one running process, so reaping by "was not captured" deletes the person's
+        // workspace on every restart.
+        let mut state = HostWorkspaceState::new();
+        arranged(&mut state, PANE);
+        arranged(&mut state, OTHER);
+        assert!(reconcile(&mut state, &[]));
+        for pane_id in [PANE, OTHER] {
+            assert_eq!(
+                PaneLiveness::from_document(pane_id, &state).map(|record| record.liveness),
+                Some(PaneLivenessState::Dead),
+                "present, and honestly stale",
+            );
+            assert_eq!(
+                state
+                    .get(&WorkspaceKey::of(WorkspaceObjectKind::Pane, pane_id, pane::TITLE))
+                    .and_then(codec::decode_string)
+                    .as_deref(),
+                Some("nvim"),
+                "a reconcile must not touch a persisted title",
+            );
+        }
+    }
+
+    #[test]
+    fn a_captured_pane_keeps_what_the_capture_said() {
+        let mut state = HostWorkspaceState::new();
+        arranged(&mut state, PANE);
+        arranged(&mut state, OTHER);
+        let mut record = PaneLiveness::new(PANE, PaneLivenessState::Attached);
+        record.live_title = Some("main.swift".to_owned());
+        record.title_fresh = true;
+        assert!(reconcile(&mut state, &[record]));
+        let Some(read) = PaneLiveness::from_document(PANE, &state) else {
+            panic!("the captured pane is still there");
+        };
+        assert_eq!(read.liveness, PaneLivenessState::Attached);
+        assert_eq!(read.live_title.as_deref(), Some("main.swift"));
+        assert!(read.title_fresh);
+        // …and the pane that was NOT captured took the other branch in the same pass.
+        assert_eq!(
+            PaneLiveness::from_document(OTHER, &state).map(|other| other.liveness),
+            Some(PaneLivenessState::Dead),
+        );
+    }
+
+    #[test]
+    fn a_pane_that_stopped_being_captured_keeps_the_place_and_drops_the_process() {
+        let mut state = document_of(&full_record());
+        arranged(&mut state, PANE);
+        assert!(reconcile(&mut state, &[]));
+        let Some(read) = PaneLiveness::from_document(PANE, &state) else {
+            panic!("a stale pane is still a pane");
+        };
+        assert_eq!(read.liveness, PaneLivenessState::Dead);
+        assert_eq!(read.cwd.as_deref(), Some("/work/slop-desk"));
+        assert_eq!(read.project_key.as_deref(), Some("slop-desk"));
+        assert_eq!(read.running_command, None);
+        assert_eq!(read.foreground_process, None);
+        assert_eq!(read.agent_label, None);
+        assert_eq!(read.grid, None);
+        assert!(!read.command_running);
+        assert_eq!(read.live_title, None, "a live title is a claim about a process");
+    }
+
+    #[test]
+    fn a_pane_with_no_topology_and_no_capture_is_reaped() {
+        let mut state = document_of(&full_record());
+        arranged(&mut state, OTHER);
+        assert!(reconcile(&mut state, &[]));
+        assert!(
+            PaneLiveness::from_document(PANE, &state).is_none(),
+            "nothing owns it",
+        );
+        assert!(
+            state
+                .keys_of_object(WorkspaceObjectKind::Pane.as_byte(), PANE)
+                .is_empty(),
+            "reaped whole, not left as a husk of one field",
+        );
+        assert!(PaneLiveness::from_document(OTHER, &state).is_some());
+    }
+
+    #[test]
+    fn a_captured_pane_outside_the_topology_is_not_reaped() {
+        // Capture alone is title enough. A pane spawned between the last topology write and this
+        // tick would otherwise be deleted by the tick that first saw it.
+        let mut state = HostWorkspaceState::new();
+        arranged(&mut state, OTHER);
+        let mut fresh = PaneLiveness::new(PANE, PaneLivenessState::Attached);
+        fresh.live_title = Some("sh".to_owned());
+        assert!(reconcile(&mut state, &[fresh]));
+        assert_eq!(
+            PaneLiveness::from_document(PANE, &state).and_then(|record| record.live_title),
+            Some("sh".to_owned()),
+        );
+    }
+
+    #[test]
+    fn a_settled_reconcile_reports_no_change() {
+        let mut state = HostWorkspaceState::new();
+        arranged(&mut state, PANE);
+        assert!(reconcile(&mut state, &[]));
+        assert!(
+            !reconcile(&mut state, &[]),
+            "this runs on a backstop timer — an idle host must not churn a version number",
+        );
+    }
+
+    #[test]
+    fn eviction_and_reconcile_leave_a_pane_in_the_same_state() {
+        // A pane's rendering must not depend on which of the two noticed first.
+        let mut evicted = document_of(&full_record());
+        arranged(&mut evicted, PANE);
+        let mut reconciled = evicted.clone();
+        mark_pane_dead(&mut evicted, PANE);
+        reconcile(&mut reconciled, &[PaneLiveness::new(
+            OTHER,
+            PaneLivenessState::Attached,
+        )]);
+        assert_eq!(
+            PaneLiveness::from_document(PANE, &evicted),
+            PaneLiveness::from_document(PANE, &reconciled),
+        );
     }
 
     #[test]

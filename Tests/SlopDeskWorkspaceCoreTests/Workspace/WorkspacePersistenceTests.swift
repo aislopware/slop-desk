@@ -9,7 +9,7 @@ import XCTest
 /// - a current-version file round-trips with NO migration hop and writes no `.corrupt` sidecar;
 /// - garbage / a future `schemaVersion` / the retired canvas shape all reset to the default workspace,
 ///   copying the unreadable file aside first;
-/// - a file whose leaf count exceeds ``WorkspacePersistence/maxItems`` is bounded-reset.
+/// - a file whose leaf count exceeds ``WorkspaceFile/maxPanes`` is bounded-reset.
 ///
 /// (The app has no released persisted format, so there is no backward-compat migration to test — an
 /// older, incompatible on-disk shape simply fails to decode and falls back to the default.)
@@ -114,17 +114,17 @@ final class WorkspacePersistenceTests: XCTestCase {
         )
     }
 
-    /// A file whose leaf count EXCEEDS ``WorkspacePersistence/maxItems`` is bounded-reset (a corrupt file must
+    /// A file whose leaf count EXCEEDS ``WorkspaceFile/maxPanes`` is bounded-reset (a corrupt file must
     /// not make the store eagerly allocate a session per leaf on launch).
     func testLoadTreeExceedingMaxItemsIsBoundedReset() throws {
         let url = try tempURL()
         let persistence = WorkspacePersistence(fileURL: url)
-        // A single session carrying maxItems + 1 leaves, spread over tabs of 200: the document's own
+        // A single session carrying maxPanes + 1 leaves, spread over tabs of 200: the document's own
         // `childCount` is a u8, so no ONE split can hold them — an over-ceiling file is wide, never a
         // single impossible fan-out.
         var tabs: [Tab] = []
         var specs: [PaneID: PaneSpec] = [:]
-        while specs.count <= WorkspacePersistence.maxItems {
+        while specs.count <= WorkspaceFile.maxPanes {
             let leaves = (0..<200).map { _ in PaneID() }
             for leaf in leaves { specs[leaf] = PaneSpec(kind: .terminal, title: "x") }
             let root = SplitNode.split(
@@ -135,7 +135,7 @@ final class WorkspacePersistenceTests: XCTestCase {
         }
         let session = Session(name: "Local", tabs: tabs, activeTabIndex: 0, specs: specs)
         let tree = TreeWorkspace(sessions: [session], activeSessionID: session.id)
-        XCTAssertGreaterThan(tree.allPaneIDs().count, WorkspacePersistence.maxItems, "the fixture is over the ceiling")
+        XCTAssertGreaterThan(tree.allPaneIDs().count, WorkspaceFile.maxPanes, "the fixture is over the ceiling")
         try persistence.save(tree)
 
         let loaded = persistence.loadTree()

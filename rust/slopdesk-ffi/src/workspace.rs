@@ -37,10 +37,11 @@ use slopdesk_workspace::tree_ops::{self, TileLayout};
 use slopdesk_workspace::workspace::{self, TreeWorkspace};
 use slopdesk_workspace::{
     FocusDirection, PaneId, PaneKind, PaneSpec, Rect, Size, SolvedLayout, SplitAxis, SplitNode, SplitNodeId,
-    SplitWeight, TabId, WeightedChild, focus, geometry, listen, rail_title, secrets, send_keys,
+    SplitWeight, TabId, WeightedChild, focus, geometry, listen, persist, rail_title, secrets, send_keys,
     shell_quoting, split_layout, split_tree, state_codec, tab_ordering, templates,
 };
 
+use crate::workspace_state_file::{write_status, write_version};
 use crate::{borrow, deliver};
 
 // MARK: The flat shapes
@@ -3417,6 +3418,204 @@ pub const unsafe extern "C" fn slopdesk_ws_default_session_name(out: *mut c_ucha
     unsafe { deliver(workspace::DEFAULT_SESSION_NAME.as_bytes(), out, cap) }
 }
 
+// MARK: The client's workspace FILE
+//
+// ## Why this is a door rather than a shape
+// `slopdesk_workspace::persist` is a complete repairing decoder for `workspace.json`, and it sat
+// with 22 tests and no caller while `SplitNode+Codable.swift` and four `Codable` conformances ran
+// instead. They had already drifted, and in the direction that costs a person something they can
+// see: an id-less split is DERIVED here from its place in the tree, where Swift's `??
+// SplitNodeID()` minted a fresh uuid on every load — so a `splitNode/<id>/weight` cell written
+// before a relaunch was orphaned after it, and every divider the person had dragged went back to
+// the default with nothing logged. `docs/55` §8's `derived_split_id` row is what this closes.
+//
+// ## It rides the document's own bytes, as its two neighbours do
+// The same arrangement `slopdesk_ws_apply_intent`, `slopdesk_ws_state_file_*` and
+// `slopdesk_ws_normalize` use, for the same reason: a `TreeWorkspace` is a split tree and there is
+// no `#[repr(C)]` flattening of one that is not a second grammar to keep in step. So the workspace
+// goes IN as the flat `(CEntry, blob)` cells `slopdesk_ws_encode_snapshot` already takes, and a
+// decoded file comes back OUT as an encoded snapshot the caller reads with
+// `slopdesk_ws_decode_snapshot`. Nothing new travels in either direction.
+//
+// ## The decode REPAIRS before it answers, and that is forced rather than chosen
+// The document's cell encoding cannot spell a session with no tab or a leaf with no spec — its
+// ingest drops the first and invents the second, on both sides, because a host push naming a
+// tabless session is describing nothing. A file can hold both. So the decode ends where
+// `TreeWorkspace::normalized` ends, which is where the launch path already ended, and the shape the
+// crossing cannot carry never reaches the crossing. That is also what `slopdesk_ws_normalize`'s own
+// note says will remove `withTheDocumentsBlindSpotsClosed` from the FILE path.
+//
+// ## No id is minted on this side, and the two kinds are minted differently on purpose
+// The identities a repair spends come from the caller's pool, sized by
+// `slopdesk_ws_workspace_file_minted_ids` — a PaneId is the join to the registry that owns a
+// process, so a name derived from the file's own contents is one two launches could both produce.
+// A SplitNodeId is the opposite case and is derived inside the crate, because it names a divider
+// group and a persisted weight cell only keeps pointing at its seam if the name is stable. Both
+// rules live in `persist.rs`; neither is decided here.
+
+/// The identities a decode of these bytes can spend.
+///
+/// Asked rather than transcribed for the reason every pool size in this crate is: a pool one short
+/// does not fail, it REPEATS an identity, and two panes sharing one is a pane that reattaches to a
+/// process it never opened. This one takes the FILE rather than a shape, because the shape is
+/// exactly what the caller does not know yet.
+///
+/// # Safety
+/// `bytes` must be null or point to `len` live bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_ws_workspace_file_minted_ids(bytes: *const c_uchar, len: usize) -> usize {
+    // SAFETY: the caller's obligation, restated above; `borrow` states its own.
+    let input = unsafe { borrow(bytes, len) };
+    persist::minted_ids_for(input)
+}
+
+/// The file's bytes for a workspace, under §4's convention.
+///
+/// `entries`/`blob` are the document's cells in `slopdesk_ws_encode_snapshot`'s flat form. Only the
+/// topology half is read — the file is the client's LAYOUT, and liveness has no business on a disk
+/// that outlives the process it describes. Encoding cannot fail, so there is no status here.
+///
+/// The answer is UTF-8 JSON with sorted keys and a trailing newline, so two saves of one value are
+/// byte-identical and the file diffs cleanly.
+///
+/// `schema_version` is passed rather than derived, and that is the whole reason it is a parameter:
+/// the cells carry a SHAPE, and a version is a property of the FILE, so a tree rebuilt from them
+/// wears whatever [`TreeWorkspace::new`] stamps — today's `CURRENT_SCHEMA_VERSION`. Deriving it
+/// here would make every save quietly re-stamp a workspace as the schema this build happens to
+/// read, which is precisely the claim the load path's version check exists to be able to
+/// disbelieve.
+///
+/// # Safety
+/// `entries` must be null or point to `count` live [`CEntry`]s; `blob` null or to `blob_len` live
+/// bytes; `out` null or writable for `cap` bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_ws_workspace_file_encode(
+    entries: *const CEntry,
+    count: usize,
+    blob: *const c_uchar,
+    blob_len: usize,
+    schema_version: i64,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligations, restated above; each helper states its own.
+    let (cells, bytes) = unsafe { (borrow_array(entries, count), borrow(blob, blob_len)) };
+    let state = crate::workspace_intent::document(cells, bytes);
+    // A document with no workspace in it writes an empty one rather than nothing at all: the file
+    // has to be a file, and the load path answers its own default for one that names no session.
+    let mut tree = state
+        .topology()
+        .map_or_else(|| TreeWorkspace::new(Vec::new(), None), |topology| topology.tree);
+    tree.schema_version = schema_version;
+    let text = persist::encode_file(&tree);
+    // SAFETY: null or, by the caller's obligation, writable for `cap` bytes.
+    unsafe { deliver(text.as_bytes(), out, cap) }
+}
+
+/// Reads a file back, answering the REPAIRED workspace as an encoded snapshot.
+///
+/// `bytes` is the file exactly as it came off disk. `minted` is the identity pool, sized by
+/// [`slopdesk_ws_workspace_file_minted_ids`] over those same bytes. `status` receives the refusal
+/// byte on EVERY path — `persist::NO_REFUSAL` when the load worked — so a caller that only wants
+/// the verdict may pass a null `out` and read it there. `version` receives the version the file
+/// CLAIMED, and only on the version-mismatch path; it is left untouched otherwise, because every
+/// `i64` is a version somebody could have typed in and none of them could have meant "not about a
+/// version".
+///
+/// The return is the encoded snapshot's byte count under §4's convention. A refusal answers 0, and
+/// so nothing else does: the repair runs before the answer is written, and it re-seeds a workspace
+/// that named nothing, so every load that got past the refusal has at least one session to encode.
+///
+/// # Safety
+/// `bytes` must be null or point to `len` live bytes; `minted` null or to `minted_count` live
+/// [`Uuid`]s; `status` null or writable for one byte; `version` null or writable for one `int64_t`;
+/// `out` null or writable for `cap` bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_ws_workspace_file_decode(
+    bytes: *const c_uchar,
+    len: usize,
+    minted: *const Uuid,
+    minted_count: usize,
+    status: *mut c_uchar,
+    version: *mut i64,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligations, restated above; each helper states its own.
+    let (input, pool) = unsafe { (borrow(bytes, len), borrow_array(minted, minted_count)) };
+    let mut ids = MintedPool { ids: pool, next: 0 };
+    match persist::decode_file(input, &mut ids) {
+        Ok(tree) => {
+            // SAFETY: null or, by the caller's obligation, writable for one byte.
+            unsafe { write_status(status, persist::NO_REFUSAL) };
+            let cells = HostWorkspaceState::from_entries(WorkspaceTopology::new(tree).entries());
+            let answer = wire_codec::encode_snapshot(&cells);
+            // SAFETY: null or, by the caller's obligation, writable for `cap` bytes.
+            unsafe { deliver(&answer, out, cap) }
+        },
+        Err(refusal) => {
+            // SAFETY: each pointer is null or, by the caller's obligation, writable for its width.
+            unsafe {
+                write_status(status, refusal.code());
+                write_version(version, refusal.claimed_version());
+            }
+            0
+        },
+    }
+}
+
+/// The refusal byte for one outcome, by index.
+///
+/// `0` is the load that worked, then [`persist::FileError`]'s own arm order — malformed, version
+/// mismatch, too many panes. An index past the last answers the malformed byte, which refuses
+/// rather than admits.
+///
+/// Exported rather than transcribed: a caller that wrote `case malformed = 1` beside this would be
+/// a second copy of the numbering, and the arm it drifted on would turn a version this build cannot
+/// read into a file kept aside under the wrong name — or not kept aside at all.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_ws_workspace_file_status(index: c_uchar) -> c_uchar {
+    match index {
+        0 => persist::NO_REFUSAL,
+        2 => persist::FileError::VersionMismatch(0).code(),
+        3 => persist::FileError::TooManyPanes.code(),
+        _ => persist::FileError::Malformed.code(),
+    }
+}
+
+/// How many panes one workspace file may name before [`slopdesk_ws_workspace_file_decode`] refuses
+/// it with index 3 of [`slopdesk_ws_workspace_file_status`].
+///
+/// Asked for rather than spelled twice, the rule every in-process cap in this header follows
+/// (`slopdesk_ws_topology_ring_cap` carries the long version). This one is a REFUSAL threshold, so
+/// the two copies drifting does not read as a disagreement: the near side would build a file it
+/// believes fits, the far side would refuse it, and the user would meet a workspace reset to the
+/// default with nothing anywhere saying why.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_ws_workspace_file_max_panes() -> usize {
+    persist::MAX_PANES
+}
+
 #[cfg(test)]
 #[expect(unsafe_code, reason = "calling the boundary IS what these tests are for")]
 #[expect(
@@ -3429,6 +3628,8 @@ pub const unsafe extern "C" fn slopdesk_ws_default_session_name(out: *mut c_ucha
     reason = "a door that refuses its own fixture IS the report"
 )]
 mod tests {
+    use core::ffi::c_uchar;
+
     use slopdesk_workspace::{PaneId, SplitAxis, SplitNode, SplitNodeId, SplitWeight, WeightedChild};
 
     use super::{
@@ -3438,11 +3639,12 @@ mod tests {
         slopdesk_ws_divider_thickness, slopdesk_ws_divider_weight_delta, slopdesk_ws_dividers,
         slopdesk_ws_encode_video_target, slopdesk_ws_focus_cycle, slopdesk_ws_focus_neighbor,
         slopdesk_ws_max_depth, slopdesk_ws_max_string_bytes, slopdesk_ws_min_weight, slopdesk_ws_normalize,
-        slopdesk_ws_schema_version,
         slopdesk_ws_normalize_minted_ids, slopdesk_ws_normalize_pass_count, slopdesk_ws_pane_kind_count,
-        slopdesk_ws_pane_kind_is_video, slopdesk_ws_project_key, slopdesk_ws_section_header,
-        slopdesk_ws_section_precedes, slopdesk_ws_send_keys, slopdesk_ws_solve_layout,
-        slopdesk_ws_successor_after_close, slopdesk_ws_tree_removing, slopdesk_ws_tree_splitting,
+        slopdesk_ws_pane_kind_is_video, slopdesk_ws_project_key, slopdesk_ws_schema_version,
+        slopdesk_ws_section_header, slopdesk_ws_section_precedes, slopdesk_ws_send_keys,
+        slopdesk_ws_solve_layout, slopdesk_ws_successor_after_close, slopdesk_ws_tree_removing,
+        slopdesk_ws_tree_splitting, slopdesk_ws_workspace_file_decode, slopdesk_ws_workspace_file_encode,
+        slopdesk_ws_workspace_file_minted_ids, slopdesk_ws_workspace_file_status,
     };
 
     const fn id(byte: u8) -> Uuid {
@@ -4208,6 +4410,378 @@ mod tests {
         assert_eq!(
             slopdesk_ws_max_string_bytes(),
             slopdesk_workspace::state_codec::MAX_STRING_BYTES
+        );
+    }
+
+    // ---------------------------------------------------------------------------------------- //
+    // The client's workspace file
+    // ---------------------------------------------------------------------------------------- //
+
+    /// One save through the C signature, sized the way §4 says to: probe, grow, call again.
+    fn file_encode(cells: &[super::CEntry], blob: &[u8]) -> Vec<u8> {
+        // SAFETY: every pointer is a live local's, and the null `out` is what §4 says to probe with.
+        let needed = unsafe {
+            slopdesk_ws_workspace_file_encode(
+                cells.as_ptr(),
+                cells.len(),
+                blob.as_ptr(),
+                blob.len(),
+                slopdesk_workspace::CURRENT_SCHEMA_VERSION,
+                core::ptr::null_mut(),
+                0,
+            )
+        };
+        let mut out = vec![0_u8; needed];
+        // SAFETY: `out` is now exactly `needed` bytes and every input pointer is still live.
+        let written = unsafe {
+            slopdesk_ws_workspace_file_encode(
+                cells.as_ptr(),
+                cells.len(),
+                blob.as_ptr(),
+                blob.len(),
+                slopdesk_workspace::CURRENT_SCHEMA_VERSION,
+                out.as_mut_ptr(),
+                out.len(),
+            )
+        };
+        assert_eq!(written, needed, "the sized call disagreed with the probe");
+        out
+    }
+
+    /// One load through the C signature, with the pool the door itself sized, answering everything
+    /// the door writes: the status byte, the claimed version, and the workspace if there is one.
+    fn file_decode(
+        bytes: &[u8],
+        seed: u8,
+    ) -> (
+        c_uchar,
+        i64,
+        Option<slopdesk_wire::document::topology::WorkspaceTopology>,
+    ) {
+        // SAFETY: `bytes` is a live local's.
+        let ids: Vec<Uuid> =
+            (0..unsafe { slopdesk_ws_workspace_file_minted_ids(bytes.as_ptr(), bytes.len()) })
+                .map(|index| {
+                    Uuid {
+                        bytes: [seed.wrapping_add(u8::try_from(index).unwrap_or(0)); 16],
+                    }
+                })
+                .collect();
+        let (mut status, mut version) = (u8::MAX, i64::MIN);
+        // SAFETY: every pointer is a live local's, and the null `out` is what §4 says to probe with.
+        let needed = unsafe {
+            slopdesk_ws_workspace_file_decode(
+                bytes.as_ptr(),
+                bytes.len(),
+                ids.as_ptr(),
+                ids.len(),
+                &raw mut status,
+                &raw mut version,
+                core::ptr::null_mut(),
+                0,
+            )
+        };
+        if needed == 0 {
+            return (status, version, None);
+        }
+        let mut out = vec![0_u8; needed];
+        // SAFETY: `out` is now exactly `needed` bytes and every input pointer is still live.
+        let written = unsafe {
+            slopdesk_ws_workspace_file_decode(
+                bytes.as_ptr(),
+                bytes.len(),
+                ids.as_ptr(),
+                ids.len(),
+                &raw mut status,
+                &raw mut version,
+                out.as_mut_ptr(),
+                out.len(),
+            )
+        };
+        assert_eq!(written, needed, "the sized call disagreed with the probe");
+        let state = slopdesk_wire::document::codec::decode_snapshot(&out).ok();
+        (status, version, state.and_then(|read| read.topology()))
+    }
+
+    /// A file naming a split the writer never named — the case the whole port turns on.
+    const UNNAMED_SPLIT_FILE: &str = r#"{
+      "schemaVersion": 12,
+      "sessions": [
+        {
+          "id": { "raw": "0A0A0A0A-0A0A-0A0A-0A0A-0A0A0A0A0A0A" },
+          "name": "work",
+          "activeTabIndex": 0,
+          "tabs": [
+            {
+              "id": { "raw": "0B0B0B0B-0B0B-0B0B-0B0B-0B0B0B0B0B0B" },
+              "title": "",
+              "root": { "split": {
+                "axis": "horizontal",
+                "children": [
+                  { "node": { "leaf": { "raw": "01010101-0101-0101-0101-010101010101" } } },
+                  { "node": { "leaf": { "raw": "02020202-0202-0202-0202-020202020202" } } }
+                ]
+              } }
+            }
+          ],
+          "specs": [
+            { "pane": { "raw": "01010101-0101-0101-0101-010101010101" },
+              "spec": { "kind": "terminal", "title": "one" } },
+            { "pane": { "raw": "02020202-0202-0202-0202-020202020202" },
+              "spec": { "kind": "terminal", "title": "two" } }
+          ]
+        }
+      ]
+    }"#;
+
+    /// Every divider group in a tree, in visual order.
+    fn seams(node: &SplitNode) -> Vec<SplitNodeId> {
+        match *node {
+            SplitNode::Leaf(_) => Vec::new(),
+            SplitNode::Split { id, ref children, .. } => {
+                core::iter::once(id)
+                    .chain(children.iter().flat_map(|child| seams(&child.node)))
+                    .collect()
+            },
+        }
+    }
+
+    fn tree_seams(topology: &slopdesk_wire::document::topology::WorkspaceTopology) -> Vec<SplitNodeId> {
+        topology
+            .tree
+            .sessions
+            .iter()
+            .flat_map(|session| session.tabs.iter().flat_map(|tab| seams(&tab.root)))
+            .collect()
+    }
+
+    #[test]
+    fn a_saved_workspace_comes_back_the_same_arrangement_through_the_two_doors() {
+        let topology = slopdesk_wire::document::topology::WorkspaceTopology::new(
+            slopdesk_workspace::workspace::TreeWorkspace::single_pane(
+                slopdesk_workspace::identity::SessionId::from_bytes([1; 16]),
+                slopdesk_workspace::identity::TabId::from_bytes([1; 16]),
+                PaneId::from_bytes([9; 16]),
+                slopdesk_workspace::PaneSpec::new(slopdesk_workspace::PaneKind::Terminal, "Terminal"),
+            ),
+        );
+        let (cells, blob) = flat_document(&topology);
+        let saved = file_encode(&cells, &blob);
+        assert!(
+            core::str::from_utf8(&saved).is_ok_and(|text| text.ends_with('\n')),
+            "the file is text, and text on this project's disks ends in a newline",
+        );
+        let (status, _, loaded) = file_decode(&saved, 0xC0);
+        let read = loaded.expect("a file this build wrote is a file this build reads");
+        assert_eq!(status, slopdesk_ws_workspace_file_status(0));
+        assert_eq!(read.tree.sessions.len(), 1);
+        assert_eq!(read.tree.all_pane_ids(), vec![PaneId::from_bytes([9; 16])]);
+        assert_eq!(
+            read.tree.sessions.first().map(|session| session.name.clone()),
+            topology.tree.sessions.first().map(|session| session.name.clone()),
+        );
+    }
+
+    /// **The defect the port exists to close, pinned at the boundary Swift crosses.** Two loads of
+    /// one file, from two DIFFERENT identity pools, still name the seam the same thing — so the
+    /// `splitNode/<id>/weight` cell a person's drag wrote before a relaunch still points at their
+    /// divider after it. Swift's `?? SplitNodeID()` minted a fresh uuid here and lost every one.
+    #[test]
+    fn two_loads_of_one_file_name_its_dividers_the_same_way() {
+        let bytes = UNNAMED_SPLIT_FILE.as_bytes();
+        let first = file_decode(bytes, 0x10)
+            .2
+            .expect("the first load answers a workspace");
+        let second = file_decode(bytes, 0x90)
+            .2
+            .expect("the second load answers one too");
+        assert!(!tree_seams(&first).is_empty(), "the fixture has a divider in it");
+        assert_eq!(
+            tree_seams(&first),
+            tree_seams(&second),
+            "a divider's name is a function of the file, not of the pool the load was handed",
+        );
+        assert_eq!(
+            first.tree.all_pane_ids(),
+            second.tree.all_pane_ids(),
+            "a pane the file named keeps that name — the pool pays only for the ones it did not",
+        );
+    }
+
+    #[test]
+    fn a_version_this_build_does_not_speak_is_refused_by_a_byte_that_names_the_version() {
+        let text = UNNAMED_SPLIT_FILE.replace("\"schemaVersion\": 12", "\"schemaVersion\": 99");
+        let (status, version, loaded) = file_decode(text.as_bytes(), 0x10);
+        assert!(loaded.is_none(), "a file this build cannot read answers nothing");
+        assert_eq!(status, slopdesk_ws_workspace_file_status(2));
+        assert_eq!(
+            version, 99,
+            "a caller that cannot log the version it was handed cannot tell the person anything",
+        );
+    }
+
+    #[test]
+    fn a_refusal_that_is_not_about_a_version_leaves_the_version_alone() {
+        // Every `i64` is a version somebody could have typed, so there is no byte pattern that
+        // means "not about a version" — the door's answer is to write nothing at all.
+        let (status, version, loaded) = file_decode(b"not a workspace", 0x10);
+        assert!(loaded.is_none());
+        assert_eq!(status, slopdesk_ws_workspace_file_status(1));
+        assert_eq!(version, i64::MIN, "the untouched local");
+    }
+
+    #[test]
+    fn a_null_out_still_answers_the_status_and_the_size() {
+        let bytes = UNNAMED_SPLIT_FILE.as_bytes();
+        // SAFETY: `bytes` is a live local's.
+        let count = unsafe { slopdesk_ws_workspace_file_minted_ids(bytes.as_ptr(), bytes.len()) };
+        let ids = vec![Uuid { bytes: [7; 16] }; count];
+        let mut status = u8::MAX;
+        // SAFETY: the null `out` and `version` §4 says a verdict-only caller may pass.
+        let needed = unsafe {
+            slopdesk_ws_workspace_file_decode(
+                bytes.as_ptr(),
+                bytes.len(),
+                ids.as_ptr(),
+                ids.len(),
+                &raw mut status,
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+                0,
+            )
+        };
+        assert!(needed > 0);
+        assert_eq!(status, slopdesk_ws_workspace_file_status(0));
+    }
+
+    #[test]
+    fn a_save_that_did_not_fit_leaves_the_buffer_untouched() {
+        let topology = slopdesk_wire::document::topology::WorkspaceTopology::new(
+            slopdesk_workspace::workspace::TreeWorkspace::single_pane(
+                slopdesk_workspace::identity::SessionId::from_bytes([1; 16]),
+                slopdesk_workspace::identity::TabId::from_bytes([1; 16]),
+                PaneId::from_bytes([1; 16]),
+                slopdesk_workspace::PaneSpec::new(slopdesk_workspace::PaneKind::Terminal, "Terminal"),
+            ),
+        );
+        let (cells, blob) = flat_document(&topology);
+        let mut out = [0_u8; 8];
+        // SAFETY: every pointer is a live local's; `out` is deliberately too small.
+        let needed = unsafe {
+            slopdesk_ws_workspace_file_encode(
+                cells.as_ptr(),
+                cells.len(),
+                blob.as_ptr(),
+                blob.len(),
+                slopdesk_workspace::CURRENT_SCHEMA_VERSION,
+                out.as_mut_ptr(),
+                out.len(),
+            )
+        };
+        assert!(needed > out.len());
+        assert!(out.iter().all(|byte| *byte == 0), "a short call still wrote");
+    }
+
+    #[test]
+    fn a_document_with_no_workspace_in_it_is_still_written_as_a_file() {
+        // The save path cannot answer "nothing" — a client that had no arrangement to write still
+        // has to leave a file the next launch can read. Reading that file back is not a refusal
+        // either: an empty session list is a well-formed file, and the repair seeds the one session
+        // and one pane a launch needs, from the pool the door sized.
+        let empty: Vec<super::CEntry> = Vec::new();
+        let saved = file_encode(&empty, &[]);
+        assert!(
+            !saved.is_empty(),
+            "a save answers a file or the disk keeps the old one"
+        );
+        let (status, _, loaded) = file_decode(&saved, 0x40);
+        let read = loaded.expect("an empty file loads as a re-seeded desk rather than nothing");
+        assert_eq!(status, slopdesk_ws_workspace_file_status(0));
+        assert_eq!(read.tree.sessions.len(), 1);
+        assert_eq!(read.tree.all_pane_ids().len(), 1);
+    }
+
+    #[test]
+    fn a_save_writes_the_version_it_was_handed_rather_than_the_one_this_build_reads() {
+        // The cells carry a shape and no version, so a tree rebuilt from them wears whatever
+        // `TreeWorkspace::new` stamps. If the door read THAT instead of its parameter, every save
+        // would silently promote a file to the current schema — and the load path's version check,
+        // the one thing that can refuse a file this build does not understand, would never fire
+        // again, because nothing on disk could still claim an older number.
+        let stale = slopdesk_workspace::CURRENT_SCHEMA_VERSION - 1;
+        let empty: Vec<super::CEntry> = Vec::new();
+        // SAFETY: every pointer is a live local's, and the null `out` is what §4 says to probe with.
+        let needed = unsafe {
+            slopdesk_ws_workspace_file_encode(
+                empty.as_ptr(),
+                0,
+                core::ptr::null(),
+                0,
+                stale,
+                core::ptr::null_mut(),
+                0,
+            )
+        };
+        let mut out = vec![0_u8; needed];
+        // SAFETY: `out` is now exactly `needed` bytes and the inputs are still the same live locals.
+        unsafe {
+            slopdesk_ws_workspace_file_encode(
+                empty.as_ptr(),
+                0,
+                core::ptr::null(),
+                0,
+                stale,
+                out.as_mut_ptr(),
+                out.len(),
+            )
+        };
+        let text = String::from_utf8(out).expect("the file is UTF-8 JSON");
+        assert!(
+            text.contains(&format!("\"schemaVersion\" : {stale}")),
+            "the save re-stamped the version instead of writing the caller's: {text}"
+        );
+        // And the round trip agrees it is a file from another schema: the decode reports the claim
+        // it read back, which is the half of the contract the save side only makes possible.
+        let (status, claimed, _) = file_decode(text.as_bytes(), 0x50);
+        assert_ne!(status, slopdesk_ws_workspace_file_status(0));
+        assert_eq!(claimed, stale);
+    }
+
+    #[test]
+    fn the_pool_is_asked_of_the_file_rather_than_guessed_from_its_shape() {
+        for text in ["", "{}", UNNAMED_SPLIT_FILE] {
+            // SAFETY: `text` is a live local's.
+            let asked = unsafe { slopdesk_ws_workspace_file_minted_ids(text.as_ptr(), text.len()) };
+            assert_eq!(
+                asked,
+                slopdesk_workspace::minted_ids_for(text.as_bytes()),
+                "{text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_exported_status_order_is_the_one_the_door_answers() {
+        // Walked rather than transcribed: a caller with its own `case malformed = 1` beside this is
+        // a second copy of the numbering, and the arm it drifts on is the one that decides whether
+        // a file this build cannot read is kept aside or written over.
+        let codes = [
+            slopdesk_ws_workspace_file_status(0),
+            slopdesk_ws_workspace_file_status(1),
+            slopdesk_ws_workspace_file_status(2),
+            slopdesk_ws_workspace_file_status(3),
+        ];
+        let distinct: std::collections::BTreeSet<c_uchar> = codes.iter().copied().collect();
+        assert_eq!(distinct.len(), codes.len(), "two outcomes cannot share a byte");
+        assert_eq!(codes.first().copied(), Some(slopdesk_workspace::NO_REFUSAL));
+        assert_eq!(
+            codes.get(1).copied(),
+            Some(slopdesk_workspace::FileError::Malformed.code())
+        );
+        assert_eq!(
+            slopdesk_ws_workspace_file_status(200),
+            slopdesk_workspace::FileError::Malformed.code(),
+            "an index past the last refuses rather than admits",
         );
     }
 

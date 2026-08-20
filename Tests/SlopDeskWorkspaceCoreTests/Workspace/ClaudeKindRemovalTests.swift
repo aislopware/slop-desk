@@ -9,7 +9,7 @@ import XCTest
 ///
 ///  1. `PaneKind` has exactly `{ terminal, desktop }` — the `.claudeCode` case is gone
 ///     (this file would not COMPILE if anything still referenced it).
-///  2. A persisted spec carrying the LEGACY `"claudeCode"` raw value decodes to `.terminal` (forward/
+///  2. A persisted spec carrying the LEGACY `"claudeCode"` raw value loads as `.terminal` (forward/
 ///     back-tolerant) — never trapping now the case is removed.
 ///  3. The frozen v9 → v10 migration rewrites a legacy claude pane to `.terminal` with NO data loss.
 ///  4. A plain `.terminal` pane does NOT stand up the read-only inspector until a `claude` is detected.
@@ -28,12 +28,37 @@ final class ClaudeKindRemovalTests: XCTestCase {
         XCTAssertNil(PaneKind(rawValue: "claudeCode"), "the synthesized rawValue init does not know claudeCode")
     }
 
-    // MARK: - 2. Legacy `"claudeCode"` raw value decodes to `.terminal` (no trap)
+    // MARK: - The file the specs live in
+
+    /// One spec, loaded the way a launch loads it: wrapped in the workspace file its session's side
+    /// table lives in, read back through ``WorkspaceFile``. It used to be a bare
+    /// `JSONDecoder().decode(PaneSpec.self, …)`; `PaneSpec` is not `Codable` any more, because the
+    /// file has one decoder and it is `rust/slopdesk-workspace`'s. The retired-kind bridge these
+    /// tests pin is `persist::decode_pane_kind`'s, and it folds the same five raw values.
+    ///
+    /// The decode is its OWN statement, and must stay one: `XCTUnwrap` records a failure for an
+    /// error thrown inside its autoclosure before it rethrows, so folding the two lines together
+    /// makes ``testUnknownPaneKindStillThrows`` fail while its assertion passes.
+    private func loadSpec(_ spec: String) throws -> PaneSpec {
+        let pane = UUID()
+        let paneJSON = "{\"raw\":\"\(pane.uuidString)\"}"
+        let id = { "{\"raw\":\"\(UUID().uuidString)\"}" }
+        let file = Data("""
+        {"schemaVersion":\(TreeWorkspace.currentSchemaVersion),"sessions":[
+          {"id":\(id()),"name":"Local","activeTabIndex":0,
+           "tabs":[{"id":\(id()),"title":"","root":{"leaf":\(paneJSON)}}],
+           "specs":[{"pane":\(paneJSON),"spec":\(spec)}]}
+        ]}
+        """.utf8)
+        let loaded = try WorkspaceFile.decode(file)
+        return try XCTUnwrap(loaded.spec(for: PaneID(raw: pane)))
+    }
+
+    // MARK: - 2. Legacy `"claudeCode"` raw value loads as `.terminal` (no trap)
 
     func testLegacyClaudeCodeRawValueDecodesToTerminal() throws {
         // A persisted PaneSpec with the retired discriminator — the exact bytes an old binary wrote.
-        let json = Data(#"{ "kind": "claudeCode", "title": "my agent" }"#.utf8)
-        let spec = try JSONDecoder().decode(PaneSpec.self, from: json)
+        let spec = try loadSpec(#"{ "kind": "claudeCode", "title": "my agent" }"#)
         XCTAssertEqual(spec.kind, .terminal, "a legacy claudeCode spec decodes to a plain terminal (no trap)")
         XCTAssertEqual(spec.title, "my agent", "the title survives the tolerant decode")
     }
@@ -41,8 +66,11 @@ final class ClaudeKindRemovalTests: XCTestCase {
     /// A genuinely unknown kind (NOT a tolerated legacy value) still throws — the loader's reset path
     /// handles that; only the intentionally-retired values are repaired.
     func testUnknownPaneKindStillThrows() {
-        let json = Data(#"{ "kind": "wormhole", "title": "x" }"#.utf8)
-        XCTAssertThrowsError(try JSONDecoder().decode(PaneSpec.self, from: json), "an unknown kind is still corruption")
+        XCTAssertThrowsError(
+            try loadSpec(#"{ "kind": "wormhole", "title": "x" }"#), "an unknown kind is still corruption",
+        ) { error in
+            XCTAssertEqual(error as? WorkspaceFile.FileError, .malformed)
+        }
     }
 
     // MARK: - 2b. Legacy `"web"` raw value decodes to `.terminal` (the removed local web pane, no trap)
@@ -54,8 +82,7 @@ final class ClaudeKindRemovalTests: XCTestCase {
     /// `PaneKind.init(from:)` the decode throws and this test fails.
     func testLegacyWebRawValueDecodesToTerminal() throws {
         // The exact bytes an old binary wrote for a persisted web pane (kind + title + address).
-        let json = Data(#"{ "kind": "web", "title": "Web", "webURL": "https://example.com/" }"#.utf8)
-        let spec = try JSONDecoder().decode(PaneSpec.self, from: json)
+        let spec = try loadSpec(#"{ "kind": "web", "title": "Web", "webURL": "https://example.com/" }"#)
         XCTAssertEqual(spec.kind, .terminal, "a legacy web spec decodes to a plain terminal (no trap)")
         XCTAssertEqual(spec.title, "Web", "the title survives the tolerant decode")
         // The raw value is no longer a valid synthesized case either.
@@ -70,8 +97,7 @@ final class ClaudeKindRemovalTests: XCTestCase {
     /// `.terminal` is exactly what picking the default kind would have done. Revert-to-confirm-fail:
     /// without the bridge in `PaneKind.init(from:)` the decode throws and this test fails.
     func testLegacyChooserRawValueDecodesToTerminal() throws {
-        let json = Data(#"{ "kind": "chooser", "title": "New Pane" }"#.utf8)
-        let spec = try JSONDecoder().decode(PaneSpec.self, from: json)
+        let spec = try loadSpec(#"{ "kind": "chooser", "title": "New Pane" }"#)
         XCTAssertEqual(spec.kind, .terminal, "a legacy chooser spec decodes to a plain terminal (no trap)")
         XCTAssertNil(PaneKind(rawValue: "chooser"), "the synthesized rawValue init does not know chooser")
     }
@@ -84,11 +110,9 @@ final class ClaudeKindRemovalTests: XCTestCase {
     /// rule), its now-unknown `video` endpoint decode-tolerated. Revert-to-confirm-fail: without the
     /// bridge in `PaneKind.init(from:)` the decode throws and this test fails.
     func testLegacyRemoteGUIRawValueDecodesToTerminal() throws {
-        let json = Data(
-            #"{ "kind": "remoteGUI", "title": "Docs", "video": { "windowID": 42, "title": "Docs", "appName": "Safari" } }"#
-                .utf8,
+        let spec = try loadSpec(
+            #"{ "kind": "remoteGUI", "title": "Docs", "video": { "windowID": 42, "title": "Docs", "appName": "Safari" } }"#,
         )
-        let spec = try JSONDecoder().decode(PaneSpec.self, from: json)
         XCTAssertEqual(spec.kind, .terminal, "a legacy remote-window spec decodes to a plain terminal (no trap)")
         XCTAssertEqual(spec.title, "Docs", "the title survives the tolerant decode")
         XCTAssertNil(PaneKind(rawValue: "remoteGUI"), "the synthesized rawValue init does not know remoteGUI")
@@ -101,11 +125,9 @@ final class ClaudeKindRemovalTests: XCTestCase {
     /// a `.systemDialog` leaf was ephemeral and never persisted, so this is belt-and-braces — but a
     /// file that somehow carries one folds to a plain `.terminal` instead of trapping.
     func testLegacySystemDialogRawValueDecodesToTerminal() throws {
-        let json = Data(
-            #"{ "kind": "systemDialog", "title": "sudo", "video": { "windowID": 7, "title": "sudo", "appName": "SecurityAgent" } }"#
-                .utf8,
+        let spec = try loadSpec(
+            #"{ "kind": "systemDialog", "title": "sudo", "video": { "windowID": 7, "title": "sudo", "appName": "SecurityAgent" } }"#,
         )
-        let spec = try JSONDecoder().decode(PaneSpec.self, from: json)
         XCTAssertEqual(spec.kind, .terminal, "a legacy system-dialog spec decodes to a plain terminal (no trap)")
         XCTAssertNil(PaneKind(rawValue: "systemDialog"), "the synthesized rawValue init does not know systemDialog")
     }
@@ -120,8 +142,7 @@ final class ClaudeKindRemovalTests: XCTestCase {
     /// The retired `"claudeCode"` raw value still decodes to `.terminal` directly on `PaneSpec` (the
     /// forward-tolerant decode that survives a stale persisted file), independent of any schema migration.
     func testLegacyClaudeCodeRawDecodesToTerminal() throws {
-        let json = Data(#"{ "kind": "claudeCode", "title": "agent" }"#.utf8)
-        let spec = try JSONDecoder().decode(PaneSpec.self, from: json)
+        let spec = try loadSpec(#"{ "kind": "claudeCode", "title": "agent" }"#)
         XCTAssertEqual(spec.kind, .terminal, "the retired claudeCode kind decodes to terminal")
         XCTAssertEqual(spec.title, "agent", "title preserved")
     }

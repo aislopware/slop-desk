@@ -4,22 +4,19 @@ import XCTest
 
 /// What a hand-edited workspace file costs when one word in it is wrong.
 ///
-/// `SplitNode+Codable.swift` and `rust/slopdesk-workspace/src/persist.rs` both open by promising the
-/// same thing — validate-then-repair, never trap — and they disagreed about it. SWIFT had the bug and
-/// RUST was right: `decode_raw_node` answers `Some("vertical") => Vertical, _ => Horizontal` and reads
-/// a non-uuid id as absent, while Swift wrote `decodeIfPresent(…) ?? .horizontal`, which THROWS on a
-/// key that is present with a value the type refuses rather than answering `nil`. The `??` never ran.
+/// These used to hold `SplitNode+Codable.swift` to `rust/slopdesk-workspace/src/persist.rs`'s answer,
+/// case by case, because the two opened by promising the same thing — validate-then-repair, never
+/// trap — and disagreed about it. That file is gone: the crate's decoder is the only one now, reached
+/// through ``WorkspaceFile``, so every case below asserts through the DOOR. What was a differential is
+/// now a pin — the answers themselves are unchanged, which is the point of re-pointing rather than
+/// deleting them.
 ///
-/// The blast radius is the reason these are pinned rather than left to the round-trip tests: the throw
-/// unwinds the whole `TreeWorkspace` decode, so `WorkspacePersistence.load()` falls back to the default
-/// workspace and files the old one away as `.corrupt`. One typo, and every session, tab and split the
-/// user had arranged is gone. Under Rust they lose nothing, which is the bar these hold Swift to.
+/// The blast radius is why they are pinned at all: a throw out of a nested node used to unwind the
+/// whole `TreeWorkspace` decode, so `WorkspacePersistence.loadTree()` fell back to the default
+/// workspace and filed the old one away as `.corrupt`. One typo, and every session, tab and split the
+/// user had arranged was gone.
 final class SplitNodeDecodeRepairTests: XCTestCase {
-    private let decoder = JSONDecoder()
-
-    private func decode(_ json: String) throws -> SplitNode {
-        try decoder.decode(SplitNode.self, from: Data(json.utf8))
-    }
+    // MARK: - Fixtures (written in the shape that is actually on disk)
 
     /// `PaneID`/`SplitNodeID` are single-field structs, so they persist as `{"raw":"<uuid>"}` — the
     /// fixtures are written in that shape because that is what is actually on disk.
@@ -29,9 +26,28 @@ final class SplitNodeDecodeRepairTests: XCTestCase {
         "{\"weight\":{\"flex\":1},\"node\":{\"leaf\":\(idJSON(uuid))}}"
     }
 
+    /// A whole file around one tab root, which is the only shape the door reads. The spec side table
+    /// is left empty on purpose: a leaf with no spec is re-seeded by the repair, so every fixture
+    /// here says exactly one thing about the ARRANGEMENT and nothing about the panes' descriptions.
+    private func fileJSON(root: String) -> String {
+        """
+        {"schemaVersion":\(TreeWorkspace.currentSchemaVersion),"sessions":[
+          {"id":\(idJSON(UUID())),"name":"work","activeTabIndex":0,
+           "tabs":[{"id":\(idJSON(UUID())),"title":"","root":\(root)}],
+           "specs":[]}
+        ]}
+        """
+    }
+
+    /// The tab root as the door hands it back, repaired.
+    private func decode(_ root: String) throws -> SplitNode {
+        let tree = try WorkspaceFile.decode(Data(fileJSON(root: root).utf8))
+        return try XCTUnwrap(tree.sessions.first?.tabs.first?.root)
+    }
+
     // MARK: - The axis
 
-    /// An axis nobody has ever had reads as `.horizontal`, exactly as Rust's `_ =>` arm does.
+    /// An axis nobody has ever had reads as `.horizontal`, exactly as the crate's `_ =>` arm does.
     func testAnUnknownAxisRepairsInsteadOfThrowing() throws {
         let a = UUID(), b = UUID()
         let node = try decode("""
@@ -46,8 +62,8 @@ final class SplitNodeDecodeRepairTests: XCTestCase {
     }
 
     /// The whole point: a typo one level down must not cost the panes at every other level. This is
-    /// the assertion that fails loudest under the old `decodeIfPresent` — not with a wrong axis, but
-    /// with no tree at all.
+    /// the assertion that failed loudest under the deleted `decodeIfPresent` — not with a wrong axis,
+    /// but with no tree at all.
     func testATypoInOneNestedAxisKeepsEveryOtherPaneInTheTree() throws {
         let a = UUID(), b = UUID(), c = UUID()
         let node = try decode("""
@@ -76,10 +92,8 @@ final class SplitNodeDecodeRepairTests: XCTestCase {
 
     // MARK: - The id
 
-    /// The same trap, one line up: `decodeIfPresent(SplitNodeID.self, …)` throws on an id that is
-    /// present but is not the `{"raw":"<uuid>"}` shape. Rust's `decode_optional_id` reads that as
-    /// absent and fills, and a split whose divider group lost its NAME still describes a real
-    /// arrangement — so the fill is the whole repair.
+    /// An id that is present but is not the `{"raw":"<uuid>"}` shape reads as ABSENT and is filled: a
+    /// split whose divider group lost its NAME still describes a real arrangement.
     func testAnUnreadableSplitIDIsFilledRatherThanThrown() throws {
         let a = UUID(), b = UUID()
         let node = try decode("""
@@ -107,13 +121,47 @@ final class SplitNodeDecodeRepairTests: XCTestCase {
         XCTAssertEqual(children.count, 2)
     }
 
+    /// **The defect this whole port exists to close, from the side a person feels it.**
+    ///
+    /// The name a divider group is filled with is DERIVED from where the split sits and what it
+    /// holds, so two loads of one file agree. The deleted Swift decoder wrote `?? SplitNodeID()` — a
+    /// fresh uuid on every load — and a divider's dragged position is persisted as
+    /// `splitNode/<id>/weight`, so every seam the person had moved was orphaned on the next launch
+    /// and snapped back to the default, with nothing logged.
+    func testTheSameFileNamesTheSameDividersOnEveryLoad() throws {
+        let a = UUID(), b = UUID()
+        let file = Data(fileJSON(root: """
+        {"split":{"axis":"horizontal","children":[\(leafJSON(a)),\(leafJSON(b))]}}
+        """).utf8)
+
+        let dividers = { (tree: TreeWorkspace) -> [SplitNodeID] in
+            tree.sessions.flatMap { session in session.tabs.flatMap { Self.seams(of: $0.root) } }
+        }
+        let first = try dividers(WorkspaceFile.decode(file))
+        let second = try dividers(WorkspaceFile.decode(file))
+        XCTAssertFalse(first.isEmpty, "the fixture has a divider in it")
+        XCTAssertEqual(
+            first, second,
+            "a divider's name is a function of the file, not of when the file was read",
+        )
+    }
+
+    /// Every divider group in a tree, in visual order.
+    private static func seams(of node: SplitNode) -> [SplitNodeID] {
+        switch node {
+        case .leaf:
+            []
+        case let .split(id, _, children):
+            [id] + children.flatMap { seams(of: $0.node) }
+        }
+    }
+
     // MARK: - The children
 
-    /// The same trap again, on the key that holds the STRUCTURE. Rust reads a `children` that is not
-    /// an array as no children (`.and_then(Json::array).unwrap_or_default()`) and the user keeps the
-    /// rest of their workspace; Swift threw and `WorkspacePersistence.load()` filed the whole file
-    /// away as `.corrupt`. The cost of the repair is real and bounded — the malformed split is
-    /// emptied and `normalized()` drops it — which is one seam against every seam in the file.
+    /// The same tolerance on the key that holds the STRUCTURE: a `children` that is not an array
+    /// reads as no children and the user keeps the rest of their workspace. The cost of the repair is
+    /// real and bounded — the malformed split is emptied and the repair drops it — which is one seam
+    /// against every seam in the file.
     func testAnUnreadableChildrenValueCostsOneSplitRatherThanTheFile() throws {
         let a = UUID(), b = UUID(), c = UUID()
         let node = try decode("""
@@ -139,11 +187,9 @@ final class SplitNodeDecodeRepairTests: XCTestCase {
         }
     }
 
-    /// A weight that is not even an object — `"weight": 5`, not the `{"flex":…}` shape. The weight
-    /// decoder is tolerant of a wrong-typed value UNDER a key, but its own `container(keyedBy:)`
-    /// threw before that tolerance could run, and `decodeIfPresent` carried the throw past the
-    /// `?? .flex(1)`. Rust folds it to the equal share (`decode_weight`'s trailing `Flex(1.0)`),
-    /// which is the right answer: a divider position is the one thing a repair can invent.
+    /// A weight that is not even an object — `"weight": 5`, not the `{"flex":…}` shape — folds to the
+    /// equal share, which is the right answer: a divider position is the one thing a repair can
+    /// invent.
     func testAWeightThatIsNotAnObjectFoldsToTheEqualShare() throws {
         let a = UUID(), b = UUID()
         let node = try decode("""
@@ -160,22 +206,25 @@ final class SplitNodeDecodeRepairTests: XCTestCase {
     }
 
     /// And the line the tolerance must NOT cross: a child INSIDE the array still decodes strictly, so
-    /// a malformed one is a fault rather than a pane that silently vanishes out of an arrangement the
-    /// rest of which decoded. Rust refuses the same child ("a split child has no node").
+    /// a malformed one is a refusal rather than a pane that silently vanishes out of an arrangement
+    /// the rest of which decoded.
     func testAMalformedChildElementIsStillAFault() {
         let a = UUID()
         XCTAssertThrowsError(try decode("""
         {"split":{"id":\(idJSON(UUID())),"axis":"vertical","children":[\(leafJSON(a)),{"weight":{"flex":1}}]}}
-        """), "a child with no node is corruption, not a repair")
+        """), "a child with no node is corruption, not a repair") { error in
+            XCTAssertEqual(error as? WorkspaceFile.FileError, .malformed)
+        }
     }
 
     // MARK: - What is still a fault
 
     /// The repair must not become a guess. A node with NEITHER discriminator describes no
-    /// arrangement, so it stays a clean throw — the same line Rust draws ("a split node has neither a
-    /// leaf nor a split" is an `Err`), and the reason `try?` is spelled per FIELD rather than wrapped
-    /// around the whole decode.
+    /// arrangement, so it stays a clean refusal — the reason the tolerance is spelled per FIELD
+    /// rather than wrapped around the whole load.
     func testANodeWithNoDiscriminatorIsStillAFault() {
-        XCTAssertThrowsError(try decode("{\"bogus\":42}"))
+        XCTAssertThrowsError(try decode("{\"bogus\":42}")) { error in
+            XCTAssertEqual(error as? WorkspaceFile.FileError, .malformed)
+        }
     }
 }

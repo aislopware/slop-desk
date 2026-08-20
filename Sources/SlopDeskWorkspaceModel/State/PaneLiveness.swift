@@ -1,5 +1,6 @@
 import CSlopDeskFFI
 import Foundation
+import SlopDeskArena
 
 /// Everything the host knows about one pane's RUNNING PROCESS, as a value.
 ///
@@ -10,22 +11,30 @@ import Foundation
 /// Collecting them into a value the host retains is what makes the document askable.
 ///
 /// **Liveness only.** The topology half of `pane/*` (`kind`, `title`, `userRenamed`, `videoTarget`,
-/// `spawnCwd`) is written by an intent and persisted; those fields are deliberately absent here and
-/// land in Phase 5. This record is derived from a live process and is never persisted — restoring
+/// `spawnCwd`) is written by an intent and persisted; those fields are deliberately absent here.
+/// This record is derived from a live process and is never persisted — restoring
 /// `commandRunning = 1` for a process that no longer exists is exactly the "fake-live" render
 /// docs/45 §6.5 exists to prevent.
 ///
-/// **Absent means default.** A field is emitted only when it carries a non-default value, with ONE
-/// exception: ``liveness`` is always emitted, so the presence of a pane object in the document is
-/// never ambiguous. `nil` (never observed) and `""` (retired) stay distinct — a zero-length value is
-/// first-class here, because an empty type-21 title is already this codebase's
-/// agent-title-ownership retirement signal.
+/// **This type is a VOCABULARY, not an implementation.** The projection, the read-back, the merge,
+/// the eviction and the reconciler's three-way reap all live in `rust/slopdesk-wire`'s
+/// `document::liveness` and are reached through the doors below; every method here is marshalling.
+/// The Swift copies of all five were deleted in the same change that opened the doors, on
+/// `CLAUDE.md`'s one-implementation rule. What stays is the case list and the field names, for the
+/// reason `docs/55` §6 keeps `AgentKind`'s: a `switch` in a view reads them, and marshalling a value
+/// type through C to restate its own fields would buy nothing.
+///
+/// **Absent means default**, and that rule is the crate's. A field is emitted only when it carries a
+/// non-default value, with ONE exception: ``liveness`` is always emitted, so the presence of a pane
+/// object in the document is never ambiguous. `nil` (never observed) and `""` (retired) stay
+/// distinct all the way across the boundary — a zero-length value is first-class here, because an
+/// empty type-21 title is already this codebase's agent-title-ownership retirement signal, and
+/// ``SlopDeskWsSpan``'s `present` flag is what carries the distinction.
 ///
 /// - Note: this lives in the MODEL target, not the host, deliberately — docs/45 §6.2 filed it under
 ///   `Sources/SlopDeskHost/`. Both ends need it: the host writes ``entries()`` and the client reads
-///   ``init(paneID:entries:)``. One round-trippable value beats an encoder and a decoder maintained
-///   apart, and it buys a headless round-trip test with no PTY in sight. The host keeps only the
-///   capture seam (`PaneLiveness.capture(from:)`).
+///   ``init(paneID:entries:)``. The host keeps only the capture seam (`PaneLiveness.capture(from:)`),
+///   which cannot move because it reads a live `MuxChannelSession`.
 public struct PaneLiveness: Equatable, Sendable {
     // MARK: Nested pairs
 
@@ -140,51 +149,28 @@ public struct PaneLiveness: Equatable, Sendable {
 
     /// This record as document entries, in canonical field order.
     ///
+    /// ASKED, not built here. Which fields are emitted at all is the crate's "absent means default"
+    /// rule plus the one exception that makes a pane's existence unambiguous, and a second copy of
+    /// that rule puts a pane in the document the reaper cannot see — or writes a default where its
+    /// absence was the answer.
+    ///
     /// Only the LIVENESS fields are produced. A caller merging this into a document must therefore
     /// replace exactly these keys and leave the topology fields alone — see
-    /// ``HostWorkspaceState/merge(paneLiveness:)``.
+    /// ``HostWorkspaceState/merge(paneLiveness:)-(PaneLiveness)``.
     public func entries() -> [WorkspaceEntry] {
-        var out: [WorkspaceEntry] = []
-        func put(_ field: UInt8, _ value: Data?) {
-            guard let value else { return }
-            out.append(WorkspaceEntry(key: WorkspaceKey(.pane, paneID, field), value: value))
+        var blob = WsBlob()
+        let record = flattened(into: &blob)
+        let snapshot = blob.lend { bytes in
+            withUnsafePointer(to: record) { flat in
+                wsBytes { out, cap in
+                    slopdesk_ws_pane_liveness_entries(flat, bytes.baseAddress, bytes.count, out, cap)
+                }
+            }
         }
-        func putString(_ field: UInt8, _ value: String?) {
-            put(field, value.map { WorkspaceStateCodec.encodeString($0) })
-        }
-        putString(WorkspacePaneField.liveTitle, liveTitle)
-        if titleFresh { put(WorkspacePaneField.titleFresh, WorkspaceStateCodec.encodeBool(true)) }
-        putString(WorkspacePaneField.cwd, cwd)
-        putString(WorkspacePaneField.projectKey, projectKey)
-        putString(WorkspacePaneField.foregroundProcess, foregroundProcess)
-        putString(WorkspacePaneField.runningCommand, runningCommand)
-        if let agentState {
-            put(
-                WorkspacePaneField.agentState,
-                WorkspaceStateCodec.encodeU8Pair(agentState.state, agentState.kind),
-            )
-        }
-        putString(WorkspacePaneField.agentLabel, agentLabel)
-        putString(WorkspacePaneField.agentIntent, agentIntent)
-        if let progress {
-            put(
-                WorkspacePaneField.progress,
-                WorkspaceStateCodec.encodeU8Pair(progress.state, progress.percent),
-            )
-        }
-        if commandRunning { put(WorkspacePaneField.commandRunning, WorkspaceStateCodec.encodeBool(true)) }
-        put(WorkspacePaneField.lastExitCode, lastExitCode.map { WorkspaceStateCodec.encodeI32($0) })
-        put(WorkspacePaneField.lastDurationMS, lastDurationMS.map { WorkspaceStateCodec.encodeU32($0) })
-        if let grid { put(WorkspacePaneField.grid, WorkspaceStateCodec.encodeU16Pair(grid.cols, grid.rows)) }
-        // ALWAYS emitted — the pane object's existence marker.
-        put(WorkspacePaneField.liveness, WorkspaceStateCodec.encodeU8(liveness.rawValue))
-        if completionEpoch != 0 {
-            put(WorkspacePaneField.completionEpoch, WorkspaceStateCodec.encodeU32(completionEpoch))
-        }
-        if lastActivityMS != 0 {
-            put(WorkspacePaneField.lastActivityMS, WorkspaceStateCodec.encodeI64(lastActivityMS))
-        }
-        return out
+        // A projection the codec then refuses is this boundary having gone wrong, not a record with
+        // nothing in it — and answering no entries is what keeps that from writing a half-pane.
+        guard let state = try? WorkspaceStateCodec.decodeSnapshot(snapshot) else { return [] }
+        return state.sortedEntries
     }
 
     /// One HALF of a pane's field vocabulary, from the crate that reaps by it.
@@ -222,98 +208,259 @@ public struct PaneLiveness: Equatable, Sendable {
 
     /// Reads one pane's liveness record back out of a document.
     ///
-    /// Every field decodes independently and a malformed one is DROPPED to its default rather than
-    /// failing the record: these bytes came off a socket, and one bad `grid` must not blank a pane's
-    /// title. Returns `nil` only when the pane has no ``WorkspacePaneField/liveness`` entry — i.e.
-    /// when the document holds no such pane.
-    public init?(paneID: UUID, entries: HostWorkspaceState) {
-        func value(_ field: UInt8) -> Data? {
-            entries[WorkspaceKey(.pane, paneID, field)]
+    /// ASKED, for the reason ``entries()`` is: this is the inverse of the same rule, and the two
+    /// have to agree about which absences are real. Every field decodes independently and a
+    /// malformed one falls back to its default rather than failing the record — these bytes came off
+    /// a socket, and one bad `grid` must not blank a pane's title — while an unknown liveness byte
+    /// from a newer host reads as `dead`, because rendering a live pane stale is cosmetic and
+    /// rendering a dead one live is the fake-live bug.
+    ///
+    /// Returns `nil` only when the pane has no ``WorkspacePaneField/liveness`` entry — i.e. when the
+    /// document holds no such pane.
+    ///
+    /// Only the named pane's own cells cross. The rule reads nothing else, so handing the whole
+    /// document over would marshal every byte of it to ask about one object's twenty.
+    public init?(paneID: UUID, entries state: HostWorkspaceState) {
+        var blob = WsBlob()
+        var cells = state.keys(ofKind: WorkspaceObjectKind.pane.rawValue, objectID: paneID)
+            .map { blob.entry(WorkspaceEntry(key: $0, value: state[$0] ?? Data())) }
+        var wanted = SlopDeskWsUuid(paneID)
+        var found = false
+        var record = SlopDeskWsPaneLiveness()
+
+        let strings = blob.lend { bytes in
+            cells.withUnsafeMutableBufferPointer { input in
+                wsBytes { out, cap in
+                    slopdesk_ws_pane_liveness_read(
+                        input.baseAddress,
+                        input.count,
+                        bytes.baseAddress,
+                        bytes.count,
+                        &wanted,
+                        &found,
+                        &record,
+                        out,
+                        cap,
+                    )
+                }
+            }
         }
-        func string(_ field: UInt8) -> String? {
-            value(field).flatMap { WorkspaceStateCodec.decodeString($0) }
+        guard found else { return nil }
+        self = Self(record, strings: strings)
+    }
+}
+
+// MARK: - Marshalling
+
+private extension WsBlob {
+    /// A span for a value that may not be there. Absent is `nil`; a PRESENT span of length zero is
+    /// the empty string, and the two are different facts on this wire.
+    mutating func optionalSpan(_ text: String?) -> SlopDeskWsSpan {
+        guard let text else { return SlopDeskWsSpan(offset: 0, len: 0, present: false) }
+        return span(text)
+    }
+}
+
+extension PaneLiveness {
+    /// This record flattened for the crossing, its seven strings appended to `blob`.
+    ///
+    /// One buffer for the strings AND for the document cells that travel beside them: one pointer,
+    /// one lifetime, one `withUnsafeBytes` scope, where a span per field would be seven nested ones
+    /// per record and a reconciler tick carries dozens of records.
+    func flattened(into blob: inout WsBlob) -> SlopDeskWsPaneLiveness {
+        SlopDeskWsPaneLiveness(
+            id: SlopDeskWsUuid(paneID),
+            live_title: blob.optionalSpan(liveTitle),
+            cwd: blob.optionalSpan(cwd),
+            project_key: blob.optionalSpan(projectKey),
+            foreground_process: blob.optionalSpan(foregroundProcess),
+            running_command: blob.optionalSpan(runningCommand),
+            agent_label: blob.optionalSpan(agentLabel),
+            agent_intent: blob.optionalSpan(agentIntent),
+            last_activity_ms: lastActivityMS,
+            completion_epoch: completionEpoch,
+            last_duration_ms: lastDurationMS ?? 0,
+            last_exit_code: lastExitCode ?? 0,
+            grid_cols: grid?.cols ?? 0,
+            grid_rows: grid?.rows ?? 0,
+            liveness: liveness.rawValue,
+            agent_state: agentState?.state ?? 0,
+            agent_kind: agentState?.kind ?? 0,
+            progress_state: progress?.state ?? 0,
+            progress_percent: progress?.percent ?? 0,
+            title_fresh: titleFresh,
+            command_running: commandRunning,
+            has_agent: agentState != nil,
+            has_progress: progress != nil,
+            has_last_exit_code: lastExitCode != nil,
+            has_last_duration_ms: lastDurationMS != nil,
+            has_grid: grid != nil,
+        )
+    }
+
+    /// The record a door answered, its spans resolved against the string buffer it filled.
+    ///
+    /// The `has_*` flags are read rather than a sentinel compared against, which is the whole reason
+    /// they are on the wire: a grid of 0×0 and a pane whose size was never observed are different
+    /// states, and picking a magic number to tell them apart would be a decision on this side of the
+    /// boundary.
+    init(_ record: SlopDeskWsPaneLiveness, strings: Data) {
+        func text(_ span: SlopDeskWsSpan) -> String? {
+            guard span.present else { return nil }
+            return strings.withUnsafeBytes { ArenaText.optionalText($0, span.offset, span.len) }
         }
-        guard let livenessByte = value(WorkspacePaneField.liveness)
-            .flatMap({ WorkspaceStateCodec.decodeU8($0) })
-        else { return nil }
-        // An unknown liveness byte from a newer host is treated as `dead`: rendering a pane STALE
-        // when it is actually live is a cosmetic miss, while rendering a dead pane live is the
-        // fake-live bug. Degrade toward the safe side.
-        let liveness = PaneLivenessState(rawValue: livenessByte) ?? .dead
-        let agentPair = value(WorkspacePaneField.agentState).flatMap { WorkspaceStateCodec.decodeU8Pair($0) }
-        let progressPair = value(WorkspacePaneField.progress).flatMap { WorkspaceStateCodec.decodeU8Pair($0) }
-        let gridPair = value(WorkspacePaneField.grid).flatMap { WorkspaceStateCodec.decodeU16Pair($0) }
         self.init(
-            paneID: paneID,
-            liveness: liveness,
-            liveTitle: string(WorkspacePaneField.liveTitle),
-            titleFresh: value(WorkspacePaneField.titleFresh)
-                .flatMap { WorkspaceStateCodec.decodeBool($0) } ?? false,
-            cwd: string(WorkspacePaneField.cwd),
-            projectKey: string(WorkspacePaneField.projectKey),
-            foregroundProcess: string(WorkspacePaneField.foregroundProcess),
-            runningCommand: string(WorkspacePaneField.runningCommand),
-            agentState: agentPair.map { AgentState(state: $0.0, kind: $0.1) },
-            agentLabel: string(WorkspacePaneField.agentLabel),
-            agentIntent: string(WorkspacePaneField.agentIntent),
-            progress: progressPair.map { Progress(state: $0.0, percent: $0.1) },
-            commandRunning: value(WorkspacePaneField.commandRunning)
-                .flatMap { WorkspaceStateCodec.decodeBool($0) } ?? false,
-            lastExitCode: value(WorkspacePaneField.lastExitCode)
-                .flatMap { WorkspaceStateCodec.decodeI32($0) },
-            lastDurationMS: value(WorkspacePaneField.lastDurationMS)
-                .flatMap { WorkspaceStateCodec.decodeU32($0) },
-            grid: gridPair.map { Grid(cols: $0.0, rows: $0.1) },
-            completionEpoch: value(WorkspacePaneField.completionEpoch)
-                .flatMap { WorkspaceStateCodec.decodeU32($0) } ?? 0,
-            lastActivityMS: value(WorkspacePaneField.lastActivityMS)
-                .flatMap { WorkspaceStateCodec.decodeI64($0) } ?? 0,
+            paneID: record.id.uuid,
+            // The byte the crate answered, which it has already degraded toward `dead` for anything
+            // this build does not know. The `?? .dead` is the same degrade restated, for a Swift
+            // enum that cannot hold a byte it has no case for.
+            liveness: PaneLivenessState(rawValue: record.liveness) ?? .dead,
+            liveTitle: text(record.live_title),
+            titleFresh: record.title_fresh,
+            cwd: text(record.cwd),
+            projectKey: text(record.project_key),
+            foregroundProcess: text(record.foreground_process),
+            runningCommand: text(record.running_command),
+            agentState: record.has_agent
+                ? AgentState(state: record.agent_state, kind: record.agent_kind)
+                : nil,
+            agentLabel: text(record.agent_label),
+            agentIntent: text(record.agent_intent),
+            progress: record.has_progress
+                ? Progress(state: record.progress_state, percent: record.progress_percent)
+                : nil,
+            commandRunning: record.command_running,
+            lastExitCode: record.has_last_exit_code ? record.last_exit_code : nil,
+            lastDurationMS: record.has_last_duration_ms ? record.last_duration_ms : nil,
+            grid: record.has_grid ? Grid(cols: record.grid_cols, rows: record.grid_rows) : nil,
+            completionEpoch: record.completion_epoch,
+            lastActivityMS: record.last_activity_ms,
         )
     }
 }
 
-// MARK: - Merge
+// MARK: - The document's liveness half
 
 public extension HostWorkspaceState {
     /// Declares that one pane has no process, keeping only what describes a PLACE.
     ///
-    /// `cwd` and `projectKey` survive because they are still true — the directory a dead pane was
-    /// working in has not moved — and because the By-Project sidebar would otherwise re-bucket every
-    /// restored row the moment its shell is gone. Everything else is a claim about a running process
-    /// and would render the pane fake-live.
+    /// ASKED. `cwd` and `projectKey` survive because they are still true — the directory a dead pane
+    /// was working in has not moved — and because the By-Project sidebar would otherwise re-bucket
+    /// every restored row the moment its shell is gone. Everything else is a claim about a running
+    /// process and would render the pane fake-live. Which two fields those are is exactly the kind of
+    /// line no second transcription of it stays on.
     @discardableResult
     mutating func markPaneDead(_ paneID: UUID) -> Bool {
-        merge(paneLiveness: PaneLiveness(
-            paneID: paneID,
-            liveness: .dead,
-            cwd: string(WorkspaceKey(.pane, paneID, WorkspacePaneField.cwd)),
-            projectKey: string(WorkspaceKey(.pane, paneID, WorkspacePaneField.projectKey)),
-        ))
+        var wanted = SlopDeskWsUuid(paneID)
+        return fold { entries, count, _, _, bytes, blobLen, changed, out, cap in
+            slopdesk_ws_mark_pane_dead(entries, count, bytes, blobLen, &wanted, changed, out, cap)
+        }
     }
 
     /// Replaces one pane's LIVENESS fields wholesale, leaving its topology fields untouched.
-    ///
-    /// Clear-then-write, not write-over: a fact that stopped being true has to disappear. Writing
-    /// only the fields the new record carries would latch `runningCommand` after the command
-    /// finished and `agentLabel` after the agent exited — the same "edge published, value retained
-    /// nowhere" failure this whole document exists to fix, just moved one layer up.
     ///
     /// - Returns: `true` if anything actually changed. The caller uses this to decide whether the
     ///   document's `stateNum` moves — a no-op recapture must never churn a version number, because
     ///   every subscriber pays for a version bump.
     @discardableResult
     mutating func merge(paneLiveness record: PaneLiveness) -> Bool {
+        merge(paneLiveness: [record])
+    }
+
+    /// Replaces the LIVENESS half of every named pane in one crossing.
+    ///
+    /// ASKED. Clear-then-write, not write-over: a fact that stopped being true has to disappear.
+    /// Writing only the fields the new record carries would latch `runningCommand` after the command
+    /// finished and `agentLabel` after the agent exited — the same "edge published, value retained
+    /// nowhere" failure this whole document exists to fix, just moved one layer up.
+    ///
+    /// Panes the document holds but `records` does not name are LEFT ALONE. Reaping is
+    /// ``reconcile(captured:)``, a separate door with a separate failure mode, and the reason the two
+    /// are not one entry point with a flag: the wrong value of that flag is the entire workspace of a
+    /// host that has just restarted and captured nothing yet.
+    @discardableResult
+    mutating func merge(paneLiveness records: [PaneLiveness]) -> Bool {
+        fold(records) { entries, count, given, givenCount, bytes, blobLen, changed, out, cap in
+            slopdesk_ws_merge_pane_liveness(
+                entries, count, given, givenCount, bytes, blobLen, changed, out, cap,
+            )
+        }
+    }
+
+    /// One reconciler pass: fold in what was captured, and decide what the rest of the panes are.
+    ///
+    /// ASKED, and it is the decision the naive "reap what was not captured" rule gets wrong once
+    /// topology lives here. A pane the host restored from disk has no process — that is the whole
+    /// point of a restart — but it is still a REAL pane in a REAL tab, and deleting it would erase
+    /// the user's layout every time hostd restarted. So:
+    ///
+    /// - captured → its liveness is whatever the capture says, and it is not a reap candidate even
+    ///   if the topology has never heard of it;
+    /// - in the topology but not captured → ``markPaneDead(_:)``, rendered STALE rather than
+    ///   fake-live, keeping the two fields that describe a PLACE rather than a process;
+    /// - neither → reaped, because nothing owns it. That is a pane whose channel closed and whose tab
+    ///   entry is gone, which is the case the old rule was actually for.
+    @discardableResult
+    mutating func reconcile(captured records: [PaneLiveness]) -> Bool {
+        fold(records) { entries, count, given, givenCount, bytes, blobLen, changed, out, cap in
+            slopdesk_ws_reconcile_panes(
+                entries, count, given, givenCount, bytes, blobLen, changed, out, cap,
+            )
+        }
+    }
+}
+
+// MARK: - The crossing
+
+private extension HostWorkspaceState {
+    /// Runs one document-mutating liveness door and adopts its answer.
+    ///
+    /// The document's cells and the records' strings go into ONE blob — one pointer, one lifetime,
+    /// one scope — and what comes back is an encoded SNAPSHOT: the document's own byte encoding, the
+    /// one every client already decodes off a host's push, so nothing here is a grammar anyone has to
+    /// keep in step.
+    ///
+    /// `changed` short-circuits the decode as well as the version bump. This runs on a 500 ms
+    /// backstop, and an idle host reconciling to the same answer must not pay for a document it is
+    /// about to discard.
+    mutating func fold(
+        _ records: [PaneLiveness] = [],
+        through door: (
+            UnsafeMutablePointer<SlopDeskWsEntry>?, Int,
+            UnsafeMutablePointer<SlopDeskWsPaneLiveness>?, Int,
+            UnsafeMutablePointer<UInt8>?, Int,
+            UnsafeMutablePointer<Bool>?,
+            UnsafeMutablePointer<UInt8>?, Int,
+        ) -> Int,
+    ) -> Bool {
+        var blob = WsBlob()
+        var cells = entries.map { blob.entry(WorkspaceEntry(key: $0.key, value: $0.value)) }
+        var flat = records.map { $0.flattened(into: &blob) }
         var changed = false
-        var next = [WorkspaceKey: Data]()
-        for entry in record.entries() { next[entry.key] = entry.value }
-        for field in PaneLiveness.livenessFields() {
-            let key = WorkspaceKey(.pane, record.paneID, field)
-            let incoming = next[key]
-            if self[key] != incoming {
-                self[key] = incoming
-                changed = true
+        let snapshot = blob.lend { bytes in
+            cells.withUnsafeMutableBufferPointer { input in
+                flat.withUnsafeMutableBufferPointer { given in
+                    wsBytes { out, cap in
+                        door(
+                            input.baseAddress,
+                            input.count,
+                            given.baseAddress,
+                            given.count,
+                            bytes.baseAddress,
+                            bytes.count,
+                            &changed,
+                            out,
+                            cap,
+                        )
+                    }
+                }
             }
         }
-        return changed
+        // A door that changed the document and then handed back bytes the codec refuses is this
+        // boundary having gone wrong, not an edit. Keeping the document as it was is the only answer
+        // that cannot leave half a workspace behind.
+        guard changed, let next = try? WorkspaceStateCodec.decodeSnapshot(snapshot) else { return false }
+        self = next
+        return true
     }
 }

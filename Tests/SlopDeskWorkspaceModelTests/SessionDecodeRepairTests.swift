@@ -2,31 +2,21 @@ import Foundation
 import XCTest
 @testable import SlopDeskWorkspaceModel
 
-/// The rest of the `decodeIfPresent(…) ?? default` sweep — the sites `SplitNodeDecodeRepairTests`
-/// did not reach, one level up the persisted file from the split tree.
+/// The rest of the hand-edited-file sweep — the sites `SplitNodeDecodeRepairTests` does not reach,
+/// one level up the persisted file from the split tree.
 ///
-/// Same trap, same blast radius: a key that is PRESENT with a value its type refuses does not answer
-/// `nil`, it THROWS, so the `??` default written beside it never runs. Nothing catches that throw
-/// until `WorkspacePersistence.load()`, which replaces the user's whole arrangement with the default
-/// workspace and files the old one away as a `.corrupt` sidecar. Every test here therefore asserts
-/// the SURVIVAL of the panes, tabs and sessions the file still describes — the field's own repaired
-/// value is the small half of the property.
+/// Same blast radius: a value the reader refuses in one session used to unwind the whole
+/// `TreeWorkspace` decode, so `WorkspacePersistence.loadTree()` replaced the user's arrangement with
+/// the default workspace and filed the old one away as a `.corrupt` sidecar. Every test here
+/// therefore asserts the SURVIVAL of the panes, tabs and sessions the file still describes — the
+/// field's own repaired value is the small half of the property.
 ///
-/// Which language had it right, per site:
-///
-/// - `PaneSpec.userRenamed` — **RUST**. `persist::decode_spec` asks
-///   `matches!(value.get("userRenamed"), Some(Json::Bool(true)))`, so anything that is not the
-///   literal `true` is false and nothing here is ever a fault.
-/// - `VideoEndpoint` — **RUST**. `persist::decode_video` repairs `windowID` to `0`, `appName` to
-///   `""` and `displayID` to `None`, and faults only on `title`. Swift's SYNTHESIZED decode faulted
-///   on all four.
-/// - `Session.activeTabIndex`, `Session.specs`, `Session.detached` — **NO RUST COUNTERPART**.
-///   `persist.rs` decodes specs and nodes; it has never seen a session. The Swift here is the only
-///   implementation of these three answers, and is what `persist.rs` will have to agree with when it
-///   grows to the session/file level.
+/// These asserted against Swift's `Session`/`PaneSpec` `Codable` until 2026-08-20, when the file's
+/// only decoder became `rust/slopdesk-workspace`'s. They now assert through ``WorkspaceFile``, which
+/// is the same rules with one implementation behind them: `decode_spec` is what folds a non-boolean
+/// `userRenamed` to false, `decode_video` is what repairs a window id to `0`, and `tolerant_array` is
+/// what reads an unreadable side table as an empty one.
 final class SessionDecodeRepairTests: XCTestCase {
-    private let decoder = JSONDecoder()
-
     // MARK: - Fixtures (written in the shape that is actually on disk)
 
     /// Every id in this model is a single-field struct, so it persists as `{"raw":"<uuid>"}`.
@@ -56,14 +46,25 @@ final class SessionDecodeRepairTests: XCTestCase {
             + "\"activeTabIndex\":\(activeTabIndex),\"specs\":\(entries)\(extra)}"
     }
 
-    private func decodeSession(_ json: String) throws -> Session {
-        try decoder.decode(Session.self, from: Data(json.utf8))
+    /// The sessions a file's `sessions` key holds, wrapped in the file the door reads.
+    private func fileJSON(_ sessions: String...) -> Data {
+        Data("""
+        {"schemaVersion":\(TreeWorkspace.currentSchemaVersion),"sessions":[\(sessions.joined(separator: ","))]}
+        """.utf8)
     }
 
-    /// Two sessions in one array — the shape a workspace file's `sessions` key holds. A repair that
-    /// is not really a repair shows up here as the SECOND session disappearing along with the first.
+    /// The decode is its OWN statement, and must stay one: `XCTUnwrap` records a failure for an
+    /// error thrown inside its autoclosure before it rethrows, so folding these two lines together
+    /// makes every test that ASSERTS a refusal fail while its assertion passes.
+    private func decodeSession(_ json: String) throws -> Session {
+        let tree = try WorkspaceFile.decode(fileJSON(json))
+        return try XCTUnwrap(tree.sessions.first)
+    }
+
+    /// Two sessions in one file. A repair that is not really a repair shows up here as the SECOND
+    /// session disappearing along with the first.
     private func decodeSessions(_ first: String, _ second: String) throws -> [Session] {
-        try decoder.decode([Session].self, from: Data("[\(first),\(second)]".utf8))
+        try WorkspaceFile.decode(fileJSON(first, second)).sessions
     }
 
     /// The intact session every test pairs its broken one with: whatever the repair costs, it must
@@ -72,11 +73,11 @@ final class SessionDecodeRepairTests: XCTestCase {
         sessionJSON(name: "right", pane: pane, spec: terminalSpecJSON(title: "two"))
     }
 
-    // MARK: - PaneSpec.userRenamed (Rust had it right)
+    // MARK: - PaneSpec.userRenamed
 
-    /// `"userRenamed": "yes"` is not `true`, and under Rust it is not a fault either — `decode_spec`
-    /// pattern-matches for `Some(Json::Bool(true))` and every other shape folds to false. Swift threw
-    /// past its own `?? false` and took both sessions with it.
+    /// `"userRenamed": "yes"` is not `true`, and it is not a fault either — `decode_spec`
+    /// pattern-matches for `Some(Json::Bool(true))` and every other shape folds to false. The deleted
+    /// Swift threw past its own `?? false` and took both sessions with it.
     func testANonBooleanUserRenamedFoldsToFalseAndKeepsBothSessions() throws {
         let first = UUID(), second = UUID()
         let broken = sessionJSON(
@@ -103,11 +104,11 @@ final class SessionDecodeRepairTests: XCTestCase {
         XCTAssertEqual(session.specs[PaneID(raw: pane)]?.userRenamed, true)
     }
 
-    // MARK: - VideoEndpoint (Rust had it right)
+    // MARK: - VideoEndpoint
 
     /// A window id that is not a number, and no `appName` at all. `decode_video` answers `0` and
-    /// `""`; Swift's synthesized decode required both keys at their exact types, so either one threw
-    /// out of the endpoint, the spec, the session and the file.
+    /// `""`; the deleted Swift required both keys at their exact types, so either one threw out of
+    /// the endpoint, the spec, the session and the file.
     func testAnUnreadableWindowIDAndAMissingAppNameRepairRatherThanThrow() throws {
         let first = UUID(), second = UUID()
         let video = "{\"windowID\":\"not-a-number\",\"title\":\"Display 1\"}"
@@ -140,7 +141,7 @@ final class SessionDecodeRepairTests: XCTestCase {
     /// And the line the tolerance must not cross, on the same struct. `decode_video` writes
     /// `text(value, "title")?` — a fault — because the title is the only thing a window-shaped
     /// endpoint says about itself that a repair cannot invent, and `decode_spec` refuses the whole
-    /// spec when it is missing. Swift refuses it too.
+    /// spec when it is missing.
     func testAVideoEndpointWithNoTitleIsStillAFault() {
         let pane = UUID()
         let json = sessionJSON(
@@ -148,15 +149,17 @@ final class SessionDecodeRepairTests: XCTestCase {
         )
         XCTAssertThrowsError(
             try decodeSession(json), "an endpoint that names no target is corruption, not a repair",
-        )
+        ) { error in
+            XCTAssertEqual(error as? WorkspaceFile.FileError, .malformed)
+        }
     }
 
-    // MARK: - Session.activeTabIndex (no Rust counterpart)
+    // MARK: - Session.activeTabIndex
 
-    /// Swift is the only implementation here, and the answer is decided by the field's own
-    /// normalizer: `normalizingActive()` already clamps an out-of-range index to `0` and `activeTab`
-    /// already falls through to `tabs.first`. A wrong-TYPED index carries strictly less information
-    /// than an out-of-range one, so treating it as the harsher fault was backwards.
+    /// The answer is decided by the field's own normalizer: the repair already clamps an out-of-range
+    /// index to `0` and `activeTab` already falls through to `tabs.first`. A wrong-TYPED index
+    /// carries strictly less information than an out-of-range one, so treating it as the harsher
+    /// fault was backwards.
     func testAnUnreadableActiveTabIndexCostsTheSelectionAndNothingElse() throws {
         let first = UUID(), second = UUID()
         let broken = sessionJSON(name: "left", pane: first, activeTabIndex: "\"two\"")
@@ -171,12 +174,12 @@ final class SessionDecodeRepairTests: XCTestCase {
         XCTAssertEqual(sessions.last?.name, "right")
     }
 
-    // MARK: - Session.specs (no Rust counterpart) — tolerant container
+    // MARK: - Session.specs — a tolerant container around strict elements
 
     /// `specs` is a SIDE table, not the pane list: the tabs' trees are. So an unreadable `specs`
-    /// value costs titles, kinds and video targets for that ONE session — `normalizingSpecs()`
-    /// re-seeds every leaf a default `PaneSpec` — while the arrangement itself survives intact. The
-    /// throw it replaces cost every session in the file.
+    /// value costs the titles, kinds and video targets of that ONE session — the repair re-seeds
+    /// every leaf a default `PaneSpec` — while the arrangement itself survives intact. The throw it
+    /// replaces cost every session in the file.
     func testAnUnreadableSpecsValueKeepsEveryTabAndEverySession() throws {
         let first = UUID(), second = UUID()
         let broken = sessionJSON(name: "left", pane: first, specs: "5")
@@ -187,29 +190,35 @@ final class SessionDecodeRepairTests: XCTestCase {
             [first],
             "the pane is still in its tab — only its description was unreadable",
         )
-        XCTAssertEqual(sessions.first?.specs.isEmpty, true)
+        XCTAssertEqual(
+            sessions.first?.specs[PaneID(raw: first)]?.title,
+            TreeWorkspaceDefaults.paneTitle,
+            "the leaf that lost its description is re-seeded, not dropped",
+        )
         XCTAssertEqual(sessions.last?.specs[PaneID(raw: second)]?.title, "two")
     }
 
-    /// The strict half. A spec ROW inside the array still decodes strictly, because a `try?` per
-    /// element would silently re-seed that one pane as a default terminal — a `.desktop` pane coming
-    /// back as a blank terminal out of a load that reported success. Visible refusal beats a pane
-    /// quietly turning into a different pane.
+    /// The strict half. A spec ROW inside the array is still strict, because tolerating it would
+    /// silently re-seed that one pane as a default terminal — a `.desktop` pane coming back as a
+    /// blank terminal out of a load that reported success. Visible refusal beats a pane quietly
+    /// turning into a different pane.
     func testAMalformedSpecEntryIsStillAFault() {
         let pane = UUID()
         let json = sessionJSON(name: "left", pane: pane, specs: "[{\"pane\":\(idJSON(pane))}]")
         XCTAssertThrowsError(
             try decodeSession(json), "a spec entry with no spec is corruption, not a repair",
-        )
+        ) { error in
+            XCTAssertEqual(error as? WorkspaceFile.FileError, .malformed)
+        }
     }
 
-    // MARK: - Session.detached (no Rust counterpart) — tolerant container
+    // MARK: - Session.detached — a tolerant container around strict elements
 
     /// `detached` is the ONLY record of a pane living outside every tab tree, so this is the repair
-    /// with the sharpest edge: an entry lost here is a pane deleted (`normalizingSpecs()` prunes its
-    /// now-orphan spec). It is still right, for the same reason `children` was — a value the type
-    /// refuses named no panes to begin with, and there is nothing under a `{}` to recover — and the
-    /// alternative was losing every session in the file including this one's tabs.
+    /// with the sharpest edge: an entry lost here is a pane deleted. It is still right, for the same
+    /// reason `children` was — a value the reader refuses named no panes to begin with, and there is
+    /// nothing under a `{}` to recover — and the alternative was losing every session in the file
+    /// including this one's tabs.
     func testAnUnreadableDetachedValueCostsNoTiledPaneAndNoOtherSession() throws {
         let first = UUID(), second = UUID()
         let broken = sessionJSON(name: "left", pane: first, extra: ",\"detached\":{}")
@@ -225,22 +234,33 @@ final class SessionDecodeRepairTests: XCTestCase {
         XCTAssertEqual(sessions.last?.specs[PaneID(raw: second)]?.title, "two")
     }
 
-    /// A readable `detached` list still decodes, and every entry in it still decodes STRICTLY: a
-    /// malformed record is a fault rather than one detached pane silently deleted out of a load that
-    /// reported success. That strictness is what makes the tolerant container above safe.
+    /// A readable `detached` list still loads, and every entry in it is still strict: a malformed
+    /// record is a refusal rather than one detached pane silently deleted out of a load that reported
+    /// success. That strictness is what makes the tolerant container above safe.
+    ///
+    /// The satellite carries its own spec row, because a detached pane with nothing to materialize
+    /// from is not a pane the repair keeps — which is the one place the door's answer is sharper than
+    /// the deleted decoder's, and deliberately so.
     func testAReadableDetachedListSurvivesAndAMalformedEntryIsAFault() throws {
         let pane = UUID(), floating = UUID()
+        let specs = "[{\"pane\":\(idJSON(pane)),\"spec\":\(terminalSpecJSON())},"
+            + "{\"pane\":\(idJSON(floating)),\"spec\":\(terminalSpecJSON(title: "satellite"))}]"
         let good = sessionJSON(
-            name: "left", pane: pane, extra: ",\"detached\":[{\"pane\":\(idJSON(floating))}]",
+            name: "left", pane: pane, specs: specs,
+            extra: ",\"detached\":[{\"pane\":\(idJSON(floating))}]",
         )
         let session = try decodeSession(good)
         XCTAssertEqual(session.detached.map(\.pane.raw), [floating])
+        XCTAssertEqual(session.specs[PaneID(raw: floating)]?.title, "satellite")
+
         let bad = sessionJSON(
             name: "left", pane: pane, extra: ",\"detached\":[{\"originTab\":\(idJSON(UUID()))}]",
         )
         XCTAssertThrowsError(
             try decodeSession(bad),
             "a detached record with no pane id names nothing that can be brought back",
-        )
+        ) { error in
+            XCTAssertEqual(error as? WorkspaceFile.FileError, .malformed)
+        }
     }
 }

@@ -7,7 +7,9 @@ import Foundation
 /// It holds `[Session]` + the active session and NOTHING device-local: the preset library, the latched
 /// video modes and the per-host connection target live in ``DevicePreferences`` (docs/45 §7.3), because
 /// the tree describes THE LAYOUT — which every attached client shares — and those describe one machine.
-/// A pure `Codable`/`Equatable`/`Sendable` value with no SwiftUI or transport import.
+/// A pure `Equatable`/`Sendable` value with no SwiftUI or transport import — and deliberately not
+/// `Codable`: the file it is persisted to is read and written by `rust/slopdesk-workspace`, through
+/// ``WorkspaceFile``.
 ///
 /// **Transitional name (W2 is purely additive).** The plan's final type name for this is `Workspace`
 /// (docs/42 §Domain model, `currentSchemaVersion = 11`), but the live ``Workspace`` (the v9 canvas value)
@@ -20,7 +22,7 @@ import Foundation
 /// **Invariant — specs == leafIDs.** For every session, `Set(session.specs.keys)` equals the set of leaf
 /// ids across all of that session's tabs. ``isInvariantHeld()`` checks it; the ops preserve it and
 /// ``normalizingSpecs()`` repairs a corrupt file.
-public struct TreeWorkspace: Codable, Sendable, Equatable {
+public struct TreeWorkspace: Sendable, Equatable {
     /// The persisted schema version for the tree-rooted shape (docs/42 §Domain model). 10 = this shape.
     public var schemaVersion: Int
     /// The sessions, in sidebar order. ≥ 1 (the workspace is never empty — see ``normalizingActive()``).
@@ -38,50 +40,14 @@ public struct TreeWorkspace: Codable, Sendable, Equatable {
         self.activeSessionID = activeSessionID
     }
 
-    private enum CodingKeys: String, CodingKey {
-        case schemaVersion
-        case sessions
-        case activeSessionID
-    }
-
-    /// Hand-written decode so a key outside ``CodingKeys`` is decode-IGNORED rather than trapping. The
-    /// tree is SHAPE; every device-local collection is read from ``DevicePreferences``, so a file
-    /// carrying one is describing something this type does not own.
-    ///
-    /// This is tolerance for a hand-edited file, NOT a migration seam: a whole file written by a
-    /// build that shaped the tree differently is caught by ``currentSchemaVersion`` and reset aside.
-    ///
-    /// ## `try?`, not `decodeIfPresent`, on the selection
-    /// `decodeIfPresent` answers `nil` for a key that is ABSENT and THROWS for one that is present
-    /// carrying a value its type refuses. Those are the same fact here — the selection is a hint,
-    /// and a hint no one can read is a hint no one gave — but the throw is not local: it unwinds the
-    /// whole decode, so `WorkspacePersistence.load()` takes the `.corrupt` path and hands back the
-    /// DEFAULT workspace. One unreadable optional field costs the user every session they had.
-    /// `slopdesk_workspace::persist`'s `decode_optional_id` reads the same input as absent and lets
-    /// ``normalizingActive()`` fill the selection from `sessions.first`, so the file that survives
-    /// under Rust used to be the file that vanished under Swift.
-    ///
-    /// **`scripts/check-supervisor.sh` cannot see this, and removing the `??` is what blinded it.**
-    /// The ratchet added in `fffc9dc1` bans the PAIRING `decodeIfPresent(…) ?? default`, because
-    /// `decodeIfPresent` alone is right wherever absence and unreadability really are different
-    /// faults. This line once had the `??`; it came off and the throw stayed, and the gate has read
-    /// it as compliant ever since. A pattern ban sees spelling, not consequence — so if this line
-    /// ever needs `decodeIfPresent` back, the reason belongs here in prose, not in the shape.
-    public init(from decoder: any Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        schemaVersion = try c.decode(Int.self, forKey: .schemaVersion)
-        sessions = try c.decode([Session].self, forKey: .sessions)
-        activeSessionID = try? c.decode(SessionID.self, forKey: .activeSessionID)
-    }
-
     /// The schema version this shape writes. A file carrying any OTHER version is not migrated — the
     /// load path resets it aside (single-user, no backward compatibility). The retained-but-dead
     /// canvas ``Workspace`` owns its own `currentSchemaVersion = 9`.
     ///
     /// 12 is the shape whose device-local half lives in ``DevicePreferences``. The bump is what makes
-    /// the no-migration rule TRUE rather than merely stated: the retired keys are outside
-    /// ``CodingKeys``, so a file from the previous shape would otherwise decode "successfully" and the
-    /// next autosave would rewrite it without the user's presets, templates and latched video modes —
+    /// the no-migration rule TRUE rather than merely stated: the retired keys are keys no decoder
+    /// reads, so a file from the previous shape would otherwise load "successfully" and the next
+    /// autosave would rewrite it without the user's presets, templates and latched video modes —
     /// silently, with no `.corrupt` copy kept. A version this build does not speak resets aside
     /// instead, which keeps the old file recoverable.
     ///

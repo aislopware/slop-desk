@@ -60,7 +60,7 @@ pub use intent::{
 };
 pub use liveness::{
     AgentState, Grid, LIVENESS_FIELDS, PaneLiveness, Progress, TOPOLOGY_FIELDS, mark_pane_dead,
-    merge_pane_liveness,
+    merge_pane_liveness, reconcile,
 };
 pub use state::{
     HostWorkspaceState, ROOT_OBJECT_ID, WorkspaceEntry, WorkspaceKey, WorkspaceObjectKind, WorkspaceStateDiff,

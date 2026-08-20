@@ -5,9 +5,13 @@ import SlopDeskWorkspaceModel
 
 /// Loads + saves the pure ``TreeWorkspace`` value tree to disk (docs/22 §6).
 ///
-/// The value tree IS the format — already `Codable` (each tab's flat ``Canvas`` has a defensive
-/// `Canvas.init(from:)` enforcing invariants on decode). Deliberately **IO-thin**: owns only the file
-/// URL and the encode/decode, so it is unit-testable against a temp dir with no store/UI/client.
+/// Deliberately **IO-thin**, and thinner since 2026-08-20: it owns the file URL, the two sidecars and
+/// the atomic write, and nothing about the FORMAT. Both directions go through ``WorkspaceFile``, which
+/// is `slopdesk_workspace::persist` — the version check, the pane cap, the repair pass and every
+/// tolerance rule live there, once, in the language the same file is decoded in when a gesture reaches
+/// it. What this type used to own instead was a `JSONEncoder`, a `JSONDecoder` and a second opinion
+/// about all four, and the second opinion was the one that lost a person their divider positions on
+/// every relaunch (`docs/55` §8).
 ///
 /// ### The RESTORED-vs-RECONNECTED discipline (docs/22 §6)
 /// Persistence restores SHAPE and INTENT only — never live connections, byte buffers, or sessionIDs.
@@ -21,11 +25,6 @@ import SlopDeskWorkspaceModel
 /// thread-safe `FileManager`, so a value can cross actor boundaries for the store's off-main-actor
 /// debounced write (docs/22 §6) without data-race risk.
 public struct WorkspacePersistence: @unchecked Sendable {
-    /// Cap on loaded-file collection sizes. An enormous `items` array would make the store eagerly
-    /// allocate one session PER item on the main actor (UI freeze / OOM). Real workspaces are dozens of
-    /// panes — this cap is far above any genuine use.
-    public static let maxItems = 1024
-
     /// The file the workspace is written to / read from. Defaults to
     /// `Application Support/SlopDesk/workspace.json` (the app container on iOS).
     public let fileURL: URL
@@ -54,48 +53,43 @@ public struct WorkspacePersistence: @unchecked Sendable {
             .appendingPathComponent("workspace.json", isDirectory: false)
     }
 
-    // MARK: Encoding (deterministic, reviewable)
-
-    /// JSON encoder for a stable, reviewable on-disk shape — ``SidecarJSON/encoder()``, which every
-    /// sidecar this target writes is built from (sorted keys are the byte-stable round-trip contract,
-    /// docs/22 §8).
-    private static func makeEncoder() -> JSONEncoder { SidecarJSON.encoder() }
-
     // MARK: Save
 
     /// Encodes the ``TreeWorkspace`` atomically to ``fileURL`` — the live save path, since the tree is
     /// the persisted source of truth. Creates the parent dir if needed; a thrown error keeps the
     /// previous good file.
+    ///
+    /// The `throws` is the filesystem's now and nothing else: ``WorkspaceFile/encode(_:)`` cannot
+    /// fail, where the `JSONEncoder` it replaced carried a `throws` this path spent years never
+    /// taking.
     public func save(_ tree: TreeWorkspace) throws {
         let directory = fileURL.deletingLastPathComponent()
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-        let data = try Self.makeEncoder().encode(tree)
-        try data.write(to: fileURL, options: [.atomic])
+        try WorkspaceFile.encode(tree).write(to: fileURL, options: [.atomic])
     }
 
     // MARK: Load (tree — LIVE path)
 
-    /// The LIVE load path for the IDE-shell tree: reads the file and typed-decodes a
-    /// ``TreeWorkspace``. There is no migration step — a shape or a `schemaVersion` this build does not
-    /// understand resets aside (single-user, no backward compatibility).
+    /// The LIVE load path for the IDE-shell tree: reads the file and hands the bytes to
+    /// ``WorkspaceFile/decode(_:)``. There is no migration step — a shape or a `schemaVersion` this
+    /// build does not understand resets aside (single-user, no backward compatibility).
     /// - missing file → ``TreeWorkspace/defaultWorkspace()`` (first launch).
-    /// - un-decodable / a foreign version → reset aside (`.corrupt` sidecar) + the default.
+    /// - un-decodable / a foreign version / more panes than a launch can hold → reset aside
+    ///   (`.corrupt` sidecar) + the default.
     ///
-    /// Never throws. The result is `normalized()` so the `Set(specs.keys) == Set(leafIDs)` invariant
-    /// holds even for a hand-edited / partial file (validate-then-repair), and the per-collection
-    /// ``maxItems`` bound guards against a corrupt file allocating a session per leaf on launch.
+    /// Never throws, and never repairs: the answer arrives already normalized — the
+    /// `Set(specs.keys) == Set(leafIDs)` invariant holds even for a hand-edited file — because the
+    /// crossing the answer comes back through cannot spell the shapes a repair exists to fix, so the
+    /// repair has to run before it. The pane cap that guards against a corrupt file allocating a
+    /// session per leaf on launch is `persist::MAX_PANES`, behind the same door.
     public func loadTree() -> TreeWorkspace {
         guard let data = try? Data(contentsOf: fileURL) else {
             return .defaultWorkspace() // missing file = first launch; nothing to back up
         }
-        guard let tree = try? JSONDecoder().decode(TreeWorkspace.self, from: data),
-              tree.schemaVersion == TreeWorkspace.currentSchemaVersion
-        else {
-            return resetTreeToDefault() // un-decodable, or a version this build does not speak
+        guard let tree = try? WorkspaceFile.decode(data) else {
+            return resetTreeToDefault() // un-decodable, a foreign version, or too many panes
         }
-        // Bound the leaf count so a corrupt file can't make the store allocate unboundedly on launch.
-        guard tree.allPaneIDs().count <= Self.maxItems else { return resetTreeToDefault() }
-        return tree.normalized()
+        return tree
     }
 
     // MARK: On-Launch behaviour (the `On Launch` general setting → actual launch behaviour)
@@ -166,7 +160,7 @@ public struct WorkspacePersistence: @unchecked Sendable {
         // Validate-then-drop: an unreadable/corrupt file is NOT default-shaped, so it is preserved aside.
         if fileManager.fileExists(atPath: previousSessionURL.path),
            let data = try? Data(contentsOf: fileURL),
-           let tree = try? JSONDecoder().decode(TreeWorkspace.self, from: data),
+           let tree = try? WorkspaceFile.decode(data),
            Self.isDefaultTreeShape(tree)
         {
             return

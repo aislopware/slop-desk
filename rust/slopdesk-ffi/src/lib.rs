@@ -149,6 +149,7 @@ pub mod wire_message;
 pub mod workspace;
 pub mod workspace_channel;
 pub mod workspace_intent;
+pub mod workspace_liveness;
 pub mod workspace_state_file;
 pub mod workspace_templates;
 

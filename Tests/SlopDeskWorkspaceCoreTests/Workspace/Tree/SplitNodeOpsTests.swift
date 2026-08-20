@@ -122,9 +122,21 @@ final class SplitNodeOpsTests: XCTestCase {
         for child in children {
             if case .split(_, .vertical, _) = child.node { XCTFail("a same-axis (vertical) nest survived") }
         }
-        // Flattened ⇒ a decode round-trip is a fixed point (no reshape-on-reload).
-        let roundTrip = try? JSONDecoder().decode(SplitNode.self, from: try JSONEncoder().encode(XCTUnwrap(removed)))
-        XCTAssertEqual(roundTrip, removed, "the flattened tree is decode-stable (no reshape on reload)")
+        // Flattened ⇒ a save-and-load round trip is a fixed point (no reshape-on-reload).
+        let flattened = try XCTUnwrap(removed)
+        let session = Session(
+            name: "work",
+            tabs: [Tab(root: flattened, activePane: flattened.allPaneIDs().first)],
+            specs: Dictionary(
+                uniqueKeysWithValues: flattened.allPaneIDs().map { ($0, PaneSpec(kind: .terminal, title: "T")) },
+            ),
+        )
+        let saved = TreeWorkspace(sessions: [session], activeSessionID: session.id)
+        let loaded = try WorkspaceFile.decode(WorkspaceFile.encode(saved))
+        XCTAssertEqual(
+            loaded.sessions.first?.tabs.first?.root, flattened,
+            "the flattened tree is load-stable (no reshape on reload)",
+        )
     }
 
     // MARK: Resize

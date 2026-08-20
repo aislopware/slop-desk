@@ -127,9 +127,7 @@ public actor HostWorkspaceDocument {
     /// separate decision with a separate failure mode.
     @discardableResult
     public func merge(paneLiveness records: [PaneLiveness]) -> Bool {
-        mutate { next in
-            for record in records { next.merge(paneLiveness: record) }
-        }
+        mutate { $0.merge(paneLiveness: records) }
     }
 
     /// One reconciler pass: fold in what was captured, and decide what the rest of the panes are.
@@ -144,32 +142,14 @@ public actor HostWorkspaceDocument {
     ///   keeping the two fields that describe a PLACE rather than a process;
     /// - neither → reaped, because nothing owns it. That is a pane whose channel closed and whose tab
     ///   entry is gone, which is the case the old rule was actually for.
+    ///
+    /// The rule itself is `slopdesk_wire`'s and is reached through
+    /// ``SlopDeskWorkspaceModel/HostWorkspaceState/reconcile(captured:)``. What stays here is the
+    /// part that could not be pure: the actor serializes it, so `stateNum` is monotone by
+    /// construction and one tick that moved three panes costs one version rather than three.
     @discardableResult
     public func reconcile(captured records: [PaneLiveness]) -> Bool {
-        mutate { next in
-            for record in records { next.merge(paneLiveness: record) }
-            let alive = Set(records.map(\.paneID))
-            let topologyPanes = Set(
-                next.entries.keys
-                    .filter {
-                        $0.kind == WorkspaceObjectKind.pane.rawValue
-                            && PaneLiveness.topologyFields().contains($0.field)
-                    }
-                    .map(\.objectID),
-            )
-            let known = Set(
-                next.entries.keys
-                    .filter { $0.kind == WorkspaceObjectKind.pane.rawValue }
-                    .map(\.objectID),
-            )
-            for paneID in known.subtracting(alive) {
-                guard topologyPanes.contains(paneID) else {
-                    next.removeObject(kind: WorkspaceObjectKind.pane.rawValue, objectID: paneID)
-                    continue
-                }
-                next.markPaneDead(paneID)
-            }
-        }
+        mutate { $0.reconcile(captured: records) }
     }
 
     /// Marks one pane as having no process — `DetachedSessionStore`'s eviction hook.

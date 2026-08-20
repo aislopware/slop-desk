@@ -6,9 +6,9 @@ import Foundation
 /// of tabs that replaces the retired infinite canvas, docs/42 §Decisions.1).
 ///
 /// Mirrors ``PaneID`` exactly: a UUID-backed value minted once and stable for the session's lifetime,
-/// surviving the persistence round-trip so `activeSessionID` and the sidebar grouping stay valid after
+/// surviving the persistence round trip so `activeSessionID` and the sidebar grouping stay valid after
 /// restore.
-public struct SessionID: Hashable, Codable, Sendable {
+public struct SessionID: Hashable, Sendable {
     public let raw: UUID
     /// Mints a fresh identity. The default is the common path (a brand-new session); pass an explicit
     /// `UUID` only when reconstructing a known identity (decode, or a test pinning a value).
@@ -19,7 +19,7 @@ public struct SessionID: Hashable, Codable, Sendable {
 ///
 /// Mirrors ``PaneID``: minted once, stable across the tab's lifetime, survives persistence so a tab's
 /// selection (`activeTabIndex`) and per-tab focus/zoom state round-trip after restore.
-public struct TabID: Hashable, Codable, Sendable {
+public struct TabID: Hashable, Sendable {
     public let raw: UUID
     public init(raw: UUID = UUID()) { self.raw = raw }
 }
@@ -30,7 +30,7 @@ public struct TabID: Hashable, Codable, Sendable {
 /// group* so the store can target a specific split for `resizeDivider(splitID:…)` without an ambiguous
 /// path. Minted once per split, stable across re-renders; survives persistence so a saved divider
 /// position keeps referring to the same split after restore.
-public struct SplitNodeID: Hashable, Codable, Sendable {
+public struct SplitNodeID: Hashable, Sendable {
     public let raw: UUID
     public init(raw: UUID = UUID()) { self.raw = raw }
 }

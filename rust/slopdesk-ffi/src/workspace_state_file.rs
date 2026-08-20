@@ -175,11 +175,15 @@ pub const extern "C" fn slopdesk_ws_state_file_status(index: c_uchar) -> c_uchar
 
 /// # Safety
 /// `status` must be null or writable for one byte.
+///
+/// Shared with [`crate::workspace`]'s client-file doors rather than written twice: both halves of
+/// the persistence pair report a refusal the same way, and a second copy of a pointer write is the
+/// one kind of duplication this crate exists to keep to a minimum.
 #[expect(
     unsafe_code,
     reason = "this IS the boundary: writing one byte through a C out-parameter"
 )]
-unsafe fn write_status(status: *mut c_uchar, code: u8) {
+pub(crate) unsafe fn write_status(status: *mut c_uchar, code: u8) {
     if !status.is_null() {
         // SAFETY: non-null and, by the caller's obligation, writable for one byte.
         unsafe { *status = code };
@@ -198,7 +202,7 @@ unsafe fn write_status(status: *mut c_uchar, code: u8) {
     unsafe_code,
     reason = "this IS the boundary: writing one word through a C out-parameter"
 )]
-unsafe fn write_version(version: *mut i64, claimed: Option<i64>) {
+pub(crate) unsafe fn write_version(version: *mut i64, claimed: Option<i64>) {
     let (false, Some(claimed)) = (version.is_null(), claimed) else {
         return;
     };

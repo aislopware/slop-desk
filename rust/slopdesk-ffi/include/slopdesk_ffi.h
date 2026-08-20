@@ -1564,6 +1564,126 @@ size_t slopdesk_ws_apply_intent(uint8_t op, const uint8_t *args, size_t args_len
                                 uint8_t *status, uint8_t *out, size_t cap);
 
 
+// MARK: The pane's LIVENESS half — what is true about its process, and what happens when it stops
+//
+// The other side of the line `slopdesk_ws_key_is_topology` draws. Topology is what the person
+// ARRANGED and survives a restart; liveness is derived from a running process, republished after
+// every restart and never persisted. Three decisions live here and none of them FAILS when it is
+// answered twice — they render, which is why they are asked:
+//
+//   * a merge is CLEAR-then-write, so a fact that stopped being true disappears rather than
+//     latching (the finished command, the agent that exited);
+//   * marking a pane dead keeps exactly the two fields that describe a PLACE — its directory and
+//     the project that directory belongs to — and drops every claim about a process;
+//   * the reconciler's reap is THREE-way, and its two-way ancestor deleted the person's layout on
+//     every host restart, since a just-restarted host has a full layout and no processes at all.
+//
+// The document rides its own encoding, as the intent applier's and the state file's do: cells in as
+// the flat `SlopDeskWsEntry` pairs `slopdesk_ws_encode_snapshot` takes, the result back as an
+// encoded snapshot read with `slopdesk_ws_decode_snapshot`. A liveness RECORD is the one thing on
+// this path with no encoding of its own to borrow — it is what the host builds from a live PTY
+// session before any of it has reached a cell — so it crosses as the struct below, its seven
+// strings SPANS into the same blob the entries span. Every optional non-string carries a presence
+// flag beside it rather than reserving a value to mean absent: a 0×0 grid and a pane whose size was
+// never observed are different states, and `liveTitle` absent (never asserted) versus present and
+// empty (RETIRED by the agent that owned it) is the same distinction one step sharper.
+
+typedef struct {
+    SlopDeskWsUuid id;
+    SlopDeskWsSpan live_title;
+    SlopDeskWsSpan cwd;
+    SlopDeskWsSpan project_key;
+    SlopDeskWsSpan foreground_process;
+    SlopDeskWsSpan running_command;
+    SlopDeskWsSpan agent_label;
+    SlopDeskWsSpan agent_intent;
+    int64_t  last_activity_ms;   // 0 = never observed; it needs no flag, the field says so itself
+    uint32_t completion_epoch;
+    uint32_t last_duration_ms;   // read only when has_last_duration_ms
+    int32_t  last_exit_code;     // read only when has_last_exit_code
+    uint16_t grid_cols;          // read only when has_grid
+    uint16_t grid_rows;          // read only when has_grid
+    uint8_t  liveness;           // always meaningful: its presence IS the pane's existence
+    uint8_t  agent_state;        // read only when has_agent
+    uint8_t  agent_kind;         // read only when has_agent
+    uint8_t  progress_state;     // read only when has_progress
+    uint8_t  progress_percent;   // read only when has_progress
+    bool     title_fresh;
+    bool     command_running;
+    bool     has_agent;
+    bool     has_progress;
+    bool     has_last_exit_code;
+    bool     has_last_duration_ms;
+    bool     has_grid;
+} SlopDeskWsPaneLiveness;
+
+// The liveness byte a state carries, by arm order: 0 attached, 1 detached, 2 dead. Exported because
+// these numbers ride in `pane/liveness` cells and are therefore golden-pinned. An index naming no
+// state answers the DEAD byte, which is the degrade this half picks everywhere: rendering a live
+// pane stale is cosmetic, rendering a dead one live is the bug the document exists to prevent.
+uint8_t slopdesk_ws_pane_liveness_state(uint8_t index);
+
+// One record's cells, as an encoded snapshot. The PROJECTION rule, not a serialization: a field is
+// emitted only when it carries a non-default value, with exactly one exception — the liveness state
+// is always emitted, so a pane's presence in the document is never ambiguous. Never 0 for a record
+// that is there, since the existence marker alone is a cell; `0` is the null record.
+size_t slopdesk_ws_pane_liveness_entries(const SlopDeskWsPaneLiveness *record,
+                                         const uint8_t *blob, size_t blob_len,
+                                         uint8_t *out, size_t cap);
+
+// One pane's record read back OUT of a document's cells. Every field decodes independently and a
+// malformed one falls back to its default rather than failing the record: these bytes came off a
+// socket, and one bad grid must not blank a pane's title.
+//
+// `found` is written on EVERY path, including the one where the answer did not fit, so a caller
+// sizing with `(NULL, 0)` learns from the same call whether there is a pane here at all. The return
+// is how many bytes of STRINGS the answer needs, §4-shaped, and `record`'s spans index `out` — so
+// both are written together or neither is. A found record with no strings answers 0, which is why
+// the existence question is `found` and not the return.
+size_t slopdesk_ws_pane_liveness_read(const SlopDeskWsEntry *entries, size_t count,
+                                      const uint8_t *blob, size_t blob_len,
+                                      const SlopDeskWsUuid *pane, bool *found,
+                                      SlopDeskWsPaneLiveness *record, uint8_t *out, size_t cap);
+
+// Replaces the liveness half of every named pane, leaving their topology fields untouched. Panes
+// the document holds but `records` does not name are LEFT ALONE — reaping is the next door down.
+// That is why these are two entry points and not one with a flag: the wrong value of the flag is
+// the whole workspace of a host that restarted and has captured nothing yet.
+//
+// `records` span the SAME `blob` the entries do. `changed` is written on every path and is what a
+// caller versions by — every bump costs every subscriber a frame, so a no-op recapture must not
+// move a version number.
+//
+// A document that did NOT move answers 0 and is not encoded at all. Read `changed` first: there is
+// no new document to hand back, and the caller was going to discard the bytes. The three folding
+// doors here (merge, mark-dead, reconcile) all share that contract, and it is what makes the idle
+// backstop cheap — a settled reconcile of a 24-pane workspace measures ~69 us against ~84 us for
+// one that moved, on an M-series host.
+size_t slopdesk_ws_merge_pane_liveness(const SlopDeskWsEntry *entries, size_t count,
+                                       const SlopDeskWsPaneLiveness *records, size_t record_count,
+                                       const uint8_t *blob, size_t blob_len,
+                                       bool *changed, uint8_t *out, size_t cap);
+
+// Declares that one pane has no process — the detached store's TTL eviction. A pane the document
+// has never heard of is MINTED as a dead one rather than ignored, because the existence marker is
+// always written: absent is what the reaper below reads as "nothing owns this" one tick later.
+size_t slopdesk_ws_mark_pane_dead(const SlopDeskWsEntry *entries, size_t count,
+                                  const uint8_t *blob, size_t blob_len,
+                                  const SlopDeskWsUuid *pane, bool *changed,
+                                  uint8_t *out, size_t cap);
+
+// One reconciler pass, the three-way rule: captured panes take what the capture said, panes the
+// topology still names but nothing captured go STALE rather than being deleted, and panes in
+// neither are reaped whole because nothing owns them. A captured pane the topology has never heard
+// of is NOT reaped — a pane spawned between the last topology write and this tick would otherwise
+// be deleted by the tick that first saw it. Same `blob` and same `changed` contract as the merge;
+// this one runs on a 500 ms backstop, so an idle host reconciling to the same answer costs nothing.
+size_t slopdesk_ws_reconcile_panes(const SlopDeskWsEntry *entries, size_t count,
+                                   const SlopDeskWsPaneLiveness *records, size_t record_count,
+                                   const uint8_t *blob, size_t blob_len,
+                                   bool *changed, uint8_t *out, size_t cap);
+
+
 // MARK: The repair pass a loader runs
 //
 // A hand-edited or partially-written workspace must come back rather than be refused, so every
@@ -1706,6 +1826,71 @@ size_t slopdesk_ws_state_file_decode(const uint8_t *bytes, size_t len, uint8_t *
 // because a transcribed copy that drifted on one arm would turn a corrupt row into a
 // mint-the-default, and the old file would not be kept aside.
 uint8_t slopdesk_ws_state_file_status(uint8_t index);
+
+
+// MARK: The client's workspace FILE
+//
+// The other file: the CLIENT's `workspace.json`, the arrangement a launch restores. Its decoder is
+// a repairing one because the file is a person's to edit and a half-typed one still has to open,
+// and the repairs are the reason it had to stop being written twice. Swift's decoder named an
+// id-less split `?? SplitNodeID()` — a fresh uuid every load — where the Rust one DERIVES the name
+// from the divider's place in the tree, so a `splitNode/<id>/weight` cell written before a relaunch
+// was orphaned after it and every divider a person had dragged snapped back with nothing logged.
+// docs/55 §8's `derived_split_id` row is what this closes.
+//
+// Both directions ride the document's own encoding, as the state file's and the intent applier's
+// do: cells in as the flat `SlopDeskWsEntry` pairs `slopdesk_ws_encode_snapshot` takes, a decoded
+// file back as an encoded snapshot read with `slopdesk_ws_decode_snapshot`. The decode REPAIRS
+// before it answers, which is forced rather than chosen — a session with no tab and a leaf with no
+// spec are both spellable in the file and neither is spellable in a cell, so the shape the crossing
+// cannot carry never reaches it.
+
+// The identities a decode of THESE bytes can spend, asked of the file because the shape is what the
+// caller does not know yet. Sized here for the reason every pool here is: one short repeats an
+// identity, and two panes sharing one is a pane that reattaches to a process it never opened.
+size_t slopdesk_ws_workspace_file_minted_ids(const uint8_t *bytes, size_t len);
+
+// The file's bytes for a workspace, §4-shaped. UTF-8 JSON, sorted keys, trailing newline, so two
+// saves of one arrangement are byte-identical. Only the topology half of the cells is read — the
+// file is a LAYOUT, and liveness has no business on a disk that outlives the process it describes.
+// Encoding cannot fail, so there is no status; a document with no workspace in it writes an empty
+// one rather than nothing, because the file has to be a file.
+//
+// `schema_version` travels BESIDE the cells because the document has no cell for it: it is a
+// property of this FILE and not of the shape, and the topology names it as a deliberate omission.
+// The value written is the CALLER's, never this build's — a door that defaulted it would make every
+// file the app saved claim the version the app reads, and the decode's version-mismatch arm would be
+// reachable only from a file somebody hand-edited.
+size_t slopdesk_ws_workspace_file_encode(const SlopDeskWsEntry *entries, size_t count,
+                                         const uint8_t *blob, size_t blob_len,
+                                         int64_t schema_version,
+                                         uint8_t *out, size_t cap);
+
+// Reads a file back, answering the REPAIRED workspace as an encoded snapshot. `minted` is the pool
+// `slopdesk_ws_workspace_file_minted_ids` sized over these same bytes — panes are minted from it,
+// dividers are derived inside and cost nothing. `status` receives the refusal byte on EVERY path —
+// index 0 of `slopdesk_ws_workspace_file_status` when the load worked — so a caller wanting only
+// the verdict passes a null `out`. `version` receives the version the file CLAIMED and is written
+// on the version-mismatch path ONLY. A refusal answers 0 bytes and nothing else does: the repair
+// re-seeds a workspace that named nothing, so a load past the refusal always has a session to say.
+size_t slopdesk_ws_workspace_file_decode(const uint8_t *bytes, size_t len,
+                                         const SlopDeskWsUuid *minted, size_t minted_count,
+                                         uint8_t *status, int64_t *version,
+                                         uint8_t *out, size_t cap);
+
+// The refusal byte for one outcome, by index: 0 the load that worked, then the arms — 1 malformed
+// (not a workspace file), 2 version mismatch (a workspace file of another shape), 3 more panes than
+// a launch can hold. An index past the last answers the malformed byte, which refuses rather than
+// admits. Exported because a transcribed copy that drifted on one arm would write over the file a
+// person's whole arrangement is in instead of keeping it aside.
+uint8_t slopdesk_ws_workspace_file_status(uint8_t index);
+
+// How many panes one file may name before the decode refuses it with status index 3. Asked for
+// rather than spelled twice, like every other in-process cap here — and this one is a REFUSAL
+// threshold, so a drifted second copy does not read as a disagreement: the near side would build a
+// file it believes fits, the far side would refuse it, and the user would meet a workspace reset to
+// the default with nothing anywhere saying why.
+size_t slopdesk_ws_workspace_file_max_panes(void);
 
 
 // MARK: The layout structure and the split weights

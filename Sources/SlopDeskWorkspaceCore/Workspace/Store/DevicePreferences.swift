@@ -93,7 +93,8 @@ public struct DevicePreferences: Codable, Sendable, Equatable {
 /// boundaries safely.
 public struct DevicePreferencesStore: @unchecked Sendable {
     /// Cap on any loaded collection. A file claiming ten thousand presets is corrupt, not ambitious;
-    /// the whole value resets rather than being allocated. Mirrors ``WorkspacePersistence/maxItems``.
+    /// the whole value resets rather than being allocated. The workspace file's own equivalent is
+    /// `persist::MAX_PANES`, which lives behind ``WorkspaceFile`` with the rest of that format.
     public static let maxItems = 1024
 
     /// The file preferences are read from / written to.

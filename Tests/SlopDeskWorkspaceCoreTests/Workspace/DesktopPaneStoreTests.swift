@@ -140,13 +140,13 @@ final class DesktopPaneStoreTests: XCTestCase {
 
     // MARK: - Stage-era persistence is decode-tolerated (the Stage domain is gone)
 
-    /// A Session JSON written during the short-lived Stage era carries `stagePanes` /
-    /// `activeStagePane` keys and a spec entry for the staged pane. Decoding IGNORES the stage keys
-    /// and `normalized()` prunes the orphaned spec (streamed-window tabs were ephemeral viewing
-    /// surfaces — dropping them loses no terminal state). Never a trap.
-    func testStageEraFileDecodesWithStageSpecsPruned() throws {
-        // Build a current-shape session, then graft the Stage-era keys + an orphaned spec entry
-        // into its JSON (encoding-shape-agnostic — no hand-written tree JSON to drift).
+    /// A workspace file written during the short-lived Stage era carries `stagePanes` /
+    /// `activeStagePane` keys and a spec entry for the staged pane. The load IGNORES the stage keys —
+    /// they are keys no reader asks for — and the repair prunes the orphaned spec (streamed-window
+    /// tabs were ephemeral viewing surfaces, so dropping them loses no terminal state). Never a trap.
+    func testStageEraFileLoadsWithStageSpecsPruned() throws {
+        // Build a current-shape workspace, then graft the Stage-era keys + an orphaned spec entry
+        // into its FILE (encoding-shape-agnostic — no hand-written tree JSON to drift).
         var session = Session.singlePane(name: "Local", spec: PaneSpec(kind: .terminal, title: "T"))
         let terminal = try XCTUnwrap(session.allPaneIDs().first)
         let staged = PaneID()
@@ -154,25 +154,24 @@ final class DesktopPaneStoreTests: XCTestCase {
             kind: .desktop, title: "W",
             video: VideoEndpoint(windowID: 5, title: "W", appName: "App"),
         )
-        var json = try XCTUnwrap(
-            JSONSerialization.jsonObject(with: JSONEncoder().encode(session)) as? [String: Any],
-        )
-        json["stagePanes"] = [["raw": staged.raw.uuidString]]
-        json["activeStagePane"] = ["raw": staged.raw.uuidString]
-        let data = try JSONSerialization.data(withJSONObject: json)
+        let saved = WorkspaceFile.encode(TreeWorkspace(sessions: [session], activeSessionID: session.id))
+        var file = try XCTUnwrap(JSONSerialization.jsonObject(with: saved) as? [String: Any])
+        var rows = try XCTUnwrap(file["sessions"] as? [[String: Any]])
+        rows[0]["stagePanes"] = [["raw": staged.raw.uuidString]]
+        rows[0]["activeStagePane"] = ["raw": staged.raw.uuidString]
+        file["sessions"] = rows
 
-        let decoded = try JSONDecoder().decode(Session.self, from: data)
-        let ws = TreeWorkspace(sessions: [decoded], activeSessionID: decoded.id).normalized()
+        let ws = try WorkspaceFile.decode(JSONSerialization.data(withJSONObject: file))
         XCTAssertTrue(ws.isInvariantHeld(), "the loaded tree holds specs == leafIDs")
         XCTAssertNil(ws.spec(for: staged), "the orphaned stage spec is pruned")
         XCTAssertNotNil(ws.spec(for: terminal), "the tree leaf survives untouched")
     }
 
-    /// The encoder writes NO stage keys anymore — byte-stability with the pre-Stage shape.
-    func testEncodedSessionCarriesNoStageKeys() throws {
+    /// The file carries NO stage keys anymore — byte-stability with the pre-Stage shape.
+    func testASavedWorkspaceCarriesNoStageKeys() throws {
         let session = Session.singlePane(name: "Local", spec: PaneSpec(kind: .terminal, title: "T"))
-        let data = try JSONEncoder().encode(session)
-        let text = try XCTUnwrap(String(data: data, encoding: .utf8))
+        let saved = WorkspaceFile.encode(TreeWorkspace(sessions: [session], activeSessionID: session.id))
+        let text = try XCTUnwrap(String(data: saved, encoding: .utf8))
         XCTAssertFalse(text.contains("stagePanes"))
         XCTAssertFalse(text.contains("activeStagePane"))
     }

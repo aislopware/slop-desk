@@ -297,9 +297,6 @@ def shell_quoting_has_one_owner() -> Report:
 #: DEBT, registered so the gate can be green while it shrinks — not exemptions. Removing a name here
 #: is the last step of finishing that port; adding one is a change `docs/DECISIONS.md` must record.
 STRANDED_RUST_MODULES = {
-    # `WorkspacePersistence.swift` + `Canvas+Codable.swift` + `SplitNode+Codable.swift` still
-    # encode and decode the client's workspace file. The Rust half has 22 tests and no caller.
-    "slopdesk-workspace::persist",
     # `ConnectionTarget.swift` is a four-field `Codable` value 20 files hold and SwiftUI diffs —
     # a vocabulary by `docs/55` §6, so the Rust twin is the copy that should go, not the Swift.
     "slopdesk-workspace::connection",
