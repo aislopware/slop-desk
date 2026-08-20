@@ -698,10 +698,10 @@ pub unsafe extern "C" fn slopdesk_workspace_decode_roster(
 /// | 6 | `subscribe`'s FOLLOWS-FOCUS flag bit |
 ///
 /// The last two are a MASK rather than a length, and they are here for the reason the lengths are:
-/// the byte is on the wire, the near side ANDs against it, and it was spelled `1 << 0` on both sides
-/// two lines from a caller of this very door. A bit position a peer disagrees about is a client that
-/// silently stops contributing to the PTY size fold — no error, no decode failure, just a window
-/// that no longer counts.
+/// the byte is on the wire, the near side ANDs against it, and it was spelled `1 << 0` on both
+/// sides two lines from a caller of this very door. A bit position a peer disagrees about is a
+/// client that silently stops contributing to the PTY size fold — no error, no decode failure, just
+/// a window that no longer counts.
 ///
 /// An unknown index answers `-1`, which is neither a length nor a mask any of these could be.
 #[unsafe(no_mangle)]

@@ -602,8 +602,9 @@ mod tests {
         let whole = read(|out, cap| unsafe { slopdesk_settings_stepper_readout(pixels, 1000.0, out, cap) });
         assert_eq!(whole.as_deref(), Some("1000 px"));
         // SAFETY: as above.
-        let fractional =
-            read(|out, cap| unsafe { slopdesk_settings_stepper_readout(Stepper::FontPoints.index(), 13.5, out, cap) });
+        let fractional = read(|out, cap| unsafe {
+            slopdesk_settings_stepper_readout(Stepper::FontPoints.index(), 13.5, out, cap)
+        });
         assert_eq!(fractional.as_deref(), Some("13.5"));
         // SAFETY: as above.
         assert_eq!(

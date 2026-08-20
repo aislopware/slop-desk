@@ -800,12 +800,12 @@ pub unsafe extern "C" fn slopdesk_replay_seqs_copy(
 mod tests {
 
     use super::{
-        ReplayBuffer, SlopDeskReplay, slopdesk_replay_ack, slopdesk_replay_acked_seq,
-        slopdesk_replay_append, slopdesk_replay_constant, slopdesk_replay_free,
-        slopdesk_replay_highest_seq, slopdesk_replay_messages, slopdesk_replay_new, slopdesk_replay_replay,
-        slopdesk_replay_result_copy, slopdesk_replay_result_len, slopdesk_replay_result_seq,
-        slopdesk_replay_retained_bytes, slopdesk_replay_ring_bytes, slopdesk_replay_ring_len,
-        slopdesk_replay_set_client_online, slopdesk_replay_should_pause_drain,
+        ReplayBuffer, SlopDeskReplay, slopdesk_replay_ack, slopdesk_replay_acked_seq, slopdesk_replay_append,
+        slopdesk_replay_constant, slopdesk_replay_free, slopdesk_replay_highest_seq,
+        slopdesk_replay_messages, slopdesk_replay_new, slopdesk_replay_replay, slopdesk_replay_result_copy,
+        slopdesk_replay_result_len, slopdesk_replay_result_seq, slopdesk_replay_retained_bytes,
+        slopdesk_replay_ring_bytes, slopdesk_replay_ring_len, slopdesk_replay_set_client_online,
+        slopdesk_replay_should_pause_drain,
     };
 
     /// A handle at tiny caps, so the gates are reachable without allocating 256 MiB.
