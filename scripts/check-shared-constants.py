@@ -41,26 +41,33 @@ ROOT = Path(__file__).resolve().parent.parent
 # found so far is one wire alphabet. An entry here needs the reason the two are unrelated.
 HOMONYM_ENUMS: set[str] = set()
 
+# WHICH ALLOWLIST ENTRIES ACTUALLY SUPPRESSED SOMETHING THIS RUN. An exemption that stops
+# matching is the failure this whole script is about, one level up: a ledger that keeps being
+# consulted after its subject moved. `maxDepth` was one — the split tree's depth limit, exempted
+# against "the JSON reader's recursion limit" — and when `SplitNode.maxDepth` became
+# `Int(slopdesk_ws_max_depth())` the entry stopped covering anything and nothing said so. Deleting
+# it changed no result, which is the definition of dead. So the allowlists are checked for deadness
+# on every run: an entry that suppressed nothing is a finding, exactly like the drift it permits.
+USED_HOMONYMS: set[str] = set()
+USED_BIT_FILES: set[str] = set()
+
 # Swift OptionSets whose members share a name with a WIRE flag set without sharing its law. A bit
 # position is only a shared law when the byte crosses; a set that never leaves the client may lay
 # its bits out however it likes.
-HOMONYM_BIT_FILES = {
-    # `KeyChord.Modifiers` is an `Int` the client keys chords by. It converts to nothing, so its
-    # agreement with the wire's `InputModifiers` about ⇧⌃⌥⌘ is convention, not a contract.
-    "Sources/SlopDeskWorkspaceCore/Workspace/Store/CommandInterpreter.swift",
-}
+#
+# Empty, and checked for deadness below like the rest. It carried `CommandInterpreter.swift` on the
+# grounds that `KeyChord.Modifiers` is a client-only `Int` whose ⇧⌃⌥⌘ layout agreeing with the
+# wire's `InputModifiers` was convention rather than contract. True, and it stopped mattering: the
+# two now agree bit for bit, so the exemption suppressed nothing. If they ever diverge the finding
+# is real — and it should be read then, not waved through by a note written before the divergence.
+HOMONYM_BIT_FILES: set[str] = set()
 
 HOMONYMS = {
     # A kernel TCP keepalive probe interval on PATH 1, against the video path's application-level
     # UDP keepalive that holds a NAT mapping open. Both happen to be 5 s.
     "keepaliveIntervalSeconds",
     # A workspace state FILE's schema version, against slopdesk-dropd's socket protocol version.
-    "version",
     "currentSchemaVersion",
-    # The split tree's nesting depth limit, against the JSON reader's recursion limit.
-    "maxDepth",
-    # The playout law's jitter coefficient, against the adaptive FEC's data-shard count. Both `k`.
-    "defaultK",
 }
 
 # A VOCABULARY is the one shared number a door cannot dissolve. A field byte is not a law anyone
@@ -241,11 +248,12 @@ def bit_findings() -> list[str]:
     out: list[str] = []
     for path in tracked("Sources/*.swift"):
         here_file = str(path.relative_to(ROOT))
-        if here_file in HOMONYM_BIT_FILES:
-            continue
         for name, bit in SWIFT_BIT.findall(path.read_text()):
             for there_file, there_name, there_bit in rust.get(name.lower(), []):
                 if int(bit) != there_bit:
+                    if here_file in HOMONYM_BIT_FILES:
+                        USED_BIT_FILES.add(here_file)
+                        continue
                     out.append(
                         f"  {here_file}: `{name} = 1 << {bit}` against "
                         f"`{there_name} = 1 << {there_bit}` in {there_file}"
@@ -272,10 +280,16 @@ def main() -> int:
             for rust_path, rust_name, rust_value in rust.get(name.lower(), []):
                 if numeric(value) != rust_value:
                     continue  # a different number is a different constant, or a gate's business
-                if name in HOMONYMS or name in ratcheted or rust_name in ratcheted:
+                if name in ratcheted or rust_name in ratcheted:
                     continue
                 pair = (str(path.relative_to(ROOT)), str(rust_path.relative_to(ROOT)))
                 if DERIVED_RATCHETS.get(pair, "\0") in ratcheted:
+                    continue
+                # LAST, not first: an entry only counts as USED when it is the sole reason a real
+                # pair was let through. Checked before the ratchets it would have suppressed a pair
+                # something else already covers, and then looked alive forever.
+                if name in HOMONYMS:
+                    USED_HOMONYMS.add(name)
                     continue
                 findings.append(
                     f"  {path.relative_to(ROOT)}: `{name} = {value}` restates "
@@ -294,6 +308,20 @@ def main() -> int:
         return 1
 
     drifted = vocabulary_findings() + enum_findings() + bit_findings()
+
+    dead = [f"  HOMONYMS: `{n}` suppressed nothing" for n in sorted(HOMONYMS - USED_HOMONYMS)] + [
+        f"  HOMONYM_BIT_FILES: `{f}` suppressed nothing"
+        for f in sorted(HOMONYM_BIT_FILES - USED_BIT_FILES)
+    ]
+    if dead:
+        print("check-shared-constants: FAIL — an allowlist entry is dead\n")
+        print("\n".join(dead))
+        print(
+            "\nThe names it exempts no longer collide, so it exempts nothing and would silently\n"
+            "wave through a REAL collision the day one comes back under that name. Delete the\n"
+            "entry. If you believe the pair still exists, the belief is what is out of date."
+        )
+        return 1
     if drifted:
         print("check-shared-constants: FAIL — a shared alphabet drifted\n")
         print("\n".join(drifted))
