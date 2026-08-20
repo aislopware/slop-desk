@@ -48,7 +48,6 @@ final class UnfollowingFocusOnIOSTests: XCTestCase {
     private func makeStore(_ tree: TreeWorkspace) -> WorkspaceStore {
         let store = WorkspaceStore(
             restoringTree: tree,
-            liveModel: .tree,
             makeSession: { FakePaneSession($0.spec) },
             liveVideoCap: 2,
         )
