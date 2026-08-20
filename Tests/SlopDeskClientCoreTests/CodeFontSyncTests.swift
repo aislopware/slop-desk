@@ -62,16 +62,44 @@ final class CodeFontSyncTests: XCTestCase {
         XCTAssertEqual(spec.lineHeight, 1.32)
     }
 
-    #if canImport(AppKit)
+    /// The real metrics walk. No platform gate: it is CoreText on BOTH halves now, and Menlo ships
+    /// with macOS AND iOS — the probe used to answer `nil` off AppKit, which pinned the phone's code
+    /// panel at the embedded 1.32 forever no matter which face the terminal was actually rendering.
     func testInstalledFontRatioResolvesARealFaceAndRefusesAFakeOne() throws {
-        // Menlo ships with macOS — the real CoreText walk must answer a sane monospace ratio.
         let menlo = try XCTUnwrap(CodeFontSync.installedFontRatio(family: "Menlo", size: 13))
         XCTAssertGreaterThan(menlo, 1.0)
         XCTAssertLessThan(menlo, 2.0)
         XCTAssertNil(CodeFontSync.installedFontRatio(family: "No Such Face 9000", size: 13))
         XCTAssertNil(CodeFontSync.installedFontRatio(family: "Menlo", size: 0))
     }
-    #endif
+
+    /// The ratio is the FACE's, not the size's: metrics scale linearly with the em, so the same
+    /// family answers the same ratio at every size. A probe that leaked the point size into the
+    /// answer would make the editor's line height drift every time the user zoomed the terminal.
+    func testInstalledFontRatioIsSizeInvariant() throws {
+        let small = try XCTUnwrap(CodeFontSync.installedFontRatio(family: "Menlo", size: 9))
+        let large = try XCTUnwrap(CodeFontSync.installedFontRatio(family: "Menlo", size: 36))
+        XCTAssertEqual(small, large, accuracy: 0.01)
+    }
+
+    /// A name CoreText cannot resolve must come back `nil` rather than as the SUBSTITUTE face's
+    /// metrics — `CTFontCreateWithName` never fails, it hands back a system fallback, and shipping
+    /// that ratio would be a silently wrong line height instead of the honest embedded fallback.
+    func testAnUnresolvableNameIsNotTheSubstituteFacesRatio() {
+        let substitute = CodeFontSync.installedFontRatio(family: "Definitely Not A Font 9001", size: 13)
+        XCTAssertNil(substitute)
+        // ...and the spec then carries the embedded face's ratio, which is what ghostty renders.
+        let spec = CodeFontSync.spec(terminal: prefs(family: "Definitely Not A Font 9001"))
+        XCTAssertEqual(spec.lineHeight, CodeFontSync.embeddedMonoRatio)
+    }
+
+    /// The PostScript spelling resolves too — a config file usually carries "Menlo-Regular" where the
+    /// picker offers the family "Menlo", and both are things a user can end up with in the field.
+    func testThePostScriptSpellingResolvesAsWellAsTheFamily() throws {
+        let byFamily = try XCTUnwrap(CodeFontSync.installedFontRatio(family: "Menlo", size: 13))
+        let byPostScript = try XCTUnwrap(CodeFontSync.installedFontRatio(family: "Menlo-Regular", size: 13))
+        XCTAssertEqual(byFamily, byPostScript, accuracy: 0.0001)
+    }
 
     // MARK: Push gate
 

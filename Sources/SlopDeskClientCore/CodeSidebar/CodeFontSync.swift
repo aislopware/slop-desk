@@ -9,9 +9,7 @@
 // neither machine), libghostty falls back to its EMBEDDED JetBrainsMono face, whose hhea metrics
 // (1020/−300/0 on upm 1000, through `Metrics.zig`'s rounding) pin the ratio at exactly 1.32.
 
-#if canImport(AppKit)
-import AppKit
-#endif
+import CoreText
 import SlopDeskProtocol
 import SlopDeskVideoProtocol
 
@@ -38,18 +36,44 @@ package enum CodeFontSync {
         return MetadataCodec.CodeFontSpec(family: terminal.fontFamily, size: size, lineHeight: rounded)
     }
 
-    /// CoreText metrics ratio for an INSTALLED family at `size` — (ascender + |descender| +
-    /// leading) / size, the same face-height-over-em walk ghostty's metrics take. `nil` when the
-    /// family does not resolve (→ the embedded fallback above).
+    /// CoreText metrics ratio for an INSTALLED family at `size` — (ascent + descent + leading) /
+    /// size, the same face-height-over-em walk ghostty's metrics take. `nil` when the family does not
+    /// resolve (→ the embedded fallback above) or `size` is not positive.
+    ///
+    /// CoreText, not AppKit, and the gate that used to sit here was SCOPE rather than necessity: the
+    /// question is "what are this face's vertical metrics", the phone's terminal asks it of the same
+    /// faces, and answering `nil` off AppKit pinned the phone's editor at 1.32 forever — so the code
+    /// panel's lines never lined up with the terminal beside them on iOS. ``InstalledFontFamilies``
+    /// two files over already answers the neighbouring question this way, on both halves.
+    ///
+    /// `NSFont(name:size:)`'s `nil` was doing double duty — resolve AND metrics — and CoreText will
+    /// not hand that back: `CTFontCreateWithName` NEVER fails, it substitutes a system fallback face.
+    /// So "did it resolve" is asked of the ANSWER (``resolves(_:to:)``), which is also what keeps the
+    /// embedded-face fallback honest: a substituted Helvetica's ratio is not the ratio libghostty
+    /// will render, and silently shipping it is worse than falling back on purpose.
+    ///
+    /// The AppKit metrics this replaces were the same numbers: `NSFont.ascender` / `.descender` /
+    /// `.leading` are `CTFontGetAscent` / `-CTFontGetDescent` / `CTFontGetLeading`. CoreText's descent
+    /// is POSITIVE, which is why the old body's sign flip is gone rather than moved.
     package static func installedFontRatio(family: String, size: Double) -> Double? {
-        #if canImport(AppKit)
-        guard size > 0, let font = NSFont(name: family, size: CGFloat(size)) else { return nil }
-        // descender is NEGATIVE in AppKit; plain adds (never fused) per the float invariant.
-        let height = Double(font.ascender) + Double(-font.descender) + Double(font.leading)
+        guard size > 0 else { return nil }
+        let font = CTFontCreateWithName(family as CFString, CGFloat(size), nil)
+        guard resolves(font, to: family) else { return nil }
+        // Plain adds (never fused) per the float invariant.
+        let height = Double(CTFontGetAscent(font)) + Double(CTFontGetDescent(font))
+            + Double(CTFontGetLeading(font))
         return height / size
-        #else
-        return nil
-        #endif
+    }
+
+    /// Whether `font` is the face `name` asked for rather than the substitute CoreText hands back for
+    /// a name it cannot resolve. Both spellings count, because both are what a user may have typed
+    /// into the font field: the FAMILY ("JetBrains Mono", what the picker offers) and the PostScript
+    /// name ("JetBrainsMono-Regular", what a config file often carries).
+    private static func resolves(_ font: CTFont, to name: String) -> Bool {
+        let family = CTFontCopyFamilyName(font) as String
+        if family.caseInsensitiveCompare(name) == .orderedSame { return true }
+        let postScript = CTFontCopyPostScriptName(font) as String
+        return postScript.caseInsensitiveCompare(name) == .orderedSame
     }
 
     /// Whether an ensure round should carry the font push (verb 20). Pure — pinned by
