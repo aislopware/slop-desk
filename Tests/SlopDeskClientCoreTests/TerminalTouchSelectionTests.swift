@@ -7,6 +7,9 @@
 // of the surface, because a ramp that leaks a non-zero delta at rest would scroll the viewport under every
 // selection drag that never reaches an edge.
 
+import CoreGraphics
+import SlopDeskTerminal
+import SlopDeskWorkspaceCore
 import XCTest
 @testable import SlopDeskClientCore
 
@@ -58,6 +61,52 @@ final class TerminalTouchSelectionTests: XCTestCase {
         XCTAssertTrue(
             TerminalTouchSelection.presentsMenuOnRelease(mouseCaptured: false),
             "off capture the menu shows with or without a selection, matching the Mac's empty right-click",
+        )
+    }
+
+    // MARK: - The link slop, against a real grid
+
+    // `linkHitSlop` is only meaningful as a distance measured against cells, and the cells are
+    // `TerminalLinkHitTest`'s to measure — so what is pinned here is the pair: a press one cell off a path,
+    // at a face the app actually renders, still opens that path's menu items, and a press across the line
+    // does not. A slop tuned to a number rather than to a grid would pass one of these and fail the other.
+
+    /// An 8 × 17pt cell is a realistic default face; the span is the one `"see /tmp/x"` produces — row 0,
+    /// cells 4..<10, i.e. x ∈ [32, 80) and y ∈ [0, 17). Hand-built rather than detected: what the scanner
+    /// finds is `TerminalLinkDetectorTests`' business, and this is about the distance.
+    private let grid = TerminalCellMetrics(cellWidth: 8, cellHeight: 17, cols: 80, rows: 24)
+    private let path = DetectedLink(
+        row: 0,
+        colStart: 4,
+        colEnd: 10,
+        kind: .absolutePath,
+        raw: "/tmp/x",
+        resolvedAbsolute: "/tmp/x",
+    )
+
+    private func pressed(x: CGFloat, y: CGFloat, slop: CGFloat) -> String? {
+        TerminalLinkHitTest.link(in: [path], metrics: grid, pointX: x, pointY: y, slop: slop)?.raw
+    }
+
+    func testAFingerOneCellPastThePathStillPressesIt() {
+        let slop = CGFloat(TerminalTouchSelection.linkHitSlop)
+        // x = 86 is cell 10 — one cell past an exclusive `colEnd`, and 6 points off the span's edge.
+        XCTAssertNil(pressed(x: 86, y: 8, slop: 0), "a pointer lands where it is aimed and misses")
+        XCTAssertEqual(pressed(x: 86, y: 8, slop: slop), "/tmp/x", "a fingertip is forgiven one cell")
+    }
+
+    func testTheSlopStopsWellShortOfTheNextWordAndTheNextLine() {
+        let slop = CGFloat(TerminalTouchSelection.linkHitSlop)
+        XCTAssertNil(pressed(x: 120, y: 8, slop: slop), "five cells off is a different word, not bad aim")
+        XCTAssertNil(pressed(x: 60, y: 40, slop: slop), "a whole row below is a different line of output")
+    }
+
+    func testTheSlopIsNarrowerThanTheDriftThePressWasAlreadyAllowed() {
+        XCTAssertGreaterThan(TerminalTouchSelection.linkHitSlop, 0)
+        XCTAssertLessThan(
+            TerminalTouchSelection.linkHitSlop,
+            TerminalTouchSelection.longPressAllowableMovement,
+            "a press that held still enough to be recognized must not be re-aimed further than it may wander",
         )
     }
 }

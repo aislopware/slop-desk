@@ -747,6 +747,83 @@ public struct GhosttyTerminalView: TerminalRenderingView {
     }
 }
 
+// MARK: - The link snapshot, and the one hit-test both halves run
+
+/// The viewport's detected links, cached, plus the gates that decide whether a point can be over one at
+/// all. OUTSIDE the platform gate on purpose — this is the piece the phone was missing.
+///
+/// It lived as three private members of the macOS view (`detectedLinksCache`, `currentDetectedLinks()`,
+/// `detectedLink(at:)`) inside the whole-file `#if os(macOS)` below, which is why the phone's long-press
+/// menu could offer Copy and Paste but nothing about the path under the finger: the menu was already the
+/// same `TerminalContextMenu` table, and the only thing on the Mac's side of the gate was the question
+/// "what is this point on". Both `GhosttyLayerBackedView`s hold one of these now and ask it the same way;
+/// the cell arithmetic itself is one floor down in the headless, tested
+/// `SlopDeskWorkspaceCore.TerminalLinkHitTest`, which is where the mac view's copy of it went.
+///
+/// THE CACHE IS THE POINT OF THE TYPE. `viewportTextRows()` re-reads the whole visible grid row by row
+/// through the C ABI (contending `renderer_state.mutex` with the off-main VT parse) and
+/// `TerminalLinkDetector.detect` re-runs the scan; paying both on EVERY mouseMoved (60–120/s, main
+/// thread) is what this removes. Keyed on the model's output generation (`bytesReceived`, bumped once per
+/// ingest pass) + the local-scroll generation (`viewportRevision`) + the resolving cwd, so a hit-test
+/// against an unchanged viewport is pure arithmetic. It must be ``invalidate()``d by anything that moves
+/// the viewport WITHOUT bumping a key — a plain scroll on either platform — and by `detach()`, whose
+/// snapshot belongs to a closing surface.
+@MainActor
+struct GhosttyLinkSnapshot {
+    private var cache: (bytesReceived: Int, viewportRevision: Int, cwd: String?, links: [DetectedLink])?
+
+    /// Nothing read yet. Spelled out because a `private` stored property makes the implicit memberwise
+    /// initializer `private` too, and the two views that hold one of these are other types in this file.
+    init() {}
+
+    /// Drop the snapshot: the next hit-test re-reads the viewport.
+    mutating func invalidate() { cache = nil }
+
+    /// The detected links for the CURRENT viewport — served from the cache while its generation keys still
+    /// match, else re-read and re-cached. The refresh deliberately KEEPS the per-row `viewportTextRows()`
+    /// read (the soft-wrap grid-alignment fix), never the unwrapped whole-viewport one.
+    mutating func links(model: TerminalViewModel?, surface: GhosttySurface?) -> [DetectedLink] {
+        let bytes = model?.bytesReceived ?? 0
+        let revision = model?.viewportRevision ?? 0
+        let cwd = model?.linkCwd
+        if let cache, cache.bytesReceived == bytes, cache.viewportRevision == revision, cache.cwd == cwd {
+            return cache.links
+        }
+        let links = TerminalLinkDetector.detect(
+            rows: surface?.viewportTextRows() ?? [],
+            cwd: cwd,
+            schemes: SettingsKey.linkSchemePolicy,
+        )
+        cache = (bytes, revision, cwd, links)
+        return links
+    }
+
+    /// The ``DetectedLink`` under a top-left-origin surface POINT (points), or `nil` when link detection is
+    /// off, the surface is a mouse-reporting TUI (alt screen — don't fight vim/tmux/htop), there is no live
+    /// surface to measure, or the point is simply over no detected span.
+    ///
+    /// `slop` is how far off a span the point may be and still count: `0` for a pointer, which lands where
+    /// it is aimed, and `TerminalTouchSelection.linkHitSlop` for a fingertip, which does not.
+    mutating func link(
+        at point: (x: Double, y: Double),
+        model: TerminalViewModel?,
+        surface: GhosttySurface?,
+        slop: Double = 0,
+    ) -> DetectedLink? {
+        guard SettingsKey.linkDetectionEnabled,
+              model?.isAlternateScreen == false,
+              let metrics = surface?.cellMetrics()
+        else { return nil }
+        return TerminalLinkHitTest.link(
+            in: links(model: model, surface: surface),
+            metrics: metrics,
+            pointX: CGFloat(point.x),
+            pointY: CGFloat(point.y),
+            slop: CGFloat(slop),
+        )
+    }
+}
+
 // MARK: - Platform representable + Metal-backed view
 
 #if os(macOS)
@@ -1117,7 +1194,7 @@ final class GhosttyLayerBackedView: NSView {
         renderDisplayLink?.invalidate()
         renderDisplayLink = nil
         lastAppliedLayout = nil   // a future re-attach must re-apply size unconditionally
-        detectedLinksCache = nil  // the snapshot belongs to the closing surface's viewport
+        linkSnapshot.invalidate()  // the snapshot belongs to the closing surface's viewport
         // Cancel any pending settle-present burst so a torn-down view never fires `requestPresent`.
         for item in settleItems { item.cancel() }
         settleItems.removeAll(keepingCapacity: true)
@@ -1660,7 +1737,7 @@ final class GhosttyLayerBackedView: NSView {
             // highlight is active, so a viewport move BETWEEN holds (copy-mode nav, jump-to-prompt) can
             // leave the generation keys matching a moved viewport. Each hold starts from a fresh read.
             // Only on the TRANSITION — a mid-hold ⇧ press (⌘⇧-click) must not evict a valid cache.
-            if commandHeld { detectedLinksCache = nil }
+            if commandHeld { linkSnapshot.invalidate() }
         }
         if commandHeld {
             // ⌘ went down with a (possibly) stationary pointer: resolve the hover from the CURRENT location so
@@ -1677,12 +1754,13 @@ final class GhosttyLayerBackedView: NSView {
     /// path to the now-dormant ``TerminalViewModel/hoveredLinkFullPath`` seam (its status-bar consumer was
     /// removed). A move off any link, a released ⌘, or a pointer-exit clears it.
     ///
-    /// AUDIT FIX `cmd-hover-full-viewport-reread-per-mousemove`: routes through ``detectedLink(at:)`` —
-    /// the SAME gates + cell math as the ⌘-click path (both mirror the PURE, headless-tested
-    /// ``TerminalViewModel/hoveredLinkPath(rows:cwd:schemes:metrics:pointX:pointY:)``, including its
-    /// `resolvedAbsolute ?? raw` result) — so the per-move cost against an unchanged viewport is ONLY the
-    /// pure cell hit-test over ``detectedLinksCache``, not a full `viewportTextRows()` C-ABI re-read +
-    /// re-detection per mouseMoved. `point` is in the surface's top-left-origin POINT space (the
+    /// AUDIT FIX `cmd-hover-full-viewport-reread-per-mousemove`: routes through ``detectedLink(at:)`` — the
+    /// SAME gates and the same pure, headless-tested ``TerminalLinkHitTest`` as the ⌘-click path, the
+    /// right-click menu and the phone's long press, so the per-move cost against an unchanged viewport is
+    /// ONLY the cell arithmetic over the cached ``GhosttyLinkSnapshot``, not a full `viewportTextRows()`
+    /// re-read + re-detection per mouseMoved. The `resolvedAbsolute ?? raw` below is this seam's own reading
+    /// of the link — it used to be a second FUNCTION returning a path, which is what made the hit-test two
+    /// implementations. `point` is in the surface's top-left-origin POINT space (the
     /// `surfacePoint`/`cellMetrics` convention).
     private func updateLinkHover(at point: (x: Double, y: Double)) {
         guard let model else { return }
@@ -1760,86 +1838,24 @@ final class GhosttyLayerBackedView: NSView {
     }
 
     /// AUDIT FIX `cmd-hover-full-viewport-reread-per-mousemove`: the (viewport rows → detected links)
-    /// snapshot every ⌘-hover / ⌘-click / menu hit-test reads. `viewportTextRows()` re-reads the whole
-    /// visible grid row-by-row through the C ABI (contending `renderer_state.mutex` with the off-main VT
-    /// parse) and `TerminalLinkDetector.detect` re-runs the regex pass — paying both on EVERY mouseMoved
-    /// (60–120/s, main thread) is what this cache removes; a pointer move with a valid cache runs ONLY
-    /// the pure cell hit-test. Keyed on the model's output generation (`bytesReceived`, bumped once per
-    /// ingest pass) + local-scroll generation (`viewportRevision`) + the resolving cwd; dropped outright
-    /// by `scrollWheel` (a non-⌘ scroll bumps NO revision), by each ⌘-down (`flagsChanged` — a fresh hold
-    /// starts from a fresh read), and by `detach()`.
-    private var detectedLinksCache: (bytesReceived: Int, viewportRevision: Int, cwd: String?, links: [DetectedLink])?
+    /// snapshot every ⌘-hover / ⌘-click / menu hit-test reads, and the hit-test itself. Both are
+    /// ``GhosttyLinkSnapshot`` now — outside the platform gate, because the phone's long-press menu asks
+    /// the same question. Dropped outright by `scrollWheel` (a non-⌘ scroll bumps NO revision), by each
+    /// ⌘-down (`flagsChanged` — a fresh hold starts from a fresh read), and by `detach()`.
+    private var linkSnapshot = GhosttyLinkSnapshot()
 
-    /// The detected links for the CURRENT viewport snapshot — served from ``detectedLinksCache`` while its
-    /// generation keys still match, else re-read + re-cached. The refresh deliberately KEEPS the per-row
-    /// `viewportTextRows()` read (the soft-wrap grid-alignment fix) — never the unwrapped whole-viewport read.
-    private func currentDetectedLinks() -> [DetectedLink] {
-        let bytes = model?.bytesReceived ?? 0
-        let revision = model?.viewportRevision ?? 0
-        let cwd = model?.linkCwd
-        if let cache = detectedLinksCache,
-           cache.bytesReceived == bytes, cache.viewportRevision == revision, cache.cwd == cwd {
-            return cache.links
-        }
-        let links = TerminalLinkDetector.detect(
-            rows: surface?.viewportTextRows() ?? [],
-            cwd: cwd,
-            schemes: SettingsKey.linkSchemePolicy,
-        )
-        detectedLinksCache = (bytes, revision, cwd, links)
-        return links
-    }
-
-    /// The ``DetectedLink`` under a top-left-origin surface POINT (points), or `nil` when the point is over no
-    /// detected span / detection is off / there is no live surface. Mirrors the pure
-    /// ``TerminalViewModel/hoveredLinkPath(...)`` cell math (plain `*`/`/`+ — view geometry, never `fma`)
-    /// but returns the link OBJECT the action policy needs (kind + raw + resolved), not just its path.
-    /// Detection reads the cached snapshot (``currentDetectedLinks()``), so a repeat hit-test against an
-    /// unchanged viewport is pure cell math.
+    /// The ``DetectedLink`` under a top-left-origin surface POINT (points), or `nil` when the point is over
+    /// no detected span / detection is off / there is no live surface. No `slop`: a pointer lands where it
+    /// is aimed, so this half keeps the exact cell reading (the phone's half does not — see
+    /// ``TerminalTouchSelection/linkHitSlop``).
     private func detectedLink(at point: (x: Double, y: Double)) -> DetectedLink? {
-        guard SettingsKey.linkDetectionEnabled,
-              model?.isAlternateScreen == false,
-              let metrics = surface?.cellMetrics(),
-              metrics.cellWidth > 0, metrics.cellHeight > 0,
-              point.x >= Double(metrics.originX), point.y >= Double(metrics.originY)
-        else { return nil }
-        let column = Int((point.x - Double(metrics.originX)) / Double(metrics.cellWidth))
-        let row = Int((point.y - Double(metrics.originY)) / Double(metrics.cellHeight))
-        guard row >= 0, column >= 0 else { return nil }
-        return currentDetectedLinks().first { $0.row == row && column >= $0.colStart && column < $0.colEnd }
+        linkSnapshot.link(at: point, model: model, surface: surface)
     }
 
     /// The live link config the policy reads (`link-cmd-click` / `link-cmd-shift-click`), resolved
     /// fire-time from Settings so a change applies to the next click with no re-wire.
     private func liveLinkConfig() -> LinkActionConfig {
         LinkActionConfig(cmdClick: SettingsKey.linkCmdClick, cmdShiftClick: SettingsKey.linkCmdShiftClick)
-    }
-
-    /// Actuate a resolved ``LinkAction`` — the thin macOS dispatcher behind the pure ``LinkActionPolicy``:
-    /// copy → client pasteboard; cd → **verbatim UTF-8** `cd <quoted>` down the PTY (never `SendKeysParser`);
-    /// open/reveal → the host RPC seams (E10 WI-7; a graceful no-op until wired); URL → client `NSWorkspace`.
-    private func performLinkAction(_ action: LinkAction) {
-        switch action {
-        case .nothing:
-            return
-        case let .copyPathClient(text):
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(text, forType: .string)
-        case let .changeDirectoryPTY(path):
-            // `cd '<path>' 2>/dev/null || cd '<parent>'\n` as raw bytes — the existing terminal OUT path
-            // (mapping note: cd is verbatim UTF-8). The shared ``LinkActionPolicy/changeDirectoryCommandLine``
-            // single-quotes the operands AND falls back to the parent folder so a FILE path (e.g. a stripped
-            // `path:line:col`) does not `cd: not a directory`. ALL THREE actuators share this one idiom.
-            model?.sendInput(Data(LinkActionPolicy.changeDirectoryCommandLine(path).utf8))
-        case let .openURLClient(urlString):
-            if let url = URL(string: urlString) { NSWorkspace.shared.open(url) }
-        case let .openHost(path):
-            model?.onRequestOpenHostPath?(path)
-        case let .openCodeHost(target):
-            model?.onRequestOpenCodeHostPath?(target)
-        case let .revealHost(path):
-            model?.onRequestRevealHostPath?(path)
-        }
     }
 
     /// Dispatches a path/URL context-menu item (tagged by ``TerminalContextMenu/LinkItem`` rawValue) for the
@@ -1849,7 +1865,7 @@ final class GhosttyLayerBackedView: NSView {
         guard let raw = sender.representedObject as? String,
               let item = TerminalContextMenu.LinkItem(rawValue: raw),
               let link = pendingMenuLink else { return }
-        performLinkAction(LinkActionPolicy.action(for: item, link: link))
+        LinkActionActuator.actuate(LinkActionPolicy.action(for: item, link: link), model: model)
     }
 
     // MARK: Mouse / scroll forwarding → libghostty
@@ -1905,7 +1921,10 @@ final class GhosttyLayerBackedView: NSView {
         if let pending = pendingLinkGesture {
             pendingLinkGesture = nil
             if let up = detectedLink(at: surfacePoint(event)), up == pending.link {
-                performLinkAction(LinkActionPolicy.action(for: pending.gesture, link: pending.link, config: liveLinkConfig()))
+                LinkActionActuator.actuate(
+                    LinkActionPolicy.action(for: pending.gesture, link: pending.link, config: liveLinkConfig()),
+                    model: model,
+                )
             }
             return
         }
@@ -2131,7 +2150,7 @@ final class GhosttyLayerBackedView: NSView {
         if model?.linkHighlightActive == true { model?.noteViewportScrolled() }
         // …and drop the link-snapshot cache UNCONDITIONALLY: a non-⌘ scroll bumps no generation key, so a
         // later ⌘-click / right-click-menu hit-test would otherwise resolve against the pre-scroll rows.
-        detectedLinksCache = nil
+        linkSnapshot.invalidate()
 
         // The delta above is handed straight to libghostty, which OWNS the viewport: on the primary screen it
         // navigates scrollback (auto-snapping to the bottom on new output / typing, native), and in an
@@ -3148,6 +3167,10 @@ final class GhosttyLayerBackedView: UIView {
             // `kPrecisionScrollMods`. A finger-driven pan carries no momentum phase here, which is fine
             // for v1 (a future round could map the end-velocity to a momentum phase).
             surface?.sendMouseScroll(deltaX: 0, deltaY: Double(deltaY), mods: Self.kPrecisionScrollMods)
+            // Drop the link snapshot, exactly as the macOS `scrollWheel` does and for the same reason: a
+            // local scrollback scroll moves the viewport while bumping NO generation key, so the next
+            // long-press hit-test would otherwise ask the pre-scroll rows what is under the finger.
+            linkSnapshot.invalidate()
             // With the gated tick, scrollback frames must ARM their own present — on iOS
             // the tick is the only present pump (no macOS-style backing-layer display path).
             requestPresent(2)
@@ -3303,6 +3326,7 @@ final class GhosttyLayerBackedView: UIView {
             // pane's body claims the pane. Idempotent, so it does not fight the reactive path.
             model?.onRequestFocus?()
             editMenuInteraction?.dismissMenu()   // a second press replaces the first menu, never stacks it
+            pendingMenuLink = nil   // the last menu's link dies with the last menu
             selectionGeneration += 1
             touchSelectionActive = true
             selectionPressForwarded = true
@@ -3339,6 +3363,17 @@ final class GhosttyLayerBackedView: UIView {
             // A cancelled gesture (a system gesture took the touch) is not a request for a menu.
             if gesture.state == .ended,
                TerminalTouchSelection.presentsMenuOnRelease(mouseCaptured: surface?.mouseCaptured ?? false) {
+                // What the menu is being offered ON, resolved at the RELEASE point — the point the menu
+                // itself is anchored to, and the Mac's `menu(for:)` reads exactly the location its menu
+                // opens at. For the common press-and-lift this is the point the finger landed on anyway;
+                // for a drag it is where the user finished looking. Stashed like the Mac's
+                // `pendingMenuLink` because a `UIAction` closure fires long after the point is gone.
+                pendingMenuLink = linkSnapshot.link(
+                    at: (Double(point.x), Double(point.y)),
+                    model: model,
+                    surface: surface,
+                    slop: TerminalTouchSelection.linkHitSlop,
+                )
                 editMenuInteraction?.presentEditMenu(with: UIEditMenuConfiguration(identifier: nil, sourcePoint: point))
             }
             // Hold the flag across the current event cycle so the tap that UIKit may deliver from this
@@ -3356,11 +3391,27 @@ final class GhosttyLayerBackedView: UIView {
 
     // MARK: The edit menu's items (the SAME table the Mac's `menu(for:)` renders)
 
+    /// The viewport's detected links + the hit-test, shared with the macOS half (see
+    /// ``GhosttyLinkSnapshot``). Invalidated by everything that moves the viewport without bumping a
+    /// generation key — the pan, the selection drag's edge autoscroll — and by `detach()`.
+    private var linkSnapshot = GhosttyLinkSnapshot()
+
+    /// The detected link the CURRENT edit menu was offered on, resolved at the long press's release point
+    /// and stashed for the `UIAction` closures that fire after it. The twin of the Mac's `pendingMenuLink`,
+    /// and one slot suffices for the same reason: a menu is modal-per-view.
+    private var pendingMenuLink: DetectedLink?
+
     /// The menu, built from the PURE ``TerminalContextMenu`` — same items, same order, same enablement
     /// rule, same SF Symbols. The Mac renders this table as an `NSMenu`; this renders it as a `UIMenu`.
     /// The system's `suggestedActions` are deliberately DROPPED: they are the responder chain's
     /// Copy/Paste over a `UITextInput` this view is not, and offering both would put two Copies with
     /// different meanings in one menu.
+    ///
+    /// A press that landed ON a detected path / URL PREPENDS that link's items — the same set from the
+    /// same ``TerminalContextMenu/linkItems(for:)``, so the two halves cannot come to offer different
+    /// things about a link either. The Mac separates them from the standard items with an `NSMenuItem`
+    /// rule; here they are the first inline group, which is what UIKit draws a rule between. Layout
+    /// differs, the offer does not.
     private func terminalMenuElements() -> [UIMenuElement] {
         let ctx = TerminalContextMenu.Context(
             hasSelection: surface?.hasSelection() ?? false,
@@ -3371,7 +3422,9 @@ final class GhosttyLayerBackedView: UIView {
         )
         // `Item.separatorBefore` opens a new GROUP; UIKit draws a group as an inline submenu, which is
         // the rule an `NSMenuItem.separator()` draws on the Mac. Same table, each framework's own rule.
-        var groups: [[UIMenuElement]] = [[]]
+        // Group 0 is the link items — EMPTY for a press over no link, and the `filter` at the end drops an
+        // empty group, so there is no rule over nothing.
+        var groups: [[UIMenuElement]] = [linkMenuActions(), []]
         for item in TerminalContextMenu.items {
             if item.separatorBefore { groups.append([]) }
             groups[groups.count - 1].append(menuAction(for: item, context: ctx))
@@ -3400,6 +3453,30 @@ final class GhosttyLayerBackedView: UIView {
             attributes: enabled ? [] : .disabled,
         ) { [weak self] _ in
             self?.performContextMenuItem(item)
+        }
+    }
+
+    /// The link items for the press's ``pendingMenuLink`` — Open / Copy Path (Copy URL) / Reveal in Finder /
+    /// Change Directory Here for a path, Open Link / Copy URL for a URL — or NOTHING when the press landed
+    /// on no link, which is most presses.
+    ///
+    /// Which items a kind offers is ``TerminalContextMenu/linkItems(for:)``'s answer and what each one DOES
+    /// is ``LinkActionPolicy``'s, both pure and both already shared with the Mac; the actuation is
+    /// ``LinkActionActuator``, which is now the one dispatch for a resolved ``LinkAction`` anywhere in the
+    /// app. So the whole of this half's link feature is the hit-test above plus these labels.
+    private func linkMenuActions() -> [UIMenuElement] {
+        guard let link = pendingMenuLink else { return [] }
+        return TerminalContextMenu.linkItems(for: link.kind).map { item in
+            UIAction(
+                title: item.title(for: link.kind),
+                image: UIImage(systemName: item.symbol),
+            ) { [weak self] _ in
+                guard let self else { return }
+                LinkActionActuator.actuate(LinkActionPolicy.action(for: item, link: link), model: model)
+                // `cd` types into the grid and a copy draws the pane's copy chip; the others reach the host.
+                // Arming a present unconditionally is cheaper than getting that list right.
+                requestPresent(3)
+            }
         }
     }
 
@@ -3690,6 +3767,9 @@ final class GhosttyLayerBackedView: UIView {
                 y: Double(selectionDragPoint.y),
                 mods: GHOSTTY_MODS_NONE,
             )
+            // Same reason as the pan: this scroll moves the viewport and bumps no generation key, and the
+            // release that ends this very drag is what asks the snapshot which link the menu is for.
+            linkSnapshot.invalidate()
             requestPresent(2)
         }
         #if targetEnvironment(simulator)
@@ -3742,6 +3822,8 @@ final class GhosttyLayerBackedView: UIView {
         touchSelectionActive = false
         selectionPressForwarded = false
         selectionAutoScroll = 0
+        pendingMenuLink = nil
+        linkSnapshot.invalidate()   // the snapshot belongs to the closing surface's viewport
         let detaching = surface
         surface = nil
         detaching?.close()

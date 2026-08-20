@@ -17,7 +17,9 @@
 // ⚠️ NOTHING HERE MEASURES A CELL. A touch point goes to libghostty as POINTS (`sendMousePos`), which applies
 // the content scale and resolves the cell itself, so there is no point→cell arithmetic on this path and no
 // second copy of the grid geometry `TerminalCellMetrics` (`Sources/SlopDeskTerminal/TerminalSurface.swift`)
-// already owns.
+// already owns. `linkHitSlop` does not break that and is the reason to say it again: it is a distance a
+// FINGER is wrong by, in points, and the only thing that ever compares it to a cell is
+// `TerminalLinkHitTest`, which is where the grid arithmetic lives for both platforms.
 
 import Foundation
 
@@ -41,6 +43,26 @@ public enum TerminalTouchSelection {
     /// far past this by the time the press would fire. Past `.began` the movement no longer cancels —
     /// it IS the selection drag.
     public static let longPressAllowableMovement: Double = 12
+
+    /// How far off a detected path / URL a finger may land and still be understood to have pressed it
+    /// (points), fed to ``TerminalLinkHitTest/link(in:metrics:pointX:pointY:slop:)`` when the long-press
+    /// menu asks what it is being offered ON. The Mac passes nothing at all and keeps its exact cell
+    /// reading — a pointer lands where it is aimed.
+    ///
+    /// A fingertip does not. The contact patch is tens of points across and the centre UIKit reports is a
+    /// guess at its middle, while a cell at the default face is about 8 × 17 points — so a press a person
+    /// would swear landed on `src/lib.rs:42` can resolve a cell or two off it, and unlike the pointer
+    /// there is no hover to correct the aim before the menu opens. One long press is the whole
+    /// interaction.
+    ///
+    /// Deliberately SMALLER than ``longPressAllowableMovement``, which is the same kind of number for the
+    /// same finger one step earlier (how far it may wander before the press is even recognized): a press
+    /// that stayed still enough to be a press should not then be re-aimed further than it was allowed to
+    /// drift. It is not a 44pt touch target either — that is the minimum size for a control drawn at a
+    /// known place, and this is a correction applied to a target the terminal placed, several of which sit
+    /// side by side in one line of compiler output. Wide enough to forgive the aim, narrow enough that the
+    /// menu still names the path the user was looking at.
+    public static let linkHitSlop: Double = 10
 
     // MARK: - Edge autoscroll (a selection drag that reaches the top or bottom)
 

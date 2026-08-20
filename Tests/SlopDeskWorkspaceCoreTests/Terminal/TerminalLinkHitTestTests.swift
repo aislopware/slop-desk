@@ -2,11 +2,11 @@ import SlopDeskTerminal
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// The PURE ⌘-hover hit-test
-/// ``TerminalViewModel/hoveredLinkPath(rows:cwd:schemes:metrics:pointX:pointY:)`` — the headless heart of the
-/// status-bar full-path preview (`full-path-hover.png`). The macOS renderer is the compile-only actuator (the
-/// real surface hangs without a window server — the hang-safety rule), so the cell math + link resolution are
-/// pinned HERE.
+/// ``TerminalLinkHitTest`` — the one point → detected-link hit-test BOTH renderers run: the Mac's ⌘-hover,
+/// ⌘click and right-click menu, and the phone's long-press menu. The renderers themselves are compile-only
+/// actuators (the real surface hangs without a window server — the hang-safety rule), and until this file
+/// was retargeted the copy production ran was the one inside the embedder's `#if os(macOS)`, which nothing
+/// here could call. The math is pinned HERE now, once, for both.
 ///
 /// None of these is tautological: each expected path is hand-written, and each probe point is hand-computed
 /// from `column = (pointX − originX) / cellWidth`, `row = (pointY − originY) / cellHeight` against the detector's
@@ -14,11 +14,17 @@ import XCTest
 /// case: an inclusive `colEnd` (`<=` instead of `<`) fails ``testColumnEndIsExclusive``; a row/column axis swap
 /// fails ``testWrongRowIsNotAHit``; dropping the cwd resolution fails ``testRelativePathResolvesAgainstCwd``;
 /// returning `resolvedAbsolute` for a URL (which has none) fails ``testUrlFallsBackToRawText``.
-final class LinkHoverHitTestTests: XCTestCase {
+///
+/// The SLOP cases are the phone's half of it — a fingertip is not a cursor — and each one is written so a
+/// slop that leaked into the pointer's reading (`slop: 0` is the default and must stay exact) fails
+/// ``testAPointerGetsNoSlopAtAll``.
+final class TerminalLinkHitTestTests: XCTestCase {
     private func metrics(cellWidth: CGFloat = 10, cellHeight: CGFloat = 20) -> TerminalCellMetrics {
         TerminalCellMetrics(cellWidth: cellWidth, cellHeight: cellHeight, cols: 80, rows: 24)
     }
 
+    /// The hit-test as its callers spell it: detect the rows, ask what is under the point, and read the link
+    /// the way the hover does (`resolvedAbsolute ?? raw` — the fallback for a `~`-path or a bare URL).
     private func hover(
         _ rows: [String],
         cwd: String? = nil,
@@ -26,15 +32,16 @@ final class LinkHoverHitTestTests: XCTestCase {
         metrics: TerminalCellMetrics? = nil,
         x: CGFloat,
         y: CGFloat,
+        slop: CGFloat = 0,
     ) -> String? {
-        TerminalViewModel.hoveredLinkPath(
-            rows: rows,
-            cwd: cwd,
-            schemes: schemes,
+        TerminalLinkHitTest.link(
+            in: TerminalLinkDetector.detect(rows: rows, cwd: cwd, schemes: schemes),
             metrics: metrics ?? self.metrics(),
             pointX: x,
             pointY: y,
+            slop: slop,
         )
+        .map { $0.resolvedAbsolute ?? $0.raw }
     }
 
     // MARK: - A point inside a detected span resolves
@@ -107,10 +114,12 @@ final class LinkHoverHitTestTests: XCTestCase {
         XCTAssertNil(hover(["你好 /tmp/x"], x: 15, y: 5))
     }
 
-    /// Degenerate metrics (zero cell size) can never divide → no hit, never a trap.
+    /// Degenerate metrics (zero cell size) can never divide → no hit, never a trap. Not even with a slop:
+    /// a grid with no cells has no spans to be near.
     func testDegenerateMetricsReturnNil() {
         let zero = TerminalCellMetrics(cellWidth: 0, cellHeight: 0, cols: 80, rows: 24)
         XCTAssertNil(hover(["see /usr/local/bin"], metrics: zero, x: 65, y: 5))
+        XCTAssertNil(hover(["see /usr/local/bin"], metrics: zero, x: 65, y: 5, slop: 40))
     }
 
     /// A point above/left of the viewport origin (negative-mapped cell) is dropped, not force-floored to 0.
@@ -127,5 +136,67 @@ final class LinkHoverHitTestTests: XCTestCase {
         XCTAssertNil(hover(["go ssh://host/x"], schemes: .custom([]), x: 55, y: 5))
         // Same cell, `.all` policy → the URL is detected and its raw text returned.
         XCTAssertEqual(hover(["go ssh://host/x"], schemes: .all, x: 55, y: 5), "ssh://host/x")
+    }
+
+    // MARK: - The slop (a fingertip is not a cursor)
+
+    /// THE DEFAULT IS EXACT. Every point the pointer's reading rejects above must still be rejected with the
+    /// default slop, and this is the one that would silently loosen if a slop were ever given a non-zero
+    /// default: cell 18 is one cell past an exclusive `colEnd`, which is a MISS for a mouse and a hit for a
+    /// finger.
+    func testAPointerGetsNoSlopAtAll() {
+        XCTAssertNil(hover(["see /usr/local/bin"], x: 185, y: 5))
+        XCTAssertEqual(hover(["see /usr/local/bin"], x: 185, y: 5, slop: 15), "/usr/local/bin")
+    }
+
+    /// The slop reaches PAST the span's end and stops: the rect ends at x = 180, so 190 is 10 points off
+    /// (inside a 15pt slop) and 200 is 20 (outside it). A slop that widened by a whole cell regardless of the
+    /// number would pass both.
+    func testSlopReachesJustPastTheSpanAndThenFallsOff() {
+        XCTAssertEqual(hover(["see /usr/local/bin"], x: 190, y: 5, slop: 15), "/usr/local/bin")
+        XCTAssertNil(hover(["see /usr/local/bin"], x: 200, y: 5, slop: 15))
+    }
+
+    /// …and BEFORE the span's start, symmetrically: the rect begins at x = 40, so 30 is 10 points off and 20
+    /// is 20. (Both probes are in cells 2 and 3, which the exact pass rejects.)
+    func testSlopReachesBeforeTheSpanToo() {
+        XCTAssertEqual(hover(["see /usr/local/bin"], x: 30, y: 5, slop: 15), "/usr/local/bin")
+        XCTAssertNil(hover(["see /usr/local/bin"], x: 20, y: 5, slop: 15))
+    }
+
+    /// A point ABOVE the viewport origin is dropped by the exact pass (it maps to no cell at all) and is
+    /// still eligible for the slop — which is precisely the finger that landed a hair above the first row.
+    func testSlopReachesUpIntoTheFirstRowFromAboveTheOrigin() {
+        XCTAssertNil(hover(["see /usr/local/bin"], x: 65, y: -5))
+        XCTAssertEqual(hover(["see /usr/local/bin"], x: 65, y: -5, slop: 15), "/usr/local/bin")
+    }
+
+    /// Two spans on one row, and the point falls in the gap between them: the NEARER one wins, both ways
+    /// round. A slop that returned the first candidate within range would answer `/tmp/a` for both.
+    func testSlopPicksTheNearerOfTwoSpansOnOneRow() {
+        // "/tmp/a    /tmp/b": cells 0..<6 → x ∈ [0,60), cells 10..<16 → x ∈ [100,160).
+        let rows = ["/tmp/a    /tmp/b"]
+        XCTAssertEqual(hover(rows, x: 70, y: 5, slop: 35), "/tmp/a", "10 points off A, 30 off B")
+        XCTAssertEqual(hover(rows, x: 90, y: 5, slop: 35), "/tmp/b", "30 points off A, 10 off B")
+    }
+
+    /// A ROW is the coarser mistake a finger makes, so the vertical distance is compared first: the point sits
+    /// in the empty row between two spans that share the same columns, and the nearer ROW wins.
+    func testSlopComparesTheRowBeforeTheColumn() {
+        let rows = ["/tmp/a", "", "/tmp/b"]
+        // Row 0 ends at y = 20, row 2 begins at y = 40; both spans cover cell 2 (x ∈ [20,30)), so only the
+        // vertical distance can decide.
+        XCTAssertEqual(hover(rows, x: 25, y: 32, slop: 15), "/tmp/b", "8 points below row 2, 12 above row 0")
+        XCTAssertEqual(hover(rows, x: 25, y: 28, slop: 15), "/tmp/a", "8 points under row 0, 12 over row 2")
+    }
+
+    /// A generous slop NEVER re-aims a point that is already ON a span. Both probes sit inside their own
+    /// span's cells with a neighbour well within reach, and each must answer with the span it is on — the
+    /// exact pass runs first, so a slop can only ever add an answer where there was none.
+    func testAGenerousSlopNeverRedirectsAPointThatIsAlreadyOnASpan() {
+        // "/tmp/a /tmp/b": cells 0..<6 and 7..<13 (one space at cell 6 — no space and it is one token).
+        let rows = ["/tmp/a /tmp/b"]
+        XCTAssertEqual(hover(rows, x: 25, y: 5, slop: 40), "/tmp/a", "cell 2 is inside /tmp/a")
+        XCTAssertEqual(hover(rows, x: 75, y: 5, slop: 40), "/tmp/b", "cell 7 is inside /tmp/b")
     }
 }

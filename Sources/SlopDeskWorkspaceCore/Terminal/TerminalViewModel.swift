@@ -1535,35 +1535,12 @@ public final class TerminalViewModel {
     /// SwiftUI ``LinkHighlightOverlay`` takes cwd as a parameter — only the renderer reads this.
     @ObservationIgnored public var linkCwd: String?
 
-    /// Pure ⌘-hover hit-test: map a top-left-origin POINT (in points, the surface's
-    /// coordinate space) to the detected link under it, returning that link's resolved absolute path — or its
-    /// raw text when no pure resolution exists (a `~`-path, a plain URL). `nil` when the point is over no
-    /// detected link, or the geometry is degenerate.
-    ///
-    /// `nonisolated` + `static` so it is unit-testable headlessly (``LinkHoverHitTestTests``) without a window
-    /// server — the renderer is only the thin actuator feeding it the live `viewportTextRows()` + the
-    /// ``TerminalCellMetrics``. Plain separate `/` cell math (NEVER `addingProduct`/`fma`, CLAUDE.md §2 habit —
-    /// view geometry, not the codec/controller cluster, but the habit is kept). `Int(_:)` of a
-    /// guaranteed-non-negative ratio truncates toward zero, i.e. floors, giving the 0-based cell index.
-    public nonisolated static func hoveredLinkPath(
-        rows: [String],
-        cwd: String?,
-        schemes: LinkSchemePolicy,
-        metrics: TerminalCellMetrics,
-        pointX: CGFloat,
-        pointY: CGFloat,
-    ) -> String? {
-        guard metrics.cellWidth > 0, metrics.cellHeight > 0 else { return nil }
-        guard pointX >= metrics.originX, pointY >= metrics.originY else { return nil }
-        let column = Int((pointX - metrics.originX) / metrics.cellWidth)
-        let row = Int((pointY - metrics.originY) / metrics.cellHeight)
-        guard row >= 0, column >= 0 else { return nil }
-        let links = TerminalLinkDetector.detect(rows: rows, cwd: cwd, schemes: schemes)
-        for link in links where link.row == row && column >= link.colStart && column < link.colEnd {
-            return link.resolvedAbsolute ?? link.raw
-        }
-        return nil
-    }
+    // `hoveredLinkPath(rows:cwd:schemes:metrics:pointX:pointY:)` was here: the pure ⌘-hover hit-test,
+    // and the SECOND spelling of the cell math the embedder's own `detectedLink(at:)` ran — which the
+    // latter's doc comment admitted by naming this one as the thing it "mirrors". The math is
+    // ``TerminalLinkHitTest`` now, once, answering with the LINK; the hover's path is
+    // `resolvedAbsolute ?? raw` at the one call site that wants a path. Nothing here called this, and
+    // the copy production ran was the one behind a `#if os(macOS)` no test could reach.
 
     // MARK: Hint Mode
 
