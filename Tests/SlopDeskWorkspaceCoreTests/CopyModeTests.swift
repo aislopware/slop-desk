@@ -110,7 +110,9 @@ final class CopyModeTests: XCTestCase {
 
         model.handleCopyModeKey(.char("y", control: false, shift: false))
         XCTAssertEqual(copied, "selected text", "y copies the existing libghostty selection")
-        XCTAssertEqual(model.copyReceipt?.text, "selected text", "a copy publishes the receipt the chip draws")
+        XCTAssertEqual(
+            model.copyReceipt?.charCount, 13, "a copy publishes the receipt the chip draws, counting what it copied",
+        )
         // It must NOT silently select-all when a selection already exists.
         XCTAssertFalse(recorder.actions.contains("select_all"), "never auto select_all over an existing selection")
     }

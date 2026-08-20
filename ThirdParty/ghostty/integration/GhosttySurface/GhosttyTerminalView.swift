@@ -3817,7 +3817,10 @@ extension GhosttyLayerBackedView: UIGestureRecognizerDelegate {
     /// across the grid then means "extend the selection", and scrolling the viewport under it as well
     /// would drag the selection head across content that is itself moving. Every other recognizer is
     /// untouched — this delegate answers only for the pan it is installed on.
-    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+    ///
+    /// `override`, not a bare conformance: `UIView` already answers this one, and the answer it gives
+    /// (`true`) is the one every OTHER recognizer on this view must keep getting.
+    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         guard gestureRecognizer === panRecognizer else { return true }
         return !touchSelectionActive
     }
@@ -3825,7 +3828,10 @@ extension GhosttyLayerBackedView: UIGestureRecognizerDelegate {
 
 // MARK: - The edit menu
 
-extension GhosttyLayerBackedView: UIEditMenuInteractionDelegate {
+// `@preconcurrency`: unlike `UIDocumentPickerDelegate` below, this protocol is not annotated `@MainActor`
+// in the SDK, so a plain conformance from a `UIView` (which is) is a concurrency error rather than a
+// promise anyone has to keep. UIKit only ever calls it on the main thread.
+extension GhosttyLayerBackedView: @preconcurrency UIEditMenuInteractionDelegate {
     func editMenuInteraction(
         _ interaction: UIEditMenuInteraction,
         menuFor configuration: UIEditMenuConfiguration,

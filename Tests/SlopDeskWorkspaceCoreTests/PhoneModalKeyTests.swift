@@ -146,7 +146,7 @@ final class PhoneModalKeyTests: XCTestCase {
         rec.scrollbackLines = ["mercury", "venus"]
         model.enterCopyMode()
         model.handleCopyModeKey(.char("y", control: false, shift: false))
-        XCTAssertEqual(model.copyReceipt?.text, "mercury\nvenus", "the chip says it copied")
+        XCTAssertEqual(model.copyReceipt?.lineCount, 2, "the chip says it copied both lines")
         XCTAssertEqual(
             ClientPasteboard.text(), "mercury\nvenus",
             "…and the default write is a REAL one, through the cross-platform door",
