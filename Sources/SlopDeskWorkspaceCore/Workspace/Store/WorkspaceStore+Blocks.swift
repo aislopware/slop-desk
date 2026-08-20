@@ -194,8 +194,9 @@ public extension WorkspaceStore {
 
     /// TOGGLES modal keyboard COPY-MODE over the active pane (the ⌘⇧C chord / Pane-menu "Copy Mode" entry).
     /// Drives the MODEL as the single source of truth — ``TerminalViewModel/enterCopyMode()`` /
-    /// ``TerminalViewModel/exitCopyMode()`` (which flip `isCopyMode` and fire `onRequestCopyMode` so the overlay
-    /// `@State` syncs FROM the model, never an independent inverting toggle). A no-op for a non-terminal active
+    /// ``TerminalViewModel/exitCopyMode()`` (which flip `isCopyMode` and its observable
+    /// ``TerminalViewModel/copyModeBadgeActive`` twin, so every overlay follows the MODEL rather than an
+    /// independent inverting toggle). A no-op for a non-terminal active
     /// pane or an empty shell. The mode's keyboard dispatch is the PURE ``TerminalViewModel/handleCopyModeKey(_:)``
     /// (unit-tested). Resolves the active terminal model so copy-mode arms only on the focused pane.
     func requestCopyModeInActivePane() {

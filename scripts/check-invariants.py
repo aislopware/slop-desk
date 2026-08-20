@@ -510,6 +510,51 @@ def source_comments_cite_files_that_exist() -> Report:
     return found, "a comment cites a source path that is not in the tree — a rename walked past it"
 
 
+#: `public var onSomething: (…) -> …` — the injected-sink shape this codebase wires its views with.
+_SINK_DECL = re.compile(r"public var (on[A-Z][A-Za-z0-9]*)\s*:\s*\(")
+
+
+def every_injected_sink_has_someone_who_binds_it() -> Report:
+    """A seam a view is supposed to install must be installed by a view, not only by a test.
+
+    The pattern all over this tree is an `@ObservationIgnored public var onX: (() -> Void)?` that
+    the model FIRES and a view BINDS. When that state later grows an observable twin the view can
+    read directly, the sink stops being bound — and nothing says so, because firing an unbound
+    optional is a silent no-op and the tests kept assigning it. Three of them survived that way
+    (`onRequestCopyMode`, `onCopyConfirmation`, `onRequestViKeyHints`): declared, documented, fired
+    from four call sites, asserted by six tests, and connected to no pixel on either platform.
+
+    That shape is worse than dead code, because a test that binds the sink PASSES — it proves the
+    model fires, which is true, and says nothing about whether anything listens. It is also the
+    shape the two-headed client makes easy: a sink one half binds and the other does not looks
+    alive from anywhere except the half that is silent.
+
+    Tests are deliberately not counted as binders, which is the whole point of the gate. Assignment
+    anywhere in product code counts, including inside the declaring file — an `init` that takes the
+    closure and stores it to `self` is a binding, made by whoever calls the initialiser.
+    """
+    sinks: dict[str, str] = {}
+    for path in repo_files("Sources/**"):
+        if path.suffix != ".swift":
+            continue
+        for name in _SINK_DECL.findall(path.read_text(errors="ignore")):
+            sinks.setdefault(name, str(path.relative_to(REPO)))
+    product = [
+        path
+        for path in repo_files("Sources/**", "Apps/**", "ThirdParty/**")
+        if path.suffix == ".swift"
+    ]
+    sources = [path.read_text(errors="ignore") for path in product]
+    found: list[str] = []
+    for name, home in sorted(sinks.items()):
+        assigned = re.compile(rf"(?<![A-Za-z0-9_]){name}\s*=(?!=)")
+        if not any(assigned.search(source) for source in sources):
+            found.append(f"{home}: {name}")
+    if not found:
+        return None
+    return found, "an injected sink is bound by nobody outside the tests — it reaches no view"
+
+
 def every_shipped_sidecar_carries_its_own_version() -> Report:
     """A sidecar the pin has never heard of ships at whatever its Cargo.toml happened to say.
 
@@ -620,6 +665,7 @@ def the_formula_installs_every_binary_the_release_ships() -> Report:
 GATES = [
     live_docs_cite_files_that_exist,
     source_comments_cite_files_that_exist,
+    every_injected_sink_has_someone_who_binds_it,
     no_app_layer_crypto,
     no_swiftpm_build_plugin,
     no_fused_multiply_add,

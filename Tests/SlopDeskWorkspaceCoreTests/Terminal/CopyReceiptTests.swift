@@ -51,14 +51,11 @@ final class CopyReceiptTests: XCTestCase {
     // MARK: Model publication (the pane chip's source)
 
     @MainActor
-    func testNoteClipboardCopyPublishesReceiptAndFiresLegacyHook() {
+    func testNoteClipboardCopyPublishesReceipt() {
         let model = TerminalViewModel()
-        var confirmations = 0
-        model.onCopyConfirmation = { confirmations += 1 }
 
         model.noteClipboardCopy("hello world")
         XCTAssertEqual(model.copyReceipt?.label, "Copied · 11 characters")
-        XCTAssertEqual(confirmations, 1, "the legacy confirmation hook fires alongside the receipt")
 
         let firstEpoch = model.copyReceipt?.epoch
         model.noteClipboardCopy("a\nb")
@@ -75,11 +72,8 @@ final class CopyReceiptTests: XCTestCase {
     @MainActor
     func testEmptyCopyPublishesNothing() {
         let model = TerminalViewModel()
-        var confirmations = 0
-        model.onCopyConfirmation = { confirmations += 1 }
         model.noteClipboardCopy("")
         XCTAssertNil(model.copyReceipt, "nothing copied ⇒ nothing to confirm")
-        XCTAssertEqual(confirmations, 0)
     }
 
     @MainActor

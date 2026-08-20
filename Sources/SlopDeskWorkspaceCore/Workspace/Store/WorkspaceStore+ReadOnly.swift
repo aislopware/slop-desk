@@ -94,8 +94,8 @@ public extension WorkspaceStore {
     /// while the active pane is in vi / copy-mode (``WorkspaceBindingRegistry`` `route` resolves the contextual
     /// branch — out of copy-mode, `⌘/` stays the global keyboard cheat sheet). Drives the MODEL as the single
     /// source of truth — ``TerminalViewModel/toggleViKeyHints()`` flips its observable
-    /// ``TerminalViewModel/showViKeyHints`` (which the leaf's hint-bar gate reads) and fires
-    /// `onRequestViKeyHints`. A graceful no-op for a non-terminal active pane or an empty shell (no live model).
+    /// ``TerminalViewModel/showViKeyHints``, which is what both halves' hint-bar gates read. A graceful
+    /// no-op for a non-terminal active pane or an empty shell (no live model).
     func toggleViKeyHintsInActivePane() {
         activeTerminalModel?.toggleViKeyHints()
     }

@@ -106,13 +106,11 @@ final class CopyModeTests: XCTestCase {
         recorder.selectionText = "selected text"
         let model = TerminalViewModel(surface: recorder)
         var copied: String?
-        var confirmations = 0
         model.copyToPasteboard = { copied = $0 }
-        model.onCopyConfirmation = { confirmations += 1 }
 
         model.handleCopyModeKey(.char("y", control: false, shift: false))
         XCTAssertEqual(copied, "selected text", "y copies the existing libghostty selection")
-        XCTAssertEqual(confirmations, 1, "a copy flashes the 'copied' confirmation")
+        XCTAssertEqual(model.copyReceipt?.text, "selected text", "a copy publishes the receipt the chip draws")
         // It must NOT silently select-all when a selection already exists.
         XCTAssertFalse(recorder.actions.contains("select_all"), "never auto select_all over an existing selection")
     }
@@ -135,35 +133,29 @@ final class CopyModeTests: XCTestCase {
         recorder.scrollbackLines = []
         let model = TerminalViewModel(surface: recorder)
         var copied: String?
-        var confirmations = 0
         model.copyToPasteboard = { copied = $0 }
-        model.onCopyConfirmation = { confirmations += 1 }
 
         model.handleCopyModeKey(.char("y", control: false, shift: false))
         XCTAssertNil(copied, "nothing to copy → no pasteboard write")
-        XCTAssertEqual(confirmations, 0, "nothing copied → no confirmation flash")
+        XCTAssertNil(model.copyReceipt, "nothing copied → no receipt, so no chip")
     }
 
     // MARK: Mode lifecycle (enter / exit)
 
-    func testEnterCopyModeSetsFlagAndFiresHook() {
+    func testEnterCopyModeSetsFlagAndItsObservableTwin() {
         let (model, _) = makeModel()
-        var requests = 0
-        model.onRequestCopyMode = { requests += 1 }
         model.enterCopyMode()
         XCTAssertTrue(model.isCopyMode, "enterCopyMode arms the mode")
-        XCTAssertEqual(requests, 1, "enterCopyMode fires onRequestCopyMode (drives the overlay @State)")
+        XCTAssertTrue(model.copyModeBadgeActive, "the observable twin every overlay reads follows it")
     }
 
     func testExitKeysClearTheMode() {
         let (model, _) = makeModel()
         for exitKey in [TerminalViewModel.CopyModeKey.char("q", control: false, shift: false), .escape] {
             model.isCopyMode = true
-            var requests = 0
-            model.onRequestCopyMode = { requests += 1 }
             model.handleCopyModeKey(exitKey)
             XCTAssertFalse(model.isCopyMode, "\(exitKey) exits copy-mode")
-            XCTAssertEqual(requests, 1, "exit fires onRequestCopyMode to dismiss the overlay")
+            XCTAssertFalse(model.copyModeBadgeActive, "the overlay backs off with the twin, not with a hook")
         }
     }
 
@@ -186,16 +178,20 @@ final class CopyModeTests: XCTestCase {
         XCTAssertTrue(rec.actions.isEmpty, "Ctrl-<navkey> is swallowed, never aliased onto a nav binding action")
     }
 
-    /// `exitCopyMode` is idempotent and `enterCopyMode` does not re-fire once already armed — the model is the
+    /// `exitCopyMode` is idempotent and `enterCopyMode` does not re-arm once already armed — the model is the
     /// single source of truth, so a double-exit (q then Esc) can't re-arm.
+    ///
+    /// The no-re-arm half is pinned by its CONSEQUENCE rather than by a hook count: arming calls
+    /// ``TerminalViewModel/resetViState()``, so a second enter that did anything would swallow a pending
+    /// count the user has already typed.
     func testEnterAndExitAreIdempotent() {
         let (model, _) = makeModel()
-        var requests = 0
-        model.onRequestCopyMode = { requests += 1 }
         model.enterCopyMode()
-        model.enterCopyMode() // already armed → no re-arm, no second hook fire
+        model.handleCopyModeKey(.char("3", control: false, shift: false))
+        XCTAssertEqual(model.viPendingCount, 3, "a digit builds the pending count")
+        model.enterCopyMode() // already armed → no re-arm, so no resetViState
         XCTAssertTrue(model.isCopyMode)
-        XCTAssertEqual(requests, 1, "enterCopyMode is a no-op once armed")
+        XCTAssertEqual(model.viPendingCount, 3, "enterCopyMode is a no-op once armed")
         model.exitCopyMode()
         XCTAssertFalse(model.isCopyMode)
         model.exitCopyMode() // already exited → still dismisses cleanly, never re-arms
@@ -217,8 +213,8 @@ final class CopyModeTests: XCTestCase {
     }
 
     /// Routing `.toggleCopyMode` through the production seam reaches the active pane's
-    /// `onRequestCopyMode` (the hook `TerminalScreenView` wires to arm the mode + show the overlay).
-    func testToggleCopyModeRoutesToActivePaneHook() throws {
+    /// model and flips the observable twin both halves' overlays are gated on.
+    func testToggleCopyModeRoutesToActivePaneModel() throws {
         let store = WorkspaceStore(
             restoringTree: .defaultWorkspace(),
             makeSession: { seed in RecordingTerminalPaneSession(seed.spec) },
@@ -228,20 +224,17 @@ final class CopyModeTests: XCTestCase {
         let active = try XCTUnwrap(store.tree.activeSession?.activeTab?.activePane)
         let session = try XCTUnwrap(store.handle(for: active) as? RecordingTerminalPaneSession)
         let model = try XCTUnwrap(session.terminalModel)
-        var requested = 0
-        // Mimic TerminalScreenView's PRODUCTION wiring: the model is the single source of truth (the store
-        // route calls enter/exitCopyMode, which flip `isCopyMode`); the hook is a PURE observer that only
-        // OBSERVES the model — it must NOT independently toggle the flag (the old inverting toggle could
-        // desync and re-arm on exit). So the closure here just counts + reads, never writes.
-        model.onRequestCopyMode = { requested += 1 }
-
+        // The PRODUCTION wiring is observation, not a callback: the store route calls enter/exitCopyMode,
+        // which flip `isCopyMode` and its observable twin, and every overlay READS the twin. There is
+        // nothing left for a view to toggle independently, which is what the old inverting hook could
+        // desync by.
         WorkspaceBindingRegistry.route(.toggleCopyMode, to: store)
-        XCTAssertEqual(requested, 1, "⌘⇧C reaches the active pane's copy-mode hook")
         XCTAssertTrue(model.isCopyMode, "the mode is armed by the store's enterCopyMode route")
+        XCTAssertTrue(model.copyModeBadgeActive, "⌘⇧C reaches the active pane's observable twin")
         XCTAssertTrue(store.isCopyMode(for: active), "the store badge helper reflects the armed pane")
 
         WorkspaceBindingRegistry.route(.toggleCopyMode, to: store)
-        XCTAssertEqual(requested, 2, "routing again fires the hook")
+        XCTAssertFalse(model.copyModeBadgeActive, "routing again backs the overlay off")
         XCTAssertFalse(model.isCopyMode, "the store's exitCopyMode route disarms the mode")
         XCTAssertFalse(store.isCopyMode(for: active), "the badge clears on exit")
     }

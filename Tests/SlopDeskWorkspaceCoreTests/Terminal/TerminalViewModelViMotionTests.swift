@@ -274,19 +274,15 @@ final class TerminalViewModelViMotionTests: XCTestCase {
 
     // MARK: Key-hint bar (⌘/ contextual toggle; off by default, reset on exit)
 
-    /// ``toggleViKeyHints()`` flips ``showViKeyHints`` and fires ``onRequestViKeyHints``; leaving vi mode
-    /// resets the hint bar (per-session, off by default).
+    /// ``toggleViKeyHints()`` flips the observable ``showViKeyHints`` both halves' hint bars are gated on;
+    /// leaving vi mode resets the hint bar (per-session, off by default).
     func testKeyHintsToggleAndResetOnExit() {
         let (model, _) = makeModel()
-        var requests = 0
-        model.onRequestViKeyHints = { requests += 1 }
         XCTAssertFalse(model.showViKeyHints, "the hint bar is off by default")
         model.toggleViKeyHints()
         XCTAssertTrue(model.showViKeyHints, "⌘/ shows the hint bar")
-        XCTAssertEqual(requests, 1, "the toggle fires onRequestViKeyHints")
         model.toggleViKeyHints()
         XCTAssertFalse(model.showViKeyHints, "⌘/ again hides it")
-        XCTAssertEqual(requests, 2)
 
         model.enterCopyMode()
         model.toggleViKeyHints()

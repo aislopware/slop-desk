@@ -3115,6 +3115,29 @@ audit and is documented in the code as interim: `PaneFocusCoordinator.reassertFo
 of the same attach: `onClipboardWrite` was unbound, so the `COPIED · N` chip the phone DOES draw never
 lit, and `isAlternateScreen` read a hardcoded `false` in the paste backstop.
 
+### Increment 73 — three hooks the overlays stopped listening to, and nobody said so
+
+`onRequestCopyMode`, `onCopyConfirmation` and `onRequestViKeyHints` were declared, documented, fired
+from four call sites and asserted by six tests. Nothing in either half of the client bound one of
+them. Both overlays had moved to the OBSERVABLE twins — `copyModeBadgeActive`, `showViKeyHints`,
+`copyReceipt` — because the renderer's `keyDown` reads `isCopyMode` from inside the AttributeGraph
+update path and must not register a SwiftUI dependency. The callbacks were what that migration left
+behind, and firing an unbound optional is a silent no-op, so nothing ever failed.
+
+The tests are why it lasted. A test that binds the sink and counts its calls PASSES — it proves the
+model fires, which was true, and says nothing about whether anything is listening. Two of them were
+rewritten to pin the CONSEQUENCE rather than the call: idempotent `enterCopyMode` is now pinned by
+typing a pending count and re-entering (a re-arm would call `resetViState` and swallow it), and the
+copy receipt is pinned by its own label and epoch, which is what the chip actually draws.
+
+The ratchet is `every_injected_sink_has_someone_who_binds_it` in `scripts/check-invariants.py`, and
+it is deliberately not a name list: it collects every `public var onX: (…)` declared under `Sources`
+and requires an assignment somewhere in PRODUCT code — `Sources`, `Apps` or `ThirdParty`, including
+the declaring file, since an `init` that stores the closure to `self` is a binding made by whoever
+calls it. Tests do not count, which is the whole point. It reads 75 sinks today and finds none
+unbound. This is the shape the two-headed client makes easy: a sink one half binds and the other does
+not looks alive from everywhere except the half that is silent.
+
 ## Stage D ledger — what the rename actually costs
 
 `SlopDeskClientUI` cannot fold into `SlopDeskPhoneUI` while `SlopDeskMacUI` still imports it. That is

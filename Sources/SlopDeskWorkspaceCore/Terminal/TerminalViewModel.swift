@@ -334,8 +334,8 @@ public final class TerminalViewModel {
     /// TRUE while this pane is in modal keyboard COPY-MODE (tmux/zellij parity): every keystroke this pane's
     /// `keyDown` sees is routed through ``handleCopyModeKey(_:)`` (navigation / search / copy / exit) instead
     /// of forwarded to the shell. VIEW state, NOT persisted (mirrors `isFindPresented`): `@ObservationIgnored`
-    /// because the keyDown intercept READS it from inside the renderer event path and the overlay drives it via
-    /// the `onRequestCopyMode` hook — it must not register a SwiftUI dependency.
+    /// because the keyDown intercept READS it from inside the renderer event path — it must not register a
+    /// SwiftUI dependency. The overlay reads the observable ``copyModeBadgeActive`` twin below instead.
     @ObservationIgnored public var isCopyMode = false {
         didSet { copyModeBadgeActive = isCopyMode }
     }
@@ -346,17 +346,6 @@ public final class TerminalViewModel {
     /// (``ViModePill``) reads THIS twin from a normal view body (reactive). Kept in lock-step by
     /// ``isCopyMode``'s `didSet`.
     public private(set) var copyModeBadgeActive = false
-
-    /// The ⌘⇧C entry / Pane-menu "Copy Mode" / `q`·Esc exit hook — toggles the copy-mode overlay's
-    /// `@State` in ``TerminalLeafView`` (set there so the closure captures THIS pane's overlay state, the
-    /// exact ``onRequestFind`` pattern). The store reaches it via `requestCopyModeInActivePane()`.
-    /// `@ObservationIgnored`: wiring, not view state. Nil for headless/preview callers (never invoked).
-    @ObservationIgnored public var onRequestCopyMode: (() -> Void)?
-
-    /// A brief "copied" confirmation flash hook. Fired by ``noteClipboardCopy(_:)`` alongside every
-    /// receipt (copy-mode yank, ⌘C selection, navigator/hint copies). `@ObservationIgnored`: wiring,
-    /// not view state. Nil for headless/preview callers.
-    @ObservationIgnored public var onCopyConfirmation: (() -> Void)?
 
     /// The most recent clipboard-copy receipt — OBSERVABLE: the pane's transient `COPIED · N` chip
     /// Every pane-scoped copy path lands here via ``noteClipboardCopy(_:)``: the copy-mode `y`/Enter yank,
@@ -372,15 +361,14 @@ public final class TerminalViewModel {
     /// the chip's dwell timer (`.task(id: epoch)`) instead of expiring on the old timer.
     @ObservationIgnored private var copyReceiptEpoch = 0
 
-    /// Records that `text` just landed on the clipboard: publishes a fresh ``CopyReceipt`` (the chip's
-    /// content) and fires the legacy ``onCopyConfirmation`` hook. RECORD-only — the pasteboard write
-    /// itself stays at the call site (libghostty writes internally; view helpers write per-platform).
+    /// Records that `text` just landed on the clipboard: publishes a fresh ``CopyReceipt``, which IS the
+    /// confirmation — the chip renders it and its epoch restarts the dwell. RECORD-only: the pasteboard
+    /// write itself stays at the call site (libghostty writes internally; ``copyToPasteboard`` for ours).
     /// Empty text is a no-op (nothing was copied ⇒ nothing to confirm).
     public func noteClipboardCopy(_ text: String) {
         guard !text.isEmpty else { return }
         copyReceiptEpoch += 1
         copyReceipt = CopyReceipt(text: text, epoch: copyReceiptEpoch)
-        onCopyConfirmation?()
     }
 
     /// Dismisses the copy receipt — called by the chip when its dwell elapses. Idempotent.
@@ -577,22 +565,16 @@ public final class TerminalViewModel {
     /// (off by default — hints show on demand only).
     public private(set) var showViKeyHints = false
 
-    /// `⌘/` (contextual, only in copy-mode) → toggle the vi key-hint bar. The store routes the chord here via
-    /// this hook so the GUI overlay can also animate/focus; nil for headless/preview. The model owns the
-    /// ``showViKeyHints`` truth (``toggleViKeyHints()`` flips it). `@ObservationIgnored`: wiring, not view state.
-    @ObservationIgnored public var onRequestViKeyHints: (() -> Void)?
-
     /// `?` find-backward hook: the copy-mode `?` key opens the SAME find bar as `/` but biased BACKWARD so
     /// `n`/`N` step against the search direction (wired to `TerminalFindBarModel.open(backward:)`).
     /// Falls back to ``onRequestFind`` when unset, so `?` still opens the bar before the backward bias is
     /// wired. `@ObservationIgnored`: wiring, not view state. Nil for headless/preview callers.
     @ObservationIgnored public var onRequestFindBackward: (() -> Void)?
 
-    /// Toggles the vi key-hint bar (the `⌘/` contextual binding while in copy-mode). Flips the observable
-    /// ``showViKeyHints`` and fires ``onRequestViKeyHints``.
+    /// Toggles the vi key-hint bar (the `⌘/` contextual binding while in copy-mode) by flipping the
+    /// observable ``showViKeyHints``, which is what both halves' hint bars are gated on.
     public func toggleViKeyHints() {
         showViKeyHints.toggle()
-        onRequestViKeyHints?()
     }
 
     /// Mirrors the pure ``copyModeState`` into the observable ``viPendingCount``/``viVisualMode`` twins so the
@@ -1307,8 +1289,9 @@ public final class TerminalViewModel {
         noteClipboardCopy(payload)
     }
 
-    /// Arms copy-mode and fires ``onRequestCopyMode`` so the overlay shows (⌘⇧C / menu / store entry). A fresh
-    /// session starts with NO pending count, plain navigation, and the hint bar off (``resetViState``).
+    /// Arms copy-mode (⌘⇧C / menu / store entry); the overlay follows the observable
+    /// ``copyModeBadgeActive`` twin. A fresh session starts with NO pending count, plain navigation, and
+    /// the hint bar off (``resetViState``).
     public func enterCopyMode() {
         guard !isCopyMode else { return }
         resetViState()
@@ -1319,18 +1302,13 @@ public final class TerminalViewModel {
             copyModeState.cursor = seededCursor(info)
         }
         syncCursorOverlay()
-        onRequestCopyMode?()
     }
 
-    /// Exits copy-mode (the `q`/Esc keys, a `y`/Enter yank, or a programmatic dismiss), clears all vi state
-    /// (count/visual/hints), and fires ``onRequestCopyMode`` so the overlay back-off matches the flag.
-    /// Idempotent.
+    /// Exits copy-mode (the `q`/Esc keys, a `y`/Enter yank, or a programmatic dismiss) and clears all vi
+    /// state (count/visual/hints). Idempotent — the overlay backs off with the observable twin, so a
+    /// second call has nothing left to say.
     public func exitCopyMode() {
-        guard isCopyMode else {
-            // Defensive: a key arrived with the flag already cleared (overlay raced) — still dismiss cleanly.
-            onRequestCopyMode?()
-            return
-        }
+        guard isCopyMode else { return }
         // Clear OUR cursor-driven selection (never a mouse-made one — those have no anchor here).
         if copyModeState.anchor != nil {
             selectionControl?.clearSelection()
@@ -1338,7 +1316,6 @@ public final class TerminalViewModel {
         isCopyMode = false
         resetViState()
         syncCursorOverlay()
-        onRequestCopyMode?()
     }
 
     // MARK: Read-only mode (per-pane user-toggled input gate)
