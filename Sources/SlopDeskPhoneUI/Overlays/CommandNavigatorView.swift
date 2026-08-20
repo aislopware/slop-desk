@@ -58,8 +58,10 @@ struct CommandNavigatorView: View {
     @FocusState private var searchFocused: Bool
 
     // The fixed panel width + results viewport cap (a compact centered card, the Jump-To family geometry).
-    private let panelWidth: CGFloat = 480
-    private let resultsMaxHeight: CGFloat = 320
+    // Both are ``CommandNavigatorMetrics``' — the Mac draws the same card from the same two numbers, and a
+    // card re-measured in one renderer is exactly the pair that drifts the first time either is tuned.
+    private let panelWidth = CommandNavigatorMetrics.panelWidth
+    private let resultsMaxHeight = CommandNavigatorMetrics.resultsMaxHeight
 
     var body: some View {
         ZStack {
@@ -138,7 +140,7 @@ struct CommandNavigatorView: View {
             Image(systemSymbol: .magnifyingglass)
                 .font(.system(size: Slate.Typeface.body))
                 .foregroundStyle(Slate.Text.secondary)
-            TextField("Search commands…", text: $query)
+            TextField(CommandNavigatorPresentation.searchPlaceholder, text: $query)
                 .textFieldStyle(.plain)
                 .font(.system(size: Slate.Typeface.body))
                 .foregroundStyle(Slate.Text.primary)
@@ -220,18 +222,12 @@ struct CommandNavigatorView: View {
         }
     }
 
+    /// The zero state, scoped to the active segment — ``CommandNavigatorPresentation/emptyLine(filter:hasBlocks:)``
+    /// answers both halves (matched nothing vs. has nothing) so the Mac's card cannot word either differently.
     private var emptyState: some View {
-        SlateNoResultsLine(message: baseBlocks.isEmpty ? emptyMessage : "No matches")
-    }
-
-    /// The zero-state message for the empty pane, scoped to the active segment (no commands / none failed /
-    /// none starred).
-    private var emptyMessage: String {
-        switch filter {
-        case .all: "No commands yet"
-        case .failed: "No failed commands"
-        case .bookmarked: "No bookmarked commands"
-        }
+        SlateNoResultsLine(
+            message: CommandNavigatorPresentation.emptyLine(filter: filter, hasBlocks: !baseBlocks.isEmpty),
+        )
     }
 
     private func row(_ block: CommandBlock, index: Int) -> some View {
@@ -300,7 +296,7 @@ struct CommandNavigatorView: View {
                     .foregroundStyle(Slate.Text.secondary)
             }
             .buttonStyle(.plain)
-            .help("Re-run (⌘↩)")
+            .help(CommandNavigatorPresentation.reRunHelp)
             .disabled(block.commandText.isEmpty)
 
             Button {
@@ -311,7 +307,7 @@ struct CommandNavigatorView: View {
                     .foregroundStyle(Slate.Text.secondary)
             }
             .buttonStyle(.plain)
-            .help("Copy Output (⌘C)")
+            .help(CommandNavigatorPresentation.copyOutputHelp)
         }
     }
 
@@ -348,6 +344,9 @@ struct CommandNavigatorView: View {
                 .foregroundStyle(starred ? Slate.Status.warn : Slate.Text.tertiary)
         }
         .buttonStyle(.plain)
+        // The star was the one affordance on this card carrying no word at all — a glyph VoiceOver reads
+        // as "button". The Mac's sibling says ``CommandNavigatorPresentation/bookmarkHelp``, so this does.
+        .help(CommandNavigatorPresentation.bookmarkHelp)
     }
 
     /// The row title with the fzf-matched runs tinted the accent colour + semibold (the Jump-To / palette
@@ -378,17 +377,18 @@ struct CommandNavigatorView: View {
 
     private var footerBar: some View {
         HStack(spacing: Slate.Metric.space2) {
-            footerHint("Navigate", glyph: "↑↓")
+            footerHint(CommandNavigatorPresentation.navigateHint)
             Spacer(minLength: Slate.Metric.space2)
-            footerHint("Jump", glyph: "↩")
-            footerHint("Close", glyph: "esc")
+            footerHint(CommandNavigatorPresentation.jumpHint)
+            footerHint(CommandNavigatorPresentation.closeHint)
         }
         .padding(.horizontal, Slate.Metric.space4)
         .frame(height: Slate.Metric.heightRow)
     }
 
-    private func footerHint(_ label: String, glyph: String) -> some View {
-        HStack(spacing: Slate.Metric.space1) {
+    private func footerHint(_ hint: CommandNavigatorHint) -> some View {
+        let (label, glyph) = (hint.label, hint.glyph)
+        return HStack(spacing: Slate.Metric.space1) {
             Text(label)
                 .font(.system(size: Slate.Typeface.small))
                 .foregroundStyle(Slate.Text.tertiary)

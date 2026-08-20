@@ -46,15 +46,17 @@
 // there is nothing for an input host to hold. A `#if` here would be dead text reading as a live rule
 // (docs/56 §3), which is why this file has none.
 //
-// ## What is deliberately NOT here yet
+// ## The Command Navigator card (⌃⌘O)
 //
-// ⚠️ THE COMMAND NAVIGATOR CARD (⌃⌘O). ``TerminalPaneWiring`` still toggles
-// ``CommandNavigatorChrome/isVisible`` for this pane, and no batch in wave R owns the card that reads
-// it: `CommandNavigatorView` is filed `Platform::Both` at `binding_rows.rs:131`, which makes the Mac's
-// AppKit version a SECOND RENDERER that joins the phone's rather than a port that replaces it (docs/56
-// §3.5 step 4). It is not folded in here because a surface is ported whole and this one is 491 lines
-// outside `Pane/`. Nothing regresses while wave R runs — the SwiftUI leaf is still what ships — but
-// R11 must not mount this leaf believing ⌃⌘O is covered.
+// It IS here now, and the ⚠️ this paragraph used to carry was right about the shape of the hole:
+// ``TerminalPaneWiring`` has always toggled ``CommandNavigatorChrome/isVisible`` for this pane — that
+// is what `onRequestBlockNavigator` is bound to — but the Mac had nothing that READ the flag, so
+// `view.commandNavigator` was taken away from the PTY to flip a `Bool` nobody drew. The reader is
+// ``MacCommandNavigatorView`` (`Pane/MacCommandNavigator.swift`), mounted by ``applyNavigator(_:)``
+// below off the same ``follow()`` arm every other piece of chrome rides. `CommandNavigatorView` is
+// filed `Platform::Both` at `binding_rows.rs:131`, so the AppKit card JOINS the phone's SwiftUI one
+// rather than replacing it (docs/56 §3.5 step 4) — the decisions underneath (the list, the ranking,
+// the clamp, the jump, the words, the two measurements) are shared, and only the drawing is twice.
 
 import AppKit
 import Defaults // the two secure-input settings are OBSERVED, not read once — see `followSettings()`
@@ -139,6 +141,11 @@ final class MacTerminalLeafView: NSView {
     /// The vi key-hint bar, when it is up. Separate from ``mounted`` because it lives in the bottom
     /// slot rather than the column.
     private var hintBar: MacViKeyHintBar?
+
+    /// The Command Navigator card (⌃⌘O), while it is up. Not a chip and not a decoration: it is a
+    /// MODAL card over this one pane, so it covers the whole surface area — the column and the hint
+    /// slot included — rather than taking a slot beside them.
+    private var navigator: MacCommandNavigatorView?
 
     // MARK: The live reads
 
@@ -326,6 +333,11 @@ final class MacTerminalLeafView: NSView {
         autotypeTask = nil
         dialKey = nil
         autotypeKey = nil
+        // The card is a MODAL over this pane and the leaf is leaving the tree: it goes with it, and
+        // the shield it raised goes with it too. The chrome flag is left alone — it is the wiring's,
+        // and a re-attach re-reads it, so a pane re-parented by a split rearrange comes back with
+        // its navigator still open.
+        dropNavigator()
         wiring.clear(live: live)
     }
 
@@ -354,6 +366,11 @@ final class MacTerminalLeafView: NSView {
         if live?.terminalModel !== hadModel {
             surfaceHost?.detachSurface()
             mountSurface()
+            // The card holds the OLD model — its block store, its bookmarks — so it cannot be left
+            // standing over a pane whose session was swapped underneath it. Dropped rather than
+            // re-pointed: ``follow()`` below rebuilds it against the new model if the chrome flag is
+            // still set, which is one path instead of two.
+            dropNavigator()
         }
         if isWired {
             wiring.wire(
@@ -520,6 +537,21 @@ final class MacTerminalLeafView: NSView {
         ])
     }
 
+    /// ``fill(_:below:)``'s other side: pin `view` to the same four edges but ABOVE everything, which
+    /// is what a card over the pane needs and a decoration must never have. `relativeTo: nil` with
+    /// `.above` is AppKit's spelling of "topmost", so the card covers the chip column and the hint
+    /// slot too — a modal over a pane that left its own chrome clickable is not modal.
+    private func cover(_ view: NSView) {
+        view.translatesAutoresizingMaskIntoConstraints = false
+        surfaceArea.addSubview(view, positioned: .above, relativeTo: nil)
+        NSLayoutConstraint.activate([
+            view.topAnchor.constraint(equalTo: surfaceArea.topAnchor),
+            view.bottomAnchor.constraint(equalTo: surfaceArea.bottomAnchor),
+            view.leadingAnchor.constraint(equalTo: surfaceArea.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: surfaceArea.trailingAnchor),
+        ])
+    }
+
     // MARK: - The live read
 
     /// ONE tracked read of everything this leaf draws or triggers on, re-armed by its own `onChange`.
@@ -538,6 +570,7 @@ final class MacTerminalLeafView: NSView {
         var conditions = PaneStatusConditions()
         var hintsToggled = false
         var findVisible = false
+        var navigatorVisible = false
         var dial: PaneID?
         var autotype: PaneID?
 
@@ -545,6 +578,10 @@ final class MacTerminalLeafView: NSView {
             conditions = pillConditions()
             hintsToggled = live?.terminalModel?.showViKeyHints ?? false
             findVisible = wiring.findBar.visible && live?.terminalModel != nil
+            // ⌃⌘O toggles the chrome flag through `onRequestBlockNavigator`; THIS read is what makes
+            // the chord actuate. Gated on a live model for the find bar's reason — the card's whole
+            // data source is that model's block store, and a pane with no session has none.
+            navigatorVisible = wiring.navigatorChrome.isVisible && live?.terminalModel != nil
             dial = TerminalLeafPolicy.dialTaskKey(pane: live?.id, mayDial: store.panesMayDial)
             autotype = TerminalLeafPolicy.autotypeTaskKey(
                 pane: live?.id,
@@ -561,6 +598,7 @@ final class MacTerminalLeafView: NSView {
         }
 
         applyChrome(conditions: conditions, hintsToggled: hintsToggled, findVisible: findVisible)
+        applyNavigator(navigatorVisible)
         applyTriggers(dial: dial, autotype: autotype)
     }
 
@@ -694,6 +732,53 @@ final class MacTerminalLeafView: NSView {
             hintBar = nil
             MacLeafChipReveal.dismiss(bar, towards: .bottom)
         }
+    }
+
+    // MARK: - The Command Navigator card (⌃⌘O)
+
+    /// Mounts or drops the navigator, which is the whole of what makes the chord actuate.
+    ///
+    /// It is NOT a chip: it covers the surface area rather than joining the column, it fades straight
+    /// in rather than travelling from an edge (the phone's `.transition(.opacity)`), and it raises
+    /// the pane-card pointer shield while it is up. That last part is the correctness half — an
+    /// `NSTrackingArea` is rect-based, so a mouse-reporting TUI under the card would go on receiving
+    /// pointer positions through it. ``MacLeafOcclusion``'s subtree sweep is the wrong tool here: it
+    /// would also strip the card's OWN rows of the tracking areas their hover selection runs on.
+    private func applyNavigator(_ wanted: Bool) {
+        if wanted, navigator == nil {
+            guard let model = live?.terminalModel else { return }
+            let card = MacCommandNavigatorView(model: model, store: store) { [weak self] in
+                self?.wiring.navigatorChrome.isVisible = false
+            }
+            navigator = card
+            cover(card)
+            MacPaneCardShield.raise()
+            card.reveal()
+        } else if !wanted, let card = navigator {
+            // Forgotten FIRST, retired second — exactly the column's rule: a card still fading out
+            // must not be found by the next open, or ⌃⌘O pressed twice quickly would re-show the
+            // one on its way off screen instead of building a fresh one.
+            navigator = nil
+            MacPaneCardShield.lower()
+            card.retire()
+            // The card held the keyboard; the pane has to be given it back explicitly, or the pane
+            // the chord was fired from is left unable to type. The store's reclaim is the same seam
+            // every other summoned surface closes through.
+            store.reclaimKeyboardFocusInActivePane()
+        }
+    }
+
+    /// Takes the card down NOW — no fade — and balances the shield.
+    ///
+    /// Un-animated because its callers are the torn-down paths (``detach()`` and ``teardown()``),
+    /// where there is nothing left to animate over. A shield left raised by a card removed during
+    /// teardown would leave the terminal permanently pointer-deaf, which is why the removal and the
+    /// balance are one function rather than two statements anyone could separate.
+    private func dropNavigator() {
+        guard let card = navigator else { return }
+        navigator = nil
+        card.removeFromSuperview()
+        MacPaneCardShield.lower()
     }
 
     // MARK: - The two triggers

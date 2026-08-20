@@ -2902,6 +2902,40 @@ than in the renderer, because both are about libghostty's state and not about dr
 answered exactly once (the entry is removed BEFORE the completion runs), and a second question
 QUEUES rather than replacing — replacing would decide the older one, which is the whole gap.
 
+### Increment 66 — ⌃⌘O flipped a `Bool` nobody drew
+
+The third of the same family, and the one that shows why "is it wired?" is the wrong question. The
+Command Navigator was wired end to end on the Mac: `row("view.commandNavigator", Platform::Both)` in
+`binding_rows.rs`, the action in `WorkspaceBindingRegistry`, the arm in `WorkspaceBindingRouting`, the
+fan-out in `WorkspaceStore+Blocks`, and — this is the part that made it invisible — the SINK itself,
+`onRequestBlockNavigator = { chrome.isVisible.toggle() }`, bound in the SHARED `TerminalPaneWiring`
+and called from `MacTerminalLeafView.attach()`. Six links, all live. What the Mac did not have was a
+READER of `CommandNavigatorChrome.isVisible`. The chord took a keystroke away from the PTY, toggled a
+flag, and nothing happened — and no gate can see that, because every gate this repo has asks whether
+a producer exists.
+
+`MacCommandNavigatorView` is that reader. It is a SECOND DRAWING, not a port: the row filed
+`Platform::Both` means both halves render, so the phone's `CommandNavigatorView` stays exactly where
+it is (docs/56 §3.5 step 4). Everything underneath was already shared before this increment —
+`TerminalBlockModel.blocks(filter:)`, `CommandNavigatorModel.filtered(_:query:)`, `ListNavigation`,
+`WorkspaceStore.jumpToNavigatorBlockInActivePane`, `OutlinePresentation`, `FuzzyMatcher`,
+`HoverSelectionGate` — so what crossed here was only the card's own vocabulary:
+`CommandNavigatorPresentation` (a placeholder, four zero-state sentences, three footer hints, two
+help strings) and `CommandNavigatorMetrics` (`panelWidth` 480, `resultsMaxHeight` 320), on the
+`PaletteMetrics` / `FindBarMetrics` precedent. **The phone adopted them in the same change** — a
+shared type with one consumer is not a shared type, it is a third copy waiting to be forgotten.
+
+Two things the AppKit half had to answer that the SwiftUI half never did:
+
+- **The card is `.above` everything in the leaf, not a slot beside the chip column.** `cover(_:)` is
+  `fill(_:below:)`'s other side. A modal over a pane that leaves its own chrome clickable is not modal.
+- **`TerminalPointerShield` had to learn a second question.** It was bound to
+  `overlay.anyModalVisible`, which is the OVERLAY COORDINATOR's flag — and the navigator is mounted
+  inside one leaf, deliberately, so a card over one pane does not deafen the sidebar. An
+  `NSTrackingArea` is rect-based, so a mouse-reporting TUI under the card would go on receiving
+  pointer positions through it. The shield is process-wide either way, so the two questions can only
+  be joined at the binding: `overlay.anyModalVisible || MacPaneCardShield.isPresenting`.
+
 ## Stage D ledger — what the rename actually costs
 
 `SlopDeskClientUI` cannot fold into `SlopDeskPhoneUI` while `SlopDeskMacUI` still imports it. That is

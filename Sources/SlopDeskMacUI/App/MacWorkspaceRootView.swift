@@ -275,7 +275,15 @@ struct MacWorkspaceRootView: View {
         // so the production renderer reads this shield before forwarding pointer positions to a
         // mouse-reporting TUI. Bound to the SAME modal flag the hosted columns gate their SwiftUI
         // hit-testing on, so the whole workspace goes pointer-deaf under a card at once.
-        TerminalPointerShield.isActive = { [overlay] in overlay.anyModalVisible }
+        //
+        // OR'd with the PANE-LOCAL family, which that flag cannot see: the Command Navigator (⌃⌘O)
+        // is mounted inside one leaf rather than by the overlay coordinator — deliberately, so a
+        // card over one pane does not deafen the sidebar — and the terminal it covers is exactly the
+        // one whose tracking area keeps firing. The shield itself is process-wide either way, so the
+        // two questions can only be joined here.
+        TerminalPointerShield.isActive = { [overlay] in
+            overlay.anyModalVisible || MacPaneCardShield.isPresenting
+        }
         wireOverlayCwdResolver()
     }
 
