@@ -502,8 +502,18 @@ struct OpenQuicklyView: View {
 
     /// The two per-pane facts the pure builders need and the tree does not carry — read here, from the
     /// workspace mirror, so ``OpenQuicklyModel`` stays a pure value function.
-    private var paneFacts: (PaneID) -> (title: String?, cwd: String?) {
-        { (store.liveProgramTitle(for: $0), store.paneCwd(for: $0)) }
+    private var paneFacts: (PaneID) -> (title: String?, cwd: String?, process: String?) {
+        { paneID in
+            let cwd = store.paneCwd(for: paneID)
+            // Guarded exactly as the Mac's twin and the window title are — the rung's escape order is
+            // `RailStructureKey`'s, and a surface that restates it is the second copy.
+            let spec = store.tree.spec(for: paneID)
+            let titled = RailStructureKey.titledByProcess(kind: spec?.kind ?? .terminal, spec: spec, cwd: cwd)
+            return (
+                store.liveProgramTitle(for: paneID), cwd,
+                titled ? store.paneForegroundProcess[paneID] : nil,
+            )
+        }
     }
 
     /// The per-pill source rows, assembled from the live store / folders / async Agents / Current snapshot

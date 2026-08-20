@@ -368,8 +368,20 @@ final class MacOpenQuicklyView: NSView, NSTextFieldDelegate {
 
     /// The two per-pane facts the pure builders need and the tree does not carry — read here, from
     /// the workspace mirror, so ``OpenQuicklyModel`` stays a pure value function.
-    private var paneFacts: (PaneID) -> (title: String?, cwd: String?) {
-        { [store] in (store.liveProgramTitle(for: $0), store.paneCwd(for: $0)) }
+    private var paneFacts: (PaneID) -> (title: String?, cwd: String?, process: String?) {
+        { [store] paneID in
+            let cwd = store.paneCwd(for: paneID)
+            // The process rung is read under the SAME guard the window title uses
+            // (``WorkspaceChromePolicy/windowTitle(for:)``): reading it unconditionally would title a
+            // pane by its program where its cwd or its rename already answers, which is the rung's own
+            // escape order and not this surface's to restate.
+            let spec = store.tree.spec(for: paneID)
+            let titled = RailStructureKey.titledByProcess(kind: spec?.kind ?? .terminal, spec: spec, cwd: cwd)
+            return (
+                store.liveProgramTitle(for: paneID), cwd,
+                titled ? store.paneForegroundProcess[paneID] : nil,
+            )
+        }
     }
 
     private func sections(filter: OpenQuicklyFilter) -> [OpenQuicklySection] {

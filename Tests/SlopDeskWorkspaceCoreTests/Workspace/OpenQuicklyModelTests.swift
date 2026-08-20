@@ -434,17 +434,17 @@ final class OpenQuicklyModelTests: XCTestCase {
         let pid = PaneID(raw: UUID())
         let spec = PaneSpec(kind: .terminal, title: paneTitle)
         let tab = Tab(title: title, root: .leaf(pid), activePane: pid)
-        paneFacts[pid] = (lastKnownTitle, cwd)
+        paneFacts[pid] = (lastKnownTitle, cwd, nil)
         return (tab, pid, spec)
     }
 
-    /// The two per-pane facts the tree no longer carries, keyed by pane — what the view reads from the
+    /// The three per-pane facts the tree no longer carries, keyed by pane — what the view reads from the
     /// workspace mirror and hands the pure builders.
-    private var paneFacts: [PaneID: (title: String?, cwd: String?)] = [:]
+    private var paneFacts: [PaneID: (title: String?, cwd: String?, process: String?)] = [:]
 
     /// The lookup shape ``OpenQuicklyModel/openedItems(from:facts:)`` takes.
-    private func facts(_ id: PaneID) -> (title: String?, cwd: String?) {
-        paneFacts[id] ?? (nil, nil)
+    private func facts(_ id: PaneID) -> (title: String?, cwd: String?, process: String?) {
+        paneFacts[id] ?? (nil, nil, nil)
     }
 
     func testOpenedItemsEnumeratesEveryLivePaneAcrossSessionsAndTabs() {
@@ -485,6 +485,33 @@ final class OpenQuicklyModelTests: XCTestCase {
         XCTAssertEqual(items.first?.title, "Pane", "a spec-less pane never renders a blank row")
     }
 
+    /// The lowest title rung — the foreground PROGRAM — reaches this surface too.
+    ///
+    /// It did not, and the shape of the miss is the one the picker's own doc comment says it was
+    /// written to end: a cwd-less pane running `vim` read `vim` in the sidebar and `Pane` here, so one
+    /// pane wore two names in two lists of the same panes. The fact is threaded rather than re-derived,
+    /// and the caller guards the read with `RailStructureKey.titledByProcess` so the rung stays off
+    /// wherever the cwd or the rename already answers — which the second half of this test pins.
+    func testOpenedItemsTitleByForegroundProcessWhenNothingHigherAnswers() {
+        let pid = PaneID(raw: UUID())
+        let spec = PaneSpec(kind: .terminal, title: "")
+        let tab = Tab(title: "", root: .leaf(pid), activePane: pid)
+        let session = Session(name: "s", tabs: [tab], specs: [pid: spec])
+        let tree = TreeWorkspace(sessions: [session], activeSessionID: session.id)
+
+        paneFacts[pid] = (nil, nil, "vim")
+        XCTAssertEqual(
+            OpenQuicklyModel.openedItems(from: tree, facts: facts).first?.title, "vim",
+            "a pane with no cwd, no rename and no live title reads its program — as the rail does",
+        )
+
+        paneFacts[pid] = (nil, "/work/proj", "vim")
+        XCTAssertEqual(
+            OpenQuicklyModel.openedItems(from: tree, facts: facts).first?.title, "proj",
+            "the folder still outranks the program — the escape order is the crate's, not this surface's",
+        )
+    }
+
     func testRecentItemsAreNewestFirstWithLifoIndex() {
         // `closedTabRecords` arrives NEWEST-first, and the rows keep that order with index 0 on top.
         let (oldTab, oldPid, oldSpec) = leafTab(title: "old", paneTitle: "zsh", cwd: "/old")
@@ -511,7 +538,7 @@ final class OpenQuicklyModelTests: XCTestCase {
     func testRecentItemsTitleFallsBackToActivePaneThenGeneric() {
         let pid = PaneID(raw: UUID())
         let spec = PaneSpec(kind: .terminal, title: "")
-        paneFacts[pid] = ("claude", nil)
+        paneFacts[pid] = ("claude", nil, nil)
         let tab = Tab(title: "", root: .leaf(pid), activePane: pid)
         let records = [WorkspaceTopology.ClosedTab(sessionID: SessionID(), tab: tab, specs: [pid: spec])]
         XCTAssertEqual(
@@ -581,7 +608,7 @@ final class OpenQuicklyModelTests: XCTestCase {
         let termID = PaneID(raw: UUID())
         let videoID = PaneID(raw: UUID())
         let termSpec = PaneSpec(kind: .terminal, title: "zsh")
-        paneFacts[termID] = (nil, "/work/proj")
+        paneFacts[termID] = (nil, "/work/proj", nil)
         let videoSpec = PaneSpec(
             kind: .desktop,
             title: "Safari — GitHub",

@@ -457,12 +457,12 @@ public enum OpenQuicklyModel {
     /// haystack is its cwd. `↩` focuses the pane. Pure so the view stays a thin renderer and the
     /// enumeration is headlessly testable.
     ///
-    /// - Parameter facts: the two per-pane facts the tree does not carry — the pane's live shell title and
-    ///   its working directory. The caller reads them from the workspace mirror; a pane the mirror knows
+    /// - Parameter facts: the three per-pane facts the tree does not carry — the pane's live shell title,
+    ///   its working directory, and the foreground process the title's lowest rung reads. The caller reads them from the workspace mirror; a pane the mirror knows
     ///   nothing about answers `(nil, nil)` and falls through to the spec title with no subtitle.
     public static func openedItems(
         from tree: TreeWorkspace,
-        facts: (PaneID) -> (title: String?, cwd: String?) = { _ in (nil, nil) },
+        facts: (PaneID) -> (title: String?, cwd: String?, process: String?) = { _ in (nil, nil, nil) },
     ) -> [OpenQuicklyItem] {
         var out: [OpenQuicklyItem] = []
         for session in tree.sessions {
@@ -472,7 +472,9 @@ public enum OpenQuicklyModel {
                     let fact = facts(paneID)
                     out.append(paneItem(
                         paneID: paneID,
-                        title: paneDisplayTitle(spec, liveTitle: fact.title, cwd: fact.cwd),
+                        title: paneDisplayTitle(
+                            spec, liveTitle: fact.title, cwd: fact.cwd, process: fact.process,
+                        ),
                         cwd: nonEmpty(fact.cwd),
                         // Thread the workspace pane kind so a `.desktop` row reads as its
                         // stream target (glyph + badge + host subtitle). Defaults to
@@ -498,17 +500,18 @@ public enum OpenQuicklyModel {
     ///   reaped, which is honest: the row then reads by the tab's own title.
     public static func recentItems(
         from records: [WorkspaceTopology.ClosedTab],
-        facts: (PaneID) -> (title: String?, cwd: String?) = { _ in (nil, nil) },
+        facts: (PaneID) -> (title: String?, cwd: String?, process: String?) = { _ in (nil, nil, nil) },
     ) -> [OpenQuicklyItem] {
         records.enumerated().map { index, record in
             let activePane = record.tab.activePane
             let activeSpec = activePane.flatMap { record.specs[$0] }
-            let fact: (title: String?, cwd: String?) = activePane.map(facts) ?? (nil, nil)
+            let fact: (title: String?, cwd: String?, process: String?) =
+                activePane.map(facts) ?? (nil, nil, nil)
             return recentTabItem(
                 index: index,
                 title: recentDisplayTitle(
                     tabTitle: record.tab.title, activeSpec: activeSpec, liveTitle: fact.title,
-                    cwd: fact.cwd,
+                    cwd: fact.cwd, process: fact.process,
                 ),
                 cwd: nonEmpty(fact.cwd),
             )
@@ -526,10 +529,19 @@ public enum OpenQuicklyModel {
     ///
     /// The empty answer is real (the crate's at-root idle shell), and this surface has no live chain
     /// to hand it to — so "Pane" is what a row with nothing to say is called, never a blank.
-    static func paneDisplayTitle(_ spec: PaneSpec?, liveTitle: String?, cwd: String? = nil) -> String {
+    ///
+    /// `process` is threaded for the reason the doc above gives and the code did not do: the rung
+    /// exists in the crate, the rail passes it, and this surface passing `nil` was the SAME
+    /// two-names-for-one-pane bug one rung lower — a cwd-less pane running `vim` read `vim` in the
+    /// sidebar and `Pane` here. The caller applies `RailStructureKey.titledByProcess` before it
+    /// reads, exactly as the titlebar does, so the rung stays off for a pane the other rungs answer.
+    static func paneDisplayTitle(
+        _ spec: PaneSpec?, liveTitle: String?, cwd: String? = nil, process: String? = nil,
+    ) -> String {
         let title = PaneLabel.rowTitle(
             kind: spec?.kind ?? .terminal, specTitle: spec.map(\.title),
             userRenamed: spec?.userRenamed == true, cwd: cwd, liveTitle: liveTitle,
+            processLabel: process,
         )
         return title.isEmpty ? "Pane" : title
     }
@@ -542,11 +554,13 @@ public enum OpenQuicklyModel {
     /// asked for rather than re-spelled.
     static func recentDisplayTitle(
         tabTitle: String, activeSpec: PaneSpec?, liveTitle: String?, cwd: String? = nil,
+        process: String? = nil,
     ) -> String {
         if !tabTitle.isEmpty { return tabTitle }
         let title = PaneLabel.rowTitle(
             kind: activeSpec?.kind ?? .terminal, specTitle: activeSpec.map(\.title),
             userRenamed: activeSpec?.userRenamed == true, cwd: cwd, liveTitle: liveTitle,
+            processLabel: process,
         )
         return title.isEmpty ? "Tab" : title
     }
