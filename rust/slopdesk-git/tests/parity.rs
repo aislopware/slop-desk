@@ -77,16 +77,46 @@ impl Fixture {
         self.root.to_str().expect("the temp path is UTF-8")
     }
 
-    /// Runs `git` in the fixture, asserting it succeeded — a fixture that failed to be built is a
-    /// broken test rather than a failing assertion about the code.
-    fn git(&self, args: &[&str]) -> String {
-        let output = Command::new(GIT)
+    /// A `git` aimed at the FIXTURE and at nothing else.
+    ///
+    /// ⚠️ THE ENVIRONMENT IS PART OF THE FIXTURE. `current_dir` is not enough to say which
+    /// repository a `git` means: `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and friends all
+    /// outrank it, and git exports exactly those to every hook it runs. So this whole suite
+    /// passed from a shell and failed all twelve at once from `pre-commit` — the temp repo's
+    /// `git init` and `git add` were being aimed at the real repository's index, which is both
+    /// a wrong result and a genuinely dangerous one. Clearing them is the same defence the two
+    /// `GIT_CONFIG_*` lines below already make against the developer's own config; it was
+    /// simply never extended to the vars that say WHERE rather than HOW.
+    ///
+    /// Cleared rather than overridden: `env_remove` cannot be wrong about a value, and the list
+    /// only has to name what git might inherit, not what it should be.
+    fn command(&self, args: &[&str]) -> Command {
+        let mut command = Command::new(GIT);
+        command
             .args(args)
             .current_dir(&self.root)
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
-            .env("GIT_CONFIG_SYSTEM", "/dev/null")
-            .output()
-            .expect("git runs");
+            .env("GIT_CONFIG_SYSTEM", "/dev/null");
+        for inherited in [
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_INDEX_FILE",
+            "GIT_PREFIX",
+            "GIT_COMMON_DIR",
+            "GIT_OBJECT_DIRECTORY",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            "GIT_CEILING_DIRECTORIES",
+            "GIT_NAMESPACE",
+        ] {
+            command.env_remove(inherited);
+        }
+        command
+    }
+
+    /// Runs `git` in the fixture, asserting it succeeded — a fixture that failed to be built is a
+    /// broken test rather than a failing assertion about the code.
+    fn git(&self, args: &[&str]) -> String {
+        let output = self.command(args).output().expect("git runs");
         assert!(
             output.status.success(),
             "git {args:?} failed: {}",
@@ -97,13 +127,7 @@ impl Fixture {
 
     /// Runs `git` WITHOUT asserting success — for the merge that is supposed to conflict.
     fn git_may_fail(&self, args: &[&str]) -> String {
-        let output = Command::new(GIT)
-            .args(args)
-            .current_dir(&self.root)
-            .env("GIT_CONFIG_GLOBAL", "/dev/null")
-            .env("GIT_CONFIG_SYSTEM", "/dev/null")
-            .output()
-            .expect("git runs");
+        let output = self.command(args).output().expect("git runs");
         String::from_utf8_lossy(&output.stdout).into_owned()
     }
 
