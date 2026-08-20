@@ -72,6 +72,13 @@ public struct SlopDeskPhoneApp: App {
         // env-gated knob is read.
         ClientComposition.applyLaunchArgumentEnvironment()
 
+        // Pin the whole app to the CHROME polarity — the ground is cream, so semantic chrome ink must
+        // resolve light or the navigator draws white-on-cream under an OS in dark mode. The same one
+        // line the Mac shell runs, for the same reason: the requirement belongs to the GROUND, which
+        // is the same fixed hex on both platforms. Armed here and re-fired per scene as each connects,
+        // because no `UIWindowScene` exists yet inside `App.init` — and because a phone can grow a
+        // second one (see ``SlateAppearancePin``).
+        SlateAppearancePin.install()
         // The terminal CELLS adopt the app palette's flat colours: this hook hands the libghostty 6-hex
         // background/foreground plus the 16-entry ANSI palette + selection colour to `PreferencesStore`
         // when it (re)builds the terminal config. `WorkspaceCore` owns the `AppearanceApplier` seam but

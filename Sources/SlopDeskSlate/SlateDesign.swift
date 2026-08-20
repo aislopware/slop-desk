@@ -50,6 +50,7 @@
 //     instrument voice (`check-ds-leaks.sh` still enforces the closed scales).
 
 #if canImport(SwiftUI)
+import QuartzCore // CAMediaTimingFunction — ``SlateCurve``'s CoreAnimation rung, on BOTH platforms
 import SlopDeskClientCore // AgentInk — the status vocabulary this ladder resolves for both platforms
 import SwiftUI
 #if canImport(AppKit)
@@ -266,9 +267,10 @@ package enum Slate {
     /// the terminal, and it is the ONE place in the app that opts out of the light pin.
     @MainActor package static var glassColorScheme: ColorScheme { .dark }
 
-    /// The colour scheme of the CHROME — the app's one polarity (`SlateAppearancePin` pins `NSApp` to
-    /// `.aqua`), named here so a subtree that has to climb BACK out of the glass can say so in tokens
-    /// rather than in a bare `.light`.
+    /// The colour scheme of the CHROME — the app's one polarity, and the ONE place it is decided.
+    /// ``SlateAppearancePin`` derives each platform's spelling of it from this rung (`NSApp.appearance`
+    /// on the Mac, the window scene's `traitOverrides` on the phone), and it is named here so a subtree
+    /// that has to climb BACK out of the glass can say so in tokens rather than in a bare `.light`.
     ///
     /// There is exactly one such subtree: ``SlatePaperCapsule``, the transient notice. It is cream —
     /// ``Surface/field``, a FIXED tone that does not follow any appearance — but it is mounted on the pane
@@ -464,9 +466,16 @@ package enum Slate {
             package static let aside = SlateNativeColor.slateDynamic(light: 0x9400BD, dark: 0xDB65FF)
         }
 
-        /// One run of the project header's GIT LINE, as ink. Native only: the line is drawn by the
-        /// Mac's navigator header (``SlopDeskMacUI/MacSidebarHeaderView``) and nowhere else — the
-        /// phone's grouped list has no room for it — so there is no SwiftUI twin to keep in step.
+        /// One run of the project header's GIT LINE, as ink.
+        ///
+        /// ⚠️ NO LONGER MAC-ONLY. This said "the line is drawn by the Mac's navigator header and
+        /// nowhere else — the phone's grouped list has no room for it", which stopped being true at
+        /// docs/56 increment 85: the phone's section header draws the same line, shedding runs with
+        /// `ViewThatFits` where AppKit measures the ladder by hand. It reaches this rung through
+        /// `Color(slateNative:)` — ONE call site, the same value — rather than a `Slate.gitInk(_:)`
+        /// twin beside `attentionInk`/`agentInk`. A second entry point is worth minting when a second
+        /// caller needs it; until then the bridge that already exists is the smaller thing to keep
+        /// true, and a twin would be one more pair that can drift.
         ///
         /// The four WORKTREE states are a RAMP, not a set of labels: `+staged` → `!modified` →
         /// `?untracked` → `~conflicted` is "how far this work is from being committed" (in the index
@@ -1876,14 +1885,21 @@ package struct SlateCurve: Equatable, Sendable {
     /// The SwiftUI view of the rung.
     package var animation: Animation { .timingCurve(x1, y1, x2, y2, duration: duration) }
 
-    #if canImport(AppKit)
     /// The CoreAnimation view of the rung — for a `CAAnimation`'s `timingFunction` or an
     /// `NSAnimationContext`'s (`NSSplitViewItem.animator()` has needed exactly this since before the
     /// AppKit port began).
+    ///
+    /// UNGATED, though every caller today is AppKit. `CAMediaTimingFunction` is QuartzCore, which
+    /// both platforms have, and a `#if canImport(AppKit)` around it said "macOS" while meaning
+    /// "CoreAnimation" — so the first phone view that drives a `CALayer` directly would have found
+    /// the app's own curve missing and re-typed the four control points, which is the second copy
+    /// this whole struct exists to prevent. The phone already hosts `CALayer`-backed `UIView`s (the
+    /// device panels' screen views, the terminal), so this is not hypothetical. A rung with no
+    /// caller on one platform costs a few bytes; a rung UNREACHABLE on one platform costs a
+    /// divergent curve nobody notices until the two halves animate differently.
     package var timingFunction: CAMediaTimingFunction {
         CAMediaTimingFunction(controlPoints: Float(x1), Float(y1), Float(x2), Float(y2))
     }
-    #endif
 }
 
 // MARK: - The value side of both bridges

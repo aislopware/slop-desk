@@ -292,10 +292,14 @@ the pill a 32pt row reaches at 16.
 | **Glass** | the terminal island, the device streams, satellite pane windows | The one **terminal profile** (`SlateTheme.app`) |
 
 **One chrome polarity, always light.** That is a CONSEQUENCE of the ground, not a second decision —
-semantic ink pinned dark would draw white on cream in the navigator. `SlateAppearancePin` pins
-`NSApp.appearance` to `.aqua` once at launch, so every auxiliary window matches the workspace chrome
-and nothing is half-and-half; the glass is the one surface outside that pin, opting out locally via
+semantic ink pinned dark would draw white on cream in the navigator. `SlateAppearancePin` holds it on
+BOTH clients at launch — `NSApp.appearance` on the Mac, each `UIWindowScene`'s `traitOverrides` on the
+phone — so every auxiliary window, sheet and hosted `UIView` matches the workspace chrome and nothing
+is half-and-half; the glass is the one surface outside that pin, opting out locally via
 `Slate.glassColorScheme` (a constant `.dark`). The app does not follow the OS appearance at all.
+The ground is the same fixed cream on both platforms, so the pin is not a macOS feature the phone
+copies — it is one requirement with two spellings, and the polarity itself is decided once, in
+`Slate.chromeColorScheme`.
 The embedded workbench webviews are pinned per-webview to the chrome polarity and
 seeded to the Monokai Pro / Monokai Pro Light pair with `window.autoDetectColorScheme`, plus a
 `workbench.colorCustomizations` block that repaints every VS Code surface — editor, gutter, sidebar,
