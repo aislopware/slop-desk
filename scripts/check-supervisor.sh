@@ -54,7 +54,7 @@ INVARIANTS_PID=$!
 #
 # The union is BUILT from the bans, not maintained beside them: `make lint` runs
 # `scripts/check-ban-union.py`, which fails if any ban's pattern is missing from it.
-DELETED_SWIFT_UNION='((enum|struct|final class) (GF256|NeonGf|ReedSolomonMatrix)\b)|((struct|enum|final class) StreamHasher\b|func (hashRow|hashNV12Scalar|rowHashes|rowHashesQuantized|borrowPlane|estimateVerticalShift|changedFraction|adaptiveMaxQP)\b)|(func (targetSeconds|stepSeconds|cgRectToCocoa|backingScaleFactor)\(|(struct|enum|final class) ScreenInfo\b)|((func|var) appendBE|(struct|enum|final class|class) BigEndianReader)|((enum|struct|final class|class|actor) (AgentManifest|CompiledAgentManifest|AgentManifestCatalog|TOMLSubsetParser|ManifestRegion|ManifestRuleEngine|BundledAgentManifests|AgentDetectionExplain|AgentOscTracker|AgentSyncFrameTracker|ClaudeManifestMatcher)\b)|((enum|struct|final class|class|actor) ShellIntegration\b|slopdesk-zdotdir-)|((enum|struct|final class|class|actor|protocol) (FileTransferServer|FileReceiveLogic|FileDropSink|DiskFileDropSink|FileNameSanitizer|LoopbackFileTransferChannel)\b)|((enum|struct|final class|class|actor|protocol) (AndroidBridgeServer|AndroidBridgeManager|AndroidToolchain|AndroidScrcpySession|AndroidDeviceCatalog|AndroidEmulatorConsole|AndroidSocket|AndroidListener|AndroidBridgeRequest)\b)|((enum|struct|final class|class|actor|protocol) (TranscriptParser|TranscriptTailer|TranscriptLine|LineAccumulator|SubagentWatcher|EventBuilder|InspectorEngine|InspectorReplayLog|InspectorSource|InspectorServer)\b)|((static (let|var|func)|let|var|func) (seededUserSettings|obsoleteSeeds|themeExtension[A-Za-z]*|bridgeExtension[A-Za-z]*|registerExtension|unregisterExtension|bundledMarketplaceExtensions|retiredExtensions|ownThemeResources)\b)|((enum|struct|final class|static (let|var|func)) (AgentInstaller|hookMarker|installedEvents|hookCommand|entryIsOurs)\b)|((struct|static (let|var|func)|private static func) (parseBranchHeader|parseStatusLine|statusNibble|packStatus|claudeProjectSlug|gitToplevel|gitStashCount|gitDiffArgumentPlan|resolveGitDiff|jsonlSessions|claudeSessions|opencodeSessions|sessionRoots|GhosttyTerminfoProbe|terminfoEntryExists|isGhosttyResolvable|effectiveTerm|liveProbe|runInfocmp)\b)|("/usr/bin/(git|infocmp)")|((let|var|func|case) *(bonusBoundary|bonusCamel123|bonusConsecutive|scoreGapStart|scoreGapExtension|bonusMatrix|bonusFor|backtrace)\b)|((enum|struct) *(HookPayload|StopInfo|ToolUseBlock|NotificationInfo|ClaudeHookBody|ClaudeHookEvent)\b|func +(mapToHookEvent|classifyNotification|stopLabel)\b)|((enum|struct|final class|class|actor) (ClaudeStatusMachine|ClaudeProcessMatcher|PaneInputClassifier)\b|enum ClaudeSignal\b)|(func +(skipEscapeSequence|isEraseToLineEnd|applySGR|extendedColour)\b)|(enum TerminalScreenModel|struct TerminalScreenModel|enum LineOverprintCollapser|enum TerminalSnapshotRenderer)|((enum|struct|final class|class|actor) (TerminalInputModeStripper|InputModeFinalState|AltScreenSegmentStripper|SyncUpdateFrameCollapser|ScrollbackDistiller|TerminalQueryStripper|PromptEOLMarkStripper)\b)|(func (splitTrailingIncompleteEscape|splitTrailingIncompleteUTF8)\b|trailingEscapeScanBytes *[:=])|((enum|struct|final class|class|actor) (ScrollbackJournal|ScrollbackJournalStore)\b)|((createFile|forWritingTo|\.write\(to:).*\.(scrollback|resume)("|\)|$))|((enum|struct|final class|class|actor) (HostOutputSniffer|OutputSniffer)\b)|((enum|struct|final class|class|actor) (CommandBlockSegmenter|CommandBlockTracker|AutoProgressMatcher)\b)|(\[\[rules\]\]|min_engine_version\s*=|skip_state_update\s*=|line_regex\s*=)|(autoProgressCommands: \[String\]|autoProgressPrefixes)|(static let persistedPaneFields\b|(struct|private struct) Row: Codable\b)'
+DELETED_SWIFT_UNION='((enum|struct|final class) (GF256|NeonGf|ReedSolomonMatrix)\b)|((struct|enum|final class) StreamHasher\b|func (hashRow|hashNV12Scalar|rowHashes|rowHashesQuantized|borrowPlane|estimateVerticalShift|changedFraction|adaptiveMaxQP)\b)|(func (targetSeconds|stepSeconds|cgRectToCocoa|backingScaleFactor)\(|(struct|enum|final class) ScreenInfo\b)|((func|var) appendBE|(struct|enum|final class|class) BigEndianReader)|((enum|struct|final class|class|actor) (AgentManifest|CompiledAgentManifest|AgentManifestCatalog|TOMLSubsetParser|ManifestRegion|ManifestRuleEngine|BundledAgentManifests|AgentDetectionExplain|AgentOscTracker|AgentSyncFrameTracker|ClaudeManifestMatcher)\b)|((enum|struct|final class|class|actor) ShellIntegration\b|slopdesk-zdotdir-)|((enum|struct|final class|class|actor|protocol) (FileTransferServer|FileReceiveLogic|FileDropSink|DiskFileDropSink|FileNameSanitizer|LoopbackFileTransferChannel)\b)|((enum|struct|final class|class|actor|protocol) (AndroidBridgeServer|AndroidBridgeManager|AndroidToolchain|AndroidScrcpySession|AndroidDeviceCatalog|AndroidEmulatorConsole|AndroidSocket|AndroidListener|AndroidBridgeRequest)\b)|((enum|struct|final class|class|actor|protocol) (TranscriptParser|TranscriptTailer|TranscriptLine|LineAccumulator|SubagentWatcher|EventBuilder|InspectorEngine|InspectorReplayLog|InspectorSource|InspectorServer)\b)|((static (let|var|func)|let|var|func) (seededUserSettings|obsoleteSeeds|themeExtension[A-Za-z]*|bridgeExtension[A-Za-z]*|registerExtension|unregisterExtension|bundledMarketplaceExtensions|retiredExtensions|ownThemeResources)\b)|((enum|struct|final class|static (let|var|func)) (AgentInstaller|hookMarker|installedEvents|hookCommand|entryIsOurs)\b)|((struct|static (let|var|func)|private static func) (parseBranchHeader|parseStatusLine|statusNibble|packStatus|claudeProjectSlug|gitToplevel|gitStashCount|gitDiffArgumentPlan|resolveGitDiff|jsonlSessions|claudeSessions|opencodeSessions|sessionRoots|GhosttyTerminfoProbe|terminfoEntryExists|isGhosttyResolvable|effectiveTerm|liveProbe|runInfocmp)\b)|("/usr/bin/(git|infocmp)")|((let|var|func|case) *(bonusBoundary|bonusCamel123|bonusConsecutive|scoreGapStart|scoreGapExtension|bonusMatrix|bonusFor|backtrace)\b)|((enum|struct) *(HookPayload|StopInfo|ToolUseBlock|NotificationInfo|ClaudeHookBody|ClaudeHookEvent)\b|func +(mapToHookEvent|classifyNotification|stopLabel)\b)|((enum|struct|final class|class|actor) (ClaudeStatusMachine|ClaudeProcessMatcher|PaneInputClassifier)\b|enum ClaudeSignal\b)|(func +(skipEscapeSequence|isEraseToLineEnd|applySGR|extendedColour)\b)|(enum TerminalScreenModel|struct TerminalScreenModel|enum LineOverprintCollapser|enum TerminalSnapshotRenderer)|((enum|struct|final class|class|actor) (TerminalInputModeStripper|InputModeFinalState|AltScreenSegmentStripper|SyncUpdateFrameCollapser|ScrollbackDistiller|TerminalQueryStripper|PromptEOLMarkStripper)\b)|(func (splitTrailingIncompleteEscape|splitTrailingIncompleteUTF8)\b|trailingEscapeScanBytes *[:=])|((enum|struct|final class|class|actor) (ScrollbackJournal|ScrollbackJournalStore)\b)|((createFile|forWritingTo|\.write\(to:).*\.(scrollback|resume)("|\)|$))|((enum|struct|final class|class|actor) (HostOutputSniffer|OutputSniffer)\b)|((enum|struct|final class|class|actor) (CommandBlockSegmenter|CommandBlockTracker|AutoProgressMatcher)\b)|(\[\[rules\]\]|min_engine_version\s*=|skip_state_update\s*=|line_regex\s*=)|(autoProgressCommands: \[String\]|autoProgressPrefixes)|(static let persistedPaneFields\b|(struct|private struct) Row: Codable\b)|((struct|private struct) (RawWeightedChild|SpecEntry)\b|func (decodeRaw|decodeChildren|rawNode)\()|(\b(SplitNode|WeightedChild|SplitWeight|TreeWorkspace|DetachedPane|PaneSpec|VideoEndpoint|Session|Tab)\b *: *(any )?(Codable|Decodable|Encodable)\b)'
 DELETED_SWIFT_CANDIDATES=$(grep -rlE "${DELETED_SWIFT_UNION}" Sources/ 2> /dev/null || true)
 # The candidates matching ONE ban, or nothing. An empty candidate list answers without a grep.
 among_deleted() {
@@ -2287,32 +2287,41 @@ fi
 #    `TreeWorkspace` decode and `WorkspacePersistence.load()` wrote a `.corrupt` sidecar. Rust
 #    repaired and Swift bricked. `(try? decode(…)) ?? default` is the idiom that means "fill".
 #
+#    THE SITE THAT TAUGHT IT THIS IS GONE. The workspace file has one decoder now and it is
+#    `slopdesk-workspace`'s `persist`, reached through `Codec/WorkspaceFile.swift` — the ban below
+#    stays because the defect was never about that file. It is about a Swift `Decodable` reading a
+#    hand-editable document, and four of those are still ours: the device-local settings sidecars
+#    allowlisted in the awk. The gate that stays after the code it caught is the cheap half of not
+#    learning this twice.
+#
 #    WHAT IS BANNED IS THE PAIRING, not the call. `decodeIfPresent` is correct where absence and
-#    unreadability are BOTH faults — `decodeRaw`'s `leaf` key is the discriminator, and
-#    `persist::decode_raw_node` faults on an unreadable one too (`decode_id(value, "leaf")?`), so
-#    that call agrees with Rust and must stay. What cannot be right is `decodeIfPresent(…) ?? x`:
-#    the `??` says "fill on absence", the throw fires first on a bad value, and the default the
-#    author wrote is unreachable on the one path it was written for. The first draft of this gate
-#    banned the call outright and went red on that correct discriminator immediately — which is the
-#    ban list's standing hazard, and the reason it is worth writing the narrow form.
+#    unreadability are BOTH faults — a discriminator key is the standing example, and
+#    `persist::decode_raw_node` faults on an unreadable one too (`decode_id(value, "leaf")?`), so a
+#    call shaped like that agrees with Rust and must stay. What cannot be right is
+#    `decodeIfPresent(…) ?? x`: the `??` says "fill on absence", the throw fires first on a bad
+#    value, and the default the author wrote is unreachable on the one path it was written for. The
+#    first draft of this gate banned the call outright and went red on that correct discriminator
+#    immediately — which is the ban list's standing hazard, and the reason it is worth writing the
+#    narrow form.
 #
 #    The lookahead is one line: swiftformat wraps a long `decodeIfPresent` before its `??`, so a
 #    same-line-only match would miss the wrapped form, which is the form a long generic type takes.
-#    Comment lines are dropped first, and that is not cosmetic — the fix in `SplitNode+Codable.swift`
-#    explains this trap in prose directly above the corrected call, so a gate that read comments
-#    would fire on the very comment describing why it fires.
+#    Comment lines are dropped first, and that is not cosmetic — `TerminalPreferences.swift` explains
+#    this trap in prose directly above the calls it governs, so a gate that read comments would fire
+#    on the very comment describing why it fires.
 #
 #    THE CONTAINER FORM IS THE SAME TRAP and was ungated until the `Session` fix. `"specs": 5` or
-#    `"detached": {}` is a key present with a value `[SpecEntry].self` refuses, so
+#    `"detached": {}` is a key present with a value a `[…]` element type refuses, so
 #    `decodeIfPresent([…].self, …) ?? []` threw past its own `?? []` and cost the user every session
 #    in the file — identically to the axis. `[`, `Set<` and `Dictionary<` are all matched because the
 #    shape of the container is not what makes it wrong; the pairing is.
 #
 #    The fill for a container is NOT free the way an axis is, and the ban does not claim otherwise.
-#    It bans the pairing and leaves the answer to the site: the shape both fixed sites landed on is
-#    `SplitNode+Codable.swift`'s `decodeChildren` — a TOLERANT container around STRICT elements, so
-#    an unreadable list VALUE (which named nothing) reads as empty while a malformed ELEMENT stays a
-#    fault rather than a pane that silently disappears out of a load reporting success.
+#    It bans the pairing and leaves the answer to the site: the shape both fixed sites landed on —
+#    and the shape `persist::decode_session` carries forward — is a TOLERANT container around STRICT
+#    elements, so an unreadable list VALUE (which named nothing) reads as empty while a malformed
+#    ELEMENT stays a fault rather than a pane that silently disappears out of a load reporting
+#    success.
 # shellcheck disable=SC2046 # `$(git ls-files …)` expands to a FILE LIST for awk on purpose
 raw_optional_fills=$(awk '
   # ALLOWLISTED, not exempt — each of these is the same defect, and each is named so the gate can go
@@ -2453,6 +2462,74 @@ for rule in 'pub fn is_persisted' 'pub fn persisting' 'pub fn encode' 'pub fn de
   fi
 done
 printf 'check-supervisor: one answer to what survives a restart, and the Swift face only marshals it.\n'
+
+# ── One answer to "what arrangement did I leave" ────────────────────────────────────────────────
+# `SplitNode+Codable.swift` was 273 lines of Swift beside `slopdesk-workspace`'s `persist`, which had
+# been a finished port with no caller. The two did not merely duplicate — they DISAGREED, and the
+# disagreement is the one a person feels: for a divider the file does not name, Rust DERIVES the
+# `SplitNodeId` from the seam's position (`persist::derived_split_id`) while the Swift decoder minted
+# a fresh UUID, so every launch renamed every seam and every remembered divider position was lost.
+# Nothing crashed and no test failed; the arrangement just kept resetting.
+#
+# So the Swift half is deleted, `Codec/WorkspaceFile.swift` is the face, and both halves of that are
+# checked here — the file staying gone, and the face still being a marshaller rather than a decoder
+# growing back under a new name.
+WORKSPACE_FILE_SWIFT=Sources/SlopDeskWorkspaceModel/Codec/WorkspaceFile.swift
+if [[ -e Sources/SlopDeskWorkspaceModel/Domain/Tree/SplitNode+Codable.swift ]]; then
+  fail "SplitNode+Codable.swift is back — the workspace file's rule is rust/slopdesk-workspace's persist (docs/55 §6)"
+fi
+if [[ ! -e "${WORKSPACE_FILE_SWIFT}" ]]; then
+  fail "${WORKSPACE_FILE_SWIFT} is gone — the workspace file's door has no Swift face, so the bans below stopped checking anything (docs/55 §6)"
+fi
+ws_codec_revived=$(among_deleted '(struct|private struct) (RawWeightedChild|SpecEntry)\b|func (decodeRaw|decodeChildren|rawNode)\(')
+if [[ -n "${ws_codec_revived}" ]]; then
+  printf '%s\n' "${ws_codec_revived}" >&2
+  fail "a Swift workspace-file decoder is back in Sources/ — the tree's JSON lives in rust/slopdesk-workspace (docs/55 §6)"
+fi
+# The CONFORMANCE is the re-implementation, however small the body. `Codable` on any of these types
+# is a second encoder for the file by synthesis alone — and a synthesized one has no derivation, so
+# it brings the divider-renaming defect back exactly as it was. (`PaneKind`, `SplitAxis` and the
+# device-prefs template values stay `Codable` on purpose: those are vocabulary, `docs/55` §8.)
+ws_conformance_revived=$(among_deleted '\b(SplitNode|WeightedChild|SplitWeight|TreeWorkspace|DetachedPane|PaneSpec|VideoEndpoint|Session|Tab)\b *: *(any )?(Codable|Decodable|Encodable)\b')
+if [[ -n "${ws_conformance_revived}" ]]; then
+  printf '%s\n' "${ws_conformance_revived}" >&2
+  fail "a workspace tree type conforms to Codable again — one encoder, and it is persist::encode_file (docs/55 §6)"
+fi
+# Every door the face must keep asking. The pool probe is the load-bearing one: the crate holds no
+# entropy, so a caller that stopped asking how many ids a file needs would hand it a pool that runs
+# dry, and a dry pool REPEATS — two panes with one id, which the repair then re-mints apart on every
+# single load. That is the divider defect again, wearing the pane's clothes.
+for door in slopdesk_ws_workspace_file_minted_ids slopdesk_ws_workspace_file_encode \
+  slopdesk_ws_workspace_file_decode slopdesk_ws_workspace_file_status \
+  slopdesk_ws_workspace_file_max_panes; do
+  if ! grep -qF "${door}" "${WORKSPACE_FILE_SWIFT}"; then
+    fail "${WORKSPACE_FILE_SWIFT} stopped asking ${door} — one answer to the saved arrangement (docs/55 §6)"
+  fi
+  if ! grep -qF "${door}" rust/slopdesk-ffi/include/slopdesk_ffi.h; then
+    fail "rust/slopdesk-ffi/include/slopdesk_ffi.h does not declare ${door} — the header is hand-written and it is the ABI (docs/55 §2)"
+  fi
+done
+# What a marshaller cannot have, and what the store beneath it cannot go back to. A `JSONEncoder` on
+# either side is the whole file returning; comments are stripped first for the reason the neighbour
+# gives — naming what moved is how a boundary stays legible, and only CODE can re-implement it.
+for marshaller in "${WORKSPACE_FILE_SWIFT}" Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspacePersistence.swift; do
+  marshaller_code=$(grep -v '^[[:space:]]*//' "${marshaller}" 2> /dev/null) || true
+  if [[ -z "${marshaller_code}" ]]; then
+    fail "${marshaller} read as EMPTY — it moved or is all comments, so this ban stopped checking anything (docs/55 §6)"
+  fi
+  if grep -qE 'JSONEncoder|JSONDecoder|CodingKeys|schemaVersion *= *[0-9]' <<< "${marshaller_code}"; then
+    fail "${marshaller} decides the file's shape again — it marshals, and rust/slopdesk-workspace's persist rules (docs/55 §6)"
+  fi
+done
+# The far side, so the door cannot be a shim over a shim. The derivation is named because it is the
+# defect's actual fix: delete it and both languages agree again, on the wrong answer.
+for rule in 'fn derived_split_id' 'pub fn encode_file' 'pub fn decode_file' 'pub fn minted_ids_for' \
+  'Malformed,' 'VersionMismatch(i64)' 'TooManyPanes,'; do
+  if ! grep -qF "${rule}" rust/slopdesk-workspace/src/persist.rs; then
+    fail "rust/slopdesk-workspace/src/persist.rs lost ${rule} — the file's rule and its taxonomy are one place (docs/55 §6)"
+  fi
+done
+printf 'check-supervisor: one answer to the saved arrangement, and the seams keep their names.\n'
 
 for solver in Domain/SendKeysParser Domain/FocusResolver Domain/Tree/TabOrdering \
   Domain/Tree/SplitLayoutSolver Domain/Tree/SplitNode+Ops \
@@ -5127,6 +5204,14 @@ done
 if ! grep -rq 'SidebarGitLine' Sources/SlopDeskMacUI/Columns/MacSidebarHeader.swift; then
   fail "MacSidebarHeader stopped reading SidebarGitLine — the git dialect is ClientCore's, cut once"
 fi
+# THE PHONE IS ASSERTED THE SAME WAY, and it is not symmetry for its own sake: the sigil ban below
+# cannot tell a half that PORTED the git line from one that DELETED it. A navigator that simply
+# stopped drawing git passes every ban in this file — no second dialect, no respelt sigil, nothing
+# to catch — while the parity rule the whole split rests on ("the phone differs in LAYOUT only")
+# quietly stops holding. A ban needs a reader beside it or it only proves an absence.
+if ! grep -rq 'SidebarGitLine' Sources/SlopDeskPhoneUI/Columns/NavigatorColumn.swift; then
+  fail "the phone's navigator stopped reading SidebarGitLine — the git line is layout-only on the phone, not absent"
+fi
 for half in Sources/SlopDeskMacUI/Columns/MacSidebarHeader.swift \
   Sources/SlopDeskMacUI/Columns/MacSidebarRow.swift \
   Sources/SlopDeskPhoneUI/Columns/NavigatorColumn.swift; do
@@ -5134,6 +5219,19 @@ for half in Sources/SlopDeskMacUI/Columns/MacSidebarHeader.swift \
   if sed -E 's#^[[:space:]]*//.*##;s#^[[:space:]]*///.*##' "${half}" |
     grep -qE '"↑\\\(|"↓\\\(|"\+\\\(|"!\\\(|"\?\\\(|"~\\\(|"\$\\\('; then
     fail "${half} spells a git sigil — every one of them is SidebarGitLine.segments's"
+  fi
+done
+# THE MULTICLIENT LINES ARE CUT ONCE TOO — `SidebarRowReading.presence` mints "Also open on <device>"
+# and "Held by <device>", and nothing else may. This is the sentence a reader trusts to know whether
+# somebody else is typing into the pane they are about to take, so a half that composes its own is
+# not a wording drift: it is a second answer to a question with one true answer, and the wrong one
+# looks exactly as authoritative as the right one. Comments stripped first — the phone navigator's
+# own header QUOTES both lines to say where they come from, which is the file doing the right thing.
+for half in Sources/SlopDeskMacUI/Columns/MacSidebarRow.swift \
+  Sources/SlopDeskPhoneUI/Columns/NavigatorColumn.swift; do
+  if sed -E 's#^[[:space:]]*//.*##;s#^[[:space:]]*///.*##' "${half}" |
+    grep -qE '"Also open on|"Held by'; then
+    fail "${half} mints a multiclient line — \"Also open on\" and \"Held by\" are SidebarRowReading.presence's"
   fi
 done
 # The ATTENTION ROLES are ranked once (`TabBadgeReading.rollup`), because a collapsed group's count
