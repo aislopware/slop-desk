@@ -751,6 +751,24 @@ package enum Slate {
         /// of them across the framework boundary — which is 56c's finding one dimension over: a
         /// number two renderers both need is a pair the day it is written.
         package static let accentRing = 0.5
+        /// WITHHELD: the control is here, and it cannot be spent right now.
+        ///
+        /// Always the second half of a pair — `.disabled` plus this, never either alone. Refusing
+        /// without dimming reads as a broken button; dimming without refusing invites the click anyway.
+        /// The pairing is what says "there is a reason, and it is elsewhere on screen": a locked
+        /// viewport dims its own zoom cluster so the eye is sent to the lock, which stays lit.
+        ///
+        /// The SAME NUMBER as ``accentRing`` and deliberately not the same rung. That one is a stroke
+        /// alpha on an accent outline; this is a whole control's presence. They agree today by
+        /// coincidence, and folding them would mean a future adjustment to a ring's weight silently
+        /// re-dimming every disabled control in the app.
+        ///
+        /// Three surfaces spent it as a raw literal before this existed — `FontSettingsView`'s locked
+        /// face-pickers, `MacFontFamilySurface`'s private `lockedAlpha` (the AppKit half of that same
+        /// row, so the pair had already drifted into two spellings), and the remote-window control
+        /// bar's viewport cluster. P6's rule is why it lands here rather than as a fourth: the value
+        /// carries no colour, so it descends to the floor instead of being pinned as a pair.
+        package static let withheld = 0.5
         /// Muted presence: soft hairlines (``Line/subtle``), secondary badge ink on a plate.
         package static let muted = 0.6
         /// A veil that RECEDES a pane while another one is the subject — the ⌃⇥ walk's dimming of

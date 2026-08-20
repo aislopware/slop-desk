@@ -231,7 +231,7 @@ final class MacFontFamilySurface: NSStackView {
         field.isEnabled = !locked
         // Dimmed as well as disabled, the pair the SwiftUI half spells `.disabled` + `.opacity(0.5)`:
         // AppKit greys a disabled TEXT FIELD's text but not its bezel, so the field alone still reads live.
-        field.alphaValue = locked ? Self.lockedAlpha : 1
+        field.alphaValue = locked ? Slate.Opacity.withheld : 1
         return row(macRowLabel(SettingsLayout.label(for: key), ""), field)
     }
 
@@ -247,7 +247,6 @@ final class MacFontFamilySurface: NSStackView {
         return label
     }
 
-    private static let lockedAlpha: CGFloat = 0.5
     /// Wide enough for two glyphs of the widest monospaced face anyone installs, so the names beside them
     /// still form a column.
     private static let specimenWidth: CGFloat = 28

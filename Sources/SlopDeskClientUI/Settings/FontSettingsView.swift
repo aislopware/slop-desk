@@ -141,7 +141,7 @@ struct FontSettingsView: View {
             )
         }
         .disabled(locked)
-        .opacity(locked ? 0.5 : 1)
+        .opacity(locked ? Slate.Opacity.withheld : 1)
     }
 
     /// The host-installation boundary note (the terminal renders on the host; specimens are this device's).

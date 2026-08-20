@@ -36,6 +36,26 @@ final class MacPlateIconButton: NSView {
 
     var onClick: () -> Void = {}
 
+    /// WITHHELD, not hidden — the verb exists here but cannot be spent right now.
+    ///
+    /// The SwiftUI half spells this as `.disabled(…)` paired with `.opacity(0.5)`, and the pairing is
+    /// the affordance: dimming alone reads as decoration, and refusing alone reads as a broken button.
+    /// The remote-window bar is where it matters most — a locked viewport dims its own zoom cluster so
+    /// the eye is sent to the lock, which stays live, rather than to four controls that would silently
+    /// do nothing. Hover and press are suppressed too, since a plate that lights under the pointer has
+    /// promised something it will not do.
+    var enabled = true {
+        didSet {
+            guard enabled != oldValue else { return }
+            alphaValue = enabled ? 1 : Slate.Opacity.withheld
+            if !enabled {
+                hovering = false
+                pressed = false
+            }
+            fade()
+        }
+    }
+
     private let glyph = NSImageView()
     private var hovering = false
     private var pressed = false
@@ -136,7 +156,14 @@ final class MacPlateIconButton: NSView {
         track()
     }
 
+    // EVERY entry point checks `enabled` SEPARATELY, and none of them can be replaced by a `hitTest`
+    // override. Hover arrives through an `NSTrackingArea`, which is rect-based and keeps firing however
+    // `hitTest` answers — the same property that made docs/56 risk 3 a real defect — so refusing the
+    // pointer in one place would dim the plate and still light it under the cursor. The accessibility
+    // press does not go through the pointer at all.
+
     override func mouseEntered(with _: NSEvent) {
+        guard enabled else { return }
         hovering = true
         fade()
     }
@@ -147,6 +174,7 @@ final class MacPlateIconButton: NSView {
     }
 
     override func mouseDown(with _: NSEvent) {
+        guard enabled else { return }
         pressed = true
         fade()
     }
@@ -154,6 +182,7 @@ final class MacPlateIconButton: NSView {
     /// The verb fires on the RELEASE, and only inside the plate — a press dragged off it is a
     /// cancelled click, which is the contract every button on this platform keeps.
     override func mouseUp(with event: NSEvent) {
+        guard enabled else { return }
         let inside = bounds.contains(convert(event.locationInWindow, from: nil))
         pressed = false
         fade()
@@ -162,7 +191,11 @@ final class MacPlateIconButton: NSView {
     }
 
     override func accessibilityPerformPress() -> Bool {
+        guard enabled else { return false }
         onClick()
         return true
     }
+
+    /// VoiceOver announces the refusal rather than reading a button that will not answer.
+    override func isAccessibilityEnabled() -> Bool { enabled }
 }
