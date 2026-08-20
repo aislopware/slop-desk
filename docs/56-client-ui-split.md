@@ -2895,6 +2895,12 @@ Two things about the phone's renderer are departures from the overlay family, bo
   floor is still a real control, so the terminal underneath cannot be typed into while the question
   is up.
 
+The Mac's `PasteProtectionSheet` adopted the shared type in the follow-up: its private
+`informativeText` was, from the moment `ClipboardConfirmPresentation` existed, a second copy of the
+same join, and adoption was a pure deletion. `check-supervisor.sh` now pairs the two renderers on it
+the way it already pairs `MacCloseConfirmation` and `OverlayHostView` on `CloseConfirmationCopy`:
+each half must READ the shared type, and neither may respell the bullet or the caption.
+
 `ClipboardConfirmRequests` is the seam the two frameworks force: `NSAlert.beginSheetModal(for:)` can
 be called from inside a C callback because the presenter IS a function, and SwiftUI has no such
 function. So the callback asks a mailbox and a mounted card drains it. Two rules live there rather

@@ -5056,6 +5056,22 @@ for half in Sources/SlopDeskMacUI/Overlays/MacCloseConfirmation.swift \
     fail "${half} respells the close-confirmation copy — every line of it is CloseConfirmationCopy's"
   fi
 done
+# ONE SHAPE for the three clipboard questions, and it is `ClipboardConfirmPresentation`. The WORDS were
+# never in danger — they are `slopdesk_terminal::paste`'s, reached through `PasteSafetyAnalyzer` — but the
+# SHAPE was decided twice: bullets or the ask's reason, the preview or nothing, the bullet glyph, the
+# caption. A half that respells any of it is a second guard saying something slightly different about the
+# same payload, which is the failure increment 65 found on the phone in its worst form (a `#else` that
+# auto-approved). The `informativeText` join lives in the shared type for the same reason: it is a
+# serialisation, not a layout, so an `NSAlert` reads it rather than composing one beside itself.
+for half in Sources/SlopDeskMacUI/Terminal/PasteProtectionSheet.swift \
+  Sources/SlopDeskPhoneUI/Overlays/ClipboardConfirmCard.swift; do
+  if ! grep -q 'ClipboardConfirmPresentation' "${half}"; then
+    fail "${half} stopped reading ClipboardConfirmPresentation — two guards, and the drift would be silent"
+  fi
+  if sed -E 's#^[[:space:]]*//.*##' "${half}" | grep -qE '"Clipboard preview|"•'; then
+    fail "${half} respells the clipboard confirmation's shape — the bullet and the caption are the shared type's"
+  fi
+done
 printf 'check-supervisor: one picker, drawn twice, and the stage-D ledger is empty.\n'
 
 # ── One navigator, one row reading, one git dialect (docs/56 stage D) ───────────────────────────

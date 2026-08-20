@@ -7,14 +7,19 @@
 //
 // It lived in the draining floor until it had no reason to: an `NSAlert` is macOS's, it names no
 // view from that target, and the whole-file `#if os(macOS)` it wore was the tell. Here the gate is
-// the TARGET, so the file has none — docs/56 §3. iOS auto-approves in the embedder (no sheet).
+// the TARGET, so the file has none — docs/56 §3. The phone asks the same three questions through
+// `SlopDeskPhoneUI/Overlays/ClipboardConfirmCard.swift`; it used to auto-approve two of them and
+// drop the third, which is what increment 65 closed.
 //
 // NOTHING HERE IS A DECISION, AND NOTHING HERE IS A SENTENCE. The four dangers, the skip rules, the
 // heading, the button title, the bullets and the defused preview are all `slopdesk_terminal::paste`
-// (docs/55), reached through `PasteSafetyAnalyzer`. What is left is the alert — the one part of the
-// sheet that could not cross.
+// (docs/55), reached through `PasteSafetyAnalyzer`; the SHAPE they take — bullets or the ask's
+// reason, the preview where there is one, and the single-string join an `NSAlert` needs — is
+// ``ClipboardConfirmPresentation``, which the phone's card reads too. What is left in this file is
+// the alert: the one part of the sheet that could not cross.
 
 import AppKit
+import SlopDeskClientCore
 import SlopDeskWorkspaceCore
 
 /// Presents the paste-protection confirmation.
@@ -50,39 +55,21 @@ public enum PasteProtectionSheet {
         preview: String,
         dangers: PasteSafetyAnalyzer.PasteDangers,
     ) -> NSAlert {
+        // The heading, the button word, the bullets-or-reason branch and the defused preview are all
+        // ``ClipboardConfirmPresentation``'s — the same reading the phone's card lays out as rows.
+        // This file used to compose the body itself, which made the join a second copy of a decision
+        // the two dialogs have to make identically.
+        let reading = ClipboardConfirmPresentation.reading(ask: ask, preview: preview, dangers: dangers)
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = ask.title
-        alert.informativeText = informativeText(ask: ask, preview: preview, dangers: dangers)
+        alert.messageText = reading.title
+        alert.informativeText = reading.informativeText
 
         // FIRST button is the affirmative action the user explicitly invoked (⌘V). "Cancel" is
         // auto-bound to Escape by AppKit (a button titled "Cancel"), so a stray Return pastes and
         // Escape cancels.
-        alert.addButton(withTitle: ask.affirmative)
+        alert.addButton(withTitle: reading.affirmative)
         alert.addButton(withTitle: "Cancel")
         return alert
-    }
-
-    /// The body: one bullet per flagged danger, or the ask's own reason where the mask is empty —
-    /// which is every OSC-52 ask, since there the REQUEST is the reason rather than the payload.
-    private static func informativeText(
-        ask: PasteSafetyAnalyzer.Ask,
-        preview: String,
-        dangers: PasteSafetyAnalyzer.PasteDangers,
-    ) -> String {
-        var sections: [String] = []
-
-        let descriptions = PasteSafetyAnalyzer.descriptions(for: dangers)
-        if !descriptions.isEmpty {
-            sections.append(descriptions.map { "•  \($0)" }.joined(separator: "\n"))
-        } else if !ask.reason.isEmpty {
-            sections.append(ask.reason)
-        }
-
-        let shown = PasteSafetyAnalyzer.preview(of: preview)
-        if !shown.isEmpty {
-            sections.append("Clipboard preview:\n\(shown)")
-        }
-        return sections.joined(separator: "\n\n")
     }
 }
