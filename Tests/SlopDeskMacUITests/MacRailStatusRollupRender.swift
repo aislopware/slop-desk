@@ -27,8 +27,6 @@ import SFSafeSymbols
 import SlopDeskSlate
 import SwiftUI
 import XCTest
-@testable import SlopDeskClientCore
-@testable import SlopDeskClientUI
 @testable import SlopDeskMacUI
 
 @MainActor
@@ -109,10 +107,10 @@ final class MacRailStatusRollupRender: XCTestCase {
             }
             // ⚠️ `alignment: .top` — the band's contents are SHORTER than the band, and a centring
             // frame slides them down 4pt, which reads as the whole rung sitting low. The real mount
-            // in ``NavigatorColumn`` top-aligns for the same reason.
+            // in ``MacNavigatorColumn`` top-aligns for the same reason.
             .frame(height: Slate.Metric.titlebarHeight, alignment: .top)
             searchPlateStandIn
-            SlateProjectIsland(tint: Slate.ProjectTint.register[0].opacity(Slate.Opacity.bed)) {
+            projectIslandStandIn {
                 VStack(alignment: .leading, spacing: 2) {
                     self.rowStandIn(
                         "Claude Code",
@@ -131,6 +129,26 @@ final class MacRailStatusRollupRender: XCTestCase {
             .padding(.horizontal, Slate.Metric.space2) // the list's LazyVStack gutter
         }
         .frame(width: Slate.Metric.sidebarWidth)
+    }
+
+    /// The project BED the row stand-ins sit on, drawn from the tokens ``MacNavigatorColumn`` itself
+    /// resolves: ``Slate/Native/ProjectTint/bed(at:)`` at ``Slate/Metric/islandRadiusCompact``,
+    /// inseamed by ``Slate/Metric/projectIslandInset``.
+    ///
+    /// ⚠️ It reads the NATIVE tint, not the SwiftUI `register[0].opacity(bed)` recipe that stood
+    /// here while this rig could still reach `SlopDeskClientUI`. Same bed, but this spelling is the
+    /// one the shipping column resolves, so a drift between the two would show up in the photograph
+    /// instead of being papered over by a fixture that re-derived the colour its own way.
+    @MainActor
+    private func projectIslandStandIn(@ViewBuilder _ content: () -> some View) -> some View {
+        content()
+            .padding(.horizontal, Slate.Metric.projectIslandInset)
+            .padding(.vertical, Slate.Metric.space2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                Color(nsColor: Slate.Native.ProjectTint.bed(at: 0)),
+                in: .rect(cornerRadius: Slate.Metric.islandRadiusCompact, style: .continuous),
+            )
     }
 
     /// One navigator ROW's footprint, drawn — the real one is `MacSidebarRowView`, which needs a
@@ -213,10 +231,10 @@ final class MacRailStatusRollupRender: XCTestCase {
         .frame(width: collapsedBandWidth, height: Slate.Metric.titlebarHeight, alignment: .topLeading)
     }
 
-    /// The search field's PLATE, drawn — the real one wraps `SlateSearchField`, which is
-    /// AppKit-backed and would force the hosted path. Only its geometry matters here (the plate's
+    /// The search field's PLATE, drawn — the real one is ``SlateNativeSearchField``, an
+    /// `NSTextField` that draws nothing a hosted SwiftUI frame can photograph. Only its geometry matters here (the plate's
     /// height, and the gutter its trailing edge lands on), and that is copied from
-    /// ``NavigatorColumn`` verbatim, ``RailStatusRollup/trailingInset`` included: the whole point of
+    /// ``MacNavigatorColumn`` verbatim, ``RailStatusRollup/trailingInset`` included: the whole point of
     /// having it in frame is that the band above it must end on the same line.
     @MainActor
     private var searchPlateStandIn: some View {
@@ -231,9 +249,30 @@ final class MacRailStatusRollupRender: XCTestCase {
         }
         .padding(.horizontal, Slate.Metric.space2)
         .frame(height: Slate.Metric.heightControl)
-        .slateChromeFieldPlate()
+        .background(chromeFieldPlate)
         .padding(.horizontal, RailStatusRollup.trailingInset)
         .padding(.bottom, Slate.Metric.space3)
+    }
+
+    /// The field plate's MATERIAL, spelled the way ``MacNavigatorColumn`` spells it on its own
+    /// `plate` layer: ``Slate/Native/State/hover`` inside a ``Slate/Metric/hairline`` of
+    /// ``Slate/Native/Line/field``, at ``Slate/Metric/radiusControl`` on a continuous curve.
+    ///
+    /// ⚠️ Same ⚠️ as ``projectIslandStandIn``: it reads the NATIVE tokens rather than the SwiftUI
+    /// `slateChromeFieldPlate()` modifier that stood here while this rig could reach
+    /// `SlopDeskClientUI`. The plate is in frame so the band's cluster can be judged against its
+    /// trailing edge, and a fixture that re-derived the material its own way would hide a drift
+    /// between the two spellings instead of showing it.
+    @MainActor
+    private var chromeFieldPlate: some View {
+        RoundedRectangle(cornerRadius: Slate.Metric.radiusControl, style: .continuous)
+            .fill(Color(nsColor: Slate.Native.State.hover))
+            .overlay {
+                RoundedRectangle(cornerRadius: Slate.Metric.radiusControl, style: .continuous)
+                    .strokeBorder(
+                        Color(nsColor: Slate.Native.Line.field), lineWidth: Slate.Metric.hairline,
+                    )
+            }
     }
 
     // MARK: - The rig

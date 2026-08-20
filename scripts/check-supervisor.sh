@@ -6200,20 +6200,18 @@ declare -a ui_test_edges=(
   "Tests/SlopDeskClientUITests:SlopDeskMacUI"
   "Tests/SlopDeskMacUITests:SlopDeskClientUI"
 )
-# TWO FILES CROSS TODAY AND THIS RECORDS THE DEBT RATHER THAN HIDING IT. Both are snapshot-render
-# harnesses that mount the SwiftUI design-system halves the Mac has not finished replacing —
-# `SlateProjectIsland`, `SlateSearchField`, `SlatePlateStyle`, `StatusDotView` — from the Mac's own
-# test target. Where a shared pixel-verify harness should LIVE is a design call, not a lint fix, so
-# they are named here in full and left where they are: the gate goes red the moment a THIRD one
-# appears, which is the failure mode an unwritten gate has no answer for.
+# ⚠️ THE ALLOWLIST IS GONE AND THIS IS A FLAT BAN NOW (increment 62). It carried two snapshot rigs —
+# `MacChromeSnapshotRender` and `MacRailStatusRollupRender` — under a comment claiming they mounted
+# `SlateProjectIsland`, `SlateSearchField`, `SlatePlateStyle` and `StatusDotView`. Checked against the
+# tree, three of those four were only ever named in DOC COMMENTS, and the first rig used nothing at
+# all: its `@testable import` had been dead since increment 46 moved the marks to `NSView`s. The debt
+# was one rig, two SwiftUI helpers, twelve lines of body. Both now draw the shipping NATIVE tokens
+# (`Slate.Native.ProjectTint.bed(at:)`, `Slate.Native.State.hover` + `Line.field`) instead, so the
+# fixture's material is the material the Mac column resolves rather than a second derivation of it.
 #
-# The check is a SUBSET test, so paying the debt (a harness moving, or the views it mounts becoming
-# AppKit) passes. When the crossing set empties, delete this array and the entry above it becomes a
-# flat ban — the same shrink-only discipline the `draws` ledger retired itself under.
-declare -a ui_test_debt=(
-  "Tests/SlopDeskMacUITests/MacChromeSnapshotRender.swift"
-  "Tests/SlopDeskMacUITests/MacRailStatusRollupRender.swift"
-)
+# The lesson is in the shape of the old comment, not just its content: a debt ledger that NAMES the
+# symbols it is waiting on goes stale silently, because nothing re-checks the naming. What is left
+# here checks the only thing that cannot rot — whether the import exists at all.
 for edge in "${ui_test_edges[@]}"; do
   test_dir="${edge%%:*}"
   test_target="${edge#*:}"
@@ -6223,22 +6221,24 @@ for edge in "${ui_test_edges[@]}"; do
   # `|| true`: a miss exits 1, and under `set -e` that kills the run instead of reporting.
   test_crossing=$(grep -rlE "^(@testable )?import ${test_target}\$" "${test_dir}" --include='*.swift' |
     sort || true)
-  # The debt is the DRAINING FLOOR's alone. Every other edge here is banned outright — a Mac test
-  # naming the phone's target has no harness story behind it, and inheriting the allowlist across
-  # edges is how a two-file exemption becomes a general one.
-  test_allowed=''
-  if [[ "${test_target}" == "SlopDeskClientUI" ]]; then
-    test_allowed=$(printf '%s\n' "${ui_test_debt[@]}" | sort)
-  fi
-  test_unexpected=$(comm -23 <(printf '%s\n' "${test_crossing}" | grep -v '^$' || true) \
-    <(printf '%s\n' "${test_allowed}" | grep -v '^$' || true) || true)
-  if [[ -n "${test_unexpected}" ]]; then
-    printf '%s\n' "${test_unexpected}" >&2
+  if [[ -n "${test_crossing}" ]]; then
+    printf '%s\n' "${test_crossing}" >&2
     fail "${test_dir} reached for ${test_target}: a UI half's tests name no other half (docs/56 §3.5 step 5)"
   fi
 done
-printf 'check-supervisor: no UI half names another, in Sources or in Tests — %s harnesses still owe the fold.\n' \
-  "${#ui_test_debt[@]}"
+# …AND THE MANIFEST EDGE IS CUT TOO, for the same reason increment 61 cut the source one: an import
+# census is a convention, a missing dependency is a compile error. Without this, deleting the two
+# imports leaves `SlopDeskClientUI` sitting in the test target's `dependencies:`, and the next rig to
+# want one `some View` gets it back with a one-line import that builds.
+mac_test_block=$(awk '
+  /\.testTarget\(/ { inside = 0 }
+  /name: "SlopDeskMacUITests"/ { inside = 1 }
+  inside { print }
+' Package.swift)
+if printf '%s' "${mac_test_block}" | sed -E 's#^[[:space:]]*//.*##' | grep -q 'SlopDeskClientUI'; then
+  fail "the SlopDeskMacUITests target depends on the draining floor again — F3 cut that edge (docs/56)"
+fi
+printf 'check-supervisor: no UI half names another, in Sources or in Tests, and neither manifest edge stands.\n'
 # A COORDINATOR HOOK BOUND ON ONE PLATFORM IS A DEAD ROW ON THE OTHER, and it dies quietly: every
 # actuator on `OverlayCoordinator` defaults to an empty closure, so a palette row whose hook nobody
 # bound looks exactly like a row that ran and had nothing to do. Three of them were bound only by the

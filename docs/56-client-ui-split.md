@@ -2443,6 +2443,12 @@ the debt passes. Where a shared pixel-verify harness should live is a design cal
 `SlateProjectIsland` note already flagged this exact pair as "an edge the rename still has to answer
 for", and this is what makes that debt fail loudly instead of sitting in a doc.
 
+> **Three of the four symbols named above were already fiction when this was written** — see increment
+> 62, which paid the debt. `SlateSearchField`, `SlatePlateStyle` and `StatusDotView` appear in those
+> two files only inside doc comments, and `MacChromeSnapshotRender` used nothing from the floor at
+> all. The gate was right and its comment was wrong, which is the failure mode a ledger that names
+> symbols has and a ledger that checks imports does not.
+
 ### Increment 57c — wave P's first three, and an amendment 56c owes itself
 
 **P1, P2 and P3 landed together; what they have in common is the point.** Each moved something that is
@@ -2677,6 +2683,55 @@ which was already there.
   type that ships as `MacNoticeCapsuleView`. That is the second time in this wave a gate has caught a
   file naming a symbol it guessed rather than one it declares (58's was `GuiUploadTint`'s row pointing
   at the wrong file), and both times the guess was in prose, where nothing else in the build looks.
+
+### Increment 62 — F3, and a debt ledger that named its symbols and went stale
+
+**F3 is paid, and it cost a twentieth of what the ledger said.** Increment 57b recorded two Mac
+snapshot rigs crossing into the draining floor for "`SlateProjectIsland`, `SlateSearchField`,
+`SlatePlateStyle` and `StatusDotView`", allowlisted them, and left the design call for the fold.
+Checked against the tree in this increment, **three of those four names appear only inside doc
+comments**, and `MacChromeSnapshotRender` used *nothing at all* — its `@testable import` had been dead
+since increment 46 moved the marks to `NSView`s, and 46's own note ("after this increment no
+`SlopDeskMacUI` file uses `StatusDotView` at all") is the sentence that emptied the claim without
+anybody re-reading the gate it was written into. The real debt was one rig and two SwiftUI helpers:
+`SlateProjectIsland` and the `slateChromeFieldPlate()` modifier, twelve lines of body between them.
+
+**What paid it was not a move and not a port — it was reading the SHIPPING tokens.** Both helpers were
+re-derivations of material the Mac column already resolves natively, so `MacRailStatusRollupRender`
+now spells the bed as `Slate.Native.ProjectTint.bed(at: 0)` at `islandRadiusCompact` inside
+`projectIslandInset`, and the field plate as `Slate.Native.State.hover` behind a `hairline` of
+`Slate.Native.Line.field` at `radiusControl` — exactly what `MacNavigatorColumn` sets on its own
+`plate` layer. This is strictly better than what it replaced, and for a reason that outlives F3: a
+fixture that re-derives a colour through the *other* renderer's spelling cannot show a drift between
+the two spellings, which is the one thing a Mac pixel rig exists to catch. The gate's own comment had
+predicted the shape of the fix ("a harness moving, or the views it mounts becoming AppKit") and got
+the third option wrong — nothing moved and nothing became a view; the fixture stopped deriving.
+
+**Both halves of the edge are now facts.** The `Tests/` import ban lost its allowlist and is flat, the
+way its own retirement note prescribed; and `Package.swift` lost `SlopDeskClientUI` from
+`SlopDeskMacUITests`' `dependencies:`, with a new manifest gate beside the increment-61 one that cut
+the same edge for `Sources/`. Both were break-tested. The stale manifest comment justifying the
+dependency ("the chord suites drive the real `WorkspaceKeyDispatcher` against seams the shared view
+target still owns") named a dispatcher that lives in `Sources/SlopDeskMacUI/Input/` — a third stale
+justification found in the same hour as the first two.
+
+**What this increment is really about:**
+
+- **A debt ledger that names the symbols it is waiting on rots silently.** Nothing re-checks a comment.
+  The allowlist stayed *correct* the whole time — the two files did import the floor — while its
+  stated reason decayed to fiction, and every later reader (including the fold plan at §3.5 step 5 and
+  the F3 sentence in the plan itself) inherited the fiction. What replaced it checks only the thing
+  that cannot rot: whether the import line exists. **Ratchet the fact, describe the reason, and never
+  let the description become the check.**
+- **A dead `@testable import` is invisible to the compiler and loud to a gate.** Two of the three
+  imports removed here (`SlopDeskClientUI` in `MacChromeSnapshotRender`, `SlopDeskClientCore` in
+  `MacRailStatusRollupRender`) resolved to nothing at all. Swift does not warn on an unused import, so
+  the only proof is deletion plus a build — and the only thing that made anyone look was a gate
+  counting them as a blocker.
+- **The `some View`-in-the-floor ratchet did its job by being un-negotiable.** The obvious cheap fix —
+  move `SlateProjectIsland` down into `SlopDeskSlate` where both halves can see it — is exactly the
+  "two renderers become one renderer plus a fallback" failure the floor gate was written for, and
+  being unable to take it is what forced the better answer.
 
 ## Stage D ledger — what the rename actually costs
 
@@ -2914,8 +2969,9 @@ island moat, and by a differently-animating amount during a collapse.
      design-system halves — into the **Mac's** snapshot harness. That is the same edge the gate exists
      to forbid, wearing a `Tests/` prefix, and it blocks the fold exactly as a source edge would.
      **Done in increment 57b** — the gate covers `Tests/` across both spellings and all four edges,
-     with those two files in a subset-checked allowlist so a third crossing is red immediately. What
-     is still owed is the design call underneath it, not the lint: see F3 in the fold plan.
+     with those two files in a subset-checked allowlist so a third crossing is red immediately.
+     **Paid in increment 62**, where the four-symbol list above turned out to be one symbol and one
+     modifier: the allowlist is gone, the ban is flat, and the manifest edge is cut too.
    - **A `Platform::Both` binding is a second renderer, not a port.** `CommandNavigatorView` was read
      as port-and-delete work; `binding_rows.rs` files its verb as `Both`, which means the phone needs
      it too and the Mac's AppKit version joins it rather than replacing it. Check the Rust table before
@@ -3085,9 +3141,10 @@ with the terminal leaf, and there is no later batch where it becomes cheaper to 
 **F2 first, not last** — reconcile the two roots (`SlopDeskPhoneApp`'s `@main` keeps it,
 `WorkspaceRootView` becomes its scene root) so the tree has one root while 101 files move. Then **F1**,
 resolving 54 platform directives across 40 files — the macOS arm deleted, the `#else` promoted, six
-agents split by directory. Then **F3**, the two Mac snapshot harnesses: 57b made that debt fail loudly,
-it did not pay it, and the answer is to **split the harness** rather than write renderers to satisfy a
-test or move `some View` into the floor (which a ratchet forbids, correctly). Then **F4**, the move and
+agents split by directory. ~~Then **F3**, the two Mac snapshot harnesses~~ — **done in increment 62**,
+and neither of the two answers this plan weighed was the one that worked: the harness did not split and
+nothing became a renderer. Both rigs simply stopped re-deriving material the Mac column already
+resolves natively, which is why F3 no longer gates anything. Then **F4**, the move and
 `Package.swift`. Then **F5**: every gate naming `Sources/SlopDeskClientUI/…` re-points, **and each one
 is re-run against a deliberately broken tree afterwards** — a path rename is precisely how a gate
 becomes absent while staying green, which 56f, 57b and the `repo_files` ordering bug in the

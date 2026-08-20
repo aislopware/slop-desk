@@ -1034,10 +1034,15 @@ let package = Package(
         // (the key-window gate takes `AnyObject` for exactly that reason).
         .testTarget(
             name: "SlopDeskMacUITests",
-            // `SlopDeskClientUI` is named because the chord suites drive the real `WorkspaceKeyDispatcher`
-            // against seams the shared view target still owns (the code panel's first-responder hold).
+            // ⚠️ `SlopDeskClientUI` IS NOT NAMED, and the omission is the point (docs/56 fold, F3). It
+            // used to be, for a chord suite that drove `WorkspaceKeyDispatcher` against seams the
+            // shared view target owned — that dispatcher is `SlopDeskMacUI`'s now, and increment 62
+            // paid the last two crossings (the two snapshot rigs, which drew the phone's project bed
+            // and field plate). With the edge cut in the MANIFEST, a rig reaching back for one
+            // `some View` is a compile error rather than a convention, the same way the source edge
+            // was made a fact in increment 61.
             dependencies: [
-                "SlopDeskMacUI", "SlopDeskClientUI", "SlopDeskSlate", "SlopDeskClientCore",
+                "SlopDeskMacUI", "SlopDeskSlate", "SlopDeskClientCore",
                 "SlopDeskWorkspaceCore",
                 "SlopDeskWorkspaceModel", "SlopDeskVideoProtocol",
                 // `SlopDeskTransport` is named for ONE thing: the navigator snapshot mounts the real
