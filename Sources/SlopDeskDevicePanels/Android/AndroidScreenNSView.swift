@@ -1,7 +1,7 @@
 // AndroidScreenNSView — the device's live frame on macOS, and the surface that turns a click into a
 // touch.
 //
-// It was the macOS half of what is now `Sources/SlopDeskPhoneUI/Android/AndroidScreenView.swift`, until docs/56 stage D
+// It was the macOS half of what is now `Sources/SlopDeskPhoneUI/Panel/Android/AndroidScreenView.swift`, until docs/56 stage D
 // increment 52b, and the move is a MOVE: not one line of it was rewritten. That is the whole point of
 // the ledger's kind 2 — a plain `NSView` sitting in a view target because the thing above it happened
 // to be a `View`. It never drew a design token, never named SwiftUI outside its own representable, and

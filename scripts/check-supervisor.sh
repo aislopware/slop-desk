@@ -4424,8 +4424,8 @@ done
 for revived in 'struct AndroidLogLine' 'struct SimulatorLogLine'; do
   if hit=$(spells "${revived}" Sources/SlopDeskDevicePanels/Android/*.swift \
     Sources/SlopDeskDevicePanels/Simulator/*.swift Sources/SlopDeskDevicePanels/Shared/*.swift \
-    Sources/SlopDeskPhoneUI/Android/*.swift Sources/SlopDeskPhoneUI/Simulator/*.swift \
-    Sources/SlopDeskPhoneUI/DevicePanel/*.swift); then
+    Sources/SlopDeskPhoneUI/Panel/Android/*.swift Sources/SlopDeskPhoneUI/Panel/Simulator/*.swift \
+    Sources/SlopDeskPhoneUI/Panel/*.swift); then
     fail "${hit} brought back ${revived} — one console row serves both device panels"
   fi
 done
@@ -5268,13 +5268,13 @@ printf 'check-supervisor: the device-panel floor builds for the phone.\n'
 # both halves in one file, `#if os(macOS)` … `#elseif os(iOS)`. A bare `#if os(macOS)` anywhere in
 # those directories is the old Mac-only shape coming back — it compiles to an empty file on the
 # phone, which is a green build over a missing feature.
-for surface in Sources/SlopDeskPhoneUI/Simulator/*.swift Sources/SlopDeskPhoneUI/Android/*.swift; do
+for surface in Sources/SlopDeskPhoneUI/Panel/Simulator/*.swift Sources/SlopDeskPhoneUI/Panel/Android/*.swift; do
   if grep -q '^#if os(macOS)' "${surface}" && ! grep -q '^#elseif os(iOS)' "${surface}"; then
     fail "${surface} is macOS-only again — both device panels draw on the phone too"
   fi
 done
-for stage in Sources/SlopDeskPhoneUI/Simulator/SimulatorScreenView.swift \
-  Sources/SlopDeskPhoneUI/Android/AndroidScreenView.swift; do
+for stage in Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorScreenView.swift \
+  Sources/SlopDeskPhoneUI/Panel/Android/AndroidScreenView.swift; do
   if ! grep -q 'UIViewRepresentable' "${stage}"; then
     fail "${stage} lost its UIKit half — the phone's device stage is a UIViewRepresentable"
   fi
@@ -5879,9 +5879,9 @@ printf 'check-supervisor: one panel vocabulary, four surfaces, two renderers.\n'
 for pair in \
   "Sources/SlopDeskMacUI/Panel/Simulator/MacSimulatorSurface.swift:SimulatorSidebarModel" \
   "Sources/SlopDeskMacUI/Panel/Android/MacAndroidSurface.swift:AndroidSidebarModel" \
-  "Sources/SlopDeskPhoneUI/Simulator/SimulatorDeviceList.swift:SimulatorPresentation" \
+  "Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorDeviceList.swift:SimulatorPresentation" \
   "Sources/SlopDeskMacUI/Panel/Simulator/MacSimulatorDeviceList.swift:SimulatorPresentation" \
-  "Sources/SlopDeskPhoneUI/Android/AndroidDeviceList.swift:AndroidPresentation" \
+  "Sources/SlopDeskPhoneUI/Panel/Android/AndroidDeviceList.swift:AndroidPresentation" \
   "Sources/SlopDeskMacUI/Panel/Android/MacAndroidDeviceList.swift:AndroidPresentation"; do
   half="${pair%%:*}"
   face="${pair##*:}"
@@ -5891,7 +5891,7 @@ for pair in \
 done
 # The phone's fifteen are the PHONE's. A macOS caller reaching back into them is the AppKit half
 # half-ported, which compiles perfectly well and ships two renderers for one surface.
-ungated=$(grep -rLn '#if os(iOS)' Sources/SlopDeskPhoneUI/Simulator/ Sources/SlopDeskPhoneUI/Android/ 2> /dev/null || true)
+ungated=$(grep -rLn '#if os(iOS)' Sources/SlopDeskPhoneUI/Panel/Simulator/ Sources/SlopDeskPhoneUI/Panel/Android/ 2> /dev/null || true)
 if [[ -n "${ungated}" ]]; then
   printf '%s\n' "${ungated}" >&2
   fail "a device-panel view lost its iOS gate — the Mac draws these in AppKit now (docs/56, increment 52)"
@@ -5908,7 +5908,7 @@ done
 # Comments STRIPPED first: both files' headers name the representable they lost, and a gate that
 # cannot quote the rule it guards is a gate nobody may document.
 device_code=$(awk '{ line = $0; sub(/\/\/.*/, "", line); printf "%s:%d:%s\n", FILENAME, FNR, line }' \
-  Sources/SlopDeskPhoneUI/Simulator/*.swift Sources/SlopDeskPhoneUI/Android/*.swift)
+  Sources/SlopDeskPhoneUI/Panel/Simulator/*.swift Sources/SlopDeskPhoneUI/Panel/Android/*.swift)
 if grep -q 'NSViewRepresentable' <<< "${device_code}"; then
   fail "a device screen representable came back — the Mac mounts the NSView directly (docs/56, increment 52)"
 fi
@@ -5968,7 +5968,7 @@ for face in Sources/SlopDeskMacUI/Panel/Simulator/MacSimulatorParts.swift:Simula
   fi
 done
 if hit=$(spells '"Copy \\\(' Sources/SlopDeskMacUI/Panel/**/*.swift \
-  Sources/SlopDeskPhoneUI/Simulator/*.swift Sources/SlopDeskPhoneUI/Android/*.swift 2> /dev/null); then
+  Sources/SlopDeskPhoneUI/Panel/Simulator/*.swift Sources/SlopDeskPhoneUI/Panel/Android/*.swift 2> /dev/null); then
   printf '%s\n' "${hit}" >&2
   fail "a Copy verb is spelled in a renderer — SimulatorPresentation/AndroidPresentation.copyTitle owns it"
 fi
@@ -6074,10 +6074,10 @@ fi
 # The panels' own files must READ the shared laws rather than restate them. A positive check,
 # because the veil and the notice are ordinary SwiftUI whose ingredients are used everywhere else.
 declare -a panel_shares=(
-  "Sources/SlopDeskPhoneUI/Android/AndroidStageView.swift:DevicePanelChrome.veil"
-  "Sources/SlopDeskPhoneUI/Simulator/SimulatorStageView.swift:DevicePanelChrome.veil"
-  "Sources/SlopDeskPhoneUI/Android/AndroidDeviceList.swift:DevicePanelChrome.notice"
-  "Sources/SlopDeskPhoneUI/Simulator/SimulatorDeviceList.swift:DevicePanelChrome.notice"
+  "Sources/SlopDeskPhoneUI/Panel/Android/AndroidStageView.swift:DevicePanelChrome.veil"
+  "Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorStageView.swift:DevicePanelChrome.veil"
+  "Sources/SlopDeskPhoneUI/Panel/Android/AndroidDeviceList.swift:DevicePanelChrome.notice"
+  "Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorDeviceList.swift:DevicePanelChrome.notice"
   "Sources/SlopDeskDevicePanels/Android/AndroidVideoFormat.swift:DevicePanelSampleBuffer.dimensions"
   "Sources/SlopDeskDevicePanels/Simulator/SimulatorVideoFormat.swift:DevicePanelSampleBuffer.dimensions"
 )

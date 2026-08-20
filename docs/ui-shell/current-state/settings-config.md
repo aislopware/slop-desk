@@ -66,7 +66,7 @@ Settings is built and wired end-to-end. Primary surfaces:
 Sources/SlopDeskPhoneUI/Settings/SettingsView.swift
 Sources/SlopDeskPhoneUI/Settings/KeybindingsEditorView.swift
 Sources/SlopDeskPhoneUI/SlopDeskClientApp.swift           — scene wiring (SlopDeskSettingsScene)
-Sources/SlopDeskPhoneUI/Footer/PreferencesEnvironment.swift — env slot for deep view injection
+Sources/SlopDeskPhoneUI/PreferencesEnvironment.swift — env slot for deep view injection
 Sources/SlopDeskPhoneUI/DesignSystem/ThemeStore.swift
 
 Sources/SlopDeskWorkspaceCore/Workspace/Store/PreferencesStore.swift

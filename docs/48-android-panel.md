@@ -11,7 +11,7 @@ and recorded off a live emulator on 2026-08-04. The byte-level claims here are w
 `Tests/SlopDeskDevicePanelsTests/Android*Tests.swift` and `rust/slopdesk-androidd`'s own suite pin. If the
 Homebrew formula moves, re-measure before changing the decoder.
 
-Read this before touching anything under `Sources/SlopDeskPhoneUI/Android` or
+Read this before touching anything under `Sources/SlopDeskPhoneUI/Panel/Android` or
 `rust/slopdesk-androidd`.
 
 > **2026-08-12 — the bridge left hostd.** It is `rust/slopdesk-androidd` now, a separate binary held
