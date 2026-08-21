@@ -32,6 +32,14 @@ pub const DEFAULT_PANE_TITLE: &str = "Terminal";
 /// The name a fresh workspace's first session takes.
 pub const DEFAULT_SESSION_NAME: &str = "Local";
 
+/// The title a minted desktop pane takes.
+///
+/// Beside the other two rather than in whichever crate happens to mint one, because a desktop pane
+/// gets minted from two directions — a local gesture in the client, and a document the wire crate
+/// applies — and those two are the ones that must not disagree. A pane the user made and a pane a
+/// restored document made would otherwise be titled differently for no reason the user could see.
+pub const DEFAULT_DESKTOP_PANE_TITLE: &str = "Desktop";
+
 /// The schema version this shape writes.
 ///
 /// A file carrying any OTHER version is NOT migrated — the load path sets it aside. The bump is
@@ -296,7 +304,7 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use super::{DEFAULT_PANE_TITLE, TreeWorkspace};
+    use super::{DEFAULT_PANE_TITLE, DEFAULT_SESSION_NAME, TreeWorkspace};
     use crate::identity::{IdSource, PaneId, SessionId, SplitNodeId, TabId};
     use crate::session::{DetachedPane, PaneKind, PaneSpec, Session, Tab};
     use crate::split_tree::{SplitAxis, SplitNode, WeightedChild};
@@ -364,7 +372,7 @@ mod tests {
         specs.insert(pane(2), spec());
         let session = Session {
             id: session_id(1),
-            name: "Local".to_owned(),
+            name: DEFAULT_SESSION_NAME.to_owned(),
             tabs: vec![Tab::new(tab_id(1), root)],
             active_tab_index: 0,
             specs,

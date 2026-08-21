@@ -129,8 +129,27 @@ final class ScreenProtocolTests: XCTestCase {
     }
 }
 
-/// The address, which is the ONE thing both ends necessarily state separately.
+/// The address. The NAME is the one thing both ends necessarily state separately; the DIRECTORY is
+/// not, and the day it was treated as though it were, the two ends stopped agreeing — see
+/// `rust/slopdesk-ffi/src/screen_paths.rs`. These now exercise the crate's ladder through the door.
 final class ScreenPathsTests: XCTestCase {
+    /// The divergence itself, as an assertion. This resolution used to go through
+    /// `NSTemporaryDirectory()`, which on Darwin ignores `$TMPDIR` and answers
+    /// `confstr(_CS_DARWIN_USER_TEMP_DIR)` — so a process with a `TMPDIR` of its own dialled the
+    /// per-user directory while screend, which reads the variable, bound somewhere else entirely.
+    /// The symptom was a daemon that looked like it was not running.
+    func testTheClientLandsWhereTheDaemonBindsWhenTMPDIRIsTheCallersOwn() {
+        let path = ScreenPaths.requestSocket(environment: ["TMPDIR": "/tmp/screend-fixture"])
+        XCTAssertEqual(path, "/tmp/screend-fixture/slopdesk-screend.sock")
+    }
+
+    /// `$TMPDIR` with a trailing slash is what a shell hands over half the time. Two spellings of
+    /// one address are two addresses to anything comparing the strings.
+    func testATrailingSlashOnTMPDIRDoesNotDoubleTheSeparator() {
+        let path = ScreenPaths.requestSocket(environment: ["TMPDIR": "/tmp/screend-fixture/"])
+        XCTAssertEqual(path, "/tmp/screend-fixture/slopdesk-screend.sock")
+    }
+
     func testTheOverrideWins() {
         let path = ScreenPaths.requestSocket(environment: ["SLOPDESK_SCREEND_SOCKET": "/tmp/x.sock"])
         XCTAssertEqual(path, "/tmp/x.sock")

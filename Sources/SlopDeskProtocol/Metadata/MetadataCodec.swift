@@ -566,8 +566,19 @@ public enum MetadataCodec {
 
         /// The typed pressure level. An unknown future byte reads ``MemoryPressure/normal`` — a level
         /// this build cannot interpret must never light an alarm ink it cannot justify.
+        ///
+        /// WHICH byte is which level, and what an unrecognised one means, is
+        /// `slopdesk_wire`'s `HostVitals::memory_pressure`. It used to be spelled here as well, and
+        /// the two spellings agreed only because nobody had touched either — the pair had no
+        /// differential, no vocabulary pin and no gate of any kind, which is the shape docs/55 §8
+        /// says every cross-language defect this project has found came in.
+        ///
+        /// The `??` below is not that rule a second time: the door answers a byte its own table
+        /// names, for every input, and the fallback is the tax Swift charges for a failable
+        /// `RawRepresentable` init. It cannot fire without the two case lists having diverged, which
+        /// is a different fault from the one this reading is about.
         public var memoryPressure: MemoryPressure {
-            MemoryPressure(rawValue: pressureByte) ?? .normal
+            MemoryPressure(rawValue: slopdesk_metadata_memory_pressure(pressureByte)) ?? .normal
         }
     }
 
@@ -650,8 +661,14 @@ public enum MetadataCodec {
         /// The typed state. An unknown future byte reads ``ServiceState/starting`` — "keep
         /// polling" is the benign fallback; a state this build cannot interpret must never render
         /// the install-hint error surface it cannot justify.
+        ///
+        /// The reading is `slopdesk_wire`'s `ServiceEndpoint::state`, asked rather than restated —
+        /// see ``HostVitals/memoryPressure`` for why the `??` that remains is not the rule again.
+        /// This half of the pair was the live one: `slopdesk_devicepanel::phase` folds the same
+        /// method into the panel's phase, so an unknown byte was already being read twice per poll,
+        /// once in each language, with nothing comparing the two answers.
         public var state: ServiceState {
-            ServiceState(rawValue: stateByte) ?? .starting
+            ServiceState(rawValue: slopdesk_metadata_service_state(stateByte)) ?? .starting
         }
     }
 
@@ -711,6 +728,12 @@ public enum MetadataCodec {
     /// body throws ``SlopDeskError/truncated``; a longer body is tolerated (trailer ignored); an
     /// unknown future byte reads ``CodeOpenDisposition/workbench`` — revealing the panel is the
     /// benign fallback (worst case an expanded panel, never a silently invisible open).
+    ///
+    /// That last reading happens INSIDE the door: `slopdesk_metadata_decode_code_open_disposition`
+    /// writes `disposition.as_byte()`, so what comes back is already one of the two this build
+    /// names. The `??` at the end is Swift's failable-init tax, not a second opinion about the
+    /// wire — unlike ``HostVitals/pressureByte`` and ``ServiceEndpoint/stateByte``, which cross RAW
+    /// because a re-encode has to put back what it was given, and so ask their own doors.
     public static func decodeCodeOpenDisposition(_ data: Data) throws -> CodeOpenDisposition {
         var byte: UInt8 = 0
         try throwIfFaulted(

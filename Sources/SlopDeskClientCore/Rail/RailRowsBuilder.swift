@@ -308,33 +308,78 @@ package enum RailRowsBuilder {
     /// `slopdesk_workspace::rail_list::disambiguated_label` — the SAME rule
     /// ``headerDisambiguated(_:)`` runs on the section headers.
     package static func disambiguated(_ rows: [RailRow]) -> [RailRow] {
-        let labels = rows.map { (text: $0.title, source: $0.cwd) }
+        let qualified = disambiguatedLabels(rows.map { (text: $0.title, source: $0.cwd) })
         return rows.enumerated().map { index, row in
-            guard let qualified = disambiguatedLabel(labels, at: index) else { return row }
-            return row.retitled(qualified)
+            let name = qualified[index]
+            guard !name.isEmpty else { return row }
+            return row.retitled(name)
         }
     }
 
-    /// What `items[index]` should be CALLED once identical labels have been told apart, or `nil` to
-    /// leave it alone — the ONE collision rule, marshalled. The whole list crosses on every call
-    /// because a collision is a fact about the list rather than about one member.
-    private static func disambiguatedLabel(
-        _ items: [(text: String, source: String?)], at index: Int,
-    ) -> String? {
+    /// What every item should be CALLED once identical labels have been told apart, in list order,
+    /// with an empty string for one to leave alone — the ONE collision rule, marshalled ONCE.
+    ///
+    /// A collision is a fact about the list rather than about one member, so the whole list has to
+    /// cross to answer for any of it. This used to ask per index, which meant rebuilding the label
+    /// array and every title's bytes `n` times per rail rebuild to answer `n` questions off one
+    /// input — quadratic in marshalling on a list that is rebuilt whenever anything in it ticks.
+    private static func disambiguatedLabels(
+        _ items: [(text: String, source: String?)],
+    ) -> [String] {
         var strings = WsStrings()
         var labels = items.map {
             SlopDeskWsRailLabel(text: strings.span($0.text), source: strings.span($0.source))
         }
         var blob = strings.bytes
-        return blob.withUnsafeMutableBufferPointer { text in
+        // The retry lives INSIDE the pointer scope: the two buffers are borrowed for exactly the
+        // calls that read them, and asking again after the scope closed would hand the door a
+        // pointer whose lifetime had already ended.
+        let delivered: [UInt8] = blob.withUnsafeMutableBufferPointer { text in
             labels.withUnsafeMutableBufferPointer { held in
-                wsAnswer { out, cap in
-                    slopdesk_ws_rail_disambiguated_label(
-                        held.baseAddress, held.count, text.baseAddress, text.count, index, out, cap,
+                let door = { (out: UnsafeMutablePointer<UInt8>?, cap: Int) -> Int in
+                    slopdesk_ws_rail_disambiguated_labels(
+                        held.baseAddress, held.count, text.baseAddress, text.count, out, cap,
                     )
                 }
+                // Four bytes of prefix per answer, and most answers are empty — a list that fits is
+                // the common case, and one that does not says how much it needs.
+                var out = [UInt8](repeating: 0, count: items.count * 32)
+                var written = out.withUnsafeMutableBufferPointer { door($0.baseAddress, $0.count) }
+                guard written > 0 else { return [] }
+                if written > out.count {
+                    out = [UInt8](repeating: 0, count: written)
+                    written = out.withUnsafeMutableBufferPointer { door($0.baseAddress, $0.count) }
+                    guard written > 0, written <= out.count else { return [] }
+                }
+                return Array(out.prefix(written))
             }
         }
+        return splitLengthPrefixed(delivered, count: items.count)
+    }
+
+    /// The delivery's `count` length-prefixed answers, padded with empties if it came up short.
+    ///
+    /// Padding rather than trusting the length: a short delivery means the door and this reader
+    /// disagree about the layout, and the alternative to padding is a silent off-by-one where every
+    /// row after the first missing answer takes its neighbour's name.
+    private static func splitLengthPrefixed(_ blob: [UInt8], count: Int) -> [String] {
+        var answers: [String] = []
+        answers.reserveCapacity(count)
+        var cursor = blob.startIndex
+        while answers.count < count, blob.distance(from: cursor, to: blob.endIndex) >= 4 {
+            var length = 0
+            for offset in 0..<4 { length = length << 8 | Int(blob[cursor + offset]) }
+            cursor += 4
+            guard blob.distance(from: cursor, to: blob.endIndex) >= length else { break }
+            // The producer is `slopdesk_workspace::rail_list`, so these bytes are a Rust `String`'s
+            // and cannot be invalid UTF-8. A failable init would add a branch meaning "this row
+            // keeps its title", which is a wrong answer rather than a cautious one.
+            // swiftlint:disable:next optional_data_string_conversion
+            answers.append(String(decoding: blob[cursor..<(cursor + length)], as: UTF8.self))
+            cursor += length
+        }
+        while answers.count < count { answers.append("") }
+        return answers
     }
 
     /// The row's LINE-1 STRUCTURAL title — the identity a pane keeps between events.
@@ -713,11 +758,11 @@ package enum RailRowsBuilder {
     /// lives HERE, not on row titles — and it is ``disambiguated(_:)``'s rule applied to a different
     /// pair of fields, which is why both reach the one crate function.
     package static func headerDisambiguated(_ groups: [RailRowGroup]) -> [RailRowGroup] {
-        let labels = groups.map { (text: $0.header ?? "", source: $0.projectKey) }
+        let qualified = disambiguatedLabels(groups.map { (text: $0.header ?? "", source: $0.projectKey) })
         return groups.enumerated().map { index, group in
-            guard group.header != nil, let qualified = disambiguatedLabel(labels, at: index)
+            guard group.header != nil, !qualified[index].isEmpty
             else { return group }
-            return RailRowGroup(header: qualified, projectKey: group.projectKey, rows: group.rows)
+            return RailRowGroup(header: name, projectKey: group.projectKey, rows: group.rows)
         }
     }
 }

@@ -1,17 +1,23 @@
 //! The `listDirectory`, `listAgentSessions` and `readAgentSession` verbs.
 //!
-//! Every path reaching these has already been CONFINED by the pure Swift builder against the pane's
-//! cwd subtree — that check is the client-facing contract and it stays where the request is
-//! decoded. What is here is the second layer: this program re-confines a session id to the known
+//! Every path reaching these has already been CONFINED against the pane's cwd subtree by the pure
+//! Swift request decoder — that check is the client-facing contract and it stays where the request
+//! is decoded. What is here is the second layer: this program re-confines a session id to the known
 //! roots itself ([`read_session`]), because a read that can be pointed anywhere is worth two checks
 //! even when one of them is somebody else's job.
+//!
+//! Both layers run the SAME rule, [`crate::path_confine`] — the decoder through the
+//! `slopdesk_path_confine` door, this one by calling it. That is the difference between defence in
+//! depth and two checks that merely look alike: before the unification the decoder refused a `..`
+//! outright while this file resolved one lexically, so `/root/a/../b` was refused by the layer in
+//! front and allowed by the layer behind, and tightening either of them tightened nothing.
 
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use serde_json::{Value, json};
 
-use crate::run;
+use crate::{path_confine, run};
 
 /// The directory-listing cap. A second backstop under the builder's own.
 pub const MAX_DIR_ENTRIES: usize = 4096;
@@ -170,45 +176,34 @@ fn scan(dir: &Path, kind: u8, project: &str, extension: &str) -> Vec<Session> {
 
 /// The transcript bytes for an absolute session `id`, confined to [`session_roots`].
 ///
-/// The builder already rejected `..`; this is defence in depth, and it is the reason the id is
-/// normalised first — a path that only *reads* as being under a root is not under it. The read is
-/// bounded at the source like every other opaque answer.
+/// This is the second layer behind the request decoder's own check, and the two now ask
+/// [`crate::path_confine`] rather than each asking a rule of its own — which is what makes "defence
+/// in depth" mean two evaluations of one rule instead of two rules that disagreed. This layer is
+/// the one that can name the ROOTS: they live under the host's `$HOME`, which the pure Swift
+/// reducer in front does not have and must not be given.
+///
+/// The `relative().is_empty()` guard is a question about being a FILE, not about confinement: a
+/// session root is a directory, a directory is not a transcript, and a request naming one is
+/// nothing this verb can answer. It is spelled here rather than inside the rule because
+/// `listDirectory` of a pane's own cwd — the same shape, the root itself — is the ordinary case and
+/// must succeed.
+///
+/// The read is bounded at the source like every other opaque answer.
 #[must_use]
 pub fn read_session(home: &str, id: &str) -> Option<Vec<u8>> {
-    if !id.starts_with('/') {
+    // The roots are disjoint subtrees of one home, so at most one of them can confine an id and
+    // the first match is the only match.
+    let confined = session_roots(home).into_iter().find_map(|root| {
+        path_confine::confine(&root.to_string_lossy(), id, path_confine::Shape::AbsoluteOnly)
+    })?;
+    if confined.relative().is_empty() {
         return None;
     }
-    let path = normalise(Path::new(id));
-    let within = session_roots(home)
-        .iter()
-        .any(|root| path.starts_with(root) && path != root.as_path());
-    if !within {
-        return None;
-    }
-    let bytes = std::fs::read(&path).ok()?;
+    let bytes = std::fs::read(confined.absolute()).ok()?;
     // One past the cap, so the builder's own trim still sees a truncation to report.
     let mut bytes = bytes;
     bytes.truncate(run::MAX_OPAQUE_READ_BYTES + 1);
     Some(bytes)
-}
-
-/// Resolves `.` and `..` lexically, without touching the filesystem.
-///
-/// Lexical on purpose: `canonicalize` would follow symlinks, and a session file reached through a
-/// symlink out of a root is exactly what the confinement is for. It also fails for a path that does
-/// not exist, which would turn a clean "not found" into a confinement decision made on an error.
-fn normalise(path: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
-    for component in path.components() {
-        match component {
-            std::path::Component::ParentDir => {
-                let _unused = out.pop();
-            },
-            std::path::Component::CurDir => {},
-            other => out.push(other),
-        }
-    }
-    out
 }
 
 /// The JSON a directory listing crosses as.
@@ -425,10 +420,26 @@ mod tests {
     }
 
     #[test]
-    fn a_traversal_that_climbs_back_out_is_refused_after_normalising() {
+    fn a_traversal_that_climbs_out_of_a_root_is_refused() {
         let scratch = Scratch::new("traverse");
         let _unused = scratch.touch("elsewhere/secret.txt", b"nope");
         let sneaky = format!("{}/.claude/projects/../../elsewhere/secret.txt", scratch.home());
+        assert!(read_session(&scratch.home(), &sneaky).is_none());
+    }
+
+    /// The behaviour that CHANGED with the unified rule, pinned so the reason is on the record.
+    ///
+    /// This id resolves lexically to a file that IS inside a session root, and the deleted
+    /// `normalise` allowed it. It is refused now, because resolving `..` lexically is only correct
+    /// when no component on the way is a symlink — and the request decoder in front had always
+    /// refused it, so the two layers were answering different questions. Nothing legitimate is
+    /// lost: every id a client can hold came out of `list_sessions`, which builds them from
+    /// `read_dir` entries and can no more emit a `..` than a `\n`.
+    #[test]
+    fn a_traversal_that_lands_back_inside_a_root_is_refused_too() {
+        let scratch = Scratch::new("traverse-inside");
+        let _unused = scratch.touch(".claude/projects/-p/s.jsonl", b"line\n");
+        let sneaky = format!("{}/.claude/projects/-p/../-p/s.jsonl", scratch.home());
         assert!(read_session(&scratch.home(), &sneaky).is_none());
     }
 
@@ -437,6 +448,25 @@ mod tests {
         let scratch = Scratch::new("relative");
         assert!(read_session(&scratch.home(), "s.jsonl").is_none());
         assert!(read_session(&scratch.home(), "").is_none());
+    }
+
+    /// A `//` or a trailing `/` is a spelling, not a different file — the rule normalises both, so
+    /// a client that assembled an id with one does not get a spurious refusal.
+    #[test]
+    fn a_doubled_separator_still_names_the_same_session() {
+        let scratch = Scratch::new("doubled");
+        let _unused = scratch.touch(".claude/projects/-p/s.jsonl", b"line\n");
+        let doubled = format!("{}/.claude/projects//-p/./s.jsonl", scratch.home());
+        assert_eq!(read_session(&scratch.home(), &doubled), Some(b"line\n".to_vec()));
+    }
+
+    /// A sibling of a root whose name merely STARTS with it is not inside it — the string-prefix
+    /// escape, at the one place the roots are `starts_with`-shaped.
+    #[test]
+    fn a_sibling_directory_sharing_the_roots_prefix_is_outside_it() {
+        let scratch = Scratch::new("prefix");
+        let file = scratch.touch(".claude/projects-evil/s.jsonl", b"nope");
+        assert!(read_session(&scratch.home(), &file.to_string_lossy()).is_none());
     }
 
     #[test]

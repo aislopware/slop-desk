@@ -69,7 +69,7 @@ public enum SessionTemplateEngine {
             if let tab = session.activeTab {
                 capture(tab.root, specs: session.specs)
             } else {
-                .pane(TemplatePane(title: "Terminal"))
+                .pane(TemplatePane(title: TreeWorkspaceDefaults.paneTitle))
             }
         return SessionTemplate(name: name, symbol: symbol, isBuiltIn: false, layout: layout)
     }
@@ -80,7 +80,7 @@ public enum SessionTemplateEngine {
     private static func capture(_ node: SplitNode, specs: [PaneID: PaneSpec]) -> TemplateNode {
         switch node {
         case let .leaf(id):
-            let spec = specs[id] ?? PaneSpec(kind: .terminal, title: "Terminal")
+            let spec = specs[id] ?? PaneSpec(kind: .terminal, title: TreeWorkspaceDefaults.paneTitle)
             return .pane(TemplatePane(kind: spec.kind, title: spec.title))
         case let .split(_, axis, children):
             return .split(axis: axis, children: children.map { capture($0.node, specs: specs) })

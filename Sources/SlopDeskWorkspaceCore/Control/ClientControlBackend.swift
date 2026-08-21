@@ -141,6 +141,25 @@ public enum ClientControlOpenMode: Sendable, Equatable {
 /// `watch:claude` must KEEP POLLING in the startup window rather than declaring the id "never seen"
 /// (exit 4) on the first poll: `resolvedNoStatus` ⇒ `{seen:true}` (no status) ⇒ keep polling;
 /// `unresolved` ⇒ `{seen:false}` ⇒ exit 4 only for an id that resolves to NO pane at all.
+/// What one `pane send-keys` did, when "it worked" and "the pane is gone" are no longer the only
+/// two answers.
+///
+/// A named key that the key vocabulary does not recognise is a THIRD outcome, and it used to have
+/// nowhere to go: the backend dropped the name and answered the same `true` a delivered keystroke
+/// answers, so `--key f5` reported success and sent nothing. A `Bool` could carry the refusal only
+/// by borrowing "pane not found", which would report the wrong reason for the right failure — so the
+/// seam names all three, the way ``AgentStatusResolution`` above names the two ways an agent-status
+/// lookup can come back empty.
+public enum SendKeysOutcome: Sendable, Equatable {
+    /// The text and every named key reached the pane.
+    case sent
+    /// The id does not resolve to any pane the running app currently knows.
+    case paneNotFound
+    /// This name is not a key. Nothing was sent — an unknown name rejects the WHOLE request, so a
+    /// typo never leaves half a key sequence on a pane.
+    case unknownKey(String)
+}
+
 public enum AgentStatusResolution: Sendable, Equatable {
     /// The id does not resolve to any pane the running app currently knows.
     case unresolved
@@ -225,8 +244,8 @@ public protocol ClientControlBackend: AnyObject {
     func capturePane(paneId: String?, lines: Int) -> [String]?
 
     /// Send literal `text` followed by named `keys` to a pane (nil `paneId` = the focused pane).
-    /// Returns `false` when the pane is unknown.
-    func sendKeys(paneId: String?, text: String, keys: [String]) -> Bool
+    /// The key NAMES are the conformance's to validate — see ``SendKeysOutcome``.
+    func sendKeys(paneId: String?, text: String, keys: [String]) -> SendKeysOutcome
 
     /// Resolve the agent status for session/pane `id`. Reports pane EXISTENCE separately from agent-status
     /// presence (``AgentStatusResolution``) so `watch:claude` can keep polling through the agent-startup

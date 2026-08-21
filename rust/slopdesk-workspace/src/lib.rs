@@ -85,6 +85,7 @@ pub mod hid_virtual_key;
 pub mod identity;
 pub mod json;
 pub mod jump;
+pub mod keybind;
 pub mod keystroke_replay;
 pub mod list_nav;
 pub mod listen;

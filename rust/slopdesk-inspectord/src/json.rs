@@ -10,11 +10,41 @@
 //! output is USER-VISIBLE text in a shipped client: sorted object keys (Swift's dictionary
 //! iteration order is hash-seed-randomized per process, so the Swift original sorts and so must
 //! this), and whole floats rendered without a trailing `.0`.
+//!
+//! ## It is NOT the same function as `JSONValue.displayString`, and here is exactly where they part
+//!
+//! `Sources/SlopDeskInspector/JSONValue.swift` still holds a flattening of its own, and the two are
+//! LIVE at once in two processes: this one renders a tool RESULT's content, that one renders a
+//! pending tool's INPUT. They never see the same value, which is precisely why nothing has ever
+//! noticed that they answer differently.
+//!
+//! The cause is one line neither function contains. Swift's `JSONValue.init(from:)` decodes every
+//! JSON number as `Double`, while serde keeps the integer types apart — so the divergence is in the
+//! VALUE TYPE, not in the rendering, and the rendering below merely declines to throw away what it
+//! was given:
+//!
+//! | JSON | this module | `JSONValue.displayString` |
+//! | --- | --- | --- |
+//! | `10000000000000000` | `10000000000000000` | `1e+16` |
+//! | `9007199254740993` | `9007199254740993` | `9.007199254740992e+15` (lost at decode) |
+//! | `18446744073709551615` | `18446744073709551615` | `1.8446744073709552e+19` |
+//! | `{"é": …, "z": …}` | `é` first (raw UTF-8 order) | `z` first for a DECOMPOSED `é` |
+//!
+//! This module is the right one in every row, and the Swift half cannot be made to match without
+//! changing what a `JSONValue` number IS — which is a `Codable` type carrying a tool payload, so
+//! `docs/55` §7 step 6 applies and the obligation is a differential rather than a deletion. There
+//! is no door over this function today; the note is here so the next reader inherits the divergence
+//! instead of re-deriving it, and the tests below assert the left-hand column so it is pinned
+//! rather than merely described.
 
 use serde_json::Value;
 
 /// The `f64` magnitude past which a whole number is no longer exactly representable as an integer,
-/// so rendering it through `i64` would lie. Mirrors the Swift original's `abs(value) < 1e15` guard.
+/// so rendering it through `i64` would lie.
+///
+/// The same `1e15` the Swift flattening uses — but only the GUARD is shared. Swift applies it to
+/// every number because every number reached it as an `f64`; here it gates the float arm alone, and
+/// an integer sails past it exact. See the module note for the four inputs that separates.
 const INTEGRAL_RENDER_LIMIT: f64 = 1e15;
 
 /// A human-readable flattening for display: text blocks joined by newlines, scalars stringified,
@@ -33,7 +63,15 @@ pub fn display_string(value: &Value) -> String {
         Value::Array(items) => items.iter().map(display_string).collect::<Vec<_>>().join("\n"),
         Value::Object(map) => {
             // `serde_json::Map` is insertion-ordered by default (not `preserve_order`), so the keys
-            // must be sorted HERE to match the Swift original's `sorted { $0.key < $1.key }`.
+            // must be sorted HERE — the point of sorting at all is that a rendering must not depend
+            // on which order a producer happened to write its fields in.
+            //
+            // The order is raw UTF-8, which agrees with the Swift flattening's `String.<` on ASCII
+            // keys and NOT on anything above it: Swift compares canonically, so a decomposed `é`
+            // sorts after `z` there and before it here. Tool payload keys are ASCII identifiers in
+            // practice, which is why this has never shown; it is in the module note's table rather
+            // than fixed, because "fix" would mean one of the two adopting the other's collation and
+            // neither is reachable from the other's process.
             let mut keys: Vec<&String> = map.keys().collect();
             keys.sort_unstable();
             keys.iter()
@@ -47,9 +85,14 @@ pub fn display_string(value: &Value) -> String {
     }
 }
 
-/// Renders a JSON number the way the Swift original did — which decoded EVERY number as a `Double`
-/// and then printed a whole one without its `.0`. serde keeps the integer types apart, so an
-/// integer already prints correctly; only the float case needs the whole-number check.
+/// Renders a JSON number: a whole float without its `.0`, everything else as serde spells it.
+///
+/// The `is_f64()` guard is what makes this DIFFER from `JSONValue.displayString` rather than mirror
+/// it, and the difference is deliberate. Swift's flattening had already lost an integer's identity
+/// by the time it ran — its value type decodes every number to `Double` — so it re-derives one
+/// through `i64` and gives up past `1e15`. serde still knows, so an integer takes the `to_string`
+/// arm and prints exactly, at any width. See the module note for the inputs where the two answers
+/// separate and why this one is the right of the two.
 fn render_number(number: &serde_json::Number) -> String {
     number.as_f64().map_or_else(
         || number.to_string(),
@@ -121,6 +164,31 @@ mod tests {
     #[test]
     fn a_float_too_large_for_an_exact_integer_keeps_its_own_rendering() {
         assert_eq!(display_string(&json!(1e16)), "1e+16");
+    }
+
+    /// An INTEGER past `f64`'s exact range prints exactly, which is the row of the module note's
+    /// table `JSONValue.displayString` gets wrong — it would answer `1e+16`,
+    /// `9.007199254740992e+15` and `1.8446744073709552e+19` for these three, having decoded
+    /// each to a `Double` before the flattening ever ran.
+    ///
+    /// Pinned rather than described, because the divergence is not something either side can fail
+    /// on: the two functions render different halves of a tool card and no input reaches both. The
+    /// note above it is a claim about another language, and docs/55 §8's last bullet is about
+    /// exactly how those go stale. This is the assertion behind it.
+    #[test]
+    fn an_integer_past_the_float_range_prints_exactly_rather_than_in_scientific_form() {
+        assert_eq!(
+            display_string(&json!(10_000_000_000_000_000_i64)),
+            "10000000000000000"
+        );
+        assert_eq!(
+            display_string(&json!(9_007_199_254_740_993_i64)),
+            "9007199254740993"
+        );
+        assert_eq!(display_string(&json!(u64::MAX)), "18446744073709551615");
+        // And the guard still applies where it must: a genuine float that large cannot be re-derived
+        // through `i64` without lying about its low digits, so it keeps serde's own spelling.
+        assert_eq!(display_string(&json!(1e16_f64)), "1e+16");
     }
 
     #[test]

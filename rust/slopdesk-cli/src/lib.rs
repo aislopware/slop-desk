@@ -5,8 +5,10 @@
 //! is exhaustively testable without a running app, which is the hang-safety rule that shaped the
 //! Swift original and is worth keeping.
 //!
-//! - [`args`] — the global-flag parser.
-//! - [`completions`] — the five shells' completion scripts, from one subcommand list.
+//! - [`vocabulary`] — WHICH subcommands exist, which of them run, and what each is for. The one
+//!   table the completions, the help text and the dispatcher all derive from.
+//! - [`args`] — the global-flag parser, and the flags' own help rows beside the grammar.
+//! - [`completions`] — the five shells' completion scripts, from the runnable half of that table.
 //! - [`config`] — config-file path resolution and the keybind-grammar validator.
 //! - [`formatting`] — the list/inspect tables and their JSON form.
 //! - [`version`] — the `version` banner.
@@ -30,8 +32,10 @@ pub mod completions;
 pub mod config;
 pub mod formatting;
 pub mod version;
+pub mod vocabulary;
 
-pub use args::{Invocation, OutputFormat, ParseError};
+pub use args::{GlobalFlag, Invocation, OutputFormat, ParseError};
 pub use completions::Shell;
 pub use config::ValidationError;
 pub use formatting::Row;
+pub use vocabulary::{Availability, Subcommand};

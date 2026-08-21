@@ -96,10 +96,24 @@ package final class AndroidStreamConnection: AndroidStreaming {
         for message in parser.consume(data) {
             switch message {
             case let .codec(name):
-                // An unrecognised codec keeps the default rather than failing: the panel asks for
-                // H.264 and the server has no reason to answer with anything else, and a stream that
-                // decodes wrong is more diagnosable than one that never starts.
-                codec = AndroidVideoCodec(streamIdentifier: name) ?? .h264
+                // An identifier the door refuses ENDS the stream. It used to fall back to H.264,
+                // which contradicted the only reason ``AndroidVideoCodec`` exists: the enum omits
+                // AV1 precisely so the panel never configures a decode session for a stream this
+                // Mac cannot decode, and defaulting produced exactly the black rectangle that
+                // omission is there to prevent — an H.264 NAL-type reading applied to AV1
+                // parameter sets, handed to `VTDecompressionSession` as a mis-typed format
+                // description. Nothing logs, nothing fails, and the panel shows nothing.
+                //
+                // `slopdesk_android_stream_decodable_codec` already answers "this cannot be
+                // displayed", so the near side's job is to say so rather than to overrule it. The
+                // teardown is the one below's, for the one below's reason: an identifier this build
+                // cannot serve does not become serviceable by reading more of the stream.
+                guard let decodable = AndroidVideoCodec(streamIdentifier: name) else {
+                    disconnect()
+                    sink(.ended(reason: "The device is streaming a video codec this Mac cannot decode."))
+                    return
+                }
+                codec = decodable
             case let .session(width, height):
                 sink(.size(width: width, height: height))
             case let .configuration(payload):

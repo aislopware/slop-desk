@@ -113,6 +113,28 @@ impl SlopDeskQpController {
 // controller that exists has legal knobs whatever a caller passed. A standalone door would answer a
 // config the caller then has to remember to use — and the one that forgot would be
 // indistinguishable from the one that did.
+//
+// The DEFAULTS door below is not that door. Sanitising is a rule, and a rule the caller can skip is
+// a rule that is sometimes not applied; the defaults are a TABLE, and a table the caller can skip
+// is a table nobody spelled twice. The failure mode each avoids is the opposite one.
+
+/// The tuned defaults for the quantiser knobs, so the fallback each `SLOPDESK_QP_*` parse falls
+/// back TO is spelled once.
+///
+/// These four numbers were hardware-validated together, and the host used to re-declare them beside
+/// its environment lookups. Two spellings of one table is the shape `docs/55` §8 catalogues: retune
+/// `sharp` here and a host that kept its own `26` would keep encoding at the old operating point
+/// with nothing to show that it had diverged — no build error, no failing test, just a different
+/// picture. The numbers are unsanitised on purpose, because they are already legal and
+/// `slopdesk_qp_new` sanitises whatever it is handed regardless.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_qp_config_default() -> SlopDeskQpConfig {
+    SlopDeskQpConfig::of(QpConfig::default())
+}
 
 /// A controller seeded at `seed_q`, with the config sanitised and the seed clamped into it.
 #[unsafe(no_mangle)]
@@ -206,6 +228,37 @@ impl SlopDeskIdrConfig {
             keyframe_ring_capacity: self.keyframe_ring_capacity,
         }
     }
+
+    /// These numbers for the crate's config.
+    const fn of(config: RecoveryIdrConfig) -> Self {
+        Self {
+            grace_fraction: config.grace_fraction,
+            grace_floor_seconds: config.grace_floor_seconds,
+            grace_ceil_seconds: config.grace_ceil_seconds,
+            bucket_capacity: config.bucket_capacity,
+            refill_tokens_per_second: config.refill_tokens_per_second,
+            grant_pending_timeout: config.grant_pending_timeout,
+            keyframe_ring_capacity: config.keyframe_ring_capacity,
+        }
+    }
+}
+
+/// The tuned defaults for the recovery-keyframe knobs, spelled once for the same reason
+/// [`slopdesk_qp_config_default`] is.
+///
+/// Seven numbers, and every one of them is load-bearing against a specific failure the host has
+/// already had: the burst allowance is two because three re-opens the keyframe storm, and the
+/// pending timeout is sized above the worst legitimate service path because anything shorter
+/// double-grants and anything unbounded wedges. A second spelling of that reasoning is a second
+/// place to get it wrong, and unlike the quantiser table these are floats — a host that re-typed
+/// `0.040` as `0.04` would agree today and stop agreeing the moment either side is retuned.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_idr_config_default() -> SlopDeskIdrConfig {
+    SlopDeskIdrConfig::of(RecoveryIdrConfig::default())
 }
 
 /// The policy behind an opaque pointer: one per session, mutated from the session actor.
@@ -370,11 +423,47 @@ mod tests {
     use super::{
         SLOPDESK_IDR_VERDICT_GRANT, SLOPDESK_IDR_VERDICT_SUPPRESS_GRANT_PENDING,
         SLOPDESK_IDR_VERDICT_SUPPRESS_IN_FLIGHT, SLOPDESK_IDR_VERDICT_SUPPRESS_RATE_LIMITED,
-        SlopDeskIdrConfig, SlopDeskQpConfig, SlopDeskQpController, slopdesk_idr_policy_available_tokens,
-        slopdesk_idr_policy_decide, slopdesk_idr_policy_free, slopdesk_idr_policy_grace,
-        slopdesk_idr_policy_new, slopdesk_idr_policy_note_keyframe_sent, slopdesk_qp_clamped_int,
-        slopdesk_qp_decide, slopdesk_qp_new,
+        SlopDeskIdrConfig, SlopDeskQpConfig, SlopDeskQpController, slopdesk_idr_config_default,
+        slopdesk_idr_policy_available_tokens, slopdesk_idr_policy_decide, slopdesk_idr_policy_free,
+        slopdesk_idr_policy_grace, slopdesk_idr_policy_new, slopdesk_idr_policy_note_keyframe_sent,
+        slopdesk_qp_clamped_int, slopdesk_qp_config_default, slopdesk_qp_decide, slopdesk_qp_new,
     };
+
+    /// The defaults cross intact, and they are the operating point `docs/29` records rather than
+    /// whatever the struct's own `Default` would have produced field by field.
+    #[test]
+    fn the_tuned_defaults_reach_the_caller_unchanged() {
+        let qp = slopdesk_qp_config_default();
+        assert_eq!(qp, SlopDeskQpConfig {
+            sharp: 26,
+            coarse: 40,
+            up_step: 3,
+            down_interval: 4
+        },);
+        assert_ne!(
+            qp,
+            SlopDeskQpConfig::default(),
+            "the derived all-zero default is not the tuned one, and this door must answer the tuned one",
+        );
+
+        let idr = slopdesk_idr_config_default();
+        assert!((idr.grace_fraction - 0.75).abs() < f64::EPSILON);
+        assert!((idr.grace_floor_seconds - 0.040).abs() < f64::EPSILON);
+        assert!((idr.grace_ceil_seconds - 0.250).abs() < f64::EPSILON);
+        assert!((idr.bucket_capacity - 2.0).abs() < f64::EPSILON);
+        assert!((idr.refill_tokens_per_second - 2.0).abs() < f64::EPSILON);
+        assert!((idr.grant_pending_timeout - 1.5).abs() < f64::EPSILON);
+        assert_eq!(idr.keyframe_ring_capacity, 4);
+    }
+
+    /// The defaults are already legal, so sanitising them is the identity. A retune that broke this
+    /// would be shipping an operating point the controller silently declines to run at.
+    #[test]
+    fn the_default_quantiser_knobs_survive_their_own_sanitation() {
+        let seeded = slopdesk_qp_new(slopdesk_qp_config_default(), 30);
+        assert_eq!(seeded.config, slopdesk_qp_config_default());
+        assert_eq!(seeded.q, 30, "and the seed is inside the default range");
+    }
 
     /// The sanitation `QpController::new` applies on the way in, asked directly: there is no door
     /// that only sanitises, because a caller who forgot to use its answer would look identical to

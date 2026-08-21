@@ -81,7 +81,7 @@ struct AndroidConsoleView: View {
         .background(Slate.Surface.raised)
     }
 
-    /// A menu rather than a segmented control: five levels do not fit a sidebar's width as segments,
+    /// A menu rather than a segmented control: the level list does not fit a sidebar's width as segments,
     /// and the value is worth showing at rest.
     private var level: some View {
         Menu {

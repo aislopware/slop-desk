@@ -193,6 +193,15 @@ public enum MuxEnvelopeCodec {
                 return
             }
             try throwIfFaulted(verdict, in: inner)
+            if verdict == UInt32(SLOPDESK_WIRE_DECODE_OK), built == nil {
+                // The door accepted a type byte ``MuxFrame/build(_:_:_:)`` has no arm for, which
+                // means the two sides' type lists have stopped agreeing. Restating the door's own
+                // refusal is the only answer that cannot be wrong: `nil` here must not fall through
+                // to `decode`'s retry, because that arm means "the arena was too small" and would
+                // burn a second decode before reporting `.truncated` — an error about a length, for
+                // a fault about a type.
+                throw SlopDeskError.unknownMessageType(flat.mux_type)
+            }
         }
         return built
     }
@@ -247,13 +256,27 @@ extension MuxFrame {
     }
 
     /// Rebuilds a frame from the flat struct, its arena, and the opaque payload already lifted out
-    /// of wherever it sat. Unknown mux types never reach here — the decode refused them.
+    /// of wherever it sat. `nil` for a mux-type byte no arm answers to — which is `unpack`'s answer
+    /// in `rust/slopdesk-ffi/src/mux_envelope.rs`, deliberately, and not a Swift opinion.
+    ///
+    /// Which byte is a frame is the DOOR's judgement: `slopdesk_mux_frame_decode` refuses an
+    /// unrecognised type with `SLOPDESK_WIRE_DECODE_UNKNOWN_TYPE` before this is ever called, so
+    /// nothing here decides anything. What this arm must not do is answer ANYWAY. Selecting a
+    /// default frame here would make the near side a second, quieter tolerance policy: a byte the
+    /// door rejects would still become a frame if this function were ever reached by another path,
+    /// and a `windowAdjust` in particular is the worst possible guess — it grants flow-control
+    /// credit, so an unrecognised byte would inflate a peer's send window by whatever `bytes_to_add`
+    /// happened to be left at in a struct nothing filled.
+    ///
+    /// The switch is over the ENUM rather than over raw bytes so that a sixth mux type fails to
+    /// compile here instead of falling into an arm that was written before it existed.
     static func build(
         _ flat: SlopDeskMuxFrame, _ arena: UnsafeRawBufferPointer, _ payload: Data,
     ) -> MuxFrame? {
         let channelID = flat.channel_id
-        switch flat.mux_type {
-        case MuxFrameType.channelOpen.rawValue:
+        guard let type = MuxFrameType(rawValue: flat.mux_type) else { return nil }
+        switch type {
+        case .channelOpen:
             return .channelOpen(
                 channelID: channelID,
                 sessionID: UUID(uuid: flat.session_id),
@@ -263,17 +286,17 @@ extension MuxFrame {
                     ? text(arena, flat.cwd_offset, flat.cwd_length)
                     : nil,
             )
-        case MuxFrameType.channelOpenAck.rawValue:
+        case .channelOpenAck:
             return .channelOpenAck(
                 channelID: channelID, accepted: flat.accepted, resumeFromSeq: flat.resume_from_seq,
             )
-        case MuxFrameType.channelData.rawValue:
+        case .channelData:
             return .channelData(channelID: channelID, payload: payload)
-        case MuxFrameType.channelClose.rawValue:
+        case .channelClose:
             return .channelClose(
                 channelID: channelID, reason: MuxCloseReason(rawValue: flat.reason) ?? .retired,
             )
-        default:
+        case .windowAdjust:
             return .windowAdjust(channelID: channelID, bytesToAdd: flat.bytes_to_add)
         }
     }

@@ -27,6 +27,56 @@
 //! the tree: decode is validate-then-drop — a short, over-long or unrecognised frame yields an
 //! error the server answers with a status byte, never a panic.
 
+use std::ffi::OsStr;
+use std::path::PathBuf;
+
+/// The variable that points both ends at a screend other than the login session's. The test fixture
+/// uses it to run a private daemon; nothing else should.
+pub const SOCKET_ENV_KEY: &str = "SLOPDESK_SCREEND_SOCKET";
+
+/// The rendezvous name itself. No pid in it, deliberately: a restarted screend must answer at the
+/// address its clients already hold (`docs/51` §1).
+pub const SOCKET_NAME: &str = "slopdesk-screend.sock";
+
+/// Where screend listens, decided from the two environment values that decide it.
+///
+/// `$SLOPDESK_SCREEND_SOCKET`, else `$TMPDIR/slopdesk-screend.sock`, else
+/// `/tmp/slopdesk-screend.sock`. `$TMPDIR` on macOS is already a per-user, `0700` directory, which
+/// is what makes the un-suffixed name safe. `/tmp` is not, and the last resort exists only so a
+/// hand-run screend in a stripped environment fails somewhere legible — the same ruling
+/// `slopdesk_superd::paths::Paths::resolve` records for the same three-step ladder.
+///
+/// ## Why an address is in the WIRE crate
+///
+/// Because it is the one thing both ends must agree on before a single frame can flow, and it
+/// cannot be negotiated: a client has to find the socket before it can say `hello`, so there is no
+/// message in which the daemon could tell it. That is exactly the property that made every other
+/// layout here shared, and the client end being Swift is why it matters more than it looks. The
+/// Swift side resolved this itself, with `NSTemporaryDirectory()`, and the two rules were not the
+/// same rule: on Darwin that function does not read `$TMPDIR` at all — it answers
+/// `confstr(_CS_DARWIN_USER_TEMP_DIR)` whatever the environment says. So any process whose `TMPDIR`
+/// pointed somewhere else had a daemon binding one path and a client dialling another, with no
+/// error anywhere to say so; the pair only agreed because launchd happens to set `TMPDIR` to the
+/// per-user directory that call returns.
+///
+/// ## Empty is unset
+///
+/// Both values are filtered for emptiness, and that had drifted too — Swift refused an empty
+/// override and this side did not, so `SLOPDESK_SCREEND_SOCKET=` meant "the default" to a client
+/// and meant the empty path to a daemon. An exported-but-blank variable is a shell accident, not a
+/// request to bind nothing.
+#[must_use]
+pub fn socket_path(socket_override: Option<&OsStr>, tmpdir: Option<&OsStr>) -> PathBuf {
+    fn set(value: Option<&OsStr>) -> Option<&OsStr> {
+        value.filter(|text| !text.is_empty())
+    }
+    if let Some(path) = set(socket_override) {
+        return PathBuf::from(path);
+    }
+    let base = set(tmpdir).map_or_else(|| PathBuf::from("/tmp"), PathBuf::from);
+    base.join(SOCKET_NAME)
+}
+
 /// The PROTOCOL identity, not a negotiated version and not the build's version. A mismatch means
 /// the two binaries were not shipped together, which is a packaging bug.
 ///
@@ -349,10 +399,55 @@ mod tests {
                   this test just built is the assertion, where `get` would soften it"
     )]
 
+    use std::ffi::OsStr;
+    use std::path::Path;
+
     use super::{
         DecodeError, FLAG_RESET, Request, Status, Verb, decode_detect_payload, decode_reply, decode_request,
-        encode_detect_payload, encode_reply, encode_request,
+        encode_detect_payload, encode_reply, encode_request, socket_path,
     };
+
+    fn address(socket_override: Option<&str>, tmpdir: Option<&str>) -> std::path::PathBuf {
+        socket_path(socket_override.map(OsStr::new), tmpdir.map(OsStr::new))
+    }
+
+    #[test]
+    fn the_address_is_the_override_then_tmpdir_then_the_legible_last_resort() {
+        assert_eq!(
+            address(Some("/run/private.sock"), Some("/tmp/x")),
+            Path::new("/run/private.sock")
+        );
+        assert_eq!(
+            address(None, Some("/tmp/x")),
+            Path::new("/tmp/x/slopdesk-screend.sock")
+        );
+        assert_eq!(address(None, None), Path::new("/tmp/slopdesk-screend.sock"));
+    }
+
+    /// An exported-but-blank variable is a shell accident. Reading it as a request would bind the
+    /// empty path on one end while the other end, which already filtered it, dialled the default.
+    #[test]
+    fn an_empty_variable_is_unset_rather_than_the_empty_path() {
+        assert_eq!(
+            address(Some(""), Some("/tmp/x")),
+            Path::new("/tmp/x/slopdesk-screend.sock")
+        );
+        assert_eq!(
+            address(Some(""), Some("")),
+            Path::new("/tmp/slopdesk-screend.sock")
+        );
+    }
+
+    /// A `TMPDIR` with a trailing slash is what a shell hands over half the time, and the join must
+    /// not turn it into a doubled separator — two spellings of one address are two addresses to
+    /// anything comparing the strings.
+    #[test]
+    fn a_trailing_slash_on_tmpdir_does_not_double_the_separator() {
+        assert_eq!(
+            address(None, Some("/tmp/x/")),
+            Path::new("/tmp/x/slopdesk-screend.sock")
+        );
+    }
 
     #[test]
     fn a_request_survives_the_round_trip() {

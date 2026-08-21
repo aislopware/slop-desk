@@ -75,7 +75,9 @@ final class TerminalConfigBuilderTests: XCTestCase {
     func testBlockHollowCursorStyleEmitsNativeToken() {
         let map = parse(TerminalConfigBuilder.string(for: TerminalPreferences(cursorStyle: .blockHollow)))
         XCTAssertEqual(map["cursor-style"], "block_hollow")
-        XCTAssertEqual(TerminalPreferences.CursorStyle.allCases.count, 4, "Block / Block (hollow) / Bar / Underline")
+        // Four TOKENS. What each is called is `settings_catalog`'s `CURSOR_STYLES` and is asserted
+        // there, not here: this enum stopped carrying a label the day the two spellings diverged.
+        XCTAssertEqual(TerminalPreferences.CursorStyle.allCases.count, 4)
     }
 
     func testEmptyFamilyOrThemeIsSkippedNotEmittedEmpty() {

@@ -136,7 +136,8 @@ extension WorkspaceStore {
     /// is detached and travels as its own intent, never in the tree.
     static func bootstrapShape(from env: [String: String]) -> BootstrapShape {
         func singleTerminal(named host: String) -> TreeWorkspace {
-            let session = Session.singlePane(name: host, spec: PaneSpec(kind: .terminal, title: "Terminal"))
+            let spec = PaneSpec(kind: .terminal, title: TreeWorkspaceDefaults.paneTitle)
+            let session = Session.singlePane(name: host, spec: spec)
             return TreeWorkspace(sessions: [session], activeSessionID: session.id).normalized()
         }
         if let (target, video) = videoTarget(from: env) {

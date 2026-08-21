@@ -20,10 +20,55 @@ final class CodeBridgeServerTests: XCTestCase {
 
     /// A trailing slash on the root (a shape the extension could legitimately announce) still
     /// contains, and a window with NO folder open contains nothing at all.
+    ///
+    /// A window rooted at `/` also contains nothing, which is the one answer this test used to give
+    /// the other way round. A predicate that says "inside" for every path on the machine has stopped
+    /// being one, and the host now runs ONE containment rule for the editor bridge and for the
+    /// metadata RPC — where taking `/` would mean a pane whose cwd failed to resolve was silently
+    /// granted the filesystem. The cost is confined to this file: an unrouted open falls through to
+    /// `code-server -r`, which is where every open with no attached window goes anyway.
     func testContainmentEdges() {
         XCTAssertTrue(CodeBridgeServer.contains(root: "/a/b/", path: "/a/b/main.swift"))
-        XCTAssertTrue(CodeBridgeServer.contains(root: "/", path: "/main.swift"))
+        XCTAssertFalse(CodeBridgeServer.contains(root: "/", path: "/main.swift"))
         XCTAssertFalse(CodeBridgeServer.contains(root: "", path: "/a/b/main.swift"))
+    }
+
+    /// The escape this function used to answer TRUE for.
+    ///
+    /// It was a `hasPrefix` with a separator guard and no `..` handling at all, so
+    /// `contains(root: "/a", path: "/a/../../etc/passwd")` was TRUE. Nothing here refused it; a
+    /// `standardizingPath` in ``HostCodeServerPerformer`` happened to run first on the one live
+    /// path, and a `false` here falls back to a CLI that opens the file regardless — so this was a
+    /// landmine rather than a live escape. It is refused at the source now.
+    func testContainmentRefusesTraversalInEveryPosition() {
+        XCTAssertFalse(CodeBridgeServer.contains(root: "/a", path: "/a/../../etc/passwd"))
+        XCTAssertFalse(CodeBridgeServer.contains(root: "/a", path: "/a/../b"))
+        XCTAssertFalse(CodeBridgeServer.contains(root: "/a/b", path: "/a/b/../../../etc/passwd"))
+        XCTAssertFalse(CodeBridgeServer.contains(root: "/a/b", path: "/a/b//../../etc"))
+        XCTAssertFalse(CodeBridgeServer.contains(root: "/a/b", path: "/a/b/x/../y"))
+        // …and in the ROOT, which arrives over the bridge socket validated only for a leading `/`.
+        XCTAssertFalse(CodeBridgeServer.contains(root: "/a/..", path: "/etc/passwd"))
+        XCTAssertFalse(CodeBridgeServer.contains(root: "/a/../a", path: "/a/main.swift"))
+    }
+
+    /// Spellings that cannot climb are the same path, on either side of the question — a doubled
+    /// separator, a trailing slash, a `.` component. A rule with several behaviours for one path is
+    /// a rule somebody will test at only one of them.
+    func testContainmentCollapsesTheHarmlessSpellings() {
+        XCTAssertTrue(CodeBridgeServer.contains(root: "/a//b", path: "/a/b/main.swift"))
+        XCTAssertTrue(CodeBridgeServer.contains(root: "/a/b", path: "/a//b/./main.swift"))
+        XCTAssertTrue(CodeBridgeServer.contains(root: "/a/b", path: "/a/b/"))
+        XCTAssertTrue(CodeBridgeServer.contains(root: "/a/b/", path: "/a/b"))
+    }
+
+    /// A relative target names no window: the bridge routes ABSOLUTE host paths, and joining a
+    /// relative one to a workspace folder would invent a file nobody asked for. `""` is the shape
+    /// ``HostCodeServerPerformer/splitLineColSuffix(_:)`` produces for a target that is all suffix
+    /// (`":12"`), and that file's documentation rests on this answering `nil`.
+    func testContainmentRefusesARelativeOrEmptyTarget() {
+        XCTAssertFalse(CodeBridgeServer.contains(root: "/a/b", path: "main.swift"))
+        XCTAssertFalse(CodeBridgeServer.contains(root: "/a/b", path: ""))
+        XCTAssertNil(CodeBridgeServer.route(target: "", among: [(fd: 4, root: "/a/b")]))
     }
 
     // MARK: Routing

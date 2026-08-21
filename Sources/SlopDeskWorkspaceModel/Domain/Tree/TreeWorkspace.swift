@@ -87,6 +87,10 @@ public enum TreeWorkspaceDefaults {
     public static let paneTitle = wsString { out, cap in slopdesk_ws_default_pane_title(out, cap) }
     /// The name a fresh workspace's first session takes.
     public static let sessionName = wsString { out, cap in slopdesk_ws_default_session_name(out, cap) }
+    /// The title a minted desktop pane takes — the one seeded name with a minter on each side.
+    public static let desktopPaneTitle = wsString { out, cap in
+        slopdesk_ws_default_desktop_pane_title(out, cap)
+    }
 }
 
 /// A §4-shaped door's answer as text. Empty when the crate answered nothing, which none of the

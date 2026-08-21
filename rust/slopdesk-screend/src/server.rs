@@ -336,19 +336,19 @@ fn encode_snapshot(model: &ScreenModel) -> (Status, Vec<u8>) {
     }
 }
 
-/// The default socket path.
+/// The default socket path, read out of this process's environment: `slopdesk-screend.sock` under
+/// `$TMPDIR`, or wherever `$SLOPDESK_SCREEND_SOCKET` names.
 ///
-/// `$SLOPDESK_SCREEND_SOCKET`, else `$TMPDIR/slopdesk-screend.sock`, else
-/// `/tmp/slopdesk-screend.sock`. No pid in the name — the same rule as every other socket in the
-/// tree (`check-supervisor.sh` ratchets it): a child that inherited the path must still find the
-/// service after a restart.
+/// The RULE is [`crate::protocol::socket_path`] and only the environment lookup is here, because
+/// the client end resolves the same address and had been resolving it differently — see that
+/// function. No pid in the name either way (`check-supervisor.sh` ratchets it): a child that
+/// inherited the path must still find the service after a restart.
 #[must_use]
 pub fn default_socket_path() -> PathBuf {
-    if let Some(path) = std::env::var_os("SLOPDESK_SCREEND_SOCKET") {
-        return PathBuf::from(path);
-    }
-    let base = std::env::var_os("TMPDIR").map_or_else(|| PathBuf::from("/tmp"), PathBuf::from);
-    base.join("slopdesk-screend.sock")
+    crate::protocol::socket_path(
+        std::env::var_os(crate::protocol::SOCKET_ENV_KEY).as_deref(),
+        std::env::var_os("TMPDIR").as_deref(),
+    )
 }
 
 #[cfg(test)]

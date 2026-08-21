@@ -33,15 +33,27 @@ import SlopDeskVideoProtocol
 /// NOTE: QP is INVERSE quality, so the AIMD senses flip against a bitrate controller — congestion
 /// RAISES Q.
 struct QPController: Equatable {
-    /// Sharpest (lowest) QP on a clean link. `SLOPDESK_QP_SHARP` (default 26 — the HW-validated
-    /// constant-QP value judged good enough; not sharper, to keep frame sizes / drops bounded on WiFi).
-    static let qSharp: Int = envInt("SLOPDESK_QP_SHARP", 26, min: 1, max: 51)
-    /// Coarsest (highest) QP under sustained congestion. `SLOPDESK_QP_COARSE` (default 40).
-    static let qCoarse: Int = envInt("SLOPDESK_QP_COARSE", 40, min: 1, max: 51)
-    /// QP increase per congested report (coarsen fast). `SLOPDESK_QP_UP_STEP` (default 3).
-    static let upStep: Int = envInt("SLOPDESK_QP_UP_STEP", 3, min: 1, max: 50)
-    /// Clean reports per one-QP sharpen (ease back slowly). `SLOPDESK_QP_DOWN_INTERVAL` (default 4).
-    static let downInterval: Int = envInt("SLOPDESK_QP_DOWN_INTERVAL", 4, min: 1, max: 10000)
+    /// The tuned defaults each knob falls back to, asked of the door rather than retyped.
+    ///
+    /// The four were hardware-validated together, so they are one table and `qp_control.rs` holds
+    /// it. A copy here would agree until the day someone retunes `sharp` in Rust — and then this
+    /// host would go on encoding at the old operating point with nothing to show for it: no build
+    /// error, no failing test, just a different picture. That is the two-spellings shape
+    /// `docs/55` §8 catalogues.
+    private static let fallbacks = slopdesk_qp_config_default()
+
+    /// Sharpest (lowest) QP on a clean link, from `SLOPDESK_QP_SHARP` — the HW-validated
+    /// constant-QP value judged good enough; not sharper, to keep frame sizes and drops bounded on
+    /// WiFi.
+    static let qSharp: Int = envInt("SLOPDESK_QP_SHARP", Int(fallbacks.sharp), min: 1, max: 51)
+    /// Coarsest (highest) QP under sustained congestion, from `SLOPDESK_QP_COARSE`.
+    static let qCoarse: Int = envInt("SLOPDESK_QP_COARSE", Int(fallbacks.coarse), min: 1, max: 51)
+    /// QP increase per congested report — coarsen fast — from `SLOPDESK_QP_UP_STEP`.
+    static let upStep: Int = envInt("SLOPDESK_QP_UP_STEP", Int(fallbacks.up_step), min: 1, max: 50)
+    /// Clean reports per one-QP sharpen — ease back slowly — from `SLOPDESK_QP_DOWN_INTERVAL`.
+    static let downInterval: Int = envInt(
+        "SLOPDESK_QP_DOWN_INTERVAL", Int(fallbacks.down_interval), min: 1, max: 10000,
+    )
 
     /// Parse + CLAMP an int config value to `[min, max]`, falling back to `def`. The lookup resolves
     /// through ``EnvConfig`` (ProcessInfo env → overlay) instead of `ProcessInfo` directly, so a GUI

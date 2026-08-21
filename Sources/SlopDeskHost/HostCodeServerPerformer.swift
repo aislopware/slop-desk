@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 import SlopDeskProtocol
 
@@ -126,23 +127,48 @@ enum HostCodeServerPerformer {
 
     /// Splits a trailing `:line[:col]` numeric suffix off `target` (at most two colon-number runs,
     /// leading colon kept in the suffix) — the existence check needs the bare path while the
-    /// workbench CLI wants the full `path:line:col`. Mirrors the client detector's splitter.
+    /// workbench CLI wants the full `path:line:col`.
+    ///
+    /// The suffix comes from `slopdesk-terminal`'s `link_action::line_col_suffix`, which is the rule
+    /// the client's own detector splits with, so the suffix this puts back is exactly the one that
+    /// was taken off. The PATH is what is left over, taken here rather than through a second door:
+    /// a substring of a string this side already holds is not a fact the two languages could
+    /// disagree about, and the suffix is ASCII colons and digits, so dropping that many `Character`s
+    /// removes those bytes and no others.
+    ///
+    /// **The one place the crate's answer differs from the Swift this replaced, and why the crate
+    /// wins.** For a target that is ALL suffix (`":12"`) the deleted Swift answered
+    /// `("", ":12")`; the crate answers `""`, on the ground that a suffix with no path in front of
+    /// it is not a suffix. Both readings are refused identically by all three callers here, so
+    /// nothing observable moves: `openResponse` rejects an empty path and a relative `":12"` alike
+    /// at the leading-`/` guard, and `CodeBridgeServer.route` matches neither against any open
+    /// workspace root, so `open` answers `false` before `openCommand` is ever reached. Carrying the
+    /// Swift reading forward would have meant keeping a second splitter alive to express a
+    /// difference no caller can see.
     static func splitLineColSuffix(_ target: String) -> (path: String, suffix: String) {
-        let chars = Array(target)
-        func runStart(endingAt end: Int) -> Int? {
-            var index = end
-            var sawDigit = false
-            while index > 0, chars[index - 1].isASCII, chars[index - 1].isNumber {
-                index -= 1
-                sawDigit = true
+        let suffix = linkSuffix(of: target)
+        return (String(target.dropLast(suffix.count)), suffix)
+    }
+}
+
+/// Reads `slopdesk_link_line_col_suffix` under the docs/55 §4 convention.
+///
+/// `""` is a REAL answer — most open targets carry no `:line:col` — so a zero-length reply maps to
+/// the empty string rather than to a failure. The retry exists because the convention has one, not
+/// because a path with a `:12:3` on the end will ever outgrow the first lend.
+private func linkSuffix(of target: String) -> String {
+    Array(target.utf8).withUnsafeBufferPointer { text -> String in
+        var room = [UInt8](repeating: 0, count: 64)
+        var needed = room.withUnsafeMutableBufferPointer { out in
+            slopdesk_link_line_col_suffix(text.baseAddress, text.count, out.baseAddress, out.count)
+        }
+        if needed > room.count {
+            room = [UInt8](repeating: 0, count: needed)
+            needed = room.withUnsafeMutableBufferPointer { out in
+                slopdesk_link_line_col_suffix(text.baseAddress, text.count, out.baseAddress, out.count)
             }
-            if sawDigit, index > 0, chars[index - 1] == ":" { return index - 1 }
-            return nil
         }
-        guard let colStart = runStart(endingAt: chars.count) else { return (target, "") }
-        if let lineStart = runStart(endingAt: colStart) {
-            return (String(chars[0..<lineStart]), String(chars[lineStart...]))
-        }
-        return (String(chars[0..<colStart]), String(chars[colStart...]))
+        guard needed > 0, needed <= room.count else { return "" }
+        return String(bytes: room[0..<needed], encoding: .utf8) ?? ""
     }
 }

@@ -222,6 +222,27 @@ final class MetadataResponseBuilderTests: XCTestCase {
         XCTAssertEqual(fake.gitDiffCalls.count, 1)
     }
 
+    /// A pathspec that climbs and comes back is refused, not resolved. Lexical resolution is only
+    /// correct when no component on the way is a symlink, and nothing in a string can say whether
+    /// one is — so the component is refused wherever it sits.
+    func testGitDiffRejectsATraversalThatWouldLandBackInside() {
+        for file in ["src/../src/main.swift", "src/..", "./../src/main.swift", "a/../../repo/a"] {
+            let fake = FakeQuery()
+            let r = response(MetadataResponseBuilder(query: fake), .gitDiff, Data(file.utf8))
+            XCTAssertEqual(r.status, MetadataStatus.error.rawValue, "rejected: \(file)")
+            XCTAssertTrue(fake.gitDiffCalls.isEmpty, "no diff for: \(file)")
+        }
+    }
+
+    /// The pathspec reaching git is NORMALIZED where the deleted implementation echoed the argument
+    /// back verbatim. Same file either way; one spelling rather than several.
+    func testGitDiffNormalizesThePathspecItPassesOn() {
+        let fake = FakeQuery()
+        let r = response(MetadataResponseBuilder(query: fake), .gitDiff, Data("./src//main.swift".utf8))
+        XCTAssertEqual(r.status, MetadataStatus.ok.rawValue)
+        XCTAssertEqual(fake.gitDiffCalls.first?.file, "src/main.swift")
+    }
+
     // MARK: - listDirectory confinement + caps
 
     func testListDirectoryEmptyArgUsesPaneCwd() {
@@ -269,6 +290,78 @@ final class MetadataResponseBuilderTests: XCTestCase {
         XCTAssertTrue(fake.listDirectoryCalls.isEmpty)
     }
 
+    /// The adversarial sweep, in one place, over the argument that actually names a directory to
+    /// read. Every one of these must reach `.error` with the query untouched — a `..` in any
+    /// position including one that would resolve back inside, the filesystem root, `/` dressed up
+    /// as `//`, and an interior NUL (which `execve` would truncate at, so a path whose meaning
+    /// changes on the way to the syscall is refused rather than reasoned about).
+    func testListDirectoryRejectsEveryTraversalShapeWithoutCallingQuery() {
+        for path in [
+            "..",
+            "../",
+            "../../etc",
+            "src/../../etc",
+            "src/..",
+            "/Users/dev/repo/../../etc",
+            "/Users/dev/repo/src/../lib",
+            "src/../src",
+            "/",
+            "//",
+            "/etc/passwd",
+            "/Users/dev",
+            "src/\u{0}/etc",
+        ] {
+            let fake = FakeQuery()
+            let r = response(MetadataResponseBuilder(query: fake), .listDirectory, Data(path.utf8))
+            XCTAssertEqual(r.status, MetadataStatus.error.rawValue, "rejected: \(path)")
+            XCTAssertTrue(fake.listDirectoryCalls.isEmpty, "no read for: \(path)")
+        }
+    }
+
+    /// The spellings that are the SAME path and must all reach the query normalized — `//`, a
+    /// trailing slash and a `.` component cannot climb, so refusing them would only mean one rule
+    /// with several behaviours.
+    func testListDirectoryNormalizesTheHarmlessSpellings() {
+        for path in ["src//net", "src/net/", "./src/./net", "/Users/dev/repo//src/net"] {
+            let fake = FakeQuery()
+            let r = response(MetadataResponseBuilder(query: fake), .listDirectory, Data(path.utf8))
+            XCTAssertEqual(r.status, MetadataStatus.ok.rawValue, "accepted: \(path)")
+            XCTAssertEqual(fake.listDirectoryCalls, ["/Users/dev/repo/src/net"], "normalized: \(path)")
+        }
+    }
+
+    /// The pane's own cwd, named explicitly rather than by the empty-argument default: the root IS
+    /// inside itself, and a listing of it is the most ordinary request this verb serves.
+    func testListDirectoryAcceptsTheRootItselfNamedInFull() {
+        let fake = FakeQuery()
+        let r = response(MetadataResponseBuilder(query: fake), .listDirectory, Data(root.utf8))
+        XCTAssertEqual(r.status, MetadataStatus.ok.rawValue)
+        XCTAssertEqual(fake.listDirectoryCalls, [root])
+    }
+
+    /// A pane whose cwd could not be resolved to a real project must be refused, not handed the
+    /// machine. An empty cwd already answers `.error` before confinement; a cwd of `/` reaches
+    /// confinement and is refused there, because a root that contains everything is not a root.
+    func testAnUnusableCwdConfinesNothing() {
+        for cwd in ["/", "//", "relative/dir", "/Users/dev/.."] {
+            let fake = FakeQuery()
+            fake.cwd = cwd
+            let r = response(MetadataResponseBuilder(query: fake), .listDirectory, Data("etc".utf8))
+            XCTAssertEqual(r.status, MetadataStatus.error.rawValue, "rejected root: \(cwd)")
+            XCTAssertTrue(fake.listDirectoryCalls.isEmpty, "no read under root: \(cwd)")
+        }
+    }
+
+    /// A trailing slash on the ROOT is a spelling the pane's cwd probe could legitimately produce,
+    /// and it must not change a single answer.
+    func testATrailingSlashOnTheRootChangesNothing() {
+        let fake = FakeQuery()
+        fake.cwd = root + "/"
+        let r = response(MetadataResponseBuilder(query: fake), .listDirectory, Data("src".utf8))
+        XCTAssertEqual(r.status, MetadataStatus.ok.rawValue)
+        XCTAssertEqual(fake.listDirectoryCalls, ["/Users/dev/repo/src"])
+    }
+
     func testListDirectoryNotFoundWhenQueryReturnsNil() {
         let fake = FakeQuery()
         fake.dirEntries = nil
@@ -297,12 +390,44 @@ final class MetadataResponseBuilderTests: XCTestCase {
         XCTAssertEqual(try MetadataCodec.decodeAgentSessionList(r.payload), fake.sessionList)
     }
 
+    /// A session id is an ABSOLUTE host path — every one a client can hold came back from
+    /// `listAgentSessions`, whose rows are built from directory entries.
     func testReadAgentSessionOk() {
         let fake = FakeQuery()
-        let r = response(MetadataResponseBuilder(query: fake), .readAgentSession, Data("abc.jsonl".utf8))
+        let id = "/Users/dev/.claude/projects/-Users-dev-repo/abc.jsonl"
+        let r = response(MetadataResponseBuilder(query: fake), .readAgentSession, Data(id.utf8))
         XCTAssertEqual(r.status, MetadataStatus.ok.rawValue)
         XCTAssertEqual(r.payload, fake.sessionBytes)
-        XCTAssertEqual(fake.readAgentSessionCalls, ["abc.jsonl"])
+        XCTAssertEqual(fake.readAgentSessionCalls, [id])
+    }
+
+    /// A RELATIVE id is refused here now, where it used to be passed through and refused one fork
+    /// later by the probe (which answers `.notFound` for anything not starting with `/`). Same
+    /// outcome for the user, one spawn cheaper, and it keeps this builder's contract literally true:
+    /// an argument it will not act on never reaches a query method.
+    func testReadAgentSessionRejectsARelativeIdWithoutCallingQuery() {
+        let fake = FakeQuery()
+        let r = response(MetadataResponseBuilder(query: fake), .readAgentSession, Data("abc.jsonl".utf8))
+        XCTAssertEqual(r.status, MetadataStatus.error.rawValue)
+        XCTAssertTrue(fake.readAgentSessionCalls.isEmpty)
+    }
+
+    /// `/` is a well-formed absolute path and is not a session file; a `..` in any position is
+    /// refused wherever it sits, including one that would have resolved back inside.
+    func testReadAgentSessionRejectsTheAdversarialIdShapes() {
+        for id in [
+            "/",
+            "//",
+            "/Users/dev/.claude/../../../etc/passwd",
+            "/Users/dev/.claude/projects/-p/../-p/abc.jsonl",
+            "/Users/dev/..",
+            "..",
+        ] {
+            let fake = FakeQuery()
+            let r = response(MetadataResponseBuilder(query: fake), .readAgentSession, Data(id.utf8))
+            XCTAssertEqual(r.status, MetadataStatus.error.rawValue, "rejected: \(id)")
+            XCTAssertTrue(fake.readAgentSessionCalls.isEmpty, "no read for: \(id)")
+        }
     }
 
     func testReadAgentSessionRejectsTraversalWithoutCallingQuery() {
@@ -324,7 +449,10 @@ final class MetadataResponseBuilderTests: XCTestCase {
     func testReadAgentSessionNotFoundWhenQueryReturnsNil() {
         let fake = FakeQuery()
         fake.sessionBytes = nil
-        let r = response(MetadataResponseBuilder(query: fake), .readAgentSession, Data("abc.jsonl".utf8))
+        let r = response(
+            MetadataResponseBuilder(query: fake), .readAgentSession,
+            Data("/Users/dev/.claude/projects/-p/abc.jsonl".utf8),
+        )
         XCTAssertEqual(r.status, MetadataStatus.notFound.rawValue)
     }
 
@@ -343,7 +471,7 @@ final class MetadataResponseBuilderTests: XCTestCase {
         let fake = FakeQuery()
         fake.sessionBytes = Data(repeating: 0x7B, count: 32)
         let builder = MetadataResponseBuilder(query: fake, maxOpaquePayloadBytes: 8)
-        let r = response(builder, .readAgentSession, Data("a.jsonl".utf8))
+        let r = response(builder, .readAgentSession, Data("/Users/dev/.claude/projects/-p/a.jsonl".utf8))
         XCTAssertEqual(r.payload.count, 8)
     }
 

@@ -1,3 +1,6 @@
+import CSlopDeskFFI
+import SlopDeskWorkspaceModel
+
 // MARK: - Config action-name → registry bindingID resolver (the N5 resolver core)
 
 /// Maps config action NAMES (`new_tab`, `split_right`, `goto_tab:N`, …) to this registry's stable
@@ -8,7 +11,7 @@
 /// `KeybindConfigLoader.apply` folds a resolved override into ``KeybindingPreferences`` through an
 /// OPTIONAL `resolveNamedBinding` hook — but the loader CANNOT call this registry directly
 /// (`KeybindConfigLoader` lives in `SlopDeskVideoProtocol`, which must not import
-/// `SlopDeskWorkspaceCore`; that layering is exactly why the hook is a closure). This table is the
+/// `SlopDeskWorkspaceCore`; that layering is exactly why the hook is a closure). This is the
 /// production resolver the app layer (`SlopDeskClientUI`, which imports both) installs into that hook so
 /// a user's `keybind = cmd+t:new_tab` actually rebinds the registry action instead of silently doing
 /// nothing.
@@ -24,52 +27,35 @@
 /// `scripts/check-ios.sh`). Names taken from `spec/reference__keybindings.md` "Config keys" +
 /// `spec/customization__custom-keybindings.md`.
 public extension WorkspaceBindingRegistry {
-    /// The bare config name → registry bindingID table (the non-parameterized actions). The values
-    /// are exactly the `WorkspaceBinding.id`s in ``bindings`` / ``selectPaneBindings`` — pinned to have
-    /// no orphan by `WorkspaceActionConfigNamesTests`. The parameterized `goto_tab:N` family is resolved
-    /// separately (it expands to nine per-digit ids in ``selectPaneBindings``).
-    private static let configNameToBindingID: [String: String] = [
-        // Panes
-        "new_tab": "tab.new",
-        "split_right": "pane.splitRight",
-        "split_left": "pane.splitLeft",
-        "split_down": "pane.splitDown",
-        "split_up": "pane.splitUp",
-        "close_pane": "pane.close",
-        // Tabs
-        "reopen_closed": "tab.reopenClosed",
-        "next_tab": "tab.next",
-        "prev_tab": "tab.prev",
-        // Focus
-        "focus_left": "focus.left",
-        "focus_right": "focus.right",
-        "focus_up": "focus.up",
-        "focus_down": "focus.down",
-        // View
-        "command_palette": "view.palette",
-        "cheat_sheet": "view.cheatSheet",
-        "find": "view.find",
-    ]
-
     /// Resolve a config action `name` (with an optional `arg`) to this registry's binding id, or
     /// `nil` if the name is unknown, the arg is out of range, or the action is a libghostty-only responder
     /// action with no ``WorkspaceAction`` (validate-then-drop — never a trap, never an invented id).
+    ///
+    /// The table and the `goto_tab` bound are `slopdesk-workspace`'s `keybind`, reached through
+    /// `slopdesk_ws_binding_id_for_config_name`. Both used to be written here as well, and the
+    /// difference between the two spellings was the `goto_tab` argument: the Swift bounded it to
+    /// `1...9`, the crate's grammar accepted any integer, and only the Swift bound is real — there
+    /// are nine per-digit bindings, so `goto_tab:99` names nothing. That bound now lives on the
+    /// Rust side, in both halves of the line: the grammar refuses the argument outright (so a
+    /// keybinding editor stops calling such a line valid), and the resolver here answers nothing
+    /// for it (so nothing reaches this registry that it cannot bind).
     ///
     /// - `goto_tab` requires a base-10 `arg` in `1...9` → `pane.select.<n>`; any other arg (`0`, `10`,
     ///   non-numeric, surrounding whitespace, or a missing arg) is dropped. The NAME stays `goto_tab`
     ///   because it is Ghostty's, not ours — what a ⌘-digit lands on in this app is a pane, and a config
     ///   that asks for "the Nth thing" gets the Nth thing this workspace counts.
-    /// - Every other supported name is a bare action looked up in ``configNameToBindingID``; a stray `arg`
-    ///   on a bare action is ignored (the action takes none).
+    /// - Every other supported name is a bare action; a stray `arg` on a bare action is ignored (the
+    ///   action takes none).
     /// - `copy_to_clipboard` / `paste_from_clipboard` / `select_all` and any unrecognised name → `nil`.
     static func bindingID(forConfigName name: String, arg: String?) -> String? {
-        // The ONE parameterized action: `goto_tab:N`, N ∈ 1…9 → pane.select.<n>. Validate the arg as a
-        // base-10 integer in range BEFORE building the id (no `!`, no out-of-range id).
-        if name == "goto_tab" {
-            guard let arg, let n = Int(arg), (1...9).contains(n) else { return nil }
-            return "pane.select.\(n)"
+        withOptionalText(name) { action, actionLength, _ in
+            withOptionalText(arg) { argument, argumentLength, _ in
+                wsAnswer { out, cap in
+                    slopdesk_ws_binding_id_for_config_name(
+                        action, actionLength, argument, argumentLength, out, cap,
+                    )
+                }
+            }
         }
-        // A bare action — the arg (if any) is irrelevant. Unknown name → nil (drop).
-        return configNameToBindingID[name]
     }
 }

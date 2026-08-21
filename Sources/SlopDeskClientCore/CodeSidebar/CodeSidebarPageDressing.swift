@@ -47,12 +47,20 @@ import Foundation
 
 package enum CodeSidebarPageDressing {
     /// The CSS family the nerd-font @font-face declares — the name the seeded `editor.fontFamily`
-    /// (`slopdesk-codeseed`'s `resources/settings.json`, host side) lists as the private-use
+    /// (`slopdesk-codeseed`'s `settings::NERD_FONT_FAMILY`, host side) lists as the private-use
     /// fallback.
+    ///
+    /// Spelled here rather than asked for, deliberately, and gated rather than ported. These two
+    /// names cross no door because `slopdesk-codeseed` is a HOST crate — it carries the whole seed
+    /// history, and linking it into the FFI artifact would drag those string tables into the iOS
+    /// binary to fetch two font names. So `check-supervisor.sh` compares the pair instead, which
+    /// costs nothing at runtime and fails just as loudly. If the injected face and the seeded stack
+    /// ever disagree the panel silently falls through to the system mono: no error, no crash, just
+    /// the wrong shapes beside a terminal drawing the right ones.
     package static let nerdFontFamilyName = "Symbols Nerd Font"
 
     /// The CSS family the JetBrains Mono @font-faces declare — the seeded `editor.fontFamily`'s
-    /// PRIMARY. Must match the host-side seed string.
+    /// PRIMARY, and `slopdesk-codeseed`'s `settings::MONO_FONT_FAMILY`. Gated, per above.
     package static let monoFontFamilyName = "JetBrains Mono"
 
     /// The DOM id of the injected style tag — the script's own re-injection guard keys on it.

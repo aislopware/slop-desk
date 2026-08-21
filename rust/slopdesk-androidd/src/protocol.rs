@@ -205,6 +205,16 @@ pub fn open_refusal(state: Option<&str>) -> Option<BridgeError> {
 
 /// logcat's priority letters, least severe first. A level outside this set would be interpolated
 /// into an argument vector, and `logcat` treats an unparsable filter spec as a fatal error.
+///
+/// This is also the CLIENT'S MENU, read through `slopdesk_ffi::android_log_level` — one array, not
+/// a guarantee here and an offer over there. The Swift copy that used to be the offer had drifted
+/// to five letters, dropping `F`, so the one severity a console gets opened to find could not be
+/// filtered for. A menu built from anything but the array the spawner validates against can only
+/// be a subset that silently withholds a level or a superset that kills the child.
+///
+/// `S` (silent) is deliberately absent: it is a level `logcat` accepts and it means "print
+/// nothing", which is a console that connects and then looks broken. `slopdesk_devicelog`'s parser
+/// does accept it, because reading a spec that named it is a different question from offering it.
 pub const LOGCAT_LEVELS: [&str; 6] = ["V", "D", "I", "W", "E", "F"];
 
 /// The requested level if it is one logcat knows, else `I`.
@@ -319,6 +329,21 @@ mod tests {
         assert_eq!(logcat_level(Some("e")), "I");
         assert_eq!(logcat_level(Some("*:S; rm -rf /")), "I");
         assert_eq!(logcat_level(None), "I");
+    }
+
+    /// The half of the alphabet the Swift menu used to stop short of. `F` is a level a client may
+    /// ask for and this daemon must honour rather than quietly widen to `I` — a fatal-only console
+    /// that fills with debug rows is worse than one that refuses.
+    #[test]
+    fn fatal_is_a_level_a_client_may_ask_for() {
+        assert_eq!(logcat_level(Some("F")), "F");
+        // Silent is NOT, even though `logcat` would take it: it is a console that prints nothing.
+        assert_eq!(logcat_level(Some("S")), "I");
+        assert_eq!(
+            logcat_level(Some("A")),
+            "I",
+            "assert is a printed priority, not a filter one"
+        );
     }
 
     #[test]

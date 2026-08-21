@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 import XCTest
 @testable import SlopDeskVideoProtocol
@@ -176,31 +177,34 @@ final class KeybindConfigLoaderTests: XCTestCase {
 
     // MARK: the production-shaped resolver folds named/param actions end-to-end
 
-    /// A hand-built stand-in for the production `WorkspaceBindingRegistry.bindingID(forConfigName:arg:)`
-    /// resolver installed at launch (`SlopDeskClientApp.swift`). The VideoProtocol test target cannot import
-    /// `SlopDeskWorkspaceCore` (the registry lives there — the very reason the loader takes a closure hook),
-    /// so this mirrors the table's CONTRACT: bare names map to ids, `goto_tab:N` (N ∈ 1…9) expands per-digit,
-    /// and an unknown name / out-of-range arg resolves to `nil` (drop, no trap). It is deliberately NOT the
-    /// registry — it is a faithful fake of the shape the production resolver wires, so these loader-level cases stay in-module.
+    /// The same resolution the production hook performs, asked of the same door.
+    ///
+    /// This was a hand-built stand-in — a three-name table plus its own `goto_tab` bound — written
+    /// because the VideoProtocol test target cannot import `SlopDeskWorkspaceCore`, where
+    /// `WorkspaceBindingRegistry.bindingID(forConfigName:arg:)` lives. It does not need to: the
+    /// table moved to `slopdesk-workspace`'s `keybind` and the registry is now marshalling around
+    /// `slopdesk_ws_binding_id_for_config_name`, which this target reaches directly. A faithful
+    /// fake of a table is still a second copy of it, and the copy had already inherited the bound
+    /// the port went on to correct.
     private func handBuiltResolver(
         _ named: KeybindConfigLoader.NamedBinding,
     ) -> (bindingID: String, chord: KeybindingPreferences.KeyChord)? {
-        let bareTable: [String: String] = [
-            "new_tab": "tab.new",
-            "close_pane": "pane.close",
-            "split_right": "pane.splitRight",
-        ]
-        let bindingID: String? =
-            if named.id == "goto_tab" {
-                if let arg = named.arg, let n = Int(arg), (1...9).contains(n) {
-                    "pane.select.\(n)"
-                } else {
-                    nil
+        let name = Array(named.id.utf8)
+        let argument = Array((named.arg ?? "").utf8)
+        let resolved: String? = name.withUnsafeBufferPointer { action in
+            argument.withUnsafeBufferPointer { arg in
+                var room = [UInt8](repeating: 0, count: 64)
+                let needed = room.withUnsafeMutableBufferPointer { out in
+                    slopdesk_ws_binding_id_for_config_name(
+                        action.baseAddress, action.count, arg.baseAddress, arg.count,
+                        out.baseAddress, out.count,
+                    )
                 }
-            } else {
-                bareTable[named.id]
+                guard needed > 0, needed <= room.count else { return nil }
+                return String(bytes: room[0..<needed], encoding: .utf8)
             }
-        guard let id = bindingID else { return nil }
+        }
+        guard let id = resolved else { return nil }
         return (bindingID: id, chord: named.chord)
     }
 

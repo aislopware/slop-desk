@@ -30,6 +30,23 @@ final class SettingsOptionCatalogTests: XCTestCase {
         assertRoundTrips(.cursorStyle, TerminalPreferences.CursorStyle.allCases, "cursor style")
     }
 
+    /// The all-settings index prints the current cursor style beside the ✎ that jumps to the picker
+    /// drawing this same group, so the two have to read the same word. They did not: the index went
+    /// through a `CursorStyle.displayName` saying "Block (hollow)" while the catalog — and therefore
+    /// the control — said "Hollow", one setting reading as two values a scroll apart on one page.
+    /// The label is now only the catalog's, and this is the assertion that keeps it that way.
+    func testEveryCursorStyleReadsAsTheLabelItsOwnPickerDraws() {
+        let drawn = SettingsCatalog.options(.cursorStyle, as: TerminalPreferences.CursorStyle.self)
+        XCTAssertFalse(drawn.isEmpty, "the group crossed empty, so the comparison below proves nothing")
+        for option in drawn {
+            XCTAssertEqual(
+                SettingsCatalog.label(.cursorStyle, for: option.value.rawValue),
+                option.label,
+                "the index readout for \(option.value.rawValue) is not what its card says",
+            )
+        }
+    }
+
     func testNewTabPositionCardsCoverEveryPosition() {
         assertRoundTrips(.newTabPosition, NewTabPosition.allCases, "new tab position")
     }

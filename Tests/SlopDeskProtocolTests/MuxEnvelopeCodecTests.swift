@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import XCTest
 @testable import SlopDeskProtocol
 
@@ -178,6 +179,43 @@ final class MuxEnvelopeCodecTests: XCTestCase {
         decoder.append(frame)
         XCTAssertThrowsError(try decoder.nextFrame()) { error in
             XCTAssertEqual(error as? SlopDeskError, .unknownMessageType(0xFF))
+        }
+    }
+
+    /// The near side's rebuild REFUSES a type byte it has no arm for, rather than picking one.
+    ///
+    /// `slopdesk_mux_frame_decode` never hands one over — the test above is what says so — so this
+    /// drives `MuxFrame.build` directly, because the rule is about what the face does when it is
+    /// asked, not about what the door lets through. It used to answer `.windowAdjust`, which is
+    /// flow-control CREDIT: had the two type lists ever stopped agreeing, an unrecognised byte would
+    /// have granted a peer a send window out of a struct field nothing filled. Rust's `unpack` in
+    /// `rust/slopdesk-ffi/src/mux_envelope.rs` answers `None` for the same input, and that is now the
+    /// answer on both sides.
+    func testRebuildingAnUnknownMuxTypeRefusesRatherThanInventingAWindowAdjust() {
+        var flat = SlopDeskMuxFrame()
+        flat.channel_id = 7
+        flat.bytes_to_add = 0xDEAD_BEEF // what the old default arm would have handed out as credit
+        for byte in [UInt8(0), 6, 0x7F, 0xFE, 0xFF] {
+            flat.mux_type = byte
+            let rebuilt = withUnsafeTemporaryAllocation(byteCount: 1, alignment: 1) { arena in
+                MuxFrame.build(flat, UnsafeRawBufferPointer(arena), Data())
+            }
+            XCTAssertNil(rebuilt, "mux type \(byte) is not a frame, so the face must not build one")
+        }
+    }
+
+    /// Every type byte the shared vocabulary DOES name still rebuilds, so the refusal above is a
+    /// refusal and not a rebuild that stopped working. `allCases` rather than five literals: a sixth
+    /// mux type joins this loop by existing.
+    func testEveryKnownMuxTypeStillRebuilds() {
+        var flat = SlopDeskMuxFrame()
+        flat.channel_id = 7
+        for type in MuxFrameType.allCases {
+            flat.mux_type = type.rawValue
+            let rebuilt = withUnsafeTemporaryAllocation(byteCount: 1, alignment: 1) { arena in
+                MuxFrame.build(flat, UnsafeRawBufferPointer(arena), Data())
+            }
+            XCTAssertEqual(rebuilt?.muxType, type, "the face lost an arm for \(type)")
         }
     }
 

@@ -37,6 +37,64 @@
 //! byte string: the peer may be an older or corrupt build, and a desynchronised socket is the
 //! expensive failure this crate exists to make impossible to reach two different ways.
 
+/// The control socket's name inside whichever directory resolves.
+pub const CONTROL_SOCKET_NAME: &str = "slopdesk-superd.sock";
+
+/// Overrides the whole socket directory. Test-only in practice: the gate script needs two superds
+/// that cannot see each other.
+pub const DIRECTORY_ENV_KEY: &str = "SLOPDESK_SUPERD_DIR";
+
+/// Overrides the control socket path outright.
+pub const SOCKET_ENV_KEY: &str = "SLOPDESK_SUPERD_SOCKET";
+
+/// Where superd listens, decided from the three environment values that decide it.
+///
+/// `$SLOPDESK_SUPERD_SOCKET`, else `$SLOPDESK_SUPERD_DIR/slopdesk-superd.sock`, else
+/// `$TMPDIR/slopdesk-superd.sock`, else `/tmp/slopdesk-superd.sock`. `$TMPDIR` on macOS is already
+/// a per-user, `0700` directory, which is what makes the un-suffixed name safe. `/tmp` is not, and
+/// the last resort exists only so a hand-run superd in a stripped environment fails somewhere
+/// legible — `slopdesk_screenwire::socket_path` records the same ruling for the same ladder.
+///
+/// ## Why an address is in the FRAMING crate
+///
+/// For the reason every other layout here is: it is the one thing both ends must agree on before a
+/// single frame can flow, and it cannot be negotiated. hostd has to FIND the control socket before
+/// it can say `hello`, so there is no message in which superd could tell it — `superd/src/paths.rs`
+/// says exactly that, and calls a divergence in this one name "not a protocol error, it is
+/// silence". superd's other three paths stay superd's, because hostd is TOLD them in the `hello`
+/// reply and a Swift constant for any of them would be a second answer.
+///
+/// ## The silence, which had already happened, twice
+///
+/// `SupervisorPaths.controlSocket` resolved this itself and the two rules were not the same rule.
+/// It read `NSTemporaryDirectory()`, which on Darwin does not consult `$TMPDIR` at all — it answers
+/// `confstr(_CS_DARWIN_USER_TEMP_DIR)` whatever the environment says — so any process with a
+/// `TMPDIR` of its own had superd binding one path and hostd dialling another. And it knew nothing
+/// of `SLOPDESK_SUPERD_DIR`, so the gate script's private daemon was reachable by nothing. The pair
+/// agreed in the one case anyone exercises only because launchd sets `TMPDIR` to the very directory
+/// that call returns.
+///
+/// ## Empty is unset
+///
+/// Every value is filtered for emptiness. An exported-but-blank variable is a shell accident, not a
+/// request to bind nothing.
+#[must_use]
+pub fn control_socket_path(
+    socket_override: Option<&str>,
+    directory: Option<&str>,
+    tmpdir: Option<&str>,
+) -> String {
+    fn set(value: Option<&str>) -> Option<&str> {
+        value.filter(|text| !text.is_empty())
+    }
+    if let Some(path) = set(socket_override) {
+        return path.to_owned();
+    }
+    let base = set(directory).or_else(|| set(tmpdir)).unwrap_or("/tmp");
+    let separator = if base.ends_with('/') { "" } else { "/" };
+    format!("{base}{separator}{CONTROL_SOCKET_NAME}")
+}
+
 /// Frame carries no file descriptor.
 pub const TAG_PLAIN: u8 = 0x01;
 /// Frame carries exactly one `SCM_RIGHTS` file descriptor.
@@ -209,9 +267,60 @@ mod tests {
     )]
 
     use super::{
-        MAX_BODY_BYTES, TAG_BLOCKS, TAG_OUTPUT, TAG_PLAIN, TAG_SNIFF, TAG_WITH_DESCRIPTOR, body_length,
-        header, is_known_tag, max_output_payload, pack_output, pack_pane_json, parse_output, parse_pane_json,
+        CONTROL_SOCKET_NAME, MAX_BODY_BYTES, TAG_BLOCKS, TAG_OUTPUT, TAG_PLAIN, TAG_SNIFF,
+        TAG_WITH_DESCRIPTOR, body_length, control_socket_path, header, is_known_tag, max_output_payload,
+        pack_output, pack_pane_json, parse_output, parse_pane_json,
     };
+
+    /// The whole ladder, in the order it is tried. Each rung is a case that had a wrong answer on
+    /// one side or the other before this became one function.
+    #[test]
+    fn the_control_address_falls_through_its_ladder_in_order() {
+        assert_eq!(
+            control_socket_path(Some("/run/explicit.sock"), Some("/dir"), Some("/tmpdir")),
+            "/run/explicit.sock",
+            "an outright override beats everything under it",
+        );
+        assert_eq!(
+            control_socket_path(None, Some("/dir"), Some("/tmpdir")),
+            format!("/dir/{CONTROL_SOCKET_NAME}"),
+            "the gate script's private directory — the rung Swift had never heard of",
+        );
+        assert_eq!(
+            control_socket_path(None, None, Some("/tmpdir")),
+            format!("/tmpdir/{CONTROL_SOCKET_NAME}"),
+            "the ordinary case, and the one NSTemporaryDirectory() answered differently",
+        );
+        assert_eq!(
+            control_socket_path(None, None, None),
+            format!("/tmp/{CONTROL_SOCKET_NAME}"),
+            "the stripped environment, which should fail somewhere legible",
+        );
+    }
+
+    /// An exported-but-blank variable is a shell accident. Reading it as a request would have meant
+    /// binding the empty path, or binding directly inside `/`.
+    #[test]
+    fn an_empty_environment_value_is_unset_at_every_rung() {
+        assert_eq!(
+            control_socket_path(Some(""), Some(""), Some("/tmpdir")),
+            format!("/tmpdir/{CONTROL_SOCKET_NAME}"),
+        );
+        assert_eq!(
+            control_socket_path(Some(""), Some(""), Some("")),
+            format!("/tmp/{CONTROL_SOCKET_NAME}")
+        );
+    }
+
+    /// A directory that already ends in a slash must not produce a doubled one: `//` is a legal but
+    /// DIFFERENT path string, and the two ends compare these as strings before they ever connect.
+    #[test]
+    fn a_trailing_slash_does_not_double() {
+        assert_eq!(
+            control_socket_path(None, None, Some("/tmpdir/")),
+            format!("/tmpdir/{CONTROL_SOCKET_NAME}"),
+        );
+    }
 
     #[test]
     fn the_tags_are_the_five_this_protocol_defines_and_no_others() {

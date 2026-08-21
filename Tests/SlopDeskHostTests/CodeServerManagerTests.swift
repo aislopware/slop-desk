@@ -952,7 +952,10 @@ final class HostCodeServerPerformerTests: XCTestCase {
         XCTAssertTrue(split("/a/b.py:12") == ("/a/b.py", ":12"))
         XCTAssertTrue(split("/a/b.py") == ("/a/b.py", ""))
         XCTAssertTrue(split("/a/v1:2/f.txt") == ("/a/v1:2/f.txt", ""), "a mid-path colon is not a suffix")
-        XCTAssertTrue(split(":42") == ("", ":42"), "a bare suffix leaves an empty path → the absolute guard rejects it")
+        XCTAssertTrue(
+            split(":42") == (":42", ""),
+            "all suffix and no path is not a suffix — the whole text stays the path, and the absolute guard rejects it",
+        )
         XCTAssertTrue(split("/a/b:1:2:3") == ("/a/b:1", ":2:3"), "at most two runs strip")
     }
 }

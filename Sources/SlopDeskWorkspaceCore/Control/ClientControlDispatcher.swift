@@ -343,10 +343,17 @@ public struct ClientControlDispatcher {
         guard !text.isEmpty || !keys.isEmpty else {
             return Self.error(id: id, message: "nothing to send (need text or keys)")
         }
-        guard backend.sendKeys(paneId: paneId, text: text, keys: keys) else {
+        // An unknown key name is its OWN refusal, not a missing pane. Reporting it as one was the
+        // shape this verb had before the key table moved behind the door: the backend swallowed the
+        // name and answered success, so `--key f5` looked delivered and was not.
+        switch backend.sendKeys(paneId: paneId, text: text, keys: keys) {
+        case .sent:
+            return Self.success(id: id, result: [:])
+        case .paneNotFound:
             return Self.error(id: id, message: "pane not found")
+        case let .unknownKey(name):
+            return Self.error(id: id, message: "unknown key: \(name)")
         }
-        return Self.success(id: id, result: [:])
     }
 
     /// `agent-status` → `{seen, status?}`. `seen:false` (id resolves to NO pane) maps to `watch:claude`

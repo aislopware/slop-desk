@@ -168,7 +168,13 @@ package enum SettingsIndexPresentation {
         case AllSettingsCatalog.RenderKey.fontFamily: store.terminal.fontFamily
         case AllSettingsCatalog.RenderKey.fontSize: "\(Int(store.terminal.fontSize))"
         case AllSettingsCatalog.RenderKey.scrollbackLimit: "\(store.terminal.scrollbackLines)"
-        case AllSettingsCatalog.RenderKey.cursorStyle: store.terminal.cursorStyle.displayName
+        // Through the catalog, never off the enum: this row sits beside the ✎ that jumps to the
+        // cursor picker, and the picker draws `SettingsCatalog.options(.cursorStyle)`. A second
+        // spelling here is a row that names the current choice differently from the control one tap
+        // away — which is exactly what `CursorStyle.displayName` did, printing "Block (hollow)"
+        // where the picker said "Hollow".
+        case AllSettingsCatalog.RenderKey.cursorStyle:
+            SettingsCatalog.label(.cursorStyle, for: store.terminal.cursorStyle.rawValue)
         case AllSettingsCatalog.RenderKey.cursorStyleBlink: store.terminal.cursorBlink.rawValue.capitalized
         case SettingsKey.density:
             (store.appearance.density ?? SettingsCatalog.densityComfortable).capitalized

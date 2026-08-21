@@ -202,19 +202,84 @@ public enum AllSettingsCatalog {
 
     // MARK: The crossing
 
-    /// One row, read field by field.
+    /// One row, in ONE crossing.
+    ///
+    /// It used to read field by field: eight doors, each able to retry, per row. ``filter`` calls
+    /// this for every match and the settings search calls ``filter`` on every keystroke, so the
+    /// per-character cost was eight crossings times the number of rows that matched — and an empty
+    /// query matches all of them. The module header of `slopdesk_ffi::settings_rows` already made
+    /// this argument for the MATCH, which is why the match crosses as positions; this is the same
+    /// argument one level out. The caller wants the row, so the row is what crosses.
     private static func entry(at index: Int) -> SettingEntry {
-        SettingEntry(
-            key: string { slopdesk_settings_row_key(index, $0, $1) } ?? "",
-            label: string { slopdesk_settings_row_label(index, $0, $1) } ?? "",
-            pageLabel: string { slopdesk_settings_row_page_label(index, $0, $1) } ?? "",
-            description: string { slopdesk_settings_row_description(index, $0, $1) } ?? "",
-            defaultText: string { slopdesk_settings_row_default_text(index, $0, $1) } ?? "",
-            bucket: SettingEntry.Bucket(rawValue: slopdesk_settings_row_bucket(index)) ?? .advancedOnly,
-            targetSection: string { slopdesk_settings_row_target_section(index, $0, $1) },
-            keywords: string { slopdesk_settings_row_keywords(index, $0, $1) } ?? "",
+        let blob = rowBlob(at: index)
+        var fields = rowFields(of: blob)
+        // Padded rather than defaulted per field: a short answer means the door and this reader
+        // disagree about the layout, and every field after the first missing one would otherwise
+        // shift up by one — a row rendering its description as its label, silently. Empty is the
+        // honest reading of "the door did not say".
+        while fields.count < 7 { fields.append("") }
+        return SettingEntry(
+            key: fields[0],
+            label: fields[1],
+            pageLabel: fields[2],
+            description: fields[3],
+            defaultText: fields[4],
+            // The bucket rides the same delivery, so reading it costs no second crossing. Its
+            // absence falls to the same arm the field door's out-of-range answer did.
+            bucket: blob.first.flatMap(SettingEntry.Bucket.init(rawValue:)) ?? .advancedOnly,
+            // Empty is "edited in place" here, which is what the single-field door spelled as a
+            // zero-length delivery and this side read back as `nil`. Same meaning, same answer.
+            targetSection: fields[5].isEmpty ? nil : fields[5],
+            keywords: fields[6],
         )
     }
+
+    /// The whole row, delivered once. Empty for an index no row has.
+    private static func rowBlob(at index: Int) -> [UInt8] {
+        var out = [UInt8](repeating: 0, count: rowInlineCapacity)
+        var written = out.withUnsafeMutableBufferPointer {
+            slopdesk_settings_row_fields(index, $0.baseAddress, $0.count)
+        }
+        guard written > 0 else { return [] }
+        if written > out.count {
+            out = [UInt8](repeating: 0, count: written)
+            written = out.withUnsafeMutableBufferPointer {
+                slopdesk_settings_row_fields(index, $0.baseAddress, $0.count)
+            }
+            guard written > 0, written <= out.count else { return [] }
+        }
+        return Array(out.prefix(written))
+    }
+
+    /// The seven fields behind the bucket byte, each a four-byte big-endian length then its bytes.
+    ///
+    /// Big-endian and explicit because the layout is read across a C boundary, where a width that
+    /// follows the target would be a bug waiting for a 32-bit build. A truncated blob stops the walk
+    /// rather than reading past its own end.
+    private static func rowFields(of blob: [UInt8]) -> [String] {
+        guard !blob.isEmpty else { return [] }
+        var fields: [String] = []
+        var cursor = blob.index(after: blob.startIndex)
+        while cursor < blob.endIndex {
+            guard blob.distance(from: cursor, to: blob.endIndex) >= 4 else { break }
+            var length = 0
+            for offset in 0..<4 { length = length << 8 | Int(blob[cursor + offset]) }
+            cursor += 4
+            guard blob.distance(from: cursor, to: blob.endIndex) >= length else { break }
+            // The producer is `slopdesk_workspace::settings_rows`, so these bytes are a Rust
+            // `&'static str`'s and cannot be invalid UTF-8. A failable init would add a branch
+            // meaning "this row has no label", which is a wrong answer rather than a cautious one.
+            // swiftlint:disable:next optional_data_string_conversion
+            fields.append(String(decoding: blob[cursor..<(cursor + length)], as: UTF8.self))
+            cursor += length
+        }
+        return fields
+    }
+
+    /// Long enough that the overwhelming majority of rows land in one call. A row that overflows it
+    /// reports its size and gets asked again — the same protocol every string door uses, paid once
+    /// per row instead of once per field.
+    private static let rowInlineCapacity = 512
 
     /// The positions a query matched, retrying at the size the door named.
     private static func matchedPositions(_ query: String) -> [Int] {

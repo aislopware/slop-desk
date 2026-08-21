@@ -1816,9 +1816,9 @@ public final class WorkspaceStore {
         }
         for (paneID, pane) in zip(createdIDs, plan.panes) {
             // The preset NAMES its panes ("htop", "Claude Code"). Every op that mints a pane titles it
-            // "Terminal", so the name is a rename — which is also what it is: an authored identity the
-            // next OSC title must not overwrite.
-            if !pane.spec.title.isEmpty, pane.spec.title != "Terminal" {
+            // with the crate's default, so the name is a rename — which is also what it is: an
+            // authored identity the next OSC title must not overwrite.
+            if !pane.spec.title.isEmpty, pane.spec.title != TreeWorkspaceDefaults.paneTitle {
                 stage(.renamePane, WorkspaceIntentArgs.encode(id: paneID.raw, name: pane.spec.title))
             }
             guard let cwd = pane.spawnCwd, !cwd.isEmpty else { continue }

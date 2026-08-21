@@ -215,7 +215,14 @@ package enum AndroidVideoCodec: String, Equatable {
     case h265
 
     /// The door decides WHICH identifiers decode; this maps the accepted one onto the case the
-    /// decode session is configured from, so the refusal is stated once rather than twice.
+    /// decode session is configured from.
+    ///
+    /// The second `guard` clause is not a second opinion — `slopdesk_android_stream_decodable_codec`
+    /// accepts exactly the identifiers this case list spells, so it cannot fire without the two
+    /// having diverged. It is there because Swift's `RawRepresentable` init is failable and there is
+    /// no total spelling of the same lookup. Read it as the tax, not as the rule: the set of
+    /// displayable codecs is `slopdesk_androidd::scrcpy`'s, and this type may narrow that set by
+    /// having fewer cases but may never widen it by accepting a string the door refused.
     package init?(streamIdentifier: String) {
         let bytes = Array(streamIdentifier.utf8)
         let decodable = bytes.withUnsafeBufferPointer { input in

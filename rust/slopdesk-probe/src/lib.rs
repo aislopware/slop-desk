@@ -33,7 +33,17 @@
 //! the hang-safety rule exists to keep out of the suite. Here the process boundary is at the edge
 //! and everything behind it is a function over strings and directories.
 
+//! ## The one thing here that is not about the probe's own answers
+//!
+//! [`path_confine`] is the metadata RPC's confinement rule, and it lives in this crate because this
+//! crate IS that RPC's Rust half — [`files::read_session`] was already asking the question. It is
+//! reached from two directions: this program asks it directly, and hostd asks it through
+//! `slopdesk_path_confine` in `rust/slopdesk-ffi`, which is what makes the pure Swift request
+//! decoder and the forked program agree by construction rather than by comment. See that module for
+//! the three implementations it replaced and what each of them got wrong.
+
 pub mod files;
 pub mod git;
+pub mod path_confine;
 pub mod run;
 pub mod terminfo;

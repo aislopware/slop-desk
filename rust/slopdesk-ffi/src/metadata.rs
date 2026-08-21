@@ -1011,6 +1011,61 @@ pub unsafe extern "C" fn slopdesk_metadata_encode_code_open_disposition(
     }
 }
 
+/// What a raw memory-pressure byte MEANS, as a byte this build's table names.
+///
+/// The two vitals bytes that are levels rather than numbers cross RAW, because the field is the
+/// wire's and a re-encode has to put back exactly what came in. That leaves the reading — which
+/// byte is which level, and what an unrecognised one is — and the reading is a decision, so it is
+/// here rather than restated wherever a surface wants a level. `HostVitals::memory_pressure` is
+/// where it lives; this door is how the near side reaches it.
+///
+/// What the rule actually says is worth carrying at the boundary too, because it is the reason it
+/// may not be re-derived by whoever needs it next: a level this build cannot interpret reads as
+/// NORMAL. A newer host that grows a fourth pressure level must not make an older client paint the
+/// alarm ink — the ink means "this machine is thrashing", and the only honest answer to a byte
+/// nobody here can read is that nothing has been established.
+///
+/// Total over every `u8` by construction: the answer is a byte the table above names, so no caller
+/// needs a fallback of its own and the door cannot hand back the question it was asked.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_metadata_memory_pressure(pressure_byte: u8) -> u8 {
+    // The reading is a method on the record rather than a free function, so the record is what has
+    // to be built to ask it. The other three fields are not read on this path and their values are
+    // arbitrary; naming them here rather than reaching for `..Default::default()` keeps the door
+    // free of anything that could quietly start to matter.
+    let vitals = HostVitals {
+        cpu_percent: 0,
+        memory_percent: 0,
+        pressure_byte,
+        disk_free_mib: None,
+    };
+    vitals.memory_pressure().as_byte()
+}
+
+/// What a raw service-state byte MEANS, as a byte this build's table names.
+///
+/// [`slopdesk_metadata_memory_pressure`]'s shape and its argument, one lifecycle over. The benign
+/// reading here is STARTING — "keep polling" — and it is benign for the same structural reason the
+/// other one is: the two states a client acts on irreversibly are the ones it must not reach by
+/// guessing. Rendering the install hint for a state this build cannot interpret tells a person to
+/// install something that is already there, and no further poll ever corrects it, because the
+/// panel has stopped asking.
+///
+/// Total over every `u8`, same as above.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_metadata_service_state(state_byte: u8) -> u8 {
+    let endpoint = ServiceEndpoint { state_byte, port: 0 };
+    endpoint.state().as_byte()
+}
+
 /// Decodes a code-font spec.
 ///
 /// # Safety
@@ -1169,8 +1224,8 @@ mod tests {
     )]
 
     use slopdesk_wire::metadata::{
-        ClipboardClip, encode_clipboard_read_response, encode_clipboard_set, encode_code_font_spec,
-        encode_git_status, encode_host_vitals, encode_process_list,
+        ClipboardClip, MemoryPressure, ServiceState, encode_clipboard_read_response, encode_clipboard_set,
+        encode_code_font_spec, encode_git_status, encode_host_vitals, encode_process_list,
     };
 
     use super::*;
@@ -1507,5 +1562,62 @@ mod tests {
             0,
             "an index with no constant answers zero"
         );
+    }
+
+    /// The two level readings answer a byte this build's own table names, for EVERY input — which
+    /// is what lets the near side stop carrying a fallback of its own. A door that handed an
+    /// unrecognised byte back would simply move the decision one step and leave both sides making
+    /// it, which is the arrangement these doors exist to end.
+    #[test]
+    fn the_level_readings_are_total_and_answer_only_named_bytes() {
+        for byte in 0u8..=255 {
+            let pressure = slopdesk_metadata_memory_pressure(byte);
+            assert!(
+                MemoryPressure::from_byte(pressure).is_some(),
+                "pressure byte {byte} read as {pressure}, which no level names",
+            );
+            let state = slopdesk_metadata_service_state(byte);
+            assert!(
+                ServiceState::from_byte(state).is_some(),
+                "state byte {byte} read as {state}, which no state names",
+            );
+        }
+    }
+
+    /// A byte the table DOES name is answered unchanged, and the benign reading is the one the rule
+    /// promises. Pinned as the two named levels rather than as `0` twice: they are different enums
+    /// whose benign case happens to share a discriminant today, and a test written against the
+    /// number would keep passing if one of them renumbered.
+    #[test]
+    fn a_known_level_is_itself_and_an_unknown_one_is_the_benign_reading() {
+        for level in [
+            MemoryPressure::Normal,
+            MemoryPressure::Warn,
+            MemoryPressure::Critical,
+        ] {
+            assert_eq!(
+                slopdesk_metadata_memory_pressure(level.as_byte()),
+                level.as_byte()
+            );
+        }
+        for state in [
+            ServiceState::Starting,
+            ServiceState::Ready,
+            ServiceState::Unavailable,
+        ] {
+            assert_eq!(slopdesk_metadata_service_state(state.as_byte()), state.as_byte());
+        }
+        for unknown in [3u8, 4, 127, 200, 255] {
+            assert_eq!(
+                slopdesk_metadata_memory_pressure(unknown),
+                MemoryPressure::Normal.as_byte(),
+                "an uninterpretable level must never light an alarm ink",
+            );
+            assert_eq!(
+                slopdesk_metadata_service_state(unknown),
+                ServiceState::Starting.as_byte(),
+                "an uninterpretable state must keep the panel polling, not render the install hint",
+            );
+        }
     }
 }

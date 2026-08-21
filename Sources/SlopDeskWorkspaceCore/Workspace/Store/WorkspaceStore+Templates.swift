@@ -56,7 +56,9 @@ public extension WorkspaceStore {
             ))
         }
         for (paneID, pane) in launches {
-            if let title = session.specs[paneID]?.title, !title.isEmpty, title != "Terminal" {
+            if let title = session.specs[paneID]?.title, !title.isEmpty,
+               title != TreeWorkspaceDefaults.paneTitle
+            {
                 stage(.renamePane, WorkspaceIntentArgs.encode(id: paneID.raw, name: title))
             }
             guard let cwd = pane.cwd, !cwd.isEmpty else { continue }

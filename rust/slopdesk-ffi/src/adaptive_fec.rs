@@ -191,6 +191,27 @@ pub unsafe extern "C" fn slopdesk_adaptive_fec_resolve_parity_count(
     adaptive_fec::multi_loss::resolve_parity_count(str_or_absent(bytes))
 }
 
+/// Whether a resolved `m` means the multi-loss codec is ACTIVE.
+///
+/// A separate entry from [`slopdesk_adaptive_fec_constant`]'s `M_MIN`/`M_MAX` because it is not a
+/// bound, it is a MEANING: `m >= 2` is what makes the wire's parity-per-group count change, what
+/// selects the true `[k + m, k]` code over the XOR-equivalent default, and what
+/// [`slopdesk_adaptive_fec_wire_tier`]'s `multi_loss_active` argument is asking about. A caller
+/// given only the two bounds would have to recompose the threshold from them, which is the
+/// transcription this door exists to remove — and it had already happened twice on the Swift side,
+/// once in `MultiLossFEC.isActive` and once in `adaptiveMFromEnv`.
+///
+/// The argument is the RESOLVED count rather than the raw string, because the resolution already
+/// has a door of its own and asking through both keeps one parse rather than two.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_adaptive_fec_multi_loss_active(parity_count: usize) -> bool {
+    adaptive_fec::multi_loss::is_active(parity_count)
+}
+
 /// What `SLOPDESK_FEC_K` means: parse, default, clamp, then cap against the field bound.
 ///
 /// The cap keeps `k + m <= 255` for the `m` the same environment resolves. Both strings cross
@@ -330,6 +351,32 @@ mod tests {
         let three = "3";
         let m = unsafe { slopdesk_adaptive_fec_resolve_parity_count(three.as_ptr(), three.len()) };
         assert_eq!(m, 3);
+    }
+
+    #[test]
+    fn the_threshold_the_two_languages_shared_is_now_one_answer() {
+        // The bounds cannot stand in for it: `M_MIN` is 1, so a caller composing the threshold out
+        // of `slopdesk_adaptive_fec_constant` would get "always active".
+        assert!(!slopdesk_adaptive_fec_multi_loss_active(0));
+        assert!(!slopdesk_adaptive_fec_multi_loss_active(
+            adaptive_fec::multi_loss::M_MIN
+        ));
+        for m in 2..=adaptive_fec::multi_loss::M_MAX {
+            assert!(slopdesk_adaptive_fec_multi_loss_active(m), "m = {m}");
+        }
+        // And it is the same predicate the tier→`m` table gates itself on, which is the drift this
+        // removes: an `m` the door calls inactive must be an `m` that resolves every tier to itself.
+        for m in 0..=adaptive_fec::multi_loss::M_MAX {
+            if !slopdesk_adaptive_fec_multi_loss_active(m) {
+                for tier in [
+                    adaptive_fec::PARITY_TIER_CLEAN,
+                    adaptive_fec::PARITY_TIER_NORMAL,
+                    adaptive_fec::PARITY_TIER_BURST,
+                ] {
+                    assert_eq!(adaptive_fec::parity_count(tier, m), m, "m = {m}, tier = {tier}");
+                }
+            }
+        }
     }
 
     #[test]

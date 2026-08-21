@@ -1,5 +1,6 @@
 import CSlopDeskFFI
 import Foundation
+import SlopDeskWorkspaceModel
 
 // MARK: - TerminalSearch (pure scrollback find-in-terminal core)
 
@@ -107,21 +108,33 @@ public struct TerminalSearchController: Equatable, Sendable {
     }
 
     /// Advances the selection to the next match (wrapping past the last back to the first). No-op with no matches.
+    ///
+    /// The wrap is ``ListNavigation/wrappedIndex(_:delta:count:)``, the same ring step the ⌃⇥ pane
+    /// switcher and the picker's filter pills take. With NOTHING selected there is no index to step
+    /// FROM, so the first match is named outright — a ring rule cannot express "start here", and
+    /// asking it to would mean picking an origin the user never sat on.
     public mutating func next() {
         guard !matches.isEmpty else { currentIndex = nil
             return
         }
-        let cur = currentIndex ?? -1
-        currentIndex = (cur + 1) % matches.count
+        guard let cur = currentIndex else { currentIndex = 0
+            return
+        }
+        currentIndex = ListNavigation.wrappedIndex(cur, delta: 1, count: matches.count) ?? cur
     }
 
     /// Moves the selection to the previous match (wrapping past the first to the last). No-op with no matches.
+    ///
+    /// The mirror of ``next()``, down to the no-selection arm: ⇧⏎ into an unvisited match list lands
+    /// on the LAST match, which is where wrapping backwards off the first one goes.
     public mutating func previous() {
         guard !matches.isEmpty else { currentIndex = nil
             return
         }
-        let cur = currentIndex ?? 0
-        currentIndex = (cur - 1 + matches.count) % matches.count
+        guard let cur = currentIndex else { currentIndex = matches.count - 1
+            return
+        }
+        currentIndex = ListNavigation.wrappedIndex(cur, delta: -1, count: matches.count) ?? cur
     }
 
     /// Clears the query + matches (the find bar's "close" / ⎋). The buffer is kept so reopening is cheap.

@@ -17,6 +17,7 @@
 // byte is legible where it is asserted.
 
 #if os(macOS)
+import CSlopDeskFFI
 import Foundation
 import XCTest
 @testable import SlopDeskDevicePanels
@@ -146,6 +147,28 @@ final class AndroidStreamProtocolTests: XCTestCase {
         XCTAssertEqual(AndroidVideoCodec(streamIdentifier: "h265"), .h265)
         XCTAssertNil(AndroidVideoCodec(streamIdentifier: "av1"))
         XCTAssertNil(AndroidVideoCodec(streamIdentifier: ""))
+    }
+
+    /// The near side never WIDENS the door's set. Named identifiers plus a spread of things a
+    /// mis-framed stream can put in those four bytes, each asked of both sides: the enum resolves
+    /// exactly when `slopdesk_android_stream_decodable_codec` says the panel can display it.
+    ///
+    /// This is the pin the fallback used to make impossible. `AndroidStreamConnection` read an
+    /// unrecognised identifier as H.264 rather than as a refusal, so the door's `false` reached
+    /// nothing that acted on it — the enum could have accepted a string the door rejected and the
+    /// only symptom would have been a black rectangle.
+    func testTheEnumResolvesExactlyWhenTheDoorSaysDecodable() {
+        let identifiers = ["h264", "h265", "av1", "", "H264", "h26", "h2644", "vp9", "\u{1F600}", "\0h264"]
+        for identifier in identifiers {
+            let bytes = Array(identifier.utf8)
+            let decodable = bytes.withUnsafeBufferPointer { input in
+                slopdesk_android_stream_decodable_codec(input.baseAddress, input.count)
+            }
+            XCTAssertEqual(
+                AndroidVideoCodec(streamIdentifier: identifier) != nil, decodable,
+                "the two sides disagree about \(identifier.debugDescription)",
+            )
+        }
     }
 }
 

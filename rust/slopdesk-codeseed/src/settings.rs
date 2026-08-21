@@ -277,13 +277,37 @@ pub fn seed_user_settings(path: &Path) -> bool {
 /// the system mono, the nerd symbols). A family already heading the stack is not repeated.
 #[must_use]
 pub fn editor_font_family_stack(family: &str) -> String {
-    const FALLBACK: &str = "'JetBrains Mono', ui-monospace, 'Symbols Nerd Font', monospace";
+    let fallback = editor_font_fallback_stack();
     let cleaned = family.replace(['\'', '"'], "");
     let cleaned = cleaned.trim();
-    if cleaned.is_empty() || cleaned == "JetBrains Mono" {
-        return FALLBACK.to_owned();
+    if cleaned.is_empty() || cleaned == MONO_FONT_FAMILY {
+        return fallback;
     }
-    format!("'{cleaned}', {FALLBACK}")
+    format!("'{cleaned}', {fallback}")
+}
+
+/// The primary editor face: the one libghostty embeds and actually renders, so the panel and the
+/// terminal beside it are the same shapes.
+///
+/// Named rather than typed out because it is read in three places that must agree — the stack this
+/// module builds, the already-heading-the-stack check that stops it being listed twice, and the
+/// client's injected `@font-face`. The check was the interesting one: it used to hold its own copy
+/// of the word, so renaming the face in the stack alone would have made the stack list it twice
+/// while every test that only asserts `starts_with` kept passing.
+pub const MONO_FONT_FAMILY: &str = "JetBrains Mono";
+
+/// The private-use fallback behind it, for the glyphs a programming face has no codepoint for.
+pub const NERD_FONT_FAMILY: &str = "Symbols Nerd Font";
+
+/// The stack a client that names no family of its own gets.
+///
+/// Byte-identical to the `editor.fontFamily` in `resources/settings.json`, and pinned to it by
+/// test: the seed is what a fresh install writes and this is what a font sync rewrites, so a drift
+/// between them would change the editor's face the first time the user touched the font setting and
+/// never change it back.
+#[must_use]
+pub fn editor_font_fallback_stack() -> String {
+    format!("'{MONO_FONT_FAMILY}', ui-monospace, '{NERD_FONT_FAMILY}', monospace")
 }
 
 /// Folds a client's font spec into the live settings file.
@@ -727,6 +751,19 @@ mod tests {
         assert_eq!(
             editor_font_family_stack("\"Fira' Code\""),
             "'Fira Code', 'JetBrains Mono', ui-monospace, 'Symbols Nerd Font', monospace",
+        );
+    }
+
+    /// The seed file and the stack this module builds are the same bytes.
+    ///
+    /// They are written by two different events — a fresh install seeds the file, a font sync
+    /// rewrites the key — so a drift between them is invisible until the user touches the font
+    /// setting once, at which point the editor's face changes and never changes back.
+    #[test]
+    fn the_seeded_stack_and_the_built_one_are_the_same_bytes() {
+        assert_eq!(
+            seeded().get("editor.fontFamily").and_then(Value::as_str),
+            Some(editor_font_fallback_stack().as_str()),
         );
     }
 

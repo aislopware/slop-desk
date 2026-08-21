@@ -1,8 +1,16 @@
-//! `slopdesk completions <shell>` — the completion scripts, generated from one list.
+//! `slopdesk completions <shell>` — the completion scripts, generated from one table.
 //!
-//! Every renderer derives from [`SUBCOMMANDS`], so the Claude-only invariant — completions never
-//! list `codex` or `opencode` — holds across all five shells by construction rather than by five
-//! separate reviews.
+//! Every renderer derives from [`crate::vocabulary::ready_names`], so two invariants hold across
+//! all five shells by construction rather than by five separate reviews:
+//!
+//! - The Claude-only rule: completions never list `codex` or `opencode`.
+//! - The one this module used to break: a completion never offers a verb that cannot run. The
+//!   subcommand list here was a flat array with no notion of availability, so six designed-but-
+//!   unimplemented verbs — `open`, `import`, `export`, `features`, `state:claude`, `ipc` — were
+//!   offered by every shell and then exited 2 with "not available yet". Availability now lives
+//!   beside the name in `vocabulary`, and this module can only see the runnable half.
+
+use crate::vocabulary::ready_names;
 
 /// A shell `slopdesk completions` can emit a script for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -50,38 +58,16 @@ impl Shell {
     }
 }
 
-/// The user-facing subcommand surface offered for completion.
+/// The user-facing subcommand surface offered for completion: the RUNNABLE half of the vocabulary,
+/// in table order.
 ///
-/// CLAUDE-ONLY: the only per-agent forms are `watch:claude` and `state:claude`. `codex` and
-/// `opencode` are deliberately absent, and a test holds them out.
-pub const SUBCOMMANDS: [&str; 26] = [
-    "open",
-    "view",
-    "edit",
-    "config",
-    "font",
-    "keybind",
-    "window",
-    "windows",
-    "tab",
-    "tabs",
-    "pane",
-    "panes",
-    "watch",
-    "watch:claude",
-    "jump",
-    "learn",
-    "ignore",
-    "import",
-    "export",
-    "features",
-    "completions",
-    "version",
-    "state:claude",
-    "sidecars",
-    "ipc",
-    "help",
-];
+/// There is deliberately no way to ask this module for the whole vocabulary. A completion is a
+/// promise that the verb exists, so the only list a script may be built from is the one whose
+/// entries the dispatcher handles.
+#[must_use]
+pub fn offered() -> Vec<&'static str> {
+    ready_names()
+}
 
 /// The completion script for `shell`, terminated by a trailing newline.
 #[must_use]
@@ -95,9 +81,9 @@ pub fn script(shell: Shell) -> String {
     }
 }
 
-/// The subcommands as one space-joined word list.
+/// The offered subcommands as one space-joined word list.
 fn words() -> String {
-    SUBCOMMANDS.join(" ")
+    offered().join(" ")
 }
 
 fn bash() -> String {
@@ -137,7 +123,7 @@ fi
 
 fn fish() -> String {
     let mut out = String::from("# slopdesk fish completion.\ncomplete -c slopdesk -f\n");
-    for sub in SUBCOMMANDS {
+    for sub in offered() {
         out.push_str("complete -c slopdesk -n __fish_use_subcommand -a '");
         out.push_str(sub);
         out.push_str("'\n");
@@ -148,7 +134,7 @@ fn fish() -> String {
 fn elvish() -> String {
     // Single-quote each candidate so a token containing `:` — `watch:claude` — is a plain string
     // rather than an elvish namespace reference.
-    let quoted = SUBCOMMANDS
+    let quoted = offered()
         .iter()
         .map(|sub| format!("'{sub}'"))
         .collect::<Vec<_>>()
@@ -164,7 +150,7 @@ set edit:completion:arg-completer[slopdesk] = {{|@words|
 }
 
 fn powershell() -> String {
-    let quoted = SUBCOMMANDS
+    let quoted = offered()
         .iter()
         .map(|sub| format!("'{sub}'"))
         .collect::<Vec<_>>()
@@ -185,7 +171,7 @@ Register-ArgumentCompleter -Native -CommandName slopdesk -ScriptBlock {{
 
 #[cfg(test)]
 mod tests {
-    use super::{SUBCOMMANDS, Shell, script};
+    use super::{Shell, offered, script};
 
     #[test]
     fn every_shell_name_round_trips_and_pwsh_aliases_powershell() {
@@ -210,10 +196,10 @@ mod tests {
     }
 
     #[test]
-    fn every_script_offers_every_subcommand() {
+    fn every_script_offers_every_subcommand_it_is_allowed_to() {
         for shell in Shell::ALL {
             let text = script(shell);
-            for sub in SUBCOMMANDS {
+            for sub in offered() {
                 assert!(text.contains(sub), "{} is missing {sub}", shell.name());
             }
         }
@@ -244,16 +230,16 @@ mod tests {
             text.lines()
                 .filter(|line| line.starts_with("complete -c"))
                 .count(),
-            SUBCOMMANDS.len() + 1
+            offered().len() + 1
         );
     }
 
     #[test]
-    fn the_subcommand_list_has_no_duplicates() {
-        let mut sorted = SUBCOMMANDS;
+    fn the_offered_list_has_no_duplicates() {
+        let mut sorted = offered();
+        let before = sorted.len();
         sorted.sort_unstable();
-        let mut deduped = sorted.to_vec();
-        deduped.dedup();
-        assert_eq!(deduped.len(), SUBCOMMANDS.len());
+        sorted.dedup();
+        assert_eq!(sorted.len(), before);
     }
 }

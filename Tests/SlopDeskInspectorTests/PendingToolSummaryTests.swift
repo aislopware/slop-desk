@@ -97,4 +97,43 @@ final class PendingToolSummaryTests: XCTestCase {
         ]
         XCTAssertEqual(PendingToolSummary.scent(todos: todos), "1/2 · Doing A")
     }
+
+    // MARK: - JSONValue.displayString — the half of a two-process flattening that lives here
+
+    /// The number rule, which had no test on this side at all — and is the half of the pair that is
+    /// WRONG. `rust/slopdesk-inspectord`'s `display_string` renders the tool RESULT with the same
+    /// intent and answers `10000000000000000` where this answers `1e+16`, because serde keeps a JSON
+    /// integer an integer and ``JSONValue`` decodes every number to a `Double` before the flattening
+    /// ever runs.
+    ///
+    /// Pinned as it BEHAVES rather than as it ought to: nothing in either language can fail on this
+    /// today, since the two functions render different halves of a tool card and no input reaches
+    /// both. A test that asserted the answer we would prefer would be red on arrival and tell nobody
+    /// anything; one that asserts the answer we have is what makes a future fix visible as a change.
+    func testDisplayStringRendersWholeNumbersWithoutTheTrailingPointZero() {
+        XCTAssertEqual(JSONValue.number(3).displayString, "3")
+        XCTAssertEqual(JSONValue.number(-0.5).displayString, "-0.5")
+        XCTAssertEqual(JSONValue.number(0).displayString, "0")
+        // The `1e15` guard: below it a whole number is re-derived through `Int64`, at and above it
+        // the `Double`'s own spelling stands. Rust prints the first of these exactly.
+        XCTAssertEqual(JSONValue.number(1e15).displayString, "1e+15")
+        XCTAssertEqual(JSONValue.number(999_999_999_999_999).displayString, "999999999999999")
+    }
+
+    /// Absence, booleans and the two container joins — the rest of the table `display_string` has to
+    /// agree with, and does.
+    func testDisplayStringFlattensTheContainersTheWayTheDaemonDoes() {
+        XCTAssertEqual(JSONValue.null.displayString, "")
+        XCTAssertEqual(JSONValue.bool(true).displayString, "true")
+        XCTAssertEqual(JSONValue.bool(false).displayString, "false")
+        XCTAssertEqual(JSONValue.array([.string("a"), .string("b")]).displayString, "a\nb")
+    }
+
+    /// Object keys render SORTED, which is the whole reason this is not just a dictionary walk:
+    /// Swift's hash seed is per-process, so an unsorted flattening would put a tool's fields in a
+    /// different order on every launch.
+    func testDisplayStringSortsObjectKeys() {
+        let value = JSONValue.object(["zeta": .number(1), "alpha": .string("a"), "mid": .bool(true)])
+        XCTAssertEqual(value.displayString, "alpha: a\nmid: true\nzeta: 1")
+    }
 }

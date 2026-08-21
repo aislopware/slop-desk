@@ -878,8 +878,10 @@ now one function with the Swift test's own case pinned to it.
 
 Every cross-language bug this project has found has the same shape: **a decision implemented in both
 languages, where the two disagree, and the disagreement is invisible because only one side is on the
-hot path.** **Ten** pairs are known. Seven were live defects when found; the other three agree
-today and are held together by nothing but the week they were written in:
+hot path.** The table below is the catalogue. Most rows were live defects when found; the rest agree
+today and are held together by nothing but the week they were written in. (There is no count in this
+sentence on purpose — the one that used to be here said "eight" while the table said ten, which is
+the same defect this section is about, one register up.)
 
 | Pair | Who was right | What the user lost |
 | --- | --- | --- |
@@ -887,12 +889,21 @@ today and are held together by nothing but the week they were written in:
 | `SplitNode+Codable` unknown `axis`/`id` | Rust | **the entire workspace**, to one typo |
 | `persist::decode_raw_node` id-less splits | Swift | two dividers moving as one |
 | `TreeWorkspace.normalized` vs `workspace::normalized` | — | launch-time and gesture-time repair disagree — **ported 2026-08-20** |
-| the 15 MiB opaque cap, spelled **three** times | — | a silently truncated `git diff` rendered as complete |
+| the 15 MiB opaque cap, spelled **three** times | — | a silently truncated `git diff` rendered as complete — **ratcheted 2026-08-22**; `slopdesk-probe` is a spawned `[[bin]]`, so a door was never available and the gate's own doctrine picks the ratchet |
 | `templates::repaired` vs `TemplateNode+Codable`, and the two built-in tables | — | agrees today — **pinned 2026-08-20**; the row said "a security rule written twice" and was wrong |
 | `persist::derived_split_id` vs `SplitNodeID()` | Rust | divider weights reset on every relaunch |
 | `detectionText` vs `detect::detection_text` | Rust | dead Swift, plus a third spelling of the join |
 | `PaneSpec+Codable` `userRenamed` vs `decode_spec` | Rust | **the entire workspace**, to a non-boolean flag |
 | `VideoEndpoint`'s synthesized `Codable` vs `decode_video` | Rust | **the entire workspace**, to a hand-edited window id |
+| `ScreenPaths.requestSocket` vs `screenwire::socket_path` | Rust | screend "not running" for any process with its own `$TMPDIR` — **ported 2026-08-22** |
+| `SupervisorPaths.controlSocket` vs `superd::paths` | Rust | the same silence, plus a `SLOPDESK_SUPERD_DIR` hostd had never heard of — **ported 2026-08-22** |
+| `CodeBridgeServer.contains` vs `MetadataResponseBuilder` vs `files::read_session` | — | **three** answers to "is this path confined", disagreeing on `..`, on the root itself and on `/` — **ported 2026-08-22** |
+| `completions::SUBCOMMANDS` vs `printUsage()` vs the dispatch `switch` | — | six verbs that tab-completed and then exited 2 — **ported 2026-08-22** |
+| `AndroidLogLevel` vs androidd's level array | Rust | five letters against six: `Fatal` was a filter the menu could not produce — **ported 2026-08-22** |
+| `qp_control`/`recovery_idr` defaults vs their Swift faces | — | eleven tuned numbers that would encode at the old operating point in silence — **ported 2026-08-22** |
+| `TreeWorkspaceDefaults` vs the seeded pane names | — | a fresh-workspace shape test passing against a default the crate stopped producing — **ported 2026-08-22** |
+| `TerminalPreferences.CursorStyle.displayName` vs `settings_catalog` | — | one setting, two words ("Hollow" / "Block (hollow)"), a scroll apart on one page — **ported 2026-08-22** |
+| `CodeSidebarPageDressing`'s `@font-face` vs `codeseed`'s seeded stack | — | agrees today; a disagreement falls silently through to the system mono — **ratcheted 2026-08-22** |
 
 **The template row was stale in both directions, and how it was stale is itself the lesson.** It
 named a *security* rule — the literal `cd` line that must never reach the token parser — and that
@@ -906,13 +917,54 @@ no gate behind it, exactly like the comments the last bullet of this section war
 decayed the same way: the port moved and the row did not.
 
 Both halves are now pinned by `SessionTemplateRepairDifferentialTests` (below). What is deliberately
-NOT ported, so the next reader does not have to re-derive it: `templates::plan` and
-`TemplatePane::keystrokes` still have no caller and stay that way. `plan` copies three fields of a
-preset into two pane specs and defers its one real rule to `keystrokes`, which already crosses — a
-door for it would marshal a whole preset to compare two spellings of an assignment. The Swift
-`SessionTemplate` decoder is likewise staying: it is `Codable` and it is what the device-preferences
-file is made of, so this is `docs/55` §7 step 6's case rather than an unfinished port, and the
-differential is the whole of what is owed.
+NOT ported, so the next reader does not have to re-derive it: the preset EXPANSION —
+`LaunchPresetEngine.plan` — stays in Swift. It copies three fields of a preset into two pane specs
+and defers its one real rule to `keystrokes`, which already crosses, so a door for it would marshal
+a whole preset to compare two spellings of an assignment. The Swift `SessionTemplate` decoder is
+likewise staying: it is `Codable` and it is what the device-preferences file is made of, so this is
+`docs/55` §7 step 6's case rather than an unfinished port, and the differential is the whole of what
+is owed.
+
+**This paragraph used to say `templates::plan` and `TemplatePane::keystrokes` "have no caller and
+stay that way", and that reading of its own rule was wrong.** It correctly refused to build a door
+and then let the far half sit there anyway — a Rust `plan`, a `LaunchPlan` and a `PaneLaunch` reached
+by nothing but their own two tests. An unreached port is not a safer half-measure than an unported
+one, it is a worse one: the pair could not be caught disagreeing, because no input ever reached both
+copies, and neither `dead_code` (it cannot see a `pub` item in a library crate) nor
+`make lint-ffi-doors` (it audits doors, and this was not one) could see it either. It had already
+drifted — `TemplatePane::keystrokes` hardcoded `None` for the cwd and so could not emit the `cd` line
+its Swift counterpart takes a directory in order to write. All four were deleted on 2026-08-22.
+**"Do not port this" and "keep an unreachable copy of it" are different instructions**, and the
+second is never what the first meant.
+
+### The argument that let two of these live for a year: "a name, not a policy"
+
+Both rendezvous addresses carried the same note above the copy, and it was a good argument: a client
+has to FIND the socket before it can say `hello`, so the address cannot be learned from the thing it
+addresses, so the two ends necessarily agree by construction. **A name, not a policy.**
+
+Half of it was true, and the false half is the interesting one. The NAME is shared by construction —
+neither `slopdesk-screend.sock` nor `slopdesk-superd.sock` ever drifted. Which DIRECTORY the name
+sits in is a *policy*: a precedence over environment variables, an emptiness filter, a last resort.
+That was written out on both sides, and the two were not the same policy. The daemons resolved
+`$…_SOCKET` → (`$SLOPDESK_SUPERD_DIR` →) `$TMPDIR` → `/tmp`; the clients resolved the override and
+then `NSTemporaryDirectory()`, **which on Darwin does not read `$TMPDIR` at all** — it answers
+`confstr(_CS_DARWIN_USER_TEMP_DIR)` whatever the environment holds. Measured, not reasoned. So every
+process with a `TMPDIR` of its own had the daemon binding one path and the client dialling another,
+with nothing on either side able to say so: the daemon simply looked like it was not running. hostd
+had also never heard of `SLOPDESK_SUPERD_DIR`, so the gate script's private superd was reachable by
+nothing.
+
+The pair agreed in practice for one accidental reason — launchd sets `TMPDIR` to exactly the
+directory that call returns, and the fixtures set the outright override — so the only two paths
+anyone ever exercised were the two where the disagreement cancels.
+
+**The generalisation: a constant crossing by construction is safe; the RULE that produces it is not,
+and "we both know the name" is not the same claim as "we both compute the same path".** When a shared
+identity is anything other than a literal — a precedence, a filter, a default — it is a rule, and the
+rule crosses. The environment lookup stays on the near side in both ports, because the Swift faces
+take their environment as a parameter and their tests pass dictionaries in; what crossed is the
+precedence, the emptiness filter and the fallback, which is the half that had drifted.
 
 **The direction is not consistent ACROSS families, and that is the point.** Rust is right in most
 rows and Swift in one. So this is not "the port is behind" — it is drift in both directions between

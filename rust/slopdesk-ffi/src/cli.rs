@@ -27,10 +27,11 @@
 use std::ffi::c_uchar;
 
 use slopdesk_cli::args::{Invocation, OutputFormat, ParseError};
-use slopdesk_cli::completions::{SUBCOMMANDS, Shell};
+use slopdesk_cli::completions::Shell;
 use slopdesk_cli::config::{ValidationError, default_path, resolve_path, validate};
 use slopdesk_cli::formatting::{TableKind, render_json_text, table, table_from_json};
 use slopdesk_cli::version::summary;
+use slopdesk_cli::vocabulary::{planned_names, ready_names, usage};
 
 use crate::host_state::SlopDeskByteSpan;
 use crate::{TextArena, borrow, deliver, records_of};
@@ -467,7 +468,12 @@ pub unsafe extern "C" fn slopdesk_cli_completion_script(shell: u32, out: *mut c_
     unsafe { text(&slopdesk_cli::completions::script(shell), out, cap) }
 }
 
-/// The subcommand surface the completions offer, in order.
+/// The subcommand surface the completions offer, in table order: the RUNNABLE verbs only.
+///
+/// The filter is the point. Six designed-but-unimplemented verbs used to cross this door, so every
+/// shell offered `open`, `import`, `export`, `features`, `state:claude` and `ipc`, and every one of
+/// them exited 2 with "not available yet" the moment a user accepted the completion. Availability
+/// now lives beside the name in the crate's table, and this door can only see the half that runs.
 ///
 /// # Safety
 /// The output pointers must be null, or writable for their stated capacities.
@@ -482,13 +488,87 @@ pub unsafe extern "C" fn slopdesk_cli_subcommands(
     out_arena: *mut c_uchar,
     arena_cap: usize,
 ) -> SlopDeskCliShape {
+    // SAFETY: the caller's obligations on the output buffers.
+    unsafe { names(&ready_names(), out, cap, out_arena, arena_cap) }
+}
+
+/// The verbs the vocabulary DOCUMENTS but does not implement, in table order.
+///
+/// The near side asks this for exactly one reason: to tell a user who typed `ipc` that it is
+/// planned, apart from a user who typed `opne` and made a mistake. Nothing may offer this list for
+/// completion — that is what `slopdesk_cli_subcommands` is for, and the two are disjoint by
+/// construction because one table produces both.
+///
+/// # Safety
+/// The output pointers must be null, or writable for their stated capacities.
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn slopdesk_cli_planned_subcommands(
+    out: *mut SlopDeskByteSpan,
+    cap: usize,
+    out_arena: *mut c_uchar,
+    arena_cap: usize,
+) -> SlopDeskCliShape {
+    // SAFETY: the caller's obligations on the output buffers.
+    unsafe { names(&planned_names(), out, cap, out_arena, arena_cap) }
+}
+
+/// Interns a name list into one arena and spills it — the shared body of the two doors above, so
+/// that "a list of subcommand names crosses this way" is written once.
+///
+/// # Safety
+/// The output pointers must be null, or writable for their stated capacities.
+#[expect(
+    unsafe_code,
+    reason = "writing the answer into the caller's buffers is the other half of the boundary"
+)]
+unsafe fn names(
+    list: &[&str],
+    out: *mut SlopDeskByteSpan,
+    cap: usize,
+    out_arena: *mut c_uchar,
+    arena_cap: usize,
+) -> SlopDeskCliShape {
     let mut pool = TextArena::default();
-    let spans: Vec<SlopDeskByteSpan> = SUBCOMMANDS
+    let spans: Vec<SlopDeskByteSpan> = list
         .iter()
         .map(|name| span(pool.intern(name.as_bytes())))
         .collect();
     // SAFETY: the caller's obligations on the output buffers.
     unsafe { spill(&spans, &pool, out, cap, out_arena, arena_cap) }
+}
+
+/// The complete `--help` text, terminated by a trailing newline.
+///
+/// `program` is `argv[0]`'s last component rather than a constant, so a renamed or symlinked binary
+/// describes itself by the name the user actually typed. Empty bytes fall back to `slopdesk`: a
+/// usage block whose synopsis line names nothing is worse than one naming the canonical binary.
+///
+/// The whole block crosses — synopsis, every section, the `config` note and the global flags —
+/// because the subcommand list, its availability and its help text are one table and splitting the
+/// rendering would put half of that table back on the near side.
+///
+/// # Safety
+/// `program` must be live for `program_len` bytes; `out` must be null, or writable for `cap` bytes.
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn slopdesk_cli_usage(
+    program: *const c_uchar,
+    program_len: usize,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligation on the program name.
+    let raw = String::from_utf8_lossy(unsafe { borrow(program, program_len) }).into_owned();
+    let name = if raw.is_empty() { "slopdesk" } else { raw.as_str() };
+    // SAFETY: the caller's obligation on the output buffer.
+    unsafe { text(&usage(name), out, cap) }
 }
 
 /// The config-file path: an explicit `--config-file`, else the env override, else the XDG default.
@@ -765,11 +845,14 @@ pub unsafe extern "C" fn slopdesk_cli_version_summary(
     reason = "calling the C ABI the way Swift does is the thing under test"
 )]
 mod tests {
+    use std::ffi::c_uchar;
+
     use super::{
         SLOPDESK_CLI_INVALID_VALUE, SLOPDESK_CLI_JSON, SLOPDESK_CLI_OK, SLOPDESK_CLI_TABLE_WINDOWS,
         SLOPDESK_CLI_TEXT, SLOPDESK_SHELL_FISH, SLOPDESK_SHELL_POWERSHELL, SlopDeskCliInvocation,
-        slopdesk_cli_config_path, slopdesk_cli_parse, slopdesk_cli_render_json, slopdesk_cli_shell,
-        slopdesk_cli_subcommands, slopdesk_cli_table, slopdesk_cli_version_summary,
+        SlopDeskCliShape, planned_names, ready_names, slopdesk_cli_config_path, slopdesk_cli_parse,
+        slopdesk_cli_planned_subcommands, slopdesk_cli_render_json, slopdesk_cli_shell,
+        slopdesk_cli_subcommands, slopdesk_cli_table, slopdesk_cli_usage, slopdesk_cli_version_summary,
     };
     use crate::host_state::SlopDeskByteSpan;
 
@@ -874,21 +957,68 @@ mod tests {
         }
     }
 
-    #[test]
-    fn the_subcommand_surface_crosses_whole() {
-        let shape = unsafe { slopdesk_cli_subcommands(std::ptr::null_mut(), 0, std::ptr::null_mut(), 0) };
-        assert_eq!(shape.count, 26);
+    /// The shape both name-list doors wear. Named so the helper below reads as "one of the two
+    /// doors" rather than as a signature.
+    type NameDoor =
+        unsafe extern "C" fn(*mut SlopDeskByteSpan, usize, *mut c_uchar, usize) -> SlopDeskCliShape;
+
+    /// The names one of the two list doors answers, decoded the way Swift decodes them.
+    fn crossed(door: NameDoor) -> Vec<String> {
+        let shape = unsafe { door(std::ptr::null_mut(), 0, std::ptr::null_mut(), 0) };
         let mut spans = vec![SlopDeskByteSpan::default(); shape.count];
         let mut arena = vec![0_u8; shape.arena_len];
-        let filled = unsafe {
-            slopdesk_cli_subcommands(spans.as_mut_ptr(), spans.len(), arena.as_mut_ptr(), arena.len())
-        };
+        let filled = unsafe { door(spans.as_mut_ptr(), spans.len(), arena.as_mut_ptr(), arena.len()) };
         assert_eq!(filled, shape);
-        let first = spans.first().copied().unwrap_or_default();
-        assert_eq!(
-            arena.get(first.offset as usize..(first.offset + first.length) as usize),
-            Some(b"open".as_slice()),
-        );
+        // `crate::arena_text`, not a span walk of its own: the read half of §4c had seven copies
+        // once and two of them clipped differently on overflow, so even a test that only wants to
+        // read its own arena asks the one reader — a test that decodes differently from the door's
+        // callers is a test that can agree with nothing.
+        spans
+            .iter()
+            .map(|span| crate::arena_text(&arena, span.offset, span.length))
+            .collect()
+    }
+
+    #[test]
+    fn the_subcommand_surface_crosses_whole_and_carries_only_verbs_that_run() {
+        let offered = crossed(slopdesk_cli_subcommands);
+        assert_eq!(offered.len(), ready_names().len());
+        assert_eq!(offered.first().map(String::as_str), Some("version"));
+        // The regression this door was fixed for: six planned verbs used to cross it, so every
+        // shell offered a command that exits 2.
+        for planned in planned_names() {
+            assert!(
+                !offered.iter().any(|name| name == planned),
+                "{planned} is offered"
+            );
+        }
+    }
+
+    #[test]
+    fn the_planned_surface_crosses_separately_and_shares_no_name_with_the_offered_one() {
+        let planned = crossed(slopdesk_cli_planned_subcommands);
+        assert_eq!(planned, planned_names());
+        let offered = crossed(slopdesk_cli_subcommands);
+        for name in &planned {
+            assert!(!offered.contains(name), "{name} is on both lists");
+        }
+    }
+
+    #[test]
+    fn the_usage_text_crosses_whole_and_wears_the_program_name_it_was_given() {
+        let program = b"sd";
+        let needed = unsafe { slopdesk_cli_usage(program.as_ptr(), program.len(), std::ptr::null_mut(), 0) };
+        assert!(needed > 0);
+        let mut out = vec![0_u8; needed];
+        let written =
+            unsafe { slopdesk_cli_usage(program.as_ptr(), program.len(), out.as_mut_ptr(), out.len()) };
+        assert_eq!(written, needed);
+        let text = String::from_utf8_lossy(&out).into_owned();
+        assert!(text.starts_with("usage: sd "));
+        assert!(text.ends_with('\n'));
+        // An empty name is a caller with no argv[0], not a caller asking for an anonymous banner.
+        let fallback = unsafe { slopdesk_cli_usage(std::ptr::null(), 0, std::ptr::null_mut(), 0) };
+        assert!(fallback > 0);
     }
 
     #[test]

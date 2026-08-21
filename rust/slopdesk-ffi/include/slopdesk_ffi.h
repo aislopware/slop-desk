@@ -87,6 +87,40 @@ size_t slopdesk_screen_encode_detect_payload(const uint8_t *agent, size_t agent_
                                              const uint8_t *raw, size_t raw_len, uint8_t *out,
                                              size_t cap);
 int32_t slopdesk_screen_reply_status(const uint8_t *body, size_t len);
+
+// screend's request socket, resolved: `$SLOPDESK_SCREEND_SOCKET`, else `$TMPDIR/…`, else `/tmp/…`.
+// An EMPTY pair means the variable is unset — an exported-but-blank variable is a shell accident,
+// not a request to bind nothing — so neither input carries the presence flag the device-panel key
+// pairs do, where absent and empty are different answers.
+//
+// The environment is read on the NEAR side and handed over, rather than looked up here, because
+// `ScreenPaths.requestSocket(environment:)` takes its environment as a parameter and its tests pass
+// dictionaries in. What crosses is the RULE — the precedence, the emptiness filter, the fallback —
+// which is the half that had drifted: the client resolved through `NSTemporaryDirectory()`, which
+// on Darwin ignores `$TMPDIR` entirely, so a process with a `TMPDIR` of its own dialled one path
+// while screend bound another and the daemon simply looked absent.
+//
+// The answer is always non-empty, so 0 is not a refusal here and no caller should read it as one.
+size_t slopdesk_screen_socket_path(const uint8_t *socket_override, size_t socket_override_len,
+                                   const uint8_t *tmpdir, size_t tmpdir_len, uint8_t *out,
+                                   size_t cap);
+
+// superd's control socket, resolved: `$SLOPDESK_SUPERD_SOCKET`, else `$SLOPDESK_SUPERD_DIR/…`,
+// else `$TMPDIR/…`, else `/tmp/…`. Same shape and same reason as the screend entry above, with one
+// extra rung — and it had drifted on TWO of them, not one: hostd resolved through
+// `NSTemporaryDirectory()`, which ignores `$TMPDIR`, and had never heard of the directory override
+// at all, so the gate script's private superd was reachable by nothing.
+//
+// An EMPTY pair means unset. So does a pair that is not UTF-8, because superd reads the same
+// variables with `std::env::var`, which calls those bytes unset too — both ends fall to the same
+// rung rather than to two different manglings.
+//
+// The answer is always non-empty, so 0 is not a refusal here and no caller should read it as one.
+size_t slopdesk_supervisor_control_socket(const uint8_t *socket_override,
+                                          size_t socket_override_len, const uint8_t *directory,
+                                          size_t directory_len, const uint8_t *tmpdir,
+                                          size_t tmpdir_len, uint8_t *out, size_t cap);
+
 // The STYLED reading — the clipboard's and the preview's, columns rewritten and colours kept.
 // Answer: [u32 BE lines] ( [u32 BE runs] ( [u8 flags][u8 fg][3] [u8 bg][3] [u32 BE len][text] )* )*
 // flags: bold 1, dim 2, italic 4, underline 8, inverse 16. A colour is [kind, a, b, c] with kind
@@ -933,6 +967,16 @@ size_t slopdesk_ws_rail_plan(const SlopDeskWsRailPlanRow *rows, size_t count,
 size_t slopdesk_ws_rail_disambiguated_label(const SlopDeskWsRailLabel *items, size_t count,
                                             const uint8_t *strings, size_t strings_len,
                                             size_t index, uint8_t *out, size_t cap);
+// The same rule for the WHOLE list in one delivery: `count` entries in order, each a four-byte
+// big-endian length then that many UTF-8 bytes, a zero length meaning "keep the label you have".
+//
+// A collision is a fact about the list, so answering for one member needs the whole list in hand —
+// and the caller was rebuilding it per index, marshalling `n` label arrays and `n` copies of every
+// title's bytes to answer `n` questions that share one input. The single-label door stays for the
+// caller that wants one answer; a whole-rail relabelling wants this.
+size_t slopdesk_ws_rail_disambiguated_labels(const SlopDeskWsRailLabel *items, size_t count,
+                                             const uint8_t *strings, size_t strings_len,
+                                             uint8_t *out, size_t cap);
 
 // The minimum flex weight a divider may take, from the crate that enforces it — `repaired()`
 // clamps to this number, so a transcribed copy would describe a rule the client does not share.
@@ -1206,6 +1250,15 @@ size_t slopdesk_settings_row_index(const uint8_t *key, size_t key_len);
 // The positions a query matched, under the same retry protocol as the string doors: a return larger
 // than `cap` means nothing was written — ask again at that size.
 size_t slopdesk_settings_row_matches(const uint8_t *query, size_t query_len, size_t *out, size_t cap);
+// A WHOLE row in one delivery: the bucket byte, then seven fields, each a four-byte big-endian
+// length followed by that many UTF-8 bytes — key, label, page label, description, default text,
+// target section, keywords. The same retry protocol; `0` for an index no row has.
+//
+// It exists because the match already crosses as positions to keep a filter one crossing rather
+// than one per field per row, and the reader then turned each position back into eight calls. On
+// every settings-search keystroke. The field doors below stay: they are the right shape for a
+// caller that wants ONE field, and this is the answer to a different question.
+size_t slopdesk_settings_row_fields(size_t index, uint8_t *out, size_t cap);
 // The label a settings PAGE shows — the page register where the row has one, the index register
 // otherwise, so a caller never has to know which rows carry an override.
 size_t slopdesk_settings_row_page_label(size_t index, uint8_t *out, size_t cap);
@@ -1821,6 +1874,7 @@ int32_t slopdesk_ws_pane_kind_from_raw(const uint8_t *raw, size_t len);
 // default this crate stopped producing, and the fresh-workspace shape test IS that comparison.
 size_t slopdesk_ws_default_pane_title(uint8_t *out, size_t cap);
 size_t slopdesk_ws_default_session_name(uint8_t *out, size_t cap);
+size_t slopdesk_ws_default_desktop_pane_title(uint8_t *out, size_t cap);
 
 
 // MARK: The things that SPAWN panes — a template's layout, and the shipped tables
@@ -2639,6 +2693,19 @@ SlopDeskKeybind slopdesk_keybind_parse_line(const uint8_t *line, size_t line_len
                                             uint8_t *arena, size_t arena_cap);
 bool slopdesk_keybind_is_valid(const uint8_t *line, size_t line_len);
 
+/* ---- A config action NAME, as the binding id it rebinds ------------------------------------
+ * The other half of a `keybind` line. `slopdesk_keybind_parse_line` above answers what the line
+ * LOOKS like — a chord plus a named action; this answers which binding that action actually fires,
+ * which is `slopdesk-workspace`'s registry rather than the grammar's. `0` is the refusal (an
+ * unknown name, a `goto_tab` outside the nine per-digit bindings, or one of the three
+ * libghostty-only responder actions that have no workspace action at all) and cannot collide with
+ * an answer, because every id this vocabulary can name is a non-empty string. A zero-length or
+ * NULL argument reads as NO argument: only `goto_tab` reads one, and `goto_tab:` is refused by the
+ * grammar before it could ever reach here.                                                    */
+size_t slopdesk_ws_binding_id_for_config_name(const uint8_t *name, size_t name_len,
+                                              const uint8_t *arg, size_t arg_len,
+                                              uint8_t *out, size_t cap);
+
 /* The one spelling a base key is stored under, and the one text a chord is written with — the same
  * table that decides which spellings the grammar accepts. */
 size_t slopdesk_keybind_canonical_key(const uint8_t *key, size_t key_len, uint8_t *out, size_t cap);
@@ -2780,8 +2847,30 @@ SlopDeskCliShape slopdesk_cli_parse(const SlopDeskByteSpan *args, size_t args_co
 
 bool slopdesk_cli_shell(const uint8_t *name, size_t name_len, uint32_t *out_shell);
 size_t slopdesk_cli_completion_script(uint32_t shell, uint8_t *out, size_t cap);
+/* The subcommand surface the completions offer, in table order: the RUNNABLE verbs only. The filter
+ * is the point. Six designed-but-unimplemented verbs used to cross this door, so every shell offered
+ * `open`, `import`, `export`, `features`, `state:claude` and `ipc`, and every one of them exited 2
+ * with "not available yet" the moment a user accepted the completion. Availability now lives beside
+ * the name in one table, and this door can only see the half that runs. */
 SlopDeskCliShape slopdesk_cli_subcommands(SlopDeskByteSpan *out, size_t cap, uint8_t *out_arena,
                                           size_t arena_cap);
+
+/* The verbs the vocabulary DOCUMENTS but does not implement, in table order. The near side asks this
+ * for exactly one reason: to tell a user who typed `ipc` that it is planned, apart from a user who
+ * typed `opne` and made a mistake. Nothing may offer this list for completion — that is what
+ * `slopdesk_cli_subcommands` is for, and the two are disjoint by construction because one table
+ * produces both. */
+SlopDeskCliShape slopdesk_cli_planned_subcommands(SlopDeskByteSpan *out, size_t cap,
+                                                  uint8_t *out_arena, size_t arena_cap);
+
+/* The complete `--help` text, terminated by a trailing newline: the synopsis, every section of the
+ * subcommand table, the `config` note and the global flags. `program` is `argv[0]`'s last component
+ * rather than a constant, so a renamed or symlinked binary describes itself by the name the user
+ * actually typed; empty bytes fall back to `slopdesk`, because a synopsis line naming nothing is
+ * worse than one naming the canonical binary. The whole block crosses rather than the rows alone,
+ * because the subcommand list, its availability and its help text are one table and rendering half
+ * of it on the near side is how the near side grew a second copy in the first place. */
+size_t slopdesk_cli_usage(const uint8_t *program, size_t program_len, uint8_t *out, size_t cap);
 
 size_t slopdesk_cli_config_path(const uint8_t *explicit_path, size_t explicit_len,
                                 const uint8_t *from_env, size_t from_env_len, const uint8_t *xdg,
@@ -3340,6 +3429,57 @@ size_t slopdesk_link_line_col_suffix(const uint8_t *text, size_t len, uint8_t *o
 size_t slopdesk_link_posix_parent(const uint8_t *text, size_t len, uint8_t *out, size_t cap);
 size_t slopdesk_link_cd_command_line(const uint8_t *text, size_t len, uint8_t *out, size_t cap);
 
+/* ---- Is this client-named path confined to this root? ---------------------------------------
+ * The security core of the metadata RPC, and the rule the embedded editor's bridge routes an open
+ * by. It had THREE implementations in two languages before this door — a component-wise one in the
+ * request decoder, a string-prefix one in the bridge that did no `..` handling at all, and a
+ * lexically-resolving one in the forked probe — and no two of them agreed about `..`, about the
+ * root itself, or about `/`. The rules, each argued in full in
+ * rust/slopdesk-probe/src/path_confine.rs:
+ *
+ *   - a `..` component is REFUSED, never resolved (resolving it lexically is a lie the moment a
+ *     component on the way is a symlink);
+ *   - `.`, `//` and a trailing `/` are collapsed, on either side;
+ *   - the root ITSELF is inside, and says so by reporting a relative half of length zero;
+ *   - an empty root, a relative root and a root of `/` all confine NOTHING — a predicate that
+ *     answers "inside" for every path on the machine has stopped being one;
+ *   - an interior NUL, and bytes that are not UTF-8, refuse;
+ *   - it is LEXICAL: a symlink inside the root that points outside it IS followed. That residual
+ *     is deliberate and the module names what closing it would cost.
+ *
+ * The shape says which spellings of the argument are admissible. An UNDEFINED shape refuses: the
+ * only admissible default for a confinement decision is the one that grants nothing.             */
+#define SLOPDESK_PATH_SHAPE_EITHER   0u
+#define SLOPDESK_PATH_SHAPE_RELATIVE 1u
+#define SLOPDESK_PATH_SHAPE_ABSOLUTE 2u
+
+/* The normalised absolute path, under §4's `(out, cap) -> needed`. 0 = not confined, and it cannot
+ * collide with an answer: a confined path always begins with `/` and always names a component, so
+ * its length is never zero.
+ *
+ * `relative_offset` takes the byte offset WITHIN the answer at which the part below the root
+ * begins — equal to the answer's length exactly when the candidate names the root itself, which is
+ * how a caller that needs a FILE rather than a containment verdict tells a directory apart. It is
+ * written whenever there is an answer, including on the short-buffer retry path, so a caller
+ * sizing up does not evaluate the rule a third time.
+ *
+ * A caller wanting only the yes/no passes (NULL, 0) for the buffer and NULL for the offset — §4's
+ * documented way to ask for a length — and reads the return as a bool.                           */
+size_t slopdesk_path_confine(const uint8_t *root, size_t root_len,
+                             const uint8_t *candidate, size_t candidate_len,
+                             uint32_t shape, size_t *relative_offset,
+                             uint8_t *out, size_t cap);
+
+/* The shape question ALONE, for a caller with no root to confine against: absolute, naming at least
+ * one component, free of `..` and of an interior NUL. The metadata request decoder is that caller —
+ * an agent session id is confined against roots under the host's $HOME, which belong to the forked
+ * probe and not to a pure reducer, so what the decoder can still do (and must, so a hostile id never
+ * reaches a fork) is refuse an argument that is not a well-formed absolute path.
+ *
+ * Two doors over ONE implementation, not two implementations: the parser behind this is the one
+ * slopdesk_path_confine runs.                                                                    */
+bool slopdesk_path_is_confinable_absolute(const uint8_t *candidate, size_t candidate_len);
+
 /* ---- What a DROP does, once the pasteboard is classified and a zone is under the pointer ----
  * The same two-part answer as the link table above, for the same reason: an action with an empty
  * payload is a real answer, so the length cannot double as the verb. A dead cell answers NOTHING,
@@ -3725,6 +3865,10 @@ typedef struct {
   double grant_pending_timeout;
   size_t keyframe_ring_capacity;
 } SlopDeskIdrConfig;
+
+/* The tuned defaults each knob's parse falls back TO, so the host holds no copy of them. */
+SlopDeskQpConfig  slopdesk_qp_config_default(void);
+SlopDeskIdrConfig slopdesk_idr_config_default(void);
 
 SlopDeskQpController slopdesk_qp_new(SlopDeskQpConfig config, int32_t seed_q);
 SlopDeskQpController slopdesk_qp_decide(SlopDeskQpController controller, bool congested);
@@ -7127,6 +7271,29 @@ bool slopdesk_logcat_parse(const unsigned char *line, size_t len,
                            SlopDeskDeviceLogLine *out);
 bool slopdesk_unified_log_parse(const unsigned char *line, size_t len,
                                 SlopDeskDeviceLogLine *out);
+
+// ---------------------------------------------------------------------------
+// The Android console's LEVEL FILTER — `slopdesk_androidd::protocol`.
+//
+// The letter the user picks is interpolated into `*:<level>` and reaches an
+// argument vector; `logcat` treats an unparsable filter spec as a fatal error,
+// which reads as a console that connects and immediately dies. So androidd
+// validates every requested level against one array — and the client's MENU is
+// that same array, read here, rather than a second list of the same letters.
+//
+// It was a second list, and it had drifted short: the menu offered V D I W E
+// against an alphabet of V D I W E F. Not a crash — a FATAL filter nobody
+// could ask for, on the one severity a console gets opened to find.
+//
+// This is NOT the same set as SLOPDESK_DEVICE_LOG_* above, and they are not
+// meant to converge. Those are the priorities a PRINTED line may carry, so
+// they include `logcat`'s A. These are the priorities a SPEC may name, so they
+// exclude it and exclude S — silent, a console that prints nothing.
+
+size_t slopdesk_android_log_level_count(void);
+// The priority letter at `index`, least severe first. 0 is "no such level",
+// which cannot collide with a real answer: every letter is non-empty.
+size_t slopdesk_android_log_level_letter(size_t index, uint8_t *out, size_t cap);
 
 // ---------------------------------------------------------------------------
 // The two device panels' shared decisions — `slopdesk_devicepanel`.

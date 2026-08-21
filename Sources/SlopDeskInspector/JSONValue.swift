@@ -79,6 +79,23 @@ public enum JSONValue: Sendable, Equatable, Codable {
 
     /// A human-readable flattening for UI display (text blocks joined, scalars
     /// stringified). Used to render tool input/output compactly.
+    ///
+    /// ## There is a second flattening, and it answers differently
+    ///
+    /// `rust/slopdesk-inspectord/src/json.rs`'s `display_string` renders a tool RESULT's content
+    /// inside the daemon; this one renders a pending tool's INPUT inside the client. They are the
+    /// same visual concept in two processes, they never see the same value, and they do not agree.
+    /// That module's own note carries the table of where; the short of it is that the divergence is
+    /// in this file's DECODER rather than in either flattening. ``JSONValue/init(from:)`` decodes
+    /// every JSON number as a `Double`, so an integer past `2^53` is already gone by the time the
+    /// `1e15` guard below reads it, and serde — which keeps the integer types apart — prints the
+    /// same input exactly.
+    ///
+    /// The Rust answer is the better one in every divergent row, and it is not adoptable here
+    /// without changing what a `JSONValue` number IS. That type is `Codable` and it is how
+    /// `ToolCard.input` arrives over the inspector channel, so this is docs/55 §7 step 6's case and
+    /// what is owed is a pin, not a deletion. The tests in `PendingToolSummaryTests` assert this
+    /// side of the table; `json.rs`'s own tests assert the other.
     public var displayString: String {
         switch self {
         case .null: return ""

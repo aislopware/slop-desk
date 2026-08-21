@@ -55,32 +55,49 @@ import CSlopDeskFFI
 /// touches it on the session actor (and the tests / loopback-validate from one thread), so no two
 /// threads race the state behind the handle.
 public final class RecoveryIDRPolicy: @unchecked Sendable {
-    /// The tuning, resolved Swift-side from `SLOPDESK_IDR_*` and handed to the door once.
+    /// The tuning, seeded from the door's own defaults, then overridden Swift-side from
+    /// `SLOPDESK_IDR_*` by the session and handed back to the door once.
+    ///
+    /// Every field starts as `slopdesk_idr_config_default()`'s answer rather than as a literal.
+    /// These seven numbers were tuned together and each is load-bearing against a failure the host
+    /// has already had, so the reasoning belongs beside the law in `recovery_idr.rs` and the digits
+    /// belong there ONLY. A second spelling here would agree today and stop agreeing the moment
+    /// either side is retuned — silently, because the two would still compile and still pass.
     public struct Config: Sendable, Equatable {
-        /// In-flight grace = `graceFraction × smoothedRTT`, clamped to [floor, ceil]. A crossing
-        /// request arrives ≤ RTT/2 + jitter after the keyframe send; 0.75×RTT adds ~50% jitter
-        /// margin (the measured path jitters RTT 10-59 ms).
-        public var graceFraction: Double = 0.75
+        /// In-flight grace is this fraction of the smoothed RTT, clamped to [floor, ceil]. A
+        /// crossing request arrives ≤ RTT/2 + jitter after the keyframe send, so the fraction is
+        /// what buys the jitter margin the measured path needs.
+        public var graceFraction: Double
         /// Covers the rtt-unknown bootstrap (smoothedRTT = 0 before the first netstats fold).
-        public var graceFloorSeconds: Double = 0.040
-        /// = kfDupMinInterval: beyond it the kfDup second copy has also long been sent, so
-        /// further suppression only adds freeze.
-        public var graceCeilSeconds: Double = 0.250
-        /// Burst allowance: exactly one ordinary grant + one casualty-bypass grant back-to-back
-        /// (recovery IDRs are compact + kfDup-doubled ⇒ 2 grants ≈ 4 wire copies in <500 ms —
-        /// bounded; 3+ would re-open the F1 storm).
-        public var bucketCapacity: Double = 2.0
-        /// 1 token / 500 ms sustained — preserves the old F1 spacing ceiling exactly.
-        public var refillTokensPerSecond: Double = 2.0
-        /// A granted-but-unserviced latch suppresses duplicates until this expires. Sized above
-        /// the worst legitimate latch-service path: a freshly-quiet window waits the
-        /// StaticIDRDecider quietWindow (1.0 s) + timer tick (0.25 s) + margin. Prevents both
+        public var graceFloorSeconds: Double
+        /// The kfDup spacing: beyond it the second copy has also long been sent, so further
+        /// suppression only adds freeze.
+        public var graceCeilSeconds: Double
+        /// Burst allowance: exactly one ordinary grant + one casualty-bypass grant back-to-back.
+        /// Recovery IDRs are compact and kfDup-doubled, so the burst stays bounded in wire copies;
+        /// one more would re-open the F1 storm.
+        public var bucketCapacity: Double
+        /// The sustained refill — it preserves the old F1 spacing ceiling exactly.
+        public var refillTokensPerSecond: Double
+        /// A granted-but-unserviced latch suppresses duplicates until this expires. Sized above the
+        /// worst legitimate latch-service path — a freshly-quiet window waits out the
+        /// StaticIDRDecider quiet window plus a timer tick plus margin — so it prevents both
         /// premature double-grants and a permanent wedge if capture dies.
-        public var grantPendingTimeout: Double = 1.5
+        public var grantPendingTimeout: Double
         /// Keyframes are rare (recovery + static-crisp + first-frame; motion heartbeat default
-        /// OFF) — 4 covers every keyframe plausibly in flight within one ack round-trip.
-        public var keyframeRingCapacity: Int = 4
-        public init() {}
+        /// OFF), so the ring covers every one plausibly in flight within an ack round-trip.
+        public var keyframeRingCapacity: Int
+
+        public init() {
+            let defaults = slopdesk_idr_config_default()
+            graceFraction = defaults.grace_fraction
+            graceFloorSeconds = defaults.grace_floor_seconds
+            graceCeilSeconds = defaults.grace_ceil_seconds
+            bucketCapacity = defaults.bucket_capacity
+            refillTokensPerSecond = defaults.refill_tokens_per_second
+            grantPendingTimeout = defaults.grant_pending_timeout
+            keyframeRingCapacity = Int(defaults.keyframe_ring_capacity)
+        }
     }
 
     /// The admission answer, as a `switch` can read it. Each case is one of the door's

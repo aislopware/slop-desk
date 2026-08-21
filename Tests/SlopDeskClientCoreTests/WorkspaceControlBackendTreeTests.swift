@@ -223,21 +223,53 @@ final class WorkspaceControlBackendTreeTests: XCTestCase {
         XCTAssertEqual(backend.capturePane(paneId: nil, lines: 10), ["l1", "l2", "l3", "l4"], "N over count = all")
     }
 
-    // MARK: - (e) send-keys — verbatim text + named-key table
+    // MARK: - (e) send-keys — verbatim text + the one named-key vocabulary
 
     func testSendKeysVerbatimTextThenNamedKeys() throws {
         let store = makeStore()
         let backend = makeBackend(store)
         let focused = try focusedLeaf(store)
 
-        XCTAssertTrue(backend.sendKeys(paneId: nil, text: "echo hi", keys: ["enter", "tab", "esc", "up"]))
+        XCTAssertEqual(backend.sendKeys(paneId: nil, text: "echo hi", keys: ["enter", "tab", "esc", "up"]), .sent)
         let handle = try recording(store, focused)
         XCTAssertEqual(handle.sentText, ["echo hi"], "literal text is sent verbatim")
         XCTAssertEqual(
             handle.sentBytes,
-            [[0x0D], [0x09], [0x1B], [0x1B, 0x5B, 0x41]],
-            "named keys map to their keycode bytes (enter/tab/esc/up)",
+            [[0x0D, 0x09, 0x1B, 0x1B, 0x5B, 0x41]],
+            "named keys map to their keycode bytes (enter/tab/esc/up), resolved before anything is written",
         )
+    }
+
+    /// The names the deleted nine-entry table did not know. Each reported SUCCESS and sent nothing;
+    /// the vocabulary behind the door has always had them, so they are keystrokes now.
+    func testSendKeysReachesTheKeysTheOldTableDropped() throws {
+        let store = makeStore()
+        let backend = makeBackend(store)
+        let focused = try focusedLeaf(store)
+
+        XCTAssertEqual(backend.sendKeys(paneId: nil, text: "", keys: ["f5", "pgup", "home", "delete"]), .sent)
+        let handle = try recording(store, focused)
+        XCTAssertEqual(
+            handle.sentBytes,
+            [[0x1B, 0x5B, 0x31, 0x35, 0x7E] + [0x1B, 0x5B, 0x35, 0x7E] + [0x1B, 0x5B, 0x48] + [0x1B, 0x5B, 0x33, 0x7E]],
+            "F5, PgUp, Home and Delete are CSI sequences, not silence",
+        )
+    }
+
+    /// A name that is not a key rejects the WHOLE request, and nothing reaches the pane — the same
+    /// validate-then-drop the host's `write` verb has always applied to the same vocabulary.
+    func testSendKeysRefusesAnUnknownKeyAndWritesNothing() throws {
+        let store = makeStore()
+        let backend = makeBackend(store)
+        let focused = try focusedLeaf(store)
+
+        XCTAssertEqual(
+            backend.sendKeys(paneId: nil, text: "echo hi", keys: ["enter", "frobnicate"]),
+            .unknownKey("frobnicate"),
+        )
+        let handle = try recording(store, focused)
+        XCTAssertEqual(handle.sentText, [], "not even the literal text goes out on a refused request")
+        XCTAssertEqual(handle.sentBytes, [])
     }
 
     // MARK: - (f) font scope classifier

@@ -216,12 +216,25 @@ final class CodeBridgeServer: CodeBridgeRouting, @unchecked Sendable {
         return best.fd
     }
 
-    /// Whether `path` lives under `root` — a path-component containment test, so `/a/bee` is not
-    /// treated as a child of `/a/b`. An empty root (a window with no folder open) contains nothing.
+    /// Whether `path` lives at or under `root` — the host's ONE containment rule, which is
+    /// ``PathConfinement/isWithin(root:path:)``, which is Rust's.
+    ///
+    /// **What used to be here, and why it had to go.** This was a string `hasPrefix` with a
+    /// separator guard bolted on. The guard was right about the case it was written for — `/a/bee`
+    /// is not a child of `/a/b` — and the function did no `..` handling whatsoever, so
+    /// `contains(root: "/a", path: "/a/../../etc/passwd")` answered TRUE. Nothing here was stopping
+    /// that; what was stopping it was a `standardizingPath` in ``HostCodeServerPerformer`` two files
+    /// away, plus the fact that a `false` from here falls back to `code-server -r`, which opens the
+    /// path anyway. A containment rule whose safety rests on where its callers happen to be is not
+    /// one, and the next caller would not have known to bring a normalizer.
+    ///
+    /// Two answers changed with the unification, both toward refusing. A root of `/` now contains
+    /// NOTHING — a predicate that says "inside" for every path on the machine has stopped being
+    /// one, and a workbench window rooted at `/` simply falls back to the CLI, which is where an
+    /// unrouted open goes anyway. And a `..` anywhere in either argument refuses instead of being
+    /// ignored.
     static func contains(root: String, path: String) -> Bool {
-        guard !root.isEmpty, path.hasPrefix(root) else { return false }
-        if root == path { return true }
-        return root.hasSuffix("/") || path.dropFirst(root.count).hasPrefix("/")
+        PathConfinement.isWithin(root: root, path: path)
     }
 
     /// The `open` line for `target` (`path[:line[:col]]`), or `nil` when the path will not encode.

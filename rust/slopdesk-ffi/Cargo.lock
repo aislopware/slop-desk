@@ -294,6 +294,7 @@ dependencies = [
  "slopdesk-git",
  "slopdesk-hookevent",
  "slopdesk-inspectord",
+ "slopdesk-probe",
  "slopdesk-rowscan",
  "slopdesk-sanitize",
  "slopdesk-screenwire",
@@ -334,6 +335,13 @@ name = "slopdesk-inspectord"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "slopdesk-probe"
+version = "0.1.0"
+dependencies = [
  "serde_json",
 ]
 

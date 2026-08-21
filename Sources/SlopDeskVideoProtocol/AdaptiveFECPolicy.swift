@@ -82,8 +82,19 @@ public enum AdaptiveFECPolicy {
             return env
         }
 
-        /// Whether multi-loss recovery is active (`SLOPDESK_FEC_M >= 2`).
-        public static var isActive: Bool { parityCount >= 2 }
+        /// Whether multi-loss recovery is active for a resolved `m`.
+        ///
+        /// The threshold is the codec's, not this file's: `m >= 2` is what changes the parity count
+        /// PER GROUP on the wire, and a Swift copy of it is a second answer to a question the host
+        /// and the client must not answer differently. It used to be spelled here and again in
+        /// ``adaptiveMFromEnv``, with a third literal inside the crate's own tier→`m` table.
+        static func isActive(parityCount: Int) -> Bool {
+            slopdesk_adaptive_fec_multi_loss_active(parityCount)
+        }
+
+        /// Whether multi-loss recovery is active for the process's resolved `m`
+        /// (`SLOPDESK_FEC_M >= 2`).
+        public static var isActive: Bool { isActive(parityCount: parityCount) }
 
         /// PURE resolution of `SLOPDESK_FEC_M` (testable without process state): parse, default 1,
         /// clamp to ``mRange``. A non-numeric / out-of-range value clamps to the nearest bound.
@@ -148,7 +159,8 @@ public enum AdaptiveFECPolicy {
     /// Pure env resolution for the adaptive-`m` gate (testable without process state): flag set AND
     /// the env resolves a multi-loss codec (`FEC_M >= 2`), the precondition for the tier→`m` table.
     static func adaptiveMFromEnv(_ env: [String: String]) -> Bool {
-        env["SLOPDESK_ADAPTIVE_FEC_M"] == "1" && MultiLossFEC.resolveParityCount(env: env) >= 2
+        env["SLOPDESK_ADAPTIVE_FEC_M"] == "1"
+            && MultiLossFEC.isActive(parityCount: MultiLossFEC.resolveParityCount(env: env))
     }
 
     /// The wire FEC tier the host must stamp on EVERY frame, given the active scheme.

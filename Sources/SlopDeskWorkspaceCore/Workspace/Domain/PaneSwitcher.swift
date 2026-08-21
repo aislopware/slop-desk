@@ -52,9 +52,17 @@ public struct PaneSwitcher: Equatable, Sendable {
 
     /// Walks the highlight one step, wrapping at both ends. Holding ⌃ and tapping ⇥ never dead-ends,
     /// and ⇧ reverses direction mid-gesture to correct an overshoot.
+    ///
+    /// The wrap is ``ListNavigation/wrappedIndex(_:delta:count:)`` — the one ring step, which the
+    /// filter pills and the find bar walk too. The refusal arm is unreachable here (the initialiser
+    /// rejects a ring of fewer than two, and ``highlightIndex`` is an index into it by construction),
+    /// and it LEAVES the highlight where it is rather than trapping, because a switcher that killed
+    /// the app on a ⇥ would be a worse answer to an impossible state than one that does not move.
     public mutating func step(forward: Bool) {
-        let count = candidates.count
-        highlightIndex = (highlightIndex + (forward ? 1 : -1) + count) % count
+        guard let next = ListNavigation.wrappedIndex(
+            highlightIndex, delta: forward ? 1 : -1, count: candidates.count,
+        ) else { return }
+        highlightIndex = next
     }
 
     /// Builds the frozen candidate order: the active pane, then recency, then anything never visited.

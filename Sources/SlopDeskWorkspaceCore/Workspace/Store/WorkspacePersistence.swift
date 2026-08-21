@@ -183,13 +183,13 @@ public struct WorkspacePersistence: @unchecked Sendable {
     static func isDefaultTreeShape(_ tree: TreeWorkspace) -> Bool {
         guard tree.sessions.count == 1,
               let session = tree.sessions.first,
-              session.name == "Local",
+              session.name == TreeWorkspaceDefaults.sessionName,
               session.tabs.count == 1,
               tree.allPaneIDs().count == 1,
               let leaf = tree.allPaneIDs().first,
               let spec = tree.spec(for: leaf),
               spec.kind == .terminal,
-              spec.title == "Terminal",
+              spec.title == TreeWorkspaceDefaults.paneTitle,
               spec.video == nil else { return false }
         return true
     }

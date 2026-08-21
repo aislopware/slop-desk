@@ -209,6 +209,67 @@ pub extern "C" fn slopdesk_settings_row_shown(index: usize, mac: bool) -> bool {
     settings_rows::shown_at(index, mac)
 }
 
+/// The seven strings and the bucket byte, in ONE delivery.
+///
+/// ## Why this exists next to seven perfectly good field doors
+///
+/// The module header already argues the principle for the MATCH — positions rather than rows, so a
+/// filter is one crossing and not one per field per row — and then the near side turned each
+/// position back into eight calls. Settings search reads every matched row on every keystroke, so
+/// the field doors were costing roughly `8 × matches` crossings per character typed, and each
+/// string door can retry, so the real figure was higher. Whole-row is the same argument applied one
+/// level out: the caller wants the row, so the row is what crosses.
+///
+/// The field doors stay. They are the right shape for the callers that want ONE field — the key
+/// lookup, the shown gate, the reset walk over `persistence` — and this door is not a replacement
+/// for them, it is the answer to a different question.
+///
+/// ## The layout
+///
+/// One byte of bucket, then seven fields, each a four-byte big-endian length followed by that many
+/// UTF-8 bytes, in the order the near side's row type declares them: key, label, page label,
+/// description, default text, target section, keywords. Big-endian and explicit rather than
+/// `usize`-native, because the layout is read by a decoder on the other side of a C boundary and a
+/// width that changes with the target is a bug waiting for a 32-bit build.
+///
+/// An empty field is a zero length, which is how `target_section` says "edited in place" — the same
+/// meaning the single-field door gives it, so the two readings cannot diverge.
+///
+/// A return larger than `cap` means nothing was written; ask again at that size. An index no row
+/// has delivers nothing at all, which the caller distinguishes from a real row by the count it
+/// already had to consult to get here.
+///
+/// # Safety
+/// `(out, cap)` must be writable for `cap` bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point, and `(out, cap)` is the caller's buffer"
+)]
+pub unsafe extern "C" fn slopdesk_settings_row_fields(index: usize, out: *mut c_uchar, cap: usize) -> usize {
+    let Some(row) = settings_rows::row_at(index) else {
+        return 0;
+    };
+    let fields = [
+        row.key,
+        row.label,
+        row.page_label(),
+        row.description,
+        row.default_text,
+        row.target_section,
+        row.keywords,
+    ];
+    let mut blob = Vec::with_capacity(1 + fields.len() * 4 + fields.iter().map(|f| f.len()).sum::<usize>());
+    blob.push(row.bucket.index());
+    for field in fields {
+        let len = u32::try_from(field.len()).unwrap_or(u32::MAX);
+        blob.extend_from_slice(&len.to_be_bytes());
+        blob.extend_from_slice(field.as_bytes());
+    }
+    // SAFETY: the caller's obligation, restated above; `deliver` writes at most `cap`.
+    unsafe { deliver(&blob, out, cap) }
+}
+
 /// One field of one row, delivered.
 ///
 /// # Safety
@@ -287,6 +348,11 @@ pub unsafe extern "C" fn slopdesk_settings_row_matches(
 
 #[cfg(test)]
 #[expect(unsafe_code, reason = "calling the boundary IS what these tests are for")]
+#[expect(
+    clippy::expect_used,
+    reason = "a panic while walking a length prefix this test just asked the door for IS the failure report \
+              — softening it to a default would let a short delivery read as an empty field and pass"
+)]
 mod tests {
     use super::*;
 
@@ -327,6 +393,82 @@ mod tests {
         assert_eq!(target, None, "an inline row jumps nowhere");
         assert_eq!(slopdesk_settings_row_bucket(index), 0);
         assert!(slopdesk_settings_row_is_inline_editable(index));
+    }
+
+    /// The whole-row door and the seven field doors answer the same row.
+    ///
+    /// This is the load-bearing test for the new door, because the near side reads rows through it
+    /// now and through the field doors only for single-field questions. If the two ever disagreed
+    /// the settings list would render one thing and the key lookup resolve another, with nothing to
+    /// say which was right. Walking EVERY row rather than a sample is what makes a field appended
+    /// to `SettingRow` and forgotten here fail immediately.
+    #[test]
+    fn the_whole_row_door_agrees_with_every_field_door_on_every_row() {
+        for index in 0..slopdesk_settings_row_count() {
+            // SAFETY: the buffer inside `read` is a live local.
+            let blob = read_bytes(|out, cap| unsafe { slopdesk_settings_row_fields(index, out, cap) });
+            let (bucket, fields) = split_row_blob(&blob);
+            assert_eq!(bucket, slopdesk_settings_row_bucket(index), "row {index} bucket");
+            let expected: [Option<String>; 7] = [
+                // SAFETY: as above, once per field.
+                read(|out, cap| unsafe { slopdesk_settings_row_key(index, out, cap) }),
+                read(|out, cap| unsafe { slopdesk_settings_row_label(index, out, cap) }),
+                read(|out, cap| unsafe { slopdesk_settings_row_page_label(index, out, cap) }),
+                read(|out, cap| unsafe { slopdesk_settings_row_description(index, out, cap) }),
+                read(|out, cap| unsafe { slopdesk_settings_row_default_text(index, out, cap) }),
+                read(|out, cap| unsafe { slopdesk_settings_row_target_section(index, out, cap) }),
+                read(|out, cap| unsafe { slopdesk_settings_row_keywords(index, out, cap) }),
+            ];
+            assert_eq!(fields.len(), expected.len(), "row {index} field count");
+            for (got, want) in fields.iter().zip(expected.iter()) {
+                // A field door answers `None` for an empty field; the blob spells it as a zero
+                // length. Same meaning, two shapes, and this is where they are reconciled.
+                assert_eq!(got.as_str(), want.as_deref().unwrap_or(""), "row {index}");
+            }
+        }
+    }
+
+    /// An index past the last delivers nothing, rather than a row of empty fields that would read
+    /// as a real setting with no name.
+    #[test]
+    fn a_row_past_the_end_delivers_nothing_at_all() {
+        let past = slopdesk_settings_row_count();
+        // SAFETY: the buffer is a live local.
+        let needed = unsafe { slopdesk_settings_row_fields(past, core::ptr::null_mut(), 0) };
+        assert_eq!(needed, 0);
+    }
+
+    /// An overflow reports the size it needs and leaves the caller's buffer untouched — §4's retry.
+    #[test]
+    fn a_row_that_does_not_fit_names_its_size_and_writes_nothing() {
+        let mut tiny = [0xAA_u8; 4];
+        // SAFETY: the buffer is a live local.
+        let needed = unsafe { slopdesk_settings_row_fields(0, tiny.as_mut_ptr(), tiny.len()) };
+        assert!(needed > tiny.len(), "row 0 is wider than four bytes");
+        assert_eq!(tiny, [0xAA; 4], "an overflow leaves the caller's buffer alone");
+    }
+
+    /// The size-then-read protocol, then the length-prefixed walk the near side does.
+    fn read_bytes(mut door: impl FnMut(*mut c_uchar, usize) -> usize) -> Vec<u8> {
+        let needed = door(core::ptr::null_mut(), 0);
+        let mut out = vec![0_u8; needed];
+        let written = door(out.as_mut_ptr(), out.len());
+        assert_eq!(written, needed);
+        out
+    }
+
+    /// The bucket byte and the seven length-prefixed fields behind it.
+    fn split_row_blob(blob: &[u8]) -> (u8, Vec<String>) {
+        let (bucket, mut rest) = blob.split_first().expect("a row is never empty");
+        let mut fields = Vec::new();
+        while !rest.is_empty() {
+            let (header, tail) = rest.split_at(4);
+            let len = u32::from_be_bytes(header.try_into().expect("four bytes")) as usize;
+            let (body, tail) = tail.split_at(len);
+            fields.push(String::from_utf8(body.to_vec()).expect("a Rust &str's bytes"));
+            rest = tail;
+        }
+        (*bucket, fields)
     }
 
     #[test]

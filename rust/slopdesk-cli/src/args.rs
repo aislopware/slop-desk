@@ -17,6 +17,72 @@ pub enum OutputFormat {
 /// The default IPC wait, in milliseconds.
 pub const DEFAULT_TIMEOUT_MS: i64 = 3000;
 
+/// One global flag as the help text describes it, and as [`parse`] accepts it.
+///
+/// The `spellings` field is not decoration: it is what lets a test feed every documented flag back
+/// through the parser, so a flag that is renamed in the `match` below but not here fails the build
+/// rather than quietly documenting a flag that no longer exists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct GlobalFlag {
+    /// How the help text prints it, alternatives and metavariable included.
+    pub display: &'static str,
+    /// Every token [`parse`] matches for this flag.
+    pub spellings: &'static [&'static str],
+    /// One sentence. `{timeout}` is substituted with [`DEFAULT_TIMEOUT_MS`] by the help renderer,
+    /// so the documented default cannot drift from the constant the parser uses.
+    pub summary: &'static str,
+}
+
+/// Every global flag, in the order the help text prints them.
+///
+/// This sits beside the grammar rather than in the help renderer for the same reason the subcommand
+/// vocabulary sits in one table: the flag STRING and the sentence describing it are one fact, and
+/// two copies of a fact is a CLI that documents a flag it does not accept.
+pub const GLOBAL_FLAGS: &[GlobalFlag] = &[
+    GlobalFlag {
+        display: "--json / --format json",
+        spellings: &["--json", "--format"],
+        summary: "Emit structured JSON for list/inspect output.",
+    },
+    GlobalFlag {
+        display: "--no-headers",
+        spellings: &["--no-headers"],
+        summary: "Strip table header rows from text output.",
+    },
+    GlobalFlag {
+        display: "--socket PATH",
+        spellings: &["--socket"],
+        summary: "Override the client control socket path.",
+    },
+    GlobalFlag {
+        display: "--config-file PATH",
+        spellings: &["--config-file"],
+        summary: "Override the config file location.",
+    },
+    GlobalFlag {
+        display: "--timeout MS",
+        spellings: &["--timeout"],
+        summary: "Per-request IPC wait for the running app (default {timeout}). Bounds each socket \
+                  recv/send — NOT the watch:claude block (see --block-timeout).",
+    },
+    GlobalFlag {
+        display: "-e <cmd> [args...]",
+        spellings: &["-e"],
+        summary: "Launch the GUI and run <cmd> in its first pane. Terminal, per xterm: every token after it \
+                  belongs to <cmd>.",
+    },
+    GlobalFlag {
+        display: "-y / --yes",
+        spellings: &["-y", "--yes"],
+        summary: "Skip destructive-action confirmation prompts.",
+    },
+    GlobalFlag {
+        display: "-h / --help",
+        spellings: &["-h", "--help"],
+        summary: "Show this help.",
+    },
+];
+
 /// A fully-parsed `slopdesk` invocation.
 #[expect(
     clippy::struct_excessive_bools,
@@ -211,7 +277,7 @@ mod tests {
         reason = "a panic in a test is the failure report, not a runtime fault"
     )]
 
-    use super::{DEFAULT_TIMEOUT_MS, Invocation, OutputFormat, ParseError, parse};
+    use super::{DEFAULT_TIMEOUT_MS, GLOBAL_FLAGS, Invocation, OutputFormat, ParseError, parse};
 
     fn run(tokens: &[&str]) -> Result<Invocation, ParseError> {
         let mut args = vec!["slopdesk".to_owned()];
@@ -363,5 +429,37 @@ mod tests {
     #[test]
     fn an_empty_argv_does_not_index_past_the_program_name() {
         assert!(parse(&[]).expect("parses").launch_gui);
+    }
+
+    #[test]
+    fn every_documented_global_flag_is_one_this_parser_accepts() {
+        // The help text is generated from `GLOBAL_FLAGS`, so a flag renamed in the `match` above but
+        // not here would leave the CLI documenting a flag it rejects with "unknown flag". Feeding
+        // each spelling back through the parser is what makes that impossible rather than unlikely.
+        for flag in GLOBAL_FLAGS {
+            assert!(!flag.spellings.is_empty(), "{} spells nothing", flag.display);
+            for spelling in flag.spellings {
+                // Every value-taking flag is given one; the point is only that the token is KNOWN,
+                // so an `UnknownFlag` for it is the failure and anything else is fine.
+                let outcome = run(&[spelling, "value", "panes"]);
+                assert_ne!(
+                    outcome,
+                    Err(ParseError::UnknownFlag((*spelling).to_owned())),
+                    "{spelling} is documented but not accepted"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn no_global_flag_is_documented_twice() {
+        let mut spellings: Vec<&str> = GLOBAL_FLAGS
+            .iter()
+            .flat_map(|flag| flag.spellings.iter().copied())
+            .collect();
+        let before = spellings.len();
+        spellings.sort_unstable();
+        spellings.dedup();
+        assert_eq!(spellings.len(), before, "a flag spelling appears on two rows");
     }
 }

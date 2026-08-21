@@ -59,6 +59,13 @@ slopdesk-fuzzy = { path = "../slopdesk-fuzzy" }
 slopdesk-rowscan = { path = "../slopdesk-rowscan" }
 slopdesk-hookevent = { path = "../slopdesk-hookevent" }
 slopdesk-inspectord = { path = "../slopdesk-inspectord" }
+# The metadata RPC's Rust half, taken here for ONE module: `path_confine`, the rule that decides
+# whether a client-named path is inside the pane's project root. hostd asks it through this crate's
+# door and the forked `slopdesk-probe` asks it directly, which is what makes the two layers of that
+# confinement one rule rather than two that merely looked alike. The edge is also what puts the rule
+# inside `build-ffi.sh`'s content stamp (`docs/55` §3); everything else in the crate is
+# filesystem-walking that no client links and `-dead_strip` removes.
+slopdesk-probe = { path = "../slopdesk-probe" }
 slopdesk-sanitize = { path = "../slopdesk-sanitize" }
 slopdesk-screenwire = { path = "../slopdesk-screenwire" }
 slopdesk-sidecars = { path = "../slopdesk-sidecars" }

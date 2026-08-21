@@ -24,7 +24,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use slopdesk_workspace::identity::{IdSource, PaneId, SessionId, SplitNodeId, TabId};
 use slopdesk_workspace::session::{PaneKind, PaneSpec, Session, Tab};
 use slopdesk_workspace::split_tree::{MAX_DEPTH, MIN_WEIGHT, SplitNode, SplitWeight, WeightedChild};
-use slopdesk_workspace::workspace::{DEFAULT_PANE_TITLE, DEFAULT_SESSION_NAME};
+use slopdesk_workspace::workspace::{DEFAULT_DESKTOP_PANE_TITLE, DEFAULT_PANE_TITLE, DEFAULT_SESSION_NAME};
 use slopdesk_workspace::{tab_ordering, tree_ops};
 
 use super::codec::{self, WorkspaceLayoutNode};
@@ -32,7 +32,11 @@ use super::intent::{self, WorkspaceIntentOp};
 use super::topology::{CLOSED_TAB_RING_CAP, ClosedTab, FOCUS_MRU_CAP, WorkspaceTopology};
 
 /// The title a video pane is born with when its endpoint names none.
-const DEFAULT_VIDEO_TITLE: &str = "Desktop";
+///
+/// The word itself is [`DEFAULT_DESKTOP_PANE_TITLE`], beside the other two seeded names, because
+/// the client mints desktop panes too. Spelling it here as well would let a locally-made pane and a
+/// document-restored one carry different titles after a rename that only touched one side.
+const DEFAULT_VIDEO_TITLE: &str = DEFAULT_DESKTOP_PANE_TITLE;
 
 /// What one intent did.
 #[derive(Debug, Clone, PartialEq)]

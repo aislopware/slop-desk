@@ -258,28 +258,55 @@ final class CLIVersionTests: XCTestCase {
 // MARK: - CLICompletions
 
 final class CLICompletionsTests: XCTestCase {
-    /// Independently-authored golden of the Claude-only subcommand surface. Authored here (not
-    /// derived from `CLICompletions.subcommands`) so a silent change to the surface — in particular
-    /// an accidental `codex`/`opencode` entry — FAILS this test.
+    /// Independently-authored golden of the Claude-only subcommand surface: the verbs the shells
+    /// OFFER, which is the runnable half of the vocabulary and nothing else. Authored here (not
+    /// derived from `CLICompletions.subcommands`) so a silent change to the surface — an accidental
+    /// `codex`/`opencode` entry, or a planned verb leaking back onto the offer — FAILS this test.
+    ///
+    /// This list used to carry six more: `open`, `import`, `export`, `features`, `state:claude` and
+    /// `ipc` completed in all five shells and then exited 2 with "not available yet". They are
+    /// designed and unbuilt, so they now live on `CLIUsage.planned`, where nothing can offer them.
     private let expectedSurface = [
-        "open", "view", "edit",
-        "config", "font", "keybind",
+        "version", "completions", "sidecars", "help",
         "window", "windows", "tab", "tabs", "pane", "panes",
-        "watch", "watch:claude",
+        "config", "font", "keybind",
         "jump", "learn", "ignore",
-        "import", "export", "features",
-        "completions", "version",
-        "state:claude", "sidecars", "ipc", "help",
+        "watch:claude", "view", "edit", "watch",
     ]
+
+    /// The other half of the same table: designed, documented, NOT implemented, never offered.
+    private let expectedPlanned = ["open", "import", "export", "features", "state:claude", "ipc"]
 
     func testSubcommandSurfaceMatchesGolden() {
         XCTAssertEqual(CLICompletions.subcommands, expectedSurface)
     }
 
+    func testPlannedSurfaceMatchesGolden() {
+        XCTAssertEqual(CLIUsage.planned, expectedPlanned)
+    }
+
+    /// The rule the vocabulary table exists to make unbreakable, checked at the door Swift actually
+    /// uses: nothing a shell offers can be a verb the dispatcher will refuse. The exhaustive form of
+    /// this — every shell script against every planned name — lives in the crate, next to the table.
+    func testNothingOfferedIsAlsoPlanned() {
+        for planned in CLIUsage.planned {
+            XCTAssertFalse(
+                CLICompletions.subcommands.contains(planned),
+                "'\(planned)' is offered for completion but is not implemented",
+            )
+            for shell in CLICompletions.Shell.allCases {
+                let script = CLICompletions.completionScript(for: shell)
+                XCTAssertFalse(script.contains(planned), "\(shell) offers the unimplemented '\(planned)'")
+            }
+        }
+    }
+
     func testSurfaceIsClaudeOnly() {
         XCTAssertTrue(CLICompletions.subcommands.contains("watch:claude"))
-        XCTAssertTrue(CLICompletions.subcommands.contains("state:claude"))
-        for sub in CLICompletions.subcommands {
+        // `state:claude` is the OTHER Claude-only form; it is planned, so it belongs on that list
+        // rather than on the offer — being Claude-only never made it runnable.
+        XCTAssertTrue(CLIUsage.planned.contains("state:claude"))
+        for sub in CLICompletions.subcommands + CLIUsage.planned {
             XCTAssertFalse(sub.contains("codex"), "unexpected codex token: \(sub)")
             XCTAssertFalse(sub.contains("opencode"), "unexpected opencode token: \(sub)")
         }
@@ -339,6 +366,60 @@ final class CLICompletionsTests: XCTestCase {
         XCTAssertEqual(CLICompletions.Shell(argument: "powershell"), .powershell)
         XCTAssertEqual(CLICompletions.Shell(argument: "pwsh"), .powershell)
         XCTAssertNil(CLICompletions.Shell(argument: "tcsh"))
+    }
+}
+
+// MARK: - CLIUsage
+
+/// Tests for `slopdesk --help`. The TEXT is the crate's, rendered from the same table the
+/// completions and `main.swift`'s dispatch switch derive from; these check that the whole block
+/// crosses the door intact and that it documents both halves of the vocabulary. The exhaustive
+/// per-row and wrapping cases live in `rust/slopdesk-cli`'s `vocabulary`, where the renderer is.
+final class CLIUsageTests: XCTestCase {
+    func testUsageOpensWithTheSynopsisAndTheProgramNameItWasGiven() {
+        let text = CLIUsage.text(programName: "sd")
+        XCTAssertTrue(text.hasPrefix("usage: sd [global flags] <subcommand> [args...]"))
+        XCTAssertTrue(text.hasSuffix("\n"))
+        // A renamed or symlinked binary must describe itself, not the canonical name.
+        XCTAssertFalse(text.contains("usage: slopdesk"))
+    }
+
+    func testUsageDocumentsEveryVerbTheShellsOffer() {
+        let text = CLIUsage.text(programName: "slopdesk")
+        for sub in CLICompletions.subcommands {
+            XCTAssertTrue(text.contains(sub), "--help never mentions '\(sub)'")
+        }
+    }
+
+    /// A planned verb is documented and set apart — the whole point of keeping it in the table
+    /// rather than deleting it. A user who reads `--help` learns it is coming; a user who presses
+    /// Tab is never offered it.
+    func testUsageSetsThePlannedVerbsApartInTheirOwnSection() {
+        let text = CLIUsage.text(programName: "slopdesk")
+        XCTAssertTrue(text.contains("Designed, NOT yet implemented (never offered for completion):"))
+        guard let sectionStart = text.range(of: "Designed, NOT yet implemented") else {
+            XCTFail("the planned section is missing")
+            return
+        }
+        let section = text[sectionStart.lowerBound...]
+        for planned in CLIUsage.planned {
+            XCTAssertTrue(section.contains(planned), "--help never mentions the planned '\(planned)'")
+        }
+    }
+
+    func testUsagePrintsEverySectionAndTheGlobalFlags() {
+        let text = CLIUsage.text(programName: "slopdesk")
+        for heading in [
+            "Local subcommands (no running app required):",
+            "App-driving subcommands (require a running SlopDesk app):",
+            "In-pane subcommands (run inside a pane; no client socket required):",
+            "Global flags:",
+        ] {
+            XCTAssertTrue(text.contains(heading), "--help is missing the '\(heading)' section")
+        }
+        // The documented default has to be the constant the parser uses, not a number retyped into
+        // prose — the renderer substitutes it.
+        XCTAssertTrue(text.contains("(default \(CLIArgs.defaultTimeoutMs))"))
     }
 }
 

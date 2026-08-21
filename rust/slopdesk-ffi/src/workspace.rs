@@ -3418,6 +3418,28 @@ pub const unsafe extern "C" fn slopdesk_ws_default_session_name(out: *mut c_ucha
     unsafe { deliver(workspace::DEFAULT_SESSION_NAME.as_bytes(), out, cap) }
 }
 
+/// The title a minted desktop pane takes, §4-shaped.
+///
+/// The third of the seeded names, and the one with two minters: the client makes a desktop pane on
+/// a gesture and the wire crate makes one while applying a document. Both take the word from here,
+/// so a rename cannot leave a session holding two differently-titled desktop panes that the user
+/// made the same way.
+///
+/// # Safety
+/// `out` must be null or writable for `cap` bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub const unsafe extern "C" fn slopdesk_ws_default_desktop_pane_title(
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligation, restated above; `deliver` states its own.
+    unsafe { deliver(workspace::DEFAULT_DESKTOP_PANE_TITLE.as_bytes(), out, cap) }
+}
+
 // MARK: The client's workspace FILE
 //
 // ## Why this is a door rather than a shape
@@ -3634,16 +3656,17 @@ mod tests {
 
     use super::{
         CRect, CVideoTarget, DividerHandle, Frame, KeyedTab, Span, TreeNode, Uuid, decode_tree, encode_tree,
-        slopdesk_ws_cwd_badge_path, slopdesk_ws_decode_video_target, slopdesk_ws_default_pane_title,
-        slopdesk_ws_divider_can_move, slopdesk_ws_divider_clamped_weight, slopdesk_ws_divider_percents,
-        slopdesk_ws_divider_thickness, slopdesk_ws_divider_weight_delta, slopdesk_ws_dividers,
-        slopdesk_ws_encode_video_target, slopdesk_ws_focus_cycle, slopdesk_ws_focus_neighbor,
-        slopdesk_ws_max_depth, slopdesk_ws_max_string_bytes, slopdesk_ws_min_weight, slopdesk_ws_normalize,
-        slopdesk_ws_normalize_minted_ids, slopdesk_ws_normalize_pass_count, slopdesk_ws_pane_kind_count,
-        slopdesk_ws_pane_kind_is_video, slopdesk_ws_project_key, slopdesk_ws_schema_version,
-        slopdesk_ws_section_header, slopdesk_ws_section_precedes, slopdesk_ws_send_keys,
-        slopdesk_ws_solve_layout, slopdesk_ws_successor_after_close, slopdesk_ws_tree_removing,
-        slopdesk_ws_tree_splitting, slopdesk_ws_workspace_file_decode, slopdesk_ws_workspace_file_encode,
+        slopdesk_ws_cwd_badge_path, slopdesk_ws_decode_video_target, slopdesk_ws_default_desktop_pane_title,
+        slopdesk_ws_default_pane_title, slopdesk_ws_divider_can_move, slopdesk_ws_divider_clamped_weight,
+        slopdesk_ws_divider_percents, slopdesk_ws_divider_thickness, slopdesk_ws_divider_weight_delta,
+        slopdesk_ws_dividers, slopdesk_ws_encode_video_target, slopdesk_ws_focus_cycle,
+        slopdesk_ws_focus_neighbor, slopdesk_ws_max_depth, slopdesk_ws_max_string_bytes,
+        slopdesk_ws_min_weight, slopdesk_ws_normalize, slopdesk_ws_normalize_minted_ids,
+        slopdesk_ws_normalize_pass_count, slopdesk_ws_pane_kind_count, slopdesk_ws_pane_kind_is_video,
+        slopdesk_ws_project_key, slopdesk_ws_schema_version, slopdesk_ws_section_header,
+        slopdesk_ws_section_precedes, slopdesk_ws_send_keys, slopdesk_ws_solve_layout,
+        slopdesk_ws_successor_after_close, slopdesk_ws_tree_removing, slopdesk_ws_tree_splitting,
+        slopdesk_ws_workspace_file_decode, slopdesk_ws_workspace_file_encode,
         slopdesk_ws_workspace_file_minted_ids, slopdesk_ws_workspace_file_status,
     };
 
@@ -4796,6 +4819,29 @@ mod tests {
         assert_eq!(
             core::str::from_utf8(&out).ok(),
             Some(slopdesk_workspace::workspace::DEFAULT_PANE_TITLE),
+        );
+    }
+
+    /// The third seeded name crosses the same way, and it is not the terminal one.
+    ///
+    /// The inequality is the load-bearing half: this door exists because the client mints desktop
+    /// panes and the wire crate mints them too, so a door that quietly answered the terminal title
+    /// would make every restored desktop pane come back named "Terminal" with nothing failing.
+    #[test]
+    fn the_desktop_title_crosses_whole_and_is_its_own_word() {
+        // SAFETY: the null probe §4 describes.
+        let needed = unsafe { slopdesk_ws_default_desktop_pane_title(core::ptr::null_mut(), 0) };
+        let mut out = vec![0_u8; needed];
+        // SAFETY: `out` is exactly `needed` bytes.
+        let written = unsafe { slopdesk_ws_default_desktop_pane_title(out.as_mut_ptr(), out.len()) };
+        assert_eq!(written, needed);
+        assert_eq!(
+            core::str::from_utf8(&out).ok(),
+            Some(slopdesk_workspace::workspace::DEFAULT_DESKTOP_PANE_TITLE),
+        );
+        assert_ne!(
+            slopdesk_workspace::workspace::DEFAULT_DESKTOP_PANE_TITLE,
+            slopdesk_workspace::workspace::DEFAULT_PANE_TITLE,
         );
     }
 }

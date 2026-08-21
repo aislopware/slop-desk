@@ -15,12 +15,17 @@ import Foundation
 //   slopdesk completions <shell> print a shell completion script                 (local, no socket)
 //   slopdesk -h | --help         usage
 //
-// This scaffold covers the router plus the local/GUI-launch ops; the agent ops (ipc/state:claude)
-// are not yet wired up. Unimplemented subcommands exit non-zero with a clear message rather than
-// silently doing nothing.
-//
 // All socket I/O / GUI launch lives here (the compiled-only shell); the pure parse/version/
 // completion logic lives in `SlopDeskCLICore` and is exhaustively unit-tested (hang-safety rule).
+//
+// WHICH subcommands exist, which of them run, and what each does is NOT written down here. It is
+// one table in `rust/slopdesk-cli`'s `vocabulary`, and this file only dispatches it. The switch at
+// the bottom must cover exactly `CLICompletions.subcommands` — the verbs the shells offer — and
+// `check-supervisor` holds the two to each other. Before that table, the vocabulary was spelled
+// four times with nothing tying the copies together, and the drift reached users: `open`, `import`,
+// `export`, `features`, `state:claude` and `ipc` tab-completed in all five shells and then exited 2
+// with "not available yet". A completion is a promise the verb exists; those six are planned, so
+// they are no longer offered, and typing one now says so.
 
 // MARK: - Fatal / output helpers
 
@@ -38,76 +43,14 @@ func stdout(_ text: String) {
 
 // MARK: - Usage
 
+/// Print `--help`.
+///
+/// The text is `rust/slopdesk-cli`'s, rendered from the SAME table the completions and this file's
+/// dispatch switch derive from. It used to be seventy lines of literal prose here, which is how the
+/// help came to document verbs the shells offered and the dispatcher rejected: three copies of one
+/// list, each edited on its own occasion.
 func printUsage() {
-    stdout("""
-    usage: \(programName) [global flags] <subcommand> [args...]
-           \(programName)                 launch the client GUI
-           \(programName) -e <cmd> [args...]   launch the GUI and run <cmd> in the first pane (xterm-style)
-
-    Local subcommands (no running app required):
-      version                 Print version, build hash, and a protocol/feature summary.
-      completions <shell>     Print a completion script (bash, zsh, fish, elvish, powershell).
-      config path             Print the resolved keybind config-file path.
-      config edit             Open the keybind config file in $EDITOR.
-      config validate         Check the keybind config file's syntax.
-      sidecars [--record]     What the last upgrade changed, per shipped binary, and what each
-                              change means. Reads MANIFEST.json against the copy recorded by the
-                              previous install; --record writes that copy (a formula's post_install
-                              runs it). Restarts nothing: hostd restarts the sidecars it owns at its
-                              next start, screend retires itself, superd is yours to restart.
-                              --manifest/--previous point at either file explicitly.
-
-    App-driving subcommands (require a running SlopDesk app):
-      windows | window list                List windows.
-      tabs    | tab list [--window <id>]   List tabs.
-      panes   | pane list [--tab <id>]     List panes.
-      tab badge --kind <kind> [--tab <id>] Set a tab status badge.
-      pane capture [--pane <id>] [--lines N]   Capture the last N lines of a pane.
-      pane send-keys [--pane <id>] -- "text" key:Enter   Send literal text + named keys.
-      config get <key>                     Read a config key (running app).
-      config set <key> <value> [--reload]  Write a config key (live + persisted).
-      config unset <key>                   Remove a config key (-y to confirm).
-      config show | config reload          Dump / broadcast-reload the running config.
-      font list [--monospace] [--family <s>] [--system|--user]   List fonts.
-      font apply "<name>"                  Set the terminal font family (running app).
-      font import <path> [--apply]         Install a font into ~/Library/Fonts (optionally apply).
-      keybind list [--action <s>]          List keybindings.
-      jump [query] [--no-cd]               cd the focused pane to a frecency-ranked dir.
-      learn [path]                         Record a directory visit (no path = focused pane cwd).
-      ignore <path>                        Remove a directory from the frecency database.
-      watch:claude <id> [--block-timeout <ms>]   Block until the Claude session <id> reaches
-                                           idle/closed (blocks indefinitely by default; --block-timeout
-                                           bounds it). --timeout is the per-poll IPC wait, NOT the block.
-                                           Exit 0 (idle/closed) · 4 (id never seen) · 9 (block timed out).
-      view <path|url> [placement]          Read-only shim (less <path> / open <url>) in a new pane.
-      edit <path|url> [placement]          Editor shim ($EDITOR <path>) in a new pane.
-                                           placement: --new-tab (default) | --new-window |
-                                                      --left | --right | --top | --bottom
-
-    In-pane subcommands (run inside a pane; no client socket required):
-      watch [-q] <cmd> [args...]           Run <cmd> showing a spinner→success/error badge, then
-                                           notify on finish (unless -q/--quiet). Put a bare `--`
-                                           before <cmd> if it contains --json/--socket/etc.
-
-    More app-driving subcommands (ipc, state:claude) are
-    added by later work items.
-
-    config: get/set/unset/show/reload target the LIVE running-app store (app keys like
-    font-size/theme, over the socket). path/edit/validate target the on-disk KEYBIND config
-    file: the app reads only its `keybind = <chord>:<action>` lines at launch — other keys in
-    that file are ignored, and `config validate` flags them rather than calling them valid.
-
-    Global flags:
-      --json / --format json   Emit structured JSON for list/inspect output.
-      --no-headers             Strip table header rows from text output.
-      --socket PATH            Override the client control socket path.
-      --config-file PATH       Override the config file location.
-      --timeout MS             Per-request IPC wait for the running app (default \(CLIArgs.defaultTimeoutMs)).
-                               Bounds each socket recv/send — NOT the watch:claude block (see --block-timeout).
-      -y / --yes               Skip destructive-action confirmation prompts.
-      -h / --help              Show this help.
-
-    """)
+    stdout(CLIUsage.text(programName: programName))
 }
 
 // MARK: - GUI launch passthrough
@@ -1296,6 +1239,15 @@ case "watch:claude":
 case "sidecars":
     cmdSidecars(invocation.rest)
 default:
-    // ipc/state:claude are not yet implemented.
-    die("subcommand '\(invocation.subcommand)' is not available yet (run with --help)", code: 2)
+    // Two different failures, and conflating them is what made the drift invisible. A verb the
+    // vocabulary lists as PLANNED is real, designed and not built; a verb it does not list at all is
+    // a typo. Neither is offered for completion, so neither can be reached by pressing Tab.
+    if CLIUsage.planned.contains(invocation.subcommand) {
+        die(
+            "subcommand '\(invocation.subcommand)' is designed but not implemented yet "
+                + "(run with --help — it is listed there under \"NOT yet implemented\")",
+            code: 2,
+        )
+    }
+    die("unknown subcommand '\(invocation.subcommand)' (run with --help)", code: 2)
 }

@@ -164,8 +164,14 @@ pub fn parse_action(raw: &str) -> Option<Action> {
         if id.is_empty() || arg.is_empty() {
             return None;
         }
-        // Bound the one parameterised action there is: `goto_tab` takes a base-ten integer.
-        if id == "goto_tab" && arg.parse::<i64>().is_err() {
+        // Bound the one parameterised action there is. `goto_tab` names one of NINE per-digit
+        // bindings — ⌘1…⌘9, the rows `slopdesk_workspace::keybind` resolves it against — so tab 0,
+        // tab 10 and tab `x` name no binding that exists. The bound belongs HERE and not only at
+        // the resolver because this is what `is_valid` answers: the keybinding editor shows a user
+        // whether the line they typed is a binding, and calling `goto_tab:99` one would put it in
+        // the third rejection class the module docs describe — a line that parses, stores, and then
+        // never fires. `u8` refuses `-1` and anything past 255 by parsing at all.
+        if id == "goto_tab" && !matches!(arg.parse::<u8>(), Ok(1..=9)) {
             return None;
         }
         return Some(Action::Named {
@@ -503,8 +509,24 @@ mod tests {
                 arg: Some("1".to_owned())
             })
         );
+        assert_eq!(
+            parse_action("goto_tab:9"),
+            Some(Action::Named {
+                id: "goto_tab".to_owned(),
+                arg: Some("9".to_owned())
+            })
+        );
         assert_eq!(parse_action("goto_tab:x"), None, "not a number");
         assert_eq!(parse_action("goto_tab:"), None, "no argument at all");
+        // Nine per-digit bindings exist, so nothing outside them is a line that could ever fire.
+        assert_eq!(parse_action("goto_tab:0"), None, "there is no zeroth tab");
+        assert_eq!(parse_action("goto_tab:10"), None, "past the ninth digit");
+        assert_eq!(parse_action("goto_tab:-1"), None, "negative");
+        assert_eq!(
+            parse_action("goto_tab:999"),
+            None,
+            "past what a digit chord can name"
+        );
         assert_eq!(parse_action(":1"), None, "no id");
     }
 

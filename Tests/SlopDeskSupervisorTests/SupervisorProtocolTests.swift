@@ -218,6 +218,33 @@ final class SupervisorProtocolTests: XCTestCase {
         XCTAssertEqual(overridden, "/tmp/other.sock")
     }
 
+    /// The two rungs this side used to answer differently from superd, and neither failure was
+    /// visible: `NSTemporaryDirectory()` ignores `$TMPDIR` on Darwin, so a process with one of its
+    /// own dialled a socket superd had not bound; and `SLOPDESK_SUPERD_DIR` was a variable only the
+    /// daemon had heard of, so the gate script's private superd was reachable by nothing. Both
+    /// symptoms were the same one — the daemon looked like it was not running.
+    func testTheControlSocketHonoursTheDirectoryAndTMPDIRRungs() {
+        XCTAssertEqual(
+            SupervisorPaths.controlSocket(environment: ["TMPDIR": "/tmp/mine"]),
+            "/tmp/mine/slopdesk-superd.sock",
+        )
+        XCTAssertEqual(
+            SupervisorPaths.controlSocket(environment: [
+                SupervisorPaths.directoryEnvKey: "/tmp/gate", "TMPDIR": "/tmp/mine",
+            ]),
+            "/tmp/gate/slopdesk-superd.sock",
+            "the directory override outranks TMPDIR, as it does on superd's side",
+        )
+        XCTAssertEqual(
+            SupervisorPaths.controlSocket(environment: [
+                SupervisorPaths.socketEnvKey: "", SupervisorPaths.directoryEnvKey: "",
+                "TMPDIR": "/tmp/mine",
+            ]),
+            "/tmp/mine/slopdesk-superd.sock",
+            "an exported-but-blank variable is a shell accident, not a request to bind nothing",
+        )
+    }
+
     func testOverlongSocketPathIsRejectedRatherThanTruncated() {
         let long = "/tmp/" + String(repeating: "a", count: 200) + ".sock"
         XCTAssertThrowsError(try UnixSocketPath.validate(long))

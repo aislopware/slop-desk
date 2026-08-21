@@ -47,8 +47,10 @@ public extension WorkspaceStore {
     internal static func desktopSpec(displayID: UInt32 = 0) -> PaneSpec {
         PaneSpec(
             kind: .desktop,
-            title: "Desktop",
-            video: VideoEndpoint(windowID: 0, title: "Desktop", displayID: displayID),
+            title: TreeWorkspaceDefaults.desktopPaneTitle,
+            video: VideoEndpoint(
+                windowID: 0, title: TreeWorkspaceDefaults.desktopPaneTitle, displayID: displayID,
+            ),
         )
     }
 

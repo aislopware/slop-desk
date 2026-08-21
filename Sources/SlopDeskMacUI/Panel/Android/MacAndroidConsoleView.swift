@@ -180,9 +180,10 @@ final class MacAndroidConsoleView: NSView {
         return strip
     }
 
-    /// A MENU rather than a segmented control: five levels do not fit a drawer's width as segments, and
-    /// the value is worth showing at rest — which a menu label does and a segmented picker only does by
-    /// highlighting one of five things too small to read.
+    /// A MENU rather than a segmented control: the level list does not fit a drawer's width as segments,
+    /// and the value is worth showing at rest — which a menu label does and a segmented picker only does
+    /// by highlighting one of several things too small to read. The count is androidd's, not a number
+    /// this view may assume: it went from five to six the day the menu stopped keeping its own list.
     private func buildLevelMenu() {
         level.isBordered = false
         level.font = .systemFont(ofSize: Slate.Typeface.small)

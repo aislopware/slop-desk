@@ -164,7 +164,10 @@ pub const fn parity_count(tier: u8, default_m: usize) -> usize {
     if tier == 1 {
         return 1;
     }
-    if default_m >= 2 {
+    // The same predicate the boundary exports as `slopdesk_adaptive_fec_multi_loss_active`, asked
+    // rather than re-spelled: this table's gate and the codec-selection gate are ONE rule, and a
+    // literal here is how they would come to disagree without either side compiling differently.
+    if multi_loss::is_active(default_m) {
         match tier {
             PARITY_TIER_CLEAN => return 2,
             PARITY_TIER_NORMAL => return 3,

@@ -68,6 +68,7 @@ SWIFT_PROTOCOL="Sources/SlopDeskSupervisor/SupervisorProtocol.swift"
 SWIFT_FRAME="Sources/SlopDeskSupervisor/SupervisorFrame.swift"
 SWIFT_STREAM="Sources/SlopDeskHost/PaneOutputStream.swift"
 RUST_PATHS="rust/slopdesk-superd/src/paths.rs"
+RUST_SUPERWIRE="rust/slopdesk-superwire/src/lib.rs"
 RUST_PROTOCOL="rust/slopdesk-superd/src/protocol.rs"
 RUST_SUPERD_SERVER="rust/slopdesk-superd/src/server.rs"
 RUST_FRAME="rust/slopdesk-superd/src/frame.rs"
@@ -131,29 +132,46 @@ same() {
   fi
 }
 
-# ── 1. The rendezvous address, and ONLY that ────────────────────────────────────────────────────
-# Exactly one path is spelled in both languages, and it has to be: hostd must FIND the control
-# socket before it can ask superd anything, so that one name cannot be learned from the thing it
-# names. A mismatch in it is SILENCE rather than an error — hostd connects to a name nobody bound
-# and reports only that no daemon is running.
-if ! grep -q 'slopdesk-superd.sock' "${SWIFT_PATHS}"; then
-  fail "${SWIFT_PATHS} no longer names slopdesk-superd.sock — hostd has no rendezvous address"
+# ── 1. The rendezvous address: ONE rule, and neither end re-derives it ──────────────────────────
+# Exactly one path used to be spelled in both languages, and the argument for it was that it had to
+# be: hostd must FIND the control socket before it can ask superd anything, so that one name cannot
+# be learned from the thing it names. A mismatch in it is SILENCE rather than an error — hostd
+# connects to a name nobody bound and reports only that no daemon is running.
+#
+# Half of that argument was true. The NAME is shared by construction. Which DIRECTORY the name sits
+# in is a policy, it was written out on both sides, and the two spellings were not the same policy:
+# superd resolved `$SLOPDESK_SUPERD_SOCKET` → `$SLOPDESK_SUPERD_DIR` → `$TMPDIR` → `/tmp`, and hostd
+# resolved the override and then `NSTemporaryDirectory()` — which on Darwin does not read `$TMPDIR`
+# at all, and had never heard of the directory override. Two silent divergences, both wearing the
+# symptom above, so this section now pins the rule's SHAPE rather than comparing two copies of it:
+# the name and both keys belong to `slopdesk_superwire`, both ends reach them, and neither end
+# spells a resolution of its own.
+for literal in 'slopdesk-superd.sock' '"SLOPDESK_SUPERD_SOCKET"' '"SLOPDESK_SUPERD_DIR"'; do
+  if ! grep -q -- "${literal}" "${RUST_SUPERWIRE}"; then
+    fail "${RUST_SUPERWIRE} no longer names ${literal} — the shared control-socket rule lost part of itself (docs/51 §1)"
+  fi
+done
+if ! grep -q 'control_socket_path' "${RUST_SUPERWIRE}"; then
+  fail "${RUST_SUPERWIRE} no longer owns the control-socket resolution — both ends would answer it and only one can be right"
 fi
-if ! grep -q 'slopdesk-superd.sock' "${RUST_PATHS}"; then
-  fail "${RUST_PATHS} no longer names slopdesk-superd.sock"
+if ! grep -q 'slopdesk_superwire::control_socket_path' "${RUST_PATHS}"; then
+  fail "${RUST_PATHS} resolves superd's own control address again instead of the shared rule (docs/51 §1)"
 fi
-
-# The OVERRIDE key for that same address, ratcheted for the same reason and with a quieter failure
-# than the address itself. `SLOPDESK_SUPERD_SOCKET` is read by superd to decide where to BIND and set
-# by hostd to decide where to DIAL, so a rename on one side does not disagree — hostd exports a
-# variable superd never reads, superd binds the default, hostd dials the override, and the only
-# symptom is the daemon appearing not to be running under a test harness that moved the socket.
-if ! grep -q '"SLOPDESK_SUPERD_SOCKET"' "${SWIFT_PATHS}"; then
-  fail "${SWIFT_PATHS} no longer names SLOPDESK_SUPERD_SOCKET — hostd would dial an address superd did not bind (docs/51 §1)"
+if ! grep -q 'slopdesk_supervisor_control_socket' "${SWIFT_PATHS}"; then
+  fail "${SWIFT_PATHS} no longer resolves through the door — hostd would dial an address superd did not bind (docs/51 §1)"
 fi
-if ! grep -q '"SLOPDESK_SUPERD_SOCKET"' "${RUST_PATHS}"; then
-  fail "${RUST_PATHS} no longer names SLOPDESK_SUPERD_SOCKET"
+# Comments stripped: the prose above the resolution NAMES `NSTemporaryDirectory()` and the socket on
+# purpose, to record which two things drifted and why they are gone. This is about the CODE.
+swift_paths_code=$(grep -vE '^ *(///|//|\*)' "${SWIFT_PATHS}")
+if grep -qE 'NSTemporaryDirectory|slopdesk-superd\.sock' <<< "${swift_paths_code}"; then
+  fail "${SWIFT_PATHS} builds the control address itself again — that resolution is slopdesk_superwire's (docs/51 §1)"
 fi
+# Both override keys still reach the door, though: the lookup is hostd's, only the RULE crossed.
+for key in '"SLOPDESK_SUPERD_SOCKET"' '"SLOPDESK_SUPERD_DIR"'; do
+  if ! grep -q -- "${key}" "${SWIFT_PATHS}"; then
+    fail "${SWIFT_PATHS} stopped reading ${key} — a rung superd honours would go unspoken, and the daemon would just look absent"
+  fi
+done
 
 # The agent-control address, on the same footing. hostd EXPORTS it into every PTY's environment and
 # `slopdesk-ctl` — a separate binary an agent shells out to — READS it to find the socket. A rename
@@ -338,16 +356,32 @@ if grep -nE '(HostCodeServerPerformer|HostSimulatorPerformer|HostAndroidPerforme
 fi
 
 # ── 9. screend: the SECOND two-ended protocol ───────────────────────────────────────────────────
-# Same shape as superd's, same silence when it drifts (`docs/52`). Three things are typed twice and
-# nothing else is: the rendezvous socket name, the verb bytes, and the hello banner.
-if ! grep -q 'slopdesk-screend.sock' "${SWIFT_SCREEN_PATHS}"; then
-  fail "${SWIFT_SCREEN_PATHS} no longer names slopdesk-screend.sock — the client has no address"
+# Same shape as superd's, same silence when it drifts (`docs/52`), and the address went the same way
+# for the same reason: both ends resolved the DIRECTORY and disagreed about it, so the rule is
+# `slopdesk_screenwire::socket_path` now and the checks pin its shape rather than two copies of the
+# name. The verb bytes and the hello banner are still typed twice, below, and nothing else is.
+if ! grep -q 'slopdesk-screend.sock' "${RUST_SCREEN_PROTOCOL}"; then
+  fail "${RUST_SCREEN_PROTOCOL} no longer names slopdesk-screend.sock — the shared address rule lost its name"
 fi
-if ! grep -q 'slopdesk-screend.sock' "${RUST_SCREEN_SERVER}"; then
-  fail "${RUST_SCREEN_SERVER} no longer names slopdesk-screend.sock"
+if ! grep -q 'pub fn socket_path' "${RUST_SCREEN_PROTOCOL}"; then
+  fail "${RUST_SCREEN_PROTOCOL} no longer owns screend's address rule — both ends would resolve it and only one can be right"
 fi
-if grep -qE '(getpid|processIdentifier)' <<< "$(grep -vE '^ *(///|//|\*)' "${SWIFT_SCREEN_PATHS}")"; then
+if ! grep -q 'slopdesk_screen_socket_path' "${SWIFT_SCREEN_PATHS}"; then
+  fail "${SWIFT_SCREEN_PATHS} no longer resolves through the door — the client has no address, or a second one"
+fi
+if grep -q 'fn default_socket_path' "${RUST_SCREEN_SERVER}" &&
+  ! grep -q 'protocol::socket_path' "${RUST_SCREEN_SERVER}"; then
+  fail "${RUST_SCREEN_SERVER} resolves its own address instead of the wire crate's rule"
+fi
+# Comments stripped: the prose above the resolution NAMES `NSTemporaryDirectory()` on purpose, to
+# record why it is gone — on Darwin that call IGNORES $TMPDIR, so the client dialled a path screend
+# never bound and the daemon simply looked absent (measured, 2026-08-22, docs/52).
+screen_paths_code=$(grep -vE '^ *(///|//|\*)' "${SWIFT_SCREEN_PATHS}")
+if grep -qE '(getpid|processIdentifier)' <<< "${screen_paths_code}"; then
   fail "a pid reached screend's rendezvous address — see docs/51 §1"
+fi
+if grep -qE 'NSTemporaryDirectory|slopdesk-screend\.sock' <<< "${screen_paths_code}"; then
+  fail "${SWIFT_SCREEN_PATHS} builds the address itself again — that resolution is slopdesk_screenwire's (docs/52)"
 fi
 
 # Verb NUMBERS, not names: the wire carries the byte, and a reordered enum on one side is a
@@ -1874,6 +1908,68 @@ if [[ -z "${swift_screen_flags}" ]]; then
   fail "${SWIFT_SCREEN_PROTOCOL} names no reset flags — this gate reads nothing and would pass"
 fi
 same "screend reset flags" "${swift_screen_flags}" "${rust_screen_flags}"
+
+# The frame CEILING, which is the same byte count under two names — `ScreenWire.maximumFrameBytes`
+# and `screenwire::MAX_FRAME`, 64 MiB each. `check-shared-constants.py` pairs by NAME and these two
+# were never given the same one, so it has never seen the pair; `docs/55` §8 has recorded it as
+# outstanding since the pair was written. It is ratcheted here rather than taught to that gate as an
+# alias, for the reason the gate's own doctrine gives: screend is a separately-shipped BINARY, so a
+# door is not available to it and a socket pair's answer is a ratchet. An alias table over there
+# would have made two places to look for one rule.
+#
+# Both sides are read as an EXPRESSION, not a literal — `64 * 1024 * 1024` is how a reader is meant
+# to see the megabytes, and a digits-only pattern would read neither side and compare "" to "".
+# Which way this drifts decides how it fails: a client ceiling raised above screend's makes screend
+# kill the connection mid-stream on a frame the client thought was legal, and lowered below it makes
+# the client reject a frame screend was entitled to send. Neither reports a size.
+swift_frame_cap=$(sed -nE 's/^ *public static let maximumFrameBytes = (.*)$/\1/p' \
+  "${SWIFT_SCREEN_PROTOCOL}" | tr -d ' ')
+rust_frame_cap=$(sed -nE 's/^pub const MAX_FRAME: usize = (.*);$/\1/p' \
+  "${RUST_SCREEN_PROTOCOL}" | tr -d ' ')
+same "the screend frame ceiling" "${swift_frame_cap}" "${rust_frame_cap}"
+
+# The reply STATUS byte, which is the last of screend's three alphabets and the one nothing watched.
+# `ScreenStatus` and `screenwire::Status` are the same three values in the same order, and the enum
+# pass in `check-shared-constants.py` deliberately does not pair them: the third case is spelled
+# `internalError` on one side and `Internal` on the other, so a name-for-name comparison would
+# report a naming choice as a drift and get itself deleted. The NUMBERS are the contract, so the
+# numbers are what is compared, in declaration order, with the count riding along — an inserted case
+# shifts the sequence and a renumbered one changes it. A status byte read as the wrong status is a
+# refusal reported as a success, or the reverse.
+swift_screen_status=$(sed -nE 's/^ *case [A-Za-z]+ = ([0-9]+)$/\1/p' \
+  <(sed -n '/^public enum ScreenStatus/,/^}/p' "${SWIFT_SCREEN_PROTOCOL}") | tr '\n' ' ')
+rust_screen_status=$(sed -nE 's/^ *[A-Z][A-Za-z]* = ([0-9]+),$/\1/p' \
+  <(sed -n '/^pub enum Status/,/^}/p' "${RUST_SCREEN_PROTOCOL}") | tr '\n' ' ')
+same "the screend status alphabet" "${swift_screen_status}" "${rust_screen_status}"
+
+# ── The 15 MiB opaque budget, which is one cap spelled THREE times ─────────────────────────────
+# A metadata `read` verb answers a file, and the ceiling on how much of one it will carry back is
+# written in three places: `MetadataResponseBuilder.defaultMaxOpaquePayloadBytes` (what hostd will
+# put in a reply), `HostMetadataProbe.maxCaptureBytes` (what hostd will accumulate from the child)
+# and `slopdesk_probe::run::MAX_OPAQUE_READ_BYTES` (what the child will read before truncating).
+# Three names, one number, and `docs/55` §8 has carried the pair as outstanding since it was found.
+#
+# `slopdesk-probe` is a `[[bin]]` hostd SPAWNS — it links nothing of hostd's and hostd links nothing
+# of its — so the third spelling cannot become a door however the first two are settled, and the
+# ratchet is the answer the lifetime picks rather than a compromise. The two Swift halves are a
+# genuine second finding, reported rather than folded: they live in one target and could be one
+# constant, which is a `Sources/` change and not this script's to make.
+#
+# A skew here is silent in the worst direction. The probe truncates at ITS ceiling and marks the
+# payload truncated; hostd's builder refuses at ITS ceiling by dropping the payload. Raise only the
+# probe's and hostd silently drops replies the probe worked to produce; raise only hostd's and the
+# extra capacity is unreachable, because the bytes were already thrown away one process upstream.
+SWIFT_METADATA_BUILDER=Sources/SlopDeskHost/MetadataResponseBuilder.swift
+SWIFT_METADATA_PROBE=Sources/SlopDeskHost/HostMetadataProbe.swift
+RUST_PROBE_RUN=rust/slopdesk-probe/src/run.rs
+swift_opaque_cap=$(sed -nE 's/^ *static let defaultMaxOpaquePayloadBytes = (.*)$/\1/p' \
+  "${SWIFT_METADATA_BUILDER}" | tr -d ' ')
+swift_capture_cap=$(sed -nE 's/^ *private static let maxCaptureBytes = (.*)$/\1/p' \
+  "${SWIFT_METADATA_PROBE}" | tr -d ' ')
+rust_opaque_cap=$(sed -nE 's/^pub const MAX_OPAQUE_READ_BYTES: usize = (.*);$/\1/p' \
+  "${RUST_PROBE_RUN}" | tr -d ' ')
+same "the opaque payload budget hostd will REPLY with" "${swift_opaque_cap}" "${rust_opaque_cap}"
+same "the opaque payload budget hostd will CAPTURE" "${swift_capture_cap}" "${rust_opaque_cap}"
 
 # No SWIFT screen engine. The parser, the renderer and the overprint collapser were DELETED when
 # they moved to Rust, and a re-added Swift copy is the cross-language mirror the tree forbids —
@@ -3465,6 +3561,111 @@ if spells 'remote-terminal|gui-video|read-only-inspector|terminal protocol v' "$
   fail "${SWIFT_CLI_VERSION} spells the banner again — its shape lives in version.rs"
 fi
 printf 'check-supervisor: the slopdesk CLI parses, completes, configures, tables and versions from one law.\n'
+
+SWIFT_CLI_MAIN=Sources/slopdesk/main.swift
+SWIFT_CLI_USAGE=Sources/SlopDeskCLICore/CLIUsage.swift
+RUST_CLI_VOCAB=rust/slopdesk-cli/src/vocabulary.rs
+
+# ---- 1. The face calls the door, rather than answering itself. -------------------------------
+# Same shape as the five pairs above: if `CLIUsage.swift` stops calling these, it has grown its own
+# help renderer or its own planned list, which is a second table by another name.
+for pair in \
+  "${SWIFT_CLI_USAGE}:slopdesk_cli_usage" \
+  "${SWIFT_CLI_USAGE}:slopdesk_cli_planned_subcommands"; do
+  if ! grep -q "${pair#*:}(" "${pair%%:*}"; then
+    fail "${pair%%:*} no longer calls ${pair#*:} — the CLI's vocabulary is rust/slopdesk-cli's"
+  fi
+done
+
+# ---- 2. main.swift PRINTS the crate's help; it does not write one. ---------------------------
+# CATCHES: someone re-adding a `printUsage()` heredoc, which is where the help text drifted from the
+# completions the first time. The section headings are the fingerprint of that block — they can only
+# appear in a file that is rendering the page itself.
+if ! grep -q 'CLIUsage.text(' "${SWIFT_CLI_MAIN}"; then
+  fail "${SWIFT_CLI_MAIN} no longer prints CLIUsage.text — the help text lives in vocabulary.rs"
+fi
+# The headings are matched WITH their parentheticals, so the `// MARK: - Local subcommands` divider
+# — which is a comment `spells` strips anyway — cannot be mistaken for the page itself.
+if hit=$(spells 'Local subcommands \(no running app|App-driving subcommands \(require|In-pane subcommands \(run inside|^ *Global flags:' \
+  "${SWIFT_CLI_MAIN}"); then
+  fail "${hit} spells a help-page section again — the whole page is rendered by vocabulary.rs"
+fi
+
+# ---- 3. THE ONE THAT WOULD HAVE CAUGHT THE BUG. ----------------------------------------------
+# The dispatch switch must cover exactly the verbs the shells offer — no more, no fewer.
+#
+# CATCHES, in both directions:
+#   * a verb marked `Ready` in the table with no `case` in main.swift  ⇒ a completion that exits 2,
+#     which is the reported drift;
+#   * a `case` in main.swift for a verb the table calls `Planned` or does not list ⇒ a command that
+#     works but that no shell will ever complete, so nobody finds it.
+#
+# `help` is deliberately excluded: it is handled ABOVE the switch, because `--help` has to win over
+# the GUI launch, so it is matched by the `subcommand == "help"` guard instead of a `case` label.
+# That guard is checked separately just below, so `help` is not silently exempt.
+ready_verbs=$(
+  awk '
+    /^ *name: "/      { name = $0; sub(/^ *name: "/, "", name); sub(/",?$/, "", name) }
+    /Availability::Ready/ { if (name != "" && name != "help") { print name; name = "" } }
+    /Availability::Planned/ { name = "" }
+  ' "${RUST_CLI_VOCAB}" | sort -u
+)
+# Only the top-level dispatch switch's labels: `case "x":` at the start of a line (column 0), which
+# is what a top-level `switch` in a main.swift script file produces. Nested per-subcommand switches
+# are indented, so they cannot be picked up here.
+dispatched_verbs=$(
+  grep -E '^case "' "${SWIFT_CLI_MAIN}" | sed -E 's/^case "([^"]+)":?.*/\1/' | sort -u
+)
+if [[ "${ready_verbs}" != "${dispatched_verbs}" ]]; then
+  fail "$(printf '%s dispatches a different set than vocabulary.rs calls Ready:\n%s' \
+    "${SWIFT_CLI_MAIN}" "$(diff <(echo "${ready_verbs}") <(echo "${dispatched_verbs}") |
+      sed 's/^/    /')")"
+fi
+if ! grep -q 'invocation.subcommand == "help"' "${SWIFT_CLI_MAIN}"; then
+  fail "${SWIFT_CLI_MAIN} no longer routes 'help' — it is Ready in vocabulary.rs and must dispatch"
+fi
+
+# ---- 4. No planned verb may be reachable by pressing Tab. ------------------------------------
+# CATCHES: a `Planned` name appearing in the completions module (which would mean the module grew
+# its own list again) or as a dispatch label in main.swift (which would mean it shipped without the
+# table being told, so the shells still would not offer it).
+planned_verbs=$(
+  awk '
+    /^ *name: "/ { name = $0; sub(/^ *name: "/, "", name); sub(/",?$/, "", name) }
+    /Availability::Planned/ { if (name != "") { print name; name = "" } }
+    /Availability::Ready/ { name = "" }
+  ' "${RUST_CLI_VOCAB}" | sort -u
+)
+while IFS= read -r verb; do
+  [[ -z "${verb}" ]] && continue
+  if grep -qE "^case \"${verb}\"" "${SWIFT_CLI_MAIN}"; then
+    fail "${SWIFT_CLI_MAIN} dispatches '${verb}', which vocabulary.rs still calls Planned — \
+move it to Availability::Ready in the same change, or the shells will never offer it"
+  fi
+done <<< "${planned_verbs}"
+
+# ---- 5. The completions module owns no list of its own. --------------------------------------
+# CATCHES: the exact regression this whole change undoes — a flat `SUBCOMMANDS` array in
+# completions.rs with no notion of availability, which is what let six unimplemented verbs be
+# offered by all five shells.
+if grep -qE 'const SUBCOMMANDS' rust/slopdesk-cli/src/completions.rs; then
+  fail "rust/slopdesk-cli/src/completions.rs holds a subcommand array again — the list, its \
+availability and its help text are one table in vocabulary.rs"
+fi
+
+# ---- 6. The flag help sits beside the grammar. -----------------------------------------------
+# CATCHES: a help page that documents a flag the parser rejects. The flag STRINGS live in args.rs
+# next to the `match` that consumes them, and a test there feeds every documented spelling back
+# through `parse`. A GLOBAL_FLAGS table anywhere else is a second copy of that fact.
+if ! grep -q 'GLOBAL_FLAGS' rust/slopdesk-cli/src/args.rs; then
+  fail "rust/slopdesk-cli/src/args.rs no longer carries GLOBAL_FLAGS — the flag help must sit \
+beside the grammar it describes"
+fi
+if grep -qE '"--no-headers"|"--config-file"|"--socket PATH"' "${SWIFT_CLI_MAIN}"; then
+  fail "${SWIFT_CLI_MAIN} spells a global flag again — the grammar and its help are args.rs's"
+fi
+
+printf 'check-supervisor: the slopdesk CLI offers exactly the verbs it can run.\n'
 
 # The FRECENCY ranking and the JUMP it resolves — `rust/slopdesk-workspace`'s `frecency` and `jump`.
 # One scorer rather than three sorts, because the folder rail, the open-quickly overlay, the store's
@@ -5831,9 +6032,13 @@ rows_swift=Sources/SlopDeskWorkspaceCore/Workspace/Store/AllSettingsCatalog.swif
 if [[ ! -e "${rows_swift}" ]]; then
   fail "${rows_swift} is gone — nothing would advertise a setting to the all-settings list (docs/56)"
 fi
-for door in slopdesk_settings_row_count slopdesk_settings_row_key slopdesk_settings_row_label \
-  slopdesk_settings_row_description slopdesk_settings_row_default_text slopdesk_settings_row_keywords \
-  slopdesk_settings_row_target_section slopdesk_settings_row_bucket slopdesk_settings_row_is_inline_editable \
+# The seven per-field doors are no longer in this list. They still EXIST, and three callers that
+# want exactly one string still ask them — but reading a whole row through them cost eight crossings
+# per row on every settings-search keystroke, so `entry(at:)` asks `slopdesk_settings_row_fields`
+# instead and gets the row tagged and length-prefixed in one. Requiring the field doors here would
+# have required the shape the port removed; the ratchet that the row crosses WHOLE is further down.
+for door in slopdesk_settings_row_count slopdesk_settings_row_key slopdesk_settings_row_fields \
+  slopdesk_settings_row_is_inline_editable \
   slopdesk_settings_row_persistence slopdesk_settings_row_index slopdesk_settings_row_matches; do
   if ! grep -qF "${door}" "${rows_swift}"; then
     fail "${rows_swift} stopped calling ${door} — a row it describes itself is a table written twice"
@@ -5891,6 +6096,84 @@ if [[ -n "${orphan_render_keys}" ]]; then
 fi
 printf 'check-supervisor: %s render-field keys, every one of them a row settings_rows advertises.\n' \
   "$(printf '%s\n' "${render_keys}" | grep -c .)"
+
+# ── …AND A SETTING'S KEY IS SPELLED ONCE, in the other half of the same alphabet ───────────────
+# `settings_rows.rs` names its keys in two notations, and the gate above only ever read one of them.
+# The 25 config-style names (`font-family`, `video-fec-k`) are `RenderKey`'s, compared just now. The
+# other 68 are dotted `UserDefaults` keys — `controls.copyOnSelect`, `notifications.longCommand` —
+# and every one of them is ALSO a `static let` in `SettingsKey.swift`, character for character,
+# because a `Defaults.Key` name cannot leave Swift and the Rust row has to quote it to advertise it.
+#
+# Sixty-eight strings written twice, and until this gate nothing compared them. `SettingsKey` is not
+# named anywhere else in this file, and `check-shared-constants.py` cannot see a string at all — its
+# docstring says so outright. A typo on either side compiles, passes every test, and ships a
+# settings row bound to a key nothing reads: the toggle moves, the plist gains an orphan entry, and
+# the feature it was supposed to control never changes. There is no error anywhere in that story.
+#
+# `AllSettingsCatalogTests` is the closest thing that existed, and it is a different instrument: it
+# asserts that a HAND-MAINTAINED list of ~40 `SettingsKey` constants is covered by the catalog. A
+# key nobody thought to add to that list — and the 28 that are not on it — was covered by nothing.
+#
+# ONE DIRECTION, deliberately. Every dotted row key must be a `SettingsKey`; the reverse is false on
+# purpose, because 11 `SettingsKey` constants are internal state rather than settings
+# (`window.savedFrame`, `firstLaunch.completed`, `shell.openedCodeProjects`) and have no row by
+# design. A reverse gate would need an allowlist of those 11, and an allowlist is the thing that
+# goes stale. One direction is enough to catch a typo on EITHER side: the two spellings stop being
+# equal, and the row key stops being found.
+#
+# The dot/dash split is the classifier, and it is checked rather than assumed — a key carrying both
+# notations, or neither, means the two alphabets have started to blur and this gate is reading the
+# wrong half.
+settings_key_swift=Sources/SlopDeskWorkspaceCore/Workspace/Store/SettingsKey.swift
+if [[ ! -e "${settings_key_swift}" ]]; then
+  fail "${settings_key_swift} is gone — the settings keys settings_rows.rs quotes have no near side (docs/56)"
+fi
+ambiguous_row_keys=$(printf '%s\n' "${row_keys}" | grep -vE '^([^-]*\.[^-]*|[^.]*-[^.]*)$' || true)
+if [[ -n "${ambiguous_row_keys}" ]]; then
+  printf '%s\n' "${ambiguous_row_keys}" >&2
+  fail "a settings_rows key is neither a dotted UserDefaults key nor a dashed config name — this gate can no longer tell the two alphabets apart"
+fi
+defaults_row_keys=$(printf '%s\n' "${row_keys}" | grep -E '^[^-]*\.[^-]*$' | sort -u || true)
+settings_key_names=$(sed -nE 's/^    public static let [A-Za-z0-9]+(: String)? = "([^"]*)".*$/\2/p' \
+  "${settings_key_swift}" | sort -u) || true
+if [[ -z "${defaults_row_keys}" || -z "${settings_key_names}" ]]; then
+  fail "the dotted row keys or the SettingsKey constants read as EMPTY — the comparison below would pass by comparing nothing"
+fi
+orphan_row_keys=$(comm -23 <(printf '%s\n' "${defaults_row_keys}") <(printf '%s\n' "${settings_key_names}"))
+if [[ -n "${orphan_row_keys}" ]]; then
+  printf '%s\n' "${orphan_row_keys}" >&2
+  fail "a settings_rows key is not a SettingsKey constant — that row edits a UserDefaults key nothing reads (docs/56)"
+fi
+printf 'check-supervisor: %s settings keys, each spelled once and quoted by its row.\n' \
+  "$(printf '%s\n' "${defaults_row_keys}" | grep -c .)"
+
+# ── …and the config BRIDGE switches on the same names, not on its own ──────────────────────────
+# `PreferencesStore+ConfigBridge` is the third place a render key is spelled: three `switch`
+# statements over the same five names — read the value, write it, restore its default — none of
+# which goes through `RenderKey`. The two lists above are compared to each other; this file is
+# compared to neither, and it is the one where a typo is completely silent. A `switch` over a
+# `String` has a `default:` arm, so `case "font-siz":` does not fail to compile and does not fail to
+# run — it stops matching, and the row goes on rendering its current value while the write that was
+# supposed to follow it lands nowhere.
+#
+# One direction, like the render keys: the bridge covers a SUBSET (the terminal config keys, not the
+# video or the font-fallback ones), so a key it does not mention is not a finding. A name it does
+# mention that no row advertises is.
+CONFIG_BRIDGE=Sources/SlopDeskWorkspaceCore/Workspace/Store/PreferencesStore+ConfigBridge.swift
+if [[ ! -e "${CONFIG_BRIDGE}" ]]; then
+  fail "${CONFIG_BRIDGE} is gone — the typed prefs models have no bridge to the row keys (docs/56)"
+fi
+bridge_keys=$(sed -nE 's/^[[:space:]]*case "([^"]*)".*$/\1/p' "${CONFIG_BRIDGE}" | sort -u) || true
+if [[ -z "${bridge_keys}" ]]; then
+  fail "${CONFIG_BRIDGE} switches on no key at all — this gate reads nothing and would pass"
+fi
+orphan_bridge_keys=$(comm -23 <(printf '%s\n' "${bridge_keys}") <(printf '%s\n' "${row_keys}"))
+if [[ -n "${orphan_bridge_keys}" ]]; then
+  printf '%s\n' "${orphan_bridge_keys}" >&2
+  fail "${CONFIG_BRIDGE} switches on a name no settings_rows key spells — that arm can never match"
+fi
+printf 'check-supervisor: %s config-bridge arms, every one of them a key settings_rows advertises.\n' \
+  "$(printf '%s\n' "${bridge_keys}" | grep -c .)"
 
 # ── A platform gate on a settings page is DATA ────────────────────────────────────────────────
 # Which groups a page shows, in what order, and which platform each belongs to is
@@ -7503,6 +7786,316 @@ if [[ -n "${doc_missing}" ]]; then
   printf '%s\n' "${doc_missing}" >&2
   fail "a read-first doc cites a file that does not exist — repoint it, or add it to doc_path_tombstones"
 fi
+
+# ── One seeded name, one font stack, one encoder default table (docs/55 §8) ─────────────────────
+# The three seeded names are the crate's, and Swift asks for them.
+#
+# `TreeWorkspaceDefaults` has existed for a while and its own doc names the failure: a copy of
+# either literal on the Swift side is a second answer to "what is a fresh pane called", and the
+# fresh-workspace SHAPE TEST comparing against a spelled-out "Terminal" would go on passing against
+# a default the crate had stopped producing. The face was built and the callers were never moved;
+# this is what stops them drifting back. Comments are stripped first, because the prose around these
+# call sites quotes the words on purpose.
+for seeded in Terminal Desktop Local; do
+  hits="$(
+    for file in Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspacePersistence.swift \
+      Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceStore+Desktop.swift \
+      Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceStore+Bootstrap.swift \
+      Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceStore+Templates.swift \
+      Sources/SlopDeskWorkspaceCore/Workspace/Domain/SessionTemplateEngine.swift; do
+      sed -E 's#^[[:space:]]*//.*##' "${file}" | grep -Fq "\"${seeded}\"" && printf '%s ' "${file}"
+    done
+  )"
+  if [[ -n "${hits}" ]]; then
+    fail "the seeded name \"${seeded}\" is spelled in Swift again (${hits}) — ask TreeWorkspaceDefaults (docs/55 §8)"
+  fi
+done
+for face in paneTitle sessionName desktopPaneTitle; do
+  if ! grep -q "static let ${face} = wsString" Sources/SlopDeskWorkspaceModel/Domain/Tree/TreeWorkspace.swift; then
+    fail "TreeWorkspaceDefaults lost ${face} — the seeded names would go back to being literals"
+  fi
+done
+
+# PaneChooserRegistry is deliberately NOT in that list. Its "Terminal"/"Desktop" are the CHOOSER's
+# labels for a pane kind — a vocabulary a Swift `switch` reads, which docs/55 §6 leaves in Swift —
+# not the title a minted pane is born with. They are the same word today for the same reason a
+# folder and its icon share a name, and nothing breaks if the seeded title is renamed and the menu
+# entry is not.
+# The two bundled font families are one pair, and they used to be held in sync by a comment.
+#
+# `CodeSidebarPageDressing` injects @font-face declarations into the embedded workbench and
+# `slopdesk-codeseed` seeds the `editor.fontFamily` that names them. If the two disagree the panel
+# falls through to the system mono — no error, no crash, just the wrong shapes beside a terminal
+# drawing the right ones. They cross no door on purpose: codeseed is a host crate carrying the whole
+# seed history, and linking it into the FFI artifact would drag those tables into the iOS binary for
+# two strings. So the gate does the job the door would have.
+codeseed_settings="rust/slopdesk-codeseed/src/settings.rs"
+dressing="Sources/SlopDeskClientCore/CodeSidebar/CodeSidebarPageDressing.swift"
+for pair in "MONO_FONT_FAMILY|monoFontFamilyName" "NERD_FONT_FAMILY|nerdFontFamilyName"; do
+  rust_name="${pair%%|*}"
+  swift_name="${pair#*|}"
+  rust_value="$(sed -n "s/^pub const ${rust_name}: &str = \"\\(.*\\)\";\$/\\1/p" "${codeseed_settings}")"
+  swift_value="$(sed -n "s/^ *package static let ${swift_name} = \"\\(.*\\)\"\$/\\1/p" "${dressing}")"
+  if [[ -z "${rust_value}" ]]; then
+    fail "${codeseed_settings} no longer declares ${rust_name} — the seeded stack lost its named face"
+  fi
+  if [[ -z "${swift_value}" ]]; then
+    fail "${dressing} no longer declares ${swift_name} — the injected @font-face lost its family"
+  fi
+  if [[ "${rust_value}" != "${swift_value}" ]]; then
+    fail "the injected face and the seeded one disagree: ${rust_name}=${rust_value} vs ${swift_name}=${swift_value}"
+  fi
+done
+
+# And the stack is BUILT from those two rather than typed out a third time. The check that stops the
+# family being listed twice used to hold its own copy of the word, so renaming the face in the stack
+# alone would have made the stack repeat it while every `starts_with` assertion kept passing.
+if grep -qE "const FALLBACK: &str = \"'" "${codeseed_settings}"; then
+  fail "${codeseed_settings} typed the font stack out again — build it from the two named families"
+fi
+# The tuned encoder defaults are Rust's, and the host asks for them.
+#
+# Eleven numbers — four quantiser knobs, seven recovery-keyframe ones — used to be spelled in both
+# `qp_control.rs`/`recovery_idr.rs` and their Swift faces. Nothing failed when they agreed and
+# nothing would have failed when they stopped: the host would simply encode at the old operating
+# point, or grant keyframes on the old bucket, with no build error and no failing test. The two
+# `*_config_default` doors put the table on one side; this stops the literals growing back.
+qp_face="Sources/SlopDeskVideoHost/QPController.swift"
+idr_face="Sources/SlopDeskVideoHost/RecoveryIDRPolicy.swift"
+for door in slopdesk_qp_config_default slopdesk_idr_config_default; do
+  if ! grep -rq "${door}" Sources/SlopDeskVideoHost/; then
+    fail "${door} lost its caller — the tuned defaults are spelled Swift-side again (docs/55 §8)"
+  fi
+done
+# A `var` in the IDR config carrying its own literal is exactly the regrowth: the struct's fields are
+# seeded from the door in `init()`, so a default on the declaration would silently win.
+if grep -qE '^ *public var [a-zA-Z]+: (Double|Int) = ' "${idr_face}"; then
+  fail "${idr_face} put literal defaults back on Config's fields — they come from slopdesk_idr_config_default()"
+fi
+# Same shape on the quantiser side: the env fallbacks are the door's answer, never a digit.
+if grep -qE 'envInt\("SLOPDESK_QP_[A-Z_]+", [0-9]' "${qp_face}"; then
+  fail "${qp_face} typed a quantiser default back in — the fallback is slopdesk_qp_config_default()'s"
+fi
+# A settings row crosses whole, not field by field.
+#
+# `slopdesk_ffi::settings_rows`' own header argues the principle for the MATCH — positions rather
+# than rows, so a filter is one crossing and not one per field per row — and the reader then turned
+# each position back into eight calls, on every settings-search keystroke. `slopdesk_settings_row_fields`
+# is that argument applied one level out. This stops `entry(at:)` sliding back to the field doors.
+catalog="Sources/SlopDeskWorkspaceCore/Workspace/Store/AllSettingsCatalog.swift"
+entry_body="$(sed -n '/private static func entry(at index: Int)/,/^    }/p' "${catalog}")"
+for field_door in slopdesk_settings_row_label slopdesk_settings_row_page_label \
+  slopdesk_settings_row_description slopdesk_settings_row_default_text \
+  slopdesk_settings_row_target_section slopdesk_settings_row_keywords \
+  slopdesk_settings_row_bucket; do
+  if printf '%s' "${entry_body}" | grep -q "${field_door}"; then
+    fail "entry(at:) went back to ${field_door} — a row crosses whole (slopdesk_settings_row_fields)"
+  fi
+done
+if ! grep -q 'slopdesk_settings_row_fields' "${catalog}"; then
+  fail "${catalog} stopped calling slopdesk_settings_row_fields — reading a row costs 8 crossings again"
+fi
+
+# The field doors themselves stay. They are the right shape for a caller that wants ONE field — the
+# key lookup, the shown gate, the reset walk over `persistence` — and deleting them because the row
+# door exists would push those callers into decoding a whole row to read one string.
+if ! grep -q 'slopdesk_settings_row_key' "${catalog}"; then
+  fail "${catalog} lost the single-field key door — a key lookup should not decode a whole row"
+fi
+# A rail relabelling crosses once, not once per row.
+#
+# The collision rule needs the WHOLE list in hand to answer for any one member, so asking per index
+# meant rebuilding the label array and every title's bytes `n` times to answer `n` questions off one
+# input — quadratic in marshalling, on a list rebuilt whenever anything in it ticks.
+rail="Sources/SlopDeskClientCore/Rail/RailRowsBuilder.swift"
+if grep -q 'slopdesk_ws_rail_disambiguated_label(' "${rail}"; then
+  fail "${rail} went back to the per-index label door — a whole rail wants slopdesk_ws_rail_disambiguated_labels"
+fi
+if ! grep -q 'slopdesk_ws_rail_disambiguated_labels(' "${rail}"; then
+  fail "${rail} stopped calling slopdesk_ws_rail_disambiguated_labels — the relabelling is quadratic again"
+fi
+
+# ── The open target splits once, and the crate owns where ──────────────────────────────────────
+# `HostCodeServerPerformer.splitLineColSuffix` used to be a second `:line[:col]` splitter beside
+# `slopdesk-terminal`'s, and the two had already answered differently for a target that is ALL
+# suffix (`":12"`): Swift called it a suffix with an empty path, the crate calls it no suffix at
+# all. Three host call sites read that split — the existence check, the workbench CLI target, and
+# the code-server window routing — so a second splitter growing back here means the path the host
+# stats and the path the extension opens can disagree by a colon.
+SWIFT_CODEOPEN=Sources/SlopDeskHost/HostCodeServerPerformer.swift
+if ! spells 'slopdesk_link_line_col_suffix' "${SWIFT_CODEOPEN}" > /dev/null; then
+  fail "${SWIFT_CODEOPEN} splits a line:col suffix in Swift again — that rule is link_action.rs's"
+fi
+if hit=$(spells 'isNumber|runStart|sawDigit' "${SWIFT_CODEOPEN}"); then
+  fail "${hit} re-derives the suffix scan — the crate answers it, and the path is the remainder"
+fi
+printf 'check-supervisor: one line:col splitter, and the host asks it.\n'
+
+# ── One key vocabulary, on the CLIENT's send-keys too ───────────────────────────────────────────
+# The existing "One key vocabulary" block pins the HOST's face (`ControlKeyMap.swift`). The client's
+# `pane send-keys` had a second table of its own — nine names — and every other name the vocabulary
+# knows fell through it into a `nil` the caller dropped while still answering success, so `--key f5`
+# reported a keystroke delivered to a pane that received nothing. Same door, same ban on spelling a
+# sequence, plus the refusal being answerable: a `Bool` here cannot say "that is not a key" without
+# borrowing "pane not found".
+SWIFT_CLIENT_KEYS=Sources/SlopDeskClientCore/Control/WorkspaceControlBackend.swift
+if ! spells 'slopdesk_ws_key_token' "${SWIFT_CLIENT_KEYS}" > /dev/null; then
+  fail "${SWIFT_CLIENT_KEYS} answers a key name again — the vocabulary is send_keys.rs's"
+fi
+if hit=$(spells '0x1B, 0x5B|case "enter"|case "pageup"|& 0x1F' "${SWIFT_CLIENT_KEYS}"); then
+  fail "${hit} spells a key sequence again — a second table is how the client lost f5 and pgup"
+fi
+if ! spells 'unknownKey' "${SWIFT_CLIENT_KEYS}" > /dev/null; then
+  fail "${SWIFT_CLIENT_KEYS} swallowed the refusal again — an unrecognised key must fail the request"
+fi
+printf 'check-supervisor: the client send-keys asks the one vocabulary, and can refuse.\n'
+
+# ── A config action name resolves once, and goto_tab is bounded on BOTH halves of the line ──────
+# The name table and the `goto_tab` bound were written in Swift and in Rust, and they disagreed: the
+# Swift bounded the argument to 1…9 (there are nine per-digit bindings), the grammar accepted any
+# integer, so `cmd+1:goto_tab:99` validated in the keybinding editor and then resolved to nothing.
+# Both halves hold the bound now — the grammar so the line does not validate, the resolver so
+# nothing unbindable reaches the registry — and the nine ids are the resolver's list, so the bound
+# and the table it guards cannot drift apart.
+SWIFT_CONFIGNAMES=Sources/SlopDeskWorkspaceCore/Workspace/Domain/WorkspaceActionConfigNames.swift
+if ! spells 'slopdesk_ws_binding_id_for_config_name' "${SWIFT_CONFIGNAMES}" > /dev/null; then
+  fail "${SWIFT_CONFIGNAMES} resolves a config name in Swift again — that table is keybind.rs's"
+fi
+# Code shapes only, not prose: the doc comment above the resolver legitimately NAMES the bound and
+# an id while explaining where they went, so the patterns are the dictionary entry, the interpolated
+# id and the range check rather than the words themselves.
+if hit=$(spells '"new_tab": "|"pane\.select\.\\\(|\(1\.\.\.9\)\.contains' "${SWIFT_CONFIGNAMES}"); then
+  fail "${hit} spells a config name, a binding id or the goto_tab bound again — all three are Rust's"
+fi
+if ! spells 'Ok\(1\.\.=9\)' rust/slopdesk-terminal/src/keybind.rs > /dev/null; then
+  fail "rust/slopdesk-terminal/src/keybind.rs stopped bounding goto_tab — a line that cannot fire must not validate"
+fi
+if ! spells 'SELECT_PANE_BINDING_IDS: \[&str; 9\]' rust/slopdesk-workspace/src/keybind.rs > /dev/null; then
+  fail "rust/slopdesk-workspace/src/keybind.rs no longer bounds goto_tab by its own row list — the list IS the bound"
+fi
+printf 'check-supervisor: one config-name table, and goto_tab is bounded where it is read.\n'
+
+# ── A ring wraps through the one ring rule ──────────────────────────────────────────────────────
+# `(i ± 1 + n) % n` was hand-rolled in three places beside `slopdesk_list_wrapped_index`, which the
+# picker's filter pills already ask. Each copy is one `% 0` away from a trap on an empty list, and
+# the door is the only spelling that answers "there is nothing to step from" instead.
+for ring in Sources/SlopDeskWorkspaceCore/Workspace/Domain/PaneSwitcher.swift \
+  Sources/SlopDeskWorkspaceCore/Terminal/TerminalSearchController.swift; do
+  if hit=$(spells '\+ count\) %|\+ matches\.count\) %|\+ candidates\.count\) %' "${ring}"); then
+    fail "${hit} hand-rolls a ring wrap — ListNavigation.wrappedIndex is the one ring step"
+  fi
+done
+printf 'check-supervisor: every ring steps through the one wrap rule.\n'
+
+# ── NOT a ratchet, a note for whoever audits this next ──────────────────────────────────────────
+# `MuxChannelSession.isCompletionTransition` looks like a twin of `slopdesk_agent_attention_completion`
+# and is NOT one. The door answers the HOOK-LESS completion (`Working|Blocked -> Idle`); the host's
+# rule is "one finished turn", which is that PLUS entering `.done` from anything but `.done` — the
+# hook path, which is the whole reason `pane/completionEpoch` advances on a host that runs the Stop
+# hook. Routing the host through the door would silently stop counting hook-driven finishes.
+# `Tests/SlopDeskHostTests/CompletionTransitionTests.swift` pins the difference; leave it Swift, or
+# give the wider rule a door of its own.
+
+# ── The Android console's level filter is androidd's array, not a second list ────────────────────
+#
+# CATCHES: a Swift `AndroidLogLevel` that goes back to spelling its own letters. It did once, and it
+# drifted short — five letters against androidd's six — so `F` was a filter the menu could not
+# produce while `logcat_level` was validating against a set that contained it. Nothing failed: the
+# console just had no way to ask for fatal. The set now crosses through
+# `slopdesk_android_log_level_letter`, and this is what keeps it crossing.
+SWIFT_ANDROID_LOG_LEVEL="Sources/SlopDeskDevicePanels/Android/AndroidLogLevel.swift"
+if ! grep -q 'slopdesk_android_log_level_letter' "${SWIFT_ANDROID_LOG_LEVEL}"; then
+  fail "${SWIFT_ANDROID_LOG_LEVEL} no longer reads androidd's level array — the menu is a second list again (docs/48)"
+fi
+# The named constants (`.info`, `.fatal`) are allowed and `AndroidLogLevelTests` pins each against
+# the crossed set. What is NOT allowed is the type going back to an `enum`, because an enum's case
+# list cannot be built from a table at run time — that keyword IS the second copy.
+if grep -qE '^ *(package|public|internal)? *enum +AndroidLogLevel' "${SWIFT_ANDROID_LOG_LEVEL}"; then
+  fail "${SWIFT_ANDROID_LOG_LEVEL} is an enum again — a case list cannot come from androidd's array, so it is a second copy of it"
+fi
+
+# ── The cursor style has ONE label ───────────────────────────────────────────────────────────────
+#
+# CATCHES: a display name growing back on `TerminalPreferences.CursorStyle`. There was one, reading
+# "Block (hollow)", against `settings_catalog`'s "Hollow" for the same token — and both were on the
+# same Settings page, the catalog's at the picker and this one at the ✎ row that jumps to it. One
+# setting, two words, a scroll apart.
+SWIFT_TERMINAL_PREFS="Sources/SlopDeskVideoProtocol/Settings/TerminalPreferences.swift"
+# Comments stripped for the same reason: the enum's doc quotes both spellings to record which one
+# survived, and the check is about the CODE.
+if grep -qE 'Block \(hollow\)|displayName' <<< "$(grep -vE '^ *(///|//|\*)' "${SWIFT_TERMINAL_PREFS}")"; then
+  fail "${SWIFT_TERMINAL_PREFS} names a cursor style again — the label is settings_catalog's CURSOR_STYLES (docs/56)"
+fi
+
+# ── 1. No second traversal check in Swift ─────────────────────────────────────────────────────────
+# CATCHES: a Swift file deciding for itself whether a path contains `..`. That predicate is exactly
+# what the three deleted implementations each spelled differently, and the two spellings that were
+# wrong were wrong in ways no test in their own file could see. `PathConfinement` is the only Swift
+# that may hold an opinion about a path component, and it holds it by asking Rust.
+if grep -rnE '(containsTraversal|contains\("\.\."\)|hasPrefix\("\.\./"\)|== "\.\."|components\(\).*"\.\.")' \
+  Sources/ --include='*.swift' 2> /dev/null; then
+  fail "a Swift file is deciding about a '..' component itself — path confinement is
+  slopdesk_path_confine's answer alone (rust/slopdesk-probe/src/path_confine.rs)."
+fi
+
+# ── 2. No string-prefix containment in the host ───────────────────────────────────────────────────
+# CATCHES: the exact shape `CodeBridgeServer.contains` had — `path.hasPrefix(root)` — which treats
+# `/a/repo-evil` as a child of `/a/repo` unless a separator guard is bolted on beside it, and which
+# says nothing at all about `..`. A containment answer that is a string comparison is a bug whose
+# next reader will assume the guard is somewhere.
+if grep -rnE '\.hasPrefix\((root|projectRoot|cwd|folder|workspaceRoot)\b' Sources/ \
+  --include='*.swift' 2> /dev/null; then
+  fail "a Swift file is testing containment with hasPrefix — use PathConfinement.isWithin, which
+  is component-wise and refuses '..'."
+fi
+
+# ── 3. The three deleted helpers stay deleted ─────────────────────────────────────────────────────
+# CATCHES: the port being half-reverted. `pathComponents`/`isWithin([String],root:)` were the
+# decoder's own splitter and prefix match; a `contains(root:path:)` with a BODY is the bridge's
+# string test coming back. All three compiled and all three passed their tests while disagreeing
+# with each other, so their absence is the only durable evidence the port happened.
+if grep -rnE 'static func (pathComponents|isWithin)\(_ ' Sources/ --include='*.swift' 2> /dev/null; then
+  fail "MetadataResponseBuilder's own path splitter/prefix match is back — the rule is
+  rust/slopdesk-probe/src/path_confine.rs."
+fi
+if grep -rn 'func contains(root:' Sources/ --include='*.swift' -A 3 2> /dev/null | grep -q 'hasPrefix'; then
+  fail "CodeBridgeServer.contains has a body again — it must forward to PathConfinement.isWithin."
+fi
+
+# ── 4. The rule stays LEXICAL ─────────────────────────────────────────────────────────────────────
+# CATCHES: someone "fixing" the documented symlink residual with `canonicalize`. That is not a fix
+# and the module says why at length: it needs the path to EXIST (so a missing file becomes a refusal
+# rather than a clean not-found), it refuses legitimate paths whose ROOT is itself a symlink (/tmp on
+# macOS), and it still loses to a symlink swap between the check and the open. Changing this is a
+# design decision, not a patch, and it must not arrive as a one-line diff.
+# (Comment lines are excluded: the module's own prose names `canonicalize` several times, to say
+#  why it is NOT used. A ban that fires on its own rationale is a ban that gets deleted.)
+if grep -rnE 'canonicalize' rust/slopdesk-probe/src/ 2> /dev/null | grep -vE ':[0-9]+:[[:space:]]*//'; then
+  fail "slopdesk-probe reached for canonicalize — path confinement is LEXICAL on purpose; see the
+  'residual' section of rust/slopdesk-probe/src/path_confine.rs before changing it."
+fi
+
+# ── 5. The rule has exactly one home ──────────────────────────────────────────────────────────────
+# CATCHES: a second Rust crate growing its own confinement. `path_confine` is reached two ways — the
+# probe calls it directly, hostd calls it through the door — and both must land on the same file.
+CONFINE_HOMES=$(grep -rlE 'fn (confine|is_confinable_absolute)\(' rust/ --include='*.rs' 2> /dev/null |
+  grep -v '/target/' | grep -v 'slopdesk-ffi/src/path_confine.rs' || true)
+if [[ "${CONFINE_HOMES}" != "rust/slopdesk-probe/src/path_confine.rs" ]]; then
+  fail "path confinement must live in exactly one file (rust/slopdesk-probe/src/path_confine.rs);
+  found: ${CONFINE_HOMES:-nothing}"
+fi
+
+# ── 6. The door is declared where Swift can reach it ──────────────────────────────────────────────
+# CATCHES: the `pub mod`/header/module trio drifting. `build-ffi.sh` already checks every declared
+# symbol against every slice, so this only has to catch the case it cannot: a module that exists and
+# is not exported, which fails as a LINK error in the app rather than in the gate.
+for symbol in slopdesk_path_confine slopdesk_path_is_confinable_absolute; do
+  grep -q "${symbol}" rust/slopdesk-ffi/include/slopdesk_ffi.h ||
+    fail "${symbol} is missing from slopdesk_ffi.h — Swift cannot link the confinement rule."
+done
+grep -q '^pub mod path_confine;' rust/slopdesk-ffi/src/lib.rs ||
+  fail "rust/slopdesk-ffi/src/lib.rs does not export path_confine — the header promises a symbol
+  the library will not carry."
 
 # ── Every path this file names still exists ───────────────────────────────────────────────────
 # Forty `SWIFT_*` / `RUST_*` constants name the files the contracts above are read out of, and a

@@ -14,16 +14,33 @@
 //!
 //! Not all of it, and the split is worth knowing before assuming a change here is load-bearing.
 //! [`keystrokes`] crosses as `slopdesk_ws_launch_keystrokes` and is the SINGLE implementation of
-//! the rule below — the Swift face is a wrapper with no logic in it. [`TemplateNode::repaired`],
-//! [`built_in_session_templates`] and [`built_in_launch_presets`] cross too (2026-08-20), but as a
-//! PIN rather than as the only implementation: Swift still holds its own copy of each, because
-//! `SessionTemplate` is `Codable` and is what the device-preferences file is made of, so
-//! `SessionTemplateRepairDifferentialTests` drives both sides and asserts they agree.
+//! the rule below — the Swift face is a wrapper with no logic in it. [`built_in_session_templates`]
+//! and [`built_in_launch_presets`] are the single implementation too, as of 2026-08-22: they cross
+//! as `slopdesk_ws_built_in_templates` / `slopdesk_ws_built_in_launch_presets` and ARE
+//! `SessionTemplate.builtIns` / `LaunchPreset.builtIns`, the rows a fresh device is seeded with.
+//! Editing one of these tables changes what every new workspace ships, with no second list to keep
+//! in step.
 //!
-//! [`plan`] and [`TemplatePane::keystrokes`] have no caller. They are deliberately still here and
-//! deliberately still unported: `plan` copies three fields of a preset into two pane specs and
-//! defers the one actual rule to [`keystrokes`], which already crosses, so a door for it would
-//! marshal a whole preset to compare two spellings of an assignment. Porting it would be motion.
+//! They did not start that way. Both crossed on 2026-08-20 as a PIN beside Swift literals of the
+//! same three rows, on the reasoning that `SessionTemplate` is `Codable` and is what the
+//! device-preferences file is made of. That is true of the TYPE and says nothing about a table of
+//! three constants, and a shipped default written twice is the cross-language mirror fixture
+//! CLAUDE.md bans by name — so the literals are gone and the differential that held them together
+//! now asserts what the seed must BE instead of that two copies of it match.
+//!
+//! [`TemplateNode::repaired`] is the one that really is a pin: `TemplateNode::init(from:)` is how a
+//! person's saved layouts come back off disk, so Swift cannot delete its decoder, and `docs/55` §7
+//! step 6 asks for a differential rather than a deletion. `SessionTemplateRepairDifferentialTests`
+//! drives both sides over every degenerate layout and asserts they converge.
+//!
+//! The EXPANSION itself is not here and is not meant to be. A preset's plan — the pane titles, the
+//! inherited spawn cwd, the split axis — is `LaunchPresetEngine.plan` on the Swift side, because it
+//! is three field copies around one rule and that rule is [`keystrokes`], which already crosses. A
+//! door for the expansion would marshal a whole preset to compare two spellings of an assignment.
+//!
+//! A Rust `plan` DID sit here until 2026-08-22, called by nothing but its own tests, and the note
+//! below the built-in tables records why an unreached port is worse than an unported one rather
+//! than better.
 //!
 //! ## A path is not shell input
 //!
@@ -36,7 +53,7 @@
 
 use crate::identity::{LaunchPresetId, SessionTemplateId};
 use crate::send_keys;
-use crate::session::{PaneKind, PaneSpec};
+use crate::session::PaneKind;
 use crate::split_tree::{MAX_DEPTH, SplitAxis};
 
 /// The optional second pane of a two-pane launch preset.
@@ -124,57 +141,23 @@ pub fn built_in_launch_presets() -> Vec<LaunchPreset> {
     ]
 }
 
-/// One pane a preset opens, with the bytes to type into it once it is live.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PaneLaunch {
-    /// What the pane is.
-    pub spec: PaneSpec,
-    /// Where the preset asks the shell to START.
-    ///
-    /// It rides the channel open, so the host spawns the PTY there directly and there is no visible
-    /// startup `cd` for the person to watch scroll past.
-    pub spawn_cwd: Option<String>,
-    /// The bytes to send once the pane's transport is live, or empty for a plain shell.
-    pub keystrokes: Vec<u8>,
-}
-
-/// The full plan for applying a launch preset.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LaunchPlan {
-    /// The panes to create, in order.
-    pub panes: Vec<PaneLaunch>,
-    /// The axis the first pane splits along to host the second, or `None` for a single-pane preset.
-    pub split_axis: Option<SplitAxis>,
-}
-
-/// The plan a preset expands into.
-///
-/// Every pane takes the preset's NAME as its title, so the chrome reads "Claude Code" rather than
-/// the command, and the second pane of a split inherits the working directory — a split beside a
-/// pane starts where that pane started.
-#[must_use]
-pub fn plan(preset: &LaunchPreset) -> LaunchPlan {
-    let primary = PaneLaunch {
-        spec: PaneSpec::new(PaneKind::Terminal, preset.name.clone()),
-        spawn_cwd: preset.working_directory.clone(),
-        keystrokes: keystrokes(&preset.command, None),
-    };
-    let Some(split) = preset.split.as_ref() else {
-        return LaunchPlan {
-            panes: vec![primary],
-            split_axis: None,
-        };
-    };
-    let secondary = PaneLaunch {
-        spec: PaneSpec::new(PaneKind::Terminal, preset.name.clone()),
-        spawn_cwd: preset.working_directory.clone(),
-        keystrokes: keystrokes(&split.secondary_command, None),
-    };
-    LaunchPlan {
-        panes: vec![primary, secondary],
-        split_axis: Some(split.axis),
-    }
-}
+// There is no `plan` here, and its absence is a decision rather than an omission.
+//
+// A launch preset's expansion — the pane titles, the inherited spawn cwd, the split axis — lives in
+// `LaunchPresetEngine.plan` and stays there. It is three field copies around one real rule, and
+// that rule is [`keystrokes`] below, which already crosses as `slopdesk_ws_launch_keystrokes`; a
+// door for the expansion would marshal a whole preset across the boundary to compare two spellings
+// of an assignment. docs/55 §8 records the same judgement.
+//
+// What DID live here until 2026-08-22 was a Rust `plan` with `LaunchPlan` and `PaneLaunch` beside
+// it, called by nothing but its own two tests. That is the arrangement the one-implementation rule
+// exists to stop, and it is worse than the usual case rather than better: a port that is never
+// reached cannot be caught disagreeing, because no input ever reaches both copies. Nothing in the
+// tree could have compared them, and `dead_code` cannot see a `pub` item in a library crate — so it
+// would have sat here accumulating drift against the Swift for as long as anyone cared to leave it.
+// `TemplatePane::keystrokes` went with it, for the same reason and with an extra one of its own: it
+// hardcoded `None` for the cwd, so it could not emit the `cd` line its Swift counterpart takes a
+// directory in order to write. The two had already stopped being the same function.
 
 /// The bytes to type into a freshly spawned pane: a `cd` line when a directory is set, then the
 /// command.
@@ -228,19 +211,19 @@ impl TemplatePane {
         self.command = Some(command.into());
         self
     }
-
-    /// The bytes this leaf types into its pane once the PTY is live.
-    #[must_use]
-    pub fn keystrokes(&self) -> Vec<u8> {
-        keystrokes(self.command.as_deref().unwrap_or_default(), None)
-    }
 }
 
 /// The title a repaired template falls back to.
 ///
 /// A template must expand to at least one pane, so a node with nothing left in it becomes a plain
 /// terminal rather than nothing at all.
-pub const FALLBACK_PANE_TITLE: &str = "Terminal";
+///
+/// It re-exports [`crate::workspace::DEFAULT_PANE_TITLE`] instead of spelling the same word again.
+/// The two ask one question — what is a pane nobody has named called — from two directions, and a
+/// second literal would let them answer it differently: rename the default and a repaired template
+/// would go on producing panes titled the old thing, while every gesture-made pane took the new
+/// one. Nothing would fail; the workspace would just have two kinds of unnamed pane in it.
+pub const FALLBACK_PANE_TITLE: &str = crate::workspace::DEFAULT_PANE_TITLE;
 
 /// The recursive, n-ary layout a session template expands into.
 ///
@@ -437,50 +420,10 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::{
-        FALLBACK_PANE_TITLE, LaunchPreset, SplitConfig, TemplateNode, TemplatePane, built_in_launch_presets,
-        built_in_session_templates, keystrokes, plan,
+        FALLBACK_PANE_TITLE, TemplateNode, TemplatePane, built_in_launch_presets, built_in_session_templates,
+        keystrokes,
     };
-    use crate::identity::LaunchPresetId;
     use crate::split_tree::{MAX_DEPTH, SplitAxis};
-
-    fn preset() -> LaunchPreset {
-        LaunchPreset::new(LaunchPresetId::from_bytes([7; 16]), "Git log", "git log")
-    }
-
-    #[test]
-    fn a_plain_preset_opens_one_pane_and_types_its_command() {
-        let expanded = plan(&preset());
-        assert_eq!(expanded.split_axis, None);
-        assert_eq!(expanded.panes.len(), 1);
-        let Some(pane) = expanded.panes.first() else {
-            panic!("a preset always plans at least one pane");
-        };
-        assert_eq!(pane.keystrokes, b"git log\n".to_vec());
-        assert_eq!(
-            pane.spec.title, "Git log",
-            "the pane is labelled by the preset, not the command"
-        );
-    }
-
-    #[test]
-    fn a_two_pane_preset_carries_the_axis_and_the_shared_directory() {
-        let mut two = preset();
-        two.working_directory = Some("/tmp/work".to_owned());
-        two.split = Some(SplitConfig {
-            axis: SplitAxis::Vertical,
-            secondary_command: "watch ls".to_owned(),
-        });
-        let expanded = plan(&two);
-        assert_eq!(expanded.split_axis, Some(SplitAxis::Vertical));
-        assert_eq!(expanded.panes.len(), 2);
-        for pane in &expanded.panes {
-            assert_eq!(
-                pane.spawn_cwd.as_deref(),
-                Some("/tmp/work"),
-                "a split inherits the directory it was opened beside",
-            );
-        }
-    }
 
     #[test]
     fn an_empty_command_and_no_directory_sends_nothing() {
@@ -616,14 +559,5 @@ mod tests {
         for template in &templates {
             assert_eq!(template.layout.repaired(), template.layout);
         }
-    }
-
-    #[test]
-    fn a_leaf_types_its_own_command_and_a_bare_one_types_nothing() {
-        assert_eq!(
-            TemplatePane::new("Git").running("git status").keystrokes(),
-            b"git status\n".to_vec()
-        );
-        assert!(TemplatePane::new("Terminal").keystrokes().is_empty());
     }
 }

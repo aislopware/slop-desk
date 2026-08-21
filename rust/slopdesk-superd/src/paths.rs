@@ -22,12 +22,12 @@ use std::path::{Path, PathBuf};
 /// The launchd job label. Also the lock-file stem.
 pub const LAUNCH_AGENT_LABEL: &str = "com.slopdesk.superd";
 
-/// Overrides the whole socket directory. Test-only in practice: the gate script needs two superds
-/// that cannot see each other.
-pub const DIRECTORY_ENV_KEY: &str = "SLOPDESK_SUPERD_DIR";
-
-/// Overrides the control socket path outright.
-pub const SOCKET_ENV_KEY: &str = "SLOPDESK_SUPERD_SOCKET";
+// The two override keys and the control socket's name are `slopdesk_superwire`'s, re-exported here
+// so this module still reads as the list of superd's paths. They moved for the reason the framing
+// did: hostd must resolve this one address before it can say `hello`, so it cannot be told, and it
+// was answering the question with a rule of its own that disagreed on `$TMPDIR` and had never heard
+// of `SLOPDESK_SUPERD_DIR`. The other three names below stay here, because hostd is TOLD them.
+pub use slopdesk_superwire::{DIRECTORY_ENV_KEY, SOCKET_ENV_KEY};
 
 /// The usable length of `sockaddr_un.sun_path` on Darwin.
 ///
@@ -90,7 +90,10 @@ impl Paths {
     pub fn resolve(directory: Option<&str>, socket: Option<&str>, tmpdir: Option<&str>) -> Self {
         let base = PathBuf::from(directory.or(tmpdir).unwrap_or("/tmp"));
         Self {
-            control: socket.map_or_else(|| base.join("slopdesk-superd.sock"), PathBuf::from),
+            // The control arm is `slopdesk_superwire::control_socket_path`, not a fourth `join`
+            // beside its siblings: it is the one of the four hostd resolves for itself, so it is
+            // the one where a second spelling can put the two ends on different sockets in silence.
+            control: PathBuf::from(slopdesk_superwire::control_socket_path(socket, directory, tmpdir)),
             hook: base.join("slopdesk-agent.sock"),
             control_agent: base.join("slopdesk-ctl.sock"),
             lock: base.join("slopdesk-superd.lock"),

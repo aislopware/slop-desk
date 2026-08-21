@@ -31,7 +31,7 @@ private final class FakeClientControlBackend: ClientControlBackend {
     var fontsReturn: [ClientFontInfo] = []
     var keybindsReturn: [ClientKeybindInfo] = []
     var capturePaneReturn: [String]? = []
-    var sendKeysReturn = true
+    var sendKeysReturn: SendKeysOutcome = .sent
     var agentStatusByID: [String: ClaudeStatus] = [:]
     /// Ids that resolve to a live pane but carry NO agent status yet (the startup window) → `resolvedNoStatus`.
     var resolvedNoStatusIDs: Set<String> = []
@@ -152,7 +152,7 @@ private final class FakeClientControlBackend: ClientControlBackend {
         return capturePaneReturn
     }
 
-    func sendKeys(paneId: String?, text: String, keys: [String]) -> Bool {
+    func sendKeys(paneId: String?, text: String, keys: [String]) -> SendKeysOutcome {
         recordedSendPaneId = paneId
         recordedSendText = text
         recordedSendKeys = keys
@@ -620,8 +620,18 @@ final class ClientControlDispatcherTests: XCTestCase {
     }
 
     func testSendKeysPaneNotFound() {
-        backend.sendKeysReturn = false
+        backend.sendKeysReturn = .paneNotFound
         XCTAssertFalse(isOK(run(ClientControlProtocol.Method.paneSendKeys, ["text": "x"])))
+    }
+
+    /// A name the key vocabulary refuses is a FAILURE, and it says which name. The verb used to
+    /// answer `ok:true` here while the pane received nothing, because the backend's own nine-name
+    /// table dropped everything it did not know and the seam had no way to say so.
+    func testSendKeysUnknownKeyFailsAndNamesTheKey() {
+        backend.sendKeysReturn = .unknownKey("f5")
+        let obj = run(ClientControlProtocol.Method.paneSendKeys, ["keys": ["f5"]])
+        XCTAssertFalse(isOK(obj))
+        XCTAssertEqual(errorMessage(obj), "unknown key: f5")
     }
 
     // MARK: agent-status

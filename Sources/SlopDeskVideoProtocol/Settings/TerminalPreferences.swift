@@ -56,25 +56,21 @@ public struct TerminalPreferences: Codable, Sendable, Equatable {
     /// Terminal foreground / text colour (libghostty `foreground`, 6-hex). Dracula's primary ink.
     public var foreground: String
 
-    /// Cursor style (libghostty `cursor-style`). Four styles: Block,
-    /// Block (hollow), Bar, Underline. `block_hollow` is a native libghostty cursor style
-    /// (`terminal/cursor.zig`); the raw values are the libghostty config tokens 1:1.
+    /// Cursor style (libghostty `cursor-style`). Four silhouettes; `block_hollow` is a native
+    /// libghostty cursor style (`terminal/cursor.zig`) and the raw values are the libghostty config
+    /// tokens 1:1.
+    ///
+    /// What each style is CALLED is not here. It was — a `displayName` reading "Block (hollow)" —
+    /// against `slopdesk_workspace::settings_catalog`'s `CURSOR_STYLES`, which calls the same token
+    /// "Hollow". Both were user-visible and they were on the same page: the picker drew the
+    /// catalog's label and the all-settings index printed this one beside the ✎ that jumps to that
+    /// very picker, so one setting read as two different values a scroll apart. The catalog is the
+    /// implementation — it is what the control itself draws — and this enum is now only the token.
     public enum CursorStyle: String, Codable, Sendable, CaseIterable {
         case block
         case blockHollow = "block_hollow"
         case bar
         case underline
-
-        /// The UI-facing display label (the dropdown text), since the kebab-style raw value
-        /// (`block_hollow`) does not capitalize into "Block (hollow)".
-        public var displayName: String {
-            switch self {
-            case .block: "Block"
-            case .blockHollow: "Block (hollow)"
-            case .bar: "Bar"
-            case .underline: "Underline"
-            }
-        }
     }
 
     /// Whether the cursor blinks (libghostty `cursor-style-blink`). A TRI-STATE "Cursor blink style"

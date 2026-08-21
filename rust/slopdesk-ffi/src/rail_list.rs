@@ -144,11 +144,67 @@ pub unsafe extern "C" fn slopdesk_ws_rail_plan(
     }
 }
 
+/// What EVERY item should be called once identical labels have been told apart, in one delivery.
+///
+/// `count` entries in list order, each a four-byte big-endian length then that many UTF-8 bytes. A
+/// zero length is "keep the label you have" — a qualified label is never empty, so the two cannot
+/// collide. A return larger than `cap` means nothing was written; ask again at that size.
+///
+/// ## Why this is not just [`slopdesk_ws_rail_disambiguated_label`] in a loop
+///
+/// That door's own note says the repeated walk is cheap at rail lengths, and it is — but the walk
+/// was never the expensive half. A collision is a fact about the LIST, so the whole list has to be
+/// in hand to answer for one member, and the near side was rebuilding it from scratch on every
+/// index: `n` label arrays and `n` copies of every title's bytes, per rail rebuild, to answer `n`
+/// questions that share one input. Passing the list once and getting `n` answers back is the shape
+/// the module header already argues for everything else here.
+///
+/// # Safety
+/// `items` must be null or point to `count` live [`CRailLabel`]s; `strings` null or `strings_len`
+/// initialised bytes; `out` null or writable for `cap` bytes. All live for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_ws_rail_disambiguated_labels(
+    items: *const CRailLabel,
+    count: usize,
+    strings: *const c_uchar,
+    strings_len: usize,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligations, restated above; the helpers state their own.
+    unsafe {
+        let blob = crate::borrow(strings, strings_len);
+        let held: Vec<Label<'_>> = borrow_array(items, count)
+            .iter()
+            .map(|item| {
+                Label {
+                    text: text_of(item.text, blob).unwrap_or_default(),
+                    source: text_of(item.source, blob),
+                }
+            })
+            .collect();
+        let mut answer = Vec::with_capacity(count * 4);
+        for index in 0..count {
+            let qualified = rail_list::disambiguated_label(&held, index).unwrap_or_default();
+            let len = u32::try_from(qualified.len()).unwrap_or(u32::MAX);
+            answer.extend_from_slice(&len.to_be_bytes());
+            answer.extend_from_slice(qualified.as_bytes());
+        }
+        deliver(&answer, out, cap)
+    }
+}
+
 /// What `items[index]` should be CALLED once identical labels have been told apart.
 ///
 /// `0` is "keep the label you have" — a qualified label is never empty, so the two cannot collide.
 /// The whole list is passed on every call because a collision is a fact about the list, not about
-/// one member; at rail lengths the repeated walk is cheaper than a second answer channel.
+/// one member. Kept beside the list door for the caller that genuinely wants ONE answer; a caller
+/// relabelling a whole rail wants [`slopdesk_ws_rail_disambiguated_labels`], which re-marshals the
+/// list once instead of once per row.
 ///
 /// # Safety
 /// `items` must be null or point to `count` live [`CRailLabel`]s; `strings` null or `strings_len`
@@ -189,10 +245,16 @@ pub unsafe extern "C" fn slopdesk_ws_rail_disambiguated_label(
 #[cfg(test)]
 mod tests {
     #![expect(unsafe_code, reason = "calling the door is the only way to test the door")]
+    #![expect(
+        clippy::expect_used,
+        reason = "a panic while walking a length prefix this test just asked the door for IS the failure \
+                  report — softening it to a default would let a short delivery read as an empty label and \
+                  pass"
+    )]
 
     use super::{
         CRailLabel, CRailPlacement, CRailPlanRow, CRailRowFields, slopdesk_ws_rail_disambiguated_label,
-        slopdesk_ws_rail_plan, slopdesk_ws_rail_row_matches,
+        slopdesk_ws_rail_disambiguated_labels, slopdesk_ws_rail_plan, slopdesk_ws_rail_row_matches,
     };
     use crate::workspace::Span;
 
@@ -336,5 +398,57 @@ mod tests {
         assert_eq!(label(0), "api/src");
         assert_eq!(label(1), "web/src");
         assert_eq!(label(2), "", "nothing else is called docs");
+
+        // The list door answers the same three, in order, from one crossing. Asserting AGREEMENT
+        // rather than the words again is what makes the two impossible to drift: the day someone
+        // changes the collision rule, either both move or this fails.
+        let mut whole = [0_u8; 256];
+        // SAFETY: three live local buffers, borrowed for the duration of the call.
+        let written = unsafe {
+            slopdesk_ws_rail_disambiguated_labels(
+                items.as_ptr(),
+                items.len(),
+                blob.bytes.as_ptr(),
+                blob.bytes.len(),
+                whole.as_mut_ptr(),
+                whole.len(),
+            )
+        };
+        let mut rest = whole.get(..written).unwrap_or_default();
+        for index in 0..items.len() {
+            let (header, tail) = rest.split_at(4);
+            let len = u32::from_be_bytes(header.try_into().expect("four bytes")) as usize;
+            let (body, tail) = tail.split_at(len);
+            assert_eq!(String::from_utf8_lossy(body), label(index), "row {index}");
+            rest = tail;
+        }
+        assert!(rest.is_empty(), "the delivery is exactly as long as the list");
+    }
+
+    /// An overflow reports its size and leaves the caller's buffer alone — §4's retry, on the list.
+    #[test]
+    fn a_rail_relabelling_that_does_not_fit_names_its_size_and_writes_nothing() {
+        let mut blob = Blob::default();
+        let items = [CRailLabel {
+            text: blob.span(Some("src")),
+            source: blob.span(Some("/w/api/src")),
+        }];
+        let mut tiny = [0xAA_u8; 2];
+        // SAFETY: two live local buffers, borrowed for the duration of the call.
+        let needed = unsafe {
+            slopdesk_ws_rail_disambiguated_labels(
+                items.as_ptr(),
+                items.len(),
+                blob.bytes.as_ptr(),
+                blob.bytes.len(),
+                tiny.as_mut_ptr(),
+                tiny.len(),
+            )
+        };
+        assert_eq!(
+            needed, 4,
+            "one length prefix, and a lone row collides with nothing"
+        );
+        assert_eq!(tiny, [0xAA; 2], "an overflow leaves the caller's buffer alone");
     }
 }

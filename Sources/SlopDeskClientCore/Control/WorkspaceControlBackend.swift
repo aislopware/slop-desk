@@ -14,8 +14,9 @@
 // The dispatcher already validated + bounded every param before calling here (CLAUDE.md untrusted-input
 // contract), so each method assumes well-formed inputs and only maps identity strings → tree nodes (a
 // bad/unknown id → `nil` → the dispatcher emits an `ok:false` error, never a crash). Literal `cd` /
-// send-keys / shim text is sent **VERBATIM UTF-8**; named keys go through a small explicit keycode table
-// (never `SendKeysParser`), per CLAUDE.md.
+// send-keys / shim text is sent **VERBATIM UTF-8**; named keys go through `slopdesk_ws_key_token` — the
+// one key vocabulary, shared with the host's `write` verb and with the `<Token>` grammar a launch preset
+// carries (never `SendKeysParser`), per CLAUDE.md. A name that vocabulary refuses fails the request.
 //
 // ## Known gaps
 // Every method wires against an existing seam so the socket is functional end-to-end. The scrollback
@@ -25,6 +26,7 @@
 // writes the store-side per-tab override the rail + `tab list` render. None of these are on the golden
 // wire; this is the NDJSON control plane only.
 
+import CSlopDeskFFI // slopdesk_ws_key_token — the ONE named-key vocabulary, shared with the host's `write`
 import Foundation
 import SlopDeskAgentDetect
 import SlopDeskCLICore // JumpResolver — the PURE frecency/$HOME-toggle/`--no-cd` jump resolution
@@ -413,15 +415,24 @@ package final class WorkspaceControlBackend: ClientControlBackend {
         return handle.captureScrollback(lines: lines)
     }
 
-    /// Send literal `text` VERBATIM, then each named key via the explicit keycode table. nil `paneId` = the
-    /// focused pane; an unknown pane → `false`.
-    package func sendKeys(paneId: String?, text: String, keys: [String]) -> Bool {
-        guard let handle = resolveHandle(paneId) else { return false }
-        if !text.isEmpty { handle.sendText(text) } // VERBATIM UTF-8
+    /// Send literal `text` VERBATIM, then each named key as the bytes the key vocabulary gives it.
+    /// nil `paneId` = the focused pane.
+    ///
+    /// Every name is resolved BEFORE anything is written, and one that is not a key rejects the
+    /// whole request — the host's `write` verb has always worked this way, because a typo halfway
+    /// through a list would otherwise leave a partial key sequence on a live shell. Names are
+    /// checked ahead of the pane lookup for the same reason: a malformed request is malformed
+    /// whether or not the pane it names happens to exist.
+    package func sendKeys(paneId: String?, text: String, keys: [String]) -> SendKeysOutcome {
+        var resolved: [UInt8] = []
         for key in keys {
-            if let bytes = Self.namedKeyBytes(key) { handle.sendBytes(bytes) }
+            guard let bytes = Self.keyBytes(key) else { return .unknownKey(key) }
+            resolved.append(contentsOf: bytes)
         }
-        return true
+        guard let handle = resolveHandle(paneId) else { return .paneNotFound }
+        if !text.isEmpty { handle.sendText(text) } // VERBATIM UTF-8
+        if !resolved.isEmpty { handle.sendBytes(resolved) }
+        return .sent
     }
 
     // MARK: - agent status
@@ -536,22 +547,36 @@ package final class WorkspaceControlBackend: ClientControlBackend {
         s.hasPrefix("http://") || s.hasPrefix("https://")
     }
 
-    /// The byte sequence for a named key (the keycode path — NEVER `SendKeysParser`, per CLAUDE.md). A small
-    /// explicit table covering the common control keys; an unknown name is dropped.
-    private static func namedKeyBytes(_ name: String) -> [UInt8]? {
-        switch name.lowercased() {
-        case "enter",
-             "return": [0x0D]
-        case "tab": [0x09]
-        case "escape",
-             "esc": [0x1B]
-        case "space": [0x20]
-        case "backspace": [0x7F]
-        case "up": [0x1B, 0x5B, 0x41] // CSI A
-        case "down": [0x1B, 0x5B, 0x42] // CSI B
-        case "right": [0x1B, 0x5B, 0x43] // CSI C
-        case "left": [0x1B, 0x5B, 0x44] // CSI D
-        default: nil
+    /// The bytes one named key sends, or `nil` for a name that is not a key (the keycode path —
+    /// NEVER `SendKeysParser`, per CLAUDE.md).
+    ///
+    /// The vocabulary is `slopdesk-workspace`'s `send_keys`, which is the same table the `<Token>`
+    /// grammar in a launch preset reads and the same door the host's `write` verb asks. What used
+    /// to be here was a hand-written nine-name table — `enter`, `tab`, `esc`, `space`, `backspace`
+    /// and the four arrows — and every other name the vocabulary knows fell out of it as `nil`. The
+    /// caller then dropped that `nil` and answered success anyway, so `--key f5`, `pgup`, `home`,
+    /// `end`, `delete` and `insert` each reported a keystroke delivered to a pane that received
+    /// nothing at all. The refusal is the caller's to answer for now (``SendKeysOutcome``), and the
+    /// names it can refuse are the ones no key is spelled with.
+    private static func keyBytes(_ name: String) -> [UInt8]? {
+        Array(name.utf8).withUnsafeBufferPointer { token -> [UInt8]? in
+            var needed = 0
+            // The longest sequence any name has is a meta chord around a CSI key — six bytes — so
+            // the first lend always fits, and the retry below is the door's contract honoured
+            // rather than a path this vocabulary reaches.
+            var room = [UInt8](repeating: 0, count: 8)
+            var found = room.withUnsafeMutableBufferPointer { out in
+                slopdesk_ws_key_token(token.baseAddress, token.count, out.baseAddress, out.count, &needed)
+            }
+            guard found else { return nil }
+            if needed > room.count {
+                room = [UInt8](repeating: 0, count: needed)
+                found = room.withUnsafeMutableBufferPointer { out in
+                    slopdesk_ws_key_token(token.baseAddress, token.count, out.baseAddress, out.count, &needed)
+                }
+                guard found, needed <= room.count else { return nil }
+            }
+            return Array(room.prefix(needed))
         }
     }
 }
