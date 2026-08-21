@@ -18,14 +18,21 @@ use std::time::{Duration, Instant};
 use slopdesk_screend::server::{DEFAULT_IDLE_EXIT, parse_idle_exit};
 
 /// Starts the daemon on a private socket with the given idle setting, waiting until it is bound.
+///
+/// ⚠️ Readiness is the socket FILE appearing — which `bind` creates before it accepts — and never a
+/// probe CONNECTION. A probe is a connection that opens and closes, and that is precisely what the
+/// idle timer counts, so probing would start the countdown before the caller has made the
+/// connection it means to hold. The stale path is removed first so an earlier run's file cannot
+/// read as ready.
 fn start(socket: &PathBuf, idle: &str) -> Child {
+    std::fs::remove_file(socket).ok();
     let child = Command::new(env!("CARGO_BIN_EXE_slopdesk-screend"))
         .arg(socket)
         .env("SLOPDESK_SCREEND_IDLE_EXIT", idle)
         .spawn()
         .expect("the daemon starts");
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while Instant::now() < deadline && UnixStream::connect(socket).is_err() {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline && !socket.exists() {
         std::thread::sleep(Duration::from_millis(20));
     }
     child
@@ -62,7 +69,10 @@ fn an_engine_with_no_connection_exits_on_its_own() {
 #[test]
 fn a_held_connection_keeps_the_engine_alive_past_the_timeout() {
     let socket = private_socket("held");
-    let mut child = start(&socket, "1");
+    // Two seconds rather than one, because the window between `bind` and the line below is the test
+    // thread being scheduled: under a loaded machine — which is what running every workspace's
+    // tests at once is — a one-second engine can idle out inside it and take its socket with it.
+    let mut child = start(&socket, "2");
     let mut held = UnixStream::connect(&socket).expect("the engine is bound");
     // A live hostd keeps pooled sockets open without necessarily speaking on them, which is exactly
     // this: the criterion is an OPEN connection, not a recent request.
