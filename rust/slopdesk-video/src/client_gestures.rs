@@ -1,8 +1,16 @@
-//! The client's pointer and gesture policies: where input goes, and what a trackpad gesture
-//! becomes.
+//! The client's pointer and gesture policies: where input goes, and what a trackpad gesture — or a
+//! FINGER — becomes.
 //!
 //! Every rule here belongs to a view that is never instantiated in a test, so each one is lifted
 //! out of it and pinned on its own. The window mechanics stay in the view; the decisions live here.
+//!
+//! The second half of the module is the phone's, and it is the same split drawn against a different
+//! input device. The Mac's half translates a TRACKPAD, which the platform has already recognised
+//! into phases and magnifications; the phone's translates raw CONTACTS, because a finger on a
+//! remote DESKTOP is not a finger — there is no touch to inject, only a pointer — so the whole
+//! vocabulary (tap, long press, drag, two-finger scroll, pan, pinch) is synthesized. Its caller is
+//! a `CAMetalLayer` over a `VideoToolbox` decoder, which hang-safety keeps out of the test bundle
+//! entirely, so the arithmetic must live where a test can reach it or it is not tested at all.
 
 use std::collections::BTreeSet;
 
@@ -198,11 +206,194 @@ impl ScrollRoutePinner {
     }
 }
 
+/// How far (points) a one-finger contact may wander and still be a TAP rather than a drag.
+///
+/// Wide enough that a thumb press does not smear into a text selection, tight enough that a
+/// deliberate 12 pt drag on a scrollbar thumb is one.
+pub const TAP_SLOP: f64 = 10.0;
+
+/// [`TAP_SLOP`] squared, so the escape test compares squared distances and no square root sits in a
+/// 120 Hz touch path. A `const` rather than an expression at the comparison, because the product of
+/// two literals folds identically and the comparison then reads as the one it is.
+const TAP_SLOP_SQUARED: f64 = TAP_SLOP * TAP_SLOP;
+
+/// How long (seconds) a contact must rest inside [`TAP_SLOP`] before it becomes a right click. The
+/// system long-press interval — a phone user already has this timing in their hands.
+pub const LONG_PRESS_DELAY: f64 = 0.5;
+
+/// How much the span between two contacts must change (points) before the pair reads as a PINCH.
+///
+/// Generous on purpose: two fingers laid down for a scroll are never perfectly parallel, and a pair
+/// that classified as a zoom on 4 pt of finger splay would jump the viewport on every scroll.
+pub const PINCH_SPAN_SLOP: f64 = 24.0;
+
+/// How far a pair's centroid must travel (points) before the pair is classified at all. Below this
+/// the gesture is still undecided and NOTHING is sent — a two-finger rest must not scroll.
+pub const PAIR_TRAVEL_SLOP: f64 = 8.0;
+
+/// The floor of the phone's client zoom ladder. It is 1×, unlike the Mac's 0.25×: the stream
+/// already letterboxes into the pane, so minifying below fit shows nothing but more background.
+pub const MIN_ZOOM: f64 = 1.0;
+
+/// The ceiling of that ladder.
+pub const MAX_ZOOM: f64 = 8.0;
+
+/// One zoom STEP of the footer's − / + controls (the Mac's ladder, same ratio).
+pub const ZOOM_STEP: f64 = 1.25;
+
+/// How near 1× a clamped zoom SNAPS to exactly 1×, so repeated − steps settle on actual-size
+/// instead of stopping at 1.024× forever (the Mac's `applyZoom` rule).
+const UNITY_SNAP: f64 = 0.06;
+
+/// Whether a one-finger contact has left the tap slop.
+///
+/// I.e. it is a DRAG now, and the pending long press is off. Compared against
+/// [`TAP_SLOP_SQUARED`] so no square root sits in a 120 Hz touch path.
+#[must_use]
+pub fn escapes_tap_slop(dx: f64, dy: f64) -> bool {
+    let horizontal = dx * dx;
+    let vertical = dy * dy;
+    horizontal + vertical > TAP_SLOP_SQUARED
+}
+
+/// What a live TWO-CONTACT gesture over a remote desktop drives.
+///
+/// Decided ONCE, the first time the pair moves past its slop, and held to the gesture's end — the
+/// [`ScrollRoutePinner`] rule, for the same reason: a gesture is one intent, and re-deciding it per
+/// event lets a pinch's tail scroll the remote document (or a scroll's tail zoom the pane).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TouchPairRoute {
+    /// The span between the contacts changed: LOCAL viewport zoom, plus the centroid pan that rides
+    /// with it (the map idiom — you zoom and reposition in one gesture).
+    Zoom,
+    /// The pair translated while the viewport is already zoomed in: LOCAL pan. Nothing reaches the
+    /// host. Panning has to be reachable somewhere, and at >1× it is what the user means far more
+    /// often than a remote scroll.
+    Pan,
+    /// The pair translated at 1×: a HOST scroll wheel at the centroid — the same continuous,
+    /// phase-carrying scroll the Mac's trackpad sends, so the host replays a native inertial scroll
+    /// rather than a phase-less wheel tick.
+    Scroll,
+}
+
+/// Classifies a two-contact gesture, or `None` while it is still undecided.
+///
+/// `span_delta` is the signed change in the distance between the two contacts since the pair
+/// landed; `centroid_travel` is how far their midpoint has moved since then; `zoom` is the
+/// viewport's CURRENT client zoom. Span wins over travel: a pinch always drags its centroid a
+/// little, and misreading that as a scroll sends the remote document flying.
+#[must_use]
+pub fn classify_pair(span_delta: f64, centroid_travel: f64, zoom: f64) -> Option<TouchPairRoute> {
+    if span_delta.abs() >= PINCH_SPAN_SLOP {
+        return Some(TouchPairRoute::Zoom);
+    }
+    // `zoom` is the compositor scale the user is looking through; at 1× there is nothing to pan (the
+    // whole stream is in the pane), so the pair can only mean a remote scroll. Written as a
+    // predicate rather than as `travel < slop` so a NaN travel stays UNDECIDED, which is the answer
+    // that sends nothing.
+    (centroid_travel >= PAIR_TRAVEL_SLOP).then_some(if zoom > MIN_ZOOM {
+        TouchPairRoute::Pan
+    } else {
+        TouchPairRoute::Scroll
+    })
+}
+
+/// The zoom a pinch lands on: the zoom the gesture started from, scaled by the live span ratio,
+/// clamped to the ladder.
+///
+/// `span_ratio` is `current_span / base_span`; a non-finite or non-positive ratio — a degenerate
+/// pair, both contacts on the same pixel — holds the base.
+#[must_use]
+pub fn pinched_zoom(base: f64, span_ratio: f64) -> f64 {
+    if span_ratio.is_finite() && span_ratio > 0.0 {
+        clamp_zoom(base * span_ratio)
+    } else {
+        clamp_zoom(base)
+    }
+}
+
+/// One footer zoom STEP from `zoom` (`step_in` is the + button), clamped to the ladder.
+#[must_use]
+pub fn stepped_zoom(zoom: f64, step_in: bool) -> f64 {
+    clamp_zoom(if step_in {
+        zoom * ZOOM_STEP
+    } else {
+        zoom / ZOOM_STEP
+    })
+}
+
+/// Clamps to `[MIN_ZOOM, MAX_ZOOM]`, and SNAPS to exactly 1× near unity.
+#[must_use]
+#[expect(
+    clippy::manual_clamp,
+    reason = "`CLAUDE.md`'s bit-exact float rule: a comparison that SELECTS a float is `maximum`/`minimum`, \
+              and `f64::clamp` is a different operation with different NaN behaviour and a panic the \
+              release profile would abort on"
+)]
+pub fn clamp_zoom(zoom: f64) -> f64 {
+    if !zoom.is_finite() {
+        return MIN_ZOOM;
+    }
+    // `max`/`min` rather than `clamp` for the repo's bit-exactness rule: a comparison that SELECTS a
+    // float is the pair of IEEE operations, never a `<` ternary.
+    let mut clamped = f64::min(f64::max(zoom, MIN_ZOOM), MAX_ZOOM);
+    if (clamped - 1.0).abs() < UNITY_SNAP {
+        clamped = 1.0;
+    }
+    clamped
+}
+
+/// Clamps a normalized pan offset to what the renderer can actually show at `zoom`.
+///
+/// The iOS surface pans by moving the renderer's UV crop, and the crop's own limit is
+/// `0.5·(1 − 1/zoom)` on each axis — the same number the input encoder's normalisation inverts,
+/// which is why it is clamped HERE rather than left to the shader: a pan the encoder clamps and the
+/// renderer does not is a click that lands somewhere the user is not looking. At 1× the limit is 0,
+/// so the crop is pinned centred and there is nothing to pan.
+#[must_use]
+pub fn clamp_pan(pan: f64, zoom: f64) -> f64 {
+    let z = clamp_zoom(zoom);
+    if z > MIN_ZOOM {
+        let limit = 0.5 * (1.0 - 1.0 / z);
+        f64::min(f64::max(pan, -limit), limit)
+    } else {
+        0.0
+    }
+}
+
+/// The scroll phase byte for a host scroll built out of touches (`1` began, `2` changed, `4`
+/// ended).
+///
+/// The phone has no `mayBegin` (no trackpad rest) and no momentum tail (the platform hands the view
+/// no coast events), so the momentum phase is always `0` — the host's replay then ends the gesture
+/// at the lift instead of inventing an inertia the finger never had.
+#[must_use]
+pub const fn scroll_phase(is_first: bool, is_last: bool) -> u8 {
+    if is_last {
+        4
+    } else if is_first {
+        1
+    } else {
+        2
+    }
+}
+
+/// Clamps a platform tap count into the wire's byte, floored at 1.
+///
+/// Both platforms count consecutive taps without bound, and the host reads this only as a
+/// click-state hint — so saturating is right, and trapping would be a crash on a very fast tapper.
+#[must_use]
+pub fn click_count(tap_count: i64) -> u8 {
+    u8::try_from(tap_count.max(1)).unwrap_or(u8::MAX)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        PINCH_STEP_THRESHOLD, PinchZoomKeyPlanner, ScrollRoutePinner, allows_zoom_reset,
-        extra_unsafe_reset_apps, forwards_pointer, is_background_click,
+        MAX_ZOOM, MIN_ZOOM, PINCH_STEP_THRESHOLD, PinchZoomKeyPlanner, ScrollRoutePinner, TouchPairRoute,
+        allows_zoom_reset, clamp_pan, clamp_zoom, classify_pair, click_count, escapes_tap_slop,
+        extra_unsafe_reset_apps, forwards_pointer, is_background_click, pinched_zoom, scroll_phase,
+        stepped_zoom,
     };
 
     #[test]
@@ -309,5 +500,143 @@ mod tests {
         let mut pinner = ScrollRoutePinner::new();
         assert!(pinner.route(true, 0, 0));
         assert!(!pinner.route(false, 0, 0));
+    }
+
+    /// Bit-for-bit, the way the golden corpus reads a float: an `f64` that is one operation away
+    /// from the expected value is a DIFFERENT answer, not a near one.
+    fn same(actual: f64, expected: f64) {
+        assert!(
+            actual.to_bits() == expected.to_bits(),
+            "expected {expected:?}, got {actual:?}"
+        );
+    }
+
+    #[test]
+    fn a_resting_finger_stays_a_tap() {
+        assert!(!escapes_tap_slop(0.0, 0.0));
+        assert!(!escapes_tap_slop(6.0, 6.0), "8.5 pt of roll is still a tap");
+        assert!(!escapes_tap_slop(-10.0, 0.0), "exactly the slop is NOT past it");
+    }
+
+    #[test]
+    fn deliberate_travel_becomes_a_drag() {
+        assert!(escapes_tap_slop(12.0, 0.0));
+        assert!(escapes_tap_slop(0.0, -12.0));
+        assert!(escapes_tap_slop(8.0, 8.0), "11.3 pt diagonally is a drag");
+    }
+
+    /// Two fingers laid down and held must not scroll the remote document.
+    #[test]
+    fn a_pair_at_rest_is_undecided() {
+        assert_eq!(classify_pair(3.0, 2.0, 1.0), None);
+    }
+
+    #[test]
+    fn a_pair_translating_at_actual_size_scrolls_the_host() {
+        assert_eq!(classify_pair(0.0, 9.0, 1.0), Some(TouchPairRoute::Scroll));
+    }
+
+    /// At >1× there is off-screen stream to reach, and reaching it is what two fingers mean.
+    #[test]
+    fn a_pair_translating_while_zoomed_pans_the_viewport() {
+        assert_eq!(classify_pair(0.0, 40.0, 2.0), Some(TouchPairRoute::Pan));
+    }
+
+    /// A pinch always drags its centroid a little; misreading that as a scroll sends the remote
+    /// document flying, so the span test runs first and wins outright.
+    #[test]
+    fn the_span_beats_the_travel() {
+        assert_eq!(classify_pair(-30.0, 200.0, 1.0), Some(TouchPairRoute::Zoom));
+    }
+
+    #[test]
+    fn a_small_splay_is_not_a_pinch() {
+        assert_eq!(
+            classify_pair(12.0, 20.0, 1.0),
+            Some(TouchPairRoute::Scroll),
+            "two fingers laid down for a scroll are never perfectly parallel"
+        );
+    }
+
+    #[test]
+    fn a_pinch_scales_from_the_gesture_base() {
+        same(pinched_zoom(2.0, 1.5), 3.0);
+        same(pinched_zoom(4.0, 0.5), 2.0);
+    }
+
+    #[test]
+    fn a_pinch_clamps_to_the_ladder() {
+        same(pinched_zoom(6.0, 4.0), MAX_ZOOM);
+        same(
+            pinched_zoom(2.0, 0.1),
+            MIN_ZOOM, // the floor is 1×: below fit the stream shows only background
+        );
+    }
+
+    /// Both contacts on the same pixel means a zero base span, so a non-finite ratio. Holding beats
+    /// a NaN reaching the renderer's UV crop.
+    #[test]
+    fn a_degenerate_pinch_holds_the_base() {
+        same(pinched_zoom(2.0, f64::NAN), 2.0);
+        same(pinched_zoom(2.0, f64::INFINITY), 2.0);
+        same(pinched_zoom(2.0, 0.0), 2.0);
+    }
+
+    #[test]
+    fn the_stepped_ladder_walks_and_settles_at_actual_size() {
+        let mut zoom = stepped_zoom(1.0, true);
+        same(zoom, 1.25);
+        zoom = stepped_zoom(zoom, true);
+        same(zoom, 1.5625);
+        // Stepping back out lands on 1.25 and then SNAPS to exactly 1 rather than stopping at
+        // 1.0000…4 forever.
+        zoom = stepped_zoom(zoom, false);
+        same(zoom, 1.25);
+        zoom = stepped_zoom(zoom, false);
+        same(zoom, 1.0);
+        same(stepped_zoom(zoom, false), 1.0);
+    }
+
+    #[test]
+    fn near_unity_snaps_exactly() {
+        same(clamp_zoom(1.04), 1.0);
+        same(clamp_zoom(1.08), 1.08);
+        same(clamp_zoom(f64::NAN), MIN_ZOOM);
+    }
+
+    /// At 1× the whole stream is in the pane, so the crop is pinned centred.
+    #[test]
+    fn actual_size_cannot_pan() {
+        same(clamp_pan(0.4, 1.0), 0.0);
+    }
+
+    /// The renderer's UV crop travels `0.5·(1 − 1/zoom)` each way; a pan the encoder clamps and the
+    /// renderer does not is a click that lands somewhere the user is not looking.
+    #[test]
+    fn the_pan_clamp_is_the_crop_limit() {
+        same(clamp_pan(10.0, 2.0), 0.25);
+        same(clamp_pan(-10.0, 2.0), -0.25);
+        same(clamp_pan(0.1, 2.0), 0.1);
+        same(clamp_pan(10.0, 4.0), 0.375);
+    }
+
+    #[test]
+    fn the_scroll_phase_spells_one_gesture() {
+        assert_eq!(scroll_phase(true, false), 1, "began");
+        assert_eq!(scroll_phase(false, false), 2, "changed");
+        assert_eq!(scroll_phase(false, true), 4, "ended");
+        assert_eq!(
+            scroll_phase(true, true),
+            4,
+            "a pair that lifts on its first move still ENDS — a began with no end strands it"
+        );
+    }
+
+    #[test]
+    fn the_click_count_saturates_instead_of_trapping() {
+        assert_eq!(click_count(0), 1, "a platform's 0 is still one click");
+        assert_eq!(click_count(2), 2, "a double-tap is a real double-click");
+        assert_eq!(click_count(9999), 255, "a very fast tapper is not a crash");
+        assert_eq!(click_count(i64::MIN), 1);
     }
 }

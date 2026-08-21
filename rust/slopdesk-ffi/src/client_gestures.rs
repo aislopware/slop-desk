@@ -1,9 +1,9 @@
 //! The client's pointer and gesture policies —
 //! `Sources/SlopDeskVideoClient/{BackgroundPointerPolicy,PinchZeroPolicy,PinchZoomKeyPlanner,
-//! ScrollRoutePinner}.swift`.
+//! ScrollRoutePinner,TouchPointerPlan}.swift`.
 //!
 //! Every rule here belongs to a view that is never instantiated in a test — no Metal, no VT — which
-//! is why they were lifted out of it in the first place. They cross in three shapes, each picked by
+//! is why they were lifted out of it in the first place. They cross in four shapes, each picked by
 //! `docs/55` §4b:
 //!
 //! * The two pointer gates are pure predicates and cross as arguments.
@@ -13,13 +13,20 @@
 //!   every door answers the new state beside its verdict.
 //! * The zoom-reset denylist carries a runtime EXTENSION set, so it is a handle owned by a
 //!   process-lifetime namespace, exactly like the swipe-nav operating point.
+//! * The phone's touch → pointer translation has no state at all: it is `docs/55` §4's "entry that
+//!   takes no memory", every argument a scalar and every answer by value. Its one non-scalar answer
+//!   is the pair ROUTE, which is an `Option` — so it crosses as a value beside a flag, never as a
+//!   sentinel, because there is no route byte that could have meant "still undecided" without a
+//!   caller having to remember it. The seven numbers of its vocabulary cross through ONE
+//!   index-shaped door for the reason `docs/55` gives: a family read once into `static let`s does
+//!   not become seven entry points.
 
 use core::ffi::c_uchar;
 use std::collections::BTreeSet;
 
 use slopdesk_video::client_gestures::{
-    PinchZoomKeyPlanner, ScrollRoutePinner, allows_zoom_reset, extra_unsafe_reset_apps, forwards_pointer,
-    is_background_click,
+    self, PinchZoomKeyPlanner, ScrollRoutePinner, TouchPairRoute, allows_zoom_reset, extra_unsafe_reset_apps,
+    forwards_pointer, is_background_click,
 };
 
 use crate::borrow;
@@ -266,6 +273,153 @@ pub unsafe extern "C" fn slopdesk_zoom_reset_allowed(
     policy.is_none_or(|policy| allows_zoom_reset(name.unwrap_or_default(), &policy.extra))
 }
 
+/// `TouchPairRoute::Zoom` as a byte.
+pub const SLOPDESK_TOUCH_ROUTE_ZOOM: u8 = 0;
+/// `TouchPairRoute::Pan` as a byte.
+pub const SLOPDESK_TOUCH_ROUTE_PAN: u8 = 1;
+/// `TouchPairRoute::Scroll` as a byte.
+pub const SLOPDESK_TOUCH_ROUTE_SCROLL: u8 = 2;
+
+/// The phone's touch vocabulary, by index, so seven numbers do not become seven doors.
+///
+/// `0` tap slop, `1` long-press delay, `2` pinch span slop, `3` pair travel slop, `4` minimum zoom,
+/// `5` maximum zoom, `6` zoom step. An index nobody defined answers `0`, which the family cannot
+/// hold: every one of these is a positive distance, delay or scale.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_touch_constant(index: u8) -> f64 {
+    match index {
+        0 => client_gestures::TAP_SLOP,
+        1 => client_gestures::LONG_PRESS_DELAY,
+        2 => client_gestures::PINCH_SPAN_SLOP,
+        3 => client_gestures::PAIR_TRAVEL_SLOP,
+        4 => client_gestures::MIN_ZOOM,
+        5 => client_gestures::MAX_ZOOM,
+        6 => client_gestures::ZOOM_STEP,
+        _ => 0.0,
+    }
+}
+
+/// Whether a one-finger contact has left the tap slop, i.e. it is a DRAG now and the pending long
+/// press is off.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_touch_escapes_tap_slop(dx: f64, dy: f64) -> bool {
+    client_gestures::escapes_tap_slop(dx, dy)
+}
+
+/// What a two-contact gesture drives, and whether it has been decided at all.
+#[derive(Debug, Clone, Copy, Default)]
+#[repr(C)]
+pub struct SlopDeskTouchPairRoute {
+    /// One of the `SLOPDESK_TOUCH_ROUTE_*` bytes, meaningful only while `decided`.
+    pub route: u8,
+    /// Whether the pair has moved past its slop. While this is false the gesture sends NOTHING — a
+    /// two-finger REST must not scroll — which is a state no route byte could have named.
+    pub decided: bool,
+}
+
+/// Classifies a two-contact gesture over a remote desktop.
+///
+/// `span_delta` is the signed change in the distance between the contacts since the pair landed;
+/// `centroid_travel` is how far their midpoint has moved since then; `zoom` is the viewport's
+/// current client zoom. Span wins over travel: a pinch always drags its centroid a little, and
+/// misreading that as a scroll sends the remote document flying.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_touch_classify_pair(
+    span_delta: f64,
+    centroid_travel: f64,
+    zoom: f64,
+) -> SlopDeskTouchPairRoute {
+    client_gestures::classify_pair(span_delta, centroid_travel, zoom).map_or_else(
+        SlopDeskTouchPairRoute::default,
+        |route| {
+            SlopDeskTouchPairRoute {
+                route: match route {
+                    TouchPairRoute::Zoom => SLOPDESK_TOUCH_ROUTE_ZOOM,
+                    TouchPairRoute::Pan => SLOPDESK_TOUCH_ROUTE_PAN,
+                    TouchPairRoute::Scroll => SLOPDESK_TOUCH_ROUTE_SCROLL,
+                },
+                decided: true,
+            }
+        },
+    )
+}
+
+/// The zoom a pinch lands on: the gesture's base scaled by the live span ratio, clamped to the
+/// ladder. A non-finite or non-positive ratio — a degenerate pair — holds the base.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_touch_pinched_zoom(base: f64, span_ratio: f64) -> f64 {
+    client_gestures::pinched_zoom(base, span_ratio)
+}
+
+/// One footer zoom STEP from `zoom` (`step_in` is the + button), clamped to the ladder.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_touch_stepped_zoom(zoom: f64, step_in: bool) -> f64 {
+    client_gestures::stepped_zoom(zoom, step_in)
+}
+
+/// Clamps to the ladder, and SNAPS to exactly 1× near unity so repeated − steps settle on
+/// actual-size instead of stopping at 1.024× forever.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_touch_clamp_zoom(zoom: f64) -> f64 {
+    client_gestures::clamp_zoom(zoom)
+}
+
+/// Clamps a normalized pan offset to what the renderer can actually show at `zoom`. At 1× the limit
+/// is 0, so the crop is pinned centred and there is nothing to pan.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_touch_clamp_pan(pan: f64, zoom: f64) -> f64 {
+    client_gestures::clamp_pan(pan, zoom)
+}
+
+/// The scroll phase byte for a host scroll built out of touches — `1` began, `2` changed, `4`
+/// ended.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_touch_scroll_phase(is_first: bool, is_last: bool) -> u8 {
+    client_gestures::scroll_phase(is_first, is_last)
+}
+
+/// Clamps a platform tap count into the wire's byte, floored at 1 and saturating at 255.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_touch_click_count(tap_count: i64) -> u8 {
+    client_gestures::click_count(tap_count)
+}
+
 #[cfg(test)]
 mod tests {
     #![expect(
@@ -276,10 +430,13 @@ mod tests {
     use std::ptr;
 
     use super::{
+        SLOPDESK_TOUCH_ROUTE_PAN, SLOPDESK_TOUCH_ROUTE_SCROLL, SLOPDESK_TOUCH_ROUTE_ZOOM,
         SlopDeskPinchPlanner, slopdesk_gesture_background_click, slopdesk_gesture_forwards_pointer,
         slopdesk_pinch_planner_new, slopdesk_pinch_planner_plan, slopdesk_scroll_pin_new,
-        slopdesk_scroll_pin_route, slopdesk_zoom_reset_allowed, slopdesk_zoom_reset_policy_free,
-        slopdesk_zoom_reset_policy_parse,
+        slopdesk_scroll_pin_route, slopdesk_touch_clamp_pan, slopdesk_touch_classify_pair,
+        slopdesk_touch_click_count, slopdesk_touch_constant, slopdesk_touch_escapes_tap_slop,
+        slopdesk_touch_pinched_zoom, slopdesk_touch_scroll_phase, slopdesk_touch_stepped_zoom,
+        slopdesk_zoom_reset_allowed, slopdesk_zoom_reset_policy_free, slopdesk_zoom_reset_policy_parse,
     };
 
     #[test]
@@ -348,5 +505,63 @@ mod tests {
             "a desktop pane cannot know its frontmost app, so it fails open"
         );
         unsafe { slopdesk_zoom_reset_policy_free(policy) };
+    }
+
+    /// The `Option` rule of `docs/55` §4: an undecided pair is a FLAG, because every route byte is
+    /// a route and none of them could have meant "nothing has been decided yet".
+    #[test]
+    fn an_undecided_pair_crosses_as_a_flag_and_not_as_a_route() {
+        let resting = slopdesk_touch_classify_pair(3.0, 2.0, 1.0);
+        assert!(!resting.decided, "a two-finger rest must send nothing");
+        let scroll = slopdesk_touch_classify_pair(0.0, 9.0, 1.0);
+        assert!(scroll.decided);
+        assert_eq!(scroll.route, SLOPDESK_TOUCH_ROUTE_SCROLL);
+        assert_eq!(
+            slopdesk_touch_classify_pair(0.0, 40.0, 2.0).route,
+            SLOPDESK_TOUCH_ROUTE_PAN
+        );
+        assert_eq!(
+            slopdesk_touch_classify_pair(-30.0, 200.0, 1.0).route,
+            SLOPDESK_TOUCH_ROUTE_ZOOM,
+            "the span beats the travel"
+        );
+    }
+
+    /// The seven numbers come back through one door, and an index nobody defined answers a value
+    /// the family cannot hold.
+    #[test]
+    fn the_touch_vocabulary_crosses_by_index() {
+        assert!(
+            (slopdesk_touch_constant(0) - 10.0).abs() < f64::EPSILON,
+            "tap slop"
+        );
+        assert!(
+            (slopdesk_touch_constant(1) - 0.5).abs() < f64::EPSILON,
+            "long-press delay"
+        );
+        assert!(
+            (slopdesk_touch_constant(4) - 1.0).abs() < f64::EPSILON,
+            "the floor"
+        );
+        assert!(
+            (slopdesk_touch_constant(6) - 1.25).abs() < f64::EPSILON,
+            "the step"
+        );
+        assert!(slopdesk_touch_constant(200).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn the_scalar_touch_doors_answer_by_value() {
+        assert!(slopdesk_touch_escapes_tap_slop(12.0, 0.0));
+        assert!(!slopdesk_touch_escapes_tap_slop(6.0, 6.0));
+        assert!((slopdesk_touch_pinched_zoom(2.0, 1.5) - 3.0).abs() < f64::EPSILON);
+        assert!((slopdesk_touch_stepped_zoom(1.0, true) - 1.25).abs() < f64::EPSILON);
+        assert!(
+            slopdesk_touch_clamp_pan(0.4, 1.0).abs() < f64::EPSILON,
+            "1× cannot pan"
+        );
+        assert_eq!(slopdesk_touch_scroll_phase(true, true), 4, "a lift still ENDS");
+        assert_eq!(slopdesk_touch_click_count(9999), 255);
+        assert_eq!(slopdesk_touch_click_count(0), 1);
     }
 }

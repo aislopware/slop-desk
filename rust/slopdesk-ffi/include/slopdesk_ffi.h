@@ -522,6 +522,31 @@ uint8_t slopdesk_ws_paste_risk(const uint8_t *bytes, size_t len, bool target_is_
 // hold what the clipboard did, and the caller has one banner to say so with.
 size_t slopdesk_keystroke_replay(const uint8_t *text, size_t text_len, uint8_t *out, size_t cap);
 
+// ---- The same keys, asked for by POSITION ---------------------------------------
+//
+// A hardware keyboard driving a remote DESKTOP sends the layout-level KEYCODE, so the HOST's layout
+// and input method interpret it server-side — a key sent as a pre-baked character is invisible to a
+// keycode-driven IME composer, and Vietnamese Telex would never compose. The USB HID usage is the
+// one thing a key event carries that names POSITION rather than meaning.
+//
+// Its printable run is the table above, read by index instead of by character: the same 47
+// `kVK_ANSI_*` numbers, resolved through the character the key types, so they exist once. What the
+// module adds is the run that has no character — escape, backspace, F1…F12, the navigation cluster,
+// the keypad, the two ISO extras and both sides of every modifier.
+//
+// The answer is a value plus a FLAG and not a keycode alone, because `kVK_ANSI_A` is `0` and `a` is
+// the commonest key on the board: a sentinel here would make "the letter a" and "this key has no
+// macOS equivalent" the same answer, and the second one must send NOTHING.
+typedef struct {
+  uint16_t key_code;
+  bool     mapped;
+} SlopDeskHidVirtualKey;
+
+SlopDeskHidVirtualKey slopdesk_hid_virtual_key(uint16_t hid_usage);
+// Either side of ⌘⇧⌃⌥, or Caps Lock. The caller latches these so a focus change that swallows the
+// release can synthesize the missing key-up.
+bool                  slopdesk_hid_is_modifier(uint16_t hid_usage);
+
 // ---- Peek & Reply: what the card sends, and the tail it shows -------------------
 //
 // Which PANE it answers is `slopdesk_agent_peek_*` above. Every reply carries its own single
@@ -5051,6 +5076,66 @@ SlopDeskZoomResetPolicy *slopdesk_zoom_reset_policy_parse(const uint8_t *raw, si
 void slopdesk_zoom_reset_policy_free(SlopDeskZoomResetPolicy *handle);
 bool slopdesk_zoom_reset_allowed(const SlopDeskZoomResetPolicy *handle, const uint8_t *app_name,
                                  size_t name_len);
+
+/* ---------------------------------------------------------------------------- *
+ * The PHONE's half of the same seam: a finger on a remote DESKTOP.
+ *
+ * The two sibling mirror surfaces forward touch as touch — a finger on the mirror IS the finger. A
+ * desktop is the opposite case: there is no touch to inject, only a POINTER, so the whole vocabulary
+ * is SYNTHESIZED (tap = click, long press = right click, one-finger drag = left drag, two fingers at
+ * 1× = a host scroll at the centroid, two fingers while zoomed = a local pan, a pinch = a local
+ * zoom). None of it may be written inside a `touchesMoved` no test can reach — the iOS video surface
+ * is a `CAMetalLayer` over a VideoToolbox decoder, and hang-safety keeps it out of XCTest entirely.
+ *
+ * These are §4's entries that take no memory at all: every argument a scalar, every answer by value,
+ * no buffer to size and no return code to read. The seven numbers of the vocabulary cross through
+ * ONE index-shaped door rather than seven of their own, since each is read once into a `static let`.
+ * ---------------------------------------------------------------------------- */
+
+// touch_constant index: 0 tap slop (pt), 1 long-press delay (s), 2 pinch span slop (pt), 3 pair
+// travel slop (pt), 4 minimum zoom, 5 maximum zoom, 6 zoom step. An index nobody defined answers 0,
+// which the family cannot hold — every one of these is a positive distance, delay or scale.
+double slopdesk_touch_constant(uint8_t index);
+
+// Squared inside, so no square root sits in a 120 Hz touch path.
+bool slopdesk_touch_escapes_tap_slop(double dx, double dy);
+
+#define SLOPDESK_TOUCH_ROUTE_ZOOM   0u
+#define SLOPDESK_TOUCH_ROUTE_PAN    1u
+#define SLOPDESK_TOUCH_ROUTE_SCROLL 2u
+
+// `decided` is false while the pair is still under its slop, and that is a FLAG rather than a fourth
+// route byte for §4's reason: every value of `route` is a route, so none of them could have meant
+// "nothing has been decided yet" — and while nothing has, the gesture must send NOTHING, since a
+// two-finger REST that scrolled the remote document is the failure the slop exists for.
+typedef struct {
+  uint8_t route;
+  bool    decided;
+} SlopDeskTouchPairRoute;
+
+// Span BEATS travel: a pinch always drags its centroid a little, and misreading that as a scroll
+// sends the remote document flying. `zoom` is the viewport's current client zoom — at 1× there is
+// nothing to pan, so a translating pair can only mean a host scroll.
+SlopDeskTouchPairRoute slopdesk_touch_classify_pair(double span_delta, double centroid_travel,
+                                                    double zoom);
+
+// `span_ratio` is `current_span / base_span`; a non-finite or non-positive one — a degenerate pair,
+// both contacts on the same pixel — holds the base rather than sending a NaN to the UV crop.
+double  slopdesk_touch_pinched_zoom(double base, double span_ratio);
+double  slopdesk_touch_stepped_zoom(double zoom, bool step_in);
+// Clamps to the ladder and SNAPS to exactly 1× near unity, so repeated − steps settle on actual size
+// instead of stopping at 1.024× forever.
+double  slopdesk_touch_clamp_zoom(double zoom);
+// The renderer's UV crop travels 0.5·(1 − 1/zoom) each way. Clamped HERE and not in the shader: a pan
+// the input encoder clamps and the renderer does not is a click that lands somewhere the user is not
+// looking. At 1× the limit is 0, so the crop is pinned centred.
+double  slopdesk_touch_clamp_pan(double pan, double zoom);
+// 1 began, 2 changed, 4 ended. The phone has no `mayBegin` and no momentum tail, so a lift ENDS the
+// host's gesture rather than inventing an inertia the finger never threw.
+uint8_t slopdesk_touch_scroll_phase(bool is_first, bool is_last);
+// Floored at 1 and SATURATING at 255: the platforms count consecutive taps without bound, the host
+// reads this only as a click-state hint, and trapping would be a crash on a very fast tapper.
+uint8_t slopdesk_touch_click_count(int64_t tap_count);
 
 /* ---------------------------------------------------------------------------- *
  * The host's swipe-nav OPERATING POINT: one parse of the SLOPDESK_SWIPE_NAV* family, shared by the

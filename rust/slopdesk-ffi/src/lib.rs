@@ -76,6 +76,7 @@ pub mod git_line;
 #[cfg(target_os = "macos")]
 pub mod git_status;
 pub mod hevc_parameter_sets;
+pub mod hid_virtual_key;
 pub mod hint_scan;
 pub mod host_policy;
 pub mod host_state;

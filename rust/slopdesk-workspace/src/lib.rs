@@ -81,6 +81,7 @@ pub mod focus;
 pub mod frecency;
 pub mod geometry;
 pub mod git_line;
+pub mod hid_virtual_key;
 pub mod identity;
 pub mod json;
 pub mod jump;

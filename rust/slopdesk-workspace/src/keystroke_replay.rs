@@ -137,6 +137,26 @@ pub const fn stroke(cluster: &str) -> Option<Stroke> {
     }
 }
 
+/// The `kVK_*` code of the KEY an ASCII byte lives on, ignoring whether Shift rides with it.
+///
+/// The one export of this table that is not about typing text. [`crate::hid_virtual_key`] needs the
+/// same 26 letters, 10 digits and 11 punctuation keys the strokes above name, keyed by USB HID
+/// usage rather than by character — and a second copy of those `kVK_ANSI_*` numbers is exactly the
+/// two-spellings-of-one-table shape `docs/55` §8 catalogues. So the HID page's printable run is
+/// resolved to the character its key carries and asked here.
+///
+/// That composition is sound because both numberings describe the SAME board: this module's table
+/// is US-QWERTY by declaration, and `kVK_ANSI_*` is the US-ANSI POSITION its name says it is. Where
+/// a key has no character — escape, the function row, the keypad, the modifiers — the HID module
+/// keeps its own arm, because there is nothing here to ask.
+#[must_use]
+pub const fn ascii_key_code(byte: u8) -> Option<u16> {
+    match ascii_stroke(byte) {
+        Some(press) => Some(press.key_code),
+        None => None,
+    }
+}
+
 /// The stroke one ASCII byte types.
 const fn ascii_stroke(byte: u8) -> Option<Stroke> {
     match byte {
