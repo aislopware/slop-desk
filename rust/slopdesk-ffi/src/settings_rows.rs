@@ -21,7 +21,7 @@
 
 use core::ffi::c_uchar;
 
-use slopdesk_workspace::settings_rows::{self, Bucket, SettingRow};
+use slopdesk_workspace::settings_rows::{self, Bucket, Persistence, SettingRow};
 
 use crate::{borrow, deliver};
 
@@ -166,6 +166,23 @@ pub unsafe extern "C" fn slopdesk_settings_row_target_section(
 )]
 pub extern "C" fn slopdesk_settings_row_bucket(index: usize) -> u8 {
     settings_rows::row_at(index).map_or_else(|| Bucket::AdvancedOnly.index(), |row| row.bucket.index())
+}
+
+/// WHERE the row's value lives: `0` `UserDefaults`, `1` device-local, `2` model-backed.
+///
+/// The reset question, not the render one — [`slopdesk_settings_row_bucket`] is that. `0` for an
+/// index no row has, which is the safe answer twice over: a caller that got here learned the row
+/// exists from the count, and `UserDefaults` is the arm a global reset already reaches.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_settings_row_persistence(index: usize) -> u8 {
+    settings_rows::row_at(index).map_or_else(
+        || Persistence::UserDefaults.index(),
+        |row| row.persistence.index(),
+    )
 }
 
 /// Whether the list renders a real inline editor for this row.
@@ -366,6 +383,30 @@ mod tests {
             tiny[0],
             usize::MAX,
             "an overflow leaves the caller's buffer alone"
+        );
+    }
+
+    #[test]
+    fn each_arm_of_the_persistence_door_answers_for_a_row_that_has_it() {
+        assert_eq!(
+            slopdesk_settings_row_persistence(index_of("general.onLaunch")),
+            0,
+            "an ordinary defaults key a global reset reaches",
+        );
+        assert_eq!(
+            slopdesk_settings_row_persistence(index_of("follow-session-focus")),
+            1,
+            "device-local: `device-prefs.json` holds it, so a defaults reset cannot",
+        );
+        assert_eq!(
+            slopdesk_settings_row_persistence(index_of("font-family")),
+            2,
+            "a typed render field, restored with the model it belongs to",
+        );
+        assert_eq!(
+            slopdesk_settings_row_persistence(slopdesk_settings_row_count()),
+            0,
+            "past the end answers the arm a reset already reaches, never a fourth case",
         );
     }
 

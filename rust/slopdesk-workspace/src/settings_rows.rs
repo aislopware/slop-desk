@@ -67,6 +67,40 @@ impl Bucket {
     }
 }
 
+/// WHERE a row's value lives, and therefore what has to restore it.
+///
+/// ⚠️ Not a rendering hint — [`Bucket`] is that one. This answers the RESET question: a global
+/// `UserDefaults` reset reaches exactly the rows filed under [`Persistence::UserDefaults`], and the
+/// other two arms name the rows it cannot reach, each of which some other path restores. A row on
+/// the wrong arm is a row a reset silently skips.
+///
+/// It is a FIELD rather than a list beside the table because a list is a second spelling of the
+/// same fact, and the two drift in the direction that cannot be seen: a new row is simply absent
+/// from it, which reads as `UserDefaults` and is wrong for exactly the rows `UserDefaults` misses.
+/// Here the compiler asks every row the question.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Persistence {
+    /// A `UserDefaults` entry under [`SettingRow::key`]; a global defaults reset restores it.
+    UserDefaults,
+    /// A device-local fact in `device-prefs.json`, restored through the workspace store instead.
+    DeviceLocal,
+    /// A typed render field, or the density token cleared by name from the store's own injected
+    /// suite — restored with the model it belongs to, never by a defaults key.
+    ModelBacked,
+}
+
+impl Persistence {
+    /// The case index a persistence crosses as.
+    #[must_use]
+    pub const fn index(self) -> u8 {
+        match self {
+            Self::UserDefaults => 0,
+            Self::DeviceLocal => 1,
+            Self::ModelBacked => 2,
+        }
+    }
+}
+
 /// One row in the all-settings list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SettingRow {
@@ -104,6 +138,8 @@ pub struct SettingRow {
     /// to its default arm, which is a dead value label with no control, and a row NOT marked here
     /// that the switch handles is a control nobody reaches.
     pub inline_editable: bool,
+    /// Where the value lives, and so what restores it. See [`Persistence`].
+    pub persistence: Persistence,
 }
 
 impl SettingRow {
@@ -132,40 +168,25 @@ pub const FOLLOW_SESSION_FOCUS_KEY: &str = "follow-session-focus";
 
 /// The advertised rows that persist OUTSIDE `UserDefaults` — the device-local facts a global
 /// defaults reset cannot reach, restored through the workspace store instead.
-pub const DEVICE_LOCAL_KEYS: &[&str] = &[FOLLOW_SESSION_FOCUS_KEY];
+pub fn device_local_keys() -> impl Iterator<Item = &'static str> {
+    keys_filed_under(Persistence::DeviceLocal)
+}
 
 /// The advertised rows a reset restores WITHOUT a global defaults key.
 ///
 /// The typed render fields come back with the model they belong to, and the density token is
 /// cleared by name from the store's own injected suite. Neither can appear in a reset key set, and
 /// a row in neither those sets nor this one is a row nothing restores.
-pub const MODEL_BACKED_KEYS: &[&str] = &[
-    "agent-prevent-sleep",
-    "agent-resume-on-recovery",
-    "font-family",
-    "font-family-bold",
-    "font-family-italic",
-    "font-family-bold-italic",
-    "font-family-fallback",
-    "font-auto-match-weight-style",
-    "font-size",
-    "font-line-height",
-    "font-ligatures",
-    "font-ligatures-alphabet",
-    "font-bold",
-    "font-italic",
-    "font-blending",
-    "video-qp-sharp",
-    "video-qp-coarse",
-    "video-fec-m",
-    "video-fec-k",
-    "video-pacer",
-    "video-sharpen",
-    "scrollback-limit",
-    "cursor-style",
-    "cursor-style-blink",
-    "appearance.density",
-];
+pub fn model_backed_keys() -> impl Iterator<Item = &'static str> {
+    keys_filed_under(Persistence::ModelBacked)
+}
+
+/// The keys of every advertised row filed under one persistence, in reading order.
+fn keys_filed_under(persistence: Persistence) -> impl Iterator<Item = &'static str> {
+    ROWS.iter()
+        .filter(move |row| row.persistence == persistence)
+        .map(|row| row.key)
+}
 
 /// Every row, in the reading order the list renders: General → Shell → Controls → Appearance →
 /// Advanced, then the typed render fields.
@@ -180,6 +201,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "launch startup restore session new window open",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "features.redactSecrets",
@@ -191,6 +213,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "privacy secret redact mask token password api key",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "shell.closeConfirm.tab",
@@ -202,6 +225,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "close confirm tab pane prompt quit running process always",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "shell.closeConfirm.window",
@@ -213,6 +237,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "close confirm window prompt quit running process always",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "follow-session-focus",
@@ -225,6 +250,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "general",
         keywords: "focus follow shared device local multi client mirror sync tab pane independent",
         inline_editable: false,
+        persistence: Persistence::DeviceLocal,
     },
     SettingRow {
         key: "notifications.osc",
@@ -236,6 +262,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "notification osc bell alert badge shell",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "notifications.longCommand",
@@ -247,6 +274,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "notification command complete long running done shell",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "notifications.onFinish",
@@ -258,6 +286,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "notification command finish complete exit success shell background",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "notifications.onError",
@@ -269,6 +298,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "notification command error fail exit non-zero shell",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "notifications.onWatchFinish",
@@ -280,6 +310,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "notification watch finish command wrapped shell",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "notifications.whileForeground",
@@ -292,6 +323,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "notification foreground banner frontmost tab unfocused while active",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "notifications.bounceDock",
@@ -303,6 +335,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "notification dock bounce attention macos icon request",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     // The three COMMAND-driven tab badges and the delay before a running command counts as busy.
     // Advertised here because they are settings a user goes looking for by name; the CONTROL is on
@@ -317,6 +350,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "shell",
         keywords: "tab badge command finish success exit zero sidebar mark",
         inline_editable: false,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "tabBadge.onCommandFail",
@@ -328,6 +362,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "shell",
         keywords: "tab badge command fail error exit non-zero sidebar mark",
         inline_editable: false,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "tabBadge.onCommandAwaitInput",
@@ -339,6 +374,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "shell",
         keywords: "tab badge command await input prompt interactive sidebar mark",
         inline_editable: false,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "tabBadge.busyDelaySeconds",
@@ -350,6 +386,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "shell",
         keywords: "tab badge busy delay reveal running spinner ring seconds instant",
         inline_editable: false,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "notifications.soundShellControlled",
@@ -361,6 +398,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "sound bell beep audio shell controlled alert nssound",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "notifications.soundOnErrorExit",
@@ -372,6 +410,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "sound error exit beep non-zero fail shell integration",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "notifications.agentTaskComplete",
@@ -383,6 +422,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "agent claude notification task complete done idle code",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "notifications.agentAwaitInput",
@@ -394,6 +434,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "agent claude notification awaiting input approval permission code",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "notifications.agentSoundTaskComplete",
@@ -405,6 +446,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "agent claude sound task complete done finish submarine audio macos code",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "notifications.agentSoundAwaitInput",
@@ -416,6 +458,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "agent claude sound awaiting input approval permission glass audio macos code",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "shell.workingDirectory.newWindow",
@@ -427,6 +470,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "working directory cwd folder window home inherit same",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "shell.workingDirectory.newTab",
@@ -438,6 +482,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "working directory cwd folder tab home inherit same",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "shell.workingDirectory.newSplit",
@@ -449,6 +494,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "working directory cwd folder split home inherit same",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "controls.paneSwitcherPreview",
@@ -460,6 +506,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "pane tab switcher control ctrl preview follow highlight cycle mru",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "controls.copyOnSelect",
@@ -471,6 +518,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "copy select clipboard pasteboard mouse selection",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "controls.trimTrailingSpaces",
@@ -482,6 +530,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "copy trim trailing whitespace space clipboard",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "controls.pasteProtection",
@@ -493,6 +542,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "paste protection clipboard safety bracketed newline",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "controls.mouseHideWhileTyping",
@@ -504,6 +554,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "mouse hide typing pointer",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "controls.focusFollowsMouse",
@@ -515,6 +566,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "focus follows mouse hover pane pointer",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "controls.scrollMultiplier",
@@ -526,6 +578,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "scroll multiplier wheel speed mouse sensitivity",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "controls.clearSelectionOnTyping",
@@ -537,6 +590,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "selection clear typing keyboard input",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "controls.clearSelectionOnCopy",
@@ -548,6 +602,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "selection clear copy clipboard",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "controls.shiftArrowSelect",
@@ -559,6 +614,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "shift arrow select selection keyboard extend",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "controls.pasteBracketedSafe",
@@ -570,6 +626,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "paste bracketed safe protection clipboard",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "controls.clipboardRead",
@@ -581,6 +638,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "clipboard read osc 52 access allow deny ask paste",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "controls.clipboardWrite",
@@ -592,6 +650,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "clipboard write osc 52 access allow deny ask copy",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "controls.allowMouseCapture",
@@ -603,6 +662,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "mouse capture reporting vim tmux htop program",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "controls.allowShiftClick",
@@ -614,6 +674,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "shift mouse click capture selection bypass",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "controls.clickToMove",
@@ -625,6 +686,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "cursor click move prompt arrow keys soft wrap",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     // `EnableSecureEventInput` is process-global and has no iOS form, so the Controls page draws this
     // pair on the Mac alone — and [`shown`] therefore withholds both rows from the phone's index.
@@ -641,6 +703,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "controls",
         keywords: "secure input keyboard entry password sudo ssh read hidden prompt keylog",
         inline_editable: false,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "controls.secureInputIndicator",
@@ -652,6 +715,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "controls",
         keywords: "secure input indicator pill badge keyboard entry visible",
         inline_editable: false,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "controls.undoAtPrompt",
@@ -663,6 +727,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "undo prompt readline cmd z line edit",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "controls.rightClickAction",
@@ -674,6 +739,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "right click action menu copy paste ignore mouse",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "controls.optionAsAlt",
@@ -686,6 +752,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "option alt meta esc keyboard macos key word jump emacs vim readline accented",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "controls.linkDetection",
@@ -697,6 +764,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "link path url detect underline hover open clickable hyperlink osc 8",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "controls.linkCmdClick",
@@ -708,6 +776,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "link cmd click open copy nothing url path open with handler",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "controls.linkCmdShiftClick",
@@ -720,6 +789,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "link cmd shift click reveal finder open system default host",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "controls.autoDetectLinkSchemes",
@@ -732,6 +802,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "link scheme url detect custom all http https file mailto codex ssh vscode",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "controls.customLinkSchemes",
@@ -744,6 +815,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "custom link scheme url codex ssh vscode additional detect",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "controls.titleShellControlled",
@@ -755,6 +827,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "title shell controlled osc 0 2 window tab name privilege",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "controls.clipboardShellControlled",
@@ -767,6 +840,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "clipboard shell controlled osc 52 master read write privilege deny",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "shell.newTabPosition",
@@ -778,6 +852,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "tab position new placement order end after current appearance",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "shell.autoHideTabsPanel",
@@ -790,6 +865,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "appearance",
         keywords: "tabs panel sidebar auto hide collapse appearance layout",
         inline_editable: false,
+        persistence: Persistence::UserDefaults,
     },
     // The four `window.*` numbers below are a PAIR OF PAIRS, each pair live only in the mode that
     // measures in its unit — so each is qualified by the mode row it belongs to rather than left as a
@@ -805,6 +881,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "appearance",
         keywords: "window size initial dimensions remember grid frame cols rows pixels appearance",
         inline_editable: false,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "window.cols",
@@ -816,6 +893,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "appearance",
         keywords: "window columns cols grid width cells appearance",
         inline_editable: false,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "window.rows",
@@ -827,6 +905,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "appearance",
         keywords: "window rows grid height cells appearance",
         inline_editable: false,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "window.widthPx",
@@ -838,6 +917,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "appearance",
         keywords: "window width pixels px frame appearance",
         inline_editable: false,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "window.heightPx",
@@ -849,6 +929,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "appearance",
         keywords: "window height pixels px frame appearance",
         inline_editable: false,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "desktopWindow.presentation",
@@ -861,6 +942,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "appearance",
         keywords: "remote desktop window fullscreen borderless space presentation appearance",
         inline_editable: false,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "satelliteWindow.backgroundPointer",
@@ -873,6 +955,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "appearance",
         keywords: "background interaction pointer satellite desktop window focus click scroll appearance",
         inline_editable: false,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "appearance.dockIconAnimateProgress",
@@ -884,6 +967,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "appearance",
         keywords: "dock icon animate progress macos appearance osc 9 4 spinner",
         inline_editable: false,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "appearance.dockIconErrorBadge",
@@ -896,6 +980,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "appearance",
         keywords: "dock icon red error badge tint exit failing tab macos appearance",
         inline_editable: false,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "agents.badgeWhileProcessing",
@@ -907,6 +992,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "agents",
         keywords: "agent claude badge processing working ring tab spinner",
         inline_editable: false,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "agents.badgeWhenComplete",
@@ -918,6 +1004,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "agents",
         keywords: "agent claude badge complete done idle mark tab",
         inline_editable: false,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "agents.badgeWhenAwaitingInput",
@@ -929,6 +1016,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "agents",
         keywords: "agent claude badge awaiting input approval permission mark tab",
         inline_editable: false,
+        persistence: Persistence::UserDefaults,
     },
     // The two HOST-read agent flags. They ride the `video-prefs.json` sidecar rather than
     // `UserDefaults`, so they are keyed the way the typed render fields are and restored with the
@@ -943,6 +1031,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "agents",
         keywords: "agent claude prevent sleep assertion host processing caffeinate power",
         inline_editable: false,
+        persistence: Persistence::ModelBacked,
     },
     SettingRow {
         key: "agent-resume-on-recovery",
@@ -954,6 +1043,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "agents",
         keywords: "agent claude resume recovery reconnect detached re-arm session host",
         inline_editable: false,
+        persistence: Persistence::ModelBacked,
     },
     SettingRow {
         key: "features.recordClipboardHistory",
@@ -965,6 +1055,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "",
         keywords: "clipboard history record paste recent ring",
         inline_editable: true,
+        persistence: Persistence::UserDefaults,
     },
     SettingRow {
         key: "font-family",
@@ -976,6 +1067,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "appearance",
         keywords: "font family typeface monospace appearance",
         inline_editable: false,
+        persistence: Persistence::ModelBacked,
     },
     SettingRow {
         key: "font-family-bold",
@@ -987,6 +1079,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "appearance",
         keywords: "font family bold face weight appearance",
         inline_editable: false,
+        persistence: Persistence::ModelBacked,
     },
     SettingRow {
         key: "font-family-italic",
@@ -998,6 +1091,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "appearance",
         keywords: "font family italic face slant appearance",
         inline_editable: false,
+        persistence: Persistence::ModelBacked,
     },
     SettingRow {
         key: "font-family-bold-italic",
@@ -1009,6 +1103,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "appearance",
         keywords: "font family bold italic face appearance",
         inline_editable: false,
+        persistence: Persistence::ModelBacked,
     },
     SettingRow {
         key: "font-family-fallback",
@@ -1020,6 +1115,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "appearance",
         keywords: "font family fallback cjk nerd glyph missing appearance",
         inline_editable: false,
+        persistence: Persistence::ModelBacked,
     },
     SettingRow {
         key: "font-auto-match-weight-style",
@@ -1031,6 +1127,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "appearance",
         keywords: "font auto match weight style bold italic derive appearance",
         inline_editable: false,
+        persistence: Persistence::ModelBacked,
     },
     SettingRow {
         key: "font-size",
@@ -1042,6 +1139,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "appearance",
         keywords: "font size point appearance zoom",
         inline_editable: false,
+        persistence: Persistence::ModelBacked,
     },
     SettingRow {
         key: "font-line-height",
@@ -1053,6 +1151,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "appearance",
         keywords: "line height leading spacing cell density appearance",
         inline_editable: false,
+        persistence: Persistence::ModelBacked,
     },
     SettingRow {
         key: "font-ligatures",
@@ -1064,6 +1163,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "appearance",
         keywords: "ligatures calt dlig font arrows appearance",
         inline_editable: false,
+        persistence: Persistence::ModelBacked,
     },
     SettingRow {
         key: "font-ligatures-alphabet",
@@ -1075,6 +1175,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "appearance",
         keywords: "ligatures alphabet letters words font appearance",
         inline_editable: false,
+        persistence: Persistence::ModelBacked,
     },
     SettingRow {
         key: "font-bold",
@@ -1086,6 +1187,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "appearance",
         keywords: "font bold style synthetic weight sgr appearance",
         inline_editable: false,
+        persistence: Persistence::ModelBacked,
     },
     SettingRow {
         key: "font-italic",
@@ -1097,6 +1199,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "appearance",
         keywords: "font italic style synthetic slant sgr appearance",
         inline_editable: false,
+        persistence: Persistence::ModelBacked,
     },
     SettingRow {
         key: "font-blending",
@@ -1108,6 +1211,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "appearance",
         keywords: "font blending thicken antialias gamma render appearance",
         inline_editable: false,
+        persistence: Persistence::ModelBacked,
     },
     SettingRow {
         key: "scrollback-limit",
@@ -1119,6 +1223,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "controls",
         keywords: "scrollback lines buffer history controls scroll",
         inline_editable: false,
+        persistence: Persistence::ModelBacked,
     },
     SettingRow {
         key: "cursor-style",
@@ -1130,6 +1235,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "appearance",
         keywords: "cursor style block hollow bar underline appearance",
         inline_editable: false,
+        persistence: Persistence::ModelBacked,
     },
     SettingRow {
         key: "cursor-style-blink",
@@ -1141,6 +1247,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "appearance",
         keywords: "cursor blink appearance",
         inline_editable: false,
+        persistence: Persistence::ModelBacked,
     },
     SettingRow {
         key: "appearance.density",
@@ -1152,6 +1259,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "appearance",
         keywords: "density appearance compact comfortable spacing tier",
         inline_editable: false,
+        persistence: Persistence::ModelBacked,
     },
     // The video flags. Five of the six are read by the HOST daemon at launch off the
     // `video-prefs.json` sidecar, so they are keyed the way the other sidecar-backed rows are and
@@ -1168,6 +1276,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "advanced",
         keywords: "video qp quantiser quantizer sharp quality encoder h264 bitrate host",
         inline_editable: false,
+        persistence: Persistence::ModelBacked,
     },
     SettingRow {
         key: "video-qp-coarse",
@@ -1179,6 +1288,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "advanced",
         keywords: "video qp quantiser quantizer coarse congestion quality encoder h264 host",
         inline_editable: false,
+        persistence: Persistence::ModelBacked,
     },
     SettingRow {
         key: "video-fec-m",
@@ -1190,6 +1300,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "advanced",
         keywords: "video fec forward error correction parity reed solomon loss symmetric m",
         inline_editable: false,
+        persistence: Persistence::ModelBacked,
     },
     SettingRow {
         key: "video-fec-k",
@@ -1201,6 +1312,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "advanced",
         keywords: "video fec forward error correction group size reed solomon symmetric k",
         inline_editable: false,
+        persistence: Persistence::ModelBacked,
     },
     SettingRow {
         key: "video-pacer",
@@ -1212,6 +1324,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "advanced",
         keywords: "video pacer playout presentation deadline arrival latency smoothness jitter",
         inline_editable: false,
+        persistence: Persistence::ModelBacked,
     },
     SettingRow {
         key: "video-sharpen",
@@ -1223,6 +1336,7 @@ pub const ROWS: &[SettingRow] = &[
         target_section: "advanced",
         keywords: "video sharpen unsharp mask luma crisp text render client blurry soft",
         inline_editable: false,
+        persistence: Persistence::ModelBacked,
     },
 ];
 
@@ -1519,14 +1633,33 @@ mod tests {
         );
     }
 
+    /// The counts, because derivation moved where this can go wrong.
+    ///
+    /// The old assertion here — that every named key is an advertised row — cannot fail any more:
+    /// the keys ARE the rows now. What replaced that risk is a row carrying the wrong arm, which no
+    /// structural check can see, so the numbers are pinned. Changing one is a real decision about
+    /// what restores a row, and it should cost a line in this test.
     #[test]
-    fn every_named_key_set_names_advertised_rows() {
-        for key in DEVICE_LOCAL_KEYS.iter().chain(MODEL_BACKED_KEYS) {
-            assert!(
-                row(key).is_some(),
-                "{key} is restored by name but advertised by nobody"
-            );
-        }
+    fn each_persistence_holds_the_rows_it_is_meant_to() {
+        assert_eq!(
+            device_local_keys().count(),
+            1,
+            "only the shared-focus row lives off UserDefaults"
+        );
+        assert_eq!(
+            model_backed_keys().count(),
+            25,
+            "the typed render fields, plus the density token"
+        );
+        assert_eq!(
+            keys_filed_under(Persistence::UserDefaults).count(),
+            ROWS.len() - 26,
+            "every other row is a defaults key a global reset reaches",
+        );
+        assert!(
+            device_local_keys().eq([FOLLOW_SESSION_FOCUS_KEY]),
+            "the device-local row is the one `device-prefs.json` holds",
+        );
     }
 
     /// Every key some page describes, whichever half draws it.

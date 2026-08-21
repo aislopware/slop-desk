@@ -1140,6 +1140,13 @@ size_t slopdesk_settings_row_keywords(size_t index, uint8_t *out, size_t cap);
 size_t slopdesk_settings_row_target_section(size_t index, uint8_t *out, size_t cap);
 uint8_t slopdesk_settings_row_bucket(size_t index);
 bool slopdesk_settings_row_is_inline_editable(size_t index);
+// WHERE a row's value lives, and so what restores it: `0` a `UserDefaults` key a global reset
+// reaches, `1` a device-local fact in `device-prefs.json`, `2` a typed render field (or the density
+// token) that comes back with its model. A FIELD on every row rather than two lists beside the
+// table, because a list is a second spelling that drifts silently: a new row is simply absent from
+// it, which reads as `0` and is wrong for exactly the rows a defaults reset misses. `0` past the
+// end.
+uint8_t slopdesk_settings_row_persistence(size_t index);
 // Whether the half that identifies as `mac` advertises this row. DERIVED from the page table below,
 // never declared here: which half can edit a setting is already a `Platform` on a group and on a
 // row, and a second spelling of it would agree until somebody moved a group. A row the page table

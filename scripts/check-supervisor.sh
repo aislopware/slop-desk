@@ -5756,7 +5756,7 @@ fi
 for door in slopdesk_settings_row_count slopdesk_settings_row_key slopdesk_settings_row_label \
   slopdesk_settings_row_description slopdesk_settings_row_default_text slopdesk_settings_row_keywords \
   slopdesk_settings_row_target_section slopdesk_settings_row_bucket slopdesk_settings_row_is_inline_editable \
-  slopdesk_settings_row_index slopdesk_settings_row_matches; do
+  slopdesk_settings_row_persistence slopdesk_settings_row_index slopdesk_settings_row_matches; do
   if ! grep -qF "${door}" "${rows_swift}"; then
     fail "${rows_swift} stopped calling ${door} — a row it describes itself is a table written twice"
   fi
@@ -5791,6 +5791,28 @@ if [[ -n "${typed_labels}" ]]; then
 fi
 printf 'check-supervisor: a setting is named once — %s rows, and no view spells one.\n' \
   "$(printf '%s\n' "${row_labels}" | grep -c .)"
+
+# ── A render field's KEY is a row's key ───────────────────────────────────────────────────────
+# `AllSettingsCatalog.RenderKey` spells two dozen config-style names — `font-family`, `video-fec-k`
+# — that `settings_rows` already spells as row keys. Unlike the sets beside them, these CANNOT
+# become a door: a Swift `switch` case needs a compile-time constant, which is the wall
+# `PaneLivenessState` hit. So the answer is the one that worked there — compare the two halves as
+# TEXT, before either is compiled. A name here that no row advertises is a view asking for a row
+# that does not exist, which renders as nothing and fails no test.
+render_keys=$(sed -n '/public enum RenderKey {/,/^    }$/p' "${rows_swift}" |
+  sed -n 's/^        public static let [A-Za-z]* = "\(.*\)"$/\1/p' | sort -u) || true
+row_keys=$(sed -n 's/^        key: "\(.*\)",$/\1/p' rust/slopdesk-workspace/src/settings_rows.rs |
+  sort -u) || true
+if [[ -z "${render_keys}" || -z "${row_keys}" ]]; then
+  fail "RenderKey or the row keys read as EMPTY — the comparison below would pass by comparing nothing"
+fi
+orphan_render_keys=$(comm -23 <(printf '%s\n' "${render_keys}") <(printf '%s\n' "${row_keys}"))
+if [[ -n "${orphan_render_keys}" ]]; then
+  printf '%s\n' "${orphan_render_keys}" >&2
+  fail "a RenderKey names no row in settings_rows.rs — the two spellings of that key have drifted"
+fi
+printf 'check-supervisor: %s render-field keys, every one of them a row settings_rows advertises.\n' \
+  "$(printf '%s\n' "${render_keys}" | grep -c .)"
 
 # ── A platform gate on a settings page is DATA ────────────────────────────────────────────────
 # Which groups a page shows, in what order, and which platform each belongs to is

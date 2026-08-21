@@ -93,7 +93,12 @@ public enum AllSettingsCatalog {
     /// `AllSettingsCatalogTests` binds the three reset surfaces to the advertised keys through this:
     /// a row belonging to none of them fails there rather than quietly outliving the reset the panel
     /// just promised.
-    public static let deviceLocalKeys: Set<String> = [followSessionFocusKey]
+    ///
+    /// DERIVED, never named. Both halves used to hold a hand list of these keys — Swift here and
+    /// Rust beside its row table — which agreed only because nobody had added a row since. The far
+    /// side now carries the answer on the ROW, so a new row cannot be absent from a list it is no
+    /// longer in.
+    public static let deviceLocalKeys: Set<String> = keys(persistedAs: 1)
 
     /// The config-file names of the five typed RENDER FIELDS. Not ``SettingsKey`` constants — those
     /// are `Defaults.Key` names, and these five live on ``TerminalPreferences`` instead — but they
@@ -131,18 +136,18 @@ public enum AllSettingsCatalog {
     /// `appearance.density`, which is cleared by name from the store's own injected suite. Neither
     /// can appear in a reset key set, so this is what tells "restored another way" apart from
     /// "restored by nobody".
-    public static let modelBackedKeys: Set<String> = [
-        RenderKey.fontFamily, RenderKey.fontSize, RenderKey.scrollbackLimit,
-        RenderKey.cursorStyle, RenderKey.cursorStyleBlink,
-        RenderKey.fontFamilyBold, RenderKey.fontFamilyItalic, RenderKey.fontFamilyBoldItalic,
-        RenderKey.fontFamilyFallback, RenderKey.fontAutoMatchWeightStyle, RenderKey.fontLineHeight,
-        RenderKey.fontLigatures, RenderKey.fontLigaturesAlphabet,
-        RenderKey.fontBold, RenderKey.fontItalic, RenderKey.fontBlending,
-        RenderKey.agentPreventSleep, RenderKey.agentResumeOnRecovery,
-        RenderKey.videoQpSharp, RenderKey.videoQpCoarse, RenderKey.videoFecM,
-        RenderKey.videoFecK, RenderKey.videoPacer, RenderKey.videoSharpen,
-        SettingsKey.density,
-    ]
+    /// Derived for ``deviceLocalKeys``' reason, and unfiltered by half for the same one: which
+    /// binary is running decides what a reset DRAWS, never what it has to restore.
+    public static let modelBackedKeys: Set<String> = keys(persistedAs: 2)
+
+    /// Every advertised key the far side files under one persistence arm.
+    private static func keys(persistedAs arm: UInt8) -> Set<String> {
+        Set(
+            (0..<slopdesk_settings_row_count())
+                .filter { slopdesk_settings_row_persistence($0) == arm }
+                .compactMap { index in string { slopdesk_settings_row_key(index, $0, $1) } },
+        )
+    }
 
     /// Which half this binary IS.
     ///
