@@ -1802,6 +1802,20 @@ bool slopdesk_ws_pane_kind_is_video(uint8_t kind);
 // How many pane kinds there are, so a caller can WALK the vocabulary rather than name its members.
 size_t slopdesk_ws_pane_kind_count(void);
 
+// Which pane kind a persisted DISCRIMINATOR names. The workspace FILE's string form is read on the
+// Rust side of its own door; the one file whose decoder is still Foundation's is `device-prefs.json`,
+// whose captured session templates carry a `PaneKind` per leaf. The five retired names — claudeCode,
+// web, chooser, remoteGUI, systemDialog — fold to `terminal` here rather than being spelled a second
+// time in Swift: `DevicePreferences` decodes as one synthesized whole, so a kind that THROWS resets
+// the template library, the latched video modes and the per-host connection targets together, and
+// nothing logs it.
+//
+// `-1` is "a name this build has never had" — corruption rather than age. It is signed for the reason
+// `slopdesk_fuzzy_rank` is: 0 is the most common REAL answer (it is `terminal`, which is what every
+// folded retired name becomes), so `size_t` has no room for a refusal. Bytes that are not valid UTF-8
+// refuse too; a discriminator is one of a closed set of ASCII names.
+int32_t slopdesk_ws_pane_kind_from_raw(const uint8_t *raw, size_t len);
+
 // The title a re-seeded pane takes, and the name a fresh workspace's first session takes. §4-shaped
 // and asked for rather than transcribed: a caller comparing against its own copy passes on a
 // default this crate stopped producing, and the fresh-workspace shape test IS that comparison.

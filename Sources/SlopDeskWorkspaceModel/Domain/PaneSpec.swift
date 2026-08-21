@@ -32,8 +32,9 @@ public struct PaneID: Hashable, Sendable {
 /// dedicated "Claude Code pane".
 ///
 /// `String`-raw + hand-stable so the persisted JSON discriminator is human-readable and
-/// versionable. **Forward/back-tolerant decode** (below): an OLD persisted `"claudeCode"` raw
-/// value maps to `.terminal` so a file predating the kind's removal never traps.
+/// versionable. The case list is a VOCABULARY in two type systems (docs/55 §6) — a SwiftUI `switch`
+/// reads it, so it stays — but the TOLERANCE RULE below is not part of the vocabulary and does not
+/// live here.
 public enum PaneKind: String, Codable, Sendable, Equatable {
     /// A remote PTY terminal (PATH 1 byte pipeline). Also hosts an auto-detected `claude` session.
     case terminal
@@ -43,59 +44,50 @@ public enum PaneKind: String, Codable, Sendable, Equatable {
     /// way CGWindowIDs do.
     case desktop
 
-    /// The retired-but-tolerated legacy raw value of the removed "Claude Code" pane kind. A
-    /// `.claudeCode` pane is just a `.terminal`; an OLD persisted file may still carry this
-    /// discriminator. Kept ONLY as the migration/decode bridge below.
-    static let legacyClaudeCodeRawValue = "claudeCode"
-
-    /// The retired-but-tolerated legacy raw value of the removed LOCAL web pane kind (the app is a
-    /// remote terminal + remote-GUI tool; a local browser is not core). An OLD persisted file may
-    /// still carry a `"web"` leaf; it decodes to `.terminal` via the bridge below (same discipline
-    /// as ``legacyClaudeCodeRawValue``) so a stale workspace never traps.
-    static let legacyWebRawValue = "web"
-
-    /// The retired-but-tolerated legacy raw value of the removed in-pane kind CHOOSER (the Stage
-    /// re-scope made every new-pane gesture mint a terminal directly, so the transient chooser kind is
-    /// gone). A persisted `.chooser` was always mid-gesture ephemera; folding it to `.terminal` is
-    /// exactly what picking the default would have done.
-    static let legacyChooserRawValue = "chooser"
-
-    /// The retired-but-tolerated legacy raw value of the removed REMOTE-WINDOW pane kind (the
-    /// dedicated-desktop-window re-scope, docs/DECISIONS.md 2026-07-22: full-desktop is the only
-    /// remote-viewing mode). A persisted `"remoteGUI"` leaf folds to `.terminal` via the bridge below
-    /// (same discipline as ``legacyClaudeCodeRawValue``) — the stream identity is deliberately
-    /// dropped (no-backcompat rule), the pane itself survives as a blank terminal.
-    static let legacyRemoteGUIRawValue = "remoteGUI"
-
-    /// The retired-but-tolerated legacy raw value of the removed SYSTEM-DIALOG pane kind (the
-    /// no-video-in-the-workspace re-scope, docs/DECISIONS.md 2026-07-23: the dedicated desktop
-    /// window is the only video surface). A `.systemDialog` pane was ephemeral and never persisted,
-    /// so this bridge is pure belt-and-braces (the ``legacyChooserRawValue`` discipline).
-    static let legacySystemDialogRawValue = "systemDialog"
-
     /// **Forward/back-tolerant decode (validate-then-repair, CLAUDE.md untrusted-persisted-data
-    /// contract).** A persisted `"claudeCode"` raw value (the removed kind), `"web"` raw value (the
-    /// removed local web pane), `"chooser"` raw value (the removed in-pane kind chooser),
-    /// `"remoteGUI"` raw value (the removed remote-window pane), or `"systemDialog"` raw value (the
-    /// removed system-dialog pane) maps to `.terminal` so an old workspace file never traps now the
-    /// cases are gone. Any OTHER unknown raw value still throws (it is genuine corruption the
-    /// loader's reset path handles), preserving the strict behaviour for everything except the
-    /// intentionally-retired values.
+    /// contract), ASKED FOR rather than restated.** `slopdesk_workspace::session::PaneKind::from_raw`
+    /// is the fold and `PaneKind::RETIRED_RAW_VALUES` is the list it folds: the five discriminators
+    /// this project has removed — `claudeCode`, `web`, `chooser`, `remoteGUI`, `systemDialog` — each
+    /// name a pane that is still a pane, so each becomes a plain `.terminal`. Any OTHER unknown raw
+    /// value throws, because it is genuine corruption rather than age and the caller's reset path is
+    /// what should handle it.
+    ///
+    /// **This body used to spell the five names out, and that was a third copy of a rule that has an
+    /// owner.** The vocabulary crate holds the list, `slopdesk_workspace::persist::decode_pane_kind`
+    /// reads it for the workspace FILE, and this decode read a private array of five `static let`s
+    /// that had to agree with both by inspection. A retired kind is exactly the fact that gets added
+    /// years after the code that folds it, which is how a copy like that goes stale without a red
+    /// test: the sixth retirement lands in the crate, this side keeps REJECTING the name, and no
+    /// compiler says anything.
+    ///
+    /// The consequence is out of all proportion to one leaf, which is why it is worth the door. The
+    /// only decoder still reaching here is Foundation's, on `device-prefs.json` — a `TemplatePane`
+    /// inside a captured ``SessionTemplate`` carries a kind, and `DevicePreferences` decodes as one
+    /// synthesized whole. A throw from this initialiser therefore unwinds past the whole template
+    /// library, past the latched video modes and past the per-host connection targets, and
+    /// `DevicePreferencesStore.load()`'s `try?` answers a fresh default. One stale discriminator in
+    /// one leaf silently resets every device-local preference, and nothing is logged.
+    ///
+    /// The byte comes back through ``WorkspacePaneKindTag/kind(for:)``, which is total on purpose: a
+    /// door that answered a kind byte this build has no case for degrades to `.terminal` — a real
+    /// pane in a real slot — where a failable lookup would turn a NEWER file into the same total
+    /// preferences reset. Only the door's own refusal throws.
     public init(from decoder: any Decoder) throws {
         let raw = try decoder.singleValueContainer().decode(String.self)
-        if raw == Self.legacyClaudeCodeRawValue || raw == Self.legacyWebRawValue
-            || raw == Self.legacyChooserRawValue || raw == Self.legacyRemoteGUIRawValue
-            || raw == Self.legacySystemDialogRawValue
-        {
-            self = .terminal
-            return
+        let name = Array(raw.utf8)
+        let answer = name.withUnsafeBufferPointer { input in
+            slopdesk_ws_pane_kind_from_raw(input.baseAddress, input.count)
         }
-        guard let value = Self(rawValue: raw) else {
+        // `-1` is the refusal, and it is the ONLY one: a kind byte is a case index, so nothing the
+        // door can answer legitimately is negative. `exactly:` rather than a truncation because a
+        // byte that did not fit would be a boundary disagreement, not a kind, and reading it as one
+        // modulo 256 is how the wrong pane gets rendered instead of the file being refused.
+        guard answer >= 0, let byte = UInt8(exactly: answer) else {
             throw DecodingError.dataCorrupted(
                 .init(codingPath: decoder.codingPath, debugDescription: "unknown PaneKind raw value \"\(raw)\""),
             )
         }
-        self = value
+        self = WorkspacePaneKindTag.kind(for: byte)
     }
 }
 

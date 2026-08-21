@@ -104,6 +104,7 @@ pub mod mux_host;
 pub mod notify;
 pub mod pacer_depth;
 pub mod palette_rows;
+pub mod pane_kind;
 pub mod panel_key;
 pub mod paste_safety;
 pub mod peek_reply;
