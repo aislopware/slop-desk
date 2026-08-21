@@ -107,18 +107,9 @@ pub fn resolve(zone: DropZone, content: Dropped<'_>) -> Option<DropAction> {
     }
 }
 
-/// Whether a drop into `zone` would do anything at all.
-///
-/// The overlay reads this to decide which zones light up, so a muted zone and a no-op zone are one
-/// answer rather than two lists that could disagree.
-#[must_use]
-pub fn zone_is_allowed(zone: DropZone, content: Dropped<'_>) -> bool {
-    resolve(zone, content).is_some()
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{DropAction, DropZone, Dropped, DroppedKind, ZONES, resolve, zone_is_allowed};
+    use super::{DropAction, DropZone, Dropped, DroppedKind, ZONES, resolve};
 
     const fn dropped(kind: DroppedKind, value: &str) -> Dropped<'_> {
         Dropped { kind, value }
@@ -195,10 +186,13 @@ mod tests {
 
     #[test]
     fn a_zone_is_allowed_exactly_when_it_would_do_something() {
+        // Asked the way the only caller asks it: `resolve` is the exported door, and the overlay
+        // derives "allowed" by filtering it. A predicate beside `resolve` would be a second way to
+        // ask one question, so the sugar that used to sit here is gone and the fact stays.
         let url = dropped(DroppedKind::Url, "https://x.dev");
         let allowed: Vec<DropZone> = ZONES
             .into_iter()
-            .filter(|zone| zone_is_allowed(*zone, url))
+            .filter(|zone| resolve(*zone, url).is_some())
             .collect();
         assert_eq!(
             allowed,

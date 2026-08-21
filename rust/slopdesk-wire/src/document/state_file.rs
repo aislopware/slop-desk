@@ -38,7 +38,7 @@ pub const VERSION: i64 = 1;
 /// `const` cannot iterate, and `the_persisted_set_is_the_topology_half_plus_exactly_two` is the
 /// ratchet that keeps the two lists from drifting — a new topology field that nobody adds here
 /// fails that test rather than silently failing to survive a restart.
-pub const PERSISTED_PANE_FIELDS: [u8; 7] = [
+const PERSISTED_PANE_FIELDS: [u8; 7] = [
     pane::KIND,
     pane::TITLE,
     pane::USER_RENAMED,

@@ -122,25 +122,6 @@ pub struct VideoEndpoint {
     pub display_id: Option<u32>,
 }
 
-impl VideoEndpoint {
-    /// The stable TARGET identity latched modes are keyed by.
-    ///
-    /// A desktop pane keys by its display. A window-shaped endpoint keys by its owning APP, because
-    /// window ids recycle across host restarts and the app is the identity that survives — falling
-    /// back to the raw window id only when no app name is known.
-    #[must_use]
-    pub fn modes_key(&self) -> String {
-        if let Some(display) = self.display_id {
-            return format!("display:{display}");
-        }
-        if self.app_name.is_empty() {
-            format!("window:{}", self.window_id)
-        } else {
-            format!("app:{}", self.app_name)
-        }
-    }
-}
-
 /// The latched modes of a video pane.
 ///
 /// Device-local and keyed by the stream TARGET rather than by the pane, so closing a tab and
@@ -158,14 +139,6 @@ pub struct VideoPaneModes {
     pub fps_cap: u32,
     /// A live bitrate ceiling. Zero is automatic.
     pub bitrate_ceiling_bps: u64,
-}
-
-impl VideoPaneModes {
-    /// Whether every mode is at its default, in which case the spec stores nothing at all.
-    #[must_use]
-    pub fn is_default(&self) -> bool {
-        *self == Self::default()
-    }
 }
 
 /// The full value description of a leaf.
@@ -438,12 +411,6 @@ impl Session {
             .flatten()
     }
 
-    /// The selected tab, falling back to the first when the index has gone stale.
-    #[must_use]
-    pub fn active_tab(&self) -> Option<&Tab> {
-        self.tabs.get(self.active_tab_index).or_else(|| self.tabs.first())
-    }
-
     /// The index of the tab whose tree holds a pane.
     #[must_use]
     pub fn tab_index_containing(&self, id: PaneId) -> Option<usize> {
@@ -537,9 +504,7 @@ impl NewTabPosition {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        DetachedPane, NewTabPosition, PaneKind, PaneSpec, Session, Tab, VideoEndpoint, VideoPaneModes,
-    };
+    use super::{DetachedPane, NewTabPosition, PaneKind, PaneSpec, Session, Tab};
     use crate::identity::{PaneId, SessionId, SplitNodeId, TabId};
     use crate::split_tree::{SplitAxis, SplitNode, WeightedChild};
 
@@ -586,52 +551,6 @@ mod tests {
     fn only_a_terminal_takes_typed_text_and_only_a_desktop_is_video() {
         assert!(PaneKind::Terminal.can_receive_text() && !PaneKind::Terminal.is_video());
         assert!(PaneKind::Desktop.is_video() && !PaneKind::Desktop.can_receive_text());
-    }
-
-    #[test]
-    fn a_display_endpoint_keys_by_its_display() {
-        let endpoint = VideoEndpoint {
-            display_id: Some(0),
-            window_id: 42,
-            app_name: "Finder".to_owned(),
-            title: String::new(),
-        };
-        assert_eq!(
-            endpoint.modes_key(),
-            "display:0",
-            "the display wins over the window"
-        );
-    }
-
-    #[test]
-    fn a_window_endpoint_keys_by_its_app_because_window_ids_recycle() {
-        let endpoint = VideoEndpoint {
-            window_id: 42,
-            app_name: "Finder".to_owned(),
-            ..VideoEndpoint::default()
-        };
-        assert_eq!(endpoint.modes_key(), "app:Finder");
-        let anonymous = VideoEndpoint {
-            window_id: 42,
-            ..VideoEndpoint::default()
-        };
-        assert_eq!(
-            anonymous.modes_key(),
-            "window:42",
-            "the raw id is the last resort"
-        );
-    }
-
-    #[test]
-    fn default_modes_are_stored_as_nothing_at_all() {
-        assert!(VideoPaneModes::default().is_default());
-        assert!(
-            !VideoPaneModes {
-                immersive: true,
-                ..VideoPaneModes::default()
-            }
-            .is_default()
-        );
     }
 
     #[test]
@@ -738,13 +657,6 @@ mod tests {
         assert!(!session.contains(pane(2)), "it has left every tree");
         assert_eq!(session.spec_for(pane(2)), Some(&spec()), "but keeps its spec");
         assert_eq!(session.detached_id_set().len(), 1);
-    }
-
-    #[test]
-    fn a_stale_active_index_falls_back_to_the_first_tab() {
-        let mut session = session();
-        session.active_tab_index = 7;
-        assert_eq!(session.active_tab().map(|tab| tab.id), Some(tab_id(1)));
     }
 
     #[test]

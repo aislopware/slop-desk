@@ -34,7 +34,13 @@ use crate::split_tree::{MIN_WEIGHT, SplitAxis, SplitNode, SplitWeight, WeightedC
 /// The clamp is a FLOOR, not a fit: when the bound genuinely cannot hold every sibling the rects
 /// overflow it rather than collapsing a pane to nothing, because a pane with no area is a pane that
 /// cannot be clicked to be closed.
-pub const DEFAULT_MIN_LEAF: Size = Size::new(160.0, 120.0);
+///
+/// It is [`geometry::MIN_ITEM_SIZE`] BY REFERENCE, not a second spelling of the same pair. That is
+/// the constant `slopdesk_ws_min_leaf` hands Swift, which reads it once into
+/// `SplitLayoutSolver.defaultMinLeaf` — so a literal here would be the floor the solver clamps by
+/// drifting away from the floor its caller sizes by, and both would look right in isolation. Two
+/// derivations of one number is exactly how they come to differ.
+pub const DEFAULT_MIN_LEAF: Size = crate::geometry::MIN_ITEM_SIZE;
 
 /// Every pane's exact rectangle.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -76,6 +82,7 @@ pub fn solve(root: &SplitNode, rect: Rect, min_leaf: Size) -> SolvedLayout {
 
 /// The same solve at the standard floor.
 #[must_use]
+#[cfg(test)]
 pub fn solve_default(root: &SplitNode, rect: Rect) -> SolvedLayout {
     solve(root, rect, DEFAULT_MIN_LEAF)
 }

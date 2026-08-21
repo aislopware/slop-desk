@@ -40,7 +40,7 @@ pub const fn truncating_u16(value: usize) -> u16 {
 use crate::error::{Result, WireError};
 
 /// Largest UTF-8 byte length a `u16`-length-prefixed string field can carry.
-pub const MAX_LENGTH_PREFIXED_BYTES: usize = u16::MAX as usize;
+const MAX_LENGTH_PREFIXED_BYTES: usize = u16::MAX as usize;
 
 /// The longest prefix of `value` whose UTF-8 fits a `u16` length field, cut at a `char` boundary.
 ///

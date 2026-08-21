@@ -41,11 +41,6 @@ macro_rules! identity {
                 uuid_text(self.0)
             }
 
-            #[doc = concat!("The ", $what, " named by hyphenated UUID text, in either case.")]
-            #[must_use]
-            pub fn from_text(text: &str) -> Option<Self> {
-                parse_uuid(text).map(Self)
-            }
         }
     };
 }
@@ -174,11 +169,6 @@ mod tests {
         ];
         let text = uuid_text(raw);
         assert_eq!(text, "01234567-89AB-CDEF-0001-020304050607");
-        assert_eq!(PaneId::from_text(&text), Some(PaneId::from_bytes(raw)));
-        assert_eq!(
-            PaneId::from_text(&text.to_lowercase()),
-            Some(PaneId::from_bytes(raw))
-        );
         assert_eq!(PaneId::from_bytes(raw).text(), text);
     }
 

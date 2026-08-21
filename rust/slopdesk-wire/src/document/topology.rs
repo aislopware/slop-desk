@@ -129,7 +129,7 @@ impl WorkspaceTopology {
 
     /// The reopen ring as ids — what `root/closedTabRing` carries.
     #[must_use]
-    pub fn closed_tab_ring(&self) -> Vec<TabId> {
+    fn closed_tab_ring(&self) -> Vec<TabId> {
         self.closed_tabs.iter().map(|closed| closed.tab.id).collect()
     }
 
@@ -651,13 +651,13 @@ impl HostWorkspaceState {
 
     /// One cell as a UUID list.
     #[must_use]
-    pub fn uuid_list(&self, key: &WorkspaceKey) -> Option<Vec<RawUuid>> {
+    fn uuid_list(&self, key: &WorkspaceKey) -> Option<Vec<RawUuid>> {
         self.get(key).and_then(codec::decode_uuid_list)
     }
 
     /// One cell as detached-pane records: each pane and the tab it came from.
     #[must_use]
-    pub fn detached_panes(&self, key: &WorkspaceKey) -> Option<Vec<(RawUuid, Option<RawUuid>)>> {
+    fn detached_panes(&self, key: &WorkspaceKey) -> Option<Vec<(RawUuid, Option<RawUuid>)>> {
         self.get(key).and_then(codec::decode_detached_panes)
     }
 

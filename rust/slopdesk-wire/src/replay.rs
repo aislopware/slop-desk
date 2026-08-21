@@ -399,13 +399,6 @@ impl ReplayBuffer {
         self.highest_seq
     }
 
-    /// [`append`](Self::append) plus the resulting [`DrainState`] — the form the host relay uses to
-    /// act on backpressure in the same call.
-    pub fn enqueue_output(&mut self, bytes: Vec<u8>) -> (i64, DrainState) {
-        let seq = self.append(bytes);
-        (seq, self.drain_state())
-    }
-
     /// Retained (un-acked) bytes with `seq > seq` — how far behind the head a subscriber that has
     /// confirmed up to `seq` actually is.
     ///
@@ -941,13 +934,6 @@ mod tests {
         assert_eq!(buffer.append(bytes("b")), 2);
         assert_eq!(buffer.append(bytes("c")), 3);
         assert_eq!(buffer.highest_seq(), 3);
-    }
-
-    #[test]
-    fn enqueue_output_agrees_with_append() {
-        let mut buffer = ReplayBuffer::new();
-        assert_eq!(buffer.enqueue_output(bytes("x")), (1, DrainState::BufferedOnly));
-        assert_eq!(buffer.highest_seq(), 1);
     }
 
     // MARK: retained-byte accounting
