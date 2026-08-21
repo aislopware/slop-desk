@@ -130,7 +130,7 @@ pub fn encode(text: &str) -> Encoded {
 /// all fail here for the same reason and produce the same honest skip, where a per-scalar walk
 /// would have typed the `e` out of the first one.
 #[must_use]
-pub fn stroke(cluster: &str) -> Option<Stroke> {
+pub const fn stroke(cluster: &str) -> Option<Stroke> {
     match cluster.as_bytes() {
         [byte] => ascii_stroke(*byte),
         _ => None,

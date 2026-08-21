@@ -65,7 +65,7 @@ fn is_severity_token(token: &[u8]) -> bool {
 /// declining the line: the SHAPE check above already did the work of keeping prose out of this
 /// slot, and the unified log's type alphabet is a moving target where `logcat`'s eight letters are
 /// not.
-fn severity(token: &[u8]) -> Severity {
+const fn severity(token: &[u8]) -> Severity {
     match token {
         b"F" => Severity::Fatal,
         b"E" => Severity::Error,

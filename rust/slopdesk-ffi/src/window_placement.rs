@@ -106,9 +106,10 @@ pub unsafe extern "C" fn slopdesk_window_should_restore(
         unsafe { core::slice::from_raw_parts(displays, display_count.saturating_mul(4)) }
     };
     let bounds: Vec<VideoRect> = scalars
-        .chunks_exact(4)
-        .filter_map(|chunk| <[f64; 4]>::try_from(chunk).ok())
-        .map(|[x, y, width, height]| VideoRect::xywh(x, y, width, height))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|&[x, y, width, height]| VideoRect::xywh(x, y, width, height))
         .collect();
     window_restore::should_restore(
         VideoRect::xywh(current_x, current_y, current_width, current_height),

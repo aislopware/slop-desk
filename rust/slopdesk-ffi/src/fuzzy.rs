@@ -100,11 +100,8 @@ mod tests {
         if needed == 0 {
             return None;
         }
-        let mut words = buffer
-            .get(..needed)
-            .unwrap_or_default()
-            .chunks_exact(4)
-            .filter_map(|word| <[u8; 4]>::try_from(word).ok());
+        let read = buffer.get(..needed).unwrap_or_default();
+        let mut words = read.as_chunks::<4>().0.iter().copied();
         let score = words.next().map(i32::from_be_bytes).unwrap_or_default();
         Some((score, words.map(u32::from_be_bytes).collect()))
     }

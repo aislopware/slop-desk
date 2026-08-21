@@ -134,8 +134,8 @@ fn le_u32(buf: &[u8], off: usize) -> u32 {
 /// (259 → 214 µs, which is where the Swift original stood).
 fn block_lanes(block: &[u8; 32]) -> [u64; 4] {
     let mut lanes = [0_u64; 4];
-    for (lane, chunk) in lanes.iter_mut().zip(block.chunks_exact(8)) {
-        *lane = u64::from_le_bytes(chunk.try_into().unwrap_or([0; 8]));
+    for (lane, chunk) in lanes.iter_mut().zip(block.as_chunks::<8>().0) {
+        *lane = u64::from_le_bytes(*chunk);
     }
     lanes
 }
@@ -238,18 +238,15 @@ impl StreamHasher {
             self.buf_len = 0;
         }
 
-        // Consume whole 32-byte blocks straight out of `input`. The `try_from` is a length check
-        // `chunks_exact` has already made — it converts the borrow, it does not copy — and its
-        // point is telling the compiler the length, which is what unrolls the lane reads.
-        let mut blocks = rest.chunks_exact(32);
-        for chunk in &mut blocks {
-            if let Ok(block) = <&[u8; 32]>::try_from(chunk) {
-                self.consume_block(block);
-            }
+        // Consume whole 32-byte blocks straight out of `input`. `as_chunks` hands back the
+        // fixed-length blocks AND the tail in one split, so the length is known to the compiler
+        // without a fallible conversion — which is what unrolls the lane reads.
+        let (blocks, remainder) = rest.as_chunks::<32>();
+        for block in blocks {
+            self.consume_block(block);
         }
 
         // Carry the remainder to the next call.
-        let remainder = blocks.remainder();
         if !remainder.is_empty() {
             if let Some(slot) = self.buf.get_mut(..remainder.len()) {
                 slot.copy_from_slice(remainder);

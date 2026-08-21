@@ -296,11 +296,12 @@ pub fn decode_pcm_s16le(payload: &[u8], channels: usize) -> Vec<f32> {
         return Vec::new();
     }
     payload
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| {
             let raw = match *pair {
                 [lo, hi] => u16::from_le_bytes([lo, hi]),
-                _ => 0,
             };
             f32::from(raw.cast_signed()) / PCM_S16_FULL_SCALE
         })

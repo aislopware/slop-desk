@@ -108,10 +108,16 @@ fn mul_add_neon(table_lo: &[u8; LANES], table_hi: &[u8; LANES], src: &[u8], dst:
     };
 
     let mut done = 0_usize;
-    for (d, s) in dst.chunks_exact_mut(LANES).zip(src.chunks_exact(LANES)) {
-        // SAFETY: `chunks_exact`/`chunks_exact_mut` yield slices of EXACTLY 16 bytes and never a
-        // short final one, so each 16-byte load and the 16-byte store are wholly inside the chunk
-        // they address. `d` and `s` come from a `&mut` and a `&`, which cannot alias.
+    for (d, s) in dst
+        .as_chunks_mut::<LANES>()
+        .0
+        .iter_mut()
+        .zip(src.as_chunks::<LANES>().0)
+    {
+        // SAFETY: `as_chunks`/`as_chunks_mut` yield `[u8; 16]` REFERENCES — the length is in the
+        // type, not in a runtime invariant a reader has to keep — so each 16-byte load and the
+        // 16-byte store are wholly inside the array they address. `d` and `s` come from a `&mut`
+        // and a `&`, which cannot alias.
         unsafe {
             let v = vld1q_u8(s.as_ptr());
             let low = vandq_u8(v, mask);
@@ -129,14 +135,20 @@ fn mul_add_neon(table_lo: &[u8; LANES], table_hi: &[u8; LANES], src: &[u8], dst:
 #[expect(
     unsafe_code,
     reason = "`vld1q_u8`/`vst1q_u8` take raw pointers; the 16-byte window each one needs is what \
-              `chunks_exact` hands out"
+              `as_chunks` hands out"
 )]
 fn xor_add_neon(src: &[u8], dst: &mut [u8]) -> usize {
     use core::arch::aarch64::{veorq_u8, vld1q_u8, vst1q_u8};
 
     let mut done = 0_usize;
-    for (d, s) in dst.chunks_exact_mut(LANES).zip(src.chunks_exact(LANES)) {
-        // SAFETY: as in `mul_add_neon` — exactly 16 bytes per chunk, and the two do not alias.
+    for (d, s) in dst
+        .as_chunks_mut::<LANES>()
+        .0
+        .iter_mut()
+        .zip(src.as_chunks::<LANES>().0)
+    {
+        // SAFETY: as in `mul_add_neon` — the `[u8; 16]` type is the length, and the two do not
+        // alias.
         unsafe {
             vst1q_u8(
                 d.as_mut_ptr(),

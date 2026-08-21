@@ -99,10 +99,7 @@ pub fn parse_uuid(text: &str) -> Option<[u8; 16]> {
         return None;
     }
     let mut out = [0_u8; 16];
-    for (byte, pair) in out.iter_mut().zip(digits.chunks_exact(2)) {
-        let (Some(high), Some(low)) = (pair.first(), pair.last()) else {
-            return None;
-        };
+    for (byte, &[high, low]) in out.iter_mut().zip(digits.as_chunks::<2>().0) {
         *byte = (high << 4) | low;
     }
     Some(out)

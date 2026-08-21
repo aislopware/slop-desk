@@ -216,7 +216,7 @@ fn column_zero(start: usize, bytes: &[u8]) -> bool {
 }
 
 /// Whether a column-1 `CHA` (`ESC [ G` or `ESC [ 1 G`) ends exactly at `end`.
-fn column_one_cha_ends_at(end: usize, bytes: &[u8]) -> bool {
+const fn column_one_cha_ends_at(end: usize, bytes: &[u8]) -> bool {
     if end < 3 || bytes[end - 1] != b'G' {
         return false;
     }

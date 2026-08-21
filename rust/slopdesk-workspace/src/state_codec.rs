@@ -57,7 +57,7 @@ pub const fn encode_u8(value: u8) -> [u8; 1] {
 
 /// `None` on any length but exactly one.
 #[must_use]
-pub fn decode_u8(bytes: &[u8]) -> Option<u8> {
+pub const fn decode_u8(bytes: &[u8]) -> Option<u8> {
     match bytes {
         [only] => Some(*only),
         _ => None,
@@ -85,7 +85,7 @@ pub const fn encode_u8_pair(first: u8, second: u8) -> [u8; 2] {
 
 /// `None` on any length but exactly two.
 #[must_use]
-pub fn decode_u8_pair(bytes: &[u8]) -> Option<(u8, u8)> {
+pub const fn decode_u8_pair(bytes: &[u8]) -> Option<(u8, u8)> {
     match bytes {
         [first, second] => Some((*first, *second)),
         _ => None,
@@ -101,7 +101,7 @@ pub const fn encode_u16_pair(first: u16, second: u16) -> [u8; 4] {
 
 /// `None` on any length but exactly four.
 #[must_use]
-pub fn decode_u16_pair(bytes: &[u8]) -> Option<(u16, u16)> {
+pub const fn decode_u16_pair(bytes: &[u8]) -> Option<(u16, u16)> {
     match bytes {
         [a, b, c, d] => Some((u16::from_be_bytes([*a, *b]), u16::from_be_bytes([*c, *d]))),
         _ => None,
@@ -181,7 +181,13 @@ pub fn decode_uuid_list(bytes: &[u8]) -> Option<Vec<RawUuid>> {
     if rest.len() != count.checked_mul(16)? {
         return None;
     }
-    Some(rest.chunks_exact(16).filter_map(decode_uuid).collect())
+    Some(
+        rest.as_chunks::<16>()
+            .0
+            .iter()
+            .filter_map(|id| decode_uuid(id))
+            .collect(),
+    )
 }
 
 #[cfg(test)]
@@ -944,7 +950,7 @@ pub fn decode_weights(bytes: &[u8]) -> Option<Vec<(bool, f64)>> {
     if rest.len() != usize::from(*count) * 9 {
         return None;
     }
-    rest.chunks_exact(9).map(decode_weight).collect()
+    rest.as_chunks::<9>().0.iter().map(|w| decode_weight(w)).collect()
 }
 
 // MARK: - The two composite field values

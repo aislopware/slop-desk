@@ -534,7 +534,7 @@ pub fn encode_u8(value: u8) -> Vec<u8> {
 /// A wrong-width value is a DROP, never a lenient prefix read: strictness here is what stops a
 /// mis-numbered field from decoding into a plausible-looking value.
 #[must_use]
-pub fn decode_u8(data: &[u8]) -> Option<u8> {
+pub const fn decode_u8(data: &[u8]) -> Option<u8> {
     match data {
         [byte] => Some(*byte),
         _ => None,
@@ -561,7 +561,7 @@ pub fn encode_u8_pair(first: u8, second: u8) -> Vec<u8> {
 
 /// Reads a two-byte pair, or `None` on any length but exactly 2.
 #[must_use]
-pub fn decode_u8_pair(data: &[u8]) -> Option<(u8, u8)> {
+pub const fn decode_u8_pair(data: &[u8]) -> Option<(u8, u8)> {
     match data {
         [first, second] => Some((*first, *second)),
         _ => None,
@@ -579,7 +579,7 @@ pub fn encode_u16_pair(first: u16, second: u16) -> Vec<u8> {
 
 /// Reads a `u16` pair, or `None` on any length but exactly 4.
 #[must_use]
-pub fn decode_u16_pair(data: &[u8]) -> Option<(u16, u16)> {
+pub const fn decode_u16_pair(data: &[u8]) -> Option<(u16, u16)> {
     match data {
         [a, b, c, d] => Some((u16::from_be_bytes([*a, *b]), u16::from_be_bytes([*c, *d]))),
         _ => None,
